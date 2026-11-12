@@ -125,8 +125,6 @@ func (s Service) List(ctx context.Context, g *agentgrant.Grant, q store.PersonIn
 				ids = append(ids, src.ID)
 			}
 		}
-	}
-	if g != nil {
 		return s.listDelegated(ctx, g, q, ids)
 	}
 	rows, err := s.Store.ListPersonIntroductionsContext(ctx, q, ids)
@@ -135,9 +133,6 @@ func (s Service) List(ctx context.Context, g *agentgrant.Grant, q store.PersonIn
 	}
 	inputs := make([]store.PersonIntroductionPrepare, 0, len(rows.Items))
 	for _, row := range rows.Items {
-		if !allowed(g, row) {
-			return Page{}, ErrForbidden
-		}
 		inputs = append(inputs, store.PersonIntroductionPrepare{SourceID: row.SourceID, PersonAID: row.PersonAID, PersonBID: row.PersonBID})
 	}
 	preflights, err := s.Store.GetPersonIntroductionPreflightsContext(ctx, inputs)
@@ -160,33 +155,14 @@ func (s Service) listDelegated(ctx context.Context, g *agentgrant.Grant, q store
 	if limit < 1 || limit > 100 {
 		return Page{}, store.ErrIntroductionInvalid
 	}
-	q.Limit = 1
-	var candidates []store.PersonIntroduction
-	var cursors []string
-	var inputs []store.PersonIntroductionPrepare
-	more := false
-	for range 100 {
-		rows, err := s.Store.ListPersonIntroductionsContext(ctx, q, ids)
-		if err != nil {
-			return Page{}, err
-		}
-		if len(rows.Items) == 0 {
-			break
-		}
-		row := rows.Items[0]
-		if !allowed(g, row) {
-			return Page{}, ErrForbidden
-		}
-		if row.SourceType == "beeper" {
-			candidates = append(candidates, row)
-			cursors = append(cursors, rows.NextAfterID)
-			inputs = append(inputs, store.PersonIntroductionPrepare{SourceID: row.SourceID, PersonAID: row.PersonAID, PersonBID: row.PersonBID})
-		}
-		more = rows.HasMore
-		if !more {
-			break
-		}
-		q.AfterID = rows.NextAfterID
+	q.Limit = 100
+	rows, err := s.Store.ListPersonIntroductionsContext(ctx, q, ids)
+	if err != nil {
+		return Page{}, err
+	}
+	inputs := make([]store.PersonIntroductionPrepare, 0, len(rows.Items))
+	for _, row := range rows.Items {
+		inputs = append(inputs, store.PersonIntroductionPrepare{SourceID: row.SourceID, PersonAID: row.PersonAID, PersonBID: row.PersonBID})
 	}
 	preflights, err := s.Store.GetPersonIntroductionPreflightsContext(ctx, inputs)
 	if err != nil {
@@ -194,7 +170,7 @@ func (s Service) listDelegated(ctx context.Context, g *agentgrant.Grant, q store
 	}
 	out := Page{Items: []Record{}}
 	var afterVisible string
-	for i, row := range candidates {
+	for i, row := range rows.Items {
 		if !visible(preflights[i]) {
 			continue
 		}
@@ -203,10 +179,13 @@ func (s Service) listDelegated(ctx context.Context, g *agentgrant.Grant, q store
 			return out, nil
 		}
 		out.Items = append(out.Items, projectedRecord(g, row, preflights[i]))
-		afterVisible = cursors[i]
+		afterVisible, err = store.IntroductionCursor(row)
+		if err != nil {
+			return Page{}, err
+		}
 	}
-	if more {
-		out.HasMore, out.NextAfterID = true, q.AfterID
+	if rows.HasMore {
+		out.HasMore, out.NextAfterID = true, rows.NextAfterID
 	}
 	return out, nil
 }

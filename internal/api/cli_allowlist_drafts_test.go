@@ -344,27 +344,27 @@ func TestDelegatedDraftGetSkipsBusyOperationGate(t *testing.T) { //nolint:parall
 	requirements.True(ok, "hold operation gate for delegated request")
 	defer release()
 
-	body, err := json.Marshal(CLIRunRequest{Args: []string{"draft-get", "draft-abc"}})
-	requirements.NoError(err)
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(apiprotocol.AgentTokenHeader, secret)
-	response := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() {
-		srv.Router().ServeHTTP(response, req)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		requirements.FailNow("delegated draft-get must not wait on a held operation gate")
+	for _, args := range [][]string{{"draft-get", "draft-abc"}, {"intro", "list"}, {"intro", "show", "intro-id"}} {
+		body, err := json.Marshal(CLIRunRequest{Args: args})
+		requirements.NoError(err)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
+		response := httptest.NewRecorder()
+		done := make(chan struct{})
+		go func() {
+			srv.Router().ServeHTTP(response, req)
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			requirements.FailNow("delegated read must not wait on a held operation gate")
+		}
+		assertions.Equal(http.StatusOK, response.Code)
+		assertions.False(gate.HasRequestWaiters())
 	}
-
-	assertions.Equal(http.StatusOK, response.Code)
-	assertions.Equal(1, runnerCalls)
-	assertions.False(gate.HasRequestWaiters())
+	assertions.Equal(3, runnerCalls)
 }
 
 func TestOwnerDraftLifecycleCommandsUseOperationGateAndRunner(t *testing.T) {
@@ -466,32 +466,4 @@ func TestDelegatedGrantScopesSource(t *testing.T) {
 	assert.Equal(http.StatusOK, w.Code)
 	assert.Contains(w.Body.String(), "not_permitted",
 		"delegated draft-reply for out-of-grant source must be refused; if this fails, verify cli_handlers.go:1315 sets req.Grant = auth.Grant")
-}
-
-func TestIntroReadsSkipHeldGate(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
-	check := assert.New(t)
-	req := require.New(t)
-	gate := NewSerialOperationGate()
-	srv, secret := newDelegatedTestServerWithGate(t, gate)
-	stub, ok := srv.store.(*stubSourceStore)
-	req.True(ok)
-	calls := 0
-	stub.runFunc = func(_ context.Context, _ CLIRunRequest, _ func(CLIRunEvent) error) error { calls++; return nil }
-	old := operationGateWaitLimit
-	operationGateWaitLimit = 20 * time.Millisecond
-	t.Cleanup(func() { operationGateWaitLimit = old })
-	release, ok := gate.BeginLabeledWorkContext(t.Context(), "held")
-	req.True(ok)
-	defer release()
-	for _, args := range [][]string{{"intro", "list"}, {"intro", "show", "intro-id"}} {
-		body, err := json.Marshal(CLIRunRequest{Args: args})
-		req.NoError(err)
-		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set(apiprotocol.AgentTokenHeader, secret)
-		response := httptest.NewRecorder()
-		srv.Router().ServeHTTP(response, request)
-		check.Equal(http.StatusOK, response.Code)
-	}
-	check.Equal(2, calls)
 }

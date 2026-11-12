@@ -53,7 +53,8 @@ the record reports `source_retired`; you can cancel it to clear the body.
 
 If a person merge combines both people, the record remains visible with a
 `same_person` blocker. An exact split of the merge restores its person references.
-Merge snapshots do not retain introduction body text.
+Cancellation retains the title in live metadata and merge snapshots. Merge
+snapshots do not retain introduction body text.
 
 Preflight reports `no_identity_on_account` when a person has no saved Beeper
 identity on that account, `ambiguous_identity` when there is more than one,

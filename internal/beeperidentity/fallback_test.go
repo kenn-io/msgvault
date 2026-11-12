@@ -14,7 +14,7 @@ func TestUserID(t *testing.T) {
 		{"scoped", "account:a", Fallback("account:a", "user:雪"), "user:雪", true},
 		{"other account", "account:b", Fallback("account:a", "user"), "", false},
 		{"legacy", "account", Fallback("", "user"), "", false},
-		{"noncanonical length", "a", "beeper:01:a:1:b", "", false},
+		{"noncanonical length", "a", "beeper:1:a:01:b", "", false},
 		{"truncated", "a", "beeper:1:a:4:b", "", false},
 		{"trailing", "a", Fallback("a", "b") + ":x", "", false},
 		{"empty account", "", Fallback("", "user"), "", false},

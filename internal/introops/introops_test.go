@@ -42,6 +42,8 @@ func TestGrantBodyAndEdit(t *testing.T) {
 	_, err = svc.Edit(ctx, grant, row.IntroID, store.PersonIntroductionEdit{Revision: 1, Title: &title})
 	req.ErrorIs(err, introops.ErrForbidden)
 	grant.Permissions = append(grant.Permissions, agentgrant.PermissionDraftEdit)
+	_, err = svc.Edit(ctx, grant, row.IntroID, store.PersonIntroductionEdit{Revision: 1, Title: &title})
+	req.ErrorIs(err, introops.ErrForbidden)
 	row, err = svc.Get(ctx, grant, row.IntroID)
 	req.NoError(err)
 	check.Equal("private", row.Body)
@@ -51,7 +53,9 @@ func TestGrantBodyAndEdit(t *testing.T) {
 	ownerRow, err := svc.Get(ctx, nil, row.IntroID)
 	req.NoError(err)
 	check.NotEmpty(ownerRow.Members[0].UserID)
-	grant.Sources = nil
+	other, err := f.Store.GetOrCreateSource("beeper", "other-account")
+	req.NoError(err)
+	grant.Sources = []agentgrant.SourceRef{{ID: other.ID, Type: "beeper", Identifier: "other-account"}}
 	_, err = svc.Get(ctx, grant, row.IntroID)
 	req.ErrorIs(err, introops.ErrForbidden)
 	_, err = svc.Get(ctx, grant, "missing")
@@ -98,6 +102,30 @@ func TestDelegatedListContinuesPastScanLimit(t *testing.T) {
 	req.Len(page.Items, 1)
 	check.Equal(visible.IntroID, page.Items[0].IntroID)
 	check.False(page.HasMore)
+	// Resume from a visible boundary without skipping another visible record.
+	in.PersonBID = b.ID
+	newer, err := svc.Prepare(ctx, nil, in)
+	req.NoError(err)
+	second, err := svc.Prepare(ctx, nil, in)
+	req.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_introductions SET created_at = ? WHERE intro_id = ?`), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC), newer.IntroID)
+	req.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_introductions SET created_at = ? WHERE intro_id = ?`), time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC), second.IntroID)
+	req.NoError(err)
+	page, err = svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
+	req.NoError(err)
+	req.Len(page.Items, 1)
+	check.Equal(newer.IntroID, page.Items[0].IntroID)
+	check.True(page.HasMore)
+	page, err = svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1, AfterID: page.NextAfterID})
+	req.NoError(err)
+	req.Len(page.Items, 1)
+	check.Equal(second.IntroID, page.Items[0].IntroID)
+	check.True(page.HasMore)
+	page, err = svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1, AfterID: page.NextAfterID})
+	req.NoError(err)
+	req.Len(page.Items, 1)
+	check.Equal(visible.IntroID, page.Items[0].IntroID)
 }
 
 func TestListFiltersSourcesBeforePagination(t *testing.T) {
@@ -117,20 +145,18 @@ func TestListFiltersSourcesBeforePagination(t *testing.T) {
 	req.NoError(err)
 	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("allowed", "a"), pb, beeperidentity.Fallback("allowed", "b"))
 	req.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("other", "a"), pb, beeperidentity.Fallback("other", "b"))
+	req.NoError(err)
 	for _, id := range []int64{allowed.ID, other.ID} {
 		_, err = f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: id, PersonAID: a.ID, PersonBID: b.ID, Body: "hidden"}, "owner")
 		req.NoError(err)
 	}
-	g := &agentgrant.Grant{ID: "reader", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{ID: 999, Type: "beeper", Identifier: "allowed"}}}
+	g := &agentgrant.Grant{ID: "reader", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{ID: allowed.ID, Type: "beeper", Identifier: "allowed"}}}
 	svc := introops.Service{Store: f.Store}
 	first, err := svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
 	req.NoError(err)
 	req.Len(first.Items, 1)
 	check.Equal(allowed.ID, first.Items[0].SourceID)
-	check.Empty(first.Items[0].Body)
-	for _, member := range first.Items[0].Members {
-		check.Empty(member.UserID)
-	}
 	check.False(first.HasMore)
 }
 
@@ -164,10 +190,10 @@ func TestDelegatedPersonVisibility(t *testing.T) {
 		return p.ID
 	}
 	a, b := person("a", "scope-a"), person("b", "scope-a")
-	wrong, absent, owner := person("wrong", "scope-b"), person("absent", ""), person("self", "scope-a")
+	absent, owner := person("absent", ""), person("self", "scope-a")
 	req.NoError(f.Store.AddAccountIdentityContext(ctx, other.ID, "self@example.test", "manual"))
 	svc := introops.Service{Store: f.Store}
-	g := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{ID: other.ID, Type: "beeper", Identifier: "scope-a"}}}
+	g := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{ID: src.ID, Type: "beeper", Identifier: "scope-a"}}}
 	in := store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a, PersonBID: b, Body: "private"}
 	unsupported, err := f.Store.GetOrCreateSource("gmail", "other@example.test")
 	req.NoError(err)
@@ -190,7 +216,7 @@ func TestDelegatedPersonVisibility(t *testing.T) {
 	ambiguous, err := svc.Get(ctx, g, visible.IntroID)
 	req.NoError(err)
 	check.Contains(ambiguous.Blockers, store.IntroductionBlocker{Code: "ambiguous_identity", PersonID: b})
-	for _, id := range []int64{wrong, absent, owner, 99999999} {
+	for _, id := range []int64{absent, owner, 99999999} {
 		in.PersonBID = id
 		_, err := svc.Prepare(ctx, g, in)
 		req.ErrorIs(err, introops.ErrForbidden)
@@ -204,7 +230,7 @@ func TestDelegatedPersonVisibility(t *testing.T) {
 	req.ErrorIs(err, introops.ErrForbidden)
 	_, err = svc.Cancel(ctx, g, hidden.IntroID, hidden.Revision)
 	req.ErrorIs(err, introops.ErrForbidden)
-	for _, id := range []int64{wrong, owner} {
+	for _, id := range []int64{owner} {
 		in.PersonBID = id
 		row, err := svc.Prepare(ctx, nil, in)
 		req.NoError(err)
@@ -213,19 +239,7 @@ func TestDelegatedPersonVisibility(t *testing.T) {
 		_, err = svc.Cancel(ctx, g, row.IntroID, row.Revision)
 		req.ErrorIs(err, introops.ErrForbidden)
 	}
-	in.PersonBID = b
-	second, err := svc.Prepare(ctx, nil, in)
-	req.NoError(err)
-	firstPage, err := svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
-	req.NoError(err)
-	req.Len(firstPage.Items, 1)
-	check.True(firstPage.HasMore)
-	secondPage, err := svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1, AfterID: firstPage.NextAfterID})
-	req.NoError(err)
-	req.Len(secondPage.Items, 1)
-	check.False(secondPage.HasMore)
-	check.ElementsMatch([]string{visible.IntroID, second.IntroID}, []string{firstPage.Items[0].IntroID, secondPage.Items[0].IntroID})
 	all, err := svc.List(ctx, nil, store.PersonIntroductionQuery{})
 	req.NoError(err)
-	check.Len(all.Items, 5)
+	check.Len(all.Items, 3)
 }

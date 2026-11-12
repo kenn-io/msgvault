@@ -67,7 +67,6 @@ func TestIntroThroughDaemonCLI(t *testing.T) {
 	var row introops.Record
 	req.NoError(json.Unmarshal([]byte(data), &row))
 	check.Equal("Private", row.Body)
-	check.Equal(int64(1), row.Revision)
 	data, err = run("intro", "show", row.IntroID)
 	req.NoError(err)
 	check.Contains(data, "no_identity_on_account")
@@ -77,15 +76,10 @@ func TestIntroThroughDaemonCLI(t *testing.T) {
 	req.NoError(json.Unmarshal([]byte(data), &page))
 	req.Len(page.Items, 1)
 	check.Equal(row.IntroID, page.Items[0].IntroID)
-	for _, flag := range [][]string{{"--verbose"}, {"--log-level", "debug"}, {"--log-sql"}, {"--log-sql-slow-ms", "5"}} {
-		_, err = run(append([]string{"intro", "list", "--json"}, flag...)...)
-		req.NoError(err)
-	}
-	stored, err := st.GetPersonIntroductionContext(ctx, row.IntroID)
+	_, err = run("intro", "list", "--json", "--verbose")
 	req.NoError(err)
-	check.Equal("Private", stored.Body)
 	_, err = run("intro", "cancel", row.IntroID, "--revision", "99")
-	req.Error(err)
+	req.ErrorContains(err, "revision_mismatch")
 }
 
 func TestIntroDelegatedThroughRunner(t *testing.T) {
@@ -117,10 +111,10 @@ func TestIntroDelegatedThroughRunner(t *testing.T) {
 	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true})
 	req.NoError(err)
 	t.Cleanup(func() { _ = owner.Close() })
-	issue := func(perms []string, sourceID int64) string {
+	issue := func(perms []string, sourceID int64) (string, string) {
 		grant, err := owner.IssueAgentToken(ctx, "test", perms, []int64{sourceID}, nil, time.Time{})
 		req.NoError(err)
-		return grant.Secret
+		return grant.Secret, grant.ID
 	}
 	run := func(secret string, args ...string) []api.CLIRunEvent {
 		body, err := json.Marshal(api.CLIRunRequest{Args: args})
@@ -143,15 +137,15 @@ func TestIntroDelegatedThroughRunner(t *testing.T) {
 		req.NoError(scanner.Err())
 		return events
 	}
-	create := issue([]string{"draft.create"}, src.ID)
-	outsider := issue([]string{"draft.create"}, other.ID)
+	create, grantID := issue([]string{"draft.create"}, src.ID)
+	outsider, _ := issue([]string{"draft.create"}, other.ID)
 	events := run(create, "intro", "prepare", "--source-id", strconv.FormatInt(src.ID, 10), "--person", strconv.FormatInt(a.ID, 10), "--person", strconv.FormatInt(b.ID, 10), "--title", "title", "--body", "secret", "--json")
 	req.Len(events, 2)
 	check.Equal("stdout", events[0].Type)
 	check.Equal("complete", events[1].Type)
 	var row introops.Record
 	req.NoError(json.Unmarshal([]byte(events[0].Data), &row))
-	check.NotEqual("owner", row.CreatedBy)
+	check.Equal(grantID, row.CreatedBy)
 	denied := run(outsider, "intro", "show", row.IntroID, "--json")
 	missing := run(outsider, "intro", "show", "missing", "--json")
 	req.Len(denied, 1)

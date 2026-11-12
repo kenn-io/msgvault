@@ -52,6 +52,11 @@ func checkPersonIntroductionLifecycle(t *testing.T) {
 	check.Empty(row.Body)
 	_, err = f.Store.EditPersonIntroductionContext(ctx, row.IntroID, store.PersonIntroductionEdit{Revision: 3, Title: &title})
 	req.ErrorIs(err, store.ErrIntroductionState)
+	_, err = f.Store.CancelPersonIntroductionContext(ctx, row.IntroID, row.Revision)
+	req.ErrorIs(err, store.ErrIntroductionState)
+	got, err := f.Store.GetPersonIntroductionContext(ctx, row.IntroID)
+	req.NoError(err)
+	check.Equal(row.Revision, got.Revision)
 	var body *string
 	req.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind("SELECT body FROM person_introductions WHERE intro_id = ?"), row.IntroID).Scan(&body))
 	check.Nil(body)
@@ -60,7 +65,14 @@ func checkPersonIntroductionLifecycle(t *testing.T) {
 	req.ErrorIs(err, store.ErrIntroductionSamePerson)
 }
 
-func TestIntroductionMergeAndSplit(t *testing.T) {
+func TestIntroductionMergeAndSplit(t *testing.T) { checkIntroductionMergeAndSplit(t) }
+func TestPostgresIntroductionMergeAndSplit(t *testing.T) {
+	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("PostgreSQL test database not configured")
+	}
+	checkIntroductionMergeAndSplit(t)
+}
+func checkIntroductionMergeAndSplit(t *testing.T) {
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
@@ -127,6 +139,42 @@ func TestIntroductionMergeAndSplit(t *testing.T) {
 	check.Equal(split.NewPerson.ID, got.PersonBID)
 	check.Equal(body, got.Body)
 	check.Greater(got.Revision, int64(3))
+	t.Run("multi-stage merge", func(t *testing.T) {
+		check := assert.New(t)
+		req := require.New(t)
+		f := storetest.New(t)
+		ctx := t.Context()
+		src, err := f.Store.GetOrCreateSource("beeper", "multi")
+		req.NoError(err)
+		pa := f.EnsureParticipant("multi-a@example.com", "A", "example.com")
+		pb := f.EnsureParticipant("multi-b@example.com", "B", "example.com")
+		pc := f.EnsureParticipant("multi-c@example.com", "C", "example.com")
+		pd := f.EnsureParticipant("multi-d@example.com", "D", "example.com")
+		a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pa)
+		req.NoError(err)
+		b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pb)
+		req.NoError(err)
+		c, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pc)
+		req.NoError(err)
+		d, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pd)
+		req.NoError(err)
+		row, err := f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: b.ID, PersonBID: d.ID}, "owner")
+		req.NoError(err)
+		first, err := f.Store.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: a.ID, AbsorbedID: b.ID, ExpectedSurvivorRevision: a.Revision, ExpectedAbsorbedRevision: b.Revision, IdempotencyKey: "multi-first", Actor: "test"})
+		req.NoError(err)
+		second, err := f.Store.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: c.ID, AbsorbedID: a.ID, ExpectedSurvivorRevision: c.Revision, ExpectedAbsorbedRevision: first.Person.Revision, IdempotencyKey: "multi-second", Actor: "test"})
+		req.NoError(err)
+		got, err := f.Store.GetPersonIntroductionContext(ctx, row.IntroID)
+		req.NoError(err)
+		check.Equal(c.ID, got.PersonAID)
+		check.Equal(int64(3), got.Revision)
+		split, err := f.Store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{SourcePersonID: c.ID, MergeID: second.Merge.ID, ParticipantIDs: []int64{pa, pb}, ExpectedSourceRevision: second.Person.Revision, IdempotencyKey: "multi-undo-second", Actor: "test"})
+		req.NoError(err)
+		got, err = f.Store.GetPersonIntroductionContext(ctx, row.IntroID)
+		req.NoError(err)
+		check.Equal(split.NewPerson.ID, got.PersonAID)
+		check.Greater(got.Revision, int64(3))
+	})
 }
 
 func TestIntroductionPaginationAndScope(t *testing.T) { checkIntroductionPaginationAndScope(t) }
@@ -205,36 +253,14 @@ func checkIntroductionPaginationAndScope(t *testing.T) {
 	req.ErrorIs(err, store.ErrIntroductionInvalid)
 }
 
-func TestIntroductionNonPreparedStates(t *testing.T) {
-	check := assert.New(t)
-	req := require.New(t)
-	f := storetest.New(t)
-	ctx := t.Context()
-	src, err := f.Store.GetOrCreateSource("beeper", "states")
-	req.NoError(err)
-	a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, f.EnsureParticipant("states-a@example.com", "A", "example.com"))
-	req.NoError(err)
-	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, f.EnsureParticipant("states-b@example.com", "B", "example.com"))
-	req.NoError(err)
-	// C3 confirm will produce these reserved states; C1 guards their mutations.
-	for _, status := range []string{"creating", "group_created", "drafted", "remote_unknown", "cancelled"} {
-		row, err := f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID, Body: "private"}, "owner")
-		req.NoError(err)
-		_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_introductions SET status = ? WHERE intro_id = ?`), status, row.IntroID)
-		req.NoError(err)
-		body := "changed"
-		_, err = f.Store.EditPersonIntroductionContext(ctx, row.IntroID, store.PersonIntroductionEdit{Revision: 1, Body: &body})
-		req.ErrorIs(err, store.ErrIntroductionState)
-		_, err = f.Store.CancelPersonIntroductionContext(ctx, row.IntroID, 1)
-		req.ErrorIs(err, store.ErrIntroductionState)
-		got, err := f.Store.GetPersonIntroductionContext(ctx, row.IntroID)
-		req.NoError(err)
-		check.Equal("private", got.Body)
-		check.Equal(int64(1), got.Revision)
+func TestIntroductionPersonDeleteCascades(t *testing.T) { checkIntroductionPersonDeleteCascades(t) }
+func TestPostgresIntroductionPersonDeleteCascades(t *testing.T) {
+	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("PostgreSQL test database not configured")
 	}
+	checkIntroductionPersonDeleteCascades(t)
 }
-
-func TestIntroductionPersonDeleteCascades(t *testing.T) {
+func checkIntroductionPersonDeleteCascades(t *testing.T) {
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
@@ -254,7 +280,14 @@ func TestIntroductionPersonDeleteCascades(t *testing.T) {
 	check.Empty(page.Items)
 }
 
-func TestIntroductionRefusesRetiredSource(t *testing.T) {
+func TestIntroductionRefusesRetiredSource(t *testing.T) { checkIntroductionRefusesRetiredSource(t) }
+func TestPostgresIntroductionRefusesRetiredSource(t *testing.T) {
+	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("PostgreSQL test database not configured")
+	}
+	checkIntroductionRefusesRetiredSource(t)
+}
+func checkIntroductionRefusesRetiredSource(t *testing.T) {
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
@@ -271,57 +304,13 @@ func TestIntroductionRefusesRetiredSource(t *testing.T) {
 	req.NoError(err)
 	_, err = f.Store.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: src.ID, IntoSourceID: target.ID})
 	req.ErrorIs(err, store.ErrSourceMergeInvalid)
-	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO source_settings (source_id, merged_into_source_id) VALUES (?, ?) ON CONFLICT (source_id) DO UPDATE SET merged_into_source_id = excluded.merged_into_source_id`), src.ID, target.ID)
+	_, err = f.Store.CancelPersonIntroductionContext(ctx, row.IntroID, row.Revision)
+	req.NoError(err)
+	_, err = f.Store.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: src.ID, IntoSourceID: target.ID})
 	req.NoError(err)
 	_, err = f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID}, "owner")
 	req.ErrorIs(err, store.ErrSourceRetired)
 	preflight, err := f.Store.GetPersonIntroductionPreflightContext(ctx, src.ID, a.ID, b.ID)
 	req.NoError(err)
 	check.Contains(preflight.Blockers, store.IntroductionBlocker{Code: "source_retired"})
-	body := "new body"
-	_, err = f.Store.EditPersonIntroductionContext(ctx, row.IntroID, store.PersonIntroductionEdit{Revision: 1, Body: &body})
-	req.ErrorIs(err, store.ErrSourceRetired)
-	cancelled, err := f.Store.CancelPersonIntroductionContext(ctx, row.IntroID, 1)
-	req.NoError(err)
-	check.Empty(cancelled.Body)
-	preflight, err = f.Store.GetPersonIntroductionPreflightContext(ctx, src.ID, a.ID, b.ID)
-	req.NoError(err)
-	check.Contains(preflight.Blockers, store.IntroductionBlocker{Code: "source_retired"})
-}
-
-func TestIntroductionMultiStageMerge(t *testing.T) {
-	check := assert.New(t)
-	req := require.New(t)
-	f := storetest.New(t)
-	ctx := t.Context()
-	src, err := f.Store.GetOrCreateSource("beeper", "multi")
-	req.NoError(err)
-	pa := f.EnsureParticipant("multi-a@example.com", "A", "example.com")
-	pb := f.EnsureParticipant("multi-b@example.com", "B", "example.com")
-	pc := f.EnsureParticipant("multi-c@example.com", "C", "example.com")
-	pd := f.EnsureParticipant("multi-d@example.com", "D", "example.com")
-	a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pa)
-	req.NoError(err)
-	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pb)
-	req.NoError(err)
-	c, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pc)
-	req.NoError(err)
-	d, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pd)
-	req.NoError(err)
-	row, err := f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: b.ID, PersonBID: d.ID}, "owner")
-	req.NoError(err)
-	first, err := f.Store.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: a.ID, AbsorbedID: b.ID, ExpectedSurvivorRevision: a.Revision, ExpectedAbsorbedRevision: b.Revision, IdempotencyKey: "multi-first", Actor: "test"})
-	req.NoError(err)
-	second, err := f.Store.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: c.ID, AbsorbedID: a.ID, ExpectedSurvivorRevision: c.Revision, ExpectedAbsorbedRevision: first.Person.Revision, IdempotencyKey: "multi-second", Actor: "test"})
-	req.NoError(err)
-	got, err := f.Store.GetPersonIntroductionContext(ctx, row.IntroID)
-	req.NoError(err)
-	check.Equal(c.ID, got.PersonAID)
-	check.Equal(int64(3), got.Revision)
-	split, err := f.Store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{SourcePersonID: c.ID, MergeID: second.Merge.ID, ParticipantIDs: []int64{pa, pb}, ExpectedSourceRevision: second.Person.Revision, IdempotencyKey: "multi-undo-second", Actor: "test"})
-	req.NoError(err)
-	got, err = f.Store.GetPersonIntroductionContext(ctx, row.IntroID)
-	req.NoError(err)
-	check.Equal(split.NewPerson.ID, got.PersonAID)
-	check.Greater(got.Revision, int64(3))
 }

@@ -4395,17 +4395,13 @@ CREATE INDEX IF NOT EXISTS idx_docbank_processing_due
 CREATE TABLE IF NOT EXISTS person_introductions (
     intro_id TEXT PRIMARY KEY,
     revision INTEGER NOT NULL CHECK (revision > 0),
-    status TEXT NOT NULL CHECK (status IN ('prepared', 'creating', 'group_created', 'drafted', 'remote_unknown', 'cancelled')),
+    status TEXT NOT NULL CHECK (status IN ('prepared', 'cancelled')),
     source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
     person_a_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
     person_b_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     body TEXT,
-    provider_chat_id TEXT,
-    draft_id TEXT,
     created_by TEXT NOT NULL,
-    confirmed_at DATETIME,
-    drafted_at DATETIME,
     cancelled_at DATETIME,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP

@@ -338,32 +338,52 @@ const malformedAutoReply = "From: " + loopAlex + "\r\nTo: " + loopOwner + "\r\nA
 
 func TestLoopIgnoresAddressesLinkedToTheOwner(t *testing.T) {
 	const alias = "me@old.example.test"
-	for _, name := range []string{"linked owner addresses", "account identities", "scoped beeper identity"} {
-		t.Run(name, func(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(*testing.T, *storetest.Fixture) int64
+	}{
+		{"linked owner addresses", func(t *testing.T, f *storetest.Fixture) int64 {
+			owner := f.EnsureParticipant(loopOwner, "", "example.com")
+			linked := f.EnsureParticipant(alias, "", "old.example.test")
+			_, err := f.Store.LinkParticipants(owner, linked)
+			require.NoError(t, err)
+			_, _, err = f.Store.CreatePersonFromParticipant(owner)
+			require.NoError(t, err)
+			return 0
+		}},
+		{"account identities", func(t *testing.T, f *storetest.Fixture) int64 {
+			source, err := f.Store.GetOrCreateSource("gmail", alias)
+			require.NoError(t, err)
+			require.NoError(t, f.Store.AddAccountIdentity(source.ID, alias, "manual"))
+			return 0
+		}},
+		{"scoped beeper identity", func(t *testing.T, f *storetest.Fixture) int64 {
+			source, err := f.Store.GetOrCreateSource("beeper", "loop-account")
+			require.NoError(t, err)
+			require.NoError(t, f.Store.AddAccountIdentity(source.ID, "opaque-self", "manual"))
+			participant := f.EnsureParticipant(alias, "", "old.example.test")
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?)`), participant, beeperidentity.Fallback("loop-account", "opaque-self"))
+			require.NoError(t, err)
+			return 0
+		}},
+		{"from-me beeper message", func(t *testing.T, f *storetest.Fixture) int64 {
+			source, err := f.Store.GetOrCreateSource("beeper", "loop-account")
+			require.NoError(t, err)
+			return source.ID
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			f := storetest.New(t)
-			if name == "scoped beeper identity" {
-				other, err := f.Store.GetOrCreateSource("beeper", "loop-account")
-				require.NoError(err)
-				require.NoError(f.Store.AddAccountIdentity(other.ID, "opaque-self", "manual"))
-				participant := f.EnsureParticipant(alias, "", "old.example.test")
-				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?)`), participant, beeperidentity.Fallback("loop-account", "opaque-self"))
-				require.NoError(err)
-			} else if name == "account identities" {
-				other, err := f.Store.GetOrCreateSource("gmail", alias)
-				require.NoError(err)
-				require.NoError(f.Store.AddAccountIdentity(other.ID, alias, "manual"))
-			} else {
-				owner := f.EnsureParticipant(loopOwner, "", "example.com")
-				linked := f.EnsureParticipant(alias, "", "old.example.test")
-				_, err := f.Store.LinkParticipants(owner, linked)
-				require.NoError(err)
-				_, _, err = f.Store.CreatePersonFromParticipant(owner)
-				require.NoError(err)
-			}
+			sourceID := tc.setup(t, f)
 			toAlias := f.PersistEmail(storetest.EmailSpec{From: loopOwner, To: []string{alias}, Body: "Can you review it?", SentAt: loopAgo(5 * loopDay)})
 			fromAlias := f.PersistEmail(storetest.EmailSpec{From: alias, To: []string{loopOwner}, Body: "Can you send it?", SentAt: loopAgo(4 * loopDay)})
+			if sourceID != 0 {
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET source_id = ?, source_is_from_me = TRUE WHERE id = ?`), sourceID, fromAlias)
+				require.NoError(err)
+			}
 			question := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{alias}, Body: "Can you send the contract?", SentAt: loopAgo(3 * loopDay)})
 			reply := f.PersistEmail(storetest.EmailSpec{From: alias, To: []string{loopAlex, loopOwner}, Body: "Sent, see attached.", SentAt: loopAgo(loopDay)})
 			messages := map[int64]store.LoopMessage{}

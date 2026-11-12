@@ -36,11 +36,7 @@ type PersonIntroduction struct {
 	PersonBID        int64      `json:"person_b_id"`
 	Title            string     `json:"title"`
 	Body             string     `json:"body"`
-	ProviderChatID   *string    `json:"provider_chat_id"`
-	DraftID          *string    `json:"draft_id"`
 	CreatedBy        string     `json:"created_by"`
-	ConfirmedAt      *time.Time `json:"confirmed_at"`
-	DraftedAt        *time.Time `json:"drafted_at"`
 	CancelledAt      *time.Time `json:"cancelled_at"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
@@ -78,12 +74,12 @@ type introductionCursor struct {
 	ID        string    `json:"i"`
 }
 
-const introductionColumns = `i.intro_id, i.revision, i.status, i.source_id, i.person_a_id, i.person_b_id, i.title, i.body, i.provider_chat_id, i.draft_id, i.created_by, i.confirmed_at, i.drafted_at, i.cancelled_at, i.created_at, i.updated_at, s.source_type, s.identifier`
+const introductionColumns = `i.intro_id, i.revision, i.status, i.source_id, i.person_a_id, i.person_b_id, i.title, i.body, i.created_by, i.cancelled_at, i.created_at, i.updated_at, s.source_type, s.identifier`
 
 func scanIntroduction(row interface{ Scan(dest ...any) error }) (PersonIntroduction, error) {
 	var v PersonIntroduction
 	var body sql.NullString
-	err := row.Scan(&v.IntroID, &v.Revision, &v.Status, &v.SourceID, &v.PersonAID, &v.PersonBID, &v.Title, &body, &v.ProviderChatID, &v.DraftID, &v.CreatedBy, &v.ConfirmedAt, &v.DraftedAt, &v.CancelledAt, &v.CreatedAt, &v.UpdatedAt, &v.SourceType, &v.SourceIdentifier)
+	err := row.Scan(&v.IntroID, &v.Revision, &v.Status, &v.SourceID, &v.PersonAID, &v.PersonBID, &v.Title, &body, &v.CreatedBy, &v.CancelledAt, &v.CreatedAt, &v.UpdatedAt, &v.SourceType, &v.SourceIdentifier)
 	v.Body = body.String
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, ErrIntroductionNotFound
@@ -209,13 +205,21 @@ func (s *Store) ListPersonIntroductionsContext(ctx context.Context, q PersonIntr
 		page.HasMore = true
 		page.Items = page.Items[:q.Limit]
 		last := page.Items[len(page.Items)-1]
-		raw, err := json.Marshal(introductionCursor{Version: 1, CreatedAt: last.CreatedAt, ID: last.IntroID})
+		page.NextAfterID, err = IntroductionCursor(last)
 		if err != nil {
 			return page, err
 		}
-		page.NextAfterID = base64.RawURLEncoding.EncodeToString(raw)
 	}
 	return page, nil
+}
+
+// IntroductionCursor encodes the position of an introduction in list order.
+func IntroductionCursor(row PersonIntroduction) (string, error) {
+	raw, err := json.Marshal(introductionCursor{Version: 1, CreatedAt: row.CreatedAt, ID: row.IntroID})
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 func (s *Store) EditPersonIntroductionContext(ctx context.Context, id string, in PersonIntroductionEdit) (PersonIntroduction, error) {
 	if in.Revision <= 0 || (in.Title == nil && in.Body == nil) || (in.Title != nil && !validIntroText(*in.Title)) || (in.Body != nil && !validIntroText(*in.Body)) {
