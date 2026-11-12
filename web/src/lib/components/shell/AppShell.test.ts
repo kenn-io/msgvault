@@ -3290,6 +3290,34 @@ it('refreshes cached duplicate cards after explicit reentry', async () => {
   } finally { rendered.unmount(); state.destroy(); }
 });
 
+it.each(['everything', 'files'] as const)('reloads grouped %s after identity recovery', async workspace => {
+  let recovered = false;
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/participants/1')) return Response.json({ id: 1, display_label: 'Original person', identifiers: [], activity_count: 1 });
+    if (path.endsWith('/participants/search')) return Response.json({ rows: [{ id: 2, display_label: 'Peer Example', identifiers: [], activity_count: 1 }] });
+    if (path.endsWith('/identity/links')) return Response.json({ identity_revision: 2, cache_state: 'stale' });
+    if (path.endsWith('/identity/cache-refresh')) { recovered = true; return Response.json({ identity_revision: 2, cache_state: 'ready' }); }
+    if (path.endsWith('/groups')) return Response.json(exploreResponse({ rows: [{ ...sourceGroup, label: recovered ? 'Updated group' : 'Original group' }], total_count: 1 }));
+    return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
+  const rendered = render(AppShell, { client, state });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Merge with…' }));
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Peer' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Peer Example/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    const notice = await screen.findByText('Changes saved, but related views may be out of date.');
+    state.commitNavigation({ workspace, groupingChain: ['source'] });
+    await screen.findByText('Original group');
+    await fireEvent.click(within(notice.closest('.inline-notice') as HTMLElement).getByRole('button', { name: 'Retry' }));
+    await screen.findByText('Updated group');
+  } finally { rendered.unmount(); state.destroy(); }
+});
+
 it.each(['ready', 'build required', 'unsupported'] as const)('keeps link recovery across workspaces: %s', async outcome => {
   let writes = 0, refreshes = 0, recovered = false;
   let release!: (response: Response) => void;

@@ -398,7 +398,11 @@
   async function retryMergeCache(): Promise<void> {
     const revision = relationshipsController.pendingIdentityCacheRevision;
     const result = await relationshipsController.refreshIdentityCache();
-    if (result.ok && result.cacheState === 'ready') { directoryReviewController.refreshSummaries(exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates); await refreshIdentityProfiles(); }
+    if (result.ok && result.cacheState === 'ready') {
+      if (exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' && exploreState.current.groupingChain.length > 0) loader.retry();
+      directoryReviewController.refreshSummaries(exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates);
+      await refreshIdentityProfiles();
+    }
     else if (!result.ok && revision !== null && revision === relationshipsController.pendingIdentityCacheRevision) mergeCacheError = { revision, message: result.message, unsupported: result.code === 'cache_unsupported' };
   }
   async function identityChanged(): Promise<void> {
