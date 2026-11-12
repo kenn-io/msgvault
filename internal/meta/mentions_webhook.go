@@ -149,5 +149,5 @@ func (r *mentionRun) persistComment(ctx context.Context, comment MentionedCommen
 		obj:          Object{ID: comment.ID, Message: comment.Text, CreatedTime: comment.Timestamp},
 		conversation: media.ID, reply: sql.NullInt64{Int64: existing[media.ID], Valid: true},
 	}
-	return r.write(ctx, obj, mentionMetadata{MediaID: media.ID, CommentID: comment.ID, Kind: mentionComment}, comment)
+	return r.write(ctx, obj, mentionMetadata{MediaID: media.ID, CommentID: comment.ID, Kinds: []string{mentionComment}}, comment)
 }
