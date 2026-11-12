@@ -1843,6 +1843,30 @@ type TestTaskIntegrationResponse = TaskIntegrationStatusResponse
 
 type TestTaskIntegrationErrorResponse = ErrorResponse
 
+type ListIntroductionsResponse = IntroductionPage
+
+type ListIntroductionsErrorResponse = ErrorResponse
+
+type ListIntroductionsErrorResponseJSON = ErrorResponse
+
+type ListIntroductionsErrorResponseJSON403 = ErrorResponse
+
+type ListIntroductionsErrorResponseJSON503 = ErrorResponse
+
+type ListIntroductionsErrorResponseJSONDefault = ErrorResponse
+
+type GetIntroductionResponse = IntroductionRecord
+
+type GetIntroductionErrorResponse = ErrorResponse
+
+type GetIntroductionErrorResponseJSON = ErrorResponse
+
+type GetIntroductionErrorResponseJSON404 = ErrorResponse
+
+type GetIntroductionErrorResponseJSON503 = ErrorResponse
+
+type GetIntroductionErrorResponseJSONDefault = ErrorResponse
+
 type ListLoopsResponse = LoopListResponse
 
 type ListLoopsErrorResponse = ErrorResponse
@@ -5755,6 +5779,40 @@ type TestTaskIntegrationResp struct {
 	StatusCode   int
 	JSON200      *TestTaskIntegrationResponse
 	JSONDefault  *TestTaskIntegrationErrorResponse
+}
+
+type ListIntroductionsResp200Headers struct {
+	CacheControl string `header:"Cache-Control"`
+}
+
+type ListIntroductionsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListIntroductionsResponse
+	Headers200   *ListIntroductionsResp200Headers
+	JSON400      *ListIntroductionsErrorResponse
+	JSON401      *ListIntroductionsErrorResponseJSON
+	JSON403      *ListIntroductionsErrorResponseJSON403
+	JSON503      *ListIntroductionsErrorResponseJSON503
+	JSONDefault  *ListIntroductionsErrorResponseJSONDefault
+}
+
+type GetIntroductionResp200Headers struct {
+	CacheControl string `header:"Cache-Control"`
+}
+
+type GetIntroductionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetIntroductionResponse
+	Headers200   *GetIntroductionResp200Headers
+	JSON401      *GetIntroductionErrorResponse
+	JSON403      *GetIntroductionErrorResponseJSON
+	JSON404      *GetIntroductionErrorResponseJSON404
+	JSON503      *GetIntroductionErrorResponseJSON503
+	JSONDefault  *GetIntroductionErrorResponseJSONDefault
 }
 
 type ListLoopsResp struct {

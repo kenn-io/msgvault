@@ -6837,6 +6837,125 @@ func (i ImportedMessage) Validate() error {
 	return errors
 }
 
+type IntroductionBlocker struct {
+	Code     string `json:"code" validate:"required"`
+	PersonID int64  `json:"person_id"`
+}
+
+func (i IntroductionBlocker) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(i))
+}
+
+type IntroductionMember struct {
+	ParticipantID int64  `json:"participant_id"`
+	PersonID      int64  `json:"person_id"`
+	UserID        string `json:"user_id" validate:"required"`
+}
+
+func (i IntroductionMember) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(i))
+}
+
+type IntroductionPage struct {
+	HasMore     bool                 `json:"has_more"`
+	Items       []IntroductionRecord `json:"items" validate:"required"`
+	NextAfterID string               `json:"next_after_id" validate:"required"`
+}
+
+func (i IntroductionPage) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
+	for i, item := range i.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(i.NextAfterID, "required"); err != nil {
+		errors = errors.Append("NextAfterID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type IntroductionRecord struct {
+	Blockers    []IntroductionBlocker    `json:"blockers" validate:"required"`
+	Body        string                   `json:"body" validate:"required"`
+	CancelledAt *time.Time               `json:"cancelled_at" validate:"required"`
+	CreatedAt   time.Time                `json:"created_at" validate:"required"`
+	CreatedBy   string                   `json:"created_by" validate:"required"`
+	IntroID     string                   `json:"intro_id" validate:"required"`
+	Members     []IntroductionMember     `json:"members" validate:"required"`
+	PersonAId   int64                    `json:"person_a_id"`
+	PersonBId   int64                    `json:"person_b_id"`
+	Revision    int64                    `json:"revision"`
+	SourceID    int64                    `json:"source_id"`
+	Status      IntroductionRecordStatus `json:"status" validate:"required"`
+	Title       string                   `json:"title" validate:"required"`
+	UpdatedAt   time.Time                `json:"updated_at" validate:"required"`
+}
+
+func (i IntroductionRecord) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.Blockers, "required"); err != nil {
+		errors = errors.Append("Blockers", err)
+	}
+	for i, item := range i.Blockers {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Blockers[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(i.Body, "required"); err != nil {
+		errors = errors.Append("Body", err)
+	}
+	if i.CancelledAt != nil {
+		if err := typesValidator.Var(i.CancelledAt, "required"); err != nil {
+			errors = errors.Append("CancelledAt", err)
+		}
+	}
+	if err := typesValidator.Var(i.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(i.CreatedBy, "required"); err != nil {
+		errors = errors.Append("CreatedBy", err)
+	}
+	if err := typesValidator.Var(i.IntroID, "required"); err != nil {
+		errors = errors.Append("IntroID", err)
+	}
+	if err := typesValidator.Var(i.Members, "required"); err != nil {
+		errors = errors.Append("Members", err)
+	}
+	for i, item := range i.Members {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Members[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(i.Status).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if err := typesValidator.Var(i.Title, "required"); err != nil {
+		errors = errors.Append("Title", err)
+	}
+	if err := typesValidator.Var(i.UpdatedAt, "required"); err != nil {
+		errors = errors.Append("UpdatedAt", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type KataEvidenceLinkRequest struct {
 	Evidence []Reference `json:"evidence" validate:"required"`
 }

@@ -7047,6 +7047,113 @@ components:
         - sender
         - sent_at
       type: object
+    IntroductionBlocker:
+      additionalProperties: true
+      properties:
+        code:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - code
+        - person_id
+      type: object
+    IntroductionMember:
+      additionalProperties: true
+      properties:
+        participant_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+        user_id:
+          type: string
+      required:
+        - person_id
+        - participant_id
+        - user_id
+      type: object
+    IntroductionPage:
+      additionalProperties: true
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: "#/components/schemas/IntroductionRecord"
+          type: array
+        next_after_id:
+          type: string
+      required:
+        - items
+        - has_more
+        - next_after_id
+      type: object
+    IntroductionRecord:
+      additionalProperties: true
+      properties:
+        blockers:
+          items:
+            $ref: "#/components/schemas/IntroductionBlocker"
+          type: array
+        body:
+          type: string
+        cancelled_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        created_at:
+          format: date-time
+          type: string
+        created_by:
+          type: string
+        intro_id:
+          type: string
+        members:
+          items:
+            $ref: "#/components/schemas/IntroductionMember"
+          type: array
+        person_a_id:
+          format: int64
+          type: integer
+        person_b_id:
+          format: int64
+          type: integer
+        revision:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        status:
+          enum:
+            - prepared
+            - cancelled
+          type: string
+        title:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - members
+        - blockers
+        - intro_id
+        - revision
+        - status
+        - source_id
+        - person_a_id
+        - person_b_id
+        - title
+        - body
+        - created_by
+        - cancelled_at
+        - created_at
+        - updated_at
+      type: object
     KataEvidenceLinkRequest:
       additionalProperties: false
       properties:
@@ -17193,7 +17300,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.1.0
+  version: 5.2.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -24263,6 +24370,132 @@ paths:
       security:
         - apiKey: []
       summary: Test task integration discovery, authentication, capabilities, and project
+      tags:
+        - API
+  /api/v1/intros:
+    get:
+      operationId: listIntroductions
+      parameters:
+        - in: query
+          name: source_id
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            default: 20
+            format: int64
+            maximum: 100
+            minimum: 1
+            type: integer
+        - description: Opaque continuation cursor
+          in: query
+          name: after_id
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntroductionPage"
+          description: OK
+          headers:
+            Cache-Control:
+              description: Always no-store
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List local introductions
+      tags:
+        - API
+  /api/v1/intros/{id}:
+    get:
+      operationId: getIntroduction
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntroductionRecord"
+          description: OK
+          headers:
+            Cache-Control:
+              description: Always no-store
+              schema:
+                type: string
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get a local introduction
       tags:
         - API
   /api/v1/loops:

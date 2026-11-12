@@ -162,6 +162,7 @@ import type {
   GetGmailIDsByFilterParams,
   GetIdentityMatchCandidatePathParameters,
   GetImportJobPathParameters,
+  GetIntroductionPathParameters,
   GetKataIssueContextParams,
   GetKataIssueContextPathParameters,
   GetMessageInlinePartParams,
@@ -211,6 +212,8 @@ import type {
   ImportJobRequest,
   ImportJobResponse,
   ImportMuesliRecordingParams,
+  IntroductionPage,
+  IntroductionRecord,
   KataEvidenceLinkRequest,
   KataEvidencePrepareRequest,
   KataEvidencePrepareResponse,
@@ -231,6 +234,7 @@ import type {
   ListDeletionsResponse,
   ListDirectoryPeopleParams,
   ListIdentityMatchCandidatesParams,
+  ListIntroductionsParams,
   ListLoopsParams,
   ListMessageRecordingsPathParameters,
   ListMessageTasksPathParameters,
@@ -2202,6 +2206,30 @@ export const testTaskIntegration = (
 ) => {
   return orvalFetch<TaskIntegrationStatusResponse>(
     { url: `/api/v1/integrations/tasks/test`, method: "POST" },
+    options,
+  );
+};
+/**
+ * @summary List local introductions
+ */
+export const listIntroductions = (
+  params?: ListIntroductionsParams,
+  options?: SecondParameter<typeof orvalFetch<IntroductionPage>>,
+) => {
+  return orvalFetch<IntroductionPage>(
+    { url: `/api/v1/intros`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Get a local introduction
+ */
+export const getIntroduction = (
+  { id }: GetIntroductionPathParameters,
+  options?: SecondParameter<typeof orvalFetch<IntroductionRecord>>,
+) => {
+  return orvalFetch<IntroductionRecord>(
+    { url: `/api/v1/intros/${encodeURIComponent(String(id))}`, method: "GET" },
     options,
   );
 };

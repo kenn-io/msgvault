@@ -1167,6 +1167,23 @@ func (i ImportJobResponseStatus) Validate() error {
 	}
 }
 
+type IntroductionRecordStatus string
+
+const (
+	IntroductionRecordStatusCancelled IntroductionRecordStatus = "cancelled"
+	Prepared                          IntroductionRecordStatus = "prepared"
+)
+
+// Validate checks if the IntroductionRecordStatus value is valid
+func (i IntroductionRecordStatus) Validate() error {
+	switch i {
+	case IntroductionRecordStatusCancelled, Prepared:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid IntroductionRecordStatus value, got: %v", i))
+	}
+}
+
 type LocalEmbeddingsStatusPhase string
 
 const (
