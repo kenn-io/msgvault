@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -174,6 +175,39 @@ func TestMeetingLinkDecisionJoinsUnscheduledNotesAndUndoes(t *testing.T) {
 }
 
 func TestMeetingLinkDecisionConflictAndClear(t *testing.T) {
+	for _, order := range [][3]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}} {
+		for _, reverse := range []bool{false, true} {
+			t.Run(fmt.Sprintf("order_%v_reverse_%v", order, reverse), func(t *testing.T) {
+				r := require.New(t)
+				st := newRFC822IDBackfillBackendStore(t)
+				var refs [3]MeetingLinkRef
+				for i := range refs {
+					_, id := projectionFixture(t, st, fmt.Sprintf("permutation-%d", i), "meeting_json", `{}`)
+					refs[i] = MeetingLinkRef{Kind: "msg", MessageID: id}
+				}
+				a, b, c := refs[order[0]], refs[order[1]], refs[order[2]]
+				_, err := st.DecideMeetingLinkContext(t.Context(), b, c, "link")
+				r.NoError(err)
+				_, err = st.DecideMeetingLinkContext(t.Context(), a, c, "unlink")
+				r.NoError(err)
+				left, right := a, b
+				if reverse {
+					left, right = right, left
+				}
+				_, err = st.DecideMeetingLinkContext(t.Context(), left, right, "link")
+				r.ErrorIs(err, ErrMeetingLinkConflict)
+				for _, ref := range []MeetingLinkRef{a, b, c} {
+					record, err := st.MeetingRecordContext(t.Context(), ref)
+					r.NoError(err)
+					if ref == a {
+						r.Equal([]int64{a.MessageID}, record.MessageIDs)
+					} else {
+						r.ElementsMatch([]int64{b.MessageID, c.MessageID}, record.MessageIDs)
+					}
+				}
+			})
+		}
+	}
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	var refs []MeetingLinkRef
@@ -945,6 +979,105 @@ func TestMeetingLinkDecisionSurvivesPermanentDuplicateDeletion(t *testing.T) {
 				r.Equal([]int64{ids[1], ids[2], ids[3]}, record.MessageIDs)
 			} else {
 				r.Equal([]int64{ids[0], ids[3]}, record.MessageIDs)
+			}
+		})
+	}
+}
+
+type meetingDecisionWriterKey struct{}
+
+func TestMeetingLinkDecisionConcurrentLinks(t *testing.T) {
+	for _, first := range []int{0, 1} {
+		t.Run(fmt.Sprintf("first_%d", first), func(t *testing.T) {
+			r := require.New(t)
+			base := newRFC822IDBackfillBackendStore(t)
+			if !base.IsPostgreSQL() {
+				t.Skip("PostgreSQL transaction contract")
+			}
+			var refs [4]MeetingLinkRef
+			for i := range refs {
+				_, id := projectionFixture(t, base, fmt.Sprintf("concurrent-link-%d", i), "meeting_json", `{}`)
+				refs[i] = MeetingLinkRef{Kind: "msg", MessageID: id}
+			}
+			_, err := base.DecideMeetingLinkContext(t.Context(), refs[1], refs[2], "link")
+			r.NoError(err)
+			_, err = base.DecideMeetingLinkContext(t.Context(), refs[0], refs[3], "unlink")
+			r.NoError(err)
+			paused, release := make(chan struct{}), make(chan struct{})
+			gate := &meetingProjectionGate{before: func(ctx context.Context, query string, _ []driver.NamedValue) error {
+				if ctx.Value(meetingDecisionWriterKey{}) == true && strings.HasPrefix(query, "INSERT INTO meeting_link_decisions(") {
+					close(paused)
+					select {
+					case <-release:
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+				return nil
+			}}
+			st := gatedMeetingProjectionStore(t, base, gate)
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			var writers sync.WaitGroup
+			defer writers.Wait()
+			defer cancel()
+			type result struct {
+				index int
+				err   error
+			}
+			done := make(chan result, 2)
+			pairs := [][2]int{{0, 1}, {2, 3}}
+			start := func(i int, pause bool) {
+				writers.Add(1)
+				go func() {
+					defer writers.Done()
+					_, err := st.DecideMeetingLinkContext(context.WithValue(ctx, meetingDecisionWriterKey{}, pause), refs[pairs[i][0]], refs[pairs[i][1]], "link")
+					done <- result{i, err}
+				}()
+			}
+			start(first, true)
+			select {
+			case <-paused:
+			case <-ctx.Done():
+				r.FailNow("first writer did not reach insert")
+			}
+			start(1-first, false)
+			ticker := time.NewTicker(5 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				var waiting bool
+				r.NoError(base.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%archive_metadata%')`).Scan(&waiting))
+				if waiting {
+					break
+				}
+				select {
+				case result := <-done:
+					close(release)
+					<-done
+					r.FailNowf("second writer did not wait", "result: %v", result.err)
+				case <-ticker.C:
+				case <-ctx.Done():
+					close(release)
+					<-done
+					<-done
+					r.FailNow("second writer did not reach the lock")
+				}
+			}
+			close(release)
+			one, two := <-done, <-done
+			byIndex := map[int]error{one.index: one.err, two.index: two.err}
+			r.NoError(byIndex[first])
+			r.ErrorIs(byIndex[1-first], ErrMeetingLinkConflict)
+			for i, ref := range refs {
+				record, err := base.MeetingRecordContext(t.Context(), ref)
+				r.NoError(err)
+				want := []int64{refs[0].MessageID, refs[1].MessageID, refs[2].MessageID}
+				if first == 1 {
+					want = []int64{refs[1].MessageID, refs[2].MessageID, refs[3].MessageID}
+				}
+				if first == 0 && i == 3 || first == 1 && i == 0 {
+					want = []int64{ref.MessageID}
+				}
+				r.Equal(want, record.MessageIDs)
 			}
 		})
 	}

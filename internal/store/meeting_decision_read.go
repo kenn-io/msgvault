@@ -13,6 +13,7 @@ import (
 
 type meetingDecisionEdge struct {
 	id         int64
+	choiceKey  string
 	isExplicit bool
 	a, b       meetingDecisionEndpoint
 	decision   string
@@ -83,7 +84,7 @@ func (l *meetingDecisionLoader) load(ctx context.Context, endpoints []meetingDec
 	args = append(args, leftArgs...)
 	args = append(args, rightArgs...)
 	args = append(args, *budget+1)
-	rows, err := l.store.db.QueryContext(ctx, `SELECT d.id,d.is_explicit,d.left_message_id,d.left_kind,d.left_key,d.left_anchor,d.right_message_id,d.right_kind,d.right_key,d.right_anchor,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE (`+where+`) AND l.deleted_at IS NULL AND r.deleted_at IS NULL`+leftScope+rightScope+` LIMIT ?`, args...)
+	rows, err := l.store.db.QueryContext(ctx, `SELECT d.id,d.choice_key,d.is_explicit,d.left_message_id,d.left_kind,d.left_key,d.left_anchor,d.right_message_id,d.right_kind,d.right_key,d.right_anchor,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE (`+where+`) AND l.deleted_at IS NULL AND r.deleted_at IS NULL`+leftScope+rightScope+` LIMIT ?`, args...)
 	if err != nil {
 		return err
 	}
@@ -93,7 +94,7 @@ func (l *meetingDecisionLoader) load(ctx context.Context, endpoints []meetingDec
 	}
 	for rows.Next() {
 		var edge meetingDecisionEdge
-		if err := rows.Scan(&edge.id, &edge.isExplicit, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.a.Anchor, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.b.Anchor, &edge.decision); err != nil {
+		if err := rows.Scan(&edge.id, &edge.choiceKey, &edge.isExplicit, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.a.Anchor, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.b.Anchor, &edge.decision); err != nil {
 			return err
 		}
 		for _, endpoint := range endpoints {
@@ -121,6 +122,24 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 	return s.meetingRecordContext(ctx, ref)
 }
 
+type meetingDecisionNode struct {
+	endpoint meetingDecisionEndpoint
+	link     *MeetingLink
+}
+
+type meetingDecisionWarning struct {
+	endpoint meetingDecisionEndpoint
+	warning  CalendarUnexpandable
+}
+
+type meetingDecisionGraph struct {
+	nodes      map[string]meetingDecisionNode
+	groups     [][]meetingDecisionEndpoint
+	warnings   []meetingDecisionWarning
+	candidates []meetingDecisionEdge
+	automatic  MeetingRecord
+}
+
 func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (MeetingRecord, error) {
 	result := MeetingRecord{Links: []MeetingLink{}, MessageIDs: []int64{}, Unexpandable: []CalendarUnexpandable{}}
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
@@ -129,11 +148,19 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 	}
 	defer release()
 	budget := calrecur.RequestReadBudget
-	type node struct {
-		endpoint meetingDecisionEndpoint
-		link     *MeetingLink
+	seed := endpointFromRef(ref)
+	graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{seed}, &budget)
+	if err != nil {
+		return result, err
 	}
-	nodes := map[string]node{}
+	if len(graph.candidates) == 0 {
+		return graph.automatic, nil
+	}
+	return graph.record(seed), nil
+}
+
+func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDecisionEndpoint, budget *int) (*meetingDecisionGraph, error) {
+	nodes := map[string]meetingDecisionNode{}
 	var queue []meetingDecisionEndpoint
 	add := func(endpoint meetingDecisionEndpoint, link *MeetingLink) {
 		key := endpoint.ref()
@@ -144,18 +171,14 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			}
 			return
 		}
-		nodes[key] = node{endpoint, link}
+		nodes[key] = meetingDecisionNode{endpoint, link}
 		queue = append(queue, endpoint)
 	}
-	seed := endpointFromRef(ref)
-	add(seed, nil)
-	type warningSource struct {
-		endpoint meetingDecisionEndpoint
-		warning  CalendarUnexpandable
+	for _, seed := range seeds {
+		add(seed, nil)
 	}
-	var warnings []warningSource
+	var warnings []meetingDecisionWarning
 	var groups [][]meetingDecisionEndpoint
-	var explicit, splits []meetingDecisionEdge
 	var automatic MeetingRecord
 	seenDecisions := map[int64]bool{}
 	var candidates []meetingDecisionEdge
@@ -169,19 +192,19 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			record, cached := materialized[endpoint.ref()]
 			var err error
 			if !cached {
-				record, err = s.meetingAutomaticRecordForEndpoint(ctx, endpoint, &budget)
+				record, err = s.meetingAutomaticRecordForEndpoint(ctx, endpoint, budget)
 			}
-			if errors.Is(err, sql.ErrNoRows) && endpoint != seed {
+			if errors.Is(err, sql.ErrNoRows) && endpoint != seeds[0] {
 				continue
 			}
 			if err != nil {
-				return result, err
+				return nil, err
 			}
-			if endpoint == seed {
+			if endpoint == seeds[0] {
 				automatic = record
 			}
 			for _, warning := range record.Unexpandable {
-				warnings = append(warnings, warningSource{endpoint, warning})
+				warnings = append(warnings, meetingDecisionWarning{endpoint, warning})
 			}
 			members := []meetingDecisionEndpoint{endpoint}
 			memberSet := map[string]bool{endpoint.ref(): true}
@@ -199,7 +222,7 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			for _, link := range record.Links {
 				ref, err := ParseMeetingLinkRef(link.Ref)
 				if err != nil {
-					return result, err
+					return nil, err
 				}
 				member := endpointFromRef(ref)
 				linkCopy := link
@@ -216,9 +239,9 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			}
 			groups = append(groups, members)
 		}
-		choices, err := decisions.edges(ctx, endpoint, queue, &budget)
+		choices, err := decisions.edges(ctx, endpoint, queue, budget)
 		if err != nil {
-			return result, err
+			return nil, err
 		}
 		for _, choice := range choices {
 			if seenDecisions[choice.id] {
@@ -227,7 +250,7 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			seenDecisions[choice.id] = true
 			valid := true
 			for _, endpoint := range []*meetingDecisionEndpoint{&choice.a, &choice.b} {
-				canonical, _, record, err := s.materializedMeetingEndpointRecord(ctx, *endpoint, &budget)
+				canonical, _, record, err := s.materializedMeetingEndpointRecord(ctx, *endpoint, budget)
 				if errors.Is(err, sql.ErrNoRows) {
 					if len(record.Unexpandable) == 0 {
 						valid = false
@@ -238,7 +261,7 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 						canonical.Key = canonical.Anchor
 					}
 				} else if err != nil {
-					return result, err
+					return nil, err
 				}
 				materialized[canonical.ref()] = record
 				*endpoint = canonical
@@ -251,12 +274,14 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			candidates = append(candidates, choice)
 		}
 	}
-	if len(candidates) == 0 {
-		return automatic, nil
-	}
+	return &meetingDecisionGraph{nodes: nodes, groups: groups, warnings: warnings, candidates: candidates, automatic: automatic}, nil
+}
+
+func (g *meetingDecisionGraph) reduce() (func(string) string, []meetingDecisionEdge) {
+	var explicit, splits []meetingDecisionEdge
 	// Materialize aliases before choosing one effective contribution per pair.
 	effective := map[string]meetingDecisionEdge{}
-	for _, choice := range candidates {
+	for _, choice := range g.candidates {
 		left, right := choice.a, choice.b
 		if compareMeetingEndpoints(left, right) > 0 {
 			left, right = right, left
@@ -276,7 +301,7 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 		}
 	}
 	parent := map[string]string{}
-	for key := range nodes {
+	for key := range g.nodes {
 		parent[key] = key
 	}
 	var root func(string) string
@@ -288,7 +313,7 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 	}
 	groupByMember := map[string][][]meetingDecisionEndpoint{}
 	var vertices []meetingDecisionEndpoint
-	for _, group := range groups {
+	for _, group := range g.groups {
 		for _, member := range group {
 			key := member.ref()
 			if len(groupByMember[key]) == 0 {
@@ -355,21 +380,27 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			join(meetingDecisionEdge{a: member, b: other})
 		}
 	}
+	return root, explicit
+}
+
+func (g *meetingDecisionGraph) record(seed meetingDecisionEndpoint) MeetingRecord {
+	result := MeetingRecord{Links: []MeetingLink{}, MessageIDs: []int64{}, Unexpandable: []CalendarUnexpandable{}}
+	root, _ := g.reduce()
 	seedRoot := root(seed.ref())
 	visibleEvents := map[int64]bool{}
-	for key, n := range nodes {
+	for key, n := range g.nodes {
 		if n.endpoint.Kind == meetingRefEvent {
 			visibleEvents[n.endpoint.ID] = visibleEvents[n.endpoint.ID] || root(key) == seedRoot
 		}
 	}
 	// Keep a warning with its event when known, or with the group that found it.
-	for _, entry := range warnings {
+	for _, entry := range g.warnings {
 		visible, present := visibleEvents[entry.warning.MessageID]
 		if visible || !present && root(entry.endpoint.ref()) == seedRoot {
 			result.Unexpandable = append(result.Unexpandable, entry.warning)
 		}
 	}
-	for key, n := range nodes {
+	for key, n := range g.nodes {
 		if root(key) != seedRoot {
 			continue
 		}
@@ -405,5 +436,5 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 		return cmp.Compare(a.Reason, b.Reason)
 	})
 	result.Unexpandable = slices.Compact(result.Unexpandable)
-	return result, nil
+	return result
 }
