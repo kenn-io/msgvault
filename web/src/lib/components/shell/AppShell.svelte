@@ -395,7 +395,7 @@
   async function refreshIdentityProfiles(): Promise<void> {
     await Promise.all([shellData.refreshDuplicates(), directoryController.loadFirstPage(), directoryController.refreshSelectedPerson()]);
   }
-  let mergeCacheError = $state<{ revision: number; message: string; unsupported: boolean }>();
+  let mergeCacheError = $state<{ revision: number; message: string; dismissible: boolean }>();
   async function retryMergeCache(): Promise<void> {
     const revision = relationshipsController.pendingIdentityCacheRevision;
     const result = await relationshipsController.refreshIdentityCache();
@@ -405,7 +405,7 @@
       directoryReviewController.refreshSummaries(exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates);
       await refreshIdentityProfiles();
     }
-    else if (!result.ok && revision !== null && revision === relationshipsController.pendingIdentityCacheRevision) mergeCacheError = { revision, message: result.message, unsupported: result.code === 'cache_unsupported' };
+    else if (!result.ok && revision !== null && revision === relationshipsController.pendingIdentityCacheRevision) mergeCacheError = { revision, message: result.message, dismissible: result.code === 'cache_unsupported' || result.code === 'cache_build_required' };
   }
   async function identityChanged(): Promise<void> {
     await Promise.all([
@@ -1329,7 +1329,7 @@
       </div>
     </header>
     {#if relationshipsController.pendingIdentityCacheRevision !== null}
-      <div class="identity-cache-notice"><InlineNotice tone="warning" message={relationshipsController.identityCacheRefreshing ? 'Refreshing...' : mergeCacheError?.revision === relationshipsController.pendingIdentityCacheRevision ? mergeCacheError.message : 'Changes saved, but related views may be out of date.'} actionLabel={mergeCacheError?.revision === relationshipsController.pendingIdentityCacheRevision && mergeCacheError.unsupported ? 'Dismiss' : 'Retry'} actionDisabled={relationshipsController.identityCacheRefreshing} onaction={() => { if (mergeCacheError?.revision === relationshipsController.pendingIdentityCacheRevision && mergeCacheError.unsupported) relationshipsController.pendingIdentityCacheRevision = null; else void retryMergeCache(); }} /></div>
+      <div class="identity-cache-notice"><InlineNotice tone="warning" message={relationshipsController.identityCacheRefreshing ? 'Refreshing...' : mergeCacheError?.revision === relationshipsController.pendingIdentityCacheRevision ? mergeCacheError.message : 'Changes saved, but related views may be out of date.'} actionLabel={mergeCacheError?.revision === relationshipsController.pendingIdentityCacheRevision && mergeCacheError.dismissible ? 'Dismiss' : 'Retry'} actionDisabled={relationshipsController.identityCacheRefreshing} onaction={() => { if (mergeCacheError?.revision === relationshipsController.pendingIdentityCacheRevision && mergeCacheError.dismissible) relationshipsController.pendingIdentityCacheRevision = null; else void retryMergeCache(); }} /></div>
     {/if}
     <div class="app-main">
       {#if exploreState.current.workspace === 'settings'}
