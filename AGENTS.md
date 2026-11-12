@@ -183,6 +183,8 @@ before publication. This exception does not permit reuse in ordinary tests.
   indexes, or required data migration. Embedded readers open without DDL and
   require completed setup at their exact expected version. See
   [schema version maintenance](docs/development.md#archive-schema-version-maintenance).
+- Bump `api.APISchemaVersion` for any HTTP API contract change and record its
+  marker. See [API schema version maintenance](docs/development.md#api-schema-version-maintenance).
 - Use Bubble Tea and lipgloss for the TUI; Svelte and the shared UI toolkit for
   the Web UI. See [Development](docs/development.md) for the dependency map.
 - Route database operations through `Store`. Use DuckDB for Parquet queries,

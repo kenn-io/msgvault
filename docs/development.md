@@ -570,13 +570,14 @@ that alter the contract without changing the documents still need a version bump
 
 Add the marker path printed by the test under `internal/api/testdata/api-version-contracts/`.
 Put a one-line summary in the file and replace `<summary-sha256>` in the path with the hash from
-`printf '%s' 'Your summary' | sha256sum`. Different summaries produce separate markers for the
-same contract. To correct a summary, rename its marker with the new summary hash.
+`printf '%s' 'Your summary' | sha256sum | cut -d ' ' -f 1`. Different summaries produce separate
+markers for the same contract. You can correct a summary without renaming its marker.
 
-Keep every contract recorded on the base. If your unreleased contract changes and the base has
-no marker for that version, replace your marker with the new path and summary. If another change
-has used that version, keep its marker, remove yours, and take the next minor above the greatest
-recorded version. Move feature minimum constants introduced by your change to that version.
+Keep every contract recorded on the base. If your contract changes and main has no marker for
+that version, replace your marker. If another change has used that version, keep its marker,
+remove yours, and take the next minor above the greatest recorded version. Move feature minimum
+constants introduced by your change to that version. A failing local run offers both remedies
+because it cannot tell which applies without the base.
 
 Do not add version entries to the comment above `APISchemaVersion`. CI compares markers with its
 exact base. Local tests skip the history comparison unless `MSGVAULT_API_CONTRACT_BASE` is set to
