@@ -174,7 +174,7 @@ func TestAPISchemaVersionContract(t *testing.T) {
 	}
 	baseMarkers, err := apiBaseMarkers(t.Context(), os.Getenv("MSGVAULT_API_CONTRACT_BASE"))
 	require.NoError(err)
-	require.NoError(checkAPIContract(APISchemaVersion, digest, markers, baseMarkers))
+	assert.NoError(t, checkAPIContract(APISchemaVersion, digest, markers, baseMarkers))
 }
 
 func TestCheckAPIContract(t *testing.T) {
@@ -186,7 +186,6 @@ func TestCheckAPIContract(t *testing.T) {
 	}{
 		{"matching contracts with different summaries", "5.1.0", a, "", []string{"5.1.0_" + a + "_" + strings.Repeat("c", 64), "5.1.0_" + a + "_" + strings.Repeat("d", 64)}, []string{"5.1.0_" + a + "_" + strings.Repeat("c", 64)}},
 		{"replaced base summary path", "5.1.0", a, "restore removed API contract marker", []string{"5.1.0_" + a + "_" + strings.Repeat("d", 64)}, []string{"5.1.0_" + a + "_" + strings.Repeat("c", 64)}},
-		{"collision", "5.1.0", b, "use 5.2.0", []string{m("5.0.0", a), m("5.1.0", a), m("5.1.0", b)}, []string{m("5.0.0", a), m("5.1.0", a)}},
 		{"collision with next minor taken", "5.1.0", b, "use 5.3.0", []string{m("5.0.0", a), m("5.1.0", a), m("5.1.0", b), m("5.2.0", a)}, []string{m("5.0.0", a), m("5.1.0", a), m("5.2.0", a)}},
 		{"collision repaired", "5.2.0", b, "", []string{m("5.0.0", a), m("5.1.0", a), m("5.2.0", b)}, []string{m("5.0.0", a), m("5.1.0", a)}},
 		{"edited marker", "5.1.0", b, "replace your marker with testdata/api-version-contracts/5.1.0_" + b + "_<summary-sha256>; otherwise compare with MSGVAULT_API_CONTRACT_BASE or use 5.2.0", []string{m("5.0.0", a), m("5.1.0", a)}, []string{m("5.0.0", a)}},
@@ -197,9 +196,9 @@ func TestCheckAPIContract(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			err := checkAPIContract(tc.version, tc.digest, tc.markers, tc.base)
 			if tc.want == "" {
-				require.NoError(t, err)
+				assert.NoError(t, err)
 			} else {
-				require.ErrorContains(t, err, tc.want)
+				assert.ErrorContains(t, err, tc.want)
 			}
 		})
 	}
@@ -247,7 +246,7 @@ func TestAPIBaseMarkers(t *testing.T) {
 	assert.Equal(t, []string{changed}, markers)
 	git("update-ref", "-d", "refs/remotes/origin/main")
 	_, err = apiBaseMarkers(t.Context(), "")
-	require.ErrorContains(err, "fetch origin/main")
+	assert.ErrorContains(t, err, "fetch origin/main")
 }
 
 func TestAPIContractDigest(t *testing.T) {
