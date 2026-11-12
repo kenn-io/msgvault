@@ -57,14 +57,19 @@ func newPersonBriefTestDaemon(t *testing.T, response string) *personBriefTestDae
 
 func runPersonBriefCommand(ctx context.Context, t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	return runPersonCommand(ctx, t, "brief", args...)
+}
+
+func runPersonCommand(ctx context.Context, t *testing.T, group string, args ...string) (string, error) {
+	t.Helper()
 	root := &cobra.Command{Use: "msgvault"}
 	person := &cobra.Command{Use: personValue}
-	person.AddCommand(newPersonBriefCommand())
+	person.AddCommand(newPersonBriefCommand(), newPersonAppreciationsCommand())
 	root.AddCommand(person)
 	var output bytes.Buffer
 	root.SetOut(&output)
 	root.SetErr(&output)
-	root.SetArgs(append([]string{personValue, "brief"}, args...))
+	root.SetArgs(append([]string{personValue, group}, args...))
 	err := root.ExecuteContext(ctx)
 	return output.String(), err
 }

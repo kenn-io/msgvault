@@ -20,9 +20,10 @@ session.
 | `msgvault-appreciations` | Review supported appreciation suggestions and owner-chosen dismissals |
 | `msgvault-feedback` | Record heard, accepted or declined feedback, link accepted actions, and keep change evidence and report-back reminders in Kata |
 
-Search, attachments and analytics cover read-only workflows. Feedback also
-guides task writes within your explicit request. All skills require your
-direction before archive mutations such as sync, import, dedup or deletion.
+Search, attachments and analytics cover read-only workflows. Feedback guides
+task writes within your explicit request. Appreciations dismisses only with your
+choice and generates only on an explicit refresh request. All skills require
+your direction before archive mutations such as sync, import, dedup or deletion.
 
 ## Install
 
