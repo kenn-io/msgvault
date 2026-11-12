@@ -16,10 +16,10 @@ type MeetingSuggestion struct {
 	TitleOriginID   int64 `json:"-"`
 	TitleWithheld   bool  `json:"-"`
 	eventEndpoint   meetingDecisionEndpoint
-	Ref             string    `json:"ref"`
-	MemberMessageID int64     `json:"member_message_id"`
-	Title           string    `json:"title"`
-	Start           time.Time `json:"start"`
+	Ref             string    `json:"ref" doc:"Calendar event reference; the suggestion when the seed is a note"`
+	MemberMessageID int64     `json:"member_message_id" doc:"Meeting note ID; the suggestion when the seed is an event"`
+	Title           string    `json:"title" doc:"Title of the suggested event or note"`
+	Start           time.Time `json:"start" doc:"Start of the suggested event or note"`
 	OverlapMinutes  int       `json:"overlap_minutes"`
 	SharedAttendees int       `json:"shared_attendees"`
 	TitleTokens     int       `json:"title_tokens"`

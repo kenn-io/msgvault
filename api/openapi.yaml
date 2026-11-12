@@ -8022,20 +8022,24 @@ components:
       additionalProperties: true
       properties:
         member_message_id:
+          description: Meeting note ID; the suggestion when the seed is an event
           format: int64
           type: integer
         overlap_minutes:
           format: int64
           type: integer
         ref:
+          description: Calendar event reference; the suggestion when the seed is a note
           type: string
         shared_attendees:
           format: int64
           type: integer
         start:
+          description: Start of the suggested event or note
           format: date-time
           type: string
         title:
+          description: Title of the suggested event or note
           type: string
         title_tokens:
           format: int64

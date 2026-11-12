@@ -3,11 +3,15 @@
  */
 
 export interface MeetingSuggestion {
+  /** Meeting note ID; the suggestion when the seed is an event */
   member_message_id: number;
   overlap_minutes: number;
+  /** Calendar event reference; the suggestion when the seed is a note */
   ref: string;
   shared_attendees: number;
+  /** Start of the suggested event or note */
   start: string;
+  /** Title of the suggested event or note */
   title: string;
   title_tokens: number;
   [key: string]: unknown;

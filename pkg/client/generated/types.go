@@ -7938,13 +7938,20 @@ func (m MeetingScopeRequest) Validate() error {
 }
 
 type MeetingSuggestion struct {
-	MemberMessageID int64     `json:"member_message_id"`
-	OverlapMinutes  int64     `json:"overlap_minutes"`
-	Ref             string    `json:"ref" validate:"required"`
-	SharedAttendees int64     `json:"shared_attendees"`
-	Start           time.Time `json:"start" validate:"required"`
-	Title           string    `json:"title" validate:"required"`
-	TitleTokens     int64     `json:"title_tokens"`
+	// MemberMessageID Meeting note ID; the suggestion when the seed is an event
+	MemberMessageID int64 `json:"member_message_id"`
+	OverlapMinutes  int64 `json:"overlap_minutes"`
+
+	// Ref Calendar event reference; the suggestion when the seed is a note
+	Ref             string `json:"ref" validate:"required"`
+	SharedAttendees int64  `json:"shared_attendees"`
+
+	// Start Start of the suggested event or note
+	Start time.Time `json:"start" validate:"required"`
+
+	// Title Title of the suggested event or note
+	Title       string `json:"title" validate:"required"`
+	TitleTokens int64  `json:"title_tokens"`
 }
 
 func (m MeetingSuggestion) Validate() error {
