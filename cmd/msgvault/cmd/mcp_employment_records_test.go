@@ -207,6 +207,7 @@ func TestMCPEmploymentNativePrimaryConflictAndDisclosure(t *testing.T) {
 	replace, err := b.OperationDisclosure(t.Context(), "replace_employment", map[string]any{"employment_id": record.Employment.ID, "etag": record.ETag, "employment": map[string]any{"person_id": person, "organization_id": org, "source": "user", "end_date": "2024-05"}})
 	require.NoError(err)
 	assert.Contains(replace, "Replace mutable fields; omitted ones clear. Omitted is_current is kept only without end_date; omitted is_primary only while the record stays current.")
+	assert.Contains(replace, "Synthetic employment note")
 	primary, err := b.OperationDisclosure(t.Context(), "set_primary_employment", map[string]any{"employment_id": record.Employment.ID, "etag": record.ETag})
 	require.NoError(err)
 	assert.Contains(primary, `"operation":"set_primary_employment"`)
