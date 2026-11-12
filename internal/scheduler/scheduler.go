@@ -464,16 +464,33 @@ const indexingPassRuntime = 5 * time.Minute
 // A schedule rejected by ValidateCronExpr leaves the previous job in place.
 func (s *Scheduler) SetEmbedJob(job *EmbedJob, schedule string, runAfterSync bool) error {
 	var run func(context.Context) error
+	maxRuntime := indexingPassRuntime
 	if job != nil {
 		run = job.Run
+		// Keep the usual pass limit for the default remote configuration.
+		// Other configurations need room for every request in a split batch.
+		if job.RequestTimeout > 0 && (job.RequestTimeout != 30*time.Second || job.BatchSize != 32) {
+			const maxDuration = time.Duration(1<<63 - 1)
+			batchSize := int64(max(1, job.BatchSize))
+			if batchSize > int64(maxDuration)/2+1 {
+				maxRuntime = maxDuration
+			} else {
+				requests := (batchSize-1)*2 + 1
+				if job.RequestTimeout > maxDuration/time.Duration(requests) {
+					maxRuntime = maxDuration
+				} else {
+					maxRuntime = max(maxRuntime, time.Duration(requests*int64(job.RequestTimeout)))
+				}
+			}
+		}
 	}
-	return s.setIndexingJob(embedJobName, "embed", run, schedule, runAfterSync)
+	return s.setIndexingJob(embedJobName, "embed", run, schedule, runAfterSync, maxRuntime)
 }
 
 // setIndexingJob registers an indexing job as a preemptible background job
 // with a bounded pass. It waits for the gate without asking another holder
 // to yield, and yields to waiting syncs after the usual grace period.
-func (s *Scheduler) setIndexingJob(name, label string, run func(context.Context) error, schedule string, runAfterSync bool) error {
+func (s *Scheduler) setIndexingJob(name, label string, run func(context.Context) error, schedule string, runAfterSync bool, maxRuntime time.Duration) error {
 	if run == nil {
 		s.mu.RLock()
 		registered := s.genericFuncs[name] != nil
@@ -490,7 +507,7 @@ func (s *Scheduler) setIndexingJob(name, label string, run func(context.Context)
 	}
 	return s.addJob(Job{
 		Name: name, Schedule: schedule, Run: run,
-		Preemptible: true, CooperativePreemption: true, Background: true, MaxRuntime: indexingPassRuntime,
+		Preemptible: true, CooperativePreemption: true, Background: true, MaxRuntime: maxRuntime,
 	}, runAfterSync)
 }
 

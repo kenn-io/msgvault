@@ -1,7 +1,6 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
-import { groupingByDimension } from '../../grouping/catalog';
 import GroupTable from './GroupTable.svelte';
 
 describe('GroupTable', () => {
@@ -9,6 +8,25 @@ describe('GroupTable', () => {
     { key: '7', label: 'Example source', count: 12, estimated_bytes: 2048, latest_at: '2026-07-18T12:00:00Z' },
     { key: '8', label: 'Second source', count: 5, estimated_bytes: 512, latest_at: '2026-07-17T12:00:00Z' }
   ];
+
+  it.each([
+    { dimension: 'source', inspected: false, expected: 5 },
+    { dimension: 'source', inspected: true, expected: 3 },
+    { dimension: 'month', inspected: false, expected: 6 },
+    { dimension: 'month', inspected: true, expected: 4 },
+  ] as const)('keeps $dimension grid tracks aligned with cells when inspected=$inspected', ({ dimension, inspected, expected }) => {
+    const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
+    try {
+      const row = { key: dimension === 'month' ? '2026-07' : '7', label: 'Example', count: 1, estimated_bytes: 1, latest_at: '2026-07-18T12:00:00Z', ...(dimension === 'month' ? { total_items: 2 } : {}) };
+      render(GroupTable, { rows: [row], dimension, inspectedKey: inspected ? `group:${dimension}:${row.key}` : null, onDrill: vi.fn() });
+      const grid = screen.getByRole('grid', { name: `Messages grouped by ${dimension}` });
+      const tracks = grid.style.getPropertyValue('--group-columns').split(/\s+(?![^()]*\))/);
+      const dataRow = within(grid).getAllByRole('row')[1]!;
+      expect(Number(grid.getAttribute('aria-colcount'))).toBe(expected);
+      expect(within(dataRow).getAllByRole('gridcell')).toHaveLength(expected);
+      expect(tracks).toHaveLength(expected);
+    } finally { clientWidth.mockRestore(); }
+  });
 
   it('owns headers, virtual rows, and named states in one focusable grid', async () => {
     const rendered = render(GroupTable, { rows, dimension: 'source', onDrill: vi.fn() });
@@ -45,13 +63,12 @@ describe('GroupTable', () => {
     expect(document.activeElement).toBe(grid);
     expect(onDrill).toHaveBeenCalledWith(expect.objectContaining({ key: '8' }));
     expect(first.getAttribute('aria-rowindex')).toBe('2');
-    expect(screen.getByRole('button', { name: 'Drill into Example source' }).textContent?.trim()).toBe('Drill');
   });
 
   it('does not let a focused drill control bubble Enter into grid navigation', async () => {
     const onDrill = vi.fn();
     render(GroupTable, { rows, dimension: 'source', onDrill });
-    const drill = screen.getByRole('button', { name: 'Drill into Example source' });
+    const drill = screen.getByRole('button', { name: 'Show items in Example source' });
 
     drill.focus();
     await fireEvent.keyDown(drill, { key: 'Enter' });
@@ -258,26 +275,35 @@ describe('GroupTable', () => {
     expect(grid.getAttribute('aria-activedescendant')).toContain('month-3A150');
   });
 
-  it('removes the drill affordance for a non-filterable group dimension', async () => {
+  it('removes the drill affordance when drilling is disabled', async () => {
     const onDrill = vi.fn();
-    render(GroupTable, { rows, dimension: 'kind', drillable: groupingByDimension('kind').drillable, onDrill });
-    const grid = screen.getByRole('grid', { name: 'Messages grouped by kind' });
+    render(GroupTable, { rows, dimension: 'kind', drillable: false, onDrill });
+    expect(screen.queryAllByRole('button', { name: /Show items in/ })).toHaveLength(0);
+    const grid = screen.getByRole('grid');
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'Enter' });
-
-    expect(screen.queryByRole('button', { name: /Drill into/ })).toBeNull();
+    expect(onDrill).not.toHaveBeenCalled();
+    await fireEvent.dblClick(screen.getAllByRole('row')[1]!);
     expect(onDrill).not.toHaveBeenCalled();
   });
 
-  it('opens aggregate inspection from a focused pointer row without drilling', async () => {
+  it('inspects row clicks once and drills only through the button', async () => {
     const onInspect = vi.fn();
     const onDrill = vi.fn();
     render(GroupTable, { rows, dimension: 'source', onDrill, onInspect });
 
-    await fireEvent.pointerDown(screen.getByRole('row', { name: /Example source/ }));
-
+    const row = screen.getByRole('row', { name: /Example source/ });
+    await fireEvent.click(row);
     expect(onInspect).toHaveBeenCalledWith(rows[0]);
-    expect(onDrill).not.toHaveBeenCalled();
+    expect(onInspect).toHaveBeenCalledTimes(1);
+    await fireEvent.pointerDown(row);
+    await fireEvent.click(row);
+    expect(onInspect).toHaveBeenCalledTimes(2);
+    const button = screen.getByRole('button', { name: 'Show items in Example source' });
+    await fireEvent.pointerDown(button);
+    await fireEvent.click(button);
+    expect(onInspect).toHaveBeenCalledTimes(2);
+    expect(onDrill).toHaveBeenCalledExactlyOnceWith(rows[0]);
   });
 
   it('marks the inspected aggregate independently from keyboard focus', () => {
@@ -288,8 +314,24 @@ describe('GroupTable', () => {
       inspectedKey: 'group:source:8',
       onDrill: vi.fn()
     });
-
     expect(screen.getByRole('row', { name: /Example source/ }).getAttribute('aria-current')).toBeNull();
     expect(screen.getByRole('row', { name: /Second source/ }).getAttribute('aria-current')).toBe('true');
+  });
+  it('keeps a later month page share relative to every grouped item', () => {
+    const onDrill = vi.fn();
+    const row = { key: '2022-05', label: '2022-05', count: 20, total_items: 1000, estimated_bytes: 200, latest_at: '2022-05-31T12:00:00Z' };
+    render(GroupTable, { rows: [row], dimension: 'month', onDrill });
+    expect(screen.getByRole('columnheader', { name: 'Share' })).toBeDefined();
+    expect(screen.getByTitle('2% of 1,000 items').firstElementChild?.getAttribute('style')).toContain('width: 2%');
+  });
+
+  it('updates a source name when its type arrives after the rows', async () => {
+    const props = { rows: [{ key: '7', label: 'fixture-granola', count: 1, estimated_bytes: 1, latest_at: '2024-01-01T12:00:00Z' }], dimension: 'source' as const, onDrill: vi.fn() };
+    const view = render(GroupTable, props);
+    expect(screen.getByText('fixture-granola')).toBeDefined();
+    await view.rerender({ ...props, sources: new Map([['7', { type: 'granola', identifier: 'fixture-granola' }]]) });
+    expect(screen.getByText('Granola')).toBeDefined();
+    expect(screen.getByTitle('fixture-granola')).toBeDefined();
+    view.unmount();
   });
 });
