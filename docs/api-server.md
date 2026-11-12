@@ -166,7 +166,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.3.0**.
+it is separate from the binary release version. The current schema is **5.4.0**.
+
+Schema 5.4.0 adds meeting link suggestions.
 
 Schema 5.3.0 adds owner meeting link decisions.
 
@@ -2446,6 +2448,8 @@ for the user workflow and coverage meanings.
 | `POST /api/v1/meetings/context` | Exactly one of `message_ids` or an Explore `selection`; returns a context packet envelope |
 | `POST /api/v1/meetings/actions` | Optional `scope` or `explore`, plus action filters; returns rows, coverage, count, and cursor |
 | `POST /api/v1/meetings/metrics` | Optional `scope` or `explore`; returns totals, duration bases, monthly rows, and undated count |
+
+`GET /api/v1/meetings/suggestions?ref=...` ranks overlapping meeting notes and calendar events; use `POST /api/v1/meetings/links/decisions` to link a suggested pair. It requires API schema 5.4.0. Without `verification.read`, withheld titles add no title words and withheld partner titles are masked.
 
 `GET /api/v1/meetings/record?ref=...` returns the notes and calendar copies
 for a `msg:<id>` or `evt:<id>[@occurrence key]` reference. It requires API

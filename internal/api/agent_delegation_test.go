@@ -300,6 +300,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 		"getAttachmentContent":    {"/api/v1/attachments/" + hash + "/content", "permitted bytes"},
 		"getCLIAttachment":        {"/api/v1/cli/attachment?content_hash=" + hash, "permitted bytes"},
 		"getMeetingRecord":        {fmt.Sprintf("/api/v1/meetings/record?ref=msg:%d", note), strconv.FormatInt(note, 10)},
+		"suggestMeetingLinks":     {fmt.Sprintf("/api/v1/meetings/suggestions?ref=msg:%d", note), `"suggestions":[]`},
 		"listCLIAccounts":         {"/api/v1/cli/accounts", src.Identifier},
 		"listCLICollections":      {"/api/v1/cli/collections", `"name":"Selected"`},
 	}
@@ -363,7 +364,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	for op := range allowed {
 		assertions.True(seen[op], "missing preexisting delegated operation: "+op)
 	}
-	assertions.Len(reads, 21)
+	assertions.Len(reads, 22)
 	assertions.Equal(len(reads), testedReads)
 	assertions.Greater(denied, 10)
 }

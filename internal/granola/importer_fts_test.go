@@ -27,7 +27,7 @@ func TestImport_FTSIndexed(t *testing.T) {
 
 	for _, term := range []string{"quarterly", "priorities", "budget"} {
 		var hits int
-		require.NoError(st.DB().QueryRow(
+		require.NoError(st.DB().QueryRowContext(t.Context(),
 			`SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?`, term).Scan(&hits),
 			"MATCH %q", term)
 		require.Equal(1, hits, "expected an FTS hit for %q", term)

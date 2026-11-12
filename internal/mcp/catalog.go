@@ -40,29 +40,30 @@ const (
 )
 
 type catalogCapabilities struct {
-	sqlQuery         bool
-	semanticSearch   bool
-	vectorInMessage  bool
-	similarMessages  bool
-	mediaSearch      bool
-	people           bool
-	directoryPeople  bool
-	chatDiscovery    bool
-	visualSearch     bool
-	embeddingStatus  bool
-	savedViews       bool
-	meetings         bool
-	meetingRecords   bool
-	meetingDecisions bool
-	personAgenda     bool
-	personTier       bool
-	kata             bool
-	kataLookup       bool
-	kataDocbank      bool
-	contactRoutes    bool
-	identityReview   bool
-	personCardDAV    bool
-	messageTags      bool
+	sqlQuery           bool
+	semanticSearch     bool
+	vectorInMessage    bool
+	similarMessages    bool
+	mediaSearch        bool
+	people             bool
+	directoryPeople    bool
+	chatDiscovery      bool
+	visualSearch       bool
+	embeddingStatus    bool
+	savedViews         bool
+	meetings           bool
+	meetingRecords     bool
+	meetingSuggestions bool
+	meetingDecisions   bool
+	personAgenda       bool
+	personTier         bool
+	kata               bool
+	kataLookup         bool
+	kataDocbank        bool
+	contactRoutes      bool
+	identityReview     bool
+	personCardDAV      bool
+	messageTags        bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -132,29 +133,30 @@ func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*t
 
 func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 	return catalogCapabilities{
-		sqlQuery:         opts.ArchiveSQLQuerier != nil,
-		semanticSearch:   opts.HybridEngine != nil || opts.HybridSearcher != nil,
-		vectorInMessage:  opts.HybridEngine != nil && opts.Backend != nil,
-		similarMessages:  opts.Backend != nil || opts.SimilarSearcher != nil,
-		mediaSearch:      opts.MediaSearcher != nil,
-		people:           opts.PeopleBackend != nil,
-		directoryPeople:  opts.DirectoryBackend != nil,
-		chatDiscovery:    opts.ChatDiscoveryBackend != nil,
-		visualSearch:     opts.VisualSearcher != nil,
-		embeddingStatus:  opts.EmbeddingStatus != nil,
-		savedViews:       opts.SavedViews != nil,
-		meetings:         opts.Meetings != nil,
-		meetingRecords:   opts.Meetings != nil && opts.MeetingRecords,
-		meetingDecisions: opts.Meetings != nil && opts.MeetingDecisions,
-		personAgenda:     opts.PersonAgendaBackend != nil,
-		personTier:       opts.PersonTierBackend != nil,
-		kata:             opts.Kata != nil,
-		kataLookup:       opts.Kata != nil && opts.KataLookup,
-		kataDocbank:      opts.Kata != nil && opts.KataDocbank,
-		contactRoutes:    opts.ContactRoutesBackend != nil,
-		identityReview:   opts.IdentityReview != nil,
-		personCardDAV:    opts.PersonCardDAV != nil,
-		messageTags:      opts.MessageTags != nil,
+		sqlQuery:           opts.ArchiveSQLQuerier != nil,
+		semanticSearch:     opts.HybridEngine != nil || opts.HybridSearcher != nil,
+		vectorInMessage:    opts.HybridEngine != nil && opts.Backend != nil,
+		similarMessages:    opts.Backend != nil || opts.SimilarSearcher != nil,
+		mediaSearch:        opts.MediaSearcher != nil,
+		people:             opts.PeopleBackend != nil,
+		directoryPeople:    opts.DirectoryBackend != nil,
+		chatDiscovery:      opts.ChatDiscoveryBackend != nil,
+		visualSearch:       opts.VisualSearcher != nil,
+		embeddingStatus:    opts.EmbeddingStatus != nil,
+		savedViews:         opts.SavedViews != nil,
+		meetings:           opts.Meetings != nil,
+		meetingRecords:     opts.Meetings != nil && opts.MeetingRecords,
+		meetingSuggestions: opts.Meetings != nil && opts.MeetingSuggestions,
+		meetingDecisions:   opts.Meetings != nil && opts.MeetingDecisions,
+		personAgenda:       opts.PersonAgendaBackend != nil,
+		personTier:         opts.PersonTierBackend != nil,
+		kata:               opts.Kata != nil,
+		kataLookup:         opts.Kata != nil && opts.KataLookup,
+		kataDocbank:        opts.Kata != nil && opts.KataDocbank,
+		contactRoutes:      opts.ContactRoutesBackend != nil,
+		identityReview:     opts.IdentityReview != nil,
+		personCardDAV:      opts.PersonCardDAV != nil,
+		messageTags:        opts.MessageTags != nil,
 	}
 }
 
@@ -251,6 +253,7 @@ func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 		previewCardDAVPublicationDefinition(),
 		getCardDAVSyncStatusDefinition(),
 		getMeetingRecordDefinition(),
+		suggestMeetingLinksDefinition(),
 		meetingDecisionDefinition(ToolLinkMeeting, "Link two archived meeting copies.", (*handlers).linkMeeting),
 		meetingDecisionDefinition(ToolUnlinkMeeting, "Split two archived meeting copies.", (*handlers).unlinkMeeting),
 		meetingDecisionDefinition(ToolResetMeetingLink, "Clear a saved meeting choice.", (*handlers).resetMeetingLink),
@@ -399,6 +402,8 @@ func savedViewsAvailable(c catalogCapabilities) bool { return c.savedViews }
 func meetingsAvailable(c catalogCapabilities) bool { return c.meetings }
 
 func meetingRecordsAvailable(c catalogCapabilities) bool { return c.meetingRecords }
+
+func meetingSuggestionsAvailable(c catalogCapabilities) bool { return c.meetingSuggestions }
 
 func meetingDecisionsAvailable(c catalogCapabilities) bool { return c.meetingDecisions }
 

@@ -89,6 +89,7 @@ type Action struct {
 type LinkEvidence struct {
 	GoogleEventID, ICalUID, CalendarOwner string
 	ScheduledAt                           *time.Time
+	ScheduledDuration                     *float64
 }
 
 type Content struct {

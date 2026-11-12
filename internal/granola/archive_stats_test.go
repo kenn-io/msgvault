@@ -16,7 +16,7 @@ func TestGranolaCountsWriteWhenStatsMaintenanceFails(t *testing.T) {
 	require := require.New(t)
 	api := &fakeAPI{notes: map[string][]byte{"not_Ab12Cd34Ef56Gh": loadFixture(t, "note_full.json")}}
 	imp, st := newTestImporter(t, api)
-	_, err := st.DB().Exec(`
+	_, err := st.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER fail_granola_stats
 		BEFORE UPDATE OF participant_count ON conversations
 		BEGIN
@@ -31,6 +31,6 @@ func TestGranolaCountsWriteWhenStatsMaintenanceFails(t *testing.T) {
 	require.NotNil(sum)
 	assert.EqualValues(1, sum.NotesAdded)
 	var messages int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
 	assert.Equal(1, messages)
 }

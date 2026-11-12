@@ -397,24 +397,14 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			if err != nil {
 				return err
 			}
-			root, _ := graph.reduce()
-			if (root(ca.ref()) == root(cb.ref())) != (state == "link") {
+			if conflict, found := meetingDecisionConflict(graph, ca, cb, state == "link", active); found {
+				root, _ := graph.reduce()
 				for _, edge := range graph.candidates {
-					if edge.id != insertedID && edge.decision == "split" && ((root(edge.a.ref()) == root(ca.ref()) && root(edge.b.ref()) == root(cb.ref())) || (root(edge.b.ref()) == root(ca.ref()) && root(edge.a.ref()) == root(cb.ref()))) {
+					if edge.id != insertedID && edge.decision == "split" && ((root(edge.a.ref()) == root(conflict.a.ref()) && root(edge.b.ref()) == root(conflict.b.ref())) || (root(edge.b.ref()) == root(conflict.a.ref()) && root(edge.a.ref()) == root(conflict.b.ref()))) {
 						return fmt.Errorf("%w: %s %s", ErrMeetingLinkConflict, edge.a.ref(), edge.b.ref())
 					}
 				}
-				return fmt.Errorf("%w: %s %s", ErrMeetingLinkConflict, ca.ref(), cb.ref())
-			}
-			for _, link := range active {
-				if root(link.a.ref()) != root(link.b.ref()) {
-					for _, edge := range graph.candidates {
-						if edge.id != insertedID && edge.decision == "split" && ((root(edge.a.ref()) == root(link.a.ref()) && root(edge.b.ref()) == root(link.b.ref())) || (root(edge.b.ref()) == root(link.a.ref()) && root(edge.a.ref()) == root(link.b.ref()))) {
-							return fmt.Errorf("%w: %s %s", ErrMeetingLinkConflict, edge.a.ref(), edge.b.ref())
-						}
-					}
-					return fmt.Errorf("%w: %s %s", ErrMeetingLinkConflict, link.a.ref(), link.b.ref())
-				}
+				return fmt.Errorf("%w: %s %s", ErrMeetingLinkConflict, conflict.a.ref(), conflict.b.ref())
 			}
 		}
 		result = MeetingLinkDecisionResult{Left: ca.ref(), Right: cb.ref(), State: state}

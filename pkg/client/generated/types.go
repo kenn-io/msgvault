@@ -8002,6 +8002,60 @@ func (m MeetingScopeRequest) Validate() error {
 	return errors
 }
 
+type MeetingSuggestion struct {
+	// MemberMessageID Meeting note ID; the suggestion when the seed is an event
+	MemberMessageID int64 `json:"member_message_id"`
+	OverlapMinutes  int64 `json:"overlap_minutes"`
+
+	// Ref Calendar event reference; the suggestion when the seed is a note
+	Ref             string `json:"ref" validate:"required"`
+	SharedAttendees int64  `json:"shared_attendees"`
+
+	// Start Start of the suggested event or note
+	Start time.Time `json:"start" validate:"required"`
+
+	// Title Title of the suggested event or note
+	Title       string `json:"title" validate:"required"`
+	TitleTokens int64  `json:"title_tokens"`
+}
+
+func (m MeetingSuggestion) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MeetingSuggestionPage struct {
+	Suggestions  []MeetingSuggestion    `json:"suggestions" validate:"required"`
+	Unexpandable []CalendarUnexpandable `json:"unexpandable" validate:"required"`
+}
+
+func (m MeetingSuggestionPage) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.Suggestions, "required"); err != nil {
+		errors = errors.Append("Suggestions", err)
+	}
+	for i, item := range m.Suggestions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Suggestions[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(m.Unexpandable, "required"); err != nil {
+		errors = errors.Append("Unexpandable", err)
+	}
+	for i, item := range m.Unexpandable {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Unexpandable[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MergeOrganizationBody struct {
 	LosingOrganizationID int64 `json:"losing_organization_id"`
 	LosingRevision       int64 `json:"losing_revision"`

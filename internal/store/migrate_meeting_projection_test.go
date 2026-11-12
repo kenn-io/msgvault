@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,13 +20,15 @@ func TestMeetingLinkProjectionBackfill(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	_, note := projectionFixture(t, st, "link-backfill", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	_, note := projectionFixture(t, st, "link-backfill", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z","endsAt":"2027-03-14T11:00:00Z"}}`)
 	for _, query := range []string{
 		`DROP INDEX idx_meeting_details_link_key`,
 		`ALTER TABLE meeting_details DROP COLUMN link_key`,
+		`ALTER TABLE meeting_details DROP COLUMN scheduled_start`,
+		`ALTER TABLE meeting_details DROP COLUMN scheduled_duration_seconds`,
 		`UPDATE meeting_details SET projection_version = 1`,
 		`UPDATE applied_migrations SET version = 1 WHERE name = 'meeting_projection_v1'`,
-		`UPDATE archive_metadata SET value = '41' WHERE key = 'schema_version'`,
+		`UPDATE archive_metadata SET value = '44' WHERE key = 'schema_version'`,
 	} {
 		_, err := st.db.Exec(query)
 		require.NoError(err)
@@ -38,13 +41,46 @@ func TestMeetingLinkProjectionBackfill(t *testing.T) {
 	var key string
 	require.NoError(reopened.db.QueryRowContext(t.Context(), `SELECT link_key FROM meeting_details WHERE message_id = ?`, note).Scan(&key))
 	assert.Equal(`["ical_uid","","weekly@example.org","2027-03-14T10:00:00Z"]`, key)
-	applied, err := reopened.IsMigrationAppliedContext(t.Context(), projectionMigrationName, 2)
+	var scheduled nullableTimestamp
+	require.NoError(reopened.db.QueryRowContext(t.Context(), `SELECT scheduled_start FROM meeting_details WHERE message_id = ?`, note).Scan(&scheduled))
+	assert.True(scheduled.Valid)
+	assert.Equal("2027-03-14T10:00:00Z", scheduled.Time.Format(time.RFC3339))
+	applied, err := reopened.IsMigrationAppliedContext(t.Context(), projectionMigrationName, 3)
 	require.NoError(err)
 	assert.True(applied)
 	var version int
 	require.NoError(reopened.db.QueryRowContext(t.Context(), `SELECT projection_version FROM meeting_details WHERE message_id = ?`, note).Scan(&version))
-	assert.Equal(2, version)
+	assert.Equal(meetingProjectionVersion, version)
 	require.NoError(reopened.InitSchemaContext(t.Context()))
+}
+
+func TestMeetingScheduledStartProjectionUpgrade(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, note := projectionFixture(t, st, "scheduled-upgrade", "twenty_json", `{"schema_version":1,"recording":{"startedAt":"2027-03-14T10:00:00Z","endedAt":"2027-03-14T10:20:00Z"},"calendar_event":{"startsAt":"2027-03-14T10:00:00Z","endsAt":"2027-03-14T11:00:00Z"}}`)
+	for _, query := range []string{
+		`ALTER TABLE meeting_details DROP COLUMN scheduled_start`,
+		`ALTER TABLE meeting_details DROP COLUMN scheduled_duration_seconds`,
+		`UPDATE meeting_details SET projection_version=2`,
+		`UPDATE applied_migrations SET version=2 WHERE name='meeting_projection_v1'`,
+		`UPDATE archive_metadata SET value='44' WHERE key='schema_version'`,
+	} {
+		_, err := st.db.ExecContext(t.Context(), query)
+		r.NoError(err)
+	}
+	r.NoError(st.InitSchemaContext(t.Context()))
+	var start nullableTimestamp
+	r.NoError(st.db.QueryRowContext(t.Context(), `SELECT scheduled_start FROM meeting_details WHERE message_id=?`, note).Scan(&start))
+	r.True(start.Valid)
+	r.Equal("2027-03-14T10:00:00Z", start.Time.Format(time.RFC3339))
+	var scheduledDuration, duration float64
+	r.NoError(st.db.QueryRowContext(t.Context(), `SELECT scheduled_duration_seconds,duration_seconds FROM meeting_details WHERE message_id=?`, note).Scan(&scheduledDuration, &duration))
+	r.InDelta(3600, scheduledDuration, 0.001)
+	r.InDelta(1200, duration, 0.001)
+	applied, err := st.IsMigrationAppliedContext(t.Context(), projectionMigrationName, 3)
+	r.NoError(err)
+	r.True(applied)
+	r.NoError(st.InitSchemaContext(t.Context()))
 }
 
 func removeMeetingProjectionSchema(t *testing.T, st *Store) {

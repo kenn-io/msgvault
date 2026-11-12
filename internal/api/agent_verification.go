@@ -30,6 +30,17 @@ func (s *Server) verificationWithheld(w http.ResponseWriter, r *http.Request, id
 	if !s.withholdsVerification(r) {
 		return nil, true
 	}
+	withheld, err := s.classifyVerification(r.Context(), ids)
+	if err != nil {
+		writeAPIHTTPError(w, newAPIHTTPError(503, "source_scope_unavailable", "Message content classification is unavailable"))
+		return nil, false
+	}
+	return withheld, true
+}
+
+var errVerificationUnavailable = errors.New("message content classification is unavailable")
+
+func (s *Server) classifyVerification(ctx context.Context, ids []int64) (map[int64]bool, error) {
 	loader, ok := s.store.(MessageBodyLoader)
 	withheld := make(map[int64]bool, len(ids))
 	// Only one page of bodies is held at a time; verdicts outlive their batch.
@@ -38,9 +49,8 @@ func (s *Server) verificationWithheld(w http.ResponseWriter, r *http.Request, id
 		for i := range messages {
 			messages[i].ID = ids[start+i]
 		}
-		if !ok || loader.PopulateMessageBodiesContext(r.Context(), messages) != nil {
-			writeAPIHTTPError(w, newAPIHTTPError(503, "source_scope_unavailable", "Message content classification is unavailable"))
-			return nil, false
+		if !ok || loader.PopulateMessageBodiesContext(ctx, messages) != nil {
+			return nil, errVerificationUnavailable
 		}
 		results := make([]bool, len(messages))
 		var wg sync.WaitGroup
@@ -54,7 +64,7 @@ func (s *Server) verificationWithheld(w http.ResponseWriter, r *http.Request, id
 			withheld[msg.ID] = results[i]
 		}
 	}
-	return withheld, true
+	return withheld, nil
 }
 
 func messageVerificationContent(subject, snippet, title, text, html string, attachments int, filename func(int) string) verification.Content {

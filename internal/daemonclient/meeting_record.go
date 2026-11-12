@@ -44,3 +44,26 @@ func (c *Client) DecideMeetingLink(ctx context.Context, left, right, decision st
 	}
 	return *decoded, nil
 }
+
+// SuggestMeetingLinks finds overlapping copies the owner can link.
+func (c *Client) SuggestMeetingLinks(ctx context.Context, ref string, limit int) (store.MeetingSuggestionPage, error) {
+	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.SuggestMeetingLinksResp, error) {
+		query := &generated.SuggestMeetingLinksQuery{Ref: ref}
+		if limit != 0 {
+			value := int64(limit)
+			query.Limit = &value
+		}
+		return client.SuggestMeetingLinksWithResponse(ctx, &generated.SuggestMeetingLinksRequestOptions{Query: query})
+	})
+	if err != nil {
+		return store.MeetingSuggestionPage{}, err
+	}
+	if response.JSON200 == nil {
+		return store.MeetingSuggestionPage{}, errors.New("meeting suggestions: empty response")
+	}
+	decoded, err := decodeMeetingResponse[store.MeetingSuggestionPage]("meeting suggestions", response.Body)
+	if err != nil {
+		return store.MeetingSuggestionPage{}, err
+	}
+	return *decoded, nil
+}

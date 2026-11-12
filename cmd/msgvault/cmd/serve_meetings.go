@@ -36,3 +36,7 @@ func (a *storeAPIAdapter) MeetingRecordContext(ctx context.Context, ref store.Me
 func (a *storeAPIAdapter) DecideMeetingLinkContext(ctx context.Context, left, right store.MeetingLinkRef, decision string) (store.MeetingLinkDecisionResult, error) {
 	return a.store.DecideMeetingLinkContext(ctx, left, right, decision)
 }
+
+func (a *storeAPIAdapter) SuggestMeetingLinksContext(ctx context.Context, ref store.MeetingLinkRef, limit int, withheld func(context.Context, []int64) (map[int64]bool, error)) (store.MeetingSuggestionPage, error) {
+	return a.store.SuggestMeetingLinksContext(ctx, ref, limit, withheld)
+}
