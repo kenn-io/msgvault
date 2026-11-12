@@ -526,3 +526,38 @@ func TestWorkerWaitsOutABusySourceWithoutSpendingTheRetryBudget(t *testing.T) {
 		require.ErrorIs(<-done, context.Canceled)
 	})
 }
+
+// Time spent inside an attempt, such as waiting for the daemon to finish
+// other work, is not charged to the retry budget: only the waits between
+// attempts are.
+func TestWorkerDoesNotChargeTimeInsideAnAttempt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		h, dir := newTestHandler(t)
+		attempts := 0
+		var applied []string
+		feed := func(ctx context.Context, change Change) error {
+			attempts++
+			if attempts < 4 {
+				// Each failing attempt takes longer than the whole budget.
+				time.Sleep(2 * time.Hour)
+				return errors.New("graph unavailable")
+			}
+			applied = append(applied, string(change.Values[0]))
+			return nil
+		}
+		w := NewWorker(dir, map[Field]FieldHandler{{"page", "feed"}: feed})
+		require.NoError(h.store("9", []byte(`{"object":"page","entry":[{"id":"100","changes":[{"field":"feed","value":"slow"}]}]}`)))
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error)
+		go func() { done <- w.Run(ctx) }()
+
+		time.Sleep(7 * time.Hour)
+		synctest.Wait()
+		assert.Equal([]string{`"slow"`}, applied, "the change is retried after slow attempts and applies")
+		assert.Equal(4, attempts)
+		assert.Empty(pendingFiles(t, dir))
+		cancel()
+		require.ErrorIs(<-done, context.Canceled)
+	})
+}
