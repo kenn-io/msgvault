@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"slices"
 
@@ -329,7 +330,7 @@ func superseded(values []jsontext.Value, ids []int64, missing bool) ([]any, bool
 func summarizeInlineMedia(encoded string) (int, string, error) {
 	data, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return 0, "", err
+		return 0, "", fmt.Errorf("decode inline media: %w", err)
 	}
 	sum := sha256.Sum256(data)
 	return len(data), hex.EncodeToString(sum[:]), nil

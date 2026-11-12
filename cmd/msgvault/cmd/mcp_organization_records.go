@@ -20,6 +20,8 @@ import (
 // limit provides room for those copies; merged history can still exceed it.
 const organizationProfileResponseLimit = 3 * api.MaxOrganizationProfileRequestBytes
 
+const organizationSourceField = "source"
+
 func organizationMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCapabilities) []string {
 	var names []string
 	for _, r := range []struct {
@@ -45,7 +47,7 @@ func organizationMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCa
 		{"delete_organization", "deleteOrganization", http.MethodDelete, "/api/v1/organizations/{id}", nil, nil},
 		{"merge_organization", "mergeOrganization", http.MethodPost, "/api/v1/organizations/{id}/merge", nil, []string{"losing_organization_id", "losing_revision"}},
 		{"replace_organization_profile", "putOrganizationProfile", http.MethodPut, "/api/v1/organizations/{id}/profile", nil, []string{"names", "identifiers", "addresses", "contact_points", "media", "categories"}},
-		{"set_organization_attribute", "setOrganizationAttribute", http.MethodPost, "/api/v1/organizations/{id}/attributes", nil, []string{"definition_slug", "value", "source", "ordinal", "expected_value_id", "dry_run"}},
+		{"set_organization_attribute", "setOrganizationAttribute", http.MethodPost, "/api/v1/organizations/{id}/attributes", nil, []string{"definition_slug", "value", organizationSourceField, "ordinal", "expected_value_id", "dry_run"}},
 		{"clear_organization_attribute", "clearOrganizationAttribute", http.MethodDelete, "/api/v1/organizations/{id}/attributes/{slug}", []string{"ordinal", "expected_value_id", "dry_run"}, nil},
 	} {
 		if hasRoute(r.id, r.method, r.path, r.query...) && (len(r.properties) == 0 || mcpRequestPropertiesPresent(caps, r.id, r.properties...)) && (r.name == "get_organization_media" || r.name == "create_organization" || hasRoute("getOrganization", http.MethodGet, "/api/v1/organizations/{id}")) {
@@ -69,7 +71,7 @@ func (b *daemonMCPOperations) executeOrganizationOperation(ctx context.Context, 
 	}
 	input, err := decodeMCPOperationArguments[organizationReadArguments](args)
 	if err != nil || !validLoopID(input.OrganizationID) {
-		return operationFailure(invalidArguments, false), true, nil
+		return operationFailure(invalidArguments, false), true, nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
 	}
 	var result *mcpserver.OperationResult
 	switch name {
@@ -100,7 +102,7 @@ type organizationRequest struct {
 
 func organizationWriteRequest(name string, args map[string]any) (organizationRequest, bool, bool) {
 	var r organizationRequest
-	valid := false
+	var valid bool
 	switch name {
 	case "create_organization":
 		a, err := decodeMCPOperationArguments[mcpserver.OrganizationCreateArgs](args)
@@ -196,7 +198,7 @@ type organizationMediaArguments struct {
 func (b *daemonMCPOperations) organizationMedia(ctx context.Context, args map[string]any) (*mcpserver.OperationResult, error) {
 	a, err := decodeMCPOperationArguments[organizationMediaArguments](args)
 	if err != nil || !validLoopID(a.OrganizationID) || !validLoopID(a.MediaID) {
-		return operationFailure(invalidArguments, false), nil
+		return operationFailure(invalidArguments, false), nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
 	}
 	data, headers, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/profile/media/{media_id}/content", &generated.GetOrganizationProfileMediaContentRequestOptions{PathParams: &generated.GetOrganizationProfileMediaContentPath{ID: a.OrganizationID, MediaID: a.MediaID}}, store.MaxPersonMediaBytes, http.StatusOK)
 	if failure != nil {
@@ -204,7 +206,7 @@ func (b *daemonMCPOperations) organizationMedia(ctx context.Context, args map[st
 	}
 	chunk, err := mcpserver.PersonMediaChunk(data, headers.Get("Content-Type"), args)
 	if err != nil {
-		return operationFailure(invalidArguments, false), nil
+		return operationFailure(invalidArguments, false), nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
 	}
 	return &mcpserver.OperationResult{Output: chunk}, nil
 }
@@ -256,7 +258,7 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 		var superseded any
 		if v := write.Superseded; v != nil {
 			ordinal = v.Ordinal
-			superseded = map[string]any{"id": v.ID, "ordinal": v.Ordinal, "value": v.Value, "source": v.Source, "source_ref": v.SourceRef, "actor": v.Actor, "confidence": v.Confidence, "active_from": v.ActiveFrom, "created_at": v.CreatedAt}
+			superseded = map[string]any{"id": v.ID, "ordinal": v.Ordinal, "value": v.Value, organizationSourceField: v.Source, "source_ref": v.SourceRef, "actor": v.Actor, "confidence": v.Confidence, "active_from": v.ActiveFrom, "created_at": v.CreatedAt}
 		}
 		if write.Value != nil {
 			ordinal = write.Value.Ordinal
