@@ -150,6 +150,7 @@ func (m Model) openCodexSettings() (tea.Model, tea.Cmd) {
 	id := m.settingsRequestID
 	ctx, cancel := context.WithCancel(context.Background())
 	m.settings.codex = codexSettingsState{active: true, stage: "setup", requestID: id, ctx: ctx, cancel: cancel}
+	m.settings.scrollOffset = 0
 	return m, nil
 }
 
@@ -163,6 +164,7 @@ func (m Model) closeCodexSettings() (Model, tea.Cmd) {
 		m.settings.peopleInferenceStatus = &status
 	}
 	m.settings.codex = codexSettingsState{}
+	m.settings.scrollOffset = 0
 	if s.login.SessionID == "" {
 		return m, nil
 	}
@@ -217,6 +219,7 @@ func (m Model) handleCodexSettingsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		case keyNameEnter:
 			if err := s.validatePolicy(); err != nil {
 				s.message = err.Error()
+				m.settings.scrollOffset = 0
 				return m, nil
 			}
 			s.stage, s.message = "starting", ""
@@ -248,21 +251,25 @@ func (m Model) handleCodexSettingsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		if s.stage == "models" && s.modelCursor > 0 {
 			s.modelCursor--
 			s.selectDefaultEffort()
+			m.revealSettingsFocus()
 		}
 	case "down", "j":
 		if s.stage == "models" && s.modelCursor+1 < len(s.models) {
 			s.modelCursor++
 			s.selectDefaultEffort()
+			m.revealSettingsFocus()
 		}
 	case "e":
 		if s.stage == "models" && len(s.models) > 0 && len(s.models[s.modelCursor].ReasoningEfforts) > 0 {
 			s.effortCursor = (s.effortCursor + 1) % len(s.models[s.modelCursor].ReasoningEfforts)
+			m.revealSettingsFocus()
 		}
 	case keyNameEnter:
 		if s.stage == "models" && len(s.models) > 0 {
 			model := s.models[s.modelCursor]
 			if len(model.ReasoningEfforts) == 0 {
 				s.message = "Selected model has no supported reasoning effort."
+				m.settings.scrollOffset = 0
 				return m, nil
 			}
 			request := s.policy
@@ -291,6 +298,7 @@ func (m Model) handleCodexSettingsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		}
 	case "s":
 		if !s.consented {
+			m.settings.scrollOffset = 0
 			if s.disclosure.Fingerprint == "" {
 				s.message = "Run a synthetic check before selecting."
 			} else {
@@ -342,6 +350,7 @@ func (m Model) beginCodexPolicyEdit(field string) (tea.Model, tea.Cmd) {
 		input.SetValue(s.policy.TrainingPosture)
 	}
 	s.editing, s.editor, s.message = field, input, ""
+	m.revealSettingsFocus()
 	return m, s.editor.Focus()
 }
 
@@ -423,6 +432,7 @@ func (m Model) handleCodexSettingsMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		m.settings.scrollOffset = 0
 		if v.err != nil {
 			s.stage, s.message = "setup", v.err.Error()
 			return m, nil
@@ -440,12 +450,18 @@ func (m Model) handleCodexSettingsMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if v.err != nil {
+			if s.message != v.err.Error() || v.poll.Failed {
+				m.settings.scrollOffset = 0
+			}
 			s.message = v.err.Error()
 			if v.poll.Failed {
 				s.stage = "error"
 				return m, nil
 			}
 			return m, codexPollTick(s.requestID)
+		}
+		if s.message != "" || v.poll.Complete {
+			m.settings.scrollOffset = 0
 		}
 		s.message = ""
 		if v.poll.Complete {
@@ -464,6 +480,7 @@ func (m Model) handleCodexSettingsMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !s.active || requestID != s.requestID {
 			return m, nil
 		}
+		m.settings.scrollOffset = 0
 		if v.err != nil {
 			s.message = v.err.Error()
 			return m, nil
@@ -472,11 +489,13 @@ func (m Model) handleCodexSettingsMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		s.modelCursor = 0
 		s.selectDefaultEffort()
 		s.message = ""
+		m.revealSettingsFocus()
 	case codexProfileSavedMsg:
 		requestID = v.requestID
 		if !s.active || requestID != s.requestID {
 			return m, nil
 		}
+		m.settings.scrollOffset = 0
 		if v.err != nil {
 			s.stage = "models"
 			s.message = v.err.Error()
@@ -491,6 +510,7 @@ func (m Model) handleCodexSettingsMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !s.active || requestID != s.requestID {
 			return m, nil
 		}
+		m.settings.scrollOffset = 0
 		if v.err != nil {
 			s.recordMutationError(v.err)
 			return m, nil
@@ -502,6 +522,7 @@ func (m Model) handleCodexSettingsMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !s.active || requestID != s.requestID {
 			return m, nil
 		}
+		m.settings.scrollOffset = 0
 		if v.err != nil {
 			s.recordMutationError(v.err)
 			return m, nil
@@ -513,6 +534,7 @@ func (m Model) handleCodexSettingsMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !s.active || requestID != s.requestID {
 			return m, nil
 		}
+		m.settings.scrollOffset = 0
 		if v.err != nil {
 			s.recordMutationError(v.err)
 			return m, nil
@@ -524,6 +546,7 @@ func (m Model) handleCodexSettingsMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !s.active || requestID != s.requestID {
 			return m, nil
 		}
+		m.settings.scrollOffset = 0
 		if v.err != nil {
 			s.message = v.err.Error()
 			return m, nil
@@ -549,7 +572,7 @@ func codexPollTick(id uint64) tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return codexPollTickMsg{requestID: id} })
 }
 
-func (m Model) codexSettingsParts() (string, string, string) {
+func (m Model) codexSettingsParts() (string, string, string, int) {
 	s := m.settings.codex
 	var lines []string
 	var actions string
@@ -559,6 +582,7 @@ func (m Model) codexSettingsParts() (string, string, string) {
 	if s.status.PendingRestart {
 		lines = append(lines, settingsRestartNotice)
 	}
+	focus := settingsWrappedRows(lines, max(m.width, 20))
 	switch s.stage {
 	case "setup":
 		lines = append(lines,
@@ -573,6 +597,7 @@ func (m Model) codexSettingsParts() (string, string, string) {
 			"[5] Training statement: "+textutil.SanitizeTerminal(s.policy.TrainingPosture),
 		)
 		if s.editing != "" {
+			focus = settingsWrappedRows(lines, max(m.width, 20))
 			lines = append(lines, "Edit field "+s.editing+": "+s.editor.View())
 		}
 		actions = "[Enter] Sign in with Codex"
@@ -598,6 +623,7 @@ func (m Model) codexSettingsParts() (string, string, string) {
 		for i, model := range s.models {
 			prefix := "  "
 			if i == s.modelCursor {
+				focus = settingsWrappedRows(lines, max(m.width, 20))
 				prefix = "▶ "
 			}
 			lines = append(lines, prefix+textutil.SanitizeTerminal(model.ID))
@@ -630,5 +656,5 @@ func (m Model) codexSettingsParts() (string, string, string) {
 	if actions != "" {
 		actions += "\n"
 	}
-	return m.styles.titleBar.Render("People inference · Codex"), strings.Join(lines, "\n"), actions + "[r] Refresh  [Esc] Cancel and return"
+	return m.styles.titleBar.Render("People inference · Codex"), strings.Join(lines, "\n"), actions + "[r] Refresh  [Esc] Cancel and return", focus
 }

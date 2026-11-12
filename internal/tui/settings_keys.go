@@ -16,8 +16,8 @@ func (m Model) settingsIsNarrow() bool {
 
 func (m Model) handleSettingsKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if !m.settings.confirmDiscard && (msg.String() == keyNamePageUp || msg.String() == keyNamePageDown) {
-		_, body, actions := m.settingsScreen()
-		v, _ := m.settingsViewport(body, actions)
+		title, body, actions, _ := m.settingsScreen()
+		v, _ := m.settingsViewport(title, body, actions)
 		if msg.String() == keyNamePageUp {
 			v.PageUp()
 		} else {
@@ -26,26 +26,7 @@ func (m Model) handleSettingsKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		m.settings.scrollOffset = v.YOffset()
 		return m, nil
 	}
-	updated, cmd := m.handleSettingsKeyPressInner(msg)
-	next, ok := updated.(Model)
-	if !ok {
-		return updated, cmd
-	}
-	before, after := m.settings, next.settings
-	if before.peopleControls.active != after.peopleControls.active || before.codex.active != after.codex.active || before.peopleControls.confirm != after.peopleControls.confirm || before.peopleControls.exitBlocked != after.peopleControls.exitBlocked || before.codex.stage != after.codex.stage || codexSelectionChanged(before, after) || before.editing != after.editing || before.groupCursor != after.groupCursor || before.rowCursor != after.rowCursor || before.narrowFields != after.narrowFields || before.status != after.status || before.codex.message != after.codex.message || before.peopleControls.message != after.peopleControls.message {
-		next.settings.scrollOffset = 0
-		if before.peopleControls.confirm != after.peopleControls.confirm && after.peopleControls.confirm != "" {
-			next.settings.scrollOffset = settingsScrollBottom
-		}
-		if codexSelectionChanged(before, after) || (!after.peopleControls.active && !after.codex.active && (before.groupCursor != after.groupCursor || before.rowCursor != after.rowCursor || before.narrowFields != after.narrowFields || before.editing != after.editing)) {
-			next.settings.scrollOffset = settingsScrollBottom
-		}
-	}
-	return next, cmd
-}
-
-func codexSelectionChanged(before, after settingsState) bool {
-	return before.codex.editing != after.codex.editing || before.codex.modelCursor != after.codex.modelCursor || before.codex.effortCursor != after.codex.effortCursor
+	return m.handleSettingsKeyPressInner(msg)
 }
 
 func (m Model) handleSettingsKeyPressInner(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -62,7 +43,7 @@ func (m Model) handleSettingsKeyPressInner(msg tea.KeyPressMsg) (tea.Model, tea.
 	if m.settings.saving {
 		if msg.String() == keyNameEsc {
 			m.settings.confirmDiscard = false
-			m.settings.status = "Save in progress; wait for it to finish."
+			m.settings.status, m.settings.scrollOffset = "Save in progress; wait for it to finish.", 0
 			m.settings.statusIsError = false
 		}
 		return m, nil
@@ -109,20 +90,27 @@ func (m Model) handleSettingsKeyPressInner(msg tea.KeyPressMsg) (tea.Model, tea.
 	case "up", "k", keyNameCtrlP:
 		if m.settings.rowCursor > 0 {
 			m.settings.rowCursor--
+			m.revealSettingsFocus()
 		}
 	case keyNameDown, "j", keyNameCtrlN:
 		if m.settings.rowCursor+1 < len(m.settings.currentFields()) {
 			m.settings.rowCursor++
+			m.revealSettingsFocus()
 		}
 	case "left", "h":
 		if m.settingsIsNarrow() {
 			m.settings.narrowFields = false
+			m.revealSettingsFocus()
 			return m, nil
 		}
-		m.changeSettingsGroup(-1)
+		if m.settings.groupCursor > 0 {
+			m.changeSettingsGroup(-1)
+			m.revealSettingsFocus()
+		}
 	case keyNameRight, "l":
-		if !m.settingsIsNarrow() {
+		if !m.settingsIsNarrow() && m.settings.groupCursor+1 < len(m.settings.groups) {
 			m.changeSettingsGroup(1)
+			m.revealSettingsFocus()
 		}
 	case keyNameEnter:
 		return m.beginSettingsEdit()
@@ -139,15 +127,18 @@ func (m Model) handleNarrowSettingsCategoryKey(msg tea.KeyPressMsg) (tea.Model, 
 	case "up", "k", keyNameCtrlP:
 		if m.settings.groupCursor > 0 {
 			m.settings.groupCursor--
+			m.revealSettingsFocus()
 		}
 	case keyNameDown, "j", keyNameCtrlN:
 		if m.settings.groupCursor+1 < len(m.settings.groups) {
 			m.settings.groupCursor++
+			m.revealSettingsFocus()
 		}
 	case keyNameEnter, keyNameRight, "l":
 		if len(m.settings.groups) > 0 {
 			m.settings.narrowFields = true
 			m.settings.rowCursor = 0
+			m.revealSettingsFocus()
 		}
 	}
 	return m, nil
@@ -168,7 +159,7 @@ func (m Model) beginSettingsEdit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if field.ReadOnly {
-		m.settings.status = "This setting is read-only; edit it on the daemon host."
+		m.settings.status, m.settings.scrollOffset = "This setting is read-only; edit it on the daemon host.", 0
 		m.settings.statusIsError = false
 		return m, nil
 	}
@@ -191,6 +182,7 @@ func (m Model) beginSettingsEdit() (tea.Model, tea.Cmd) {
 				break
 			}
 		}
+		m.revealSettingsFocus()
 		return m, nil
 	}
 
@@ -206,6 +198,7 @@ func (m Model) beginSettingsEdit() (tea.Model, tea.Cmd) {
 		input.SetValue(m.currentSettingText(field))
 	}
 	m.settings.editor = input
+	m.revealSettingsFocus()
 	return m, m.settings.editor.Focus()
 }
 
@@ -277,7 +270,7 @@ func (m *Model) commitSettingsEdit(field SettingField) bool {
 	}
 	value, err := parseSettingInput(field, raw)
 	if err != nil {
-		m.settings.status = "Invalid value: " + err.Error()
+		m.settings.status, m.settings.scrollOffset = "Invalid value: "+err.Error(), 0
 		m.settings.statusIsError = true
 		return false
 	}

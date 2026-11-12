@@ -1454,28 +1454,14 @@ func (m Model) Update(msg tea.Msg) (result tea.Model, command tea.Cmd) {
 		m.analyticsNotice = msg.Notice
 		return m, nil
 	case settingsLoadedMsg:
-		m.settings.scrollOffset = 0
 		return m.handleSettingsLoaded(msg)
 	case settingsSavedMsg:
-		m.settings.scrollOffset = 0
 		return m.handleSettingsSaved(msg)
 	case peopleControlsLoadedMsg, peopleControlsActionMsg:
-		m.settings.scrollOffset = 0
 		return m.handlePeopleInferenceControlMsg(msg)
-	case codexLoginStartedMsg, codexModelsLoadedMsg,
+	case codexLoginStartedMsg, codexLoginPolledMsg, codexModelsLoadedMsg,
 		codexProfileSavedMsg, codexCheckedMsg, codexConsentedMsg,
-		codexSelectedMsg, codexStatusLoadedMsg:
-		m.settings.scrollOffset = 0
-		return m.handleCodexSettingsMsg(msg)
-	case codexLoginPolledMsg:
-		before := m.settings.codex
-		updated, cmd := m.handleCodexSettingsMsg(msg)
-		if next, ok := updated.(Model); ok && (before.stage != next.settings.codex.stage || before.message != next.settings.codex.message) {
-			next.settings.scrollOffset = 0
-			return next, cmd
-		}
-		return updated, cmd
-	case codexPollTickMsg:
+		codexSelectedMsg, codexStatusLoadedMsg, codexPollTickMsg:
 		return m.handleCodexSettingsMsg(msg)
 	// People messages are delegated before the shared Email handlers.
 	case peopleSearchDebounceMsg:

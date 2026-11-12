@@ -54,7 +54,7 @@ func (m Model) peopleInferenceControlBackend() PeopleInferenceControlBackend {
 
 func (m Model) openPeopleInferenceControls() (tea.Model, tea.Cmd) {
 	if m.settings.dirty() {
-		m.settings.status = "Save or discard settings drafts before changing people inference."
+		m.settings.status, m.settings.scrollOffset = "Save or discard settings drafts before changing people inference.", 0
 		return m, nil
 	}
 	backend := m.peopleInferenceControlBackend()
@@ -66,6 +66,7 @@ func (m Model) openPeopleInferenceControls() (tea.Model, tea.Cmd) {
 	m.settings.peopleControls = peopleInferenceControlState{
 		active: true, loading: true, requestID: m.settingsRequestID, ctx: ctx, cancel: cancel,
 	}
+	m.settings.scrollOffset = 0
 	return m, m.loadPeopleInferenceControls(backend)
 }
 
@@ -82,6 +83,7 @@ func (m Model) closePeopleInferenceControls() Model {
 		m.settings.peopleControls.cancel()
 	}
 	m.settings.peopleControls = peopleInferenceControlState{}
+	m.settings.scrollOffset = 0
 	return m
 }
 
@@ -159,6 +161,9 @@ func (m Model) handlePeopleInferenceControlKey(msg tea.KeyPressMsg) (tea.Model, 
 			s.confirmProfile = s.status.Configured
 		}
 	}
+	if s.confirm != "" {
+		m.revealSettingsFocus()
+	}
 	return m, nil
 }
 
@@ -169,7 +174,7 @@ func (m Model) handlePeopleInferenceControlMsg(msg tea.Msg) (tea.Model, tea.Cmd)
 		if !s.active || v.requestID != s.requestID {
 			return m, nil
 		}
-		s.loading = false
+		s.loading, m.settings.scrollOffset = false, 0
 		s.resolvingMutation = false
 		s.exitBlocked = false
 		if v.err != nil {
@@ -188,7 +193,7 @@ func (m Model) handlePeopleInferenceControlMsg(msg tea.Msg) (tea.Model, tea.Cmd)
 		if !s.active || v.requestID != s.requestID {
 			return m, nil
 		}
-		s.pending = false
+		s.pending, m.settings.scrollOffset = false, 0
 		s.exitBlocked = false
 		if v.err != nil {
 			var conflict *SettingsConflictError
@@ -217,7 +222,7 @@ func (m Model) handlePeopleInferenceControlMsg(msg tea.Msg) (tea.Model, tea.Cmd)
 	return m, nil
 }
 
-func (m Model) peopleControlsParts() (string, string, string) {
+func (m Model) peopleControlsParts() (string, string, string, int) {
 	s := m.settings.peopleControls
 	var lines []string
 	if s.message != "" {
@@ -246,7 +251,9 @@ func (m Model) peopleControlsParts() (string, string, string) {
 		lines = append(lines, "Running: "+textutil.SanitizeTerminal(status.Running))
 	}
 	var actions string
+	focus := 0
 	if s.confirm != "" {
+		focus = settingsWrappedRows(lines, max(m.width, 20))
 		switch s.confirm {
 		case "disable":
 			lines = append(lines, "Disable people inference and revoke active consent?")
@@ -270,5 +277,5 @@ func (m Model) peopleControlsParts() (string, string, string) {
 		}
 		actions += "\n[r] Refresh  [Esc] Back"
 	}
-	return m.styles.titleBar.Render("People inference controls"), strings.Join(lines, "\n"), actions
+	return m.styles.titleBar.Render("People inference controls"), strings.Join(lines, "\n"), actions, focus
 }

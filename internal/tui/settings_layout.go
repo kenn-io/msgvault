@@ -7,21 +7,32 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-const settingsScrollBottom = -1
-
-// settingsViewport keeps the actions outside the scrollable settings content.
-func (m Model) settingsViewport(body, actions string) (viewport.Model, string) {
-	width := max(m.width, 20)
-	footer := wrapActions(actions, width)
-	v := viewport.New(viewport.WithWidth(width), viewport.WithHeight(max(m.height-len(footer)-1, 1)))
-	wrapped := ansi.Wrap(body, width, "")
+// settingsViewport reserves space for the body and reachable actions.
+func (m Model) settingsViewport(title, body, actions string) (viewport.Model, string) {
+	width, titleRows, wrapped, footer := m.settingsViewportContent(title, body, actions)
+	v := viewport.New(viewport.WithWidth(width), viewport.WithHeight(max(m.height-len(footer)-titleRows, 1)))
 	v.SetContent(wrapped)
 	if v.TotalLineCount() > v.Height() {
 		footer = append(footer, "[PgUp/PgDn] Scroll")
-		v.SetHeight(max(m.height-len(footer)-1, 1))
+		v.SetHeight(max(m.height-len(footer)-titleRows, 1))
 	}
-	v.SetYOffset(m.settingsYOffset(v, wrapped))
+	v.SetYOffset(m.settings.scrollOffset)
 	return v, strings.Join(footer, "\n")
+}
+
+func (m Model) settingsViewportContent(title, body, actions string) (int, int, string, []string) {
+	width := max(m.width, 20)
+	footer := wrapActions(actions, width)
+	titleRows := strings.Count(ansi.Wrap(title, width, ""), "\n") + 1
+	wrapped := ansi.Wrap(body, width, "")
+	if len(footer) > m.height-titleRows-2 {
+		wrapped = ansi.Wrap(body+"\n\n"+strings.ReplaceAll(actions, "  [", "\n["), width, "")
+		footer = nil
+		if strings.Contains(actions, "Esc]") {
+			footer = wrapActions("[Esc] Back", width)
+		}
+	}
+	return width, titleRows, wrapped, footer
 }
 
 // wrapActions keeps each key beside the first word of its label when wrapping.
@@ -33,31 +44,18 @@ func wrapActions(actions string, width int) []string {
 	return lines
 }
 
-// settingsYOffset resolves the stored scroll request against the wrapped body.
-// A negative request keeps the selected row visible; results and notices that
-// follow an operation stay at the top, and paging reaches the selection.
-func (m Model) settingsYOffset(v viewport.Model, wrapped string) int {
-	request := m.settings.scrollOffset
-	if request >= 0 {
-		return request
+func settingsWrappedRows(lines []string, width int) int {
+	if len(lines) == 0 {
+		return 0
 	}
-	bottom, cursor := max(v.TotalLineCount()-v.Height(), 0), settingsCursorLine(wrapped)
-	if cursor < 0 {
-		return bottom
-	}
-	return min(bottom, cursor)
+	return strings.Count(ansi.Wrap(strings.Join(lines, "\n"), width, ""), "\n") + 1
 }
 
-// settingsCursorLine finds the selected row: the marker furthest right, which
-// is the field marker when categories are shown beside the fields.
-func settingsCursorLine(wrapped string) int {
-	line, best := -1, -1
-	for i, text := range strings.Split(ansi.Strip(wrapped), "\n") {
-		if at := strings.LastIndex(text, "▶ "); at > best {
-			line, best = i, at
-		}
-	}
-	return line
+func (m *Model) revealSettingsFocus() {
+	title, body, actions, focus := m.settingsScreen()
+	v, _ := m.settingsViewport(title, body, actions)
+	v.SetYOffset(focus)
+	m.settings.scrollOffset = v.YOffset()
 }
 
 // settingsListHeight keeps the notices, the selected row, and the footer on one
@@ -71,7 +69,7 @@ func (m Model) settingsListHeight(notices []string) int {
 	return min(max(m.height-4-len(notices), 4), max(m.height-used, 2))
 }
 
-func (m Model) settingsScreen() (string, string, string) {
+func (m Model) settingsScreen() (string, string, string, int) {
 	if m.settings.peopleControls.active {
 		return m.peopleControlsParts()
 	}
@@ -82,7 +80,7 @@ func (m Model) settingsScreen() (string, string, string) {
 }
 
 func (m Model) settingsScreenView() string {
-	title, body, actions := m.settingsScreen()
-	v, footer := m.settingsViewport(body, actions)
-	return strings.Join([]string{title, v.View(), footer}, "\n")
+	title, body, actions, _ := m.settingsScreen()
+	v, footer := m.settingsViewport(title, body, actions)
+	return strings.Join([]string{ansi.Wrap(title, max(m.width, 20), ""), v.View(), footer}, "\n")
 }

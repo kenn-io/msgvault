@@ -8,7 +8,7 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-const settingsRestartNotice = "Restart pending: on the daemon host, run msgvault daemon restart with its --home and --config, or restart its service."
+const settingsRestartNotice = "Restart pending. On the daemon host, run msgvault daemon restart with the same custom --home and --config values, or restart its service."
 
 func (m Model) renderSettingsView() string {
 	if m.settings.confirmDiscard {
@@ -17,7 +17,7 @@ func (m Model) renderSettingsView() string {
 	return m.settingsScreenView()
 }
 
-func (m Model) mainSettingsParts() (string, string, string) {
+func (m Model) mainSettingsParts() (string, string, string, int) {
 	title := "Settings"
 	if m.settings.dirty() {
 		title += " *"
@@ -50,9 +50,16 @@ func (m Model) mainSettingsParts() (string, string, string) {
 		}
 	}
 	if m.settings.loading {
-		return m.styles.titleBar.Render(title), strings.Join(append(lines, m.styles.loading.Render("Loading settings…")), "\n"), "[Esc] Back"
+		return m.styles.titleBar.Render(title), strings.Join(append(lines, m.styles.loading.Render("Loading settings…")), "\n"), "[Esc] Back", 0
 	}
 	availableHeight := m.settingsListHeight(lines)
+	focus := settingsWrappedRows(lines, max(m.width, 20))
+	if m.settingsIsNarrow() && !m.settings.narrowFields {
+		focus += min(m.settings.groupCursor, max(availableHeight-2, 0)) + 1
+	} else {
+		rows := max(min(len(m.settings.currentFields()), availableHeight/2), 1)
+		focus += min(m.settings.rowCursor, rows-1) + 1
+	}
 	if m.settingsIsNarrow() {
 		if m.settings.narrowFields {
 			lines = append(lines, m.renderSettingsFields(max(m.width, 20), availableHeight))
@@ -64,7 +71,7 @@ func (m Model) mainSettingsParts() (string, string, string) {
 		fieldWidth := max(m.width-categoryWidth-3, 30)
 		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top, m.renderSettingsCategories(categoryWidth, availableHeight), " │ ", m.renderSettingsFields(fieldWidth, availableHeight)))
 	}
-	return m.styles.titleBar.Render(title), strings.Join(lines, "\n"), m.settingsFooter()
+	return m.styles.titleBar.Render(title), strings.Join(lines, "\n"), m.settingsFooter(), focus
 }
 
 func (m Model) renderSettingsCategories(width, height int) string {

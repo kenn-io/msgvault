@@ -23,7 +23,7 @@ func TestSettingsViewportEndpointDetail(t *testing.T) {
 			for range 6 {
 				snapshot.Fields = append(snapshot.Fields, SettingField{Key: "search.field", Group: "search", Label: "Other", Kind: SettingKindString, Value: stringSettingValue("auto")})
 			}
-			snapshot.Fields = append(snapshot.Fields, SettingField{Key: "vector.embeddings.endpoint", Group: "search", Label: "Embedding endpoint", Description: "Endpoint for the embedding service.", RestartRequired: true, Kind: SettingKindString, Value: stringSettingValue(""), Validation: SettingValidation{Hint: "HTTP or HTTPS URL without credentials, query, or fragment."}})
+			snapshot.Fields = append(snapshot.Fields, SettingField{Key: "vector.embeddings.endpoint", Group: "search", Label: "Embedding endpoint", Description: "Endpoint example ▶ value.", RestartRequired: true, Kind: SettingKindString, Value: stringSettingValue(""), Validation: SettingValidation{Hint: "HTTP or HTTPS URL without credentials, query, or fragment."}})
 			model := resizeModel(t, loadedSettingsModel(t, snapshot), tc.width, 12)
 			if tc.width < settingsWideWidth {
 				model, _ = sendKey(t, model, keyEnter())
@@ -33,6 +33,7 @@ func TestSettingsViewportEndpointDetail(t *testing.T) {
 			}
 			screen := uv.NewScreenBuffer(tc.width, 12)
 			uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+			assert.Contains(t, screen.String(), "▶   Embedding endpoint")
 			assert.Contains(t, screen.String(), "HTTP or HTTPS URL without credentials")
 		})
 	}
@@ -103,7 +104,7 @@ func TestSettingsViewportSettingsRestartNotice(t *testing.T) {
 				return
 			}
 			assert.Equal(t, 1, strings.Count(view, "msgvault daemon restart"))
-			assert.Contains(t, view, "on the daemon host, run msgvault daemon restart with its --home and --config, or restart its service")
+			assert.Contains(t, view, "On the daemon host, run msgvault daemon restart with the same custom --home and --config values, or restart its service")
 		})
 	}
 }
@@ -116,7 +117,7 @@ func TestSettingsViewportCodexRestartNotice(t *testing.T) {
 	screen := uv.NewScreenBuffer(80, 24)
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	view := strings.Join(strings.Fields(screen.String()), " ")
-	assert.Contains(t, view, "on the daemon host, run msgvault daemon restart with its --home and --config, or restart its service")
+	assert.Contains(t, view, "On the daemon host, run msgvault daemon restart with the same custom --home and --config values, or restart its service")
 	assert.Contains(t, view, "[Esc] Cancel and return")
 }
 
