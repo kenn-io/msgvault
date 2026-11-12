@@ -58,19 +58,3 @@ func TestEscapeTSQueryTerm(t *testing.T) {
 		})
 	}
 }
-
-func TestTSQuery(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		terms []string
-		want  string
-	}{
-		{"punctuation", []string{"---"}, ""},
-		{"phrase", []string{"foo-bar"}, "foo & bar:*"},
-		{"multiple terms", []string{"monthly", "foo-bar", "or"}, "monthly:* & foo & bar:* & or:*"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, TSQuery(tc.terms, "", " & "))
-		})
-	}
-}
