@@ -216,7 +216,7 @@ it.each([
     '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
     '/api/v1/identity/links': async request => {
       links.push(await request.json()); calls += 1;
-      if (outcome === 'merges') return calls === 1 ? Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1]) }, { etag: '"person-9-r2"', person: profile(9, 2, [2]) }] }, { status: 409 }) : Response.json({ identity_revision: 9, cache_state: 'stale' });
+      if (outcome === 'merges') return calls === 1 ? Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1]) }, { etag: '"person-9-r2"', person: profile(9, 2, [2]) }] }, { status: 409 }) : Response.json({ identity_revision: 9, cache_state: 'ready' });
       return calls === 1 ? Response.json({ identity_revision: 5, cache_state: 'ready' }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 });
     },
     '/api/v1/people/9/merge': () => { merged = true; return Response.json(mergeResult(survivor, 'stale'), { headers: { ETag: '"person-9-r3"' } }); },
@@ -832,7 +832,7 @@ it('keeps bulk progress when a later link fails', async () => {
   let writes = 0;
   const client = clientFor({
     '/api/v1/relationships': () => Response.json({ rows: ['Alice Example', 'Bob Example', 'Cara Example'].map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { sent_count: 3, received_from_them: 1, modalities: 2, sent_to_them: 1, meetings_together: 0, meeting_count: 0, last_interaction_at: when } })) }),
-    '/api/v1/identity/links': () => ++writes === 1 ? Response.json({ identity_revision: 2, cache_state: 'stale' }) : Response.json({ message: 'Cara link failed' }, { status: 500 }),
+    '/api/v1/identity/links': () => ++writes === 1 ? Response.json({ identity_revision: 2, cache_state: 'ready' }) : Response.json({ message: 'Cara link failed' }, { status: 500 }),
   });
   const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
   const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
