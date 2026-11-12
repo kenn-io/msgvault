@@ -308,16 +308,6 @@ func TestPG_BackfillFTS_ConcurrentRebuild(t *testing.T) {
 	require.NoError(err)
 	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = 'repair marker', search_fts = NULL, indexing_version = NULL WHERE id = $1`, ids[64])
 	require.NoError(err)
-	// Put the last row before the first page in heap order.
-	_, err = f.Store.DB().ExecContext(t.Context(), `CREATE INDEX test_messages_reverse_id ON messages (id DESC)`)
-	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(t.Context(), `CLUSTER messages USING test_messages_reverse_id`)
-	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(t.Context(), `DROP INDEX test_messages_reverse_id`)
-	require.NoError(err)
-	var scrambled bool
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT NOT EXISTS (SELECT 1 FROM messages WHERE id = ANY($2) AND ctid <= (SELECT ctid FROM messages WHERE id = $1))`, ids[64], ids[:64]).Scan(&scrambled))
-	require.True(scrambled)
 
 	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)

@@ -2608,7 +2608,7 @@ func (s *postgresBackfillStore) BackfillFTSContext(ctx context.Context, _ func(i
 	return 0, ctx.Err()
 }
 
-func TestHandleCLISearchPostgresBackfillAllowsOtherOperations(t *testing.T) {
+func TestPostgresStartupSearchRepairLifecycle(t *testing.T) {
 	t.Run("startup begins search repair", func(t *testing.T) {
 		require := require.New(t)
 		base := testutil.NewTestStore(t)

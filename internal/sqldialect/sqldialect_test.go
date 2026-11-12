@@ -38,6 +38,8 @@ func TestEscapeTSQueryTerm(t *testing.T) {
 		{"whitespace_splits", "hello world", []string{"hello", "world"}},
 		{"all_meta_empty", "&|!():*\\'", nil},
 		{"colon_splits", "user:foo", []string{"user", "foo"}},
+		{"angle_digit", "<3", []string{"3"}},
+		{"angles_only", "<>=#$", nil},
 
 		// R3 regression cases: previously these leaked punctuation
 		// into the tsquery argument and caused to_tsquery to error.

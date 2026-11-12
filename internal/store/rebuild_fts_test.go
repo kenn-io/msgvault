@@ -242,4 +242,31 @@ func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
 			}
 		})
 	}
+	if f.Store.IsPostgreSQL() {
+		t.Run("damaged beeper payloads", func(t *testing.T) {
+			for _, tc := range []struct{ key, compression, raw string }{
+				{"brokenzlib", "zlib", "invalid compressed data"},
+				{"brokenjson", "none", "{"},
+			} {
+				id := f.CreateMessage(tc.key)
+				pid := f.EnsureParticipant(tc.key+"@example.test", "Sender", "example.test")
+				_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET message_type = 'beeper', sender_id = $1 WHERE id = $2`, pid, id)
+				require.NoError(t, err)
+				require.NoError(t, f.Store.UpsertMessageRawWithFormat(id, []byte(`{"senderName":"original"}`), "beeper_json"))
+				_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE message_raw SET raw_data = $1, compression = $2 WHERE message_id = $3`, []byte(tc.raw), tc.compression, id)
+				require.NoError(t, err)
+			}
+			later := f.NewMessage().WithSourceMessageID("later").WithSubject("latersearchable").Create(t, f.Store)
+			_, err := f.Store.BackfillFTS(nil)
+			require.NoError(t, err)
+			assertFTSContains(t, f.Store, "brokenzlib", 1)
+			assertFTSContains(t, f.Store, "brokenjson", 1)
+			matches, total, err := f.Store.SearchMessages("latersearchable", 0, 10)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, total)
+			require.Len(t, matches, 1)
+			assert.Equal(t, later, matches[0].ID)
+		})
+	}
+
 }

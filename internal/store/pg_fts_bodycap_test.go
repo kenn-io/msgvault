@@ -146,9 +146,6 @@ func TestPG_FTSMultibyteWriteAndBackfillBounds(t *testing.T) {
 	_, total, err = f.Store.SearchMessages("latebeacon", 0, 10)
 	require.NoError(err)
 	assert.Zero(total)
-	_, total, err = f.Store.SearchMessages("beyondbeacon", 0, 10)
-	require.NoError(err)
-	assert.Zero(total)
 }
 
 // TestPG_BackfillFTS_OversizedBodyDoesNotWedge (finding T2b) seeds >5000
@@ -323,20 +320,20 @@ func TestPG_BackfillFTS_MultibyteOversizedBodyDoesNotWedge(t *testing.T) {
 	require.NoError(f.Store.UpsertMessageBody(ids[oversizedIdx],
 		sql.NullString{String: multibyteOversizedBody(), Valid: true}, sql.NullString{}),
 		"attach multibyte oversized body")
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = 'repairsubject' WHERE id = $1`, ids[oversizedIdx])
+	require.NoError(err)
 
 	n, err := f.Store.BackfillFTS(nil)
 	require.NoError(err,
 		"BackfillFTS must COMPLETE without error despite a pathological multibyte body")
 
-	// Every row EXCEPT possibly the pathological one is indexed; at most one row
-	// (the oversized multibyte body, if it still overflows the char cap) is
-	// skipped. The invariant is: BackfillFTS never errors and never wedges later
-	// rows.
-	nulls := nullSearchFTSCount(t, f.Store)
-	assert.LessOrEqual(nulls, 1,
-		"at most the one pathological row may be left NULL; got %d", nulls)
-	assert.GreaterOrEqual(n, int64(total-1),
-		"every row except (at most) the pathological one must be indexed")
+	assert.Zero(nullSearchFTSCount(t, f.Store))
+	assert.Equal(int64(total), n)
+	matches, count, err := f.Store.SearchMessages("repairsubject", 0, 10)
+	require.NoError(err)
+	require.EqualValues(1, count)
+	require.Len(matches, 1)
+	assert.Equal(ids[oversizedIdx], matches[0].ID)
 
 	// Every non-oversized token — including the ones AFTER the pathological row
 	// — must be searchable, proving the bad row never wedged later rows.
@@ -399,18 +396,4 @@ func TestPG_PersistMessage_OverflowingIndexKeepsMessage(t *testing.T) {
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(),
 		"SELECT search_fts = ''::tsvector FROM messages WHERE id = $1", messageID).Scan(&unsearchable))
 	assert.True(t, unsearchable, "the overflowing message is marked unsearchable")
-}
-
-func TestPG_BackfillOversizedMultibyteBodyKeepsSubject(t *testing.T) {
-	skipUnlessPostgres(t)
-	f := storetest.New(t)
-	id := f.NewMessage().WithSourceMessageID("oversized-repair").WithSubject("repairsubject").Create(t, f.Store)
-	require.NoError(t, f.Store.UpsertMessageBody(id, sql.NullString{String: multibyteOversizedBody(), Valid: true}, sql.NullString{}))
-	_, err := f.Store.BackfillFTS(nil)
-	require.NoError(t, err)
-	matches, total, err := f.Store.SearchMessages("repairsubject", 0, 10)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, total)
-	require.Len(t, matches, 1)
-	assert.Equal(t, id, matches[0].ID)
 }

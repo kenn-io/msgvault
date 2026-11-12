@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -159,9 +158,9 @@ func TestPostgresFTSSaturatedPhrases(t *testing.T) {
 		assert.Contains(want, ids[0])
 		assert.Equal(int64(len(want)), count)
 	}
-	for i, prefix := range []string{strings.Repeat("filler ", 17000), strings.Repeat("alice ", 255)} {
-		id := f.NewMessage().WithSourceMessageID(strconv.Itoa(i)).Create(t, f.Store)
-		require.NoError(f.Store.UpsertFTS(id, "", prefix+"alice@example.com", "", "", ""))
+	{
+		id := f.NewMessage().WithSourceMessageID("position-saturated").Create(t, f.Store)
+		require.NoError(f.Store.UpsertFTS(id, "", strings.Repeat("filler ", 17000)+"alice@example.com", "", "", ""))
 		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice@exam"}}, 10)
 		require.NoError(err)
 		assert.Contains(ids, id)

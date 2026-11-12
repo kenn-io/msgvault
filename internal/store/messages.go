@@ -7049,18 +7049,14 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 			}
 			if len(raw) > 0 {
 				decoded, err := decodeMessageRaw(raw, compression)
-				if err != nil {
-					_ = rows.Close()
-					return 0, fmt.Errorf("decode message %d for FTS: %w", doc.MessageID, err)
+				if err == nil {
+					var message struct {
+						SenderName string `json:"senderName"`
+					}
+					if json.Unmarshal(decoded, &message) == nil {
+						doc.FromAddr = message.SenderName
+					}
 				}
-				var message struct {
-					SenderName string `json:"senderName"`
-				}
-				if err := json.Unmarshal(decoded, &message); err != nil {
-					_ = rows.Close()
-					return 0, fmt.Errorf("parse message %d for FTS: %w", doc.MessageID, err)
-				}
-				doc.FromAddr = message.SenderName
 			}
 			doc, fields := preparePostgresFTSDoc(doc)
 			encoded, err := json.Marshal(fields, json.FormatNilSliceAsNull(true))

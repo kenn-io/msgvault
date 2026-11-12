@@ -83,6 +83,8 @@ func PostgreSQLBodyPredicate(arg string, terms []string) string {
 	return "(m.search_fts @@ to_tsquery('simple', " + arg + ") AND ((m.search_fts_fields IS NULL AND m.search_fts @@ to_tsquery('simple', '" + TSQuery(terms, "D") + "')) OR (m.search_fts_fields IS NOT NULL AND " + strings.Join(checks, " AND ") + ")))"
 }
 
+func ftsTokenRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+
 // EscapeTSQueryTerm tokenizes a single user-supplied search term into
 // PostgreSQL `to_tsquery`-safe lexemes. The input is split on every
 // rune that isn't a Unicode letter or digit, so inputs that previously
@@ -104,7 +106,7 @@ func EscapeTSQueryTerm(s string) []string {
 		}
 	}
 	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		if ftsTokenRune(r) {
 			cur.WriteRune(r)
 		} else {
 			flush()
@@ -122,7 +124,7 @@ func FoldFTSText(s string) (string, []int) {
 	for i, r := range s {
 		end := i + utf8.RuneLen(r)
 		length := end - i
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		if ftsTokenRune(r) {
 			length, _ = b.WriteRune(unicode.ToLower(r))
 		} else {
 			for range length {
