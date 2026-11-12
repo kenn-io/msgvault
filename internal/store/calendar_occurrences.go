@@ -207,17 +207,6 @@ func calendarEventOccurrence(e calevent.Event, id int64) calrecur.Occurrence {
 	return o
 }
 
-// compareMeetingStart orders unknown (zero) starts after known ones.
-func compareMeetingStart(a, b time.Time) int {
-	if a.IsZero() != b.IsZero() {
-		if a.IsZero() {
-			return 1
-		}
-		return -1
-	}
-	return a.Compare(b)
-}
-
 func calendarOriginalStart(original calrecur.Identity, event calevent.Event) (time.Time, error) {
 	if !original.AllDay {
 		return original.Instant, nil

@@ -257,12 +257,12 @@ func TestMeetingRecordCompleteAndPartialCopies(t *testing.T) {
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
 	require.NoError(err)
 	require.Len(record.Links, 2)
-	assert.Equal(fmt.Sprintf("evt:%d", complete), record.Links[0].Ref)
-	assert.Equal(fmt.Sprintf("evt:%d", sparse), record.Links[1].Ref)
-	assert.NotNil(record.Links[0].Start)
-	assert.NotNil(record.Links[0].End)
-	assert.Nil(record.Links[1].Start)
-	assert.Nil(record.Links[1].End)
+	assert.Equal(fmt.Sprintf("evt:%d", sparse), record.Links[0].Ref)
+	assert.Equal(fmt.Sprintf("evt:%d", complete), record.Links[1].Ref)
+	assert.Nil(record.Links[0].Start)
+	assert.Nil(record.Links[0].End)
+	assert.NotNil(record.Links[1].Start)
+	assert.NotNil(record.Links[1].End)
 }
 
 func TestMeetingRecordNoteLookupSharesBudget(t *testing.T) {
@@ -862,5 +862,5 @@ func TestUniqueMeetingOccurrencesOrder(t *testing.T) {
 	items := []CalendarOccurrence{{Ref: "evt:10", MessageID: 10, Start: start}, {Ref: "evt:9", MessageID: 9, Start: start}, {Ref: "evt:11", MessageID: 11, Start: start.Add(-time.Hour)}, {Ref: "evt:9", MessageID: 9, Start: start}, {Ref: "evt:1", MessageID: 1}}
 	got := uniqueMeetingOccurrences(items)
 	require.Len(t, got, 4)
-	assert.Equal(t, []string{"evt:11", "evt:9", "evt:10", "evt:1"}, []string{got[0].Ref, got[1].Ref, got[2].Ref, got[3].Ref})
+	assert.Equal(t, []string{"evt:1", "evt:11", "evt:9", "evt:10"}, []string{got[0].Ref, got[1].Ref, got[2].Ref, got[3].Ref})
 }
