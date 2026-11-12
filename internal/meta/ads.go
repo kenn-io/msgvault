@@ -15,6 +15,9 @@ const adCreativesEdge PostEdge = "adcreatives"
 
 const instagramMediaFields = "id,caption,timestamp,permalink,owner{id}"
 
+// fieldsParam is the Graph query parameter that selects response fields.
+const fieldsParam = "fields"
+
 var instagramAdEdges = [...]PostEdge{instagramMediaEdge, adCreativesEdge}
 
 type AdCreative struct {
@@ -34,7 +37,7 @@ func (c *Client) AdCreatives(ctx context.Context, account, after string) (AdCrea
 		return AdCreativePage{}, errors.New("invalid ad account ID")
 	}
 	page, err := readObjectPage(ctx, c, "act_"+account+"/adcreatives", after, url.Values{
-		"fields": {"id,effective_instagram_media_id"}, "limit": {"100"},
+		fieldsParam: {"id,effective_instagram_media_id"}, "limit": {"100"},
 	}, func(creative AdCreative) string { return creative.ID })
 	if err != nil {
 		return AdCreativePage{}, err
@@ -52,7 +55,7 @@ func (c *Client) InstagramMediaByID(ctx context.Context, id string) (IGMedia, er
 		return IGMedia{}, errors.New("invalid Instagram media ID")
 	}
 	var media IGMedia
-	if err := c.get(ctx, url.PathEscape(id), url.Values{"fields": {instagramMediaFields}}, &media); err != nil {
+	if err := c.get(ctx, url.PathEscape(id), url.Values{fieldsParam: {instagramMediaFields}}, &media); err != nil {
 		return IGMedia{}, err
 	}
 	if media.ID != id {
