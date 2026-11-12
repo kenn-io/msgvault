@@ -6,11 +6,14 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"go.kenn.io/kit/atomicfile"
 )
 
 // Change is one change of a delivery entry: entry.id names the Page or
@@ -55,15 +58,20 @@ const maxRetryTime = time.Hour
 // waiting to retry failures, the failing change is logged and skipped, and
 // each remaining change of that delivery gets a single attempt, still
 // waiting out a busy source. A change that fails permanently is logged and
-// skipped at once.
+// skipped at once. A delivery that cannot be read, or not removed once
+// applied, is set aside under a dot-name so the deliveries after it still
+// apply.
 type Worker struct {
 	pending  string
 	handlers map[Field]FieldHandler
 	wake     chan struct{}
+	// stuck holds deliveries that could be neither removed nor set aside.
+	// Run skips them until the daemon restarts. Only Run uses it.
+	stuck map[string]bool
 }
 
 func NewWorker(pending string, handlers map[Field]FieldHandler) *Worker {
-	return &Worker{pending: pending, handlers: handlers, wake: make(chan struct{}, 1)}
+	return &Worker{pending: pending, handlers: handlers, wake: make(chan struct{}, 1), stuck: map[string]bool{}}
 }
 
 // Wake makes Run look for new deliveries.
@@ -75,7 +83,7 @@ func (w *Worker) Wake() {
 }
 
 // Run applies deliveries, including any stored before a restart, until ctx
-// ends or the pending directory cannot be used.
+// ends or the pending directory cannot be listed.
 func (w *Worker) Run(ctx context.Context) error {
 	for {
 		entries, err := os.ReadDir(w.pending)
@@ -84,7 +92,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		}
 		applied := 0
 		for _, entry := range entries {
-			if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			if !entry.Type().IsRegular() || strings.HasPrefix(entry.Name(), ".") || w.stuck[entry.Name()] {
 				continue
 			}
 			if err := w.process(ctx, entry.Name()); err != nil {
@@ -106,15 +114,21 @@ func (w *Worker) Run(ctx context.Context) error {
 func (w *Worker) process(ctx context.Context, name string) error {
 	path := filepath.Join(w.pending, name)
 	body, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
-		return fmt.Errorf("read Meta webhook delivery: %w", err)
+		slog.Warn("Meta webhook delivery cannot be read; setting it aside", "delivery", name, "error", err)
+		w.setAside(name)
+		return nil
 	}
 	_, rest, _ := strings.Cut(name, "-")
 	app, _, _ := strings.Cut(rest, "-")
 	var envelope envelope
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		slog.Warn("Meta webhook delivery dropped", "delivery", name, "error", err)
-		return remove(path)
+		w.remove(name)
+		return nil
 	}
 	// The retry budget covers the whole delivery, so failures block the queue
 	// for about maxRetryTime at most.
@@ -139,7 +153,8 @@ func (w *Worker) process(ctx context.Context, name string) error {
 			}
 		}
 	}
-	return remove(path)
+	w.remove(name)
+	return nil
 }
 
 // applyWithRetry applies one change. A busy source is retried after a wait
@@ -182,11 +197,25 @@ func applyWithRetry(ctx context.Context, log *slog.Logger, budget *time.Duration
 	}
 }
 
-func remove(path string) error {
-	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("remove applied Meta webhook delivery: %w", err)
+// remove deletes a delivery that was applied or dropped. If that fails, it
+// sets the delivery aside so it is not applied again.
+func (w *Worker) remove(name string) {
+	err := os.Remove(filepath.Join(w.pending, name))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		slog.Warn("Meta webhook delivery cannot be removed; setting it aside", "delivery", name, "error", err)
+		w.setAside(name)
 	}
-	return nil
+}
+
+// setAside renames a delivery to ".<name>.set-aside", which Run and the
+// handler's caps ignore, for an operator to inspect. If the rename fails
+// too, Run skips the delivery until the daemon restarts.
+func (w *Worker) setAside(name string) {
+	err := atomicfile.Replace(filepath.Join(w.pending, name), filepath.Join(w.pending, "."+name+".set-aside"))
+	if err != nil {
+		slog.Error("Meta webhook delivery cannot be set aside; skipping it until restart", "delivery", name, "error", err)
+		w.stuck[name] = true
+	}
 }
 
 type envelope struct {

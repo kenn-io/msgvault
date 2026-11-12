@@ -371,6 +371,111 @@ func TestWorkerRetriesEachChangeInOrderAndAppliesTheRest(t *testing.T) {
 	})
 }
 
+// skipIfPermissionsIgnored skips when this user can read a file with mode 0
+// or write into a read-only directory, as root can and as Windows allows.
+func skipIfPermissionsIgnored(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	probe := filepath.Join(dir, "probe")
+	require.NoError(t, os.WriteFile(probe, nil, 0))
+	_, readErr := os.ReadFile(probe)
+	require.NoError(t, os.Chmod(dir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	writeErr := os.WriteFile(filepath.Join(dir, "other"), nil, 0o600)
+	if readErr == nil || writeErr == nil {
+		t.Skip("file permissions do not stop this user (root, or Windows), so the files cannot be made unreadable or undeletable")
+	}
+}
+
+// feedDelivery returns a page delivery with one feed change per value.
+func feedDelivery(values ...string) []byte {
+	changes := make([]string, len(values))
+	for i, value := range values {
+		changes[i] = `{"field":"feed","value":` + value + `}`
+	}
+	return []byte(`{"object":"page","entry":[{"id":"100","changes":[` + strings.Join(changes, ",") + `]}]}`)
+}
+
+func TestWorkerSetsAsideADeliveryItCannotRead(t *testing.T) {
+	skipIfPermissionsIgnored(t)
+	synctest.Test(t, func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		h, dir := newTestHandler(t)
+		var applied []string
+		feed := func(_ context.Context, change Change) error {
+			applied = append(applied, string(change.Values[0]))
+			return nil
+		}
+		w := NewWorker(dir, map[Field]FieldHandler{{"page", "feed"}: feed})
+		require.NoError(h.store("9", feedDelivery(`"unreadable"`)))
+		names := pendingFiles(t, dir)
+		require.Len(names, 1)
+		require.NoError(os.Chmod(filepath.Join(dir, names[0]), 0))
+		require.NoError(h.store("9", feedDelivery(`"later"`)))
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error)
+		go func() { done <- w.Run(ctx) }()
+
+		synctest.Wait()
+		assert.Equal([]string{`"later"`}, applied, "a later delivery still applies")
+		assert.Equal([]string{"." + names[0] + ".set-aside"}, pendingFiles(t, dir), "the unreadable delivery is set aside")
+
+		require.NoError(h.store("9", feedDelivery(`"after"`)))
+		w.Wake()
+		synctest.Wait()
+		assert.Equal([]string{`"later"`, `"after"`}, applied, "the worker keeps running")
+		cancel()
+		require.ErrorIs(<-done, context.Canceled)
+	})
+}
+
+func TestWorkerSkipsADeliveryItCannotRemoveOrSetAside(t *testing.T) {
+	skipIfPermissionsIgnored(t)
+	synctest.Test(t, func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		h, dir := newTestHandler(t)
+		var applied []string
+		feed := func(_ context.Context, change Change) error {
+			applied = append(applied, string(change.Values[0]))
+			return nil
+		}
+		w := NewWorker(dir, map[Field]FieldHandler{{"page", "feed"}: feed})
+		require.NoError(h.store("9", feedDelivery(`"stuck"`)))
+		stuck := pendingFiles(t, dir)
+		require.NoError(os.Chmod(dir, 0o500)) // neither remove nor rename can succeed
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error)
+		go func() { done <- w.Run(ctx) }()
+
+		synctest.Wait() // a worker that re-listed the directory forever would never block here
+		assert.Equal([]string{`"stuck"`}, applied)
+		assert.Equal(stuck, pendingFiles(t, dir), "the delivery stays where it is")
+
+		require.NoError(os.Chmod(dir, 0o700))
+		require.NoError(h.store("9", feedDelivery(`"next"`)))
+		w.Wake()
+		synctest.Wait()
+		assert.Equal([]string{`"stuck"`, `"next"`}, applied, "the stuck delivery is not applied again and the worker keeps running")
+		cancel()
+		require.ErrorIs(<-done, context.Canceled)
+	})
+}
+
+func TestNewHandlerStartsWhenAStagingFileCannotBeRemoved(t *testing.T) {
+	skipIfPermissionsIgnored(t)
+	require := require.New(t)
+	dir := filepath.Join(t.TempDir(), "pending")
+	require.NoError(os.MkdirAll(dir, 0o700))
+	staging := filepath.Join(dir, ".x.json.tmp-123")
+	require.NoError(os.WriteFile(staging, []byte(`{}`), 0o600))
+	require.NoError(os.Chmod(dir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	_, err := NewHandler(map[string]App{"9": {Secret: []byte(testSecret), VerifyToken: "synthetic-verify"}}, dir, nil)
+	require.NoError(err, "a staging file that cannot be removed does not stop the daemon")
+	assert.FileExists(t, staging)
+}
+
 func TestWorkerWaitsOutABusySourceWithoutSpendingTheRetryBudget(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
