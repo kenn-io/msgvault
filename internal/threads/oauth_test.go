@@ -1,0 +1,332 @@
+package threads
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestThreadsOAuthFullCallback(t *testing.T) {
+	const registered = "https://example.com/threads-callback?tenant=archive"
+	const good = registered + "&code=code%2Bvalue&state=expected"
+	cases := []struct {
+		name, registered, returned, state string
+		valid                             bool
+	}{
+		{"valid", registered, good, "expected", true},
+		{"fragment", registered, good + "#_", "expected", true},
+		{"hostname case", registered, strings.Replace(good, "example.com", "EXAMPLE.COM", 1), "expected", true},
+		{"default port", registered, strings.Replace(good, "example.com", "example.com:443", 1), "expected", true},
+		{"empty registered path", "https://example.com", "https://example.com/?code=code%2Bvalue&state=expected", "expected", true},
+		{"empty returned path", "https://example.com/", "https://example.com?code=code%2Bvalue&state=expected", "expected", true},
+		{"missing state", registered, registered + "&code=secret", "expected", false},
+		{"wrong state", registered, good, "other", false},
+		{"empty expected", registered, good, "", false},
+		{"duplicate state", registered, good + "&state=expected", "expected", false},
+		{"duplicate code", registered, good + "&code=secret", "expected", false},
+		{"duplicate registered", registered, good + "&tenant=archive", "expected", false},
+		{"bare code", registered, "secret", "expected", false},
+		{"origin", registered, strings.Replace(good, "example.com", "attacker.example", 1), "expected", false},
+		{"port", registered, strings.Replace(good, "example.com", "example.com:444", 1), "expected", false},
+		{"path", registered, strings.Replace(good, "/threads-callback", "/other", 1), "expected", false},
+		{"query", registered, strings.Replace(good, "tenant=archive", "tenant=other", 1), "expected", false},
+		{"extra query", registered, good + "&extra=1", "expected", false},
+		{"userinfo", registered, strings.Replace(good, "https://", "https://secret@", 1), "expected", false},
+		{"bad escape", registered, good + "&x=%zz", "expected", false},
+		{"http", "http://example.com/callback", "http://example.com/callback?code=secret&state=expected", "expected", false},
+		{"loopback", "https://127.0.0.1/callback", "https://127.0.0.1/callback?code=secret&state=expected", "expected", false},
+		{"localhost", "https://localhost/callback", "https://localhost/callback?code=secret&state=expected", "expected", false},
+		{"registered fragment", registered + "#_", good, "expected", false},
+		{"registered reserved query", "https://example.com/cb?state=expected", good, "expected", false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			code, err := ParseOAuthCallback(tt.registered, tt.returned, tt.state)
+			if tt.valid {
+				requirements.NoError(err)
+				assertions.Equal("code+value", code)
+			} else {
+				requirements.Error(err)
+				assertions.Empty(code)
+				assertions.NotContains(err.Error(), "secret")
+				assertions.NotContains(err.Error(), tt.returned)
+			}
+		})
+	}
+	t.Run("authorization denied", func(t *testing.T) {
+		_, err := ParseOAuthCallback(registered, good+"&error=access_denied&error_description=secret", "expected")
+		require.Error(t, err)
+		callback := registered + "&state=expected&error=access_denied&error_description=provider-secret"
+		_, err = ParseOAuthCallback(registered, callback, "expected")
+		require.EqualError(t, err, "threads authorization was denied")
+		_, err = ParseOAuthCallback(registered, callback, "other")
+		require.EqualError(t, err, "invalid Threads OAuth callback")
+	})
+	t.Run("random state", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		first, err := NewOAuthState()
+		requirements.NoError(err)
+		raw, err := base64.RawURLEncoding.DecodeString(first)
+		requirements.NoError(err)
+		assertions.Len(raw, 32)
+		second, err := NewOAuthState()
+		requirements.NoError(err)
+		assertions.NotEqual(first, second)
+	})
+}
+
+var oauthTestNow = time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+
+const oauthTestOwner = "9007199254740993123"
+const oauthTestCallback = "https://example.com/threads-callback?tenant=archive"
+
+// This provider is an external boundary fixture: requests are parsed by a real
+// HTTP server and must satisfy the documented exchange/debug contract.
+type oauthFixture struct {
+	server                       *httptest.Server
+	calls                        atomic.Int32
+	paths                        []string
+	debugApp, debugOwner         string
+	scopes                       []string
+	valid                        bool
+	issued, expires, dataExpires time.Time
+	redirectURI                  string
+	failPath                     string
+	failStatus, failCode         int
+}
+
+func newOAuthFixture(t *testing.T) *oauthFixture {
+	t.Helper()
+	f := &oauthFixture{redirectURI: oauthTestCallback, debugApp: "123", debugOwner: oauthTestOwner, scopes: []string{"threads_basic", "threads_read_replies"}, valid: true, issued: oauthTestNow.Add(-8 * 24 * time.Hour), expires: oauthTestNow.Add(60 * 24 * time.Hour), dataExpires: oauthTestNow.Add(90 * 24 * time.Hour)}
+	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.calls.Add(1)
+		f.paths = append(f.paths, r.URL.Path)
+		assert.NotContains(t, r.URL.Path, "v1.0")
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == f.failPath {
+			w.WriteHeader(f.failStatus)
+			_, _ = fmt.Fprintf(w, `{"error":{"code":%d,"message":"provider-secret-body"}}`, f.failCode)
+			return
+		}
+		switch r.URL.Path {
+		case "/oauth/access_token":
+			assert.Equal(t, http.MethodPost, r.Method)
+			if !assert.NoError(t, r.ParseForm()) {
+				return
+			}
+			assert.Empty(t, r.URL.RawQuery)
+			assert.Equal(t, "123", r.PostForm.Get("client_id"))
+			assert.Equal(t, "app-secret", r.PostForm.Get("client_secret"))
+			assert.Equal(t, "authorization-code", r.PostForm.Get("code"))
+			assert.Equal(t, "authorization_code", r.PostForm.Get("grant_type"))
+			assert.Equal(t, f.redirectURI, r.PostForm.Get("redirect_uri"))
+			_, _ = fmt.Fprintf(w, `{"access_token":"short-secret","user_id":%s}`, oauthTestOwner)
+		case "/access_token":
+			assert.Equal(t, http.MethodGet, r.Method)
+			assert.Equal(t, "th_exchange_token", r.URL.Query().Get("grant_type"))
+			assert.Equal(t, "app-secret", r.URL.Query().Get("client_secret"))
+			assert.Equal(t, "short-secret", r.URL.Query().Get("access_token"))
+			_, _ = fmt.Fprint(w, `{"access_token":"long-secret","token_type":"bearer","expires_in":5184000}`)
+		case "/me":
+			assert.Equal(t, "id,username,name", r.URL.Query().Get("fields"))
+			assert.Equal(t, "long-secret", r.URL.Query().Get("access_token"))
+			_, _ = fmt.Fprintf(w, `{"id":"%s","username":"example_owner","name":"Example Owner"}`, oauthTestOwner)
+		case "/debug_token":
+			assert.Equal(t, "TH|123|app-secret", r.URL.Query().Get("access_token"))
+			assert.Equal(t, "long-secret", r.URL.Query().Get("input_token"))
+			body := map[string]any{"data": map[string]any{"app_id": f.debugApp, "user_id": f.debugOwner, "is_valid": f.valid, "scopes": f.scopes, "issued_at": f.issued.Unix(), "expires_at": f.expires.Unix(), "data_access_expires_at": f.dataExpires.Unix()}}
+			if f.debugApp == "" {
+				data, ok := body["data"].(map[string]any)
+				if !assert.True(t, ok) {
+					return
+				}
+				delete(data, "app_id")
+			}
+			data, err := json.Marshal(body)
+			if !assert.NoError(t, err) {
+				return
+			}
+			_, err = w.Write(data)
+			assert.NoError(t, err)
+		default:
+			assert.Fail(t, "unexpected OAuth endpoint")
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(f.server.Close)
+	return f
+}
+func (f *oauthFixture) options() OAuthClientOptions {
+	return OAuthClientOptions{HTTPClient: f.server.Client(), OAuthBaseURL: f.server.URL, Now: func() time.Time { return oauthTestNow }}
+}
+func testOAuthRequest() OAuthRequest {
+	return NewOAuthRequest("123", oauthTestCallback, "authorization-code", "app-secret")
+}
+
+func TestThreadsTokenLifecycleExchange(t *testing.T) {
+	t.Run("verified long token", func(t *testing.T) {
+		assertions := assert.New(t)
+		f := newOAuthFixture(t)
+		r, err := ExchangeCredential(t.Context(), f.options(), testOAuthRequest())
+		require.NoError(t, err)
+		assertions.Equal("long-secret", r.AccessToken())
+		assertions.Equal("123", r.AppID)
+		assertions.Equal(oauthTestOwner, r.OwnerID)
+		assertions.Equal("example_owner", r.Username)
+		assertions.Equal(f.scopes, r.Scopes)
+		assertions.Equal(f.issued, r.IssuedAt)
+		assertions.Equal(f.dataExpires, r.DataAccessExpiresAt)
+		assertions.Equal(oauthTestCallback, r.RedirectURI)
+		assertions.Equal([]string{"/oauth/access_token", "/access_token", "/me", "/debug_token"}, f.paths)
+	})
+	t.Run("preserves registered empty path", func(t *testing.T) {
+		f := newOAuthFixture(t)
+		f.redirectURI = "https://example.com"
+		req := testOAuthRequest()
+		req.RedirectURI = f.redirectURI
+		r, err := ExchangeCredential(t.Context(), f.options(), req)
+		require.NoError(t, err)
+		assert.Equal(t, f.redirectURI, r.RedirectURI)
+	})
+	t.Run("provider issuance ahead of local clock", func(t *testing.T) {
+		f := newOAuthFixture(t)
+		f.issued = oauthTestNow.Add(2 * time.Second)
+		r, err := ExchangeCredential(t.Context(), f.options(), testOAuthRequest())
+		require.NoError(t, err)
+		assert.Equal(t, f.issued, r.IssuedAt)
+	})
+	t.Run("documented debug response omits app ID", func(t *testing.T) {
+		f := newOAuthFixture(t)
+		f.debugApp = ""
+		r, err := ExchangeCredential(t.Context(), f.options(), testOAuthRequest())
+		require.NoError(t, err)
+		assert.Equal(t, "123", r.AppID)
+	})
+	cases := []struct {
+		name   string
+		change func(*oauthFixture)
+	}{
+		{"wrong app", func(f *oauthFixture) { f.debugApp = "456" }},
+		{"wrong owner", func(f *oauthFixture) { f.debugOwner = "789" }},
+		{"missing scopes", func(f *oauthFixture) { f.scopes = []string{"threads_basic"} }},
+		{"invalid", func(f *oauthFixture) { f.valid = false }},
+		{"data expired", func(f *oauthFixture) { f.dataExpires = oauthTestNow }},
+		{"token expired", func(f *oauthFixture) { f.expires = oauthTestNow }},
+		{"missing data expiry", func(f *oauthFixture) { f.dataExpires = time.Unix(0, 0) }},
+		{"missing issuance", func(f *oauthFixture) { f.issued = time.Unix(0, 0) }},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newOAuthFixture(t)
+			tt.change(f)
+			r, err := ExchangeCredential(t.Context(), f.options(), testOAuthRequest())
+			require.ErrorIs(t, err, ErrReauthorizationRequired)
+			assert.Empty(t, r.AccessToken())
+		})
+	}
+	t.Run("invalid request before HTTP", func(t *testing.T) {
+		f := newOAuthFixture(t)
+		req := testOAuthRequest()
+		req.RedirectURI = "http://example.com/cb"
+		_, err := ExchangeCredential(t.Context(), f.options(), req)
+		require.Error(t, err)
+		assert.Zero(t, f.calls.Load())
+	})
+}
+
+func TestThreadsOAuthRedactionAndRedirect(t *testing.T) {
+	assertions := assert.New(t)
+	req := testOAuthRequest()
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%p", "%d"} {
+		for _, value := range []any{req, &req} {
+			formatted := fmt.Sprintf(verb, value)
+			assertions.NotContains(formatted, "app-secret")
+			assertions.NotContains(formatted, "authorization-code")
+		}
+	}
+	requestJSON, err := json.Marshal(req)
+	require.NoError(t, err)
+	assertions.NotContains(string(requestJSON), "app-secret")
+	assertions.NotContains(string(requestJSON), "authorization-code")
+	var targetCalls atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { targetCalls.Add(1) }))
+	defer target.Close()
+	for _, status := range []int{302, 307, 308} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL+"/leak", status) }))
+			defer redirect.Close()
+			opts := OAuthClientOptions{HTTPClient: redirect.Client(), OAuthBaseURL: redirect.URL}
+			_, err := ExchangeCredential(t.Context(), opts, req)
+			require.Error(t, err)
+			assertions.NotContains(err.Error(), target.URL)
+			assertions.Zero(targetCalls.Load())
+		})
+	}
+	t.Run("URL error", func(t *testing.T) {
+		assertions := assert.New(t)
+		f := newOAuthFixture(t)
+		opts := f.options()
+		opts.HTTPClient = &http.Client{Transport: oauthFailTransport{}}
+		_, err := ExchangeCredential(t.Context(), opts, req)
+		require.Error(t, err)
+		assertions.NotContains(err.Error(), "secret")
+		assertions.NotContains(err.Error(), "https://")
+		assertions.ErrorIs(err, context.DeadlineExceeded)
+	})
+	t.Run("provider error", func(t *testing.T) {
+		f := newOAuthFixture(t)
+		f.failPath = "/access_token"
+		f.failStatus = 400
+		f.failCode = 190
+		_, err := ExchangeCredential(t.Context(), f.options(), req)
+		require.ErrorIs(t, err, ErrReauthorizationRequired)
+		assertions.NotContains(err.Error(), "secret")
+	})
+	t.Run("malformed provider JSON", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprint(w, `{"access_token":"provider-secret-body",oops`)
+		}))
+		defer server.Close()
+		_, err := ExchangeCredential(t.Context(), OAuthClientOptions{HTTPClient: server.Client(), OAuthBaseURL: server.URL}, req)
+		require.Error(t, err)
+		assertions.NotContains(err.Error(), "secret")
+	})
+}
+
+type oauthFailTransport struct{}
+
+func (oauthFailTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, &url.Error{Op: "Get", URL: "https://example.com/?access_token=transport-secret", Err: context.DeadlineExceeded}
+}
+
+func TestThreadsOAuthBindsSourceBeforeLongExchange(t *testing.T) {
+	fixture := newOAuthFixture(t)
+	opts := fixture.options()
+	called := false
+	opts.WithOwnerLock = func(ctx context.Context, source string, exchange func() (TokenRecord, error)) (TokenRecord, error) {
+		called = true
+		assert.Equal(t, "threads:123:"+oauthTestOwner, source)
+		assert.Equal(t, int32(1), fixture.calls.Load())
+		return TokenRecord{}, errors.New("binding barrier")
+	}
+	_, err := ExchangeCredential(t.Context(), opts, testOAuthRequest())
+	require.ErrorContains(t, err, "binding barrier")
+	assert.True(t, called)
+	assert.Equal(t, int32(1), fixture.calls.Load())
+}

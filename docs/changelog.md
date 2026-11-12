@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Connect an owner-operated Threads account with `add-threads`; content import and sync are not yet available.
+
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).

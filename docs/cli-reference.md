@@ -261,7 +261,7 @@ If `[oauth].service_account_key` or `[oauth.apps.<name>].service_account_key` is
 ### Saved default identity choice
 
 `add-account` (including service accounts), `add-imap`, `add-o365` (IMAP and
-`--graph`), and `add-teams` save `--no-default-identity` for later syncs.
+`--graph`), `add-teams`, and `add-threads` save `--no-default-identity` for later syncs.
 Omitting the flag when adding or re-authorizing an existing account keeps its
 saved choice. Use `--no-default-identity=false` to re-enable automatic defaults.
 New accounts confirm their default identity unless the flag is set.
@@ -784,6 +784,46 @@ the Microsoft IMAP token used by `add-o365`. Requires `[microsoft].client_id` in
 | `--no-default-identity` | `false` | Do not auto-confirm the email address as this source's "me" identity. Saved across syncs and re-authorization; only explicit `--no-default-identity=false` clears the choice. See [saved identity choice](#saved-default-identity-choice) |
 
 After adding the account, sync it with `msgvault sync-teams`.
+
+---
+
+## add-threads
+
+```bash
+msgvault add-threads --app-id <app-id> --redirect-uri <https-callback>
+```
+
+On unreleased `main`, create a Threads app in [Meta for Developers](https://developers.facebook.com/docs/threads/),
+add your account as a tester when required, and obtain the Threads app ID and
+Threads app secret.
+Configure a registered HTTPS callback and request the `threads_basic` and
+`threads_read_replies` permissions.
+
+Connect the owner-operated Threads app using its registered
+HTTPS callback. Set `MSGVAULT_THREADS_APP_SECRET` or enter the secret at the
+masked terminal prompt, open the displayed authorization URL, and paste the
+complete returned callback URL. The daemon verifies the account and stores its
+token in an owner-only JSON file (mode 0600); the file is not encrypted.
+Connecting does not import or sync Threads content. The success
+message shows the provider-reported token expiry; save the date and rerun `add-threads` to
+reconnect when it expires. Reconnecting with a different app ID creates a
+separate source. Remove the old source explicitly with `remove-account` when
+it is no longer needed.
+
+Use `--no-default-identity` to skip automatic confirmation of the account's
+identity. The choice is saved; use `--no-default-identity=false` to restore
+automatic confirmation. See [saved identity choice](#saved-default-identity-choice).
+
+If connection or account registration fails, retry the connection. An error
+identifies the account if its token cannot be read or saved, or if a new token
+cannot be cleaned up. Inspect the token file in the configured tokens directory;
+when no source exists, you can remove an unwanted token manually. Its name is `threads_<app-id>_<owner-id>.json`, or `threads_sha256_<digest>.json` for
+long IDs, where the digest is SHA-256 of `threads:<app-id>:<owner-id>`.
+`remove-account` deletes the saved token when a source exists. If cleanup fails
+after source removal, it warns; remove the token file manually using the naming
+rules above. To revoke the app's access, also revoke its authorization in
+Threads. OAuth handoff requires a literal loopback IP for HTTP; remote HTTPS
+requires an owner API key. The handoff does not follow redirects.
 
 ---
 

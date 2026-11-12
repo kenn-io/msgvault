@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/threads"
 )
 
 const (
@@ -144,10 +145,10 @@ func confirmRemoveAccount(r io.Reader, w io.Writer) (bool, error) {
 }
 
 func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
-	return runRemoveAccountLocalWithMatrixLock(cmd, args, false)
+	return runRemoveAccountLocalWithLifecycleLock(cmd, args, false, nil)
 }
 
-func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matrixLockHeld bool) (retErr error) {
+func runRemoveAccountLocalWithLifecycleLock(cmd *cobra.Command, args []string, lifecycleLockHeld bool, pinned *store.Source) (retErr error) {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -172,7 +173,15 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 		return err
 	}
 
-	source, err := sourceops.ResolveExactOne(s, selector)
+	var source *store.Source
+	if pinned != nil {
+		source, err = s.GetSourceByIDContext(cmd.Context(), pinned.ID)
+		if err == nil && (source.Identifier != pinned.Identifier || source.SourceType != sourceTypeThreads) {
+			err = errors.New("threads source changed while waiting for removal")
+		}
+	} else {
+		source, err = sourceops.ResolveExactOne(s, selector)
+	}
 	if err != nil {
 		cleanup()
 		return err
@@ -197,10 +206,18 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 		}
 		return nil
 	}
-	if source.SourceType == sourceTypeMatrix && !matrixLockHeld {
+	if source.SourceType == sourceTypeMatrix && !lifecycleLockHeld {
 		cleanup()
 		return matrixsource.WithCredentialLifecycleLock(cfg.TokensDir(), func() error {
-			return runRemoveAccountLocalWithMatrixLock(cmd, args, true)
+			return runRemoveAccountLocalWithLifecycleLock(cmd, args, true, nil)
+		})
+	}
+	if source.SourceType == sourceTypeThreads && !lifecycleLockHeld {
+		cleanup()
+		manager := threads.NewTokenManager(cfg.TokensDir())
+		return manager.WithSourceLock(cmd.Context(), source.Identifier, func() error {
+			// Continue with the exact row resolved before taking its lifecycle lock.
+			return runRemoveAccountLocalWithLifecycleLock(cmd, args, true, source)
 		})
 	}
 	defer cleanup()
@@ -258,6 +275,13 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 		if err := revokeMatrixCredentials(cmd.Context(), cfg.TokensDir(), source.Identifier); err != nil {
 			return fmt.Errorf("revoke Matrix device (account was not removed): %w", err)
 		}
+	}
+	if source.SourceType == sourceTypeThreads {
+		release, err := s.AcquireSourceRemovalLockContext(cmd.Context(), source.ID)
+		if err != nil {
+			return fmt.Errorf("prepare Threads account removal: %w", err)
+		}
+		defer func() { retErr = errors.Join(retErr, release()) }()
 	}
 
 	// Collect attachment paths unique to this source before the cascade deletes them.
@@ -443,6 +467,19 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 	case sourceTypeMatrix:
 		// The dedicated device and local credential were revoked before the
 		// source cascade so a remote failure could abort removal safely.
+	case sourceTypeThreads:
+		appID, ownerID, parseErr := threads.ParseSourceIdentifier(source.Identifier)
+		if parseErr != nil {
+			fmt.Fprintln(os.Stderr, "Warning: invalid Threads source binding; credential was preserved")
+		} else {
+			// After source removal, finish credential cleanup even if the caller cancels.
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(cmd.Context()), 5*time.Second)
+			err := threads.NewTokenManager(cfg.TokensDir()).Delete(cleanupCtx, appID, ownerID)
+			cancel()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not remove Threads credential: %v\n", err)
+			}
+		}
 	case sourceTypeSlack:
 		if teamID, userID, ok := splitSlackIdentifier(source.Identifier); ok {
 			if err := slack.DeleteToken(cfg.TokensDir(), teamID, userID); err != nil {

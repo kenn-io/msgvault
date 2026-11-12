@@ -9,6 +9,7 @@ const (
 	sourceTypeIMAP           = "imap"
 	sourceTypeMbox           = "mbox"
 	sourceTypeTeams          = "teams"
+	sourceTypeThreads        = "threads"
 	sourceTypeMSMail         = msmail.SourceType
 	sourceTypeCalendar       = "gcal"
 	sourceTypeBeeper         = "beeper"
