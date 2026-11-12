@@ -122,16 +122,23 @@ func (c *Client) readComment(ctx context.Context, sourceType, id string) (Object
 	return comment, err
 }
 
+// archiveReply archives reply on the surface its parent was found on. A
+// parent only a webhook archived has no known surface, so neither has the
+// reply until a sync finds it.
 func archiveReply(ctx context.Context, st *store.Store, source *store.Source, target CommentTarget, reply Object) error {
 	m := target.metadata
-	edge := Posts
+	var edge PostEdge
 	switch {
 	case m.InstagramAccountID != "":
-		edge = instagramMediaEdge
+		if m.Organic {
+			edge = instagramMediaEdge
+		}
 	case m.Visitor:
 		edge = VisitorPosts
 	case m.Ad && !m.Organic:
 		edge = AdsPosts
+	case m.Organic:
+		edge = Posts
 	}
 	run := &importRun{imp: &Importer{store: st, instagram: m.InstagramAccountID}, app: m.AppID, page: m.PageID, source: source, sum: &ImportSummary{}}
 	return run.persist(ctx, reply, m.root(), target.CommentID, edge)
