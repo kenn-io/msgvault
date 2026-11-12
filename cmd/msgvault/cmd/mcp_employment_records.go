@@ -179,7 +179,7 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 	}
 	effect := map[string]string{
 		"create_employment":      "Create this employment record; it may become the person's primary current employment.",
-		"replace_employment":     "Replace this employment's mutable fields; omitted optional fields are cleared.",
+		"replace_employment":     "Replace mutable fields; omitted ones clear, except current/primary flags.",
 		"end_employment":         "End this employment on the given date; it is no longer current or primary.",
 		"set_primary_employment": "Make this employment primary; the person's other primary employment is demoted.",
 		"delete_employment":      "Permanently delete this employment record.",
