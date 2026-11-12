@@ -35,7 +35,9 @@ The list reports whether Events are enabled. The POST routes use the MCP
 Events subscription shape; they accept one person or source and a public HTTPS
 webhook. Mutation errors contain `code` and `reason`; middleware errors contain
 `error` and `message`, including rate-limit responses. Agent-grant and
-remote-client credentials cannot use these routes.
+remote-client credentials cannot use these routes. For MCP over HTTP, `/mcp`
+provides discovery and reads; Events mutations require `/mcp/writes` with
+`--mcp-allow-writes`, or `--http-allow-writes` on standalone MCP HTTP.
 See [MCP Events](usage/chat.md#mcp-events) for leases and delivery semantics.
 
 ### Filename suggestions

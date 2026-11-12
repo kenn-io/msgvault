@@ -100,3 +100,9 @@ func TestWakeupSecretFileResolutionPreservesConfig(t *testing.T) {
 	assert.Contains(string(saved), "secret_file = \"secret\"")
 	assert.Contains(string(saved), "secret_file = \"~/secret\"")
 }
+
+func TestMCPEventsUnknownKeyRejectedByConfigLoader(t *testing.T) {
+	path := writeDaemonSectionConfig(t, "[mcp_events]\nenabled=true\nenabeld=true\n")
+	_, err := Load(path, "")
+	Require.ErrorContains(t, err, `unknown mcp_events config key "mcp_events.enabeld"`)
+}

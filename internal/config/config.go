@@ -1184,6 +1184,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		if len(key) > 0 && key[0] == "wakeups" {
 			cfg.deferDaemonError(fmt.Errorf("unknown wakeups config key %q", key.String()))
 		}
+		if len(key) > 0 && key[0] == "mcp_events" {
+			cfg.deferDaemonError(fmt.Errorf("unknown mcp_events config key %q", key.String()))
+		}
 		if len(key) > 0 && key[0] == "instagram_comments" {
 			return nil, fmt.Errorf("unknown Instagram comments config key %q", key.String())
 		}

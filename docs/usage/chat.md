@@ -38,10 +38,14 @@ View never deletes archive messages.
 ## MCP Events
 
 On unreleased `main`, owner clients can subscribe to
-`msgvault.messages.changed` over stdio or protocol `2026-07-28` HTTP, including
-`/mcp` and `msgvault mcp --http`. Enable `[mcp_events]` in the daemon first.
-Delegated agent tokens cannot subscribe. HTTP clients send `Mcp-Method` and,
-for subscribe and unsubscribe, `Mcp-Name` equal to the event name.
+`msgvault.messages.changed` over stdio or protocol `2026-07-28` HTTP. Enable
+`[mcp_events]` in the daemon first. The daemon's `/mcp` provides discovery and
+reads; subscribe and unsubscribe require `/mcp/writes` with `--mcp-allow-writes`.
+Standalone `msgvault mcp --http` requires `--http-allow-writes` for those
+mutations. Stdio Events methods are protocol methods and do not use tool
+elicitation. Delegated agent tokens cannot subscribe. HTTP clients send
+`Mcp-Method` and, for subscribe and unsubscribe, `Mcp-Name` equal to the event
+name.
 
 Call `events/subscribe` with exactly one positive `person_id` or `source_id` in
 `arguments`. `incoming_only` defaults to true. Set `delivery` to webhook mode,
@@ -293,7 +297,7 @@ If `msgvault` is not on your PATH, use the full path to the binary. Restart Clau
 Connect directly to your running daemon at
 `http://127.0.0.1:8080/mcp` (substitute its configured address and port). Send
 `Authorization: Bearer <owner-api-key>` on every request. The endpoint is
-read-only except Events methods.
+read-only.
 
 To connect a trusted client to a separate write-capable catalog on that same
 listener, start:
@@ -304,7 +308,7 @@ msgvault serve --mcp-allow-writes
 
 Use `/mcp/writes` for that connection, with the same owner bearer key. This
 permits attachment exports, deletion manifests, Saved View management, native
-email tag edits, and managed draft writes. Other write families need their own
+email tag edits, managed draft writes, and Events subscriptions. Other write families need their own
 `--mcp-allow-*` flags listed in the [CLI reference](../cli-reference.md#serve).
 Those flags have no effect without `--mcp-allow-writes` and never change `/mcp`.
 Existing client confirmation requirements still apply: clients must obtain
@@ -972,7 +976,7 @@ requires the daemon Events opt-in.
 | Writes | Stdio | HTTP |
 |---|---|---|
 | Native email tag edits, Saved View management, attachment export, deletion staging, and drafts | Available by default | `--http-allow-writes` |
-| Native Events subscribe and unsubscribe | Owner access; subscribe requires daemon opt-in | Owner access; subscribe requires daemon opt-in |
+| Native Events subscribe and unsubscribe | Owner access; subscribe requires daemon opt-in | Owner access and `--http-allow-writes`; subscribe requires daemon opt-in |
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |

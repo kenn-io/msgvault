@@ -262,9 +262,11 @@ func (s *Service) removeEntry(ctx context.Context, entries []entry, raw []byte, 
 
 func (s *Service) removeEntryAndCredential(ctx context.Context, entries []entry, raw []byte, index int) (bool, error) {
 	id := entries[index].ID
-	credentialErr := s.deleteCredential(id)
 	ok, err := s.removeEntry(ctx, entries, raw, index)
-	if credentialErr != nil {
+	if err != nil || !ok {
+		return ok, err
+	}
+	if credentialErr := s.deleteCredential(id); credentialErr != nil {
 		logger := s.Logger
 		if logger == nil {
 			logger = slog.Default()
