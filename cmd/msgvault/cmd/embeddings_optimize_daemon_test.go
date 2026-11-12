@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
@@ -162,7 +163,9 @@ func TestDaemonOptimizeYieldsAndRestartsChangedSource(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, owner.Close()) }()
 	gate := api.NewSerialOperationGate()
-	main := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	main, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, main.Close()) })
 	cleaner := NewXContentCleanup(main, cfg, nil)
 	adapter := &storeAPIAdapter{config: cfg, operationGate: gate, xCleanup: cleaner}
 	originalWorker := runAcceleratorWorkerSubprocess
