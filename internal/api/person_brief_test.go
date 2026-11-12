@@ -377,8 +377,14 @@ func TestPersonBriefHTTPOmitsSentenceOrdinalsWhenTheCitationOrderCannotBeRebuilt
 	output.ThanksSuggestions = []peoplesweep.BriefThanksSuggestion{{
 		Text: "carrying boxes", AnchorID: "evidence-3", Quote: "carried boxes", Key: strings.Repeat("a", 64), State: "suggested", PriorThanks: "unknown",
 	}}
-	f.seedBrief(t, personBriefAPISeedFor(t, output, personBriefAPINow, []int64{f.evidence[0].ID}))
-	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE person_briefs SET program_version = 'v3' WHERE person_id = ? AND status = 'current'`), f.personID)
+	seed := personBriefAPISeedFor(t, output, personBriefAPINow, []int64{f.evidence[0].ID})
+	rendered, err := peoplesweep.RenderBrief(peoplesweep.ParsedBrief{Output: output}, peoplesweep.BriefWindow{})
+	requirements.NoError(err)
+	seed.rendered = rendered.Text
+	requirements.Contains(seed.rendered, "carrying boxes")
+	requirements.Len(rendered.Sentences, 5)
+	f.seedBrief(t, seed)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE person_briefs SET program_version = 'v3' WHERE person_id = ? AND status = 'current'`), f.personID)
 	requirements.NoError(err)
 	response = doRequest(t, f.server.Router(), http.MethodGet, personBriefPath(f.personID, ""), nil, nil)
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
@@ -386,9 +392,13 @@ func TestPersonBriefHTTPOmitsSentenceOrdinalsWhenTheCitationOrderCannotBeRebuilt
 	assertions.NotContains(brief.RenderedText, "carrying boxes")
 	assertions.Contains(brief.RenderedText, "role change")
 	requirements.Len(brief.Evidence, 1)
-	for _, sentence := range brief.Sentences {
+	requirements.Len(brief.Sentences, 4)
+	wantTexts := []string{rendered.Sentences[0].Text, rendered.Sentences[1].Text, rendered.Sentences[2].Text, rendered.Sentences[4].Text}
+	for i, sentence := range brief.Sentences {
+		assertions.Equal(wantTexts[i], sentence.Text)
 		assertions.Empty(sentence.EvidenceOrdinals)
 	}
+	assertions.Equal(strings.Join(wantTexts, " "), brief.RenderedText)
 }
 
 func TestPersonBriefHTTPWithoutLastInteraction(t *testing.T) {
