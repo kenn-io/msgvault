@@ -28,7 +28,7 @@ func TestMeetingLinkProjectionBackfill(t *testing.T) {
 		`ALTER TABLE meeting_details DROP COLUMN scheduled_duration_seconds`,
 		`UPDATE meeting_details SET projection_version = 1`,
 		`UPDATE applied_migrations SET version = 1 WHERE name = 'meeting_projection_v1'`,
-		`UPDATE archive_metadata SET value = '42' WHERE key = 'schema_version'`,
+		`UPDATE archive_metadata SET value = '44' WHERE key = 'schema_version'`,
 	} {
 		_, err := st.db.Exec(query)
 		require.NoError(err)
@@ -45,7 +45,7 @@ func TestMeetingLinkProjectionBackfill(t *testing.T) {
 	require.NoError(reopened.db.QueryRowContext(t.Context(), `SELECT scheduled_start FROM meeting_details WHERE message_id = ?`, note).Scan(&scheduled))
 	assert.True(scheduled.Valid)
 	assert.Equal("2027-03-14T10:00:00Z", scheduled.Time.Format(time.RFC3339))
-	applied, err := reopened.IsMigrationAppliedContext(t.Context(), projectionMigrationName, 2)
+	applied, err := reopened.IsMigrationAppliedContext(t.Context(), projectionMigrationName, 3)
 	require.NoError(err)
 	assert.True(applied)
 	var version int
@@ -61,9 +61,9 @@ func TestMeetingScheduledStartProjectionUpgrade(t *testing.T) {
 	for _, query := range []string{
 		`ALTER TABLE meeting_details DROP COLUMN scheduled_start`,
 		`ALTER TABLE meeting_details DROP COLUMN scheduled_duration_seconds`,
-		`UPDATE meeting_details SET projection_version=1`,
-		`UPDATE applied_migrations SET version=1 WHERE name='meeting_projection_v1'`,
-		`UPDATE archive_metadata SET value='42' WHERE key='schema_version'`,
+		`UPDATE meeting_details SET projection_version=2`,
+		`UPDATE applied_migrations SET version=2 WHERE name='meeting_projection_v1'`,
+		`UPDATE archive_metadata SET value='44' WHERE key='schema_version'`,
 	} {
 		_, err := st.db.ExecContext(t.Context(), query)
 		r.NoError(err)
@@ -77,7 +77,7 @@ func TestMeetingScheduledStartProjectionUpgrade(t *testing.T) {
 	r.NoError(st.db.QueryRowContext(t.Context(), `SELECT scheduled_duration_seconds,duration_seconds FROM meeting_details WHERE message_id=?`, note).Scan(&scheduledDuration, &duration))
 	r.InDelta(3600, scheduledDuration, 0.001)
 	r.InDelta(1200, duration, 0.001)
-	applied, err := st.IsMigrationAppliedContext(t.Context(), projectionMigrationName, 2)
+	applied, err := st.IsMigrationAppliedContext(t.Context(), projectionMigrationName, 3)
 	r.NoError(err)
 	r.True(applied)
 	r.NoError(st.InitSchemaContext(t.Context()))
