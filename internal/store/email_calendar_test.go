@@ -373,7 +373,7 @@ func TestEmailCalendarMaterializesOnRawMIMEUpsert(t *testing.T) {
 }
 
 func TestEmailCalendarInvalidPartPreservesEmail(t *testing.T) {
-	t.Run("ignored method", func(t *testing.T) {
+	t.Run("unsupported method", func(t *testing.T) {
 		assertions := assert.New(t)
 		st := newRFC822IDBackfillBackendStore(t)
 		var logs bytes.Buffer
@@ -386,7 +386,8 @@ func TestEmailCalendarInvalidPartPreservesEmail(t *testing.T) {
 		stored, err := st.GetMessageRaw(id)
 		require.NoError(t, err)
 		assertions.Equal(raw, stored)
-		assertions.NotContains(logs.String(), "calendar invite ignored")
+		assertions.Contains(logs.String(), "calendar invite ignored")
+		assertions.Contains(logs.String(), `unsupported calendar method \"ADD\"`)
 	})
 	t.Run("invalid calendar", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
