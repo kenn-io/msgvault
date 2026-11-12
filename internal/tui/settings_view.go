@@ -52,14 +52,23 @@ func (m Model) mainSettingsParts() (string, string, string, int) {
 	if m.settings.loading {
 		return m.styles.titleBar.Render(title), strings.Join(append(lines, m.styles.loading.Render("Loading settings…")), "\n"), "[Esc] Back", 0
 	}
-	availableHeight := max(m.height-3-settingsWrappedRows(lines, max(m.width, 20)), 4)
-	focus := settingsWrappedRows(lines, max(m.width, 20))
+	titleBar := m.styles.titleBar.Render(title)
+	actions := m.settingsFooter()
+	_, titleRows, _, footer := m.settingsViewportContent(titleBar, "", actions)
+	statusRows := settingsWrappedRows(lines, max(m.width, 20))
+	availableHeight := min(max(m.height-3-statusRows, 4), max(m.height-titleRows-len(footer)-1, 1))
+	categoryRow := min(m.settings.groupCursor, max(availableHeight-1, 1)-1) + 1
+	rows := max(min(len(m.settings.currentFields()), availableHeight/2), 1)
+	fieldRow := min(m.settings.rowCursor, rows-1) + 1
+	var focus int
 	if m.settingsIsNarrow() && !m.settings.narrowFields {
-		focus += min(m.settings.groupCursor, max(availableHeight-2, 0)) + 1
+		focus = categoryRow
+	} else if m.settingsIsNarrow() {
+		focus = fieldRow
 	} else {
-		rows := max(min(len(m.settings.currentFields()), availableHeight/2), 1)
-		focus += min(m.settings.rowCursor, rows-1) + 1
+		focus = min(categoryRow, fieldRow)
 	}
+	focus += statusRows
 	if m.settingsIsNarrow() {
 		if m.settings.narrowFields {
 			lines = append(lines, m.renderSettingsFields(max(m.width, 20), availableHeight))
@@ -71,7 +80,7 @@ func (m Model) mainSettingsParts() (string, string, string, int) {
 		fieldWidth := max(m.width-categoryWidth-3, 30)
 		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top, m.renderSettingsCategories(categoryWidth, availableHeight), " │ ", m.renderSettingsFields(fieldWidth, availableHeight)))
 	}
-	return m.styles.titleBar.Render(title), strings.Join(lines, "\n"), m.settingsFooter(), focus
+	return titleBar, strings.Join(lines, "\n"), actions, focus
 }
 
 func (m Model) renderSettingsCategories(width, height int) string {

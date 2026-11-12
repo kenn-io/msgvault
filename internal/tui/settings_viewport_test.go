@@ -13,6 +13,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSettingsViewportShortWideScreenKeepsCategoryVisible(t *testing.T) {
+	snapshot := SettingsSnapshot{}
+	for _, group := range []string{"Archive", "Daemon", "Search"} {
+		id := strings.ToLower(group)
+		snapshot.Groups = append(snapshot.Groups, SettingsGroup{ID: id, Label: group})
+		for i := range 3 {
+			snapshot.Fields = append(snapshot.Fields, SettingField{Key: fmt.Sprintf("%s.field%d", id, i), Group: id, Label: fmt.Sprintf("%s field %d", group, i), Kind: SettingKindString, Value: stringSettingValue("value")})
+		}
+	}
+	for _, height := range []int{5, 6} {
+		t.Run(fmt.Sprint(height), func(t *testing.T) {
+			backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{snapshot}}
+			model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 100, height)
+			model.settingsBackend = backend
+			for _, step := range []struct {
+				key             rune
+				category, field string
+			}{{'l', "Daemon", "Daemon field 0"}, {'l', "Search", "Search field 0"}, {'j', "Search", "Search field 1"}, {'j', "Search", "Search field 2"}} {
+				model, _ = sendKey(t, model, key(step.key))
+				screen := uv.NewScreenBuffer(100, height)
+				uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+				assert.Contains(t, screen.String(), "▶ "+step.category)
+				assert.Contains(t, screen.String(), "▶   "+step.field)
+			}
+		})
+	}
+}
+
 func TestSettingsViewportEndpointDetail(t *testing.T) {
 	for _, tc := range []struct {
 		pending bool
