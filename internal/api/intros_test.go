@@ -100,6 +100,7 @@ func TestIntroductionReadErrorsAndSnapshotCapacity(t *testing.T) {
 // introductionBoundaryRecorder observes capacity before the underlying writer sends headers.
 type introductionBoundaryRecorder struct {
 	*httptest.ResponseRecorder
+
 	slots          chan struct{}
 	firstSlotCount int
 	observed       bool
