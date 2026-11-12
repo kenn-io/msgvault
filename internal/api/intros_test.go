@@ -84,7 +84,7 @@ func TestIntroductionReadErrorsAndSnapshotCapacity(t *testing.T) {
 					assert.Fail(t, "response cleanup blocked")
 					cancel()
 					// Unblock duplicate receives without letting recovery hang.
-					for i := 0; i < 3; i++ {
+					for range 3 {
 						select {
 						case <-done:
 							return
