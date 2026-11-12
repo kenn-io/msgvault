@@ -33,12 +33,14 @@ func TestPhoneConnectedOwner(t *testing.T) {
 }
 
 func TestPhoneSourceLabelPreservesIdentityAndRaw(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	account := strings.Repeat("a", 256)
 	o, err := PhoneObservation(account, "owner", []byte(syntheticPhoneElement), nil)
-	require.NoError(t, err)
-	assert.Equal(t, "Zoom Phone — "+account, o.SourceLabel)
-	assert.Equal(t, AccountNamespace(account, "owner"), o.Account)
-	assert.Equal(t, syntheticPhoneElement, string(o.Raw))
+	require.NoError(err)
+	assert.Equal("Zoom Phone — "+account, o.SourceLabel)
+	assert.Equal(AccountNamespace(account, "owner"), o.Account)
+	assert.Equal(syntheticPhoneElement, string(o.Raw))
 }
 
 func TestPhoneMissingAnswerRemainsUnknown(t *testing.T) {
