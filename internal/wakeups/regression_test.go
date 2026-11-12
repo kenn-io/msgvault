@@ -391,7 +391,7 @@ func TestEmptyPageCorrectsFutureCursorAfterClockRollback(t *testing.T) {
 	engine := Engine{Store: observed, Subscriptions: []Subscription{testSubscription(t, "rollback", server, changefeed.Filter{IncomingOnly: true})}, Now: func() time.Time { return now }}
 
 	require.NoError(engine.RunPass(t.Context()))
-	state, _, err := base.LoadWakeupState(t.Context(), "rollback")
+	state, _, err := base.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("rollback"))
 	require.NoError(err)
 	assert.Equal(bound, state.At)
 	assert.Empty(deliveries)
