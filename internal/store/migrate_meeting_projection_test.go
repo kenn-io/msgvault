@@ -61,11 +61,15 @@ func TestMeetingScheduledStartProjectionUpgrade(t *testing.T) {
 		`ALTER TABLE meeting_details DROP COLUMN scheduled_start`,
 		`UPDATE meeting_details SET projection_version=2`,
 		`UPDATE applied_migrations SET version=2 WHERE name='meeting_projection_v1'`,
+		`UPDATE archive_metadata SET value='43' WHERE key='schema_version'`,
 	} {
 		_, err := st.db.ExecContext(t.Context(), query)
 		r.NoError(err)
 	}
 	r.NoError(st.InitSchemaContext(t.Context()))
+	version, err := st.SchemaVersionContext(t.Context())
+	r.NoError(err)
+	r.Equal(44, version)
 	var start nullableTimestamp
 	r.NoError(st.db.QueryRowContext(t.Context(), `SELECT scheduled_start FROM meeting_details WHERE message_id=?`, note).Scan(&start))
 	r.True(start.Valid)

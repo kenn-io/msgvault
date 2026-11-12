@@ -89,6 +89,32 @@ func TestMeetingSuggestionsBackfilledScheduledStart(t *testing.T) {
 	r.Empty(page.Suggestions)
 }
 
+func TestMeetingSuggestionsScheduledStartWithProviderDuration(t *testing.T) {
+	for _, tc := range []struct{ name, format, raw string }{
+		{"twenty recording", "twenty_json", `{"schema_version":1,"recording":{"startedAt":"2027-03-15T10:00:00Z","endedAt":"2027-03-15T10:30:00Z"},"calendar_event":{"startsAt":"2027-03-14T10:00:00Z","endsAt":"2027-03-14T10:30:00Z"}}`},
+		{"twenty start only", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T10:00:00Z"}}`},
+		{"circleback duration", "circleback_json", `{"meeting":{"startTime":"2027-03-14T10:00:00Z","durationSeconds":1800}}`},
+		{"notion recording", "notion_meeting_json", `{"schema_version":1,"discovery":{"meeting_notes":{"recording":{"start_time":"2027-03-15T10:00:00Z","end_time":"2027-03-15T10:30:00Z"},"calendar_event":{"start_time":"2027-03-14T10:00:00Z"}}},"canonical":{"summary":"Summary"}}`},
+		{"granola start only", "granola_json", `{"calendar_event":{"scheduled_start_time":"2027-03-14T10:00:00Z"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, event := calendarFixture(t, st, "provider-event", `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T10:30:00Z"}}`)
+			data, note := projectionFixture(t, st, "provider-note", tc.format, tc.raw)
+			data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 15, 10, 0, 0, 0, time.UTC), Valid: true}
+			_, err := st.UpsertMessage(data.Message)
+			r.NoError(err)
+			for _, ref := range []MeetingLinkRef{{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}}, {Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: event}}} {
+				page, err := st.SuggestMeetingLinksContext(t.Context(), ref, 10, nil)
+				r.NoError(err)
+				r.Len(page.Suggestions, 1)
+				r.Equal(30, page.Suggestions[0].OverlapMinutes)
+			}
+		})
+	}
+}
+
 func TestMeetingSuggestionsRescheduledGranola(t *testing.T) {
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
