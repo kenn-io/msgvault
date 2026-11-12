@@ -382,3 +382,65 @@ func TestReboundMemberRematchesSettledRoster(t *testing.T) {
 	assert.Equal("annhandle", observationValues(t, st, current)[store.ContactAddressUsername],
 		"the username chat must record ann's username for the new participant")
 }
+
+func TestMessageTurnRecordsAuthoritativeMemberCount(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		initial, current int
+	}{
+		{"increase", 2, 3}, {"decrease", 3, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			f := newFakeBeeper(t)
+			chat := budgetTestChat("!member-count:example.test", 1, time.Now().Add(-time.Hour))
+			if tc.initial == 3 {
+				chat.Participants = append(chat.Participants, map[string]any{"id": "@signal_new:beeper.local"})
+			}
+			f.addChat(chat)
+			imp, st := newHandlerTestImporter(t, f)
+			t.Cleanup(func() { require.NoError(st.Close()) })
+			sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+			require.NoError(err)
+			members := rosterMembers(t, st, sum.SourceID, chat.ID)
+			run, err := st.GetLastSuccessfulSync(sum.SourceID)
+			require.NoError(err)
+			state, err := LoadSyncState(run.CursorAfter.String)
+			require.NoError(err)
+			state.Chats[chat.ID].RosterWork.MemberFirst = false
+			cursor, err := state.Marshal()
+			require.NoError(err)
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), cursor, run.ID)
+			require.NoError(err)
+			f.mu.Lock()
+			if tc.current == 3 {
+				chat.Participants = append(chat.Participants, map[string]any{"id": "@signal_new:beeper.local"})
+			} else {
+				chat.Participants = chat.Participants[:2]
+			}
+			f.mu.Unlock()
+			f.appendMsg(chat.ID, fakeMsg{ID: "new-count-message", SortKey: 100, Timestamp: time.Now(), Text: "new", SenderID: "@signal_ann:beeper.local"})
+			f.resetRequests()
+			imp = NewImporter(st, imp.client)
+			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true})
+			require.NoError(err)
+			for _, request := range f.requests() {
+				require.NotContains(request, "/v1/chats/"+chat.ID+"?", "message turn must defer detail")
+			}
+			var raw string
+			var messageID int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT metadata FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sum.SourceID, chat.ID).Scan(&raw))
+			var metadata struct {
+				MemberCount int `json:"member_count"`
+			}
+			require.NoError(json.Unmarshal([]byte(raw), &metadata))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, "new-count-message").Scan(&messageID))
+			membership, err := st.AttachmentConversationMembershipContext(t.Context(), messageID)
+			require.NoError(err)
+			require.False(membership.RosterArchived)
+			assert.Equal(tc.current, membership.Conversation.ParticipantCount)
+			assert.Equal(tc.current, metadata.MemberCount, "the complete listing supplies the archived count")
+			assert.ElementsMatch(members, rosterMembers(t, st, sum.SourceID, chat.ID), "membership replacement waits for a roster turn")
+		})
+	}
+}

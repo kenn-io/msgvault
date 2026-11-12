@@ -1062,6 +1062,14 @@ func (imp *Importer) ensureConversation(
 	if detail.ID != ch.ID {
 		routeEvidence.Failure = "chat_binding_mismatch"
 	}
+	if membership.known {
+		err = imp.store.SetConversationMemberCountContext(ctx, convID, membership.count)
+	} else {
+		err = imp.store.MarkConversationMemberCountUnknownContext(ctx, convID)
+	}
+	if err != nil {
+		return 0, false, chatMembership{}, err
+	}
 	if opts.skipRoster {
 		if opts.rosterState != nil && opts.rosterState.Verified && opts.rosterState.ListingSignature == listingSignature && opts.rosterState.Signature == rosterSignature(detail, opts.AccountID) {
 			keys := imp.rosterKeys(detail.Participants.Items)
@@ -1105,14 +1113,6 @@ func (imp *Importer) ensureConversation(
 	if work.Phase == "done" && !membershipComplete {
 		work.Phase = "members"
 		work.Verified = false
-	}
-	if membership.known {
-		err = imp.store.SetConversationMemberCountContext(ctx, convID, membership.count)
-	} else {
-		err = imp.store.MarkConversationMemberCountUnknownContext(ctx, convID)
-	}
-	if err != nil {
-		return 0, false, chatMembership{}, err
 	}
 	provider := rosterProvider(ch.ID)
 	items := slices.Clone(detail.Participants.Items)
