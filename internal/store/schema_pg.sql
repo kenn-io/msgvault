@@ -3760,8 +3760,12 @@ CREATE INDEX IF NOT EXISTS idx_collection_sources_source_id
 CREATE TABLE IF NOT EXISTS voice_transcripts (
     message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     attachment_id BIGINT NOT NULL,
+    vault_uid TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    source_version_id TEXT NOT NULL,
+    content_version_id TEXT NOT NULL,
     transcript_text TEXT NOT NULL,
-    PRIMARY KEY (message_id, attachment_id)
+    PRIMARY KEY (message_id, attachment_id, vault_uid, source_id, source_version_id, content_version_id)
 );
 
 -- Current normalized source evidence, rebuilt from authoritative meeting raw.

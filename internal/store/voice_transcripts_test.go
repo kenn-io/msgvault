@@ -9,7 +9,51 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestVoiceTranscriptReplacementWithReusedAttachmentID(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	f := newBeeperMediaFixture(t)
+	st := f.Store
+	first := addBeeperAudio(t, st, f.Source.ID, f.ConvID, "voice", strings.Repeat("a", 64))
+	mapping := first.mapping("destination", "first", "")
+	retainAudio(t, st, mapping, "first-occurrence")
+	require.NoError(st.SetVoiceTranscriptSearch(t.Context(), true))
+	mappings, err := st.VoiceTranscriptMappings(t.Context(), "destination", 0, 8)
+	require.NoError(err)
+	require.Len(mappings, 1)
+	require.NoError(st.SaveVoiceTranscript(t.Context(), mappings[0], "dinner Thursday"))
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM attachments WHERE id=?`), first.attachmentID)
+	require.NoError(err)
+	second := addBeeperAudio(t, st, f.Source.ID, f.ConvID, "voice", strings.Repeat("c", 64))
+	if !st.IsPostgreSQL() {
+		require.Equal(first.attachmentID, second.attachmentID)
+	}
+	replacement := second.mapping("destination", "second", "")
+	require.NoError(st.ReconcileBeeperMediaMapping(t.Context(), replacement))
+	operation, err := st.PrepareBeeperMediaOperation(t.Context(), retainOperation(replacement))
+	require.NoError(err)
+	applied, err := st.FinishBeeperMediaOperation(t.Context(), operation, store.BeeperMediaResult{
+		VaultUID: "vault", DocbankSourceID: "new-source", SourceVersionID: "new-version",
+		ContentVersionID: "new-content", DocbankOccurrenceID: "second-occurrence", CoverageState: "unprocessed",
+	})
+	require.NoError(err)
+	require.True(applied)
+	mappings, err = st.VoiceTranscriptMappings(t.Context(), "destination", 0, 8)
+	require.NoError(err)
+	require.Len(mappings, 1)
+	assert.Equal("new-version", mappings[0].SourceVersionID)
+	assert.Equal("new-content", mappings[0].ContentVersionID)
+	require.NoError(st.SaveVoiceTranscript(t.Context(), mappings[0], "breakfast Friday"))
+	_, err = st.RebuildFTSContext(t.Context(), nil)
+	require.NoError(err)
+	for _, term := range []string{"dinner", "breakfast"} {
+		ids, _, err := st.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
+		require.NoError(err)
+		assert.Equal([]int64{first.messageID}, ids)
+	}
+}
 
 func TestVoiceTranscriptEligibilitySearchRebuildDisableAndDelete(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)

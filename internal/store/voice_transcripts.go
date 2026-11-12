@@ -10,11 +10,12 @@ import (
 const voiceSearchSetting = "voice_transcript_search_enabled"
 
 func voiceSearchSQL(pg bool, messageID string) string {
+	order := `attachment_id, vault_uid, source_id, source_version_id, content_version_id`
 	aggregate := `GROUP_CONCAT(transcript_text, char(10))`
 	if pg {
-		aggregate = `STRING_AGG(transcript_text, E'\n' ORDER BY attachment_id)`
+		aggregate = `STRING_AGG(transcript_text, E'\n' ORDER BY ` + order + `)`
 	}
-	return `COALESCE((SELECT ` + aggregate + ` FROM (SELECT transcript_text, attachment_id FROM voice_transcripts WHERE message_id=` + messageID + ` ORDER BY attachment_id)),'')`
+	return `COALESCE((SELECT ` + aggregate + ` FROM (SELECT transcript_text, ` + order + ` FROM voice_transcripts WHERE message_id=` + messageID + ` ORDER BY ` + order + `)),'')`
 }
 
 // SetVoiceTranscriptSearch changes the search setting and removes saved speech when disabled.
@@ -55,7 +56,8 @@ func (s *Store) VoiceTranscriptMappings(ctx context.Context, destination string,
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT `+beeperMediaOccurrenceColumns("o")+` FROM beeper_media_occurrences o`+beeperMediaCurrentJoin+`
 		AND o.destination_key=? AND o.source_type='beeper' AND a.media_type='voice_note' AND o.retention_state='retained'
 		AND o.transcript_sha256='' AND o.attachment_id>?
-		AND NOT EXISTS (SELECT 1 FROM voice_transcripts v WHERE v.message_id=o.message_id AND v.attachment_id=o.attachment_id) ORDER BY o.attachment_id LIMIT ?`), destination, after, limit)
+		AND NOT EXISTS (SELECT 1 FROM voice_transcripts v WHERE v.message_id=o.message_id AND v.attachment_id=o.attachment_id
+			AND v.vault_uid=o.vault_uid AND v.source_id=o.source_id AND v.source_version_id=o.source_version_id AND v.content_version_id=o.content_version_id) ORDER BY o.attachment_id LIMIT ?`), destination, after, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -96,8 +98,8 @@ func (s *Store) SaveVoiceTranscript(ctx context.Context, m BeeperMediaMapping, t
 		if err != nil || current != 1 {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO voice_transcripts(message_id,attachment_id,transcript_text) VALUES(?,?,?)
-			ON CONFLICT(message_id,attachment_id) DO UPDATE SET transcript_text=excluded.transcript_text`, m.MessageID, m.AttachmentID, text)
+		_, err = tx.ExecContext(ctx, `INSERT INTO voice_transcripts(message_id,attachment_id,vault_uid,source_id,source_version_id,content_version_id,transcript_text) VALUES(?,?,?,?,?,?,?)
+			ON CONFLICT(message_id,attachment_id,vault_uid,source_id,source_version_id,content_version_id) DO UPDATE SET transcript_text=excluded.transcript_text`, m.MessageID, m.AttachmentID, m.VaultUID, m.DocbankSourceID, m.SourceVersionID, m.ContentVersionID, text)
 		if err != nil {
 			return err
 		}
