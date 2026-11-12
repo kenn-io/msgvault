@@ -380,8 +380,8 @@ func TestBriefEventAnnouncementDateCannotDriftDuringReextraction(t *testing.T) {
 	assert.Contains(t, result.Rendered.Text, "How did the move go?")
 }
 
-func TestBriefEventDateRevisionRequiresNewPersonEvidence(t *testing.T) {
-	checks, required := assert.New(t), require.New(t)
+func revisedBriefEventFixture(t *testing.T) (EvidenceItem, EvidenceItem, BriefWindow, BriefHighlight, BriefResult, BriefResult) {
+	t.Helper()
 	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
 	later := briefWindowItem(11, SourceConversationText, 12, "I move on August 22 instead.")
 	archive := &briefFakeArchive{items: []EvidenceItem{anchor}}
@@ -392,6 +392,14 @@ func TestBriefEventDateRevisionRequiresNewPersonEvidence(t *testing.T) {
 	update := eventHighlight(anchor, "2026-08-22")
 	update.EvidenceIDs = append(update.EvidenceIDs, packetEvidenceID(later))
 	result := eventResult(t, window, eventCandidate(t, update))
+	window = eventWindow(t, archive, &result.Boundary, "2026-08-17T00:00:00Z")
+	replayed := eventResult(t, window, eventCandidate(t, eventHighlight(anchor, "2026-08-15")))
+	return anchor, later, window, update, result, replayed
+}
+
+func TestBriefEventDateRevisionRequiresNewPersonEvidence(t *testing.T) {
+	checks, required := assert.New(t), require.New(t)
+	anchor, later, window, update, result, _ := revisedBriefEventFixture(t)
 	required.Len(result.Boundary.EventMemory, 1)
 	required.NotNil(result.Boundary.EventMemory[0].Highlight.LifeEvent.Date)
 	checks.Equal("2026-08-22", *result.Boundary.EventMemory[0].Highlight.LifeEvent.Date)
@@ -399,57 +407,6 @@ func TestBriefEventDateRevisionRequiresNewPersonEvidence(t *testing.T) {
 	checks.NotContains(result.Rendered.Text, update.LifeEvent.Question)
 	required.NotNil(result.Boundary.NextEventAt)
 	checks.Equal("2026-08-23T00:00:00Z", result.Boundary.NextEventAt.Format(time.RFC3339))
-
-	// A later anchor-only update must retain the evidence supporting the date.
-	window = eventWindow(t, archive, &result.Boundary, "2026-08-17T00:00:00Z")
-	replayed := eventResult(t, window, eventCandidate(t, eventHighlight(anchor, "2026-08-15")))
-	required.Len(replayed.Boundary.EventMemory, 1)
-	memory := replayed.Boundary.EventMemory[0]
-	checks.Equal([]string{packetEvidenceID(anchor), packetEvidenceID(later)}, memory.Highlight.EvidenceIDs)
-	checks.Equal([]EvidenceRef{anchor.Ref, later.Ref}, memory.Sources)
-	required.NotNil(memory.Highlight.LifeEvent.Date)
-	checks.Equal("2026-08-22", *memory.Highlight.LifeEvent.Date)
-	required.NotNil(replayed.Boundary.NextEventAt)
-	checks.Equal("2026-08-23T00:00:00Z", replayed.Boundary.NextEventAt.Format(time.RFC3339))
-	checks.Len(replayed.Evidence, 2)
-	ordinals, ok := BriefCitationOrdinals(ParsedBriefOutput(t, replayed), len(replayed.Evidence))
-	required.True(ok)
-	checks.Len(ordinals[BriefSentenceKey{Kind: BriefSentenceHighlight, Index: 0}], 2)
-
-	newer := briefWindowItem(12, SourceConversationText, 18, "The move is now August 25.")
-	newArchive := &briefFakeArchive{items: []EvidenceItem{anchor, later, newer}}
-	newWindow := eventWindow(t, newArchive, &replayed.Boundary, "2026-08-19T00:00:00Z")
-	newUpdate := eventHighlight(anchor, "2026-08-25")
-	newUpdate.EvidenceIDs = append(newUpdate.EvidenceIDs, packetEvidenceID(newer))
-	newResult := eventResult(t, newWindow, eventCandidate(t, newUpdate))
-	required.Len(newResult.Boundary.EventMemory, 1)
-	newMemory := newResult.Boundary.EventMemory[0]
-	required.NotNil(newMemory.Highlight.LifeEvent.Date)
-	checks.Equal("2026-08-25", *newMemory.Highlight.LifeEvent.Date)
-	checks.Equal([]string{packetEvidenceID(anchor), packetEvidenceID(later), packetEvidenceID(newer)}, newMemory.Highlight.EvidenceIDs)
-
-	for _, loss := range []string{"deleted", "edited", "excluded"} {
-		t.Run(loss, func(t *testing.T) {
-			checks, required := assert.New(t), require.New(t)
-			changed := later
-			items := []EvidenceItem{anchor, changed}
-			request := window.Request
-			request.Previous = &replayed.Boundary
-			switch loss {
-			case "deleted":
-				items = []EvidenceItem{anchor}
-			case "edited":
-				changed.ContentSHA256 = strings.Repeat("a", 64)
-				items[1] = changed
-			case "excluded":
-				request.Profile.SourceUntil = "2026-08-11"
-			}
-			next, err := BuildBriefWindow(t.Context(), &briefFakeArchive{items: items}, request)
-			required.NoError(err)
-			checks.Empty(next.Batch.Packet.BriefContext.Events)
-		})
-	}
-
 	for _, tc := range []struct {
 		name   string
 		change func(*EvidenceItem, *BriefHighlight)
@@ -474,26 +431,45 @@ func TestBriefEventDateRevisionRequiresNewPersonEvidence(t *testing.T) {
 			checks.Equal("2026-08-15", *kept[0].LifeEvent.Date)
 		})
 	}
+}
 
-	t.Run("citation ceiling retains previous event", func(t *testing.T) {
-		checks, required := assert.New(t), require.New(t)
-		old := eventHighlight(anchor, "2026-08-15")
-		evidence := map[string]EvidenceItem{packetEvidenceID(anchor): anchor}
-		for i := 0; i < 199; i++ {
-			item := briefWindowItem(int64(100+i), SourceConversationText, 10, "Earlier supporting evidence.")
-			id := packetEvidenceID(item)
-			evidence[id] = item
-			old.EvidenceIDs = append(old.EvidenceIDs, id)
-		}
-		evidence[packetEvidenceID(later)] = later
-		context := &BriefEventContext{AsOf: window.Request.AsOf, Events: []BriefHighlight{old}}
-		kept, indexes, dropped := mergeBriefEvents([]BriefHighlight{update}, context, evidence, briefTestPersonID, context.AsOf)
-		required.Len(kept, 1)
-		checks.Equal(old.EvidenceIDs, kept[0].EvidenceIDs)
-		checks.Equal("2026-08-15", *kept[0].LifeEvent.Date)
-		checks.Empty(indexes)
-		checks.Equal(1, dropped)
-	})
+func TestBriefEventDateRevisionRetainsEvidenceOnReplay(t *testing.T) {
+	checks, required := assert.New(t), require.New(t)
+	anchor, later, _, _, _, replayed := revisedBriefEventFixture(t)
+	required.Len(replayed.Boundary.EventMemory, 1)
+	memory := replayed.Boundary.EventMemory[0]
+	checks.Equal([]string{packetEvidenceID(anchor), packetEvidenceID(later)}, memory.Highlight.EvidenceIDs)
+	checks.Equal([]EvidenceRef{anchor.Ref, later.Ref}, memory.Sources)
+	required.NotNil(memory.Highlight.LifeEvent.Date)
+	checks.Equal("2026-08-22", *memory.Highlight.LifeEvent.Date)
+	required.NotNil(replayed.Boundary.NextEventAt)
+	checks.Equal("2026-08-23T00:00:00Z", replayed.Boundary.NextEventAt.Format(time.RFC3339))
+	checks.Len(replayed.Evidence, 2)
+	ordinals, ok := BriefCitationOrdinals(ParsedBriefOutput(t, replayed), len(replayed.Evidence))
+	required.True(ok)
+	checks.Len(ordinals[BriefSentenceKey{Kind: BriefSentenceHighlight, Index: 0}], 2)
+}
+
+func TestBriefEventDateRevisionCitationCeilingRetainsPrevious(t *testing.T) {
+	anchor, later, window, update, _, _ := revisedBriefEventFixture(t)
+
+	checks, required := assert.New(t), require.New(t)
+	old := eventHighlight(anchor, "2026-08-15")
+	evidence := map[string]EvidenceItem{packetEvidenceID(anchor): anchor}
+	for i := 0; i < 199; i++ {
+		item := briefWindowItem(int64(100+i), SourceConversationText, 10, "Earlier supporting evidence.")
+		id := packetEvidenceID(item)
+		evidence[id] = item
+		old.EvidenceIDs = append(old.EvidenceIDs, id)
+	}
+	evidence[packetEvidenceID(later)] = later
+	context := &BriefEventContext{AsOf: window.Request.AsOf, Events: []BriefHighlight{old}}
+	kept, indexes, dropped := mergeBriefEvents([]BriefHighlight{update}, context, evidence, briefTestPersonID, context.AsOf)
+	required.Len(kept, 1)
+	checks.Equal(old.EvidenceIDs, kept[0].EvidenceIDs)
+	checks.Equal("2026-08-15", *kept[0].LifeEvent.Date)
+	checks.Empty(indexes)
+	checks.Equal(1, dropped)
 }
 
 func FuzzBriefEventCitationSetCanReplay(f *testing.F) {

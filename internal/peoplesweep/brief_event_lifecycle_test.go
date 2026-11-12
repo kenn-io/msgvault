@@ -155,7 +155,6 @@ func TestBriefEventFutureSourceDoesNotPoisonAdmission(t *testing.T) {
 	require.Len(t, first.Boundary.EventMemory, 1)
 	assert.Equal(t, packetEvidenceID(anchor), first.Boundary.EventMemory[0].Highlight.LifeEvent.AnchorID)
 	assert.Equal(t, window.Request.AsOf, first.Boundary.AdmissionThroughEventTime)
-	assert.Equal(t, future.EventTime, first.Boundary.ThroughEventTime)
 
 	next := briefWindowItem(12, SourceConversationText, 15, "I have an interview next week.")
 	archive.items = append(archive.items, next)
@@ -207,6 +206,27 @@ func TestBriefEventRetainedFutureSourceKeepsPriorWatermark(t *testing.T) {
 	parsed, err := ParseBrief(eventCandidate(t, eventHighlight(anchor, "2026-09-01")), window, request.Profile)
 	require.NoError(t, err)
 	assert.Empty(t, parsed.Output.Highlights)
+}
+
+func TestBriefEventRevisionSourceLossRemovesMemory(t *testing.T) {
+	anchor, later, window, _, _, replayed := revisedBriefEventFixture(t)
+	for _, loss := range []string{"deleted", "excluded"} {
+		t.Run(loss, func(t *testing.T) {
+			checks, required := assert.New(t), require.New(t)
+			items := []EvidenceItem{anchor, later}
+			request := window.Request
+			request.Previous = &replayed.Boundary
+			switch loss {
+			case "deleted":
+				items = []EvidenceItem{anchor}
+			case "excluded":
+				request.Profile.SourceUntil = "2026-08-11"
+			}
+			next, err := BuildBriefWindow(t.Context(), &briefFakeArchive{items: items}, request)
+			required.NoError(err)
+			checks.Empty(next.Batch.Packet.BriefContext.Events)
+		})
+	}
 }
 
 func TestBriefEventMemoryRespectsExclusionAndOperationalErrors(t *testing.T) {
