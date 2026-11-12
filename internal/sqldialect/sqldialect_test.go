@@ -36,10 +36,8 @@ func TestEscapeTSQueryTerm(t *testing.T) {
 		{"unicode_kept", "café", []string{"café"}},
 		{"strip_meta_inline", "in&voice|!", []string{"in", "voice"}},
 		{"whitespace_splits", "hello world", []string{"hello", "world"}},
-		{"all_meta_empty", "&|!():*\\'", nil},
+		{"all_meta_empty", "&|!():*\\'<>#$=", nil},
 		{"colon_splits", "user:foo", []string{"user", "foo"}},
-		{"angle_digit", "<3", []string{"3"}},
-		{"angles_only", "<>=#$", nil},
 
 		// R3 regression cases: previously these leaked punctuation
 		// into the tsquery argument and caused to_tsquery to error.
@@ -52,7 +50,7 @@ func TestEscapeTSQueryTerm(t *testing.T) {
 			[]string{"v1", "2", "3", "rc", "1"}},
 		{"trailing_punct", "invoice---", []string{"invoice"}},
 		{"leading_punct", "---invoice", []string{"invoice"}},
-		{"digit_only", "12345", []string{"12345"}},
+		{"digit_only", "<12345>", []string{"12345"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

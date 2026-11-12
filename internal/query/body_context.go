@@ -863,7 +863,7 @@ func (e *SQLiteEngine) postgresBodyContexts(
 	}
 	queryValues := make([]string, 0, len(terms))
 	for group, term := range terms {
-		arg := sqldialect.TSQuery([]string{term}, "")
+		arg := sqldialect.TSQuery([]string{term}, "", " <-> ")
 		if arg == "" {
 			continue
 		}

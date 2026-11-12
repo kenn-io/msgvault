@@ -41,11 +41,6 @@ func RebindPostgreSQL(query string) string {
 	return b.String()
 }
 
-// PostgreSQLSearchArg builds the unordered candidate query for the index.
-func PostgreSQLSearchArg(terms []string) string {
-	return tsQuery(terms, "", " & ")
-}
-
 // CanonicalFTSText prepares text for collation-independent phrase matching.
 func CanonicalFTSText(s string) string {
 	return strings.ToLower(strings.Join(EscapeTSQueryTerm(s), " "))
@@ -58,12 +53,9 @@ func PostgreSQLSearchPredicate(arg string, terms []string) string {
 		if len(EscapeTSQueryTerm(term)) < 2 {
 			continue
 		}
-		var weighted []string
-		for _, weight := range []string{"A", "B", "C", "D"} {
-			weighted = append(weighted, TSQuery([]string{term}, weight))
-		}
+		phrase := TSQuery([]string{term}, "", " <-> ")
 		canonical := CanonicalFTSText(term)
-		clauses = append(clauses, "((m.search_fts_fields IS NULL AND m.search_fts @@ to_tsquery('simple', '"+strings.Join(weighted, " | ")+"')) OR (m.search_fts_fields IS NOT NULL AND EXISTS (SELECT 1 FROM unnest(m.search_fts_fields) AS f(value) WHERE strpos(' ' || f.value, ' "+canonical+"') > 0)))")
+		clauses = append(clauses, "((m.search_fts_fields IS NULL AND m.search_fts @@ to_tsquery('simple', '"+phrase+"')) OR (m.search_fts_fields IS NOT NULL AND EXISTS (SELECT 1 FROM unnest(m.search_fts_fields) AS f(value) WHERE strpos(' ' || f.value, ' "+canonical+"') > 0)))")
 	}
 	return strings.Join(clauses, " AND ")
 }
@@ -77,10 +69,7 @@ func PostgreSQLBodyPredicate(arg string, terms []string) string {
 			checks = append(checks, "strpos(' ' || m.search_fts_fields[5], ' "+canonical+"') > 0")
 		}
 	}
-	if len(checks) == 0 {
-		return "FALSE"
-	}
-	return "(m.search_fts @@ to_tsquery('simple', " + arg + ") AND ((m.search_fts_fields IS NULL AND m.search_fts @@ to_tsquery('simple', '" + TSQuery(terms, "D") + "')) OR (m.search_fts_fields IS NOT NULL AND " + strings.Join(checks, " AND ") + ")))"
+	return "(m.search_fts @@ to_tsquery('simple', " + arg + ") AND ((m.search_fts_fields IS NULL AND m.search_fts @@ to_tsquery('simple', '" + TSQuery(terms, "D", " <-> ") + "')) OR (m.search_fts_fields IS NOT NULL AND " + strings.Join(checks, " AND ") + ")))"
 }
 
 func ftsTokenRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
@@ -142,12 +131,8 @@ func FoldFTSText(s string) (string, []int) {
 	return b.String(), offsets
 }
 
-// TSQuery builds ordered phrases, with a prefix on each final token.
-func TSQuery(terms []string, weight string) string {
-	return tsQuery(terms, weight, " <-> ")
-}
-
-func tsQuery(terms []string, weight, separator string) string {
+// TSQuery builds token groups with a prefix on each final token.
+func TSQuery(terms []string, weight, separator string) string {
 	var groups []string
 	for _, term := range terms {
 		parts := EscapeTSQueryTerm(strings.ToLower(term))

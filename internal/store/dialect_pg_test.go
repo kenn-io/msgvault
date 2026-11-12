@@ -89,19 +89,13 @@ func TestPostgreSQLDialect_InsertOrIgnore(t *testing.T) {
 	}
 }
 
-type recordingFTSQuerier struct {
-	query string
-	args  []any
-	all   []string
-}
-
 func TestPostgreSQLDialect_FTSSearchClause(t *testing.T) {
 	assert := assert.New(t)
 	d := &PostgreSQLDialect{}
 	join, where, orderBy, orderArgCount := d.FTSSearchClause(false, []string{"foo-bar"})
 	assert.Empty(join)
 	assert.Contains(where, "m.search_fts @@ to_tsquery('simple', ?)")
-	assert.Contains(where, "foo:A <-> bar:*A")
+	assert.Contains(where, "foo <-> bar:*")
 	assert.Equal("-ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?))", orderBy)
 	assert.Equal(1, orderArgCount)
 }
@@ -123,6 +117,12 @@ func TestPostgreSQLDialect_BuildFTSArg(t *testing.T) {
 	} {
 		assert.Equal(t, tc.want, d.BuildFTSArg(tc.terms))
 	}
+}
+
+type recordingFTSQuerier struct {
+	query string
+	args  []any
+	all   []string
 }
 
 func (q *recordingFTSQuerier) Exec(query string, args ...any) (sql.Result, error) {

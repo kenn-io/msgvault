@@ -331,7 +331,7 @@ func (d *PostgreSQLDialect) JSONIsDistinctExpr(col string) string {
 
 // BuildFTSArg builds unordered candidates whose final pieces match prefixes.
 func (d *PostgreSQLDialect) BuildFTSArg(terms []string) string {
-	return sqldialect.PostgreSQLSearchArg(terms)
+	return sqldialect.TSQuery(terms, "", " & ")
 }
 
 // InsertOrIgnore rewrites INSERT OR IGNORE INTO to INSERT INTO and appends

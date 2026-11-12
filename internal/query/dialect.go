@@ -259,7 +259,7 @@ func (PostgreSQLQueryDialect) FTSJoin() string { return "" }
 
 // BuildFTSTerm matches each term's pieces in order, with a final prefix.
 func (PostgreSQLQueryDialect) BuildFTSTerm(terms []string) (expr string, arg string) {
-	arg = sqldialect.PostgreSQLSearchArg(terms)
+	arg = sqldialect.TSQuery(terms, "", " & ")
 	if arg == "" {
 		return "FALSE", ""
 	}
@@ -267,7 +267,7 @@ func (PostgreSQLQueryDialect) BuildFTSTerm(terms []string) (expr string, arg str
 }
 
 func (PostgreSQLQueryDialect) BuildFTSBodyTerm(terms []string) (expr string, arg string) {
-	arg = sqldialect.PostgreSQLSearchArg(terms)
+	arg = sqldialect.TSQuery(terms, "", " & ")
 	if arg == "" {
 		return "FALSE", ""
 	}
