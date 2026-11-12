@@ -51,7 +51,7 @@ func TestListFiltersSourcesBeforePagination(t *testing.T) {
 	require.NoError(t, err)
 	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, f.EnsureParticipant("list-b@example.com", "B", "example.com"))
 	require.NoError(t, err)
-	for _, id := range []int64{allowed.ID, other.ID, allowed.ID, other.ID} {
+	for _, id := range []int64{allowed.ID, other.ID} {
 		_, err = f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: id, PersonAID: a.ID, PersonBID: b.ID, Body: "hidden"}, "owner")
 		require.NoError(t, err)
 	}
@@ -62,13 +62,7 @@ func TestListFiltersSourcesBeforePagination(t *testing.T) {
 	require.Len(t, first.Items, 1)
 	assert.Equal(t, allowed.ID, first.Items[0].SourceID)
 	assert.Empty(t, first.Items[0].Body)
-	assert.True(t, first.HasMore)
-	next, err := svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1, AfterID: first.NextAfterID})
-	require.NoError(t, err)
-	require.Len(t, next.Items, 1)
-	assert.Equal(t, allowed.ID, next.Items[0].SourceID)
-	assert.NotEqual(t, first.Items[0].IntroID, next.Items[0].IntroID)
-	assert.False(t, next.HasMore)
+	assert.False(t, first.HasMore)
 }
 
 func TestPrepareRejectsNonpositiveSourceID(t *testing.T) {

@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"fmt"
 	"sort"
 
 	"go.kenn.io/msgvault/internal/beeperidentity"
@@ -63,24 +62,6 @@ func (s *Store) introductionPreflightContext(ctx context.Context, sourceID, pers
 	if source.MergedIntoSourceID != 0 {
 		out.Blockers = append(out.Blockers, IntroductionBlocker{Code: "source_retired"})
 	}
-	scopedOwners := map[int64]struct{}{}
-	rows, err := s.db.QueryContext(ctx, `SELECT pi.participant_id FROM account_identities ai JOIN sources src ON src.id = ai.source_id JOIN participant_identifiers pi ON pi.identifier_type = 'beeper' AND pi.identifier_value = `+beeperidentity.FallbackSQL(s.dialect.DriverName(), "src.identifier", "ai.address")+` WHERE ai.source_id = ?`, sourceID)
-	if err != nil {
-		return out, fmt.Errorf("load scoped owner identities: %w", err)
-	}
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return out, err
-		}
-		scopedOwners[id] = struct{}{}
-	}
-	err = rows.Err()
-	_ = rows.Close()
-	if err != nil {
-		return out, err
-	}
 	for i, personID := range []int64{personAID, personBID} {
 		if personAID == personBID {
 			if i > 0 {
@@ -102,9 +83,6 @@ func (s *Store) introductionPreflightContext(ctx context.Context, sourceID, pers
 				return out, err
 			}
 			if _, ok := owners.participants[participant]; ok {
-				owner = true
-			}
-			if _, ok := scopedOwners[participant]; ok {
 				owner = true
 			}
 			if key != nil {

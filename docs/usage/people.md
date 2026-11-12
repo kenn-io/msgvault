@@ -416,7 +416,9 @@ Merge snapshots are durable audit data. They retain both profiles' merge-time
 values after later live-profile edits or redaction. A subset copies a complete
 merge packet only with `--include-attributes`, `--include-profiles`, and
 `--include-vcard-resources`; treat that output as containing historical
-personal data.
+personal data. Introduction drafts stay in the source archive. A subset omits
+merge packets that depend on those drafts and reports the omitted count, even
+when all profile options are enabled. The source archive retains its history.
 
 ## Store typed attributes
 

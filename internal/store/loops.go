@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/beeperidentity"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
@@ -407,7 +408,11 @@ func (s *Store) loopOwnerIdentities(ctx context.Context) (loopOwners, error) {
 		JOIN participants p ON `+ownerEmailMatch("p.email_address", "ai.address")+`
 		UNION ALL
 		SELECT pi.participant_id FROM account_identities ai
-		JOIN participant_identifiers pi ON `+ownerIdentifierMatch("pi.identifier_type", "pi.identifier_value", "ai.address", identifierWithoutPrimaryEmail))
+		JOIN participant_identifiers pi ON `+ownerIdentifierMatch("pi.identifier_type", "pi.identifier_value", "ai.address", identifierWithoutPrimaryEmail)+`
+		UNION ALL
+		SELECT pi.participant_id FROM account_identities ai
+		JOIN sources src ON src.id = ai.source_id AND src.source_type = 'beeper'
+		JOIN participant_identifiers pi ON pi.identifier_type = 'beeper' AND pi.identifier_value = `+beeperidentity.FallbackSQL(s.dialect.DriverName(), "src.identifier", "ai.address"))
 	if err != nil {
 		return loopOwners{}, fmt.Errorf("load owner identities: %w", err)
 	}

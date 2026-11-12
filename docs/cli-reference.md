@@ -3135,7 +3135,9 @@ confirmed addresses each account's included messages use, including addresses
 in the stored headers of mail not yet attributed, so each message keeps its
 account. The optional identity, attribute, profile, and vCard flags can copy
 personal records that have no message in the subset; read the command's
-warning before sharing its output.
+warning before sharing its output. Introduction drafts remain in the source
+archive. The subset omits and counts merge packets that depend on them, even
+when all profile options are enabled.
 
 ---
 

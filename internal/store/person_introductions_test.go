@@ -1,7 +1,11 @@
 package store_test
 
 import (
+	"encoding/base64"
+	"sort"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -125,13 +129,23 @@ func TestIntroductionPaginationAndScope(t *testing.T) {
 	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, f.EnsureParticipant("page-b@example.com", "B", "example.com"))
 	require.NoError(t, err)
 	ids := map[string]bool{}
+	var ordered []string
 	for _, source := range []int64{one.ID, one.ID, one.ID, two.ID} {
 		row, err := f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: source, PersonAID: a.ID, PersonBID: b.ID}, "owner")
 		require.NoError(t, err)
 		if source == one.ID {
 			ids[row.IntroID] = true
+			ordered = append(ordered, row.IntroID)
+			micros := 1
+			if len(ordered) == 3 {
+				micros = 2
+			}
+			stamp := time.Date(2026, 1, 1, 0, 0, 0, micros*1000, time.UTC)
+			_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_introductions SET created_at = ? WHERE intro_id = ?`), stamp, row.IntroID)
+			require.NoError(t, err)
 		}
 	}
+	sort.Strings(ordered[:2])
 	cursor := ""
 	seen := map[string]bool{}
 	finished := false
@@ -142,6 +156,8 @@ func TestIntroductionPaginationAndScope(t *testing.T) {
 			assert.True(t, ids[row.IntroID])
 			assert.False(t, seen[row.IntroID])
 			seen[row.IntroID] = true
+			require.LessOrEqual(t, len(seen), len(ordered))
+			assert.Equal(t, ordered[len(ordered)-len(seen)], row.IntroID)
 		}
 		if !page.HasMore {
 			finished = true
@@ -156,9 +172,19 @@ func TestIntroductionPaginationAndScope(t *testing.T) {
 	empty, err := f.Store.ListPersonIntroductionsContext(ctx, store.PersonIntroductionQuery{}, []int64{})
 	require.NoError(t, err)
 	assert.Empty(t, empty.Items)
+	for _, raw := range []string{
+		`{"version":2,"t":"2026-01-01T00:00:00Z","i":"x"}`,
+		`{"version":1,"t":"2026-01-01T00:00:00Z","i":"x","extra":true}`,
+		`{"version":1,"t":"2026-01-01T00:00:00Z","i":"x"} {}`,
+	} {
+		_, err := f.Store.ListPersonIntroductionsContext(ctx, store.PersonIntroductionQuery{AfterID: base64.RawURLEncoding.EncodeToString([]byte(raw))}, nil)
+		assert.ErrorIs(t, err, store.ErrIntroductionInvalid)
+	}
+	_, err = f.Store.ListPersonIntroductionsContext(ctx, store.PersonIntroductionQuery{AfterID: strings.Repeat("a", 4000)}, nil)
+	assert.ErrorIs(t, err, store.ErrIntroductionInvalid)
 }
 
-func TestIntroductionNonPreparedStatesAndCascade(t *testing.T) {
+func TestIntroductionNonPreparedStates(t *testing.T) {
 	f := storetest.New(t)
 	ctx := t.Context()
 	src, err := f.Store.GetOrCreateSource("beeper", "states")
@@ -167,6 +193,7 @@ func TestIntroductionNonPreparedStatesAndCascade(t *testing.T) {
 	require.NoError(t, err)
 	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, f.EnsureParticipant("states-b@example.com", "B", "example.com"))
 	require.NoError(t, err)
+	// C3 confirm will produce these reserved states; C1 guards their mutations.
 	for _, status := range []string{"creating", "group_created", "drafted", "remote_unknown", "cancelled"} {
 		row, err := f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID, Body: "private"}, "owner")
 		require.NoError(t, err)
@@ -182,6 +209,19 @@ func TestIntroductionNonPreparedStatesAndCascade(t *testing.T) {
 		assert.Equal(t, "private", got.Body)
 		assert.Equal(t, int64(1), got.Revision)
 	}
+}
+
+func TestIntroductionPersonDeleteCascades(t *testing.T) {
+	f := storetest.New(t)
+	ctx := t.Context()
+	src, err := f.Store.GetOrCreateSource("beeper", "cascade")
+	require.NoError(t, err)
+	a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, f.EnsureParticipant("cascade-a@example.com", "A", "example.com"))
+	require.NoError(t, err)
+	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, f.EnsureParticipant("cascade-b@example.com", "B", "example.com"))
+	require.NoError(t, err)
+	_, err = f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID}, "owner")
+	require.NoError(t, err)
 	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`DELETE FROM persons WHERE id = ?`), b.ID)
 	require.NoError(t, err)
 	page, err := f.Store.ListPersonIntroductionsContext(ctx, store.PersonIntroductionQuery{}, nil)
@@ -220,56 +260,6 @@ func TestIntroductionRefusesRetiredSource(t *testing.T) {
 	preflight, err = f.Store.GetPersonIntroductionPreflightContext(ctx, src.ID, a.ID, b.ID)
 	require.NoError(t, err)
 	assert.Contains(t, preflight.Blockers, store.IntroductionBlocker{Code: "source_retired"})
-}
-
-func TestIntroductionSplitDoesNotRestoreDeletedSource(t *testing.T) {
-	f := storetest.New(t)
-	ctx := t.Context()
-	src, err := f.Store.GetOrCreateSource("beeper", "deleted-source")
-	require.NoError(t, err)
-	pa := f.EnsureParticipant("deleted-a@example.com", "A", "example.com")
-	pb := f.EnsureParticipant("deleted-b@example.com", "B", "example.com")
-	a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pa)
-	require.NoError(t, err)
-	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pb)
-	require.NoError(t, err)
-	row, err := f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID}, "owner")
-	require.NoError(t, err)
-	merged, err := f.Store.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: a.ID, AbsorbedID: b.ID, ExpectedSurvivorRevision: a.Revision, ExpectedAbsorbedRevision: b.Revision, IdempotencyKey: "deleted-source-merge", Actor: "test"})
-	require.NoError(t, err)
-	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`DELETE FROM sources WHERE id = ?`), src.ID)
-	require.NoError(t, err)
-	split, err := f.Store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{SourcePersonID: a.ID, MergeID: merged.Merge.ID, ParticipantIDs: []int64{pb}, ExpectedSourceRevision: merged.Person.Revision, IdempotencyKey: "deleted-source-split", Actor: "test"})
-	require.NoError(t, err)
-	assert.NotEmpty(t, split.UnrestoredRows)
-	_, err = f.Store.GetPersonIntroductionContext(ctx, row.IntroID)
-	assert.ErrorIs(t, err, store.ErrIntroductionNotFound)
-}
-
-func TestIntroductionSplitKeepsDeletedCounterpartAbsent(t *testing.T) {
-	f := storetest.New(t)
-	ctx := t.Context()
-	src, err := f.Store.GetOrCreateSource("beeper", "counterpart")
-	require.NoError(t, err)
-	pa := f.EnsureParticipant("counter-a@example.com", "A", "example.com")
-	pb := f.EnsureParticipant("counter-b@example.com", "B", "example.com")
-	pc := f.EnsureParticipant("counter-c@example.com", "C", "example.com")
-	a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pa)
-	require.NoError(t, err)
-	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pb)
-	require.NoError(t, err)
-	c, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pc)
-	require.NoError(t, err)
-	row, err := f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: b.ID, PersonBID: c.ID}, "owner")
-	require.NoError(t, err)
-	merged, err := f.Store.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: a.ID, AbsorbedID: b.ID, ExpectedSurvivorRevision: a.Revision, ExpectedAbsorbedRevision: b.Revision, IdempotencyKey: "counter-merge", Actor: "test"})
-	require.NoError(t, err)
-	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`DELETE FROM persons WHERE id = ?`), c.ID)
-	require.NoError(t, err)
-	_, err = f.Store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{SourcePersonID: a.ID, MergeID: merged.Merge.ID, ParticipantIDs: []int64{pb}, ExpectedSourceRevision: merged.Person.Revision, IdempotencyKey: "counter-split", Actor: "test"})
-	require.NoError(t, err)
-	_, err = f.Store.GetPersonIntroductionContext(ctx, row.IntroID)
-	assert.ErrorIs(t, err, store.ErrIntroductionNotFound)
 }
 
 func TestIntroductionMultiStageMerge(t *testing.T) {

@@ -389,8 +389,8 @@ func (s *Store) mergePersonsOnce(
 		); err != nil {
 			return err
 		}
-		if err := s.reconcilePersonIntroductionsTx(ctx, tx, survivor.ID, absorbed.ID); err != nil {
-			return err
+		if _, err := tx.ExecContext(ctx, `UPDATE person_introductions SET person_a_id = CASE WHEN person_a_id = ? THEN ? ELSE person_a_id END, person_b_id = CASE WHEN person_b_id = ? THEN ? ELSE person_b_id END, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE person_a_id = ? OR person_b_id = ?`, absorbed.ID, survivor.ID, absorbed.ID, survivor.ID, absorbed.ID, absorbed.ID); err != nil {
+			return fmt.Errorf("repoint introductions: %w", err)
 		}
 		projectionIDs := []int64{}
 		if err := s.reconcilePersonRelationshipsTx(
@@ -2342,41 +2342,4 @@ func listPersonMergeReviewCandidatesTx(
 		return nil, fmt.Errorf("iterate person merge review candidates: %w", err)
 	}
 	return result, nil
-}
-
-func (s *Store) reconcilePersonIntroductionsTx(ctx context.Context, tx *loggedTx, survivorID, absorbedID int64) error {
-	rows, err := tx.QueryContext(ctx, `SELECT intro_id, person_a_id, person_b_id FROM person_introductions WHERE person_a_id = ? OR person_b_id = ?`, absorbedID, absorbedID)
-	if err != nil {
-		return err
-	}
-	type move struct {
-		id   string
-		a, b int64
-	}
-	var moves []move
-	for rows.Next() {
-		var m move
-		if err := rows.Scan(&m.id, &m.a, &m.b); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		moves = append(moves, m)
-	}
-	err = rows.Err()
-	_ = rows.Close()
-	if err != nil {
-		return err
-	}
-	for _, m := range moves {
-		if m.a == absorbedID {
-			m.a = survivorID
-		}
-		if m.b == absorbedID {
-			m.b = survivorID
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_introductions SET person_a_id = ?, person_b_id = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE intro_id = ?`, m.a, m.b, m.id); err != nil {
-			return err
-		}
-	}
-	return nil
 }

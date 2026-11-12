@@ -6,12 +6,16 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 var (
@@ -65,7 +69,11 @@ type PersonIntroductionPage struct {
 	HasMore     bool                 `json:"has_more"`
 	NextAfterID string               `json:"next_after_id"`
 }
+
+const introductionCursorBytes = 2 << 10
+
 type introductionCursor struct {
+	Version   int       `json:"version"`
 	CreatedAt time.Time `json:"t"`
 	ID        string    `json:"i"`
 }
@@ -151,19 +159,36 @@ func (s *Store) ListPersonIntroductionsContext(ctx context.Context, q PersonIntr
 		}
 	}
 	if q.AfterID != "" {
-		raw, err := base64.RawURLEncoding.DecodeString(q.AfterID)
-		var c introductionCursor
-		if err != nil || json.Unmarshal(raw, &c) != nil || c.ID == "" || c.CreatedAt.IsZero() {
+		if len(q.AfterID) > base64.RawURLEncoding.EncodedLen(introductionCursorBytes) {
 			return page, ErrIntroductionInvalid
 		}
+		raw, err := base64.RawURLEncoding.DecodeString(q.AfterID)
+		var c introductionCursor
+		if err != nil || len(raw) > introductionCursorBytes {
+			return page, ErrIntroductionInvalid
+		}
+		decoder := jsontext.NewDecoder(strings.NewReader(string(raw)))
+		if json.UnmarshalDecode(decoder, &c, json.RejectUnknownMembers(true)) != nil {
+			return page, ErrIntroductionInvalid
+		}
+		if _, err := decoder.ReadValue(); !errors.Is(err, io.EOF) || c.Version != 1 || c.ID == "" || c.CreatedAt.IsZero() {
+			return page, ErrIntroductionInvalid
+		}
+		var position any = c.CreatedAt
 		if s.IsPostgreSQL() {
 			query += ` AND (i.created_at < ? OR (i.created_at = ? AND i.intro_id < ?))`
 		} else {
-			query += ` AND (julianday(i.created_at) < julianday(?) OR (julianday(i.created_at) = julianday(?) AND i.intro_id < ?))`
+			key := sqliteutil.TimestampKeyFunction + `(i.created_at)`
+			query += ` AND (` + key + ` < ? OR (` + key + ` = ? AND i.intro_id < ?))`
+			position = sqliteutil.TimestampKey(c.CreatedAt)
 		}
-		args = append(args, c.CreatedAt, c.CreatedAt, c.ID)
+		args = append(args, position, position, c.ID)
 	}
-	query += ` ORDER BY i.created_at DESC, i.intro_id DESC LIMIT ?`
+	order := "i.created_at"
+	if !s.IsPostgreSQL() {
+		order = sqliteutil.TimestampKeyFunction + "(i.created_at)"
+	}
+	query += ` ORDER BY ` + order + ` DESC, i.intro_id DESC LIMIT ?`
 	args = append(args, q.Limit+1)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -184,7 +209,7 @@ func (s *Store) ListPersonIntroductionsContext(ctx context.Context, q PersonIntr
 		page.HasMore = true
 		page.Items = page.Items[:q.Limit]
 		last := page.Items[len(page.Items)-1]
-		raw, err := json.Marshal(introductionCursor{last.CreatedAt, last.IntroID})
+		raw, err := json.Marshal(introductionCursor{Version: 1, CreatedAt: last.CreatedAt, ID: last.IntroID})
 		if err != nil {
 			return page, err
 		}
@@ -243,13 +268,6 @@ func (s *Store) updateIntroduction(ctx context.Context, id string, revision int6
 			return err
 		}
 		if count != 1 {
-			current, readErr := scanIntroduction(tx.QueryRowContext(ctx, `SELECT `+introductionColumns+` FROM person_introductions i JOIN sources s ON s.id = i.source_id WHERE i.intro_id = ?`, id))
-			if readErr != nil {
-				return readErr
-			}
-			if current.Revision != revision {
-				return ErrIntroductionRevision
-			}
 			return ErrIntroductionState
 		}
 		result, err = scanIntroduction(tx.QueryRowContext(ctx, `SELECT `+introductionColumns+` FROM person_introductions i JOIN sources s ON s.id = i.source_id WHERE i.intro_id = ?`, id))

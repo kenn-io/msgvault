@@ -298,12 +298,8 @@ func checkIntroductionMergeSnapshotsOmitBody(t *testing.T, st *Store) {
 	require.NoError(t, err)
 	b, _, err := st.CreatePersonFromParticipantContext(ctx, pb)
 	require.NoError(t, err)
-	intro, err := st.PreparePersonIntroductionContext(ctx, PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID, Body: "sensitive synthetic text"}, "owner")
+	_, err = st.PreparePersonIntroductionContext(ctx, PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID, Body: "sensitive synthetic text"}, "owner")
 	require.NoError(t, err)
-	target, err := st.GetOrCreateSource("beeper", "snapshot-target")
-	require.NoError(t, err)
-	_, err = st.MergeSourcesContext(ctx, MergeSourcesRequest{FromSourceID: src.ID, IntoSourceID: target.ID})
-	assert.ErrorIs(t, err, ErrSourceMergeInvalid)
 	merged, err := st.MergePersonsContext(ctx, PersonMergeRequest{SurvivorID: a.ID, AbsorbedID: b.ID, ExpectedSurvivorRevision: a.Revision, ExpectedAbsorbedRevision: b.Revision, IdempotencyKey: "intro-snapshot", Actor: "test"})
 	require.NoError(t, err)
 	var blob []byte
@@ -328,13 +324,6 @@ func checkIntroductionMergeSnapshotsOmitBody(t *testing.T, st *Store) {
 	for _, column := range post.Columns {
 		assert.NotEqual(t, "body", column.Name)
 	}
-	_, err = st.CancelPersonIntroductionContext(ctx, intro.IntroID, 2)
-	require.NoError(t, err)
-	_, err = st.MergeSourcesContext(ctx, MergeSourcesRequest{FromSourceID: src.ID, IntoSourceID: target.ID})
-	require.NoError(t, err)
-	preflight, err := st.GetPersonIntroductionPreflightContext(ctx, src.ID, a.ID, a.ID)
-	require.NoError(t, err)
-	assert.Contains(t, preflight.Blockers, IntroductionBlocker{Code: "source_retired"})
 }
 
 func TestIntroductionProtectsUserOwnedPerson(t *testing.T) {

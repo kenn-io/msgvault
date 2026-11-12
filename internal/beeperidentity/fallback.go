@@ -29,25 +29,9 @@ func Fallback(accountID, userID string) string {
 
 // UserID decodes only canonical account-scoped fallback identities.
 func UserID(accountID, identifier string) (string, bool) {
-	account := strings.TrimSpace(accountID)
-	if account == "" {
-		return "", false
-	}
-	prefix := Prefix + ":" + EncodePart(account) + ":"
-	if !strings.HasPrefix(identifier, prefix) {
-		return "", false
-	}
-	part := strings.TrimPrefix(identifier, prefix)
-	colon := strings.IndexByte(part, ':')
-	if colon < 0 {
-		return "", false
-	}
-	n, err := strconv.Atoi(part[:colon])
-	if err != nil || n <= 0 || n != len(part[colon+1:]) {
-		return "", false
-	}
-	user := part[colon+1:]
-	if Fallback(accountID, user) != identifier {
+	part, ok := strings.CutPrefix(identifier, Prefix+":"+EncodePart(strings.TrimSpace(accountID))+":")
+	_, user, found := strings.Cut(part, ":")
+	if !ok || !found || Fallback(accountID, user) != identifier {
 		return "", false
 	}
 	return user, true

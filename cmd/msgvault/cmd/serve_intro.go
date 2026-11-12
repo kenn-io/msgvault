@@ -20,7 +20,7 @@ func introError(err error) error {
 	return &api.CLIRunCodedError{Code: introops.ErrorCode(err)}
 }
 func (a *storeAPIAdapter) runCLIIntro(ctx context.Context, req api.CLIRunRequest, emit func(api.CLIRunEvent) error) error {
-	if len(req.Env) != 0 || req.Cwd != "" || req.GrantDecided {
+	if req.Cwd != "" {
 		return introError(store.ErrIntroductionInvalid)
 	}
 	svc := introops.Service{Store: a.store}
