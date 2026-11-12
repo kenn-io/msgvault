@@ -905,6 +905,7 @@ func TestPersonSweepBriefPlanRefusesProfilesWithoutSensitiveInput(t *testing.T) 
 		time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC))
 	require.NoError(err)
 	assert.False(plan.run)
+	assert.Empty(archive.candidateCalls, "no brief window is even built")
 
 	profile.AllowSensitive = true
 	plan, err = worker.planPersonBrief(t.Context(), 7, BriefModeForce, profile,

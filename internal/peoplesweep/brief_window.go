@@ -209,7 +209,7 @@ func BuildBriefWindow(
 	// listing does not apply the authorship filter, so passing one through
 	// would hydrate the whole unfiltered scope for a person who authored
 	// nothing on an authenticating source, such as an email-only contact,
-	// only to reject every row. No candidate means no evidence.
+	// only to reject every row. No candidates skip ordinary retrieval.
 	var retrieved []EvidenceItem
 	if len(candidates) > 0 {
 		// An empty target carries no lexical filter, so the search returns every
