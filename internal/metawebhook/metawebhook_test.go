@@ -310,7 +310,7 @@ func TestWorkerRetriesEachChangeInOrderAndAppliesTheRest(t *testing.T) {
 			case `"flaky"`:
 				flaky++
 				if flaky < 3 {
-					return errors.New("source busy")
+					return errors.New("temporary failure")
 				}
 			case `"invalid"`:
 				invalid++
@@ -368,5 +368,56 @@ func TestWorkerRetriesEachChangeInOrderAndAppliesTheRest(t *testing.T) {
 		cancel()
 		require.ErrorIs(<-done, context.Canceled)
 		assert.Len(pendingFiles(t, dir), 1, "a delivery interrupted by shutdown stays for the next start")
+	})
+}
+
+func TestWorkerWaitsOutABusySourceWithoutSpendingTheRetryBudget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		h, dir := newTestHandler(t)
+		start := time.Now()
+		var applied []string
+		var downAttempts []time.Time
+		var busyLaterSince time.Time
+		feed := func(ctx context.Context, change Change) error {
+			value := string(change.Values[0])
+			switch value {
+			case `"busy"`:
+				if time.Since(start) < 3*time.Hour {
+					return fmt.Errorf("%w: polling sync running", ErrBusy)
+				}
+			case `"down"`:
+				downAttempts = append(downAttempts, time.Now())
+				return errors.New("graph unavailable")
+			case `"busy later"`:
+				if busyLaterSince.IsZero() {
+					busyLaterSince = time.Now()
+				}
+				if time.Since(busyLaterSince) < 10*time.Minute {
+					return fmt.Errorf("%w: polling sync running", ErrBusy)
+				}
+			}
+			applied = append(applied, value)
+			return nil
+		}
+		w := NewWorker(dir, map[Field]FieldHandler{{"page", "feed"}: feed})
+		body := `{"object":"page","entry":[{"id":"100","changes":[` +
+			`{"field":"feed","value":"busy"},{"field":"feed","value":"down"},` +
+			`{"field":"feed","value":"busy later"},{"field":"feed","value":"after"}]}]}`
+		require.NoError(h.store("9", []byte(body)))
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error)
+		go func() { done <- w.Run(ctx) }()
+
+		time.Sleep(6 * time.Hour)
+		synctest.Wait()
+		assert.Equal([]string{`"busy"`, `"busy later"`, `"after"`}, applied,
+			"busy changes wait for their source, even after the budget is spent; the failing change is skipped")
+		require.NotEmpty(downAttempts)
+		assert.GreaterOrEqual(downAttempts[len(downAttempts)-1].Sub(downAttempts[0]), 55*time.Minute,
+			"hours of waiting for a busy source leave the next failure its full retry budget")
+		assert.Empty(pendingFiles(t, dir))
+		cancel()
+		require.ErrorIs(<-done, context.Canceled)
 	})
 }

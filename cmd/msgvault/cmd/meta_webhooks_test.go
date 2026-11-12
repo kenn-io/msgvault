@@ -24,42 +24,44 @@ import (
 
 func TestMetaWebhookErrorRetriesOnlyRecoverableFailures(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		err       error
-		permanent bool
+		name string
+		err  error
+		want error // ErrUnrecoverable, ErrBusy, or nil for a retryable failure
 	}{
-		{"source busy", fmt.Errorf("apply: %w", store.ErrSyncAlreadyActive), false},
-		{"Graph unavailable", &meta.APIError{Status: 503}, false},
-		{"Graph throttled with 400", &meta.APIError{Status: 400, Code: 4}, false},
-		{"Graph throttled with 429", &meta.APIError{Status: 429}, false},
-		{"Graph throttled with 403", &meta.APIError{Status: 403, Code: 613}, false},
-		{"Page token expired", &meta.APIError{Status: 400, Code: 190}, false},
-		{"Page token invalidated", &meta.APIError{Status: 400, Code: 190, Subcode: 463}, false},
-		{"API session", &meta.APIError{Status: 400, Code: 102}, false},
-		{"unauthorized without a code", &meta.APIError{Status: 401}, false},
-		{"API unknown", &meta.APIError{Status: 400, Code: 1}, false},
-		{"API service", &meta.APIError{Status: 400, Code: 2}, false},
-		{"application limit reached", &meta.APIError{Status: 400, Code: 341}, false},
-		{"temporarily blocked", &meta.APIError{Status: 400, Code: 368}, false},
-		{"business use case throttled 80001", &meta.APIError{Status: 400, Code: 80001}, false},
-		{"business use case throttled 80002", &meta.APIError{Status: 400, Code: 80002}, false},
-		{"business use case throttled 80006", &meta.APIError{Status: 400, Code: 80006}, false},
-		{"business use case throttled 80014", &meta.APIError{Status: 400, Code: 80014}, false},
-		{"token expired with HTTP 200", &meta.APIError{Status: 200, Code: 190}, false},
-		{"unknown code with 500", &meta.APIError{Status: 500, Code: 100}, false},
-		{"post deleted", fmt.Errorf("read post: %w", &meta.APIError{Status: 400, Code: 100, Subcode: 33}), true},
-		{"invalid parameter with HTTP 200", &meta.APIError{Status: 200, Code: 100}, true},
-		{"permission denied", &meta.APIError{Status: 403, Code: 10}, true},
-		{"permission family", &meta.APIError{Status: 403, Code: 200}, true},
-		{"capability missing", &meta.APIError{Status: 400, Code: 3}, true},
-		{"bad request without a code", &meta.APIError{Status: 400}, true},
-		{"source not registered", store.ErrSourceNotFound, true},
-		{"invalid change", fmt.Errorf("%w: bad", meta.ErrInvalidChange), true},
+		{"source busy", fmt.Errorf("apply: %w", store.ErrSyncAlreadyActive), metawebhook.ErrBusy},
+		{"Graph unavailable", &meta.APIError{Status: 503}, nil},
+		{"Graph throttled with 400", &meta.APIError{Status: 400, Code: 4}, nil},
+		{"Graph throttled with 429", &meta.APIError{Status: 429}, nil},
+		{"Graph throttled with 403", &meta.APIError{Status: 403, Code: 613}, nil},
+		{"Page token expired", &meta.APIError{Status: 400, Code: 190}, nil},
+		{"Page token invalidated", &meta.APIError{Status: 400, Code: 190, Subcode: 463}, nil},
+		{"API session", &meta.APIError{Status: 400, Code: 102}, nil},
+		{"unauthorized without a code", &meta.APIError{Status: 401}, nil},
+		{"API unknown", &meta.APIError{Status: 400, Code: 1}, nil},
+		{"API service", &meta.APIError{Status: 400, Code: 2}, nil},
+		{"application limit reached", &meta.APIError{Status: 400, Code: 341}, nil},
+		{"temporarily blocked", &meta.APIError{Status: 400, Code: 368}, nil},
+		{"business use case throttled 80001", &meta.APIError{Status: 400, Code: 80001}, nil},
+		{"business use case throttled 80002", &meta.APIError{Status: 400, Code: 80002}, nil},
+		{"business use case throttled 80006", &meta.APIError{Status: 400, Code: 80006}, nil},
+		{"business use case throttled 80014", &meta.APIError{Status: 400, Code: 80014}, nil},
+		{"token expired with HTTP 200", &meta.APIError{Status: 200, Code: 190}, nil},
+		{"unknown code with 500", &meta.APIError{Status: 500, Code: 100}, nil},
+		{"post deleted", fmt.Errorf("read post: %w", &meta.APIError{Status: 400, Code: 100, Subcode: 33}), metawebhook.ErrUnrecoverable},
+		{"invalid parameter with HTTP 200", &meta.APIError{Status: 200, Code: 100}, metawebhook.ErrUnrecoverable},
+		{"permission denied", &meta.APIError{Status: 403, Code: 10}, metawebhook.ErrUnrecoverable},
+		{"permission family", &meta.APIError{Status: 403, Code: 200}, metawebhook.ErrUnrecoverable},
+		{"capability missing", &meta.APIError{Status: 400, Code: 3}, metawebhook.ErrUnrecoverable},
+		{"bad request without a code", &meta.APIError{Status: 400}, metawebhook.ErrUnrecoverable},
+		{"source not registered", store.ErrSourceNotFound, metawebhook.ErrUnrecoverable},
+		{"invalid change", fmt.Errorf("%w: bad", meta.ErrInvalidChange), metawebhook.ErrUnrecoverable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := metaWebhookError(tc.err)
 			require.ErrorIs(t, err, tc.err)
-			assert.Equal(t, tc.permanent, errors.Is(err, metawebhook.ErrUnrecoverable))
+			for _, class := range []error{metawebhook.ErrUnrecoverable, metawebhook.ErrBusy} {
+				assert.Equal(t, errors.Is(tc.want, class), errors.Is(err, class), "is %v", class)
+			}
 		})
 	}
 }

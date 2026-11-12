@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/cenkalti/backoff/v7"
 )
 
 // Change is one change of a delivery entry: entry.id names the Page or
@@ -28,27 +26,36 @@ type Field struct{ Object, Name string }
 
 // FieldHandler applies one change for its field. An error that wraps
 // ErrUnrecoverable is logged and the change skipped, and later changes still
-// apply. Any other error retries the change with backoff. Changes that already
-// succeeded are not applied again, except when the daemon restarts during a
-// delivery: then the whole delivery is applied again, which the archive's
-// upserts allow.
+// apply. An error that wraps ErrBusy waits for the source and retries for as
+// long as it stays busy. Any other error retries the change with backoff
+// within the delivery's retry budget. Changes that already succeeded are not
+// applied again, except when the daemon restarts during a delivery: then the
+// whole delivery is applied again, which the archive's upserts allow.
 type FieldHandler func(ctx context.Context, change Change) error
 
 // ErrUnrecoverable marks a change that retrying cannot apply.
 var ErrUnrecoverable = errors.New("change cannot be applied")
 
-// maxRetryTime bounds how long one delivery spends retrying failed changes,
-// and so how long it blocks the deliveries after it. Polling sync still
-// archives the comments of changes that are skipped.
+// ErrBusy marks a change whose source is in use, such as by a polling sync.
+// It is not a failure: the change is retried until the source is free, and
+// the waits do not spend the delivery's retry budget.
+var ErrBusy = errors.New("source is busy")
+
+// maxRetryTime is one delivery's retry budget: the total time it may wait
+// between retries of failed changes, and so about how long failures let it
+// block the deliveries after it. Time spent in attempts and waiting for a
+// busy source is not counted. Polling sync still archives the comments of
+// changes that are skipped.
 const maxRetryTime = time.Hour
 
 // Worker applies stored deliveries oldest first, one change at a time, and
-// deletes each delivery after it is applied. A failing change blocks the
-// changes and deliveries after it while it is retried, so a retried change
-// never overwrites newer ones. Once a delivery has spent maxRetryTime
-// retrying, the failing change is logged and skipped, and each remaining
-// change of that delivery gets a single attempt. A change that fails
-// permanently is logged and skipped at once.
+// deletes each delivery after it is applied. A failing or busy change blocks
+// the changes and deliveries after it while it is retried, so a retried
+// change never overwrites newer ones. Once a delivery has spent maxRetryTime
+// waiting to retry failures, the failing change is logged and skipped, and
+// each remaining change of that delivery gets a single attempt, still
+// waiting out a busy source. A change that fails permanently is logged and
+// skipped at once.
 type Worker struct {
 	pending  string
 	handlers map[Field]FieldHandler
@@ -109,9 +116,9 @@ func (w *Worker) process(ctx context.Context, name string) error {
 		slog.Warn("Meta webhook delivery dropped", "delivery", name, "error", err)
 		return remove(path)
 	}
-	// The retry budget covers the whole delivery, so one delivery blocks the
-	// queue for about maxRetryTime at most.
-	deadline := time.Now().Add(maxRetryTime)
+	// The retry budget covers the whole delivery, so failures block the queue
+	// for about maxRetryTime at most.
+	budget := maxRetryTime
 	for _, entry := range envelope.Entry {
 		for _, change := range entry.Changes {
 			log := slog.With("delivery", name, "object", envelope.Object, "field", change.Field, "entry", entry.ID)
@@ -123,7 +130,7 @@ func (w *Worker) process(ctx context.Context, name string) error {
 			apply := func() error {
 				return handler(ctx, Change{App: app, EntryID: entry.ID, Values: []jsontext.Value{change.Value}})
 			}
-			err := applyWithRetry(ctx, log, &deadline, apply)
+			err := applyWithRetry(ctx, log, &budget, apply)
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -135,34 +142,44 @@ func (w *Worker) process(ctx context.Context, name string) error {
 	return remove(path)
 }
 
-// applyWithRetry applies one change, retrying failures with backoff until
-// deadline. Without budget left it makes a single attempt. When the budget
-// runs out during the retries it moves deadline to now, so the remaining
-// changes of the delivery get one attempt each.
-func applyWithRetry(ctx context.Context, log *slog.Logger, deadline *time.Time, apply func() error) error {
-	left := time.Until(*deadline)
-	if left <= 0 {
-		return apply()
-	}
-	retry := backoff.NewExponentialBackOff()
-	retry.InitialInterval, retry.MaxInterval = time.Second, 5*time.Minute
-	_, err := backoff.Retry(ctx, func() (struct{}, error) {
+// applyWithRetry applies one change. A busy source is retried after a wait
+// that grows from 1 second to 1 minute, for as long as it stays busy, and
+// the wait is not charged to budget. Other failures are retried after a wait
+// that grows from 1 second to 5 minutes, and each wait is subtracted from
+// budget. When the next wait would overrun budget, the change fails and
+// budget drops to zero, so the remaining changes of the delivery get one
+// attempt each apart from busy waits.
+func applyWithRetry(ctx context.Context, log *slog.Logger, budget *time.Duration, apply func() error) error {
+	busyWait, failWait := time.Second, time.Second
+	for {
 		err := apply()
-		if errors.Is(err, ErrUnrecoverable) {
-			return struct{}{}, backoff.Permanent(err)
+		var wait time.Duration
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, ErrUnrecoverable):
+			return fmt.Errorf("apply change: %w", err)
+		case errors.Is(err, ErrBusy):
+			if busyWait == time.Second { // log once per change, not every minute
+				log.Info("Meta webhook source busy; waiting for it", "error", err)
+			}
+			wait, busyWait = busyWait, min(2*busyWait, time.Minute)
+		case failWait > *budget:
+			*budget = 0
+			return fmt.Errorf("apply change: %w", err)
+		default:
+			wait, failWait = failWait, min(2*failWait, 5*time.Minute)
+			*budget -= wait
+			log.Warn("Meta webhook change failed; retrying", "retry_in", wait, "error", err)
 		}
-		return struct{}{}, err
-	}, backoff.WithBackOff(retry), backoff.WithMaxElapsedTime(left), backoff.WithNotify(func(err error, wait time.Duration) {
-		log.Warn("Meta webhook change failed; retrying", "retry_in", wait, "error", err)
-	}))
-	if errors.Is(err, backoff.ErrMaxElapsedTime) {
-		// Backoff stops before a wait that would overrun the budget.
-		*deadline = time.Now()
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
-	if err != nil {
-		return fmt.Errorf("apply change: %w", err)
-	}
-	return nil
 }
 
 func remove(path string) error {
