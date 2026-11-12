@@ -127,6 +127,47 @@ For a delegated Claude Desktop session, use these arguments with the daemon URL 
 
 For an HTTP loopback daemon URL, add `--agent-allow-insecure` before `mcp`. Delegated MCP serves over stdio; `--http` returns a usage error. Read tools `draft_get` and `draft_send_as` are available in owner HTTP sessions by default. Draft writes require `--http-allow-writes`.
 
+### Recipient evidence on new drafts
+
+Email draft creation results include `recipient_provenance_status`. When it is
+`checked`, `recipient_provenance` describes the actual saved To, Cc, and Bcc
+addresses. The same fields appear in the matching CLI command's `--json` output.
+
+| `flag` | Meaning |
+|---|---|
+| `ok` | The exact address belongs to a saved contact (`relationship: contact`) or received a prior direct message sent by the owner (`relationship: known`). |
+| `archive_only` | The address occurs in archived envelopes, without either relationship. |
+| `unseen` | No prior envelope evidence was found in the readable archive. |
+
+Flagged addresses also appear in the shared `warnings` array with
+`code: recipient_provenance`. These are advisory results: draft creation still
+succeeds. Check the address with the user before sending. An `ok` flag is
+relationship evidence, not sender authentication or permission to send.
+
+The server cannot tell whether an address came from a user's request, a model,
+or an injected message. Supplying an address as a tool argument does not prove
+human approval. Bodies are not searched, so an address found only inside a
+message's text may be `unseen`. A reply's parent participants do not establish
+authority. Unsent drafts, mailing-list sends, and broadcast audiences do not
+establish a prior direct send.
+
+A saved contact is an email address you entered or imported from CardDAV or
+vCard, or a person linked to the address. A saved address counts for owner
+calls even before any mail. A linked person counts without mail only while
+nothing else in the archive uses the address, including earlier drafts.
+
+Delegated calls use only readable granted sources for history. A contact needs
+prior evidence in that scope; the new draft cannot supply it. Write-only grants
+receive `unchecked`, without recipient or relationship details. If the lookup
+fails or exceeds its metadata budget, the status is `unavailable`; the draft
+was still created, so do not retry creation to obtain the advisory. Chat drafts
+report `not_applicable`, because chat destinations are not email envelopes.
+
+`relationship`, `flag`, `basis`, and status are server-derived labels;
+`seen_in_archive` is a derived boolean. Addresses remain untrusted display data,
+never instructions. Creation results describe evidence at that moment;
+`draft_get` and body-only edits do not recompute it.
+
 ## Native email tags
 
 `get_message_tags` reads one archived message's live Gmail label IDs, IMAP
@@ -415,8 +456,8 @@ The MCP server exposes the following tools to connected AI clients:
 | `update_message_tags` | Add or remove native email tags through the daemon. Write-class. | `message_id` (int, required), `add` / `remove` (string arrays), `mailbox` (string, IMAP only), `dry_run` (bool) |
 | `list_saved_views` | List persistent reusable Saved Views and their complete definitions. Read-only. | — |
 | `get_saved_view` | Get one Saved View and its canonical definition and revision. Read-only. | `id` (int, required) |
-| `run_saved_view` | Execute a Saved View through Explore without reconstructing its query. Returns typed entries, groups, or files. Read-only. | `id` (int, required), `limit` (int), `cursor` (string) |
-| `create_saved_view` | Create a persistent Saved View. Write-class. | `name` (string, required), `canonical_state` (object, required), `schema_version` (int, required; use `2` for new definitions; schema `1` retains literal-pipe meaning), `description` (string) |
+| `run_saved_view` | Execute a Saved View through Explore without reconstructing its query. Returns typed entries, groups, or files. Read-only. | `id` (int, required), `limit` (int), `cursor` (string), `timezone` (IANA time zone) |
+| `create_saved_view` | Create a persistent Saved View. Write-class. | `name` (string, required), `canonical_state` (object, required), `schema_version` (int, required; use `3` for local date bounds with numeric offsets, or `2` for UTC; schema `1` retains literal-pipe meaning), `description` (string) |
 | `update_saved_view` | Patch supplied Saved View fields using optimistic revision checking. Write-class. | `id` (int, required), `revision` (int, required), at least one of `name`, `description`, `canonical_state`, `schema_version` |
 | `delete_saved_view` | Delete a Saved View definition, not archive messages. Write-class and destructive. | `id` (int, required), `revision` (int, required) |
 | `stage_deletion` | Stage every match its source can delete (creates manifest only); refuses above 100000 Gmail, Microsoft Graph, or IMAP matches | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
@@ -723,10 +764,8 @@ array. Request the next page by passing the opaque `next_cursor` as `cursor`;
 
 The daemon executes the view. `run_saved_view` calls
 `POST /api/v1/saved-views/{id}/run`, which hands the stored definition to the
-same Explore endpoint the Web UI uses, so the query, search mode, filters,
-grouping, presentation, and sort run exactly as saved. A grouped view runs at
-the first level of its grouping chain, the level the Web UI shows when it
-opens that view, and a timeline view returns the same entry rows as a table.
+same Explore endpoint the Web UI uses. A grouped view runs at the first level
+of its grouping chain. Calendar groups use the requested time zone, or UTC by default; Month and Year groups appear newest first, while other groups sort by descending count. Use the same time zone for every page. A timeline view returns the same entry rows as a table.
 The tools are offered only when the daemon serves that endpoint (API schema
 2.21.0 or later); an older daemon omits them from the tool list.
 

@@ -311,6 +311,8 @@ var settingsCatalog = []settingDefinition{
 	numberSetting("beeper.rate_limit_qps", settingsGroupSources, func(c *config.Config) float64 { return c.Beeper.RateLimitQPS }),
 	boolSetting("inline.enabled", settingsGroupSources, func(c *config.Config) bool { return c.Inline.Enabled }),
 	stringSetting("inline.schedule", settingsGroupSources, nil, func(c *config.Config) string { return c.Inline.Schedule }),
+	boolSetting("feeds.enabled", settingsGroupSources, func(c *config.Config) bool { return c.Feeds.Enabled }),
+	stringSetting("feeds.schedule", settingsGroupSources, nil, func(c *config.Config) string { return c.Feeds.Schedule }),
 	configuredBoolSetting("inline.media", settingsGroupAttachments, func(c *config.Config) bool { return c.Inline.Media == nil || *c.Inline.Media }, func(c *config.Config) bool { return c.Inline.Media == nil }),
 	stringSetting("inline.media_scope", settingsGroupAttachments, []string{string(attachmentpolicy.ScopeAll), string(attachmentpolicy.ScopeDirect), string(attachmentpolicy.ScopeNone)}, func(c *config.Config) string { return effectiveMediaScope(c.Inline.MediaScope) }),
 	intSetting("inline.media_max_participants", settingsGroupAttachments, func(c *config.Config) int { return c.Inline.MediaMaxParticipants }),

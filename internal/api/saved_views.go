@@ -78,7 +78,7 @@ func (s *Server) registerSavedViewRoutes(api huma.API) {
 	registerRawHumaRoute(api, get, s.handleGetSavedView)
 
 	patch := rawAPIV1Operation("patchSavedView", http.MethodPatch, "/saved-views/{id}", "Update a shared analytical Saved View")
-	patch.Description = "Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR."
+	patch.Description = "Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR, or 3 for local date offsets."
 	addSavedViewIDParameter(&patch)
 	addSavedViewIfMatchParameter(&patch)
 	patch.RequestBody = jsonRequestBodyFor[PatchSavedViewRequest](api)
