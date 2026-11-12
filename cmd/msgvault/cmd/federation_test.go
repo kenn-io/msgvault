@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -22,10 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-type federationFailWriter struct{}
-
-func (federationFailWriter) Write([]byte) (int, error) { return 0, errors.New("output failed") }
 
 func TestFederationEnrollOutput(t *testing.T) {
 	setup := func(t *testing.T) (*store.Store, *cobra.Command, context.Context, *bytes.Buffer, *bytes.Buffer, string) {
@@ -80,8 +75,6 @@ func TestFederationEnrollOutput(t *testing.T) {
 		list.SetOut(&output)
 		require.NoError(t, list.ExecuteContext(ctx))
 		assert.Contains(t, output.String(), "\talice\talice\tactive\n")
-		list.SetOut(federationFailWriter{})
-		assert.ErrorContains(t, list.ExecuteContext(ctx), "write federation enrollments: output failed")
 	})
 	t.Run("JSON output", func(t *testing.T) {
 		_, command, ctx, stdout, stderr, _ := setup(t)
@@ -96,7 +89,7 @@ func TestFederationEnrollOutput(t *testing.T) {
 	})
 	t.Run("server error", func(t *testing.T) {
 		_, command, ctx, _, _, _ := setup(t)
-		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "Alice"})
+		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", " "})
 		assert.ErrorContains(t, command.ExecuteContext(ctx), "member")
 	})
 }

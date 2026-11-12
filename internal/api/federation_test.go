@@ -117,7 +117,11 @@ func TestFederationHandshakeLibraryAuthorization(t *testing.T) {
 	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 	var body federationHandshakeResponse
 	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &body))
-	requirements.Equal(federationHandshakeResponse{ProtocolVersions: []int{1}, HubInstance: hubUID, EnrollmentState: "active"}, body)
+	requirements.Equal(federationHandshakeResponse{ProtocolVersions: []int{1}, HubInstance: hubUID, EnrollmentState: ""}, body)
+	var fields map[string]any
+	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &fields))
+	requirements.Contains(fields, "enrollment_state")
+	requirements.Equal("", fields["enrollment_state"])
 }
 
 func TestFederationKeylessSpokeIdentity(t *testing.T) {
@@ -270,21 +274,18 @@ func TestFederationCredentialOnlyHandshake(t *testing.T) {
 	}
 	assertions.True(seen)
 	assertions.Greater(requests, 10)
-	for _, method := range []string{http.MethodPost, http.MethodTrace, http.MethodHead} {
-		r := httptest.NewRequestWithContext(t.Context(), method, "/api/v1/federation/handshake", nil)
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/federation/handshake"},
+		{http.MethodTrace, "/api/v1/federation/handshake"},
+		{http.MethodHead, "/api/v1/federation/handshake"},
+		{http.MethodGet, "/health"},
+	} {
+		r := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)
 		r.Header.Set("Authorization", "Bearer "+token)
 		r.Header.Set("X-Msgvault-Spoke-Instance", uid)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
-		assertions.Equal(http.StatusForbidden, w.Code, method)
-	}
-	for _, path := range []string{"/health"} {
-		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
-		r.Header.Set("Authorization", "Bearer "+token)
-		r.Header.Set("X-Msgvault-Spoke-Instance", uid)
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, r)
-		assertions.Equal(http.StatusForbidden, w.Code, path)
+		assertions.Equal(http.StatusForbidden, w.Code, "%s %s", tc.method, tc.path)
 	}
 }
 

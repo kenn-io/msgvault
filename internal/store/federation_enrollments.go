@@ -20,7 +20,6 @@ var (
 	ErrFederationValidation = errors.New("invalid federation enrollment")
 	ErrFederationHubSource  = errors.New("federation hub cannot create sources")
 	federationUIDPattern    = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	federationMemberPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 )
 
 type FederationEnrollment struct {
@@ -56,8 +55,8 @@ func (s *Store) CreateFederationEnrollmentContext(ctx context.Context, spokeUID,
 	if !federationUIDPattern.MatchString(spokeUID) {
 		return nil, "", fmt.Errorf("spoke_instance must be 64 lowercase hexadecimal digits: %w", ErrFederationValidation)
 	}
-	if !federationMemberPattern.MatchString(member) {
-		return nil, "", fmt.Errorf("member must be 1–64 lowercase ASCII letters, digits, dots, underscores or hyphens, starting with a letter or digit: %w", ErrFederationValidation)
+	if strings.TrimSpace(member) == "" || strings.IndexFunc(member, unicode.IsControl) >= 0 {
+		return nil, "", fmt.Errorf("member must not be blank or contain control characters: %w", ErrFederationValidation)
 	}
 	if len(name) > 128 || strings.IndexFunc(name, unicode.IsControl) >= 0 {
 		return nil, "", fmt.Errorf("spoke_name must be at most 128 bytes and contain no control characters: %w", ErrFederationValidation)

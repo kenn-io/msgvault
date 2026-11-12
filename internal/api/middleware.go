@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"net"
 	"net/http"
 	"slices"
@@ -13,7 +12,6 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/store"
 	"golang.org/x/time/rate"
 )
 
@@ -273,12 +271,8 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 				_, cookieErr := r.Cookie(sessionCookieName)
 				parts := strings.Fields(auths[0])
 				if cookieErr != nil && len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && strings.HasPrefix(parts[1], "mvf1_") {
-					_, err := s.federationStore.AuthenticateFederationEnrollmentContext(r.Context(), parts[1], instances[0])
-					if err == nil {
+					if _, err := s.federationStore.AuthenticateFederationEnrollmentContext(r.Context(), parts[1], instances[0]); err == nil {
 						return requestAuthentication{Mode: AuthModeFederation}
-					}
-					if !errors.Is(err, store.ErrNotFound) {
-						s.logger.Warn("federation enrollment lookup failed", "error", err)
 					}
 				}
 			}

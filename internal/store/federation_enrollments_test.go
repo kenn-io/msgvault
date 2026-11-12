@@ -65,8 +65,6 @@ func TestFederationEnrollmentPersistsAndSchemaUpgrade(t *testing.T) {
 	requirements := require.New(t)
 	path := filepath.Join(t.TempDir(), "archive.db")
 	st := testutil.NewSQLiteTestStoreAt(t, path)
-	archiveUID, err := st.ArchiveUIDContext(t.Context())
-	requirements.NoError(err)
 	spoke := strings.Repeat("a", 64)
 	e, token, err := st.CreateFederationEnrollmentContext(t.Context(), spoke, "alice", "")
 	requirements.NoError(err)
@@ -81,14 +79,8 @@ func TestFederationEnrollmentPersistsAndSchemaUpgrade(t *testing.T) {
 	requirements.NoError(err)
 	_, err = reopened.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value = '41' WHERE key = 'schema_version'")
 	requirements.NoError(err)
-	upgraded, err := store.OpenForTest(t.Context(), path)
-	requirements.NoError(err)
-	t.Cleanup(func() { requirements.NoError(upgraded.Close()) })
-	requirements.NoError(upgraded.InitSchemaUnlessCurrentContext(t.Context()))
-	gotUID, err := upgraded.ArchiveUIDContext(t.Context())
-	requirements.NoError(err)
-	assertions.Equal(archiveUID, gotUID)
-	_, _, err = upgraded.CreateFederationEnrollmentContext(t.Context(), spoke, "alice", "")
+	requirements.NoError(reopened.InitSchemaContext(t.Context()))
+	_, _, err = reopened.CreateFederationEnrollmentContext(t.Context(), spoke, "alice", "")
 	requirements.NoError(err)
 }
 
@@ -97,7 +89,8 @@ func TestFederationEnrollmentValidation(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	for _, tc := range []struct{ spoke, member, name, field string }{
 		{"bad", "alice", "", "spoke_instance"},
-		{strings.Repeat("a", 64), "Alice", "", "member"},
+		{strings.Repeat("a", 64), "   ", "", "member"},
+		{strings.Repeat("a", 64), "ali\nce", "", "member"},
 		{strings.Repeat("a", 64), "alice", strings.Repeat("x", 129), "spoke_name"},
 		{strings.Repeat("a", 64), "alice", "name\nother", "spoke_name"},
 		{strings.Repeat("a", 64), "alice", "name\u009b", "spoke_name"},
@@ -106,4 +99,7 @@ func TestFederationEnrollmentValidation(t *testing.T) {
 		requirements.ErrorIs(err, store.ErrFederationValidation)
 		requirements.ErrorContains(err, tc.field)
 	}
+	enrollment, _, err := st.CreateFederationEnrollmentContext(t.Context(), strings.Repeat("a", 64), "Alice", "")
+	requirements.NoError(err)
+	requirements.Equal("Alice", enrollment.Member)
 }

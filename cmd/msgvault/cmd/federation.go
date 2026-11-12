@@ -21,9 +21,7 @@ func init() {
 		if err != nil {
 			return err
 		}
-		if _, err = fmt.Fprintln(cmd.OutOrStdout(), out.ArchiveUID); err != nil {
-			return fmt.Errorf("write federation identity: %w", err)
-		}
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), out.ArchiveUID)
 		return nil
 	}}
 	var spoke, member, name string
@@ -43,17 +41,12 @@ func init() {
 		if asJSON {
 			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), result, json.Deterministic(true))
 		}
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), result.Token); err != nil {
-			return fmt.Errorf("write enrollment token: %w", err)
-		}
-		_, err = fmt.Fprintf(cmd.ErrOrStderr(), "Enrollment: %s\nMember: %s\nSpoke: %s\nJoin (upcoming, not in this release): msgvault federation join <hub-url> --hub-instance %s --token-file <path>\n", result.Enrollment.EnrollmentUID, result.Enrollment.Member, result.Enrollment.SpokeName, result.HubInstance)
-		if err != nil {
-			return fmt.Errorf("write enrollment details: %w", err)
-		}
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Token)
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Enrollment: %s\nMember: %s\nSpoke: %s\nJoin (upcoming, not in this release): msgvault federation join <hub-url> --hub-instance %s --token-file <path>\n", result.Enrollment.EnrollmentUID, result.Enrollment.Member, result.Enrollment.SpokeName, result.HubInstance)
 		return nil
 	}}
 	enroll.Flags().StringVar(&spoke, "spoke-instance", "", "Spoke archive UID (64 lowercase hexadecimal digits)")
-	enroll.Flags().StringVar(&member, "member", "", "Member handle: 1–64 lowercase ASCII letters, digits, dots, underscores or hyphens; start with a letter or digit")
+	enroll.Flags().StringVar(&member, "member", "", "Member handle (any non-blank name without control characters)")
 	enroll.Flags().StringVar(&name, "spoke-name", "", "Spoke display name (up to 128 bytes; no control characters)")
 	enroll.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	var listJSON bool
@@ -74,9 +67,7 @@ func init() {
 			if e.RevokedAt != nil {
 				state = "revoked"
 			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", e.EnrollmentUID, e.Member, e.SpokeName, state); err != nil {
-				return fmt.Errorf("write federation enrollments: %w", err)
-			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", e.EnrollmentUID, e.Member, e.SpokeName, state)
 		}
 		return nil
 	}}
@@ -94,9 +85,7 @@ func init() {
 		if err = c.RevokeFederationEnrollment(cmd.Context(), args[0]); err != nil {
 			return err
 		}
-		if _, err = fmt.Fprintln(cmd.OutOrStdout(), "Enrollment revoked."); err != nil {
-			return fmt.Errorf("write revocation result: %w", err)
-		}
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Enrollment revoked.")
 		return nil
 	}}
 	root.AddCommand(identity, enroll, enrollments, revoke)

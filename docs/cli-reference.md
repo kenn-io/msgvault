@@ -5788,9 +5788,8 @@ Set `[federation] role = "spoke"` on a personal archive and run
 `msgvault federation identity` to obtain its archive UID. Restart the daemon after
 you change the role; with `role = "off"` the command fails with 404. On a dedicated hub,
 run `msgvault federation enroll --spoke-instance <uid> --member <handle>`.
-The UID is 64 lowercase hexadecimal digits. The member handle is 1–64
-lowercase ASCII letters, digits, dots, underscores or hyphens, starting with a
-letter or digit. Optionally supply `--spoke-name` (at most 128 bytes, without
+The UID is 64 lowercase hexadecimal digits. The member handle must not be blank
+or contain control characters. Optionally supply `--spoke-name` (at most 128 bytes, without
 control characters).
 The command prints the one-time token to standard output and a token-free join
 command for the upcoming `federation join` to standard error. Save the token

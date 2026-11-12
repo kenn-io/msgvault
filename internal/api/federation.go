@@ -114,7 +114,12 @@ func (s *Server) handleFederationHandshake(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, federationHandshakeResponse{ProtocolVersions: []int{1}, HubInstance: uid, EnrollmentState: "active"})
+	// An empty state means the library callback admitted the request without checking an enrollment.
+	state := ""
+	if auth.Mode == AuthModeFederation {
+		state = "active"
+	}
+	writeJSON(w, http.StatusOK, federationHandshakeResponse{ProtocolVersions: []int{1}, HubInstance: uid, EnrollmentState: state})
 }
 
 func (s *Server) federationManagement(w http.ResponseWriter, r *http.Request) bool {
