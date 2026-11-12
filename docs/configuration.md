@@ -1682,6 +1682,10 @@ daemon environment variables that hold the app secret (`app_secret_env`) and
 the verify token (`verify_token_env`). App IDs must be unique, and a
 `listen_addr` needs at least one app. Unknown keys are rejected.
 
+With the receiver on, an app listed here may have only one enabled
+`[[instagram_comments]]` profile per Instagram account. msgvault refuses the
+configuration otherwise, because it could not tell which profile a delivery is for.
+
 ### `[[instagram_comments]]` {#instagram-comments}
 
 Select a professional Instagram account linked to an explicitly selected Page

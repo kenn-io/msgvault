@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -157,15 +158,17 @@ type mentionRun struct {
 	sum                *ImportSummary
 }
 
-// mentionMetadata records how an object reached the archive. A later
-// delivery of the same object replaces Kind.
+// mentionMetadata records how an object reached the archive. Kinds is the
+// sorted set of every way it arrived, so tag sync and the mention webhook
+// record the same metadata in either order and do not rewrite each other's
+// rows.
 type mentionMetadata struct {
-	AppID              string `json:"app_id"`
-	PageID             string `json:"page_id"`
-	InstagramAccountID string `json:"instagram_account_id"`
-	MediaID            string `json:"media_id"`
-	CommentID          string `json:"comment_id,omitempty"`
-	Kind               string `json:"kind"`
+	AppID              string   `json:"app_id"`
+	PageID             string   `json:"page_id"`
+	InstagramAccountID string   `json:"instagram_account_id"`
+	MediaID            string   `json:"media_id"`
+	CommentID          string   `json:"comment_id,omitempty"`
+	Kinds              []string `json:"kinds"`
 }
 
 // persistMedia archives media by another account as the root of its own
@@ -181,7 +184,7 @@ func (r *mentionRun) persistMedia(ctx context.Context, media IGMedia, kind strin
 		subject = "@" + media.Username
 	}
 	obj := archivedObject{obj: Object{ID: media.ID, Message: media.Caption, CreatedTime: media.Timestamp}, conversation: media.ID, title: title, subject: subject, fromName: subject}
-	return r.write(ctx, obj, mentionMetadata{MediaID: media.ID, Kind: kind}, media)
+	return r.write(ctx, obj, mentionMetadata{MediaID: media.ID, Kinds: []string{kind}}, media)
 }
 
 // write archives obj in the mentions source with meta and the raw object.
@@ -197,7 +200,15 @@ func (r *mentionRun) write(ctx context.Context, obj archivedObject, meta mention
 		if priorMetadata, err = r.store.GetMessageMetadataContext(ctx, row.ID); err != nil {
 			return err
 		}
+		// Metadata that does not decode only records provenance, so it adds
+		// no kinds instead of failing the write.
+		var before mentionMetadata
+		if json.Unmarshal([]byte(priorMetadata.String), &before) == nil {
+			meta.Kinds = append(meta.Kinds, before.Kinds...)
+		}
 	}
+	slices.Sort(meta.Kinds)
+	meta.Kinds = slices.Compact(meta.Kinds)
 	meta.AppID, meta.PageID, meta.InstagramAccountID = r.app, r.page, r.account
 	if obj.metadata, err = json.Marshal(meta); err != nil {
 		return err
