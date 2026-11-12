@@ -161,6 +161,33 @@ func TestCheckAPIContract(t *testing.T) {
 	}
 }
 
+func TestAPIContractConcurrentEndpoints(t *testing.T) {
+	require := require.New(t)
+	baseDigest, err := apiContractDigest(OpenAPIDocument(), openAPIClientDocument())
+	require.NoError(err)
+	base := []string{"5.0.0_" + baseDigest}
+
+	first := OpenAPIDocument()
+	first.Paths["/api/v1/test-first"] = &huma.PathItem{Get: &huma.Operation{OperationID: "test-first"}}
+	firstDigest, err := apiContractDigest(first, openAPIClientDocument())
+	require.NoError(err)
+	firstMarker := "5.1.0_" + firstDigest
+	require.NoError(checkAPIContract("5.1.0", firstDigest, append(base, firstMarker), base))
+
+	second := OpenAPIDocument()
+	second.Paths["/api/v1/test-second"] = &huma.PathItem{Get: &huma.Operation{OperationID: "test-second"}}
+	secondDigest, err := apiContractDigest(second, openAPIClientDocument())
+	require.NoError(err)
+	secondMarker := "5.1.0_" + secondDigest
+	require.NotEqual(firstMarker, secondMarker)
+	require.NoError(checkAPIContract("5.1.0", secondDigest, append(base, secondMarker), base))
+
+	first.Paths["/api/v1/test-second"] = second.Paths["/api/v1/test-second"]
+	combinedDigest, err := apiContractDigest(first, openAPIClientDocument())
+	require.NoError(err)
+	require.ErrorContains(checkAPIContract("5.1.0", combinedDigest, []string{base[0], firstMarker, secondMarker}, []string{base[0], firstMarker}), "5.2.0")
+}
+
 func TestAPIBaseMarkers(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
