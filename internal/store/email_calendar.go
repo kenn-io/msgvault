@@ -244,6 +244,9 @@ func (s *Store) persistEmailCalendarPartsWith(ctx context.Context, tx *loggedTx,
 	if err != nil {
 		return summary, err
 	}
+	for i := range prepared {
+		prepared[i].sender = parsed.GetFirstFrom().Email
+	}
 	if err := s.persistICalendarWith(ctx, tx, sourceID, prepared, &summary); err != nil {
 		return summary, err
 	}

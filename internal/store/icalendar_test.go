@@ -94,8 +94,8 @@ func TestICalendarCancelledSeriesOccurrences(t *testing.T) {
 				source = mail.ID
 			}
 			for i, event := range [][]byte{
-				calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=3\r\nSUMMARY:Original"),
-				calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T140000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=3\r\nSUMMARY:Updated"),
+				calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=3\r\nSUMMARY:Original\r\nORGANIZER:mailto:organizer@example.com"),
+				calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T140000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=3\r\nSUMMARY:Updated\r\nORGANIZER:mailto:organizer@example.com"),
 				calendarDocument("CANCEL", "SEQUENCE:2"),
 			} {
 				if mode == "email" {
