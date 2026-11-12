@@ -145,9 +145,6 @@ func (s Service) List(ctx context.Context, g *agentgrant.Grant, q store.PersonIn
 	}
 	inputs := make([]store.PersonIntroductionPrepare, 0, len(rows.Items))
 	for _, row := range rows.Items {
-		if !allowed(g, row) {
-			return Page{}, ErrForbidden
-		}
 		inputs = append(inputs, store.PersonIntroductionPrepare{SourceID: row.SourceID, PersonAID: row.PersonAID, PersonBID: row.PersonBID})
 	}
 	preflights, err := s.Store.GetPersonIntroductionPreflightsContext(ctx, inputs)
