@@ -13,7 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/providercredentials"
 )
 
-func TestBackupRestoreOmittedTokensRemainReadable(t *testing.T) {
+func TestBackupRestoreNestedTokensRemainUsable(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg, dbPath, attachments := backupTokenFixture(t)
