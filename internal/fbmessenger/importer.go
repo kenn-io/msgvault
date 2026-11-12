@@ -76,6 +76,7 @@ type ImportSummary struct {
 	SourceID                    int64
 	MediaMissing, MediaRejected int
 	RecordsUnsupported          int64
+	PossibleDuplicates          int
 	Incomplete, LimitReached    bool
 	Duration                    time.Duration
 	ThreadsProcessed            int
@@ -632,6 +633,9 @@ func writeThreadToStore(
 		stored := archived[m.sourceID]
 		if opts.Limit > 0 && summary.MessagesAdded >= int64(opts.Limit) && (!instagram || stored.ID == 0) {
 			return errLimitReached
+		}
+		if m.possibleDuplicate {
+			summary.PossibleDuplicates++
 		}
 		if !instagram {
 			summary.MessagesProcessed++

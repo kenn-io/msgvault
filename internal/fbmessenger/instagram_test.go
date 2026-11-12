@@ -1580,3 +1580,40 @@ func TestInstagramMixedMetadataKeepsUnambiguousMatches(t *testing.T) {
 		}
 	}
 }
+
+func TestInstagramReportsPossibleSenderDuplicates(t *testing.T) {
+	st, root := testutil.NewTestStore(t), t.TempDir()
+	record := instagramTestRecord("same")
+	record["sender_name"] = "Mira Example"
+	instagramTestShard(t, root, "circle", "message_1.json", record)
+	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	before, _ := instagramSnapshot(t, st)
+	record["sender_name"] = "Lumen Example"
+	instagramTestShard(t, root, "circle", "message_1.json", record)
+	for i := range 2 {
+		summary, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(t, err)
+		assert.Equal(t, 1, summary.PossibleDuplicates)
+		assert.Equal(t, int64(1-i), summary.MessagesAdded)
+		after, _ := instagramSnapshot(t, st)
+		assert.Len(t, after, 2)
+		for id, raw := range before {
+			assert.Equal(t, raw, after[id])
+		}
+		var senders int
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(DISTINCT sender_id) FROM messages`).Scan(&senders))
+		assert.Equal(t, 2, senders)
+	}
+	other := instagramTestRecord("same")
+	other["sender_name"] = "Another Example"
+	instagramTestShard(t, root, "other", "message_1.json", other)
+	later := instagramTestRecord("same")
+	later["sender_name"], later["timestamp_ms"] = "Another Example", int64(1730500001123)
+	instagramTestShard(t, root, "circle", "message_1.json", later)
+	summary, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.Zero(t, summary.PossibleDuplicates)
+	assert.Equal(t, 4, countMessages(t, st, ""))
+}

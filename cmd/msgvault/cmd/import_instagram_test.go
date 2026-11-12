@@ -132,3 +132,44 @@ func TestImportMessengerInstagramRejectsUnsupportedFormat(t *testing.T) {
 		})
 	}
 }
+
+func TestImportInstagramReportsPossibleDuplicates(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		records     string
+		wantWarning bool
+	}{
+		{"renamed sender", `{"sender_name":"Lumen Example","timestamp_ms":1730500000123,"content":"hello"}`, true},
+		{"distinct senders", `{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"hello"},{"sender_name":"Lumen Example","timestamp_ms":1730500000123,"content":"hello"}`, true},
+		{"different content", `{"sender_name":"Lumen Example","timestamp_ms":1730500000123,"content":"different"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, "your_instagram_activity", "messages", "inbox", "circle")
+			require.NoError(t, os.MkdirAll(dir, 0700))
+			shard := filepath.Join(dir, "message_1.json")
+			write := func(records string) {
+				t.Helper()
+				require.NoError(t, os.WriteFile(shard, []byte(`{"thread_path":"inbox/circle","messages":[`+records+`]}`), 0600))
+			}
+			write(`{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"hello"}`)
+			command := &cobra.Command{Use: "import-instagram"}
+			command.SetContext(withStoreResolverConfig(t, lifecycleTestConfig(t.TempDir())))
+			var output bytes.Buffer
+			command.SetOut(&output)
+			command.SetErr(io.Discard)
+			opts := instagramCLIOptions{Account: "example", SelfName: "Nova Example"}
+			require.NoError(t, runImportInstagram(command, root, opts))
+			write(tc.records)
+			for range 2 {
+				output.Reset()
+				require.NoError(t, runImportInstagram(command, root, opts))
+				if tc.wantWarning {
+					assert.Contains(t, output.String(), "possible duplicate")
+				} else {
+					assert.NotContains(t, output.String(), "possible duplicate")
+				}
+			}
+		})
+	}
+}

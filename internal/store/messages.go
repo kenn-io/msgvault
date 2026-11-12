@@ -616,6 +616,25 @@ func (s *Store) StoredMessagesContext(
 	return result, nil
 }
 
+// SourceConversationMessageIDsAtTimesContext finds archived messages at the
+// supplied timestamps within one source conversation.
+func (s *Store) SourceConversationMessageIDsAtTimesContext(ctx context.Context, sourceID int64, conversationID string, times []time.Time) ([]string, error) {
+	var ids []string
+	err := queryInChunksContext(ctx, s.db, times, []any{sourceID, conversationID}, `
+		SELECT m.source_message_id FROM conversations c
+		JOIN messages m ON m.conversation_id = c.id
+		WHERE c.source_id = ? AND c.source_conversation_id = ? AND m.sent_at IN (%s)`,
+		func(rows *loggedRows) error {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			ids = append(ids, id)
+			return nil
+		})
+	return ids, err
+}
+
 // MessageContentMatchesContext reports whether one message's stored body and
 // search document are what PersistMessage would write for bodyText, a NULL
 // HTML body and doc. The search check is skipped when FTS is unavailable,

@@ -379,6 +379,7 @@ identical display names merge, including
 across direct and group chats; distinct names remain distinct.
 
 Each run starts from the beginning. Messages use content fingerprints and occurrence counts within a thread. Reordered copies keep their IDs when their rendered content and reactions match, and a single changed copy keeps its ID when it is the only unmatched copy. Changed copies that cannot be told apart are skipped, their originals keep their reactions, and the run reports incomplete coverage. When an export has more changed copies than the archive holds, the surplus is added with only the reactions every copy shares. Missing media and interrupted ancillary writes retry on replay. Later exports never delete archived messages or stored media. If a later export changes a message’s sender name, the importer keeps the original and adds another message. Edited content or renamed thread keys cannot be reconciled without native message IDs.
+On replay, the summary reports possible duplicates when an imported message and an archived message in the same thread share a timestamp and content but have different sender names. Different people can send matching messages, so the importer keeps both.
 Instagram accepts `--format auto` or `--format json` and ignores `--me`, `--no-resume`, and `--checkpoint-interval`.
 Original records and shard provenance are retained with the title and members; timestamps preserve integer
 milliseconds, and missing sender evidence remains unknown. Records with missing

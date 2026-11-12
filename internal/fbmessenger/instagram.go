@@ -126,13 +126,38 @@ func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, 
 		groups[prefix] = append(groups[prefix], p)
 	}
 	var ids []string
+	seenIDs := map[string]bool{}
 	for prefix := range groups {
-		ids = append(ids, archivedGroups[prefix]...)
+		for _, id := range archivedGroups[prefix] {
+			ids = append(ids, id)
+			seenIDs[id] = true
+		}
+	}
+	if len(archivedGroups) > 0 {
+		times := make([]time.Time, 0, len(pending))
+		seen := make(map[int64]bool)
+		for _, p := range pending {
+			if !seen[p.record.TimestampMs] {
+				seen[p.record.TimestampMs] = true
+				times = append(times, time.UnixMilli(p.record.TimestampMs).UTC())
+			}
+		}
+		candidates, err := st.SourceConversationMessageIDsAtTimesContext(ctx, sourceID, key, times)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, id := range candidates {
+			if !seenIDs[id] {
+				ids = append(ids, id)
+				seenIDs[id] = true
+			}
+		}
 	}
 	archived, err := st.StoredMessagesContext(ctx, sourceID, "instagram_json", ids)
 	if err != nil {
 		return nil, nil, err
 	}
+	instagramMarkPossibleDuplicates(pending, archived)
 	used := map[string]bool{}
 	var repairs []string
 	for prefix, group := range groups {
@@ -166,6 +191,39 @@ func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, 
 		parsed.Messages = append(parsed.Messages, message)
 	}
 	return parsed, archived, nil
+}
+
+// A sender change and two distinct senders can produce the same evidence.
+// Keep both records and report the uncertainty without assigning an identity.
+func instagramMarkPossibleDuplicates(pending []*instagramPending, archived map[string]store.StoredMessage) {
+	senders := map[string]map[string]bool{}
+	for _, stored := range archived {
+		record, ok := instagramArchivedRecord(stored)
+		if !ok || record.SenderName == "" {
+			continue
+		}
+		name := DecodeMojibake(record.SenderName)
+		record.SenderName = ""
+		key := instagramFingerprint(record)
+		if senders[key] == nil {
+			senders[key] = map[string]bool{}
+		}
+		senders[key][name] = true
+	}
+	for _, p := range pending {
+		name := DecodeMojibake(p.record.SenderName)
+		if name == "" {
+			continue
+		}
+		record := p.record
+		record.SenderName = ""
+		for other := range senders[instagramFingerprint(record)] {
+			if other != name {
+				p.message.possibleDuplicate = true
+				break
+			}
+		}
+	}
 }
 
 // Retain the evidence carried by a surplus row after its identity is resolved.
