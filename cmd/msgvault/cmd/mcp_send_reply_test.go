@@ -27,7 +27,7 @@ import (
 )
 
 func TestMCPSendReplyRequiresCurrentXDaemon(t *testing.T) {
-	for _, version := range []string{"3.29.0", "3.34.0", "3.35.0", "5.0.0", "5.1.0"} {
+	for _, version := range []string{"3.29.0", "3.34.0", "3.35.0", "5.0.0", "5.1.0", "5.2.0"} {
 		t.Run(version, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -50,7 +50,7 @@ func TestMCPSendReplyRequiresCurrentXDaemon(t *testing.T) {
 			for _, tool := range listed.Tools {
 				names = append(names, tool.Name)
 			}
-			if version == "5.1.0" {
+			if version == "5.2.0" {
 				assert.Contains(names, "send_reply")
 			} else {
 				assert.NotContains(names, "send_reply")

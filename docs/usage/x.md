@@ -8,8 +8,8 @@ Connect your own X account to keep its posts and returned replies and mentions
 searchable in msgvault. Review author evidence through the people workflow and
 send an explicit text reply from a managed draft.
 
-Use a daemon with API schema 5.1.0 or newer. Archive setup upgrades SQLite and
-PostgreSQL databases to schema 42 before the daemon serves them.
+Use a daemon with API schema 5.2.0 or newer. Archive setup upgrades SQLite and
+PostgreSQL databases to schema 43 before the daemon serves them.
 
 This functionality is unreleased. Collection depends on X access, endpoint
 reach and prepaid credits. It does not establish complete reply trees or

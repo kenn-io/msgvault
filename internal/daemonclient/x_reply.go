@@ -13,7 +13,7 @@ import (
 
 // XReplySendMinAPISchemaVersion uses the same unreleased X API minor as
 // ingestion. Health is the capability contract; older daemons cannot send.
-const XReplySendMinAPISchemaVersion = "5.1.0"
+const XReplySendMinAPISchemaVersion = "5.2.0"
 
 func (c *Client) requireXReplySend(ctx context.Context) error {
 	supported, err := c.SupportsAPISchemaVersion(ctx, XReplySendMinAPISchemaVersion)

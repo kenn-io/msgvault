@@ -124,6 +124,7 @@ type ContextCLIStore interface {
 	CountSourceDeletedMessagesContext(ctx context.Context, sourceIDs ...int64) (int64, error)
 	NeedsFTSBackfillQuickContext(ctx context.Context) bool
 	NeedsFTSBackfillContext(ctx context.Context) (bool, error)
+	BackfillFTSContext(ctx context.Context, progress func(done, total int64)) (int64, error)
 	RebuildFTSContext(ctx context.Context, progress func(done, total int64)) (int64, error)
 }
 
@@ -270,6 +271,10 @@ func (s *requestCLIStore) CountSourceDeletedMessages(sourceIDs ...int64) (int64,
 
 func (s *requestCLIStore) NeedsFTSBackfillQuick() bool {
 	return s.contextStore.NeedsFTSBackfillQuickContext(s.ctx)
+}
+
+func (s *requestCLIStore) BackfillFTS(progress func(done, total int64)) (int64, error) {
+	return s.contextStore.BackfillFTSContext(s.ctx, progress)
 }
 
 func (s *requestCLIStore) RebuildFTS(
@@ -2514,10 +2519,26 @@ func (s *Server) ensureCLISearchIndexAsync(cliStore CLIStore, mayRepair bool) st
 	if bound, ok := cliStore.(*requestCLIStore); ok {
 		cliStore = bound.CLIStore
 	}
+	s.importMu.Lock()
+	if s.importsClosed {
+		s.importMu.Unlock()
+		return state
+	}
+	finishIdle, ok := s.idleTracker.BeginMaintenanceWorkContext(s.importContext)
+	if !ok {
+		s.importMu.Unlock()
+		return state
+	}
+	s.importWG.Add(1)
+	s.importMu.Unlock()
 	s.ftsEnsureMayRepair = mayRepair
 	s.ftsEnsureRunning.Store(true)
 	s.ftsIndexState.Store(state)
-	go s.runCLISearchIndexEnsure(cliStore, knownIncomplete, !mayRepair)
+	go func() {
+		defer s.importWG.Done()
+		defer finishIdle()
+		s.runCLISearchIndexEnsure(cliStore, knownIncomplete, !mayRepair)
+	}()
 	return state
 }
 

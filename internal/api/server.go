@@ -953,6 +953,17 @@ func (s *Server) StartOnListener(ln net.Listener) error {
 	s.listenerBound = true
 	s.server = server
 	s.serverMu.Unlock()
+	if backend, ok := s.store.(interface{ IsPostgreSQL() bool }); ok && backend.IsPostgreSQL() {
+		if cliStore, ok := s.store.(CLIStore); ok {
+			s.importMu.Lock()
+			if !s.importsClosed {
+				s.importWG.Go(func() {
+					s.ensureCLISearchIndexAsync(bindCLIStoreContext(s.importContext, cliStore), true)
+				})
+			}
+			s.importMu.Unlock()
+		}
+	}
 	s.signalStarted(nil)
 
 	s.logger.Info("starting API server", "addr", ln.Addr().String())

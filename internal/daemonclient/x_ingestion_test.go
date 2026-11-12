@@ -12,7 +12,7 @@ import (
 )
 
 func TestXIngestionRequiresCompletedDaemonVersion(t *testing.T) {
-	for _, version := range []string{"", "3.27.0", "3.28.0", "3.29.0", "3.30.0", "3.34.0", "3.35.0", "5.0.0", "5.1.0"} {
+	for _, version := range []string{"", "3.27.0", "3.28.0", "3.29.0", "3.30.0", "3.34.0", "3.35.0", "5.0.0", "5.1.0", "5.2.0"} {
 		t.Run(version, func(t *testing.T) {
 			_testAssert := assert.New(t)
 			_testRequire := require.New(t)
@@ -32,7 +32,7 @@ func TestXIngestionRequiresCompletedDaemonVersion(t *testing.T) {
 			client, err := New(Config{URL: server.URL, APIKey: "example-owner-key", AllowInsecure: true})
 			_testRequire.NoError(err)
 			err = client.RunCLICommand(t.Context(), CLIRunRequest{Args: []string{"sync-x", "--source-id=1", "--json"}}, nil)
-			if version == "5.1.0" {
+			if version == "5.2.0" {
 				_testRequire.NoError(err)
 				_testAssert.Equal(int32(1), calls.Load())
 			} else {

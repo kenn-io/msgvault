@@ -685,7 +685,7 @@ func (c *Client) RunCLICommand(
 
 // XIngestionMinAPISchemaVersion is the health-version capability for the full
 // in-process X collection, retention and source-lifecycle path.
-const XIngestionMinAPISchemaVersion = "5.1.0"
+const XIngestionMinAPISchemaVersion = "5.2.0"
 
 func (c *Client) DiscoverCLIIdentities(
 	ctx context.Context,
