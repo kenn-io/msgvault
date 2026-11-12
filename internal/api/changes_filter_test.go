@@ -188,27 +188,29 @@ func (s *linkBeforeChangesPage) ListChangedMessages(ctx context.Context, since s
 }
 
 func TestChangesPersonIncludesIdentityLinkedBeforePage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	srv, st := newChangesServer(t)
 	first, err := st.EnsureParticipant("first@example.com", "First", "example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 	second, err := st.EnsureParticipant("second@example.com", "Second", "example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 	person, _, err := st.CreatePersonFromParticipant(first)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	var messageID int64
 	srv.store = &linkBeforeChangesPage{Store: st, before: func() {
 		_, err := st.LinkParticipants(first, second)
-		require.NoError(t, err)
+		require.NoError(err)
 		messageID = seedChangedMessages(t, st, 1)[0]
 		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET sender_id = ? WHERE id = ?"), second, messageID)
-		require.NoError(t, err)
+		require.NoError(err)
 		setChangesWatermark(t, st, "2020-01-01 00:00:00.000", messageID)
 	}}
 
 	target := fmt.Sprintf("/api/v1/messages/changes?person_id=%d", person.ID)
 	page := getChangesPage(t, srv, target)
-	assert.Equal(t, []int64{messageID}, changedIDs(page))
+	assert.Equal([]int64{messageID}, changedIDs(page))
 	next := getChangesPage(t, srv, target+"&cursor="+url.QueryEscape(page.NextCursor))
-	assert.Empty(t, next.Messages)
+	assert.Empty(next.Messages)
 }
