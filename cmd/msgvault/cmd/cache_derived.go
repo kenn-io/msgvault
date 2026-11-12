@@ -23,6 +23,7 @@ var ErrDerivedRefreshRequiresFullBuild = errors.New(
 )
 
 var derivedPublishBeforeMarkerHook func() error
+var derivedRefreshNow = time.Now
 
 // derivedRefreshBeforeSnapshotHook is a deterministic test seam for writes
 // that commit after a staleness check selects a refresh but before the refresh
@@ -354,7 +355,7 @@ func refreshDerivedDatasetsOnly(
 		}
 	}
 
-	effectiveAt := time.Now().UTC().Truncate(time.Second)
+	effectiveAt := derivedRefreshNow().UTC().Truncate(time.Second)
 	if err := stageMeetingOccurrences(ctx, exportDB, dbPath, staging.root, effectiveAt); err != nil {
 		return nil, err
 	}

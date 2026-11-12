@@ -229,11 +229,24 @@ func TestMeetingCountsExcludeFutureEventWithPastMessageDate(t *testing.T) {
 	require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
 	_, err = buildCache(t.Context(), dbPath, analytics, true)
 	require.NoError(t, err)
-	engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
+	count := func() int64 {
+		t.Helper()
+		engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, engine.Close()) }()
+		detail, err := engine.GetPerson(t.Context(), person, query.Context{}, nil)
+		require.NoError(t, err)
+		require.NotNil(t, detail)
+		return detail.MeetingCount
+	}
+	assert.Zero(t, count())
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE calendar_events SET status=status WHERE message_id=?`, id)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, engine.Close()) }()
-	detail, err := engine.GetPerson(t.Context(), person, query.Context{}, nil)
+	oldNow := derivedRefreshNow
+	derivedRefreshNow = func() time.Time { return start.Add(time.Hour) }
+	t.Cleanup(func() { derivedRefreshNow = oldNow })
+	result, err := buildCache(t.Context(), dbPath, analytics, false)
 	require.NoError(t, err)
-	require.NotNil(t, detail)
-	assert.Zero(t, detail.MeetingCount)
+	assert.True(t, result.IdentityOnly)
+	assert.EqualValues(t, 1, count())
 }

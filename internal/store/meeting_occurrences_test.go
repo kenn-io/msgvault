@@ -60,6 +60,20 @@ func TestMeetingOccurrenceCountsTwoDatesLinkedToOneNote(t *testing.T) {
 	}
 	assert.Len(t, eventKeys, 2)
 	assert.Equal(t, eventKeys, noteKeys)
+	for _, ref := range []MeetingLinkRef{
+		{Kind: "msg", MessageID: note},
+		{Kind: "evt", MessageID: event, Identity: occurrenceIdentity(t, "20270314T100000Z")},
+		{Kind: "evt", MessageID: event, Identity: occurrenceIdentity(t, "20270321T100000Z")},
+	} {
+		record, err := st.MeetingRecordContext(t.Context(), ref)
+		require.NoError(t, err)
+		assert.Equal(t, []int64{note}, record.MessageIDs)
+		var refs []string
+		for _, link := range record.Links {
+			refs = append(refs, link.Ref)
+		}
+		assert.ElementsMatch(t, eventKeys, refs)
+	}
 	_, _ = calendarFixture(t, st, "cancelled", `{"id":"cancelled","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-21T10:00:00Z"},"status":"cancelled"}`)
 	rows, err = st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 3, 22, 0, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
@@ -204,9 +218,47 @@ func TestMeetingOccurrenceCountsSavedCalendarLinkAndSplit(t *testing.T) {
 	keys := readKeys()
 	require.Len(t, keys, 2)
 	assert.Equal(t, keys[0], keys[1])
+	for _, ref := range []MeetingLinkRef{left, right} {
+		record, err := st.MeetingRecordContext(t.Context(), ref)
+		require.NoError(t, err)
+		require.Len(t, record.Links, 2)
+		assert.ElementsMatch(t, []string{fmt.Sprintf("evt:%d", first), fmt.Sprintf("evt:%d", second)}, []string{record.Links[0].Ref, record.Links[1].Ref})
+		assert.Empty(t, record.MessageIDs)
+	}
 	_, err = st.DecideMeetingLinkContext(t.Context(), left, right, "unlink")
 	require.NoError(t, err)
 	keys = readKeys()
 	require.Len(t, keys, 2)
 	assert.NotEqual(t, keys[0], keys[1])
+	for _, ref := range []MeetingLinkRef{left, right} {
+		record, err := st.MeetingRecordContext(t.Context(), ref)
+		require.NoError(t, err)
+		require.Len(t, record.Links, 1)
+		assert.Equal(t, fmt.Sprintf("evt:%d", ref.MessageID), record.Links[0].Ref)
+		assert.Empty(t, record.MessageIDs)
+		assert.Contains(t, keys, record.Links[0].Ref)
+	}
+}
+
+func TestMeetingOccurrencesMatchRecordsSavedSplit(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, first := calendarFixture(t, st, "first", `{"id":"first","iCalUID":"shared@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	_, second := calendarFixture(t, st, "second", `{"id":"second","iCalUID":"shared@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, "other@example.com")
+	left, right := MeetingLinkRef{Kind: "evt", MessageID: first}, MeetingLinkRef{Kind: "evt", MessageID: second}
+	record, err := st.MeetingRecordContext(t.Context(), left)
+	require.NoError(t, err)
+	require.Len(t, record.Links, 2)
+	_, err = st.DecideMeetingLinkContext(t.Context(), left, right, "unlink")
+	require.NoError(t, err)
+	rows, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	for _, ref := range []MeetingLinkRef{left, right} {
+		record, err := st.MeetingRecordContext(t.Context(), ref)
+		require.NoError(t, err)
+		require.Len(t, record.Links, 1)
+		assert.Empty(t, record.MessageIDs)
+		assert.Equal(t, fmt.Sprintf("evt:%d", ref.MessageID), record.Links[0].Ref)
+		assert.Contains(t, rows, MeetingOccurrence{MessageID: ref.MessageID, OccurrenceKey: record.Links[0].Ref, OccurredAt: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Counted: true})
+	}
 }
