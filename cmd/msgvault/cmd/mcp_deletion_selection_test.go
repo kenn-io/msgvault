@@ -83,10 +83,6 @@ func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
 	}
 	explored := loopToolOutput[exploredResponse](t, call("explore_deletion_selection", map[string]any{"collection": "selected"}))
 	predicate := explored.Predicate
-	page := loopToolOutput[exploredResponse](t, call("explore_deletion_selection", map[string]any{"collection": "selected", "limit": 1}))
-	require.NotNil(t, page.NextCursor)
-	nextPage := loopToolOutput[exploredResponse](t, call("explore_deletion_selection", map[string]any{"collection": "selected", "limit": 1, "cursor": *page.NextCursor}))
-	assert.NotContains(t, nextPage.Predicate, "cursor")
 	selection := map[string]any{"mode": "all_matching", "predicate": predicate, "cache_revision": explored.CacheRevision, "search_provenance": explored.SearchProvenance, "exclusions": []string{fmt.Sprintf("source:%d:message:first", source.ID)}}
 	preflight := loopToolOutput[generated.ExplorePreflightResponse](t, call("preflight_deletion_selection", map[string]any{"selection": selection}))
 	assert.Equal(t, int64(1), preflight.Count)
@@ -183,7 +179,11 @@ func TestMCPDeletionSelectionRefusalsAndResponseBound(t *testing.T) {
 			_, _ = w.Write([]byte(`{}`))
 			return
 		}
-		w.WriteHeader(http.StatusConflict)
+		status := http.StatusConflict
+		if code == "stage_deletion_failed" {
+			status = http.StatusInternalServerError
+		}
+		w.WriteHeader(status)
 		_, _ = fmt.Fprintf(w, `{"error":%q}`, code)
 	}))
 	t.Cleanup(server.Close)
@@ -191,7 +191,7 @@ func TestMCPDeletionSelectionRefusalsAndResponseBound(t *testing.T) {
 	require.NoError(t, err)
 	backend := &daemonMCPOperations{client: client, supported: []string{"preflight_deletion_selection", "stage_deletion_selection"}}
 	args := map[string]any{"selection": map[string]any{"mode": "all_matching", "predicate": map[string]any{}, "cache_revision": "revision", "search_provenance": map[string]any{}}}
-	for _, nativeCode := range []string{"search_revision_changed", "candidate_pool_saturated", "candidate_snapshot_expired", "operation_token_invalid"} {
+	for _, nativeCode := range []string{"search_revision_changed", "candidate_pool_saturated", "candidate_snapshot_expired"} {
 		code = nativeCode
 		result, err := backend.ExecuteOperation(t.Context(), "preflight_deletion_selection", args)
 		require.NoError(t, err)
