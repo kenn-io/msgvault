@@ -58,10 +58,10 @@ func TestDecodeGranolaEvidence(t *testing.T) {
 		"transcript":[{"speaker":{"source":"microphone"},"text":"Meeting","start_time":"2026-09-12T10:00:00Z","end_time":"2026-09-12T10:20:00Z"}]
 	}`), nil)
 	requirements.NotNil(allDay.DurationSeconds)
-	assertions.Equal(float64(1200), *allDay.DurationSeconds)
+	assertions.InDelta(float64(1200), *allDay.DurationSeconds, 0)
 	assertions.Equal(DurationTranscriptSpan, allDay.DurationBasis)
 	requirements.NotNil(allDay.LinkEvidence.ScheduledDuration)
-	assertions.Equal(float64(86400), *allDay.LinkEvidence.ScheduledDuration)
+	assertions.InDelta(float64(86400), *allDay.LinkEvidence.ScheduledDuration, 0)
 
 	unknown := Decode("granola_json", []byte(`{"summary_text":"Fallback","transcript":[{"speaker":{"source":"microphone"},"text":"Only"}]}`), nil)
 	assertions.Nil(unknown.DurationSeconds)
