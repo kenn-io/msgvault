@@ -4,6 +4,8 @@
 
 export interface MCPEventsArguments {
   incoming_only?: boolean;
+  /** @minimum 1 */
   person_id?: number;
+  /** @minimum 1 */
   source_id?: number;
 }

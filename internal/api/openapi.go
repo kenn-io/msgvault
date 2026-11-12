@@ -480,6 +480,7 @@ func baseOpenAPIDocument(includeHidden bool) *huma.OpenAPI {
 	hardenSearchCoverageSchemas(doc)
 	hardenTaskLinkSchemas(doc)
 	hardenPersonRelationshipSchemas(doc)
+	hardenMCPEventsSchemas(doc)
 	hardenPersonSearchSchemas(doc)
 	hardenActivitySchemas(doc)
 	hardenMeetingSchemas(doc)
@@ -639,6 +640,39 @@ func hardenPersonSearchSchemas(doc *huma.OpenAPI) {
 	response := doc.Components.Schemas.Map()["PersonSearchResponse"]
 	if response != nil && response.Properties["results"] != nil {
 		response.Properties["results"].Nullable = false
+	}
+}
+
+func hardenMCPEventsSchemas(doc *huma.OpenAPI) {
+	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
+		return
+	}
+	schemas := doc.Components.Schemas.Map()
+	if arguments := schemas["MCPEventsArguments"]; arguments != nil {
+		minimum := float64(1)
+		for _, field := range []string{"person_id", "source_id"} {
+			if property := arguments.Properties[field]; property != nil {
+				property.Minimum = &minimum
+			}
+		}
+		// Keep the exclusive choice under not: a top-level oneOf makes the
+		// Go generator add a union that changes request marshaling.
+		selector := func(fields ...string) *huma.Schema {
+			properties := make(map[string]*huma.Schema, len(fields))
+			for _, field := range fields {
+				properties[field] = &huma.Schema{Type: huma.TypeInteger}
+			}
+			return &huma.Schema{Type: huma.TypeObject, Properties: properties, Required: fields}
+		}
+		arguments.Not = &huma.Schema{AnyOf: []*huma.Schema{
+			selector("person_id", "source_id"),
+			{Not: &huma.Schema{AnyOf: []*huma.Schema{selector("person_id"), selector("source_id")}}},
+		}}
+		arguments.PrecomputeMessages()
+	}
+	if delivery := schemas["MCPEventsDelivery"]; delivery != nil {
+		delivery.Required = append(delivery.Required, "secret")
+		delivery.PrecomputeMessages()
 	}
 }
 

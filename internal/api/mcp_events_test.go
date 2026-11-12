@@ -221,7 +221,7 @@ func TestGeneratedEventsMutationErrorsDecode(t *testing.T) {
 	id := int64(1)
 	secret := "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"
 	arguments := generated.MCPEventsArguments{SourceID: &id}
-	delivery := generated.MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: &secret}
+	delivery := generated.MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: secret}
 	body := generated.McpEventsSubscribeBody{Name: mcpevents.Name, Arguments: arguments, Delivery: delivery}
 	response, err := client.McpEventsSubscribeWithResponse(t.Context(), &generated.McpEventsSubscribeRequestOptions{Body: &body})
 	requirements.Error(err)
@@ -293,9 +293,53 @@ func TestMCPEventsDeliverySchemas(t *testing.T) {
 			assertions.Contains(delivery.Required, "url")
 			if tc.modeRequired {
 				assertions.Contains(delivery.Required, "mode")
+				assertions.Contains(delivery.Required, "secret")
 			} else {
 				assertions.NotContains(delivery.Required, "mode")
+				assertions.NotContains(delivery.Required, "secret")
 			}
 		}
+	}
+}
+
+func TestMCPEventsInputSchemasValidate(t *testing.T) {
+	for name, doc := range map[string]*huma.OpenAPI{"public": OpenAPIDocument(), "client": openAPIClientDocument()} {
+		t.Run(name, func(t *testing.T) {
+			registry := doc.Components.Schemas
+			arguments := registry.Map()["MCPEventsArguments"]
+			require.NotNil(t, arguments)
+			for _, tc := range []struct {
+				name  string
+				value map[string]any
+				valid bool
+			}{
+				{"person", map[string]any{"person_id": 1}, true},
+				{"source", map[string]any{"source_id": 1}, true},
+				{"neither", map[string]any{}, false},
+				{"both", map[string]any{"person_id": 1, "source_id": 1}, false},
+				{"zero", map[string]any{"person_id": 0}, false},
+				{"negative", map[string]any{"source_id": -1}, false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					result := &huma.ValidateResult{}
+					huma.Validate(registry, arguments, huma.NewPathBuffer(nil, 0), huma.ModeWriteToServer, tc.value, result)
+					assert.Equal(t, tc.valid, len(result.Errors) == 0, "%v", result.Errors)
+				})
+			}
+			for _, tc := range []struct {
+				path  string
+				value map[string]any
+				valid bool
+			}{
+				{"/api/v1/mcp-events/subscribe", map[string]any{"url": "https://example.com/hook", "mode": "webhook", "secret": "fixture"}, true},
+				{"/api/v1/mcp-events/subscribe", map[string]any{"url": "https://example.com/hook", "mode": "webhook"}, false},
+				{"/api/v1/mcp-events/unsubscribe", map[string]any{"url": "https://example.com/hook"}, true},
+			} {
+				body := operationBodySchema(t, doc, doc.Paths[tc.path].Post)
+				result := &huma.ValidateResult{}
+				huma.Validate(registry, body.Properties["delivery"], huma.NewPathBuffer(nil, 0), huma.ModeWriteToServer, tc.value, result)
+				assert.Equal(t, tc.valid, len(result.Errors) == 0, "%s: %v", tc.path, result.Errors)
+			}
+		})
 	}
 }

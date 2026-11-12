@@ -4,6 +4,6 @@
 
 export interface MCPEventsDelivery {
   mode: string;
-  secret?: string;
+  secret: string;
   url: string;
 }

@@ -541,6 +541,9 @@ func NewHTTPHandler(opts ServeOptions, httpOpts HTTPOptions) (http.Handler, func
 }
 
 func newHTTPHandlerWithPolicy(opts ServeOptions, httpOpts HTTPOptions, policy *invocationPolicy, daemonAuthenticated bool) (http.Handler, func()) {
+	if !daemonAuthenticated && httpOpts.APIKey == "" {
+		opts.Events = nil
+	}
 	if opts.downloads == nil {
 		opts.downloads = &downloadCache{}
 	}

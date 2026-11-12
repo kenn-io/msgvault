@@ -7343,14 +7343,41 @@ components:
       type: object
     MCPEventsArguments:
       additionalProperties: false
+      not:
+        anyOf:
+          - properties:
+              person_id:
+                type: integer
+              source_id:
+                type: integer
+            required:
+              - person_id
+              - source_id
+            type: object
+          - not:
+              anyOf:
+                - properties:
+                    person_id:
+                      type: integer
+                  required:
+                    - person_id
+                  type: object
+                - properties:
+                    source_id:
+                      type: integer
+                  required:
+                    - source_id
+                  type: object
       properties:
         incoming_only:
           type: boolean
         person_id:
           format: int64
+          minimum: 1
           type: integer
         source_id:
           format: int64
+          minimum: 1
           type: integer
       type: object
     MCPEventsDefinition:
@@ -7390,6 +7417,7 @@ components:
       required:
         - mode
         - url
+        - secret
       type: object
     MCPEventsDeliveryStatus:
       properties:

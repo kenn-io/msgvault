@@ -7279,8 +7279,12 @@ func (m MCPCapabilities) Validate() error {
 
 type MCPEventsArguments struct {
 	IncomingOnly *bool  `json:"incoming_only,omitempty"`
-	PersonID     *int64 `json:"person_id,omitempty"`
-	SourceID     *int64 `json:"source_id,omitempty"`
+	PersonID     *int64 `json:"person_id,omitempty" validate:"omitempty,gte=1"`
+	SourceID     *int64 `json:"source_id,omitempty" validate:"omitempty,gte=1"`
+}
+
+func (m MCPEventsArguments) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
 }
 
 type MCPEventsDefinition struct {
@@ -7296,9 +7300,9 @@ func (m MCPEventsDefinition) Validate() error {
 }
 
 type MCPEventsDelivery struct {
-	Mode   string  `json:"mode" validate:"required"`
-	Secret *string `json:"secret,omitzero"`
-	URL    string  `json:"url" validate:"required"`
+	Mode   string `json:"mode" validate:"required"`
+	Secret string `json:"secret" validate:"required"`
+	URL    string `json:"url" validate:"required"`
 }
 
 func (m MCPEventsDelivery) Validate() error {

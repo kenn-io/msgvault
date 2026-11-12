@@ -59,8 +59,9 @@ func TestEventsListPropagatesBackendFailure(t *testing.T) {
 			req.Header.Set("Accept", "application/json, text/event-stream")
 			req.Header.Set("Mcp-Protocol-Version", modernProtocolVersion)
 			req.Header.Set("Mcp-Method", "events/list")
+			req.Header.Set("Authorization", "Bearer fixture-key")
 			recorder := httptest.NewRecorder()
-			newMCPHTTPServer(ServeOptions{Events: backend}, HTTPOptions{}).Handler.ServeHTTP(recorder, req)
+			newMCPHTTPServer(ServeOptions{Events: backend}, HTTPOptions{APIKey: "fixture-key"}).Handler.ServeHTTP(recorder, req)
 			requirements.Equal(http.StatusOK, recorder.Code)
 			var response rawRPCResponse
 			requirements.NoError(json.Unmarshal(recorder.Body.Bytes(), &response))
@@ -109,7 +110,7 @@ func TestEventsStdioAndModernHTTP(t *testing.T) {
 		{"events/subscribe", map[string]any{"name": mcpevents.Name, "arguments": map[string]any{"source_id": 1}, "delivery": delivery}},
 		{"events/unsubscribe", map[string]any{"name": mcpevents.Name, "arguments": map[string]any{"source_id": 1}, "delivery": map[string]any{"mode": "webhook", "url": delivery.URL}}},
 	} {
-		response := rawModernCall(t, opts, HTTPOptions{AllowWrites: true}, tc.method, tc.params)
+		response := rawModernCall(t, opts, HTTPOptions{AllowWrites: true, APIKey: "fixture-key"}, tc.method, tc.params)
 		switch tc.method {
 		case "events/list":
 			assert.Len(response.Result["events"], 1)
@@ -158,7 +159,7 @@ func TestEventsHTTPWriteAdmission(t *testing.T) {
 	opts := ServeOptions{Events: backend}
 	name := mcpevents.Name
 	params := map[string]any{"name": name, "arguments": map[string]any{"source_id": 1}, "delivery": map[string]any{"mode": "webhook", "url": "https://example.com/hook", "secret": "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
-	list := rawModernCall(t, opts, HTTPOptions{}, "events/list", nil)
+	list := rawModernCall(t, opts, HTTPOptions{APIKey: "fixture-key"}, "events/list", nil)
 	assertions.Len(list.Result["events"], 1)
 	for _, method := range []string{"events/subscribe", "events/unsubscribe"} {
 		params["_meta"] = modernRequestMeta()
@@ -170,8 +171,9 @@ func TestEventsHTTPWriteAdmission(t *testing.T) {
 		req.Header.Set("Mcp-Protocol-Version", modernProtocolVersion)
 		req.Header.Set("Mcp-Method", method)
 		req.Header.Set("Mcp-Name", name)
+		req.Header.Set("Authorization", "Bearer fixture-key")
 		recorder := httptest.NewRecorder()
-		newMCPHTTPServer(opts, HTTPOptions{}).Handler.ServeHTTP(recorder, req)
+		newMCPHTTPServer(opts, HTTPOptions{APIKey: "fixture-key"}).Handler.ServeHTTP(recorder, req)
 		requirements.Equal(http.StatusOK, recorder.Code)
 		var response rawRPCResponse
 		requirements.NoError(json.Unmarshal(recorder.Body.Bytes(), &response))
@@ -201,6 +203,30 @@ func TestEventsLegacyAndDelegatedDoNotReachBackend(t *testing.T) {
 			var rpcErr *jsonrpc.Error
 			require.ErrorAs(err, &rpcErr)
 			assert.Equal(t, int64(-32601), rpcErr.Code)
+			assert.Zero(t, backend.calls)
+		})
+	}
+}
+
+func TestKeylessStandaloneHTTPEventsUnavailable(t *testing.T) {
+	backend := &eventTestBackend{}
+	server := newMCPHTTPServer(ServeOptions{Events: backend}, HTTPOptions{AllowWrites: true})
+	for _, method := range []string{"events/list", "events/subscribe", "events/unsubscribe"} {
+		t.Run(method, func(t *testing.T) {
+			params := map[string]any{"_meta": modernRequestMeta(), "name": mcpevents.Name, "arguments": map[string]any{"source_id": 1}, "delivery": map[string]any{"mode": "webhook", "url": "https://example.com/hook", "secret": "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
+			body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+			require.NoError(t, err)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
+			req.Header.Set("Mcp-Protocol-Version", modernProtocolVersion)
+			req.Header.Set("Mcp-Method", method)
+			recorder := httptest.NewRecorder()
+			server.Handler.ServeHTTP(recorder, req)
+			require.Equal(t, http.StatusOK, recorder.Code)
+			var response rawRPCResponse
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+			assert.InDelta(t, -32601, response.Error["code"], 0)
 			assert.Zero(t, backend.calls)
 		})
 	}
