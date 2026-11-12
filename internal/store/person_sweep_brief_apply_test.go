@@ -160,6 +160,22 @@ func TestApplyPersonSweepStoresBriefWithExtractionBatches(t *testing.T) {
 	checks.Empty(attemptBriefClass)
 }
 
+func TestApplyPersonSweepRejectsUnencodableBoundary(t *testing.T) {
+	f := newPersonSweepApplyFixture(t, "unencodable-boundary", true)
+	brief := reserveBriefCall(t, f, strings.Repeat("1", 64))
+	f.request.Batches = append(f.request.Batches, brief)
+	f.request.Usage = addBriefUsage(f.request.Usage, peoplesweep.Usage{Requests: 1,
+		InputTokens: 3, OutputTokens: 2, EstimatedCostMicroUSD: 5})
+	f.request.Brief = briefApplyResult(f.personID, "person-sweep/v1:brief-a")
+	due := time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
+	f.request.Brief.Boundary.NextEventAt = &due
+
+	_, err := f.store.applyPersonSweepWithAligner(t.Context(), f.request, &stubBriefAligner{})
+	require.ErrorContains(t, err, "marshal person brief boundary")
+	_, err = f.store.GetPersonBriefContext(t.Context(), f.personID, 0)
+	assert.ErrorIs(t, err, ErrPersonBriefNotFound)
+}
+
 func TestApplyPersonSweepDropsBriefEvidenceThatNoLongerAligns(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)

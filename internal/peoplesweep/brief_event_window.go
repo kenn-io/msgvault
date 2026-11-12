@@ -194,7 +194,8 @@ func freezeBriefEventMemory(window BriefWindow, events []BriefHighlight, byID ma
 			day, err := time.Parse(time.DateOnly, *event.Date)
 			if err == nil {
 				due := day.AddDate(0, 0, 1)
-				if boundary.NextEventAt == nil || due.Before(*boundary.NextEventAt) {
+				// The day after 9999-12-31 cannot be represented in JSON.
+				if due.Year() <= 9999 && (boundary.NextEventAt == nil || due.Before(*boundary.NextEventAt)) {
 					boundary.NextEventAt = &due
 				}
 			}
