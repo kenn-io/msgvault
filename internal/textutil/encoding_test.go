@@ -505,6 +505,8 @@ func TestPrefixBytes(t *testing.T) {
 		{name: "cut inside four-byte rune", input: "a😀b", max: 4, want: "a"},
 		{name: "cut at rune boundary", input: "a😀b", max: 5, want: "a😀"},
 		{name: "all multi-byte", input: strings.Repeat("界", 4), max: 8, want: "界界"},
+		{name: "keeps text after invalid byte", input: "a\xffbcdef", max: 5, want: "a\xffbcd"},
+		{name: "invalid byte then split rune", input: "a\xffb界", max: 5, want: "a\xffb"},
 		{name: "zero", input: "hello", max: 0, want: ""},
 		{name: "negative", input: "hello", max: -1, want: ""},
 		{name: "empty", input: "", max: 0, want: ""},
