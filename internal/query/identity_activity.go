@@ -10,14 +10,11 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 )
 
-// scopedMeetingDate picks one date for a linked meeting from the selected copies.
-const scopedMeetingDate = "min(a.occurred_at) OVER (PARTITION BY a.entry_num)"
-
 func meetingCountActivityCTE(dates string) string {
 	return `meeting_activity AS (
-	SELECT a.* REPLACE (` + scopedMeetingDate + ` AS occurred_at) FROM relationship_counting_activity a
+	SELECT a.* FROM relationship_counting_activity a
 	JOIN selected_meeting_messages s USING (message_id)
-	WHERE a.entry_kind IN ('event', 'meeting') AND a.canonical_id IS NOT NULL AND a.is_direct QUALIFY true` + dates + `
+	WHERE a.entry_kind IN ('event', 'meeting') AND a.canonical_id IS NOT NULL AND a.is_direct` + dates + `
 )`
 }
 
@@ -31,11 +28,11 @@ func (e *DuckDBEngine) meetingScopeCTE(request ExploreRequest) (string, []any, e
 	}
 	dates := ""
 	if request.Context.After != nil {
-		dates += " AND " + scopedMeetingDate + " >= CAST(? AS TIMESTAMP)"
+		dates += " AND a.occurred_at >= CAST(? AS TIMESTAMP)"
 		args = append(args, request.Context.After.UTC())
 	}
 	if request.Context.Before != nil {
-		dates += " AND " + scopedMeetingDate + " < CAST(? AS TIMESTAMP)"
+		dates += " AND a.occurred_at < CAST(? AS TIMESTAMP)"
 		args = append(args, request.Context.Before.UTC())
 	}
 	return `selected_meeting_messages AS (

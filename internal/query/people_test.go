@@ -636,8 +636,8 @@ func TestPersonSummaryCountsMeetingTranscriptsWithoutLoadingMeetingRows(t *testi
 	b.addAuxiliaryTables(pb)
 	b.addAttachmentsTable(pb)
 	pb.addTable(identityindex.DatasetMeetingOccurrences, identityindex.DatasetMeetingOccurrences, "meeting_occurrences.parquet",
-		"message_id, occurrence_key, occurred_at, start_date, counted, declined_emails, occurrence_id",
-		fmt.Sprintf("(%d::BIGINT, 'msg:%d', TIMESTAMP '2026-08-20 09:00:00', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0))", meeting, meeting))
+		"message_id, anchor_message_id, occurrence_key, occurred_at, start_date, counted, declined_emails, occurrence_id",
+		fmt.Sprintf("(%d::BIGINT, %d::BIGINT, 'msg:%d', TIMESTAMP '2026-08-20 09:00:00', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0))", meeting, meeting, meeting))
 	dir, cleanup := pb.build()
 	t.Cleanup(cleanup)
 	engine, err := NewDuckDBEngine(t.Context(), dir, "", nil)

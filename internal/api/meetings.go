@@ -50,7 +50,6 @@ type MeetingScopeRequest struct {
 	MessageIDs     *[]int64   `json:"message_ids,omitempty" maxItems:"100"`
 	SourceIDs      []int64    `json:"source_ids,omitempty" maxItems:"100"`
 	ParticipantIDs []int64    `json:"participant_ids,omitempty" maxItems:"100"`
-	MessageTypes   []string   `json:"message_types,omitempty" maxItems:"2"`
 	PersonID       int64      `json:"person_id,omitempty" minimum:"1" maximum:"9007199254740991"`
 	ParticipantID  int64      `json:"participant_id,omitempty" minimum:"1" maximum:"9007199254740991"`
 	Domains        []string   `json:"domains,omitempty" maxItems:"100"`

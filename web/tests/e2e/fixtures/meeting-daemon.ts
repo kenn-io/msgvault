@@ -17,7 +17,6 @@ type SeedManifest = {
   chatwoot: [number, number];
   meetings: Record<"granola" | "notion" | "circleback", MeetingRef>;
   participant_id: number;
-  two_dates_note?: number;
 };
 export type MeetingDaemon = SeedManifest & {
   origin: string;
@@ -43,11 +42,10 @@ async function stop(child: ChildProcess): Promise<void> {
   }
 }
 
-export const test = base.extend<{ daemon: MeetingDaemon; twoDates: boolean }>({
+export const test = base.extend<{ daemon: MeetingDaemon }>({
   userAgent,
-  twoDates: [false, { option: true }],
   daemon: [
-    async ({ twoDates }, use, testInfo) => {
+    async ({}, use, testInfo) => {
       const scratch = await mkdtemp(join(tmpdir(), "msgvault-meeting-e2e-"));
       const archive = join(scratch, "archive");
       let child: ChildProcess | undefined;
@@ -98,7 +96,6 @@ export const test = base.extend<{ daemon: MeetingDaemon; twoDates: boolean }>({
             cwd: repo,
             env: {
               ...env, ...caches, CGO_ENABLED: "1",
-              ...(twoDates ? { MSGVAULT_FIXTURE_TWO_DATES: '1' } : {}),
               ...(process.platform === "win32" ? Object.fromEntries(
                 ["CC", "CGO_CFLAGS", "CGO_LDFLAGS"].flatMap((key) =>
                   process.env[key] ? [[key, process.env[key]]] : [],

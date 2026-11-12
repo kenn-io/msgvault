@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"github.com/stretchr/testify/assert"
@@ -272,10 +270,10 @@ func TestMeetingExploreMetricsApplyResolvedDeletionToCurrentStoreSnapshot(t *tes
 	t.Parallel()
 	requirements := require.New(t)
 	fixture := storetest.New(t)
-	meetingID, err := fixture.Store.PersistMessage(&store.MessagePersistData{Message: &store.Message{
-		ConversationID: fixture.ConvID, SourceID: fixture.Source.ID, SentAt: sql.NullTime{Time: time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC), Valid: true},
+	meetingID, err := fixture.Store.UpsertMessage(&store.Message{
+		ConversationID: fixture.ConvID, SourceID: fixture.Source.ID,
 		SourceMessageID: "meeting-deletion-boundary", MessageType: "meeting_transcript",
-	}, RawFormat: "meeting_json", RawMIME: []byte(`{"transcript":"Archived meeting evidence"}`)})
+	})
 	requirements.NoError(err)
 
 	messageValues := fmt.Sprintf(
@@ -503,12 +501,11 @@ func TestMeetingScopeResolvesDurablePersonAndPreservesExactPluralIDs(t *testing.
 	response = httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, meetingRouteRequest(
 		t.Context(),
-		"/api/v1/meetings/metrics", `{"scope":{"participant_ids":[11],"message_types":["calendar_event"]}}`,
+		"/api/v1/meetings/metrics", `{"scope":{"participant_ids":[11]}}`,
 	))
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	assertions.Nil(st.metricsScope.Person)
 	assertions.Equal([]int64{11}, st.metricsScope.ParticipantIDs)
-	assertions.Equal([]string{"calendar_event"}, st.metricsScope.MessageTypes)
 }
 
 func TestMeetingExploreScopeRejectsMixedSelectionsAndBindsExactAuthority(t *testing.T) {
@@ -544,82 +541,6 @@ func TestMeetingExploreScopeRejectsMixedSelectionsAndBindsExactAuthority(t *test
 	assertions.Equal([]int64{41}, *st.actionsQuery.Scope.MessageIDs)
 	assertions.NotEmpty(st.actionsQuery.Scope.Authority)
 	assertions.Equal(10_000, engine.limit)
-}
-
-func TestMeetingExploreMetricsPreserveSourceAndParticipantFilters(t *testing.T) {
-	t.Parallel()
-	st := &meetingRouteStore{mockStore: &mockStore{}, metricsResult: &meetingcontent.Metrics{DurationByBasis: []meetingcontent.BasisTotals{}, Months: []meetingcontent.MonthTotals{}}}
-	engine := &meetingRouteEngine{MockEngine: &querytest.MockEngine{}, result: &query.ExploreMeetingSelection{SelectedCount: 1, MeetingCount: 1, MessageIDs: []int64{41}, ParticipantIDs: []int64{7}, AdditionalParticipantGroups: [][]int64{{8}}, CacheRevision: "r"}}
-	response := httptest.NewRecorder()
-	newMeetingRouteTestServer(t, st, engine).Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/metrics", `{"explore":{"predicate":{"filters":[{"dimension":"source","values":["2"]},{"dimension":"participant","values":["7"]},{"dimension":"participant","values":["8"]}]},"cache_revision":"r","search_provenance":{}}}`))
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Equal(t, []int64{2}, st.metricsScope.SourceIDs)
-	assert.Equal(t, []int64{7}, st.metricsScope.ParticipantIDs)
-	assert.Equal(t, [][]int64{{8}}, st.metricsScope.AdditionalParticipantGroups)
-}
-
-func TestMeetingExploreMetricsPreserveMessageType(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		filters string
-		want    []string
-	}{
-		{`[{"dimension":"message_type","values":["meeting_transcript"]}]`, []string{"meeting_transcript"}},
-		{`[{"dimension":"kind","values":["meeting"]}]`, []string{"meeting_transcript"}},
-		{`[]`, nil},
-	} {
-		t.Run(tc.filters, func(t *testing.T) {
-			st := &meetingRouteStore{mockStore: &mockStore{}, metricsResult: &meetingcontent.Metrics{DurationByBasis: []meetingcontent.BasisTotals{}, Months: []meetingcontent.MonthTotals{}}}
-			engine := &meetingRouteEngine{MockEngine: &querytest.MockEngine{}, result: &query.ExploreMeetingSelection{SelectedCount: 1, MeetingCount: 1, MessageIDs: []int64{41}, CacheRevision: "r"}}
-			response := httptest.NewRecorder()
-			body := fmt.Sprintf(`{"explore":{"predicate":{"filters":%s},"cache_revision":"r","search_provenance":{}}}`, tc.filters)
-			newMeetingRouteTestServer(t, st, engine).Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/metrics", body))
-			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-			assert.Equal(t, tc.want, st.metricsScope.MessageTypes)
-		})
-	}
-}
-
-func TestMeetingExploreMetricsExpandLinkedParticipant(t *testing.T) {
-	t.Parallel()
-	message := `(1::BIGINT, 1::BIGINT, 'meeting', 101::BIGINT, 'Meeting', '', TIMESTAMP '2026-07-18 10:00:00', 0::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'meeting_transcript', NULL::VARCHAR, false, 2026, 7)`
-	engine, _ := newExploreDuckDBFixtureWithClusters(t, message, `(1::BIGINT, 2::BIGINT, 'to', '')`, `(1::BIGINT, 1::BIGINT), (2::BIGINT, 1::BIGINT)`, 1, identityCacheFixtureOptions{})
-	selection, err := engine.ResolveExploreMeetings(t.Context(), query.ExploreSelectionRequest{Explore: query.ExploreRequest{Context: query.Context{ParticipantIDs: []int64{1}}}}, meetingExploreMaxIDs)
-	require.NoError(t, err)
-	require.Equal(t, []int64{1}, selection.MessageIDs)
-	assert.ElementsMatch(t, []int64{1, 2}, selection.ParticipantIDs)
-	st := &meetingRouteStore{mockStore: &mockStore{}, metricsResult: &meetingcontent.Metrics{DurationByBasis: []meetingcontent.BasisTotals{}, Months: []meetingcontent.MonthTotals{}}}
-	response := httptest.NewRecorder()
-	body := fmt.Sprintf(`{"explore":{"predicate":{"filters":[{"dimension":"participant","values":["1"]}]},"cache_revision":%q,"search_provenance":{}}}`, selection.CacheRevision)
-	newMeetingRouteTestServer(t, st, engine).Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/metrics", body))
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.ElementsMatch(t, []int64{1, 2}, st.metricsScope.ParticipantIDs)
-}
-
-func TestMeetingExploreTranscriptFilterExcludesPendingCalendarCredit(t *testing.T) {
-	t.Parallel()
-	fixture := storetest.New(t)
-	started := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
-	note, err := fixture.Store.PersistMessage(&store.MessagePersistData{Message: &store.Message{ConversationID: fixture.ConvID, SourceID: fixture.Source.ID, SourceMessageID: "pending", MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: started, Valid: true}}, RawFormat: "meeting_json", RawMIME: []byte(`{"summary_text":"Pending transcript"}`)})
-	require.NoError(t, err)
-	event, err := fixture.Store.PersistMessage(&store.MessagePersistData{Message: &store.Message{ConversationID: fixture.ConvID, SourceID: fixture.Source.ID, SourceMessageID: "event", MessageType: "calendar_event", SentAt: sql.NullTime{Time: started, Valid: true}}, RawFormat: "gcal_json", RawMIME: []byte(`{"id":"event","start":{"dateTime":"2026-01-02T10:00:00Z"},"end":{"dateTime":"2026-01-02T11:00:00Z"}}`)})
-	require.NoError(t, err)
-	_, err = fixture.Store.DecideMeetingLinkContext(t.Context(), store.MeetingLinkRef{Kind: "msg", MessageID: note}, store.MeetingLinkRef{Kind: "evt", MessageID: event}, "link")
-	require.NoError(t, err)
-	engine := &meetingRouteEngine{MockEngine: &querytest.MockEngine{}, result: &query.ExploreMeetingSelection{SelectedCount: 1, MeetingCount: 1, MessageIDs: []int64{note}, CacheRevision: "r"}}
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: fixture.Store, Engine: engine, Logger: testLogger()})
-	for _, tc := range []struct {
-		filters string
-		want    int64
-	}{{`[]`, 1}, {`[{"dimension":"message_type","values":["meeting_transcript"]}]`, 0}} {
-		body := fmt.Sprintf(`{"explore":{"predicate":{"filters":%s},"cache_revision":"r","search_provenance":{}}}`, tc.filters)
-		response := httptest.NewRecorder()
-		srv.Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/metrics", body))
-		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-		var metrics meetingcontent.Metrics
-		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &metrics))
-		assert.Equal(t, tc.want, metrics.Totals.MeetingCount)
-	}
 }
 
 func TestMeetingExploreScopeUsesSemanticSnapshotAndRejectsSaturatedPool(t *testing.T) {

@@ -3,446 +3,186 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
-	"slices"
-	"strings"
-	"time"
 
 	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
-type meetingMetricMember struct {
-	id       int64
-	at       time.Time
-	duration sql.NullFloat64
-	basis    string
-}
+func (s *Store) GetMeetingMetricsContext(
+	ctx context.Context, scope MeetingQueryScope,
+) (*meetingcontent.Metrics, error) {
+	statement, err := s.buildMeetingScopeStatement(scope)
+	if err != nil {
+		return nil, err
+	}
+	result := &meetingcontent.Metrics{
+		SchemaVersion:   meetingResultSchemaVersion,
+		DurationByBasis: []meetingcontent.BasisTotals{},
+		Months:          []meetingcontent.MonthTotals{},
+		Scope:           meetingScopeProvenance(scope),
+	}
+	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		var readErr error
+		result.ArchiveUID, readErr = archiveUIDFromMeetingSnapshot(ctx, tx)
+		if readErr != nil {
+			return readErr
+		}
+		if readErr = s.validateMeetingScopePopulation(ctx, tx, scope); readErr != nil {
+			return readErr
+		}
+		var average sql.NullFloat64
+		var first, last nullableTimestamp
+		firstExpression, lastExpression := `NULL`, `NULL`
+		if s.IsPostgreSQL() {
+			firstExpression, lastExpression = `MIN(occurred_at)`, `MAX(occurred_at)`
+		}
+		readErr = tx.QueryRowContext(ctx, statement.cte+`
+			SELECT COUNT(*), COUNT(duration_seconds), COUNT(*) - COUNT(duration_seconds),
+				COALESCE(SUM(duration_seconds), 0), AVG(duration_seconds),
+				`+firstExpression+`, `+lastExpression+`,
+				COALESCE(SUM(CASE WHEN occurred_at IS NULL THEN 1 ELSE 0 END), 0)
+			FROM scoped_meetings`, statement.args...).Scan(
+			&result.Totals.MeetingCount,
+			&result.Totals.KnownDurationCount,
+			&result.Totals.UnknownDurationCount,
+			&result.Totals.TotalKnownSeconds,
+			&average,
+			&first,
+			&last,
+			&result.UndatedCount,
+		)
+		if readErr != nil {
+			return fmt.Errorf("read meeting duration totals: %w", readErr)
+		}
+		result.Totals.AverageKnownSeconds = nullableFloatPointer(average)
+		result.FirstMeetingAt = nullableTimePointer(first)
+		result.LastMeetingAt = nullableTimePointer(last)
+		if !s.IsPostgreSQL() {
+			first, last, readErr = readSQLiteMeetingExtrema(ctx, tx, statement)
+			if readErr != nil {
+				return readErr
+			}
+			result.FirstMeetingAt = nullableTimePointer(first)
+			result.LastMeetingAt = nullableTimePointer(last)
+		}
 
-type meetingMetricUnit struct {
-	at          time.Time
-	month       string
-	counted     bool
-	duration    *float64
-	basis       meetingcontent.DurationBasis
-	memberID    int64
-	hasCalendar bool
-}
+		rows, queryErr := tx.QueryContext(ctx, statement.cte+`
+			SELECT duration_basis, COUNT(*), COALESCE(SUM(duration_seconds), 0)
+			FROM scoped_meetings
+			WHERE duration_seconds IS NOT NULL
+			GROUP BY duration_basis
+			ORDER BY CASE duration_basis
+				WHEN 'provider' THEN 1
+				WHEN 'scheduled' THEN 2
+				WHEN 'transcript_span' THEN 3
+				ELSE 4 END, duration_basis`, statement.args...)
+		if queryErr != nil {
+			return fmt.Errorf("read meeting duration bases: %w", queryErr)
+		}
+		for rows.Next() {
+			var item meetingcontent.BasisTotals
+			if scanErr := rows.Scan(&item.Basis, &item.Count, &item.TotalSeconds); scanErr != nil {
+				_ = rows.Close()
+				return fmt.Errorf("scan meeting duration basis: %w", scanErr)
+			}
+			result.DurationByBasis = append(result.DurationByBasis, item)
+		}
+		if iterationErr := rows.Err(); iterationErr != nil {
+			_ = rows.Close()
+			return fmt.Errorf("iterate meeting duration bases: %w", iterationErr)
+		}
+		if closeErr := rows.Close(); closeErr != nil {
+			return fmt.Errorf("close meeting duration bases: %w", closeErr)
+		}
 
-func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQueryScope) (*meetingcontent.Metrics, error) {
-	ctx, release, err := s.BeginReadSnapshotContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-	snapshot, ok := ctx.Value(readSnapshotKey{}).(*readSnapshot)
-	if !ok {
-		return nil, errors.New("meeting metrics read snapshot unavailable")
-	}
-	uid, err := archiveUIDFromMeetingSnapshot(ctx, snapshot.tx)
-	if err != nil {
-		return nil, err
-	}
-	if err = s.validateMeetingScopePopulation(ctx, snapshot.tx, scope); err != nil {
-		return nil, err
-	}
-	unbounded := scope
-	unbounded.After, unbounded.Before = nil, nil
-	unbounded.MessageIDs = nil
-	members, err := s.meetingMetricMembers(ctx, unbounded)
-	if err != nil {
-		return nil, err
-	}
-	dateMembers, err := s.meetingMetricDateMembers(ctx, unbounded, members)
-	if err != nil {
-		return nil, err
-	}
-	owners, canonical, emailOwners, err := s.meetingMetricOwners(ctx)
-	if err != nil {
-		return nil, err
-	}
-	now := time.Now().UTC()
-	occurrences, _, err := s.MeetingOccurrencesContext(ctx, now, owners)
-	if err != nil {
-		return nil, err
-	}
-	units := map[string]*meetingMetricUnit{}
-	seen := map[int64]bool{}
-	eligible := map[string]map[int64]bool{}
-	var selectedKeys map[string]bool
-	if scope.MessageIDs != nil {
-		anchors := map[int64]bool{}
-		for _, id := range *scope.MessageIDs {
-			anchors[id] = true
+		monthExpression := `strftime('%Y-%m', occurred_at)`
+		if s.IsPostgreSQL() {
+			monthExpression = `TO_CHAR(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM')`
 		}
-		selectedKeys = map[string]bool{}
-		for _, row := range occurrences {
-			if anchors[row.MessageID] {
-				selectedKeys[row.OccurrenceKey] = true
+		rows, queryErr = tx.QueryContext(ctx, statement.cte+`
+			SELECT `+monthExpression+`, COUNT(*), COUNT(duration_seconds),
+				COUNT(*) - COUNT(duration_seconds), COALESCE(SUM(duration_seconds), 0),
+				AVG(duration_seconds)
+			FROM scoped_meetings
+			WHERE occurred_at IS NOT NULL
+			GROUP BY `+monthExpression+`
+			ORDER BY `+monthExpression, statement.args...)
+		if queryErr != nil {
+			return fmt.Errorf("read meeting months: %w", queryErr)
+		}
+		for rows.Next() {
+			var item meetingcontent.MonthTotals
+			var monthAverage sql.NullFloat64
+			if scanErr := rows.Scan(
+				&item.Month,
+				&item.Totals.MeetingCount,
+				&item.Totals.KnownDurationCount,
+				&item.Totals.UnknownDurationCount,
+				&item.Totals.TotalKnownSeconds,
+				&monthAverage,
+			); scanErr != nil {
+				_ = rows.Close()
+				return fmt.Errorf("scan meeting month: %w", scanErr)
 			}
+			item.Totals.AverageKnownSeconds = nullableFloatPointer(monthAverage)
+			result.Months = append(result.Months, item)
 		}
+		if iterationErr := rows.Err(); iterationErr != nil {
+			_ = rows.Close()
+			return fmt.Errorf("iterate meeting months: %w", iterationErr)
+		}
+		if closeErr := rows.Close(); closeErr != nil {
+			return fmt.Errorf("close meeting months: %w", closeErr)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get meeting metrics: %w", err)
 	}
-	for _, row := range occurrences {
-		if selectedKeys != nil && !selectedKeys[row.OccurrenceKey] {
-			continue
-		}
-		member, selected := members[row.MessageID]
-		if !selected {
-			continue
-		}
-		seen[row.MessageID] = true
-		if row.OccurredAt.After(now) {
-			continue
-		}
-		unit := units[row.OccurrenceKey]
-		if unit == nil {
-			unit = &meetingMetricUnit{at: row.OccurredAt}
-			if len(row.StartDate) >= 7 {
-				unit.month = row.StartDate[:7]
-			}
-			units[row.OccurrenceKey] = unit
-		}
-		counted := row.Counted
-		if counted && len(row.DeclinedEmails) > 0 && (len(scope.ParticipantIDs) > 0 || len(scope.AdditionalParticipantGroups) > 0 || scope.Person != nil || len(scope.Domains) > 0 || len(scope.AdditionalDomainGroups) > 0) {
-			key := strings.Join(row.DeclinedEmails, "\x00")
-			matching, ok := eligible[key]
-			if !ok {
-				matching, err = s.meetingMetricEligibleMembers(ctx, unbounded, row.DeclinedEmails, canonical, emailOwners)
-				if err != nil {
-					return nil, err
-				}
-				eligible[key] = matching
-			}
-			counted = matching[row.MessageID]
-		}
-		unit.counted = unit.counted || counted
-		if !counted {
-			continue
-		}
-		if member.duration.Valid {
-			unit.choose(member.duration.Float64, meetingcontent.DurationBasis(member.basis), member.id)
-		}
-		if row.ScheduledSeconds != nil {
-			unit.choose(*row.ScheduledSeconds, meetingcontent.DurationScheduled, member.id)
-		}
-	}
-	for id, member := range members {
-		if scope.MessageIDs != nil && !slices.Contains(*scope.MessageIDs, id) {
-			continue
-		}
-		if seen[id] {
-			continue
-		}
-		if member.at.After(now) {
-			continue
-		}
-		unit := &meetingMetricUnit{at: member.at, counted: true}
-		if member.duration.Valid {
-			unit.choose(member.duration.Float64, meetingcontent.DurationBasis(member.basis), id)
-		}
-		units[fmt.Sprintf("message:%d", id)] = unit
-	}
-	result := &meetingcontent.Metrics{SchemaVersion: meetingResultSchemaVersion, ArchiveUID: uid, Scope: meetingScopeProvenance(scope), DurationByBasis: []meetingcontent.BasisTotals{}, Months: []meetingcontent.MonthTotals{}}
-	bases := map[meetingcontent.DurationBasis]meetingcontent.BasisTotals{}
-	months := map[string]meetingcontent.DurationTotals{}
-	dates := meetingMetricDates(occurrences, dateMembers, now)
-	for key, unit := range units {
-		if date, ok := dates[key]; ok {
-			unit.at, unit.month = date.at, date.month
-		}
-		if !unit.counted {
-			continue
-		}
-		if scope.After != nil && (unit.at.IsZero() || unit.at.Before(*scope.After)) {
-			continue
-		}
-		if scope.Before != nil && (unit.at.IsZero() || !unit.at.Before(*scope.Before)) {
-			continue
-		}
-		addMeetingMetric(&result.Totals, unit.duration)
-		if unit.at.IsZero() {
-			result.UndatedCount++
-		} else {
-			at := unit.at.UTC()
-			if result.FirstMeetingAt == nil || at.Before(*result.FirstMeetingAt) {
-				result.FirstMeetingAt = &at
-			}
-			if result.LastMeetingAt == nil || at.After(*result.LastMeetingAt) {
-				result.LastMeetingAt = &at
-			}
-			month := unit.month
-			if month == "" {
-				month = at.Format("2006-01")
-			}
-			totals := months[month]
-			addMeetingMetric(&totals, unit.duration)
-			months[month] = totals
-		}
-		if unit.duration != nil {
-			b := bases[unit.basis]
-			b.Basis = unit.basis
-			b.Count++
-			b.TotalSeconds += *unit.duration
-			bases[unit.basis] = b
-		}
-	}
-	finishMeetingMetric(&result.Totals)
-	for month, totals := range months {
-		finishMeetingMetric(&totals)
-		result.Months = append(result.Months, meetingcontent.MonthTotals{Month: month, Totals: totals})
-	}
-	slices.SortFunc(result.Months, func(a, b meetingcontent.MonthTotals) int { return strings.Compare(a.Month, b.Month) })
-	for _, b := range bases {
-		result.DurationByBasis = append(result.DurationByBasis, b)
-	}
-	slices.SortFunc(result.DurationByBasis, func(a, b meetingcontent.BasisTotals) int { return metricBasisRank(a.Basis) - metricBasisRank(b.Basis) })
 	return result, nil
 }
 
-func (s *Store) meetingMetricMembers(ctx context.Context, scope MeetingQueryScope) (map[int64]meetingMetricMember, error) {
-	statement, err := s.buildMeetingScopeStatementExcluding(scope, true, nil)
+func readSQLiteMeetingExtrema(
+	ctx context.Context, tx *loggedTx, statement meetingScopeStatement,
+) (nullableTimestamp, nullableTimestamp, error) {
+	rows, err := tx.QueryContext(ctx, statement.cte+`, meeting_extrema AS (
+		SELECT MIN(julianday(occurred_at)) AS first_bucket,
+			MAX(julianday(occurred_at)) AS last_bucket
+		FROM scoped_meetings
+		WHERE occurred_at IS NOT NULL AND julianday(occurred_at) IS NOT NULL
+	)
+	SELECT scoped_meetings.occurred_at
+	FROM scoped_meetings
+	CROSS JOIN meeting_extrema
+	WHERE julianday(scoped_meetings.occurred_at) = meeting_extrema.first_bucket
+	   OR julianday(scoped_meetings.occurred_at) = meeting_extrema.last_bucket`,
+		statement.args...)
 	if err != nil {
-		return nil, err
+		return nullableTimestamp{}, nullableTimestamp{}, fmt.Errorf("read SQLite meeting extrema: %w", err)
 	}
-	allowed, allowedArgs := sourceScopeClause(ctx, "sm.source_id")
-	statement.args = append(statement.args, allowedArgs...)
-	rows, err := s.db.QueryContext(ctx, statement.cte+` SELECT sm.message_id, COALESCE(e.start_at, sm.occurred_at), sm.duration_seconds, sm.duration_basis FROM scoped_meetings sm LEFT JOIN calendar_events e ON e.message_id=sm.message_id WHERE 1=1`+allowed, statement.args...)
-	if err != nil {
-		return nil, fmt.Errorf("select meeting metrics members: %w", err)
-	}
-	members := map[int64]meetingMetricMember{}
+	var first, last nullableTimestamp
 	for rows.Next() {
-		var member meetingMetricMember
-		var at nullableTimestamp
-		var basis sql.NullString
-		if err := rows.Scan(&member.id, &at, &member.duration, &basis); err != nil {
+		var candidate nullableTimestamp
+		if scanErr := rows.Scan(&candidate); scanErr != nil {
 			_ = rows.Close()
-			return nil, err
+			return nullableTimestamp{}, nullableTimestamp{}, fmt.Errorf("scan SQLite meeting extrema: %w", scanErr)
 		}
-		if at.Valid {
-			member.at = at.Time
-		}
-		member.basis = basis.String
-		members[member.id] = member
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, err
-	}
-	return members, nil
-}
-
-func (s *Store) meetingMetricDateMembers(ctx context.Context, scope MeetingQueryScope, members map[int64]meetingMetricMember) (map[int64]meetingMetricMember, error) {
-	if len(scope.ParticipantIDs) == 0 && len(scope.AdditionalParticipantGroups) == 0 && scope.Person == nil && len(scope.Domains) == 0 && len(scope.AdditionalDomainGroups) == 0 {
-		return members, nil
-	}
-	scope.ParticipantIDs, scope.AdditionalParticipantGroups, scope.Person = nil, nil, nil
-	scope.Domains, scope.AdditionalDomainGroups = nil, nil
-	return s.meetingMetricMembers(ctx, scope)
-}
-
-func meetingMetricDates(rows []MeetingOccurrence, members map[int64]meetingMetricMember, now time.Time) map[string]meetingMetricUnit {
-	dates := map[string]meetingMetricUnit{}
-	for _, row := range rows {
-		if _, ok := members[row.MessageID]; !ok || !row.Counted || row.OccurredAt.After(now) {
+		if !candidate.Valid {
 			continue
 		}
-		date, ok := dates[row.OccurrenceKey]
-		calendar := row.ScheduledSeconds != nil
-		if !ok || calendar && !date.hasCalendar || calendar == date.hasCalendar && row.OccurredAt.Before(date.at) {
-			date = meetingMetricUnit{at: row.OccurredAt, hasCalendar: calendar}
-			if len(row.StartDate) >= 7 {
-				date.month = row.StartDate[:7]
-			}
-			dates[row.OccurrenceKey] = date
+		if !first.Valid || candidate.Time.Before(first.Time) {
+			first = candidate
+		}
+		if !last.Valid || candidate.Time.After(last.Time) {
+			last = candidate
 		}
 	}
-	return dates
-}
-
-func (u *meetingMetricUnit) choose(seconds float64, basis meetingcontent.DurationBasis, id int64) {
-	if u.duration == nil || metricBasisRank(basis) < metricBasisRank(u.basis) || metricBasisRank(basis) == metricBasisRank(u.basis) && id < u.memberID {
-		u.duration = &seconds
-		u.basis = basis
-		u.memberID = id
+	if iterationErr := rows.Err(); iterationErr != nil {
+		_ = rows.Close()
+		return nullableTimestamp{}, nullableTimestamp{}, fmt.Errorf("iterate SQLite meeting extrema: %w", iterationErr)
 	}
-}
-func metricBasisRank(b meetingcontent.DurationBasis) int {
-	switch b {
-	case meetingcontent.DurationProvider:
-		return 0
-	case meetingcontent.DurationScheduled:
-		return 1
-	case meetingcontent.DurationTranscriptSpan:
-		return 2
-	default:
-		return 3
+	if closeErr := rows.Close(); closeErr != nil {
+		return nullableTimestamp{}, nullableTimestamp{}, fmt.Errorf("close SQLite meeting extrema: %w", closeErr)
 	}
-}
-func addMeetingMetric(t *meetingcontent.DurationTotals, duration *float64) {
-	t.MeetingCount++
-	if duration == nil {
-		t.UnknownDurationCount++
-	} else {
-		t.KnownDurationCount++
-		t.TotalKnownSeconds += *duration
-	}
-}
-func finishMeetingMetric(t *meetingcontent.DurationTotals) {
-	if t.KnownDurationCount > 0 {
-		average := t.TotalKnownSeconds / float64(t.KnownDurationCount)
-		t.AverageKnownSeconds = &average
-	}
-}
-func (s *Store) meetingMetricOwners(ctx context.Context) (map[string]bool, map[int64]int64, map[string][]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT LOWER(TRIM(address)) FROM account_identities`)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	owners := map[string]bool{}
-	for rows.Next() {
-		var email string
-		if err := rows.Scan(&email); err != nil {
-			_ = rows.Close()
-			return nil, nil, nil, err
-		}
-		owners[email] = true
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, nil, nil, err
-	}
-	clusters, err := s.ParticipantClusters(ctx)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	rows, err = s.db.QueryContext(ctx, `SELECT id, email_address FROM participants WHERE email_address IS NOT NULL UNION ALL SELECT participant_id, identifier_value FROM participant_identifiers WHERE identifier_type='email'`)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	type address struct {
-		id    int64
-		email string
-	}
-	var addresses []address
-	for rows.Next() {
-		var a address
-		if err := rows.Scan(&a.id, &a.email); err != nil {
-			_ = rows.Close()
-			return nil, nil, nil, err
-		}
-		a.email = strings.ToLower(strings.TrimSpace(a.email))
-		addresses = append(addresses, a)
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, nil, nil, err
-	}
-	canonical := func(id int64) int64 {
-		if c, ok := clusters[id]; ok {
-			return c
-		}
-		return id
-	}
-	ownerClusters := map[int64]bool{}
-	emailClusters := map[string][]int64{}
-	for _, a := range addresses {
-		emailClusters[a.email] = append(emailClusters[a.email], canonical(a.id))
-		if owners[a.email] {
-			ownerClusters[canonical(a.id)] = true
-		}
-	}
-	for _, a := range addresses {
-		if ownerClusters[canonical(a.id)] {
-			owners[a.email] = true
-		}
-	}
-	return owners, clusters, emailClusters, nil
-}
-
-func filterMeetingScopeParticipants(scope MeetingQueryScope, keep func([]int64) []int64) (MeetingQueryScope, bool) {
-	if len(scope.ParticipantIDs) > 0 {
-		scope.ParticipantIDs = keep(scope.ParticipantIDs)
-		if len(scope.ParticipantIDs) == 0 {
-			return scope, false
-		}
-	}
-	scope.AdditionalParticipantGroups = slices.Clone(scope.AdditionalParticipantGroups)
-	for i, group := range scope.AdditionalParticipantGroups {
-		scope.AdditionalParticipantGroups[i] = keep(group)
-		if len(scope.AdditionalParticipantGroups[i]) == 0 {
-			return scope, false
-		}
-	}
-	return scope, true
-}
-
-func (s *Store) meetingMetricEligibleMembers(ctx context.Context, scope MeetingQueryScope, declined []string, clusters map[int64]int64, emails map[string][]int64) (map[int64]bool, error) {
-	declinedClusters := map[int64]bool{}
-	for _, email := range declined {
-		for _, id := range emails[email] {
-			declinedClusters[id] = true
-		}
-	}
-	canonical := func(id int64) int64 {
-		if c, ok := clusters[id]; ok {
-			return c
-		}
-		return id
-	}
-	keep := func(ids []int64) []int64 {
-		result := make([]int64, 0, len(ids))
-		for _, id := range ids {
-			if !declinedClusters[canonical(id)] {
-				result = append(result, id)
-			}
-		}
-		return result
-	}
-	result := map[int64]bool{}
-	var matches bool
-	scope, matches = filterMeetingScopeParticipants(scope, keep)
-	if !matches {
-		return result, nil
-	}
-	if scope.Person != nil {
-		person := *scope.Person
-		person.ParticipantIDs = keep(person.ParticipantIDs)
-		if len(person.ParticipantIDs) == 0 {
-			return result, nil
-		}
-		scope.Person = &person
-	}
-	var excluded []int64
-	for id := range clusters {
-		if declinedClusters[canonical(id)] {
-			excluded = append(excluded, id)
-		}
-	}
-	for _, ids := range emails {
-		for _, id := range ids {
-			if declinedClusters[id] {
-				excluded = append(excluded, id)
-			}
-		}
-	}
-	slices.Sort(excluded)
-	excluded = slices.Compact(excluded)
-	statement, err := s.buildMeetingScopeStatementExcluding(scope, scope.MessageIDs == nil, excluded)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := s.db.QueryContext(ctx, statement.cte+` SELECT message_id FROM scoped_meetings`, statement.args...)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		result[id] = true
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, err
-	}
-	return result, nil
+	return first, last, nil
 }

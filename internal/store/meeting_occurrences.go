@@ -18,6 +18,7 @@ import (
 // MeetingOccurrence is one message's contribution to an occurrence.
 type MeetingOccurrence struct {
 	MessageID        int64
+	AnchorMessageID  int64
 	OccurrenceKey    string
 	OccurredAt       time.Time
 	StartDate        string
@@ -584,7 +585,7 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 			seconds := event.end.Sub(event.start).Seconds()
 			duration = &seconds
 		}
-		result = append(result, MeetingOccurrence{MessageID: id, OccurrenceKey: fmt.Sprintf("fallback:%d", id), OccurredAt: event.start, StartDate: event.startDate, Counted: counted, DeclinedEmails: event.declined, ScheduledSeconds: duration})
+		result = append(result, MeetingOccurrence{MessageID: id, AnchorMessageID: id, OccurrenceKey: fmt.Sprintf("fallback:%d", id), OccurredAt: event.start, StartDate: event.startDate, Counted: counted, DeclinedEmails: event.declined, ScheduledSeconds: duration})
 	}
 	for _, unit := range units {
 		slices.SortFunc(unit.events, func(a, b CalendarOccurrence) int {
@@ -606,30 +607,32 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 			return cmp.Compare(a.id, b.id)
 		})
 		var key string
+		var anchorID int64
 		var at time.Time
 		cancelled := false
 		var startDate string
 		declined := map[string]bool{}
-		eventDeclines := map[string]map[string]bool{}
 		for _, event := range unit.events {
 			if key == "" || event.Ref < key {
 				key = event.Ref
 			}
 			cancelled = cancelled || event.Status == calendarCancelledStatus
-			eventDeclines[event.Ref] = occurrenceDeclines(event, seriesAttendees[event.SeriesMessageID])
-			for email := range eventDeclines[event.Ref] {
+			for email := range occurrenceDeclines(event, seriesAttendees[event.SeriesMessageID]) {
 				declined[email] = true
 			}
 		}
 		if len(unit.events) > 0 && (!unit.events[0].DeletedFromSource || len(unit.notes) == 0) {
+			anchorID = unit.events[0].MessageID
 			at = unit.events[0].Start
 			if unit.events[0].AllDay {
 				startDate = unit.events[0].StartDate
 			}
 		} else if len(unit.notes) > 0 {
+			anchorID = unit.notes[0].id
 			for _, note := range unit.notes {
 				if at.IsZero() && !note.at.IsZero() {
 					at = note.at
+					anchorID = note.id
 				}
 				ref := (meetingDecisionEndpoint{ID: note.id, Kind: meetingRefMessage}).ref()
 				if len(unit.events) == 0 && (key == "" || ref < key) {
@@ -637,16 +640,18 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 				}
 			}
 		}
-		var declinedEmails []string
-		for email := range declined {
-			declinedEmails = append(declinedEmails, email)
+		declinedEmails := sortedDeclines(declined)
+		available := false
+		for _, note := range unit.notes {
+			available = available || note.state == "available"
 		}
-		slices.Sort(declinedEmails)
+		ownerDeclined := false
+		for email := range declined {
+			ownerDeclined = ownerDeclined || owners[email]
+		}
+		deleted := len(unit.events) > 0 && unit.events[0].DeletedFromSource
+		counted := !at.After(through) && !cancelled && !deleted && (!ownerDeclined || available) && (len(unit.events) > 0 || available)
 		for _, event := range unit.events {
-			ownerDeclined := false
-			for email := range eventDeclines[event.Ref] {
-				ownerDeclined = ownerDeclined || owners[email]
-			}
 			for _, id := range []int64{event.MessageID, event.SeriesMessageID} {
 				if id != 0 {
 					var duration *float64
@@ -654,11 +659,7 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 						seconds := event.End.Sub(event.Start).Seconds()
 						duration = &seconds
 					}
-					eventDate := ""
-					if event.AllDay {
-						eventDate = event.StartDate
-					}
-					result = append(result, MeetingOccurrence{MessageID: id, OccurrenceKey: key, OccurredAt: event.Start, StartDate: eventDate, Counted: !event.Start.After(through) && !cancelled && !event.DeletedFromSource && !ownerDeclined, DeclinedEmails: sortedDeclines(eventDeclines[event.Ref]), ScheduledSeconds: duration})
+					result = append(result, MeetingOccurrence{MessageID: id, AnchorMessageID: anchorID, OccurrenceKey: key, OccurredAt: at, StartDate: startDate, Counted: counted, DeclinedEmails: declinedEmails, ScheduledSeconds: duration})
 				}
 			}
 		}
@@ -670,7 +671,7 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 			if note.state == "available" {
 				ids = nil
 			}
-			result = append(result, MeetingOccurrence{MessageID: note.id, OccurrenceKey: key, OccurredAt: at, StartDate: startDate, Counted: !at.After(through) && !cancelled && note.state == "available", DeclinedEmails: ids})
+			result = append(result, MeetingOccurrence{MessageID: note.id, AnchorMessageID: anchorID, OccurrenceKey: key, OccurredAt: at, StartDate: startDate, Counted: counted, DeclinedEmails: ids})
 		}
 	}
 	seenMessages := map[int64]bool{}
@@ -679,7 +680,7 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 	}
 	for _, id := range e.suppressed {
 		if !seenMessages[id] && !unexpandable[id] {
-			result = append(result, MeetingOccurrence{MessageID: id, OccurrenceKey: formatMeetingOccurrence(OccurrenceRef{MessageID: id})})
+			result = append(result, MeetingOccurrence{MessageID: id, AnchorMessageID: id, OccurrenceKey: formatMeetingOccurrence(OccurrenceRef{MessageID: id})})
 		}
 	}
 	slices.SortFunc(result, func(a, b MeetingOccurrence) int {

@@ -41,18 +41,15 @@ func (e *MeetingSelectionError) Error() string {
 func (e *MeetingSelectionError) Unwrap() error { return e.Err }
 
 type MeetingQueryScope struct {
-	MessageIDs                  *[]int64
-	SourceIDs                   []int64
-	ParticipantIDs              []int64
-	MessageTypes                []string
-	AdditionalParticipantGroups [][]int64
-	Person                      *personscope.Scope
-	Domains                     []string
-	AdditionalDomainGroups      [][]string
-	After                       *time.Time
-	Before                      *time.Time
-	Deletion                    string
-	Authority                   string
+	MessageIDs     *[]int64
+	SourceIDs      []int64
+	ParticipantIDs []int64
+	Person         *personscope.Scope
+	Domains        []string
+	After          *time.Time
+	Before         *time.Time
+	Deletion       string
+	Authority      string
 }
 
 type meetingScopeStatement struct {
@@ -416,13 +413,8 @@ func newMeetingSelectionError(kind error, ids []int64) *MeetingSelectionError {
 }
 
 func (s *Store) buildMeetingScopeStatement(scope MeetingQueryScope) (meetingScopeStatement, error) {
-	return s.buildMeetingScopeStatementExcluding(scope, false, nil)
-}
-
-func (s *Store) buildMeetingScopeStatementExcluding(scope MeetingQueryScope, includeCalendar bool, excluded []int64) (meetingScopeStatement, error) {
-	messageType := meetingEvidenceTypePredicate(scope.MessageTypes, includeCalendar)
 	conditions := []string{
-		messageType,
+		`m.message_type = 'meeting_transcript'`,
 		`m.deleted_at IS NULL`,
 	}
 	args := make([]any, 0)
@@ -443,7 +435,21 @@ func (s *Store) buildMeetingScopeStatementExcluding(scope MeetingQueryScope, inc
 		conditions = append(conditions, `m.source_id IN (`+meetingPlaceholders(len(ids))+`)`)
 		args = appendInt64Args(args, ids)
 	}
-	conditions, args = appendMeetingMemberFilters(conditions, args, scope, excluded)
+	if ids := normalizedSignedIDs(scope.ParticipantIDs); len(ids) > 0 {
+		placeholders := meetingPlaceholders(len(ids))
+		conditions = append(conditions, `(m.sender_id IN (`+placeholders+`) OR EXISTS (
+			SELECT 1 FROM message_recipients exact_recipient
+			WHERE exact_recipient.message_id = m.id
+			  AND exact_recipient.participant_id IN (`+placeholders+`)
+		) OR EXISTS (
+			SELECT 1 FROM conversation_participants exact_roster
+			WHERE exact_roster.conversation_id = m.conversation_id
+			  AND exact_roster.participant_id IN (`+placeholders+`)
+		))`)
+		for range 3 {
+			args = appendInt64Args(args, ids)
+		}
+	}
 	if scope.Person != nil {
 		if err := personscope.Validate(*scope.Person); err != nil {
 			return meetingScopeStatement{}, fmt.Errorf("invalid meeting person scope: %w", err)
@@ -451,6 +457,25 @@ func (s *Store) buildMeetingScopeStatementExcluding(scope MeetingQueryScope, inc
 		predicate, personArgs := personscope.MessagePredicate(*scope.Person, "m", "c")
 		conditions = append(conditions, `(`+predicate+`)`)
 		args = append(args, personArgs...)
+	}
+	if domains := normalizedMeetingDomains(scope.Domains); len(domains) > 0 {
+		placeholders := meetingPlaceholders(len(domains))
+		conditions = append(conditions, `EXISTS (
+			SELECT 1 FROM participants domain_participant
+			WHERE LOWER(TRIM(COALESCE(domain_participant.domain, ''))) IN (`+placeholders+`)
+			  AND (domain_participant.id = m.sender_id OR EXISTS (
+				SELECT 1 FROM message_recipients domain_recipient
+				WHERE domain_recipient.message_id = m.id
+				  AND domain_recipient.participant_id = domain_participant.id
+			  ) OR EXISTS (
+				SELECT 1 FROM conversation_participants domain_roster
+				WHERE domain_roster.conversation_id = m.conversation_id
+				  AND domain_roster.participant_id = domain_participant.id
+			  ))
+		)`)
+		for _, domain := range domains {
+			args = append(args, domain)
+		}
 	}
 	occurredAt := `COALESCE(m.sent_at, m.received_at, m.internal_date)`
 	occurredKey := occurredAt
@@ -503,74 +528,6 @@ func (s *Store) buildMeetingScopeStatementExcluding(scope MeetingQueryScope, inc
 		)`,
 		args: args,
 	}, nil
-}
-
-func meetingEvidenceTypePredicate(types []string, includeCalendar bool) string {
-	allowed := []string{"meeting_transcript"}
-	if includeCalendar {
-		allowed = append(allowed, "calendar_event")
-	}
-	var predicates []string
-	for _, kind := range allowed {
-		if len(types) == 0 || slices.Contains(types, kind) {
-			predicates = append(predicates, `m.message_type = '`+kind+`'`)
-		}
-	}
-	if len(predicates) == 0 {
-		return `FALSE`
-	}
-	return `(` + strings.Join(predicates, ` OR `) + `)`
-}
-
-func appendMeetingMemberFilters(conditions []string, args []any, scope MeetingQueryScope, excluded []int64) ([]string, []any) {
-	for _, ids := range append([][]int64{scope.ParticipantIDs}, scope.AdditionalParticipantGroups...) {
-		ids = normalizedSignedIDs(ids)
-		if len(ids) == 0 {
-			continue
-		}
-		placeholders := meetingPlaceholders(len(ids))
-		conditions = append(conditions, `(m.sender_id IN (`+placeholders+`) OR EXISTS (
-			SELECT 1 FROM message_recipients exact_recipient
-			WHERE exact_recipient.message_id = m.id
-			  AND exact_recipient.participant_id IN (`+placeholders+`)
-		) OR EXISTS (
-			SELECT 1 FROM conversation_participants exact_roster
-			WHERE exact_roster.conversation_id = m.conversation_id
-			  AND exact_roster.participant_id IN (`+placeholders+`)
-		))`)
-		for range 3 {
-			args = appendInt64Args(args, ids)
-		}
-	}
-	for _, domains := range append([][]string{scope.Domains}, scope.AdditionalDomainGroups...) {
-		domains = normalizedMeetingDomains(domains)
-		if len(domains) == 0 {
-			continue
-		}
-		placeholders := meetingPlaceholders(len(domains))
-		exclusion := ""
-		if len(excluded) > 0 {
-			exclusion = ` AND domain_participant.id NOT IN (` + meetingPlaceholders(len(excluded)) + `)`
-		}
-		conditions = append(conditions, `EXISTS (
-			SELECT 1 FROM participants domain_participant
-			WHERE LOWER(TRIM(COALESCE(domain_participant.domain, ''))) IN (`+placeholders+`)`+exclusion+`
-			  AND (domain_participant.id = m.sender_id OR EXISTS (
-				SELECT 1 FROM message_recipients domain_recipient
-				WHERE domain_recipient.message_id = m.id
-				  AND domain_recipient.participant_id = domain_participant.id
-			  ) OR EXISTS (
-				SELECT 1 FROM conversation_participants domain_roster
-				WHERE domain_roster.conversation_id = m.conversation_id
-				  AND domain_roster.participant_id = domain_participant.id
-			  ))
-		)`)
-		for _, domain := range domains {
-			args = append(args, domain)
-		}
-		args = appendInt64Args(args, excluded)
-	}
-	return conditions, args
 }
 
 func normalizedSignedIDs(values []int64) []int64 {
@@ -627,5 +584,13 @@ func nullableTimePointer(value nullableTimestamp) *time.Time {
 		return nil
 	}
 	result := value.Time.UTC()
+	return &result
+}
+
+func nullableFloatPointer(value sql.NullFloat64) *float64 {
+	if !value.Valid {
+		return nil
+	}
+	result := value.Float64
 	return &result
 }

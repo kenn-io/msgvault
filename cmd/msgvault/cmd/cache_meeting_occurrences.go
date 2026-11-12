@@ -50,7 +50,7 @@ SELECT DISTINCT lower(trim(e.email)) FROM emails e JOIN canon c ON c.participant
 	if err != nil {
 		return time.Time{}, fmt.Errorf("read meeting occurrences: %w", err)
 	}
-	if _, err := db.ExecContext(ctx, `CREATE TEMP TABLE tmp_meeting_occurrences (message_id BIGINT, occurrence_key VARCHAR, occurred_at TIMESTAMP, start_date DATE, counted BOOLEAN, declined_emails VARCHAR[])`); err != nil {
+	if _, err := db.ExecContext(ctx, `CREATE TEMP TABLE tmp_meeting_occurrences (message_id BIGINT, anchor_message_id BIGINT, occurrence_key VARCHAR, occurred_at TIMESTAMP, start_date DATE, counted BOOLEAN, declined_emails VARCHAR[])`); err != nil {
 		return time.Time{}, fmt.Errorf("create meeting occurrence table: %w", err)
 	}
 	defer func() { _, _ = db.ExecContext(context.WithoutCancel(ctx), `DROP TABLE tmp_meeting_occurrences`) }()
@@ -67,12 +67,12 @@ SELECT DISTINCT lower(trim(e.email)) FROM emails e JOIN canon c ON c.participant
 		return nil
 	}
 	for _, occurrence := range occurrences {
-		values = append(values, `(?, ?, ?, NULLIF(?, '')::DATE, ?, [`+strings.TrimSuffix(strings.Repeat("?,", len(occurrence.DeclinedEmails)), ",")+`]::VARCHAR[])`)
+		values = append(values, `(?, ?, ?, ?, NULLIF(?, '')::DATE, ?, [`+strings.TrimSuffix(strings.Repeat("?,", len(occurrence.DeclinedEmails)), ",")+`]::VARCHAR[])`)
 		var occurredAt any
 		if !occurrence.OccurredAt.IsZero() {
 			occurredAt = occurrence.OccurredAt.UTC().Format("2006-01-02 15:04:05.999999999")
 		}
-		args = append(args, occurrence.MessageID, occurrence.OccurrenceKey, occurredAt, occurrence.StartDate, occurrence.Counted)
+		args = append(args, occurrence.MessageID, occurrence.AnchorMessageID, occurrence.OccurrenceKey, occurredAt, occurrence.StartDate, occurrence.Counted)
 		for _, email := range occurrence.DeclinedEmails {
 			args = append(args, email)
 		}

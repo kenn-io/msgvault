@@ -26,14 +26,12 @@ function handler(detailResponse: () => Response | Promise<Response> = () => Resp
   const requests: Request[] = [];
   const client = createAPIClient(async (input) => {
     const request = input instanceof Request ? input : new Request(input); requests.push(request);
-    const url = new URL(request.url);
-    const path = url.pathname;
+    const path = new URL(request.url).pathname;
     if (path.endsWith('/operations/status')) return Response.json({ lanes: lanes() });
     if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
     if (path.endsWith('/meetings/metrics')) return metricsResponse(request);
     if (path.endsWith('/meetings/actions')) return Response.json(meetingActions({ rows: [action], total_count: 1 }));
-    if (path.endsWith('/meetings/record')) return Response.json({ message_ids: [Number(url.searchParams.get('ref')?.split(':')[1])], links: [], unexpandable: [] });
     if (path.endsWith('/messages/42')) return detailResponse();
     if (path.endsWith('/participants/7')) return Response.json({ id: 7, display_label: 'Example Person', identifiers: [], first_at: detail.sent_at, last_at: detail.sent_at, source_counts: [], activity_count: 1, file_count: 0 });
     if (path.endsWith('/participants/7/timeline')) return Response.json({ rows: [{ key: 'message:42', anchor_message_id: 42, conversation_id: 8, kind: 'email', title: detail.subject, occurred_at: detail.sent_at, message_type: 'email', conversation_type: 'email', source_id: 3, participant_labels: [], participant_ids: [], attachment_count: 0, attachment_size: 0, message_count: 1, deleted_from_source: false, match: {} }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} });
@@ -75,7 +73,6 @@ function groupNavigationClient() {
     if (url.pathname.endsWith('/sources/status')) return Response.json({ sources: [] });
     if (url.pathname.endsWith('/saved-views')) return Response.json({ saved_views: [] });
     if (url.pathname.endsWith('/meetings/metrics')) return metricsResponse(request);
-    if (url.pathname.endsWith('/meetings/record')) return Response.json({ message_ids: [Number(url.searchParams.get('ref')?.split(':')[1])], links: [], unexpandable: [] });
     if (url.pathname.endsWith('/meetings/actions')) {
       const body = await request.json();
       const messageID = body.scope?.message_ids?.[0];
@@ -105,9 +102,9 @@ function stateWithGroup(): ExploreState {
 describe('meeting archive reader navigation', () => {
   it.each([
     [false, 'message', false], [false, 'message', true],
-    [false, 'record', false], [false, 'record', true],
+    [false, 'metrics', false], [false, 'metrics', true],
     [true, 'message', false], [true, 'message', true],
-    [true, 'record', false], [true, 'record', true]
+    [true, 'metrics', false], [true, 'metrics', true]
   ] as const)('keeps an archived meeting request through Past runs, deep=%s pending=%s closeBeforeLoad=%s', async (deep, pending, close) => {
     let finish!: () => void;
     let pendingRequest!: Request;
@@ -118,7 +115,7 @@ describe('meeting archive reader navigation', () => {
       if (path.endsWith('/operations/runs')) return Response.json({ runs: [], unavailable_kinds: [], membership_revision: 1 });
       const response = await baseClient.fetch(input, init);
       if ((pending === 'message' && path.endsWith('/messages/42')) ||
-        (pending === 'record' && path.endsWith('/meetings/record') && new URL(request.url).searchParams.get('ref') === 'msg:42')) {
+        (pending === 'metrics' && path.endsWith('/meetings/metrics') && (await request.clone().json()).scope?.message_ids?.[0] === 42)) {
         pendingRequest = request;
         return new Promise<Response>(resolve => { finish = () => resolve(response); });
       }
@@ -251,7 +248,7 @@ describe('meeting archive reader navigation', () => {
     const scopeMetrics = metricRequests.filter((body) => body.explore);
     expect(scopeMetrics.length).toBeGreaterThan(0);
     for (const body of scopeMetrics) expect(body.explore.predicate.filters).toEqual(filters);
-    expect(requests.filter((request) => new URL(request.url).pathname.endsWith('/meetings/record')).map((request) => new URL(request.url).searchParams.get('ref'))).toEqual(['msg:42']);
+    expect(metricRequests.filter((body) => body.scope?.message_ids?.[0] === 42)).toEqual([{ scope: { message_ids: [42] } }]);
     const actionRequests = await Promise.all(requests.filter((request) => request.url.endsWith('/meetings/actions')).map((request) => request.clone().json()));
     expect(actionRequests).toContainEqual(expect.objectContaining({ scope: { message_ids: [42] } }));
     view.unmount(); state.destroy();

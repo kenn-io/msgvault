@@ -54,27 +54,6 @@ func TestBuildExcludesRooms(t *testing.T) {
 	assertions.Positive(aliceCount)
 }
 
-func TestBuildCountsEarlierGroupAttachmentsForSilentMembers(t *testing.T) {
-	root, db := writeRelationshipBaseFixture(t, true)
-	writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
-		firstMessageID: 1, messageCount: 2, memberCount: 3,
-		startDate: "2026-01-01", messageType: "imessage", conversationType: "group_chat",
-	})
-	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE group_messages AS SELECT * REPLACE ((id = 1)::INTEGER AS attachment_count, (id = 1) AS has_attachments) FROM read_parquet(?)`, parquetDatasetGlob(root, "messages"))
-	require.NoError(t, err)
-	replaceRelationshipParquet(t, db, root, "messages", `SELECT * FROM group_messages`)
-	_, err = db.ExecContext(t.Context(), `CREATE TEMP TABLE group_people AS SELECT * REPLACE (CASE WHEN id = 3 THEN 'silent.test' ELSE domain END AS domain) FROM read_parquet(?)`, parquetDatasetGlob(root, "participants"))
-	require.NoError(t, err)
-	replaceRelationshipParquet(t, db, root, "participants", `SELECT * FROM group_people`)
-	_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
-	require.NoError(t, err)
-	var count int64
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT file_count FROM read_parquet(?) WHERE canonical_id = 3`, relationshipParquetGlob(root, DatasetPeople)).Scan(&count))
-	assert.Equal(t, int64(1), count)
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT file_count FROM read_parquet(?) WHERE domain = 'silent.test'`, relationshipParquetGlob(root, DatasetDomains)).Scan(&count))
-	assert.Equal(t, int64(1), count)
-}
-
 func TestBuildPublishesFourRelationshipDatasets(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -412,7 +391,7 @@ func testExpandedActivity(baseRoot string, activityRoots ...string) string {
 	expanded := ExpandedActivityRelation(readParquetRelation(paths, true),
 		base("conversation_participants"), base("participants"),
 		base("participant_clusters"), base("owner_participants"))
-	return MeetingOccurrenceActivitySQL(expanded, base(DatasetMeetingOccurrences), base("participants"), base("participant_identifiers"), base("participant_clusters"), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
+	return MeetingOccurrenceActivitySQL(expanded, expanded, base(DatasetMeetingOccurrences), base("participants"), base("participant_identifiers"), base("participant_clusters"), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
 }
 
 func TestBuildIncrementalChatContributionsMatchFullReductionAcrossYears(t *testing.T) {
@@ -874,7 +853,7 @@ func writeRelationshipBaseFixture(tb testing.TB, empty bool) (string, *sql.DB) {
 	)
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, db.Close()) })
-	writeRelationshipParquet(tb, db, root, DatasetMeetingOccurrences, `SELECT NULL::BIGINT AS message_id, NULL::VARCHAR AS occurrence_key, NULL::TIMESTAMP AS occurred_at, NULL::DATE AS start_date, NULL::BOOLEAN AS counted, []::VARCHAR[] AS declined_emails, 0::DECIMAL(38,0) AS occurrence_id WHERE false`)
+	writeRelationshipParquet(tb, db, root, DatasetMeetingOccurrences, `SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS anchor_message_id, NULL::VARCHAR AS occurrence_key, NULL::TIMESTAMP AS occurred_at, NULL::DATE AS start_date, NULL::BOOLEAN AS counted, []::VARCHAR[] AS declined_emails, 0::DECIMAL(38,0) AS occurrence_id WHERE false`)
 
 	where := ""
 	if empty {
@@ -1118,7 +1097,7 @@ func TestMeetingOccurrenceCountsInRelationshipIndex(t *testing.T) {
 	require.NoError(t, err)
 	replaceRelationshipParquet(t, db, root, "messages", `SELECT * FROM meeting_messages`)
 	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type, '' AS display_name UNION ALL SELECT 100, 2, 'to', '' UNION ALL SELECT 101, 1, 'from', '' UNION ALL SELECT 101, 2, 'to', ''`)
-	replaceRelationshipParquet(t, db, root, DatasetMeetingOccurrences, `SELECT * FROM (VALUES
+	replaceRelationshipParquet(t, db, root, DatasetMeetingOccurrences, `SELECT t.*, 100::BIGINT AS anchor_message_id FROM (VALUES
 		(100::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0)),
 		(101::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0)),
 		(100::BIGINT, 'second'::VARCHAR, TIMESTAMP '2026-07-27', NULL::DATE, true, []::VARCHAR[], -9223372036854775810::DECIMAL(38,0))
@@ -1143,7 +1122,7 @@ func TestMeetingAttachmentSourceWithoutCountedActivity(t *testing.T) {
 	replaceRelationshipParquet(t, db, root, "sources", `SELECT * FROM (VALUES (1::BIGINT, 'owner@example.com', 'gmail'), (2::BIGINT, 'owner@example.com', 'other')) AS t(id, account_email, source_type)`)
 	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type, '' AS display_name UNION ALL SELECT 100, 2, 'to', '' UNION ALL SELECT 101, 1, 'from', '' UNION ALL SELECT 101, 2, 'to', ''`)
 	replaceRelationshipParquet(t, db, root, "attachments", `SELECT 1::BIGINT AS attachment_id, 101::BIGINT AS message_id, 12::BIGINT AS size, 'file.txt' AS filename, 'text/plain' AS mime_type`)
-	replaceRelationshipParquet(t, db, root, DatasetMeetingOccurrences, `SELECT * FROM (VALUES
+	replaceRelationshipParquet(t, db, root, DatasetMeetingOccurrences, `SELECT t.*, 100::BIGINT AS anchor_message_id FROM (VALUES
 		(100::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0)),
 		(101::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, false, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0))
 	) AS t(message_id, occurrence_key, occurred_at, start_date, counted, declined_emails, occurrence_id)`)
@@ -1167,7 +1146,7 @@ func TestMeetingDomainStaysWithItsSource(t *testing.T) {
 	replaceRelationshipParquet(t, db, root, "messages", `SELECT * FROM meeting_messages`)
 	replaceRelationshipParquet(t, db, root, "sources", `SELECT * FROM (VALUES (1::BIGINT, 'owner@example.com', 'gmail'), (2::BIGINT, 'owner@example.com', 'other')) AS t(id, account_email, source_type)`)
 	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type, '' AS display_name UNION ALL SELECT 100, 2, 'to', '' UNION ALL SELECT 101, 1, 'from', ''`)
-	replaceRelationshipParquet(t, db, root, DatasetMeetingOccurrences, `SELECT * FROM (VALUES
+	replaceRelationshipParquet(t, db, root, DatasetMeetingOccurrences, `SELECT t.*, 100::BIGINT AS anchor_message_id FROM (VALUES
 		(100::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0)),
 		(101::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-21', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0))
 	) AS t(message_id, occurrence_key, occurred_at, start_date, counted, declined_emails, occurrence_id)`)

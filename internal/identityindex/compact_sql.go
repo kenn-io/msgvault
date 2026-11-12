@@ -16,34 +16,34 @@ func buildRelationshipPeopleSQL(effectiveAt time.Time, activity string) string {
 	return `
 WITH file_messages AS (
 	SELECT DISTINCT message_id, canonical_id, source_id, source_type, attachment_count
-	FROM ` + activity + ` WHERE canonical_id IS NOT NULL AND attachment_count > 0 AND NOT unsent AND (is_direct OR is_conversation_member)
+	FROM ` + activity + ` WHERE canonical_id IS NOT NULL AND attachment_count > 0 AND NOT unsent AND entry_kind IN ('event', 'meeting') AND (is_direct OR is_conversation_member)
 ), file_totals AS (
 	SELECT canonical_id, sum(attachment_count)::BIGINT AS file_count FROM file_messages GROUP BY canonical_id
 ), source_file_totals AS (
 	SELECT canonical_id, source_id, source_type, sum(attachment_count)::BIGINT AS file_count FROM file_messages GROUP BY canonical_id, source_id, source_type
 ), logical_people AS (
 	SELECT entry_key, source_id, source_type, occurred_at, message_type, entry_kind, attachment_count,
-	       canonical_id, with_owner, CASE WHEN entry_kind IN ('event', 'meeting') THEN min(occurred_at) OVER (PARTITION BY entry_key) ELSE occurred_at END AS overall_at
+	       canonical_id, with_owner
 	FROM ` + logicalBuildRelation + `
 	WHERE relation_kind = 1
 ), people_totals AS (
 	SELECT canonical_id,
 	       count(DISTINCT entry_key)::BIGINT AS activity_count,
 	       count(DISTINCT entry_key) FILTER (WHERE entry_kind IN ('event', 'meeting') AND with_owner)::BIGINT AS meeting_count,
-	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
-	       min(overall_at)::TIMESTAMP AS first_at,
-	       max(overall_at)::TIMESTAMP AS last_at
+	       coalesce(sum(attachment_count) FILTER (WHERE entry_kind NOT IN ('event','meeting')), 0)::BIGINT AS file_count,
+	       min(occurred_at)::TIMESTAMP AS first_at,
+	       max(occurred_at)::TIMESTAMP AS last_at
 	FROM logical_people
 	GROUP BY canonical_id
 ), source_rows AS (
 	SELECT canonical_id, source_id, source_type,
 	       count(*)::BIGINT AS activity_count,
 	       count(DISTINCT entry_key) FILTER (WHERE entry_kind IN ('event', 'meeting') AND with_owner)::BIGINT AS meeting_count,
-	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
+	       coalesce(sum(attachment_count) FILTER (WHERE entry_kind NOT IN ('event','meeting')), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
 	FROM logical_people
-	GROUP BY canonical_id, source_id, source_type UNION ALL SELECT f.canonical_id, f.source_id, f.source_type, 0, 0, 0, NULL::TIMESTAMP, NULL::TIMESTAMP FROM source_file_totals f WHERE f.file_count > 0 AND NOT EXISTS (SELECT 1 FROM logical_people p WHERE p.canonical_id=f.canonical_id AND p.source_id=f.source_id)
+	GROUP BY canonical_id, source_id, source_type
 ), source_type_rows AS (
 	SELECT canonical_id, source_type,
 	       sum(activity_count)::BIGINT AS source_count
@@ -62,7 +62,7 @@ WITH file_messages AS (
 		       source_type := source_type,
 		       activity_count := activity_count,
 		       meeting_count := meeting_count,
-		       file_count := coalesce((SELECT sf.file_count FROM source_file_totals sf WHERE sf.canonical_id=source_rows.canonical_id AND sf.source_id=source_rows.source_id), 0),
+		       file_count := file_count + coalesce((SELECT sf.file_count FROM source_file_totals sf WHERE sf.canonical_id=source_rows.canonical_id AND sf.source_id=source_rows.source_id), 0),
 		       first_at := first_at,
 		       last_at := last_at
 	       ) ORDER BY source_id, source_type) AS source_rollups
@@ -72,7 +72,7 @@ WITH file_messages AS (
 ` + relationshipTemperatureCTEs(effectiveAt) + `
 SELECT d.canonical_id, d.display_label, d.partial_label, d.member_ids,
 	   d.search_values, d.search_primitives, d.is_owner,
-	   t.activity_count, t.meeting_count, coalesce(ft.file_count, 0) AS file_count,
+	   t.activity_count, t.meeting_count, t.file_count + coalesce(ft.file_count, 0) AS file_count,
        t.first_at, t.last_at, c.source_counts, r.source_rollups,
 	   coalesce(cr.temperature, 0)::INTEGER AS current_temperature,
 	   coalesce(cr.score_rank, 0)::BIGINT AS current_temperature_rank,
@@ -107,11 +107,11 @@ func buildRelationshipDomainsSQL(activity string) string {
 	return `
 WITH domain_file_messages AS (
 	SELECT DISTINCT message_id, participant_domain AS domain, attachment_count
-	FROM ` + activity + ` WHERE canonical_id IS NOT NULL AND participant_domain <> '' AND attachment_count > 0 AND NOT unsent AND (is_direct OR is_conversation_member)
+	FROM ` + activity + ` WHERE canonical_id IS NOT NULL AND participant_domain <> '' AND attachment_count > 0 AND NOT unsent AND entry_kind IN ('event', 'meeting') AND (is_direct OR is_conversation_member)
 ), domain_file_totals AS (
 	SELECT domain, sum(attachment_count)::BIGINT AS file_count FROM domain_file_messages GROUP BY domain
 ), domain_entries AS (
-	SELECT d.entry_key, d.domain, d.source_type, d.attachment_count, CASE WHEN d.entry_kind IN ('event', 'meeting') THEN coalesce((SELECT min(p.occurred_at) FROM ` + logicalBuildRelation + ` p WHERE p.entry_key=d.entry_key AND p.relation_kind=1), d.occurred_at) ELSE d.occurred_at END AS occurred_at
+	SELECT d.entry_key, d.domain, d.source_type, d.entry_kind, d.attachment_count, d.occurred_at
 	FROM ` + logicalBuildRelation + ` d
 	WHERE d.relation_kind = 2
 ), logical_person_domains AS (
@@ -121,7 +121,7 @@ WITH domain_file_messages AS (
 ), domain_totals AS (
 	SELECT domain,
 	       count(DISTINCT entry_key)::BIGINT AS activity_count,
-	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
+	       coalesce(sum(attachment_count) FILTER (WHERE entry_kind NOT IN ('event','meeting')), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
 	FROM domain_entries
@@ -143,7 +143,7 @@ WITH domain_file_messages AS (
 	GROUP BY domain
 )
 SELECT t.domain, t.activity_count, coalesce(p.person_count, 0)::BIGINT AS person_count,
-       coalesce(df.file_count, 0) AS file_count, t.first_at, t.last_at, s.source_counts
+       t.file_count + coalesce(df.file_count, 0) AS file_count, t.first_at, t.last_at, s.source_counts
 FROM domain_totals t
 LEFT JOIN domain_file_totals df USING (domain)
 JOIN domain_sources s USING (domain)
@@ -154,7 +154,7 @@ ORDER BY t.domain`
 func buildRelationshipDailySQL() string {
 	return fmt.Sprintf(`
 WITH logical_people AS (
-	SELECT entry_key, CASE WHEN entry_kind IN ('event','meeting') THEN min(occurred_at) OVER (PARTITION BY entry_key) ELSE occurred_at END AS occurred_at,
+	SELECT entry_key, occurred_at,
 	       entry_kind, is_from_me, canonical_id, is_author, CASE WHEN entry_kind IN ('event','meeting') THEN bool_or(is_owner) OVER (PARTITION BY entry_key, canonical_id) ELSE is_owner END AS is_owner, with_owner
 	FROM `+logicalBuildRelation+`
 	WHERE relation_kind = 1

@@ -1,7 +1,6 @@
 import {
   getMeetingContext as generatedGetMeetingContext,
   getMeetingMetrics as generatedGetMeetingMetrics,
-  getMeetingRecord as generatedGetMeetingRecord,
   listMeetingActionItems as generatedListMeetingActionItems,
 } from '../api/generated/meetings/meetings';
 import type {
@@ -10,7 +9,6 @@ import type {
   MeetingActionsRequest,
   MeetingContextRequest,
   MeetingMetricsRequest,
-  MeetingRecord,
   Metrics,
   PacketResult,
 } from '../api/generated/models';
@@ -34,7 +32,6 @@ export interface MeetingsAPI {
   context(request: MeetingContextRequest, signal?: AbortSignal): Promise<PacketResult>;
   actions(request: MeetingActionsRequest, signal?: AbortSignal): Promise<ActionsPage>;
   metrics(request: MeetingMetricsRequest, signal?: AbortSignal): Promise<Metrics>;
-  record(ref: string, signal?: AbortSignal): Promise<MeetingRecord>;
 }
 
 function failure(error: unknown, status: number): MeetingsAPIError {
@@ -50,11 +47,6 @@ function failure(error: unknown, status: number): MeetingsAPIError {
 
 export function createMeetingsAPI(client: APIClient): MeetingsAPI {
   return {
-    async record(ref, signal) {
-      const { data, error, response } = await generatedGetMeetingRecord({ ref }, { ...client, signal });
-      if (data !== undefined) return data;
-      throw failure(error, response.status);
-    },
     async context(request, signal) {
       const { data, error, response } = await generatedGetMeetingContext(request, { ...client, signal });
       if (data !== undefined) return data;

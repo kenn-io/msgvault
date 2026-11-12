@@ -84,8 +84,8 @@ func TestBuildActivityPreservesFullExpansionContributions(t *testing.T) {
 				base("participants"), base("participant_clusters"), base("owner_participants"))
 			bounded := buildActivityRelation("sparse", base("conversation_participants"),
 				base("participants"), base("participant_clusters"), base("owner_participants"))
-			full = MeetingOccurrenceActivitySQL(full, base(DatasetMeetingOccurrences), base("participants"), base("participant_identifiers"), base("participant_clusters"), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
-			bounded = MeetingOccurrenceActivitySQL(bounded, base(DatasetMeetingOccurrences), base("participants"), base("participant_identifiers"), base("participant_clusters"), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
+			full = MeetingOccurrenceActivitySQL(full, full, base(DatasetMeetingOccurrences), base("participants"), base("participant_identifiers"), base("participant_clusters"), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
+			bounded = MeetingOccurrenceActivitySQL(bounded, full, base(DatasetMeetingOccurrences), base("participants"), base("participant_identifiers"), base("participant_clusters"), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
 			if tc.mixed {
 				var meetingFacts, earlierRosterAttendeeFacts int64
 				facts := RelationshipTemperatureFactsSQL(bounded, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))

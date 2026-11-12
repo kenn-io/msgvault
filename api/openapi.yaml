@@ -8042,11 +8042,6 @@ components:
             type: integer
           maxItems: 100
           type: array
-        message_types:
-          items:
-            type: string
-          maxItems: 2
-          type: array
         participant_id:
           format: int64
           maximum: 9007199254740991
@@ -17283,7 +17278,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.4.0
+  version: 5.3.0
 openapi: 3.1.0
 paths:
   /api/ping:

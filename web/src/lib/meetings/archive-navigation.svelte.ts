@@ -35,9 +35,9 @@ export class ArchiveMeetingNavigation {
         throw new Error('The archived meeting conversation changed or is unavailable. Reload meeting activity.');
       }
       // Legacy detail.deleted_at records source deletion. Meeting scope excludes local hides.
-      const record = await createMeetingsAPI(this.client).record(`msg:${id}`, this.loader.signal);
+      const metrics = await createMeetingsAPI(this.client).metrics({ scope: { message_ids: [id] } }, this.loader.signal);
       if (generation !== this.generation) return;
-      if (!record.message_ids.includes(id)) throw new Error('This archived meeting is no longer available.');
+      if (metrics.totals.meeting_count !== 1) throw new Error('This archived meeting is no longer available.');
       this.detail = data;
       return data;
     } catch (cause: unknown) {

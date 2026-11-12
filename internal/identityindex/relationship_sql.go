@@ -26,8 +26,8 @@ WITH filtered_facts AS (
 	SELECT f.entry_key::VARCHAR AS entry_key,
 	       min(f.message_id)::BIGINT AS anchor_message_id,
 	       arg_min(f.conversation_id, f.message_id)::BIGINT AS conversation_id,
-	       f.source_id::BIGINT AS source_id,
-	       f.source_type::VARCHAR AS source_type,
+	       any_value(f.source_id)::BIGINT AS source_id,
+	       any_value(f.source_type)::VARCHAR AS source_type,
 	       min(f.occurred_at)::TIMESTAMP AS occurred_at,
 	       arg_min(f.message_type, f.message_id)::VARCHAR AS message_type,
 	       arg_min(f.entry_kind, f.message_id)::VARCHAR AS entry_kind,
@@ -35,7 +35,7 @@ WITH filtered_facts AS (
 	       max(f.attachment_count)::BIGINT AS attachment_count
 	FROM filtered_facts f
 	WHERE NOT f.is_chat
-	GROUP BY f.entry_key, f.source_id, f.source_type
+	GROUP BY f.entry_key
 ), chat_units AS (
 	SELECT ('conversation:' || f.source_id || ':' || f.conversation_id)::VARCHAR AS entry_key,
 	       arg_max(f.message_id,
@@ -76,7 +76,7 @@ WITH filtered_facts AS (
 ), logical_people_candidates AS (
 	SELECT u.entry_key, u.source_id, f.canonical_id, f.is_author, f.is_owner
 	FROM nonchat_units u
-	JOIN %[1]s f ON f.entry_key = u.entry_key AND f.source_id = u.source_id
+	JOIN %[1]s f ON f.entry_key = u.entry_key
 	WHERE f.canonical_id IS NOT NULL
 	  AND f.is_direct
 
@@ -116,7 +116,7 @@ WITH filtered_facts AS (
 ), logical_person_domain_candidates AS (
 	SELECT u.entry_key, f.canonical_id, f.participant_domain AS domain
 	FROM nonchat_units u
-	JOIN %[1]s f ON f.entry_key = u.entry_key AND f.source_id = u.source_id
+	JOIN %[1]s f ON f.entry_key = u.entry_key
 	WHERE f.canonical_id IS NOT NULL
 	  AND f.is_direct
 
@@ -140,7 +140,7 @@ WITH filtered_facts AS (
 ), logical_domain_candidates AS (
 	SELECT u.entry_key, u.source_id, f.participant_domain AS domain
 	FROM nonchat_units u
-	JOIN %[1]s f ON f.entry_key = u.entry_key AND f.source_id = u.source_id
+	JOIN %[1]s f ON f.entry_key = u.entry_key
 	WHERE f.canonical_id IS NOT NULL
 
 	UNION ALL
