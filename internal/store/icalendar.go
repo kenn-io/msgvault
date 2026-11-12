@@ -121,48 +121,36 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 				return fmt.Errorf("decode retained ICS metadata: %w", err)
 			}
 		}
-		organizerID := id
+		seriesExists := false
 		if item.fromEmail && !exists && e.Original != nil {
-			seriesID := calevent.ICSMessageID(item.component.UID, "")
-			err := q.QueryRow(`SELECT m.id FROM messages m WHERE m.source_id=? AND m.id IN (SELECT id FROM messages WHERE source_id=? AND source_message_id=? UNION ALL SELECT message_id FROM source_merge_archive_only_messages WHERE original_source_message_id=?) ORDER BY CASE WHEN m.source_message_id=? THEN 0 ELSE 1 END, m.id LIMIT 1`, sourceID, sourceID, seriesID, seriesID, seriesID).Scan(&organizerID)
+			seriesID := calevent.ICSMessageID(item.component.OrganizerEmail, item.component.UID, "")
+			var seriesRowID int64
+			err := q.QueryRow(`SELECT m.id FROM messages m WHERE m.source_id=? AND m.id IN (SELECT id FROM messages WHERE source_id=? AND source_message_id=? UNION ALL SELECT message_id FROM source_merge_archive_only_messages WHERE original_source_message_id=?) ORDER BY CASE WHEN m.source_message_id=? THEN 0 ELSE 1 END, m.id LIMIT 1`, sourceID, sourceID, seriesID, seriesID, seriesID).Scan(&seriesRowID)
+			seriesExists = err == nil
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("read prior ICS series identity: %w", err)
 			}
 		}
-		if item.fromEmail && organizerID != 0 {
-			var organizer string
-			if err := q.QueryRow(`SELECT COALESCE((SELECT email FROM calendar_event_attendees WHERE message_id=? AND role='organizer' ORDER BY ordinal LIMIT 1), '')`, organizerID).Scan(&organizer); err != nil {
-				return fmt.Errorf("read retained ICS organizer: %w", err)
-			}
-			if organizer == "" || !strings.EqualFold(organizer, item.sender) {
-				summary.Unchanged++
-				continue
-			}
+		if item.fromEmail && (exists || seriesExists) && !strings.EqualFold(item.sender, item.component.OrganizerEmail) {
+			summary.Unchanged++
+			continue
 		}
-		familyKey, err := s.icsFamily(ctx, tx, sourceID, id, calevent.ICSMessageID(item.component.UID, ""))
+		familyKey, err := s.icsFamily(ctx, tx, sourceID, id, calevent.ICSMessageID(item.component.OrganizerEmail, item.component.UID, ""))
 		if err != nil {
 			return err
 		}
 		apply := !exists || icsRevisionNewer(item.component, old)
-		details := e.Status != SyncStatusCancelled && (!exists || old.Details == nil || icsRevisionNewer(item.component, calevent.ICSMetadata{Sequence: old.Details.Sequence, Stamp: old.Details.Stamp}))
 		if apply && exists && e.Status == SyncStatusCancelled {
-			// Like a provider cancellation, keep the accepted details.
 			old.Sequence, old.Stamp, old.Status = item.meta.Sequence, item.meta.Stamp, SyncStatusCancelled
 			if err := s.setICSMetadataWith(ctx, tx, id, old); err != nil {
 				return err
 			}
-		} else if apply || details {
-			if e.Status != SyncStatusCancelled {
-				item.meta.Details = &calevent.ICSRevision{Sequence: item.component.Sequence, Stamp: item.component.Stamp}
-				if !apply {
-					item.meta.Sequence, item.meta.Stamp, item.meta.Status = old.Sequence, old.Stamp, old.Status
-				}
-			}
+		} else if apply {
 			if err := s.persistICSDetailsWith(ctx, tx, sourceID, sourceMessageID, familyKey, item); err != nil {
 				return err
 			}
 		}
-		if apply || details {
+		if apply {
 			if exists {
 				if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
 					return err

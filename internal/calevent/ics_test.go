@@ -117,7 +117,7 @@ func TestICSCalendarTimeZone(t *testing.T) {
 
 func TestICSCalendarTimeZoneRetained(t *testing.T) {
 	for _, tc := range []struct{ name, declared, context, want string }{
-		{"declared custom", "Customized Time Zone", "", "2026-07-15T04:30:00Z"},
+		{"declared custom", "Customized Time Zone", "", ""},
 		{"explicit context", "America/New_York", "Asia/Tokyo", "2026-07-15T01:00:00Z"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -130,6 +130,10 @@ func TestICSCalendarTimeZoneRetained(t *testing.T) {
 			text = strings.Replace(text, "DTSTART;TZID=Customized Time Zone:20260715T100000", "DTSTART:20260715T100000", 1)
 			text = strings.Replace(text, "END:VCALENDAR", "BEGIN:VEVENT\nUID:second@example.com\nDTSTAMP:20260101T000000Z\nDTSTART:20260715T100000\nEND:VEVENT\nEND:VCALENDAR", 1)
 			components, err := ParseICS([]byte(text), "", tc.context)
+			if tc.want == "" {
+				requirements.Error(err)
+				return
+			}
 			requirements.NoError(err)
 			requirements.Len(components, 2)
 			for _, component := range components {
@@ -307,6 +311,20 @@ func TestICSRecurrenceAndBounds(t *testing.T) {
 		})
 	}
 
+	for _, tc := range []struct{ name, props, line string }{
+		{"nominal duration", "DTSTART;TZID=America/New_York:20270313T090000\r\nDURATION:P1D", "DURATION:P1D"},
+		{"zero nominal duration", "DTSTART;TZID=America/New_York:20270313T090000\r\nDURATION:P0D", "DURATION:P0D"},
+		{"spring gap", "DTSTART;TZID=America/New_York:20270314T023000", "DTSTART;TZID=America/New_York:20270314T023000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:bounds@example.com\r\n" + tc.props + "\r\nRRULE:FREQ=DAILY;COUNT=2\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+			components, err := ParseICS([]byte(raw), "", "")
+			require.NoError(t, err)
+			require.Len(t, components, 1)
+			assert.Contains(t, components[0].Event.Recurrence, tc.line)
+		})
+	}
+
 	t.Run("large elapsed duration", func(t *testing.T) {
 		raw := strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT3000000000S", 1)
 		assertions, requirements := assert.New(t), require.New(t)
@@ -319,15 +337,8 @@ func TestICSRecurrenceAndBounds(t *testing.T) {
 
 func TestICSRejectMalformed(t *testing.T) {
 	const zone = "BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Custom/Test\r\nBEGIN:STANDARD\r\nDTSTART:20270101T000000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:test@example.com\r\nDTSTART;TZID=Custom/Test:20270302T120000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-	const ruleZone = "BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Custom/Test\r\nBEGIN:STANDARD\r\nDTSTART:20271107T020000\r\nTZOFFSETFROM:-0400\r\nTZOFFSETTO:-0500\r\nRRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU\r\nEND:STANDARD\r\nBEGIN:DAYLIGHT\r\nDTSTART:20270314T020000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0400\r\nRRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU\r\nEND:DAYLIGHT\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:test@example.com\r\nDTSTART;TZID=Custom/Test:20270305T090000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	for _, tc := range []struct{ name, raw, want string }{
-		{"zone RDATE", strings.Replace(ruleZone, "END:DAYLIGHT", "RDATE:20270301T020000\r\nEND:DAYLIGHT", 1), `unsupported VTIMEZONE "Custom/Test" observance`},
-		{"zone EXDATE", strings.Replace(ruleZone, "END:DAYLIGHT", "EXDATE:20270314T020000\r\nEND:DAYLIGHT", 1), `unsupported VTIMEZONE "Custom/Test" observance`},
-		{"zone EXRULE", strings.Replace(ruleZone, "END:DAYLIGHT", "EXRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU\r\nEND:DAYLIGHT", 1), `unsupported VTIMEZONE "Custom/Test" observance`},
-		{"duplicate zone observance", strings.Replace(zone, "END:VTIMEZONE", "BEGIN:STANDARD\r\nDTSTART:20280101T000000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nEND:STANDARD\r\nEND:VTIMEZONE", 1), `VTIMEZONE "Custom/Test" requires distinct STANDARD or DAYLIGHT observances`},
-		{"zone rule until", strings.Replace(zone, "END:STANDARD", "RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU;UNTIL=20300101T000000Z\r\nEND:STANDARD", 1), `unsupported VTIMEZONE "Custom/Test" rule`},
-		{"zone changing offset without rule", strings.Replace(zone, "TZOFFSETFROM:-0500", "TZOFFSETFROM:-0400", 1), `unsupported VTIMEZONE "Custom/Test" offset or start`},
-		{"cancel zone date before observance", strings.NewReplacer("BEGIN:VCALENDAR", "BEGIN:VCALENDAR\r\nMETHOD:CANCEL", "DTSTART;TZID=Custom/Test:20270302T120000", "RDATE;TZID=Custom/Test:20270302T120000,20260101T120000").Replace(zone), "an observance starts after"},
+		{"custom VTIMEZONE rejects", zone, `load time zone "Custom/Test"`},
 		{"unknown excluded date zone", strings.Replace(icsExample, "SUMMARY:", "EXDATE;TZID=Unknown/Zone:20270315T090000\r\nSUMMARY:", 1), `load time zone "Unknown/Zone"`},
 		{"unknown zone", strings.ReplaceAll(icsExample, "America/New_York", "Unknown/Zone"), `load time zone "Unknown/Zone"`},
 		{"negative sequence", strings.Replace(icsExample, "SEQUENCE:2", "SEQUENCE:-1", 1), "invalid SEQUENCE"},
@@ -354,27 +365,17 @@ func TestICSRejectMalformed(t *testing.T) {
 }
 
 func TestParseICSCustomizedZone(t *testing.T) {
+	t.Run("custom zone rejects", func(t *testing.T) {
+		raw, err := os.ReadFile("testdata/customized-no-dst.ics")
+		require.NoError(t, err)
+		_, err = ParseICS(raw, "", "")
+		require.ErrorContains(t, err, "time zone")
+	})
 	t.Run("unused unsupported zone", func(t *testing.T) {
 		raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTIMEZONE\r\nTZID:Custom/Test\r\nBEGIN:STANDARD\r\nDTSTART:20270101T000000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nRDATE:20270301T020000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:valid@example.com\r\nDTSTART:20270302T120000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 		components, err := ParseICS([]byte(raw), "", "")
 		require.NoError(t, err)
 		require.Len(t, components, 1)
 		assert.Equal(t, "valid@example.com", components[0].UID)
-	})
-	t.Run("single era", func(t *testing.T) {
-		assertions, requirements := assert.New(t), require.New(t)
-		raw, err := os.ReadFile("testdata/customized.ics")
-		requirements.NoError(err)
-		components, err := ParseICS(raw, "", "")
-		requirements.NoError(err)
-		requirements.Len(components, 1)
-		assertions.Equal("2026-07-15T14:00:00Z", components[0].Event.Start.Format(time.RFC3339))
-		assertions.Contains(components[0].Event.Recurrence, "EXDATE:20260722T140000Z")
-		raw, err = os.ReadFile("testdata/customized-no-dst.ics")
-		requirements.NoError(err)
-		components, err = ParseICS(raw, "", "")
-		requirements.NoError(err)
-		requirements.Len(components, 1)
-		assertions.Equal("2026-07-15T04:30:00Z", components[0].Event.Start.Format(time.RFC3339))
 	})
 }

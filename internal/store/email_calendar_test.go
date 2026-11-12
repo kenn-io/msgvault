@@ -402,7 +402,7 @@ func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {
 	t.Run("master and exception retain renamed conversation", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
 		st := newRFC822IDBackfillBackendStore(t)
-		family := strings.Replace(string(calendarFamilyDocument()), "SUMMARY:Original series", "ORGANIZER:mailto:organizer@example.com\r\nSUMMARY:Original series", 1)
+		family := strings.ReplaceAll(string(calendarFamilyDocument()), "UID:family@example.com\r\n", "UID:family@example.com\r\nORGANIZER:mailto:organizer@example.com\r\n")
 		_, from := persistInviteEmail(t, st, "family", inviteEmail([]byte(family)))
 		into, err := st.GetOrCreateSource("mbox", "destination@example.com")
 		requirements.NoError(err)
@@ -412,7 +412,7 @@ func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {
 		requirements.Len(ids, 2)
 		var conversationID int64
 		requirements.NoError(st.db.QueryRow(`SELECT conversation_id FROM messages WHERE id=?`, ids[0]).Scan(&conversationID))
-		update := calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2\r\nSUMMARY:Updated series")
+		update := calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2\r\nSUMMARY:Updated series\r\nORGANIZER:mailto:organizer@example.com")
 		persistInviteEmailForSource(t, st, into.ID, "update", inviteEmail(update))
 		var subject string
 		requirements.NoError(st.db.QueryRow(`SELECT subject FROM messages WHERE id=?`, ids[0]).Scan(&subject))
@@ -502,16 +502,17 @@ func TestEmailCalendarSubsetAfterSourceMerge(t *testing.T) {
 	assertions.Equal("2027-03-02T13:00:00Z", start)
 }
 
-func TestEmailCalendarChangedOrganizerUpdatesEvent(t *testing.T) {
+func TestEmailCalendarChangedOrganizerCreatesEvent(t *testing.T) {
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, source := persistInviteEmail(t, st, "original", emailFrom("first@example.com", calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Original\r\nORGANIZER:mailto:first@example.com")))
 	persistInviteEmailForSource(t, st, source, "update", emailFrom("FIRST@example.com", calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Updated\r\nORGANIZER:mailto:other@example.com")))
 	ids := emailEvents(t, st, source)
-	r.Len(ids, 1)
-	r.Equal("Updated", calendarRows(t, st, ids[0])[0].Subject)
+	r.Len(ids, 2)
+	r.Equal("Original", calendarRows(t, st, ids[0])[0].Subject)
+	r.Equal("Updated", calendarRows(t, st, ids[1])[0].Subject)
 	persistInviteEmailForSource(t, st, source, "cancel", emailFrom("other@example.com", calendarDocument("CANCEL", "SEQUENCE:2\r\nORGANIZER:mailto:first@example.com")))
-	r.Equal("cancelled", calendarRows(t, st, ids[0])[0].Event.Status)
+	r.Equal("confirmed", calendarRows(t, st, ids[0])[0].Event.Status)
 }
 
 func TestEmailCalendarRejectsOtherSenders(t *testing.T) {
@@ -535,7 +536,7 @@ func TestEmailCalendarRejectsOtherSenders(t *testing.T) {
 		r := require.New(t)
 		st := newRFC822IDBackfillBackendStore(t)
 		_, source := persistInviteEmail(t, st, "series", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2\r\nORGANIZER:mailto:organizer@example.com")))
-		persistInviteEmailForSource(t, st, source, "cancel", emailFrom("attendee@example.org", calendarDocument("CANCEL", "RECURRENCE-ID:20270303T120000Z\r\nSEQUENCE:9")))
+		persistInviteEmailForSource(t, st, source, "cancel", emailFrom("attendee@example.org", calendarDocument("CANCEL", "RECURRENCE-ID:20270303T120000Z\r\nSEQUENCE:9\r\nORGANIZER:mailto:organizer@example.com")))
 		r.Len(emailEvents(t, st, source), 1)
 		from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
 		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
