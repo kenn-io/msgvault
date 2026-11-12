@@ -136,6 +136,7 @@ func TestICalendarRangePreservesOriginalPrefix(t *testing.T) {
 		{"all day", "DTSTART;VALUE=DATE:20270302\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;VALUE=DATE;RANGE=THISANDFUTURE:20270305\r\nDTSTART;VALUE=DATE:20270305", []string{"2027-03-02T00:00:00Z", "2027-03-03T00:00:00Z", "2027-03-04T00:00:00Z"}},
 		{"mismatched", "DTSTART;VALUE=DATE:20270302\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", nil},
 		{"single", "DTSTART:20270302T120000Z\r\nDURATION:PT1H", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", []string{"2027-03-02T12:00:00Z"}},
+		{"long occurrence", "DTSTART:20270302T120000Z\r\nDURATION:P7D\r\nRRULE:FREQ=WEEKLY", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T130000Z", []string{"2027-03-02T12:00:00Z"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -153,7 +154,12 @@ func TestICalendarRangePreservesOriginalPrefix(t *testing.T) {
 				requirements.NoError(err)
 			}
 			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 7))
+			to := from.AddDate(0, 0, 7)
+			if tc.name == "long occurrence" {
+				from = from.AddDate(0, 0, 5)
+				to = from.AddDate(0, 0, 1)
+			}
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, to)
 			requirements.NoError(err)
 			var starts []string
 			for _, occurrence := range page.Occurrences {
@@ -161,6 +167,10 @@ func TestICalendarRangePreservesOriginalPrefix(t *testing.T) {
 			}
 			requirements.Equal(tc.want, starts)
 			requirements.NotEmpty(page.Unexpandable)
+			if tc.name == "long occurrence" {
+				requirements.Len(page.Unexpandable, 1)
+				requirements.Equal("unsupported recurrence range: later occurrences omitted", page.Unexpandable[0].Reason)
+			}
 			if tc.name == "timed" {
 				requirements.Equal("cancelled", page.Occurrences[1].Status)
 				page, err = st.ListCalendarOccurrencesContext(t.Context(), from.AddDate(0, 0, 2), from.AddDate(0, 0, 3))
@@ -171,26 +181,6 @@ func TestICalendarRangePreservesOriginalPrefix(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestICalendarRangeAfterBoundary(t *testing.T) {
-	requirements := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	source := icsSource(t, st)
-	for _, event := range [][]byte{
-		calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:P7D\r\nRRULE:FREQ=WEEKLY"),
-		calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T130000Z"),
-	} {
-		_, err := st.PersistICalendarContext(t.Context(), source, event)
-		requirements.NoError(err)
-	}
-	from := time.Date(2027, 3, 7, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	requirements.NoError(err)
-	requirements.Len(page.Unexpandable, 1)
-	requirements.Contains(page.Unexpandable[0].Reason, "unsupported recurrence range")
-	requirements.Len(page.Occurrences, 1)
-	requirements.Equal("2027-03-02T12:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
 }
 
 func TestICalendarRangeReportsIncompletePrefix(t *testing.T) {

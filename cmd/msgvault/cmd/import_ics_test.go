@@ -49,6 +49,7 @@ func TestImportICSCommandImportsFile(t *testing.T) {
 	cmd.SetErr(&out)
 	cmd.SetArgs([]string{path, "--identifier", "example-export"})
 	requirements.NoError(cmd.Execute())
+	assertions.Equal("Events: 0 updated, 1 not updated\n", out.String())
 	st, err := store.Open(cfg.DatabaseDSN())
 	requirements.NoError(err)
 	t.Cleanup(func() { requirements.NoError(st.Close()) })

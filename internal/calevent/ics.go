@@ -220,13 +220,14 @@ func propText(props ical.Props, name string) (string, error) {
 
 // Resolve Windows IDs and libical's prefixed IANA names.
 func normalizeICSParams(props ical.Props, zones map[string]string) error {
-	for _, values := range props {
-		for _, prop := range values {
+	for name, values := range props {
+		for i, prop := range values {
 			zone := normalizeICSZone(prop.Params.Get("TZID"))
 			if custom := zones[zone]; custom != "" {
 				zone = custom
 			}
-			if zone != "" {
+			parsedTime := (name == "DTSTART" || name == "DTEND" || name == "RECURRENCE-ID" || name == "DTSTAMP") && i == 0 && prop.ValueType() != ical.ValueDate && !strings.HasSuffix(prop.Value, "Z")
+			if zone != "" && !parsedTime {
 				if _, err := LoadZone(zone); err != nil {
 					return err
 				}
