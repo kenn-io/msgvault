@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { groupRowName, type SourceInventory } from '../../explore/labels';
   import { tasksSettingsDestination } from './navigation';
   import { Button, MEDIA, PageHeader, SearchByMeaningHint } from '@kenn-io/kit-ui';
   import { onDestroy, tick, untrack } from 'svelte';
@@ -58,6 +59,7 @@
   const stackedListMin = 120, stackedReaderMin = 160;
 
   interface Props {
+    sources?: SourceInventory;
     meetingContext?: { scope?: import('../../meetings/controller.svelte').MeetingPanelScope; error?: string };
     scope?: import('../../explore/models').ExploreFilter;
     conversationStart?: string;
@@ -96,6 +98,7 @@
   }
 
   let {
+    sources = new Map(),
     meetingContext = undefined,
     scope = undefined,
     conversationStart = undefined,
@@ -238,7 +241,7 @@
       session.readingGroupDetail?.kind === 'group' &&
       session.readingGroupDetail.dimension === group.dimension &&
       session.readingGroupDetail.key === group.key
-      ? session.readingGroupDetail
+      ? { ...session.readingGroupDetail, label: groupRowName(group.dimension, group.key, session.readingGroupDetail.label, group.dimension === 'source' ? sources : undefined).name }
       : undefined;
   });
 
@@ -362,14 +365,14 @@
       cursor: undefined,
       candidate_snapshot_id: undefined,
       grouping: undefined,
-      filters,
+      filters: predicate.filters,
       presentation: 'table' as const,
     };
     // Filtering by target.key does not make it the top-ranked group: every
     // co-participant/co-domain of the matching entries forms a group too, so
     // findGroupDetail resolves the exact key server-side via group_key.
     void findGroupDetail(api, detailPredicate, target.dimension, target.key, controller.signal)
-      .then((lookup) => {
+      .then(async (lookup) => {
         if (generation !== session.readingDetailGeneration || controller.signal.aborted) return;
         if (lookup.status === 'unavailable') {
           readingDetailUnavailable = lookup.unavailable;
@@ -379,6 +382,8 @@
           readingDetailError = 'The selected group is no longer available in this context.';
           return;
         }
+        const hasMeetings = target.dimension === 'participant' || target.dimension === 'domain';
+        const needsSnapshot = hasMeetings && lookup.authority.candidateSnapshotId && canonicalFingerprint(filters) !== canonicalFingerprint(predicate.filters ?? []);
         session.readingGroupDetail = {
           kind: 'group',
           dimension: target.dimension,
@@ -387,9 +392,18 @@
           count: lookup.row.count,
           estimatedBytes: lookup.row.estimated_bytes,
           latestAt: lookup.row.latest_at,
-          meetingScope: exploreMeetingScope(detailPredicate, lookup.authority).explore,
+          overview: lookup.overview,
+          meetingScope: hasMeetings && !needsSnapshot ? exploreMeetingScope({ ...detailPredicate, filters }, lookup.authority).explore : undefined,
         };
         session.readingDetailFingerprint = loadedKey;
+        if (!needsSnapshot) return;
+        try {
+          const narrowed = await api.explore({ ...detailPredicate, filters, limit: 1 }, controller.signal);
+          if (generation !== session.readingDetailGeneration || controller.signal.aborted || narrowed.status === 'unavailable') return;
+          session.readingGroupDetail = { ...session.readingGroupDetail, meetingScope: exploreMeetingScope({ ...detailPredicate, filters }, narrowed.result).explore };
+        } catch {
+          // The group overview is still available without meeting authority.
+        }
       })
       .catch((cause: unknown) => {
         if (generation !== session.readingDetailGeneration || controller.signal.aborted) return;
@@ -794,7 +808,7 @@
             <h2 class="results-heading">Results <span class="count" aria-live="polite">{countLabel}</span></h2>
           {/if}
           {#if exploreState.current.groupingChain.length > 0}
-            <GroupTable
+            <GroupTable {sources}
               rows={loader.groupRows}
               dimension={exploreState.current.groupingChain[0]!}
               loading={loader.loading}

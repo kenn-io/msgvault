@@ -5066,6 +5066,31 @@ components:
         - dimension
         - values
       type: object
+    ExploreGroupActivity:
+      properties:
+        bucket:
+          type: string
+        count:
+          format: int64
+          type: integer
+      required:
+        - bucket
+        - count
+      type: object
+    ExploreGroupCoParticipant:
+      properties:
+        count:
+          format: int64
+          type: integer
+        key:
+          type: string
+        label:
+          type: string
+      required:
+        - key
+        - label
+        - count
+      type: object
     ExploreGroupDimension:
       enum:
         - source
@@ -5088,6 +5113,24 @@ components:
         - ExploreGroupDimensionYear
         - ExploreGroupDimensionMonth
         - ExploreGroupDimensionDay
+    ExploreGroupOverview:
+      properties:
+        activity:
+          items:
+            $ref: "#/components/schemas/ExploreGroupActivity"
+          type: array
+        co_participants:
+          items:
+            $ref: "#/components/schemas/ExploreGroupCoParticipant"
+          type: array
+        first_at:
+          format: date-time
+          type: string
+      required:
+        - first_at
+        - activity
+        - co_participants
+      type: object
     ExploreGroupRow:
       properties:
         count:
@@ -5117,6 +5160,9 @@ components:
             - ExploreGroupRowLevelSecondQuartile
             - ExploreGroupRowLevelThirdQuartile
             - ExploreGroupRowLevelFourthQuartile
+        total_items:
+          format: int64
+          type: integer
       required:
         - key
         - label
@@ -5205,7 +5251,7 @@ components:
           maxItems: 1
           type: array
         timezone:
-          description: IANA timezone for day grouping; defaults to UTC
+          description: IANA timezone for day, month, and year grouping; defaults to UTC
           type: string
       required:
         - grouping
@@ -5218,6 +5264,8 @@ components:
           type: string
         next_cursor:
           type: string
+        overview:
+          $ref: "#/components/schemas/ExploreGroupOverview"
         rows:
           items:
             $ref: "#/components/schemas/ExploreGroupRow"
@@ -14503,6 +14551,9 @@ components:
           maximum: 100
           minimum: 0
           type: integer
+        timezone:
+          description: IANA timezone for calendar grouping; defaults to UTC
+          type: string
       type: object
     RunSavedViewResponse:
       properties:
@@ -16972,7 +17023,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.1.0
+  version: 5.2.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -31638,7 +31689,7 @@ paths:
       tags:
         - API
     patch:
-      description: Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR.
+      description: Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR, or 3 for local date offsets.
       operationId: patchSavedView
       parameters:
         - description: Saved View ID
