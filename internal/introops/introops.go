@@ -13,6 +13,7 @@ var ErrForbidden = errors.New("not permitted")
 type Service struct{ Store *store.Store }
 type Record struct {
 	store.PersonIntroduction
+
 	Members  []store.IntroductionMember  `json:"members"`
 	Blockers []store.IntroductionBlocker `json:"blockers"`
 }

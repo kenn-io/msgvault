@@ -56,7 +56,7 @@ func (s *Store) introductionPreflightContext(ctx context.Context, sourceID, pers
 	if err != nil {
 		return out, err
 	}
-	if source.SourceType != "beeper" {
+	if source.SourceType != sourceTypeBeeper {
 		return out, ErrIntroductionSource
 	}
 	if source.MergedIntoSourceID != 0 {

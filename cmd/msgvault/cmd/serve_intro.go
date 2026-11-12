@@ -117,8 +117,7 @@ func (a *storeAPIAdapter) runCLIIntro(ctx context.Context, req api.CLIRunRequest
 	root.SetErr(io.Discard)
 	root.SetArgs(req.Args[1:])
 	if err := root.ExecuteContext(ctx); err != nil {
-		var coded *api.CLIRunCodedError
-		if errors.As(err, &coded) {
+		if coded, ok := errors.AsType[*api.CLIRunCodedError](err); ok {
 			return coded
 		}
 		return introError(store.ErrIntroductionInvalid)

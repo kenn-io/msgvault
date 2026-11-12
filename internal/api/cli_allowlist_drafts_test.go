@@ -469,27 +469,29 @@ func TestDelegatedGrantScopesSource(t *testing.T) {
 }
 
 func TestIntroReadsSkipHeldGate(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
+	check := assert.New(t)
+	req := require.New(t)
 	gate := NewSerialOperationGate()
 	srv, secret := newDelegatedTestServerWithGate(t, gate)
 	stub, ok := srv.store.(*stubSourceStore)
-	require.True(t, ok)
+	req.True(ok)
 	calls := 0
 	stub.runFunc = func(_ context.Context, _ CLIRunRequest, _ func(CLIRunEvent) error) error { calls++; return nil }
 	old := operationGateWaitLimit
 	operationGateWaitLimit = 20 * time.Millisecond
 	t.Cleanup(func() { operationGateWaitLimit = old })
 	release, ok := gate.BeginLabeledWorkContext(t.Context(), "held")
-	require.True(t, ok)
+	req.True(ok)
 	defer release()
 	for _, args := range [][]string{{"intro", "list"}, {"intro", "show", "intro-id"}} {
 		body, err := json.Marshal(CLIRunRequest{Args: args})
-		require.NoError(t, err)
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
+		req.NoError(err)
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set(apiprotocol.AgentTokenHeader, secret)
 		response := httptest.NewRecorder()
-		srv.Router().ServeHTTP(response, req)
-		assert.Equal(t, http.StatusOK, response.Code)
+		srv.Router().ServeHTTP(response, request)
+		check.Equal(http.StatusOK, response.Code)
 	}
-	assert.Equal(t, 2, calls)
+	check.Equal(2, calls)
 }

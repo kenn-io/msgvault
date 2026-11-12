@@ -80,7 +80,7 @@ type introductionCursor struct {
 
 const introductionColumns = `i.intro_id, i.revision, i.status, i.source_id, i.person_a_id, i.person_b_id, i.title, i.body, i.provider_chat_id, i.draft_id, i.created_by, i.confirmed_at, i.drafted_at, i.cancelled_at, i.created_at, i.updated_at, s.source_type, s.identifier`
 
-func scanIntroduction(row interface{ Scan(...any) error }) (PersonIntroduction, error) {
+func scanIntroduction(row interface{ Scan(dest ...any) error }) (PersonIntroduction, error) {
 	var v PersonIntroduction
 	var body sql.NullString
 	err := row.Scan(&v.IntroID, &v.Revision, &v.Status, &v.SourceID, &v.PersonAID, &v.PersonBID, &v.Title, &body, &v.ProviderChatID, &v.DraftID, &v.CreatedBy, &v.ConfirmedAt, &v.DraftedAt, &v.CancelledAt, &v.CreatedAt, &v.UpdatedAt, &v.SourceType, &v.SourceIdentifier)
@@ -114,7 +114,7 @@ func (s *Store) PreparePersonIntroductionContext(ctx context.Context, in PersonI
 		} else if err != nil {
 			return err
 		}
-		if typ != "beeper" {
+		if typ != sourceTypeBeeper {
 			return ErrIntroductionSource
 		}
 		if err := requireSourceWritableWith(tx, in.SourceID); err != nil {

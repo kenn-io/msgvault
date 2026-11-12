@@ -68,7 +68,7 @@ func delegatedCLIRunAdmitted(args []string, grant *agentgrant.Grant) bool {
 		return false
 	}
 	if IsCLIRunIntro(args) {
-		return introActionAllowed(args) && args[1] != "edit" && grant.HasPermission(agentgrant.PermissionDraftCreate)
+		return len(args) > 1 && introActionAllowed(args) && args[1] != "edit" && grant.HasPermission(agentgrant.PermissionDraftCreate)
 	}
 	if IsCLIRunDraftReply(args) || IsCLIRunDraftCompose(args) {
 		return grant.HasPermission(agentgrant.PermissionDraftCreate)
