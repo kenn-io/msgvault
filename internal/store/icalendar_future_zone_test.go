@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRejectedCalendarDoesNotCommitSibling(t *testing.T) {
+func TestRejectedCalendarDoesNotImportSibling(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
 	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VTIMEZONE\r\nTZID:Custom/Test\r\nBEGIN:STANDARD\r\nDTSTART:20270101T000000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:sibling@example.com\r\nDTSTAMP:20260701T120000Z\r\nDTSTART:20270706T090000Z\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:old@example.com\r\nDTSTAMP:20260701T120000Z\r\nDTSTART;TZID=Custom/Test:20260706T090000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
