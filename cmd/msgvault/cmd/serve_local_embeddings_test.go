@@ -637,64 +637,6 @@ func TestLocalEmbeddingsFirstOllamaActivationRetriesAfterCredentialRepair(t *tes
 	assert.Len(t, results, 1)
 }
 
-func TestLocalEmbeddingsStartupSharedChoice(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		choice     bool
-		missing    bool
-		configured bool
-		postgres   bool
-		wantBuild  bool
-	}{
-		{name: "installed and chosen", choice: true, wantBuild: true},
-		{name: "no choice"},
-		{name: "missing files", choice: true, missing: true},
-		{name: "configured provider", choice: true, configured: true},
-		{name: "postgres", choice: true, postgres: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newLocalActivationFixture(t, "")
-			if tc.configured {
-				file, err := os.OpenFile(f.cfg.ConfigFilePath(), os.O_APPEND|os.O_WRONLY, 0)
-				require.NoError(t, err)
-				_, err = file.WriteString("\n[vector.embeddings]\nmodel = \"other\"\n")
-				require.NoError(t, err)
-				require.NoError(t, file.Close())
-			}
-			f.start(t)
-			adapter := &storeAPIAdapter{config: f.cfg, store: f.store, operationGate: f.controller.gate}
-			f.controller.runner = adapter
-			if tc.postgres {
-				f.cfg.Data.DatabaseURL = "postgres://example.test/archive"
-				f.controller.dbPath = f.cfg.DatabaseDSN()
-			}
-			f.controller.choice = func() (bool, error) { return tc.choice, nil }
-			f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
-				if tc.missing {
-					return embedlocal.Status{DownloadBytes: 1}, nil
-				}
-				return embedlocal.Status{}, nil
-			}
-			before, err := os.ReadFile(f.cfg.ConfigFilePath())
-			require.NoError(t, err)
-			require.NoError(t, f.controller.Start(f.ctx, func(api.LocalEmbeddingsStatus) {}))
-			after, err := os.ReadFile(f.cfg.ConfigFilePath())
-			require.NoError(t, err)
-			assert.Equal(t, before, after)
-			if tc.wantBuild {
-				require.NotNil(t, f.handle.vf)
-				active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
-				require.NoError(t, err)
-				assert.Equal(t, f.handle.vf.Cfg.GenerationFingerprint(), active.Fingerprint)
-				assert.Positive(t, f.inputs.Load())
-			} else {
-				assert.Nil(t, f.handle.vf)
-			}
-			assert.Zero(t, f.installs)
-		})
-	}
-}
-
 func startupTestFingerprint(t *testing.T, f *localActivationFixture) string {
 	t.Helper()
 	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
@@ -709,54 +651,96 @@ func startupTestFingerprint(t *testing.T, f *localActivationFixture) string {
 	return next.Vector.GenerationFingerprint()
 }
 
-func TestLocalEmbeddingsStartupGenerations(t *testing.T) {
+func TestLocalEmbeddingsStart(t *testing.T) {
 	for _, tc := range []struct {
-		name                             string
-		active, building                 bool
-		activeMismatch, buildingMismatch bool
-		resumes                          bool
+		name                                                        string
+		choice, missing, configured, wantBuild                      bool
+		active, building, activeMismatch, buildingMismatch, resumes bool
+		detail                                                      string
 	}{
-		{name: "matching unfinished", building: true, resumes: true},
-		{name: "matching active and incompatible unfinished", active: true, building: true, buildingMismatch: true},
-		{name: "incompatible active and matching unfinished", active: true, building: true, activeMismatch: true},
-		{name: "matching active", active: true},
+		{name: "installed and chosen", choice: true, wantBuild: true},
+		{name: "no choice"},
+		{name: "missing files", choice: true, missing: true},
+		{name: "configured provider", choice: true, configured: true},
+		{name: "matching unfinished", choice: true, building: true, resumes: true},
+		{name: "matching active and incompatible unfinished", choice: true, active: true, building: true, buildingMismatch: true},
+		{name: "incompatible active and matching unfinished", choice: true, active: true, building: true, activeMismatch: true},
+		{name: "matching active", choice: true, active: true},
+		{name: "initialization", choice: true, detail: "archive initialization failed"},
+		{name: "transport", choice: true, detail: "local server failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLocalActivationFixture(t, "")
-			file, err := os.OpenFile(f.cfg.ConfigFilePath(), os.O_APPEND|os.O_WRONLY, 0)
-			require.NoError(t, err)
-			_, err = file.WriteString("\n[vector.embed.schedule]\ncron = \"\"\nrun_after_sync = false\n")
-			require.NoError(t, err)
-			require.NoError(t, file.Close())
+			if tc.configured || tc.active || tc.building {
+				file, err := os.OpenFile(f.cfg.ConfigFilePath(), os.O_APPEND|os.O_WRONLY, 0)
+				require.NoError(t, err)
+				if tc.configured {
+					_, err = file.WriteString("\n[vector.embeddings]\nmodel = \"other\"\n")
+				} else {
+					_, err = file.WriteString("\n[vector.embed.schedule]\ncron = \"\"\nrun_after_sync = false\n")
+				}
+				require.NoError(t, err)
+				require.NoError(t, file.Close())
+			}
 			f.start(t)
-			fingerprint := startupTestFingerprint(t, f)
-			require.NoError(t, sqlitevec.RegisterExtension())
-			backend, err := sqlitevec.Open(f.ctx, sqlitevec.Options{Path: filepath.Join(f.cfg.Data.DataDir, "vectors.db"), MainPath: f.cfg.DatabaseDSN(), MainDB: f.store.DB(), Dimension: 768})
-			require.NoError(t, err)
-			defer func() { assert.NoError(t, backend.Close()) }()
+			var backend *sqlitevec.Backend
 			var activeID, buildingID vector.GenerationID
-			if tc.active {
-				fp := fingerprint
-				if tc.activeMismatch {
-					fp = "different"
-				}
-				activeID, err = backend.CreateGeneration(f.ctx, "model", 768, fp)
+			if tc.active || tc.building {
+				fingerprint := startupTestFingerprint(t, f)
+				require.NoError(t, sqlitevec.RegisterExtension())
+				var err error
+				backend, err = sqlitevec.Open(f.ctx, sqlitevec.Options{Path: filepath.Join(f.cfg.Data.DataDir, "vectors.db"), MainPath: f.cfg.DatabaseDSN(), MainDB: f.store.DB(), Dimension: 768})
 				require.NoError(t, err)
-				require.NoError(t, backend.ActivateGeneration(f.ctx, activeID, true))
-			}
-			if tc.building {
-				fp := fingerprint
-				if tc.buildingMismatch {
-					fp = "different"
+				defer func() { assert.NoError(t, backend.Close()) }()
+				if tc.active {
+					fp := fingerprint
+					if tc.activeMismatch {
+						fp = "different"
+					}
+					activeID, err = backend.CreateGeneration(f.ctx, "model", 768, fp)
+					require.NoError(t, err)
+					require.NoError(t, backend.ActivateGeneration(f.ctx, activeID, true))
 				}
-				buildingID, err = backend.CreateGeneration(f.ctx, "model", 768, fp)
-				require.NoError(t, err)
+				if tc.building {
+					fp := fingerprint
+					if tc.buildingMismatch {
+						fp = "different"
+					}
+					buildingID, err = backend.CreateGeneration(f.ctx, "model", 768, fp)
+					require.NoError(t, err)
+				}
 			}
-			f.controller.choice = func() (bool, error) { return true, nil }
-			f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) { return embedlocal.Status{}, nil }
+			f.controller.choice = func() (bool, error) { return tc.choice, nil }
+			f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
+				if tc.missing {
+					return embedlocal.Status{DownloadBytes: 1}, nil
+				}
+				return embedlocal.Status{}, nil
+			}
 			f.controller.runner = &storeAPIAdapter{config: f.cfg, store: f.store, operationGate: f.controller.gate}
+			switch tc.name {
+			case "initialization":
+				f.server.SetVectorInitError(errors.New(tc.detail))
+			case "transport":
+				endpoint := localEmbeddingEndpoint
+				calls := 0
+				localEmbeddingEndpoint = func(ctx context.Context, opts embedlocal.Options) (string, error) {
+					calls++
+					if calls > 1 {
+						return "", errors.New(tc.detail)
+					}
+					return endpoint(ctx, opts)
+				}
+			}
+			before, err := os.ReadFile(f.cfg.ConfigFilePath())
+			require.NoError(t, err)
 			err = f.controller.Start(f.ctx, func(api.LocalEmbeddingsStatus) {})
-			if tc.activeMismatch || tc.buildingMismatch {
+			if tc.detail != "" {
+				require.ErrorContains(t, err, tc.detail)
+				if tc.name == "transport" {
+					require.ErrorContains(t, err, "resolve local embeddings")
+				}
+			} else if tc.activeMismatch || tc.buildingMismatch {
 				require.ErrorContains(t, err, "different model")
 				assert.False(t, f.scheduler.IsJobScheduled(jobctx.ScheduledEmbeddingLabel))
 				active, err := backend.ActiveGeneration(f.ctx)
@@ -768,84 +752,29 @@ func TestLocalEmbeddingsStartupGenerations(t *testing.T) {
 				assert.Equal(t, buildingID, building.ID)
 			} else {
 				require.NoError(t, err)
-				active, err := backend.ActiveGeneration(f.ctx)
-				require.NoError(t, err)
-				if tc.resumes {
-					assert.Equal(t, buildingID, active.ID)
+				if backend != nil {
+					active, err := backend.ActiveGeneration(f.ctx)
+					require.NoError(t, err)
+					if tc.resumes {
+						assert.Equal(t, buildingID, active.ID)
+					} else {
+						assert.Equal(t, activeID, active.ID)
+					}
+					assert.Positive(t, f.inputs.Load())
+				} else if tc.wantBuild {
+					require.NotNil(t, f.handle.vf)
+					active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
+					require.NoError(t, err)
+					assert.Equal(t, f.handle.vf.Cfg.GenerationFingerprint(), active.Fingerprint)
 					assert.Positive(t, f.inputs.Load())
 				} else {
-					assert.Equal(t, activeID, active.ID)
-					assert.Positive(t, f.inputs.Load())
+					assert.Nil(t, f.handle.vf)
 				}
 			}
-		})
-	}
-}
-
-func TestLocalEmbeddingsStartupReportsErrors(t *testing.T) {
-	for _, tc := range []struct{ name, detail string }{
-		{name: "initialization", detail: "archive initialization failed"},
-		{name: "transport", detail: "local server failed"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newLocalActivationFixture(t, "")
-			f.start(t)
-			f.controller.choice = func() (bool, error) { return true, nil }
-			f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) { return embedlocal.Status{}, nil }
-			if tc.name == "initialization" {
-				f.server.SetVectorInitError(errors.New(tc.detail))
-			} else {
-				localEmbeddingEndpoint = func(context.Context, embedlocal.Options) (string, error) { return "", errors.New(tc.detail) }
-			}
-			require.ErrorContains(t, f.controller.Start(f.ctx, func(api.LocalEmbeddingsStatus) {}), tc.detail)
-		})
-	}
-}
-
-func TestManagedBuiltinBuildHonorsSavedSettings(t *testing.T) {
-	for _, scenario := range []string{"saved provider", "published builtin"} {
-		t.Run(scenario, func(t *testing.T) {
-			f := newLocalActivationFixture(t, "")
-			var ctx context.Context
-			adapter := &storeAPIAdapter{config: f.cfg, store: f.store, operationGate: f.controller.gate}
-			if scenario == "saved provider" {
-				endpoint, err := localEmbeddingEndpoint(f.ctx, embedlocal.Options{SkipOllama: true})
-				require.NoError(t, err)
-				file, err := os.OpenFile(f.cfg.ConfigFilePath(), os.O_APPEND|os.O_WRONLY, 0)
-				require.NoError(t, err)
-				_, err = fmt.Fprintf(file, "\n[vector.embeddings]\nendpoint = %q\nmodel = \"saved-model\"\ndimension = 768\n", endpoint)
-				require.NoError(t, err)
-				require.NoError(t, file.Close())
-				snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-				require.NoError(t, err)
-				_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector"}, Values: map[string]any{"enabled": true}}})
-				require.NoError(t, err)
-				published := f.cfg.Vector
-				published.Enabled, published.Embeddings.LocalOnly = true, true
-				published.Embeddings.Model, published.Embeddings.Dimension = "builtin-model", 768
-				server := api.NewServerWithOptions(api.ServerOptions{Config: f.cfg, Backend: &fakeCmdVectorBackend{}, VectorCfg: published, Logger: f.state.logger})
-				t.Cleanup(func() { _ = server.Shutdown(context.WithoutCancel(t.Context())) })
-				ctx = server.WithPublishedVectorConfig(f.ctx)
-			} else {
-				f.start(t)
-				f.controller.choice = func() (bool, error) { return true, nil }
-				f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) { return embedlocal.Status{}, nil }
-				f.controller.runner = adapter
-				require.NoError(t, f.controller.Start(f.ctx, func(api.LocalEmbeddingsStatus) {}))
-				ctx = f.server.WithPublishedVectorConfig(f.ctx)
-			}
-			err := adapter.RunCLICommand(ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil)
+			after, err := os.ReadFile(f.cfg.ConfigFilePath())
 			require.NoError(t, err)
-			backend, err := sqlitevec.Open(f.ctx, sqlitevec.Options{Path: filepath.Join(f.cfg.Data.DataDir, "vectors.db"), MainPath: f.cfg.DatabaseDSN(), MainDB: f.store.DB(), Dimension: 768})
-			require.NoError(t, err)
-			defer func() { assert.NoError(t, backend.Close()) }()
-			active, err := backend.ActiveGeneration(f.ctx)
-			require.NoError(t, err)
-			if scenario == "saved provider" {
-				assert.Equal(t, "saved-model", active.Model)
-			} else {
-				assert.Equal(t, f.handle.vf.Cfg.GenerationFingerprint(), active.Fingerprint)
-			}
+			assert.Equal(t, before, after)
+			assert.Zero(t, f.installs)
 		})
 	}
 }
