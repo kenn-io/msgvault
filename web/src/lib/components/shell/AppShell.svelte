@@ -1102,9 +1102,13 @@
     if (exploreState.current.selectedRow === row.key) return;
     commitNavigation({ selectedRow: row.key });
   }
+  function groupIsDrillable(dimension: ExploreGroupDimension | undefined): boolean {
+    return !!dimension && groupingByDimension(dimension).drillable && (exploreState.current.workspace !== 'files' || dimension !== 'kind');
+  }
+
   function drillGroup(row: ExploreGroupRow): void {
     const [dimension, ...remaining] = exploreState.current.groupingChain;
-    if (!dimension || !groupingByDimension(dimension).drillable || (exploreState.current.workspace === 'files' && dimension === 'kind')) return;
+    if (!dimension || !groupIsDrillable(dimension)) return;
     const filters = filtersForGroup(exploreState.current.filters, dimension, row.key, exploreState.current.workspace === 'files');
     if (!filters) {
       commitNavigation({ selectedRow: `group:${dimension}:${row.key}` });
@@ -1456,7 +1460,7 @@
               error={loader.error}
               pageError={loader.pageError}
               unavailable={loader.unavailable}
-              drillable={groupingByDimension(exploreState.current.groupingChain[0]!).drillable && exploreState.current.groupingChain[0] !== 'kind'}
+              drillable={groupIsDrillable(exploreState.current.groupingChain[0])}
               focusedKey={exploreState.current.activeRow}
               inspectedKey={readingTargetKey}
               scrollAnchor={exploreState.current.scrollAnchor}
