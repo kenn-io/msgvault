@@ -604,7 +604,7 @@ func TestImportRejectsCrossConversationReuse(t *testing.T) {
 	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
 	require.Error(t, err)
 	assert.Contains(err.Error(), "comment object already belongs to a different root or parent")
-	assert.NotErrorIs(err, ErrInvalidChange, "only the webhook path reports an invalid change")
+	require.NotErrorIs(t, err, ErrInvalidChange, "only the webhook path reports an invalid change")
 	got := message(t, st, src.ID, "100_201")
 	root := message(t, st, src.ID, "100_200")
 	assert.Equal(root.ConversationID, got.ConversationID)

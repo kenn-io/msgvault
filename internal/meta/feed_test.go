@@ -155,7 +155,7 @@ func TestApplyFeedReportsArchiveInvariantsAsInvalidChanges(t *testing.T) {
 		case id == "me":
 			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
 		case id == "100_200" || id == "100_900":
-			_, _ = fmt.Fprintf(w, `{"id":%q,"message":"Example post","from":{"id":"100","name":"Example Page"}}`, id)
+			_, _ = fmt.Fprintf(w, `{"id":%q,"message":"Example post","from":{"id":"100","name":"Example Page"}}`, id) // #nosec G705 -- test fixture; id is a path segment matched above and is JSON-quoted.
 		case id == "100_201":
 			_, _ = fmt.Fprint(w, `{"id":"100_201","message":"first","created_time":"2026-10-01T12:00:00+0000","from":{"id":"300","name":"Example Customer"}}`)
 		case id == "100_400":
@@ -168,7 +168,7 @@ func TestApplyFeedReportsArchiveInvariantsAsInvalidChanges(t *testing.T) {
 				http.Error(w, "unexpected", http.StatusNotFound)
 				return
 			}
-			_, _ = fmt.Fprintf(w, `{"id":%q,"message":"reply","created_time":"2026-10-01T12:00:00+0000","from":{"id":"300","name":"Example Customer"},"parent":{"id":"100_3%02d"}}`, id, n+1)
+			_, _ = fmt.Fprintf(w, `{"id":%q,"message":"reply","created_time":"2026-10-01T12:00:00+0000","from":{"id":"300","name":"Example Customer"},"parent":{"id":"100_3%02d"}}`, id, n+1) // #nosec G705 -- test fixture; id is a path segment matched above and is JSON-quoted.
 		default:
 			assert.Fail("unexpected Graph read", r.URL.Path)
 			http.Error(w, "unexpected", http.StatusNotFound)
