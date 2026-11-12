@@ -233,10 +233,7 @@ func streamDaemonCLIPipe(
 				firstErr = emitErr
 			}
 		}
-		held = 0
-		if firstErr == nil {
-			held = copy(buf, data[cut:])
-		}
+		held = copy(buf, data[cut:])
 		if errors.Is(err, io.EOF) {
 			return firstErr
 		}

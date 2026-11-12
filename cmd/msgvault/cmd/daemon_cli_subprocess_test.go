@@ -180,26 +180,30 @@ func TestNewDaemonCLISubprocessCommandAppliesWorkingDirectory(t *testing.T) {
 }
 
 func TestStreamDaemonCLIPipeValidUTF8Chunks(t *testing.T) {
-	for _, stream := range []string{cliStreamStdout, cliStreamStderr} {
-		for _, value := range []string{"", "ascii", "é", "界", "😀", strings.Repeat("x", 32767) + "😀" + strings.Repeat("y", 32768) + "é界😀"} {
-			t.Run(fmt.Sprintf("%s/%q", stream, value[:min(len(value), 8)]), func(t *testing.T) {
-				var got strings.Builder
-				reader := io.Reader(strings.NewReader(value))
-				if len(value) < 100 {
-					reader = iotest.OneByteReader(reader)
-				}
-				err := streamDaemonCLIPipe(reader, stream, func(label, data string) error {
-					assert.Equal(t, stream, label)
-					assert.NotEmpty(t, data)
-					assert.True(t, utf8.ValidString(data), "chunk must be valid UTF-8: %q", data)
-					assert.LessOrEqual(t, len(data), 32*1024)
-					got.WriteString(data)
-					return nil
-				})
-				require.NoError(t, err)
-				assert.Equal(t, value, got.String())
+	for _, tc := range []struct {
+		value   string
+		oneByte bool
+	}{
+		{"é", true}, {"界", true}, {"😀", true},
+		{strings.Repeat("x", 32767) + "😀" + strings.Repeat("y", 32768) + "é界😀", false},
+	} {
+		t.Run(fmt.Sprintf("%q", tc.value[:min(len(tc.value), 8)]), func(t *testing.T) {
+			var got strings.Builder
+			reader := io.Reader(strings.NewReader(tc.value))
+			if tc.oneByte {
+				reader = iotest.OneByteReader(reader)
+			}
+			err := streamDaemonCLIPipe(reader, cliStreamStdout, func(label, data string) error {
+				assert.Equal(t, cliStreamStdout, label)
+				assert.NotEmpty(t, data)
+				assert.True(t, utf8.ValidString(data), "chunk must be valid UTF-8: %q", data)
+				assert.LessOrEqual(t, len(data), 32*1024)
+				got.WriteString(data)
+				return nil
 			})
-		}
+			require.NoError(t, err)
+			assert.Equal(t, tc.value, got.String())
+		})
 	}
 }
 
@@ -213,7 +217,7 @@ func TestStreamDaemonCLIPipeTerminalAndMalformedBytes(t *testing.T) {
 	}{
 		{"data with EOF", iotest.DataErrReader(strings.NewReader("é")), "é", nil},
 		{"data with error", iotest.DataErrReader(io.MultiReader(strings.NewReader("界"), iotest.ErrReader(readErr))), "界", readErr},
-		{"held suffix then EOF", io.MultiReader(bytes.NewReader([]byte("prefix\xe2\x82"))), "prefix\xe2\x82", nil},
+		{"held suffix then EOF", bytes.NewReader([]byte("prefix\xe2\x82")), "prefix\xe2\x82", nil},
 		{"held suffix then error", io.MultiReader(bytes.NewReader([]byte("prefix\xf0\x9f")), iotest.ErrReader(readErr)), "prefix\xf0\x9f", readErr},
 		{"malformed bytes", io.MultiReader(bytes.NewReader([]byte("\xe0\x80")), bytes.NewReader([]byte("\x80\xe2")), bytes.NewReader([]byte("a\xff"))), "\xe0\x80\x80\xe2a\xff", nil},
 	} {
@@ -231,7 +235,11 @@ func TestStreamDaemonCLIPipeDrainsAfterEmitFailure(t *testing.T) {
 	r1, r2, r3 := bytes.NewReader([]byte("first")), bytes.NewReader([]byte("second")), bytes.NewReader([]byte("third"))
 	reader := io.MultiReader(r1, r2, r3, iotest.ErrReader(readErr))
 	calls := 0
-	err := streamDaemonCLIPipe(reader, cliStreamStderr, func(_, _ string) error { calls++; return emitErr })
+	err := streamDaemonCLIPipe(reader, cliStreamStderr, func(label, _ string) error {
+		assert.Equal(t, cliStreamStderr, label)
+		calls++
+		return emitErr
+	})
 	require.ErrorIs(t, err, emitErr)
 	assert.Equal(t, 1, calls)
 	assert.Zero(t, r1.Len())

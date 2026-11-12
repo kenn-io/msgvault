@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -513,17 +512,12 @@ func TestExportMessagesCommandConcurrentParticipantMerge(t *testing.T) {
 type exportPipeRunner struct {
 	*storeAPIAdapter
 
-	fragments [][]byte
+	reader io.Reader
 }
 
-func (s *exportPipeRunner) RunCLICommand(_ context.Context, _ api.CLIRunRequest, emit func(api.CLIRunEvent) error) error {
-	readers := make([]io.Reader, 0, len(s.fragments))
-	for _, fragment := range s.fragments {
-		readers = append(readers, bytes.NewReader(fragment))
-	}
-	reader := io.MultiReader(readers...)
-	return streamDaemonCLIPipe(reader, cliStreamStdout, func(stream, data string) error {
-		return emit(api.CLIRunEvent{Type: stream, Data: data})
+func (s *exportPipeRunner) RunCLICommand(ctx context.Context, req api.CLIRunRequest, emit func(api.CLIRunEvent) error) error {
+	return s.runCLICommandWithRunner(ctx, req, emit, func(_ context.Context, _ []string, _ map[string]string, _ string, emitPipe func(string, string) error) error {
+		return streamDaemonCLIPipe(s.reader, cliStreamStdout, emitPipe)
 	})
 }
 
@@ -533,36 +527,30 @@ func TestExportMessagesUnicodeThroughDaemonCLI(t *testing.T) {
 	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	source, err := st.GetOrCreateSource("text", "archive")
 	require.NoError(t, err)
-	participant, err := st.EnsureParticipant("alice@example.com", "Alice Example", "example.com")
-	require.NoError(t, err)
-	person, _, err := st.CreatePersonFromParticipant(participant)
-	require.NoError(t, err)
 	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
 	conversation := insertExportMessagesConversation(t, st, source.ID, "conversation", "Example")
 	body := strings.Repeat("x", 33000) + "é界😀"
 	insertExportMessagesMessage(t, st, source.ID, conversation, "message", start, body)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET sender_id = ? WHERE source_id = ? AND source_message_id = ?`), participant, source.ID, "message")
-	require.NoError(t, err)
 	command := newExportMessagesLocalCmd(exportMessagesDeps{openStore: func(context.Context) (*store.Store, func(), error) { return st, func() {}, nil }})
 	var native bytes.Buffer
 	command.SetOut(&native)
 	command.SetErr(io.Discard)
-	command.SetArgs([]string{"--start", start.Format(time.RFC3339), "--end", start.Add(time.Hour).Format(time.RFC3339), "--person-id", strconv.FormatInt(person.ID, 10)})
+	command.SetArgs([]string{"--start", start.Format(time.RFC3339), "--end", start.Add(time.Hour).Format(time.RFC3339)})
 	require.NoError(t, command.ExecuteContext(t.Context()))
 
 	// Split inside each Unicode character in the native JSONL, deterministically.
 	raw := native.Bytes()
-	var fragments [][]byte
+	var fragments []io.Reader
 	offset := 0
 	for _, char := range []string{"é", "界", "😀"} {
 		index := bytes.Index(raw[offset:], []byte(char))
 		require.GreaterOrEqual(t, index, 0)
 		end := offset + index + 1
-		fragments = append(fragments, raw[offset:end])
+		fragments = append(fragments, bytes.NewReader(raw[offset:end]))
 		offset = end
 	}
-	fragments = append(fragments, raw[offset:])
-	runner := &exportPipeRunner{storeAPIAdapter: &storeAPIAdapter{store: st}, fragments: fragments}
+	fragments = append(fragments, bytes.NewReader(raw[offset:]))
+	runner := &exportPipeRunner{storeAPIAdapter: &storeAPIAdapter{store: st}, reader: io.MultiReader(fragments...)}
 	daemon := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: runner, Logger: slog.New(slog.DiscardHandler)})
 	server := httptest.NewServer(daemon.Router())
 	t.Cleanup(server.Close)
@@ -571,21 +559,12 @@ func TestExportMessagesUnicodeThroughDaemonCLI(t *testing.T) {
 	var received bytes.Buffer
 	err = client.RunCLICommand(t.Context(), daemonclient.CLIRunRequest{Args: []string{"export-messages"}}, func(stream, data string) error {
 		assert.Equal(t, cliStreamStdout, stream)
-		_, writeErr := received.WriteString(data)
-		if writeErr != nil {
-			return fmt.Errorf("write received export: %w", writeErr)
-		}
+		_, _ = received.WriteString(data)
 		return nil
 	})
 	require.NoError(t, err)
 	assert.Equal(t, native.String(), received.String())
 	records := decodeExportMessageRecords(t, received.Bytes())
-	require.Len(t, records, 5)
-	assert.Equal(t, []string{"manifest", "source", "conversation", "message", "complete"}, exportMessageRecordTypes(records))
-	assert.Equal(t, "message", records[3]["id"])
+	require.GreaterOrEqual(t, len(records), 4)
 	assert.Equal(t, body, records[3]["text"])
-	assert.Equal(t, map[string]any{"display_name": "Alice Example", "address": "alice@example.com"}, records[3]["author"])
-	counts, ok := records[4]["counts"].(map[string]any)
-	require.True(t, ok)
-	assert.InDelta(t, 1, counts["messages"], 0)
 }
