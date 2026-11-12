@@ -1167,6 +1167,14 @@ describe('RelationshipsController filtered header metrics', () => {
 });
 
 describe('RelationshipsController.linkParticipants / unlinkParticipants', () => {
+  it('keeps a newer stale revision after an older ready response', () => {
+    const controller = new RelationshipsController(createAPIClient(async () => { throw new Error('unexpected request'); }), () => 'UTC');
+    controller.recordIdentityCacheState(5, 'stale');
+    expect(controller.pendingIdentityCacheRevision).toBe(5);
+    controller.recordIdentityCacheState(4, 'ready');
+    expect(controller.pendingIdentityCacheRevision).toBe(5);
+    controller.destroy();
+  });
   it('maps 200 to ok with cacheState and reopens the target', async () => {
     let personCalls = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

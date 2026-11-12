@@ -219,7 +219,7 @@ it.each([
       if (outcome === 'merges') return calls === 1 ? Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1]) }, { etag: '"person-9-r2"', person: profile(9, 2, [2]) }] }, { status: 409 }) : Response.json({ identity_revision: 5, cache_state: 'ready' });
       return calls === 1 ? Response.json({ identity_revision: 5, cache_state: 'ready' }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 });
     },
-    '/api/v1/people/9/merge': () => { merged = true; return Response.json(mergeResult(survivor), { headers: { ETag: '"person-9-r3"' } }); },
+    '/api/v1/people/9/merge': () => { merged = true; return Response.json(mergeResult(survivor, 'stale'), { headers: { ETag: '"person-9-r3"' } }); },
   });
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
   if (selectedID !== null) state.commitNavigation({ workspace: 'relationships', directoryPersonID: selectedID });
@@ -239,6 +239,7 @@ it.each([
       await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
       await waitFor(() => expect(releaseReconcile).toBeDefined());
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Resolve person merge' })).toBeNull());
+      expect(controller.pendingIdentityCacheRevision).toBe(8);
       if (selectedID === null) {
         expect(screen.getByRole('checkbox', { name: 'Unselect Bob Example' }).closest('.list-content')).toHaveProperty('inert', true);
         await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
@@ -827,56 +828,21 @@ it('leaving People aborts its pending Save', async () => {
   expect(pending!.signal.aborted).toBe(true);
 });
 
-it.each(['settled', 'pending', 'all pairs link'] as const)('preserves bulk-link work with stale-cache outcome: %s', async phase => {
-  const pairs: Array<{ participant_a: number; participant_b: number }> = [];
-  const names = phase !== 'pending' ? ['Alice Example', 'Bob Example', 'Cara Example'] : ['Alice Example', 'Bob Example'];
-  let cacheReady = false;
-  let resolveRetry: ((response: Response) => void) | undefined;
+it('keeps bulk progress when a later link fails', async () => {
+  let writes = 0;
   const client = clientFor({
-    '/api/v1/relationships': () => Response.json({ rows: names.map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: cacheReady && index === 0 ? [1, 2] : [index + 1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })).filter(row => !cacheReady || row.canonical_id !== 2) }),
-    '/api/v1/identity/links': async request => {
-      pairs.push(await request.json());
-      if (phase === 'pending' && pairs.length === 2) return new Promise<Response>(resolve => { resolveRetry = resolve; });
-      if (phase === 'settled' && pairs.length === 2) return Response.json({ error: 'internal_error', message: 'Cara link failed' }, { status: 500 });
-      cacheReady = pairs.length > 1;
-      return Response.json({ identity_revision: 2, cache_state: cacheReady ? 'ready' : 'stale' });
-    },
+    '/api/v1/relationships': () => Response.json({ rows: ['Alice Example', 'Bob Example', 'Cara Example'].map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { sent_count: 3, received_from_them: 1, modalities: 2, sent_to_them: 1, meetings_together: 0, meeting_count: 0, last_interaction_at: when } })) }),
+    '/api/v1/identity/links': () => ++writes === 1 ? Response.json({ identity_revision: 2, cache_state: 'ready' }) : Response.json({ error: 'internal_error', message: 'Cara link failed' }, { status: 500 }),
   });
   const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: { filters: [], presentation: 'table' }, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
-    for (const name of names) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
+    for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    if (phase === 'all pairs link') {
-      await waitFor(() => expect(pairs).toHaveLength(2));
-      await waitFor(() => expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull());
-      expect(screen.queryByRole('button', { name: 'Retry identity cache' })).toBeNull();
-      return;
-    }
-    const retry = await screen.findByRole('button', { name: 'Retry identity cache' });
-    if (phase === 'pending') for (const name of names) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
-    else {
-      await waitFor(() => expect(screen.getByRole('status').textContent).toContain('1 of 2 linked.'));
-      expect(pairs).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }]);
-    }
-    await fireEvent.click(retry);
-    if (phase === 'pending') {
-      await waitFor(() => expect(pairs).toHaveLength(2));
-      await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-      expect(pairs).toHaveLength(2);
-    } else {
-      await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry identity cache' })).toBeNull());
-      expect(pairs).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }, { participant_a: 1, participant_b: 2 }]);
-      expect.soft(screen.queryByRole('checkbox', { name: /select Bob Example/i })).toBeNull();
-      for (const name of ['Alice Example', 'Cara Example']) expect.soft(screen.queryByRole('checkbox', { name: `Unselect ${name}` })).not.toBeNull();
-      expect.soft(screen.queryByRole('button', { name: 'Clear selection' })).not.toBeNull();
-      expect.soft(screen.getByRole('status').textContent).toContain('1 of 2 linked.');
-      expect.soft(screen.getByRole('status').textContent).not.toContain('People are now treated as the same person.');
-    }
-  } finally {
-    resolveRetry?.(Response.json({ identity_revision: 2, cache_state: 'ready' }));
-    view.unmount(); controller.destroy(); directory.destroy(); state.destroy();
-  }
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('1 of 2 linked.'));
+    expect(screen.getByRole('status').textContent).toContain('Cara link failed');
+    expect(writes).toBe(2);
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
 it.each(['remount', 'restoration epoch'])('refreshes retained Saved rows after %s', async entry => {

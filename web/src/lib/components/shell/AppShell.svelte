@@ -99,6 +99,7 @@
   import type { SavedView } from '../../api/generated/models';
   import RunHistoryDialog from './RunHistoryDialog.svelte';
   import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
+  import InlineNotice from '../common/InlineNotice.svelte';
 
   const media = mediaReadiness();
   const visual = visualReadiness();
@@ -265,6 +266,7 @@
   }
   let historyDialog = $state<{ restoreFocus: () => Promise<void> }>();
   let sourcesPage = $state<{ refresh: () => void; openAddSource: () => void }>();
+  let filesPage = $state<{ reloadListing: () => void }>();
 
   async function addSource(): Promise<void> {
     commitWorkspace('sources');
@@ -384,11 +386,27 @@
     (patch) => commitNavigation(patch),
     async result => {
       if (!result.ok && result.kind !== 'merge_required') flashDecisionError(result.message);
-      if (result.ok) await reconcileIdentity();
+      if (result.ok) { relationshipsController.recordIdentityCacheState(result.identityRevision, result.cacheState); await reconcileIdentity(); }
     },
   );
   async function reconcileIdentity(): Promise<void> {
-    await Promise.all([shellData.refreshDuplicates(), directoryController.loadFirstPage(), directoryController.refreshSelectedPerson(), relationshipsController.reconcilePersonMerge(relationshipsController.personMergeContextSnapshot())]);
+    await Promise.all([refreshIdentityProfiles(), relationshipsController.reconcilePersonMerge(relationshipsController.personMergeContextSnapshot())]);
+  }
+  async function refreshIdentityProfiles(): Promise<void> {
+    await Promise.all([shellData.refreshDuplicates(), directoryController.loadFirstPage(), directoryController.refreshSelectedPerson()]);
+  }
+  let mergeCacheError = $state<{ revision: number; message: string; unsupported: boolean; dismissible: boolean }>();
+  const pendingMergeCacheError = $derived(mergeCacheError?.revision === relationshipsController.pendingIdentityCacheRevision ? mergeCacheError : undefined);
+  async function retryMergeCache(): Promise<void> {
+    const revision = relationshipsController.pendingIdentityCacheRevision;
+    const result = await relationshipsController.refreshIdentityCache();
+    if (result.ok && result.cacheState === 'ready') {
+      if (exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' && exploreState.current.groupingChain.length > 0) loader.retry();
+      else if (exploreState.current.workspace === 'files') filesPage?.reloadListing();
+      directoryReviewController.refreshSummaries(exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates);
+      await refreshIdentityProfiles();
+    }
+    else if (!result.ok && revision !== null && revision === relationshipsController.pendingIdentityCacheRevision) mergeCacheError = { revision, message: result.message, unsupported: result.code === 'cache_unsupported', dismissible: true };
   }
   async function identityChanged(): Promise<void> {
     await Promise.all([
@@ -1315,6 +1333,12 @@
         />
       </div>
     </header>
+    {#if relationshipsController.pendingIdentityCacheRevision !== null}
+      <div class="identity-cache-notice"><InlineNotice tone="warning" message={relationshipsController.identityCacheRefreshing ? 'Refreshing...' : pendingMergeCacheError?.message ?? 'Changes saved, but related views may be out of date.'} actions={[
+          ...(pendingMergeCacheError?.dismissible ? [{ label: 'Dismiss', onclick: () => (relationshipsController.pendingIdentityCacheRevision = null), disabled: relationshipsController.identityCacheRefreshing }] : []),
+          ...(pendingMergeCacheError?.unsupported ? [] : [{ label: 'Retry', onclick: () => void retryMergeCache(), disabled: relationshipsController.identityCacheRefreshing }]),
+        ]} /></div>
+    {/if}
     <div class="app-main">
       {#if exploreState.current.workspace === 'settings'}
         {#if settings}{@render settings(
@@ -1475,6 +1499,7 @@
             />
           {:else}
             <FilesWorkspace
+              bind:this={filesPage}
               onConfigureVisualSearch={openVisualAttachmentSettings}
               bind:submitted={loader.submitted}
               {client}
@@ -1633,7 +1658,7 @@
   {@const merge = directoryReviewController.mergeRequired}
   {#key merge.candidateID}<PersonBindingConflictModal {client} conflict={merge.conflict}
     onOpenProfile={(id) => { directoryReviewController.mergeRequired = null; openDirectoryPerson(id); }}
-    onSuccess={async success => { if (exploreState.current.directoryPersonID === success.result.merge.absorbed_person_id) replaceCommittedNavigation({ directoryPersonID: success.survivor.id }); await reconcileIdentity(); await directoryReviewController.completePersonMerge(merge.candidateID, success); }}
+    onSuccess={async success => { relationshipsController.recordIdentityCacheState(success.result.identity_revision, success.result.cache_state); if (exploreState.current.directoryPersonID === success.result.merge.absorbed_person_id) replaceCommittedNavigation({ directoryPersonID: success.survivor.id }); await reconcileIdentity(); await directoryReviewController.completePersonMerge(merge.candidateID, success); }}
     onClose={() => directoryReviewController.mergeRequired = null} />{/key}
 {/if}
 
@@ -1696,6 +1721,8 @@
     flex: 1;
     flex-direction: column;
   }
+
+  .identity-cache-notice { padding: var(--space-box); }
 
   .app-top-bar {
     display: flex;

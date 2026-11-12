@@ -6,10 +6,9 @@
   import LinkIdentityDialog from '../relationships/LinkIdentityDialog.svelte';
   import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
   import { onDestroy, untrack } from 'svelte';
-  import { showFlash } from '@kenn-io/kit-ui';
-  let { client, controller, personID: currentPersonID, participantID: currentParticipantID, name, onReconcile, onOpenPerson, onLinked, onClose }:
+  let { client, controller, personID: currentPersonID, participantID: currentParticipantID, name, onReconcile, onOpenPerson, onClose }:
     { client: APIClient; controller: RelationshipsController; personID: number | null; participantID: number | null; name: string;
-      onReconcile: (context: RelationshipsMergeContext, participantsLinked?: boolean, success?: PersonMergeSuccess) => Promise<void>; onOpenPerson?: (id: number) => void; onLinked?: (a: number, b: number, outcome: LinkOutcome) => void; onClose: () => void } = $props();
+      onReconcile: (context: RelationshipsMergeContext, participantsLinked?: boolean, success?: PersonMergeSuccess) => Promise<void>; onOpenPerson?: (id: number) => void; onClose: () => void } = $props();
   let conflict = $state<ValidatedPersonMergeRequired>();
   // The operation keeps the people it opened with, even after navigation disposes the dialog.
   const [personID, participantID] = untrack(() => [currentPersonID, currentParticipantID]);
@@ -27,13 +26,13 @@
     } catch { return { ok: false, code: 'error', message: "Couldn't load both people." }; }
   }
   async function link(other: number): Promise<LinkOutcome> {
-    if (participantID !== null) { const outcome = await controller.linkParticipants(participantID, other); if (!disposed) onLinked?.(participantID, other, outcome); return outcome; }
+    if (participantID !== null) return controller.linkParticipants(participantID, other);
     if (personID === null) return { ok: false, code: 'error', message: 'Choose a person first.' };
     try {
       const profile = await getPersonProfile({ id: personID }, client);
       if (!profile.data) return { ok: false, code: 'error', message: profile.error?.message ?? "Couldn't load this person." };
       const representative = profile.data.participant_ids?.[0];
-      if (representative !== undefined) { const outcome = await controller.linkParticipants(representative, other); if (!disposed) onLinked?.(representative, other, outcome); return outcome; }
+      if (representative !== undefined) return controller.linkParticipants(representative, other);
       const result = await createPerson({ participant_id: other }, client);
       if (!result.data) return { ok: false, code: 'error', message: result.error?.message ?? "Couldn't save the chosen person." };
       promoted = true;
@@ -56,7 +55,8 @@
     } catch { return { ok: false, code: 'error', message: "Couldn't load the chosen person." }; }
   }
   async function merged(success: PersonMergeSuccess): Promise<void> {
-    close(); if (success.result.cache_state === 'stale') showFlash("People merged. Couldn't refresh the people list.", { tone: 'warning', durationMs: 8000 });
+    controller.recordIdentityCacheState(success.result.identity_revision, success.result.cache_state);
+    close();
     const reconciliation = onReconcile(context, false, success);
     onOpenPerson?.(success.survivor.id);
     await reconciliation;

@@ -3169,24 +3169,27 @@ it.each(['', 'invoice'])('clears Files filters and a pending filename edit from 
   } finally { view.unmount(); state.destroy(); vi.useRealTimers(); }
 });
 
-it('opens the surviving person and keeps the merged pair instruction after resolving duplicates', async () => {
+it('opens the survivor and refreshes the duplicate pair after merging saved people', async () => {
   let merged = false;
+  let refreshes = 0;
   const profile = (id: number) => person(id, id === 7 ? 4 : 2, [id === 7 ? 1 : 2]);
   const conflict = { error: 'person_merge_required', message: 'Choose a survivor', profiles: [7, 9].map(id => ({ person: profile(id), etag: id === 7 ? '"person-7-r4"' : '"person-9-r2"' })) };
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const url = new URL(request.url), path = url.pathname;
+    if (path.endsWith('/identity/cache-refresh')) { refreshes++; return Response.json({ identity_revision: 8, cache_state: 'ready' }); }
     if (path.endsWith('/people/directory')) return Response.json({ people: merged ? [directoryPerson(7)] : [directoryPerson(7), directoryPerson(9)] });
     if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, review_token: merged ? 'refreshed-17' : 'review-17', actionable: merged, ...(merged ? {} : { blocker: 'person_merge_required' }) }], limit: Number(url.searchParams.get('limit')), offset: 0 });
     if (path.endsWith('/17/review/accept')) return Response.json(conflict, { status: 409 });
-    if (path.endsWith('/people/7/merge')) { merged = true; return Response.json(mergeResult({ ...profile(7), revision: 5, participant_ids: [1, 2] }), { headers: { ETag: '"person-7-r5"' } }); }
+    if (path.endsWith('/people/7/merge')) { merged = true; return Response.json(mergeResult({ ...profile(7), revision: 5, participant_ids: [1, 2] }, 'stale'), { headers: { ETag: '"person-7-r5"' } }); }
     if (/\/people\/(7|9)\/profile$/.test(path)) { const id = Number(path.split('/').at(-2)); if (merged && id === 9) return Response.json({ message: 'Person no longer exists' }, { status: 404 }); return Response.json({ person: profile(id), names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }); }
     if (/\/people\/(7|9)$/.test(path)) { const id = Number(path.split('/').at(-1)); if (merged && id === 9) return Response.json({ message: 'Person no longer exists' }, { status: 404 }); return Response.json(profile(id), { headers: { ETag: id === 7 ? '"person-7-r4"' : '"person-9-r2"' } }); }
-    if (/\/participants\/(1|2)$/.test(path)) { const id = Number(path.split('/').at(-1)); return Response.json({ id, display_label: id === 1 ? 'Synthetic One' : 'Synthetic Two', identifiers: [], activity_count: 3 }); }
+    if (/\/participants\/(1|2)$/.test(path)) { const id = Number(path.split('/').at(-1)); return Response.json({ id, display_label: id === 1 ? (refreshes ? 'Refreshed One' : 'Synthetic One') : 'Synthetic Two', identifiers: [], activity_count: 3 }); }
     if (path.endsWith('/operations/status')) return Response.json({ lanes: [] });
     if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
     if (path.endsWith('/deletions')) return Response.json({ manifests: [] });
+    const meeting = meetingFixtureResponse(path); if (meeting) return meeting;
     return Response.json({ rows: [] });
   });
   const state = new ExploreState(null);
@@ -3207,6 +3210,10 @@ it('opens the surviving person and keeps the merged pair instruction after resol
     await fireEvent.click(within(modal).getByRole('button', { name: 'Merge into selected survivor' }));
     await waitFor(() => expect(state.current.directoryPersonID).toBe(7));
     await waitFor(() => expect(document.getElementById('duplicate-17')?.textContent).toContain('Choose Merge to record this pair.'));
+    await waitFor(() => expect(document.getElementById('duplicate-17')?.textContent).toContain('Synthetic One'));
+    await screen.findByText('Changes saved, but related views may be out of date.');
+    await fireEvent.click(within(screen.getByText('Changes saved, but related views may be out of date.').closest('.inline-notice') as HTMLElement).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(document.getElementById('duplicate-17')?.textContent).toContain('Refreshed One'));
   } finally { view.unmount(); state.destroy(); }
 });
 
@@ -3215,7 +3222,7 @@ function duplicateReviewArchive(savedViews: ReturnType<typeof view>[] = []) {
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const url = new URL(request.url), path = url.pathname;
-    if (path.endsWith('/17/review/reject')) { server.decisions.push(await request.json()); return Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' }); }
+    if (path.endsWith('/17/review/reject')) { server.decisions.push(await request.json()); return Response.json({ candidate: { ...pair, state: 'rejected' }, identity_revision: 1, cache_state: 'ready' }); }
     if (path.endsWith('/saved-views/3') && request.method === 'DELETE') { server.deleted = true; return new Response(null, { status: 204 }); }
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: server.deleted ? [] : savedViews });
     if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, review_token: server.changed ? 'fresh-17' : pair.review_token }], limit: Number(url.searchParams.get('limit')), offset: 0 });
@@ -3300,10 +3307,10 @@ it.each([
       await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: /^People(?: |$)/ }));
       await screen.findByRole('dialog', { name: 'Resolve person merge' });
     } else {
-      finish(Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' }));
+      finish(Response.json({ candidate: { ...pair, state: 'rejected' }, identity_revision: 1, cache_state: 'ready' }));
       await waitFor(() => expect(document.activeElement).toBe(outcome === 'pagehide' ? screen.getByRole('radio', { name: 'To review' }) : messages));
     }
-  } finally { finish?.(Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' })); rendered.unmount(); state.destroy(); vi.useRealTimers(); }
+  } finally { finish?.(Response.json({ candidate: { ...pair, state: 'rejected' }, identity_revision: 1, cache_state: 'ready' })); rendered.unmount(); state.destroy(); vi.useRealTimers(); }
 });
 
 it('refreshes cached duplicate cards after explicit reentry', async () => {
@@ -3323,5 +3330,165 @@ it('refreshes cached duplicate cards after explicit reentry', async () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Keep separate' }));
     await fireEvent(window, new Event('pagehide'));
     await waitFor(() => expect(server.decisions).toEqual([{ review_token: 'fresh-17' }]));
+  } finally { rendered.unmount(); state.destroy(); }
+});
+
+it.each(['everything', 'files', 'ungrouped files'] as const)('reloads %s after identity recovery', async workspace => {
+  let recovered = false;
+  const fileRequests: unknown[] = [];
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/participants/1')) return Response.json({ id: 1, display_label: 'Original person', identifiers: [], activity_count: 1 });
+    if (path.endsWith('/participants/search')) return Response.json({ rows: [{ id: 2, display_label: 'Peer Example', identifiers: [], activity_count: 1 }] });
+    if (path.endsWith('/identity/links')) return Response.json({ identity_revision: 2, cache_state: 'stale' });
+    if (path.endsWith('/identity/cache-refresh')) { recovered = true; return Response.json({ identity_revision: 2, cache_state: 'ready' }); }
+    if (path.endsWith('/groups')) return Response.json(exploreResponse({ rows: [{ ...sourceGroup, label: recovered ? 'Updated group' : 'Original group' }], total_count: 1 }));
+    if (path.endsWith('/files/search')) { fileRequests.push(await request.json()); return Response.json({ files: [{ id: 7, key: 'file:7', entry_key: 'message:11', message_id: 11, conversation_id: 21, occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_type: 'synthetic', source_identifier: 'archive@example.com', containing_title: 'Containing item', filename: recovered ? 'updated.pdf' : 'original.pdf', mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 2048, participant_labels: [], participant_domains: [], content_state: 'unverified', content_available: null }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} }); }
+    return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
+  const rendered = render(AppShell, { client, state });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Merge with…' }));
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Peer' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Peer Example/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    const notice = await screen.findByText('Changes saved, but related views may be out of date.');
+    const ungrouped = workspace === 'ungrouped files';
+    state.commitNavigation({ workspace: ungrouped ? 'files' : workspace, groupingChain: ungrouped ? [] : ['source'], filters: ungrouped ? [{ dimension: 'participant', values: ['1'] }] : [] });
+    await screen.findByText(ungrouped ? 'original.pdf' : 'Original group');
+    await fireEvent.click(within(notice.closest('.inline-notice') as HTMLElement).getByRole('button', { name: 'Retry' }));
+    await screen.findByText(ungrouped ? 'updated.pdf' : 'Updated group');
+    if (ungrouped) expect(fileRequests).toEqual([expect.objectContaining({ predicate: expect.objectContaining({ filters: [{ dimension: 'participant', values: ['1'] }] }) }), expect.objectContaining({ predicate: expect.objectContaining({ filters: [{ dimension: 'participant', values: ['1'] }] }) })]);
+  } finally { rendered.unmount(); state.destroy(); }
+});
+
+it.each(['ready', 'build required', 'build dismissed', 'unsupported', 'failure', 'failure dismissed'] as const)('keeps link recovery across workspaces: %s', async outcome => {
+  let writes = 0, refreshes = 0, recovered = false;
+  let release!: (response: Response) => void;
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/participants/1')) return Response.json({ id: 1, display_label: recovered ? 'Updated person' : 'Original person', identifiers: [], activity_count: 1 });
+    if (path.endsWith('/participants/search')) return Response.json({ rows: [{ id: 2, display_label: 'Peer Example', identifiers: [], activity_count: 1 }] });
+    if (path.endsWith('/people/directory')) return Response.json({ people: [] });
+    if (path.endsWith('/identity/links')) { writes++; return Response.json({ identity_revision: 2, cache_state: 'stale' }); }
+    if (path.endsWith('/identity/cache-refresh')) {
+      refreshes++;
+      if (refreshes === 1 && (outcome === 'build required' || outcome === 'build dismissed')) return Response.json({ error: 'identity_cache_build_required', message: 'Run msgvault build-cache to refresh related views.' }, { status: 503 });
+      if (refreshes === 1 && outcome === 'unsupported') return Response.json({ error: 'identity_cache_unsupported', message: 'People and relationship analytics are unavailable with PostgreSQL.' }, { status: 503 });
+      if (refreshes === 1 && (outcome === 'failure' || outcome === 'failure dismissed')) return Response.json({ error: 'internal_error', message: "Couldn't refresh related views." }, { status: 500 });
+      recovered = true;
+      if (outcome === 'ready') return new Promise<Response>(resolve => { release = resolve; });
+      return Response.json({ identity_revision: 2, cache_state: 'ready' });
+    }
+    return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
+  const rendered = render(AppShell, { client, state });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Merge with…' }));
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Peer' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Peer Example/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    await screen.findByText('Changes saved, but related views may be out of date.');
+    await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: /^Messages(?: |$)/ }));
+    await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: /^People(?: |$)/ }));
+    const notice = screen.getByText('Changes saved, but related views may be out of date.').closest('.inline-notice') as HTMLElement;
+    await fireEvent.click(within(notice).getByRole('button', { name: 'Retry' }));
+    if (outcome === 'ready') {
+      await screen.findByText('Refreshing...');
+      expect(within(notice).getByRole('button', { name: 'Retry' })).toHaveProperty('disabled', true);
+      release(Response.json({ identity_revision: 2, cache_state: 'ready' }));
+    } else if (outcome === 'build required' || outcome === 'build dismissed') {
+      await screen.findByText('Run msgvault build-cache to refresh related views.');
+      expect(within(notice).getByRole('button', { name: 'Retry' })).toBeDefined();
+      await fireEvent.click(within(notice).getByRole('button', { name: outcome === 'build required' ? 'Retry' : 'Dismiss' }));
+      if (outcome === 'build dismissed') expect(screen.queryByText('Run msgvault build-cache to refresh related views.')).toBeNull();
+    } else if (outcome === 'failure' || outcome === 'failure dismissed') {
+      await screen.findByText("Couldn't refresh related views.");
+      expect(within(notice).getByRole('button', { name: 'Retry' })).toBeDefined();
+      expect(within(notice).getByRole('button', { name: 'Dismiss' })).toBeDefined();
+      await fireEvent.click(within(notice).getByRole('button', { name: outcome === 'failure' ? 'Retry' : 'Dismiss' }));
+      if (outcome === 'failure dismissed') expect(screen.queryByText("Couldn't refresh related views.")).toBeNull();
+    } else {
+      await screen.findByText('People and relationship analytics are unavailable with PostgreSQL.');
+      expect(within(notice).queryByRole('button', { name: 'Retry' })).toBeNull();
+      await fireEvent.click(within(notice).getByRole('button', { name: 'Dismiss' }));
+      expect(screen.queryByText('People and relationship analytics are unavailable with PostgreSQL.')).toBeNull();
+    }
+    if (outcome !== 'unsupported' && outcome !== 'build dismissed' && outcome !== 'failure dismissed') await screen.findByRole('heading', { name: 'Updated person' });
+    await waitFor(() => expect(screen.queryByText('Changes saved, but related views may be out of date.')).toBeNull());
+    expect(writes).toBe(1);
+    expect(refreshes).toBe(outcome === 'failure' || outcome === 'build required' ? 2 : 1);
+  } finally { release?.(Response.json({ identity_revision: 2, cache_state: 'ready' })); rendered.unmount(); state.destroy(); }
+});
+
+it('recovers a stale bulk link', async () => {
+  let refreshes = 0;
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/relationships')) return Response.json({ rows: [1, 2].filter(id => !refreshes || id === 1).map(id => ({ canonical_id: id, display_label: `Person ${id}`, member_ids: id === 1 && refreshes ? [1, 2] : [id], score: 2, signals: { sent_count: 1, received_from_them: 1, modalities: 1, sent_to_them: 1, meetings_together: 0, meeting_count: 0, last_interaction_at: '2026-01-01T00:00:00Z' } })) });
+    if (path.endsWith('/identity/links')) return Response.json({ identity_revision: 2, cache_state: 'stale' });
+    if (path.endsWith('/identity/cache-refresh')) { refreshes++; return Response.json({ identity_revision: 2, cache_state: 'ready' }); }
+    return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships' });
+  const rendered = render(AppShell, { client, state });
+  try {
+    for (const id of [1, 2]) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select Person ${id}` }));
+    expect(screen.getByRole('button', { name: 'Clear selection' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    const notice = await screen.findByText('Changes saved, but related views may be out of date.');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull());
+    await fireEvent.click(within(notice.closest('.inline-notice') as HTMLElement).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByRole('checkbox', { name: 'Select Person 2' })).toBeNull());
+  } finally { rendered.unmount(); state.destroy(); }
+});
+
+it('recovers a stale unlink and reloads the addresses', async () => {
+  let refreshes = 0;
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/participants/1')) return Response.json({ id: 1, display_label: 'Person One', identifiers: refreshes ? [] : [{ type: 'email', value: 'peer@example.com', participant_id: 2, is_primary: true, provenance: 'participant_identifiers' }], cluster: { canonical_id: 1, member_ids: refreshes ? [1] : [1, 2], edges: refreshes ? [] : [{ participant_a: 1, participant_b: 2 }] }, activity_count: 1 });
+    if (path.endsWith('/identity/unlinks')) return Response.json({ identity_revision: 2, cache_state: 'stale' });
+    if (path.endsWith('/identity/cache-refresh')) { refreshes++; return Response.json({ identity_revision: 2, cache_state: 'ready' }); }
+    return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
+  const rendered = render(AppShell, { client, state });
+  try {
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Unlink peer@example.com' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
+    const notice = await screen.findByText('Changes saved, but related views may be out of date.');
+    await fireEvent.click(within(notice.closest('.inline-notice') as HTMLElement).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Unlink peer@example.com' })).toBeNull());
+  } finally { rendered.unmount(); state.destroy(); }
+});
+
+it('offers cache recovery after accepting a duplicate', async () => {
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [pair], limit: 10, offset: 0 });
+    if (path.endsWith('/17/review/accept')) return Response.json({ candidate: { ...pair, state: 'accepted' }, identity_revision: 8, cache_state: 'stale' });
+    if (/\/participants\/(1|2)$/.test(path)) return Response.json({ id: Number(path.split('/').at(-1)), display_label: 'Synthetic person', identifiers: [], activity_count: 3 });
+    return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
+  });
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', peopleDuplicates: true });
+  const rendered = render(AppShell, { client, state });
+  try {
+    await fireEvent.click(await screen.findByRole('button', { name: 'Merge' }));
+    await fireEvent(window, new Event('pagehide'));
+    await screen.findByText('Changes saved, but related views may be out of date.');
   } finally { rendered.unmount(); state.destroy(); }
 });
