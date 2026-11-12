@@ -340,7 +340,7 @@ func detectFormat(threadPath string, reportUnsupported bool) (string, bool, int)
 			continue
 		}
 		switch {
-		case reMessageFile.MatchString(name) && (!reportUnsupported || isNumberedMessageFile(name)):
+		case (reportUnsupported && isNumberedMessageFile(name)) || (!reportUnsupported && reMessageFile.MatchString(name)):
 			hasJSON = true
 		case strings.HasPrefix(name, "message_") && strings.HasSuffix(name, ".html"):
 			html++
