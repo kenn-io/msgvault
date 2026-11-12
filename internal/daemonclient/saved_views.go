@@ -121,10 +121,14 @@ func (c *Client) RunSavedView(
 	id int64,
 	limit int,
 	cursor string,
+	timezone string,
 ) (*savedview.RunPage, error) {
 	body := generated.RunSavedViewRequest{Limit: new(int64(limit))}
 	if cursor != "" {
 		body.Cursor = &cursor
+	}
+	if timezone != "" {
+		body.Timezone = &timezone
 	}
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.RunSavedViewResp, error) {
 		return client.RunSavedViewWithResponse(ctx, &generated.RunSavedViewRequestOptions{
@@ -165,7 +169,7 @@ func runPageFromGenerated(result generated.RunSavedViewResponse) (*savedview.Run
 		page.Groups = make([]query.ExploreGroupRow, len(result.Groups))
 		for i, group := range result.Groups {
 			page.Groups[i] = query.ExploreGroupRow{
-				Key: group.Key, Label: group.Label, Count: group.Count,
+				Key: group.Key, Label: group.Label, Count: group.Count, TotalItems: int64Value(group.TotalItems),
 				EstimatedBytes: group.EstimatedBytes, LatestAt: group.LatestAt,
 			}
 		}

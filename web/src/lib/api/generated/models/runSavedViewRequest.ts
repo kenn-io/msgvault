@@ -9,4 +9,6 @@ export interface RunSavedViewRequest {
    * @maximum 100
    */
   limit?: number;
+  /** IANA timezone for calendar grouping; defaults to UTC */
+  timezone?: string;
 }
