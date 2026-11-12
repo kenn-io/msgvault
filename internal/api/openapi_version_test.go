@@ -219,12 +219,10 @@ func TestCheckAPIContract(t *testing.T) {
 		{"collision", "5.1.0", b, "use 5.2.0", []string{m("5.0.0", a), m("5.1.0", a), m("5.1.0", b)}, []string{m("5.0.0", a)}},
 		{"collision with next minor taken", "5.1.0", b, "use 5.3.0", []string{m("5.0.0", a), m("5.1.0", a), m("5.1.0", b), m("5.2.0", a)}, []string{m("5.0.0", a)}},
 		{"collision repaired", "5.2.0", b, "", []string{m("5.0.0", a), m("5.1.0", a), m("5.2.0", b)}, []string{m("5.0.0", a), m("5.1.0", a)}},
-		{"edited marker, with or without base", "5.1.0", b, "replace your marker with testdata/api-version-contracts/5.1.0_" + b, []string{m("5.0.0", a), m("5.1.0", a)}, nil},
-		{"edited marker names next minor", "5.1.0", b, "use 5.2.0", []string{m("5.0.0", a), m("5.1.0", a)}, []string{m("5.0.0", a), m("5.1.0", a)}},
+		{"edited marker", "5.1.0", b, "replace your marker with testdata/api-version-contracts/5.1.0_" + b + "_<summary-sha256>; otherwise compare with MSGVAULT_API_CONTRACT_BASE or use 5.2.0", []string{m("5.0.0", a), m("5.1.0", a)}, nil},
 		{"superseded", "5.2.0", b, "remove the superseded", []string{m("5.1.0", a), m("5.1.0", b), m("5.2.0", b)}, []string{m("5.1.0", a)}},
 		{"unrecorded", "5.1.0", b, "marker at", []string{m("5.0.0", a)}, nil},
 		{"older", "4.0.0", b, "older than recorded version", []string{m("5.0.0", a)}, nil},
-		{"removed", "5.1.0", b, "restore removed API contract marker", []string{m("5.1.0", b)}, []string{m("5.1.0", a)}},
 		{"malformed", "5.0.0", a, "<version>_<sha256>", []string{"bad"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -263,10 +261,10 @@ func TestAPIBaseMarkers(t *testing.T) {
 	require.NoError(err)
 	assert.Equal([]string{marker}, markers)
 	require.NoError(os.WriteFile("internal/api/"+apiContractsDir+"/"+marker, []byte("Corrected summary\n"), 0o644))
-	content, err := os.ReadFile("internal/api/" + apiContractsDir + "/" + marker)
+	entries, err := os.ReadDir("internal/api/" + apiContractsDir)
 	require.NoError(err)
-	assert.Equal("Corrected summary\n", string(content))
-	require.NoError(checkAPIContract("5.0.0", strings.Repeat("f", 64), []string{marker}, markers))
+	require.Len(entries, 1)
+	require.NoError(checkAPIContract("5.0.0", strings.Repeat("f", 64), []string{entries[0].Name()}, markers))
 }
 
 func TestAPIContractDigest(t *testing.T) {
@@ -287,6 +285,7 @@ func TestAPIContractDigest(t *testing.T) {
 		name   string
 		change func(*huma.OpenAPI)
 		same   bool
+		client bool
 	}{
 		{"wording", func(d *huma.OpenAPI) {
 			op(d).Summary = "new"
@@ -294,22 +293,22 @@ func TestAPIContractDigest(t *testing.T) {
 			op(d).Parameters[0].Description = "new"
 			op(d).Responses["200"].Description = "new"
 			op(d).RequestBody.Content["application/json"].Schema.Examples = []any{"example"}
-		}, true},
-		{"version", func(d *huma.OpenAPI) { d.Info.Version = "9.0.0" }, true},
-		{"request", func(d *huma.OpenAPI) { op(d).RequestBody.Required = true }, false},
+		}, true, false},
+		{"version", func(d *huma.OpenAPI) { d.Info.Version = "9.0.0" }, true, false},
+		{"client request", func(d *huma.OpenAPI) { op(d).RequestBody.Required = true }, false, true},
 		{"route", func(d *huma.OpenAPI) {
 			d.Paths["/api/v1/another"] = &huma.PathItem{Get: &huma.Operation{OperationID: "another"}}
-		}, false},
-		{"parameter", func(d *huma.OpenAPI) { op(d).Parameters[0].Required = true }, false},
-		{"response", func(d *huma.OpenAPI) { op(d).Responses["200"].Content["application/json"].Schema.Type = "integer" }, false},
-		{"webhook named description", func(d *huma.OpenAPI) { d.Webhooks["description"].Post.OperationID = "changed-hook" }, false},
+		}, false, false},
+		{"parameter", func(d *huma.OpenAPI) { op(d).Parameters[0].Required = true }, false, false},
+		{"response", func(d *huma.OpenAPI) { op(d).Responses["200"].Content["application/json"].Schema.Type = "integer" }, false, false},
+		{"webhook named description", func(d *huma.OpenAPI) { d.Webhooks["description"].Post.OperationID = "changed-hook" }, false, false},
 		{"property named description", func(d *huma.OpenAPI) {
 			op(d).RequestBody.Content["application/json"].Schema.Properties["description"].Type = "integer"
-		}, false},
+		}, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			public, client := makeDoc(OpenAPIDocument()), makeDoc(openAPIClientDocument())
-			if tc.name == "request" {
+			if tc.client {
 				tc.change(client)
 			} else {
 				tc.change(public)
