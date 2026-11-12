@@ -94,7 +94,7 @@ func (s *Store) resolveMeetingMessage(ctx context.Context, id int64) (int64, boo
 		}
 		id = next.Int64
 	}
-	return 0, false, errors.New("meeting survivor chain exceeds limit")
+	return 0, false, errors.New("too many successive merges")
 }
 
 // meetingCopies finds the hidden copies that will return when dedup is undone.
@@ -376,13 +376,19 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 					if compareMeetingEndpoints(x, y) == 0 || compareMeetingEndpoints(x, a) == 0 && compareMeetingEndpoints(y, b) == 0 {
 						continue
 					}
-					if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES (?,?,?,?,?,?,?) ON CONFLICT(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key) DO UPDATE SET decision=excluded.decision`, x.ID, x.Kind, x.Key, y.ID, y.Kind, y.Key, state); err != nil {
+					if err := deleteMeetingDecisionPair(ctx, tx, x, y); err != nil {
+						return err
+					}
+					if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES (?,?,?,?,?,?,?)`, x.ID, x.Kind, x.Key, y.ID, y.Kind, y.Key, state); err != nil {
 						return err
 					}
 				}
 			}
+			if err := deleteMeetingDecisionPair(ctx, tx, a, b); err != nil {
+				return err
+			}
 			var insertedID int64
-			err = tx.QueryRowContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES (?,?,?,?,?,?,?) ON CONFLICT(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key) DO UPDATE SET decision=excluded.decision RETURNING id`, a.ID, a.Kind, a.Key, b.ID, b.Kind, b.Key, state).Scan(&insertedID)
+			err = tx.QueryRowContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES (?,?,?,?,?,?,?) RETURNING id`, a.ID, a.Kind, a.Key, b.ID, b.Kind, b.Key, state).Scan(&insertedID)
 			if err != nil {
 				return err
 			}
@@ -439,4 +445,11 @@ func (s *Store) clearStoredMeetingDecision(ctx context.Context, tx *loggedTx, a,
 	}
 	*result = MeetingLinkDecisionResult{Left: a.ref(), Right: b.ref(), State: "automatic"}
 	return nil
+}
+
+// deleteMeetingDecisionPair removes a saved pair so its replacement gets a newer
+// id, which reads and cleanup use as its priority.
+func deleteMeetingDecisionPair(ctx context.Context, tx *loggedTx, a, b meetingDecisionEndpoint) error {
+	_, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE left_message_id=? AND left_kind=? AND left_key=? AND right_message_id=? AND right_kind=? AND right_key=?`, a.ID, a.Kind, a.Key, b.ID, b.Kind, b.Key)
+	return err
 }
