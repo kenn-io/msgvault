@@ -974,7 +974,7 @@ func (s *cacheSourceSnapshot) personDisplayNamesExportSelectSQL() string {
 // not re-derive. Account-identity drift must always take the full-rebuild
 // path.
 func derivedDriftOnly(staleness cacheStaleness) bool {
-	return (staleness.HasIdentityDrift || staleness.HasConversationParticipantDrift ||
+	return (staleness.HasMeetingTimeDrift || staleness.HasIdentityDrift || staleness.HasConversationParticipantDrift ||
 		staleness.HasConversationTypeDrift || staleness.HasUnsentDrift || staleness.HasParticipantIdentifierDrift ||
 		staleness.HasParticipantDisplayNameDrift || staleness.HasPersonDisplayNameDrift) &&
 		!staleness.HasNew && !staleness.HasDeleted &&
@@ -1592,7 +1592,8 @@ func buildCacheLockedAttempt(
 		delete(publicationPlan.Append, identityindex.DatasetActivity)
 		publicationPlan.Replace[identityindex.DatasetActivity] = true
 	}
-	if err := stageMeetingOccurrences(ctx, exportDB, dbPath, staging.root, cacheWatermark); err != nil {
+	nextMeetingAt, err := stageMeetingOccurrences(ctx, exportDB, dbPath, staging.root, analyticsDir, cacheWatermark)
+	if err != nil {
 		return nil, err
 	}
 	derived, err := identityindex.Build(ctx, exportDB, identityindex.BuildOptions{
@@ -1678,6 +1679,7 @@ func buildCacheLockedAttempt(
 	// Save sync state using the pre-export watermark so any deletion
 	// that occurs during or after the build is detected as stale.
 	state := syncState{
+		NextMeetingAt:                       nextMeetingAt,
 		LastMessageID:                       maxID,
 		LastSyncAt:                          cacheWatermark,
 		SchemaVersion:                       cacheSchemaVersion,
@@ -2797,7 +2799,7 @@ func scheduledCacheBuildDelay(
 	interval time.Duration,
 	now time.Time,
 ) (time.Duration, bool) {
-	if interval <= 0 || !staleness.HasUsablePublication || staleness.PublishedAt.IsZero() {
+	if staleness.HasMeetingTimeDrift || interval <= 0 || !staleness.HasUsablePublication || staleness.PublishedAt.IsZero() {
 		return 0, false
 	}
 	if staleness.PublishedAt.After(now.Add(interval)) {

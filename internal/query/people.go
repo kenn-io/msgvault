@@ -381,11 +381,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		meetingDates += " AND a.occurred_at < CAST(? AS TIMESTAMP)"
 		args = append(args, request.Explore.Context.Before.UTC())
 	}
-	var effectiveAt time.Time
-	if err := e.db.QueryRowContext(ctx, `SELECT coalesce(max(temperature_effective_at), TIMESTAMP '1970-01-01') FROM read_parquet('`+quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))+`')`).Scan(&effectiveAt); err != nil {
-		return nil, fmt.Errorf("read relationship cutoff: %w", err)
-	}
-	activity := e.meetingCountingActivitySQL(effectiveAt)
+	activity := "relationship_counting_activity"
 	meetingPerson := "a.canonical_id"
 	meetingMembership := ""
 	if exactID != nil {
@@ -399,10 +395,10 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	entriesCTE += `
 ), selected_meeting_messages AS (
 	SELECT message_id FROM analytical_entries WHERE ` + meetingConditions + `
-), meeting_counts AS (
+), ` + meetingCountActivityCTE(meetingDates) + `, meeting_counts AS (
 	SELECT ` + meetingPerson + ` AS person_id, count(DISTINCT a.entry_key)::BIGINT AS meeting_count
-	FROM ` + activity + ` a JOIN selected_meeting_messages s USING (message_id)
-	WHERE a.entry_kind IN ('event', 'meeting') AND a.canonical_id IS NOT NULL AND a.is_direct` + meetingMembership + meetingDates + `
+	FROM meeting_activity a
+	WHERE true` + meetingMembership + `
 	  AND EXISTS (SELECT 1 FROM ` + activity + ` owner_edge WHERE owner_edge.entry_key=a.entry_key AND owner_edge.is_owner)
 	GROUP BY person_id`
 	// bestNameExpr is the shared cluster label policy (see person_label.go).

@@ -16,7 +16,7 @@ func TestMeetingOccurrencesMatchRecords(t *testing.T) {
 	_, first := projectionFixture(t, st, "first", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	_, cancelled := calendarFixture(t, st, "cancelled", `{"id":"cancelled","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-21T10:00:00Z"},"status":"cancelled"}`)
 	_, second := projectionFixture(t, st, "second", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-21T10:00:00Z"}}`)
-	rows, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC))
+	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
 	for _, tc := range []struct {
 		note, exception int64
@@ -47,7 +47,7 @@ func TestMeetingOccurrenceCountsTwoDatesLinkedToOneNote(t *testing.T) {
 		_, err = st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, ref, "link")
 		require.NoError(t, err)
 	}
-	rows, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 3, 22, 0, 0, 0, 0, time.UTC))
+	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 3, 22, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
 	var eventKeys, noteKeys []string
 	for _, row := range rows {
@@ -75,7 +75,7 @@ func TestMeetingOccurrenceCountsTwoDatesLinkedToOneNote(t *testing.T) {
 		assert.ElementsMatch(t, eventKeys, refs)
 	}
 	_, _ = calendarFixture(t, st, "cancelled", `{"id":"cancelled","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-21T10:00:00Z"},"status":"cancelled"}`)
-	rows, err = st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 3, 22, 0, 0, 0, 0, time.UTC))
+	rows, _, err = st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 3, 22, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
 	eventKeys, noteKeys = nil, nil
 	for _, row := range rows {
@@ -94,7 +94,7 @@ func TestMeetingOccurrenceCountsCancelledSeriesAndAvailableNote(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	_, event := calendarFixture(t, st, "cancelled-series", `{"id":"series","status":"cancelled","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
 	_, note := projectionFixture(t, st, "available-note", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series_20270314T100000Z"},"transcript":[{"text":"Notes"}]}`)
-	rows, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC))
+	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
 	counts := map[int64]bool{}
 	for _, row := range rows {
@@ -110,7 +110,7 @@ func TestMeetingOccurrenceCountsYearBoundaryAndUnexpandable(t *testing.T) {
 	_, series := calendarFixture(t, st, "boundary", `{"id":"boundary","start":{"dateTime":"2026-12-31T23:30:00Z"},"end":{"dateTime":"2027-01-01T00:30:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=2"]}`)
 	_, unsupported := calendarFixture(t, st, "unsupported", `{"id":"unsupported","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`)
 	_, future := calendarFixture(t, st, "future", `{"id":"future","start":{"dateTime":"2028-01-01T10:00:00Z"},"end":{"dateTime":"2028-01-01T11:00:00Z"}}`)
-	rows, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC))
+	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
 	var dates []time.Time
 	for _, row := range rows {
@@ -125,21 +125,21 @@ func TestMeetingOccurrenceCountsYearBoundaryAndUnexpandable(t *testing.T) {
 	}
 	assert.Equal(t, []time.Time{time.Date(2026, 12, 31, 23, 30, 0, 0, time.UTC), time.Date(2027, 1, 1, 23, 30, 0, 0, time.UTC)}, dates)
 	assert.Contains(t, rows, MeetingOccurrence{MessageID: future, OccurrenceKey: fmt.Sprintf("evt:%d", future)})
-	rows, err = st.MeetingOccurrencesContext(t.Context(), time.Date(2028, 1, 2, 0, 0, 0, 0, time.UTC))
+	rows, _, err = st.MeetingOccurrencesContext(t.Context(), time.Date(2028, 1, 2, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
 	assert.Contains(t, rows, MeetingOccurrence{MessageID: future, OccurrenceKey: fmt.Sprintf("evt:%d", future), OccurredAt: time.Date(2028, 1, 1, 10, 0, 0, 0, time.UTC), Counted: true})
 }
 
 func TestMeetingOccurrenceCountsOwnerDeclineAndNoteAvailability(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
-	data, event := calendarFixture(t, st, "declined", `{"id":"declined","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"attendees":[{"email":"calendar@example.com","responseStatus":"declined"}]}`)
+	data, event := calendarFixture(t, st, "declined", `{"id":"declined","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"attendees":[{"email":"calendar@example.com","responseStatus":"declined"}]}`, "delegate@example.com")
 	require.NoError(t, st.AddAccountIdentity(data.Message.SourceID, "calendar@example.com", "manual"))
 	_, note := projectionFixture(t, st, "note", "meeting_json", `{}`)
 	_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
 	require.NoError(t, err)
 	read := func() map[int64]bool {
 		t.Helper()
-		rows, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC))
+		rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 		require.NoError(t, err)
 		counts := map[int64]bool{}
 		for _, row := range rows {
@@ -164,7 +164,7 @@ func TestMeetingOccurrencesMatchRecordsAmbiguousUID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, record.Links)
 	assert.Equal(t, []int64{first, second}, record.MessageIDs)
-	rows, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC))
+	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
 	var noteKeys, eventKeys []string
 	for _, row := range rows {
@@ -188,7 +188,7 @@ func TestMeetingOccurrenceCountsAllDayCivilDate(t *testing.T) {
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event})
 	require.NoError(t, err)
 	require.Len(t, record.Links, 1)
-	rows, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC))
+	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, record.Links[0].Ref, rows[0].OccurrenceKey)
@@ -205,7 +205,7 @@ func TestMeetingOccurrenceCountsSavedCalendarLinkAndSplit(t *testing.T) {
 	require.NoError(t, err)
 	readKeys := func() []string {
 		t.Helper()
-		rows, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC))
+		rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 		require.NoError(t, err)
 		var keys []string
 		for _, row := range rows {
@@ -250,7 +250,7 @@ func TestMeetingOccurrencesMatchRecordsSavedSplit(t *testing.T) {
 	require.Len(t, record.Links, 2)
 	_, err = st.DecideMeetingLinkContext(t.Context(), left, right, "unlink")
 	require.NoError(t, err)
-	rows, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC))
+	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
 	for _, ref := range []MeetingLinkRef{left, right} {

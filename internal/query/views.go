@@ -470,6 +470,10 @@ func createRelationshipActivityView(ctx context.Context, db *sql.DB, analyticsDi
 		if _, err := db.ExecContext(ctx, "CREATE OR REPLACE VIEW relationship_activity_expanded AS SELECT * FROM "+relation); err != nil {
 			return fmt.Errorf("create relationship activity view: %w", err)
 		}
+		counting := identityindex.MeetingOccurrenceActivityAtSQL("relationship_activity_expanded", parquet(identityindex.DatasetMeetingOccurrences, false), parquet(datasetParticipants, false), parquet(datasetParticipantIdentifiers, false), parquet(datasetParticipantClusters, false), "(SELECT max(temperature_effective_at) FROM "+parquet(identityindex.DatasetPeople, false)+")")
+		if _, err := db.ExecContext(ctx, "CREATE OR REPLACE VIEW relationship_counting_activity AS SELECT * FROM "+counting); err != nil {
+			return fmt.Errorf("create relationship counting activity view: %w", err)
+		}
 	}
 	return nil
 }

@@ -234,6 +234,10 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 	endLocal := startLocal.AddDate(1, 0, 0)
 	startUTC := startLocal.UTC()
 	endUTC := endLocal.UTC()
+	var years []string
+	for year := startUTC.Year(); year <= endUTC.Add(-time.Nanosecond).Year(); year++ {
+		years = append(years, strconv.Itoa(year))
+	}
 	owners, err := e.relationshipOwnerCanonicalIDs(ctx)
 	if err != nil {
 		return nil, err
@@ -243,18 +247,12 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 		canonicalIDs = append(canonicalIDs, strconv.FormatInt(owner, 10))
 	}
 	cutoff := effectiveAt.UTC()
-	parquet := func(dataset string) string {
-		return "read_parquet('" + quoteIdentitySQLPath(e.parquetPath(dataset)) + "')"
-	}
-	participants := strings.Join(canonicalIDs, ",")
-	countingActivity := identityindex.MeetingOccurrenceActivitySQL(
-		"(SELECT * FROM relationship_activity_expanded WHERE canonical_id IN ("+participants+"))",
-		parquet(identityindex.DatasetMeetingOccurrences), parquet(datasetParticipantClusters), cutoff,
-	)
+	countingActivity := "relationship_counting_activity"
 	activity := fmt.Sprintf(`(
 		SELECT * FROM %[1]s
 		WHERE occurred_at >= TIMESTAMP '%[2]s'
 		  AND occurred_at < TIMESTAMP '%[3]s'
+		  AND (occurred_year IN (%[6]s) OR entry_kind IN ('event', 'meeting'))
 		  AND canonical_id IN (%[4]s)
 		  AND entry_key IN (
 		    SELECT entry_key FROM %[1]s
@@ -266,6 +264,7 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 		endUTC.Format("2006-01-02 15:04:05.999999999"),
 		strings.Join(canonicalIDs, ","),
 		request.CanonicalID,
+		strings.Join(years, ","),
 	)
 	facts := identityindex.RelationshipTemperatureFactsSQL(activity, cutoff)
 	rows, err := e.db.QueryContext(ctx, `

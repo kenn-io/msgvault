@@ -768,6 +768,19 @@ func TestValidateRejectsDuplicateActivityGrain(t *testing.T) {
 	require.ErrorContains(t, err, "duplicate message/canonical/domain keys")
 }
 
+func TestValidateRejectsSourceMeetingCountAboveTotal(t *testing.T) {
+	root, db := writeRelationshipBaseFixture(t, false)
+	_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
+	require.NoError(t, err)
+	oldRoot := moveRelationshipDatasetAside(t, root, DatasetPeople)
+	source := quoteSQLString(relationshipParquetGlob(oldRoot, DatasetPeople))
+	writeRelationshipParquet(t, db, root, DatasetPeople, `
+		SELECT * REPLACE (list_transform(source_rollups, lambda x: struct_update(x, meeting_count := meeting_count + 1)) AS source_rollups)
+		FROM read_parquet('`+source+`')`)
+	err = Validate(t.Context(), db, ValidationOptions{OutputRoot: root, RequiredOutputDatasets: RequiredDatasets})
+	require.ErrorContains(t, err, "source rollups do not decompose identity totals")
+}
+
 func TestValidateRejectsInvalidRelationshipTemperatureSummary(t *testing.T) {
 	root, db := writeRelationshipBaseFixture(t, false)
 	_, err := Build(t.Context(), db, BuildOptions{
@@ -838,7 +851,7 @@ func writeRelationshipBaseFixture(tb testing.TB, empty bool) (string, *sql.DB) {
 	)
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, db.Close()) })
-	writeRelationshipParquet(tb, db, root, DatasetMeetingOccurrences, `SELECT NULL::BIGINT AS message_id, NULL::VARCHAR AS occurrence_key, NULL::TIMESTAMP AS occurred_at, NULL::BOOLEAN AS counted, []::BIGINT[] AS declined_participant_ids WHERE false`)
+	writeRelationshipParquet(tb, db, root, DatasetMeetingOccurrences, `SELECT NULL::BIGINT AS message_id, NULL::VARCHAR AS occurrence_key, NULL::TIMESTAMP AS occurred_at, NULL::BOOLEAN AS counted, []::VARCHAR[] AS declined_emails, 0::DECIMAL(38,0) AS occurrence_id WHERE false`)
 
 	where := ""
 	if empty {
@@ -1083,10 +1096,10 @@ func TestMeetingOccurrenceCountsInRelationshipIndex(t *testing.T) {
 	replaceRelationshipParquet(t, db, root, "messages", `SELECT * FROM meeting_messages`)
 	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type, '' AS display_name UNION ALL SELECT 100, 2, 'to', '' UNION ALL SELECT 101, 1, 'from', '' UNION ALL SELECT 101, 2, 'to', ''`)
 	replaceRelationshipParquet(t, db, root, DatasetMeetingOccurrences, `SELECT * FROM (VALUES
-		(100::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', true, []::BIGINT[]),
-		(101::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', true, []::BIGINT[]),
-		(100::BIGINT, 'second'::VARCHAR, TIMESTAMP '2026-07-27', true, []::BIGINT[])
-	) AS t(message_id, occurrence_key, occurred_at, counted, declined_participant_ids)`)
+		(100::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0)),
+		(101::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0)),
+		(100::BIGINT, 'second'::VARCHAR, TIMESTAMP '2026-07-27', true, []::VARCHAR[], -9223372036854775810::DECIMAL(38,0))
+	) AS t(message_id, occurrence_key, occurred_at, counted, declined_emails, occurrence_id)`)
 	_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root, EffectiveAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)})
 	require.NoError(t, err)
 	var meetings, dailyMeetings int64

@@ -32,11 +32,13 @@ func (b builder) materializeContributions(ctx context.Context, activity string, 
 	}
 	occurrences := "read_parquet('" + quoteSQLString(b.base(DatasetMeetingOccurrences)) + "')"
 	clusters := "read_parquet('" + quoteSQLString(b.base("participant_clusters")) + "')"
-	activity = MeetingOccurrenceActivitySQL(activity, occurrences, clusters, effectiveAt)
+	participants := "read_parquet('" + quoteSQLString(b.base("participants")) + "')"
+	identifiers := "read_parquet('" + quoteSQLString(b.base("participant_identifiers")) + "')"
+	activity = MeetingOccurrenceActivitySQL(activity, occurrences, participants, identifiers, clusters, effectiveAt)
 	temperatureSQL := buildRelationshipTemperatureDailySQL(activity, effectiveAt)
 	logicalSQL := buildLogicalActivityMaterializationSQL(activity)
 	if reuseContributions {
-		delta := MeetingOccurrenceActivitySQL("(SELECT * FROM "+deltaActivityBuildRelation+")", occurrences, clusters, effectiveAt)
+		delta := MeetingOccurrenceActivitySQL("(SELECT * FROM "+deltaActivityBuildRelation+")", occurrences, participants, identifiers, clusters, effectiveAt)
 		if reuseTemperature {
 			temperatureSQL = mergeTemperatureContributionsSQL(
 				b.committed(DatasetTemperatureContributions),

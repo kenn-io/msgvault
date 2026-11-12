@@ -240,7 +240,8 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 
-	if !repairRelated && identityRevision == state.IdentityRevision &&
+	meetingTimeDrift := !state.NextMeetingAt.IsZero() && !derivedRefreshNow().Before(state.NextMeetingAt)
+	if !repairRelated && !meetingTimeDrift && identityRevision == state.IdentityRevision &&
 		participantIdentifierRevision == state.ParticipantIdentifierRevision &&
 		participantDisplayNameRevision == state.ParticipantDisplayNameRevision &&
 		personDisplayNameRevision == state.PersonDisplayNameRevision &&
@@ -253,7 +254,7 @@ func refreshDerivedDatasetsOnly(
 		// it active pagination cursors — for no analytical difference.
 		return &buildResult{OutputDir: analyticsDir, IdentityOnly: true, Skipped: true}, nil
 	}
-	if repairRelated && !relatedKinds.recipients && !relatedKinds.meetings &&
+	if repairRelated && !meetingTimeDrift && !relatedKinds.recipients && !relatedKinds.meetings &&
 		identityRevision == state.IdentityRevision &&
 		participantIdentifierRevision == state.ParticipantIdentifierRevision &&
 		participantDisplayNameRevision == state.ParticipantDisplayNameRevision &&
@@ -356,7 +357,8 @@ func refreshDerivedDatasetsOnly(
 	}
 
 	effectiveAt := derivedRefreshNow().UTC().Truncate(time.Second)
-	if err := stageMeetingOccurrences(ctx, exportDB, dbPath, staging.root, effectiveAt); err != nil {
+	nextMeetingAt, err := stageMeetingOccurrences(ctx, exportDB, dbPath, staging.root, analyticsDir, effectiveAt)
+	if err != nil {
 		return nil, err
 	}
 	derived, err := identityindex.Build(ctx, exportDB, identityindex.BuildOptions{
@@ -380,6 +382,7 @@ func refreshDerivedDatasetsOnly(
 	}
 
 	state.IdentityRevision = identityRevision
+	state.NextMeetingAt = nextMeetingAt
 	if repairRelated {
 		state.DerivedDataRevision = derivedDataRevision
 	}

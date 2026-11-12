@@ -95,8 +95,22 @@ func TestMeetingCountsCalendarHistoryAndAvailableTranscripts(t *testing.T) {
 		}
 	}
 	assert.Equal(t, []string{"2024-01-02:1", "2024-01-09:1", "2024-01-16:1", "2024-01-23:1"}, days)
+	timeline, err := engine.RelationshipTimeline(t.Context(), query.RelationshipTimelineRequest{CanonicalID: person, Timezone: "UTC"})
+	require.NoError(t, err)
+	var timelineDates []string
+	for _, row := range timeline.Rows {
+		timelineDates = append(timelineDates, row.OccurredAt.UTC().Format(time.DateOnly))
+	}
+	assert.Equal(t, []string{"2024-01-23", "2024-01-16", "2024-01-09", "2024-01-02"}, timelineDates)
 	after, before := time.Date(2024, 1, 8, 0, 0, 0, 0, time.UTC), time.Date(2024, 1, 20, 0, 0, 0, 0, time.UTC)
 	filtered := query.Context{After: &after, Before: &before}
+	timeline, err = engine.RelationshipTimeline(t.Context(), query.RelationshipTimelineRequest{CanonicalID: person, Timezone: "UTC", Context: filtered})
+	require.NoError(t, err)
+	timelineDates = nil
+	for _, row := range timeline.Rows {
+		timelineDates = append(timelineDates, row.OccurredAt.UTC().Format(time.DateOnly))
+	}
+	assert.Equal(t, []string{"2024-01-16", "2024-01-09"}, timelineDates)
 	detail, err = engine.GetPerson(t.Context(), person, filtered, nil)
 	require.NoError(t, err)
 	require.NotNil(t, detail)
@@ -135,6 +149,10 @@ func TestMeetingCountsRefresh(t *testing.T) {
 	require.NoError(t, err)
 	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
 	require.NoError(t, err)
+	alias, err := st.EnsureParticipant("person-alias@example.com", "Person", "example.com")
+	require.NoError(t, err)
+	_, err = st.LinkParticipants(person, alias)
+	require.NoError(t, err)
 	start := time.Date(2024, 1, 2, 10, 0, 0, 0, time.UTC)
 	makeMessage := func(key, typ, format, raw string) int64 {
 		t.Helper()
@@ -149,7 +167,7 @@ func TestMeetingCountsRefresh(t *testing.T) {
 		require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
 		return id
 	}
-	event := makeMessage("event", "calendar_event", "gcal_json", `{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"attendees":[{"email":"person@example.com","responseStatus":"accepted"}]}`)
+	event := makeMessage("event", "calendar_event", "gcal_json", `{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"attendees":[{"email":"person-alias@example.com","responseStatus":"accepted"}]}`)
 	note := makeMessage("note", "meeting_transcript", "meeting_json", `{"transcript":"Notes"}`)
 	eventRef, noteRef := store.MeetingLinkRef{Kind: "evt", OccurrenceRef: store.OccurrenceRef{MessageID: event}}, store.MeetingLinkRef{Kind: "msg", OccurrenceRef: store.OccurrenceRef{MessageID: note}}
 	_, err = st.DecideMeetingLinkContext(t.Context(), eventRef, noteRef, "link")
@@ -178,8 +196,19 @@ func TestMeetingCountsRefresh(t *testing.T) {
 	require.NoError(t, err)
 	_, err = st.DB().ExecContext(t.Context(), `UPDATE meeting_details SET transcript_state='pending' WHERE message_id=?`, note)
 	require.NoError(t, err)
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE calendar_event_attendees SET rsvp='declined' WHERE message_id=? AND email='person@example.com'`, event)
+	result, err = buildCache(t.Context(), dbPath, analytics, false)
 	require.NoError(t, err)
+	assert.True(t, result.IdentityOnly)
+	assert.EqualValues(t, 1, count())
+	tx, err := st.DB().BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(t.Context(), `UPDATE calendar_events SET content_hash='updated-evidence' WHERE message_id=?`, event)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(t.Context(), `DELETE FROM calendar_event_attendees WHERE message_id=?`, event)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(t.Context(), `INSERT INTO calendar_event_attendees (message_id, ordinal, email, role, rsvp) VALUES (?, 0, 'person-alias@example.com', 'required', 'declined')`, event)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
 	result, err = buildCache(t.Context(), dbPath, analytics, false)
 	require.NoError(t, err)
 	assert.True(t, result.IdentityOnly)
@@ -190,7 +219,7 @@ func TestMeetingCountsRefresh(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.IdentityOnly)
 	assert.EqualValues(t, 1, count())
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE calendar_event_attendees SET rsvp='accepted' WHERE message_id=? AND email='person@example.com'`, event)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE meeting_details SET transcript_state='pending' WHERE message_id=?`, note)
 	require.NoError(t, err)
 	derivedRefreshBeforeSnapshotHook = func() {
 		_, hookErr := st.DB().ExecContext(t.Context(), `UPDATE calendar_events SET status='cancelled' WHERE message_id=?`, event)
@@ -217,8 +246,8 @@ func TestMeetingCountsExcludeFutureEventWithPastMessageDate(t *testing.T) {
 	require.NoError(t, err)
 	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
 	require.NoError(t, err)
-	start := time.Now().UTC().Add(24 * time.Hour)
-	raw := fmt.Sprintf(`{"id":"future","start":{"dateTime":%q},"end":{"dateTime":%q}}`, start.Format(time.RFC3339), start.Add(time.Hour).Format(time.RFC3339))
+	start := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second)
+	raw := fmt.Sprintf(`{"id":"future","start":{"dateTime":%q},"end":{"dateTime":%q},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, start.Format(time.RFC3339), start.Add(time.Hour).Format(time.RFC3339))
 	id, err := st.PersistMessage(&store.MessagePersistData{
 		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "future", MessageType: "calendar_event", SentAt: sql.NullTime{Time: start.Add(-48 * time.Hour), Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}},
 		Conversation: &store.ConversationPersistData{SourceConversationID: "future", ConversationType: "meeting"},
@@ -240,11 +269,17 @@ func TestMeetingCountsExcludeFutureEventWithPastMessageDate(t *testing.T) {
 		return detail.MeetingCount
 	}
 	assert.Zero(t, count())
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE calendar_events SET status=status WHERE message_id=?`, id)
-	require.NoError(t, err)
+	assert.False(t, cacheNeedsBuild(dbPath, analytics).NeedsBuild)
 	oldNow := derivedRefreshNow
+	deadline := start
+	if nextYear := time.Date(time.Now().UTC().Year()+1, 1, 1, 0, 0, 0, 0, time.UTC); nextYear.Before(deadline) {
+		deadline = nextYear
+	}
+	derivedRefreshNow = func() time.Time { return deadline.Add(-time.Second) }
+	assert.False(t, cacheNeedsBuild(dbPath, analytics).NeedsBuild)
 	derivedRefreshNow = func() time.Time { return start.Add(time.Hour) }
 	t.Cleanup(func() { derivedRefreshNow = oldNow })
+	assert.True(t, cacheNeedsBuild(dbPath, analytics).NeedsBuild)
 	result, err := buildCache(t.Context(), dbPath, analytics, false)
 	require.NoError(t, err)
 	assert.True(t, result.IdentityOnly)

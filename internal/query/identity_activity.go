@@ -5,17 +5,17 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"strings"
-	"time"
 
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 )
 
-func (e *DuckDBEngine) meetingCountingActivitySQL(cutoff time.Time) string {
-	parquet := func(dataset string) string {
-		return "read_parquet('" + quoteIdentitySQLPath(e.parquetPath(dataset)) + "')"
-	}
-	return identityindex.MeetingOccurrenceActivitySQL("relationship_activity_expanded", parquet(identityindex.DatasetMeetingOccurrences), parquet(datasetParticipantClusters), cutoff)
+func meetingCountActivityCTE(dates string) string {
+	return `meeting_activity AS (
+	SELECT a.* FROM relationship_counting_activity a
+	JOIN selected_meeting_messages s USING (message_id)
+	WHERE a.entry_kind IN ('event', 'meeting') AND a.canonical_id IS NOT NULL AND a.is_direct` + dates + `
+)`
 }
 
 func identityRequestIsUnfiltered(request ExploreRequest) bool {
@@ -90,11 +90,9 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	identityCandidateSQL string,
 ) (string, []any, error) {
 	var err error
-	if request.Context.After == nil && request.Context.Before == nil {
-		request, err = e.narrowIdentityFactCandidates(ctx, request)
-		if err != nil {
-			return "", nil, err
-		}
+	request, err = e.narrowIdentityFactCandidates(ctx, request)
+	if err != nil {
+		return "", nil, err
 	}
 	conditions, args := buildExploreConditions(request)
 	conditions, err = e.sentIdentityConditions(conditions)
@@ -118,24 +116,20 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 		meetingDates += " AND a.occurred_at < CAST(? AS TIMESTAMP)"
 		args = append(args, request.Context.Before.UTC())
 	}
-	var effectiveAt time.Time
-	if err := e.db.QueryRowContext(ctx, `SELECT coalesce(max(temperature_effective_at), TIMESTAMP '1970-01-01') FROM read_parquet('`+quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))+`')`).Scan(&effectiveAt); err != nil {
-		return "", nil, fmt.Errorf("read relationship cutoff: %w", err)
-	}
+	// Numeric entry IDs keep the per-person deduplication hash compact. Message
+	// IDs are positive, chat IDs are negated, and meeting IDs lie below int64.
 	sql := buildExploreLogicalSQLNoLists(conditions) + `
 ), selected_meeting_messages AS (
 	SELECT message_id FROM analytical_entries WHERE ` + meetingConditions + `
-), meeting_person AS (
-	SELECT a.entry_key, a.canonical_id, a.source_type,
+), ` + meetingCountActivityCTE(meetingDates) + `, meeting_person AS (
+	SELECT a.entry_num, a.canonical_id, a.source_type,
 	       bool_or(a.is_author) AS is_author, bool_or(a.is_owner) AS is_owner,
 	       min(a.occurred_at) AS occurred_at, bool_or(a.is_from_me) AS is_from_me,
 	       arg_min(a.message_type, a.message_id) AS message_type,
 	       arg_min(a.entry_kind, a.message_id) AS entry_kind,
 	       max(a.attachment_count) AS attachment_count
-	FROM ` + e.meetingCountingActivitySQL(effectiveAt) + ` a
-	JOIN selected_meeting_messages s USING (message_id)
-	WHERE a.entry_kind IN ('event', 'meeting') AND a.canonical_id IS NOT NULL AND a.is_direct` + meetingDates + `
-	GROUP BY a.entry_key, a.canonical_id, a.source_type
+	FROM meeting_activity a
+	GROUP BY a.entry_num, a.canonical_id, a.source_type
 ), message_person AS (
 	SELECT a.message_id, a.canonical_id,
 	       bool_or(a.is_author) AS is_author,
@@ -163,7 +157,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	  AND (a.is_direct OR a.is_conversation_member)
 	GROUP BY f.conversation_id, a.canonical_id
 ), person_flags AS (
-	SELECT le.entry_key AS entry_num, mp.canonical_id,
+	SELECT le.anchor_message_id::DECIMAL(38,0) AS entry_num, mp.canonical_id,
 	       mp.is_author, mp.is_owner,
 	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
 	       le.attachment_count, le.source_type
@@ -171,7 +165,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	JOIN message_person mp ON mp.message_id = le.anchor_message_id
 	WHERE le.entry_kind NOT IN ('conversation', 'event', 'meeting')
 	UNION ALL
-	SELECT le.entry_key AS entry_num, cp.canonical_id,
+	SELECT -le.conversation_id::DECIMAL(38,0) AS entry_num, cp.canonical_id,
 	       cp.is_author, cp.is_owner,
 	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
 	       le.attachment_count, le.source_type
@@ -179,14 +173,14 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	JOIN chat_person cp ON cp.conversation_id = le.conversation_id
 	WHERE le.entry_kind = 'conversation'
 	UNION ALL
-	SELECT entry_key AS entry_num, canonical_id, is_author, is_owner,
+	SELECT entry_num, canonical_id, is_author, is_owner,
 	       occurred_at, is_from_me, message_type, entry_kind,
 	       attachment_count, source_type
 	FROM meeting_person
 ), owner_presence AS (
 	SELECT entry_num, bool_or(is_owner) OR EXISTS (
-		SELECT 1 FROM ` + e.meetingCountingActivitySQL(effectiveAt) + ` owner_edge
-		WHERE owner_edge.entry_key = person_flags.entry_num AND owner_edge.is_owner
+		SELECT 1 FROM relationship_counting_activity owner_edge
+		WHERE owner_edge.entry_num = person_flags.entry_num AND owner_edge.is_owner
 	) AS with_owner
 	FROM person_flags
 	GROUP BY entry_num
@@ -431,11 +425,11 @@ func buildIdentityFactConditions(request ExploreRequest) (string, []any) {
 		conditions = append(conditions, "(CASE WHEN f.is_chat THEN 'conversation' ELSE f.entry_kind END) IN ("+strings.Join(placeholders, ",")+")")
 	}
 	if request.Context.After != nil {
-		conditions = append(conditions, "f.occurred_at >= CAST(? AS TIMESTAMP)")
+		conditions = append(conditions, "(f.entry_kind IN ('event', 'meeting') OR f.occurred_at >= CAST(? AS TIMESTAMP))")
 		args = append(args, duckDBDateParam(*request.Context.After))
 	}
 	if request.Context.Before != nil {
-		conditions = append(conditions, "f.occurred_at < CAST(? AS TIMESTAMP)")
+		conditions = append(conditions, "(f.entry_kind IN ('event', 'meeting') OR f.occurred_at < CAST(? AS TIMESTAMP))")
 		args = append(args, duckDBDateParam(*request.Context.Before))
 	}
 	switch request.Context.Deletion {

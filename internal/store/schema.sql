@@ -4436,11 +4436,6 @@ CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_decisions_delete
 AFTER DELETE ON meeting_link_decisions FOR EACH ROW BEGIN
     INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_occurrences', 0);
 END;
-CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_attendee_rsvp
-AFTER UPDATE OF rsvp ON calendar_event_attendees FOR EACH ROW
-WHEN OLD.rsvp IS NOT NEW.rsvp BEGIN
-    INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_occurrences', 0);
-END;
 CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_details_update
 AFTER UPDATE OF link_key, transcript_state ON meeting_details FOR EACH ROW
 WHEN OLD.link_key IS NOT NEW.link_key OR OLD.transcript_state IS NOT NEW.transcript_state BEGIN

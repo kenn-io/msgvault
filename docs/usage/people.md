@@ -32,8 +32,9 @@ need separate provider configuration and consent. You can edit saved profiles wi
 People and relationship counts include each attended calendar occurrence once,
 even when it has several linked notes. A calendar event counts without notes;
 an available transcript can count when someone declined the calendar event.
-Cancelled occurrences and pending transcripts alone do not count. Changes
-appear after the next cache refresh.
+Cancelled occurrences and transcripts that aren't available do not count on
+their own. Changes appear after the next cache refresh, and a future meeting
+counts at the first cache check after it starts.
 
 ## Understand the records
 
