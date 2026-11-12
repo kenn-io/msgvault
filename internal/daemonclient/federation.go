@@ -10,12 +10,7 @@ import (
 )
 
 type FederationIdentity = generated.FederationIdentityResponse
-type FederationEnrollmentResult struct {
-	Enrollment  generated.FederationEnrollment `json:"enrollment"`
-	Token       string                         `json:"token"`
-	HubInstance string                         `json:"hub_instance"`
-	HubURL      string                         `json:"hub_url,omitempty"`
-}
+type FederationEnrollmentResult = generated.FederationCreateResponse
 
 func (c *Client) FederationIdentity(ctx context.Context) (*FederationIdentity, error) {
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetFederationIdentityResp, error) {
@@ -39,8 +34,7 @@ func (c *Client) CreateFederationEnrollment(ctx context.Context, spoke, member, 
 	if resp.JSON201 == nil || resp.JSON201.Token == "" {
 		return nil, errors.New("federation enrollment response is empty")
 	}
-	e := resp.JSON201
-	return &FederationEnrollmentResult{Enrollment: e.Enrollment, Token: e.Token, HubInstance: e.HubInstance}, nil
+	return resp.JSON201, nil
 }
 func (c *Client) ListFederationEnrollments(ctx context.Context) ([]generated.FederationEnrollment, error) {
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.ListFederationEnrollmentsResp, error) {

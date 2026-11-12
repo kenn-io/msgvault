@@ -17,21 +17,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
 type failingFederationTouch struct {
 	FederationStore
-	fail       bool
-	failCreate bool
-}
-
-func (f *failingFederationTouch) CreateFederationEnrollmentContext(ctx context.Context, uid, member, name string) (*store.FederationEnrollment, string, error) {
-	if f.failCreate {
-		return nil, "", errors.New("fixture failure")
-	}
-	return f.FederationStore.CreateFederationEnrollmentContext(ctx, uid, member, name)
+	fail bool
 }
 
 func (f *failingFederationTouch) TouchFederationEnrollmentContext(ctx context.Context, uid string) error {
@@ -69,12 +60,16 @@ func TestFederationHandshakeCredential(t *testing.T) {
 	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 	var body federationHandshakeResponse
 	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &body))
-	assertions.Equal(enrollment.EnrollmentUID, body.Enrollment.EnrollmentUID)
 	hubUID, err := st.ArchiveUIDContext(t.Context())
 	requirements.NoError(err)
 	assertions.Equal(hubUID, body.HubInstance)
 	assertions.Equal([]int{1}, body.ProtocolVersions)
-	assertions.Equal("active", body.Enrollment.State)
+	assertions.Equal("active", body.EnrollmentState)
+	entries, err := st.ListFederationEnrollmentsContext(t.Context())
+	requirements.NoError(err)
+	requirements.Len(entries, 1)
+	assertions.Equal(enrollment.EnrollmentUID, entries[0].EnrollmentUID)
+	assertions.NotNil(entries[0].LastSeenAt)
 	federation.fail = true
 	w = request("/api/v1/federation/handshake", uid)
 	assertions.Equal(http.StatusOK, w.Code, w.Body.String())
@@ -131,8 +126,7 @@ func TestFederationOwnerLifecycle(t *testing.T) {
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Server.APIKey = "owner-fixture"
 	cfg.Federation.Role = "hub"
-	federation := &failingFederationTouch{FederationStore: st}
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: federation, Logger: testLogger()})
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, Logger: testLogger()})
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
@@ -170,7 +164,8 @@ func TestFederationOwnerLifecycle(t *testing.T) {
 		assertions.Equal(http.StatusBadRequest, w.Code)
 		assertions.Contains(w.Body.String(), tc.message)
 	}
-	federation.failCreate = true
+	_, err := st.DB().ExecContext(t.Context(), "DROP TABLE federation_enrollments")
+	requirements.NoError(err)
 	w = do(http.MethodPost, "/api/v1/federation/enrollments", `{"spoke_instance":"`+strings.Repeat("a", 64)+`","member":"alice"}`)
 	assertions.Equal(http.StatusInternalServerError, w.Code)
 	assertions.Contains(w.Body.String(), "Could not create enrollment")

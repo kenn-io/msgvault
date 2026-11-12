@@ -35,16 +35,10 @@ type federationListResponse struct {
 type federationIdentityResponse struct {
 	ArchiveUID string `json:"archive_uid"`
 }
-type federationHandshakeEnrollment struct {
-	EnrollmentUID string `json:"enrollment_uid"`
-	Member        string `json:"member"`
-	SpokeName     string `json:"spoke_name"`
-	State         string `json:"state"`
-}
 type federationHandshakeResponse struct {
-	ProtocolVersions []int                         `json:"protocol_versions"`
-	HubInstance      string                        `json:"hub_instance"`
-	Enrollment       federationHandshakeEnrollment `json:"enrollment"`
+	ProtocolVersions []int  `json:"protocol_versions"`
+	HubInstance      string `json:"hub_instance"`
+	EnrollmentState  string `json:"enrollment_state"`
 }
 
 func (s *Server) registerFederationRoutes(api huma.API) {
@@ -114,8 +108,7 @@ func (s *Server) handleFederationHandshake(w http.ResponseWriter, r *http.Reques
 	if err := s.federationStore.TouchFederationEnrollmentContext(r.Context(), auth.Federation.EnrollmentUID); err != nil {
 		s.logger.Warn("federation last-seen update failed", "enrollment_uid", auth.Federation.EnrollmentUID, "error", err)
 	}
-	e := auth.Federation
-	writeJSON(w, http.StatusOK, federationHandshakeResponse{[]int{1}, uid, federationHandshakeEnrollment{e.EnrollmentUID, e.Member, e.SpokeName, "active"}})
+	writeJSON(w, http.StatusOK, federationHandshakeResponse{[]int{1}, uid, "active"})
 }
 func (s *Server) federationManagement(w http.ResponseWriter, r *http.Request) bool {
 	if !s.federationRole(w, r, false) || !s.federationOwner(w, r, false) {
