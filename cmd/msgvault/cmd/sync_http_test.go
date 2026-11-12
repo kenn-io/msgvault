@@ -112,12 +112,12 @@ func TestSyncFullInterruptionHint(t *testing.T) {
 				assert.Contains(t, stderr.String(), "reader@example.test")
 				assert.NotContains(t, stderr.String(), cliSubprocessExitSentinel)
 				if mode == "child-noresume" {
-					assert.Contains(t, stderr.String(), "--noresume flag restarts enumeration; already-imported messages are skipped")
+					assert.Contains(t, stderr.String(), "With --noresume, the sync starts over and skips already-imported messages.")
 					lines := strings.Split(strings.TrimSpace(stderr.String()), "\n")
 					require.Len(t, lines, 3)
 					assert.Contains(t, lines[2], "--noresume")
 				} else {
-					assert.NotContains(t, stderr.String(), "restarts enumeration")
+					assert.NotContains(t, stderr.String(), "With --noresume")
 				}
 				if mode == "child-extra" {
 					assert.Equal(t, 1, strings.Count(stderr.String(), "cache refresh failed"))
