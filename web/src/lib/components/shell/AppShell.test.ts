@@ -3122,7 +3122,7 @@ it.each(['', 'invoice'])('clears Files filters and a pending filename edit from 
   } finally { view.unmount(); state.destroy(); vi.useRealTimers(); }
 });
 
-it('refreshes duplicate cards after merging saved people', async () => {
+it('opens the survivor and refreshes the duplicate pair after merging saved people', async () => {
   let merged = false;
   let refreshes = 0;
   const profile = (id: number) => person(id, id === 7 ? 4 : 2, [id === 7 ? 1 : 2]);
