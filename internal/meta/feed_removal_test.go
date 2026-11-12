@@ -197,3 +197,55 @@ func TestWebhookRunsKeepPausedPollingProgress(t *testing.T) {
 	assert.Equal("newer text", body)
 	message(t, st, src.ID, "403")
 }
+
+// A paused sync can hold a post queued on its saved page that the archive
+// never got. Removing it prunes the queued copy, so a resumed run neither
+// archives it nor reads its comments, even while Meta still lists it.
+func TestWebhookPostRemovalPrunesQueuedPost(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, f, imp, src := setupImport(t)
+	f.pageSize = 3
+	for _, id := range []string{"100_300", "100_400"} {
+		f.posts = append(f.posts, Object{ID: id, Message: "Queued post", From: &Actor{ID: "100", Name: "Example Page"}})
+	}
+	// Page check and post page; the run archives 100_200 and leaves its
+	// comment page and the other two posts for the next run.
+	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 2})
+	require.NoError(err)
+	require.True(sum.Partial)
+	require.Equal([]string{"100_200:"}, savedFrames(t, st, src))
+	ids, err := st.MessageExistsBatchContext(t.Context(), src.ID, []string{"100_300", "100_400"})
+	require.NoError(err)
+	require.Empty(ids, "the queued posts are not archived yet")
+
+	applyRemoval(t, st, imp, "status", "100_300")
+	paths := resumeWithout(t, f, imp, "100_300")
+	assert.Contains(paths, "/v26.0/100_400/comments", "the other queued post is traversed")
+	ids, err = st.MessageExistsBatchContext(t.Context(), src.ID, []string{"100_300", "100_400"})
+	require.NoError(err)
+	assert.NotContains(ids, "100_300", "the removed post is not archived")
+	assert.Contains(ids, "100_400")
+}
+
+// A retried removal finds the replies already marked by the attempt whose
+// prune did not happen. It still prunes them, including a declared descendant
+// whose frame sits in the stack without its parent's frame, so the resume
+// after `msgvault gc` does not read their replies.
+func TestWebhookRetriedRemovalPrunesMarkedDescendants(t *testing.T) {
+	require := require.New(t)
+	st, f, imp, src := setupImport(t)
+	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Parent comment"), *comment("100_202", "100_201", "Declared child")}
+	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 4})
+	require.NoError(err)
+	require.True(sum.Partial)
+	require.Equal([]string{"100_200:", "100_202:"}, savedFrames(t, st, src))
+	// The first attempt committed its marks but did not prune.
+	marked, err := st.MarkMessageThreadDeletedContext(t.Context(), src.ID, "100_201")
+	require.NoError(err)
+	require.ElementsMatch([]string{"100_201", "100_202"}, marked)
+
+	applyRemoval(t, st, imp, "comment", "100_201")
+	assert.Equal(t, []string{"100_200:"}, savedFrames(t, st, src))
+	purgeDeleted(t, st, 2)
+	assertDeclaredThreadGone(t, st, f, imp, src, "100_201", "100_202")
+}
