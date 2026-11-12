@@ -318,4 +318,54 @@ describe('FactLedgerController', () => {
     controller.destroy();
   });
 
+  it.each([
+    { section: 'decisions' as const, param: 'claim_key', value: 'private-claim-key' },
+    { section: 'evidence' as const, param: 'evidence_id', value: '1' },
+  ])('keeps $param across paging and retry until navigation', async ({ section, param, value }) => {
+    const requests: URL[] = [];
+    let fail = false;
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const url = new URL(requestOf(input).url);
+      requests.push(url);
+      if (url.searchParams.has(param) && url.searchParams.get('offset') === '50' && fail) {
+        fail = false;
+        return new Response(null, { status: 503 });
+      }
+      const data = payload(url.pathname);
+      if (url.searchParams.has(param)) {
+        const rows = section === 'decisions' ? data.decisions! : data.evidence!;
+        return Response.json({ [section]: url.searchParams.get('offset') === '0' ? Array.from({ length: 50 }, () => rows[0]) : [rows[0]] });
+      }
+      return Response.json(data);
+    });
+    const controller = new FactLedgerController(createAPIClient(fetchFn));
+    controller.applyContext(true, 42);
+    await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
+    requests.length = 0;
+    const open = () => section === 'decisions'
+      ? controller.showDecision(value, `attribute:work:email:${revision}`)
+      : controller.showEvidence(1, `attribute:work:email:${revision}`);
+    await open();
+    expect(controller.focusRequest?.key).toBe(section === 'decisions' ? `decision:${value}` : `evidence:${value}`);
+    await controller.nextPage(section);
+    expect(controller.focusRequest).toBeNull();
+    await controller.previousPage(section);
+    fail = true;
+    await controller.nextPage(section);
+    const beforeRetry = controller.focusRequest;
+    await controller.retrySection(section);
+    expect(controller.focusRequest).toEqual(beforeRetry);
+    expect(requests.map(url => [url.searchParams.get(param), url.searchParams.get('offset')])).toEqual([
+      [value, '0'], [value, '50'], [value, '0'], [value, '50'], [value, '50'],
+    ]);
+    await controller.showAll();
+    expect(requests.at(-1)!.searchParams.has(param)).toBe(false);
+    await open();
+    await controller.selectTarget('all');
+    expect(requests.at(-1)!.searchParams.has(param)).toBe(false);
+    await open();
+    await controller.selectSection('claims');
+    expect(controller.exactFilter).toBeNull();
+    controller.destroy();
+  });
 });

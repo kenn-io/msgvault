@@ -248,14 +248,12 @@ export class FactLedgerController {
   async nextPage(section: PagedSection): Promise<void> {
     const page = this[section];
     if (page.loading || !this.hasNext(section)) return;
-    this.exactFilter = null;
     this.clearDisclosureAndDialog();
     await this.loadPage(section, page.offset + FACT_LEDGER_PAGE_LIMIT, this.contextGeneration);
   }
   async previousPage(section: PagedSection): Promise<void> {
     const page = this[section];
     if (page.loading || !this.hasPrevious(section)) return;
-    this.exactFilter = null;
     this.clearDisclosureAndDialog();
     await this.loadPage(section, Math.max(0, page.offset - FACT_LEDGER_PAGE_LIMIT), this.contextGeneration);
   }
@@ -532,7 +530,7 @@ export class FactLedgerController {
       page.rows = projected as never[];
       page.offset = targetOffset;
       page.endReached = projected.length < FACT_LEDGER_PAGE_LIMIT;
-      if (this.exactFilter?.section === section) {
+      if (targetOffset === 0 && this.exactFilter?.section === section) {
         this.requestFocus(projected.length ? `${section === 'evidence' ? 'evidence' : 'decision'}:${this.exactFilter.key}` : `${section}-section`);
       }
       if (section === 'evidence') this.revealedEvidence.clear();
