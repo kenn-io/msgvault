@@ -94,7 +94,7 @@ func meetingBound(at time.Time) *time.Time {
 
 func untimedMeetingCopy(row CalendarEventRow) (CalendarOccurrence, CalendarUnexpandable) {
 	reason := calendarMissingBoundsReason(row.Event)
-	if row.Event.Kind == "exception" {
+	if row.Event.Kind == calendarExceptionKind {
 		reason = "exception has no original start"
 	}
 	return CalendarOccurrence{row: row, Ref: formatMeetingOccurrence(OccurrenceRef{MessageID: row.MessageID}), MessageID: row.MessageID, SourceID: row.SourceID, Subject: row.Subject, Status: row.Event.Status, DeletedFromSource: row.DeletedFromSource}, CalendarUnexpandable{MessageID: row.MessageID, Reason: reason}
@@ -132,7 +132,7 @@ func (s *Store) meetingRelatedRows(ctx context.Context, seeds []CalendarEventRow
 	}
 	for _, row := range seeds {
 		id := row.Event.ProviderEventID
-		if row.Event.Kind == "exception" {
+		if row.Event.Kind == calendarExceptionKind {
 			id = row.Event.SeriesProviderID
 		}
 		if id == "" {
@@ -178,9 +178,9 @@ func (s *Store) meetingOccurrencesForKeys(ctx context.Context, keys []meetingLin
 		}
 		for _, row := range rows {
 			if row.Event.Kind != "series" && row.Event.Start == nil && row.Event.End == nil && row.Event.Original == nil {
-				copy, diagnostic := untimedMeetingCopy(row)
-				if key[0] == "google_event_id" && slices.Contains(occurrenceKeys(copy), key) {
-					matches[key] = append(matches[key], copy)
+				occurrence, diagnostic := untimedMeetingCopy(row)
+				if key[0] == "google_event_id" && slices.Contains(occurrenceKeys(occurrence), key) {
+					matches[key] = append(matches[key], occurrence)
 					*unexpandable = append(*unexpandable, diagnostic)
 				}
 				continue
