@@ -361,7 +361,6 @@ msgvault import-messenger --source instagram --account orbit.example --self-name
 
 Only `your_instagram_activity/messages/inbox/<thread>/message_<N>.json` is
 supported. HTML, ZIP files and other message sections/layouts are unsupported.
-Multipart ZIP containers are not assembled by this importer.
 The summary reports sent records, skipped records/files, and missing or rejected media.
 The command can exit successfully with incomplete coverage; scripts should check
 the summary for `Incomplete coverage`.

@@ -4037,7 +4037,8 @@ func (s *Store) indexStoredMessage(q querier, messageID int64) error {
 
 // RetitleArchivedConversationContext stores a conversation's title together
 // with the subject and search entry of each of its messages with the given raw
-// format, in one transaction. Cancellation leaves the old title and subjects.
+// format, and advances the derived-data revision, in one transaction.
+// Cancellation leaves the old title and subjects.
 func (s *Store) RetitleArchivedConversationContext(ctx context.Context, sourceID int64, sourceConversationID, conversationType, title, rawFormat string) error {
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
@@ -4062,7 +4063,7 @@ func (s *Store) RetitleArchivedConversationContext(ctx context.Context, sourceID
 				return err
 			}
 		}
-		return nil
+		return s.bumpDerivedDataRevisionContext(ctx, tx)
 	})
 }
 

@@ -1039,6 +1039,32 @@ func TestInstagramConversationUsesFirstShardHeader(t *testing.T) {
 	})
 }
 
+func TestInstagramEmptyRenameAdvancesDerivedRevision(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, root := testutil.NewTestStore(t), t.TempDir()
+	filename := instagramTestShard(t, root, "circle", "message_1.json", instagramTestRecord("retained"))
+	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	before, err := st.DerivedDataRevisionContext(t.Context())
+	require.NoError(err)
+	require.NoError(os.WriteFile(filename, []byte(`{"thread_path":"inbox/circle","title":"Renamed circle","participants":[],"messages":[]}`), 0600))
+	_, err = ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	after, err := st.DerivedDataRevisionContext(t.Context())
+	require.NoError(err)
+	assert.Greater(after, before)
+	_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Renamed"}}, 0, 10)
+	require.NoError(err)
+	assert.Equal(int64(1), total)
+	_, err = ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	again, err := st.DerivedDataRevisionContext(t.Context())
+	require.NoError(err)
+	assert.Equal(after, again)
+}
+
 func TestInstagramRejectsNewerFingerprintInAbsentThread(t *testing.T) {
 	checks := assert.New(t)
 	must := require.New(t)
