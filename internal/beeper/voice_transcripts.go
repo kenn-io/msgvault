@@ -76,7 +76,7 @@ func generatedVoiceText(t docbankmedia.MediaTranscript) string {
 	}
 	var text strings.Builder
 	for _, unit := range e.Units {
-		if strings.TrimSpace(unit.Text) == "" {
+		if strings.TrimSpace(unit.Text) == "" || strings.ContainsRune(unit.Text, 0) {
 			continue
 		}
 		if text.Len() > 0 {
