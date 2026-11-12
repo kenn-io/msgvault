@@ -20,7 +20,7 @@ func newIntroCommand(execute func(*cobra.Command, []string) error) *cobra.Comman
 	list := &cobra.Command{Use: "list", Short: "List introductions", Args: cobra.NoArgs, RunE: execute}
 	list.Flags().Int64("source-id", 0, "filter by source ID")
 	list.Flags().Int("limit", 20, "maximum records (1–100)")
-	list.Flags().String("after-id", "", "pagination cursor")
+	list.Flags().String("after-id", "", "value printed after next: for the next page")
 	show := &cobra.Command{Use: "show ID", Short: "Show an introduction", Args: cobra.ExactArgs(1), RunE: execute}
 	edit := &cobra.Command{Use: "edit ID", Short: "Edit an introduction", Args: cobra.ExactArgs(1), RunE: execute}
 	edit.Flags().Int64("revision", 0, "current revision")
