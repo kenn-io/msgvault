@@ -3087,25 +3087,35 @@ func (c ContactPointPage) Validate() error {
 	return errors
 }
 
+type FirstContactIntroducer struct {
+	DisplayName   string `json:"display_name"`
+	ParticipantID int64  `json:"participant_id"`
+	PersonID      *int64 `json:"person_id,omitzero"`
+}
+
 type ContactState struct {
-	CadenceDueAt        *time.Time `json:"cadence_due_at,omitempty"`
-	CadenceStatus       string     `json:"cadence_status" validate:"required"`
-	ComputedAt          time.Time  `json:"computed_at" validate:"required"`
-	FirstContactAt      *time.Time `json:"first_contact_at,omitempty"`
-	FirstContactRef     *string    `json:"first_contact_ref,omitzero"`
-	InferredChannel     *string    `json:"inferred_channel,omitzero"`
-	InteractionCount    int64      `json:"interaction_count"`
-	LastContactAt       *time.Time `json:"last_contact_at,omitempty"`
-	LastContactChannel  *string    `json:"last_contact_channel,omitzero"`
-	LastContactOwner    *string    `json:"last_contact_owner,omitzero"`
-	LastContactRef      *string    `json:"last_contact_ref,omitzero"`
-	LastContactSourceID *int64     `json:"last_contact_source_id,omitempty"`
-	LastInboundAt       *time.Time `json:"last_inbound_at,omitempty"`
-	LastInboundRef      *string    `json:"last_inbound_ref,omitzero"`
-	LastOutboundAt      *time.Time `json:"last_outbound_at,omitempty"`
-	LastOutboundRef     *string    `json:"last_outbound_ref,omitzero"`
-	PersonID            int64      `json:"person_id"`
-	Stale               bool       `json:"stale"`
+	FirstSeenAt         *time.Time              `json:"first_seen_at,omitempty"`
+	FirstSeenRef        *string                 `json:"first_seen_ref,omitzero"`
+	FirstContactKind    *string                 `json:"first_contact_kind,omitzero"`
+	Introducer          *FirstContactIntroducer `json:"introducer,omitzero"`
+	CadenceDueAt        *time.Time              `json:"cadence_due_at,omitempty"`
+	CadenceStatus       string                  `json:"cadence_status" validate:"required"`
+	ComputedAt          time.Time               `json:"computed_at" validate:"required"`
+	FirstContactAt      *time.Time              `json:"first_contact_at,omitempty"`
+	FirstContactRef     *string                 `json:"first_contact_ref,omitzero"`
+	InferredChannel     *string                 `json:"inferred_channel,omitzero"`
+	InteractionCount    int64                   `json:"interaction_count"`
+	LastContactAt       *time.Time              `json:"last_contact_at,omitempty"`
+	LastContactChannel  *string                 `json:"last_contact_channel,omitzero"`
+	LastContactOwner    *string                 `json:"last_contact_owner,omitzero"`
+	LastContactRef      *string                 `json:"last_contact_ref,omitzero"`
+	LastContactSourceID *int64                  `json:"last_contact_source_id,omitempty"`
+	LastInboundAt       *time.Time              `json:"last_inbound_at,omitempty"`
+	LastInboundRef      *string                 `json:"last_inbound_ref,omitzero"`
+	LastOutboundAt      *time.Time              `json:"last_outbound_at,omitempty"`
+	LastOutboundRef     *string                 `json:"last_outbound_ref,omitzero"`
+	PersonID            int64                   `json:"person_id"`
+	Stale               bool                    `json:"stale"`
 }
 
 func (c ContactState) Validate() error {

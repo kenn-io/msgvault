@@ -1432,11 +1432,15 @@ func TestMergePersons_DerivedState(t *testing.T) {
 	assert.Equal(int64(3), interactionCount,
 		"contact state must be rebuilt from three final native events, not summed")
 	assert.Equal(revisions.IdentityRevision, identityRevision)
+	state, err := f.Store.ContactStateContext(ctx, survivor.ID, time.Now())
+	require.NoError(err)
+	assert.Equal(fmt.Sprintf("message:%d", messageID), state.FirstSeenRef)
 	var absorbedDerivedRows int
 	require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT
 		(SELECT COUNT(*) FROM activity_event_persons WHERE person_id = ?) +
-		(SELECT COUNT(*) FROM person_contact_state WHERE person_id = ?)`),
-		absorbed.ID, absorbed.ID).Scan(&absorbedDerivedRows))
+		(SELECT COUNT(*) FROM person_contact_state WHERE person_id = ?) +
+		(SELECT COUNT(*) FROM person_first_contacts WHERE person_id = ?)`),
+		absorbed.ID, absorbed.ID, absorbed.ID).Scan(&absorbedDerivedRows))
 	assert.Zero(absorbedDerivedRows)
 
 	var journalCount int

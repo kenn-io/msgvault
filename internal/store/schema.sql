@@ -3943,6 +3943,19 @@ CREATE INDEX IF NOT EXISTS idx_activity_event_persons_person_date
 CREATE INDEX IF NOT EXISTS idx_activity_event_persons_date_person
     ON activity_event_persons(local_date, person_id, message_id);
 
+CREATE TABLE IF NOT EXISTS person_first_contacts (
+    person_id INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+    first_seen_at DATETIME NOT NULL,
+    first_seen_message_id INTEGER NOT NULL,
+    conversation_id INTEGER,
+    dirty_at DATETIME,
+    computed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_person_first_contacts_dirty
+    ON person_first_contacts(dirty_at) WHERE dirty_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_person_first_contacts_conversation
+    ON person_first_contacts(conversation_id);
+
 CREATE TABLE IF NOT EXISTS person_contact_state (
     person_id                 INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
     first_contact_at          DATETIME,
@@ -4134,6 +4147,13 @@ BEGIN
     UPDATE person_contact_state
     SET dirty_at = CURRENT_TIMESTAMP
     WHERE person_id = OLD.person_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_activity_first_link_delete_dirty
+AFTER DELETE ON activity_event_persons FOR EACH ROW
+BEGIN
+    UPDATE person_first_contacts SET dirty_at = COALESCE(dirty_at, CURRENT_TIMESTAMP)
+    WHERE person_id = OLD.person_id AND first_seen_message_id = OLD.message_id;
 END;
 
 -- Current normalized source evidence, rebuilt from authoritative meeting raw.

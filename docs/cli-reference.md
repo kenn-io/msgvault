@@ -3592,6 +3592,7 @@ msgvault person directory [flags]
 msgvault person get <person-id> [--json]
 msgvault person get --vcard-uid <uid> [--json]
 msgvault person identities <person-id> [--json]
+msgvault person contact-state <person-id> [--json]
 msgvault person set-display-name <person-id> <display-name> [--json]
 msgvault person set-display-name <person-id> --clear [--json]
 msgvault person delete <person-id>
@@ -3605,6 +3606,11 @@ msgvault person attributes list <person-id> [--slug <slug>] [--history] [--json]
 msgvault person attributes set <person-id> <slug> (--value <scalar> | --value-json <json|@path|->) [flags]
 msgvault person attributes clear <person-id> <slug> [flags]
 ```
+
+`contact-state` shows first archived appearance and direct-contact history.
+JSON includes the appearance reference, kind and introducer when known. See
+[first archived appearance](usage/people.md#see-a-persons-first-archived-appearance)
+for evidence rules and limitations.
 
 `promote` seeds a new profile with the first nonblank observed name in its
 linked cluster, ordered by participant ID. It leaves the name empty when no

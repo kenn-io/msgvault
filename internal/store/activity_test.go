@@ -29,6 +29,9 @@ var activityTableColumns = map[string][]string{
 	"activity_event_persons": {
 		"message_id", "person_id", "role", "evidence", "local_date",
 	},
+	"person_first_contacts": {
+		"person_id", "first_seen_at", "first_seen_message_id", "conversation_id", "dirty_at", "computed_at",
+	},
 	"person_contact_state": {
 		"person_id", "first_contact_at", "first_contact_message_id",
 		"last_contact_at", "last_contact_message_id", "last_contact_channel",
@@ -3472,4 +3475,132 @@ func TestClaimActivityTimezoneTransitionRejectsHostDependentZone(t *testing.T) {
 	f := storetest.New(t)
 	_, err := f.Store.ClaimActivityTimezoneTransitionContext(t.Context(), "Local")
 	require.ErrorIs(t, err, store.ErrInvalidActivity)
+}
+
+func TestFirstSeenProjectionAndCascadeFallback(t *testing.T) {
+	f, personID := activityProjectionFixture(t)
+	at := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	first := f.NewMessage().WithSourceMessageID("first-seen-first").WithSentAt(at).Create(t, f.Store)
+	second := f.NewMessage().WithSourceMessageID("first-seen-second").WithSentAt(at).Create(t, f.Store)
+	low, high := min(first, second), max(first, second)
+	a := activityProjectionForMessage(t, f, high, personID, at)
+	b := activityProjectionForMessage(t, f, low, personID, at)
+	a.Event.Persons[0].Evidence = store.EvidenceCoPresence
+	b.Event.Persons[0].Evidence = store.EvidenceCoPresence
+	_, err := f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{a, b})
+	require.NoError(t, err)
+	state, err := f.Store.ContactStateContext(t.Context(), personID, at)
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("message:%d", low), state.FirstSeenRef)
+	assert.Nil(t, state.FirstContactAt)
+	assert.Zero(t, state.InteractionCount)
+	_, err = activityExec(t.Context(), f.Store, `UPDATE person_first_contacts SET dirty_at = NULL WHERE person_id = ?`, personID)
+	require.NoError(t, err)
+	_, err = activityExec(t.Context(), f.Store, `DELETE FROM messages WHERE id = ?`, low)
+	require.NoError(t, err)
+	var dirty sql.NullTime
+	require.NoError(t, activityQueryRow(t.Context(), f.Store, `SELECT dirty_at FROM person_first_contacts WHERE person_id = ?`, personID).Scan(&dirty))
+	assert.True(t, dirty.Valid)
+	state, err = f.Store.ContactStateContext(t.Context(), personID, at)
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("message:%d", high), state.FirstSeenRef)
+	var storedID int64
+	require.NoError(t, activityQueryRow(t.Context(), f.Store, `SELECT first_seen_message_id FROM person_first_contacts WHERE person_id = ?`, personID).Scan(&storedID))
+	assert.Equal(t, low, storedID, "snapshot fallback must not write the cache")
+}
+
+func TestFirstSeenReplacementAndRetraction(t *testing.T) {
+	f, oldID := activityProjectionFixture(t)
+	participant := f.EnsureParticipant("new-first@example.test", "New First", "example.test")
+	person, created, err := f.Store.CreatePersonFromParticipant(participant)
+	require.NoError(t, err)
+	require.True(t, created)
+	at := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	id := f.NewMessage().WithSourceMessageID("first-seen-move").WithSentAt(at).Create(t, f.Store)
+	initial := activityProjectionForMessage(t, f, id, oldID, at)
+	initial.Event.Persons[0].Evidence = store.EvidenceCoPresence
+	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{initial})
+	require.NoError(t, err)
+	_, err = activityExec(t.Context(), f.Store, `UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("move-first"), id)
+	require.NoError(t, err)
+	moved := activityProjectionForMessage(t, f, id, person.ID, at)
+	moved.Event.Persons[0].Evidence = store.EvidenceCoPresence
+	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{moved})
+	require.NoError(t, err)
+	oldState, err := f.Store.ContactStateContext(t.Context(), oldID, at)
+	require.NoError(t, err)
+	assert.Nil(t, oldState.FirstSeenAt)
+	state, err := f.Store.ContactStateContext(t.Context(), person.ID, at)
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("message:%d", id), state.FirstSeenRef)
+	assert.Nil(t, state.FirstContactAt)
+	_, err = activityExec(t.Context(), f.Store, `UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("retract-first"), id)
+	require.NoError(t, err)
+	retract := activityProjectionForMessage(t, f, id, person.ID, at)
+	retract.Event = nil
+	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{retract})
+	require.NoError(t, err)
+	state, err = f.Store.ContactStateContext(t.Context(), person.ID, at)
+	require.NoError(t, err)
+	assert.Nil(t, state.FirstSeenAt)
+}
+
+func TestFirstSeenBackfillsDrainedProjectionOnce(t *testing.T) {
+	f, personID := activityProjectionFixture(t)
+	at := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	id := f.NewMessage().WithSourceMessageID("first-seen-upgrade").WithSentAt(at).Create(t, f.Store)
+	projection := activityProjectionForMessage(t, f, id, personID, at)
+	projection.Event.Persons[0].Evidence = store.EvidenceCoPresence
+	_, err := f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{projection})
+	require.NoError(t, err)
+	revision := activityQueueRevision(t, f.Store, id)
+	_, err = activityExec(t.Context(), f.Store, `DELETE FROM person_first_contacts WHERE person_id = ?`, personID)
+	require.NoError(t, err)
+	_, err = activityExec(t.Context(), f.Store, `DELETE FROM applied_migrations WHERE name = ?`, "person_first_contacts_v1")
+	require.NoError(t, err)
+	require.NoError(t, f.Store.InitSchemaContext(t.Context()))
+	var got int64
+	require.NoError(t, activityQueryRow(t.Context(), f.Store, `SELECT first_seen_message_id FROM person_first_contacts WHERE person_id = ?`, personID).Scan(&got))
+	assert.Equal(t, id, got)
+	assert.Equal(t, revision, activityQueueRevision(t, f.Store, id))
+	_, err = activityExec(t.Context(), f.Store, `UPDATE person_first_contacts SET dirty_at = NULL WHERE person_id = ?`, personID)
+	require.NoError(t, err)
+	require.NoError(t, f.Store.InitSchemaContext(t.Context()))
+	var dirty sql.NullTime
+	require.NoError(t, activityQueryRow(t.Context(), f.Store, `SELECT dirty_at FROM person_first_contacts WHERE person_id = ?`, personID).Scan(&dirty))
+	assert.False(t, dirty.Valid)
+}
+
+func TestFirstSeenDateChangesRecomputeWinner(t *testing.T) {
+	f, personID := activityProjectionFixture(t)
+	earlier := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	later := earlier.Add(24 * time.Hour)
+	first := f.NewMessage().WithSourceMessageID("first-date-a").WithSentAt(earlier).Create(t, f.Store)
+	second := f.NewMessage().WithSourceMessageID("first-date-b").WithSentAt(later).Create(t, f.Store)
+	a := activityProjectionForMessage(t, f, first, personID, earlier)
+	b := activityProjectionForMessage(t, f, second, personID, later)
+	a.Event.Persons[0].Evidence = store.EvidenceCoPresence
+	b.Event.Persons[0].Evidence = store.EvidenceCoPresence
+	_, err := f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{a, b})
+	require.NoError(t, err)
+	moved := later.Add(24 * time.Hour)
+	_, err = activityExec(t.Context(), f.Store, `UPDATE messages SET sent_at = ? WHERE id = ?`, moved, first)
+	require.NoError(t, err)
+	changed := activityProjectionForMessage(t, f, first, personID, moved)
+	changed.Event.Persons[0].Evidence = store.EvidenceCoPresence
+	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{changed})
+	require.NoError(t, err)
+	state, err := f.Store.ContactStateContext(t.Context(), personID, moved)
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("message:%d", second), state.FirstSeenRef)
+	_, err = activityExec(t.Context(), f.Store, `UPDATE messages SET sent_at = ? WHERE id = ?`, earlier, first)
+	require.NoError(t, err)
+	changed = activityProjectionForMessage(t, f, first, personID, earlier)
+	changed.Event.Persons[0].Evidence = store.EvidenceCoPresence
+	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{changed})
+	require.NoError(t, err)
+	state, err = f.Store.ContactStateContext(t.Context(), personID, moved)
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("message:%d", first), state.FirstSeenRef)
+	assert.Zero(t, state.InteractionCount)
 }

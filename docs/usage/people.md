@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: "2026-11-11"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -51,6 +51,25 @@ or a UID from one of its bound CardDAV cards. JSON profile reads include
 `vcard_uid` and `carddav_bindings`, which show the connection, book, resource
 href, remote UID, and mapping status. UID lookup needs daemon API schema 3.10.0
 or newer.
+
+## See a person's first archived appearance
+
+Run `msgvault person contact-state <person-id> --json` to see the earliest
+archived event linked to a saved person, including messages where they were
+copied. `first_seen_at` and `first_seen_ref` describe that appearance;
+`first_contact_at` and interaction counts still describe direct contact.
+The HTTP contact-state route and assembled profiles carry the same fields.
+
+`first_contact_kind` describes the evidence: `email_intro` is an inbound email
+from a third party to you and the person with at most four other non-owner
+recipients; `owner_outreach` is your addressed, non-broadcast email or direct
+chat; `inbound_outreach` is a direct email or chat sent by the person;
+`group_shared` is a group or channel message; `meeting` is a meeting; and
+`observed` covers other evidence, including messages without your identity.
+When known, `introducer` identifies the sender of an introduction email or
+your sending identity. Group inviter evidence is not yet used. These fields
+reflect archived evidence and currently linked identities, not a claim about
+when you met offline.
 
 ## Review identity matches
 

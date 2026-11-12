@@ -749,6 +749,10 @@ func (s *Store) contactStateTxContext(
 		state.Stale = err == nil || globalStale
 	}
 
+	if err := s.populateFirstContactTx(ctx, tx, &state); err != nil {
+		return ContactState{}, err
+	}
+
 	var inferred string
 	err = tx.QueryRowContext(ctx, `
 		SELECT ae.channel

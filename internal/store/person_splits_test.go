@@ -3,6 +3,7 @@ package store_test
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -2705,6 +2706,14 @@ func TestSplitPersonMerge_RecomputesActivityAndContactState(t *testing.T) {
 		require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT interaction_count
 			FROM person_contact_state WHERE person_id = ?`), personID).Scan(&count))
 		assert.Equal(t, want, count)
+		state, err := f.Store.ContactStateContext(ctx, personID, time.Now())
+		require.NoError(err)
+		require.NotNil(state.FirstSeenAt)
+		var firstMessageID int64
+		require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT ae.message_id
+			FROM activity_event_persons aep JOIN activity_events ae ON ae.message_id = aep.message_id
+			WHERE aep.person_id = ? ORDER BY ae.occurred_at, ae.message_id LIMIT 1`), personID).Scan(&firstMessageID))
+		assert.Equal(t, fmt.Sprintf("message:%d", firstMessageID), state.FirstSeenRef)
 	}
 }
 

@@ -818,24 +818,28 @@ func (s *Store) CompareAndSetActivityReconciledRevisionsContext(
 // ContactState is the stored contact projection. Task 8 augments the cadence
 // and inferred-channel fields at read time.
 type ContactState struct {
-	PersonID            int64           `json:"person_id"`
-	FirstContactAt      *time.Time      `json:"first_contact_at,omitempty"`
-	FirstContactRef     string          `json:"first_contact_ref,omitempty"`
-	LastContactAt       *time.Time      `json:"last_contact_at,omitempty"`
-	LastContactRef      string          `json:"last_contact_ref,omitempty"`
-	LastContactChannel  ActivityChannel `json:"last_contact_channel,omitempty"`
-	LastContactSourceID *int64          `json:"last_contact_source_id,omitzero" nullable:"false"`
-	LastContactOwner    string          `json:"last_contact_owner,omitempty"`
-	LastInboundAt       *time.Time      `json:"last_inbound_at,omitempty"`
-	LastInboundRef      string          `json:"last_inbound_ref,omitempty"`
-	LastOutboundAt      *time.Time      `json:"last_outbound_at,omitempty"`
-	LastOutboundRef     string          `json:"last_outbound_ref,omitempty"`
-	InteractionCount    int64           `json:"interaction_count"`
-	InferredChannel     ActivityChannel `json:"inferred_channel,omitempty"`
-	CadenceDueAt        *time.Time      `json:"cadence_due_at,omitempty"`
-	CadenceStatus       string          `json:"cadence_status"`
-	Stale               bool            `json:"stale"`
-	ComputedAt          time.Time       `json:"computed_at"`
+	PersonID            int64                   `json:"person_id"`
+	FirstSeenAt         *time.Time              `json:"first_seen_at,omitempty"`
+	FirstSeenRef        string                  `json:"first_seen_ref,omitempty"`
+	FirstContactKind    FirstContactKind        `json:"first_contact_kind,omitempty"`
+	Introducer          *FirstContactIntroducer `json:"introducer,omitzero" nullable:"false"`
+	FirstContactAt      *time.Time              `json:"first_contact_at,omitempty"`
+	FirstContactRef     string                  `json:"first_contact_ref,omitempty"`
+	LastContactAt       *time.Time              `json:"last_contact_at,omitempty"`
+	LastContactRef      string                  `json:"last_contact_ref,omitempty"`
+	LastContactChannel  ActivityChannel         `json:"last_contact_channel,omitempty"`
+	LastContactSourceID *int64                  `json:"last_contact_source_id,omitzero" nullable:"false"`
+	LastContactOwner    string                  `json:"last_contact_owner,omitempty"`
+	LastInboundAt       *time.Time              `json:"last_inbound_at,omitempty"`
+	LastInboundRef      string                  `json:"last_inbound_ref,omitempty"`
+	LastOutboundAt      *time.Time              `json:"last_outbound_at,omitempty"`
+	LastOutboundRef     string                  `json:"last_outbound_ref,omitempty"`
+	InteractionCount    int64                   `json:"interaction_count"`
+	InferredChannel     ActivityChannel         `json:"inferred_channel,omitempty"`
+	CadenceDueAt        *time.Time              `json:"cadence_due_at,omitempty"`
+	CadenceStatus       string                  `json:"cadence_status"`
+	Stale               bool                    `json:"stale"`
+	ComputedAt          time.Time               `json:"computed_at"`
 }
 
 func (s *Store) ContactRevisionsContext(
@@ -1323,9 +1327,7 @@ func (s *Store) projectActivityBatchOnce(
 			}
 			if attempt.item.Event == nil {
 				if attempt.old != nil {
-					if _, err := tx.ExecContext(ctx,
-						`DELETE FROM activity_events WHERE message_id = ?`,
-						attempt.item.Token.MessageID); err != nil {
+					if err := s.retractActivityEventTx(ctx, tx, attempt.item.Token.MessageID); err != nil {
 						return fmt.Errorf("retract activity event %d: %w",
 							attempt.item.Token.MessageID, err)
 					}
@@ -1696,7 +1698,11 @@ func (s *Store) replaceActivityEventTx(
 	tx *loggedTx,
 	event ActivityEvent,
 ) error {
-	_, err := tx.ExecContext(ctx, `
+	winners, err := s.firstContactWinnersTx(ctx, tx, event.MessageID)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO activity_events (
 			message_id, ref_kind, source_id, conversation_id, channel,
 			occurred_at, date_origin, date_precision, timezone,
@@ -1748,6 +1754,14 @@ func (s *Store) replaceActivityEventTx(
 			string(link.Evidence), event.LocalDate); err != nil {
 			return fmt.Errorf("write activity link for message %d person %d: %w",
 				event.MessageID, link.PersonID, err)
+		}
+		if err := s.notePersonFirstContactTx(ctx, tx, link.PersonID, event); err != nil {
+			return err
+		}
+	}
+	for _, personID := range winners {
+		if err := s.recomputePersonFirstContactTx(ctx, tx, personID); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -2383,9 +2397,7 @@ func (s *Store) reclassifyPersonActivityTx(
 	}
 	for _, rewrite := range rewrites {
 		if rewrite.next == nil {
-			if _, err := tx.ExecContext(ctx,
-				`DELETE FROM activity_events WHERE message_id = ?`, rewrite.old.MessageID,
-			); err != nil {
+			if err := s.retractActivityEventTx(ctx, tx, rewrite.old.MessageID); err != nil {
 				return nil, fmt.Errorf("retract person activity event: %w", err)
 			}
 			continue

@@ -73,7 +73,7 @@ func (b *PeopleBrowser) GetPersonProfile(
 	switch {
 	case err == nil:
 		// A missing projection is an HTTP 200 response with zero ComputedAt.
-		if !state.JSON200.ComputedAt.IsZero() {
+		if !state.JSON200.ComputedAt.IsZero() || state.JSON200.FirstSeenAt != nil {
 			profile.ContactState = contactStateFromGenerated(*state.JSON200)
 		}
 	case !absentAPIResource(err):
@@ -244,7 +244,15 @@ func absentAPIResource(err error) bool {
 }
 
 func contactStateFromGenerated(state generated.ContactState) *store.ContactState {
+	var introducer *store.FirstContactIntroducer
+	if state.Introducer != nil {
+		introducer = &store.FirstContactIntroducer{ParticipantID: state.Introducer.ParticipantID, DisplayName: state.Introducer.DisplayName, PersonID: copyInt64(state.Introducer.PersonID)}
+	}
 	return &store.ContactState{
+		FirstSeenAt:         copyTime(state.FirstSeenAt),
+		FirstSeenRef:        stringValue(state.FirstSeenRef),
+		FirstContactKind:    store.FirstContactKind(stringValue(state.FirstContactKind)),
+		Introducer:          introducer,
 		PersonID:            state.PersonID,
 		FirstContactAt:      copyTime(state.FirstContactAt),
 		FirstContactRef:     stringValue(state.FirstContactRef),
