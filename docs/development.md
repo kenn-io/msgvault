@@ -578,8 +578,8 @@ version, replace your marker. If another change used that version, remove your m
 next minor above the greatest recorded version, and move feature minimum constants your change
 introduced to it. Local tests read the base from the common ancestor of `HEAD` and `origin/main`;
 if that fails, fetch `origin/main` with its history, or set `MSGVAULT_API_CONTRACT_BASE` to a SHA
-or ref. CI uses the exact pull request or merge group base, or the checked-out SHA on main and
-dispatch runs.
+or ref. CI uses the pull request or merge group base, the previous SHA for main pushes, and the
+common ancestor with `main` for manual and scheduled runs.
 
 ## Archive schema version maintenance
 
