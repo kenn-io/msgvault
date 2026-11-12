@@ -51,6 +51,7 @@ import (
 	"go.kenn.io/msgvault/internal/personmatch"
 	"go.kenn.io/msgvault/internal/plaud"
 	"go.kenn.io/msgvault/internal/pocket"
+	"go.kenn.io/msgvault/internal/postaladdress"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/rederive"
@@ -1063,6 +1064,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		apiOpts.VectorStatus = api.VectorStatusInitializing
 	}
 	apiServer = api.NewServerWithOptions(apiOpts)
+	if cfg.People.AddressValidation.Enabled {
+		apiServer.SetPostalAddressValidator(&postaladdress.GoogleValidator{APIKey: os.Getenv(postaladdress.GoogleAddressValidationEnvVar)})
+	}
 	if cfg.People.Sweep.Enabled {
 		// The daemon owns the people sweep worker, so it owns manual brief
 		// generation: POST /api/v1/people/{id}/brief/generate reports

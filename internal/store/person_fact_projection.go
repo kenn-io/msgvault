@@ -625,8 +625,9 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 	var pin personfacts.PinState
 	var projectionContext string
 	supportedKind := descriptor.Kind == personfacts.TargetAttribute ||
-		descriptor.Kind == personfacts.TargetEmployment
-	projectable := eligibility.Supported && supportedKind
+		descriptor.Kind == personfacts.TargetEmployment || descriptor.Kind == personfacts.TargetPostalAddress
+	projectable := eligibility.Supported && supportedKind && descriptor.Kind != personfacts.TargetPostalAddress
+	reviewable := eligibility.Supported && descriptor.Kind == personfacts.TargetPostalAddress
 	if projectable {
 		projector, err = s.personFactProjectorWithOrganizationLocksTx(
 			ctx, tx, descriptor, organizationLocks)
@@ -645,7 +646,7 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 		if err != nil {
 			return false, err
 		}
-	} else {
+	} else if !reviewable {
 		for index := range resolvedClaims {
 			resolvedClaims[index].Normalized = nil
 			if resolvedClaims[index].Failure == nil {
@@ -1153,6 +1154,8 @@ func (s *Store) personFactProjector(
 			return nil, err
 		}
 		return &personFactAttributeProjector{store: s, tx: tx, definition: *definition}, nil
+	case personfacts.TargetPostalAddress:
+		return &personFactPostalProjector{store: s, tx: tx}, nil
 	case personfacts.TargetEmployment:
 		return &personFactEmploymentProjector{
 			store: s, tx: tx, lock: lock, organizationLocks: organizationLocks,
@@ -2530,14 +2533,14 @@ func (s *Store) loadPersonFactTargetDescriptor(
 			SensitivePolicyBlocked: eligibleWithSensitive && definition.IsSensitive &&
 				!allowSensitive,
 		}, nil
-	case personfacts.TargetEmployment:
-		catalog, err := personfacts.BuildCatalog(nil, personfacts.CatalogOptions{})
+	case personfacts.TargetEmployment, personfacts.TargetPostalAddress:
+		catalog, err := personfacts.BuildCatalog(nil, personfacts.CatalogOptions{IncludeSensitive: true})
 		if err != nil {
 			return personfacts.TargetDescriptor{}, personFactTargetEligibility{}, err
 		}
 		for _, descriptor := range catalog.Targets {
 			if descriptor.Kind == kind && descriptor.Key == key {
-				return descriptor, personFactTargetEligibility{Supported: true}, nil
+				return descriptor, personFactTargetEligibility{Supported: !descriptor.Sensitive || allowSensitive, SensitivePolicyBlocked: descriptor.Sensitive && !allowSensitive}, nil
 			}
 		}
 	}

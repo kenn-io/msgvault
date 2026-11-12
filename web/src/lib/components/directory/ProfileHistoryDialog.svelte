@@ -3,6 +3,7 @@
   import InlineNotice from '../common/InlineNotice.svelte';
   import HistorySection, { type HistoryRow as SectionRow } from './HistorySection.svelte';
   import AttributeSection from './AttributeSection.svelte';
+  import { postalAddressText } from '../../directory/postal-review.svelte';
   import { sentenceCase } from '../../explore/labels';
   import { sourceTypeLabel } from '../../sources/labels';
   import { valueProvenance } from './history-format';
@@ -49,7 +50,7 @@
       loading = false;
     }
   }
-  type HistoryRow = { id: number; value: string; context?: Item; envelope: ValueEnvelope; observedAt?: string };
+  type HistoryRow = { id: number; value: string; context?: Item; detail?: string | null; envelope: ValueEnvelope; observedAt?: string };
   /**
    * An address a merge brought in, under Email and phone: "Merged in · Nov 6", opening that merge.
    */
@@ -86,8 +87,8 @@
   }
 
   type Item = { envelope: ValueEnvelope; original_value: string; formatted?: string; label?: string; date_kind?: string; date_text?: string; observed_at?: string; service_slug?: string; service_label?: string; scope_kind?: string; scope_value?: string };
-  function rows(items: Item[], value: ((item: Item) => string) | null = null, context = false): HistoryRow[] {
-    return items.map((item) => ({ id: item.envelope.id, value: value ? value(item) : item.original_value, context: context ? item : undefined, envelope: item.envelope, observedAt: item.observed_at }));
+  function rows<T extends Item>(items: T[], value: ((item: T) => string) | null = null, context = false, detail: ((item: T) => string | null) | null = null): HistoryRow[] {
+    return items.map((item) => ({ id: item.envelope.id, value: value ? value(item) : item.original_value, context: context ? item : undefined, detail: detail?.(item), envelope: item.envelope, observedAt: item.observed_at }));
   }
 
   const sections = $derived.by(() => {
@@ -95,7 +96,18 @@
     return [
       { title: 'Names', rows: rows(history.names ?? [], (row) => row.formatted ?? row.original_value) },
       { title: 'Email and phone', rows: rows(history.contact_points ?? [], null, true) },
-      { title: 'Addresses', rows: rows(history.addresses ?? []) },
+      { title: 'Addresses', rows: rows(history.addresses ?? [], row => row.address_kind === 'postal' ? postalAddressText(row, row.assessment?.proposed_extended_parts) || 'No current address' : row.original_value, false, row => {
+        if (row.address_kind !== 'postal') return null;
+        const source = row.assessment?.original;
+        const original = postalAddressText(source ?? {}, row.assessment?.original_extended_parts) || source?.original_value;
+        const current = postalAddressText(row, row.assessment?.proposed_extended_parts);
+        const text = source?.original_value?.trim();
+        const shown = new Set(`${current}, ${original ?? ''}`.split(/[,;\n]+/).map(part => part.trim()));
+        const distinctText = text && text.split(/[,;\n]+/).some(part => part.trim() && !shown.has(part.trim())) && text;
+        const currentParts = new Set(current.split(',').map(part => part.trim()));
+        const lines = [distinctText, original?.split(',').filter(part => !currentParts.has(part.trim()) && (!distinctText || !distinctText.split(/[,;\n]+/).some(segment => segment.trim() === part.trim() || segment.trim().startsWith(`${part.trim()} `)))).join(', ')].filter(Boolean);
+        return lines.length ? `Original: ${lines.join(' · ')}` : null;
+      }) },
       { title: 'Dates', rows: rows(history.dates ?? [], (row) => `${row.label ?? sentenceCase(row.date_kind ?? '')}: ${row.date_text ?? row.original_value}`) },
       { title: 'Categories', rows: rows(history.categories ?? []) },
       { title: 'Media', rows: rows(history.media ?? []) },
@@ -111,7 +123,7 @@
   });
 
   function historyRow(item: HistoryRow, workspaces: Map<string, string>): SectionRow {
-    return { id: item.id, value: item.value, detail: item.context && providerContext(item.context, workspaces), provenance: valueProvenance(item.envelope, [['Seen', item.observedAt]]) };
+    return { id: item.id, value: item.value, detail: item.detail ?? (item.context && providerContext(item.context, workspaces)), provenance: valueProvenance(item.envelope, [['Seen', item.observedAt]]) };
   }
 
   function providerContext(point: Item, workspaces: Map<string, string>, includeScope = true): string | null {

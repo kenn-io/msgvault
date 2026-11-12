@@ -1,0 +1,189 @@
+package cmd
+
+import (
+	"bytes"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/daemonclient"
+	apiclient "go.kenn.io/msgvault/pkg/client"
+	"go.kenn.io/msgvault/pkg/client/generated"
+)
+
+func newPersonAddressCommand() *cobra.Command {
+	command := &cobra.Command{Use: "address", Short: "Review and explicitly apply postal addresses"}
+	list := &cobra.Command{Use: "list <person-id>", Short: "Read postal addresses and local assessments", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		id, err := positivePersonCLIArg(cmd, args[0], personValue)
+		if err != nil {
+			return err
+		}
+		client, _, err := OpenHTTPStore(cmd.Context())
+		if err != nil {
+			return err
+		}
+		defer func() { _ = client.Close() }()
+		response, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.GetPersonStructuredProfileResp, error) {
+			return api.GetPersonStructuredProfileWithResponse(cmd.Context(), &generated.GetPersonStructuredProfileRequestOptions{PathParams: &generated.GetPersonStructuredProfilePath{ID: id}})
+		})
+		if err != nil {
+			return err
+		}
+		addresses := make([]generated.PersonAddress, 0)
+		for _, address := range response.JSON200.Addresses {
+			if address.AddressKind == "postal" {
+				addresses = append(addresses, address)
+			}
+		}
+		return writePostalJSON(cmd.OutOrStdout(), addresses)
+	}}
+	var assessInput, previousResponseID string
+	var external bool
+	assess := &cobra.Command{Use: "assess <person-id>", Short: "Assess a JSON address without saving", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		id, err := positivePersonCLIArg(cmd, args[0], personValue)
+		if err != nil {
+			return err
+		}
+		var input generated.Input
+		if err := readPostalAssessInput(assessInput, previousResponseID, external, &input); err != nil {
+			return err
+		}
+		if input.AddressKind == "" {
+			input.AddressKind = "postal"
+		}
+		if input.AddressKind != "postal" {
+			return errors.New("only postal addresses can be assessed")
+		}
+		client, _, err := OpenHTTPStore(cmd.Context())
+		if err != nil {
+			return err
+		}
+		defer func() { _ = client.Close() }()
+		body := postalAssessBody(input, external, previousResponseID)
+		response, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.AssessPersonPostalAddressResp, error) {
+			return api.AssessPersonPostalAddressWithResponse(cmd.Context(), &generated.AssessPersonPostalAddressRequestOptions{PathParams: &generated.AssessPersonPostalAddressPath{ID: id}, Body: &body})
+		})
+		if err != nil {
+			return err
+		}
+		return writePostalJSON(cmd.OutOrStdout(), response.JSON200)
+	}}
+	addPostalAssessFlags(assess, &assessInput, &external, &previousResponseID)
+	var applyInput string
+	var revision, supersede int64
+	var add bool
+	apply := &cobra.Command{Use: "apply <person-id>", Short: "Add or supersede one address at a reviewed person revision", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		id, err := positivePersonCLIArg(cmd, args[0], personValue)
+		if err != nil {
+			return err
+		}
+		if revision < 1 {
+			return errors.New("--revision must be the positive reviewed person revision")
+		}
+		if add == cmd.Flags().Changed("supersede") || (!add && supersede < 1) {
+			return errors.New("choose exactly one of --add or --supersede <positive-address-id>")
+		}
+		var input generated.PersonAddressInputRequest
+		if err := readPostalCLIInput(applyInput, &input); err != nil {
+			return err
+		}
+		if input.AddressKind == "" {
+			input.AddressKind = "postal"
+		}
+		if input.AddressKind != "postal" {
+			return errors.New("only postal addresses can be applied")
+		}
+		// A correction is a new owner declaration. Preserve presentation and an
+		// exact claim origin, rather than copying imported identity/confidence.
+		envelope := input.Envelope
+		input.Envelope = generated.ValueEnvelopeInput{Source: "user", Ordinal: envelope.Ordinal, Pref: envelope.Pref, TypeLabel: envelope.TypeLabel, TypeTokens: envelope.TypeTokens}
+		if envelope.SourceRef != nil && strings.HasPrefix(*envelope.SourceRef, "person-fact-claim:") {
+			input.Envelope.SourceRef = envelope.SourceRef
+		}
+		patch := &generated.PersonAddressPatchRequest{Add: []generated.PersonAddressInputRequest{input}}
+		if !add {
+			patch.Supersede = []int64{supersede}
+		}
+		body := generated.PatchPersonStructuredProfileBody{Addresses: patch}
+		client, _, err := OpenHTTPStore(cmd.Context())
+		if err != nil {
+			return err
+		}
+		defer func() { _ = client.Close() }()
+		response, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.PatchPersonStructuredProfileResp, error) {
+			return api.PatchPersonStructuredProfileWithResponse(cmd.Context(), &generated.PatchPersonStructuredProfileRequestOptions{PathParams: &generated.PatchPersonStructuredProfilePath{ID: id}, Header: &generated.PatchPersonStructuredProfileHeaders{IfMatch: personCLIETag(id, revision)}, Body: &body})
+		})
+		if err != nil {
+			return err
+		}
+		return writePostalJSON(cmd.OutOrStdout(), response.JSON200)
+	}}
+	apply.Flags().StringVar(&applyInput, "input", "", "Path to postal address request JSON; original_input preserves the initial draft")
+	apply.Flags().Int64Var(&revision, "revision", 0, "Reviewed person revision (required)")
+	apply.Flags().BoolVar(&add, "add", false, "Add a new address")
+	apply.Flags().Int64Var(&supersede, "supersede", 0, "Address ID to replace")
+	command.AddCommand(list, assess, apply)
+	return command
+}
+
+func addPostalAssessFlags(command *cobra.Command, input *string, external *bool, previousResponseID *string) {
+	command.Flags().StringVar(input, "input", "", "Path to raw postal input JSON")
+	command.Flags().BoolVar(external, "external", false, "Explicitly send postal components to the configured provider")
+	command.Flags().StringVar(previousResponseID, "previous-response-id", "", "response_id from the first --external assessment of this address; use on a follow-up check")
+}
+
+// readPostalAssessInput reads the draft; a follow-up ID is meaningful only to a provider call.
+func readPostalAssessInput(path, previousResponseID string, external bool, input *generated.Input) error {
+	if previousResponseID != "" && !external {
+		return errors.New("--previous-response-id requires --external")
+	}
+	return readPostalCLIInput(path, input)
+}
+
+func postalAssessBody(input generated.Input, external bool, previousResponseID string) generated.AssessPersonPostalAddressBody {
+	body := generated.AssessPersonPostalAddressBody{Address: input, AllowExternal: &external}
+	if previousResponseID != "" {
+		body.PreviousResponseID = &previousResponseID
+	}
+	return body
+}
+
+func writePostalJSON(out io.Writer, value any) error {
+	if err := json.MarshalWrite(out, value); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(out)
+	if err != nil {
+		return fmt.Errorf("write address JSON: %w", err)
+	}
+	return nil
+}
+
+func readPostalCLIInput(path string, value any) error {
+	if path == "" {
+		return errors.New("--input requires a JSON file path")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open address input: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+	if err != nil {
+		return fmt.Errorf("read address input: %w", err)
+	}
+	if len(data) > 1<<20 {
+		return errors.New("address input exceeds 1 MiB")
+	}
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return errors.New("address input must be a JSON object")
+	}
+	if err := json.Unmarshal(data, value, json.RejectUnknownMembers(true)); err != nil {
+		return fmt.Errorf("decode address input: %w", err)
+	}
+	return nil
+}

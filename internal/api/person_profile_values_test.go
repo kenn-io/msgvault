@@ -181,6 +181,8 @@ func TestPatchPersonProfileMapsValidationErrorsToBadRequest(t *testing.T) {
 		name string
 		body string
 	}{
+		{"missing suggestion", `{"addresses":{"add":[{"address_kind":"postal","street_address":"x","envelope":{"source":"user","source_ref":"person-fact-claim:missing"}}]}}`},
+		{"empty current postal value", `{"addresses":{"add":[{"address_kind":"postal","free_text":"","original_input":{"address_kind":"postal","street_address":"Old street"},"envelope":{"source":"user"}}]}}`},
 		{"unknown provenance", `{"categories":{"add":[{"original_value":"Friends","envelope":{"source":"beeper"}}]}}`},
 		{"scope required", `{"contact_points":{"add":[{"address_kind":"username","service_slug":"slack","original_value":"alice","envelope":{"source":"user"}}]}}`},
 		{"provider identity is observation-only", `{"contact_points":{"add":[{"address_kind":"provider_identity","original_value":"provider:key","envelope":{"source":"user"}}]}}`},
@@ -248,6 +250,15 @@ func TestPatchPersonProfileRejectsResponseOnlyEnvelopeFields(t *testing.T) {
 			assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
 		})
 	}
+	t.Run("postal assessment", func(t *testing.T) {
+		server, st := newProfileTestServer(t)
+		personID := seedAPIPerson(t, st)
+		read := doRequest(t, server, http.MethodGet, personProfilePath(personID), nil, nil)
+		require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+		body := []byte(`{"addresses":{"add":[{"address_kind":"postal","street_address":"x","assessment":{"status":"validated"},"envelope":{"source":"user"}}]}}`)
+		response := doRequest(t, server, http.MethodPatch, personProfilePath(personID), body, map[string]string{"If-Match": read.Header().Get("ETag")})
+		assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	})
 }
 
 func TestPatchPersonProfileRejectsOversizedBody(t *testing.T) {

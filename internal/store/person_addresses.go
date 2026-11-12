@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/postaladdress"
 )
 
 type PersonAddressKind string
@@ -27,24 +29,25 @@ func (k PersonAddressKind) Valid() bool {
 }
 
 type PersonAddress struct {
-	Envelope           ValueEnvelope     `json:"envelope"`
-	PersonID           int64             `json:"person_id"`
-	AddressKind        PersonAddressKind `json:"address_kind"`
-	PostOfficeBox      *string           `json:"post_office_box,omitzero" nullable:"false"`
-	ExtendedAddress    *string           `json:"extended_address,omitzero" nullable:"false"`
-	StreetAddress      *string           `json:"street_address,omitzero" nullable:"false"`
-	Locality           *string           `json:"locality,omitzero" nullable:"false"`
-	Region             *string           `json:"region,omitzero" nullable:"false"`
-	PostalCode         *string           `json:"postal_code,omitzero" nullable:"false"`
-	CountryName        *string           `json:"country_name,omitzero" nullable:"false"`
-	ExtendedComponents *string           `json:"extended_components,omitzero" nullable:"false"`
-	FreeText           *string           `json:"free_text,omitzero" nullable:"false"`
-	Label              *string           `json:"label,omitzero" nullable:"false"`
-	GeoURI             *string           `json:"geo_uri,omitzero" nullable:"false"`
-	Timezone           *string           `json:"timezone,omitzero" nullable:"false"`
-	CountryCode        *string           `json:"country_code,omitzero" nullable:"false"`
-	PlaceURI           *string           `json:"place_uri,omitzero" nullable:"false"`
-	OriginalValue      string            `json:"original_value"`
+	Assessment         *postaladdress.Assessment `json:"assessment,omitzero" nullable:"false"`
+	Envelope           ValueEnvelope             `json:"envelope"`
+	PersonID           int64                     `json:"person_id"`
+	AddressKind        PersonAddressKind         `json:"address_kind"`
+	PostOfficeBox      *string                   `json:"post_office_box,omitzero" nullable:"false"`
+	ExtendedAddress    *string                   `json:"extended_address,omitzero" nullable:"false"`
+	StreetAddress      *string                   `json:"street_address,omitzero" nullable:"false"`
+	Locality           *string                   `json:"locality,omitzero" nullable:"false"`
+	Region             *string                   `json:"region,omitzero" nullable:"false"`
+	PostalCode         *string                   `json:"postal_code,omitzero" nullable:"false"`
+	CountryName        *string                   `json:"country_name,omitzero" nullable:"false"`
+	ExtendedComponents *string                   `json:"extended_components,omitzero" nullable:"false"`
+	FreeText           *string                   `json:"free_text,omitzero" nullable:"false"`
+	Label              *string                   `json:"label,omitzero" nullable:"false"`
+	GeoURI             *string                   `json:"geo_uri,omitzero" nullable:"false"`
+	Timezone           *string                   `json:"timezone,omitzero" nullable:"false"`
+	CountryCode        *string                   `json:"country_code,omitzero" nullable:"false"`
+	PlaceURI           *string                   `json:"place_uri,omitzero" nullable:"false"`
+	OriginalValue      string                    `json:"original_value"`
 }
 
 type PersonAddressInput struct {
@@ -70,6 +73,8 @@ type PersonAddressInput struct {
 var (
 	ErrInvalidPersonAddressKind  = errors.New("invalid person address kind")
 	ErrPersonAddressValueMissing = errors.New("person address requires at least one component")
+	ErrPostalSuggestionMismatch  = errors.New("postal address snapshot does not match the cited suggestion")
+	ErrPostalSuggestionInvalid   = errors.New("cited postal suggestion does not exist or cannot be reviewed")
 )
 
 func (s *Store) AddPersonAddressContext(
@@ -84,7 +89,7 @@ func (s *Store) AddPersonAddressContext(
 			return err
 		}
 		var err error
-		result, err = s.addPersonAddressTx(ctx, tx, personID, input)
+		result, err = s.addPersonAddressTx(ctx, tx, personID, input, nil)
 		if err != nil {
 			return err
 		}
@@ -125,10 +130,15 @@ func (s *Store) SupersedePersonAddressContext(
 }
 
 func (s *Store) addPersonAddressTx(
-	ctx context.Context, tx *loggedTx, personID int64, input PersonAddressInput,
+	ctx context.Context, tx *loggedTx, personID int64, input PersonAddressInput, replacedOriginal *string,
 ) (*PersonAddress, error) {
 	if !input.AddressKind.Valid() {
 		return nil, ErrInvalidPersonAddressKind
+	}
+	if input.AddressKind == PersonAddressPostal {
+		if err := s.validatePostalInputTx(ctx, tx, personID, input, replacedOriginal); err != nil {
+			return nil, err
+		}
 	}
 	if !personAddressHasValue(input) {
 		return nil, ErrPersonAddressValueMissing
@@ -212,13 +222,27 @@ func (s *Store) listPersonAddressesTx(
 func (s *Store) supersedePersonAddressTx(
 	ctx context.Context, tx *loggedTx, personID, addressID int64, activeUntil *time.Time,
 ) error {
+	address, err := getPersonAddressTx(ctx, tx, personID, addressID)
+	if err != nil {
+		return err
+	}
+	if address.AddressKind == PersonAddressPostal {
+		if _, _, err := postaladdress.DecodeOriginalInput(address.OriginalValue); err != nil {
+			return err
+		}
+	}
 	return s.supersedeProfileValueTx(
 		ctx, tx, "person_addresses", personID, addressID, activeUntil,
 	)
 }
 
 func personAddressHasValue(input PersonAddressInput) bool {
-	if strings.TrimSpace(input.OriginalValue) != "" {
+	if input.AddressKind == PersonAddressPostal {
+		_, snapshot, _ := postaladdress.DecodeOriginalInput(input.OriginalValue)
+		if !snapshot && strings.TrimSpace(input.OriginalValue) != "" {
+			return true
+		}
+	} else if strings.TrimSpace(input.OriginalValue) != "" {
 		return true
 	}
 	for _, value := range []*string{
@@ -293,5 +317,6 @@ func scanPersonAddress(row scanner) (*PersonAddress, error) {
 	if err := env.apply(&address.Envelope); err != nil {
 		return nil, err
 	}
+	address.Assessment = address.LocalPostalAssessment()
 	return &address, nil
 }

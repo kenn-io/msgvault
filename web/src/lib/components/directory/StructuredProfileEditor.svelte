@@ -1,11 +1,12 @@
 <script lang="ts">
   import { Button, TextInput } from '@kenn-io/kit-ui';
-  import { onMount, tick, untrack } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import type { Input } from '../../api/generated/models';
+  import { PostalReviewSession, postalAddressText, postalReasons, copyPostalInput, type PostalCandidate } from '../../directory/postal-review.svelte';
 
   import type {
     PartialDate as GeneratedPartialDate,
     PersonAddress as GeneratedPersonAddress,
-    PersonAddressInputRequest as GeneratedPersonAddressInputRequest,
     PersonCategory as GeneratedPersonCategory,
     PersonContactPoint as GeneratedPersonContactPoint,
     PersonDate as GeneratedPersonDate,
@@ -31,7 +32,6 @@
     | GeneratedPersonDate
     | GeneratedPersonCategory
     | GeneratedPersonMedia;
-  type PersonAddressInputRequest = GeneratedPersonAddressInputRequest;
 
   interface Props {
     controller: DirectoryProfileController;
@@ -39,8 +39,10 @@
     current?: StructuredProfileRecord;
     contactKind?: string;
     nameKind?: string;
+    postalCandidate?: PostalCandidate;
     onDone?: () => void;
     onCancel?: () => void;
+    onComparisonChange?: (visible: boolean) => void;
   }
 
   let {
@@ -49,8 +51,10 @@
     current = undefined,
     contactKind: presetContactKind,
     nameKind: presetNameKind,
+    postalCandidate = undefined,
     onDone = () => undefined,
     onCancel = () => undefined,
+    onComparisonChange = () => undefined,
   }: Props = $props();
 
   // One editor instance owns one explicit draft. The section replaces the
@@ -58,6 +62,14 @@
   // once instead of rebasing an in-progress draft under the user's cursor.
   const initialSection = untrack(() => section);
   const initialCurrent = untrack(() => current);
+  const initialCandidate = untrack(() => postalCandidate);
+  const initialController = untrack(() => controller);
+  const initialPersonID = untrack(() => controller.person?.id ?? controller.structuredProfile?.person.id ?? 0);
+  const reviewedETag = initialCandidate ? `"person-${initialPersonID}-r${initialCandidate.personRevision}"` : untrack(() => controller.structuredProfileETag ?? undefined);
+  const review = new PostalReviewSession(initialPersonID, (id, input, external, signal, previousResponseID) => initialController.assessPostalAddress(id, input, external, signal, previousResponseID));
+  onDestroy(() => review.destroy());
+  $effect(() => { onComparisonChange(!!review.result); return () => onComparisonChange(false); });
+  $effect(() => { if (controller !== initialController || (controller.person?.id ?? controller.structuredProfile?.person.id ?? 0) !== initialPersonID) review.destroy(); });
   const currentName = initialCurrent as GeneratedPersonName | undefined;
   const currentContact = initialCurrent as GeneratedPersonContactPoint | undefined;
   const currentAddress = initialCurrent as GeneratedPersonAddress | undefined;
@@ -74,12 +86,24 @@
   let serviceSlug = $state(currentContact?.service_slug ?? '');
   let scopeKind = $state(currentContact?.scope_kind ?? '');
   let scopeValue = $state(currentContact?.scope_value ?? '');
-  let addressKind = $state(currentAddress?.address_kind ?? 'postal');
-  let streetAddress = $state(currentAddress?.street_address ?? '');
-  let locality = $state(currentAddress?.locality ?? '');
-  let region = $state(currentAddress?.region ?? '');
-  let postalCode = $state(currentAddress?.postal_code ?? '');
-  let countryName = $state(currentAddress?.country_name ?? '');
+  let addressKind = $state(initialCandidate ? 'postal' : currentAddress?.address_kind ?? 'postal');
+  const seedAddress = initialCandidate?.input ?? currentAddress;
+  let originalInput = $state<Input | undefined>(initialCandidate?.input ?? (currentAddress?.address_kind === 'postal' && currentAddress.envelope.source_ref?.startsWith('person-fact-claim:') ? currentAddress.assessment?.original ?? copyPostalInput(currentAddress) : undefined));
+  let addressTarget = $state('');
+  let addressTargetInvalid = $state(false);
+  let addressTargetSelect = $state<HTMLSelectElement>();
+  let addressEdited = $state(false);
+  let postOfficeBox = $state(seedAddress?.post_office_box ?? '');
+  let extendedAddress = $state(seedAddress?.extended_address ?? '');
+  let countryCode = $state(seedAddress?.country_code ?? '');
+  let originalText = $state(untrack(() => originalInput ? originalInput.original_value ?? '' : currentAddress?.address_kind === 'postal' ? '' : seedAddress?.original_value ?? ''));
+  let currentText = $state(seedAddress?.free_text ?? (initialCandidate && !initialCandidate.input.extended_components && !postalAddressText({ ...initialCandidate.input, free_text: '', country_code: '' }) ? initialCandidate.input.original_value ?? '' : ''));
+  let currentTextTouched = $state(false);
+  let streetAddress = $state(seedAddress?.street_address ?? '');
+  let locality = $state(seedAddress?.locality ?? '');
+  let region = $state(seedAddress?.region ?? '');
+  let postalCode = $state(seedAddress?.postal_code ?? '');
+  let countryName = $state(seedAddress?.country_name ?? '');
   let dateKind = $state(currentDate?.date_kind ?? (untrack(() => controller.structuredProfile?.dates.some(date => date.date_kind === 'birthday')) ? 'anniversary' : 'birthday'));
   let dateValue = $state(
     formatDate(currentDate?.date) ??
@@ -110,9 +134,16 @@
 
   const ordinal = initialCurrent?.envelope.ordinal ?? 0;
   const supersede = initialCurrent ? [initialCurrent.envelope.id] : [];
+  const replacementAddress = () => initialCandidate && addressTarget.startsWith('supersede:')
+    ? controller.structuredProfile?.addresses.find(address => address.envelope.id === Number(addressTarget.slice('supersede:'.length)))
+    : undefined;
   const envelope = (): GeneratedValueEnvelopeInput => ({
     source: 'user',
-    ...(initialCurrent && sameDiscriminator() ? { ordinal } : {}),
+    ...(replacementAddress() ? { ordinal: replacementAddress()!.envelope.ordinal } : initialCurrent && sameDiscriminator() ? { ordinal } : {}),
+    ...(initialSection === 'addresses' ? {
+      ...keep((replacementAddress() ?? currentAddress)?.envelope, ['pref', 'type_label', 'type_tokens']),
+      ...(initialCandidate ? { source_ref: initialCandidate.sourceRef } : currentAddress?.envelope.source_ref?.startsWith('person-fact-claim:') ? { source_ref: currentAddress.envelope.source_ref } : {}),
+    } : {}),
   });
 
   function dateParts(value: string): GeneratedPartialDate | undefined {
@@ -172,7 +203,7 @@
     }
   }
 
-  function addressHasValue(input: PersonAddressInputRequest): boolean {
+  function addressHasValue(input: Input): boolean {
     return [
       input.original_value,
       input.post_office_box,
@@ -242,38 +273,15 @@
           },
         };
       case 'addresses': {
-        const street = streetAddress.trim();
-        return {
-          addresses: {
-            add: [
-              {
-                ...keep(currentAddress, [
-                  'post_office_box',
-                  'extended_address',
-                  'extended_components',
-                  'free_text',
-                  'label',
-                  'geo_uri',
-                  'timezone',
-                  'country_code',
-                  'place_uri',
-                ]),
-                address_kind: addressKind,
-                ...(street
-                  ? { original_value: street, street_address: street }
-                  : initialCurrent?.original_value.trim()
-                    ? { original_value: initialCurrent.original_value }
-                    : {}),
-                ...(locality.trim() ? { locality: locality.trim() } : {}),
-                ...(region.trim() ? { region: region.trim() } : {}),
-                ...(postalCode.trim() ? { postal_code: postalCode.trim() } : {}),
-                ...(countryName.trim() ? { country_name: countryName.trim() } : {}),
-                envelope: envelope(),
-              },
-            ],
-            supersede,
-          },
-        };
+        if (addressKind === 'postal') { initializeCurrentText(); captureOriginal(); }
+        const input = addressDraft();
+        if (addressKind !== 'postal' && streetAddress.trim()) {
+          input.original_value = streetAddress.trim();
+          if (currentAddress?.free_text) input.free_text = streetAddress.trim();
+        } else if (addressKind !== 'postal' && !input.original_value) {
+          input.original_value = [locality, region, postalCode, countryName].map(value => value.trim()).filter(Boolean).join(', ');
+        }
+        return { addresses: { add: [{ ...copyPostalInput(input), ...(addressKind === 'postal' ? { original_input: originalInput, free_text: currentText } : {}), envelope: envelope() }], supersede: initialCandidate ? (addressTarget.startsWith('supersede:') ? [Number(addressTarget.slice('supersede:'.length))] : []) : supersede } };
       }
       case 'dates': {
         const value = dateValue.trim();
@@ -317,21 +325,55 @@
     }
   }
 
-  async function save(event: SubmitEvent): Promise<void> {
-    event.preventDefault();
-    if (submitting || !controller.canWriteProfile) return;
+  function addressDraft(): Input {
+    return { ...keep(seedAddress, ['extended_components', 'label', 'geo_uri', 'timezone', 'place_uri']), address_kind: addressKind,
+      post_office_box: postOfficeBox, extended_address: extendedAddress, street_address: streetAddress,
+      locality, region, postal_code: postalCode, country_name: countryName, country_code: countryCode, original_value: originalText, free_text: currentText };
+  }
+  function initializeCurrentText(): void {
+    if (!originalInput && !currentTextTouched && !currentText && originalText && !addressDraft().extended_components && !postalAddressText({ ...addressDraft(), free_text: '', country_code: '' })) currentText = originalText;
+  }
+  function captureOriginal(): void {
+    if (!originalInput && addressHasValue(addressDraft())) originalInput = copyPostalInput(addressDraft());
+  }
+  function edited(): void {
+    if (initialSection !== 'addresses') return;
+    addressEdited = true;
+    review.invalidate();
+  }
+  async function checkAddress(external: boolean): Promise<void> {
+    initializeCurrentText();
+    captureOriginal();
+    await review.check(addressDraft(), external);
+  }
+  async function chooseAddress(corrected: boolean): Promise<void> {
+    const result = review.result;
+    if (!result) return;
+    captureOriginal();
+    const input = corrected ? result.proposed : result.original;
+    streetAddress = input.street_address ?? ''; extendedAddress = input.extended_address ?? ''; postOfficeBox = input.post_office_box ?? '';
+    locality = input.locality ?? ''; region = input.region ?? ''; postalCode = input.postal_code ?? ''; countryName = input.country_name ?? ''; countryCode = input.country_code ?? ''; currentText = input.free_text ?? '';
+    review.invalidate();
+    await save();
+  }
+  async function save(event: SubmitEvent | undefined = undefined): Promise<void> {
+    event?.preventDefault();
+    if (submitting || !controller.canWriteProfile || controller !== initialController || (controller.person?.id ?? controller.structuredProfile?.person.id ?? 0) !== initialPersonID) return;
     validationError = null;
-    const body = patch();
-    if (initialSection === 'addresses') {
-      const address = body.addresses?.add?.[0];
-      if (!address || !addressHasValue(address)) {
-        validationError = 'Enter at least one address component.';
-        return;
-      }
+    if (initialCandidate && !addressTarget) {
+      addressTargetInvalid = true;
+      await tick();
+      addressTargetSelect?.focus();
+      return;
     }
+    if (initialSection === 'addresses' && !addressHasValue(addressDraft())) {
+      validationError = 'Enter at least one address component.';
+      return;
+    }
+    const body = patch();
     submitting = true;
     try {
-      const result = await controller.patchProfile(body);
+      const result = await controller.patchProfile(body, initialSection === 'addresses' ? reviewedETag : undefined);
       if (result === undefined && controller.draft === null) onDone();
     } finally {
       submitting = false;
@@ -346,7 +388,7 @@
   function conflictMessage(): string | null {
     if (!controller.conflict) return null;
     if (controller.conflict.code === 'person_revision_conflict')
-      return 'This person changed elsewhere. Reload and retry.';
+      return initialSection === 'addresses' ? 'This person changed elsewhere. Reload and review the address again.' : 'This person changed elsewhere. Reload and retry.';
     return controller.conflict.message;
   }
 </script>
@@ -357,7 +399,7 @@
     <div class="editor-actions"><Button label="Cancel" type="button" onclick={onCancel} /></div>
   </div>
 {:else}
-  <form class="profile-editor" bind:this={formElement} onsubmit={save} aria-label={`Edit ${section.replace('_', ' ')}`}>
+  <form class="profile-editor" bind:this={formElement} onsubmit={save} oninput={() => { if (!initialCandidate && !currentAddress && (review.pending || review.error || review.result?.status === 'unavailable' || review.result?.reason_codes.some(code => code.startsWith('external_')))) originalInput = undefined; edited(); }} onchange={edited} aria-label={`Edit ${section.replace('_', ' ')}`}>
     {#if section === 'names'}
       <label
         >Name kind
@@ -423,9 +465,18 @@
       >
       {/if}
     {:else if section === 'addresses'}
+      {#if initialCandidate}
+        <p class="postal-note">Edits keep the original source.</p>
+        <label>Save address as<select bind:this={addressTargetSelect} bind:value={addressTarget} aria-required="true" aria-invalid={addressTargetInvalid && !addressTarget} disabled={submitting}>
+          <option value="">Choose…</option><option value="add">Add a new address</option>
+          {#each controller.structuredProfile?.addresses.filter(address => address.address_kind === 'postal') ?? [] as address (address.envelope.id)}
+            <option value={`supersede:${address.envelope.id}`}>Replace: {postalAddressText(address, address.assessment?.proposed_extended_parts) || 'No current address'}</option>
+          {/each}
+        </select></label>
+      {/if}
       <label
         >Address kind
-        <select bind:value={addressKind} disabled={submitting}>
+        <select bind:value={addressKind} disabled={submitting || !!initialCandidate}>
           <option value="postal">Postal</option><option value="birth_place">Birth place</option><option
             value="death_place">Death place</option
           >
@@ -439,11 +490,46 @@
           disabled={submitting}
         /></label
       >
+      {#if addressKind === 'postal'}
+        <label>Unit or apartment<TextInput bind:value={extendedAddress} ariaLabel="Unit or apartment" block disabled={submitting} /></label>
+        <label>PO box<TextInput bind:value={postOfficeBox} ariaLabel="PO box" block disabled={submitting} /></label>
+        <label>Country code<TextInput bind:value={countryCode} ariaLabel="Country code" block disabled={submitting} /></label>
+        <label>Current address text<textarea aria-label="Current address text" bind:value={currentText} oninput={() => { currentTextTouched = true; }} disabled={submitting}></textarea></label>
+        <label>Original text<textarea aria-label="Original text" bind:value={originalText} oninput={() => { originalInput = undefined; }} readonly={addressKind === 'postal' && !!originalInput && (!!initialCandidate || !!currentAddress || (!review.error && review.result?.status !== 'unavailable' && !review.result?.reason_codes.some(code => code.startsWith('external_'))))} disabled={submitting}></textarea></label>
+      {/if}
       <label>Locality<TextInput bind:value={locality} ariaLabel="Locality" block disabled={submitting} /></label>
       <label>Region<TextInput bind:value={region} ariaLabel="Region" block disabled={submitting} /></label>
       <label>Postal code<TextInput bind:value={postalCode} ariaLabel="Postal code" block disabled={submitting} /></label
       >
       <label>Country<TextInput bind:value={countryName} ariaLabel="Country" block disabled={submitting} /></label>
+      {#if addressKind === 'postal'}
+        <div class="postal-review">
+          <p>Local cleanup does not verify that an address exists or is deliverable.</p>
+          <div class="editor-actions">
+            <Button label="Check locally" type="button" disabled={submitting || review.pending || !controller.canWriteProfile} onclick={() => void checkAddress(false)} />
+            <Button label="Check with Google" type="button" disabled={submitting || review.pending || !controller.canWriteProfile} onclick={() => void checkAddress(true)} />
+          </div>
+          <p>Checking with Google sends postal components, including unit and PO box, to Google.</p>
+          {#if review.pending}<p role="status">Checking address…</p>{/if}
+          {#if review.error}<p role="alert">{review.error}</p>{/if}
+          {#if review.result}
+            {@const result = review.result}
+            <dl class="postal-comparison">
+              <div><dt>Original address</dt><dd>{postalAddressText(result.original, result.original_extended_parts)}</dd></div>
+              {#if postalAddressText(result.original, result.original_extended_parts) !== postalAddressText(result.proposed, result.proposed_extended_parts)}<div><dt>Suggested address</dt><dd>{postalAddressText(result.proposed, result.proposed_extended_parts)}</dd></div>{/if}
+            </dl>
+            {#if result.status !== 'unavailable' || !postalReasons(result.reason_codes).length}<p role="status">{result.status === 'validated' ? 'Validated — review before saving' : result.status === 'unavailable' ? 'Provider unavailable' : result.status === 'needs_review' ? 'Needs review' : 'Normalized, unverified'}</p>{/if}
+            {#if postalReasons(result.reason_codes).length}<p>{postalReasons(result.reason_codes).join(' · ')}</p>{/if}
+            {#if result.provider === 'google' && result.checked_at && (result.status === 'validated' || result.status === 'needs_review')}<p class="google-attribution"><a href="https://maps.google.com" target="_blank" rel="noreferrer" translate="no" style="white-space: nowrap; font-family: Arial, sans-serif; font-style: normal; font-weight: 400; font-size: 14px; color: #1f1f1f; background-color: #ffffff; letter-spacing: normal">Google Maps</a></p>{/if}
+            <div class="editor-actions">
+              <Button label="Keep original" type="button" disabled={submitting || !controller.canWriteProfile} onclick={() => void chooseAddress(false)} />
+              <Button label="Save correction" type="button" disabled={submitting || !controller.canWriteProfile} onclick={() => void chooseAddress(true)} />
+            </div>
+          {:else if !addressEdited && currentAddress?.assessment}
+            <p role="status">Local assessment: {currentAddress.assessment.status.replaceAll('_', ' ')}</p>
+          {/if}
+        </div>
+      {/if}
     {:else if section === 'dates'}
       <label
         >Date kind
@@ -540,6 +626,12 @@
 {/if}
 
 <style>
+  .postal-review, .postal-note { width: 100%; }
+  .postal-comparison { display: grid; gap: var(--space-2); }
+  .postal-comparison dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  textarea { box-sizing: border-box; width: 100%; min-width: 0; min-height: 5rem; }
+  label :global(.kit-text-input) { box-sizing: border-box; min-width: 0; }
+  label :global(input) { box-sizing: border-box; min-width: 0; max-width: 100%; }
   .profile-editor {
     display: flex;
     flex-wrap: wrap;

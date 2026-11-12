@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-30"
+last_edited: "2026-11-07"
 title: Profile Automation
 description: Maintain tracked people's profile facts from archive evidence and inspect why a value changed.
 ---
@@ -250,19 +250,51 @@ Status and history are redacted operational records. Use them to inspect
 progress, failures, and usage without printing message packets. A failed
 provider call does not authorize a switch to another provider.
 
+## Review sweep addresses
+
+The sensitive `postal_address` target (`system:postal_address`) retains explicitly
+evidenced addresses as suggestions. A city or employer location alone is not a
+postal address. Enable sensitive targets only when you want the sweep to
+extract this information. Postal claims never change the profile automatically,
+regardless of confidence, and do not support pins.
+
+Reveal the sensitive claim in the person's fact ledger, inspect its original
+and proposed components, local assessment, and supporting evidence, then open
+an eligible suggestion for review. Every opening refreshes server eligibility
+for that exact claim. Missing support, a failed refresh, or a profile revision
+that no longer matches prevents the editor from opening. Choose whether to add
+a new address or which existing address to replace. The same editor can check
+locally or, on an explicit click, use the separately configured Google provider. Saving retains
+the raw input and claim origin as a user-declared address; it does not turn
+modified fields into evidence-backed facts.
+
+The server derives eligibility from the complete current evidence and claim
+state, even when the browser has loaded only one page. Revoked support, stale
+target revisions, future or expired validity, unsupported relations, and
+preparation failures prevent supported adoption. Already adopted claim origins
+are detected in current addresses and their history.
+
+Saving protects the person revision you reviewed. It does not atomically
+recheck claim freshness: evidence may change while an editor is open. Reopen
+the claim to review current support when needed; you can still enter a manual
+override. Sweep packet context includes at most the newest 100 unresolved
+postal suggestions, excluding adopted origins. This bounds model context;
+the full claim ledger remains available through pagination.
+
 ## Understand and correct automatic facts
 
 The sweep chooses fields from the archive's current attribute definitions,
-including eligible custom fields, plus employment. It does not use a fixed
-allowlist of seeded fields. An attribute must be active, API-editable, and
+including eligible custom fields, plus employment and review-only postal
+addresses. It does not use a fixed allowlist of seeded fields. An attribute must be active, API-editable, and
 non-derived, with a supported value type and a description of 1–280 characters.
 Attributes that link to another record are excluded. Inspect the current set
 with `msgvault person facts catalog --include-sensitive`.
 
 `allow_sensitive = true` permits both private archive evidence and sensitive
-targets, including religion, politics, and Notes. There is no separate switch
-for those two permissions. A claim that passes the evidence and resolution
-rules can update the profile automatically; enabling a sweep does not put every
+targets, including religion, politics, Notes, and postal addresses. There is no
+separate switch for those two permissions. A claim that passes the evidence and resolution
+rules can update ordinary profile fields automatically; postal addresses always
+require owner review. Enabling a sweep does not put every
 proposed change through manual approval. Pins and competing evidence still
 control which values can change.
 
@@ -274,8 +306,8 @@ The fact ledger separates three things:
    superseded a claim.
 
 The resolver checks the target field, attribution, evidence, and competing
-claims before changing a profile. User-declared values receive pins that keep
-automation from replacing them. An explicit pin also protects an empty field;
+claims before changing a profile. User-declared values on automatically managed
+targets receive pins that keep automation from replacing them. An explicit pin also protects an empty field;
 unpinning allows the resolver to reconsider retained claims.
 
 ```bash

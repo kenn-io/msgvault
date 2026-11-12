@@ -3,10 +3,33 @@
   import { onDestroy, tick } from 'svelte';
 
   import type { FactLedgerController, FactLedgerSection } from '../../directory/fact-ledger-controller.svelte';
+  import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
+  import { postalAddressText, postalReason } from '../../directory/postal-review.svelte';
+  import StructuredProfileEditor from './StructuredProfileEditor.svelte';
   import FactEvidenceHistoryDialog from './FactEvidenceHistoryDialog.svelte';
 
-  interface Props { controller: FactLedgerController }
-  let { controller }: Props = $props();
+  interface Props { controller: FactLedgerController; profileController?: DirectoryProfileController }
+  let { controller, profileController = undefined }: Props = $props();
+  $effect(() => {
+    const activeController = controller;
+    const activeProfile = profileController;
+    // A replacement profile controller starts a new review context, even for the same person.
+    return () => { void activeProfile; activeController.cancelPostalReview(); };
+  });
+  function openPostalDraft(rowToken: string): void {
+    const profile = profileController;
+    if (!profile) return;
+    void controller.openPostalReview(rowToken, () => {
+      const revision = profile.structuredProfile?.person.revision ?? 0;
+      return profile.person?.id === controller.personID && profile.person?.revision === revision &&
+        profile.structuredProfileETag === `"person-${controller.personID}-r${revision}"` ? revision : 0;
+    });
+  }
+  function closePostalDraft(): void {
+    if (profileController?.draft?.kind === 'profile' && !profileController.discardProfileDraft()) return;
+    controller.cancelPostalReview();
+  }
+  let editorHasComparison = $state(false);
   let root: HTMLElement;
   let destroyed = false;
 
@@ -75,7 +98,7 @@
         <div class="cards" aria-busy={controller.evidence.loading}>
           {#each controller.evidence.rows as row (row.rowToken)}
             <Card level="default" padding="sm" ariaLabel="Fact evidence">
-              <dl><div><dt>Source class</dt><dd>{row.sourceClass}</dd></div><div><dt>Directness</dt><dd>{row.directness}</dd></div><div><dt>Authority</dt><dd>{row.authority}</dd></div><div><dt>Identity score</dt><dd>{row.identityScore}</dd></div><div><dt>Event time</dt><dd>{row.eventTime}</dd></div><div><dt>Recorded time</dt><dd>{row.recordedTime}</dd></div><div><dt>Support</dt><dd>{row.supported ? 'Supported' : 'Unsupported'}</dd></div><div><dt>Current support status</dt><dd>{row.currentSupportLabel}</dd></div><div><dt>Created</dt><dd>{row.createdAt}</dd></div></dl>
+              <dl><div><dt>Evidence ID</dt><dd>{row.id}</dd></div><div><dt>Source class</dt><dd>{row.sourceClass}</dd></div><div><dt>Directness</dt><dd>{row.directness}</dd></div><div><dt>Authority</dt><dd>{row.authority}</dd></div><div><dt>Identity score</dt><dd>{row.identityScore}</dd></div><div><dt>Event time</dt><dd>{row.eventTime}</dd></div><div><dt>Recorded time</dt><dd>{row.recordedTime}</dd></div><div><dt>Support</dt><dd>{row.supported ? 'Supported' : 'Unsupported'}</dd></div><div><dt>Current support status</dt><dd>{row.currentSupportLabel}</dd></div><div><dt>Created</dt><dd>{row.createdAt}</dd></div></dl>
               {#if row.excerpt !== null}
                 {#if controller.revealedEvidence.has(row.rowToken)}<p class="revealed"><strong>Evidence excerpt</strong><span>{row.excerpt}</span></p>
                 {:else}<Button label="Reveal evidence excerpt" size="sm" onclick={() => controller.revealEvidence(row.rowToken)} />{/if}
@@ -103,7 +126,39 @@
                 <p role="status" aria-label="Fact value hidden until target sensitivity is verified.">Fact value hidden until target sensitivity is verified.</p>
               {:else if sensitivity === 'sensitive' && !controller.revealedClaims.has(row.rowToken)}
                 <p>Sensitive fact value hidden.</p><Button label="Reveal sensitive fact value" size="sm" onclick={() => controller.revealClaim(row.rowToken)} />
-              {:else}<dl><div><dt>Submitted value</dt><dd>{row.submittedValue}</dd></div>{#if row.normalizedValue !== null}<div><dt>Normalized value</dt><dd>{row.normalizedValue}</dd></div>{/if}</dl>{/if}
+              {:else}
+                {#if !row.postalReview?.assessment}<dl><div><dt>Submitted value</dt><dd>{row.submittedValue}</dd></div>{#if row.normalizedValue !== null}<div><dt>Normalized value</dt><dd>{row.normalizedValue}</dd></div>{/if}</dl>{/if}
+                {#if row.postalReview}
+                  {@const review = row.postalReview}
+                  <div class="postal-claim-review">
+                    {#if !review.eligible && !review.reason_codes.map(postalReason).filter(Boolean).length}<p>Cannot apply suggestion</p>{/if}
+                    {#if review.reason_codes.map(postalReason).filter(Boolean).length}<p>{review.reason_codes.map(postalReason).filter(Boolean).join(' · ')}</p>{/if}
+                    {#if review.supporting_evidence_ids.length}<p>Supporting evidence IDs: {review.supporting_evidence_ids.join(', ')}</p><Button label="View evidence" size="sm" onclick={() => void controller.selectSection('evidence')} />{:else if !review.reason_codes.map(postalReason).includes('Evidence unavailable')}<p>No supporting evidence</p>{/if}
+                    {#if review.assessment}
+                      {#if review.assessment.original.original_value && !(controller.postalReview?.rowToken === row.rowToken && controller.postalReview.candidate?.input.original_value === review.assessment.original.original_value) && !` ${postalAddressText(review.assessment.original, review.assessment.original_extended_parts).replace(/[\s,;]+/g, ' ').trim()} `.includes(` ${review.assessment.original.original_value.replace(/[\s,;]+/g, ' ').trim()} `)}<p>Source text: {review.assessment.original.original_value}</p>{/if}
+                      {#if !(controller.postalReview?.rowToken === row.rowToken && editorHasComparison)}
+                      <dl><div><dt>Original address</dt><dd>{postalAddressText(review.assessment.original, review.assessment.original_extended_parts)}</dd></div>{#if postalAddressText(review.assessment.original, review.assessment.original_extended_parts) !== postalAddressText(review.assessment.proposed, review.assessment.proposed_extended_parts)}<div><dt>Suggested address</dt><dd>{postalAddressText(review.assessment.proposed, review.assessment.proposed_extended_parts)}</dd></div>{/if}<div><dt>Local assessment</dt><dd>{review.assessment.status.replaceAll('_', ' ')}</dd></div></dl>
+                      {/if}
+                      {#if review.eligible && row.claimKey && profileController && controller.personID === profileController.person?.id}
+                        <Button label="Review address" size="sm" disabled={!profileController.canWriteProfile || controller.postalReview?.loading === true || !!controller.postalReview?.candidate} onclick={() => openPostalDraft(row.rowToken)} />
+                        {#if controller.postalReview?.rowToken === row.rowToken}
+                          {#if controller.postalReview.loading}
+                            <p role="status">Refreshing address support…</p>
+                            <Button label="Cancel opening address review" size="sm" onclick={() => controller.cancelPostalReview()} />
+                          {:else if controller.postalReview.error}
+                            <p role="alert">{controller.postalReview.error}</p>
+                            <Button label="Dismiss address review error" size="sm" onclick={() => controller.cancelPostalReview()} />
+                          {:else if controller.postalReview.candidate}
+                            {#key controller.postalReview}
+                              <StructuredProfileEditor controller={profileController} section="addresses" postalCandidate={controller.postalReview.candidate} onComparisonChange={(visible) => { editorHasComparison = visible; }} onCancel={closePostalDraft} onDone={() => { controller.cancelPostalReview(); void controller.retrySection('claims'); }} />
+                            {/key}
+                          {/if}
+                        {/if}
+                      {/if}
+                    {/if}
+                  </div>
+                {/if}
+              {/if}
               <dl><div><dt>Relation</dt><dd>{row.relation}</dd></div><div><dt>Origin</dt><dd>{row.origin}</dd></div><div><dt>Validity</dt><dd>{row.validFrom ?? 'No start'} – {row.validUntil ?? 'No end'}</dd></div><div><dt>Confidence</dt><dd>Reported confidence {row.reportedScore}</dd></div><div><dt>Created</dt><dd>{row.createdAt}</dd></div></dl>
             </Card>
           {:else}<EmptyState title="No fact claims on this page." description="Choose another target or page." />{/each}

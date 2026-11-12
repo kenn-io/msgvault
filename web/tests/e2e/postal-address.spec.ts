@@ -1,0 +1,69 @@
+import { expect, test } from '@playwright/test';
+import type { Input, PersonProfilePatchRequest } from '../../src/lib/api/generated/models';
+import { installDirectoryReviewArchive, installMixedArchive } from './fixtures/mixed-archive';
+
+for (const width of [1280, 420] as const) {
+  test(`postal review fits at ${width}px`, async ({ page }) => {
+    await installMixedArchive(page);
+    const when = '2026-08-01T00:00:00Z';
+    const person = { id: 42, revision: 1, participant_ids: [12], display_name: 'Archive Person', vcard_uid: 'urn:uuid:archive-person', created_at: when, updated_at: when };
+    await page.route('**/api/v1/people/42/profile', route => route.fulfill({ json: { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, headers: { ETag: '"person-42-r1"' } }));
+    await page.route('**/api/v1/people/42/addresses/assess', async route => {
+      const body = route.request().postDataJSON() as { address: Input };
+      await route.fulfill({ json: { original: body.address, proposed: { ...body.address, street_address: '12 Example Street', country_code: 'CA' }, status: 'validated', reason_codes: ['provider_confirmed'], provider: 'google', checked_at: when, original_extended_parts: [], proposed_extended_parts: [] } });
+    });
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: 42 }))}`);
+    const pane = page.getByRole('group', { name: 'Person page' });
+    await pane.getByRole('radio', { name: 'Details', exact: true }).click();
+    await pane.getByRole('button', { name: 'Add address', exact: true }).click();
+    const form = pane.getByRole('form', { name: 'Edit addresses' });
+    await form.getByLabel('Street address', { exact: true }).fill('12 Example St');
+    await form.getByLabel('Country code').fill('CA');
+    await form.getByRole('button', { name: 'Check with Google' }).click();
+    await expect(form.getByRole('link', { name: 'Google Maps' })).toBeVisible();
+    const layout = await form.evaluate(element => ({ width: element.getBoundingClientRect().width, scroll: element.scrollWidth, client: element.clientWidth }));
+    expect(layout.width).toBeLessThanOrEqual(width);
+    expect(layout.scroll).toBeLessThanOrEqual(layout.client + 1);
+  });
+}
+
+test('a sweep address stays tied to its evidence through check, edit, and save', async ({ page }) => {
+  await installDirectoryReviewArchive(page);
+  const when = '2026-08-01T00:00:00Z';
+  const revision = `sha256:${'a'.repeat(64)}`;
+  const original: Input = { address_kind: 'postal', street_address: '12 Example Street', free_text: 'Delivery note', country_code: 'CA', original_value: 'Source address' };
+  const assessment = { original, proposed: original, status: 'normalized_unverified', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] };
+  const claim = { id: 71, claim_key: 'synthetic-claim', generation_id: 72, target: { kind: 'postal_address', key: 'system:postal_address', revision }, submitted_value: JSON.stringify({ street_address: original.street_address, free_text: original.free_text, country_code: original.country_code, source_text: original.original_value }), relation: 'support', origin: 'observed', confidence: { reported_score: 99 }, evidence_ids: [51], created_at: when, postal_review: { eligible: true, person_revision: 1, reason_codes: [], supporting_evidence_ids: [51], assessment } };
+  const person = { id: 42, revision: 1, participant_ids: [12], display_name: 'Archive Person', vcard_uid: 'urn:uuid:archive-person', created_at: when, updated_at: when };
+  const writes: { body: PersonProfilePatchRequest; ifMatch: string | null }[] = [];
+  await page.route('**/api/v1/person-fact-targets*', route => route.fulfill({ json: { targets: [{ ...claim.target, description: 'Postal address', value_type: 'record', cardinality: 'multi', sensitive: true }] } }));
+  await page.route('**/api/v1/people/42/fact-claims*', route => route.fulfill({ json: { claims: [claim] } }));
+  await page.route('**/api/v1/people/42/profile', async route => {
+    if (route.request().method() === 'PATCH') writes.push({ body: route.request().postDataJSON(), ifMatch: route.request().headers()['if-match'] ?? null });
+    await route.fulfill({ json: { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, headers: { ETag: '"person-42-r1"' } });
+  });
+  await page.route('**/api/v1/people/42/addresses/assess', async route => {
+    const body = route.request().postDataJSON() as { address: Input };
+    await route.fulfill({ json: { ...assessment, original: body.address, proposed: body.address } });
+  });
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 42 }))}`);
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
+  const facts = page.getByRole('region', { name: 'Facts', exact: true });
+  await facts.getByRole('button', { name: 'Show', exact: true }).click();
+  await facts.getByRole('radio', { name: 'Claims' }).click();
+  await facts.getByRole('button', { name: 'Reveal sensitive fact value' }).click();
+  await facts.getByRole('button', { name: 'Review address' }).click();
+  const form = facts.getByRole('form', { name: 'Edit addresses' });
+  await expect(form.getByLabel('Street address', { exact: true })).toHaveValue('12 Example Street');
+  await form.getByRole('button', { name: 'Check locally' }).click();
+  await expect(form.getByText('Original address')).toBeVisible();
+  await form.getByLabel('Street address', { exact: true }).fill('14 Example Street');
+  await form.getByLabel('Current address text').fill('');
+  await form.getByLabel('Save address as').selectOption('add');
+  await form.getByRole('button', { name: 'Save address' }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]!.ifMatch).toBe('"person-42-r1"');
+  expect(writes[0]!.body.addresses!.supersede).toEqual([]);
+  expect(writes[0]!.body.addresses!.add![0]).toMatchObject({ street_address: '14 Example Street', free_text: '', original_input: original, envelope: { source_ref: 'person-fact-claim:synthetic-claim' } });
+});

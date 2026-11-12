@@ -71,6 +71,31 @@ describe('ProfileHistoryDialog', () => {
     expect(requests.filter(url => url.pathname.endsWith('/attributes')).every(url => url.searchParams.get('history') === 'true')).toBe(true);
   });
 
+  it('shows current and earlier postal source details', async () => {
+    const client = createAPIClient(async input => {
+      const path = new URL((input instanceof Request ? input : new Request(input)).url).pathname;
+      if (path.endsWith('/merges')) return Response.json({ merges: [] });
+      return Response.json({ ...emptyProfile(person()), observations: [], addresses: [{
+        person_id: 7, address_kind: 'postal', original_value: 'Old street', street_address: 'New street', locality: 'Town', country_code: 'CA', extended_components: ';;;;;;;Floor 2',
+        envelope: { ...currentEnvelope, id: 31 },
+        assessment: { original: { address_kind: 'postal', street_address: 'Old street', locality: 'Town', country_code: 'CA', original_value: 'Old street', extended_components: ';;;;;;;Room\\;3' }, proposed: { address_kind: 'postal', street_address: 'New street', locality: 'Town', country_code: 'CA', extended_components: ';;;;;;;Floor 2' }, original_extended_parts: ['Room;3'], proposed_extended_parts: ['Floor 2'], status: 'needs_review', reason_codes: ['not_verified'] },
+      },
+        { person_id: 7, address_kind: 'postal', original_value: '12 Main St Apt 4B, Town', street_address: '14 Oak Ave', envelope: { ...currentEnvelope, id: 41, superseded_at: when }, assessment: { original: { address_kind: 'postal', street_address: '12 Main St', locality: 'Town', original_value: '12 Main St Apt 4B, Town' }, proposed: { address_kind: 'postal', street_address: '14 Oak Ave' }, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] } },
+        { person_id: 7, address_kind: 'postal', original_value: ';;12 Main St;Town;;;', street_address: '12 Main St', locality: 'Town', envelope: { ...currentEnvelope, id: 42, superseded_at: when }, assessment: { original: { address_kind: 'postal', street_address: '12 Main St', locality: 'Town', original_value: ';;12 Main St;Town;;;' }, proposed: { address_kind: 'postal', street_address: '12 Main St', locality: 'Town' }, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] } },
+        { person_id: 7, address_kind: 'postal', original_value: 'Unit 1', street_address: 'Unit 12', envelope: { ...currentEnvelope, id: 43, superseded_at: when }, assessment: { original: { address_kind: 'postal', street_address: 'Unit 12', original_value: 'Unit 1' }, proposed: { address_kind: 'postal', street_address: 'Unit 12' }, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] } },
+      ] });
+    });
+    render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
+    expect(await screen.findByText('New street, Town, CA, Floor 2')).toBeDefined();
+    expect(screen.getByText(/Original: Old street, Room;3 · You/)).toBeDefined();
+    const corrected = (await screen.findByText('14 Oak Ave')).closest('.detail-row') as HTMLElement;
+    expect(within(corrected).getByText(/Original: 12 Main St Apt 4B, Town · You/)).toBeDefined();
+    const legacy = screen.getByText('12 Main St, Town').closest('.detail-row')!;
+    expect(legacy.textContent).not.toContain('Original:');
+    const unit = screen.getByText('Unit 12').closest('.detail-row') as HTMLElement;
+    expect(within(unit).getByText(/Original: Unit 1/)).toBeDefined();
+  });
+
   it('preserves structured provenance and classifies every closed value as earlier', async () => {
     const requests: Request[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
@@ -90,7 +115,7 @@ describe('ProfileHistoryDialog', () => {
         })), { person_id: 7, address_kind: 'email', original_value: 'current@example.com', normalized_value: 'current@example.com', normalization: 'email', normalization_version: 1, envelope: { ...currentEnvelope, id: 30 } },
         { person_id: 7, address_kind: 'username', original_value: 'Desk 4455', normalized_value: 'Desk 4455', normalization: 'none', normalization_version: 1, service_slug: 'pager', service_label: 'Team hotline', envelope: { ...currentEnvelope, id: 35 } },
         ...['beeper-a', 'beeper-b'].map((scope, index) => ({ person_id: 7, address_kind: 'username', original_value: `reader${index}`, identity_key: `whatsapp-${index}`, normalized_value: `reader${index}`, normalization: 'none', normalization_version: 1, service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: scope, envelope: { ...currentEnvelope, id: 40 + index } }))],
-        addresses: [{ person_id: 7, address_kind: 'postal', original_value: 'Current address', envelope: { ...currentEnvelope, id: 31 } }],
+        addresses: [{ person_id: 7, address_kind: 'postal', original_value: 'Current address', free_text: 'Current address', envelope: { ...currentEnvelope, id: 31 } }],
         dates: [{ person_id: 7, date_kind: 'birthday', date: { month: 2, day: 14 }, date_text: 'February 14', original_value: '--02-14', envelope: { ...currentEnvelope, id: 32 } }],
         categories: [{ person_id: 7, normalized_value: 'scheduled end category', original_value: 'Scheduled end category', envelope: { ...currentEnvelope, id: 33, active_until: '2999-01-01T00:00:00Z' } }, {
           person_id: 7, original_value: 'Past category', normalized_value: 'past category',

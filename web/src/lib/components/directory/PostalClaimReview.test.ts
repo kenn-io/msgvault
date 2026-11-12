@@ -1,0 +1,219 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { describe, expect, it } from 'vitest';
+import { createAPIClient } from '../../api/client';
+import { FactLedgerController } from '../../directory/fact-ledger-controller.svelte';
+import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
+import { emptyProfile } from '../../directory/profile-fixtures.test-support';
+import FactLedger from './FactLedger.svelte';
+
+const when = '2026-08-01T00:00:00Z';
+const person = { id: 7, revision: 3, participant_ids: [], vcard_uid: 'person-7', created_at: when, updated_at: when };
+const raw = { address_kind: 'postal', street_address: '12 Example Street', extended_address: 'Unit 7', country_code: 'CA', extended_components: ';;;;;;;Room\\;3;Floor 2', original_value: 'Source address text' };
+const revision = `sha256:${'a'.repeat(64)}`;
+
+function setup(reason?: string, evidenceResponse?: Promise<Response>) {
+  const requests: Request[] = [];
+  let adopted = false;
+  const server = { reason, absent: false, fail: false, raw, personRevision: 3, readClaims: undefined as (() => Promise<Response>) | undefined };
+  let claimReads = 0;
+  const claim = () => ({ id: 1, claim_key: 'synthetic-claim', generation_id: 1, target: { kind: 'postal_address', key: 'system:postal_address', revision }, submitted_value: server.reason === 'malformed-value' ? JSON.stringify({ street_address: 123 }) : JSON.stringify({ street_address: raw.street_address, extended_address: raw.extended_address, country_code: raw.country_code, extended_components: raw.extended_components, source_text: raw.original_value }), relation: 'support', origin: 'observed', confidence: { reported_score: 99 }, evidence_ids: [5], created_at: when, postal_review: { eligible: !server.reason && !adopted, person_revision: server.personRevision, reason_codes: adopted ? ['already_adopted'] : server.reason ? [server.reason] : [], supporting_evidence_ids: [5], assessment: server.reason === 'malformed-value' ? undefined : { original: server.raw, proposed: server.raw, status: 'normalized_unverified', reason_codes: ['not_verified'], original_extended_parts: ['Room;3', 'Floor 2'], proposed_extended_parts: ['Room;3', 'Floor 2'] } } });
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input); requests.push(request);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [{ kind: 'postal_address', key: 'system:postal_address', revision, description: 'Postal address', value_type: 'record', cardinality: 'multi', sensitive: true }] });
+    if (path.endsWith('/fact-claims')) {
+      claimReads++;
+      if (server.readClaims) return server.readClaims();
+      if (server.fail) return Response.json({ message: 'Synthetic failure' }, { status: 503 });
+      if (server.absent) return Response.json({ claims: [] });
+      return Response.json({ claims: [claim()] });
+    }
+    if (path.endsWith('/fact-evidence')) return evidenceResponse ?? Response.json({ evidence: [] });
+    if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [] });
+    if (path.endsWith('/fact-pins')) return Response.json({ pins: [] });
+    if (path.endsWith('/addresses/assess')) return Response.json({ original: raw, proposed: raw, status: 'normalized_unverified', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] });
+    if (request.method === 'PATCH') { adopted = true; return Response.json(emptyProfile({ ...person, revision: 4 }), { headers: { ETag: '"person-7-r4"' } }); }
+    throw new Error(`Unexpected request ${path}`);
+  });
+  const ledger = new FactLedgerController(client);
+  const profileController = new DirectoryProfileController(client, 7, { person, structuredProfile: emptyProfile(person), etags: { person: '"person-7-r3"', structuredProfile: '"person-7-r3"' }, errors: {} });
+  ledger.applyContext(true, 7);
+  const view = render(FactLedger, { controller: ledger, profileController });
+  return { ledger, profileController, requests, server, view, claim, claimReads: () => claimReads };
+}
+
+describe('Postal claim review', () => {
+  it('keeps an edited claim open when the initial evidence response arrives', async () => {
+    let release!: (response: Response) => void;
+    const evidence = new Promise<Response>(resolve => { release = resolve; });
+    const { ledger } = setup(undefined, evidence);
+    await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
+    expect(screen.getByText(/Room;3, Floor 2/)).toBeDefined();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Review address' }));
+    const street = await screen.findByLabelText('Street address');
+    await fireEvent.input(street, { target: { value: 'Edited street' } });
+    release(Response.json({ evidence: [] }));
+    await waitFor(() => expect(ledger.evidence.loading).toBe(false));
+    expect(screen.getByLabelText('Street address')).toHaveProperty('value', 'Edited street');
+  });
+
+  it('shows one comparison while checking a suggestion', async () => {
+    setup();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Review address' }));
+    await screen.findByLabelText('Street address');
+    expect(screen.getAllByText('Original address')).toHaveLength(1);
+    await fireEvent.click(screen.getByRole('button', { name: 'Check locally' }));
+    await screen.findByRole('button', { name: 'Keep original' });
+    expect(screen.getAllByText('Original address')).toHaveLength(1);
+    await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'Changed street' } });
+    expect(screen.getAllByText('Original address')).toHaveLength(1);
+  });
+
+  it('uses server eligibility, reveals the sensitive address deliberately, and adopts once', async () => {
+    const { requests } = setup();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
+    expect(screen.getByText('Source text: Source address text')).toBeDefined();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Review address' }));
+    expect(await screen.findByLabelText('Unit or apartment')).toHaveProperty('value', 'Unit 7');
+    expect(screen.queryByText('Source text: Source address text')).toBeNull();
+    expect(requests.some(request => request.url.endsWith('/addresses/assess'))).toBe(false);
+    expect(screen.getByLabelText('Address kind')).toHaveProperty('disabled', true);
+    await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'Corrected street' } });
+    await fireEvent.change(screen.getByLabelText('Save address as'), { target: { value: 'add' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
+    await waitFor(() => expect(requests.filter(request => request.method === 'PATCH')).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Review address' })).toBeNull());
+    await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
+    expect(screen.getByText('Already saved')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Review address' })).toBeNull();
+  });
+
+  it.each([['stale-target-revision', 'This suggestion is out of date'], ['evidence-unsupported', 'Evidence unavailable'], ['malformed-value', 'The address is invalid']])('keeps %s claims inspectable without offering supported adoption', async (reason, explanation) => {
+    const { requests } = setup(reason);
+    await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
+    if (reason === 'malformed-value') expect(screen.queryByText('{"street_address":123}')).toBeNull();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
+    if (reason === 'malformed-value') expect(screen.getByText('{"street_address":123}')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Review address' })).toBeNull();
+    expect(screen.getByText(explanation)).toBeDefined();
+    expect(requests.some(request => request.method === 'PATCH' || request.url.endsWith('/addresses/assess'))).toBe(false);
+  });
+});
+
+async function revealPostalClaim() {
+  await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
+}
+
+it.each(['evidence-unsupported', 'absent', 'failure'])('refreshes reopened supported review and fails closed for %s', async failure => {
+  const { server, claimReads } = setup();
+  await revealPostalClaim();
+  await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
+  await screen.findByLabelText('Street address');
+  await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  const before = claimReads();
+  if (failure === 'absent') server.absent = true;
+  else if (failure === 'failure') server.fail = true;
+  else server.reason = failure;
+  await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
+  expect(screen.queryByLabelText('Street address')).toBeNull();
+  await screen.findByRole('alert');
+  expect(claimReads()).toBe(before + 1);
+  expect(screen.queryByLabelText('Street address')).toBeNull();
+});
+
+it('dismisses a failed opening so another address review can be attempted', async () => {
+  const { server, ledger } = setup();
+  await revealPostalClaim();
+  server.fail = true;
+  await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
+  await screen.findByRole('alert');
+  await fireEvent.click(screen.getByRole('button', { name: 'Dismiss address review error' }));
+  expect(ledger.postalReview).toBeUndefined();
+  server.fail = false;
+  await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
+  expect(await screen.findByLabelText('Street address')).toBeDefined();
+});
+
+it('labels a cleared replacement target without presenting its original text as current', async () => {
+  const { profileController } = setup();
+  profileController.structuredProfile!.addresses.push({
+    person_id: 7, address_kind: 'postal', original_value: 'Old source address', free_text: '',
+    envelope: { id: 26, ordinal: 1, source: 'user', created_at: when, updated_at: when, vcard: {} },
+  });
+  await revealPostalClaim();
+  await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
+  expect(await screen.findByRole('option', { name: 'Replace: No current address' })).toBeDefined();
+  expect(screen.queryByRole('option', { name: 'Replace: Old source address' })).toBeNull();
+});
+
+it('opens the exact freshly returned assessment and refuses a mismatched profile revision', async () => {
+  const { server } = setup();
+  await revealPostalClaim();
+  server.raw = { ...raw, street_address: 'Freshly reviewed street' };
+  await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
+  expect(await screen.findByLabelText('Street address')).toHaveProperty('value', 'Freshly reviewed street');
+  await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  server.personRevision = 4;
+  await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
+  await screen.findByRole('alert');
+  expect(screen.queryByLabelText('Street address')).toBeNull();
+});
+
+it('cancels an opening read, suppresses duplicate clicks, and ignores its response after a newer open', async () => {
+  const { server, claimReads } = setup();
+  await revealPostalClaim();
+  let release!: (response: Response) => void;
+  server.readClaims = () => new Promise<Response>(resolve => { release = resolve; });
+  const before = claimReads();
+  const button = screen.getByRole('button', { name: 'Review address' });
+  await fireEvent.click(button); await fireEvent.click(button);
+  await screen.findByRole('button', { name: 'Cancel opening address review' });
+  expect(claimReads()).toBe(before + 1);
+  await fireEvent.click(screen.getByRole('button', { name: 'Cancel opening address review' }));
+  server.readClaims = undefined;
+  server.raw = { ...raw, street_address: 'New open street' };
+  await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
+  expect(await screen.findByLabelText('Street address')).toHaveProperty('value', 'New open street');
+  release(Response.json({ claims: [] }));
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  expect(screen.getByLabelText('Street address')).toHaveProperty('value', 'New open street');
+});
+
+it.each(['history restoration', 'section change', 'profile replacement', 'person change'])('cancels an opening review on %s without surfacing a late error', async change => {
+  const { server, ledger, profileController, view } = setup();
+  await revealPostalClaim();
+  let release!: (response: Response) => void;
+  server.readClaims = () => new Promise<Response>(resolve => { release = resolve; });
+  await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
+  await screen.findByRole('button', { name: 'Cancel opening address review' });
+  server.readClaims = undefined;
+  if (change === 'history restoration') ledger.applyContext(true, 7, true);
+  else if (change === 'section change') await ledger.selectSection('evidence');
+  else if (change === 'person change') ledger.applyContext(false, null);
+  else await view.rerender({ controller: ledger, profileController: new DirectoryProfileController(createAPIClient(async () => Response.json({})), 7, { person, structuredProfile: emptyProfile(person), etags: { structuredProfile: '\"person-7-r3\"' }, errors: {} }) });
+  release(Response.json({ message: 'Late failure' }, { status: 503 }));
+  expect(ledger.postalReview).toBeUndefined();
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel opening address review' })).toBeNull());
+  expect(screen.queryByLabelText('Street address')).toBeNull();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+it('refuses an opening result if the viewed profile revision changes while the read is pending', async () => {
+  const { server, profileController, claim } = setup();
+  await revealPostalClaim();
+  let release!: (response: Response) => void;
+  server.readClaims = () => new Promise<Response>(resolve => { release = resolve; });
+  await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
+  await screen.findByRole('button', { name: 'Cancel opening address review' });
+  server.readClaims = undefined;
+  profileController.person = { ...person, revision: 4 };
+  // The old response still describes revision 3, which cannot open against revision 4.
+  release(Response.json({ claims: [claim()] }));
+  await screen.findByRole('alert');
+  expect(screen.queryByLabelText('Street address')).toBeNull();
+});

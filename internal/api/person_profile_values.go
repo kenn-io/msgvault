@@ -9,10 +9,12 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/postaladdress"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -98,6 +100,7 @@ type PersonAddressPatchRequest struct {
 }
 
 type PersonAddressInputRequest struct {
+	OriginalInput      *postaladdress.Input    `json:"original_input,omitzero" nullable:"false"`
 	AddressKind        store.PersonAddressKind `json:"address_kind"`
 	PostOfficeBox      *string                 `json:"post_office_box,omitzero" nullable:"false"`
 	ExtendedAddress    *string                 `json:"extended_address,omitzero" nullable:"false"`
@@ -275,7 +278,13 @@ func (s *Server) handleGetPersonProfileHistory(w http.ResponseWriter, r *http.Re
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, history)
+	copyHistory := *history
+	copyHistory.Addresses, err = publicPersonAddresses(history.Addresses)
+	if err != nil {
+		s.writePersonProfileValueError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &copyHistory)
 }
 
 func (s *Server) handleGetPersonProfileMediaContent(w http.ResponseWriter, r *http.Request) {
@@ -351,6 +360,8 @@ func (s *Server) writePersonProfileValueError(w http.ResponseWriter, err error) 
 		writeError(w, http.StatusNotFound, "person_profile_not_found", "Person profile not found")
 	case errors.Is(err, store.ErrPersonRevisionConflict):
 		writeError(w, http.StatusConflict, "person_revision_conflict", "Person profile changed; reload and retry")
+	case errors.Is(err, postaladdress.ErrUnsupportedEnvelope):
+		writeError(w, http.StatusConflict, "unsupported_postal_snapshot", "This address was saved by a newer version and cannot be changed")
 	case errors.Is(err, store.ErrPersonEnrichmentDispatchInProgress):
 		writeError(w, http.StatusConflict, "person_enrichment_dispatch_in_progress",
 			"Person enrichment is being sent; retry the profile change after it finishes")
@@ -377,7 +388,7 @@ func isPersonProfileValidationError(err error) bool {
 		store.ErrInvalidPersonNameKind, store.ErrPersonNameValueMissing,
 		store.ErrInvalidContactAddressKind, store.ErrContactPointValueMissing,
 		store.ErrProviderIdentityNotExportable,
-		store.ErrInvalidPersonAddressKind, store.ErrPersonAddressValueMissing,
+		store.ErrInvalidPersonAddressKind, store.ErrPersonAddressValueMissing, store.ErrPostalSuggestionMismatch, store.ErrPostalSuggestionInvalid,
 		store.ErrInvalidPersonDateKind, store.ErrPersonDateValueMissing,
 		store.ErrPersonCategoryEmpty, store.ErrInvalidPersonMediaKind,
 		store.ErrPersonMediaEmpty, store.ErrPersonMediaTooLarge,
@@ -398,7 +409,14 @@ func writePersonStructuredProfile(
 ) {
 	w.Header().Set(etagHeaderName, personETag(profile.Person))
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, status, profile)
+	copyProfile := *profile
+	var err error
+	copyProfile.Addresses, err = publicPersonAddresses(profile.Addresses)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "Invalid stored postal address")
+		return
+	}
+	writeJSON(w, status, &copyProfile)
 }
 
 // A patch may contain one 8 MiB inline media value. Base64 expansion plus
@@ -440,5 +458,69 @@ func decodeProfilePatchRequest(
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid person profile patch")
 		return patch, false
 	}
+	if err := capturePostalPatchOriginals(request, &patch); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid postal address input: "+err.Error())
+		return patch, false
+	}
 	return patch, true
+}
+
+func publicPersonAddresses(addresses []store.PersonAddress) ([]store.PersonAddress, error) {
+	result := slices.Clone(addresses)
+	for i := range result {
+		var err error
+		result[i], err = result[i].PublicAddress()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+func postalRequestInput(input PersonAddressInputRequest) postaladdress.Input {
+	value := func(s *string) string {
+		if s == nil {
+			return ""
+		}
+		return *s
+	}
+	return postaladdress.Input{AddressKind: string(input.AddressKind), PostOfficeBox: value(input.PostOfficeBox), ExtendedAddress: value(input.ExtendedAddress), StreetAddress: value(input.StreetAddress), Locality: value(input.Locality), Region: value(input.Region), PostalCode: value(input.PostalCode), CountryName: value(input.CountryName), ExtendedComponents: value(input.ExtendedComponents), FreeText: value(input.FreeText), Label: value(input.Label), GeoURI: value(input.GeoURI), Timezone: value(input.Timezone), CountryCode: value(input.CountryCode), PlaceURI: value(input.PlaceURI), OriginalValue: input.OriginalValue}
+}
+
+func capturePostalPatchOriginals(request PersonProfilePatchRequest, patch *store.PersonProfilePatch) error {
+	if request.Addresses == nil {
+		return nil
+	}
+	for i, input := range request.Addresses.Add {
+		if input.AddressKind != store.PersonAddressPostal {
+			if input.OriginalInput != nil {
+				return errors.New("original_input is only available for postal addresses")
+			}
+			continue
+		}
+		if input.OriginalInput == nil {
+			continue
+		}
+		current := postalRequestInput(input)
+		raw := *input.OriginalInput
+		if raw.AddressKind == "" {
+			raw.AddressKind = "postal"
+		}
+		if raw.AddressKind != "postal" {
+			return errors.New("original_input must be postal")
+		}
+		encoded, err := postaladdress.EncodeOriginalInput(raw)
+		if err != nil {
+			return err
+		}
+		proposed := postaladdress.Assess(current).Proposed
+		output := &patch.Addresses.Add[i]
+		// Store preserves the remaining components and envelope. Normalization here
+		// adds only the shared two-letter country-code casing to its whitespace trim.
+		if input.CountryCode != nil {
+			output.CountryCode = new(proposed.CountryCode)
+		}
+		output.OriginalValue = encoded
+	}
+	return nil
 }

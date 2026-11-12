@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
+	"go.kenn.io/msgvault/internal/postaladdress"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -362,4 +363,23 @@ func TestMCPGetPersonProfileErrorsAndValidation(t *testing.T) {
 	assert.Nil(result)
 	var internal *internalError
 	require.ErrorAs(t, err, &internal, "a backend without profile reads fails loudly instead of guessing")
+}
+
+func TestMCPPostalAddressAssessmentPropagation(t *testing.T) {
+	assessment := &postaladdress.Assessment{Original: postaladdress.Input{AddressKind: "postal", StreetAddress: " 12 Example St ", ExtendedAddress: " Unit 7 ", ExtendedComponents: `;;;;;;;Room\;3;Floor 2`}, Proposed: postaladdress.Input{AddressKind: "postal", StreetAddress: "12 Example St", ExtendedAddress: "Unit 7", ExtendedComponents: `;;;;;;;Room\;3;Floor 2`}, Status: postaladdress.StatusNeedsReview, ReasonCodes: []string{"not_verified", "country_missing"}, OriginalExtendedParts: []string{"Room;3", "Floor 2"}, ProposedExtendedParts: []string{"Room;3", "Floor 2"}}
+	backend := &profileReadingPeopleBackend{profile: &peoplebrowser.PersonProfile{Person: store.Person{ID: 12, VCardUID: "person-12"}, Addresses: []peoplebrowser.PersonAddressSummary{{Kind: "postal", StreetAddress: "12 Example St", ExtendedAddress: "Unit 7", Source: store.ProvenanceUser, Assessment: assessment}}}}
+	result := rawCallTool(t, peopleToolOptions(backend), ToolGetPersonProfile, map[string]any{"person_id": 12})
+	structured := toolStructuredContent(t, result)
+	address, ok := structured["address"].(map[string]any)
+	require := require.New(t)
+	require.True(ok)
+	got, ok := address["assessment"].(map[string]any)
+	require.True(ok)
+	assert := assert.New(t)
+	assert.Equal("needs_review", got["status"])
+	assert.Equal([]any{"Room;3", "Floor 2"}, got["original_extended_parts"])
+	assert.Equal([]any{"not_verified", "country_missing"}, got["reason_codes"])
+	original, ok := got["original"].(map[string]any)
+	require.True(ok)
+	assert.Equal(" Unit 7 ", original["extended_address"])
 }

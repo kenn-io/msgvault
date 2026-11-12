@@ -10,6 +10,7 @@
     AttributeDefinition,
     PersonAttributeValue,
   } from '../../api/generated/models';
+  import { postalAddressText } from '../../directory/postal-review.svelte';
   import type { PersonProfilePatchRequest } from '../../directory/models';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import { CONTACT_LABELS } from '../../directory/contact-labels';
@@ -46,6 +47,8 @@
   let confirming = $state<Row & { kind: 'profile' | 'attribute' }>();
   let editing = $state<Editing>();
   let revealed = $state<Record<string, boolean>>({});
+  let editorPersonID = $state<number>();
+  $effect(() => { if (editorPersonID !== undefined && controller.person?.id !== editorPersonID) { editing = undefined; confirming = undefined; editorPersonID = undefined; } });
 
   const profile = $derived(controller.structuredProfile);
   const groups = $derived(joinDefinitions(controller.definitions, controller.attributes?.attributes ?? []));
@@ -81,7 +84,7 @@
     for (const kind of ['phone', 'email']) for (const point of points) if (point.address_kind === kind) result.push(pointRow(point));
     for (const point of points) if (point.address_kind !== 'phone' && point.address_kind !== 'email') result.push(pointRow(point));
     for (const address of profile?.addresses ?? []) {
-      result.push({ id: `addresses:${address.envelope.id}`, kind: 'profile', section: 'addresses', label: 'Address', value: [address.post_office_box, address.extended_address, address.street_address, address.locality, address.region, address.postal_code, address.country_name, address.extended_components].filter(Boolean).join(', ') || address.free_text || address.original_value, record: address });
+      result.push({ id: `addresses:${address.envelope.id}`, kind: 'profile', section: 'addresses', label: 'Address', value: address.address_kind === 'postal' ? postalAddressText(address, address.assessment?.proposed_extended_parts) || 'No current address' : postalAddressText(address) || address.original_value, record: address });
     }
     for (const date of profile?.dates ?? []) {
       result.push({
@@ -148,6 +151,7 @@
 
   function startAdd(target: Editing): void {
     confirming = undefined;
+    editorPersonID = controller.person?.id;
     editing = target;
   }
 
@@ -158,6 +162,7 @@
   }
 
   function startEdit(row: Row & { kind: 'profile' | 'attribute' }): void {
+    editorPersonID = controller.person?.id;
     confirming = undefined;
     editing =
       row.kind === 'profile'

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
+	"go.kenn.io/msgvault/internal/postaladdress"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 )
@@ -202,20 +203,21 @@ type personProfileContactPoint struct {
 // semicolon-joined rendering rather than a formatted address; the components
 // are omitted when the source did not carry them.
 type personProfileAddress struct {
-	Kind            string           `json:"kind"`
-	Label           string           `json:"label,omitempty"`
-	PostOfficeBox   string           `json:"post_office_box,omitempty"`
-	ExtendedAddress string           `json:"extended_address,omitempty"`
-	StreetAddress   string           `json:"street_address,omitempty"`
-	Locality        string           `json:"locality,omitempty"`
-	Region          string           `json:"region,omitempty"`
-	PostalCode      string           `json:"postal_code,omitempty"`
-	CountryName     string           `json:"country_name,omitempty"`
-	CountryCode     string           `json:"country_code,omitempty"`
-	FreeText        string           `json:"free_text,omitempty"`
-	OriginalValue   string           `json:"original_value"`
-	Preferred       bool             `json:"preferred"`
-	Source          store.Provenance `json:"source"`
+	Assessment      *postaladdress.Assessment `json:"assessment,omitempty"`
+	Kind            string                    `json:"kind"`
+	Label           string                    `json:"label,omitempty"`
+	PostOfficeBox   string                    `json:"post_office_box,omitempty"`
+	ExtendedAddress string                    `json:"extended_address,omitempty"`
+	StreetAddress   string                    `json:"street_address,omitempty"`
+	Locality        string                    `json:"locality,omitempty"`
+	Region          string                    `json:"region,omitempty"`
+	PostalCode      string                    `json:"postal_code,omitempty"`
+	CountryName     string                    `json:"country_name,omitempty"`
+	CountryCode     string                    `json:"country_code,omitempty"`
+	FreeText        string                    `json:"free_text,omitempty"`
+	OriginalValue   string                    `json:"original_value"`
+	Preferred       bool                      `json:"preferred"`
+	Source          store.Provenance          `json:"source"`
 }
 
 type personProfileDate struct {
@@ -443,7 +445,7 @@ func personProfileAddressResponse(addresses []peoplebrowser.PersonAddressSummary
 		return nil
 	}
 	return &personProfileAddress{
-		Kind: primary.Kind, Label: primary.Label,
+		Kind: primary.Kind, Label: primary.Label, Assessment: primary.Assessment,
 		PostOfficeBox:   primary.PostOfficeBox,
 		ExtendedAddress: primary.ExtendedAddress,
 		StreetAddress:   primary.StreetAddress,

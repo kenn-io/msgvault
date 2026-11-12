@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/postaladdress"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vcard"
@@ -857,7 +858,7 @@ func TestProjectPersonPropertiesCarriesUnstructuredPostalAddresses(t *testing.T)
 			},
 			{
 				Envelope:    store.ValueEnvelope{ID: 701, Source: store.ProvenanceUser},
-				AddressKind: store.PersonAddressPostal, OriginalValue: ";;1 Main\\, St;Town;;;",
+				AddressKind: store.PersonAddressPostal, OriginalValue: "Box 1;Suite 2;1 Main\\, St;Town;;;",
 			},
 			{
 				Envelope:    store.ValueEnvelope{ID: 702, Source: store.ProvenanceUser},
@@ -873,6 +874,14 @@ func TestProjectPersonPropertiesCarriesUnstructuredPostalAddresses(t *testing.T)
 				Envelope:    store.ValueEnvelope{ID: 704, Source: store.ProvenanceUser},
 				AddressKind: store.PersonAddressPostal,
 			},
+			{
+				Envelope:    store.ValueEnvelope{ID: 705, Source: store.ProvenanceUser},
+				AddressKind: store.PersonAddressPostal, OriginalValue: "12 Example Street; Unit 7",
+			},
+			{
+				Envelope:    store.ValueEnvelope{ID: 707, Source: store.ProvenanceUser},
+				AddressKind: store.PersonAddressPostal, OriginalValue: "Box 1;;12 Example St;Town",
+			},
 		},
 	}}
 
@@ -882,9 +891,15 @@ func TestProjectPersonPropertiesCarriesUnstructuredPostalAddresses(t *testing.T)
 	assert.Equal(";;;;;;", freeText.Property.RawValue)
 	assert.Equal([]string{"1 Main St, Town"}, projectedParameterValues(freeText.Property, "LABEL"))
 	structured := projectedByOwner(t, properties, "person_addresses", 701, fieldValue)
-	assert.Equal(";;1 Main\\, St;Town;;;", structured.Property.RawValue,
+	assert.Equal("Box 1;Suite 2;1 Main\\, St;Town;;;", structured.Property.RawValue,
 		"a structured original value is re-emitted with its escaping intact, not escaped again")
 	assert.Empty(projectedParameterValues(structured.Property, "LABEL"))
+	semicolonText := projectedByOwner(t, properties, "person_addresses", 705, fieldValue)
+	assert.Equal(";;;;;;", semicolonText.Property.RawValue)
+	assert.Equal([]string{"12 Example Street; Unit 7"}, projectedParameterValues(semicolonText.Property, "LABEL"))
+	shortBox := projectedByOwner(t, properties, "person_addresses", 707, fieldValue)
+	assert.Equal("Box 1;;12 Example St;Town", shortBox.Property.RawValue)
+	assert.Empty(projectedParameterValues(shortBox.Property, "LABEL"))
 	fromFreeText := projectedByOwner(t, properties, "person_addresses", 702, fieldValue)
 	assert.Equal([]string{"Second Floor, 2 Side St"}, projectedParameterValues(fromFreeText.Property, "LABEL"))
 	components := projectedByOwner(t, properties, "person_addresses", 703, fieldValue)
@@ -1282,4 +1297,59 @@ func mappedOccurrence(
 	t.Helper()
 	mapping := mappingByOwner(t, envelope.NativeMappings, table, rowID, field)
 	return projectOccurrenceByIdentity(t, envelope, mapping.Identity)
+}
+
+func TestPostalSnapshotExport(t *testing.T) {
+	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", OriginalValue: "Old street"})
+	require.NoError(t, err)
+	encodedStreet, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", StreetAddress: "Old street"})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name    string
+		address store.PersonAddress
+		value   string
+		label   *string
+	}{
+		{"country code", store.PersonAddress{OriginalValue: encodedStreet, CountryCode: new("CA")}, ";;;;;;", nil},
+		{"geo", store.PersonAddress{GeoURI: new("geo:1,2")}, ";;;;;;", nil},
+		{"free text", store.PersonAddress{FreeText: new("  Current address\nUnit 8  ")}, ";;;;;;", new("  Current address\nUnit 8  ")},
+		{"label", store.PersonAddress{Label: new("Corrected label")}, ";;;;;;", new("Corrected label")},
+		{"label and free text", store.PersonAddress{Label: new("Delivery instructions"), FreeText: new("12 Example Street")}, ";;;;;;", new("Delivery instructions\n12 Example Street")},
+		{"partial components", store.PersonAddress{FreeText: new("12 Example Street"), CountryName: new("Canada")}, ";;;;;;Canada", new("12 Example Street")},
+		{"unsupported", store.PersonAddress{OriginalValue: "msgvault:postal-input:v2\n{}"}, "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.address.AddressKind = store.PersonAddressPostal
+			if tc.address.OriginalValue == "" {
+				tc.address.OriginalValue = encoded
+			}
+			value, label, err := postalAddressValue(tc.address)
+			require.NoError(t, err)
+			assert.Equal(t, tc.value, value)
+			assert.Equal(t, tc.label, label)
+		})
+	}
+}
+
+func TestLegacyPostalLabelKeepsCurrentTextAndClears(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		text *string
+		want string
+	}{
+		{"original", nil, "Home\n12 Main St; Unit 7"},
+		{"current", new("Current address"), "Home\nCurrent address"},
+		{"cleared", new(""), "Home"},
+		{"same label", new("Home"), "Home"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			address := store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: "12 Main St; Unit 7", Label: new("Home"), FreeText: tc.text}
+			raw, label, err := postalAddressValue(address)
+			require := require.New(t)
+			require.NoError(err)
+			require.Equal(";;;;;;", raw)
+			require.NotNil(label)
+			require.Equal(tc.want, *label)
+		})
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.kenn.io/msgvault/internal/postaladdress"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vcard"
 )
@@ -623,9 +624,26 @@ func projectPostalAddress(address store.PersonAddress) (projectedProperty, bool,
 // means the row has nothing to render and its existing occurrence, if any, is
 // left as residue.
 func postalAddressValue(address store.PersonAddress) (string, *string, error) {
+	_, snapshot := postaladdress.DecodeStoredOriginalInput(address.OriginalValue)
 	components, err := postalComponents(address)
 	if err != nil {
 		return "", nil, err
+	}
+	if snapshot {
+		label, text := deref(address.Label), deref(address.FreeText)
+		if text != "" && text != label {
+			if label != "" {
+				label += "\n"
+			}
+			label += text
+		}
+		if allBlank(components) && label == "" && isBlank(address.CountryCode) && isBlank(address.GeoURI) && isBlank(address.Timezone) {
+			return "", nil, nil
+		}
+		if label != "" {
+			return vcard.JoinStructuredText(components), &label, nil
+		}
+		return vcard.JoinStructuredText(components), nil, nil
 	}
 	if !allBlank(components) {
 		return vcard.JoinStructuredText(components), address.Label, nil
@@ -634,13 +652,21 @@ func postalAddressValue(address store.PersonAddress) (string, *string, error) {
 	// each exactly once and a wire-form original re-renders unchanged.
 	original := strings.TrimSpace(address.OriginalValue)
 	parsed, err := vcard.SplitStructuredText(original)
-	if err == nil && len(parsed) > 1 && !allBlank(parsed) {
+	if err == nil && (len(parsed) >= 7 || len(parsed) >= 4 && parsed[1] == "" || strings.HasPrefix(original, ";;")) && !allBlank(parsed) {
 		return vcard.JoinStructuredText(parsed), address.Label, nil
 	}
-	for _, text := range []*string{address.Label, address.FreeText, &original} {
-		if !isBlank(text) {
-			return vcard.JoinStructuredText(components), text, nil
+	label, text := deref(address.Label), original
+	if address.FreeText != nil {
+		text = *address.FreeText
+	}
+	if strings.TrimSpace(text) != "" && text != label {
+		if label != "" {
+			label += "\n"
 		}
+		label += text
+	}
+	if strings.TrimSpace(label) != "" {
+		return vcard.JoinStructuredText(components), &label, nil
 	}
 	return "", nil, nil
 }

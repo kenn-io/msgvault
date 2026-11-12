@@ -11,6 +11,7 @@ import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 type PersonContactPoint = GeneratedPersonContactPoint;
 
 const when = '2026-08-01T00:00:00Z';
+const rawPostal = { address_kind: 'postal' as const, street_address: ' 12 Example St ', extended_address: ' Unit 7 ', post_office_box: ' Box 9 ', country_code: ' ca ', original_value: ' raw\n address ' };
 
 function person(revision = 3) {
   return {
@@ -53,6 +54,26 @@ function requestHarness(
 }
 
 describe('StructuredProfileEditor', () => {
+  it('saves without a separate person read and blocks a changed person id', async () => {
+    const requests: Request[] = [];
+    const client = createAPIClient(async input => {
+      requests.push(input instanceof Request ? input : new Request(input));
+      return new Response(JSON.stringify(profile(4)), { headers: { 'Content-Type': 'application/json', ETag: '"person-7-r4"' } });
+    });
+    const controller = new DirectoryProfileController(client, 7, { structuredProfile: profile(), etags: { structuredProfile: '"person-7-r3"' }, errors: {} });
+    render(StructuredProfileEditor, { controller, section: 'categories' });
+    await fireEvent.input(screen.getByLabelText('Category'), { target: { value: 'Friends' } });
+    controller.structuredProfile = { ...profile(), person: { ...person(), id: 8 } };
+    await fireEvent.click(screen.getByRole('button', { name: 'Save category' }));
+    expect(requests).toHaveLength(0);
+    controller.structuredProfile = profile();
+    await fireEvent.click(screen.getByRole('button', { name: 'Save category' }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]!.headers.get('If-Match')).toBe('\"person-7-r3\"');
+    expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/people/7/profile');
+    expect(await requests[0]!.clone().json()).toMatchObject({ categories: { add: [{ original_value: 'Friends' }] } });
+  });
+
   it('supersedes a contact point with generated user provenance and no fabricated actor', async () => {
     const { controller, requests } = requestHarness();
     const current = {
@@ -111,15 +132,20 @@ describe('StructuredProfileEditor', () => {
     {
       section: 'addresses' as const,
       label: 'Street address',
-      value: '1 Test Street',
+      value: rawPostal.street_address,
       save: 'Save address',
       expected: {
         addresses: {
           add: [
             {
               address_kind: 'postal',
-              original_value: '1 Test Street',
-              street_address: '1 Test Street',
+              free_text: '',
+              original_input: rawPostal,
+              street_address: rawPostal.street_address,
+              extended_address: rawPostal.extended_address,
+              post_office_box: rawPostal.post_office_box,
+              country_code: rawPostal.country_code,
+              original_value: rawPostal.original_value,
               envelope: { source: 'user' },
             },
           ],
@@ -178,6 +204,11 @@ describe('StructuredProfileEditor', () => {
     render(StructuredProfileEditor, { controller, section });
 
     await fireEvent.input(screen.getByLabelText(label), { target: { value } });
+    if (section === 'addresses') {
+      for (const [field, content] of [['Unit or apartment', rawPostal.extended_address], ['PO box', rawPostal.post_office_box], ['Country code', rawPostal.country_code], ['Original text', rawPostal.original_value]]) {
+        await fireEvent.input(screen.getByLabelText(field!), { target: { value: content } });
+      }
+    }
     await fireEvent.click(screen.getByRole('button', { name: save }));
 
     await waitFor(() => expect(requests).toHaveLength(1));
@@ -200,12 +231,30 @@ describe('StructuredProfileEditor', () => {
             address_kind: 'postal',
             locality: 'Exampleville',
             country_name: 'Testland',
+            free_text: '',
+            original_input: { address_kind: 'postal', locality: 'Exampleville', country_name: 'Testland' },
             envelope: { source: 'user' },
           },
         ],
         supersede: [],
       },
     });
+  });
+
+  it('keeps an existing postal text address when adding a country', async () => {
+    const { controller, requests } = requestHarness();
+    const current = {
+      person_id: 7,
+      address_kind: 'postal',
+      original_value: '12 Example Street',
+      free_text: '12 Example Street',
+      envelope: { id: 26, ordinal: 8, source: 'vcard_import', created_at: when, updated_at: when, vcard: {} },
+    };
+    render(StructuredProfileEditor, { controller, section: 'addresses', current });
+    await fireEvent.input(screen.getByLabelText('Country'), { target: { value: 'Canada' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(await requests[0]!.clone().json()).toMatchObject({ addresses: { add: [{ free_text: '12 Example Street', country_name: 'Canada' }], supersede: [26] } });
   });
 
   it('edits an address represented by free text and geo without inventing a street', async () => {
@@ -363,14 +412,16 @@ describe('StructuredProfileEditor', () => {
         timezone: 'Etc/UTC',
         country_code: 'TS',
         place_uri: 'https://example.test/place',
-        envelope: { id: 23, ordinal: 5, source: 'vcard_import', created_at: when, updated_at: when, vcard: {} },
+        assessment: { original: rawPostal, proposed: rawPostal, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] },
+        envelope: { id: 23, ordinal: 5, pref: 1, type_label: 'home', type_tokens: ['home'], source: 'user', source_ref: 'person-fact-claim:synthetic-claim', created_at: when, updated_at: when, vcard: {} },
       },
       expected: {
         addresses: {
           add: [
             {
               address_kind: 'postal',
-              original_value: '2 Updated Street',
+              original_input: rawPostal,
+              original_value: rawPostal.original_value,
               post_office_box: 'PO 12',
               extended_address: 'Suite 3',
               street_address: '2 Updated Street',
@@ -385,7 +436,7 @@ describe('StructuredProfileEditor', () => {
               timezone: 'Etc/UTC',
               country_code: 'TS',
               place_uri: 'https://example.test/place',
-              envelope: { source: 'user', ordinal: 5 },
+              envelope: { source: 'user', ordinal: 5, pref: 1, type_label: 'home', type_tokens: ['home'], source_ref: 'person-fact-claim:synthetic-claim' },
             },
           ],
           supersede: [23],

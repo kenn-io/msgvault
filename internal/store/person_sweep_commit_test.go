@@ -55,10 +55,17 @@ func newPersonSweepApplyFixtureWithBudget(
 	budget peoplesweep.BudgetConfig,
 ) personSweepApplyFixture {
 	t.Helper()
+	return newPersonSweepApplyFixtureWithBudgetAndSensitive(t, suffix, provider, budget, false)
+}
+
+func newPersonSweepApplyFixtureWithBudgetAndSensitive(
+	t *testing.T, suffix string, provider bool, budget peoplesweep.BudgetConfig, sensitive bool,
+) personSweepApplyFixture {
+	t.Helper()
 	st, personID, targets := newPersonFactProjectionStore(t)
 	program := strings.Repeat("a", 64)
 	profile := strings.Repeat("b", 64)
-	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), false)
+	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), sensitive)
 	require.NoError(t, err)
 	key := peoplesweep.CursorKey{PersonID: personID, SourceLane: peoplesweep.SourceConversationText,
 		ProgramFingerprint: program, CatalogFingerprint: catalog.Fingerprint}
@@ -96,7 +103,7 @@ func newPersonSweepApplyFixtureWithBudget(
 	generation.ProgramVersion = "v1"
 	generation.ProgramFingerprint = program
 	generation.CatalogFingerprint = catalog.Fingerprint
-	generation.Policy = personfacts.PolicyContext{ProviderPolicyFingerprint: profile}
+	generation.Policy = personfacts.PolicyContext{ProviderPolicyFingerprint: profile, AllowSensitive: sensitive}
 	generation.ResolvedAt = personFactLedgerNow
 	request := peoplesweep.ApplyRequest{Lease: lease, RunID: runID, AttemptID: attemptID,
 		Generation: generation, CursorEnvelope: envelope,
@@ -108,7 +115,7 @@ func newPersonSweepApplyFixtureWithBudget(
 	_, err = st.db.ExecContext(t.Context(), `INSERT INTO person_inference_profiles
 		(fingerprint,provider_kind,endpoint,model,api_key_env,allow_anonymous,
 		 retention_posture,training_posture,allowed_sources,source_since,allow_sensitive,policy_json)
-		VALUES (?, 'fixture-provider', '', 'fixture-model', '', FALSE, 'none', 'none', '[]', '', FALSE, '{}')`, profile)
+		VALUES (?, 'fixture-provider', '', 'fixture-model', '', FALSE, 'none', 'none', '[]', '', ?, '{}')`, profile, sensitive)
 	require.NoError(t, err)
 	if !provider {
 		request.Generation.Provider = peoplesweep.StatusOnlyProvider

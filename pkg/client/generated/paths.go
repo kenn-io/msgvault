@@ -543,6 +543,11 @@ type PatchPersonPath struct {
 	ID int64 `json:"id"`
 }
 
+type AssessPersonPostalAddressPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
 type ListPersonAgendaPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`

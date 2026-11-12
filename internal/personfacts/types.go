@@ -12,19 +12,21 @@ type ValueType string
 type Cardinality string
 
 const (
-	TargetAttribute   TargetKind  = "attribute"
-	TargetEmployment  TargetKind  = "employment"
-	ValueText         ValueType   = "text"
-	ValueInteger      ValueType   = "integer"
-	ValueReal         ValueType   = "real"
-	ValueBoolean      ValueType   = "boolean"
-	ValueDate         ValueType   = "date"
-	ValueTimestamp    ValueType   = "timestamp"
-	ValueEmployment   ValueType   = "employment"
-	ValueOrganization ValueType   = "organization"
-	ValuePartialDate  ValueType   = "partial-date"
-	CardinalitySingle Cardinality = "single"
-	CardinalityMulti  Cardinality = "multi"
+	TargetAttribute     TargetKind  = "attribute"
+	TargetEmployment    TargetKind  = "employment"
+	TargetPostalAddress TargetKind  = "postal_address"
+	ValuePostalAddress  ValueType   = "postal_address"
+	ValueText           ValueType   = "text"
+	ValueInteger        ValueType   = "integer"
+	ValueReal           ValueType   = "real"
+	ValueBoolean        ValueType   = "boolean"
+	ValueDate           ValueType   = "date"
+	ValueTimestamp      ValueType   = "timestamp"
+	ValueEmployment     ValueType   = "employment"
+	ValueOrganization   ValueType   = "organization"
+	ValuePartialDate    ValueType   = "partial-date"
+	CardinalitySingle   Cardinality = "single"
+	CardinalityMulti    Cardinality = "multi"
 )
 
 type ChoiceDescriptor struct {
@@ -363,6 +365,7 @@ type Generation struct {
 }
 
 type Claim struct {
+	PostalReview   *PostalAddressReview `json:"postal_review,omitzero"`
 	ID             int64
 	PersonID       int64
 	GenerationID   int64

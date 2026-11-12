@@ -12,17 +12,17 @@ func TestPersonFactTargetRefCodecRoundTripsColonKeyAndSHA256Revision(t *testing.
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	revision := "sha256:" + strings.Repeat("a", 64)
-	want := TargetRef{
-		Kind: TargetEmployment, Key: "system:employment", Revision: revision,
+	for _, want := range []TargetRef{
+		{Kind: TargetEmployment, Key: "system:employment", Revision: revision},
+		{Kind: TargetPostalAddress, Key: "system:postal_address", Revision: revision},
+	} {
+		encoded, err := EncodeTargetRef(want)
+		requirements.NoError(err)
+		assertions.Equal(string(want.Kind)+":"+want.Key+":"+revision, encoded)
+		decoded, err := DecodeTargetRef(encoded)
+		requirements.NoError(err)
+		assertions.Equal(want, decoded)
 	}
-
-	encoded, err := EncodeTargetRef(want)
-	requirements.NoError(err)
-	assertions.Equal("employment:system:employment:"+revision, encoded)
-
-	decoded, err := DecodeTargetRef(encoded)
-	requirements.NoError(err)
-	assertions.Equal(want, decoded)
 }
 
 func TestPersonFactTargetRefCodecRejectsMalformedKindKeyAndRevision(t *testing.T) {

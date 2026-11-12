@@ -1,4 +1,5 @@
 import {
+  assessPersonPostalAddress as generatedAssessPersonPostalAddress,
   clearPersonAttribute as generatedClearPersonAttribute,
   createAttributeDefinition as generatedCreateAttributeDefinition,
   deletePerson as generatedDeletePerson,
@@ -12,6 +13,7 @@ import {
   setPersonAttribute as generatedSetPersonAttribute,
 } from '../api/generated/api/api';
 import type { APIClient } from '../api/client';
+import type { Assessment, Input } from '../api/generated/models';
 import type {
   AttributeDefinition,
   CreateAttributeDefinitionRequest,
@@ -82,6 +84,7 @@ export class DirectoryProfileController {
   private generation = 0;
   private definitionsGeneration = 0;
   private draftGeneration = 0;
+  private profileConflictETag: string | null = null;
   private activeMutationGeneration: number | null = null;
   private mutationSettled = Promise.resolve();
   private settleMutation: (() => void) | undefined;
@@ -178,7 +181,7 @@ export class DirectoryProfileController {
       const structuredProfileReady =
         structuredProfile.data !== undefined &&
         hasETag(profileResponseETag) &&
-        (!profileRequiresFreshETag || profileResponseETag !== profileETagBeforeReload);
+        (!profileRequiresFreshETag || profileResponseETag !== (this.profileConflictETag ?? profileETagBeforeReload));
       const attributesReady = attributes.data !== undefined;
       const definitionsReady = definitionsGeneration === this.definitionsGeneration && definitions.data !== undefined;
       const errors = { ...this.bundle.errors };
@@ -249,15 +252,22 @@ export class DirectoryProfileController {
     }
     if (deleted) await this.options.onDeleted?.(this.personID);
   }
-  async patchProfile(body: PersonProfilePatchRequest): Promise<void | DirectoryProfileOperationBlocked> {
+  async assessPostalAddress(personID: number, address: Input, external: boolean, signal: AbortSignal, previousResponseID?: string): Promise<Assessment> {
+    if (this.disposed || personID !== this.personID) throw new Error('Address editor is no longer active');
+    const result = await generatedAssessPersonPostalAddress({ id: this.personID }, { address, allow_external: external, previous_response_id: previousResponseID }, { ...this.client, signal });
+    if (!result.data) throw new Error('Address check unavailable');
+    return result.data;
+  }
+  async patchProfile(body: PersonProfilePatchRequest, reviewedETag?: string): Promise<void | DirectoryProfileOperationBlocked> {
     const draftGeneration = this.prepareMutation({ kind: 'profile', body });
     if (typeof draftGeneration !== 'number') return draftGeneration;
-    if (!this.structuredProfileETag) return this.missingETag();
+    const etag = reviewedETag ?? this.structuredProfileETag;
+    if (!etag) return this.missingETag();
     this.beginMutation(draftGeneration);
     try {
       const response = await generatedPatchPersonStructuredProfile({ id: this.personID }, body, {
         ...this.client,
-        headers: { 'If-Match': this.structuredProfileETag },
+        headers: { 'If-Match': etag },
       });
       if (response.data) {
         this.structuredProfile = response.data;
@@ -278,6 +288,7 @@ export class DirectoryProfileController {
         return;
       }
       this.captureMutationFailure(response.error, response.response.status, draftGeneration);
+      if (this.draftGeneration === draftGeneration && this.conflict?.code === 'person_revision_conflict') this.profileConflictETag = etag;
     } catch (cause: unknown) {
       this.captureMutationFailure(cause, 0, draftGeneration);
     } finally {
@@ -482,6 +493,7 @@ export class DirectoryProfileController {
     }
     this.draft = draft;
     this.conflict = null;
+    this.profileConflictETag = null;
     return ++this.draftGeneration;
   }
   private beginMutation(draftGeneration: number): void {

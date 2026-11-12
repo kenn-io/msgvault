@@ -170,7 +170,7 @@ it('gates media actions on available data', () => {
 
 it('displays every structured address component before its original street value', () => {
   const initial = profile();
-  initial.addresses = [{ person_id: 7, address_kind: 'postal', original_value: '1 Example Street', street_address: '1 Example Street', post_office_box: 'PO Box 7', extended_address: 'Suite 2', extended_components: 'Building C', locality: 'Example City', region: 'CA', postal_code: '90001', country_name: 'United States', envelope }];
+  initial.addresses = [{ person_id: 7, address_kind: 'postal', original_value: '1 Example Street', street_address: '1 Example Street', post_office_box: 'PO Box 7', extended_address: 'Suite 2', extended_components: ';;;;;;;Building C', assessment: { original: { address_kind: 'postal' }, proposed: { address_kind: 'postal' }, original_extended_parts: [], proposed_extended_parts: ['Building C'], status: 'needs_review', reason_codes: [] }, locality: 'Example City', region: 'CA', postal_code: '90001', country_name: 'United States', envelope }];
   const { view, controller } = harness(initial);
   try {
     expect(screen.getByText('PO Box 7, Suite 2, 1 Example Street, Example City, CA, 90001, United States, Building C')).toBeDefined();
