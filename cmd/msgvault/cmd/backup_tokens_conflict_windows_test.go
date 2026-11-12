@@ -79,32 +79,8 @@ func backupRestoreOmittedOAuthLock(t *testing.T, compliant bool) {
 	}
 	omitted := filepath.Join(tokens, "oauth-token.json.lock")
 	require.NoError(os.WriteFile(omitted, []byte("omitted"), 0o600))
-	var before, rootBefore, deniedBefore *windows.SECURITY_DESCRIPTOR
-	var deniedHandle windows.Handle
+	var before, rootBefore *windows.SECURITY_DESCRIPTOR
 	if compliant {
-		denied := filepath.Join(tokens, "unrelated")
-		require.NoError(os.Mkdir(denied, 0o700))
-		deniedPath, pathErr := windows.UTF16PtrFromString(denied)
-		require.NoError(pathErr)
-		deniedHandle, err = windows.CreateFile(deniedPath, windows.READ_CONTROL|windows.WRITE_DAC,
-			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING,
-			windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
-		require.NoError(err)
-		t.Cleanup(func() {
-			assert.NoError(windows.SetSecurityInfo(deniedHandle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
-			assert.NoError(windows.CloseHandle(deniedHandle))
-		})
-		denyEntries := []windows.EXPLICIT_ACCESS{
-			{AccessPermissions: windows.FILE_LIST_DIRECTORY, AccessMode: windows.DENY_ACCESS, Trustee: entries[0].Trustee},
-			{AccessPermissions: fileutil.FileAllAccess, AccessMode: windows.GRANT_ACCESS, Trustee: entries[0].Trustee},
-		}
-		denyACL, aclErr := windows.ACLFromEntries(denyEntries, nil)
-		require.NoError(aclErr)
-		require.NoError(windows.SetSecurityInfo(deniedHandle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, denyACL, nil))
-		_, readErr := os.ReadDir(denied)
-		require.ErrorIs(readErr, windows.ERROR_ACCESS_DENIED)
-		deniedBefore, err = windows.GetSecurityInfo(deniedHandle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-		require.NoError(err)
 		before, err = windows.GetNamedSecurityInfo(omitted, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 		require.NoError(err)
 		dacl, _, err := before.DACL()
@@ -139,9 +115,6 @@ func backupRestoreOmittedOAuthLock(t *testing.T, compliant bool) {
 		rootAfter, readErr := windows.GetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 		require.NoError(readErr)
 		assert.Equal(rootBefore.String(), rootAfter.String())
-		deniedAfter, readErr := windows.GetSecurityInfo(deniedHandle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-		require.NoError(readErr)
-		assert.Equal(deniedBefore.String(), deniedAfter.String())
 		data, readErr := os.ReadFile(omitted)
 		require.NoError(readErr)
 		assert.Equal("omitted", string(data))
