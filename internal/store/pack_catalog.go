@@ -86,7 +86,7 @@ func (c *PackCatalog) ListUnpacked(ctx context.Context) ([]packstore.Candidate, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if pass, ok := ctx.Value(packVerificationKey{}).(*PackVerificationPass); ok && pass.skipLooseEnumeration {
+	if PackVerificationSkipsLooseEnumeration(ctx) {
 		return nil, nil
 	}
 	raw, err := c.store.ListUnpackedBlobsContext(ctx)
@@ -130,7 +130,7 @@ func (c *PackCatalog) ListIndexed(ctx context.Context) ([]packstore.IndexEntry, 
 		return nil, err
 	}
 	if pass, ok := ctx.Value(packVerificationKey{}).(*PackVerificationPass); ok {
-		entries, err := c.store.listPackVerificationWindow(ctx, pass)
+		entries, err := c.store.listPackVerificationWindow(ctx, pass, c.attachmentsDir)
 		if err != nil {
 			return nil, err
 		}
