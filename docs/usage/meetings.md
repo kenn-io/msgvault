@@ -90,6 +90,19 @@ RFC3339 timestamps. See the [CLI flags](../cli-reference.md#meetings),
 [HTTP contract](../api-server.md#meeting-intelligence), and
 [MCP examples](chat.md#meeting-evidence).
 
+### Export subtitles
+
+Format `srt` or `vtt` exports one meeting's transcript with recording-relative
+cue times and speaker labels. It needs exactly one meeting ID, includes the
+transcript without opting in, and the byte budget limits the complete output.
+
+Omi, Pocket, and Twenty meetings export when every cue has a start and end and
+the recording start is known: Omi's `started_at`, Pocket's `recorded_at` or
+`recording.recording_at`, or Twenty's `recording.startedAt`. Calendar,
+creation, and message dates don't substitute. Other sources and missing times
+return an error. SRT refuses speech containing tags, override commands, or
+timing lines, which players reinterpret; use WebVTT for that speech.
+
 ## Understand meeting time and coverage
 
 Meeting metrics show the number of meetings, known and unknown durations,

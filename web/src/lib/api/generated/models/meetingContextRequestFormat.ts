@@ -8,4 +8,6 @@ export type MeetingContextRequestFormat =
 export const MeetingContextRequestFormat = {
   json: "json",
   markdown: "markdown",
+  srt: "srt",
+  vtt: "vtt",
 } as const;

@@ -526,8 +526,8 @@ func translateDaemonRequestError(err error) *toolResult {
 
 	var message string
 	switch coded.APIErrorCode() {
-	case "permission_denied", "unsupported_agent_scope":
-		// The daemon's message names the missing permission or the supported scope.
+	case "permission_denied", "unsupported_agent_scope", "invalid_meeting_subtitles", "invalid_meeting_format", "context_budget_too_small":
+		// These known public diagnostics explain how the caller can repair the request.
 		message = coded.APIErrorCode() + ": " + daemonErrorMessage(err)
 	case "unauthorized":
 		message = "unauthorized: Archive authentication failed"

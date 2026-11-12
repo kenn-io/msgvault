@@ -121,3 +121,23 @@ func TestMeetingContextValidatesEveryIDBeforeRendering(t *testing.T) {
 func jsonNumberForMeetingTest(value int64) string {
 	return strconv.FormatInt(value, 10)
 }
+
+func TestMeetingContextSubtitleSelectionAndTiming(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	fixture := newMeetingQueryFixture(t)
+	source, err := fixture.store.GetOrCreateSource("twenty", "owner@example.test")
+	must.NoError(err)
+	raw := []byte(`{"schema_version":1,"recording":{"startedAt":"2026-01-01T00:00:00Z","transcript":[{"participant":{"name":"A"},"words":[{"text":"Hello","start_timestamp":{"absolute":"2026-01-01T00:00:10Z"},"end_timestamp":{"absolute":"2026-01-01T00:00:12Z"}}]}]}}`)
+	id := fixture.persistMeeting(t, source.ID, "twenty", "Twenty meeting", nil, "")
+	must.NoError(fixture.store.UpsertMessageRawWithFormat(id, raw, "twenty_json"))
+	options := meetingcontent.PacketOptions{Format: meetingcontent.FormatVTT, MaxBytes: 4096}
+	result, err := fixture.store.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: new([]int64{id, id})}, options)
+	must.NoError(err)
+	checks.Equal("WEBVTT\n\n1\n00:00:10.000 --> 00:00:12.000\nA: Hello\n\n", result.Content)
+	for _, ids := range [][]int64{{}, {id, fixture.meetingIDs[1]}} {
+		result, err = fixture.store.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: &ids}, options)
+		must.ErrorIs(err, meetingcontent.ErrInvalidSubtitles)
+		checks.Nil(result)
+	}
+}

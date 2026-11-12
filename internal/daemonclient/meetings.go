@@ -23,6 +23,10 @@ func (c *Client) GetMeetingContext(
 				&generated.GetMeetingContextRequestOptions{Body: &body})
 		})
 	if err != nil {
+		var apiErr *APIError
+		if body.Format != nil && (*body.Format == "srt" || *body.Format == "vtt") && errors.As(err, &apiErr) && apiErr.Code == "invalid_meeting_format" {
+			return nil, &APIError{Status: apiErr.Status, Code: apiErr.Code, Message: "Subtitle export requires daemon API schema 5.1.0 or newer; upgrade the daemon"}
+		}
 		return nil, err
 	}
 	if response.JSON200 == nil {

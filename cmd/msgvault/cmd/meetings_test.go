@@ -82,6 +82,7 @@ func executeMeetingsCommand(
 	command := newMeetingsCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) {
 		return client, func() {}, nil
 	}})
+	silenceUsageInRunE(command)
 	var stdout, stderr bytes.Buffer
 	command.SetOut(&stdout)
 	command.SetErr(&stderr)

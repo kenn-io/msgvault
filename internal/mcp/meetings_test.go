@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,14 +16,16 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.Result) {
+func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.Result, *store.Store) {
 	t.Helper()
 	st := testutil.NewTestStore(t)
 	importer := meetingimport.NewImporter(st, meetingimport.Hooks{})
@@ -68,13 +72,13 @@ func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.R
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
-	return client, results
+	return client, results, st
 }
 
 func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.T) {
 	checks := assert.New(t)
 	must := require.New(t)
-	backend, imported := newMeetingMCPBackend(t)
+	backend, imported, st := newMeetingMCPBackend(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 
@@ -204,6 +208,38 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 	must.NoError(err)
 	must.NotNil(emptyMetrics)
 	checks.Nil(emptyMetrics.Totals.AverageKnownSeconds)
+	source, err := st.GetOrCreateSource("twenty", "owner@example.test")
+	must.NoError(err)
+	raw := []byte(`{"schema_version":1,"calendar_event":{"startsAt":"2025-01-01T00:00:00Z"},"recording":{"startedAt":"2026-01-01T00:00:00Z","transcript":[{"participant":{"name":"A"},"words":[{"text":"Hello","start_timestamp":{"absolute":"2026-01-01T00:00:10Z"},"end_timestamp":{"absolute":"2026-01-01T00:00:12Z"}}]}]}}`)
+	snapshot := meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "owner@example.test", SourceMessageID: "subtitle", SourceConversationID: "subtitle", Title: "Meeting", StartedAt: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), Raw: raw, RawFormat: "twenty_json", Organizer: &meetingarchive.Person{Name: "Owner", Email: "owner@example.test"}}
+	archived, err := meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+	must.NoError(err)
+	subtitles, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingContext, Arguments: map[string]any{"message_ids": []any{float64(archived.MessageID)}, "format": "vtt"}})
+	must.NoError(err)
+	must.False(subtitles.IsError)
+	checks.Equal("WEBVTT\n\n1\n00:00:10.000 --> 00:00:12.000\nA: Hello\n\n", meetingStructuredContent(t, subtitles)["content"])
+	snapshot.Raw = []byte(strings.Replace(string(raw), `"startedAt":"2026-01-01T00:00:00Z",`, "", 1))
+	_, err = meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+	must.NoError(err)
+	invalid, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingContext, Arguments: map[string]any{"message_ids": []any{float64(archived.MessageID)}, "format": "vtt"}})
+	must.NoError(err)
+	must.True(invalid.IsError)
+	must.NotEmpty(invalid.Content)
+	message, ok := invalid.Content[0].(*sdkmcp.TextContent)
+	must.True(ok)
+	checks.Contains(message.Text, "invalid_meeting_subtitles")
+	snapshot.Raw = []byte(strings.Replace(string(raw), `"Hello"`, `"`+strings.Repeat("x", 5000)+`"`, 1))
+	_, err = meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+	must.NoError(err)
+	budget, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingContext, Arguments: map[string]any{"message_ids": []any{float64(archived.MessageID)}, "format": "vtt", "max_bytes": 4096}})
+	must.NoError(err)
+	must.True(budget.IsError)
+	must.NotEmpty(budget.Content)
+	message, ok = budget.Content[0].(*sdkmcp.TextContent)
+	must.True(ok)
+	checks.Contains(message.Text, "context_budget_too_small")
+	checks.Contains(message.Text, "max_bytes")
+	checks.Contains(message.Text, "1048576")
 }
 
 func meetingStructuredContent(t *testing.T, result *sdkmcp.CallToolResult) map[string]any {
@@ -261,4 +297,43 @@ func (meetingBackendFixture) ListMeetingActionItems(context.Context, generated.L
 
 func (meetingBackendFixture) GetMeetingMetrics(context.Context, generated.GetMeetingMetricsBody) (*meetingcontent.Metrics, error) {
 	return &meetingcontent.Metrics{}, nil
+}
+
+func TestMeetingMCPSubtitleOldDaemon(t *testing.T) {
+	must := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/health" {
+			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"5.0.0"}`))
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_meeting_format","message":"format must be json or markdown"}`))
+	}))
+	t.Cleanup(server.Close)
+	backend, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
+	must.NoError(err)
+	t.Cleanup(func() { _ = backend.Close() })
+	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
+	serverSession, err := newMCPServer(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend}, false).Connect(t.Context(), serverTransport, nil)
+	must.NoError(err)
+	t.Cleanup(func() { _ = serverSession.Close() })
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "meeting-test", Version: "1.0.0"}, nil)
+	clientSession, err := client.Connect(t.Context(), clientTransport, nil)
+	must.NoError(err)
+	t.Cleanup(func() { _ = clientSession.Close() })
+	for _, format := range []string{"srt", "vtt"} {
+		t.Run(format, func(t *testing.T) {
+			must := require.New(t)
+			result, err := clientSession.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolGetMeetingContext, Arguments: map[string]any{"message_ids": []any{float64(1)}, "format": format}})
+			must.NoError(err)
+			must.True(result.IsError)
+			must.NotEmpty(result.Content)
+			message, ok := result.Content[0].(*sdkmcp.TextContent)
+			must.True(ok)
+			must.Contains(message.Text, "invalid_meeting_format")
+			must.Contains(message.Text, "5.1.0")
+			must.Contains(message.Text, "upgrade")
+		})
+	}
 }
