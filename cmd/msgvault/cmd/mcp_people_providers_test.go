@@ -131,16 +131,16 @@ request_timeout = "45s"
 
 func TestPeopleProviderDiscoveryRequiresEachNativeContract(t *testing.T) {
 	a := assert.New(t)
-	c := &apiprotocol.MCPCapabilities{Routes: []apiprotocol.MCPRouteDescriptor{
+	c := &apiprotocol.MCPCapabilities{Version: 1, Routes: []apiprotocol.MCPRouteDescriptor{
 		{OperationID: "getSettingsPeopleInference", Method: "GET", Path: "/api/v1/settings/people-inference"},
 		{OperationID: "selectSettingsPeopleInference", Method: "POST", Path: "/api/v1/settings/people-inference/select", RequestProperties: []string{"name"}},
 		{OperationID: "disableSettingsPeopleInference", Method: "POST", Path: "/api/v1/settings/people-inference/disable"},
 	}}
 	a.Len(newDaemonMCPOperations(nil, c).capabilities(), 3)
 	c.Routes[1].RequestProperties = nil
-	c.Routes[2].Path = "/wrong"
+	c.Routes[2].Path = "/api/v1/settings/people-inference/other-disable"
 	a.Equal([]string{"get_people_provider_settings"}, newDaemonMCPOperations(nil, c).capabilities())
-	c.Routes[0].Path = "/wrong"
+	c.Routes[0].Path = "/api/v1/settings/other-people-inference"
 	a.Empty(newDaemonMCPOperations(nil, c).capabilities())
 }
 
