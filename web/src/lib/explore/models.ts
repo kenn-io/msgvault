@@ -249,7 +249,10 @@ export interface ExploreResult {
   nextCursor?: string;
 }
 
+export type ExploreGroupOverview = NonNullable<ExploreGroupsResponse['overview']>;
+
 export interface ExploreGroupResult {
+  overview?: ExploreGroupOverview;
   warnings?: string[];
   rows: ExploreGroupRow[];
   totalCount: number;
