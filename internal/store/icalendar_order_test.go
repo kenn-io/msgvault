@@ -105,3 +105,61 @@ func TestICalendarSparseCancellationKeepsDetails(t *testing.T) {
 	requirements.NotNil(row.Event.Start)
 	requirements.Equal("2027-03-02T12:00:00Z", row.Event.Start.Format(time.RFC3339))
 }
+
+func TestICalendarPartialCancellationKeepsDetails(t *testing.T) {
+	for _, mode := range []string{"file", "email"} {
+		t.Run(mode, func(t *testing.T) {
+			requirements := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			source := icsSource(t, st)
+			if mode == "email" {
+				account, err := st.GetOrCreateSource("mbox", "owner@example.com")
+				requirements.NoError(err)
+				source = account.ID
+			}
+			for i, fields := range []string{
+				"SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z\r\nSUMMARY:Cancelled meeting",
+				"SEQUENCE:2\r\nDTSTART:20270302T120000Z",
+				"SEQUENCE:3\r\nDTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z",
+			} {
+				raw := calendarDocument("CANCEL", fields)
+				if mode == "email" {
+					persistInviteEmailForSource(t, st, source, fmt.Sprintf("cancel-%d", i), inviteEmail(raw))
+				} else {
+					_, err := st.PersistICalendarContext(t.Context(), source, raw)
+					requirements.NoError(err)
+				}
+			}
+			ids := emailEvents(t, st, source)
+			requirements.Len(ids, 1)
+			row := calendarRows(t, st, ids[0])[0]
+			requirements.Equal("Cancelled meeting", row.Subject)
+			requirements.Equal("cancelled", row.Event.Status)
+			requirements.NotNil(row.Event.Start)
+			requirements.NotNil(row.Event.End)
+			requirements.Equal("2027-03-02T12:00:00Z", row.Event.Start.Format(time.RFC3339))
+			requirements.Equal("2027-03-02T13:00:00Z", row.Event.End.Format(time.RFC3339))
+		})
+	}
+}
+
+func TestICalendarCompleteCancellationFillsDetails(t *testing.T) {
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	for _, fields := range []string{
+		"SEQUENCE:1",
+		"SEQUENCE:2\r\nDTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z\r\nSUMMARY:Cancelled meeting",
+	} {
+		_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("CANCEL", fields))
+		requirements.NoError(err)
+	}
+	ids := emailEvents(t, st, source)
+	requirements.Len(ids, 1)
+	row := calendarRows(t, st, ids[0])[0]
+	requirements.Equal("Cancelled meeting", row.Subject)
+	requirements.NotNil(row.Event.Start)
+	requirements.NotNil(row.Event.End)
+	requirements.Equal("2027-03-02T12:00:00Z", row.Event.Start.Format(time.RFC3339))
+	requirements.Equal("2027-03-02T13:00:00Z", row.Event.End.Format(time.RFC3339))
+}
