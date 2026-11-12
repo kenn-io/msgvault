@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-10"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -15,8 +15,8 @@ appear in full under Inherited Flags.
 
 | Task | Commands and guides |
 |---|---|
-| Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full), [source feeds add](#source-feeds-add) |
+| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-discord-package](#import-discord-package), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -1657,6 +1657,72 @@ See [Chatwoot setup](guides/chatwoot.md).
 
 ---
 
+## source feeds add
+
+Follow RSS 2.0, Atom, or JSON feeds and archive their items. See
+[Feeds](usage/feeds.md).
+
+```bash
+msgvault source feeds add https://example.com/releases.atom
+msgvault source feeds add --opml ~/Downloads/subscriptions.opml
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--opml` | — | Follow every feed in this OPML file without fetching them; mutually exclusive with URL arguments |
+
+Each URL is fetched first; a URL that is not a reachable feed is reported, not
+followed, and makes the command exit non-zero. The items a feed lists now are
+archived right away. Adding a removed feed follows it again.
+
+---
+
+## source feeds list
+
+List followed feeds with their title, URL, last check, and last error.
+
+```bash
+msgvault source feeds list
+msgvault source feeds list --all --json
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--all` | `false` | Include removed feeds |
+| `--json` | `false` | Output JSON |
+
+---
+
+## source feeds remove
+
+Stop fetching feeds. Their archived items stay searchable.
+
+```bash
+msgvault source feeds remove https://example.com/releases.atom
+```
+
+---
+
+## source feeds sync
+
+Fetch every followed feed, or the given ones, and archive each item the
+archive does not hold yet. A feed that fails is reported and the others still
+sync; the command then exits non-zero.
+
+```bash
+msgvault source feeds sync
+msgvault source feeds sync https://example.com/releases.atom
+msgvault source feeds sync --full
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--full` | `false` | Download every feed again, even when unchanged |
+
+Scheduled fetching is controlled by [`[feeds]`](configuration.md#feeds).
+
+---
+
 ## sync-chatwoot
 
 Sync Chatwoot conversations, media, and linked voice-call meetings. Only registered inboxes selected by the profile's filters are synced.
@@ -2446,6 +2512,25 @@ See [Google Voice imports](usage/text-messages.md#import-gvoice) for voicemail a
 
 ---
 
+## import-discord-package
+
+Available on `main` (not yet released). Import an extracted official Discord
+sent-message data package on the daemon host:
+
+```bash
+msgvault import-discord-package <package-dir>
+```
+
+| Flag | Description |
+|------|-------------|
+| `--no-default-identity` | Skip assigning the exporting account to the default identity |
+
+Imports only the exporting account's sent messages, including DMs. Legacy CSV
+transcripts are supported; JSON transcripts are experimental. Attachment URLs
+are stored as links. Re-running is safe and resumes an interrupted import. See
+[Discord packages](usage/discord.md#import-a-personal-data-package) for
+requirements and limits.
+
 ## import-telegram
 
 Import a Telegram Desktop Machine-readable JSON export, including available media.
@@ -2649,17 +2734,19 @@ msgvault pack-attachments
 
 The daemon serializes packing against sync and backup operations. Reads remain
 available from loose, packed, or mixed storage, and the command is safe to
-rerun as new loose content arrives. Bounded packing also runs after successful
-attachment-producing commands sent to the daemon. Scheduled syncs never pack
-inline: when one writes new loose blobs, the daemon's `attachment-pack` job
-(every 6 hours) packs them, and the daily `attachment-maintenance` job packs
-and repacks. Each automatic pack pass has a 256 MiB soft raw-byte budget and
-finishes its current blob before stopping for that byte limit. Scheduled packing
-and daily attachment maintenance also stop after one minute, which lets queued
+rerun as new loose content arrives. Attachment-producing commands sent to the
+daemon defer packing, including after a partial failure. Scheduled syncs also
+defer packing when they write new loose blobs. The daemon's `attachment-pack`
+job (every 6 hours) packs them, and the daily `attachment-maintenance` job
+packs and repacks. Automatic maintenance errors appear in scheduled job status.
+Each automatic pack pass has a 256 MiB soft raw-byte budget and finishes its
+current blob before stopping for that byte limit. Scheduled packing and daily
+attachment maintenance also stop after one minute, which lets queued
 scheduled work run. Each scheduled pack pass verifies at most 128
-existing packed blobs or 32 MiB of their raw content, allowing one oversized
+indexed blobs with canonical loose copies or missing packs, or 32 MiB of
+their raw content, allowing one oversized
 blob. Its durable hash cursor resumes verification after a restart, while new
-loose blobs are packed by sync-requested passes and the daily job when nothing
+loose blobs are packed by pending passes and the daily job when nothing
 is queued; verification-only follow-ups skip them. Manual unpacking reads the full
 catalog. Cancellation preserves committed packs. A pass with committed
 progress resumes behind waiting work; runtime expiry without a checkpoint
