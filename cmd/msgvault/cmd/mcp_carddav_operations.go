@@ -88,13 +88,13 @@ func cardDAVRoleRefusal(code string) bool {
 	return false
 }
 
-// Native recovery and post-prepare stages can return these fixed refusals
+// Native recovery and post-prepare stages can return not_found
 // after a remote or local mutation has already occurred.
 func cardDAVUncertainRefusals(enabled bool) []string {
 	if !enabled {
 		return nil
 	}
-	return []string{"not_found", "conflict", "carddav_conflict_stale", "carddav_conflict_pending", "carddav_publication_pending", "carddav_retry_after", "carddav_remote_protected", "carddav_remote_invalid", "carddav_inference_review_required", "carddav_review_stale", "carddav_icloud_reconnect_required", "google_authorization_required", "microsoft_authorization_required", "carddav_preview_too_large", "microsoft_contact_too_large", "carddav_upstream_failed", "carddav_storage_failed"}
+	return []string{"not_found"}
 }
 
 func (b *daemonMCPOperations) executeCardDAVOperation(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
