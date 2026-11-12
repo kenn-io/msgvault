@@ -194,7 +194,7 @@ func (s *Store) ResolvePersonSemanticCandidatesContext(
 // CurrentOrganizationMemberIDsContext returns the saved people with current
 // employment at the active canonical organization.
 func (s *Store) CurrentOrganizationMemberIDsContext(ctx context.Context, organizationID int64) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT employment.person_id `+s.currentOrganizationMembershipSQL()+` ORDER BY employment.person_id`, organizationID)
+	rows, err := s.db.QueryContext(ctx, `SELECT person.id FROM persons person WHERE EXISTS (SELECT 1 `+s.currentOrganizationMembershipSQL()+` AND employment.person_id = person.id) ORDER BY person.id`, organizationID)
 	if err != nil {
 		return nil, fmt.Errorf("list organization members: %w", err)
 	}
