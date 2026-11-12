@@ -190,7 +190,7 @@ describe('PersonAddresses', () => {
     await rerender(baseProps({ detail: { ...person(), id: 200, identifiers: [{ type: 'email', value: 'next@example.com', participant_id: 200, is_primary: true, provenance: 'participant_identifiers' }], cluster: { canonical_id: 200, member_ids: [200, 201], edges: [{ participant_a: 200, participant_b: 201 }] } }, onUnlinkParticipants }));
     expect(screen.queryByRole('group', { name: /Confirm unlinking/ })).toBeNull();
     release(outcome === 'second edge fails' ? { ok: false, code: 'error', message: 'Request failed (500)' } : { ok: true, identityRevision: 3, cacheState: 'ready' });
-    await waitFor(() => expect(onUnlinkParticipants).toHaveBeenCalledWith(34, 56));
+    await waitFor(() => expect(onUnlinkParticipants).toHaveBeenCalledTimes(2));
     await act(async () => { await onUnlinkParticipants.mock.results[1]!.value; });
     if (outcome === 'second edge fails') expect(screen.queryByRole('alert')).toBeNull();
   });

@@ -100,7 +100,7 @@ describe('DirectoryReviewController', () => {
       if (request.method === 'POST') {
         expect(url.pathname).toBe('/api/v1/identity/match-candidates/1/review/reject');
         candidates = candidates.filter(row => row.id !== 1);
-        return Response.json({ candidate: candidate(1, 'rejected'), cache_state: 'ready' });
+        return Response.json({ candidate: candidate(1, 'rejected'), identity_revision: 1, cache_state: 'ready' });
       }
       const offset = Number(url.searchParams.get('offset'));
       offsets.push(offset);
@@ -430,7 +430,7 @@ it('returns to the first page when deciding the last later-page row empties that
   let decided = false;
   const controller = new DirectoryReviewController(createAPIClient(async input => {
     const request = requestOf(input);
-    if (request.method === 'POST') { decided = true; return Response.json({ candidate: candidate(11, 'rejected'), cache_state: 'ready' }); }
+    if (request.method === 'POST') { decided = true; return Response.json({ candidate: candidate(11, 'rejected'), identity_revision: 1, cache_state: 'ready' }); }
     const offset = Number(new URL(request.url).searchParams.get('offset'));
     return page(offset ? decided ? [] : [candidate(11)] : Array.from({ length: decided ? 10 : 11 }, (_, i) => candidate(i + 1)), offset);
   }));
@@ -474,7 +474,7 @@ it.each([
     const navigation = direction === 'next' ? controller.loadNextPage() : direction === 'invalidate' ? controller.invalidate(true) : controller.retryPage();
     await vi.waitFor(() => expect(posted).toBe(true));
     if (direction === 'invalidate') expect(order).toEqual(['GET', 'POST']);
-    decision.resolve(failed ? Response.json({ message: 'Decision unavailable' }, { status: 503 }) : Response.json({ candidate: candidate(1, 'rejected'), cache_state: 'ready' }));
+    decision.resolve(failed ? Response.json({ message: 'Decision unavailable' }, { status: 503 }) : Response.json({ candidate: candidate(1, 'rejected'), identity_revision: 1, cache_state: 'ready' }));
     await vi.waitFor(() => expect(controller.pendingDecisions.size).toBe(0));
     if (direction !== 'invalidate') {
       await vi.waitFor(() => expect(destinationRead).toBe(true));
