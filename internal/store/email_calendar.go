@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"time"
 
 	"go.kenn.io/msgvault/internal/mime"
 )
@@ -28,22 +29,54 @@ func (s *Store) deriveEmailCalendarAfterCommit(ctx context.Context, id int64, ra
 		return
 	}
 	if err == nil {
-		var sourceID int64
-		err = s.db.QueryRowContext(ctx, `SELECT source_id FROM messages WHERE id=?`, id).Scan(&sourceID)
-		if err == nil {
-			var item *ArchivedRawMessage
-			item, err = s.ScanArchivedEmailContext(ctx, sourceID, id-1, id)
-			if err == nil && item != nil && item.RawDecodeError != nil {
-				err = item.RawDecodeError
-			}
-			if err == nil && item != nil && bytes.Equal(item.RawData, raw) {
-				_, err = s.RefreshArchivedEmailCalendarContext(ctx, sourceID, item, parsed)
-			}
+		if err = s.refreshCommittedEmailCalendar(ctx, id, raw, parsed); err != nil {
+			err = errors.Join(err, s.reopenEmailRepairContext(ctx, id))
 		}
 	}
 	if err != nil {
 		slog.Warn("derive email calendar after commit failed", "message_id", id, "error", err)
 	}
+}
+
+func (s *Store) refreshCommittedEmailCalendar(ctx context.Context, id int64, raw []byte, parsed *mime.Message) error {
+	var sourceID int64
+	if err := s.db.QueryRowContext(ctx, `SELECT source_id FROM messages WHERE id=?`, id).Scan(&sourceID); err != nil {
+		return err
+	}
+	item, err := s.ScanArchivedEmailContext(ctx, sourceID, id-1, id)
+	if err != nil {
+		return err
+	}
+	if item == nil {
+		return nil
+	}
+	if item.RawDecodeError != nil {
+		return item.RawDecodeError
+	}
+	if !bytes.Equal(item.RawData, raw) {
+		return nil
+	}
+	_, err = s.RefreshArchivedEmailCalendarContext(ctx, sourceID, item, parsed)
+	return err
+}
+
+// reopenEmailRepairContext forgets the completion of a message's source's email
+// repair pass, so the next sync's stale check retries invitations that
+// failed after their message committed. It outlives ctx, whose expiry may be
+// what failed the write.
+func (s *Store) reopenEmailRepairContext(ctx context.Context, messageID int64) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_, err := s.db.ExecContext(ctx, s.Rebind(`DELETE FROM applied_migrations WHERE EXISTS (
+		SELECT 1 FROM (
+			SELECT 'rederive:' || source_type || ':' || identifier || ':email-v' AS prefix
+			FROM sources WHERE id = (SELECT source_id FROM messages WHERE id = ?)
+		) repair_source
+		WHERE SUBSTR(name, 1, LENGTH(prefix)) = prefix
+		  AND SUBSTR(name, LENGTH(prefix) + 1) NOT LIKE '%:%'
+		  AND SUBSTR(name, LENGTH(prefix) + 1) NOT LIKE '%#%'
+	)`), messageID)
+	return err
 }
 
 // RefreshArchivedEmailCalendarContext derives invites from the MIME already
