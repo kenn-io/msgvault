@@ -166,9 +166,8 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			return err
 		}
 		seen := map[int64]bool{}
-		decisions := meetingDecisionLoader{store: s}
 		for _, id := range append(aliasesA, aliasesB...) {
-			choices, err := decisions.edges(ctx, meetingDecisionEndpoint{ID: id}, nil, &budget)
+			choices, err := s.meetingDecisionEdges(ctx, meetingDecisionEndpoint{ID: id}, &budget)
 			if err != nil {
 				return err
 			}

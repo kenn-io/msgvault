@@ -60,8 +60,7 @@ func TestMeetingLinkDecisionReadsOnlyRequestedOccurrence(t *testing.T) {
 	occurrence, err := ParseMeetingLinkRef(fmt.Sprintf("evt:%d@20270314T100000Z", event))
 	r.NoError(err)
 	budget := 20
-	loader := meetingDecisionLoader{store: base}
-	edges, err := loader.edges(t.Context(), endpointFromRef(occurrence), nil, &budget)
+	edges, err := base.meetingDecisionEdges(t.Context(), endpointFromRef(occurrence), &budget)
 	r.NoError(err)
 	r.Len(edges, 1)
 	r.Contains([]int64{edges[0].a.ID, edges[0].b.ID}, firstNote)
