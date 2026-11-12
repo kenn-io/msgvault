@@ -34,19 +34,13 @@ func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map
 	command := newExportMessagesCmd(defaultExportMessagesDeps())
 	flags := command.Flags()
 	for name, value := range map[string]string{"person-id": strconv.FormatInt(input.PersonID, 10), "start": input.Start, "end": input.End, "format": "jsonl"} {
-		if flags.Set(name, value) != nil {
-			return operationFailure("invalid_arguments", false), nil
-		}
+		_ = flags.Set(name, value)
 	}
 	for _, value := range input.Sources {
-		if flags.Set("source", value) != nil {
-			return operationFailure("invalid_arguments", false), nil
-		}
+		_ = flags.Set("source", value)
 	}
 	for _, value := range input.MessageTypes {
-		if flags.Set("message-type", value) != nil {
-			return operationFailure("invalid_arguments", false), nil
-		}
+		_ = flags.Set("message-type", value)
 	}
 	argv, err := daemonCLIArgsFromCobra(command, nil)
 	if err != nil {
@@ -70,6 +64,9 @@ func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map
 	})
 	if overflow {
 		return operationFailure("export_limit_exceeded", false), nil
+	}
+	if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
+		return operationFailure(local.APIErrorCode(), false), nil
 	}
 	if err != nil || ctx.Err() != nil {
 		return operationFailure("export_failed", false), nil
@@ -107,29 +104,17 @@ func validPersonExport(data string, expected exportMessagesManifest) bool {
 		} else {
 			switch header.RecordType {
 			case "source":
-				var record exportMessagesSourceRecord
-				if json.Unmarshal(line, &record) != nil || record.SourceType == "" || record.Identifier == "" {
-					return false
-				}
 				if phase > 0 {
 					return false
 				}
 				count.Sources++
 			case "conversation":
-				var record exportMessagesConversationRecord
-				if json.Unmarshal(line, &record) != nil || record.SourceType == "" || record.SourceIdentifier == "" || record.ID == "" {
-					return false
-				}
 				if phase > 1 {
 					return false
 				}
 				phase = 1
 				count.Conversations++
 			case "message":
-				var record exportMessagesMessageRecord
-				if json.Unmarshal(line, &record) != nil || record.SourceType == "" || record.SourceIdentifier == "" || record.ID == "" || record.OccurredAt.IsZero() {
-					return false
-				}
 				phase = 2
 				count.Messages++
 			case "complete":

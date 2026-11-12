@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -102,9 +103,9 @@ func TestMCPPersonExportReceiptValidation(t *testing.T) {
 }
 
 func TestMCPPersonExportRefusesTransportFailureAndOverflow(t *testing.T) {
-	for _, tc := range []struct{ name, events string }{
-		{"failure", `{"type":"error","error":"private detail"}` + "\n"},
-		{"overflow", `{"type":"stdout","data":` + strconv.Quote(strings.Repeat("x", mcpPersonExportLimit+1)) + "}\n"},
+	for _, tc := range []struct{ name, events, code string }{
+		{"failure", `{"type":"error","error":"private detail"}` + "\n", "export_failed"},
+		{"overflow", `{"type":"stdout","data":` + strconv.Quote(strings.Repeat("x", mcpPersonExportLimit+1)) + "}\n", "export_limit_exceeded"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server, _ := newDaemonCLIRunnerTestServer(t, func(daemonCLIRunTestRequest) {}, tc.events)
@@ -116,19 +117,46 @@ func TestMCPPersonExportRefusesTransportFailureAndOverflow(t *testing.T) {
 			require.True(t, result.IsError)
 			encoded, err := json.Marshal(result.Output)
 			require.NoError(t, err)
+			var failure struct {
+				Error string `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(encoded, &failure))
+			assert.Equal(t, tc.code, failure.Error)
 			assert.NotContains(t, string(encoded), "private detail")
 		})
 	}
 }
 
+type cancelOnCloseBody struct {
+	io.Reader
+	cancel context.CancelFunc
+}
+
+func (b cancelOnCloseBody) Close() error {
+	b.cancel()
+	return nil
+}
+
 func TestMCPPersonExportCancelled(t *testing.T) {
-	server, _ := newDaemonCLIRunnerTestServer(t, func(daemonCLIRunTestRequest) {}, exportCompleteEvents)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	export := `{"record_type":"manifest","schema":"msgvault-message-export/1","window":{"start":"2026-07-20T00:00:00Z","end":"2026-07-21T00:00:00Z"},"filters":{"person_id":1,"message_types":[],"sources":[]}}` + "\n" +
+		`{"record_type":"complete","counts":{"sources":0,"conversations":0,"messages":0}}` + "\n"
+	events := `{"type":"stdout","data":` + strconv.Quote(export) + "}\n" + `{"type":"complete"}` + "\n"
+	transport := testTransport(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: cancelOnCloseBody{Reader: strings.NewReader(events), cancel: cancel}}, nil
+	})
+	client, err := daemonclient.New(daemonclient.Config{URL: "http://127.0.0.1", AllowInsecure: true, HTTPClient: &http.Client{Transport: transport}})
 	require.NoError(t, err)
 	backend := &daemonMCPOperations{client: client, supported: []string{"export_person_messages"}}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
 	result, err := backend.ExecuteOperation(ctx, "export_person_messages", map[string]any{"person_id": 1, "start": "2026-07-20T00:00:00Z", "end": "2026-07-21T00:00:00Z"})
 	require.NoError(t, err)
 	require.True(t, result.IsError)
+	encoded, err := json.Marshal(result.Output)
+	require.NoError(t, err)
+	var failure struct {
+		Error string `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(encoded, &failure))
+	assert.Equal(t, "export_failed", failure.Error)
 }
