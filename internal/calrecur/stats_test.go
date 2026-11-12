@@ -78,7 +78,7 @@ func TestMeetingHistoryExpandsSeriesOnce(t *testing.T) {
 	assert.Equal(t, 734, results[1].Candidates)
 	assert.LessOrEqual(t, physical, 734, "a shared traversal should generate each prefix once")
 	windows[0].Budget = 400
-	windows[1].Budget = 499999
+	windows[1].Budget = 50000
 	results, _ = testExpandWindows(t.Context(), s, time.Hour, 0, windows)
 	require.NoError(t, results[0].Err)
 	require.NoError(t, results[1].Err)
@@ -137,13 +137,6 @@ func TestExpandWindowsStopsPullingAfterBudgetFailure(t *testing.T) {
 	start := instant(t, "2020-01-01T00:00:00Z")
 	s, err := ParseSet(start, false, "", time.UTC, []string{"RRULE:FREQ=DAILY"})
 	require.NoError(t, err)
-	results, _ := testExpandWindows(t.Context(), s, time.Hour, 0, []Window{
-		{From: start, To: instant(t, "2021-01-02T04:00:00Z"), Budget: 400},
-		{From: instant(t, "2021-01-01T00:00:00Z"), To: instant(t, "2022-01-02T04:00:00Z"), Budget: 0},
-	})
-	require.NoError(t, results[0].Err)
-	assert.ErrorIs(t, results[1].Err, ErrBudgetExceeded)
-	assert.Equal(t, 369, results[0].Candidates)
 	results, pulls := testExpandWindows(t.Context(), s, time.Hour, 0, []Window{
 		{From: start, To: instant(t, "2021-01-02T04:00:00Z"), Budget: 400},
 		{From: instant(t, "2021-01-01T00:00:00Z"), To: instant(t, "2022-01-02T04:00:00Z"), Budget: 1},

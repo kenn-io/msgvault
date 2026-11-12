@@ -20,6 +20,8 @@ export type MeetingScopeRequest = unknown &
      * @items.maximum 9007199254740991
      */
     message_ids?: number[];
+    /** @maxItems 2 */
+    message_types?: string[];
     /**
      * @minimum 1
      * @maximum 9007199254740991

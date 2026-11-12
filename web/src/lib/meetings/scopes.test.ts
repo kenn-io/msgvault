@@ -5,6 +5,10 @@ describe('meeting scopes', () => {
   it('retains calendar-only and transcript-only meeting filters', () => {
     expect(relationshipMeetingScope({ participant_id: 7 }, { filters: [{ dimension: 'message_type', values: ['calendar_event'] }] })).toEqual({ kind: 'direct', scope: { participant_id: 7, message_types: ['calendar_event'] } });
     expect(relationshipMeetingScope({ participant_id: 7 }, { filters: [{ dimension: 'message_type', values: ['meeting_transcript'] }] })).toEqual({ kind: 'direct', scope: { participant_id: 7, message_types: ['meeting_transcript'] } });
+    expect(relationshipMeetingScope({ participant_id: 7 }, { filters: [
+      { dimension: 'message_type', values: ['calendar_event'] },
+      { dimension: 'message_type', values: ['meeting_transcript'] },
+    ] })).toEqual({ kind: 'direct', scope: { participant_id: 7, message_types: ['calendar_event'], message_ids: [] } });
   });
   it.each([
     { name: 'no filters', filters: undefined, want: false },

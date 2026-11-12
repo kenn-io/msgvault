@@ -22,7 +22,7 @@ func TestCalendarExpansionBatchRetainsYearBudgets(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	batch := &calendarExpansionBatch{through: time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC), series: map[int64]*calrecur.WindowExpander{}}
-	for _, tc := range []struct{ year, budget, candidates int }{{2020, 400, 369}, {2021, 499999, 734}} {
+	for _, tc := range []struct{ year, budget, candidates int }{{2020, 400, 369}, {2021, 50000, 734}} {
 		from := time.Date(tc.year, 1, 1, 0, 0, 0, 0, time.UTC)
 		occurrences, candidates, warning, err := expandCalendarSeries(t.Context(), rows[0], nil, from, from.AddDate(1, 0, 0), tc.budget, batch)
 		require.NoError(t, err)

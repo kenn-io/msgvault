@@ -545,6 +545,7 @@ func TestMeetingExploreScopeRejectsMixedSelectionsAndBindsExactAuthority(t *test
 }
 
 func TestMeetingExploreMetricsPreserveSourceAndParticipantFilters(t *testing.T) {
+	t.Parallel()
 	st := &meetingRouteStore{mockStore: &mockStore{}, metricsResult: &meetingcontent.Metrics{DurationByBasis: []meetingcontent.BasisTotals{}, Months: []meetingcontent.MonthTotals{}}}
 	engine := &meetingRouteEngine{MockEngine: &querytest.MockEngine{}, result: &query.ExploreMeetingSelection{SelectedCount: 1, MeetingCount: 1, MessageIDs: []int64{41}, CacheRevision: "r"}}
 	response := httptest.NewRecorder()

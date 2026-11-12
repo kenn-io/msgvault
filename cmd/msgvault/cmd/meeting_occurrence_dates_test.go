@@ -31,7 +31,11 @@ func TestLinkedMeetingCopiesUseScopedDate(t *testing.T) {
 	other, err := st.EnsureParticipant("other-person@example.com", "Other", "example.com")
 	require.NoError(t, err)
 	persist := func(source, sender int64, fromMe bool, key string, at time.Time) int64 {
-		raw := `{"id":"` + key + `","start":{"dateTime":"` + at.Format(time.RFC3339) + `"},"end":{"dateTime":"` + at.Add(time.Hour).Format(time.RFC3339) + `"}}`
+		organizer := ""
+		if fromMe {
+			organizer = `,"organizer":{"email":"other-person@example.com","self":true}`
+		}
+		raw := `{"id":"` + key + `","start":{"dateTime":"` + at.Format(time.RFC3339) + `"},"end":{"dateTime":"` + at.Add(time.Hour).Format(time.RFC3339) + `"}` + organizer + `}`
 		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source, SourceMessageID: key, MessageType: "calendar_event", SentAt: sql.NullTime{Time: at, Valid: true}, SenderID: sql.NullInt64{Int64: sender, Valid: true}, IsFromMe: fromMe}, Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"}, RawMIME: []byte(raw), RawFormat: "gcal_json"})
 		require.NoError(t, err)
 		require.NoError(t, st.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{""}))

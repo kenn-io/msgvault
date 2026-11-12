@@ -5826,6 +5826,7 @@ func (g GCalCalendarError) Validate() error {
 
 type GCalEvent struct {
 	Attendees         []GCalAttendee     `json:"attendees,omitempty"`
+	AttendeesOmitted  *bool              `json:"attendeesOmitted,omitempty"`
 	Created           *time.Time         `json:"created,omitempty"`
 	Creator           *GCalPerson        `json:"creator,omitempty"`
 	Description       *string            `json:"description,omitzero"`
@@ -7938,6 +7939,7 @@ type MeetingScopeRequest struct {
 	Deletion       *MeetingScopeRequestDeletion `json:"deletion,omitempty"`
 	Domains        []string                     `json:"domains,omitempty"`
 	MessageIds     *[]int64                     `json:"message_ids,omitempty" validate:"omitempty,max=100,dive,gte=1,lte=9007199254740991"`
+	MessageTypes   []string                     `json:"message_types,omitempty"`
 	ParticipantID  *int64                       `json:"participant_id,omitempty" validate:"omitempty,gte=1,lte=9007199254740991"`
 	ParticipantIds []int64                      `json:"participant_ids,omitempty"`
 	PersonID       *int64                       `json:"person_id,omitempty" validate:"omitempty,gte=1,lte=9007199254740991"`
@@ -7963,6 +7965,9 @@ func (m MeetingScopeRequest) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("MessageIds", err)
 		}
+	}
+	if len(m.MessageTypes) > 2 {
+		errors = errors.Add("MessageTypes", fmt.Sprintf("must have at most 2 items, got %d", len(m.MessageTypes)))
 	}
 	if m.ParticipantID != nil {
 		if err := typesValidator.Var(m.ParticipantID, "omitempty,gte=1,lte=9007199254740991"); err != nil {
