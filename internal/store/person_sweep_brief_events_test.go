@@ -458,14 +458,10 @@ func TestPersonSweepEventCapacityPreservesCurrent(t *testing.T) {
 					MaxRenderedRunes: f.worker.Config.Brief.MaxRenderedRunes,
 					ThroughSequence:  through, Previous: &boundary,
 				}
-				// The saved boundary describes the earlier, larger packet. Measure
-				// the actual one-item replay, including its retained event context.
-				window, err := peoplesweep.BuildBriefWindow(t.Context(), st, request)
-				required.NoError(err)
-				required.Len(window.Items, 1)
-				required.Greater(window.Boundary.InputBytes, 1)
-				f.worker.Config.Brief.MaxBytes = window.Boundary.InputBytes - 1
-				request.MaxBytes = f.worker.Config.Brief.MaxBytes
+				// Even after every optional sidecar is trimmed, a one-byte limit
+				// cannot hold the mandatory event packet.
+				f.worker.Config.Brief.MaxBytes = 1
+				request.MaxBytes = 1
 				_, err = peoplesweep.BuildBriefWindow(t.Context(), st, request)
 				required.ErrorIs(err, peoplesweep.ErrEvidenceItemTooLarge)
 			}

@@ -172,13 +172,13 @@ describe('PersonBriefController', () => {
   });
 
   it.each([
-    ['follow_up', { state: 'follow_up', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }, 'You may want to ask: How did it go?', 'You may want to ask: How did it go?'],
-    ['upcoming', { state: 'upcoming', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }, 'Upcoming: moving soon.', 'Upcoming: moving soon.'],
-    ['resolved', { state: 'resolved', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }, 'Resolved: the move.', 'Resolved: the move.'],
+    ['follow_up', { state: 'follow_up', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }, 'You may want to ask: How did it go?', null],
+    ['upcoming', { state: 'upcoming', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }, 'Upcoming: moving soon.', null],
+    ['resolved', { state: 'resolved', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }, 'Resolved: the move.', null],
     ['v1', undefined, 'Old sentence.', 'They were preparing for a role change.'],
     ['null', null, 'Old sentence.', 'They were preparing for a role change.'],
     ['malformed', { state: 'follow_up' }, 'Old sentence.', 'They were preparing for a role change.'],
-    ['empty sentence', { state: 'follow_up', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }, '', 'They were preparing for a role change.'],
+    ['empty sentence', { state: 'follow_up', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }, '', null],
   ] as const)('uses saved event sentence for %s with the same citations', async (_name, event, sentenceText, expected) => {
     const data = structured();
     const highlights = data.highlights.map((item, index) => index === 0 ? { ...item, life_event: event } : item);

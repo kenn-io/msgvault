@@ -322,7 +322,14 @@ func BuildBriefWindow(
 	for len(selected) > request.MaxItems {
 		trimmed, ok := briefDropUnprotected(selected, mandatory, protected)
 		if !ok {
-			return BriefWindow{}, ErrEvidenceItemTooLarge
+			request.retainedEvents, ok = briefRetireCapacityEvent(request.retainedEvents, protected)
+			for id := range appreciationProtected {
+				protected[id] = true
+			}
+			if !ok {
+				return BriefWindow{}, ErrEvidenceItemTooLarge
+			}
+			continue
 		}
 		selected = trimmed
 	}

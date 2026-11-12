@@ -706,7 +706,7 @@ function safeSentences(
     keys.add(key);
     const cited = safeSentenceEvidence(value.evidence_ordinals, byOrdinal);
     if (!cited) return undefined;
-    const item = structuredItem(structured, value.kind, value.index, value.text);
+    const item = structuredItem(structured, value.kind, value.index);
     sentences.push({
       key,
       kind: value.kind,
@@ -765,8 +765,7 @@ function structuredItem(
   structured: unknown,
   kind: string,
   index: number,
-  sentenceText: string,
-): { detail: string; meta: string[] } | undefined {
+): { detail: string | null; meta: string[] } | undefined {
   const document = record(structured);
   if (!document) return undefined;
   if (kind === 'last_interaction') {
@@ -780,8 +779,8 @@ function structuredItem(
     const state = event?.state;
     const eventState = (state === 'upcoming' || state === 'follow_up' || state === 'resolved') &&
       text(event?.anchor_id) && text(event?.quote) && text(event?.question);
-    const detail = (eventState && text(sentenceText)) || text(item?.text);
-    if (!item || !detail) return undefined;
+    const detail = eventState ? null : text(item?.text);
+    if (!item || (!eventState && !detail)) return undefined;
     const meta: string[] = [];
     const speaker = speakerLabels[String(item.speaker)];
     if (speaker) meta.push(speaker);

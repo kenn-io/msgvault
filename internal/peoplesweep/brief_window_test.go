@@ -39,9 +39,19 @@ type briefFakeArchive struct {
 	dismissedAppreciations map[string]bool
 }
 
-func (a *briefFakeArchive) PersonSweepAppreciationPeers(_ context.Context, _ int64, _ []EvidenceItem, _ int64) ([]BriefAppreciationPeer, error) {
+func (a *briefFakeArchive) PersonSweepAppreciationPeers(_ context.Context, _ int64, items []EvidenceItem, _ int64) ([]BriefAppreciationPeer, error) {
 	a.peerCalls++
-	return a.appreciationPeers, nil
+	refs := make(map[EvidenceRef]bool, len(items))
+	for _, item := range items {
+		refs[item.Ref] = true
+	}
+	var peers []BriefAppreciationPeer
+	for _, peer := range a.appreciationPeers {
+		if refs[peer.Ref] {
+			peers = append(peers, peer)
+		}
+	}
+	return peers, nil
 }
 
 func (a *briefFakeArchive) PersonSweepAppreciationOwners(_ context.Context, _ int64, _ []BriefAppreciationPeer, _ ProviderProfile, _ int64, _ int) ([]BriefAppreciationOwner, error) {
@@ -67,7 +77,7 @@ func TestBriefAppreciationReplayProtectsActiveEvidence(t *testing.T) {
 	request.Previous = &BriefBoundary{AppreciationMemory: []BriefAppreciationMemory{memory}}
 	request.MaxItems = 1
 	_, err := BuildBriefWindow(t.Context(), archive, request)
-	assert.ErrorIs(t, err, ErrEvidenceItemTooLarge)
+	require.ErrorIs(t, err, ErrEvidenceItemTooLarge)
 
 	request.MaxItems = 2
 	window, err := BuildBriefWindow(t.Context(), archive, request)
@@ -88,8 +98,8 @@ func TestBriefAppreciationReplayProtectsActiveEvidence(t *testing.T) {
 func TestAppreciationMemoryBound(t *testing.T) {
 	var entries []BriefAppreciationMemory
 	for i := 0; i < 3; i++ {
-		entries = append(entries, BriefAppreciationMemory{Suggestion: BriefThanksSuggestion{State: "suggested"}})
-		entries = append(entries, BriefAppreciationMemory{Suggestion: BriefThanksSuggestion{State: "already_thanked"}})
+		entries = append(entries, BriefAppreciationMemory{Suggestion: BriefThanksSuggestion{State: "suggested"}},
+			BriefAppreciationMemory{Suggestion: BriefThanksSuggestion{State: "already_thanked"}})
 	}
 	assert.True(t, ValidBriefAppreciationMemory(entries))
 	entries = append(entries, BriefAppreciationMemory{Suggestion: BriefThanksSuggestion{State: "suggested"}})

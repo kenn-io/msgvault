@@ -311,7 +311,9 @@ func (s *Store) applyPersonSweepWithAligner(
 	withApplyTx := s.withTxContext
 	if len(sources) > 0 {
 		withApplyTx = func(ctx context.Context, fn func(*loggedTx) error) error {
-			return s.withAttributionTxContext(ctx, attributionLock{Sources: sources}, fn)
+			// SQLite fact identity checks need the writer lock before the sync fence.
+			lock := attributionLock{Sources: sources, Exclusive: !s.IsPostgreSQL()}
+			return s.withAttributionTxContext(ctx, lock, fn)
 		}
 	}
 	err = withApplyTx(ctx, func(tx *loggedTx) error {

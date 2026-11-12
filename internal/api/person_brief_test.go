@@ -373,6 +373,22 @@ func TestPersonBriefHTTPOmitsSentenceOrdinalsWhenTheCitationOrderCannotBeRebuilt
 	for _, sentence := range brief.Sentences {
 		assertions.Empty(sentence.EvidenceOrdinals, "sentence %s", sentence.Kind)
 	}
+
+	output.ThanksSuggestions = []peoplesweep.BriefThanksSuggestion{{
+		Text: "carrying boxes", AnchorID: "evidence-3", Quote: "carried boxes", Key: strings.Repeat("a", 64), State: "suggested", PriorThanks: "unknown",
+	}}
+	f.seedBrief(t, personBriefAPISeedFor(t, output, personBriefAPINow, []int64{f.evidence[0].ID}))
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE person_briefs SET program_version = 'v3' WHERE person_id = ? AND status = 'current'`), f.personID)
+	requirements.NoError(err)
+	response = doRequest(t, f.server.Router(), http.MethodGet, personBriefPath(f.personID, ""), nil, nil)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &brief))
+	assertions.NotContains(brief.RenderedText, "carrying boxes")
+	assertions.Contains(brief.RenderedText, "role change")
+	requirements.Len(brief.Evidence, 1)
+	for _, sentence := range brief.Sentences {
+		assertions.Empty(sentence.EvidenceOrdinals)
+	}
 }
 
 func TestPersonBriefHTTPWithoutLastInteraction(t *testing.T) {

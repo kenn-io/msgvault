@@ -15,9 +15,9 @@ import (
 )
 
 type personAppreciationStore interface {
-	ProjectPersonAppreciationsContext(context.Context, int64, peoplesweep.ProviderProfile) (store.PersonAppreciationProjection, error)
-	DismissPersonAppreciationContext(context.Context, int64, string, string, time.Time, peoplesweep.ProviderProfile) (store.PersonAppreciationState, error)
-	GetPersonAppreciationStatesContext(context.Context, []string) (map[string]store.PersonAppreciationState, error)
+	ProjectPersonAppreciationsContext(ctx context.Context, personID int64, profile peoplesweep.ProviderProfile) (store.PersonAppreciationProjection, error)
+	DismissPersonAppreciationContext(ctx context.Context, personID int64, key, actor string, at time.Time, profile peoplesweep.ProviderProfile) (store.PersonAppreciationState, error)
+	GetPersonAppreciationStatesContext(ctx context.Context, keys []string) (map[string]store.PersonAppreciationState, error)
 }
 
 // PersonAppreciation exposes only the selected peer and owner citations, not
@@ -140,15 +140,14 @@ func (s *Server) projectCurrentBrief(w http.ResponseWriter, response *PersonBrie
 		return false
 	}
 	order := peoplesweep.BriefCitationOrder(output)
-	if len(order) != len(response.Evidence) {
-		writeError(w, http.StatusServiceUnavailable, "brief_projection_failed", "Person brief citations are unavailable")
-		return false
-	}
+	matchedCitations := len(order) == len(response.Evidence)
 	inputs := make([]personfacts.EvidenceInput, len(order))
 	pointers := make(map[string]store.PersonBriefEvidencePointer, len(order))
 	for i, id := range order {
 		inputs[i].SourceRef = id
-		pointers[id] = response.Evidence[i]
+		if matchedCitations {
+			pointers[id] = response.Evidence[i]
+		}
 	}
 	current := make(map[string]peoplesweep.BriefAppreciationMemory)
 	for _, memory := range projection.Appreciations {
@@ -170,13 +169,20 @@ func (s *Server) projectCurrentBrief(w http.ResponseWriter, response *PersonBrie
 	projected.Structured, projected.RenderedText = result.Structured, result.Rendered.Text
 	response.Structured = s.sanitizedPersonBriefStructure(projected)
 	response.RenderedText = textutil.SanitizeTerminal(result.Rendered.Text)
-	response.Evidence = make([]store.PersonBriefEvidencePointer, 0, len(result.Evidence))
-	for _, input := range result.Evidence {
-		pointer := pointers[input.SourceRef]
-		pointer.Ordinal = len(response.Evidence)
-		response.Evidence = append(response.Evidence, pointer)
+	if matchedCitations {
+		response.Evidence = make([]store.PersonBriefEvidencePointer, 0, len(result.Evidence))
+		for _, input := range result.Evidence {
+			pointer := pointers[input.SourceRef]
+			pointer.Ordinal = len(response.Evidence)
+			response.Evidence = append(response.Evidence, pointer)
+		}
 	}
 	response.Sentences = s.personBriefSentences(projected, len(response.Evidence))
+	if !matchedCitations {
+		for i := range response.Sentences {
+			response.Sentences[i].EvidenceOrdinals = []int{}
+		}
+	}
 	for i := range response.Sentences {
 		response.Sentences[i].Text = textutil.SanitizeTerminal(response.Sentences[i].Text)
 	}
