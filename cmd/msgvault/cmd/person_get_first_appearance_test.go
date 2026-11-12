@@ -94,7 +94,7 @@ func TestPersonGetFirstAppearanceRealProjection(t *testing.T) {
 	savedJSON := personJSON
 	personJSON = true
 	t.Cleanup(func() { personJSON = savedJSON })
-	for phase := 0; phase < 2; phase++ {
+	for phase := range 2 {
 		if phase == 1 {
 			id = f.NewMessage().WithSourceMessageID("older-intro-cli").WithSentAt(at.Add(-time.Hour)).Create(t, f.Store)
 			req.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{"Sender Example"}))
