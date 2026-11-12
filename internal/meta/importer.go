@@ -27,9 +27,6 @@ type ImportSummary struct {
 	MessagesUpdated   int
 	Requests          int
 	Partial           bool
-	// removed lists the Meta IDs a webhook run removed, so applyWebhook can
-	// prune a paused sync's saved traversal once the run is finished.
-	removed []string
 }
 
 type Importer struct {

@@ -3680,6 +3680,38 @@ func (s *Store) MarkMessageThreadDeletedContext(ctx context.Context, sourceID in
 	return marked, nil
 }
 
+// MessageThreadSourceIDsContext returns the source message IDs of a source
+// message and every archived reply below it in the same source, the rows
+// MarkMessageThreadDeletedContext would cover, whether marked deleted or not.
+// It changes nothing.
+func (s *Store) MessageThreadSourceIDsContext(ctx context.Context, sourceID int64, sourceMessageID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		WITH RECURSIVE thread(id) AS (
+			SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
+			UNION
+			SELECT m.id FROM messages m JOIN thread ON m.reply_to_message_id = thread.id
+			WHERE m.source_id = ?
+		)
+		SELECT source_message_id FROM messages WHERE id IN (SELECT id FROM thread)
+	`, sourceID, sourceMessageID, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("read message thread: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan thread message: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read thread messages: %w", err)
+	}
+	return ids, nil
+}
+
 // MessageDeletedFromSourceContext reports whether a source message is archived
 // and marked deleted from its source.
 func (s *Store) MessageDeletedFromSourceContext(ctx context.Context, sourceID int64, sourceMessageID string) (bool, error) {
