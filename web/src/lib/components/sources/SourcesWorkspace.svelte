@@ -12,7 +12,7 @@
   import { CardDAVController } from '../../carddav/controller.svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { contactCanSync, contactLabel, contactLastGood, contactRunState } from '../../sources/contacts';
-  import { isOnDemandSourceType, sourceRunState, sourceTypeLabel, syncRunning, syncUnavailableLabel } from '../../sources/labels';
+  import { isOnDemandSourceType, sourceLabel, sourceRunState, sourceTypeLabel, syncRunning, syncUnavailableLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
   import InlineNotice from '../common/InlineNotice.svelte';
   import { operationStateChip } from '../../operations/labels';
@@ -361,7 +361,7 @@
     return Number.isFinite(timestamp) && Date.now() - timestamp > 24 * 60 * 60 * 1000;
   }
   function label(source: Source): string {
-    return source.display_name || source.identifier;
+    return sourceLabel(source);
   }
   function messageFor(value: unknown, fallback: string): string {
     return typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string'

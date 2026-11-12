@@ -1,6 +1,7 @@
 package callhistory
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +33,10 @@ func TestObservationValidation(t *testing.T) {
 		{"unknown status", func(o *Observation) { o.Outcome = "unknown" }, true},
 		{"invalid status", func(o *Observation) { o.Outcome = "perhaps" }, false},
 		{"missing time", func(o *Observation) { o.OccurredAt = time.Time{} }, false},
+		{"source label", func(o *Observation) { o.SourceLabel = "Example account" }, true},
+		{"blank source label", func(o *Observation) { o.SourceLabel = " " }, false},
+		{"oversized source label", func(o *Observation) { o.SourceLabel = strings.Repeat("a", 1025) }, false},
+		{"source label with NUL", func(o *Observation) { o.SourceLabel = "a\x00b" }, false},
 		{"blank account", func(o *Observation) { o.Account = " " }, false},
 		{"blank record ID", func(o *Observation) { o.RecordID = " " }, false},
 		{"zero participant", func(o *Observation) { o.Participants[0].ID = 0 }, false},

@@ -12,11 +12,19 @@ import (
 // PutCallObservationContext replaces one validated source observation atomically.
 // It never resolves a person by name or infers participants from a chat roster.
 func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o callhistory.Observation) (int64, error) {
+	if err := o.Validate(); err != nil {
+		return 0, err
+	}
 	// Source locking serializes absent-row creation as well as later updates.
 	// The identity lock held by persistence also orders participant merges.
 	before := func(ctx context.Context, tx *loggedTx) error {
 		if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, sourceID); err != nil {
 			return err
+		}
+		if o.SourceLabel != "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE sources SET display_name = ? WHERE id = ? AND (display_name IS NULL OR display_name = '')`, o.SourceLabel, sourceID); err != nil {
+				return fmt.Errorf("set call source label: %w", err)
+			}
 		}
 		for _, p := range o.Participants {
 			var exists bool
