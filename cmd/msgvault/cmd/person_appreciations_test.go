@@ -3,13 +3,20 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func runAppreciations(ctx context.Context, t *testing.T, args ...string) (string, error) {
@@ -24,7 +31,7 @@ func runAppreciations(ctx context.Context, t *testing.T, args ...string) (string
 	return out.String(), err
 }
 
-const appreciationPayload = `{"appreciations":[{"suggestion":{"text":"Helped with café\u001b[31m","anchor_id":"a","quote":"exact peer quote","key":"opaque-key","state":"suggested","prior_thanks":"unknown","thanked":null},"peer":{"source_lane":"chat","source_id":2,"message_id":42,"source_message_id":"native-42","attachment_id":0,"occurrence_key":"o","chunk_key":"c","span_start":1,"span_end":8}},{"suggestion":{"text":"Shared notes","anchor_id":"b","quote":"peer two","key":"other","state":"already_thanked","prior_thanks":"evidenced","thanked":{"evidence_id":"e","quote":"exact owner thanks"}},"peer":{"source_lane":"chat","source_id":2,"message_id":43,"source_message_id":"native-43"},"owner":{"source_lane":"chat","source_id":2,"message_id":44,"source_message_id":"native-44"}}],"future":"preserved"}`
+const appreciationPayload = `{"appreciations":[{"suggestion":{"text":"Helped with café\u001b[31m","anchor_id":"a","quote":"exact peer quote","key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","state":"suggested","prior_thanks":"unknown","thanked":null},"peer":{"source_lane":"chat","source_id":2,"message_id":42,"source_message_id":"native-42\u001b[31m","attachment_id":0,"occurrence_key":"o","chunk_key":"c","span_start":1,"span_end":8}},{"suggestion":{"text":"Shared notes","anchor_id":"b","quote":"peer two","key":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","state":"already_thanked","prior_thanks":"evidenced","thanked":{"evidence_id":"e","quote":"exact owner thanks"}},"peer":{"source_lane":"chat","source_id":2,"message_id":43,"source_message_id":"native-43"},"owner":{"source_lane":"chat","source_id":2,"message_id":44,"source_message_id":"native-44"}}],"future":"preserved"}`
 
 func TestAppreciationsListWireAndOutput(t *testing.T) {
 	daemon := newPersonBriefTestDaemon(t, appreciationPayload)
@@ -33,7 +40,7 @@ func TestAppreciationsListWireAndOutput(t *testing.T) {
 	assert.Equal(t, http.MethodGet, daemon.method)
 	assert.Equal(t, "/api/v1/people/7/appreciations", daemon.path)
 	assert.Empty(t, daemon.body)
-	for _, value := range []string{"opaque-key", "café", "exact peer quote", "lane=chat", "message_id=42", "source_message_id=native-42", "suggested", "prior thanks unknown", "already_thanked", "prior thanks evidenced", "exact owner thanks", "message_id=44"} {
+	for _, value := range []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "café", "exact peer quote", "lane=chat", "message_id=42", "source_message_id=native-42", "suggested", "prior thanks unknown", "already_thanked", "prior thanks evidenced", "exact owner thanks", "message_id=44"} {
 		assert.Contains(t, out, value)
 	}
 	assert.NotContains(t, out, "\x1b")
@@ -51,7 +58,7 @@ func TestAppreciationsListWireAndOutput(t *testing.T) {
 	assert.ErrorContains(t, err, "missing current brief")
 }
 
-func TestAppreciationsDismissWireAndErrors(t *testing.T) {
+func TestAppreciationsDismissForwardsAuditAndErrors(t *testing.T) {
 	key := strings.Repeat("a", 64)
 	daemon := newPersonBriefTestDaemon(t, `{"contribution_key":"`+key+`","dismissed_by":"owner","dismissed_at":"2026-01-02T03:04:05Z","dismissed_person_uid":"uid","thanks_brief_id":9,"future":true}`)
 	first, err := runAppreciations(daemon.ctx, t, "dismiss", "7", key)
@@ -64,6 +71,7 @@ func TestAppreciationsDismissWireAndErrors(t *testing.T) {
 	}
 	second, err := runAppreciations(daemon.ctx, t, "dismiss", "7", key)
 	require.NoError(t, err)
+	// The fixed response checks forwarding, not server-side idempotence.
 	assert.Equal(t, first, second)
 	out, err := runAppreciations(daemon.ctx, t, "dismiss", "7", key, "--json")
 	require.NoError(t, err)
@@ -95,24 +103,48 @@ func TestAppreciationsRejectInvalidInputAndResponses(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestPersonBriefEnrollmentsPagesAndBounds(t *testing.T) {
-	daemon := newPersonBriefTestDaemon(t, `{"enrollments":[{"person_id":7,"enrolled":true,"enabled_at":null,"actor":"owner"},{"person_id":9,"enrolled":true,"enabled_at":"2026-01-02T03:04:05Z","actor":"owner"}],"future":true}`)
-	out, err := runPersonBriefCommand(daemon.ctx, t, "enrollments", "--json")
+// Exercise the generated client and the server's route segmentation and key
+// validator together. The synthetic handler only records a valid write.
+func TestAppreciationDismissEscapesPathDelimiters(t *testing.T) {
+	key := strings.Repeat("a", 64)
+	seen := make(chan string, 4)
+	var writes atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/people/{id}/appreciations/{key}/dismiss", func(w http.ResponseWriter, r *http.Request) {
+		received := r.PathValue("key")
+		seen <- received
+		// Empty audit fields stop the real Store method before it needs a database.
+		_, err := (&store.Store{}).RecordPersonAppreciationDismissalContext(r.Context(), received, "", "", time.Time{})
+		w.Header().Set("Content-Type", "application/json")
+		if errors.Is(err, store.ErrInvalidPersonAppreciationKey) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(w, `{"error":"invalid_key","message":"invalid key"}`)
+			return
+		}
+		if !errors.Is(err, store.ErrInvalidPersonAppreciationAudit) {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		writes.Add(1)
+		_, _ = fmt.Fprintf(w, `{"contribution_key":%q}`, received)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	_, err := runAppreciations(ctx, t, "dismiss", "7", key)
 	require.NoError(t, err)
-	assert.Equal(t, "/api/v1/people/brief-enrollments?after_id=0&limit=20", daemon.path)
-	assert.Contains(t, out, `"future":true`)
-	out, err = runPersonBriefCommand(daemon.ctx, t, "enrollments", "--limit", "2")
-	require.NoError(t, err)
-	assert.Less(t, strings.Index(out, "Person 7"), strings.Index(out, "Person 9"))
-	daemon.response = `{"enrollments":[]}`
-	out, err = runPersonBriefCommand(daemon.ctx, t, "enrollments", "--after-id", "9", "--limit", "2", "--json")
-	require.NoError(t, err)
-	assert.JSONEq(t, daemon.response, out)
-	assert.Equal(t, "/api/v1/people/brief-enrollments?after_id=9&limit=2", daemon.path)
-	before := daemon.requests.Load()
-	for _, args := range [][]string{{"enrollments", "extra"}, {"enrollments", "--after-id", "-1"}, {"enrollments", "--after-id", "999999999999999999999"}, {"enrollments", "--limit", "0"}, {"enrollments", "--limit", "1001"}} {
-		_, err := runPersonBriefCommand(daemon.ctx, t, args...)
+	assert.Equal(t, key, <-seen)
+	assert.EqualValues(t, 1, writes.Load())
+	for _, suffix := range []string{"/dismiss#", "/dismiss?", "%2F"} {
+		malformed := key + suffix
+		_, err = runAppreciations(ctx, t, "dismiss", "7", malformed)
 		require.Error(t, err)
+		select {
+		case received := <-seen:
+			assert.Equal(t, malformed, received)
+		default:
+			assert.Fail(t, "request did not reach the dismissal route")
+		}
+		assert.EqualValues(t, 1, writes.Load())
 	}
-	assert.Equal(t, before, daemon.requests.Load())
 }

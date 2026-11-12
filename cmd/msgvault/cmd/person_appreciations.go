@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -89,8 +91,10 @@ func newPersonAppreciationsDismissCommand() *cobra.Command {
 			return err
 		}
 		defer cleanup()
+		// The generated runtime substitutes path parameters without escaping.
+		// Escape the opaque key so delimiters cannot change the write target.
 		response, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.DismissPersonAppreciationResp, error) {
-			return api.DismissPersonAppreciationWithResponse(cmd.Context(), &generated.DismissPersonAppreciationRequestOptions{PathParams: &generated.DismissPersonAppreciationPath{ID: id, Key: args[1]}})
+			return api.DismissPersonAppreciationWithResponse(cmd.Context(), &generated.DismissPersonAppreciationRequestOptions{PathParams: &generated.DismissPersonAppreciationPath{ID: id, Key: url.PathEscape(args[1])}})
 		})
 		if err != nil {
 			return err
@@ -116,7 +120,7 @@ func newPersonAppreciationsDismissCommand() *cobra.Command {
 			}
 		}
 		if state.DismissedAt != nil {
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Dismissed at: %s\n", state.DismissedAt.Format("2006-01-02T15:04:05Z07:00")); err != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Dismissed at: %s\n", state.DismissedAt.Format(time.RFC3339)); err != nil {
 				return err
 			}
 		}

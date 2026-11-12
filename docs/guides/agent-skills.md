@@ -20,12 +20,9 @@ session.
 | `msgvault-appreciations` | Review supported appreciation suggestions and owner-chosen dismissals |
 | `msgvault-feedback` | Record heard, accepted or declined feedback, link accepted actions, and keep change evidence and report-back reminders in Kata |
 
-Search, attachments and analytics cover read-only workflows. The appreciation skill
-reads saved suggestions, dismisses only at your direction, and refreshes only
-on explicit request using provider budget. It is newer than the latest release;
-rerun `msgvault skills install` after upgrading. Feedback also
-guides task writes within your explicit request. All skills require your
-direction before archive mutations such as sync, import, dedup or deletion.
+Search, attachments and analytics cover read-only workflows. Feedback guides
+task writes within your explicit request. All skills require your direction
+before archive mutations such as sync, import, dedup or deletion.
 
 ## Install
 
@@ -57,6 +54,13 @@ coexist: MCP suits chat apps (Claude Desktop), while skills suit
 terminal coding agents that already run shell commands and can pipe
 `--json` output through `jq`. Skill content is validated against the
 CLI's command tree in CI, so examples stay correct as the CLI evolves.
+
+## Review appreciation suggestions
+
+The appreciation skill is newer than the latest release. After upgrading
+msgvault, run `msgvault skills install` again. It reads saved suggestions,
+dismisses only at your direction, and refreshes only on explicit request using
+provider budget.
 
 ## Follow through on feedback
 

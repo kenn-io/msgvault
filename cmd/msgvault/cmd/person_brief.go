@@ -7,6 +7,7 @@ import (
 	"io"
 	"strconv"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -16,8 +17,9 @@ import (
 )
 
 const (
-	maxPersonBriefHistoryLimit = 200
-	personBriefDateFormat      = "2006-01-02"
+	maxPersonBriefHistoryLimit     = 200
+	maxPersonBriefEnrollmentsLimit = 1000
+	personBriefDateFormat          = "2006-01-02"
 )
 
 // personBriefGenerateLong warns that a manual generation is not free: the
@@ -399,8 +401,8 @@ func newPersonBriefEnrollmentsCommand() *cobra.Command {
 		if afterID < 0 {
 			return usageErr(cmd, errors.New("--after-id must be nonnegative"))
 		}
-		if limit < 1 || limit > 1000 {
-			return usageErr(cmd, errors.New("--limit must be between 1 and 1000"))
+		if limit < 1 || limit > maxPersonBriefEnrollmentsLimit {
+			return usageErr(cmd, fmt.Errorf("--limit must be between 1 and %d", maxPersonBriefEnrollmentsLimit))
 		}
 		client, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
@@ -419,10 +421,14 @@ func newPersonBriefEnrollmentsCommand() *cobra.Command {
 		if jsonOutput {
 			return writePersonBriefRawJSON(cmd, response.Body)
 		}
+		if len(response.JSON200.Enrollments) == 0 {
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), "No enrolled people on this page.")
+			return err
+		}
 		for _, row := range response.JSON200.Enrollments {
 			enabled := "-"
 			if row.EnabledAt != nil {
-				enabled = row.EnabledAt.Format("2006-01-02T15:04:05Z07:00")
+				enabled = row.EnabledAt.Format(time.RFC3339)
 			}
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Person %d: enrolled=%t enabled_at=%s\n", row.PersonID, row.Enrolled, enabled); err != nil {
 				return fmt.Errorf("write person brief enrollments: %w", err)
@@ -431,7 +437,7 @@ func newPersonBriefEnrollmentsCommand() *cobra.Command {
 		return nil
 	}}
 	command.Flags().Int64Var(&afterID, "after-id", 0, "List people after this ID")
-	command.Flags().Int64Var(&limit, "limit", 20, "Maximum enrollments to list (1-1000)")
+	command.Flags().Int64Var(&limit, "limit", 20, fmt.Sprintf("Maximum enrollments to list (1-%d)", maxPersonBriefEnrollmentsLimit))
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output as JSON")
 	return command
 }

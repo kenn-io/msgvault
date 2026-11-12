@@ -68,6 +68,7 @@ turns on tracking.
 | `msgvault person brief show 7` | Read the current brief |
 | `msgvault person brief history 7 --limit 5` | List the five newest versions with their dates and status |
 | `msgvault person brief history 7 --json` | Read saved paragraphs and sources as JSON |
+| `msgvault person brief enrollments --limit 20` | List a page of enrolled people |
 | `msgvault person brief generate 7` | Generate now, using provider budget |
 | `msgvault person brief reject 7 --reason "merges two different threads"` | Remove the current brief from view and let the next eligible run replace it; the reason is optional |
 | `msgvault person brief unenroll 7` | Stop future generation while keeping saved versions |
