@@ -80,14 +80,14 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 }
 
 func TestCallsRejectDaemonWithoutCallRoutes(t *testing.T) {
-	client := &fakeCallCommandClient{version: "5.0.0"}
+	client := &fakeCallCommandClient{version: "5.1.0"}
 	cleanups := 0
 	command := newCallsCommand(callCommandDeps{open: func(context.Context) (callCommandClient, func(), error) {
 		return client, func() { cleanups++ }, nil
 	}})
 	command.SetArgs([]string{"list"})
 	err := command.ExecuteContext(t.Context())
-	require.ErrorContains(t, err, "calls require daemon API 5.1.0 or newer")
+	require.ErrorContains(t, err, "calls require daemon API 5.2.0 or newer")
 	assert.Empty(t, client.lists)
 	assert.Equal(t, 1, cleanups)
 }
