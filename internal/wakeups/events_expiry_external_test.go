@@ -92,43 +92,45 @@ func TestOwnerEventExpiresBehindConfiguredCallback(t *testing.T) {
 }
 
 func TestDelegatedEventExpiresBehindConfiguredCallback(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "events@example.test")
-	require.NoError(t, err)
+	require.NoError(err)
 	registry := agentgrant.NewRegistry()
 	grant, _, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-	require.NoError(t, err)
+	require.NoError(err)
 	var mu sync.Mutex
 	now := time.Now().UTC()
 	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
 	service := mcpevents.Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: registry, Now: clock}
 	in, err := mcpevents.DecodeSubscribe(fmt.Appendf(nil, `{"name":"msgvault.messages.changed","arguments":{"source_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/native","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"},"ttlMs":60000}`, source.ID))
-	require.NoError(t, err)
+	require.NoError(err)
 	created, err := service.Subscribe(ctx, in, agentgrant.Owner(grant), func(context.Context, string, string, []byte) error { return nil }, nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	start := clock().Add(-time.Hour)
 	key := store.MCPEventsPositionKey(created.ID)
 	_, raw, err := st.LoadWakeupStateKey(ctx, key)
-	require.NoError(t, err)
+	require.NoError(err)
 	ok, err := st.AdvanceWakeupStateKey(ctx, key, raw, store.WakeupState{At: start})
-	require.NoError(t, err)
-	require.True(t, ok)
+	require.NoError(err)
+	require.True(ok)
 	ok, err = st.AdvanceWakeupStateKey(ctx, store.WakeupStateKey("configured"), nil, store.WakeupState{At: start})
-	require.NoError(t, err)
-	require.True(t, ok)
+	require.NoError(err)
+	require.True(ok)
 	conv, err := st.EnsureConversationWithType(source.ID, "expiry", "email_thread", "Fixture")
-	require.NoError(t, err)
+	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, SourceMessageID: "expiry", ConversationID: conv, MessageType: "email", SentAt: sql.NullTime{Time: clock(), Valid: true}})
-	require.NoError(t, err)
+	require.NoError(err)
 	var stamp any = clock().Add(-time.Minute)
 	if !st.IsPostgreSQL() {
 		stamp = clock().Add(-time.Minute).Format(store.SQLiteTimestampLayout)
 	}
 	_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET content_changed_at=? WHERE id=?`), stamp, id)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, before, err := st.LoadWakeupStateKey(ctx, key)
-	require.NoError(t, err)
+	require.NoError(err)
 	var requests []string
 	var nativeCount int
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -152,14 +154,14 @@ func TestDelegatedEventExpiresBehindConfiguredCallback(t *testing.T) {
 		}
 		return subs, err
 	}}
-	require.NoError(t, engine.RunPass(ctx))
-	assert.Equal(t, 1, nativeCount)
+	require.NoError(engine.RunPass(ctx))
+	assert.Equal(1, nativeCount)
 	_, after, err := st.LoadWakeupStateKey(ctx, key)
-	require.NoError(t, err)
-	assert.Equal(t, before, after)
+	require.NoError(err)
+	assert.Equal(before, after)
 	mu.Lock()
 	defer mu.Unlock()
-	assert.Equal(t, []string{"/configured"}, requests)
+	assert.Equal([]string{"/configured"}, requests)
 	_, live := registry.LookupID(grant, agentgrant.PermissionSearchRead)
-	assert.True(t, live)
+	assert.True(live)
 }
