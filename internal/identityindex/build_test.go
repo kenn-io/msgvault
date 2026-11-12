@@ -352,6 +352,7 @@ func assertIncrementalContributionsMatchFullReduction(
 ) {
 	t.Helper()
 	fullActivity := testExpandedActivity(stagedRoot, committedRoot, stagedRoot)
+	fullActivity = "(SELECT *, 'message:' || message_id AS entry_key FROM " + fullActivity + ")"
 	for _, check := range []struct {
 		name     string
 		dataset  string
