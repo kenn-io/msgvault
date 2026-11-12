@@ -147,12 +147,14 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			recordA, recordB = recordB, recordA
 		}
 		var active []meetingDecisionEdge
+		var root func(string) string
 		if decision != "clear" {
 			graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{a, b}, &budget)
 			if err != nil {
 				return err
 			}
-			root, links := graph.reduce()
+			var links []meetingDecisionEdge
+			root, links = graph.reduce()
 			for _, link := range links {
 				if root(link.a.ref()) == root(link.b.ref()) {
 					active = append(active, link)
@@ -198,7 +200,7 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 				matches := compareMeetingEndpoints(left, canonicalA) == 0 && compareMeetingEndpoints(right, canonicalB) == 0
 				equivalent := !matches
 				if !matches && decision != "clear" && (decision == "link") != (choice.decision == "link") {
-					matches = equivalentMeetingChoice(left, right, canonicalA, canonicalB, recordA, recordB)
+					matches = equivalentMeetingChoice(left, right, canonicalA, canonicalB, recordA, recordB, root)
 				}
 				if matches {
 					active = slices.DeleteFunc(active, func(link meetingDecisionEdge) bool {
@@ -290,7 +292,7 @@ func meetingDecisionRelevant(endpoints map[int64][]meetingDecisionEndpoint, stor
 	})
 }
 
-func equivalentMeetingChoice(left, right, requestedA, requestedB meetingDecisionEndpoint, recordA, recordB MeetingRecord) bool {
+func equivalentMeetingChoice(left, right, requestedA, requestedB meetingDecisionEndpoint, recordA, recordB MeetingRecord, root func(string) string) bool {
 	note, event, requestedNote, requestedEvent, record := left, right, requestedA, requestedB, recordB
 	if note.Kind == meetingRefEvent {
 		note, event = event, note
@@ -298,7 +300,7 @@ func equivalentMeetingChoice(left, right, requestedA, requestedB meetingDecision
 	if requestedNote.Kind == meetingRefEvent {
 		requestedNote, requestedEvent, record = requestedEvent, requestedNote, recordA
 	}
-	if note.Kind == meetingRefMessage && event.Kind == meetingRefEvent && requestedEvent.Kind == meetingRefEvent && compareMeetingEndpoints(note, requestedNote) == 0 {
+	if note.Kind == meetingRefMessage && event.Kind == meetingRefEvent && requestedEvent.Kind == meetingRefEvent && compareMeetingEndpoints(note, requestedNote) == 0 && root(event.ref()) == root(requestedEvent.ref()) {
 		for _, link := range record.Links {
 			if link.Ref == event.ref() {
 				return true

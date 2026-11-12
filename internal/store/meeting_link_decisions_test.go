@@ -287,29 +287,82 @@ func TestMeetingLinkDecisionRejectsSameCopyAndInvalidDecision(t *testing.T) {
 }
 
 func TestMeetingLinkDecisionSplitCopiesKeepsExplicitNoteLink(t *testing.T) {
+	t.Run("link", func(t *testing.T) {
+		r := require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		raw := `{"id":"event","iCalUID":"shared@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+		_, first := calendarFixture(t, st, "split-first", raw, "first@example.com")
+		_, second := calendarFixture(t, st, "split-second", raw, "second@example.com")
+		_, note := projectionFixture(t, st, "split-note", "meeting_json", `{}`)
+		firstRef := MeetingLinkRef{Kind: "evt", MessageID: first}
+		secondRef := MeetingLinkRef{Kind: "evt", MessageID: second}
+		noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+		_, err := st.DecideMeetingLinkContext(t.Context(), firstRef, secondRef, "unlink")
+		r.NoError(err)
+		_, err = st.DecideMeetingLinkContext(t.Context(), noteRef, firstRef, "link")
+		r.NoError(err)
+		record, err := st.MeetingRecordContext(t.Context(), noteRef)
+		r.NoError(err)
+		r.Len(record.Links, 1)
+		r.Equal(fmt.Sprintf("evt:%d", first), record.Links[0].Ref)
+		_, err = st.DecideMeetingLinkContext(t.Context(), noteRef, secondRef, "unlink")
+		r.NoError(err)
+		record, err = st.MeetingRecordContext(t.Context(), noteRef)
+		r.NoError(err)
+		r.Len(record.Links, 1)
+		r.Equal(fmt.Sprintf("evt:%d", first), record.Links[0].Ref)
+	})
+	t.Run("reverse", func(t *testing.T) {
+		r := require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		raw := `{"id":"event","iCalUID":"shared@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+		_, first := calendarFixture(t, st, "reverse-first", raw, "first@example.com")
+		_, second := calendarFixture(t, st, "reverse-second", raw, "second@example.com")
+		_, note := projectionFixture(t, st, "reverse-note", "meeting_json", `{}`)
+		firstRef := MeetingLinkRef{Kind: "evt", MessageID: first}
+		secondRef := MeetingLinkRef{Kind: "evt", MessageID: second}
+		noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+		_, err := st.DecideMeetingLinkContext(t.Context(), firstRef, secondRef, "unlink")
+		r.NoError(err)
+		_, err = st.DecideMeetingLinkContext(t.Context(), noteRef, firstRef, "unlink")
+		r.NoError(err)
+		_, err = st.DecideMeetingLinkContext(t.Context(), noteRef, secondRef, "link")
+		r.NoError(err)
+		_, err = st.DecideMeetingLinkContext(t.Context(), firstRef, secondRef, "clear")
+		r.NoError(err)
+		record, err := st.MeetingRecordContext(t.Context(), noteRef)
+		r.NoError(err)
+		for _, link := range record.Links {
+			r.NotEqual(fmt.Sprintf("evt:%d", first), link.Ref)
+		}
+	})
+}
+
+func TestMeetingLinkDecisionBridgeDoesNotMakeEventsCopies(t *testing.T) {
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	raw := `{"id":"event","iCalUID":"shared@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
-	_, first := calendarFixture(t, st, "split-first", raw, "first@example.com")
-	_, second := calendarFixture(t, st, "split-second", raw, "second@example.com")
-	_, note := projectionFixture(t, st, "split-note", "meeting_json", `{}`)
+	_, first := calendarFixture(t, st, "bridge-first", `{"id":"first","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, "first@example.com")
+	_, second := calendarFixture(t, st, "bridge-second", `{"id":"second","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, "second@example.com")
+	_, bridge := projectionFixture(t, st, "bridge-note", "meeting_json", `{}`)
+	_, note := projectionFixture(t, st, "separate-note", "meeting_json", `{}`)
 	firstRef := MeetingLinkRef{Kind: "evt", MessageID: first}
 	secondRef := MeetingLinkRef{Kind: "evt", MessageID: second}
+	bridgeRef := MeetingLinkRef{Kind: "msg", MessageID: bridge}
 	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
-	_, err := st.DecideMeetingLinkContext(t.Context(), firstRef, secondRef, "unlink")
+	for _, event := range []MeetingLinkRef{firstRef, secondRef} {
+		_, err := st.DecideMeetingLinkContext(t.Context(), bridgeRef, event, "link")
+		r.NoError(err)
+	}
+	_, err := st.DecideMeetingLinkContext(t.Context(), noteRef, firstRef, "unlink")
 	r.NoError(err)
-	_, err = st.DecideMeetingLinkContext(t.Context(), noteRef, firstRef, "link")
-	r.NoError(err)
+	_, err = st.DecideMeetingLinkContext(t.Context(), noteRef, secondRef, "link")
+	r.ErrorIs(err, ErrMeetingLinkConflict)
+	var decision string
+	r.NoError(st.db.QueryRowContext(t.Context(), `SELECT decision FROM meeting_link_decisions WHERE (left_message_id=? AND right_message_id=?) OR (left_message_id=? AND right_message_id=?)`, note, first, first, note).Scan(&decision))
+	r.Equal("split", decision)
 	record, err := st.MeetingRecordContext(t.Context(), noteRef)
 	r.NoError(err)
-	r.Len(record.Links, 1)
-	r.Equal(fmt.Sprintf("evt:%d", first), record.Links[0].Ref)
-	_, err = st.DecideMeetingLinkContext(t.Context(), noteRef, secondRef, "unlink")
-	r.NoError(err)
-	record, err = st.MeetingRecordContext(t.Context(), noteRef)
-	r.NoError(err)
-	r.Len(record.Links, 1)
-	r.Equal(fmt.Sprintf("evt:%d", first), record.Links[0].Ref)
+	r.Empty(record.Links)
 }
 
 func TestMeetingLinkDecisionEquivalentEventCopies(t *testing.T) {
