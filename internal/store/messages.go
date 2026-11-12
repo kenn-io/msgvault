@@ -7012,16 +7012,7 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 		if err != nil {
 			return 0, err
 		}
-		var lockedIDs []int64
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				_ = rows.Close()
-				return 0, err
-			}
-			lockedIDs = append(lockedIDs, id)
-		}
-		err = rows.Err()
+		lockedIDs, err := scanInt64Rows(rows)
 		if closeErr := rows.Close(); err == nil {
 			err = closeErr
 		}

@@ -15,6 +15,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver for database/sql
 
 	"go.kenn.io/msgvault/internal/sqldialect"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // PostgreSQLDialect implements Dialect for PostgreSQL.
@@ -444,10 +445,7 @@ func pgFTSVector(doc FTSDoc) (string, []any) {
 func preparePostgresFTSDoc(doc FTSDoc) (FTSDoc, []string) {
 	prepare := func(s string) string {
 		s = truncateBytesRuneSafe(s)
-		runes := []rune(s)
-		if len(runes) > maxFTSBodyChars {
-			s = string(runes[:maxFTSBodyChars])
-		}
+		s = textutil.PrefixRunes(s, maxFTSBodyChars)
 		s = sqldialect.CanonicalFTSText(s)
 		return truncateBytesRuneSafe(s)
 	}
