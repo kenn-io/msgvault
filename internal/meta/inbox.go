@@ -107,7 +107,7 @@ func (c *Client) InboxConversations(ctx context.Context, page, platform, after s
 	}
 	got, err := readObjectPage(ctx, c, page+"/conversations", after, url.Values{
 		"platform": {platform}, "limit": {"25"},
-		"fields": {"id,participants,messages.limit(20){id,created_time,from,message}"},
+		fieldsParam: {"id,participants,messages.limit(20){id,created_time,from,message}"},
 	}, func(v wire) string { return v.ID }, false)
 	if err != nil {
 		return InboxConversationPage{}, err
