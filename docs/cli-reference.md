@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-11"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -3900,9 +3900,9 @@ consented provider and its budget. History accepts limits from 1 to 200;
 rejection hides the current version but preserves it in history. Unenrolling
 stops future generation without deleting saved versions.
 
-Enrollment pages contain enrolled people, who may no longer be tracked. The default
-limit is 20 (maximum 1000); after a full page, pass its last person ID as
-`--after-id`. A short or empty page ends enumeration. JSON retains the daemon response.
+Enrollment pages default to 20 rows and accept limits from 1 to 1000. JSON
+retains the daemon response. See [person briefs](usage/people-briefs.md#review-reasons-to-say-thanks)
+for pagination and tracking checks.
 
 See [person briefs](usage/people-briefs.md)
 for provider setup, supported sources, and a first-run example.
@@ -4658,9 +4658,9 @@ msgvault skills uninstall
 ```
 
 Install detects Claude Code and Codex from `~/.claude` and `~/.codex`, then
-writes the `msgvault-search`, `msgvault-attachments`, and
-`msgvault-analytics` skills to their user-level skill directories. Existing
-generated copies are updated in place; files without msgvault's generation
+writes the `msgvault-search`, `msgvault-attachments`, `msgvault-analytics`,
+`msgvault-feedback`, and `msgvault-appreciations` skills to their user-level
+skill directories. Existing generated copies are updated in place; files without msgvault's generation
 marker are preserved unless `--force` is supplied.
 
 | Install flag | Description |

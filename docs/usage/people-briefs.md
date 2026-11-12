@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-06"
+last_edited: "2026-11-11"
 title: Person Briefs
 description: Remember what someone recently shared before your next conversation, with links to the archived sources.
 ---

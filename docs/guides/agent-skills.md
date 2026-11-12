@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-06
+last_edited: 2026-11-11
 title: Agent Skills
 description: Teach coding agents the msgvault CLI with installable skills
 ---
@@ -20,9 +20,9 @@ session.
 | `msgvault-appreciations` | Review supported appreciation suggestions and owner-chosen dismissals |
 | `msgvault-feedback` | Record heard, accepted or declined feedback, link accepted actions, and keep change evidence and report-back reminders in Kata |
 
-Search, attachments and analytics cover read-only workflows. Feedback guides
-task writes within your explicit request. All skills require your direction
-before archive mutations such as sync, import, dedup or deletion.
+Search, attachments and analytics cover read-only workflows. Feedback also
+guides task writes within your explicit request. All skills require your
+direction before archive mutations such as sync, import, dedup or deletion.
 
 ## Install
 
@@ -60,7 +60,8 @@ CLI's command tree in CI, so examples stay correct as the CLI evolves.
 The appreciation skill is newer than the latest release. After upgrading
 msgvault, run `msgvault skills install` again. It reads saved suggestions,
 dismisses only at your direction, and refreshes only on explicit request using
-provider budget.
+provider budget. See [person briefs](../usage/people-briefs.md#review-reasons-to-say-thanks)
+for the review workflow.
 
 ## Follow through on feedback
 

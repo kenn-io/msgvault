@@ -62,12 +62,13 @@ func TestAppreciationsDismissForwardsAuditAndErrors(t *testing.T) {
 	assert.Equal(t, http.MethodPost, daemon.method)
 	assert.Equal(t, "/api/v1/people/7/appreciations/"+key+"/dismiss", daemon.path)
 	assert.Empty(t, daemon.body)
-	for _, value := range []string{key, "owner", "2026-01-02T03:04:05Z", "uid", "9"} {
+	for _, value := range []string{key, "owner", "2026-01-02T03:04:05Z", "uid"} {
 		assert.Contains(t, first, value)
 	}
 	out, err := runAppreciations(daemon.ctx, t, "dismiss", "7", key, "--json")
 	require.NoError(t, err)
 	assert.Contains(t, out, `"future":true`)
+	assert.Contains(t, out, `"thanks_brief_id":9`)
 	daemon.status = http.StatusNotFound
 	daemon.response = `{"error":"failure","message":"dismissal failed"}`
 	_, err = runAppreciations(daemon.ctx, t, "dismiss", "7", "invalid")

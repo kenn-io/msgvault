@@ -46,13 +46,6 @@ func newPersonAppreciationsListCommand() *cobra.Command {
 	return command
 }
 
-func appreciationString(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return textutil.SanitizeTerminal(*s)
-}
-
 func writeAppreciationRef(w io.Writer, label, quote string, ref generated.EvidenceRef) error {
 	_, err := fmt.Fprintf(w, "  %s quote: %s\n  %s source: lane=%s source_id=%d message_id=%d attachment_id=%d source_message_id=%s occurrence_key=%s chunk_key=%s span=%d:%d\n", label, textutil.SanitizeTerminal(quote), label, textutil.SanitizeTerminal(ref.SourceLane), ref.SourceID, ref.MessageID, ref.AttachmentID, textutil.SanitizeTerminal(ref.SourceMessageID), textutil.SanitizeTerminal(ref.OccurrenceKey), textutil.SanitizeTerminal(ref.ChunkKey), ref.SpanStart, ref.SpanEnd)
 	return err
@@ -63,9 +56,14 @@ func writePersonAppreciations(w io.Writer, items []generated.PersonAppreciation)
 		_, err := fmt.Fprintln(w, "No supported, undismissed appreciation suggestions.")
 		return err
 	}
-	for _, item := range items {
+	for i, item := range items {
+		if i > 0 {
+			if _, err := fmt.Fprintln(w); err != nil {
+				return fmt.Errorf("write appreciation: %w", err)
+			}
+		}
 		s := item.Suggestion
-		if _, err := fmt.Fprintf(w, "Key: %s\nReason: %s\nState: %s; prior thanks %s\n", appreciationString(s.Key), textutil.SanitizeTerminal(s.Text), appreciationString(s.State), appreciationString(s.PriorThanks)); err != nil {
+		if _, err := fmt.Fprintf(w, "Key: %s\nReason: %s\nState: %s; prior thanks %s\n", textutil.SanitizeTerminal(stringOrEmpty(s.Key)), textutil.SanitizeTerminal(s.Text), textutil.SanitizeTerminal(stringOrEmpty(s.State)), textutil.SanitizeTerminal(stringOrEmpty(s.PriorThanks))); err != nil {
 			return fmt.Errorf("write appreciation: %w", err)
 		}
 		if err := writeAppreciationRef(w, "Peer", s.Quote, item.Peer); err != nil {
@@ -77,7 +75,8 @@ func writePersonAppreciations(w io.Writer, items []generated.PersonAppreciation)
 			}
 		}
 	}
-	return nil
+	_, err := fmt.Fprintln(w, "Prior thanks unknown does not mean never thanked; evidence is limited to supported direct chats.")
+	return err
 }
 
 func newPersonAppreciationsDismissCommand() *cobra.Command {
@@ -106,28 +105,15 @@ func newPersonAppreciationsDismissCommand() *cobra.Command {
 			return writePersonBriefRawJSON(cmd, response.Body)
 		}
 		state := response.JSON200
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Dismissed: %s\n", textutil.SanitizeTerminal(state.ContributionKey)); err != nil {
-			return fmt.Errorf("write appreciation dismissal: %w", err)
-		}
-		if state.DismissedPersonUID != nil {
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Person UID: %s\n", appreciationString(state.DismissedPersonUID)); err != nil {
-				return err
-			}
-		}
-		if state.DismissedBy != nil {
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Dismissed by: %s\n", appreciationString(state.DismissedBy)); err != nil {
-				return err
-			}
-		}
+		at := "-"
 		if state.DismissedAt != nil {
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Dismissed at: %s\n", state.DismissedAt.Format(time.RFC3339)); err != nil {
-				return err
-			}
+			at = state.DismissedAt.Format(time.RFC3339)
 		}
-		if state.ThanksBriefID != nil {
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Thanks brief ID: %d\n", *state.ThanksBriefID); err != nil {
-				return err
-			}
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Dismissed: %s\nPerson UID: %s\nDismissed by: %s\nDismissed at: %s\n",
+			textutil.SanitizeTerminal(state.ContributionKey),
+			personBriefReasonOrDash(stringOrEmpty(state.DismissedPersonUID)),
+			personBriefReasonOrDash(stringOrEmpty(state.DismissedBy)), at); err != nil {
+			return fmt.Errorf("write appreciation dismissal: %w", err)
 		}
 		return nil
 	}}

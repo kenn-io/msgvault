@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-11"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -7,6 +7,8 @@ description: Release history for msgvault
 All notable changes to msgvault, grouped by release.
 
 ## Unreleased
+
+- Review supported appreciation suggestions and their citations with `person appreciations`, page brief enrollments, and install the appreciation review skill. Dismiss selected suggestions durably without generating a new brief. After upgrading, rerun `msgvault skills install` to add the skill.
 
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 
