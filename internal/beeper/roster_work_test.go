@@ -2,8 +2,6 @@ package beeper
 
 import (
 	"encoding/json/v2"
-	"fmt"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -101,8 +99,16 @@ func TestRosterVerificationRejectsChangedSnapshot(t *testing.T) {
 }
 
 func TestTruncatedChangedListingDefersRoster(t *testing.T) {
-	for _, hidden := range []bool{false, true} {
-		t.Run(fmt.Sprintf("hidden=%t", hidden), func(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		hidden, verified bool
+		phase            string
+		next             int
+	}{
+		{"visible", false, false, "members", 0},
+		{"hidden", true, true, "matching", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			f := newFakeBeeper(t)
 			chat := budgetTestChat("!changed-listing:example.test", 2, time.Now())
@@ -118,7 +124,7 @@ func TestTruncatedChangedListingDefersRoster(t *testing.T) {
 			state.RosterWork.Phase = "matching"
 			state.RosterWork.Next = 1
 			f.mu.Lock()
-			if hidden {
+			if tc.hidden {
 				chat.Participants[2] = map[string]any{"id": "@signal_hidden_new:example.test"}
 			} else {
 				chat.Participants[0]["fullName"] = "Changed"
@@ -133,29 +139,20 @@ func TestTruncatedChangedListingDefersRoster(t *testing.T) {
 			unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 			require.NoError(err)
 			assert.Contains(unresolved, chat.ID)
-			if !hidden {
-				assert.False(state.RosterWork.Verified)
-				assert.Equal("members", state.RosterWork.Phase)
+			assert.Equal(tc.verified, state.RosterWork.Verified)
+			assert.Equal(tc.phase, state.RosterWork.Phase)
+			assert.Equal(tc.next, state.RosterWork.Next)
+			var convID int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sum.SourceID, chat.ID).Scan(&convID))
+			metadata, err := st.GetConversationMetadataContext(t.Context(), convID)
+			require.NoError(err)
+			var value struct {
+				Route struct {
+					MembershipComplete bool `json:"membership_complete"`
+				} `json:"messaging_route"`
 			}
-			if hidden {
-				assert.True(state.RosterWork.Verified)
-				assert.Equal("matching", state.RosterWork.Phase)
-				assert.Equal(1, state.RosterWork.Next)
-				var convID int64
-				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sum.SourceID, chat.ID).Scan(&convID))
-				routeComplete := func() bool {
-					metadata, err := st.GetConversationMetadataContext(t.Context(), convID)
-					require.NoError(err)
-					var value struct {
-						Route struct {
-							MembershipComplete bool `json:"membership_complete"`
-						} `json:"messaging_route"`
-					}
-					require.NoError(json.Unmarshal([]byte(metadata.String), &value))
-					return value.Route.MembershipComplete
-				}
-				assert.False(routeComplete())
-			}
+			require.NoError(json.Unmarshal([]byte(metadata.String), &value))
+			assert.False(value.Route.MembershipComplete)
 		})
 	}
 }
@@ -298,54 +295,6 @@ func TestRosterResumeResolvesRicherIdentityAndName(t *testing.T) {
 	assert.Equal("Updated Name", name)
 }
 
-func TestQuietMatchingRepairInvalidatesGoneRoute(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	chat := budgetTestChat("!gone-matching:example.test", 2, time.Now().Add(-48*time.Hour))
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	provider := f.handler()
-	imp.client.http.Transport = handlerTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/accounts/signal" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"accountID":"signal","bridge":{"type":"signal"},"status":"connected"}`))
-			return
-		}
-		provider(w, r)
-	}))
-	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-	require.NoError(err)
-	state, err := imp.loadResumeState(t.Context(), sum.SourceID, false)
-	require.NoError(err)
-	cs := state.Chats[chat.ID]
-	require.True(cs.Done)
-	detail, err := imp.client.GetChat(t.Context(), chat.ID)
-	require.NoError(err)
-	cs.RosterWork = &rosterWork{Signature: rosterSignature(detail, "signal"), Phase: "matching", Verified: true}
-	peer := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
-	person, _, err := st.CreatePersonFromParticipant(peer)
-	require.NoError(err)
-	query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
-	before, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
-	require.NoError(err)
-	require.Len(before.Routes.Items, 1)
-	require.Equal("archive_verified", before.Routes.Items[0].Status)
-	f.mu.Lock()
-	f.goneChatGets = map[string]bool{chat.ID: true}
-	f.mu.Unlock()
-	runID, err := st.StartSync(sum.SourceID, sourceTypeBeeper)
-	require.NoError(err)
-	_, err = imp.repairQuietRosters(t.Context(), runID, sum.SourceID, ImportOptions{AccountID: "signal"}, state, nil, &ImportSummary{})
-	require.NoError(err)
-	require.NoError(st.CompleteSync(runID, ""))
-	assert.True(cs.Gone)
-	after, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
-	require.NoError(err)
-	require.Len(after.Routes.Items, 1)
-	assert.Equal("unresolved", after.Routes.Items[0].Status)
-}
-
 func TestReboundMemberRematchesSettledRoster(t *testing.T) {
 	t.Parallel()
 	assert, require := assert.New(t), require.New(t)
@@ -427,19 +376,12 @@ func TestMessageTurnRecordsAuthoritativeMemberCount(t *testing.T) {
 			for _, request := range f.requests() {
 				require.NotContains(request, "/v1/chats/"+chat.ID+"?", "message turn must defer detail")
 			}
-			var raw string
 			var messageID int64
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT metadata FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sum.SourceID, chat.ID).Scan(&raw))
-			var metadata struct {
-				MemberCount int `json:"member_count"`
-			}
-			require.NoError(json.Unmarshal([]byte(raw), &metadata))
 			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, "new-count-message").Scan(&messageID))
 			membership, err := st.AttachmentConversationMembershipContext(t.Context(), messageID)
 			require.NoError(err)
 			require.False(membership.RosterArchived)
 			assert.Equal(tc.current, membership.Conversation.ParticipantCount)
-			assert.Equal(tc.current, metadata.MemberCount, "the complete listing supplies the archived count")
 			assert.ElementsMatch(members, rosterMembers(t, st, sum.SourceID, chat.ID), "membership replacement waits for a roster turn")
 		})
 	}

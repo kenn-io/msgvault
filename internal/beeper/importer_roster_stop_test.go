@@ -216,8 +216,6 @@ func TestQuietRosterYieldRetriesWithoutBackoff(t *testing.T) {
 	assert.NotContains(ids, quiet.ID, "identical retry should advance the repair")
 }
 
-// a stop during the message walk, after membership committed and
-// route proof stored, should not leave the committed roster marked unresolved.
 func rosterRetryChat() *fakeChat {
 	chat := budgetTestChat("!retry-budget:example.test", 2, time.Now().Add(-48*time.Hour))
 	chat.Type = "group"
@@ -582,13 +580,18 @@ func TestFinalMemberStopKeepsMessageTurn(t *testing.T) {
 	_, _, err = imp.syncChat(t.Context(), 0, sum.SourceID, detail, opts, state, time.Now(), false, false, &ImportSummary{})
 	require.NoError(err)
 	require.True(stop, "the last member's capture must request the stop")
-	require.NotNil(state.Chats[chat.ID].RosterWork, "a stop after the last member keeps the message turn")
+	assert.False(state.Chats[chat.ID].RosterWork.MemberFirst, "a stop after the last member keeps the message turn")
 	assert.Equal(2, countBeeperMessages(t, imp), "no message work starts after the stop")
 
 	stop = false
+	var convID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sum.SourceID, chat.ID).Scan(&convID))
+	require.NoError(st.InvalidateConversationMessagingRouteEvidence(t.Context(), convID))
 	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER yield_proof AFTER UPDATE OF metadata ON conversations
-		WHEN json_extract(NEW.metadata, '$.messaging_route.membership_complete') = 1 BEGIN SELECT yield_final_member(); END`)
+		WHEN COALESCE(json_extract(OLD.metadata, '$.messaging_route.membership_complete'), 0) = 0 AND json_extract(NEW.metadata, '$.messaging_route.membership_complete') = 1 BEGIN SELECT yield_final_member(); END`)
 	require.NoError(err)
+	require.NoError(st.SetConversationMemberCountContext(t.Context(), convID, 2))
+	require.False(stop, "the count update cannot trigger the proof stop")
 	_, _, err = imp.syncChat(t.Context(), 0, sum.SourceID, detail, opts, state, time.Now(), false, false, &ImportSummary{})
 	require.NoError(err)
 	require.True(stop, "the message turn's proof refresh must request the stop")

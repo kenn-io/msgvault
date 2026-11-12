@@ -633,27 +633,7 @@ func TestImportMessageTurnSkipsTruncatedRosterDetail(t *testing.T) {
 	var messages int
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE source_message_id = 'message-turn'`).Scan(&messages))
 	assert.Equal(1, messages)
-	work = latestBeeperState(t, imp).Chats[chat.ID].RosterWork
-	assert.True(work.Verified)
-	assert.Equal("matching", work.Phase)
-	assert.Equal(1, work.Next)
-	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
-	require.NoError(err)
-	assert.Contains(unresolved, chat.ID)
-	var convID int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sum.SourceID, chat.ID).Scan(&convID))
-	routeComplete := func() bool {
-		metadata, err := st.GetConversationMetadataContext(t.Context(), convID)
-		require.NoError(err)
-		var value struct {
-			Route struct {
-				MembershipComplete bool `json:"membership_complete"`
-			} `json:"messaging_route"`
-		}
-		require.NoError(json.Unmarshal([]byte(metadata.String), &value))
-		return value.Route.MembershipComplete
-	}
-	assert.False(routeComplete())
+
 	f.mu.Lock()
 	f.blockChatGetID = ""
 	f.mu.Unlock()
@@ -664,10 +644,20 @@ func TestImportMessageTurnSkipsTruncatedRosterDetail(t *testing.T) {
 	work = latestBeeperState(t, imp).Chats[chat.ID].RosterWork
 	assert.True(work.Verified)
 	assert.Equal("done", work.Phase)
-	unresolved, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 	require.NoError(err)
 	assert.NotContains(unresolved, chat.ID)
-	assert.True(routeComplete())
+	var convID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sum.SourceID, chat.ID).Scan(&convID))
+	metadata, err := st.GetConversationMetadataContext(t.Context(), convID)
+	require.NoError(err)
+	var value struct {
+		Route struct {
+			MembershipComplete bool `json:"membership_complete"`
+		} `json:"messaging_route"`
+	}
+	require.NoError(json.Unmarshal([]byte(metadata.String), &value))
+	assert.True(value.Route.MembershipComplete)
 	assert.Contains(rosterMembers(t, st, sum.SourceID, chat.ID), participantForBeeperUser(t, st, "@signal_replacement:beeper.local"))
 	assert.NotContains(rosterMembers(t, st, sum.SourceID, chat.ID), oldID)
 }

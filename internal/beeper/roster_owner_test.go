@@ -8,63 +8,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRosterBareSenderFollowsCurrentOwner(t *testing.T) {
-	for _, omitted := range []bool{false, true} {
-		t.Run(fmt.Sprintf("omitted=%t", omitted), func(t *testing.T) {
-			require := require.New(t)
-			f := newFakeBeeper(t)
-			old := budgetTestChat("!bare:example.test", 1, time.Now().Add(-time.Hour))
-			healthy := budgetTestChat("!rich:example.test", 1, time.Now().Add(-time.Hour))
-			for _, chat := range []*fakeChat{old, healthy} {
-				chat.Participants[0]["id"] = "@signal_shared:example.test"
-				chat.Msgs[0].SenderID = "@signal_shared:example.test"
-			}
-			healthy.Participants[0]["phoneNumber"] = "+12025550124"
-			if omitted {
-				old.Participants[0], old.Participants[1] = old.Participants[1], old.Participants[0]
-			}
-			old.ParticipantsTruncated = true
-			f.addChat(old)
-			imp, st := newHandlerTestImporter(t, f)
-			t.Cleanup(func() { require.NoError(st.Close()) })
-			ownerA, err := newParticipantResolver(st, "signal").resolveUser(t.Context(), &User{ID: "@signal_shared:example.test", PhoneNumber: "+12025550123"})
-			require.NoError(err)
-			opts := ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true}
-			sum, err := imp.Import(t.Context(), opts)
-			require.NoError(err)
-			f.addChat(healthy)
-			imp = NewImporter(st, imp.client)
-			_, err = imp.Import(t.Context(), opts)
-			require.NoError(err)
-			ownerB := participantForBeeperUser(t, st, "@signal_shared:example.test")
-			require.NotEqual(ownerA, ownerB)
-			run, err := st.GetLastSuccessfulSync(sum.SourceID)
-			require.NoError(err)
-			state, err := LoadSyncState(run.CursorAfter.String)
-			require.NoError(err)
-			state.Chats[old.ID].RosterWork.MemberFirst = false
-			blob, err := state.Marshal()
-			require.NoError(err)
-			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), blob, run.ID)
-			require.NoError(err)
-			f.appendMsg(old.ID, fakeMsg{ID: "bare-new", SortKey: 100, Timestamp: time.Now(), SenderID: "@signal_shared:example.test", Text: "new"})
-			imp = NewImporter(st, imp.client)
-			_, err = imp.Import(t.Context(), opts)
-			require.NoError(err)
-			var sender int64
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, "bare-new").Scan(&sender))
-			require.Equal(ownerB, sender)
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, old.Msgs[0].ID).Scan(&sender))
-			require.Equal(ownerA, sender)
-		})
+func TestImportDefersRosterAndContinues(t *testing.T) {
+	for _, tc := range []struct {
+		name                      string
+		incomplete, omitted, bare bool
+	}{
+		{"failed omitted", false, true, false}, {"failed visible", false, false, false},
+		{"truncated omitted", true, true, false}, {"truncated visible", true, false, false},
+		{"bare visible", false, false, true}, {"bare omitted", false, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) { testImportDefersTruncatedRoster(t, tc.incomplete, tc.omitted, tc.bare) })
 	}
-}
-
-func TestImportDefersTruncatedRosterAndContinues(t *testing.T) {
 	t.Run("complete listing verification failure", testCompleteListingVerificationFailure)
 }
 
-func testImportDefersTruncatedRoster(t *testing.T, incomplete, omitted bool) {
+func testImportDefersTruncatedRoster(t *testing.T, incomplete, omitted, bare bool) {
 	t.Helper()
 	require := require.New(t)
 	f := newFakeBeeper(t)
@@ -73,19 +31,34 @@ func testImportDefersTruncatedRoster(t *testing.T, incomplete, omitted bool) {
 	for _, chat := range []*fakeChat{old, healthy} {
 		chat.Participants[0]["id"] = "@signal_user:example.test"
 		chat.Msgs[0].SenderID = "@signal_user:example.test"
-		f.addChat(chat)
 	}
-	old.Participants[0]["phoneNumber"] = "+12025550123"
+	if !bare {
+		old.Participants[0]["phoneNumber"] = "+12025550123"
+	}
 	healthy.Participants[0]["phoneNumber"] = "+12025550124"
 	if omitted {
 		old.Participants[0], old.Participants[1] = old.Participants[1], old.Participants[0]
 	}
 	old.ParticipantsTruncated = true
+	f.addChat(old)
+	if !bare {
+		f.addChat(healthy)
+	}
 	imp, st := newHandlerTestImporter(t, f)
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	opts := ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true}
+	if bare {
+		_, err := newParticipantResolver(st, "signal").resolveUser(t.Context(), &User{ID: "@signal_user:example.test", PhoneNumber: "+12025550123"})
+		require.NoError(err)
+	}
 	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
+	if bare {
+		f.addChat(healthy)
+		imp = NewImporter(st, imp.client)
+		_, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+	}
 	oldOwner, err := st.EnsureParticipantByPhone(t.Context(), "+12025550123", "", "signal")
 	require.NoError(err)
 	newOwner, err := st.EnsureParticipantByPhone(t.Context(), "+12025550124", "", "signal")
@@ -106,6 +79,18 @@ func testImportDefersTruncatedRoster(t *testing.T, incomplete, omitted bool) {
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), blob, run.ID)
 	require.NoError(err)
 	now := time.Now()
+	if bare {
+		f.appendMsg(old.ID, fakeMsg{ID: "bare-new", SortKey: 100, Timestamp: now, SenderID: "@signal_user:example.test", Text: "new"})
+		imp = NewImporter(st, imp.client)
+		_, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+		var sender int64
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, "bare-new").Scan(&sender))
+		require.Equal(newOwner, sender)
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, old.Msgs[0].ID).Scan(&sender))
+		require.Equal(oldOwner, sender)
+		return
+	}
 	f.appendMsg(healthy.ID, fakeMsg{ID: "healthy-new", SortKey: 100, Timestamp: now, SenderID: "@signal_user:example.test", Text: "healthy"})
 	if incomplete {
 		f.mu.Lock()
@@ -183,16 +168,6 @@ func testImportDefersTruncatedRoster(t *testing.T, incomplete, omitted bool) {
 }
 
 func TestRosterEachChatKeepsItsOwnPhone(t *testing.T) {
-	for _, tc := range []struct {
-		name                string
-		incomplete, omitted bool
-	}{
-		{"failed omitted", false, true}, {"failed visible", false, false},
-		{"truncated omitted", true, true}, {"truncated visible", true, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) { testImportDefersTruncatedRoster(t, tc.incomplete, tc.omitted) })
-	}
-
 	for _, tc := range []struct {
 		name                            string
 		messageFirst, sameRun, verified bool

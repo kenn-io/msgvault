@@ -340,7 +340,7 @@ func TestFullImportRecoversUnreadableProgressAndVerifiesArchive(t *testing.T) {
 				chat.Msgs[i].Timestamp = chat.Msgs[i].Timestamp.Add(time.Hour)
 			}
 			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Full: true})
-			assert.ErrorIs(err, ErrNeedsReanchor, "full sync still verifies saved anchors or the archive sample")
+			assert.ErrorIs(err, ErrNeedsReanchor, "full sync still verifies the existing archive")
 		})
 	}
 }
