@@ -1300,7 +1300,6 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_calendar_events_series_id", "ON calendar_events(series_provider_id, message_id)"},
 		{"idx_calendar_events_ical_uid", "ON calendar_events(ical_uid)"},
 		{"idx_meeting_details_link_key", "ON meeting_details(link_key) WHERE link_key IS NOT NULL"},
-		{"idx_calendar_events_series_provider_id", "ON calendar_events(series_provider_id)"},
 	}
 	for _, index := range concurrentIndexes {
 		if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {

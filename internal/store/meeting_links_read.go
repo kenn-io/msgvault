@@ -56,10 +56,10 @@ func occurrenceKeys(o CalendarOccurrence) []meetingLinkKey {
 			keys = append(keys, canonicalMeetingKey("google_event_id", owner, series+"_"+o.original.Key(), nil))
 		}
 	}
-	if row.ICalUID != "" {
-		keys = append(keys, meetingUIDKeys(row.ICalUID, o.Start)...)
+	if row.Event.ICalUID != "" {
+		keys = append(keys, meetingUIDKeys(row.Event.ICalUID, o.Start)...)
 		if o.AllDay && o.StartDate != "" {
-			keys = append(keys, meetingLinkKey{"ical_date", "", row.ICalUID, o.StartDate})
+			keys = append(keys, meetingLinkKey{"ical_date", "", row.Event.ICalUID, o.StartDate})
 		}
 		if o.original != (calrecur.Identity{}) {
 			original := o.originalStart
@@ -68,9 +68,9 @@ func occurrenceKeys(o CalendarOccurrence) []meetingLinkKey {
 				original, _ = calendarOriginalStart(o.original, row.Event)
 			}
 			if o.original.AllDay {
-				keys = append(keys, meetingLinkKey{"ical_date", "", row.ICalUID, o.original.Date})
+				keys = append(keys, meetingLinkKey{"ical_date", "", row.Event.ICalUID, o.original.Date})
 			}
-			keys = append(keys, meetingUIDKeys(row.ICalUID, original)...)
+			keys = append(keys, meetingUIDKeys(row.Event.ICalUID, original)...)
 		}
 	}
 	return slices.Compact(keys)

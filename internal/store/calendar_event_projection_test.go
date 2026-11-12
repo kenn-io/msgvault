@@ -210,10 +210,6 @@ func TestCalendarEventUpgradeBackfillsUID(t *testing.T) {
 	require := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, id := calendarFixture(t, st, "uid-upgrade", calendarRaw)
-	if !st.IsPostgreSQL() {
-		_, err := st.db.Exec(`DROP INDEX IF EXISTS idx_calendar_events_series_provider_id`)
-		require.NoError(err)
-	}
 	for _, query := range []string{
 		`DROP INDEX IF EXISTS idx_calendar_events_ical_uid`,
 		`ALTER TABLE calendar_events DROP COLUMN ical_uid`,
@@ -231,12 +227,7 @@ func TestCalendarEventUpgradeBackfillsUID(t *testing.T) {
 	require.NoError(reopened.InitSchemaContext(t.Context()))
 	rows := calendarRows(t, reopened, id)
 	require.Len(rows, 1)
-	assert.Equal(t, "event-uid@example.com", rows[0].ICalUID)
-	if !reopened.IsPostgreSQL() {
-		var count int
-		require.NoError(reopened.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_calendar_events_series_provider_id' AND sql LIKE '%(series_provider_id)%'`).Scan(&count))
-		assert.Equal(t, 1, count)
-	}
+	assert.Equal(t, "event-uid@example.com", rows[0].Event.ICalUID)
 }
 
 func TestCalendarEventProjectionUpgradeRebuildsLeapYearEnd(t *testing.T) {

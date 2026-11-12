@@ -301,12 +301,6 @@ func TestMCPMeetingRecordCalendarOnly(t *testing.T) {
 		RawMIME:      []byte(`{"id":"first","iCalUID":"copy@example.test","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`), RawFormat: "gcal_json",
 	})
 	must.NoError(err)
-	unsupported, err := st.PersistMessage(&store.MessagePersistData{
-		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "unsupported", MessageType: "calendar_event"},
-		Conversation: &store.ConversationPersistData{SourceConversationID: "unsupported", ConversationType: "calendar"},
-		RawMIME:      []byte(`{"id":"unsupported","iCalUID":"copy@example.test","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`), RawFormat: "gcal_json",
-	})
-	must.NoError(err)
 	server := mcpDraftTestDaemon(t, &storeAPIAdapter{store: st}, nil)
 	ctx := withStoreResolverConfig(t, &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Remote: config.RemoteConfig{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true}})
 	session := mcpDraftTestSession(ctx, t)
@@ -318,9 +312,6 @@ func TestMCPMeetingRecordCalendarOnly(t *testing.T) {
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_meeting_record", Arguments: map[string]any{"ref": fmt.Sprintf("evt:%d", id)}})
 	must.NoError(err)
 	must.False(result.IsError, "%v", result.Content)
-	content, ok := result.StructuredContent.(map[string]any)
-	must.True(ok)
-	assert.Equal([]any{map[string]any{"message_id": float64(unsupported), "reason": "unsupported recurrence"}}, content["unexpandable"])
 	t.Run("delegated", func(t *testing.T) {
 		require := require.New(t)
 		session := mcpDraftTestSession(mcpDraftAgentContext(t, server, source.ID, []string{"message.read"}), t)

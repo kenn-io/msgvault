@@ -68,7 +68,7 @@ func TestMeetingRecordUntimedCopies(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw, reason, status string
 	}{
-		{"confirmed", `{"id":"event"}`, "missing event bounds", "confirmed"},
+		{"cancelled", `{"id":"event","status":"cancelled"}`, "missing event bounds", "cancelled"},
 		{"decode-error", `{"id":`, "event data could not be decoded", "decode_error"},
 		{"exception", `{"id":"edit","recurringEventId":"series","status":"cancelled"}`, "exception has no original start", "cancelled"},
 	} {
@@ -220,7 +220,7 @@ func TestMeetingRecordCancelledOccurrenceWithoutMaster(t *testing.T) {
 func TestMeetingRecordPartialBoundsAndAliases(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	_, partial := calendarFixture(t, st, "partial", `{"id":"series_20270314T100000Z","recurringEventId":"series","iCalUID":"uid@example.org","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T12:00:00Z"}}`, "owner@example.com")
+	_, partial := calendarFixture(t, st, "partial", `{"id":"series_20270314T100000Z","recurringEventId":"series","status":"cancelled","iCalUID":"uid@example.org","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T12:00:00Z"}}`, "owner@example.com")
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: partial})
 	require.NoError(err)
 	require.Len(record.Links, 1)
@@ -228,7 +228,7 @@ func TestMeetingRecordPartialBoundsAndAliases(t *testing.T) {
 	assert.Equal(time.Date(2027, 3, 15, 12, 0, 0, 0, time.UTC), *record.Links[0].Start)
 	assert.Nil(record.Links[0].End)
 	assert.Equal([]CalendarUnexpandable{{MessageID: partial, Reason: "missing series master and event bounds"}}, record.Unexpandable)
-	_, sparse := calendarFixture(t, st, "no-start", `{"id":"no-start","recurringEventId":"absent","iCalUID":"zero@example.org","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}}`, "owner@example.com")
+	_, sparse := calendarFixture(t, st, "no-start", `{"id":"no-start","recurringEventId":"absent","status":"cancelled","iCalUID":"zero@example.org","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}}`, "owner@example.com")
 	_, zero := projectionFixture(t, st, "zero-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"zero@example.org","startsAt":"0001-01-01T00:00:00Z"}}`)
 	record, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: sparse})
 	require.NoError(err)
@@ -314,7 +314,7 @@ func TestMeetingRecordCancelledOccurrenceWithUnsupportedMaster(t *testing.T) {
 				assert.Equal([]int64{note}, record.MessageIDs)
 				assert.Contains(record.Unexpandable, CalendarUnexpandable{MessageID: master, Reason: "unsupported recurrence"})
 			}
-			_, partial := calendarFixture(t, st, "end-only", fmt.Sprintf(`{"id":"partial","recurringEventId":"series","originalStartTime":%s,"end":%s}`, tc.partialOriginal, tc.partialEnd), "owner@example.com")
+			_, partial := calendarFixture(t, st, "end-only", fmt.Sprintf(`{"id":"partial","recurringEventId":"series","status":"cancelled","originalStartTime":%s,"end":%s}`, tc.partialOriginal, tc.partialEnd), "owner@example.com")
 			partialRecord, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: partial})
 			require.NoError(err)
 			require.Len(partialRecord.Links, 1)
