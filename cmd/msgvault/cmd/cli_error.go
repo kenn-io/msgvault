@@ -13,6 +13,8 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+const cliUnavailableKind = "unavailable"
+
 type hintedError struct {
 	err  error
 	hint string
@@ -103,13 +105,13 @@ func classifyCLIError(cmd *cobra.Command, err error) *cliError {
 			result.Kind = kindForExit(result.ExitCode)
 			result.Code = result.Kind
 		} else if errors.Is(err, errLocalDaemonAutoStartDisabled) {
-			result.Kind = "unavailable"
-			result.Code = "unavailable"
+			result.Kind = cliUnavailableKind
+			result.Code = cliUnavailableKind
 			result.ExitCode = 7
 			result.Hint = "check 'msgvault daemon status' before retrying"
 		} else if _, ok := errors.AsType[net.Error](err); ok {
-			result.Kind = "unavailable"
-			result.Code = "unavailable"
+			result.Kind = cliUnavailableKind
+			result.Code = cliUnavailableKind
 			result.ExitCode = 7
 			result.Hint = "check 'msgvault daemon status'; start a local daemon with 'msgvault daemon start', or check [remote].url in config.toml"
 		}
@@ -270,7 +272,7 @@ func kindForExit(code int) string {
 	case 6:
 		return "conflict"
 	case 7:
-		return "unavailable"
+		return cliUnavailableKind
 	case 75:
 		return "sync_paused"
 	case 130:
