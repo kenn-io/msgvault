@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,6 +20,7 @@ func TestEventsNameGuardRejectsBeforeHandler(t *testing.T) {
 		{"mismatch", "other", `{"jsonrpc":"2.0","id":1,"method":"events/subscribe","params":{"name":"msgvault.messages.changed"}}`, 400, false},
 		{"duplicate", "msgvault.messages.changed", `{"jsonrpc":"2.0","id":1,"method":"events/subscribe","params":{"name":"msgvault.messages.changed","name":"other"}}`, 400, false},
 		{"matching", "msgvault.messages.changed", `{"jsonrpc":"2.0","id":1,"method":"events/subscribe","params":{"name":"msgvault.messages.changed"}}`, 204, true},
+		{"encoded matching", "=?base64?" + base64.StdEncoding.EncodeToString([]byte("msgvault.messages.changed")) + "?=", `{"jsonrpc":"2.0","id":1,"method":"events/subscribe","params":{"name":"msgvault.messages.changed"}}`, 204, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			called := false
