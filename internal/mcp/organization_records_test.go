@@ -16,7 +16,7 @@ func TestOrganizationWritesNeedSeparateOptIn(t *testing.T) {
 	opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, OperationFamilyOrganizations)
 	listed := toolsByName(t, rawListTools(t, opts, true))
 	assert.Contains(listed, "delete_organization")
-	for name, destructive := range map[string]bool{"create_organization": false, "set_organization_attribute": false, "update_organization": true, "delete_organization": true, "merge_organization": true, "replace_organization_profile": true, "clear_organization_attribute": true} {
+	for name, destructive := range map[string]bool{"create_organization": false, "set_organization_attribute": true, "update_organization": true, "delete_organization": true, "merge_organization": true, "replace_organization_profile": true, "clear_organization_attribute": true} {
 		annotations, ok := listed[name]["annotations"].(map[string]any)
 		require.True(ok)
 		assert.Equal(destructive, annotations["destructiveHint"], name)

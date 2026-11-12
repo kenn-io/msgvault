@@ -57,6 +57,17 @@ func TestOrganizationCapabilities(t *testing.T) {
 	}
 }
 
+func TestOrganizationCreateRefusedWhenOperationGateDrains(t *testing.T) {
+	must := require.New(t)
+	gate := api.NewSerialOperationGate()
+	gate.StartDrain()
+	cfg := &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}
+	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: testutil.NewTestStore(t), OperationGate: gate, Logger: slog.New(slog.DiscardHandler)}))
+	result, err := backend.ExecuteOperation(t.Context(), "create_organization", map[string]any{"body": map[string]any{"name": "Example Company", "kind": "company"}})
+	must.NoError(err)
+	assertLoopRefusal(t, result, "server_busy", false)
+}
+
 func TestOrganizationReadsUseNativeStore(t *testing.T) {
 	checks := assert.New(t)
 	must := require.New(t)
