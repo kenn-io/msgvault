@@ -196,13 +196,13 @@ func TestCheckAPIContract(t *testing.T) {
 	}{
 		{"matching contracts with different summaries", "5.1.0", a, "", []string{"5.1.0_" + a + "_" + strings.Repeat("c", 64), "5.1.0_" + a + "_" + strings.Repeat("d", 64)}, []string{"5.1.0_" + a + "_" + strings.Repeat("c", 64)}},
 		{"replaced base summary path", "5.1.0", a, "restore removed API contract marker", []string{"5.1.0_" + a + "_" + strings.Repeat("d", 64)}, []string{"5.1.0_" + a + "_" + strings.Repeat("c", 64)}},
-		{"collision", "5.1.0", b, "use 5.2.0", []string{m("5.0.0", a), m("5.1.0", a), m("5.1.0", b)}, []string{m("5.0.0", a)}},
-		{"collision with next minor taken", "5.1.0", b, "use 5.3.0", []string{m("5.0.0", a), m("5.1.0", a), m("5.1.0", b), m("5.2.0", a)}, []string{m("5.0.0", a)}},
+		{"collision", "5.1.0", b, "use 5.2.0", []string{m("5.0.0", a), m("5.1.0", a), m("5.1.0", b)}, []string{m("5.0.0", a), m("5.1.0", a)}},
+		{"collision with next minor taken", "5.1.0", b, "use 5.3.0", []string{m("5.0.0", a), m("5.1.0", a), m("5.1.0", b), m("5.2.0", a)}, []string{m("5.0.0", a), m("5.1.0", a)}},
 		{"collision repaired", "5.2.0", b, "", []string{m("5.0.0", a), m("5.1.0", a), m("5.2.0", b)}, []string{m("5.0.0", a), m("5.1.0", a)}},
 		{"edited marker", "5.1.0", b, "replace your marker with testdata/api-version-contracts/5.1.0_" + b + "_<summary-sha256>; otherwise compare with MSGVAULT_API_CONTRACT_BASE or use 5.2.0", []string{m("5.0.0", a), m("5.1.0", a)}, nil},
 		{"superseded", "5.2.0", b, "remove the superseded", []string{m("5.1.0", a), m("5.1.0", b), m("5.2.0", b)}, []string{m("5.1.0", a)}},
 		{"unrecorded", "5.1.0", b, "marker at", []string{m("5.0.0", a)}, nil},
-		{"older", "4.0.0", b, "older than recorded version", []string{m("5.0.0", a)}, nil},
+		{"older", "4.0.0", b, "older than recorded version 5.0.0; use 5.1.0", []string{m("5.0.0", a)}, nil},
 		{"malformed", "5.0.0", a, "<version>_<sha256>", []string{"bad"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
