@@ -2587,7 +2587,6 @@ type postgresBackfillStore struct {
 	started chan struct{}
 }
 
-func (*postgresBackfillStore) IsPostgreSQL() bool { return true }
 func (s *postgresBackfillStore) NeedsFTSBackfillQuick() bool {
 	return s.NeedsFTSBackfillQuickContext(context.Background())
 }
@@ -2619,9 +2618,6 @@ func TestPostgresStartupSearchRepairLifecycle(t *testing.T) {
 		idle.requireNotFiredWithin(t, 35*time.Millisecond, "idle fired while search repair was active")
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
-		done, ok := gate.BeginRequestWorkContext(ctx, "another operation")
-		require.True(ok, "operation must start while backfill is running")
-		done()
 		require.NoError(srv.Shutdown(ctx), "shutdown must cancel the running backfill")
 		idle.requireFiredWithin(t, 80*time.Millisecond, "idle did not fire after search repair")
 	})

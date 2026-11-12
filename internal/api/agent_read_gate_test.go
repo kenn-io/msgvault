@@ -464,9 +464,6 @@ func TestAgentIndexProbeHasFiniteLifetime(t *testing.T) {
 	for _, arrival := range []string{"healthy", "stale", "owner after request cancellation", "agent only", "owner before timeout", "owner after timeout", "owner first", "probe failure", "failed repair", "owner at exit", "owner probe failure", "gate refused"} {
 		st := &boundedAgentIndexStore{Store: testutil.NewTestStore(t), needs: arrival != "healthy"}
 		t.Run(arrival, func(t *testing.T) {
-			if arrival == "gate refused" && st.IsPostgreSQL() {
-				t.Skip("PostgreSQL repair does not use the operation gate")
-			}
 			synctest.Test(t, func(t *testing.T) {
 				assertions := assert.New(t)
 				requirements := require.New(t)

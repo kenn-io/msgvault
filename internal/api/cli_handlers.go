@@ -2560,23 +2560,17 @@ func (s *Server) runCLISearchIndexEnsure(cliStore CLIStore, knownIncomplete, bou
 	}
 	s.ftsIndexState.Store(cliSearchIndexStateBuilding)
 	s.ftsEnsureMu.Unlock()
-	backend, isBackend := cliStore.(interface{ IsPostgreSQL() bool })
-	postgres := isBackend && backend.IsPostgreSQL()
-	if !postgres {
-		done, ok := s.beginBackgroundOperationGateWork(s.importContext, "a search index build")
-		if !ok {
-			return
-		}
-		defer done()
+	done, ok := s.beginBackgroundOperationGateWork(s.importContext, "a search index build")
+	if !ok {
+		return
 	}
+	defer done()
 	if needed, err := s.probeFTSBackfillNeeded(cliStore, false); err != nil {
 		s.logger.Error("failed to verify CLI search index", "error", err)
 		return
 	} else if !needed {
 		state = ""
-		if !postgres {
-			rebuildGen = s.ftsRebuildGen.Load()
-		}
+		rebuildGen = s.ftsRebuildGen.Load()
 		complete = true
 		return
 	}
@@ -2584,11 +2578,9 @@ func (s *Server) runCLISearchIndexEnsure(cliStore CLIStore, knownIncomplete, bou
 		s.logger.Error("failed to build CLI search index", "error", err)
 		return
 	}
-	// A concurrent rebuild invalidates observations made before its generation.
+	// Repair ran under the rebuild gate, so its final index supersedes earlier observations.
 	state = ""
-	if !postgres {
-		rebuildGen = s.ftsRebuildGen.Load()
-	}
+	rebuildGen = s.ftsRebuildGen.Load()
 	complete = true
 }
 
