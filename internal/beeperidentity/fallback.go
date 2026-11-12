@@ -27,6 +27,32 @@ func Fallback(accountID, userID string) string {
 	return Prefix + ":" + EncodePart(userID)
 }
 
+// UserID decodes only canonical account-scoped fallback identities.
+func UserID(accountID, identifier string) (string, bool) {
+	account := strings.TrimSpace(accountID)
+	if account == "" {
+		return "", false
+	}
+	prefix := Prefix + ":" + EncodePart(account) + ":"
+	if !strings.HasPrefix(identifier, prefix) {
+		return "", false
+	}
+	part := strings.TrimPrefix(identifier, prefix)
+	colon := strings.IndexByte(part, ':')
+	if colon < 0 {
+		return "", false
+	}
+	n, err := strconv.Atoi(part[:colon])
+	if err != nil || n <= 0 || n != len(part[colon+1:]) {
+		return "", false
+	}
+	user := part[colon+1:]
+	if Fallback(accountID, user) != identifier {
+		return "", false
+	}
+	return user, true
+}
+
 // FallbackSQL encodes trusted SQL expressions with the same bytes as Fallback.
 func FallbackSQL(driverName, accountExpr, userExpr string) string {
 	// This is the Unicode White_Space set used by strings.TrimSpace.
