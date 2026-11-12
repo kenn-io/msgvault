@@ -78,6 +78,8 @@ func TestFederationEnrollOutput(t *testing.T) {
 		st, _, ctx := setup(t)
 		matching, _, err := st.CreateFederationEnrollmentContext(t.Context(), strings.Repeat("a", 64), "alice", "")
 		requirements.NoError(err)
+		secondMatching, _, err := st.CreateFederationEnrollmentContext(t.Context(), strings.Repeat("c", 64), "alice", "")
+		requirements.NoError(err)
 		distinct, _, err := st.CreateFederationEnrollmentContext(t.Context(), strings.Repeat("b", 64), "bob", "laptop")
 		requirements.NoError(err)
 		template, _, err := rootCmd.Find([]string{"federation", "enrollments", "list"})
@@ -87,8 +89,9 @@ func TestFederationEnrollOutput(t *testing.T) {
 		var output bytes.Buffer
 		list.SetOut(&output)
 		requirements.NoError(list.ExecuteContext(ctx))
-		assert.Contains(t, output.String(), matching.EnrollmentUID+"\talice\tactive\n")
-		assert.Contains(t, output.String(), distinct.EnrollmentUID+"\tbob (laptop)\tactive\n")
+		assert.Contains(t, output.String(), matching.EnrollmentUID+"\t"+strings.Repeat("a", 64)+"\talice\tactive\n")
+		assert.Contains(t, output.String(), secondMatching.EnrollmentUID+"\t"+strings.Repeat("c", 64)+"\talice\tactive\n")
+		assert.Contains(t, output.String(), distinct.EnrollmentUID+"\t"+strings.Repeat("b", 64)+"\tbob (laptop)\tactive\n")
 	})
 	t.Run("server error", func(t *testing.T) {
 		_, command, ctx := setup(t)

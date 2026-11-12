@@ -8,10 +8,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const federationMinAPISchema = "5.1.0"
+
 func init() {
 	root := &cobra.Command{Use: "federation", Short: "Manage hub enrollment"}
 	identity := &cobra.Command{Use: "identity", Short: "Print this archive's federation UID", Long: "Print this archive's federation UID. Set [federation] role to spoke or hub and restart the daemon first.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		c, _, err := OpenHTTPStore(cmd.Context(), "5.1.0")
+		c, _, err := OpenHTTPStore(cmd.Context(), federationMinAPISchema)
 		if err != nil {
 			return err
 		}
@@ -27,7 +29,7 @@ func init() {
 		if spoke == "" || member == "" {
 			return errors.New("--spoke-instance and --member are required")
 		}
-		c, _, err := OpenHTTPStore(cmd.Context(), "5.1.0")
+		c, _, err := OpenHTTPStore(cmd.Context(), federationMinAPISchema)
 		if err != nil {
 			return err
 		}
@@ -47,7 +49,7 @@ func init() {
 	enroll.Flags().StringVar(&member, "member", "", "Member handle (any non-blank name without control characters)")
 	enroll.Flags().StringVar(&name, "spoke-name", "", "Spoke display name (no control characters)")
 	list := &cobra.Command{Use: "list", Short: "List spoke enrollments", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		c, _, err := OpenHTTPStore(cmd.Context(), "5.1.0")
+		c, _, err := OpenHTTPStore(cmd.Context(), federationMinAPISchema)
 		if err != nil {
 			return err
 		}
@@ -64,7 +66,7 @@ func init() {
 			if e.SpokeName != e.Member {
 				names += " (" + e.SpokeName + ")"
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", e.EnrollmentUID, names, state)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", e.EnrollmentUID, e.SpokeArchiveUID, names, state)
 		}
 		return nil
 	}}
@@ -74,7 +76,7 @@ func init() {
 		if strings.TrimSpace(args[0]) == "" {
 			return errors.New("enrollment UID is required")
 		}
-		c, _, err := OpenHTTPStore(cmd.Context(), "5.1.0")
+		c, _, err := OpenHTTPStore(cmd.Context(), federationMinAPISchema)
 		if err != nil {
 			return err
 		}
