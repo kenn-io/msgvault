@@ -94,7 +94,7 @@ msgvault calls import-zoom-meeting --roster roster.json --uuid INSTANCE_UUID \
 response pages in order. Every intermediate page needs a unique nonempty
 `next_page_token`; the final page must have no continuation token. A supplied
 export is trusted source evidence; the importer cannot verify that pages were
-not edited. It rejects incomplete totals, malformed times and oversized input.
+not edited. It rejects incomplete totals, malformed times, missing or unsupported participant statuses, and oversized input.
 
 `bindings.json` maps exact stable Zoom participant IDs to existing archive
 participant IDs, for example `{"peer-zoom-id":42}`. For anonymous attendees,

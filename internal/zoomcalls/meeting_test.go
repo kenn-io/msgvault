@@ -36,14 +36,16 @@ func TestMeetingAttendance(t *testing.T) {
 }
 
 func TestMeetingSourceLabelPreservesIdentityAndRaw(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	account := strings.Repeat("a", 256)
 	o, err := Meeting(account, "owner", "instance", []byte(roster), nil)
-	require.NoError(t, err)
-	require.NotNil(t, o)
-	assert.Equal(t, "Zoom meetings — "+account, o.SourceLabel)
-	assert.Equal(t, AccountNamespace(account, "owner"), o.Account)
-	assert.Equal(t, (callhistory.Evidence{Provider: "zoom_meetings", Account: AccountNamespace(account, "owner")}).SourceIdentifier(), o.SourceIdentifier())
-	assert.JSONEq(t, roster, string(o.Raw))
+	require.NoError(err)
+	require.NotNil(o)
+	assert.Equal("Zoom meetings — "+account, o.SourceLabel)
+	assert.Equal(AccountNamespace(account, "owner"), o.Account)
+	assert.Equal((callhistory.Evidence{Provider: "zoom_meetings", Account: AccountNamespace(account, "owner")}).SourceIdentifier(), o.SourceIdentifier())
+	assert.JSONEq(roster, string(o.Raw))
 }
 
 func TestMeetingRejectsNumericMeetingID(t *testing.T) {
@@ -57,6 +59,23 @@ func TestMeetingRejectsIncompleteOrInvalidRoster(t *testing.T) {
 		_, err := Meeting("account", "owner", "instance", []byte(raw), nil)
 		require.Error(t, err, raw)
 	}
+}
+
+func TestMeetingRejectsUnknownParticipantStatuses(t *testing.T) {
+	for _, tc := range []struct{ name, raw string }{
+		{"missing", `{"participants":[{}],"total_records":1}`},
+		{"empty", `{"participants":[{"status":""}]}`},
+		{"unsupported", `{"participants":[{"status":"future_status"}]}`},
+		{"later page", `[{"participants":[],"next_page_token":"next"},{"participants":[{}],"total_records":1}]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Meeting("account", "owner", "instance", []byte(tc.raw), nil)
+			require.ErrorContains(t, err, "participant status")
+		})
+	}
+	o, err := Meeting("account", "owner", "instance", []byte(`{"participants":[]}`), nil)
+	require.NoError(t, err)
+	assert.Nil(t, o)
 }
 
 func TestWaitingRoomWithoutJoinDoesNotBlockAttendance(t *testing.T) {

@@ -79,8 +79,12 @@ func Meeting(account, owner, uuid string, raw []byte, bindings map[string]int64)
 		tokens[page.Next] = true
 		count += len(page.Participants)
 		for _, p := range page.Participants {
-			if p.Status != "in_meeting" {
+			switch p.Status {
+			case "in_waiting_room":
 				continue
+			case "in_meeting":
+			default:
+				return nil, errors.New("invalid Zoom participant status")
 			}
 			if p.Join.IsZero() || p.Leave.IsZero() || p.Leave.Before(p.Join) {
 				return nil, errors.New("invalid Zoom attendance interval")
