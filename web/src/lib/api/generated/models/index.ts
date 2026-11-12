@@ -308,7 +308,6 @@ export * from "./fastSearchParams";
 export * from "./federationCreateRequest";
 export * from "./federationCreateResponse";
 export * from "./federationEnrollment";
-export * from "./federationHandshakeEnrollment";
 export * from "./federationHandshakeResponse";
 export * from "./federationIdentityResponse";
 export * from "./federationListResponse";

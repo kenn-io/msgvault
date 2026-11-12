@@ -5307,40 +5307,14 @@ func (f FederationEnrollment) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(f))
 }
 
-type FederationHandshakeEnrollment struct {
-	EnrollmentUID string `json:"enrollment_uid" validate:"required"`
-	Member        string `json:"member" validate:"required"`
-	SpokeName     string `json:"spoke_name" validate:"required"`
-	State         string `json:"state" validate:"required"`
-}
-
-func (f FederationHandshakeEnrollment) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(f))
-}
-
 type FederationHandshakeResponse struct {
-	Enrollment       FederationHandshakeEnrollment `json:"enrollment"`
-	HubInstance      string                        `json:"hub_instance" validate:"required"`
-	ProtocolVersions []int64                       `json:"protocol_versions" validate:"required"`
+	EnrollmentState  string  `json:"enrollment_state" validate:"required"`
+	HubInstance      string  `json:"hub_instance" validate:"required"`
+	ProtocolVersions []int64 `json:"protocol_versions" validate:"required"`
 }
 
 func (f FederationHandshakeResponse) Validate() error {
-	var errors runtime.ValidationErrors
-	if v, ok := any(f.Enrollment).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("Enrollment", err)
-		}
-	}
-	if err := typesValidator.Var(f.HubInstance, "required"); err != nil {
-		errors = errors.Append("HubInstance", err)
-	}
-	if err := typesValidator.Var(f.ProtocolVersions, "required"); err != nil {
-		errors = errors.Append("ProtocolVersions", err)
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
 }
 
 type FederationIdentityResponse struct {

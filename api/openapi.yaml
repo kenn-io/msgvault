@@ -5482,28 +5482,11 @@ components:
         - spoke_name
         - created_at
       type: object
-    FederationHandshakeEnrollment:
-      additionalProperties: true
-      properties:
-        enrollment_uid:
-          type: string
-        member:
-          type: string
-        spoke_name:
-          type: string
-        state:
-          type: string
-      required:
-        - enrollment_uid
-        - member
-        - spoke_name
-        - state
-      type: object
     FederationHandshakeResponse:
       additionalProperties: true
       properties:
-        enrollment:
-          $ref: "#/components/schemas/FederationHandshakeEnrollment"
+        enrollment_state:
+          type: string
         hub_instance:
           type: string
         protocol_versions:
@@ -5514,7 +5497,7 @@ components:
       required:
         - protocol_versions
         - hub_instance
-        - enrollment
+        - enrollment_state
       type: object
     FederationIdentityResponse:
       additionalProperties: true
