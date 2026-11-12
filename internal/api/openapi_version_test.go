@@ -237,19 +237,47 @@ func TestCheckAPIContract(t *testing.T) {
 }
 
 func TestMatchingContractSummaries(t *testing.T) {
+	for _, env := range os.Environ() {
+		key, _, _ := strings.Cut(env, "=")
+		if strings.HasPrefix(key, "GIT_") {
+			t.Setenv(key, "")
+			require.NoError(t, os.Unsetenv(key))
+		}
+	}
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "config"))
+	t.Chdir(t.TempDir())
+	git := func(args ...string) {
+		t.Helper()
+		out, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput()
+		require.NoError(t, err, "%s", out)
+	}
+	git("init", "-q", "-b", "base")
+	git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "base", "--allow-empty")
+
 	digest := strings.Repeat("a", 64)
-	dir := t.TempDir()
 	var markers []string
-	for _, summary := range []string{"First summary", "Second summary"} {
+	summaries := []string{"First summary", "Second summary"}
+	for i, summary := range summaries {
+		git("switch", "-q", "-c", fmt.Sprintf("change-%d", i), "base")
+		require.NoError(t, os.MkdirAll(apiContractsDir, 0o755))
 		hash := sha256.Sum256([]byte(summary))
 		name := fmt.Sprintf("5.1.0_%s_%x", digest, hash)
-		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(summary+"\n"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(apiContractsDir, name), []byte(summary+"\n"), 0o644))
+		git("add", apiContractsDir)
+		git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "change")
 		markers = append(markers, name)
 	}
-	entries, err := os.ReadDir(dir)
+	git("-c", "user.name=Test", "-c", "user.email=test@example.com", "merge", "-q", "change-0")
+	entries, err := os.ReadDir(apiContractsDir)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	assert.NotEqual(t, markers[0], markers[1])
+	for i, marker := range markers {
+		content, err := os.ReadFile(filepath.Join(apiContractsDir, marker))
+		require.NoError(t, err)
+		assert.Equal(t, summaries[i]+"\n", string(content))
+	}
 	require.NoError(t, checkAPIContract("5.1.0", digest, markers, markers[:1]))
 }
 
