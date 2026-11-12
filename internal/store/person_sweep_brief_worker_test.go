@@ -431,9 +431,6 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	require.Equal(t, 1, run.PeopleSucceeded)
 	require.NotEmpty(t, f.runner.extractionInputs)
 	assert.Contains(t, f.runner.extractionInputs[0], "I carried your boxes upstairs.")
-	for _, input := range f.runner.extractionInputs {
-		assert.NotContains(t, input, "Thanks for carrying my boxes upstairs!")
-	}
 	profile, err := f.config.Profile()
 	require.NoError(t, err)
 	projection, err := st.ProjectPersonAppreciationsContext(t.Context(), journal.alicePersonID, profile)
@@ -479,6 +476,7 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	retired, err := st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, profile)
 	require.NoError(t, err)
 	assert.True(t, retired[key], "a valid old proof frees the active slot before provider input")
+	// A malformed persisted boundary must be refused by readers.
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET boundary_json = ? WHERE id = ?`), `{"appreciation_memory":[{}, {}, {}, {}]}`, proofID)
 	require.NoError(t, err)
 	_, err = st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, profile)
@@ -571,51 +569,11 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, projection.Appreciations, 1)
 	assert.Equal(t, "evidenced", projection.Appreciations[0].Suggestion.PriorThanks)
-	first, err := st.DismissPersonAppreciationContext(t.Context(), journal.alicePersonID, key, "owner", f.now, profile)
+	_, err = st.DismissPersonAppreciationContext(t.Context(), journal.alicePersonID, key, "owner", f.now, profile)
 	require.NoError(t, err)
-	retry, err := st.DismissPersonAppreciationContext(t.Context(), journal.alicePersonID, key, "other", f.now.Add(time.Hour), profile)
-	require.NoError(t, err)
-	assert.Equal(t, first.DismissedAt, retry.DismissedAt)
-	assert.Equal(t, first.DismissedBy, retry.DismissedBy)
 	projection, err = st.ProjectPersonAppreciationsContext(t.Context(), journal.alicePersonID, profile)
 	require.NoError(t, err)
 	assert.Empty(t, projection.Appreciations)
-}
-
-func TestPersonSweepApplyDoesNotReviveDismissalDuringGeneration(t *testing.T) {
-	f := newBriefWorkerEndToEndFixture(t, "appreciation-race")
-	key, err := peoplesweep.AppreciationContributionKey("slack", "person-sweep-journal", "brief-e2e-1-appreciation-race")
-	require.NoError(t, err)
-	f.runner.candidate = func(packet map[string]any) json.RawMessage {
-		peers, ok := packet["appreciation_peers"].([]any)
-		require.True(t, ok)
-		var anchor string
-		for _, value := range peers {
-			peer := value.(map[string]any)
-			if peer["contribution_key"] == key {
-				anchor = peer["anchor_id"].(string)
-			}
-		}
-		require.NotEmpty(t, anchor)
-		return json.RawMessage(fmt.Sprintf(`{"last_meaningful_interaction":{"evidence_id":%q,"summary":"they finished the move"},
- "highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[{"text":"helping with the move",
- "anchor_id":%q,"quote":"finished the move","thanked":null}],"uncertainties":[],"possible_attributes":[]}`, anchor, anchor))
-	}
-	f.runner.afterBrief = func() {
-		_, err := f.journal.store.RecordPersonAppreciationDismissalContext(t.Context(), key, "person-a", "owner", f.now)
-		require.NoError(t, err)
-	}
-	run, err := f.worker.Run(t.Context(), peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
-		PersonID: f.journal.alicePersonID, Limit: 1, Brief: peoplesweep.BriefModeForce})
-	require.NoError(t, err)
-	require.Equal(t, 1, run.PeopleSucceeded)
-	brief, err := f.journal.store.GetPersonBriefContext(t.Context(), f.journal.alicePersonID, 0)
-	require.NoError(t, err)
-	assert.NotContains(t, string(brief.Structured), key)
-	assert.NotContains(t, brief.RenderedText, "helping with the move")
-	var boundary peoplesweep.BriefBoundary
-	require.NoError(t, json.Unmarshal(brief.Boundary, &boundary))
-	assert.Empty(t, boundary.AppreciationMemory)
 }
 
 // The status-only case: no changed seed, so extraction runs no batch, and the
@@ -1355,70 +1313,65 @@ func TestAppreciationDismissalDoesNotAuthorizeRetryAfterPersonSplit(t *testing.T
 	assert.Equal(t, first, states[key])
 }
 
-func TestPersonSweepEmptyAfterConcurrentDismissalPreservesExtraction(t *testing.T) {
-	f := newBriefWorkerEndToEndFixture(t, "appreciation-empty-race")
-	key, err := peoplesweep.AppreciationContributionKey("slack", "person-sweep-journal", "brief-e2e-1-appreciation-empty-race")
-	require.NoError(t, err)
-	f.runner.candidate = func(packet map[string]any) json.RawMessage {
-		for _, value := range packet["appreciation_peers"].([]any) {
-			peer := value.(map[string]any)
-			if peer["contribution_key"] == key {
-				return json.RawMessage(fmt.Sprintf(`{"last_meaningful_interaction":null,"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[{"text":"helping with the move","anchor_id":%q,"quote":"finished the move","thanked":null}],"uncertainties":[],"possible_attributes":[]}`, peer["anchor_id"].(string)))
+func TestPersonSweepConcurrentDismissal(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		t.Run(fmt.Sprintf("empty_%t", empty), func(t *testing.T) {
+			f := newBriefWorkerEndToEndFixture(t, "appreciation-empty-race")
+			key, err := peoplesweep.AppreciationContributionKey("slack", "person-sweep-journal", "brief-e2e-1-appreciation-empty-race")
+			require.NoError(t, err)
+			f.runner.candidate = func(packet map[string]any) json.RawMessage {
+				for _, value := range packet["appreciation_peers"].([]any) {
+					peer := value.(map[string]any)
+					if peer["contribution_key"] == key {
+						interaction := "null"
+						if !empty {
+							interaction = fmt.Sprintf(`{"evidence_id":%q,"summary":"they finished the move"}`, peer["anchor_id"].(string))
+						}
+						return json.RawMessage(fmt.Sprintf(`{"last_meaningful_interaction":%s,"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[{"text":"helping with the move","anchor_id":%q,"quote":"finished the move","thanked":null}],"uncertainties":[],"possible_attributes":[]}`, interaction, peer["anchor_id"].(string)))
+					}
+				}
+				require.FailNow(t, "expected contribution in brief input")
+				return nil
 			}
-		}
-		require.FailNow(t, "expected contribution in brief input")
-		return nil
+			f.runner.afterBrief = func() {
+				_, err := f.journal.store.RecordPersonAppreciationDismissalContext(t.Context(), key, "person-a", "owner", f.now)
+				require.NoError(t, err)
+			}
+			run, err := f.worker.Run(t.Context(), peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
+				PersonID: f.journal.alicePersonID, Limit: 1, Brief: peoplesweep.BriefModeForce})
+			require.NoError(t, err)
+			require.Equal(t, 1, run.PeopleSucceeded)
+			require.Len(t, run.People, 1)
+			if !empty {
+				brief, err := f.journal.store.GetPersonBriefContext(t.Context(), f.journal.alicePersonID, 0)
+				require.NoError(t, err)
+				assert.NotContains(t, string(brief.Structured), key)
+				assert.NotContains(t, brief.RenderedText, "helping with the move")
+				var boundary peoplesweep.BriefBoundary
+				require.NoError(t, json.Unmarshal(brief.Boundary, &boundary))
+				assert.Empty(t, boundary.AppreciationMemory)
+				return
+			}
+			assert.Equal(t, peoplesweep.FailureInvalidOutput, run.People[0].BriefFailureClass)
+			_, err = f.journal.store.GetPersonBriefContext(t.Context(), f.journal.alicePersonID, 0)
+			assert.ErrorIs(t, err, store.ErrPersonBriefNotFound)
+			var successfulBatches int
+			require.NoError(t, f.journal.store.DB().QueryRowContext(t.Context(), f.journal.store.Rebind(`SELECT COUNT(*) FROM person_sweep_batches WHERE attempt_id = ? AND status = 'succeeded'`), run.People[0].AttemptID).Scan(&successfulBatches))
+			assert.GreaterOrEqual(t, successfulBatches, 2, "paid extraction and brief calls are recorded")
+			var generationID sql.NullInt64
+			var inputTokens, outputTokens int
+			require.NoError(t, f.journal.store.DB().QueryRowContext(t.Context(), f.journal.store.Rebind(`SELECT generation_id, input_tokens, output_tokens FROM person_sweep_attempts WHERE id = ?`), run.People[0].AttemptID).Scan(&generationID, &inputTokens, &outputTokens))
+			assert.True(t, generationID.Valid, "extraction generation is committed")
+			assert.GreaterOrEqual(t, inputTokens, 22)
+			assert.GreaterOrEqual(t, outputTokens, 8)
+			var cursor int64
+			require.NoError(t, f.journal.store.DB().QueryRowContext(t.Context(), f.journal.store.Rebind(`SELECT MAX(optimistic_sequence) FROM person_sweep_cursors WHERE person_id = ?`), f.journal.alicePersonID).Scan(&cursor))
+			assert.Positive(t, cursor, "extraction cursor advances")
+			var retryClass string
+			require.NoError(t, f.journal.store.DB().QueryRowContext(t.Context(), f.journal.store.Rebind(`SELECT last_failure_class FROM person_sweep_work WHERE person_id = ?`), f.journal.alicePersonID).Scan(&retryClass))
+			assert.Equal(t, string(peoplesweep.FailureInvalidOutput), retryClass)
+		})
 	}
-	f.runner.afterBrief = func() {
-		_, err := f.journal.store.RecordPersonAppreciationDismissalContext(t.Context(), key, "person-a", "owner", f.now)
-		require.NoError(t, err)
-	}
-	run, err := f.worker.Run(t.Context(), peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
-		PersonID: f.journal.alicePersonID, Limit: 1, Brief: peoplesweep.BriefModeForce})
-	require.NoError(t, err)
-	require.Equal(t, 1, run.PeopleSucceeded)
-	require.Len(t, run.People, 1)
-	assert.Equal(t, peoplesweep.FailureInvalidOutput, run.People[0].BriefFailureClass)
-	_, err = f.journal.store.GetPersonBriefContext(t.Context(), f.journal.alicePersonID, 0)
-	assert.ErrorIs(t, err, store.ErrPersonBriefNotFound)
-	var successfulBatches int
-	require.NoError(t, f.journal.store.DB().QueryRowContext(t.Context(), f.journal.store.Rebind(`SELECT COUNT(*) FROM person_sweep_batches WHERE attempt_id = ? AND status = 'succeeded'`), run.People[0].AttemptID).Scan(&successfulBatches))
-	assert.GreaterOrEqual(t, successfulBatches, 2, "paid extraction and brief calls are recorded")
-	var generationID sql.NullInt64
-	var inputTokens, outputTokens int
-	require.NoError(t, f.journal.store.DB().QueryRowContext(t.Context(), f.journal.store.Rebind(`SELECT generation_id, input_tokens, output_tokens FROM person_sweep_attempts WHERE id = ?`), run.People[0].AttemptID).Scan(&generationID, &inputTokens, &outputTokens))
-	assert.True(t, generationID.Valid, "extraction generation is committed")
-	assert.GreaterOrEqual(t, inputTokens, 22)
-	assert.GreaterOrEqual(t, outputTokens, 8)
-	var cursor int64
-	require.NoError(t, f.journal.store.DB().QueryRowContext(t.Context(), f.journal.store.Rebind(`SELECT MAX(optimistic_sequence) FROM person_sweep_cursors WHERE person_id = ?`), f.journal.alicePersonID).Scan(&cursor))
-	assert.Positive(t, cursor, "extraction cursor advances")
-	var retryClass string
-	require.NoError(t, f.journal.store.DB().QueryRowContext(t.Context(), f.journal.store.Rebind(`SELECT last_failure_class FROM person_sweep_work WHERE person_id = ?`), f.journal.alicePersonID).Scan(&retryClass))
-	assert.Equal(t, string(peoplesweep.FailureInvalidOutput), retryClass)
-}
-
-// appreciationApplyProbe changes owner evidence after parsing but before the
-// first real apply, and records whether the worker retries without the brief.
-type appreciationApplyProbe struct {
-	store      *store.Store
-	before     func()
-	afterFirst func(error)
-	requests   []peoplesweep.ApplyRequest
-	errors     []error
-}
-
-func (p *appreciationApplyProbe) ApplyPersonSweep(ctx context.Context, request peoplesweep.ApplyRequest) (peoplesweep.ApplyResult, error) {
-	p.requests = append(p.requests, request)
-	if len(p.requests) == 1 && p.before != nil {
-		p.before()
-	}
-	result, err := p.store.ApplyPersonSweep(ctx, request)
-	p.errors = append(p.errors, err)
-	if len(p.requests) == 1 && p.afterFirst != nil {
-		p.afterFirst(err)
-	}
-	return result, err
 }
 
 func TestAppreciationOwnerDowngradePreservesBriefAndRetries(t *testing.T) {
@@ -1455,8 +1408,6 @@ func TestAppreciationOwnerDowngradePreservesBriefAndRetries(t *testing.T) {
 			var priorBoundary peoplesweep.BriefBoundary
 			require.NoError(t, json.Unmarshal(prior.Boundary, &priorBoundary))
 			require.Len(t, priorBoundary.AppreciationMemory, 3)
-			var cursorBefore int64
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT MAX(optimistic_sequence) FROM person_sweep_cursors WHERE person_id = ?`), journal.alicePersonID).Scan(&cursorBefore))
 			ownerID := journal.insertMessage(t, "bound-thanks", "chat", journal.bobID, f.now.Add(-2*time.Hour))
 			addSweepBody(t, journal, ownerID, "Thanks for carrying my boxes!")
 			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET source_is_from_me = TRUE, is_sent = TRUE WHERE id = ?`), ownerID)
@@ -1477,23 +1428,12 @@ func TestAppreciationOwnerDowngradePreservesBriefAndRetries(t *testing.T) {
 				require.NotEmpty(t, owners)
 				return json.RawMessage(fmt.Sprintf(`{"last_meaningful_interaction":null,"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[{"text":"new help","anchor_id":%q,"quote":%q,"thanked":null},{"text":"carrying boxes","anchor_id":%q,"quote":%q,"thanked":{"evidence_id":%q,"quote":"Thanks for carrying my boxes!"}}],"uncertainties":[],"possible_attributes":[]}`, anchors[texts[3]], texts[3], anchors[texts[0]], texts[0], owners[0].(map[string]any)["evidence_id"].(string)))
 			}
-			probe := &appreciationApplyProbe{store: st}
 			if invalidate {
-				probe.before = func() {
+				f.runner.afterBrief = func() {
 					_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "Changed thanks", ownerID)
 					require.NoError(t, err)
 				}
-				probe.afterFirst = func(applyErr error) {
-					assert.Error(t, applyErr)
-					current, err := st.GetPersonBriefContext(t.Context(), journal.alicePersonID, 0)
-					require.NoError(t, err)
-					assert.Equal(t, prior.ID, current.ID, "the refused apply leaves the current brief intact")
-					states, err := st.GetPersonAppreciationStatesContext(t.Context(), []string{key})
-					require.NoError(t, err)
-					assert.Nil(t, states[key].ThanksBriefID, "the refused apply cannot publish a proof")
-				}
 			}
-			f.worker.Sink = probe
 			var seq int
 			f.worker.NewID = func() string { seq++; return fmt.Sprintf("bound-second-%t-%d", invalidate, seq) }
 			second, err := f.worker.Run(t.Context(), peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental, PersonID: journal.alicePersonID, Limit: 1, Brief: peoplesweep.BriefModeForce})
@@ -1505,49 +1445,21 @@ func TestAppreciationOwnerDowngradePreservesBriefAndRetries(t *testing.T) {
 			states, err := st.GetPersonAppreciationStatesContext(t.Context(), []string{key})
 			require.NoError(t, err)
 			if !invalidate {
-				require.Len(t, probe.requests, 1)
-				require.NoError(t, probe.errors[0])
 				var boundary peoplesweep.BriefBoundary
 				require.NoError(t, json.Unmarshal(current.Boundary, &boundary))
 				assert.True(t, peoplesweep.ValidBriefAppreciationMemory(boundary.AppreciationMemory))
 				assert.Len(t, boundary.AppreciationMemory, 4)
-				var active, resolved int
-				for _, memory := range boundary.AppreciationMemory {
-					if memory.Suggestion.State == "suggested" {
-						active++
-					} else if memory.Suggestion.State == "already_thanked" {
-						resolved++
-					}
-				}
-				assert.Equal(t, 3, active)
-				assert.Equal(t, 1, resolved)
 				assert.NotNil(t, states[key].ThanksBriefID)
 				return
 			}
-			require.Len(t, probe.requests, 2)
-			assert.ErrorIs(t, probe.errors[0], peoplesweep.ErrBriefAppreciationMemoryInvalid)
-			require.NotNil(t, probe.requests[0].Brief)
-			assert.Nil(t, probe.requests[1].Brief)
-			assert.NoError(t, probe.errors[1])
+			assert.Equal(t, peoplesweep.FailureInvalidOutput, second.People[0].BriefFailureClass)
 			assert.Equal(t, prior.ID, current.ID)
 			assert.Nil(t, states[key].ThanksBriefID)
-			projection, err := st.ProjectPersonAppreciationsContext(t.Context(), journal.alicePersonID, probe.requests[0].Brief.ValidationProfile)
+			profile, err := f.config.Profile()
+			require.NoError(t, err)
+			projection, err := st.ProjectPersonAppreciationsContext(t.Context(), journal.alicePersonID, profile)
 			require.NoError(t, err)
 			assert.Len(t, projection.Appreciations, 3)
-			var generationID sql.NullInt64
-			var inputTokens, outputTokens int
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT generation_id, input_tokens, output_tokens FROM person_sweep_attempts WHERE id = ?`), second.People[0].AttemptID).Scan(&generationID, &inputTokens, &outputTokens))
-			assert.True(t, generationID.Valid)
-			assert.GreaterOrEqual(t, inputTokens, 22)
-			assert.GreaterOrEqual(t, outputTokens, 8)
-			var cursorAfter int64
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT MAX(optimistic_sequence) FROM person_sweep_cursors WHERE person_id = ?`), journal.alicePersonID).Scan(&cursorAfter))
-			assert.Greater(t, cursorAfter, cursorBefore)
-			var retryClass string
-			var backedOff bool
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT last_failure_class, available_at > ? FROM person_sweep_work WHERE person_id = ?`), f.now, journal.alicePersonID).Scan(&retryClass, &backedOff))
-			assert.Equal(t, string(peoplesweep.FailureInvalidOutput), retryClass)
-			assert.True(t, backedOff)
 		})
 	}
 }

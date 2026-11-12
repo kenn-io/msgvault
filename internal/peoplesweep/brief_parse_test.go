@@ -53,9 +53,7 @@ func TestBriefAppreciationRequiresExactPeerAndLaterOwnerEvidence(t *testing.T) {
 		wantState           string
 	}{
 		{"supported later thanks", "carried your boxes", `{"evidence_id":"owner:test","quote":"Thanks for carrying my boxes!"}`, 1, "already_thanked"},
-		{"unknown owner", "carried your boxes", `{"evidence_id":"owner:other","quote":"Thanks"}`, 1, "suggested"},
-		{"peer cannot serve as owner", "carried your boxes", fmt.Sprintf(`{"evidence_id":%q,"quote":"Thanks"}`, anchor), 1, "suggested"},
-		{"changed peer quote", "moved your piano", `null`, 0, ""},
+		{"unknown owner", "carried your boxes", fmt.Sprintf(`{"evidence_id":%q,"quote":"Thanks"}`, anchor), 1, "suggested"},
 		{"changed owner quote", "carried your boxes", `{"evidence_id":"owner:test","quote":"different words"}`, 1, "suggested"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

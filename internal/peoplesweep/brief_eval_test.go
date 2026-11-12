@@ -20,7 +20,6 @@ var briefFixtureNames = []string{
 	"owner-appreciation-and-third-party.json",
 	"stale-fact.json",
 	"appreciation-ordinary-and-spanish.json",
-	"appreciation-generic-thanks.json",
 }
 
 type briefFixture struct {

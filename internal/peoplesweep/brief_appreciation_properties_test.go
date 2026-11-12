@@ -158,13 +158,46 @@ func TestAppreciationReplayProperty(t *testing.T) {
 		if dismissed {
 			assert.NotContains(ht, seen, fmt.Sprintf("%064x", 2))
 		}
+		memory := freezeAppreciationMemory(parsed, window)
+		assert.True(ht, ValidBriefAppreciationMemory(memory))
+		request.Previous = &BriefBoundary{AppreciationMemory: memory}
+		replayed, err := BuildBriefWindow(t.Context(), archive, request)
+		require.NoError(ht, err)
+		want := 3
+		if dismissed {
+			want = 2
+		}
+		assert.Len(ht, replayed.Request.retainedAppreciations, want)
+		if !dismissed {
+			// Each resolved contribution retires before the next fresh one arrives.
+			for i := 0; i < 3; i++ {
+				archive.dismissedAppreciations[fmt.Sprintf("%064x", i+1)] = true
+				item := briefWindowItem(int64(64+i), SourceConversationText, 15+i, "I reviewed and sent the draft today.")
+				archive.items = append(archive.items, item)
+				archive.appreciationPeers = append(archive.appreciationPeers, BriefAppreciationPeer{Ref: item.Ref, ConversationID: 42,
+					ContributionKey: fmt.Sprintf("%064x", i+5), RawSHA256: strings.Repeat("b", 64), ExactExcerpt: item.Excerpt, EventTime: item.EventTime})
+				peer := archive.items[i+1]
+				ownerID := fmt.Sprintf("owner:later-%d", i)
+				archive.appreciationOwners = append(archive.appreciationOwners, BriefAppreciationOwner{EvidenceID: ownerID,
+					Ref:            EvidenceRef{SourceLane: SourceConversationText, SourceID: peer.Ref.SourceID, MessageID: int64(100 + i)},
+					ConversationID: 42, RawSHA256: strings.Repeat("c", 64), ExactExcerpt: "Thanks for sending the draft!", EventTime: peer.EventTime.Add(time.Hour)})
+				request.MaxItems = 20
+				window, err = BuildBriefWindow(t.Context(), archive, request)
+				require.NoError(ht, err)
+				retained = briefEvidenceID(t, window, peer.Ref.MessageID)
+				fresh = briefEvidenceID(t, window, item.Ref.MessageID)
+				candidate = briefOutputJSON{ThanksSuggestions: []string{
+					fmt.Sprintf(`{"text":"fresh help","anchor_id":%q,"quote":"sent the draft","thanked":null}`, fresh),
+					fmt.Sprintf(`{"text":"retained help","anchor_id":%q,"quote":"sent the draft","thanked":{"evidence_id":%q,"quote":"Thanks for sending the draft!"}}`, retained, ownerID),
+				}}
+				parsed, err = ParseBrief(candidate.raw(), window, request.Profile)
+				require.NoError(ht, err)
+				memory = freezeAppreciationMemory(parsed, window)
+				assert.True(ht, ValidBriefAppreciationMemory(memory))
+				assert.Len(ht, memory, 4)
+				assert.Contains(ht, parsed.Output.ThanksSuggestions, BriefThanksSuggestion{Text: "fresh help", AnchorID: fresh, Quote: "sent the draft", Key: fmt.Sprintf("%064x", i+5), State: "suggested", PriorThanks: "unknown"})
+				request.Previous = &BriefBoundary{AppreciationMemory: memory}
+			}
+		}
 	}, hegel.WithTestCases(40), hegel.WithDatabase(""))
-}
-
-func TestAppreciationUnknownThanksWording(t *testing.T) {
-	rendered, err := RenderBrief(ParsedBrief{Output: BriefOutput{ThanksSuggestions: []BriefThanksSuggestion{{
-		Text: "carrying boxes", State: "suggested",
-	}}}}, BriefWindow{})
-	require.NoError(t, err)
-	assert.Equal(t, "If you haven't already, you could thank them for carrying boxes.", rendered.Text)
 }

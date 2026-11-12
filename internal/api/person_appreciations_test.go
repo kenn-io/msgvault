@@ -61,7 +61,7 @@ func TestAppreciationHTTPProjectsDismissalAndPreservesHistory(t *testing.T) {
 	require.NoError(t, err)
 	seed.boundary = string(boundary)
 	f.seedBrief(t, seed)
-	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE person_briefs SET program_version = ?, renderer_policy = ? WHERE person_id = ?`), "v3", peoplesweep.BriefRendererPolicyV3, f.personID)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE person_briefs SET program_version = ?, program_fingerprint = ?, renderer_policy = ? WHERE person_id = ?`), "v3", peoplesweep.BriefProgramFingerprint(), peoplesweep.BriefRendererPolicyV3, f.personID)
 	require.NoError(t, err)
 	base := fmt.Sprintf("/api/v1/people/%d/appreciations", f.personID)
 	response := doRequest(t, f.server.Router(), http.MethodGet, base, nil, nil)
