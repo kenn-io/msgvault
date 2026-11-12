@@ -23,7 +23,7 @@ func TestImportDateOnlyMeetingSuggestions(t *testing.T) {
 	event, err := st.PersistMessage(&store.MessagePersistData{
 		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "date-event", MessageType: "calendar_event", Subject: sql.NullString{String: "Planning", Valid: true}},
 		Conversation: &store.ConversationPersistData{SourceConversationID: "date-event", ConversationType: "calendar", Title: "Planning"},
-		RawMIME:      []byte(`{"id":"date-event","start":{"dateTime":"2026-06-01T00:00:00Z"},"end":{"dateTime":"2026-06-01T01:00:00Z"}}`), RawFormat: "gcal_json",
+		RawMIME:      []byte(`{"id":"date-event","start":{"dateTime":"2026-06-01T10:00:00Z"},"end":{"dateTime":"2026-06-01T11:00:00Z"}}`), RawFormat: "gcal_json",
 	})
 	r.NoError(err)
 	page, err := st.SuggestMeetingLinksContext(t.Context(), store.MeetingLinkRef{Kind: "msg", OccurrenceRef: store.OccurrenceRef{MessageID: note}}, 10, nil)
