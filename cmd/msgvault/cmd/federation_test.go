@@ -68,6 +68,7 @@ func TestFederationEnrollOutput(t *testing.T) {
 	requirements.NoError(err)
 	var stdout, stderr bytes.Buffer
 	command := &cobra.Command{Use: template.Use, Args: template.Args, RunE: template.RunE}
+	silenceUsageInRunE(command)
 	command.Flags().AddFlagSet(template.Flags())
 	command.Flags().VisitAll(func(flag *pflag.Flag) { requirements.NoError(flag.Value.Set(flag.DefValue)); flag.Changed = false })
 	t.Cleanup(func() {
