@@ -814,7 +814,7 @@ func TestLocalEmbeddingsStartupGenerations(t *testing.T) {
 					assert.Positive(t, f.inputs.Load())
 				} else {
 					assert.Equal(t, activeID, active.ID)
-					assert.Zero(t, f.inputs.Load())
+					assert.Positive(t, f.inputs.Load())
 				}
 			}
 		})
@@ -905,4 +905,33 @@ func TestManagedEmbeddingsSavedProviderOverridesPublishedBuiltin(t *testing.T) {
 	active, err := backend.ActiveGeneration(f.ctx)
 	require.NoError(t, err)
 	assert.Equal(t, "saved-model", active.Model)
+}
+
+func TestManagedBuiltinBuildHonorsSavedScope(t *testing.T) {
+	f := newLocalActivationFixture(t, "")
+	f.start(t)
+	f.controller.choice = func() (bool, error) { return true, nil }
+	f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) { return embedlocal.Status{}, nil }
+	adapter := &storeAPIAdapter{config: f.cfg, store: f.store, operationGate: f.controller.gate}
+	f.controller.runner = adapter
+	require.NoError(t, f.controller.Start(f.ctx, func(api.LocalEmbeddingsStatus) {}))
+	before := f.inputs.Load()
+	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+	require.NoError(t, err)
+	_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{
+		{Path: []string{"vector", "embed", "scope"}, Values: map[string]any{"message_types": []string{"sms"}}},
+		{Path: []string{"vector", "preprocess"}, Values: map[string]any{"strip_quotes": false}},
+	})
+	require.NoError(t, err)
+	ctx := f.server.WithPublishedVectorConfig(f.ctx)
+	err = adapter.RunCLICommand(ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, before, f.inputs.Load())
+	active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
+	require.NoError(t, err)
+	expected := f.handle.vf.Cfg
+	expected.Embed.Scope.MessageTypes = []string{"sms"}
+	stripQuotes := false
+	expected.Preprocess.StripQuotes = &stripQuotes
+	assert.Equal(t, expected.GenerationFingerprint(), active.Fingerprint)
 }

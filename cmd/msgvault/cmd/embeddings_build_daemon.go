@@ -41,11 +41,19 @@ func (a *storeAPIAdapter) runCLIEmbeddingsBuild(ctx context.Context, req api.CLI
 						saved.Vector.Backend = running.Vector.Backend
 						saved.Vector.SkipExtensionCreate = running.Vector.SkipExtensionCreate
 						published, ok := api.PublishedVectorConfig(cmd.Context())
-						if !ok || !published.Enabled || !published.Embeddings.LocalOnly || textProviderConfigured(saved.Vector) {
-							running.Vector = saved.Vector
-						} else {
-							running.Vector = published
+						if ok && published.Enabled && published.Embeddings.LocalOnly && !textProviderConfigured(saved.Vector) {
+							saved.Vector.Enabled = true
+							saved.Vector.Embeddings.LocalOnly = published.Embeddings.LocalOnly
+							saved.Vector.Embeddings.APIFormat = published.Embeddings.APIFormat
+							saved.Vector.Embeddings.Endpoint = published.Embeddings.Endpoint
+							saved.Vector.Embeddings.APIKeyEnv = published.Embeddings.APIKeyEnv
+							saved.Vector.Embeddings.Model = published.Embeddings.Model
+							saved.Vector.Embeddings.Dimension = published.Embeddings.Dimension
+							saved.Vector.Embeddings.DocumentPrefix = published.Embeddings.DocumentPrefix
+							saved.Vector.Embeddings.QueryPrefix = published.Embeddings.QueryPrefix
+							saved.Vector.Embeddings.MaxInputChars = published.Embeddings.MaxInputChars
 						}
+						running.Vector = saved.Vector
 						state.cfg = &running
 					}
 				}

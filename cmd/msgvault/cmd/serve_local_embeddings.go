@@ -339,9 +339,6 @@ func (c *localEmbeddingsController) enable(ctx context.Context, report func(api.
 	releaseGate()
 	releaseGate = func() {}
 
-	if startup && activeExists && !buildingExists {
-		return nil
-	}
 	report(api.LocalEmbeddingsStatus{Phase: "indexing"})
 	fingerprint := vf.Cfg.GenerationFingerprint()
 	run := func(args ...string) error {
