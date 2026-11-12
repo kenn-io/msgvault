@@ -299,11 +299,15 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect D
 		dateEnd = `NULLIF(e.original_start_date, '')::date + (NULLIF(p.end_date, '')::date - NULLIF(p.start_date, '')::date) >= ?::date`
 	}
 	rangeEnd := `julianday(p.recurrence_end_at) + coalesce(abs(julianday(e.start_at) - coalesce(julianday(e.original_start_at), julianday(e.original_start_date))), 0) + coalesce(abs(julianday(e.end_at) - julianday(e.start_at)), 0) >= julianday(?)`
+	rangeStart := `coalesce(julianday(e.original_start_at), julianday(e.original_start_date)) - coalesce(abs(julianday(e.start_at) - coalesce(julianday(e.original_start_at), julianday(e.original_start_date))), 0) - coalesce(abs(julianday(e.end_at) - julianday(e.start_at)), 0)`
+	rangeUpper := `julianday(?)`
 	if dialect.DriverName() == postgresDriverName {
 		rangeEnd = `p.recurrence_end_at + (coalesce(abs(extract(epoch from (e.start_at - coalesce(e.original_start_at, NULLIF(e.original_start_date, '')::date::timestamp AT TIME ZONE 'UTC')))), 0) + coalesce(abs(extract(epoch from (e.end_at - e.start_at))), 0)) * interval '1 second' >= ?`
+		rangeStart = `coalesce(e.original_start_at, NULLIF(e.original_start_date, '')::date::timestamp AT TIME ZONE 'UTC') - (coalesce(abs(extract(epoch from (e.start_at - coalesce(e.original_start_at, NULLIF(e.original_start_date, '')::date::timestamp AT TIME ZONE 'UTC')))), 0) + coalesce(abs(extract(epoch from (e.end_at - e.start_at))), 0)) * interval '1 second'`
+		rangeUpper = `?`
 	}
-	rangeCandidate := `e.recurrence_json LIKE '%RECURRENCE-ID;RANGE=THISANDFUTURE%' AND NOT EXISTS (SELECT 1 FROM calendar_events p JOIN messages pm ON pm.id=p.message_id WHERE p.provider_event_id=e.series_provider_id AND pm.source_id=m.source_id AND p.kind IN ('series','single') AND pm.deleted_at IS NULL AND ` + calendarEventVisibility("p", "pm") + ` AND p.recurrence_end_at IS NOT NULL AND NOT (` + rangeEnd + `))`
-	rangeArgs := []any{dialect.TimestampParam(lower)}
+	rangeCandidate := `e.recurrence_json LIKE '%RECURRENCE-ID;RANGE=THISANDFUTURE%' AND (` + rangeStart + ` IS NULL OR ` + rangeStart + ` < ` + rangeUpper + `) AND NOT EXISTS (SELECT 1 FROM calendar_events p JOIN messages pm ON pm.id=p.message_id WHERE p.provider_event_id=e.series_provider_id AND pm.source_id=m.source_id AND p.kind IN ('series','single') AND pm.deleted_at IS NULL AND ` + calendarEventVisibility("p", "pm") + ` AND p.recurrence_end_at IS NOT NULL AND NOT (` + rangeEnd + `))`
+	rangeArgs := []any{dialect.TimestampParam(upper), dialect.TimestampParam(lower)}
 	if restriction != "" {
 		rangeCandidate = `e.recurrence_json LIKE '%RECURRENCE-ID;RANGE=THISANDFUTURE%'`
 		rangeArgs = nil

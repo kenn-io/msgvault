@@ -232,9 +232,17 @@ func TestICSStatus(t *testing.T) {
 		requirements.Len(components, 1)
 		assertions.Equal("cancelled", components[0].Event.Status)
 		components, err = ParseICS([]byte(icsExample), "CANCEL", "")
+		requirements.Error(err)
+		components, err = ParseICS([]byte(icsExample), "request", "")
 		requirements.NoError(err)
 		requirements.Len(components, 1)
-		assertions.Equal("confirmed", components[0].Event.Status)
+		sparse := "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:example@example.com\r\nRECURRENCE-ID:20270303T120000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+		for _, retained := range []string{raw, icsExample, sparse} {
+			event, ok, err := DecodeICS([]byte(retained), []byte(`{"status":"cancelled"}`), "")
+			requirements.NoError(err)
+			requirements.True(ok)
+			assertions.Equal("cancelled", event.Status)
+		}
 	})
 }
 

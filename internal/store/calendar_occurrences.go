@@ -83,12 +83,12 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		}
 		page.Occurrences = append(page.Occurrences, CalendarOccurrence{MessageID: row.MessageID, SeriesMessageID: seriesID, SourceID: row.SourceID, Subject: row.Subject, Start: o.Start, End: o.End, AllDay: o.AllDay, StartDate: o.StartDate, EndDate: o.EndDate, Status: status, DeletedFromSource: row.DeletedFromSource, Attendees: attendees})
 	}
-	addSeriesOccurrence := func(row CalendarEventRow, o calrecur.Occurrence) error {
+	addSeriesOccurrence := func(row CalendarEventRow, o calrecur.Occurrence, ranges []CalendarEventRow) error {
 		effective := row
 		if o.HasException {
 			effective = byID[o.ExceptionRef]
 			if effective.Event.Status == "cancelled" {
-				effective, err = inheritCalendarCancellation(ctx, s.db, effective, row)
+				effective, err = inheritCalendarCancellation(ctx, s.db, effective, calendarEarlierRange(row, ranges, effective.Event.Original))
 				if err != nil {
 					return err
 				}
@@ -137,12 +137,11 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 			}
 			fallthrough
 		case "series":
-			for _, exception := range exceptions[seriesKey{row.SourceID, e.ProviderEventID}] {
-				edit := exception.Event
-				if edit.Original != nil && edit.Original.AllDay != e.AllDay && (edit.Start == nil || edit.End == nil) {
-					report(exception.MessageID, "exception original type differs from series and event bounds are missing")
-				}
+			ranges, err := calendarEffectiveRanges(ctx, s.db, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], byID)
+			if err != nil {
+				return page, err
 			}
+			calendarReportMismatchedExceptions(e, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], report)
 			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from.Add(-shift.pad), to.Add(shift.pad), remaining)
 			remaining -= count
 			if err != nil {
@@ -155,7 +154,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 				if !calendarKeepBeforeBoundary(&o, byID, boundary, shift, report) {
 					continue
 				}
-				if err := addSeriesOccurrence(row, o); err != nil {
+				if err := addSeriesOccurrence(row, o, ranges); err != nil {
 					return page, err
 				}
 			}
@@ -168,6 +167,43 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		return cmp.Compare(a.MessageID, b.MessageID)
 	})
 	return page, nil
+}
+
+func calendarReportMismatchedExceptions(master calevent.Event, exceptions []CalendarEventRow, report func(int64, string)) {
+	for _, exception := range exceptions {
+		edit := exception.Event
+		if edit.Original != nil && edit.Original.AllDay != master.AllDay && (edit.Start == nil || edit.End == nil) {
+			report(exception.MessageID, "exception original type differs from series and event bounds are missing")
+		}
+	}
+}
+
+func calendarEarlierRange(master CalendarEventRow, edits []CalendarEventRow, original *calrecur.Identity) CalendarEventRow {
+	for _, edit := range slices.Backward(edits) {
+		if calendarIdentityBefore(edit.Event.Original, original) {
+			return edit
+		}
+	}
+	return master
+}
+
+func calendarEffectiveRanges(ctx context.Context, db *loggedDB, master CalendarEventRow, exceptions []CalendarEventRow, byID map[int64]CalendarEventRow) ([]CalendarEventRow, error) {
+	edits := slices.DeleteFunc(slices.Clone(exceptions), func(row CalendarEventRow) bool {
+		return !slices.Contains(row.Event.Recurrence, calevent.ICSRangeRecurrence) || !calendarIdentityComparable(row.Event.Original, master.Event.AllDay)
+	})
+	slices.SortStableFunc(edits, func(a, b CalendarEventRow) int { return cmp.Compare(a.Event.Original.Key(), b.Event.Original.Key()) })
+	previous := master
+	for i, edit := range edits {
+		if edit.Event.Status == SyncStatusCancelled {
+			var err error
+			edit, err = inheritCalendarCancellation(ctx, db, edit, previous)
+			if err != nil {
+				return nil, err
+			}
+		}
+		edits[i], byID[edit.MessageID], previous = edit, edit, edit
+	}
+	return edits, nil
 }
 
 func calendarIdentityBefore(a, b *calrecur.Identity) bool {
