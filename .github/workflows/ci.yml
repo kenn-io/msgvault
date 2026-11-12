@@ -11,7 +11,7 @@ env:
   GOFLAGS: -trimpath
   PG_MOVED_PKGS: ./internal/matrix ./internal/beeper ./internal/rederive ./internal/chatwoot
   API_CONTRACT_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.before) || '' }}
-  API_CONTRACT_MERGE_MAIN: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
+  API_CONTRACT_MERGE_MAIN: ${{ github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main' }}
 
 on:
   workflow_call:
