@@ -67,8 +67,35 @@ func TestEmailCalendarICSRawFormatDoesNotLockDirectory(t *testing.T) {
 	requirements.NoError(st.UpsertMessageRawWithFormatContext(ctx, id, calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:text/calendar"), "ics"))
 }
 
+func TestPlainEmailSingleParticipantDoesNotWaitForDirectory(t *testing.T) {
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("requires PostgreSQL participant directory locks")
+	}
+	source, err := st.GetOrCreateSource("imap", "imap://owner@example.com:143")
+	requirements.NoError(err)
+	blocker, err := st.db.BeginTx(t.Context(), nil)
+	requirements.NoError(err)
+	defer func() { _ = blocker.Rollback() }()
+	requirements.NoError(st.lockParticipantDirectoryMutationTxContext(t.Context(), blocker))
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	receipt := IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 1}
+	_, err = st.PersistIMAPDraftContext(ctx, receipt, []ParticipantPersistData{
+		{EmailAddress: "sender@example.com", Domain: "example.com"},
+	}, func(ids []int64) *MessagePersistData {
+		return &MessagePersistData{
+			Message:      &Message{SourceID: source.ID, SourceMessageID: IMAPDraftSourceMessageID(receipt), MessageType: "email", SenderID: sql.NullInt64{Int64: ids[0], Valid: true}},
+			Conversation: &ConversationPersistData{SourceConversationID: "plain-email"},
+			RawMIME:      []byte("From: sender@example.com\r\nSubject: Hello\r\n\r\nHello"),
+		}
+	})
+	requirements.NoError(err)
+}
+
 func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
+	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	if !st.IsPostgreSQL() {
 		t.Skip("requires PostgreSQL participant directory locks")
@@ -83,18 +110,17 @@ func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {
 	requirements.NoError(err)
 	defer func() { _ = blocker.Rollback() }()
 	requirements.NoError(st.lockParticipantDirectoryMutationTxContext(ctx, blocker))
-	receipt := IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 1}
 	done := make(chan error, 1)
 	go func() {
-		_, persistErr := st.PersistIMAPDraftContext(ctx, receipt, []ParticipantPersistData{
+		_, persistErr := st.persistMessageWithParticipantsTransaction(ctx, attributionLock{Sources: []int64{source.ID}}, nil, []ParticipantPersistData{
 			{EmailAddress: "organizer@example.com", DisplayName: "Organizer", Domain: "example.com"},
 		}, func(ids []int64) *MessagePersistData {
 			return &MessagePersistData{
-				Message:      &Message{SourceID: source.ID, SourceMessageID: IMAPDraftSourceMessageID(receipt), MessageType: "email", SenderID: sql.NullInt64{Int64: ids[0], Valid: true}},
+				Message:      &Message{SourceID: source.ID, SourceMessageID: "single-invite", MessageType: "email", SenderID: sql.NullInt64{Int64: ids[0], Valid: true}},
 				Conversation: &ConversationPersistData{SourceConversationID: "single-invite"},
 				RawMIME:      inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z")),
 			}
-		})
+		}, nil, nil)
 		done <- persistErr
 	}()
 	// Release the blocker and join the writer even when a lock assertion fails.
@@ -112,13 +138,14 @@ func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {
 		var waiting bool
 		return st.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND ? = ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting) == nil && waiting
 	}, 5*time.Second, 10*time.Millisecond, "email writer must reach the directory lock")
-	// The revision row stays available while the writer waits on the directory.
-	_, err = blocker.ExecContext(ctx, `SELECT value FROM archive_metadata WHERE key='participant_display_name_revision' FOR UPDATE NOWAIT`)
-	assertions.NoError(err, "email writer must acquire the directory before the revision row")
+	var count int
+	requirements.NoError(st.db.QueryRowContext(ctx, `SELECT count(*) FROM messages WHERE source_id=? AND source_message_id='single-invite'`, source.ID).Scan(&count))
+	requirements.Equal(1, count, "email must commit before waiting on the directory")
 	requirements.NoError(blocker.Rollback())
 	err = <-done
 	joined = true
 	requirements.NoError(err)
+	requirements.Len(emailEvents(t, st, source.ID), 1)
 }
 
 // emailFrom wraps a calendar part in an email with a plain-text alternative.

@@ -2320,13 +2320,28 @@ func (s *Store) persistMessageWithParticipantsTransaction(
 		}
 	}
 	var messageID int64
+	var calendarRaw []byte
+	wrappedAfterPersist := func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
+		if afterPersist != nil {
+			if err := afterPersist(ctx, tx, data, id); err != nil {
+				return err
+			}
+		}
+		if IsEmailMessageType(data.Message.MessageType) && (data.RawFormat == "" || data.RawFormat == emailLinkageRawFormat) && hasCalendarToken(data.RawMIME) {
+			calendarRaw = data.RawMIME
+		}
+		return nil
+	}
 	err := s.withAttributionTxContext(ctx, lock, func(tx *loggedTx) error {
 		var err error
 		messageID, err = s.persistMessageWithParticipantsTx(
-			ctx, tx, beforeParticipants, participants, build, prepare, afterPersist,
+			ctx, tx, beforeParticipants, participants, build, prepare, wrappedAfterPersist,
 		)
 		return err
 	})
+	if err == nil && calendarRaw != nil {
+		s.deriveEmailCalendarAfterCommit(ctx, messageID, calendarRaw)
+	}
 	return messageID, err
 }
 
@@ -2368,12 +2383,10 @@ func (s *Store) persistMessageWithParticipantsTx(
 			return 0, err
 		}
 	}
-	if len(participants) > 0 {
+	if len(participants) > 1 || hasPhoneParticipant {
 		// Participant merges take the directory lock before rewriting
 		// message rows. Keep the same order when a repair's preflight
-		// callback locks its target message for identity revalidation. Calendar
-		// persistence also takes this lock after build, so take it before
-		// participant writes to preserve that order.
+		// callback locks its target message for identity revalidation.
 		if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
 			return 0, err
 		}
@@ -2465,12 +2478,6 @@ func (s *Store) persistMessageWith(
 	if data == nil || data.Message == nil {
 		return 0, errors.New("persist message requires a message")
 	}
-	calendarCandidate := len(data.RawMIME) > 0 && (data.RawFormat == "" || data.RawFormat == emailLinkageRawFormat) && hasCalendarToken(data.RawMIME)
-	if calendarCandidate && IsEmailMessageType(data.Message.MessageType) {
-		if err := s.lockEmailCalendarParticipantsWith(ctx, tx); err != nil {
-			return 0, err
-		}
-	}
 	q := boundQuerier{ctx: ctx, q: tx}
 	message := data.Message
 	if data.Conversation != nil {
@@ -2561,11 +2568,6 @@ func (s *Store) persistMessageWith(
 	}
 	if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 		return 0, err
-	}
-	if calendarCandidate {
-		if err := s.refreshEmailCalendarEventsWith(ctx, tx, messageID, data.RawMIME); err != nil {
-			return 0, err
-		}
 	}
 
 	if !data.PreserveLabels {
@@ -6274,12 +6276,6 @@ func (s *Store) UpsertMessageRawWithFormat(messageID int64, rawData []byte, form
 // UpsertMessageRawWithFormatContext honors cancellation during UpsertMessageRawWithFormat.
 func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID int64, rawData []byte, format string) error {
 	write := func(tx *loggedTx) error {
-		calendarCandidate := len(rawData) > 0 && format == emailLinkageRawFormat && hasCalendarToken(rawData)
-		if calendarCandidate {
-			if err := s.lockEmailCalendarParticipantsWith(ctx, tx); err != nil {
-				return err
-			}
-		}
 		if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
 			return err
 		}
@@ -6317,11 +6313,6 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 		if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 			return err
 		}
-		if calendarCandidate {
-			if err := s.refreshEmailCalendarEventsWith(ctx, tx, messageID, rawData); err != nil {
-				return err
-			}
-		}
 		switch {
 		case format == "mime":
 			return s.refreshAccountAttributionAfterWriteTx(ctx, tx, messageID, deliveryFromMIME(rawData))
@@ -6340,7 +6331,11 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 			return err
 		}
 	}
-	return s.withMessageAttributionTxContext(ctx, messageID, write)
+	err := s.withMessageAttributionTxContext(ctx, messageID, write)
+	if err == nil && format == emailLinkageRawFormat && hasCalendarToken(rawData) {
+		s.deriveEmailCalendarAfterCommit(ctx, messageID, rawData)
+	}
+	return err
 }
 
 // errRawNeedsAttributionLock rolls back a non-MIME raw write that found MIME

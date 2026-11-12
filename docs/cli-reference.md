@@ -2164,6 +2164,7 @@ An invitation, its updates, and its cancellation share one event. Every
 contributing email keeps its full MIME and attachments, and the event survives
 deletion of any of them.
 Invalid calendar parts leave the email intact and log a warning with its message ID.
+If event extraction fails after the email is archived, run `repair-derived` to retry it.
 
 An email and its event count as two archive records in account listings and
 statistics. Provider verification counts the email once. Hiding the
