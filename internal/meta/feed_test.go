@@ -256,3 +256,65 @@ func TestPollingResumeAdvancesWithSmallBudget(t *testing.T) {
 		message(t, st, src.ID, strconv.Itoa(400+i))
 	}
 }
+
+// A paused run can hold a saved posts page beyond page one without the cursor
+// that read it, as checkpoints saved by earlier releases do. Re-reading lands
+// on the wrong page, so the run starts the phase over instead of skipping the
+// saved posts. With the cursor, the run resumes in place.
+func TestPollingResumeFindsSavedPostsPage(t *testing.T) {
+	for _, withCursor := range []bool{true, false} {
+		name := "checkpoint without posts_after"
+		if withCursor {
+			name = "checkpoint with posts_after"
+		}
+		t.Run(name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, f, imp, src := setupImport(t)
+			ids := []string{"100_200", "100_300", "100_400", "100_500", "100_600", "100_700"}
+			for _, id := range ids[1:] {
+				f.posts = append(f.posts, Object{ID: id, Message: "Example post", From: &Actor{ID: "100", Name: "Example Page"}})
+			}
+			f.comments["100_500"] = []Object{*comment("100_501", "100_500", "Queued post comment")}
+			// Page check, two post pages and the comment pages of 100_200 and
+			// 100_300; 100_400 is archived and 100_500 waits on the saved page.
+			sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 5})
+			require.NoError(err)
+			require.True(sum.Partial)
+			var postsAfter, after sql.NullString
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT json_extract(cursor_before, '$.phases.posts.posts_after'), json_extract(cursor_before, '$.phases.posts.after')
+				FROM sync_runs WHERE source_id = ? AND sync_type = ? ORDER BY id DESC LIMIT 1`, src.ID, SourceType).Scan(&postsAfter, &after))
+			require.Equal("2", postsAfter.String)
+			require.Equal("4", after.String)
+			queued, err := st.MessageExistsBatchContext(t.Context(), src.ID, []string{"100_500"})
+			require.NoError(err)
+			require.Empty(queued, "100_500 is queued, not archived")
+			if !withCursor {
+				_, err = st.DB().ExecContext(t.Context(), `UPDATE sync_runs SET cursor_before = json_remove(cursor_before, '$.phases.posts.posts_after')
+					WHERE source_id = ? AND sync_type = ?`, src.ID, SourceType)
+				require.NoError(err)
+			}
+
+			before := len(f.paths)
+			sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.NoError(err)
+			assert.False(sum.Partial)
+			for _, id := range append(ids, "100_501") {
+				message(t, st, src.ID, id)
+			}
+			if withCursor {
+				// The saved page at cursor 2, then the last page at cursor 4.
+				assert.Equal(2, countPaths(f.paths[before:], "/v26.0/100/posts"), "the run resumes in place")
+			}
+		})
+	}
+}
+
+func countPaths(paths []string, want string) int {
+	n := 0
+	for _, path := range paths {
+		if path == want {
+			n++
+		}
+	}
+	return n
+}
