@@ -132,7 +132,7 @@ func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*t
 func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 	_, collections := opts.Engine.(query.CollectionScopeLister)
 	return catalogCapabilities{
-		collections:     collections && opts.CollectionScopesAvailable,
+		collections:     collections && opts.CollectionScopesAvailable && !opts.DelegatedOnly,
 		sqlQuery:        opts.ArchiveSQLQuerier != nil,
 		semanticSearch:  opts.HybridEngine != nil || opts.HybridSearcher != nil,
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
@@ -223,6 +223,9 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 	available := definitions[:0]
 	for _, definition := range definitions {
 		if definition.availability(capabilities) {
+			if !capabilities.collections && definition.inputSchema != nil {
+				delete(definition.inputSchema.Properties, "collection")
+			}
 			available = append(available, definition)
 		}
 	}

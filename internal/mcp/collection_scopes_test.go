@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -30,7 +31,7 @@ func TestCollectionScopesFilterRealMessageReads(t *testing.T) {
 	require.NoError(t, err)
 	e := &collectionTestEngine{Engine: query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()), collections: []query.CollectionScope{{Name: "one", SourceIDs: []int64{f.Source.ID}}, {Name: "empty", SourceIDs: []int64{}}}}
 	h := newTestHandlers(e)
-	h.collectionScopesAvailable = true
+	h.collectionScopes = true
 	for _, tc := range []struct {
 		name string
 		want []int64
@@ -58,18 +59,45 @@ func TestCollectionScopesFilterRealMessageReads(t *testing.T) {
 
 func TestCollectionCatalogAvailability(t *testing.T) {
 	e := &collectionTestEngine{Engine: query.NewSQLiteEngine(nil), collections: []query.CollectionScope{{Name: "empty", SourceIDs: []int64{}}}}
-	tools := rawListTools(t, ServeOptions{Engine: e, CollectionScopesAvailable: true}, false)
-	assert.Contains(t, toolsByName(t, tools), ToolListMessageCollections)
-	tools = rawListTools(t, ServeOptions{}, false)
-	assert.NotContains(t, toolsByName(t, tools), ToolListMessageCollections)
-	tools = rawListTools(t, ServeOptions{Engine: e, CollectionScopesAvailable: true, DelegatedOnly: true}, false)
-	assert.NotContains(t, toolsByName(t, tools), ToolListMessageCollections)
+	searcher := hybridSearcherFunc(func(context.Context, HybridSearchRequest) (*HybridSearchResult, error) { return nil, nil })
+	for _, tc := range []struct {
+		name      string
+		opts      ServeOptions
+		available bool
+		delegated bool
+	}{
+		{"owner", ServeOptions{Engine: e, CollectionScopesAvailable: true, HybridSearcher: searcher}, true, false},
+		{"older daemon", ServeOptions{Engine: e, HybridSearcher: searcher}, false, false},
+		{"no lister", ServeOptions{Engine: &querytest.MockEngine{}, CollectionScopesAvailable: true, HybridSearcher: searcher}, false, false},
+		{"delegated", ServeOptions{Engine: e, CollectionScopesAvailable: true, HybridSearcher: searcher, DelegatedOnly: true, GrantPermissions: []string{string(agentgrant.PermissionSearchRead), string(agentgrant.PermissionMessageRead)}}, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tools := toolsByName(t, rawListTools(t, tc.opts, false))
+			if tc.available {
+				assert.Contains(t, tools, ToolListMessageCollections)
+			} else {
+				assert.NotContains(t, tools, ToolListMessageCollections)
+			}
+			names := []string{ToolAggregate, ToolGetMessage, ToolListMessages, ToolSearchMessageBodies, ToolSearchMessages, ToolSearchMetadata}
+			if !tc.delegated {
+				names = append(names, ToolSemanticSearchMessages)
+			}
+			for _, name := range names {
+				require.Contains(t, tools, name)
+				if tc.available {
+					assert.Contains(t, toolPropertyNames(t, tools[name]), "collection", name)
+				} else {
+					assert.NotContains(t, toolPropertyNames(t, tools[name]), "collection", name)
+				}
+			}
+		})
+	}
 }
 
 func TestSemanticCollectionUsesOneResolvedSource(t *testing.T) {
 	e := &collectionTestEngine{Engine: &querytest.MockEngine{}, collections: []query.CollectionScope{{Name: "one", SourceIDs: []int64{42}}, {Name: "empty", SourceIDs: []int64{}}, {Name: "many", SourceIDs: []int64{42, 43}}}}
 	h := newTestHandlers(e)
-	h.collectionScopesAvailable = true
+	h.collectionScopes = true
 	calls := 0
 	h.hybridSearcher = hybridSearcherFunc(func(_ context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
 		calls++
