@@ -85,11 +85,6 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 		return deferRoom("beeper_roster_repair_failed", store.SyncRunItemStatusError, cause)
 	}
 
-	// Like chat discovery's probe, clear the route's membership proof before the
-	// request and record a fetch failure only if the request actually fails.
-	if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, chatID); err != nil {
-		return failed(fmt.Errorf("invalidate route before roster repair: %w", err))
-	}
 	// The probe timeout bounds only the provider request. Roster writes for a
 	// large room can outlast it, so they share the run's budget instead.
 	requestCtx, cancelRequest := opts.requestContext(ctx)
@@ -100,6 +95,13 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 	cancelProbe()
 	if err := ctx.Err(); err != nil {
 		return false, err
+	}
+	work := cs.RosterWork
+	if errors.Is(opts.budgetError(ctx, fetchErr), errBeeperBudgetExpired) && work != nil && work.Verified && (work.Phase == "matching" || work.Phase == "matching_retry") {
+		return true, nil
+	}
+	if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, chatID); err != nil {
+		return failed(fmt.Errorf("invalidate route before roster repair: %w", err))
 	}
 	if errors.Is(fetchErr, ErrNotFound) {
 		// A chat Beeper no longer has keeps its invalidated route proof without a

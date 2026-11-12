@@ -2,6 +2,7 @@ package beeper
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -521,13 +522,18 @@ func TestQuietRosterBudgetStopKeepsVerifiedMembershipResolved(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
 	chat := budgetTestChat("!quiet-verified:example.test", 1, time.Now().Add(-48*time.Hour))
-	chat.Type = "group"
-	chat.Participants = append(chat.Participants,
-		map[string]any{"id": "@signal_q1:beeper.local", "fullName": "Quinn One"},
-		map[string]any{"id": "@signal_q2:beeper.local", "fullName": "Quinn Two"})
 	f.addChat(chat)
 	imp, st := newHandlerTestImporter(t, f)
 	t.Cleanup(func() { require.NoError(st.Close()) })
+	provider := f.handler()
+	imp.client.http.Transport = handlerTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/accounts/signal" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"accountID":"signal","bridge":{"type":"signal"},"status":"connected"}`))
+			return
+		}
+		provider(w, r)
+	}))
 	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
 	require.NoError(err)
 	f.mu.Lock()
@@ -541,7 +547,7 @@ func TestQuietRosterBudgetStopKeepsVerifiedMembershipResolved(t *testing.T) {
 	require.NoError(err)
 	cs := &ChatState{Done: true}
 	stopped, err := imp.repairQuietRoster(t.Context(), runID, sum.SourceID, chat.ID, ImportOptions{
-		AccountID: "signal", NoMedia: true,
+		AccountID: "signal", NoMedia: true, routeAccount: &Account{AccountID: "signal", Bridge: &AccountBridge{Type: "signal"}, Status: "connected"},
 		ShouldStop: func() bool {
 			return cs.RosterWork != nil && cs.RosterWork.Phase == "matching" && cs.RosterWork.Next >= 1
 		},
@@ -555,6 +561,46 @@ func TestQuietRosterBudgetStopKeepsVerifiedMembershipResolved(t *testing.T) {
 	unresolved, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 	require.NoError(err)
 	assert.NotContains(unresolved, chat.ID, "verified membership stays resolved while quiet matching is deferred")
+	peer := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
+	person, _, err := st.CreatePersonFromParticipant(peer)
+	require.NoError(err)
+	query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
+	routes, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
+	require.NoError(err)
+	require.Len(routes.Routes.Items, 1)
+	require.Equal("archive_verified", routes.Routes.Items[0].Status)
+
+	transport := imp.client.http.Transport
+	entered := false
+	imp.client.http.Transport = handlerTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		entered = true
+		<-r.Context().Done()
+	}))
+	stopped, err = imp.repairQuietRoster(t.Context(), runID, sum.SourceID, chat.ID, ImportOptions{
+		AccountID: "signal", NoMedia: true, Scheduled: true, StopAt: time.Now().Add(100 * time.Millisecond), //nolint:kennlint // deadlinetest: the blocked request must exhaust the scheduled budget
+	}, cs, time.Now(), &ImportSummary{})
+	require.NoError(err)
+	require.True(entered)
+	require.True(stopped)
+	assert.Empty(cs.RosterRetryAfter, "budget expiry must not defer matching for a day")
+	assert.True(cs.RosterWork.Verified)
+	assert.Equal("matching", cs.RosterWork.Phase)
+	assert.Equal(1, cs.RosterWork.Next)
+	unresolved, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+	require.NoError(err)
+	assert.NotContains(unresolved, chat.ID)
+	routes, err = st.GetPersonMessagingRoutesContext(t.Context(), query)
+	require.NoError(err)
+	require.Len(routes.Routes.Items, 1)
+	assert.Equal("archive_verified", routes.Routes.Items[0].Status, "a matching-only yield must preserve verified route evidence")
+
+	imp.client.http.Transport = transport
+	imp = NewImporter(st, imp.client)
+	state := NewSyncState()
+	state.Chats[chat.ID] = cs
+	_, err = imp.repairQuietRosters(t.Context(), runID, sum.SourceID, ImportOptions{AccountID: "signal", NoMedia: true, routeAccount: &Account{AccountID: "signal", Bridge: &AccountBridge{Type: "signal"}, Status: "connected"}}, state, nil, &ImportSummary{})
+	require.NoError(err)
+	assert.Equal("done", cs.RosterWork.Phase, "the next quiet repair must resume matching")
 	require.NoError(st.CompleteSync(runID, ""))
 }
 
