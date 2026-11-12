@@ -4416,6 +4416,18 @@ CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_events_insert
 AFTER INSERT ON calendar_events FOR EACH ROW BEGIN
     INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_occurrences', 0);
 END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_sources_update
+AFTER UPDATE OF sync_config ON sources FOR EACH ROW
+WHEN OLD.sync_config IS NOT NEW.sync_config BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_occurrences', 0);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_source_deletion_update
+AFTER UPDATE OF deleted_from_source_at ON messages FOR EACH ROW
+WHEN OLD.deleted_from_source_at IS NOT NEW.deleted_from_source_at AND
+    (lower(OLD.message_type) IN ('calendar_event', 'meeting_transcript', 'meeting_note', 'meeting_minutes') OR
+     lower(NEW.message_type) IN ('calendar_event', 'meeting_transcript', 'meeting_note', 'meeting_minutes')) BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('message_facts', NEW.id);
+END;
 CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_events_update
 AFTER UPDATE ON calendar_events FOR EACH ROW BEGIN
     INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_occurrences', 0);

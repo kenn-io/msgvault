@@ -439,3 +439,82 @@ func TestMeetingCountsAllDayRefresh(t *testing.T) {
 		})
 	}
 }
+
+func TestMeetingCountsDeletedAndSourceScope(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		deleted bool
+	}{
+		{"deleted_event", true},
+		{"source_scope", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			dbPath, analytics := filepath.Join(dir, "archive.db"), filepath.Join(dir, "analytics")
+			st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+			source, err := st.GetOrCreateSource("gcal", "owner@example.com")
+			require.NoError(t, err)
+			require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"calendar_id":"owner@example.com","time_zone":"UTC"}`))
+			require.NoError(t, st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
+			owner, err := st.EnsureParticipant("owner@example.com", "Owner", "example.com")
+			require.NoError(t, err)
+			person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
+			require.NoError(t, err)
+			at := time.Date(2024, 1, 2, 10, 0, 0, 0, time.UTC)
+			makeMessage := func(key, typ, format, raw string) int64 {
+				t.Helper()
+				id, err := st.PersistMessage(&store.MessagePersistData{
+					Message:      &store.Message{SourceID: source.ID, SourceMessageID: key, MessageType: typ, SentAt: sql.NullTime{Time: at, Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}},
+					Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"},
+					RawMIME:      []byte(raw), RawFormat: format, Metadata: &sql.NullString{String: `{"calendar_id":"owner@example.com"}`, Valid: true},
+				})
+				require.NoError(t, err)
+				require.NoError(t, st.ReplaceMessageRecipients(id, "from", []int64{owner}, []string{""}))
+				require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
+				return id
+			}
+			event := makeMessage("event", "calendar_event", "gcal_json", `{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"}}`)
+			if tc.deleted {
+				_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`, event)
+				require.NoError(t, err)
+			} else {
+				makeMessage("note", "meeting_transcript", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"event"},"transcript":[{"text":"Notes"}]}`)
+			}
+			_, err = buildCache(t.Context(), dbPath, analytics, true)
+			require.NoError(t, err)
+			count := func() int64 {
+				t.Helper()
+				engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, engine.Close()) }()
+				detail, err := engine.GetPerson(t.Context(), person, query.Context{}, nil)
+				require.NoError(t, err)
+				require.NotNil(t, detail)
+				timeline, err := engine.RelationshipTimeline(t.Context(), query.RelationshipTimelineRequest{CanonicalID: person, Timezone: "UTC"})
+				require.NoError(t, err)
+				for _, row := range timeline.Rows {
+					assert.Greater(t, row.OccurredAt.Year(), 1)
+				}
+				return detail.MeetingCount
+			}
+			if tc.deleted {
+				assert.Zero(t, count())
+				_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET deleted_from_source_at=NULL WHERE id=?`, event)
+				require.NoError(t, err)
+				assert.True(t, cacheNeedsBuild(dbPath, analytics).NeedsBuild)
+				_, err = buildCache(t.Context(), dbPath, analytics, false)
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, count())
+				return
+			}
+			assert.EqualValues(t, 1, count())
+			_, err = st.DB().ExecContext(t.Context(), `UPDATE sources SET sync_config='{"calendar_id":"other@example.com","time_zone":"UTC"}' WHERE id=?`, source.ID)
+			require.NoError(t, err)
+			assert.True(t, cacheNeedsBuild(dbPath, analytics).NeedsBuild)
+			result, err := buildCache(t.Context(), dbPath, analytics, false)
+			require.NoError(t, err)
+			assert.False(t, result.Skipped)
+			assert.EqualValues(t, 2, count())
+		})
+	}
+}

@@ -318,3 +318,15 @@ func TestMeetingOccurrenceCountsReportsBusyYear(t *testing.T) {
 	assert.Equal(t, []int{2027}, warning.TooBroadYears)
 	assert.Zero(t, warning.SkippedChoices)
 }
+
+func TestMeetingOccurrenceCountsDeletedFromSource(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "deleted", `{"id":"deleted","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"}}`)
+	_, err := st.db.ExecContext(t.Context(), `UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`, event)
+	require.NoError(t, err)
+	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.False(t, rows[0].Counted)
+	assert.Equal(t, time.Date(2024, 1, 2, 10, 0, 0, 0, time.UTC), rows[0].OccurredAt)
+}

@@ -290,9 +290,9 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 				ownerDeclined = ownerDeclined || owners[email]
 				declined[email] = true
 			}
-			eligible = eligible || !ownerDeclined
+			eligible = eligible || !event.DeletedFromSource && !ownerDeclined
 		}
-		if len(unit.events) > 0 && !unit.events[0].DeletedFromSource {
+		if len(unit.events) > 0 && (!unit.events[0].DeletedFromSource || len(unit.notes) == 0) {
 			at = unit.events[0].Start
 			if unit.events[0].AllDay {
 				startDate = unit.events[0].StartDate
@@ -318,7 +318,7 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 			}
 			for _, id := range []int64{event.MessageID, event.SeriesMessageID} {
 				if id != 0 {
-					result = append(result, MeetingOccurrence{id, key, at, startDate, !cancelled && !ownerDeclined, declinedEmails})
+					result = append(result, MeetingOccurrence{id, key, at, startDate, !cancelled && !event.DeletedFromSource && !ownerDeclined, declinedEmails})
 				}
 			}
 		}

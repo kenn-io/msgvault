@@ -195,6 +195,8 @@ func TestMeetingOccurrenceJournalUpgradesSchema42(t *testing.T) {
 	second, err := s.UpsertMessage(f.NewMessage().WithSourceMessageID("note").Build())
 	require.NoError(t, err)
 	_, err = s.DB().ExecContext(ctx, `DROP TRIGGER trg_cache_meeting_events_insert;
+		DROP TRIGGER trg_cache_meeting_sources_update;
+		DROP TRIGGER trg_cache_meeting_source_deletion_update;
 		DROP TRIGGER trg_cache_meeting_events_update;
 		DROP TRIGGER trg_cache_meeting_events_delete;
 		DROP TRIGGER trg_cache_meeting_details_update;
@@ -206,8 +208,12 @@ func TestMeetingOccurrenceJournalUpgradesSchema42(t *testing.T) {
 	version, err := s.SchemaVersionContext(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, store.SchemaVersion, version)
+	_, err = s.DB().ExecContext(ctx, `UPDATE messages SET message_type='calendar_event' WHERE id=?`, first)
+	require.NoError(t, err)
 	var baseline int64
 	require.NoError(t, s.DB().QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&baseline))
+	_, err = s.DB().ExecContext(ctx, `UPDATE sources SET sync_config='{"calendar_id":"owner@example.com"}' WHERE id=?`, f.Source.ID)
+	require.NoError(t, err)
 	_, err = s.DB().ExecContext(ctx, `INSERT INTO calendar_events (message_id, projection_version, content_hash) VALUES (?, 1, 'first')`, first)
 	require.NoError(t, err)
 	_, err = s.DB().ExecContext(ctx, `UPDATE calendar_events SET content_hash='second' WHERE message_id=?`, first)
@@ -226,5 +232,11 @@ func TestMeetingOccurrenceJournalUpgradesSchema42(t *testing.T) {
 	require.NoError(t, err)
 	var changes int
 	require.NoError(t, s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset='meeting_occurrences' AND message_id=0`, baseline).Scan(&changes))
-	assert.Equal(t, 7, changes)
+	assert.Equal(t, 8, changes)
+	_, err = s.DB().ExecContext(ctx, `UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`, first)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `UPDATE messages SET deleted_from_source_at=NULL WHERE id=?`, first)
+	require.NoError(t, err)
+	require.NoError(t, s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset='message_facts' AND message_id=?`, baseline, first).Scan(&changes))
+	assert.Equal(t, 2, changes)
 }
