@@ -21,7 +21,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gofrs/flock"
-	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
+	"github.com/mattn/go-sqlite3"
 	"github.com/spf13/cobra"
 	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/consolewindow"
@@ -1396,6 +1396,10 @@ func buildCacheLockedAttempt(
 			afterMessageIDs[dataset] = 0
 		}
 	}
+	meetingEvidence, err := store.LoadMeetingEvidenceContext(ctx, sourceSnapshot, cacheWatermark)
+	if err != nil {
+		return nil, fmt.Errorf("load meeting evidence: %w", err)
+	}
 	if err := sourceSnapshot.Prepare(ctx, maxID, afterMessageIDs); err != nil {
 		return nil, err
 	}
@@ -1592,7 +1596,7 @@ func buildCacheLockedAttempt(
 		delete(publicationPlan.Append, identityindex.DatasetActivity)
 		publicationPlan.Replace[identityindex.DatasetActivity] = true
 	}
-	nextMeetingAt, err := stageMeetingOccurrences(ctx, exportDB, dbPath, staging.root, analyticsDir, cacheWatermark)
+	nextMeetingAt, err := stageMeetingOccurrences(ctx, exportDB, meetingEvidence, staging.root, analyticsDir)
 	if err != nil {
 		return nil, err
 	}
@@ -2016,7 +2020,31 @@ func (s *cacheSourceSnapshot) QueryRowContext(ctx context.Context, query string,
 		duckQuery += ", params=row(" + placeholders + ")"
 	}
 	duckQuery += ")"
-	return s.duckTx.QueryRowContext(ctx, duckQuery, args...)
+	return s.duckTx.QueryRowContext(ctx, duckQuery, sqliteSnapshotArgs(args)...)
+}
+
+func (s *cacheSourceSnapshot) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if s.sqliteTx != nil {
+		return s.sqliteTx.QueryContext(ctx, query, args...)
+	}
+	escapedQuery := strings.ReplaceAll(query, "'", "''")
+	duckQuery := fmt.Sprintf("SELECT * FROM sqlite_query('sqlite_db', '%s'", escapedQuery)
+	if len(args) > 0 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")
+		duckQuery += ", params=row(" + placeholders + ")"
+	}
+	duckQuery += ")"
+	return s.duckTx.QueryContext(ctx, duckQuery, sqliteSnapshotArgs(args)...)
+}
+
+func sqliteSnapshotArgs(args []any) []any {
+	converted := append([]any(nil), args...)
+	for i, arg := range converted {
+		if at, ok := arg.(time.Time); ok {
+			converted[i] = at.Format(sqlite3.SQLiteTimestampFormats[0])
+		}
+	}
+	return converted
 }
 
 func (s *cacheSourceSnapshot) DuckDB() sqlRunner {

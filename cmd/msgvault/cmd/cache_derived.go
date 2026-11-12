@@ -213,6 +213,11 @@ func refreshDerivedDatasetsOnly(
 			relatedReplacements[dataset] = true
 		}
 	}
+	effectiveAt := derivedRefreshNow().UTC().Truncate(time.Second)
+	meetingEvidence, err := store.LoadMeetingEvidenceContext(ctx, sourceSnapshot, effectiveAt)
+	if err != nil {
+		return nil, fmt.Errorf("load meeting evidence: %w", err)
+	}
 	if err := sourceSnapshot.PrepareDatasets(ctx, state.LastMessageID, datasets...); err != nil {
 		return nil, err
 	}
@@ -356,8 +361,7 @@ func refreshDerivedDatasetsOnly(
 		}
 	}
 
-	effectiveAt := derivedRefreshNow().UTC().Truncate(time.Second)
-	nextMeetingAt, err := stageMeetingOccurrences(ctx, exportDB, dbPath, staging.root, analyticsDir, effectiveAt)
+	nextMeetingAt, err := stageMeetingOccurrences(ctx, exportDB, meetingEvidence, staging.root, analyticsDir)
 	if err != nil {
 		return nil, err
 	}

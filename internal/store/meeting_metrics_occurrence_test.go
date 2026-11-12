@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/personscope"
+	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 func TestMeetingOccurrenceEvidence(t *testing.T) {
@@ -129,6 +130,114 @@ func TestMeetingMetricsIgnoresPendingDuration(t *testing.T) {
 	assert.InDelta(t, 3600, metrics.Totals.TotalKnownSeconds, 0)
 }
 
+func TestMeetingMetricsEditedOccurrenceDuration(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, _ = calendarFixture(t, st, "duration-series", `{"id":"series","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+	_, _ = calendarFixture(t, st, "duration-edit", `{"id":"moved","recurringEventId":"series","originalStartTime":{"dateTime":"2024-01-09T10:00:00Z"},"start":{"dateTime":"2024-01-09T12:00:00Z"},"end":{"dateTime":"2024-01-09T14:00:00Z"}}`)
+	metrics, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, metrics.Totals.MeetingCount)
+	assert.InDelta(t, 10800, metrics.Totals.TotalKnownSeconds, 0)
+	for _, tc := range []struct {
+		after, before time.Time
+		seconds       float64
+	}{
+		{time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC), time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC), 3600},
+		{time.Date(2024, 1, 9, 0, 0, 0, 0, time.UTC), time.Date(2024, 1, 10, 0, 0, 0, 0, time.UTC), 7200},
+	} {
+		metrics, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{After: &tc.after, Before: &tc.before})
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, metrics.Totals.MeetingCount)
+		assert.InDelta(t, tc.seconds, metrics.Totals.TotalKnownSeconds, 0)
+	}
+}
+
+func TestMeetingMetricsScopedCalendarCopies(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	for _, tc := range []struct{ owner, start, end string }{
+		{"first@example.com", "2024-01-02T10:00:00Z", "2024-01-02T11:00:00Z"},
+		{"second@example.com", "2024-01-03T12:00:00Z", "2024-01-03T14:00:00Z"},
+	} {
+		_, _ = calendarFixture(t, st, "master-"+tc.owner, `{"id":"series","iCalUID":"shared@example.org","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=1"]}`, tc.owner)
+		data, _ := calendarFixture(t, st, "edit-"+tc.owner, fmt.Sprintf(`{"id":"edit","recurringEventId":"series","iCalUID":"shared@example.org","originalStartTime":{"dateTime":"2024-01-02T10:00:00Z"},"start":{"dateTime":%q},"end":{"dateTime":%q}}`, tc.start, tc.end), tc.owner)
+		metrics, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{SourceIDs: []int64{data.Message.SourceID}})
+		require.NoError(t, err)
+		require.EqualValues(t, 1, metrics.Totals.MeetingCount)
+		start, err := time.Parse(time.RFC3339, tc.start)
+		require.NoError(t, err)
+		end, err := time.Parse(time.RFC3339, tc.end)
+		require.NoError(t, err)
+		assert.InDelta(t, end.Sub(start).Seconds(), metrics.Totals.TotalKnownSeconds, 0)
+		require.NotNil(t, metrics.FirstMeetingAt)
+		assert.True(t, start.Equal(*metrics.FirstMeetingAt))
+	}
+}
+
+func TestMeetingMetricsSelectedNoteUsesEventDuration(t *testing.T) {
+	for _, raw := range []string{`{"transcript":"Notes"}`, `{}`} {
+		t.Run(raw, func(t *testing.T) {
+			st := newRFC822IDBackfillBackendStore(t)
+			eventData, event := calendarFixture(t, st, "selected-event", `{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"}}`)
+			noteData, note := projectionFixture(t, st, "selected-note", "meeting_json", raw)
+			_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+			require.NoError(t, err)
+			ids := []int64{note}
+			metrics, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{MessageIDs: &ids})
+			require.NoError(t, err)
+			assert.EqualValues(t, 1, metrics.Totals.MeetingCount)
+			assert.InDelta(t, 3600, metrics.Totals.TotalKnownSeconds, 0)
+			calendarScope, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{MessageIDs: &ids, SourceIDs: []int64{eventData.Message.SourceID}})
+			require.NoError(t, err)
+			assert.EqualValues(t, 1, calendarScope.Totals.MeetingCount)
+			assert.InDelta(t, 3600, calendarScope.Totals.TotalKnownSeconds, 0)
+			noteScope, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{MessageIDs: &ids, SourceIDs: []int64{noteData.Message.SourceID}})
+			require.NoError(t, err)
+			if raw == `{}` {
+				assert.Zero(t, noteScope.Totals.MeetingCount)
+			} else {
+				assert.EqualValues(t, 1, noteScope.Totals.MeetingCount)
+				assert.EqualValues(t, 1, noteScope.Totals.UnknownDurationCount)
+			}
+			authorized := sourcescope.WithSourceIDs(t.Context(), []int64{noteData.Message.SourceID})
+			limited, err := st.GetMeetingMetricsContext(authorized, MeetingQueryScope{MessageIDs: &ids})
+			require.NoError(t, err)
+			assert.Equal(t, noteScope.Totals, limited.Totals)
+		})
+	}
+}
+
+func TestMeetingOccurrenceNoteOnlyMatching(t *testing.T) {
+	for _, tc := range []struct {
+		name, format, raw string
+		series            bool
+		want              int
+	}{
+		{"google-no-calendar", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series"},"transcript":[{"text":"Notes"}]}`, false, 2},
+		{"google-series", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series"},"transcript":[{"text":"Notes"}]}`, true, 4},
+		{"uid-and-time", "twenty_json", `{"schema_version":1,"recording":{"transcript":[{"words":[{"text":"Notes"}]}]},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2024-01-02T10:00:00Z"}}`, false, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newRFC822IDBackfillBackendStore(t)
+			if tc.series {
+				_, _ = calendarFixture(t, st, "series", `{"id":"series","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+			}
+			_, first := projectionFixture(t, st, "first-note", tc.format, tc.raw)
+			_, second := projectionFixture(t, st, "second-note", tc.format, tc.raw)
+			record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: first})
+			require.NoError(t, err)
+			if tc.format == "granola_json" {
+				assert.Equal(t, []int64{first}, record.MessageIDs)
+				assert.Empty(t, record.Links)
+			} else {
+				assert.ElementsMatch(t, []int64{first, second}, record.MessageIDs)
+			}
+			metrics, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{})
+			require.NoError(t, err)
+			assert.EqualValues(t, tc.want, metrics.Totals.MeetingCount)
+		})
+	}
+}
+
 func TestMeetingMetricsExcludeDeclinedPerson(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	_, event := calendarFixture(t, st, "declined", `{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"attendees":[{"email":"person@example.com","responseStatus":"declined"}]}`)
@@ -245,7 +354,8 @@ func TestMeetingMetricsNoteLinkedToTwoDates(t *testing.T) {
 	metrics, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{MessageIDs: &ids})
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, metrics.Totals.MeetingCount)
-	assert.EqualValues(t, 2, metrics.Totals.UnknownDurationCount)
+	assert.EqualValues(t, 2, metrics.Totals.KnownDurationCount)
+	assert.InDelta(t, 7200, metrics.Totals.TotalKnownSeconds, 0)
 }
 
 func TestMeetingMetricsAllDayUsesCivilMonth(t *testing.T) {

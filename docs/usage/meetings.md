@@ -63,7 +63,9 @@ cache build logs a warning naming those messages.
 Meeting metrics count each selected occurrence once. For duration, they use
 the provider's duration first, then the calendar schedule, then the transcript
 span. A source or person filter can include calendar-only meetings; selecting
-specific notes includes the occurrences those notes identify.
+specific notes includes the occurrences those notes identify. An edited
+recurring event uses the schedule for that occurrence. Source and participant
+filters still apply to the evidence used for its count and duration.
 
 Use `msgvault meetings links <note-id>` to see the calendar copies and notes
 that share an exact occurrence. You can also pass `msg:<id>` or an event `ref`

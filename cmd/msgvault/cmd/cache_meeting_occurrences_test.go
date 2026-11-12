@@ -254,6 +254,92 @@ func TestMeetingCountsRefresh(t *testing.T) {
 	assert.False(t, cacheNeedsBuild(dbPath, analytics).NeedsBuild)
 }
 
+func TestMeetingCountsPinnedSnapshot(t *testing.T) {
+	for _, csv := range []bool{false, true} {
+		for _, change := range []string{"link", "cancel"} {
+			t.Run(fmt.Sprintf("csv-%t/%s", csv, change), func(t *testing.T) {
+				if csv {
+					t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+				}
+				dir := t.TempDir()
+				dbPath, analytics := filepath.Join(dir, "archive.db"), filepath.Join(dir, "analytics")
+				st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+				calendar, err := st.GetOrCreateSource("gcal", "owner@example.com")
+				require.NoError(t, err)
+				notes, err := st.GetOrCreateSource("meeting_import", "owner@example.com")
+				require.NoError(t, err)
+				require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), calendar.ID, `{"calendar_id":"owner@example.com"}`))
+				require.NoError(t, st.AddAccountIdentity(calendar.ID, "owner@example.com", "manual"))
+				require.NoError(t, st.AddAccountIdentity(notes.ID, "owner@example.com", "manual"))
+				owner, err := st.EnsureParticipant("owner@example.com", "Owner", "example.com")
+				require.NoError(t, err)
+				person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
+				require.NoError(t, err)
+				start := time.Date(2024, 1, 2, 10, 0, 0, 0, time.UTC)
+				persist := func(source int64, key, typ, format, raw string) int64 {
+					id, err := st.PersistMessage(&store.MessagePersistData{
+						Message:      &store.Message{SourceID: source, SourceMessageID: key, MessageType: typ, SentAt: sql.NullTime{Time: start, Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}},
+						Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"}, RawMIME: []byte(raw), RawFormat: format,
+					})
+					require.NoError(t, err)
+					require.NoError(t, st.ReplaceMessageRecipients(id, "from", []int64{owner}, []string{""}))
+					require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
+					return id
+				}
+				event := persist(calendar.ID, "event", "calendar_event", "gcal_json", `{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"}}`)
+				var note int64
+				if change == "link" {
+					note = persist(notes.ID, "note", "meeting_transcript", "meeting_json", `{"transcript":"Notes"}`)
+				}
+				var pinned, written int64
+				buildCacheBeforeMessagesExportHook = func() error {
+					if err := st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(MAX(seq),0) FROM cache_related_change_journal`).Scan(&pinned); err != nil {
+						return err
+					}
+					if change == "link" {
+						_, err = st.DecideMeetingLinkContext(t.Context(), store.MeetingLinkRef{Kind: "evt", MessageID: event}, store.MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+					} else {
+						_, err = st.DB().ExecContext(t.Context(), `UPDATE calendar_events SET status='cancelled' WHERE message_id=?`, event)
+					}
+					if err != nil {
+						return err
+					}
+					return st.DB().QueryRowContext(t.Context(), `SELECT MAX(seq) FROM cache_related_change_journal`).Scan(&written)
+				}
+				t.Cleanup(func() { buildCacheBeforeMessagesExportHook = nil })
+				_, err = buildCache(t.Context(), dbPath, analytics, true)
+				buildCacheBeforeMessagesExportHook = nil
+				require.NoError(t, err)
+				state, err := query.ReadCacheSyncState(analytics)
+				require.NoError(t, err)
+				assert.Equal(t, pinned, state.LastRelatedChangeSeq)
+				assert.Greater(t, written, pinned)
+				count := func() int64 {
+					engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
+					require.NoError(t, err)
+					defer func() { require.NoError(t, engine.Close()) }()
+					row, err := engine.GetPerson(t.Context(), person, query.Context{}, nil)
+					require.NoError(t, err)
+					require.NotNil(t, row)
+					return row.MeetingCount
+				}
+				if change == "link" {
+					assert.EqualValues(t, 2, count())
+				} else {
+					assert.EqualValues(t, 1, count())
+				}
+				_, err = buildCache(t.Context(), dbPath, analytics, false)
+				require.NoError(t, err)
+				if change == "link" {
+					assert.EqualValues(t, 1, count())
+				} else {
+					assert.Zero(t, count())
+				}
+			})
+		}
+	}
+}
+
 func TestMeetingCountsExcludeFutureEventWithPastMessageDate(t *testing.T) {
 	dir := t.TempDir()
 	dbPath, analytics := filepath.Join(dir, "archive.db"), filepath.Join(dir, "analytics")

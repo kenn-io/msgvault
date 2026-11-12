@@ -20,12 +20,14 @@ type meetingMetricMember struct {
 }
 
 type meetingMetricUnit struct {
-	at       time.Time
-	month    string
-	counted  bool
-	duration *float64
-	basis    meetingcontent.DurationBasis
-	memberID int64
+	at          time.Time
+	month       string
+	counted     bool
+	duration    *float64
+	basis       meetingcontent.DurationBasis
+	memberID    int64
+	calendarID  int64
+	hasCalendar bool
 }
 
 func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQueryScope) (*meetingcontent.Metrics, error) {
@@ -47,20 +49,23 @@ func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQuery
 	}
 	unbounded := scope
 	unbounded.After, unbounded.Before = nil, nil
-	statement, err := s.buildMeetingScopeStatementFor(unbounded, scope.MessageIDs == nil)
+	unbounded.MessageIDs = nil
+	statement, err := s.buildMeetingScopeStatementFor(unbounded, true)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, statement.cte+` SELECT sm.message_id, COALESCE(e.start_at, sm.occurred_at), sm.duration_seconds, sm.duration_basis, e.end_at FROM scoped_meetings sm LEFT JOIN calendar_events e ON e.message_id=sm.message_id`, statement.args...)
+	allowed, allowedArgs := sourceScopeClause(ctx, "sm.source_id")
+	args := append(statement.args, allowedArgs...)
+	rows, err := s.db.QueryContext(ctx, statement.cte+` SELECT sm.message_id, COALESCE(e.start_at, sm.occurred_at), sm.duration_seconds, sm.duration_basis FROM scoped_meetings sm LEFT JOIN calendar_events e ON e.message_id=sm.message_id WHERE 1=1`+allowed, args...)
 	if err != nil {
 		return nil, fmt.Errorf("select meeting metrics members: %w", err)
 	}
 	members := map[int64]meetingMetricMember{}
 	for rows.Next() {
 		var member meetingMetricMember
-		var at, end nullableTimestamp
+		var at nullableTimestamp
 		var basis sql.NullString
-		if err := rows.Scan(&member.id, &at, &member.duration, &basis, &end); err != nil {
+		if err := rows.Scan(&member.id, &at, &member.duration, &basis); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -68,10 +73,6 @@ func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQuery
 			member.at = at.Time
 		}
 		member.basis = basis.String
-		if !member.duration.Valid && at.Valid && end.Valid && !end.Time.Before(at.Time) {
-			member.duration = sql.NullFloat64{Float64: end.Time.Sub(at.Time).Seconds(), Valid: true}
-			member.basis = string(meetingcontent.DurationScheduled)
-		}
 		members[member.id] = member
 	}
 	if err := errorsJoinRows(rows); err != nil {
@@ -89,7 +90,23 @@ func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQuery
 	units := map[string]*meetingMetricUnit{}
 	seen := map[int64]bool{}
 	eligible := map[string]map[int64]bool{}
+	var selectedKeys map[string]bool
+	if scope.MessageIDs != nil {
+		anchors := map[int64]bool{}
+		for _, id := range *scope.MessageIDs {
+			anchors[id] = true
+		}
+		selectedKeys = map[string]bool{}
+		for _, row := range occurrences {
+			if anchors[row.MessageID] {
+				selectedKeys[row.OccurrenceKey] = true
+			}
+		}
+	}
 	for _, row := range occurrences {
+		if selectedKeys != nil && !selectedKeys[row.OccurrenceKey] {
+			continue
+		}
 		member, selected := members[row.MessageID]
 		if !selected {
 			continue
@@ -123,6 +140,14 @@ func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQuery
 		if !counted {
 			continue
 		}
+		if row.ScheduledSeconds != nil && (!unit.hasCalendar || member.id < unit.calendarID) {
+			unit.at = row.OccurredAt
+			unit.month = ""
+			if len(row.StartDate) >= 7 {
+				unit.month = row.StartDate[:7]
+			}
+			unit.calendarID, unit.hasCalendar = member.id, true
+		}
 		if member.duration.Valid {
 			unit.choose(member.duration.Float64, meetingcontent.DurationBasis(member.basis), member.id)
 		}
@@ -131,6 +156,9 @@ func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQuery
 		}
 	}
 	for id, member := range members {
+		if scope.MessageIDs != nil && !slices.Contains(*scope.MessageIDs, id) {
+			continue
+		}
 		if seen[id] {
 			continue
 		}

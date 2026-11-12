@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-func stageMeetingOccurrences(ctx context.Context, db sqlRunner, dbPath, root, committed string, through time.Time) (time.Time, error) {
+func stageMeetingOccurrences(ctx context.Context, db sqlRunner, evidence *store.MeetingEvidence, root, committed string) (time.Time, error) {
 	parquet := func(dataset string) string {
 		dir := filepath.Join(root, dataset)
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
@@ -46,12 +46,7 @@ SELECT DISTINCT lower(trim(e.email)) FROM emails e JOIN canon c ON c.participant
 	if err := rows.Close(); err != nil {
 		return time.Time{}, err
 	}
-	archive, err := store.OpenReadOnlyContext(ctx, dbPath)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("open archive for meeting occurrences: %w", err)
-	}
-	defer func() { _ = archive.Close() }()
-	occurrences, nextAt, err := archive.MeetingOccurrencesContext(ctx, through, ownerEmails)
+	occurrences, nextAt, err := evidence.Reduce(ctx, ownerEmails)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("read meeting occurrences: %w", err)
 	}
