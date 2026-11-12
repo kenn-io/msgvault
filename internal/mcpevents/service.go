@@ -54,7 +54,7 @@ func (s *Service) catalog(ctx context.Context) ([]entry, []byte, error) {
 	}
 	var entries []entry
 	if raw != nil {
-		if err = json.Unmarshal(raw, &entries); err != nil {
+		if err = json.Unmarshal(raw, &entries, json.RejectUnknownMembers(true)); err != nil {
 			return nil, nil, err
 		}
 	}
