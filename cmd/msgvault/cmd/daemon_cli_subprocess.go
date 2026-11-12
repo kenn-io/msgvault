@@ -12,9 +12,10 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"go.kenn.io/kit/consolewindow"
+	"golang.org/x/text/encoding/unicode"
+	"golang.org/x/text/transform"
 )
 
 const daemonCLISubprocessEnv = "MSGVAULT_DAEMON_CLI_PARENT_PID"
@@ -210,30 +211,19 @@ func streamDaemonCLIPipe(
 	stream string,
 	emit func(stream, data string) error,
 ) error {
+	// The decoder holds a rune split across reads until the rest arrives, so
+	// every emitted chunk is valid UTF-8. Invalid bytes become U+FFFD, which
+	// the NDJSON event encoder would produce anyway.
+	r = transform.NewReader(r, unicode.UTF8.NewDecoder())
 	buf := make([]byte, 32*1024)
 	var firstErr error
-	held := 0
 	for {
-		n, err := r.Read(buf[held:])
-		data := buf[:held+n]
-		cut := len(data)
-		if err == nil && firstErr == nil {
-			// Only an incomplete rune at the end needs the next read.
-			for i := len(data) - 1; i >= 0 && i >= len(data)-(utf8.UTFMax-1); i-- {
-				if utf8.RuneStart(data[i]) {
-					if !utf8.FullRune(data[i:]) {
-						cut = i
-					}
-					break
-				}
-			}
-		}
-		if cut > 0 && firstErr == nil {
-			if emitErr := emit(stream, string(data[:cut])); emitErr != nil {
+		n, err := r.Read(buf)
+		if n > 0 && firstErr == nil {
+			if emitErr := emit(stream, string(buf[:n])); emitErr != nil {
 				firstErr = emitErr
 			}
 		}
-		held = copy(buf, data[cut:])
 		if errors.Is(err, io.EOF) {
 			return firstErr
 		}
