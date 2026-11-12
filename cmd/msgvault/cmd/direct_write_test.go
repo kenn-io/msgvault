@@ -594,3 +594,14 @@ func TestOpenReadOnlyStoreRejectsUnsupportedSchema(t *testing.T) {
 	require.ErrorContains(err, "run setup with the matching release")
 	assert.Nil(reader)
 }
+
+func TestFederationHubDirectWriteSourceGuard(t *testing.T) {
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Federation.Role = "hub"
+	st, err := openStoreAndInitWithInvocation(t.Context(), testInvocationWithConfig(cfg), func(*store.Store) error { return nil })
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	_, err = st.GetOrCreateSourceContext(t.Context(), "gmail", "fixture@example.test")
+	assert.ErrorIs(t, err, store.ErrFederationHubSource)
+}

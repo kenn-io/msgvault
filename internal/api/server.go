@@ -271,6 +271,7 @@ type Server struct {
 	cfg                    *config.Config
 	store                  MessageStore
 	analyticsState         atomic.Pointer[analyticsEngineState]
+	federationStore        FederationStore
 	savedViewStore         SavedViewStore
 	sqlQueryRunner         SQLQueryRunner
 	archiveSQLQueryRunner  SQLQueryRunner
@@ -537,8 +538,9 @@ const (
 
 // ServerOptions configures the API server.
 type ServerOptions struct {
-	Config *config.Config
-	Store  MessageStore
+	Config          *config.Config
+	Store           MessageStore
+	FederationStore FederationStore
 	// SavedViewStore owns durable analytical view definitions. It is separate
 	// from the minimal MessageStore so API consumers do not need to implement
 	// unrelated persistence methods.
@@ -652,6 +654,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		cfg:                    opts.Config,
 		senderAuthPins:         opts.Config.SenderAuth.Pins(),
 		store:                  opts.Store,
+		federationStore:        opts.FederationStore,
 		savedViewStore:         opts.SavedViewStore,
 		sqlQueryRunner:         opts.SQLQueryRunner,
 		archiveSQLQueryRunner:  opts.ArchiveSQLQueryRunner,

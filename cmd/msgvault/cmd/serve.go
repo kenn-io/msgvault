@@ -330,6 +330,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := s.InitSchemaUnlessCurrentContext(cmd.Context()); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
+	if cfg.Federation.Role == "hub" {
+		if err := s.ConfigureFederationHubContext(cmd.Context()); err != nil {
+			return err
+		}
+	}
 	failedUnfinishedImports, err := s.FailUnfinishedSyncOperationsContext(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("recover unfinished historical imports: %w", err)
@@ -1010,10 +1015,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and start API server
 	var apiServer *api.Server
 	apiOpts := api.ServerOptions{
-		Config:         cfg,
-		Store:          storeAdapter,
-		SavedViewStore: s,
-		Engine:         engine,
+		Config:          cfg,
+		Store:           storeAdapter,
+		FederationStore: s,
+		SavedViewStore:  s,
+		Engine:          engine,
 		SQLQueryRunner: func(requestCtx context.Context, sql string, fresh bool) (*query.QueryResult, *api.CacheBuildAccepted, error) {
 			if apiServer == nil {
 				return nil, nil, errors.New("daemon API server unavailable")

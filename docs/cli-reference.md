@@ -28,7 +28,7 @@ appear in full under Inherited Flags.
 | Review and remove mail | [stage-delete](#stage-delete), [delete-staged](#delete-staged), [deduplicate](#deduplicate), [gc](#gc) |
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
 | Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-attachment-roles](#repair-attachment-roles), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
-| Operate or integrate | [setup](#setup), [credentials](#credentials), [daemon](#daemon), [serve](#serve), [activity](#activity), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
+| Operate or integrate | [setup](#setup), [credentials](#credentials), [daemon](#daemon), [serve](#serve), [activity](#activity), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token), [federation](#federation) |
 
 ## loops
 
@@ -5781,3 +5781,19 @@ Google bills Places separately from the free GoPlaces software. Autocomplete
 and Details requests have separate free monthly usage caps; incomplete or
 abandoned sessions are charged per request. Check current [Google pricing](https://developers.google.com/maps/billing-and-pricing/pricing)
 and [session pricing](https://developers.google.com/maps/documentation/places/web-service/session-pricing).
+
+## Federation
+
+Set `[federation] role = "spoke"` on a personal archive and run
+`msgvault federation identity` to obtain its archive UID. On a dedicated hub,
+run `msgvault federation enroll --spoke-instance <uid> --member <handle>`.
+Optionally supply `--spoke-name` and `--hub-url https://hub.example.org`. The
+URL must be an HTTPS origin, except that loopback origins can use HTTP.
+The command prints the one-time token to standard output and a token-free join
+command to standard error. Save the token securely; it cannot be retrieved again.
+Without `--hub-url`, the join command uses a placeholder. `--json` prints the
+response, including the token, once. Joining is not yet available.
+
+Use `msgvault federation enrollments list [--json]` to inspect enrollments and
+`msgvault federation revoke <enrollment-uid>` to revoke one. Enrollment alone
+shares no messages or sources.

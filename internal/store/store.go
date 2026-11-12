@@ -46,6 +46,7 @@ const HNSWEfSearch = 1000
 // methods, existing store code that does s.db.Query(...) compiles
 // unchanged and automatically routes through the logger.
 type Store struct {
+	federationHub        bool
 	db                   *loggedDB
 	dbPath               string
 	sqliteFilesystemPath string

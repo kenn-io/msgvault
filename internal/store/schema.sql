@@ -6,6 +6,17 @@ CREATE TABLE IF NOT EXISTS archive_metadata (
     value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS federation_enrollments (
+    enrollment_uid TEXT PRIMARY KEY,
+    spoke_archive_uid TEXT NOT NULL,
+    member_handle TEXT NOT NULL,
+    spoke_name TEXT NOT NULL,
+    token_sha256 TEXT NOT NULL UNIQUE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at DATETIME,
+    revoked_at DATETIME
+);
+
 -- Open catalog of communication services. Seeded slugs are presentation and
 -- normalization metadata, NOT a database enum and not a compatibility
 -- ceiling: an unknown bridge type or a custom service is registered as a new

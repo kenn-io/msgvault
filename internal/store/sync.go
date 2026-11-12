@@ -1830,6 +1830,9 @@ func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identi
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("get source: %w", err)
 	}
+	if s.federationHub || (s.syncBase != nil && s.syncBase.federationHub) {
+		return nil, ErrFederationHubSource
+	}
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := lockSourceMaintenance(ctx, tx); err != nil {
 			return err

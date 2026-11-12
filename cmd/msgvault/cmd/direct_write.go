@@ -120,6 +120,12 @@ func openStoreAndInitWithInvocation(ctx context.Context, state *invocation, migr
 		_ = st.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
+	if currentCfg.Federation.Role == "hub" {
+		if err := st.ConfigureFederationHubContext(ctx); err != nil {
+			_ = st.Close()
+			return nil, err
+		}
+	}
 	if err := migrate(st); err != nil {
 		_ = st.Close()
 		return nil, fmt.Errorf("startup migrations: %w", err)

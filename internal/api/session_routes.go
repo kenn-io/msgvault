@@ -19,10 +19,11 @@ const (
 type AuthMode string
 
 const (
-	AuthModeLoopback AuthMode = "loopback"
-	AuthModeAPIKey   AuthMode = "api_key"
-	AuthModeSession  AuthMode = "session"
-	AuthModeRequired AuthMode = "required"
+	AuthModeFederation AuthMode = "federation"
+	AuthModeLoopback   AuthMode = "loopback"
+	AuthModeAPIKey     AuthMode = "api_key"
+	AuthModeSession    AuthMode = "session"
+	AuthModeRequired   AuthMode = "required"
 	// AuthModeCaller marks an operation admitted by the library handler's caller.
 	AuthModeCaller AuthMode = "caller"
 	// AuthModeDelegated marks a caller authenticated by a restricted agent grant. Never an owner mode: see apiRequestAuthorized.

@@ -10,10 +10,12 @@ import (
 func TestFederationRoleAndHubKeys(t *testing.T) {
 	for _, tc := range []struct{ name, config, role, loadError, keyError string }{
 		{name: "default", role: "off"},
+		{name: "case normalization", config: "[federation]\nrole = \"SPOKE\"", role: "spoke"},
 		{name: "spoke", config: "[federation]\nrole = \"spoke\"", role: "spoke"},
 		{name: "hub keyless", config: "[federation]\nrole = \"hub\"", role: "hub", keyError: "federation hub role requires an effective API key"},
 		{name: "hub owner", config: "[federation]\nrole = \"hub\"\n[server]\napi_key = \"owner-key\"", role: "hub"},
 		{name: "reserved owner", config: "[federation]\nrole = \"hub\"\n[server]\napi_key = \"mvf1_reserved\"", role: "hub", keyError: "federation hub owner key must not begin with mvf1_"},
+		{name: "hub remote readers", config: "[federation]\nrole = \"hub\"\n[server]\napi_key = \"owner-key\"\n[[server.remote_clients]]\nclient_id = \"reader\"\napi_key_file = \"reader\"", role: "hub", keyError: "federation hub role refuses [[server.remote_clients]]"},
 		{name: "invalid", config: "[federation]\nrole = \"other\"", loadError: "invalid [federation] role"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

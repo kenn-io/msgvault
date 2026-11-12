@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net"
 	"net/http"
 	"slices"
@@ -12,6 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"golang.org/x/time/rate"
 )
 
@@ -234,6 +237,7 @@ type requestAuthentication struct {
 	trustedForCLIDuration bool
 	Grant                 *agentgrant.Grant
 	RemoteClient          *config.RemoteClientConfig
+	Federation            *store.FederationEnrollment
 }
 
 func (s *Server) requestAuthentication(r *http.Request) requestAuthentication {
@@ -247,13 +251,39 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 	// Agent token takes priority: if the header is present, the request must
 	// authenticate as a delegated caller; we never fall through to other modes.
 	if agentVal, agentPresent := agentTokenHeaderValue(r); agentPresent {
-		if s.agentGrants == nil || agentVal == "" || ownerCredentialPresented(r) {
+		if s.agentGrants == nil || agentVal == "" || ownerCredentialPresented(r) || (s.cfg.Federation.Role == "hub" && len(r.Header.Values(apiprotocol.SpokeInstanceHeader)) > 0) {
 			return requestAuthentication{Mode: AuthModeRequired}
 		}
 		if grant, ok := s.agentGrants.Lookup(agentVal); ok {
 			return requestAuthentication{Mode: AuthModeDelegated, Grant: &grant}
 		}
 		return requestAuthentication{Mode: AuthModeRequired}
+	}
+
+	if s.cfg.Federation.Role == "hub" {
+		auths := r.Header.Values("Authorization")
+		instances := r.Header.Values(apiprotocol.SpokeInstanceHeader)
+		claim := len(instances) > 0
+		for _, value := range auths {
+			parts := strings.Fields(value)
+			if len(parts) >= 2 && strings.EqualFold(parts[0], "Bearer") && strings.HasPrefix(parts[1], "mvf1_") {
+				claim = true
+			}
+		}
+		if claim {
+			if len(auths) == 1 && len(instances) == 1 && instances[0] != "" && len(r.Header.Values("X-Api-Key")) == 0 && len(r.Header.Values(apiprotocol.AgentTokenHeader)) == 0 && len(r.Header.Values(apiprotocol.DaemonRuntimeTokenHeader)) == 0 && s.federationStore != nil {
+				_, cookieErr := r.Cookie(sessionCookieName)
+				parts := strings.Fields(auths[0])
+				if cookieErr != nil && len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && strings.HasPrefix(parts[1], "mvf1_") {
+					digest := sha256.Sum256([]byte(parts[1]))
+					enrollment, err := s.federationStore.AuthenticateFederationEnrollmentContext(r.Context(), hex.EncodeToString(digest[:]), instances[0])
+					if err == nil {
+						return requestAuthentication{Mode: AuthModeFederation, Federation: enrollment}
+					}
+				}
+			}
+			return requestAuthentication{Mode: AuthModeRequired}
+		}
 	}
 
 	// Preserve the existing keyless mode: secure startup confines the daemon to
@@ -357,6 +387,12 @@ func (s *Server) apiRequestAuthorized(r *http.Request) bool {
 // reach the API auth layer without touching gate state.
 func (s *Server) requestGateEligible(r *http.Request) bool {
 	auth := s.requestAuthentication(r)
+	if auth.Mode == AuthModeFederation {
+		return false
+	}
+	if s.cfg.Federation.Role != "hub" && (r.Method == http.MethodPost && r.URL.Path == "/api/v1/federation/enrollments" || r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/federation/enrollments/")) {
+		return false
+	}
 	if auth.Mode == AuthModeDelegated {
 		return r.URL.Path == "/api/v1/cli/run" || r.URL.Path == "/api/v1/calendar/control"
 	}

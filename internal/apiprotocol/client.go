@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+const SpokeInstanceHeader = "X-Msgvault-Spoke-Instance"
+
 const (
 	ClientClassHeader       = "X-Msgvault-Client"
 	ClientClassCLI          = "cli"

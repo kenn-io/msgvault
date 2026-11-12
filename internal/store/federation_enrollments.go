@@ -1,0 +1,125 @@
+package store
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"regexp"
+	"time"
+)
+
+var (
+	ErrNotFound             = errors.New("not found")
+	ErrFederationHubSource  = errors.New("federation hub cannot create sources")
+	federationUIDPattern    = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	federationMemberPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+)
+
+type FederationEnrollment struct {
+	EnrollmentUID   string     `json:"enrollment_uid"`
+	SpokeArchiveUID string     `json:"spoke_archive_uid"`
+	Member          string     `json:"member"`
+	SpokeName       string     `json:"spoke_name"`
+	CreatedAt       time.Time  `json:"created_at"`
+	LastSeenAt      *time.Time `json:"last_seen_at,omitempty"`
+	RevokedAt       *time.Time `json:"revoked_at,omitempty"`
+}
+
+const federationColumns = `enrollment_uid, spoke_archive_uid, member_handle, spoke_name, created_at, last_seen_at, revoked_at`
+
+type federationScanner interface{ Scan(...any) error }
+
+func scanFederation(row federationScanner) (*FederationEnrollment, error) {
+	var e FederationEnrollment
+	var seen, revoked sql.NullTime
+	err := row.Scan(&e.EnrollmentUID, &e.SpokeArchiveUID, &e.Member, &e.SpokeName, &e.CreatedAt, &seen, &revoked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if seen.Valid {
+		e.LastSeenAt = &seen.Time
+	}
+	if revoked.Valid {
+		e.RevokedAt = &revoked.Time
+	}
+	return &e, nil
+}
+func (s *Store) CreateFederationEnrollmentContext(ctx context.Context, spokeUID, member, name string) (*FederationEnrollment, string, error) {
+	if !federationUIDPattern.MatchString(spokeUID) || !federationMemberPattern.MatchString(member) || len(name) > 128 {
+		return nil, "", errors.New("invalid federation enrollment")
+	}
+	if name == "" {
+		name = member
+	}
+	id := make([]byte, 16)
+	secret := make([]byte, 32)
+	if _, err := rand.Read(id); err != nil {
+		return nil, "", err
+	}
+	if _, err := rand.Read(secret); err != nil {
+		return nil, "", err
+	}
+	token := "mvf1_" + base64.RawURLEncoding.EncodeToString(secret)
+	digest := sha256.Sum256([]byte(token))
+	e, err := scanFederation(s.db.QueryRowContext(ctx, `INSERT INTO federation_enrollments (enrollment_uid, spoke_archive_uid, member_handle, spoke_name, token_sha256) VALUES (?, ?, ?, ?, ?) RETURNING `+federationColumns, hex.EncodeToString(id), spokeUID, member, name, hex.EncodeToString(digest[:])))
+	if err != nil {
+		return nil, "", fmt.Errorf("create federation enrollment: %w", err)
+	}
+	return e, token, nil
+}
+func (s *Store) ListFederationEnrollmentsContext(ctx context.Context) ([]FederationEnrollment, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+federationColumns+` FROM federation_enrollments ORDER BY created_at, enrollment_uid`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	list := []FederationEnrollment{}
+	for rows.Next() {
+		e, err := scanFederation(rows)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, *e)
+	}
+	return list, rows.Err()
+}
+func (s *Store) AuthenticateFederationEnrollmentContext(ctx context.Context, digest, spokeUID string) (*FederationEnrollment, error) {
+	return scanFederation(s.db.QueryRowContext(ctx, `SELECT `+federationColumns+` FROM federation_enrollments WHERE token_sha256 = ? AND spoke_archive_uid = ? AND revoked_at IS NULL`, digest, spokeUID))
+}
+func (s *Store) RevokeFederationEnrollmentContext(ctx context.Context, uid string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE federation_enrollments SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP) WHERE enrollment_uid = ?`, uid)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+func (s *Store) TouchFederationEnrollmentContext(ctx context.Context, uid string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE federation_enrollments SET last_seen_at = CURRENT_TIMESTAMP WHERE enrollment_uid = ? AND revoked_at IS NULL`, uid)
+	return err
+}
+func (s *Store) ConfigureFederationHubContext(ctx context.Context) error {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sources`).Scan(&count); err != nil {
+		return fmt.Errorf("check hub sources: %w", err)
+	}
+	if count != 0 {
+		return fmt.Errorf("federation hub role needs a dedicated archive: it already has %d sources", count)
+	}
+	s.federationHub = true
+	return nil
+}
