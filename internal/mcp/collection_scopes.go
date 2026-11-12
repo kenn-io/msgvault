@@ -43,12 +43,16 @@ func (h *handlers) listMessageCollections(ctx context.Context, _ toolRequest) (*
 	return jsonResult(out)
 }
 
-func (h *handlers) resolveReadSelection(ctx context.Context, account, collection string) (accountSelection, error) {
-	if collection == "" {
+func (h *handlers) resolveReadSelection(ctx context.Context, account string, args map[string]any) (accountSelection, error) {
+	if _, ok := args["collection"]; !ok {
 		return h.resolveAccount(ctx, account)
 	}
 	if account != "" {
 		return accountSelection{}, &expectedHandlerError{message: "account and collection are mutually exclusive"}
+	}
+	collection := stringArgument(args, "collection")
+	if collection == "" {
+		return accountSelection{}, &expectedHandlerError{message: "collection name is required"}
 	}
 	if !h.collectionScopesAvailable {
 		return accountSelection{}, &expectedHandlerError{message: "message collections are unavailable"}

@@ -50,9 +50,9 @@ func TestCollectionScopesFilterRealMessageReads(t *testing.T) {
 			assert.ElementsMatch(t, tc.want, ids)
 		})
 	}
-	_, err = h.resolveReadSelection(t.Context(), "account", "one")
+	_, err = h.resolveReadSelection(t.Context(), "account", map[string]any{"collection": "one"})
 	require.ErrorContains(t, err, "mutually exclusive")
-	_, err = h.resolveReadSelection(t.Context(), "", "missing")
+	_, err = h.resolveReadSelection(t.Context(), "", map[string]any{"collection": "missing"})
 	require.ErrorContains(t, err, "collection not found")
 }
 
@@ -83,5 +83,14 @@ func TestSemanticCollectionUsesOneResolvedSource(t *testing.T) {
 	result, err := h.semanticSearchMessages(t.Context(), toolRequest{arguments: map[string]any{"query": "fixture", "collection": "many"}})
 	require.NoError(t, err)
 	assert.True(t, result.isError)
+	assert.Equal(t, 1, calls)
+	result, err = h.semanticSearchMessages(t.Context(), toolRequest{arguments: map[string]any{"query": "fixture", "collection": ""}})
+	require.NoError(t, err)
+	assert.True(t, result.isError)
+	assert.Equal(t, 1, calls)
+	result, err = h.semanticSearchMessages(t.Context(), toolRequest{arguments: map[string]any{"query": "subject:fixture", "collection": "empty"}})
+	require.NoError(t, err)
+	assert.True(t, result.isError)
+	assert.Contains(t, resultText(t, result), "missing_free_text")
 	assert.Equal(t, 1, calls)
 }

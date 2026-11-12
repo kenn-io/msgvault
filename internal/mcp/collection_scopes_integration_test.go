@@ -22,9 +22,13 @@ func TestCollectionsThroughDaemonAndSDK(t *testing.T) {
 	require.NoError(t, err)
 	second, secondID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "second@example.test", "second", "other alpine fixture", "alpine body")
 	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), "UPDATE messages SET sent_at = ? WHERE id IN (?, ?)", "2025-01-01T00:00:00Z", firstID, secondID)
+	require.NoError(t, err)
 	_, err = st.CreateCollection("selected", "", []int64{first.ID})
 	require.NoError(t, err)
-	_, err = st.CreateCollection("empty", "", nil)
+	_, err = st.CreateCollection("empty", "", []int64{second.ID})
+	require.NoError(t, err)
+	err = st.RemoveSourcesFromCollection("empty", []int64{second.ID})
 	require.NoError(t, err)
 	_, err = st.CreateCollection("both", "", []int64{first.ID, second.ID})
 	require.NoError(t, err)
@@ -65,7 +69,7 @@ func TestCollectionsThroughDaemonAndSDK(t *testing.T) {
 			}
 		})
 	}
-	for _, args := range []map[string]any{{"collection": "selected", "account": "first@example.test"}, {"collection": "missing"}, {"collection": "both", "query": "alpine"}} {
+	for _, args := range []map[string]any{{"collection": "selected", "account": "first@example.test"}, {"collection": ""}, {"collection": "", "account": "first@example.test"}, {"collection": "missing"}, {"collection": "both", "query": "alpine"}} {
 		name := ToolListMessages
 		if _, ok := args["query"]; ok {
 			name = ToolSearchMessageBodies
@@ -96,12 +100,24 @@ func TestCollectionsThroughDaemonAndSDK(t *testing.T) {
 			assert.NotContains(t, fmt.Sprint(got.StructuredContent), "other alpine fixture")
 		}
 	}
-	for _, collection := range []string{"empty", "selected"} {
-		got, callErr := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolAggregate, Arguments: map[string]any{"group_by": "time", "collection": collection}})
+	for _, tc := range []struct {
+		collection string
+		count      float64
+	}{{"empty", 0}, {"selected", 1}, {"both", 2}} {
+		got, callErr := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolAggregate, Arguments: map[string]any{"group_by": "time", "collection": tc.collection}})
 		require.NoError(t, callErr)
 		require.False(t, got.IsError)
-		if collection == "empty" {
-			assert.Contains(t, fmt.Sprint(got.StructuredContent), "data:[]")
+		content, ok := got.StructuredContent.(map[string]any)
+		require.True(t, ok)
+		rows, ok := content["data"].([]any)
+		require.True(t, ok)
+		if tc.count == 0 {
+			assert.Empty(t, rows)
+		} else {
+			require.Len(t, rows, 1)
+			row, ok := rows[0].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, tc.count, row["Count"])
 		}
 	}
 	unsupported := task5ConnectClient(t, ServeOptions{Engine: daemonclient.NewEngineAdapter(client)}, false)

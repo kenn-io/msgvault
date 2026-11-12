@@ -269,6 +269,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_identity_judgments` | read | — | owner-only |
 | `list_identity_matches` | read | — | owner-only |
 | `list_meeting_action_items` | read | — | owner-only |
+| `list_message_collections` | read | — | owner-only |
 | `list_messages` | read | — | search.read |
 | `list_open_loops` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |
