@@ -280,7 +280,7 @@ describe('PersonBriefCard', () => {
     await waitFor(() => expect(onAnnounce).toHaveBeenCalledOnce());
     expect(bodies).toEqual([{ enrolled: true, track: true }]);
     expect(onAnnounce).toHaveBeenCalledWith('Brief enrollment enabled.');
-    expect(await screen.findByText('No brief yet.')).toBeDefined();
+    expect(await screen.findByText('No current brief.')).toBeDefined();
     expect(await screen.findByRole('button', { name: 'Generate a brief now' })).toBeDefined();
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('switch')));
   });
@@ -332,7 +332,7 @@ describe('PersonBriefCard', () => {
         expect(toggle.checked).toBe(nextEnrolled);
         expect(document.activeElement).toBe(toggle);
       });
-      if (nextEnrolled) await screen.findByText('No brief yet.');
+      if (nextEnrolled) await screen.findByText('No current brief.');
       else await screen.findByRole('checkbox', { name: 'Also track this person' });
     }
 
@@ -418,7 +418,7 @@ describe('PersonBriefCard', () => {
     expect(bodies).toEqual([{ reason: 'Wrong person' }]);
     // The rejected paragraph is gone: the card offers a fresh generation, not
     // a reject button for a version that is no longer current.
-    expect(await screen.findByText('No brief yet.')).toBeDefined();
+    expect(await screen.findByText('No current brief.')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Generate a brief now' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Reject this brief version' })).toBeNull();
     expect(screen.queryByText(sentenceTexts[0])).toBeNull();
@@ -472,7 +472,7 @@ describe('PersonBriefCard', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Generate a brief now' }));
 
     expect(await screen.findByText('No new brief version. Reason: Provider budget exhausted.')).toBeDefined();
-    expect(screen.getByText('No brief yet.')).toBeDefined();
+    expect(screen.getByText('No current brief.')).toBeDefined();
   });
 
   it('loads the version history on request and hides it again', async () => {
@@ -621,7 +621,7 @@ describe('PersonBriefCard', () => {
     await waitFor(() => expect(onAnnounce).toHaveBeenCalledExactlyOnceWith(announcement));
     await waitFor(() => expect(reads.filter((path) => path.endsWith('/brief-enrollment'))).toHaveLength(2));
     if (action === 'generate') await screen.findByText(/Version 3 · Current/);
-    else if (action === 'reject') await screen.findByText('No brief yet.');
+    else if (action === 'reject') await screen.findByText('No current brief.');
     else expect((screen.getByRole('switch') as HTMLInputElement).checked).toBe(false);
   });
 });
