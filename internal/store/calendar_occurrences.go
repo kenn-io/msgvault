@@ -293,21 +293,34 @@ func calendarRangeShift(master calevent.Event, edits []CalendarEventRow) calenda
 	}}
 }
 
-// calendarEditShift follows one RANGE edit: a cancellation cancels the later occurrences, and a new start
-// moves them by its change in the series zone's wall-clock time (civil days for an all-day series).
-// A cancellation that retains an earlier edit's details may have replaced a move, and an edit that leaves
-// the start alone, cannot be followed.
+// calendarEditShift follows one RANGE edit: a new start moves the later occurrences by its change in the
+// series zone's wall-clock time (civil days for an all-day series), and a cancellation also cancels them.
+// An edit that sets neither cannot be followed.
 func calendarEditShift(master, edit calevent.Event, zone *time.Location) calendarShift {
+	var shift calendarShift
 	switch {
-	case edit.Status == "cancelled" && edit.Start == nil:
-		return calendarShift{move: func(o *calrecur.Occurrence) { o.Cancelled = true }}
-	case edit.Status == "cancelled":
 	case master.AllDay && edit.StartDate != "":
-		return calendarAllDayShift(edit, zone)
+		shift = calendarAllDayShift(edit, zone)
 	case !master.AllDay && edit.Start != nil:
-		return calendarTimedShift(master, edit, zone)
+		shift = calendarTimedShift(master, edit, zone)
 	}
-	return calendarShift{}
+	return calendarCancelShift(edit, shift)
+}
+
+// calendarCancelShift makes a cancellation also cancel the later occurrences its edit moves. A
+// cancellation that sets no start has nothing to move, so it only cancels.
+func calendarCancelShift(edit calevent.Event, shift calendarShift) calendarShift {
+	if edit.Status != "cancelled" {
+		return shift
+	}
+	move := shift.move
+	shift.move = func(o *calrecur.Occurrence) {
+		if move != nil {
+			move(o)
+		}
+		o.Cancelled = true
+	}
+	return shift
 }
 
 // calendarTimedShift moves later occurrences so they keep the zone's local time across daylight saving
@@ -334,12 +347,12 @@ func calendarTimedShift(master, edit calevent.Event, zone *time.Location) calend
 }
 
 // calendarAllDayShift moves later all-day occurrences by the edit's change in civil days and gives them
-// the edit's length when it sets an end date. An edit that keeps its start day cannot be followed.
+// the edit's length when it sets an end date. An edit that keeps its start day moves them by nothing.
 func calendarAllDayShift(edit calevent.Event, zone *time.Location) calendarShift {
 	start, startErr := time.Parse(time.DateOnly, edit.StartDate)
 	was, wasErr := time.Parse(time.DateOnly, edit.Original.Date)
 	end, endErr := time.Parse(time.DateOnly, edit.EndDate)
-	if startErr != nil || wasErr != nil || start.Equal(was) {
+	if startErr != nil || wasErr != nil {
 		return calendarShift{}
 	}
 	delta, span := start.Sub(was), end.Sub(start)
