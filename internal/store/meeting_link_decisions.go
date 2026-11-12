@@ -139,17 +139,25 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		if err != nil {
 			return clearStored(err)
 		}
-		comparison := compareMeetingEndpoints(canonicalA, canonicalB)
-		if comparison == 0 {
+		if compareMeetingEndpoints(canonicalA, canonicalB) == 0 {
 			return ErrMeetingLinkSameCopy
 		}
-		if comparison > 0 {
+		if compareMeetingEndpoints(canonicalA, canonicalB) > 0 {
 			canonicalA, canonicalB = canonicalB, canonicalA
 			recordA, recordB = recordB, recordA
 		}
-		active, err := s.meetingActiveLinks(ctx, a, b, decision, &budget)
-		if err != nil {
-			return err
+		var active []meetingDecisionEdge
+		if decision != "clear" {
+			graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{a, b}, &budget)
+			if err != nil {
+				return err
+			}
+			root, links := graph.reduce()
+			for _, link := range links {
+				if root(link.a.ref()) == root(link.b.ref()) {
+					active = append(active, link)
+				}
+			}
 		}
 		relevant, err := meetingDecisionRelevantEndpoints(canonicalA, canonicalB, recordA, recordB, append(aliasesA, aliasesB...))
 		if err != nil {
@@ -243,20 +251,6 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		return nil
 	})
 	return result, err
-}
-
-func (s *Store) meetingActiveLinks(ctx context.Context, a, b meetingDecisionEndpoint, decision string, budget *int) ([]meetingDecisionEdge, error) {
-	if decision == "clear" {
-		return nil, nil
-	}
-	graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{a, b}, budget)
-	if err != nil {
-		return nil, err
-	}
-	root, links := graph.reduce()
-	return slices.DeleteFunc(links, func(link meetingDecisionEdge) bool {
-		return root(link.a.ref()) != root(link.b.ref())
-	}), nil
 }
 
 func meetingDecisionRelevantEndpoints(a, b meetingDecisionEndpoint, recordA, recordB MeetingRecord, aliases []int64) (map[int64][]meetingDecisionEndpoint, error) {
