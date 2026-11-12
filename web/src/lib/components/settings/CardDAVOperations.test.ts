@@ -74,7 +74,7 @@ describe('CardDAVOperations', () => {
     expect(screen.getByText('Manual sync only')).toBeDefined();
     expect(screen.getByText('Partial')).toBeDefined();
     expect(screen.getByText('2 books · 1 created · 3 updated · 1 removed')).toBeDefined();
-    expect(screen.getByText('Next sync reconciles this book')).toBeDefined();
+    expect(screen.getByText('Address book will be rechecked on next sync')).toBeDefined();
     expect(screen.getByText('No CardDAV sync history yet.')).toBeDefined();
     expect(rendered.container.textContent).not.toContain(forbidden);
     expect(rendered.container.innerHTML).not.toContain(forbidden);
