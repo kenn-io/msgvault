@@ -108,14 +108,6 @@ func instagramMediaObject(media *IGMedia) Object {
 	return Object{ID: media.ID, Message: media.Caption, CreatedTime: media.Timestamp, InstagramMedia: media}
 }
 
-func instagramCommentObject(comment *IGComment) Object {
-	object := Object{ID: comment.ID, Message: comment.Text, CreatedTime: comment.Timestamp, InstagramComment: comment}
-	if comment.ParentID != "" {
-		object.Parent = &Actor{ID: comment.ParentID}
-	}
-	return object
-}
-
 func (r *importRun) readComments(ctx context.Context, frame commentFrame) (ObjectPage, error) {
 	if r.imp.instagram == "" {
 		return r.imp.api.Comments(ctx, frame.Parent, frame.After)
@@ -135,6 +127,14 @@ func (r *importRun) readComments(ctx context.Context, frame commentFrame) (Objec
 		result.Data = append(result.Data, instagramCommentObject(&page.Data[i]))
 	}
 	return result, nil
+}
+
+func instagramCommentObject(comment *IGComment) Object {
+	object := Object{ID: comment.ID, Message: comment.Text, CreatedTime: comment.Timestamp, InstagramComment: comment}
+	if comment.ParentID != "" {
+		object.Parent = &Actor{ID: comment.ParentID}
+	}
+	return object
 }
 
 // LinkedInstagramAccount performs one read after separate Page verification.
