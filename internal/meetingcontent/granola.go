@@ -33,7 +33,9 @@ func decodeGranola(fields map[string]jsontext.Value) Content {
 	end, endOK := rawTime(calendar["scheduled_end_time"], false)
 	if startOK && endOK && end.After(start) {
 		content.LinkEvidence.ScheduledAt = &start
-		setDuration(&content, end.Sub(start).Seconds(), DurationScheduled)
+		seconds := end.Sub(start).Seconds()
+		content.LinkEvidence.ScheduledDuration = &seconds
+		setDuration(&content, seconds, DurationScheduled)
 		return content
 	}
 	var starts, ends []time.Time

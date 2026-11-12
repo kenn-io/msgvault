@@ -1963,6 +1963,7 @@ func (d *SQLiteDialect) contentChangedAtDefaultStamps(q querier) (bool, error) {
 func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
 		{`ALTER TABLE meeting_details ADD COLUMN scheduled_start DATETIME`, "meeting_details.scheduled_start"},
+		{`ALTER TABLE meeting_details ADD COLUMN scheduled_duration_seconds REAL`, "meeting_details.scheduled_duration_seconds"},
 		{`ALTER TABLE meeting_details ADD COLUMN link_key TEXT`, "meeting_details.link_key"},
 		{`ALTER TABLE calendar_events ADD COLUMN ical_uid TEXT NOT NULL DEFAULT ''`, "calendar_events.ical_uid"},
 		{`ALTER TABLE carddav_resources ADD COLUMN owns_display_name BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.owns_display_name"},
