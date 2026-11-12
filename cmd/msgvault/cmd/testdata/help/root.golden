@@ -5,7 +5,7 @@ Start here:
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
+  msgvault export-messages --help
   msgvault person --help
   msgvault daemon status
   msgvault setup status --json
@@ -45,6 +45,7 @@ Export:
 People, organizations, and identity:
   address              Find address suggestions with Google Places
   attribute-definition Manage portable attribute definitions
+  calls                Import and inspect call history
   carddav              Manage CardDAV connections, books, and conflicts
   collection           Manage named groups of accounts
   employment           Manage employment records linking people and organizations

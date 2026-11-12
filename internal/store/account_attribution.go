@@ -56,9 +56,11 @@ var (
 
 // attributionLock names the locks a transaction takes before the sync fence.
 // Exclusive takes the identity row for writing and excludes every other
-// attribution transaction, so it lists no sources.
+// attribution transaction, so it lists no sources. Catalog serializes source
+// selector changes before any listed source row is locked.
 type attributionLock struct {
 	Exclusive bool
+	Catalog   bool
 	Sources   []int64
 }
 
@@ -108,7 +110,8 @@ func (st *attributionLockState) holds(sourceID int64) bool {
 
 // withAttributionTxContext opens every transaction that derives attribution
 // or changes an input some message's attribution reads. Lock order is the
-// identity row (shared or exclusive), then each listed source row ascending,
+// identity row (shared or exclusive), then the optional source catalog,
+// then each listed source row ascending,
 // then the sync fence, then fn.
 func (s *Store) withAttributionTxContext(
 	ctx context.Context, lock attributionLock, fn func(*loggedTx) error,
@@ -126,6 +129,11 @@ func (s *Store) withAttributionTxContext(
 			}
 		} else if err := s.shareIdentityLockTxContext(ctx, tx); err != nil {
 			return err
+		}
+		if lock.Catalog {
+			if err := lockSourceMaintenance(ctx, tx); err != nil {
+				return err
+			}
 		}
 		state := &attributionLockState{exclusive: lock.Exclusive, sources: make(map[int64]struct{}, len(sources))}
 		for _, sourceID := range sources {

@@ -309,6 +309,10 @@ Follow-up probe candidates:
   for replies to old threads. Not yet probed (scope not granted to the
   probe app); candidate for a fast follow to the incremental design.
 
+Huddle messages can be derived into call evidence from their archived JSON;
+see the [call-history guide](../usage/call-history.md#import-an-archived-slack-huddle).
+This does not add Calls API ingestion or infer answered attendance.
+
 ## Out of scope
 
 - Slack export ZIP import (`import-slack-export`) — separate follow-up
@@ -316,7 +320,7 @@ Follow-up probe candidates:
   history.
 - Session-token acquisition (`xoxc`/`xoxd` browser tokens, slackdump
   style) — ToS-gray, not something msgvault should ship.
-- Canvases, huddles, clips, workflows, and Slack Connect external-shared
+- Canvases, clips, workflows, and Slack Connect external-shared
   channel edge cases beyond what `users.conversations` returns.
 - Custom emoji image download (`emoji.list` mapping) — reactions store
   the emoji name; image backfill can be a fast follow.

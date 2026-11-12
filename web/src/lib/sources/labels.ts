@@ -11,7 +11,7 @@ import { sentenceCase } from '../explore/labels';
 // the identifier stands alone.
 const SOURCE_TYPES: Readonly<Record<string, string>> = {
   '': '', gmail: 'Gmail', imap: 'IMAP', msmail: 'Microsoft mail', teams: 'Teams',
-  discord: 'Discord', chatwoot: 'Chatwoot', meeting_import: 'Meeting import', message_import: 'Message import', synctech_sms: 'SMS backup',
+  discord: 'Discord', chatwoot: 'Chatwoot', call_history: 'Call history', meeting_import: 'Meeting import', message_import: 'Message import', synctech_sms: 'SMS backup',
   imazing_csv: 'iMazing CSV', circleback: 'Circleback', plaud: 'Plaud', pocket: 'Pocket', gcal: 'Google Calendar', muesli: 'Muesli',
   granola: 'Granola', notion_meetings: 'Notion meetings', twilio: 'Twilio', pst: 'PST import',
   'apple-mail': 'Apple Mail', mbox: 'Mbox import', beeper: 'Beeper', slack: 'Slack', inline: 'Inline', matrix: 'Matrix',
@@ -23,6 +23,11 @@ const SOURCE_TYPES: Readonly<Record<string, string>> = {
 };
 export function sourceTypeLabel(code: string): string {
   return Object.hasOwn(SOURCE_TYPES, code) ? SOURCE_TYPES[code]! : sentenceCase(code);
+}
+
+/** A source's user-facing name; call identifiers are internal provenance. */
+export function sourceLabel(source: Pick<SourceStatus, 'source_type' | 'identifier' | 'display_name'>): string {
+  return source.display_name || (source.source_type === 'call_history' ? 'Call history' : source.identifier);
 }
 
 // API import sources receive data when a client posts it; they have nothing
