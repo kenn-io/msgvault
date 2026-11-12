@@ -3087,24 +3087,18 @@ func (c ContactPointPage) Validate() error {
 	return errors
 }
 
-type FirstContactIntroducer struct {
-	DisplayName   string `json:"display_name"`
-	ParticipantID int64  `json:"participant_id"`
-	PersonID      *int64 `json:"person_id,omitzero"`
-}
-
 type ContactState struct {
-	FirstSeenAt         *time.Time              `json:"first_seen_at,omitempty"`
-	FirstSeenRef        *string                 `json:"first_seen_ref,omitzero"`
-	FirstContactKind    *string                 `json:"first_contact_kind,omitzero"`
-	Introducer          *FirstContactIntroducer `json:"introducer,omitzero"`
 	CadenceDueAt        *time.Time              `json:"cadence_due_at,omitempty"`
 	CadenceStatus       string                  `json:"cadence_status" validate:"required"`
 	ComputedAt          time.Time               `json:"computed_at" validate:"required"`
 	FirstContactAt      *time.Time              `json:"first_contact_at,omitempty"`
+	FirstContactKind    *string                 `json:"first_contact_kind,omitzero"`
 	FirstContactRef     *string                 `json:"first_contact_ref,omitzero"`
+	FirstSeenAt         *time.Time              `json:"first_seen_at,omitempty"`
+	FirstSeenRef        *string                 `json:"first_seen_ref,omitzero"`
 	InferredChannel     *string                 `json:"inferred_channel,omitzero"`
 	InteractionCount    int64                   `json:"interaction_count"`
+	Introducer          *FirstContactIntroducer `json:"introducer,omitempty"`
 	LastContactAt       *time.Time              `json:"last_contact_at,omitempty"`
 	LastContactChannel  *string                 `json:"last_contact_channel,omitzero"`
 	LastContactOwner    *string                 `json:"last_contact_owner,omitzero"`
@@ -3119,7 +3113,24 @@ type ContactState struct {
 }
 
 func (c ContactState) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.CadenceStatus, "required"); err != nil {
+		errors = errors.Append("CadenceStatus", err)
+	}
+	if err := typesValidator.Var(c.ComputedAt, "required"); err != nil {
+		errors = errors.Append("ComputedAt", err)
+	}
+	if c.Introducer != nil {
+		if v, ok := any(c.Introducer).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Introducer", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ContextPassage struct {
@@ -5751,6 +5762,16 @@ type Filters struct {
 	Recipients    []string `json:"recipients,omitempty"`
 	SenderDomains []string `json:"sender_domains,omitempty"`
 	Senders       []string `json:"senders,omitempty"`
+}
+
+type FirstContactIntroducer struct {
+	DisplayName   string `json:"display_name" validate:"required"`
+	ParticipantID int64  `json:"participant_id"`
+	PersonID      *int64 `json:"person_id,omitempty"`
+}
+
+func (f FirstContactIntroducer) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
 }
 
 type FormatCoverage struct {
