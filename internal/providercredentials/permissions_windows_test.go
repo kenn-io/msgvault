@@ -600,3 +600,15 @@ func TestSecureRestoredDoesNotTouchEmptySelection(t *testing.T) {
 	_, err := os.Stat(dir)
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
+
+func TestSecureRestoredCaseVariantProviderRequiresFullAccess(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tokens")
+	require.NoError(t, (nativePermissions{}).secureDirectory(dir))
+	name := "Provider-Credentials.json"
+	path := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(path, []byte("fixture"), 0o600))
+	user := currentWindowsProviderCredentialSID(t)
+	handle := setProviderCredentialTestACL(t, path, []windows.EXPLICIT_ACCESS{providerCredentialTestAccess(user, windows.GENERIC_READ, windows.TRUSTEE_IS_USER)}, true)
+	require.NoError(t, SecureRestored(dir, []string{name}))
+	require.NoError(t, verifyOwnerOnlyHandle(handle, false))
+}
