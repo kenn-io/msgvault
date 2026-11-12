@@ -117,10 +117,12 @@ func TestFederationHandshakeLibraryAuthorization(t *testing.T) {
 	var fields map[string]any
 	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &fields))
 	requirements.Contains(fields, "enrollment_state")
-	requirements.Equal("", fields["enrollment_state"])
+	requirements.Empty(fields["enrollment_state"])
 }
 
 func TestFederationKeylessSpokeIdentity(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
@@ -128,9 +130,9 @@ func TestFederationKeylessSpokeIdentity(t *testing.T) {
 	cfg.Server.BindAddr = "0.0.0.0"
 	cfg.Server.AllowInsecure = true
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, Logger: testLogger()})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	uid, err := st.ArchiveUIDContext(t.Context())
-	require.NoError(t, err)
+	requirements.NoError(err)
 	for _, tc := range []struct {
 		peer   string
 		status int
@@ -139,13 +141,13 @@ func TestFederationKeylessSpokeIdentity(t *testing.T) {
 		r.RemoteAddr = tc.peer
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
-		assert.Equal(t, tc.status, w.Code, w.Body.String())
+		assertions.Equal(tc.status, w.Code, w.Body.String())
 		if tc.status == http.StatusOK {
 			var response federationIdentityResponse
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
-			assert.Equal(t, uid, response.ArchiveUID)
+			requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+			assertions.Equal(uid, response.ArchiveUID)
 		} else {
-			assert.Contains(t, w.Body.String(), "Invalid or missing API key")
+			assertions.Contains(w.Body.String(), "Invalid or missing API key")
 		}
 	}
 }
@@ -196,17 +198,19 @@ func TestFederationOwnerLifecycle(t *testing.T) {
 func TestFederationOperationGate(t *testing.T) {
 	for _, role := range []string{"off", "spoke", "hub"} {
 		t.Run(role, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			st := testutil.NewTestStore(t)
 			gate := NewSerialOperationGate()
 			release, ok := gate.BeginWorkContext(t.Context())
-			require.True(t, ok)
+			requirements.True(ok)
 			t.Cleanup(release)
 			cfg := config.NewDefaultConfig()
 			cfg.Data.DataDir = t.TempDir()
 			cfg.Server.APIKey = "owner-fixture"
 			cfg.Federation.Role = role
 			srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, OperationGate: gate, Logger: testLogger()})
-			t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+			t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 			if role == "hub" {
 				ctx, cancel := context.WithCancel(t.Context())
 				done := make(chan struct{})
@@ -216,10 +220,10 @@ func TestFederationOperationGate(t *testing.T) {
 					r.Header.Set("X-Api-Key", "owner-fixture")
 					srv.Router().ServeHTTP(httptest.NewRecorder(), r)
 				}()
-				assert.Eventually(t, gate.HasRequestWaiters, 5*time.Second, 10*time.Millisecond)
+				assertions.Eventually(gate.HasRequestWaiters, 5*time.Second, 10*time.Millisecond)
 				cancel()
 				<-done
-				assert.False(t, gate.HasRequestWaiters())
+				assertions.False(gate.HasRequestWaiters())
 				return
 			}
 			for _, tc := range []struct{ method, path string }{{http.MethodPost, "/api/v1/federation/enrollments"}, {http.MethodDelete, "/api/v1/federation/enrollments/fixture"}} {
@@ -228,9 +232,9 @@ func TestFederationOperationGate(t *testing.T) {
 				r.Header.Set("X-Api-Key", "owner-fixture")
 				w := httptest.NewRecorder()
 				srv.Router().ServeHTTP(w, r)
-				require.NoError(t, ctx.Err(), "%s %s waited on the gate", tc.method, tc.path)
+				requirements.NoError(ctx.Err(), "%s %s waited on the gate", tc.method, tc.path)
 				cancel()
-				assert.False(t, gate.HasRequestWaiters())
+				assertions.False(gate.HasRequestWaiters())
 			}
 		})
 	}

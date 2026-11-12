@@ -42,7 +42,11 @@ func init() {
 			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), result, json.Deterministic(true))
 		}
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Token)
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Enrollment: %s\nMember: %s\nSpoke: %s\nJoin (upcoming, not in this release): msgvault federation join <hub-url> --hub-instance %s --token-file <path>\n", result.Enrollment.EnrollmentUID, result.Enrollment.Member, result.Enrollment.SpokeName, result.HubInstance)
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Enrollment: %s\nMember: %s\n", result.Enrollment.EnrollmentUID, result.Enrollment.Member)
+		if result.Enrollment.SpokeName != result.Enrollment.Member {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Spoke: %s\n", result.Enrollment.SpokeName)
+		}
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Join (upcoming, not in this release): msgvault federation join <hub-url> --hub-instance %s --token-file <path>\n", result.HubInstance)
 		return nil
 	}}
 	enroll.Flags().StringVar(&spoke, "spoke-instance", "", "Spoke archive UID (64 lowercase hexadecimal digits)")
@@ -67,7 +71,11 @@ func init() {
 			if e.RevokedAt != nil {
 				state = "revoked"
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", e.EnrollmentUID, e.Member, e.SpokeName, state)
+			names := e.Member
+			if e.SpokeName != e.Member {
+				names += " (" + e.SpokeName + ")"
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", e.EnrollmentUID, names, state)
 		}
 		return nil
 	}}

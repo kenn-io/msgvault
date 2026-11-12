@@ -53,39 +53,58 @@ func TestFederationEnrollOutput(t *testing.T) {
 		return st, command, ctx, stdout, stderr, srv.URL
 	}
 	t.Run("token and join hint", func(t *testing.T) {
-		_, command, ctx, stdout, stderr, url := setup(t)
-		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice"})
-		require.NoError(t, command.ExecuteContext(ctx))
-		token := strings.TrimSpace(stdout.String())
-		assert.Regexp(t, `^mvf1_[A-Za-z0-9_-]+$`, token)
-		assert.Equal(t, token+"\n", stdout.String())
-		assert.NotContains(t, stderr.String(), token)
-		assert.Contains(t, stderr.String(), "msgvault federation join <hub-url>")
-		assert.NotContains(t, stderr.String(), url)
+		for _, tc := range []struct {
+			name, spokeName string
+		}{{"matching", ""}, {"distinct", "laptop"}} {
+			t.Run(tc.name, func(t *testing.T) {
+				assertions := assert.New(t)
+				_, command, ctx, stdout, stderr, url := setup(t)
+				command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--spoke-name", tc.spokeName})
+				require.NoError(t, command.ExecuteContext(ctx))
+				token := strings.TrimSpace(stdout.String())
+				assertions.Regexp(`^mvf1_[A-Za-z0-9_-]+$`, token)
+				assertions.Equal(token+"\n", stdout.String())
+				assertions.NotContains(stderr.String(), token)
+				assertions.Contains(stderr.String(), "Member: alice\n")
+				if tc.spokeName == "" {
+					assertions.NotContains(stderr.String(), "Spoke:")
+				} else {
+					assertions.Contains(stderr.String(), "Spoke: laptop\n")
+				}
+				assertions.Contains(stderr.String(), "msgvault federation join <hub-url>")
+				assertions.NotContains(stderr.String(), url)
+			})
+		}
 	})
 	t.Run("list", func(t *testing.T) {
+		requirements := require.New(t)
 		st, _, ctx, _, _, _ := setup(t)
-		_, _, err := st.CreateFederationEnrollmentContext(t.Context(), strings.Repeat("a", 64), "alice", "")
-		require.NoError(t, err)
+		matching, _, err := st.CreateFederationEnrollmentContext(t.Context(), strings.Repeat("a", 64), "alice", "")
+		requirements.NoError(err)
+		distinct, _, err := st.CreateFederationEnrollmentContext(t.Context(), strings.Repeat("b", 64), "bob", "laptop")
+		requirements.NoError(err)
 		template, _, err := rootCmd.Find([]string{"federation", "enrollments", "list"})
-		require.NoError(t, err)
+		requirements.NoError(err)
 		list := &cobra.Command{Use: template.Use, Args: template.Args, RunE: template.RunE}
 		list.Flags().AddFlagSet(template.Flags())
 		var output bytes.Buffer
 		list.SetOut(&output)
-		require.NoError(t, list.ExecuteContext(ctx))
-		assert.Contains(t, output.String(), "\talice\talice\tactive\n")
+		requirements.NoError(list.ExecuteContext(ctx))
+		assert.Contains(t, output.String(), matching.EnrollmentUID+"\talice\tactive\n")
+		assert.Contains(t, output.String(), distinct.EnrollmentUID+"\tbob (laptop)\tactive\n")
 	})
 	t.Run("JSON output", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
 		_, command, ctx, stdout, stderr, _ := setup(t)
 		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--json"})
-		require.NoError(t, command.ExecuteContext(ctx))
+		requirements.NoError(command.ExecuteContext(ctx))
 		var output struct {
 			Token string `json:"token"`
 		}
-		require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
-		assert.Regexp(t, `^mvf1_[A-Za-z0-9_-]+$`, output.Token)
-		assert.NotContains(t, stderr.String(), output.Token)
+		requirements.NoError(json.Unmarshal(stdout.Bytes(), &output))
+		assertions.Regexp(`^mvf1_[A-Za-z0-9_-]+$`, output.Token)
+		assertions.NotContains(stderr.String(), output.Token)
 	})
 	t.Run("server error", func(t *testing.T) {
 		_, command, ctx, _, _, _ := setup(t)
