@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -61,5 +62,12 @@ func TestImportICSCommandImportsFile(t *testing.T) {
 	_, err = importer.ImportICS(t.Context(), st, invalid, "invalid-export")
 	requirements.Error(err)
 	_, err = st.GetSourceByTypeAndIdentifier(t.Context(), "ics", "invalid-export")
+	requirements.ErrorIs(err, store.ErrSourceNotFound)
+	oversized := filepath.Join(t.TempDir(), "oversized.ics")
+	large := "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:large@example.com\r\nDTSTART:20270302T120000Z\r\nDESCRIPTION:" + strings.Repeat("x", 64<<20) + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	requirements.NoError(os.WriteFile(oversized, []byte(large), 0600))
+	_, err = importer.ImportICS(t.Context(), st, oversized, "oversized-export")
+	requirements.Error(err)
+	_, err = st.GetSourceByTypeAndIdentifier(t.Context(), "ics", "oversized-export")
 	requirements.ErrorIs(err, store.ErrSourceNotFound)
 }

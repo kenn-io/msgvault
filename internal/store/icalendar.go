@@ -34,6 +34,12 @@ type preparedICS struct {
 	fromEmail bool
 }
 
+// ValidateICalendar checks calendar syntax and retained event sizes.
+func ValidateICalendar(raw []byte) error {
+	_, err := prepareICalendar(raw, "", false)
+	return err
+}
+
 // PersistICalendarContext imports one complete file atomically under the same
 // source lock as email/calendar ingestion. Invalid files leave no event writes.
 func (s *Store) PersistICalendarContext(ctx context.Context, sourceID int64, raw []byte) (ICalendarImportSummary, error) {
