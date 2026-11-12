@@ -173,8 +173,7 @@ func serveEventsMutation[Req, Resp any](w http.ResponseWriter, r *http.Request, 
 	}()
 	result, err := run(ctx, in, &release)
 	if err != nil {
-		var apiErr *apiHTTPError
-		if errors.As(err, &apiErr) {
+		if apiErr, ok := errors.AsType[*apiHTTPError](err); ok {
 			writeAPIHTTPError(w, apiErr)
 		} else {
 			eventsError(w, err)

@@ -1064,6 +1064,7 @@ func TestDelegatedCatalogChangesDuringChallenge(t *testing.T) {
 		run  func(*testing.T, *store.Store, *agentgrant.Registry, string, *Service, *time.Time)
 	}{
 		{"grant revoked", func(t *testing.T, st *store.Store, registry *agentgrant.Registry, id string, service *Service, now *time.Time) {
+			t.Helper()
 			require := require.New(t)
 			assert := assert.New(t)
 			var err error
@@ -1079,6 +1080,7 @@ func TestDelegatedCatalogChangesDuringChallenge(t *testing.T) {
 			assert.Empty(raw)
 		}},
 		{"unrelated catalog change", func(t *testing.T, st *store.Store, registry *agentgrant.Registry, id string, service *Service, now *time.Time) {
+			t.Helper()
 			require := require.New(t)
 			assert := assert.New(t)
 			var err error
@@ -1100,6 +1102,7 @@ func TestDelegatedCatalogChangesDuringChallenge(t *testing.T) {
 			assert.Equal(1, calls)
 		}},
 		{"concurrent verified pair", func(t *testing.T, st *store.Store, registry *agentgrant.Registry, id string, service *Service, now *time.Time) {
+			t.Helper()
 			require := require.New(t)
 			assert := assert.New(t)
 			var err error
@@ -1111,14 +1114,13 @@ func TestDelegatedCatalogChangesDuringChallenge(t *testing.T) {
 			second := request("whsec_YmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJi")
 			var challenged string
 			var winner MCPEventsSubscribeResult
-			verifyWinner := func(_ context.Context, _ string, id string, secret []byte) error {
-				assert.Equal(second.secret, secret)
-				challenged = id
-				return nil
-			}
 			verifyLoser := func(ctx context.Context, _ string, id string, secret []byte) error {
 				assert.Equal(first.secret, secret)
-				winner, err = service.Subscribe(ctx, second, owner, verifyWinner, nil)
+				winner, err = service.Subscribe(ctx, second, owner, func(_ context.Context, _ string, id string, secret []byte) error {
+					assert.Equal(second.secret, secret)
+					challenged = id
+					return nil
+				}, nil)
 				require.NoError(err)
 				assert.NotEqual(id, challenged)
 				return nil
@@ -1163,6 +1165,7 @@ func TestDelegatedCatalogChangesDuringChallenge(t *testing.T) {
 			assert.Equal(first.secret, secret)
 		}},
 		{"expiry during challenge", func(t *testing.T, st *store.Store, registry *agentgrant.Registry, id string, service *Service, now *time.Time) {
+			t.Helper()
 			require := require.New(t)
 			assert := assert.New(t)
 			var err error
@@ -1205,6 +1208,7 @@ func TestDelegatedCatalogChangesDuringChallenge(t *testing.T) {
 			}
 		}},
 		{"expiry between requests", func(t *testing.T, st *store.Store, registry *agentgrant.Registry, id string, service *Service, now *time.Time) {
+			t.Helper()
 			require := require.New(t)
 			assert := assert.New(t)
 			var err error

@@ -198,7 +198,7 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, o
 				id += hex.EncodeToString(b[:])
 			}
 		}
-		if challengedID != "" && authorize != nil {
+		if (challengedID != "" || !refresh) && authorize != nil {
 			if err := authorize(ctx, !refresh); err != nil {
 				return out, err
 			}

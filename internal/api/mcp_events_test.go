@@ -434,19 +434,19 @@ func TestDelegatedPersonRefusalsHaveSameReason(t *testing.T) {
 				assert.Equal(t, before, after)
 			} else {
 				assert.NotEqual(t, before, after)
+				require.NoError(t, st.ReplaceMessageRecipients(outsideMessage, "to", []int64{outside, both, inside}, nil))
+				body := fmt.Sprintf(`{"name":"msgvault.messages.changed","arguments":{"person_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, inPerson.ID)
+				r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/mcp-events/subscribe", strings.NewReader(body))
+				r.Header.Set("Content-Type", "application/json")
+				r.Header.Set(apiprotocol.AgentTokenHeader, token)
+				w := httptest.NewRecorder()
+				previousCalls := calls
+				srv.Router().ServeHTTP(w, r)
+				assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+				assert.Equal(t, previousCalls+1, calls)
 			}
 		})
 	}
-	require.NoError(t, st.ReplaceMessageRecipients(outsideMessage, "to", []int64{outside, both, inside}, nil))
-	body := fmt.Sprintf(`{"name":"msgvault.messages.changed","arguments":{"person_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, inPerson.ID)
-	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/mcp-events/subscribe", strings.NewReader(body))
-	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set(apiprotocol.AgentTokenHeader, token)
-	w := httptest.NewRecorder()
-	previousCalls := calls
-	srv.Router().ServeHTTP(w, r)
-	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	assert.Equal(t, previousCalls+1, calls)
 }
 
 func TestEventsInitialSourceAdmissionPreservesDaemonClientReason(t *testing.T) {
