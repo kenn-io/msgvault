@@ -10,6 +10,8 @@ env:
   # Compile without absolute source paths, like the Makefile does.
   GOFLAGS: -trimpath
   PG_MOVED_PKGS: ./internal/matrix ./internal/beeper ./internal/rederive ./internal/chatwoot
+  API_CONTRACT_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.before) || '' }}
+  API_CONTRACT_MERGE_MAIN: ${{ github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main' }}
 
 on:
   workflow_call:
@@ -369,6 +371,24 @@ jobs:
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
+      - name: Set API contract base
+        if: ${{ matrix.name == 'api' }}
+        shell: bash
+        run: &set-api-contract-base |
+          if [ -z "$API_CONTRACT_BASE_REF" ]; then
+            kit-retry 3 5 git fetch --no-tags --unshallow origin +refs/heads/main:refs/remotes/origin/main
+            if [ "$API_CONTRACT_MERGE_MAIN" = true ]; then
+              git -c user.name='CI' -c user.email='ci@example.com' merge --no-commit --no-ff refs/remotes/origin/main
+              BASE_SHA=$(git rev-parse refs/remotes/origin/main)
+            else
+              BASE_SHA=$(git merge-base HEAD refs/remotes/origin/main)
+            fi
+          else
+            kit-retry 3 5 git fetch --no-tags --depth=1 origin "$API_CONTRACT_BASE_REF"
+            BASE_SHA=$(git rev-parse FETCH_HEAD)
+          fi
+          echo "MSGVAULT_API_CONTRACT_BASE=$BASE_SHA" >> "$GITHUB_ENV"
+
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
@@ -405,6 +425,12 @@ jobs:
         with:
           group: macos
           trim: "true"
+
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+
+      - name: Set API contract base
+        shell: bash
+        run: *set-api-contract-base
 
       - name: Test
         run: make test TEST_TIMEOUT=39m
@@ -838,6 +864,10 @@ jobs:
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
+      - name: Set API contract base
+        shell: bash
+        run: *set-api-contract-base
+
       - name: Install SQLite development headers
         shell: bash
         run: kit-retry 3 5 C:/msys64/usr/bin/pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
@@ -1230,6 +1260,11 @@ jobs:
           group: linux-postgres
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+
+      - name: Set API contract base
+        if: ${{ matrix.name == 'api' }}
+        shell: bash
+        run: *set-api-contract-base
 
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
