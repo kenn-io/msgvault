@@ -97,7 +97,7 @@ does not publish. Publish separately through the CardDAV publication API.
 The MCP `create_person` tool accepts the same creation fields except `source`.
 It requires both MCP writes and profile writes to be enabled, like
 `promote_person`, and is absent from the read-only catalog and from daemons
-older than API schema 5.1.0. It records every value with enrichment
+older than API schema 5.2.0. It records every value with enrichment
 provenance, like other MCP profile writes, so CardDAV publication requires
 review. It never publishes.
 
