@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,18 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+type suggestionClassificationStore struct {
+	*store.Store
+	counts map[int64]int
+}
+
+func (s *suggestionClassificationStore) PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error {
+	for _, message := range messages {
+		s.counts[message.ID]++
+	}
+	return s.Store.PopulateMessageBodiesContext(ctx, messages)
+}
 
 func TestGrantedMeetingSuggestions(t *testing.T) {
 	r := require.New(t)
@@ -112,7 +125,8 @@ func TestGrantedMeetingSuggestionsTitleWords(t *testing.T) {
 	event, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: calendar.ID, SourceMessageID: "event", MessageType: "calendar_event", Subject: sql.NullString{String: "Your verification code is 482913", Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"}, RawMIME: []byte(`{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`), RawFormat: "gcal_json"})
 	r.NoError(err)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	spy := &suggestionClassificationStore{Store: st, counts: map[int64]int{}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: spy, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(srv.agentGrants.Close)
 	sources := []agentgrant.SourceRef{{ID: notes.ID, Type: notes.SourceType, Identifier: notes.Identifier}, {ID: calendar.ID, Type: calendar.SourceType, Identifier: calendar.Identifier}}
 	_, limited, _, err := srv.agentGrants.Issue("limited", []agentgrant.Permission{agentgrant.PermissionMessageRead}, sources, time.Time{})
@@ -126,6 +140,7 @@ func TestGrantedMeetingSuggestionsTitleWords(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, ref := range []string{fmt.Sprintf("msg:%d", ids[1]), fmt.Sprintf("evt:%d", event)} {
 				t.Run(ref, func(t *testing.T) {
+					clear(spy.counts)
 					req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/suggestions?ref="+ref+"&limit=1", nil)
 					if tc.token == "" {
 						req.Header.Set("Authorization", "Bearer owner")
@@ -139,6 +154,12 @@ func TestGrantedMeetingSuggestionsTitleWords(t *testing.T) {
 					require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page))
 					require.Len(t, page.Suggestions, 1)
 					item := page.Suggestions[0]
+					if !tc.reveal {
+						require.NotEmpty(t, spy.counts)
+					}
+					for _, count := range spy.counts {
+						require.Equal(t, 1, count)
+					}
 					if tc.reveal {
 						require.Equal(t, 1, item.TitleTokens)
 						if ref[0:3] == "evt" {

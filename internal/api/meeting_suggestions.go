@@ -59,19 +59,8 @@ func (s *Server) handleMeetingSuggestions(w http.ResponseWriter, r *http.Request
 		s.writeMeetingLinkError(w, err)
 		return
 	}
-	ids := make([]int64, 0, len(page.Suggestions)*2)
-	for _, item := range page.Suggestions {
-		ids = append(ids, item.TitleMessageID)
-		if item.TitleOriginID != 0 {
-			ids = append(ids, item.TitleOriginID)
-		}
-	}
-	withheld, ok := s.verificationWithheld(w, r, ids)
-	if !ok {
-		return
-	}
 	for i := range page.Suggestions {
-		if withheld[page.Suggestions[i].TitleMessageID] || withheld[page.Suggestions[i].TitleOriginID] {
+		if page.Suggestions[i].TitleWithheld {
 			page.Suggestions[i].Title = verification.Masked
 		}
 	}

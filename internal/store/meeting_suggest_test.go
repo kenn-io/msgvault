@@ -94,6 +94,32 @@ func TestMeetingSuggestionsWithheldTitle(t *testing.T) {
 	}
 }
 
+func TestMeetingSuggestionsScheduledDuration(t *testing.T) {
+	for _, minute := range []int{5, 50} {
+		t.Run(fmt.Sprint(minute), func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, first := calendarFixture(t, st, "scheduled-first", `{"id":"first","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+			calendarFixture(t, st, "scheduled-next", `{"id":"next","start":{"dateTime":"2027-03-14T11:00:00Z"},"end":{"dateTime":"2027-03-14T12:00:00Z"}}`)
+			raw := fmt.Sprintf(`{"schema_version":1,"recording":{"startedAt":"2027-03-14T10:%02d:00Z","summary":{"markdown":"Summary"}},"calendar_event":{"startsAt":"2027-03-14T10:00:00Z","endsAt":"2027-03-14T11:00:00Z"}}`, minute)
+			data, note := projectionFixture(t, st, "scheduled-note", "twenty_json", raw)
+			data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, minute, 0, 0, time.UTC), Valid: true}
+			_, err := st.UpsertMessage(data.Message)
+			r.NoError(err)
+			_, err = st.db.ExecContext(t.Context(), `UPDATE messages SET metadata=? WHERE id=?`, `{"scheduled_start":"2027-03-14T10:00:00Z"}`, note)
+			r.NoError(err)
+			page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}}, 10, nil)
+			r.NoError(err)
+			r.Len(page.Suggestions, 1)
+			r.Equal(fmt.Sprintf("evt:%d", first), page.Suggestions[0].Ref)
+			page, err = st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: first}}, 10, nil)
+			r.NoError(err)
+			r.Len(page.Suggestions, 1)
+			r.Equal(time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), page.Suggestions[0].Start.UTC())
+		})
+	}
+}
+
 func TestMeetingSuggestionsRankingAndSavedChoices(t *testing.T) {
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -295,9 +321,12 @@ func TestMeetingSuggestionsAllDayAndPartialExpansion(t *testing.T) {
 	r.Equal(note, reverse.Suggestions[0].MemberMessageID)
 	_, err = st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}}, MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: event}}, "link")
 	r.NoError(err)
-	r.Len(page.Suggestions, 2)
-	r.Equal(fmt.Sprintf("evt:%d", event), page.Suggestions[0].Ref)
-	r.Equal(fmt.Sprintf("evt:%d", exception), page.Suggestions[1].Ref)
+	page, err = st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}}, 10, nil)
+	r.NoError(err)
+	r.NotEmpty(page.Unexpandable)
+	r.Equal(unsupported, page.Unexpandable[0].MessageID)
+	r.Len(page.Suggestions, 1)
+	r.Equal(fmt.Sprintf("evt:%d", exception), page.Suggestions[0].Ref)
 }
 
 func TestMeetingSuggestionsExcludeConflictingLink(t *testing.T) {
@@ -343,7 +372,11 @@ func TestMeetingSuggestionsLimit(t *testing.T) {
 		r.NoError(err)
 		r.Len(page.Suggestions, tc.want)
 		for i := 1; i < len(page.Suggestions); i++ {
-			r.Less(page.Suggestions[i-1].Ref, page.Suggestions[i].Ref)
+			previous, err := ParseMeetingLinkRef(page.Suggestions[i-1].Ref)
+			r.NoError(err)
+			current, err := ParseMeetingLinkRef(page.Suggestions[i].Ref)
+			r.NoError(err)
+			r.Less(previous.MessageID, current.MessageID)
 		}
 	}
 }

@@ -13,8 +13,10 @@ import (
 )
 
 type MeetingSuggestion struct {
-	TitleMessageID  int64     `json:"-"`
-	TitleOriginID   int64     `json:"-"`
+	TitleMessageID  int64 `json:"-"`
+	TitleOriginID   int64 `json:"-"`
+	TitleWithheld   bool  `json:"-"`
+	eventEndpoint   meetingDecisionEndpoint
 	Ref             string    `json:"ref"`
 	MemberMessageID int64     `json:"member_message_id"`
 	Title           string    `json:"title"`
@@ -22,6 +24,16 @@ type MeetingSuggestion struct {
 	OverlapMinutes  int       `json:"overlap_minutes"`
 	SharedAttendees int       `json:"shared_attendees"`
 	TitleTokens     int       `json:"title_tokens"`
+}
+
+func (s *Store) suggestionIntervalExpressions() (start, duration string) {
+	scheduled := "CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.scheduled_start') END"
+	if s.IsPostgreSQL() {
+		scheduled = "(m.metadata->>'scheduled_start')::timestamptz"
+	}
+	start = "COALESCE(CASE WHEN d.duration_basis = 'scheduled' THEN " + scheduled + " END, m.sent_at, m.received_at, m.internal_date)"
+	duration = "CASE WHEN d.duration_seconds > 0 THEN d.duration_seconds ELSE 1800 END"
+	return start, duration
 }
 
 type MeetingSuggestionPage struct {
@@ -76,31 +88,23 @@ func (s *Store) suggestionMembers(ctx context.Context, ids []int64) ([]suggestMe
 	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 	args := appendInt64Args(nil, ids)
 	args = append(args, scopeArgs...)
-	rows, err := r.QueryContext(ctx, `SELECT m.id,COALESCE(m.subject,''),m.sent_at,m.received_at,m.internal_date,d.duration_seconds FROM messages m LEFT JOIN meeting_details d ON d.message_id=m.id WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL AND m.id IN (`+placeholders(len(ids))+`)`+scope+` ORDER BY m.id`, args...)
+	start, duration := s.suggestionIntervalExpressions()
+	rows, err := r.QueryContext(ctx, `SELECT m.id,COALESCE(m.subject,''),`+start+`,`+duration+` FROM messages m LEFT JOIN meeting_details d ON d.message_id=m.id WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL AND m.id IN (`+placeholders(len(ids))+`)`+scope+` ORDER BY m.id`, args...)
 	if err != nil {
 		return nil, err
 	}
 	var members []suggestMember
 	for rows.Next() {
 		var m suggestMember
-		var sent, received, internal sql.NullTime
-		var duration sql.NullFloat64
-		if err := rows.Scan(&m.ID, &m.Title, &sent, &received, &internal, &duration); err != nil {
+		var start nullableTimestamp
+		var duration float64
+		if err := rows.Scan(&m.ID, &m.Title, &start, &duration); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
-		for _, at := range []sql.NullTime{sent, received, internal} {
-			if at.Valid {
-				m.Start = at.Time
-				break
-			}
-		}
-		d := 30 * time.Minute
-		if duration.Valid && duration.Float64 > 0 {
-			d = time.Duration(duration.Float64 * float64(time.Second))
-		}
-		if !m.Start.IsZero() {
-			m.End = m.Start.Add(d)
+		if start.Valid {
+			m.Start = start.Time
+			m.End = m.Start.Add(time.Duration(duration * float64(time.Second)))
 		}
 		members = append(members, m)
 	}
@@ -196,12 +200,12 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		}
 		r := s.db
 		scope, args := sourceScopeClause(ctx, "m.source_id")
-		startExpr := "COALESCE(m.sent_at,m.received_at,m.internal_date)"
-		endExpr := startExpr + " + (CASE WHEN d.duration_seconds > 0 THEN d.duration_seconds ELSE 1800 END) * interval '1 second'"
+		startExpr, duration := s.suggestionIntervalExpressions()
+		endExpr := startExpr + " + (" + duration + ") * interval '1 second'"
 		startBound, endBound := "?", "?"
 		if !s.IsPostgreSQL() {
 			startExpr = "julianday(" + startExpr + ")"
-			endExpr = startExpr + " + (CASE WHEN d.duration_seconds > 0 THEN d.duration_seconds ELSE 1800 END) / 86400.0"
+			endExpr = startExpr + " + (" + duration + ") / 86400.0"
 			startBound, endBound = "julianday(?)", "julianday(?)"
 		}
 		values := []any{*seed.End, *seed.Start}
@@ -240,6 +244,28 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			}
 		}
 	}
+	verdicts := map[int64]bool{}
+	classify := func(ids []int64) error {
+		var pending []int64
+		queued := map[int64]bool{}
+		for _, id := range ids {
+			if _, found := verdicts[id]; id != 0 && !found && !queued[id] {
+				queued[id] = true
+				pending = append(pending, id)
+			}
+		}
+		if len(pending) == 0 {
+			return nil
+		}
+		results, err := withheld(ctx, pending)
+		if err != nil {
+			return err
+		}
+		for _, id := range pending {
+			verdicts[id] = results[id]
+		}
+		return nil
+	}
 	if withheld != nil {
 		ids := append([]int64(nil), seedIDs...)
 		for _, candidate := range candidates {
@@ -251,20 +277,26 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			}
 		}
 		if len(ids) > len(seedIDs) {
-			masked, err := withheld(ctx, ids)
-			if err != nil {
+			if err := classify(ids); err != nil {
 				return page, err
 			}
 			seedMasked := false
 			for _, id := range seedIDs {
-				seedMasked = seedMasked || masked[id]
+				seedMasked = seedMasked || verdicts[id]
 			}
 			for i := range candidates {
-				if seedMasked || masked[candidates[i].TitleMessageID] || masked[candidates[i].TitleOriginID] {
+				if seedMasked || verdicts[candidates[i].TitleMessageID] || verdicts[candidates[i].TitleOriginID] {
 					candidates[i].TitleTokens = 0
 				}
 			}
 		}
+	}
+	for i := range candidates {
+		ref, err := ParseMeetingLinkRef(candidates[i].Ref)
+		if err != nil {
+			return page, err
+		}
+		candidates[i].eventEndpoint = endpointFromRef(ref)
 	}
 	slices.SortFunc(candidates, func(a, b MeetingSuggestion) int {
 		if a.SharedAttendees != b.SharedAttendees {
@@ -276,7 +308,7 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		if a.TitleTokens != b.TitleTokens {
 			return b.TitleTokens - a.TitleTokens
 		}
-		if c := strings.Compare(a.Ref, b.Ref); c != 0 {
+		if c := compareMeetingEndpoints(a.eventEndpoint, b.eventEndpoint); c != 0 {
 			return c
 		}
 		if a.MemberMessageID < b.MemberMessageID {
@@ -292,13 +324,10 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 	}
 	limit = min(limit, 100)
 	seen := map[string]bool{}
+	budget := calrecur.RequestReadBudget
 	for _, candidate := range candidates {
-		event, err := ParseMeetingLinkRef(candidate.Ref)
-		if err != nil {
-			return page, err
-		}
 		note := MeetingLinkRef{Kind: meetingRefMessage, OccurrenceRef: OccurrenceRef{MessageID: candidate.MemberMessageID}}
-		a, b := endpointFromRef(note), endpointFromRef(event)
+		a, b := endpointFromRef(note), candidate.eventEndpoint
 		partner := b
 		if ref.Kind == meetingRefEvent {
 			partner = a
@@ -306,10 +335,12 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		if seen[partner.ref()] {
 			continue
 		}
-		budget := calrecur.RequestReadBudget
 		graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{a, b}, &budget)
 		if errors.Is(err, ErrQueryTooBroad) {
-			continue
+			if len(page.Suggestions) == 0 {
+				return page, ErrQueryTooBroad
+			}
+			break
 		}
 		if err != nil {
 			return page, err
@@ -331,14 +362,20 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			}
 		}
 		if budget < 0 {
-			continue
+			if len(page.Suggestions) == 0 {
+				return page, ErrQueryTooBroad
+			}
+			break
 		}
 		_, _, _, err = s.materializedMeetingEndpointRecord(ctx, a, &budget)
 		if err == nil {
 			_, _, _, err = s.materializedMeetingEndpointRecord(ctx, b, &budget)
 		}
 		if errors.Is(err, ErrQueryTooBroad) {
-			continue
+			if len(page.Suggestions) == 0 {
+				return page, ErrQueryTooBroad
+			}
+			break
 		}
 		if err != nil {
 			return page, err
@@ -356,6 +393,19 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		page.Suggestions = append(page.Suggestions, candidate)
 		if len(page.Suggestions) == limit {
 			break
+		}
+	}
+	if withheld != nil {
+		var ids []int64
+		for _, item := range page.Suggestions {
+			ids = append(ids, item.TitleMessageID, item.TitleOriginID)
+		}
+		if err := classify(ids); err != nil {
+			return page, err
+		}
+		for i := range page.Suggestions {
+			item := &page.Suggestions[i]
+			item.TitleWithheld = verdicts[item.TitleMessageID] || verdicts[item.TitleOriginID]
 		}
 	}
 	return page, nil
