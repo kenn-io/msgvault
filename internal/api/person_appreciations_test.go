@@ -24,9 +24,11 @@ func TestAppreciationHTTPProjectsDismissalAndPreservesHistory(t *testing.T) {
 			Auth: peoplesweep.AuthBearer, Credential: peoplesweep.CredentialEnv, CredentialEnv: "TEST_KEY",
 			OutputMode: peoplesweep.OutputModeNativeJSONSchema, TokenLimitParameter: "max_completion_tokens",
 			RetentionPosture: "zero_retention", TrainingPosture: "no_training", AllowSensitive: true,
-			AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}, RequestTimeout: time.Second,
+			AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}, SourceSince: "2025-01-01", RequestTimeout: time.Second,
 		}}}
 	config.ApplyDefaults()
+	_, err := config.Profile()
+	require.NoError(t, err)
 	f.server.cfg.People.Sweep = config
 	var participantID int64
 	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT participant_id FROM person_participants WHERE person_id = ?`), f.personID).Scan(&participantID))
