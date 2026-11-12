@@ -100,13 +100,13 @@ func applyWebhook(ctx context.Context, st *store.Store, sourceType, identifier s
 	if err = errors.Join(err, st.UpdateSyncCheckpointContext(finish, syncID, cp)); err != nil {
 		return errors.Join(err, st.FailSyncContext(finish, syncID, err.Error()))
 	}
-	if err := st.CompleteSyncContext(finish, syncID, ""); err != nil || len(run.removed) == 0 {
+	if err := st.CompleteSyncContext(finish, syncID, ""); err != nil || len(run.sum.removed) == 0 {
 		return err
 	}
 	// A paused polling sync would read the removed objects on every resume,
 	// and after `msgvault gc` it cannot see they were removed. Prune it now,
 	// under the same lock. A failure is retried with the change.
-	return dropDeletedTraversal(ctx, st, execution, source, run.removed)
+	return dropDeletedTraversal(ctx, st, execution, source, run.sum.removed)
 }
 
 func (r *importRun) applyFeedChange(ctx context.Context, reader ObjectReader, change feedChange) error {
@@ -125,12 +125,12 @@ func (r *importRun) applyFeedChange(ctx context.Context, reader ObjectReader, ch
 	case "remove", "delete":
 		// A paused sync can hold a saved copy the archive never got, so its
 		// traversal is pruned by ID either way.
-		r.removed = append(r.removed, id)
+		r.sum.removed = append(r.sum.removed, id)
 		if !change.isPost() {
 			marked, err := r.imp.store.MarkMessageThreadDeletedContext(ctx, r.source.ID, id)
 			r.sum.MessagesProcessed += len(marked)
 			r.sum.MessagesUpdated += len(marked)
-			r.removed = append(r.removed, marked...)
+			r.sum.removed = append(r.sum.removed, marked...)
 			return err
 		}
 		// Only the post is marked; its comments stay archived.
