@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,12 +33,7 @@ func TestBackupRestoreNestedTokensRemainUsable(t *testing.T) {
 	prepareBackupTokenRestore(t)
 
 	fresh := filepath.Join(t.TempDir(), "fresh")
-	backupRestoreOverwrite, backupRestoreForceUnlock = false, false
-	backupRestoreLooseAttachments, backupRestoreIntegrityCheck = false, false
-	rootCmd.SetOut(io.Discard)
-	rootCmd.SetErr(io.Discard)
-	rootCmd.SetArgs([]string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", "--repo", repo.Root(), "--target", fresh, "--jobs", "1"})
-	require.NoError(executeRootContext(t.Context(), rootCmd))
+	require.NoError(runBackupTokenRestore(t, cfg, repo, fresh, false))
 	freshTokens := filepath.Join(fresh, "tokens")
 	_, err = providercredentials.Read(freshTokens)
 	require.NoError(err)
@@ -71,12 +65,7 @@ func TestBackupRestoreConfigOnlyLeavesUnrelatedTokenPath(t *testing.T) {
 	require.NoError(os.Mkdir(target, 0o700))
 	tokenPath := filepath.Join(target, "tokens")
 	require.NoError(os.WriteFile(tokenPath, []byte("unrelated"), 0o600))
-	backupRestoreOverwrite, backupRestoreForceUnlock = false, false
-	backupRestoreLooseAttachments, backupRestoreIntegrityCheck = false, false
-	rootCmd.SetOut(io.Discard)
-	rootCmd.SetErr(io.Discard)
-	rootCmd.SetArgs([]string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", "--repo", repo.Root(), "--target", target, "--jobs", "1", "--overwrite"})
-	require.NoError(executeRootContext(t.Context(), rootCmd))
+	require.NoError(runBackupTokenRestore(t, cfg, repo, target, true))
 	data, err := os.ReadFile(tokenPath)
 	require.NoError(err)
 	require.Equal("unrelated", string(data))

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"io"
 	"path/filepath"
 	"testing"
 
@@ -29,12 +28,7 @@ func TestBackupRestoreIncludedTokensRemainReadable(t *testing.T) {
 	prepareBackupTokenRestore(t)
 
 	target := filepath.Join(t.TempDir(), "restored")
-	backupRestoreOverwrite, backupRestoreForceUnlock = false, false
-	backupRestoreLooseAttachments, backupRestoreIntegrityCheck = false, false
-	rootCmd.SetOut(io.Discard)
-	rootCmd.SetErr(io.Discard)
-	rootCmd.SetArgs([]string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", "--repo", repo.Root(), "--target", target, "--jobs", "1"})
-	require.NoError(executeRootContext(t.Context(), rootCmd))
+	require.NoError(runBackupTokenRestore(t, cfg, repo, target, false))
 
 	tokens := filepath.Join(target, "tokens")
 	restored, err := providercredentials.Read(tokens)

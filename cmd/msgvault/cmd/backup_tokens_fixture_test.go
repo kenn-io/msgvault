@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -71,4 +72,18 @@ func prepareBackupTokenRestore(t *testing.T) {
 		rootCmd.SetArgs(nil)
 		slog.SetDefault(oldLogger)
 	})
+}
+
+func runBackupTokenRestore(t *testing.T, cfg *config.Config, repo *backup.Repo, target string, overwrite bool) error {
+	t.Helper()
+	backupRestoreOverwrite, backupRestoreForceUnlock = false, false
+	backupRestoreLooseAttachments, backupRestoreIntegrityCheck = false, false
+	rootCmd.SetOut(io.Discard)
+	rootCmd.SetErr(io.Discard)
+	args := []string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", "--repo", repo.Root(), "--target", target, "--jobs", "1"}
+	if overwrite {
+		args = append(args, "--overwrite")
+	}
+	rootCmd.SetArgs(args)
+	return executeRootContext(t.Context(), rootCmd)
 }
