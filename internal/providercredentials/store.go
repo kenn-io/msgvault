@@ -47,7 +47,7 @@ var (
 	ErrConflict       = errors.New("provider credential store changed")
 	ErrUnavailable    = errors.New("provider credential store unavailable")
 	ErrOriginMismatch = errors.New("stored provider credential is bound to a different endpoint origin")
-	eventsIDRE        = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	eventsIDRE        = regexp.MustCompile(`^(?:[0-9a-f]{32}|[0-9a-f]{64})$`)
 	providerNameRE    = regexp.MustCompile(`^[A-Za-z0-9._:-]+$`)
 	revisionKey       struct {
 		once sync.Once

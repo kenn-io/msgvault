@@ -472,3 +472,26 @@ func TestEventsCredentialsSeparated(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal("event", value)
 }
+
+func TestEventsCredentialIDGenerations(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		valid bool
+	}{
+		{"0123456789abcdef0123456789abcdef", true},
+		{"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", true},
+		{"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg", false},
+		{"0123456789abcdef0123456789abcdef0", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot, err := ReadEvents(t.TempDir())
+			require.NoError(t, err)
+			_, _, err = snapshot.Resolve(EventsID(tc.name), "https://example.test", "", nil)
+			if tc.valid {
+				assert.NoError(t, err)
+			} else {
+				assert.Error(t, err)
+			}
+		})
+	}
+}

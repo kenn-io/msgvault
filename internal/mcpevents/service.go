@@ -102,11 +102,24 @@ func subscriptionID(owner string, args MCPEventsArguments, url string) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%t\x00%s", owner, Name, args.PersonID, args.SourceID, *args.IncomingOnly, url)))
 	return hex.EncodeToString(sum[:16])
 }
+
+// Delegated IDs combine the existing identity digest with a random generation.
+// The catalog can find an identity without opening private credentials, including
+// when those credentials are missing; a new generation prevents expired replay.
 func find(entries []entry, owner string, args MCPEventsArguments, url string) int {
 	id := subscriptionID(owner, args, url)
 	for i, e := range entries {
-		if e.Owner == owner && (e.ID == id || (owner != "owner" && len(e.ID) == 64 && strings.HasPrefix(e.ID, id))) {
+		if e.Owner != owner {
+			continue
+		}
+		if owner == "owner" && e.ID == id {
 			return i
+		}
+		if isGrantOwner(owner) && len(e.ID) == 64 && strings.HasPrefix(e.ID, id) {
+			generation := e.ID[len(id):]
+			if _, err := hex.DecodeString(generation); err == nil && generation == strings.ToLower(generation) {
+				return i
+			}
 		}
 	}
 	return -1

@@ -1567,3 +1567,25 @@ func TestDelegatedPrivateCallbackIdentityAndFreshLease(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, first.ID, next.ID)
 }
+
+func TestCatalogIdentityRequiresValidGeneration(t *testing.T) {
+	incoming := true
+	args := MCPEventsArguments{SourceID: 1, IncomingOnly: &incoming}
+	endpoint := "https://example.com/hook"
+	for _, tc := range []struct {
+		owner, suffix string
+		match         bool
+	}{
+		{"owner", "", true},
+		{"owner", "0123456789abcdef0123456789abcdef", false},
+		{"grant:fixture", "0123456789abcdef0123456789abcdef", true},
+		{"grant:fixture", "0123456789abcdef0123456789abcdeg", false},
+		{"grant:fixture", "", false},
+	} {
+		t.Run(tc.owner+tc.suffix, func(t *testing.T) {
+			id := subscriptionID(tc.owner, args, endpoint) + tc.suffix
+			entries := []entry{{ID: id, Owner: tc.owner, Arguments: args}}
+			assert.Equal(t, tc.match, find(entries, tc.owner, args, endpoint) == 0)
+		})
+	}
+}
