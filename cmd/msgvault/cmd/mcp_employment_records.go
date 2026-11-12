@@ -165,29 +165,66 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 		}
 		id = a.EmploymentID
 	}
-	var current any
-	if name != "create_employment" {
-		result, _, err := b.executeEmploymentOperation(ctx, "get_employment", map[string]any{"employment_id": id})
-		if err != nil {
-			return "", true, err
-		}
-		if err := operationContext(result, result.ETag, "employment_revision_conflict", employmentDefiniteRefusal); err != nil {
-			return "", true, err
-		}
-		current = result.Output
+	current, demotes, err := b.employmentDisclosureContext(ctx, name, id)
+	if err != nil {
+		return "", true, err
 	}
 	effect := map[string]string{
 		"create_employment":      "Create this employment record; it may become the person's primary current employment.",
 		"replace_employment":     "Replace mutable fields; omitted ones clear, except current/primary flags.",
 		"end_employment":         "End this employment on the given date; it is no longer current or primary.",
-		"set_primary_employment": "Make this employment primary; the person's other primary employment is demoted.",
+		"set_primary_employment": "Make this employment primary; native demotes whichever other employment is primary when it runs. demotes shows the one read now, if any.",
 		"delete_employment":      "Permanently delete this employment record.",
 	}[name]
 	data, err := json.Marshal(struct {
-		Operation string         `json:"operation"`
-		Current   any            `json:"current,omitempty"`
-		Changes   map[string]any `json:"changes"`
-		Effect    string         `json:"effect"`
-	}{name, current, args, effect}, json.Deterministic(true))
+		Operation string                      `json:"operation"`
+		Current   *mcpserver.EmploymentRecord `json:"current,omitempty"`
+		Demotes   *generated.Employment       `json:"demotes,omitempty"`
+		Changes   map[string]any              `json:"changes"`
+		Effect    string                      `json:"effect"`
+	}{name, current, demotes, args, effect}, json.Deterministic(true))
 	return string(data), true, err
+}
+
+// employmentDisclosureContext reads the record an operation acts on and, for
+// set_primary_employment, the person's current primary it would demote. Failed
+// reads refuse as a definite read failure. Descriptions stay out of the
+// confirmation.
+func (b *daemonMCPOperations) employmentDisclosureContext(ctx context.Context, name string, id int64) (*mcpserver.EmploymentRecord, *generated.Employment, error) {
+	if name == "create_employment" {
+		return nil, nil, nil
+	}
+	unavailable := &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+	result, _, err := b.executeEmploymentOperation(ctx, "get_employment", map[string]any{"employment_id": id})
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := operationContext(result, result.ETag, "employment_revision_conflict", employmentDefiniteRefusal); err != nil {
+		return nil, nil, err
+	}
+	current, ok := result.Output.(mcpserver.EmploymentRecord)
+	if !ok {
+		return nil, nil, unavailable
+	}
+	current.Employment.Description = nil
+	if name != "set_primary_employment" {
+		return &current, nil, nil
+	}
+	listed, _, err := b.executeEmploymentOperation(ctx, "list_person_employments", map[string]any{"person_id": current.Employment.PersonID, "current_only": true, "limit": 1})
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := operationContext(listed, listed.ETag, "employment_revision_conflict", employmentDefiniteRefusal); err != nil {
+		return nil, nil, err
+	}
+	rows, ok := listed.Output.(generated.EmploymentsResponse)
+	if !ok {
+		return nil, nil, unavailable
+	}
+	if len(rows.Employments) == 1 && rows.Employments[0].IsPrimary && rows.Employments[0].ID != current.Employment.ID {
+		demotes := rows.Employments[0]
+		demotes.Description = nil
+		return &current, &demotes, nil
+	}
+	return &current, nil, nil
 }
