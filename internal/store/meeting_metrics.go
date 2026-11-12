@@ -49,32 +49,12 @@ func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQuery
 	unbounded := scope
 	unbounded.After, unbounded.Before = nil, nil
 	unbounded.MessageIDs = nil
-	statement, err := s.buildMeetingScopeStatementExcluding(unbounded, true, nil)
+	members, err := s.meetingMetricMembers(ctx, unbounded)
 	if err != nil {
 		return nil, err
 	}
-	allowed, allowedArgs := sourceScopeClause(ctx, "sm.source_id")
-	statement.args = append(statement.args, allowedArgs...)
-	rows, err := s.db.QueryContext(ctx, statement.cte+` SELECT sm.message_id, COALESCE(e.start_at, sm.occurred_at), sm.duration_seconds, sm.duration_basis FROM scoped_meetings sm LEFT JOIN calendar_events e ON e.message_id=sm.message_id WHERE 1=1`+allowed, statement.args...)
+	dateMembers, err := s.meetingMetricDateMembers(ctx, unbounded, members)
 	if err != nil {
-		return nil, fmt.Errorf("select meeting metrics members: %w", err)
-	}
-	members := map[int64]meetingMetricMember{}
-	for rows.Next() {
-		var member meetingMetricMember
-		var at nullableTimestamp
-		var basis sql.NullString
-		if err := rows.Scan(&member.id, &at, &member.duration, &basis); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		if at.Valid {
-			member.at = at.Time
-		}
-		member.basis = basis.String
-		members[member.id] = member
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, err
 	}
 	owners, canonical, emailOwners, err := s.meetingMetricOwners(ctx)
@@ -173,7 +153,11 @@ func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQuery
 	result := &meetingcontent.Metrics{SchemaVersion: meetingResultSchemaVersion, ArchiveUID: uid, Scope: meetingScopeProvenance(scope), DurationByBasis: []meetingcontent.BasisTotals{}, Months: []meetingcontent.MonthTotals{}}
 	bases := map[meetingcontent.DurationBasis]meetingcontent.BasisTotals{}
 	months := map[string]meetingcontent.DurationTotals{}
-	for _, unit := range units {
+	dates := meetingMetricDates(occurrences, dateMembers, now)
+	for key, unit := range units {
+		if date, ok := dates[key]; ok {
+			unit.at, unit.month = date.at, date.month
+		}
 		if !unit.counted {
 			continue
 		}
@@ -221,6 +205,66 @@ func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQuery
 	}
 	slices.SortFunc(result.DurationByBasis, func(a, b meetingcontent.BasisTotals) int { return metricBasisRank(a.Basis) - metricBasisRank(b.Basis) })
 	return result, nil
+}
+
+func (s *Store) meetingMetricMembers(ctx context.Context, scope MeetingQueryScope) (map[int64]meetingMetricMember, error) {
+	statement, err := s.buildMeetingScopeStatementExcluding(scope, true, nil)
+	if err != nil {
+		return nil, err
+	}
+	allowed, allowedArgs := sourceScopeClause(ctx, "sm.source_id")
+	statement.args = append(statement.args, allowedArgs...)
+	rows, err := s.db.QueryContext(ctx, statement.cte+` SELECT sm.message_id, COALESCE(e.start_at, sm.occurred_at), sm.duration_seconds, sm.duration_basis FROM scoped_meetings sm LEFT JOIN calendar_events e ON e.message_id=sm.message_id WHERE 1=1`+allowed, statement.args...)
+	if err != nil {
+		return nil, fmt.Errorf("select meeting metrics members: %w", err)
+	}
+	members := map[int64]meetingMetricMember{}
+	for rows.Next() {
+		var member meetingMetricMember
+		var at nullableTimestamp
+		var basis sql.NullString
+		if err := rows.Scan(&member.id, &at, &member.duration, &basis); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if at.Valid {
+			member.at = at.Time
+		}
+		member.basis = basis.String
+		members[member.id] = member
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	return members, nil
+}
+
+func (s *Store) meetingMetricDateMembers(ctx context.Context, scope MeetingQueryScope, members map[int64]meetingMetricMember) (map[int64]meetingMetricMember, error) {
+	if len(scope.ParticipantIDs) == 0 && len(scope.AdditionalParticipantGroups) == 0 && scope.Person == nil && len(scope.Domains) == 0 && len(scope.AdditionalDomainGroups) == 0 {
+		return members, nil
+	}
+	scope.ParticipantIDs, scope.AdditionalParticipantGroups, scope.Person = nil, nil, nil
+	scope.Domains, scope.AdditionalDomainGroups = nil, nil
+	return s.meetingMetricMembers(ctx, scope)
+}
+
+func meetingMetricDates(rows []MeetingOccurrence, members map[int64]meetingMetricMember, now time.Time) map[string]meetingMetricUnit {
+	dates := map[string]meetingMetricUnit{}
+	for _, row := range rows {
+		if _, ok := members[row.MessageID]; !ok || !row.Counted || row.OccurredAt.After(now) {
+			continue
+		}
+		date, ok := dates[row.OccurrenceKey]
+		calendar := row.ScheduledSeconds != nil
+		if !ok || calendar && !date.hasCalendar || calendar == date.hasCalendar && row.OccurredAt.Before(date.at) {
+			date = meetingMetricUnit{at: row.OccurredAt, hasCalendar: calendar}
+			if len(row.StartDate) >= 7 {
+				date.month = row.StartDate[:7]
+			}
+			dates[row.OccurrenceKey] = date
+		}
+	}
+	return dates
 }
 
 func (u *meetingMetricUnit) choose(seconds float64, basis meetingcontent.DurationBasis, id int64) {

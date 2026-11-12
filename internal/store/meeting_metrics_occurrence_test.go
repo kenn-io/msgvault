@@ -487,3 +487,38 @@ func TestMeetingMetricsAllDayUsesCivilMonth(t *testing.T) {
 	require.NotNil(t, metrics.FirstMeetingAt)
 	assert.Equal(t, "2024-02-29", metrics.FirstMeetingAt.UTC().Format(time.DateOnly))
 }
+
+func TestMeetingMetricsUseScopedCopyDateBeforeParticipantFilter(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	first, firstID := calendarFixture(t, st, "early", `{"id":"early","start":{"dateTime":"2024-12-29T10:00:00Z"},"end":{"dateTime":"2024-12-29T11:00:00Z"}}`)
+	second, secondID := calendarFixture(t, st, "late", `{"id":"late","start":{"dateTime":"2025-01-03T10:00:00Z"},"end":{"dateTime":"2025-01-03T12:00:00Z"},"attendees":[{"email":"late@late.example","responseStatus":"accepted"}]}`, "other@example.com")
+	person, err := st.EnsureParticipant("late@late.example", "Late", "late.example")
+	require.NoError(t, err)
+	require.NoError(t, st.ReplaceMessageRecipients(secondID, "to", []int64{person}, []string{""}))
+	_, err = st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: firstID}, MeetingLinkRef{Kind: "evt", MessageID: secondID}, "link")
+	require.NoError(t, err)
+	before := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name  string
+		scope MeetingQueryScope
+		want  int64
+		at    time.Time
+	}{
+		{"person before", MeetingQueryScope{ParticipantIDs: []int64{person}, Before: &before}, 1, time.Date(2024, 12, 29, 10, 0, 0, 0, time.UTC)},
+		{"domain before", MeetingQueryScope{Domains: []string{"late.example"}, Before: &before, MessageTypes: []string{"calendar_event"}}, 1, time.Date(2024, 12, 29, 10, 0, 0, 0, time.UTC)},
+		{"person after", MeetingQueryScope{ParticipantIDs: []int64{person}, After: &before}, 0, time.Time{}},
+		{"second source", MeetingQueryScope{ParticipantIDs: []int64{person}, SourceIDs: []int64{second.Message.SourceID}, After: &before}, 1, time.Date(2025, 1, 3, 10, 0, 0, 0, time.UTC)},
+		{"first source", MeetingQueryScope{ParticipantIDs: []int64{person}, SourceIDs: []int64{first.Message.SourceID}}, 0, time.Time{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			metrics, err := st.GetMeetingMetricsContext(t.Context(), tc.scope)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, metrics.Totals.MeetingCount)
+			if tc.want > 0 {
+				require.NotNil(t, metrics.FirstMeetingAt)
+				assert.Equal(t, tc.at, *metrics.FirstMeetingAt)
+				assert.InDelta(t, 7200, metrics.Totals.TotalKnownSeconds, 0)
+			}
+		})
+	}
+}
