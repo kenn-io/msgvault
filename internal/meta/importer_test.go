@@ -596,16 +596,19 @@ func TestImportStreamedBodyYieldKeepsProgress(t *testing.T) {
 }
 
 func TestImportRejectsCrossConversationReuse(t *testing.T) {
+	assert := assert.New(t)
 	st, f, imp, src := setupImport(t)
 	f.posts = append(f.posts, Object{ID: "100_900", Message: "other root"})
 	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "first root")}
 	f.comments["100_900"] = []Object{*comment("100_201", "100_900", "wrong root")}
 	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
 	require.Error(t, err)
+	assert.Contains(err.Error(), "comment object already belongs to a different root or parent")
+	assert.NotErrorIs(err, ErrInvalidChange, "only the webhook path reports an invalid change")
 	got := message(t, st, src.ID, "100_201")
 	root := message(t, st, src.ID, "100_200")
-	assert.Equal(t, root.ConversationID, got.ConversationID)
-	assert.Equal(t, sql.NullInt64{Int64: root.ID, Valid: true}, got.ReplyToMessageID)
+	assert.Equal(root.ConversationID, got.ConversationID)
+	assert.Equal(sql.NullInt64{Int64: root.ID, Valid: true}, got.ReplyToMessageID)
 }
 
 func TestImportCheckpointRejectsDifferentSource(t *testing.T) {

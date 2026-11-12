@@ -145,6 +145,51 @@ func TestApplyFeedHiddenStateFollowsGraph(t *testing.T) {
 	assert.False(archivedHidden(), "a hide delivered again after the unhide leaves the comment visible")
 }
 
+// An archive invariant that the same change always breaks makes the change
+// invalid, so the webhook worker skips it instead of retrying it.
+func TestApplyFeedReportsArchiveInvariantsAsInvalidChanges(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/v26.0/")
+		switch {
+		case id == "me":
+			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
+		case id == "100_200" || id == "100_900":
+			_, _ = fmt.Fprintf(w, `{"id":%q,"message":"Example post","from":{"id":"100","name":"Example Page"}}`, id)
+		case id == "100_201":
+			_, _ = fmt.Fprint(w, `{"id":"100_201","message":"first","created_time":"2026-10-01T12:00:00+0000","from":{"id":"300","name":"Example Customer"}}`)
+		case strings.HasPrefix(id, "100_3"):
+			// Each reply in this chain answers the one after it, past the read limit.
+			n, err := strconv.Atoi(strings.TrimPrefix(id, "100_3"))
+			if !assert.NoError(err) {
+				http.Error(w, "unexpected", http.StatusNotFound)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"id":%q,"message":"reply","created_time":"2026-10-01T12:00:00+0000","from":{"id":"300","name":"Example Customer"},"parent":{"id":"100_3%02d"}}`, id, n+1)
+		default:
+			assert.Fail("unexpected Graph read", r.URL.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	_, err := NewImporter(st, c).Register(t.Context(), "9", "100")
+	require.NoError(err)
+	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(
+		`{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_201"}`)))
+
+	err = ApplyFeed(t.Context(), st, c, "9", "100", feedValues(
+		`{"item":"comment","verb":"add","post_id":"100_900","comment_id":"100_201"}`))
+	require.Error(err)
+	assert.ErrorIs(err, ErrInvalidChange, "a comment archived under another post")
+	assert.Contains(err.Error(), "comment object already belongs to a different root or parent")
+
+	err = ApplyFeed(t.Context(), st, c, "9", "100", feedValues(
+		`{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_300"}`))
+	require.Error(err)
+	assert.ErrorIs(err, ErrInvalidChange, "a reply chain longer than the read limit")
+	assert.Contains(err.Error(), "comment ancestors exceed the read limit")
+}
+
 func TestApplyFeedRefusesUnregisteredPage(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	reply := `{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_202","parent_id":"100_200","message":"x"}`
