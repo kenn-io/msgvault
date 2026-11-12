@@ -22,7 +22,7 @@ func TestCollectionsThroughDaemonAndSDK(t *testing.T) {
 	require.NoError(t, err)
 	second, secondID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "second@example.test", "second", "other alpine fixture", "alpine body")
 	require.NoError(t, err)
-	_, err = st.DB().ExecContext(t.Context(), "UPDATE messages SET sent_at = ? WHERE id IN (?, ?)", "2025-01-01T00:00:00Z", firstID, secondID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET sent_at = ? WHERE id IN (?, ?)"), "2025-01-01T00:00:00Z", firstID, secondID)
 	require.NoError(t, err)
 	_, err = st.CreateCollection("selected", "", []int64{first.ID})
 	require.NoError(t, err)
