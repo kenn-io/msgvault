@@ -51,7 +51,8 @@ type operationalDefinition struct {
 // Roots are built once, independent of capability combinations. Selecting any
 // subset retains pointer identity for the official SDK's shared schema cache.
 var fixedOperationalDefinitions = sync.OnceValue(func() []operationalDefinition {
-	return append(sourceOperationalDefinitions(), loopOperationalDefinitions()...)
+	definitions := append(sourceOperationalDefinitions(), loopOperationalDefinitions()...)
+	return append(definitions, operationRunDefinitions()...)
 })
 
 func operationalCatalog(opts ServeOptions, allowWrites bool) []operationalDefinition {

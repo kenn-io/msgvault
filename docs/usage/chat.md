@@ -855,10 +855,13 @@ MCP discovers these tools from the selected daemon's
 capability response. Tools appear only when the daemon advertises their required
 routes and fields. If discovery fails, these tools are omitted; existing archive
 tools retain their own capability checks. Delegated sessions do not expose these
-source, cache, or person-edit tools.
+operational tools.
 
 | Tool | Use | Parameters |
 |---|---|---|
+| `get_operation_status` | Read operation lane readiness and latest runs. | — |
+| `list_operation_runs` | List durable operation history. Repeat filters when using a cursor. | Optional `kind`, `lane`, `state`, `started_from`, `started_before`, `limit`, `cursor` |
+| `get_operation_run` | Read one durable operation run. | Required opaque `id` from operation status or history |
 | `list_source_status` | Read source capabilities, recent runs, and queued or pending work. | Optional `source_type` |
 | `get_source_identities` | Read confirmed sender identities and confirmation signals. | Required `source_id` |
 | `get_source_scheduler_status` | Read scheduler status without starting a sync. | — |
@@ -867,6 +870,14 @@ source, cache, or person-edit tools.
 | `update_slack_sync_policy` | Change Slack selection; requires confirmation. | Required `etag`; at least one of `dms`, `group_dms`, `channels`, `exclude_channels` |
 | `get_participant_identity` | Read observed identifiers, service and scope context, cluster members, and link evidence. | Required `participant_id` |
 | `get_cache_build_status` | Follow an accepted analytics refresh job. | Required `job_id` from a fresh query response |
+
+Operation history defaults to 25 runs per page (maximum 100). Timestamps must
+be canonical UTC RFC 3339 with `Z` and the shortest fractional seconds (no
+trailing fractional zeros), such as `2026-01-02T03:04:05Z` or
+`2026-01-02T03:04:05.12Z`.
+On `invalid_cursor` or `operation_history_conflict`, restart from the first
+page. `supported_actions` and `related_status` name daemon capabilities; these
+read tools do not invoke them.
 
 `sync_source` returns acceptance, not completion. A generic source uses its
 configured shared scheduler job. The response preserves `disposition` when the
