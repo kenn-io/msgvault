@@ -170,3 +170,45 @@ func TestChangesPersonErrorsAreDeclared(t *testing.T) {
 		assert.Equal(t, "#/components/schemas/ErrorResponse", response.Content[applicationJSONMediaType].Schema.Ref)
 	}
 }
+
+// linkBeforeChangesPage commits an identity link and message immediately before
+// the real store reads the bounded page, without depending on goroutine timing.
+type linkBeforeChangesPage struct {
+	*store.Store
+	before func()
+}
+
+func (s *linkBeforeChangesPage) ListChangedMessages(ctx context.Context, since store.ChangedMessagesCursor, limit int) (store.ChangedMessagePage, error) {
+	if s.before != nil {
+		before := s.before
+		s.before = nil
+		before()
+	}
+	return s.Store.ListChangedMessages(ctx, since, limit)
+}
+
+func TestChangesPersonIncludesIdentityLinkedBeforePage(t *testing.T) {
+	srv, st := newChangesServer(t)
+	first, err := st.EnsureParticipant("first@example.com", "First", "example.com")
+	require.NoError(t, err)
+	second, err := st.EnsureParticipant("second@example.com", "Second", "example.com")
+	require.NoError(t, err)
+	person, _, err := st.CreatePersonFromParticipant(first)
+	require.NoError(t, err)
+
+	var messageID int64
+	srv.store = &linkBeforeChangesPage{Store: st, before: func() {
+		_, err := st.LinkParticipants(first, second)
+		require.NoError(t, err)
+		messageID = seedChangedMessages(t, st, 1)[0]
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET sender_id = ? WHERE id = ?"), second, messageID)
+		require.NoError(t, err)
+		setChangesWatermark(t, st, "2020-01-01 00:00:00.000", messageID)
+	}}
+
+	target := fmt.Sprintf("/api/v1/messages/changes?person_id=%d", person.ID)
+	page := getChangesPage(t, srv, target)
+	assert.Equal(t, []int64{messageID}, changedIDs(page))
+	next := getChangesPage(t, srv, target+"&cursor="+url.QueryEscape(page.NextCursor))
+	assert.Empty(t, next.Messages)
+}
