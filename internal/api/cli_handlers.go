@@ -750,7 +750,7 @@ func (s *Server) virtualAccountCatalogVersion(ctx context.Context, lister virtua
 		s.logger.Warn("reading account identity revision for the account catalog", "error", err)
 		return ""
 	}
-	return strconv.FormatInt(revision, 10)
+	return strconv.FormatInt(revision, 10) + ":" + strconv.FormatUint(s.accountRepairGeneration.Load(), 10)
 }
 
 type cliCollectionsResponse struct {

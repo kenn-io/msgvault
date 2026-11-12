@@ -536,6 +536,20 @@ func genericSyncTriggerRequest(r *http.Request) bool {
 	return classifySourceScheduling(r.URL.Query().Get("source_type"), account).kind == sourceScheduleGeneric
 }
 
+var accountAttributionRepairRoute = func() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/sources/{source_id}/account-attribution/repair", func(http.ResponseWriter, *http.Request) {})
+	return mux
+}()
+
+func accountAttributionRepairRequest(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+	_, pattern := accountAttributionRepairRoute.Handler(r)
+	return pattern != ""
+}
+
 type discardResponseWriter struct{}
 
 func (discardResponseWriter) Header() http.Header         { return http.Header{} }
@@ -556,7 +570,7 @@ func operationGateRequest(r *http.Request, auth requestAuthentication) (bool, st
 	if readOnlyPostRouteRequest(r) {
 		return false, "", nil
 	}
-	if genericSyncTriggerRequest(r) {
+	if genericSyncTriggerRequest(r) || accountAttributionRepairRequest(r) {
 		return false, "", nil
 	}
 	// Provider handlers take the gate only for their local mutations. Device

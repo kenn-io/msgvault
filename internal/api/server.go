@@ -315,6 +315,9 @@ type Server struct {
 	idleTracker               *IdleTracker
 	operationGate             OperationGate
 	operationHistoryReader    operations.HistoryReader
+	accountRepairs            map[int64]*accountAttributionRepairJob
+	accountRepairGeneration   atomic.Uint64
+	accountRecoveryOnce       sync.Once
 	importContext             context.Context
 	cancelImports             context.CancelFunc
 	importMu                  sync.Mutex

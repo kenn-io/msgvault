@@ -1247,6 +1247,10 @@ type ClientInterface interface {
 	ListSourceStatus(ctx context.Context, options *ListSourceStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListSourceStatusResponse, error)
 	ListSourceStatusWithResponse(ctx context.Context, options *ListSourceStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListSourceStatusResp, error)
 
+	// RepairAccountAttribution Retry account matching for one source
+	RepairAccountAttribution(ctx context.Context, options *RepairAccountAttributionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
+	RepairAccountAttributionWithResponse(ctx context.Context, options *RepairAccountAttributionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RepairAccountAttributionResp, error)
+
 	// ListSourceIdentities List confirmed identities for one source
 	ListSourceIdentities(ctx context.Context, options *ListSourceIdentitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListSourceIdentitiesResponse, error)
 	ListSourceIdentitiesWithResponse(ctx context.Context, options *ListSourceIdentitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListSourceIdentitiesResp, error)
@@ -20075,6 +20079,51 @@ func (c *Client) ListSourceStatus(ctx context.Context, options *ListSourceStatus
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/sources/status")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RepairAccountAttribution Retry account matching for one source
+func (c *Client) RepairAccountAttribution(ctx context.Context, options *RepairAccountAttributionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/sources/{source_id}/account-attribution/repair",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 202 {
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(struct{})
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "struct{}",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/sources/{source_id}/account-attribution/repair")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

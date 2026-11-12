@@ -2087,7 +2087,10 @@ func (s *Store) UpdateSourceIdentifier(ctx context.Context, sourceID int64, iden
 			return nil
 		}
 		pending, err = s.markAccountAttributionPendingForAddressesTx(ctx, tx, sourceID, []string{oldSink, newSink})
-		return err
+		if err != nil {
+			return err
+		}
+		return s.bumpAccountIdentityRevisionContext(ctx, tx)
 	})
 	if err != nil {
 		return err

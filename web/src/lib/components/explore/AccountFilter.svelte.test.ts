@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { chooseSelectOption } from '../../../test/kit-ui';
@@ -34,7 +34,7 @@ describe('AccountFilter', () => {
     const onChange = vi.fn();
     const filters = [{ dimension: 'source' as const, values: [' +07'] }];
     render(AccountFilter, { client: createAPIClient(fetchFn), filters, onChange });
-    expect((await screen.findByRole('status')).textContent).toContain('Messages awaiting account matching: 1.');
+    expect((await screen.findByRole('status')).textContent).toContain('inbox@example.net: 1 message awaiting account matching.');
     const select = await screen.findByRole('combobox', { name: /^Account:/ });
     await waitFor(() => expect(select).toHaveProperty('disabled', false));
     await chooseSelectOption(select, 'inbox@example.net / work@example.org (3)');
@@ -127,6 +127,143 @@ describe('AccountFilter', () => {
       await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(3));
       await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
       expect(screen.getByRole('combobox', { name: /^Account:/ })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('offers immediate retry and keeps polling matching for the affected source', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let count = 2;
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        const request = input as Request;
+        if (request.method === 'POST') {
+          expect(request.url).toMatch(/\/sources\/7\/account-attribution\/repair$/);
+          count = 1;
+          return new Response(null, { status: 202 });
+        }
+        return Response.json({ accounts: [{ id: 7, email: 'inbox@example.net', virtual_accounts: [
+          { key: 'unattributed:7', source_id: 7, unattributed: true, message_count: 0, source_deleted_count: 0, pending_count: count },
+        ] }] });
+      });
+      render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange: vi.fn() });
+      await screen.findByText('inbox@example.net: 2 messages awaiting account matching.');
+      const retry = await screen.findByRole('button', { name: 'Retry' });
+      await fireEvent.click(retry);
+      await screen.findByText('inbox@example.net: 1 message awaiting account matching.');
+      expect(screen.queryByRole('alert')).toBeNull();
+      count = 0;
+      await vi.advanceTimersByTimeAsync(30000);
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull());
+      expect(screen.queryByRole('status')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('disables Retry while its request is pending', async () => {
+    let release!: (response: Response) => void;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      if ((input as Request).method === 'POST') return new Promise<Response>((resolve) => { release = resolve; });
+      return Response.json({ accounts: [{ id: 7, email: 'inbox@example.net', virtual_accounts: [
+        { key: 'unattributed:7', source_id: 7, unattributed: true, message_count: 0, source_deleted_count: 0, pending_count: 2 },
+      ] }] });
+    });
+    render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange: vi.fn() });
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    await fireEvent.click(retry);
+    expect(retry).toHaveProperty('disabled', true);
+    release(new Response(null, { status: 202 }));
+    await waitFor(() => expect(retry).toHaveProperty('disabled', false));
+  });
+
+  it('discovers pending matching after an empty catalog and stops polling on disposal', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let count = 0;
+      const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ accounts: [
+        { id: 7, email: 'inbox@example.net', virtual_accounts: [{ key: 'unattributed:7', source_id: 7, unattributed: true, message_count: 0, source_deleted_count: 0, pending_count: count }] },
+      ] }));
+      const view = render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange: vi.fn() });
+      await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(1));
+      count = 2;
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(screen.getByText('inbox@example.net: 2 messages awaiting account matching.')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+      view.unmount();
+      const calls = fetchFn.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(fetchFn).toHaveBeenCalledTimes(calls);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores a stale poll that returns after a retry', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let holdNext = false;
+      let retried = false;
+      let releaseBody: () => void = () => {};
+      const accounts = (count: number) => Response.json({ accounts: [{ id: 7, email: 'inbox@example.net', virtual_accounts: [
+        { key: 'unattributed:7', source_id: 7, unattributed: true, message_count: 0, source_deleted_count: 0, pending_count: count },
+      ] }] });
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        const request = input as Request;
+        if (request.method === 'POST') {
+          retried = true;
+          return new Response(null, { status: 202 });
+        }
+        if (holdNext) {
+          holdNext = false;
+          const response = accounts(2);
+          const body = await response.text();
+          // Parsing can resume after the request is canceled once the body is buffered.
+          response.text = () => new Promise<string>((resolve) => { releaseBody = () => resolve(body); });
+          return response;
+        }
+        return accounts(retried ? 0 : 2);
+      });
+      render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange: vi.fn() });
+      await screen.findByText('inbox@example.net: 2 messages awaiting account matching.');
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+      holdNext = true;
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(holdNext).toBe(false);
+      await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull());
+      releaseBody();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(screen.queryByText('inbox@example.net: 2 messages awaiting account matching.')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retains pending sources after a failed retry and an unavailable catalog', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let unavailable = false;
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        const request = input as Request;
+        if (request.method === 'POST') return Response.json({ error: 'failed' }, { status: 500 });
+        if (unavailable) return Response.json({ accounts: [{ id: 7, email: 'inbox@example.net', virtual_accounts: [] }], virtual_accounts_unavailable: true });
+        return Response.json({ accounts: [{ id: 7, email: 'inbox@example.net', virtual_accounts: [
+          { key: 'unattributed:7', source_id: 7, unattributed: true, message_count: 0, source_deleted_count: 0, pending_count: 2 },
+        ] }] });
+      });
+      render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange: vi.fn() });
+      await screen.findByText('inbox@example.net: 2 messages awaiting account matching.');
+      unavailable = true;
+      await fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+      expect((await screen.findByRole('alert')).textContent).toContain('Unable to retry account matching.');
+      expect(screen.getByText('inbox@example.net: 2 messages awaiting account matching.')).toBeTruthy();
+      const calls = fetchFn.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(fetchFn.mock.calls.length).toBeGreaterThan(calls);
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }

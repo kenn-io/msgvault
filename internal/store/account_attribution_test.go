@@ -1063,3 +1063,17 @@ func TestAccountAttributionFirstSentFolderReturnsSourceToPending(t *testing.T) {
 	require.NoError(err)
 	assert.Equal([]int64{id}, searchIDs(t, f.st, "received:"+attrSink))
 }
+
+func TestUpdateSourceIdentifierAdvancesAccountRevision(t *testing.T) {
+	f := newAttrFixture(t, "mbox", "old@example.net")
+	before, err := f.st.AccountIdentityRevisionContext(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, f.st.UpdateSourceIdentifier(t.Context(), f.source.ID, "new@example.net"))
+	after, err := f.st.AccountIdentityRevisionContext(t.Context())
+	require.NoError(t, err)
+	assert.Greater(t, after, before)
+	require.NoError(t, f.st.UpdateSourceIdentifier(t.Context(), f.source.ID, "new@example.net"))
+	again, err := f.st.AccountIdentityRevisionContext(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, after, again)
+}

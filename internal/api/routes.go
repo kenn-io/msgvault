@@ -652,6 +652,9 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRouteWithRequest[AddAccountRequest, StatusMessageResponse](apiV1, "addAccount", http.MethodPost, "/accounts", "Add an account", s.handleAddAccount, http.StatusOK, http.StatusCreated)
 	registerAPIV1RawHumaJSONRoute[SourceStatusResponse](apiV1, "listSourceStatus", http.MethodGet, "/sources/status", "List source sync status", s.handleSourceStatus)
 	registerAPIV1RawHumaJSONRoute[SourceIdentitiesResponse](apiV1, "listSourceIdentities", http.MethodGet, "/sources/{source_id}/identities", "List confirmed identities for one source", s.handleSourceIdentities)
+	repairOp := rawAPIV1Operation("repairAccountAttribution", http.MethodPost, "/sources/{source_id}/account-attribution/repair", "Retry account matching for one source")
+	repairOp.Responses = rawHumaResponses(http.StatusAccepted)
+	registerRawHumaRoute(apiV1, repairOp, s.handleAccountAttributionRepair)
 	registerAPIV1RawHumaJSONRoute[TriggerSyncResponse](apiV1, "triggerSync", http.MethodPost, "/sync/{account}", "Trigger account sync", s.handleTriggerSync, http.StatusAccepted)
 	registerAPIV1RawHumaJSONRoute[SchedulerStatusResponse](apiV1, "getSchedulerStatus", http.MethodGet, "/scheduler/status", "Get scheduler status", s.handleSchedulerStatus)
 	registerAPIV1RawHumaJSONRouteWithRequest[TokenUploadRequest, StatusMessageResponse](apiV1, "uploadToken", http.MethodPost, "/auth/token/{email}", "Upload an OAuth token", s.handleUploadToken, http.StatusCreated)
@@ -1134,7 +1137,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		}
 	case "listSourceStatus":
 		return []*huma.Param{queryStringParam("source_type", "Restrict to one source type", false)}
-	case "listSourceIdentities":
+	case "listSourceIdentities", "repairAccountAttribution":
 		return []*huma.Param{pathNamedIntegerParam("source_id", "Source ID")}
 	case "triggerSync":
 		return []*huma.Param{

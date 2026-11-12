@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { SelectDropdown } from '@kenn-io/kit-ui';
-  import { listCLIAccounts } from '../../api/generated/api/api';
+  import { Button, SelectDropdown } from '@kenn-io/kit-ui';
+  import { listCLIAccounts, repairAccountAttribution } from '../../api/generated/api/api';
   import type { CliAccountResponse } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
   import type { ExploreFilter } from '../../explore/models';
@@ -30,7 +30,10 @@
   let known = $state(new Map<string, Option>());
   let loading = $state(true);
   let error = $state('');
-  let pending = $state(0);
+  let pending = $state<{ id: number; email: string; count: number }[]>([]);
+  let repairing = $state<number[]>([]);
+  let repairError = $state('');
+  let retryRepair: (id: number) => void = () => {};
   let unavailable = $state(false);
   let retrying = $state(false);
   const selected = $derived(filters.find((f) => f.dimension === 'account')?.values[0] ?? '');
@@ -76,13 +79,14 @@
   function readOptions(accounts: CliAccountResponse[]): {
     options: Option[];
     known: Map<string, Option>;
-    pending: number;
+    pending: { id: number; email: string; count: number }[];
   } {
-    let pendingCount = 0;
+    const pendingCounts: { id: number; email: string; count: number }[] = [];
     const all = new Map<string, Option>();
     const read = accounts.flatMap((account) => {
       const children = account.virtual_accounts ?? [];
-      pendingCount += children.reduce((total, child) => total + (child.pending_count ?? 0), 0);
+      const count = children.reduce((total, child) => total + (child.pending_count ?? 0), 0);
+      if (count > 0) pendingCounts.push({ id: account.id, email: account.email, count });
       const entries = children.map((child) => {
         const name = child.unattributed ? 'Unattributed' : (child.account_address ?? '');
         return {
@@ -94,66 +98,85 @@
       for (const entry of entries) all.set(entry.value, entry);
       return showSingleMailbox || showChildren(account) ? entries : [];
     });
-    return { options: read, known: all, pending: pendingCount };
+    return { options: read, known: all, pending: pendingCounts };
   }
 
   $effect(() => {
-    const controller = new AbortController();
+    const lifetime = new AbortController();
+    let controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
     let shown = 0;
-    // Schedules the next reread, or ends retrying once the delays run out.
+    let blocked = false;
+
     const scheduleRetry = (): void => {
-      retrying = attempt < retryDelaysMs.length;
-      if (retrying) {
-        timer = setTimeout(load, retryDelaysMs[attempt]);
-        attempt += 1;
+      clearTimeout(timer);
+      if (blocked || lifetime.signal.aborted) return;
+      if (pending.length > 0 || unavailable) {
+        retrying = true;
+        timer = setTimeout(load, retryDelaysMs[Math.min(attempt++, retryDelaysMs.length - 1)]);
+      } else {
+        retrying = false;
+        attempt = 0;
+        timer = setTimeout(load, 30000);
       }
-    };
-    // A failed reread while the catalog recovers keeps to the backoff; any
-    // other failure, or one after the last retry, is reported.
-    const fail = (message: string): void => {
-      if (unavailable) {
-        scheduleRetry();
-        if (retrying) return;
-      }
-      error = message;
     };
     const load = (): void => {
-      void listCLIAccounts({ ...client, signal: controller.signal })
-        .then(({ data }) => {
-          if (controller.signal.aborted) return;
-          if (!data) {
-            fail('Unable to load accounts.');
-            return;
-          }
-          error = '';
-          const read = readOptions(data.accounts);
-          unavailable = data.virtual_accounts_unavailable === true;
-          // An unavailable catalog may come back empty; keep what is shown.
-          if (!unavailable || read.options.length > 0 || shown === 0) {
-            options = read.options;
-            known = read.known;
-            pending = read.pending;
-            shown = read.options.length;
-          }
-          if (unavailable) {
-            scheduleRetry();
-          } else {
-            retrying = false;
-          }
-        })
-        .catch((cause: unknown) => {
-          if (!controller.signal.aborted) fail(cause instanceof Error ? cause.message : 'Unable to load accounts.');
-        })
-        .finally(() => {
-          if (!controller.signal.aborted) loading = false;
-        });
+      controller.abort();
+      controller = new AbortController();
+      const signal = controller.signal;
+      void listCLIAccounts({ ...client, signal }).then(({ data, response }) => {
+        if (signal.aborted) return;
+        if (response.status === 401 || response.status === 403) {
+          blocked = true;
+          retrying = false;
+          error = 'Unable to load accounts.';
+          return;
+        }
+        if (!data) {
+          if (!unavailable && pending.length === 0) error = 'Unable to load accounts.';
+          scheduleRetry();
+          return;
+        }
+        error = '';
+        const read = readOptions(data.accounts);
+        unavailable = data.virtual_accounts_unavailable === true;
+        if (!unavailable || shown === 0) {
+          options = read.options;
+          known = read.known;
+          pending = read.pending;
+          shown = read.options.length;
+        }
+        scheduleRetry();
+      }).catch((cause: unknown) => {
+        if (signal.aborted) return;
+        if (!unavailable && pending.length === 0) error = cause instanceof Error ? cause.message : 'Unable to load accounts.';
+        scheduleRetry();
+      }).finally(() => {
+        if (!signal.aborted) loading = false;
+      });
+    };
+    retryRepair = (id: number): void => {
+      clearTimeout(timer);
+      repairError = '';
+      repairing = [...repairing, id];
+      controller.abort();
+      void repairAccountAttribution({ sourceId: id }, { ...client, signal: lifetime.signal }).then(({ response }) => {
+        if (!response.ok) throw new Error('Repair failed');
+      }).catch(() => {
+        if (!lifetime.signal.aborted) repairError = 'Unable to retry account matching.';
+      }).finally(() => {
+        if (!lifetime.signal.aborted) {
+          repairing = repairing.filter((sourceID) => sourceID !== id);
+          load();
+        }
+      });
     };
     loading = true;
     error = '';
     load();
     return () => {
+      lifetime.abort();
       controller.abort();
       clearTimeout(timer);
     };
@@ -165,15 +188,21 @@
   }
 </script>
 
-{#if options.length > 0 || selected || error || unavailable}
+{#if options.length > 0 || selected || error || unavailable || pending.length > 0}
   <div class="account-filter">
     <label>
       <span>Account:</span>
       <SelectDropdown title="Account" options={visibleOptions} value={selected} disabled={loading} onchange={select} />
     </label>
     {#if error}<span role="alert">{error}</span>{/if}
-    {#if unavailable}<span role="status">{retrying ? 'Loading accounts…' : 'Accounts unavailable'}</span>
-    {:else if pending > 0}<span role="status">Messages awaiting account matching: {pending}.</span>{/if}
+    {#if unavailable}<span role="status">{retrying ? 'Loading accounts…' : 'Accounts unavailable'}</span>{/if}
+    {#if repairError}<span role="alert">{repairError}</span>{/if}
+    {#each pending as source (source.id)}
+      <div class="pending-source">
+        <span role="status">{source.email}: {source.count} {source.count === 1 ? 'message' : 'messages'} awaiting account matching.</span>
+        <Button size="sm" surface="soft" label="Retry" disabled={repairing.includes(source.id)} onclick={() => retryRepair(source.id)} />
+      </div>
+    {/each}
   </div>
 {/if}
 
@@ -186,6 +215,13 @@
   }
   .account-filter {
     flex-wrap: wrap;
+  }
+  .pending-source {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    flex-basis: 100%;
+    gap: var(--space-2);
   }
   span {
     color: var(--text-muted);
