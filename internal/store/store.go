@@ -1296,6 +1296,7 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_beeper_media_occurrences_source", "ON beeper_media_occurrences(source_type, source_identifier, source_message_id, destination_key)"},
 		{"idx_message_recipients_email_from", "ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'"},
 		{"idx_calendar_events_ical_uid", "ON calendar_events(ical_uid)"},
+		{"idx_meeting_details_link_key", "ON meeting_details(link_key) WHERE link_key IS NOT NULL"},
 		{"idx_calendar_events_series_provider_id", "ON calendar_events(series_provider_id)"},
 		{"idx_message_recipients_normalized_email", messageRecipientsNormalizedEmailIndexDefinition},
 	}
@@ -1827,6 +1828,7 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	// buildLargeIndexesConcurrently.
 	if !s.IsPostgreSQL() {
 		for _, index := range []struct{ name, definition string }{
+			{"idx_meeting_details_link_key", "ON meeting_details(link_key) WHERE link_key IS NOT NULL"},
 			{"idx_messages_account", messagesAccountIndexDefinition},
 			{"idx_messages_account_pending", messagesAccountPendingIndexDefinition},
 			{"idx_messages_email_linkage_pending", messagesEmailLinkagePendingIndexDefinition},

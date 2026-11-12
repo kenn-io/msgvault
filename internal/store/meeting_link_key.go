@@ -1,9 +1,7 @@
 package store
 
 import (
-	"context"
 	"encoding/json/v2"
-	"fmt"
 	"strings"
 	"time"
 
@@ -35,16 +33,4 @@ func deriveMeetingLinkKey(content meetingcontent.Content) meetingLinkKey {
 		return canonicalMeetingKey("ical_uid", "", evidence.ICalUID, evidence.ScheduledAt)
 	}
 	return meetingLinkKey{}
-}
-
-func replaceMeetingLinkKey(ctx context.Context, tx *loggedTx, messageID int64, key meetingLinkKey) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_key WHERE message_id = ?`, messageID); err != nil {
-		return fmt.Errorf("clear meeting key: %w", err)
-	}
-	if key[0] != "" {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_key(message_id,key) VALUES (?,?)`, messageID, key.text()); err != nil {
-			return fmt.Errorf("write meeting key: %w", err)
-		}
-	}
-	return nil
 }

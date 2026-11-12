@@ -3765,7 +3765,8 @@ CREATE TABLE IF NOT EXISTS meeting_details (
     duration_seconds DOUBLE PRECISION,
     duration_basis TEXT NOT NULL DEFAULT '',
     action_coverage TEXT NOT NULL,
-    transcript_state TEXT NOT NULL
+    transcript_state TEXT NOT NULL,
+    link_key TEXT
 );
 CREATE TABLE IF NOT EXISTS meeting_action_items (
     message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -3996,8 +3997,3 @@ CREATE TABLE IF NOT EXISTS docbank_attachment_processing (
 CREATE INDEX IF NOT EXISTS idx_docbank_processing_due
  ON docbank_attachment_processing(destination_key, fingerprint, next_action_at, content_hash)
  WHERE next_action_at IS NOT NULL;
-CREATE TABLE IF NOT EXISTS meeting_link_key (
-    message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
-    key TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_meeting_link_key_value ON meeting_link_key(key);

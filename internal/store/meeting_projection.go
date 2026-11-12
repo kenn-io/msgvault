@@ -57,9 +57,6 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 		if err != nil {
 			return fmt.Errorf("read prior meeting projection: %w", err)
 		}
-		if err := replaceMeetingLinkKey(ctx, tx, messageID, meetingLinkKey{}); err != nil {
-			return err
-		}
 		if _, err := q.Exec(`DELETE FROM meeting_action_items WHERE message_id = ?`, messageID); err != nil {
 			return fmt.Errorf("clear meeting actions: %w", err)
 		}
@@ -109,8 +106,9 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 	if err == nil && oldVersion == meetingProjectionVersion && oldHash == hash {
 		return nil
 	}
-	if err := replaceMeetingLinkKey(ctx, tx, messageID, key); err != nil {
-		return err
+	var linkKey any
+	if key[0] != "" {
+		linkKey = key.text()
 	}
 	compact, err := json.Marshal(meetingcontent.ProjectionContent(content))
 	if err != nil {
@@ -119,8 +117,8 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 	_, err = q.Exec(`
 		INSERT INTO meeting_details (
 			message_id, projection_version, content_hash, content_json,
-			duration_seconds, duration_basis, action_coverage, transcript_state
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			duration_seconds, duration_basis, action_coverage, transcript_state, link_key
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (message_id) DO UPDATE SET
 			projection_version = excluded.projection_version,
 			content_hash = excluded.content_hash,
@@ -128,10 +126,11 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 			duration_seconds = excluded.duration_seconds,
 			duration_basis = excluded.duration_basis,
 			action_coverage = excluded.action_coverage,
-			transcript_state = excluded.transcript_state`,
+			transcript_state = excluded.transcript_state,
+			link_key = excluded.link_key`,
 		messageID, meetingProjectionVersion, hash, string(compact),
 		content.DurationSeconds, string(content.DurationBasis),
-		string(content.ActionCoverage), string(content.Transcript.State),
+		string(content.ActionCoverage), string(content.Transcript.State), linkKey,
 	)
 	if err != nil {
 		return fmt.Errorf("write meeting projection: %w", err)

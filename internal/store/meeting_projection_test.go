@@ -91,31 +91,33 @@ func TestMeetingLinkProjectionRefreshesEvidence(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	data, id := projectionFixture(t, st, "link", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"event-a","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
 	var key string
-	require.NoError(st.db.QueryRow(`SELECT key FROM meeting_link_key WHERE message_id = ?`, id).Scan(&key))
+	require.NoError(st.db.QueryRow(`SELECT link_key FROM meeting_details WHERE message_id = ?`, id).Scan(&key))
 	assert.Equal(`["google_event_id","owner@example.com","event-a",""]`, key)
 
 	data.RawMIME = []byte(`{"owner":{"email":"other@example.com"},"calendar_event":{"calendar_event_id":"event-b","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
 	_, err := st.PersistMessage(data)
 	require.NoError(err)
-	require.NoError(st.db.QueryRow(`SELECT key FROM meeting_link_key WHERE message_id = ?`, id).Scan(&key))
+	require.NoError(st.db.QueryRow(`SELECT link_key FROM meeting_details WHERE message_id = ?`, id).Scan(&key))
 	assert.Equal(`["google_event_id","other@example.com","event-b",""]`, key)
 
 	data.RawMIME = []byte(`{"calendar_event":{"scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
 	_, err = st.PersistMessage(data)
 	require.NoError(err)
 	var count int
-	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_link_key WHERE message_id = ?`, id).Scan(&count))
+	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_details WHERE message_id = ? AND link_key IS NOT NULL`, id).Scan(&count))
 	assert.Zero(count)
+	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_details WHERE message_id = ?`, id).Scan(&count))
+	assert.Equal(1, count)
 
 	data.RawMIME = []byte(`{"owner":{"email":"other@example.com"},"calendar_event":{"calendar_event_id":"event-b","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
 	_, err = st.PersistMessage(data)
 	require.NoError(err)
-	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_link_key WHERE message_id = ?`, id).Scan(&count))
+	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_details WHERE message_id = ? AND link_key IS NOT NULL`, id).Scan(&count))
 	assert.Equal(1, count)
 	data.Message.MessageType = "email"
 	_, err = st.PersistMessage(data)
 	require.NoError(err)
-	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_link_key WHERE message_id = ?`, id).Scan(&count))
+	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_details WHERE message_id = ?`, id).Scan(&count))
 	assert.Zero(count)
 }
 
