@@ -154,7 +154,7 @@ func TestImport_RoundTrip(t *testing.T) {
 	var subject string
 	var sentAt time.Time
 	var fromMe bool
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT subject, sent_at, is_from_me FROM messages WHERE source_message_id = ?`),
 		"not_Ab12Cd34Ef56Gh").Scan(&subject, &sentAt, &fromMe))
 	assert.Equal("Quarterly Planning Review", subject)
@@ -164,7 +164,7 @@ func TestImport_RoundTrip(t *testing.T) {
 	// The ad-hoc note: title fallback, owner alice IS the account holder.
 	var subject2 string
 	var fromMe2 bool
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT subject, is_from_me FROM messages WHERE source_message_id = ?`),
 		"not_Zz98Yy87Xx76Wv").Scan(&subject2, &fromMe2))
 	assert.Equal("Meeting on 2026-06-02", subject2)
@@ -172,7 +172,7 @@ func TestImport_RoundTrip(t *testing.T) {
 
 	// Body carries the summary markdown and offset-stamped transcript lines.
 	var body string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT mb.body_text FROM message_bodies mb
 		JOIN messages m ON m.id = mb.message_id
 		WHERE m.source_message_id = ?`), "not_Ab12Cd34Ef56Gh").Scan(&body))
@@ -185,7 +185,7 @@ func TestImport_RoundTrip(t *testing.T) {
 
 	// Conversation: one per meeting, type "meeting".
 	var convType, convTitle string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT c.conversation_type, c.title FROM conversations c
 		JOIN messages m ON m.conversation_id = c.id
 		WHERE m.source_message_id = ?`), "not_Ab12Cd34Ef56Gh").Scan(&convType, &convTitle))
@@ -194,7 +194,7 @@ func TestImport_RoundTrip(t *testing.T) {
 
 	// Recipients: from = organizer bob, to = all three attendees.
 	var fromEmail string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT p.email_address FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		JOIN messages m ON m.id = mr.message_id
@@ -203,7 +203,7 @@ func TestImport_RoundTrip(t *testing.T) {
 	assert.Equal("bob@example.com", fromEmail)
 
 	var toCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM message_recipients mr
 		JOIN messages m ON m.id = mr.message_id
 		WHERE m.source_message_id = ? AND mr.recipient_type = 'to'`),
@@ -212,7 +212,7 @@ func TestImport_RoundTrip(t *testing.T) {
 
 	// Metadata JSON.
 	var msgID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM messages WHERE source_message_id = ?`), "not_Ab12Cd34Ef56Gh").Scan(&msgID))
 	metaNS, err := st.GetMessageMetadata(msgID)
 	require.NoError(err)
@@ -231,7 +231,7 @@ func TestImport_RoundTrip(t *testing.T) {
 	require.NoError(err)
 	assert.JSONEq(string(api.notes["not_Ab12Cd34Ef56Gh"]), string(raw))
 	var rawFormat string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT raw_format FROM message_raw WHERE message_id = ?`), msgID).Scan(&rawFormat))
 	assert.Equal(RawFormat, rawFormat)
 }
@@ -277,7 +277,7 @@ func TestImport_TranscriptTimestampFallbacksRemainSearchable(t *testing.T) {
 
 	var sparseSentAt time.Time
 	var sparseBody, sparseMetadata string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT m.sent_at, mb.body_text, m.metadata
 		FROM messages m
 		JOIN message_bodies mb ON mb.message_id = m.id
@@ -294,7 +294,7 @@ func TestImport_TranscriptTimestampFallbacksRemainSearchable(t *testing.T) {
 
 	var fallbackSentAt time.Time
 	var fallbackBody string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT m.sent_at, mb.body_text
 		FROM messages m
 		JOIN message_bodies mb ON mb.message_id = m.id
@@ -350,8 +350,8 @@ func TestImport_RejectsFetchedNoteWithInvalidID(t *testing.T) {
 			assert.Zero(sum.NotesAdded)
 			assert.Zero(sum.NotesUpdated)
 			var messageCount, completedRunCount int
-			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount))
-			require.NoError(st.DB().QueryRow(
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messageCount))
+			require.NoError(st.DB().QueryRowContext(t.Context(),
 				`SELECT COUNT(*) FROM sync_runs WHERE status = 'completed'`,
 			).Scan(&completedRunCount))
 			assert.Zero(messageCount, "invalid response must not be archived")
@@ -401,14 +401,14 @@ func TestImport_AccountIdentityControlsFromMe(t *testing.T) {
 		{id: "note-other", want: false},
 	} {
 		var got bool
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`SELECT is_from_me FROM messages WHERE source_id = ? AND source_message_id = ?`),
 			source.ID, tc.id).Scan(&got))
 		assert.Equal(tc.want, got, tc.id)
 	}
 
 	var msgID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
 		source.ID, "note-primary").Scan(&msgID))
 	metaJSON, err := st.GetMessageMetadata(msgID)
@@ -438,7 +438,7 @@ func TestImport_NormalizesSentAtToUTC(t *testing.T) {
 	// the assertion to the session/local timezone and fail on non-UTC
 	// machines (PostgreSQL renders timestamptz in the session zone).
 	var sentAt time.Time
-	require.NoError(st.DB().QueryRow(`SELECT sent_at FROM messages`).Scan(&sentAt))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sent_at FROM messages`).Scan(&sentAt))
 	assert.Equal(time.Date(2026, 6, 1, 20, 0, 0, 0, time.UTC), sentAt.UTC())
 }
 
@@ -485,7 +485,7 @@ func TestImport_IdempotentAndRefresh(t *testing.T) {
 	assert.EqualValues(0, sum2.NotesAdded, "re-import must not add rows")
 	assert.EqualValues(0, sum2.NotesUpdated, "unchanged cursor-boundary notes are no-ops")
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(1, count)
 
 	// An incremental sync leaves a stale derived preview alone when the
@@ -493,8 +493,8 @@ func TestImport_IdempotentAndRefresh(t *testing.T) {
 	const noteID = "not_Ab12Cd34Ef56Gh"
 	const snippetQuery = `SELECT snippet FROM messages WHERE source_message_id = ?`
 	var snippet string
-	require.NoError(st.DB().QueryRow(st.Rebind(snippetQuery), noteID).Scan(&snippet))
-	_, err = st.DB().Exec(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(snippetQuery), noteID).Scan(&snippet))
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`UPDATE messages SET snippet = ? WHERE source_message_id = ?`), "stale", noteID)
 	require.NoError(err)
 	forced, err := imp.Import(
@@ -504,7 +504,7 @@ func TestImport_IdempotentAndRefresh(t *testing.T) {
 	assert.EqualValues(0, forced.NotesAdded)
 	assert.EqualValues(1, forced.NotesUpdated)
 	var repaired string
-	require.NoError(st.DB().QueryRow(st.Rebind(snippetQuery), noteID).Scan(&repaired))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(snippetQuery), noteID).Scan(&repaired))
 	assert.Equal(snippet, repaired)
 
 	// Server-side edit with a newer updated_at: row refreshes in place.
@@ -529,16 +529,16 @@ func TestImport_IdempotentAndRefresh(t *testing.T) {
 	assert.Equal(sum3.NotesUpdated, latest.MessagesUpdated, "refresh count persisted to sync history")
 
 	var subject, body string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT m.subject, mb.body_text FROM messages m
 		JOIN message_bodies mb ON mb.message_id = m.id
 		WHERE m.source_message_id = ?`), "not_Ab12Cd34Ef56Gh").Scan(&subject, &body))
 	assert.Equal("Quarterly Planning Review v2", subject)
 	assert.Contains(body, "Quarterly Planning Review v2")
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(1, count, "refresh must update in place, not add")
 	var conversationParticipantCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM conversation_participants cp
 		JOIN messages m ON m.conversation_id = cp.conversation_id
 		WHERE m.source_message_id = ?`), "not_Ab12Cd34Ef56Gh").Scan(&conversationParticipantCount))
@@ -555,7 +555,7 @@ func TestIngestNote_RawFailureRollsBackCanonicalWrite(t *testing.T) {
 	source, err := st.GetOrCreateSource(SourceType, "alice@example.com")
 	require.NoError(err)
 
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER fail_granola_raw_archive
 		BEFORE INSERT ON message_raw
 		WHEN NEW.raw_format = 'granola_json'
@@ -585,7 +585,7 @@ func TestIngestNote_RawFailureRollsBackCanonicalWrite(t *testing.T) {
 		"participants":       0,
 	} {
 		var got int
-		require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM "+table).Scan(&got), table)
+		require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&got), table)
 		assert.Equal(want, got, table)
 	}
 }
@@ -652,7 +652,7 @@ func TestImport_CursorAdvancesOnlyOnCleanRuns(t *testing.T) {
 	// back-to-back runs this test performs.
 	cursorOf := func() string {
 		var blob string
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT cursor_after FROM sync_runs
 			WHERE source_id = ? AND status = 'completed'
 			ORDER BY id DESC LIMIT 1`), sum.SourceID).Scan(&blob))
@@ -747,7 +747,7 @@ func TestImport_IncrementalDiscoversLateNoteAtCursorTimestamp(t *testing.T) {
 		"overlapping the boundary must not create repeated cache-invalidating updates")
 
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(2, count)
 }
 
@@ -826,7 +826,7 @@ func TestImport_LimitedRunsRememberNewCursorBoundaryIDs(t *testing.T) {
 		"the first late boundary note must be remembered after a limited run")
 
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(3, count)
 }
 
@@ -856,7 +856,7 @@ func TestImport_LimitDoesNotAdvanceCursor(t *testing.T) {
 	require.EqualValues(1, sum.NotesProcessed)
 
 	var cursorJSON string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT cursor_after FROM sync_runs
 		WHERE source_id = ? AND status = 'completed'
 		ORDER BY id DESC LIMIT 1`), sum.SourceID).Scan(&cursorJSON))
@@ -867,7 +867,7 @@ func TestImport_LimitDoesNotAdvanceCursor(t *testing.T) {
 	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(2, count, "normal incremental run must still import the older note")
 }
 
@@ -912,7 +912,7 @@ func TestImport_BoundedFullPreservesIncrementalCursor(t *testing.T) {
 			require.NoError(err)
 			cursorOf := func() string {
 				var encoded string
-				require.NoError(st.DB().QueryRow(st.Rebind(`
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 					SELECT cursor_after FROM sync_runs
 					WHERE source_id = ? AND status = 'completed'
 					ORDER BY id DESC LIMIT 1`), first.SourceID).Scan(&encoded))
