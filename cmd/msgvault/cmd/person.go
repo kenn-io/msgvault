@@ -739,7 +739,7 @@ func writeCLIGetPerson(cmd *cobra.Command, client *daemonclient.Client, person *
 	}
 	supported, err := client.SupportsAPISchemaVersion(cmd.Context(), daemonclient.FirstAppearanceMinAPISchemaVersion)
 	if err != nil {
-		return fmt.Errorf("check first appearance capability: %w", err)
+		return writeCLIPerson(cmd, person)
 	}
 	if !supported {
 		return writeCLIPerson(cmd, person)

@@ -21,6 +21,37 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
+func TestPersonGetReturnsPersonWhenFirstAppearanceProbeFails(t *testing.T) {
+	check := assert.New(t)
+	req := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/people/7":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":7,"vcard_uid":"person-7","revision":2,"participant_ids":[],"created_at":"2026-07-29T12:00:00Z","updated_at":"2026-07-29T12:00:00Z"}`))
+		case "/api/v1/health":
+			http.Error(w, "unavailable", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	savedJSON := personJSON
+	personJSON = true
+	t.Cleanup(func() { personJSON = savedJSON })
+	get := &cobra.Command{Use: personGetCmd.Use, Args: personGetCmd.Args, RunE: personGetCmd.RunE}
+	get.Flags().String("vcard-uid", "", "")
+	var got bytes.Buffer
+	get.SetOut(&got)
+	get.SetArgs([]string{"7"})
+	req.NoError(get.ExecuteContext(ctx))
+	var person map[string]any
+	req.NoError(json.Unmarshal(got.Bytes(), &person))
+	check.InDelta(7, person["id"], 0)
+	check.NotContains(person, "contact_state")
+}
+
 func TestPersonGetFirstAppearanceRealProjection(t *testing.T) {
 	check := assert.New(t)
 	req := require.New(t)
