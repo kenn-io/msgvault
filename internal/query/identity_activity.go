@@ -5,10 +5,18 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 )
+
+func (e *DuckDBEngine) meetingCountingActivitySQL(cutoff time.Time) string {
+	parquet := func(dataset string) string {
+		return "read_parquet('" + quoteIdentitySQLPath(e.parquetPath(dataset)) + "')"
+	}
+	return identityindex.MeetingOccurrenceActivitySQL("relationship_activity_expanded", parquet(identityindex.DatasetMeetingOccurrences), parquet(datasetParticipantClusters), cutoff)
+}
 
 func identityRequestIsUnfiltered(request ExploreRequest) bool {
 	context := request.Context
@@ -82,28 +90,52 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	identityCandidateSQL string,
 ) (string, []any, error) {
 	var err error
-	request, err = e.narrowIdentityFactCandidates(ctx, request)
-	if err != nil {
-		return "", nil, err
+	if request.Context.After == nil && request.Context.Before == nil {
+		request, err = e.narrowIdentityFactCandidates(ctx, request)
+		if err != nil {
+			return "", nil, err
+		}
 	}
 	conditions, args := buildExploreConditions(request)
 	conditions, err = e.sentIdentityConditions(conditions)
 	if err != nil {
 		return "", nil, err
 	}
-	// entry_num is a numeric logical-entry key: the anchor message ID for
-	// message entries, the (globally unique, NOT NULL) conversation ID
-	// negated for chat conversation entries so the two spaces cannot
-	// collide. The per-(entry, person) dedup hash below holds millions of
-	// groups under a broad filter; a 16-byte numeric pair keeps it inside
-	// the interactive memory budget where the VARCHAR entry_key did not.
-	// The dedup aggregates run over purely numeric (id, canonical) pairs
-	// with two boolean flags BEFORE the entry-payload join, so their hash
-	// tables never hold entry payload for millions of groups — the shape
-	// that previously sat on the interactive memory limit and failed
-	// intermittently. person_flags then attaches payload with one
-	// streaming join per branch.
+	meetingRequest := request
+	meetingRequest.Context.After, meetingRequest.Context.Before = nil, nil
+	meetingConditions, meetingArgs := buildExploreConditions(meetingRequest)
+	meetingConditions, err = e.sentIdentityConditions(meetingConditions)
+	if err != nil {
+		return "", nil, err
+	}
+	args = append(args, meetingArgs...)
+	meetingDates := ""
+	if request.Context.After != nil {
+		meetingDates += " AND a.occurred_at >= CAST(? AS TIMESTAMP)"
+		args = append(args, request.Context.After.UTC())
+	}
+	if request.Context.Before != nil {
+		meetingDates += " AND a.occurred_at < CAST(? AS TIMESTAMP)"
+		args = append(args, request.Context.Before.UTC())
+	}
+	var effectiveAt time.Time
+	if err := e.db.QueryRowContext(ctx, `SELECT coalesce(max(temperature_effective_at), TIMESTAMP '1970-01-01') FROM read_parquet('`+quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))+`')`).Scan(&effectiveAt); err != nil {
+		return "", nil, fmt.Errorf("read relationship cutoff: %w", err)
+	}
 	sql := buildExploreLogicalSQLNoLists(conditions) + `
+), selected_meeting_messages AS (
+	SELECT message_id FROM analytical_entries WHERE ` + meetingConditions + `
+), meeting_person AS (
+	SELECT a.entry_key, a.canonical_id, a.source_type,
+	       bool_or(a.is_author) AS is_author, bool_or(a.is_owner) AS is_owner,
+	       min(a.occurred_at) AS occurred_at, bool_or(a.is_from_me) AS is_from_me,
+	       arg_min(a.message_type, a.message_id) AS message_type,
+	       arg_min(a.entry_kind, a.message_id) AS entry_kind,
+	       max(a.attachment_count) AS attachment_count
+	FROM ` + e.meetingCountingActivitySQL(effectiveAt) + ` a
+	JOIN selected_meeting_messages s USING (message_id)
+	WHERE a.entry_kind IN ('event', 'meeting') AND a.canonical_id IS NOT NULL AND a.is_direct` + meetingDates + `
+	GROUP BY a.entry_key, a.canonical_id, a.source_type
 ), message_person AS (
 	SELECT a.message_id, a.canonical_id,
 	       bool_or(a.is_author) AS is_author,
@@ -131,23 +163,31 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	  AND (a.is_direct OR a.is_conversation_member)
 	GROUP BY f.conversation_id, a.canonical_id
 ), person_flags AS (
-	SELECT le.anchor_message_id AS entry_num, mp.canonical_id,
+	SELECT le.entry_key AS entry_num, mp.canonical_id,
 	       mp.is_author, mp.is_owner,
 	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
 	       le.attachment_count, le.source_type
 	FROM logical_entries le
 	JOIN message_person mp ON mp.message_id = le.anchor_message_id
-	WHERE le.entry_kind <> 'conversation'
+	WHERE le.entry_kind NOT IN ('conversation', 'event', 'meeting')
 	UNION ALL
-	SELECT -le.conversation_id AS entry_num, cp.canonical_id,
+	SELECT le.entry_key AS entry_num, cp.canonical_id,
 	       cp.is_author, cp.is_owner,
 	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
 	       le.attachment_count, le.source_type
 	FROM logical_entries le
 	JOIN chat_person cp ON cp.conversation_id = le.conversation_id
 	WHERE le.entry_kind = 'conversation'
+	UNION ALL
+	SELECT entry_key AS entry_num, canonical_id, is_author, is_owner,
+	       occurred_at, is_from_me, message_type, entry_kind,
+	       attachment_count, source_type
+	FROM meeting_person
 ), owner_presence AS (
-	SELECT entry_num, bool_or(is_owner) AS with_owner
+	SELECT entry_num, bool_or(is_owner) OR EXISTS (
+		SELECT 1 FROM ` + e.meetingCountingActivitySQL(effectiveAt) + ` owner_edge
+		WHERE owner_edge.entry_key = person_flags.entry_num AND owner_edge.is_owner
+	) AS with_owner
 	FROM person_flags
 	GROUP BY entry_num
 ), logical_people AS (
@@ -460,17 +500,11 @@ func (e *DuckDBEngine) searchPeople(
 	if identityRequestIsUnfiltered(request.Explore) {
 		queryText = e.unfilteredPeopleSQL(candidates, order)
 		args = append(args, candidateArgs...)
-	} else if identityRequestIsSourceOnly(request.Explore) &&
+	} else if identityRequestIsSourceOnly(request.Explore) && len(request.Explore.Context.SourceIDs) == 1 &&
 		!e.sourceRollupFastPathDisabled {
-		queryText = e.sourceFilteredPeopleSQL(
-			candidates,
-			order,
-			len(request.Explore.Context.SourceIDs),
-		)
+		queryText = e.sourceFilteredPeopleSQL(candidates, order, 1)
 		args = append(args, candidateArgs...)
-		for _, sourceID := range request.Explore.Context.SourceIDs {
-			args = append(args, sourceID)
-		}
+		args = append(args, request.Explore.Context.SourceIDs[0])
 	} else {
 		logicalSQL, logicalArgs, logicalErr := e.buildIdentityLogicalSQL(
 			ctx,
@@ -585,35 +619,27 @@ func (e *DuckDBEngine) unfilteredPeopleSQL(
 func (e *DuckDBEngine) filteredPeopleSQL(
 	logicalSQL, order string,
 ) string {
-	// person_stats is the ONLY reference to the per-(entry, person) rows,
-	// and it reads person_flags rather than logical_people: a second
-	// reference would make DuckDB materialize the full row set — hundreds
-	// of MB on a production archive under a broad filter — and the
-	// owner_presence join inside logical_people serves only the filtered
-	// relationships ranking, so consuming person_flags lets the optimizer
-	// drop it entirely here. Totals and per-source counts both reduce from
-	// the compact (person, source_type) stats, and the candidate
-	// restriction happens in the population join below rather than inside
-	// the aggregate.
 	return logicalSQL + `,
 person_stats AS (
 	SELECT p.canonical_id, p.source_type,
 	       count(*)::BIGINT AS source_count,
-	       count(*) FILTER (WHERE p.message_type = 'meeting_transcript')::BIGINT AS meeting_count,
 	       coalesce(sum(p.attachment_count), 0)::BIGINT AS file_count,
 	       min(p.occurred_at)::TIMESTAMP AS first_at,
 	       max(p.occurred_at)::TIMESTAMP AS last_at
-	FROM person_flags p
+	FROM logical_people p
 	GROUP BY p.canonical_id, p.source_type
+), meeting_totals AS (
+	SELECT canonical_id, count(DISTINCT entry_num) FILTER (WHERE entry_kind IN ('event', 'meeting') AND with_owner)::BIGINT AS meeting_count
+	FROM logical_people GROUP BY canonical_id
 ), person_totals AS (
-	SELECT canonical_id,
+	SELECT p.canonical_id,
 	       sum(source_count)::BIGINT AS activity_count,
-	       sum(meeting_count)::BIGINT AS meeting_count,
+	       max(m.meeting_count)::BIGINT AS meeting_count,
 	       sum(file_count)::BIGINT AS file_count,
 	       min(first_at)::TIMESTAMP AS first_at,
 	       max(last_at)::TIMESTAMP AS last_at
-	FROM person_stats
-	GROUP BY canonical_id
+	FROM person_stats p JOIN meeting_totals m USING (canonical_id)
+	GROUP BY p.canonical_id
 ), person_sources AS (
 	SELECT canonical_id,
 	       list(struct_pack(source_type := source_type, count := source_count)

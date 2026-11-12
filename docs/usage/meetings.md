@@ -50,6 +50,11 @@ aggregates remain email-only unless you choose another message type.
 
 ## Link calendar events and notes
 
+People and relationship views count each attended occurrence once, including
+calendar-only meetings and linked notes. An available transcript can count
+attendance despite a decline. Cancelled occurrences and pending transcripts
+alone do not count. Changes appear after the next cache refresh.
+
 Use `msgvault meetings links <note-id>` to see the calendar copies and notes
 that share an exact occurrence. You can also pass `msg:<id>` or an event `ref`
 from the `REF` column of `msgvault calendar events`, for example

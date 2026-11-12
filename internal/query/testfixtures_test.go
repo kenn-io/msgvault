@@ -918,6 +918,7 @@ func (b *parquetBuilder) build() (string, func()) {
 	b.ensureOwnerParticipantsTable()
 	b.ensureParticipantClustersTable()
 	b.ensurePersonDisplayNamesTable()
+	b.ensureMeetingOccurrencesTable()
 
 	value, _ := parquetTemplates.LoadOrStore(b.contentKey(), &parquetTemplate{})
 	template, ok := value.(*parquetTemplate)
@@ -1044,6 +1045,17 @@ func (b *parquetBuilder) ensureParticipantClustersTable() {
 	}
 	b.addEmptyTable(datasetParticipantClusters, datasetParticipantClusters,
 		datasetParticipantClusters+".parquet", participantClustersCols, "(0::BIGINT, 0::BIGINT)")
+}
+
+func (b *parquetBuilder) ensureMeetingOccurrencesTable() {
+	for _, table := range b.tables {
+		if table.name == identityindex.DatasetMeetingOccurrences {
+			return
+		}
+	}
+	b.addEmptyTable(identityindex.DatasetMeetingOccurrences, identityindex.DatasetMeetingOccurrences,
+		"meeting_occurrences.parquet", "message_id, occurrence_key, occurred_at, counted, declined_participant_ids",
+		"(0::BIGINT, ''::VARCHAR, TIMESTAMP '2000-01-01', false, []::BIGINT[])")
 }
 
 func (b *parquetBuilder) ensureConversationParticipantsTable() {

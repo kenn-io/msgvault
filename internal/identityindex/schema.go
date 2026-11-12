@@ -15,6 +15,7 @@ const (
 	DatasetRelationshipDaily        = "relationship_daily"
 	DatasetLogicalContributions     = "relationship_logical_contributions"
 	DatasetTemperatureContributions = "relationship_temperature_contributions"
+	DatasetMeetingOccurrences       = "meeting_occurrences"
 
 	ModalityEmail   uint8 = 1
 	ModalityChat    uint8 = 2

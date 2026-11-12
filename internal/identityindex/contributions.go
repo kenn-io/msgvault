@@ -21,18 +21,22 @@ func (b builder) materializeContributions(ctx context.Context, activity string, 
 		if err != nil {
 			return err
 		}
+		reuseContributions = reuseTemperature
 	}
-	if b.opts.Mode == ModeIncremental && !reuseTemperature {
+	if b.opts.Mode == ModeIncremental && !reuseContributions {
 		if err := b.materializeBuildTable(ctx, activityBuildRelation,
 			activity, "relationship_activity_edges"); err != nil {
 			return err
 		}
 		activity = "(SELECT * FROM " + activityBuildRelation + ")"
 	}
+	occurrences := "read_parquet('" + quoteSQLString(b.base(DatasetMeetingOccurrences)) + "')"
+	clusters := "read_parquet('" + quoteSQLString(b.base("participant_clusters")) + "')"
+	activity = MeetingOccurrenceActivitySQL(activity, occurrences, clusters, effectiveAt)
 	temperatureSQL := buildRelationshipTemperatureDailySQL(activity, effectiveAt)
 	logicalSQL := buildLogicalActivityMaterializationSQL(activity)
 	if reuseContributions {
-		delta := "(SELECT * FROM " + deltaActivityBuildRelation + ")"
+		delta := MeetingOccurrenceActivitySQL("(SELECT * FROM "+deltaActivityBuildRelation+")", occurrences, clusters, effectiveAt)
 		if reuseTemperature {
 			temperatureSQL = mergeTemperatureContributionsSQL(
 				b.committed(DatasetTemperatureContributions),
@@ -69,6 +73,28 @@ func (b builder) canReuseTemperatureContributions(ctx context.Context, effective
 		return false, nil
 	}
 	if effectiveAt.Before(priorCutoff.Time) {
+		return false, nil
+	}
+	if !datasetContainsParquet(b.opts.CommittedRoot, DatasetMeetingOccurrences) {
+		return false, nil
+	}
+	var changed bool
+	query = `SELECT EXISTS (
+		(SELECT * FROM read_parquet('` + quoteSQLString(b.base(DatasetMeetingOccurrences)) + `') EXCEPT ALL SELECT * FROM read_parquet('` + quoteSQLString(b.committed(DatasetMeetingOccurrences)) + `'))
+		UNION ALL
+		(SELECT * FROM read_parquet('` + quoteSQLString(b.committed(DatasetMeetingOccurrences)) + `') EXCEPT ALL SELECT * FROM read_parquet('` + quoteSQLString(b.base(DatasetMeetingOccurrences)) + `'))
+	)`
+	if err := b.db.QueryRowContext(ctx, query).Scan(&changed); err != nil {
+		return false, fmt.Errorf("compare meeting occurrences: %w", err)
+	}
+	if changed {
+		return false, nil
+	}
+	query = `SELECT EXISTS (SELECT 1 FROM read_parquet('` + quoteSQLString(b.base(DatasetMeetingOccurrences)) + `') WHERE occurred_at > ? AND occurred_at <= ?)`
+	if err := b.db.QueryRowContext(ctx, query, priorCutoff.Time, effectiveAt).Scan(&changed); err != nil {
+		return false, fmt.Errorf("inspect newly eligible meeting occurrences: %w", err)
+	}
+	if changed {
 		return false, nil
 	}
 	var newlyEligible bool

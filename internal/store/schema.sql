@@ -4411,3 +4411,38 @@ CREATE TABLE IF NOT EXISTS meeting_copy_survivors (
 );
 CREATE INDEX IF NOT EXISTS idx_meeting_copy_survivors_survivor ON meeting_copy_survivors(survivor_message_id);
 CREATE INDEX IF NOT EXISTS idx_source_merge_messages_survivor ON source_merge_messages(survivor_message_id);
+
+CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_events_insert
+AFTER INSERT ON calendar_events FOR EACH ROW BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_occurrences', 0);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_events_update
+AFTER UPDATE ON calendar_events FOR EACH ROW BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_occurrences', 0);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_events_delete
+AFTER DELETE ON calendar_events FOR EACH ROW BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_occurrences', 0);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_decisions_insert
+AFTER INSERT ON meeting_link_decisions FOR EACH ROW BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_occurrences', 0);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_decisions_update
+AFTER UPDATE ON meeting_link_decisions FOR EACH ROW BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_occurrences', 0);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_decisions_delete
+AFTER DELETE ON meeting_link_decisions FOR EACH ROW BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_occurrences', 0);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_attendee_rsvp
+AFTER UPDATE OF rsvp ON calendar_event_attendees FOR EACH ROW
+WHEN OLD.rsvp IS NOT NEW.rsvp BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_occurrences', 0);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_details_update
+AFTER UPDATE OF link_key, transcript_state ON meeting_details FOR EACH ROW
+WHEN OLD.link_key IS NOT NEW.link_key OR OLD.transcript_state IS NOT NEW.transcript_state BEGIN
+    INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_occurrences', 0);
+END;

@@ -47,7 +47,7 @@ import (
 // Schema bumps force a full rebuild before readers use an older publication,
 // so committed caches never mix shards of different shapes.
 // Version 36 rebuilds sender projections for relayed authors.
-const CacheSchemaVersion = 36
+const CacheSchemaVersion = 37
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only

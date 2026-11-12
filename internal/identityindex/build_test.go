@@ -838,6 +838,7 @@ func writeRelationshipBaseFixture(tb testing.TB, empty bool) (string, *sql.DB) {
 	)
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, db.Close()) })
+	writeRelationshipParquet(tb, db, root, DatasetMeetingOccurrences, `SELECT NULL::BIGINT AS message_id, NULL::VARCHAR AS occurrence_key, NULL::TIMESTAMP AS occurred_at, NULL::BOOLEAN AS counted, []::BIGINT[] AS declined_participant_ids WHERE false`)
 
 	where := ""
 	if empty {
@@ -1070,4 +1071,27 @@ func TestCollectCacheStatsRelayedSenderEnvelope(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, stats.UniqueSenders)
 	assert.EqualValues(t, 3, stats.UniqueDomains)
+}
+
+func TestMeetingOccurrenceCountsInRelationshipIndex(t *testing.T) {
+	root, db := writeRelationshipBaseFixture(t, false)
+	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE meeting_messages AS
+		SELECT * REPLACE ('calendar_event' AS message_type, 0 AS attachment_count) FROM read_parquet(?)
+		UNION ALL SELECT * REPLACE (101::BIGINT AS id, 'meeting_transcript' AS message_type, 0 AS attachment_count) FROM read_parquet(?)`,
+		parquetDatasetGlob(root, "messages"), parquetDatasetGlob(root, "messages"))
+	require.NoError(t, err)
+	replaceRelationshipParquet(t, db, root, "messages", `SELECT * FROM meeting_messages`)
+	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type, '' AS display_name UNION ALL SELECT 100, 2, 'to', '' UNION ALL SELECT 101, 1, 'from', '' UNION ALL SELECT 101, 2, 'to', ''`)
+	replaceRelationshipParquet(t, db, root, DatasetMeetingOccurrences, `SELECT * FROM (VALUES
+		(100::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', true, []::BIGINT[]),
+		(101::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', true, []::BIGINT[]),
+		(100::BIGINT, 'second'::VARCHAR, TIMESTAMP '2026-07-27', true, []::BIGINT[])
+	) AS t(message_id, occurrence_key, occurred_at, counted, declined_participant_ids)`)
+	_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root, EffectiveAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)})
+	require.NoError(t, err)
+	var meetings, dailyMeetings int64
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT meeting_count FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetPeople)).Scan(&meetings))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sum(meeting_units) FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetRelationshipDaily)).Scan(&dailyMeetings))
+	assert.EqualValues(t, 2, meetings)
+	assert.EqualValues(t, 2, dailyMeetings)
 }

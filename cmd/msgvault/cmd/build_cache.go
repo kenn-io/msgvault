@@ -1294,7 +1294,7 @@ func buildCacheLockedAttempt(
 		// Export their complete population alongside the new message shards.
 		relatedKinds.recipients = true
 	}
-	repairRelated := relatedKinds.recipients || relatedKinds.labels || relatedKinds.attachments
+	repairRelated := relatedKinds.recipients || relatedKinds.labels || relatedKinds.attachments || relatedKinds.meetings
 	if hasPreviousState && !fullRebuild && hasSyncRunsTable > 0 &&
 		syncCounters.additions != previousState.LastCacheAdditionCount &&
 		maxID <= previousState.LastMessageID && !repairRelated {
@@ -1591,6 +1591,9 @@ func buildCacheLockedAttempt(
 		buildMode = identityindex.ModeAppendRepair
 		delete(publicationPlan.Append, identityindex.DatasetActivity)
 		publicationPlan.Replace[identityindex.DatasetActivity] = true
+	}
+	if err := stageMeetingOccurrences(ctx, exportDB, dbPath, staging.root, cacheWatermark); err != nil {
+		return nil, err
 	}
 	derived, err := identityindex.Build(ctx, exportDB, identityindex.BuildOptions{
 		UnsentMessages:       "tmp_unsent_messages",

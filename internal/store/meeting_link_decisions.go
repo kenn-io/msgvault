@@ -240,7 +240,7 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			if err != nil {
 				return err
 			}
-			root, links := graph.reduce()
+			root, links, _ := graph.reduce()
 			for _, link := range links {
 				if root(link.a.ref()) == root(link.b.ref()) {
 					active = append(active, link)
@@ -397,7 +397,7 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			if err != nil {
 				return err
 			}
-			root, _ := graph.reduce()
+			root, _, _ := graph.reduce()
 			if (root(ca.ref()) == root(cb.ref())) != (state == "link") {
 				for _, edge := range graph.candidates {
 					if edge.id != insertedID && edge.decision == "split" && ((root(edge.a.ref()) == root(ca.ref()) && root(edge.b.ref()) == root(cb.ref())) || (root(edge.b.ref()) == root(ca.ref()) && root(edge.a.ref()) == root(cb.ref()))) {

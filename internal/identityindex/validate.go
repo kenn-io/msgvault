@@ -79,7 +79,7 @@ func Validate(
 			DatasetLogicalContributions,
 			"duplicate logical contribution keys",
 			`SELECT count(*) FROM (
-				SELECT relation_kind, entry_key, canonical_id, domain
+				SELECT relation_kind, entry_key, source_id, canonical_id, domain
 				FROM ` + logicalContributions + `
 				GROUP BY ALL HAVING count(*) > 1
 			)`,
@@ -140,7 +140,7 @@ func Validate(
 			       IS DISTINCT FROM p.file_count
 			    OR (SELECT sum(item.meeting_count)::BIGINT
 			        FROM unnest(p.source_rollups) AS source(item))
-			       IS DISTINCT FROM p.meeting_count
+			       < p.meeting_count
 			    OR (SELECT min(item.first_at)::TIMESTAMP
 			        FROM unnest(p.source_rollups) AS source(item))
 			       IS DISTINCT FROM p.first_at

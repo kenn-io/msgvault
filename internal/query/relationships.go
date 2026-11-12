@@ -322,7 +322,13 @@ func (e *DuckDBEngine) buildFilteredRelationshipsSQL(
 		e.parquetPath(identityindex.DatasetPeople),
 	)
 	queryText := logicalSQL + `,
-relationship_interactions AS (
+relationship_people_grouped AS (
+	SELECT entry_num, canonical_id, min(occurred_at) AS occurred_at,
+	       arg_min(entry_kind, occurred_at) AS entry_kind,
+	       bool_or(is_from_me) AS is_from_me, bool_or(is_author) AS is_author,
+	       bool_or(is_owner) AS is_owner, bool_or(with_owner) AS with_owner
+	FROM logical_people GROUP BY entry_num, canonical_id
+), relationship_interactions AS (
 	SELECT p.*,
 	       CASE WHEN p.is_from_me
 	                 AND p.entry_kind IN ('email','conversation','item')
@@ -344,7 +350,7 @@ relationship_interactions AS (
 	       END AS modality_mask,
 	       exp(-? * greatest(
 	           0, date_diff('day', p.occurred_at, CAST(? AS TIMESTAMP)))) AS decay
-	FROM logical_people p
+	FROM relationship_people_grouped p
 	WHERE NOT p.is_owner
 	  AND NOT (p.entry_kind IN ('event','meeting') AND NOT p.with_owner)
 ), aggregated AS (

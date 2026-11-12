@@ -15,14 +15,14 @@ const (
 func buildRelationshipPeopleSQL(effectiveAt time.Time) string {
 	return `
 WITH logical_people AS (
-	SELECT entry_key, source_id, source_type, occurred_at, message_type, attachment_count,
-	       canonical_id
+	SELECT entry_key, source_id, source_type, occurred_at, message_type, entry_kind, attachment_count,
+	       canonical_id, with_owner
 	FROM ` + logicalBuildRelation + `
 	WHERE relation_kind = 1
 ), people_totals AS (
 	SELECT canonical_id,
 	       count(*)::BIGINT AS activity_count,
-	       count(*) FILTER (WHERE message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+	       count(DISTINCT entry_key) FILTER (WHERE entry_kind IN ('event', 'meeting') AND with_owner)::BIGINT AS meeting_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
@@ -31,7 +31,7 @@ WITH logical_people AS (
 ), source_rows AS (
 	SELECT canonical_id, source_id, source_type,
 	       count(*)::BIGINT AS activity_count,
-	       count(*) FILTER (WHERE message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+	       count(DISTINCT entry_key) FILTER (WHERE entry_kind IN ('event', 'meeting') AND with_owner)::BIGINT AS meeting_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
@@ -169,7 +169,7 @@ SELECT canonical_id,
        occurred_at::DATE AS event_date,
        sum(sent_units)::BIGINT AS sent_units,
        sum(received_units)::BIGINT AS received_units,
-       sum(meeting_units)::BIGINT AS meeting_units,
+       count(DISTINCT entry_key) FILTER (WHERE meeting_units = 1)::BIGINT AS meeting_units,
        bit_or(modality_mask)::UTINYINT AS modality_mask,
        max(occurred_at)::TIMESTAMP AS last_at
 FROM interactions

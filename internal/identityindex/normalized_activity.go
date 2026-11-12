@@ -2,6 +2,7 @@ package identityindex
 
 import (
 	"fmt"
+	"time"
 
 	"go.kenn.io/msgvault/internal/calevent"
 )
@@ -243,4 +244,21 @@ func RelayAddressSubquery(messageID, recipients string) string {
 // RelayAbsentExpr prevents a linked author from replacing the relay sender.
 func RelayAbsentExpr(messageID, recipients string) string {
 	return "NOT EXISTS (SELECT 1 FROM " + recipients + " mr_guard WHERE mr_guard.message_id = " + messageID + " AND mr_guard.recipient_type = 'from' AND mr_guard.is_relayed)"
+}
+
+// MeetingOccurrenceActivitySQL projects meeting activity onto counted occurrences.
+// All arguments are trusted SQL relations or an effective cutoff from the cache.
+func MeetingOccurrenceActivitySQL(activity, occurrences, clusters string, cutoff time.Time) string {
+	return fmt.Sprintf(`(
+SELECT f.* REPLACE (coalesce(o.occurred_at, f.occurred_at) AS occurred_at),
+       CASE WHEN o.message_id IS NULL THEN 'message:' || f.message_id
+            ELSE 'meeting:' || o.occurrence_key END AS entry_key
+FROM %s f
+LEFT JOIN %s o ON o.message_id = f.message_id AND f.entry_kind IN ('event', 'meeting')
+WHERE (o.message_id IS NULL OR (o.counted AND NOT EXISTS (
+    SELECT 1 FROM unnest(o.declined_participant_ids) d(participant_id)
+    LEFT JOIN %s c ON c.participant_id = d.participant_id
+    WHERE coalesce(c.canonical_id, d.participant_id) = f.canonical_id
+))) AND (f.entry_kind NOT IN ('event', 'meeting') OR coalesce(o.occurred_at, f.occurred_at) <= TIMESTAMP '%s')
+)`, activity, occurrences, clusters, cutoff.UTC().Format("2006-01-02 15:04:05.999999999"))
 }

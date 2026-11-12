@@ -29,6 +29,12 @@ Ordinary profile editing and identity discovery use your archive. Briefs,
 automatic fact extraction, semantic person search, and external enrichment
 need separate provider configuration and consent. You can edit saved profiles without enabling them.
 
+People and relationship counts include each attended calendar occurrence once,
+even when it has several linked notes. A calendar event counts without notes;
+an available transcript can count when someone declined the calendar event.
+Cancelled occurrences and pending transcripts alone do not count. Changes
+appear after the next cache refresh.
+
 ## Understand the records
 
 - A **source identity** is an address or handle that belongs to you in one

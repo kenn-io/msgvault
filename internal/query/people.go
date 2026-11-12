@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -363,6 +364,47 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs,
 		e.parquetPath(datasetParticipantClusters))
 	args = append(args, entryArgs...)
+	meetingRequest := request.Explore
+	meetingRequest.Context.After, meetingRequest.Context.Before = nil, nil
+	meetingConditions, meetingArgs := buildExploreConditions(meetingRequest)
+	meetingConditions, err = e.sentIdentityConditions(meetingConditions)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, meetingArgs...)
+	meetingDates := ""
+	if request.Explore.Context.After != nil {
+		meetingDates += " AND a.occurred_at >= CAST(? AS TIMESTAMP)"
+		args = append(args, request.Explore.Context.After.UTC())
+	}
+	if request.Explore.Context.Before != nil {
+		meetingDates += " AND a.occurred_at < CAST(? AS TIMESTAMP)"
+		args = append(args, request.Explore.Context.Before.UTC())
+	}
+	var effectiveAt time.Time
+	if err := e.db.QueryRowContext(ctx, `SELECT coalesce(max(temperature_effective_at), TIMESTAMP '1970-01-01') FROM read_parquet('`+quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))+`')`).Scan(&effectiveAt); err != nil {
+		return nil, fmt.Errorf("read relationship cutoff: %w", err)
+	}
+	activity := e.meetingCountingActivitySQL(effectiveAt)
+	meetingPerson := "a.canonical_id"
+	meetingMembership := ""
+	if exactID != nil {
+		var ids []string
+		for _, id := range clusterMemberIDs {
+			ids = append(ids, strconv.FormatInt(id, 10))
+		}
+		meetingPerson = strconv.FormatInt(*exactID, 10) + "::BIGINT"
+		meetingMembership = " AND a.message_id IN (SELECT message_id FROM person_message_ids) AND a.canonical_id IN (SELECT coalesce(c.canonical_id, p.id) FROM participants p LEFT JOIN read_parquet('" + quoteIdentitySQLPath(e.parquetPath(datasetParticipantClusters)) + "') c ON c.participant_id=p.id WHERE p.id IN (" + strings.Join(ids, ",") + "))"
+	}
+	entriesCTE += `
+), selected_meeting_messages AS (
+	SELECT message_id FROM analytical_entries WHERE ` + meetingConditions + `
+), meeting_counts AS (
+	SELECT ` + meetingPerson + ` AS person_id, count(DISTINCT a.entry_key)::BIGINT AS meeting_count
+	FROM ` + activity + ` a JOIN selected_meeting_messages s USING (message_id)
+	WHERE a.entry_kind IN ('event', 'meeting') AND a.canonical_id IS NOT NULL AND a.is_direct` + meetingMembership + meetingDates + `
+	  AND EXISTS (SELECT 1 FROM ` + activity + ` owner_edge WHERE owner_edge.entry_key=a.entry_key AND owner_edge.is_owner)
+	GROUP BY person_id`
 	// bestNameExpr is the shared cluster label policy (see person_label.go).
 	// Listing/search rows are canonical identities, so the label evaluates
 	// every member of the row's cluster (resolved through the canon CTE that
@@ -396,8 +438,11 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	overrideExpr := sqlPersonNameOverrideExpr(e.parquetPath(datasetPersonDisplayNames), overrideFilter)
 	personWhere := []string{"true"}
 	populationFrom := "FROM person_entries pe JOIN participants p ON p.id = pe.person_id"
-	if keepInactive {
+	if keepInactive || exactID != nil {
 		populationFrom = "FROM participants p LEFT JOIN person_entries pe ON pe.person_id = p.id"
+	}
+	if exactID != nil && !keepInactive {
+		personWhere = append(personWhere, "(activity_count > 0 OR meeting_count > 0)")
 	}
 	if exactID != nil {
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",")
@@ -476,7 +521,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		` + overrideExpr + ` AS person_display_name,
 		` + sqlPersonIdentifierFallbackExpr("p") + ` AS fallback_label,
 		COUNT(pe.person_id)::BIGINT AS activity_count,
-		COUNT(*) FILTER (WHERE pe.message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+		COALESCE((SELECT meeting_count FROM meeting_counts mc WHERE mc.person_id=p.id), 0)::BIGINT AS meeting_count,
 		COALESCE(SUM(pe.attachment_count), 0)::BIGINT AS file_count,
 		MIN(pe.occurred_at) AS first_at, MAX(pe.occurred_at) AS last_at
 	` + populationFrom + `

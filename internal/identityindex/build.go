@@ -218,6 +218,7 @@ var baseIdentityDatasets = []string{
 	"participant_clusters",
 	"person_display_names",
 	"attachments",
+	DatasetMeetingOccurrences,
 }
 
 type builder struct {
