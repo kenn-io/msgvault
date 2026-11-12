@@ -145,6 +145,70 @@ func TestBriefEventReplayNeverReintroducesEvictedOrEditedAnchors(t *testing.T) {
 	assert.Equal(packetEvidenceID(fresh), parsed.Output.Highlights[0].LifeEvent.AnchorID)
 }
 
+func TestBriefEventFutureSourceDoesNotPoisonAdmission(t *testing.T) {
+	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 20.")
+	future := briefWindowItem(11, SourceConversationText, 25, "I start a course in September.")
+	archive := &briefFakeArchive{items: []EvidenceItem{anchor, future}}
+	window := eventWindow(t, archive, nil, "2026-08-14T12:00:00Z")
+	first := eventResult(t, window, eventCandidate(t, eventHighlight(anchor, "2026-08-20"),
+		eventHighlight(future, "2026-09-01")))
+	require.Len(t, first.Boundary.EventMemory, 1)
+	assert.Equal(t, packetEvidenceID(anchor), first.Boundary.EventMemory[0].Highlight.LifeEvent.AnchorID)
+	assert.Equal(t, window.Request.AsOf, first.Boundary.AdmissionThroughEventTime)
+	assert.Equal(t, future.EventTime, first.Boundary.ThroughEventTime)
+
+	next := briefWindowItem(12, SourceConversationText, 15, "I have an interview next week.")
+	archive.items = append(archive.items, next)
+	request := window.Request
+	request.Previous = &first.Boundary
+	request.OverlapItems = 2
+	request.AsOf = time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	window, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	second := eventResult(t, window, eventCandidate(t, eventHighlight(next, "2026-08-22"),
+		eventHighlight(future, "2026-09-01")))
+	require.Len(t, second.Boundary.EventMemory, 2)
+	assert.Equal(t, packetEvidenceID(next), second.Boundary.EventMemory[1].Highlight.LifeEvent.AnchorID)
+	assert.Equal(t, BriefEventUpcoming, second.Boundary.EventMemory[1].Highlight.LifeEvent.State)
+	assert.Equal(t, request.AsOf, second.Boundary.AdmissionThroughEventTime)
+}
+
+func TestBriefEventRetainedFutureSourceKeepsPriorWatermark(t *testing.T) {
+	anchor := briefWindowItem(10, SourceConversationText, 25, "I start a course in September.")
+	resolution := briefWindowItem(11, SourceConversationText, 26, "I cancelled the course.")
+	archive := &briefFakeArchive{items: []EvidenceItem{anchor}}
+	first := eventResult(t, eventWindow(t, archive, nil, "2026-08-26T00:00:00Z"),
+		eventCandidate(t, eventHighlight(anchor, "2026-09-01")))
+	archive.items = append(archive.items, resolution)
+	window := eventWindow(t, archive, &first.Boundary, "2026-08-16T00:00:00Z")
+	update := eventHighlight(anchor, "2026-09-01")
+	update.EvidenceIDs = append(update.EvidenceIDs, packetEvidenceID(resolution))
+	update.LifeEvent.Resolution = &BriefEventResolution{EvidenceID: packetEvidenceID(resolution), Quote: resolution.Excerpt}
+	resolved := eventResult(t, window, eventCandidate(t, update))
+	require.Len(t, resolved.Boundary.EventMemory, 1)
+	assert.Equal(t, BriefEventResolved, resolved.Boundary.EventMemory[0].Highlight.LifeEvent.State)
+	assert.Equal(t, first.Boundary.AdmissionThroughEventTime, resolved.Boundary.AdmissionThroughEventTime)
+
+	window = eventWindow(t, archive, &resolved.Boundary, "2026-08-17T00:00:00Z")
+	replayed := eventResult(t, window, eventCandidate(t, eventHighlight(anchor, "2026-09-01")))
+	require.Len(t, replayed.Boundary.EventMemory, 1)
+	assert.Equal(t, BriefEventResolved, replayed.Boundary.EventMemory[0].Highlight.LifeEvent.State)
+	assert.Equal(t, first.Boundary.AdmissionThroughEventTime, replayed.Boundary.AdmissionThroughEventTime)
+
+	// A resolved event can be evicted while its admission watermark survives.
+	evicted := replayed.Boundary
+	evicted.EventMemory = nil
+	request := window.Request
+	request.Previous = &evicted
+	request.OverlapItems = 2
+	request.AsOf = time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	window, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	parsed, err := ParseBrief(eventCandidate(t, eventHighlight(anchor, "2026-09-01")), window, request.Profile)
+	require.NoError(t, err)
+	assert.Empty(t, parsed.Output.Highlights)
+}
+
 func TestBriefEventMemoryRespectsExclusionAndOperationalErrors(t *testing.T) {
 	require := require.New(t)
 	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
