@@ -78,9 +78,3 @@ func (m Model) settingsScreen() (string, string, string, int) {
 	}
 	return m.mainSettingsParts()
 }
-
-func (m Model) settingsScreenView() string {
-	title, body, actions, _ := m.settingsScreen()
-	v, footer := m.settingsViewport(title, body, actions)
-	return strings.Join([]string{ansi.Wrap(title, max(m.width, 20), ""), v.View(), footer}, "\n")
-}

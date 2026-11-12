@@ -26,10 +26,6 @@ func (m Model) handleSettingsKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		m.settings.scrollOffset = v.YOffset()
 		return m, nil
 	}
-	return m.handleSettingsKeyPressInner(msg)
-}
-
-func (m Model) handleSettingsKeyPressInner(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.settings.peopleControls.active {
 		return m.handlePeopleInferenceControlKey(msg)
 	}

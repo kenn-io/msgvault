@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
@@ -14,7 +15,9 @@ func (m Model) renderSettingsView() string {
 	if m.settings.confirmDiscard {
 		return strings.Join([]string{m.styles.titleBar.Render("Settings *"), "", m.styles.modalTitle.Render("Discard unsaved changes?"), "", "Your settings drafts have not been saved.", "", "[Y] Discard and return    [N/Esc] Keep editing"}, "\n")
 	}
-	return m.settingsScreenView()
+	title, body, actions, _ := m.settingsScreen()
+	v, footer := m.settingsViewport(title, body, actions)
+	return strings.Join([]string{ansi.Wrap(title, max(m.width, 20), ""), v.View(), footer}, "\n")
 }
 
 func (m Model) mainSettingsParts() (string, string, string, int) {

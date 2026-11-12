@@ -64,7 +64,7 @@ func TestSettingsViewportShortScreenPeopleDisable(t *testing.T) {
 	assert.Contains(t, screen.String(), "People inference disabled.")
 }
 
-func TestSettingsViewportSaveKeepsSelectedFieldVisible(t *testing.T) {
+func TestSettingsViewportSaveShowsNoticeAndSelectedField(t *testing.T) {
 	snapshot := SettingsSnapshot{Groups: []SettingsGroup{{ID: "server", Label: "Daemon"}}}
 	for i := range 6 {
 		snapshot.Fields = append(snapshot.Fields, SettingField{Key: fmt.Sprintf("server.field%d", i), Group: "server", Label: "Other setting", Kind: SettingKindBoolean, Value: boolSettingValue(true)})

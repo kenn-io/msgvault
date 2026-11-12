@@ -20,8 +20,8 @@ func TestSettingsViewportEndpointDetail(t *testing.T) {
 	}{{false, 80}, {true, 80}, {true, 100}} {
 		t.Run(fmt.Sprintf("pending_%t_width_%d", tc.pending, tc.width), func(t *testing.T) {
 			snapshot := SettingsSnapshot{PendingRestart: tc.pending, Groups: []SettingsGroup{{ID: "search", Label: "Search"}}}
-			for range 6 {
-				snapshot.Fields = append(snapshot.Fields, SettingField{Key: "search.field", Group: "search", Label: "Other", Kind: SettingKindString, Value: stringSettingValue("auto")})
+			for i := range 6 {
+				snapshot.Fields = append(snapshot.Fields, SettingField{Key: fmt.Sprintf("search.field%d", i), Group: "search", Label: "Other", Kind: SettingKindString, Value: stringSettingValue("auto")})
 			}
 			snapshot.Fields = append(snapshot.Fields, SettingField{Key: "vector.embeddings.endpoint", Group: "search", Label: "Embedding endpoint", Description: "Endpoint example ▶ value.", RestartRequired: true, Kind: SettingKindString, Value: stringSettingValue(""), Validation: SettingValidation{Hint: "HTTP or HTTPS URL without credentials, query, or fragment."}})
 			model := resizeModel(t, loadedSettingsModel(t, snapshot), tc.width, 12)

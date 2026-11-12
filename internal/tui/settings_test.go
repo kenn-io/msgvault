@@ -238,7 +238,6 @@ func TestSettingsWideAndNarrowNavigationUseTheSameDraft(t *testing.T) {
 }
 
 func TestSettingsRendersPendingRestartAndFieldMetadata(t *testing.T) {
-	assertions := assert.New(t)
 	snapshot := SettingsSnapshot{
 		ETag:           "etag-1",
 		PendingRestart: true,
@@ -254,13 +253,13 @@ func TestSettingsRendersPendingRestartAndFieldMetadata(t *testing.T) {
 
 	view := model.renderView()
 	assert.Contains(t, view, "Restart pending")
-	assertions.Contains(view, "Threads used for cache builds")
-	assertions.Contains(view, "read-only")
-	assertions.Contains(view, "restart required")
-	assertions.Contains(view, "Validation: Between 1 and 16")
+	assert.Contains(t, view, "Threads used for cache builds")
+	assert.Contains(t, view, "read-only")
+	assert.Contains(t, view, "restart required")
+	assert.Contains(t, view, "Validation: Between 1 and 16")
 	model, _ = sendKey(t, model, keyEnter())
-	assertions.False(model.settings.editing)
-	assertions.False(model.settings.dirty())
+	assert.False(t, model.settings.editing)
+	assert.False(t, model.settings.dirty())
 }
 
 func TestSettingsSelectEditorAndSavePublishTypedDraft(t *testing.T) {
