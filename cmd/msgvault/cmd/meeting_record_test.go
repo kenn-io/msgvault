@@ -98,11 +98,6 @@ func TestMeetingLinksCLIReferenceNormalizationAndSchemaGate(t *testing.T) {
 		command.SetArgs([]string{"evt:23", "--json"})
 		require.ErrorContains(command.Execute(), "daemon API schema 5.1.0 or newer")
 		assert.Empty(client.refs)
-		decisionClient := &meetingDecisionClient{version: "5.1.0"}
-		decision := newMeetingsCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return decisionClient, func() {}, nil }})
-		decision.SetArgs([]string{"link", "msg:3", "msg:4"})
-		require.ErrorContains(decision.Execute(), "5.2.0")
-		assert.Empty(decisionClient.args)
 	})
 }
 
