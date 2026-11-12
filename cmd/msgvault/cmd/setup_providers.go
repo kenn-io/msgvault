@@ -87,6 +87,7 @@ type setupProvidersDeps struct {
 	probeOllama       func(context.Context, string) ollamaProbeResult
 	localEndpoint     func(context.Context, embedlocal.Options) (string, error)
 	localInstall      func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error)
+	recordChoice      func() error
 	consentState      func(context.Context, *config.Config) *setupConsentState
 	daemonAlive       func(context.Context, *config.Config) bool
 	personProvider    func() personProviderCommandDeps
@@ -151,6 +152,7 @@ func defaultSetupProvidersDeps(contexts ...context.Context) setupProvidersDeps {
 		probeOllama:      probeOllamaServer,
 		localEndpoint:    embedlocal.Endpoint,
 		localInstall:     embedlocal.Install,
+		recordChoice:     embedlocal.RecordChoice,
 		consentState:     readSetupConsentState,
 		daemonAlive: func(ctx context.Context, loaded *config.Config) bool {
 			return findAnyDaemonRuntimeContext(ctx, loaded.Data.DataDir) != nil
@@ -1010,6 +1012,13 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 	}
 	if err := applySetupProvidersPlan(command, deps, before, &plan, options.jsonOutput); err != nil {
 		return err
+	}
+	for _, lane := range plan.Lanes {
+		if lane.local && lane.Action == planActionEnable && deps.recordChoice != nil {
+			if err := deps.recordChoice(); err != nil {
+				loggerFromContext(ctx).Warn("Could not record local search choice", "error", err)
+			}
+		}
 	}
 	return writeSetupProvidersResult(command, deps, nil, &plan, options, plan.writes(), declined)
 }

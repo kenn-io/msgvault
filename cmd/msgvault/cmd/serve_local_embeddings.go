@@ -20,17 +20,19 @@ import (
 )
 
 type localEmbeddingsController struct {
-	gate      api.OperationGate
-	state     *invocation
-	store     *store.Store
-	dbPath    string
-	handle    *vectorInitHandle
-	server    *api.Server
-	scheduler *scheduler.Scheduler
-	runner    api.CLIRunner
-	openers   []visual.StreamOpener
-	inspect   func(context.Context, embedlocal.Options) (embedlocal.Status, error)
-	install   func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error)
+	gate         api.OperationGate
+	state        *invocation
+	store        *store.Store
+	dbPath       string
+	handle       *vectorInitHandle
+	server       *api.Server
+	scheduler    *scheduler.Scheduler
+	runner       api.CLIRunner
+	openers      []visual.StreamOpener
+	inspect      func(context.Context, embedlocal.Options) (embedlocal.Status, error)
+	install      func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error)
+	choice       func() (bool, error)
+	recordChoice func() error
 }
 
 type localEmbeddingsConflictError struct{ cause error }
@@ -65,7 +67,7 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 		}
 		cfg = loaded.Vector
 	}
-	configured := cfg.Enabled || cfg.Embeddings.LocalOnly || cfg.Embeddings.Endpoint != "" || cfg.Embeddings.Model != ""
+	configured := textProviderConfigured(cfg)
 	if missingRuntime {
 		cfg.Enabled = false
 	}
@@ -95,18 +97,67 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 		DownloadBytes: status.DownloadBytes, Phase: "idle"}, nil
 }
 
+func textProviderConfigured(cfg vector.Config) bool {
+	return cfg.Enabled || cfg.Embeddings.LocalOnly || cfg.Embeddings.Endpoint != "" || cfg.Embeddings.Model != ""
+}
+
 func isOllamaEmbeddingEndpoint(ctx context.Context, endpoint string) bool {
 	server := strings.TrimSuffix(strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(endpoint), "/"), "/embeddings"), "/v1")
 	return embeddingProviderName(endpoint) == "local" && probeOllamaServer(ctx, server).Catalog
 }
 
 func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.LocalEmbeddingsStatus)) (result error) {
+	return c.enable(ctx, report, false)
+}
+
+func (c *localEmbeddingsController) Start(ctx context.Context, report func(api.LocalEmbeddingsStatus)) error {
+	if store.IsPostgresURL(c.dbPath) {
+		return nil
+	}
+	if _, unavailable := setupVectorBackend(c.state.cfg); unavailable != "" {
+		return nil
+	}
+	chosen, err := c.choice()
+	if err != nil || !chosen {
+		return err
+	}
+	snapshot, err := config.ReadConfigFile(c.state.cfg.ConfigFilePath())
+	if err != nil {
+		return err
+	}
+	loaded, err := c.state.cfg.ReloadConfigFile(snapshot)
+	if err != nil {
+		return err
+	}
+	if textProviderConfigured(loaded.Vector) {
+		return nil
+	}
+	dir, err := localEmbeddingsDir()
+	if err != nil {
+		return err
+	}
+	status, err := c.inspect(ctx, embedlocal.Options{DataDir: dir, SkipOllama: true})
+	if err != nil || status.DownloadBytes != 0 {
+		return err
+	}
+	return c.enable(ctx, report, true)
+}
+
+func (c *localEmbeddingsController) enable(ctx context.Context, report func(api.LocalEmbeddingsStatus), startup bool) (result error) {
 	// Bound accepted setup work independently of the HTTP request.
 	runtimeCtx := ctx
 	ctx, cancel := context.WithTimeout(ctx, 24*time.Hour)
 	defer cancel()
 	if !c.handle.WaitContext(ctx) {
 		return ctx.Err()
+	}
+	c.handle.mu.Lock()
+	live := c.handle.vf
+	c.handle.mu.Unlock()
+	if startup && live == nil {
+		if status, detail := c.server.VectorStatus(); status == api.VectorStatusError {
+			return errors.New(detail)
+		}
 	}
 
 	snapshot, err := config.ReadConfigFile(c.state.cfg.ConfigFilePath())
@@ -120,6 +171,9 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 	if err != nil {
 		return err
 	}
+	if startup && textProviderConfigured(loaded.Vector) {
+		return nil
+	}
 	dir, err := localEmbeddingsDir()
 	if err != nil {
 		return err
@@ -131,7 +185,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 	deps := defaultSetupProvidersDeps(ctx)
 	deps.lookupEnv = func(string) (string, bool) { return "", false }
 	deps.localEndpoint = localEmbeddingEndpoint
-	detection := detectSetupProviders(ctx, loaded, deps, setupProvidersOptions{localEmbeddings: !loaded.Vector.Enabled && loaded.Vector.Embeddings.LocalOnly})
+	detection := detectSetupProviders(ctx, loaded, deps, setupProvidersOptions{localEmbeddings: startup || (!loaded.Vector.Enabled && loaded.Vector.Embeddings.LocalOnly)})
 	detection.configKeys = configKeys
 	lane := planTextSearch(loaded, detection)
 	if lane.Action == planActionKeep {
@@ -150,15 +204,12 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 	if err != nil {
 		return err
 	}
-	c.handle.mu.Lock()
-	live := c.handle.vf
-	c.handle.mu.Unlock()
 	if nextConfig.DatabaseDSN() != c.dbPath || nextConfig.Data.DataDir != c.state.cfg.Data.DataDir ||
 		(live != nil && nextConfig.Vector.DBPath != live.Cfg.DBPath) {
 		return errors.New("Restart msgvault to use the new storage settings.") //nolint:revive,staticcheck // Displayed directly as a recovery message in Settings.
 	}
 	var builtinEndpoint string
-	if lane.local {
+	if lane.local && !startup {
 		installation, err := c.install(ctx, embedlocal.InstallOptions{DataDir: dir,
 			Confirm: func(context.Context, int64) (bool, error) { return true, nil },
 			Progress: func(done, total int64) {
@@ -211,7 +262,12 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 		if resolveErr != nil {
 			return resolveErr
 		}
-		if lane.local {
+		if lane.local && startup {
+			vecCfg, err = resolveLocalVectorConfig(workCtx, vecCfg)
+			if err != nil {
+				return err
+			}
+		} else if lane.local {
 			vecCfg.Embeddings.Endpoint = builtinEndpoint
 		}
 		credentialSnapshot, credentialErr := providercredentials.Read(state.cfg.TokensDir())
@@ -223,14 +279,54 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 	if err != nil {
 		return err
 	}
-	if _, err := config.EditConfigTables(loaded.ConfigFilePath(), snapshot.ETag, lane.edits); err != nil {
-		if live == nil {
-			_ = vf.Close()
+	var activeExists, buildingExists bool
+	if startup {
+		closeNew := func() {
+			if live == nil {
+				_ = vf.Close()
+			}
 		}
-		if errors.Is(err, config.ErrConfigConflict) {
-			return localEmbeddingsConflictError{cause: err}
+		active, activeErr := vf.Backend.ActiveGeneration(ctx)
+		if activeErr != nil && !errors.Is(activeErr, vector.ErrNoActiveGeneration) {
+			closeNew()
+			return fmt.Errorf("read active index: %w", activeErr)
 		}
-		return err
+		building, buildingErr := vf.Backend.BuildingGeneration(ctx)
+		if buildingErr != nil {
+			closeNew()
+			return fmt.Errorf("read unfinished index: %w", buildingErr)
+		}
+		activeExists, buildingExists = activeErr == nil, building != nil
+		fingerprint := vf.Cfg.GenerationFingerprint()
+		if (activeExists && active.Fingerprint != fingerprint) || (buildingExists && building.Fingerprint != fingerprint) {
+			closeNew()
+			return errors.New("An existing search index uses a different model. Turn on search in Settings to rebuild it.") //nolint:revive,staticcheck // Displayed in Settings.
+		}
+		latest, readErr := config.ReadConfigFile(c.state.cfg.ConfigFilePath())
+		if readErr != nil {
+			closeNew()
+			return readErr
+		}
+		current, readErr := c.state.cfg.ReloadConfigFile(latest)
+		if readErr != nil {
+			closeNew()
+			return readErr
+		}
+		if textProviderConfigured(current.Vector) || current.DatabaseDSN() != c.dbPath || current.Data.DataDir != c.state.cfg.Data.DataDir || current.Vector.DBPath != loaded.Vector.DBPath {
+			closeNew()
+			return errors.New("Settings changed during setup. Restart msgvault to apply them.") //nolint:revive,staticcheck // Displayed in Settings.
+		}
+	}
+	if !startup {
+		if _, err := config.EditConfigTables(loaded.ConfigFilePath(), snapshot.ETag, lane.edits); err != nil {
+			if live == nil {
+				_ = vf.Close()
+			}
+			if errors.Is(err, config.ErrConfigConflict) {
+				return localEmbeddingsConflictError{cause: err}
+			}
+			return err
+		}
 	}
 	c.handle.mu.Lock()
 	c.handle.vf = vf
@@ -243,6 +339,9 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 	releaseGate()
 	releaseGate = func() {}
 
+	if startup && activeExists && !buildingExists {
+		return nil
+	}
 	report(api.LocalEmbeddingsStatus{Phase: "indexing"})
 	fingerprint := vf.Cfg.GenerationFingerprint()
 	run := func(args ...string) error {
@@ -261,10 +360,16 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 	if err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {
 		return fmt.Errorf("read active index: %w", err)
 	}
-	if errors.Is(err, vector.ErrNoActiveGeneration) || active.Fingerprint != fingerprint {
+	if (startup && !activeExists && !buildingExists) || (!startup && (errors.Is(err, vector.ErrNoActiveGeneration) || active.Fingerprint != fingerprint)) {
 		args = append(args, "--full-rebuild")
 	}
-	return run(args...)
+	err = run(args...)
+	if err == nil && publicationErr == nil && !startup && lane.local && c.recordChoice != nil {
+		if choiceErr := c.recordChoice(); choiceErr != nil {
+			loggerFromContext(ctx).Warn("Could not record local search choice", "error", choiceErr)
+		}
+	}
+	return err
 }
 
 // Log the full command output, then surface only its final error line.

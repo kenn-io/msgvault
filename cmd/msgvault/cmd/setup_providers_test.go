@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1258,7 +1259,10 @@ func TestSetupProvidersLocalDownloadTransaction(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
 			fixture.tty, fixture.confirm = tc.tty, true
-			command := newSetupProvidersCommand(fixture.deps(t))
+			deps := fixture.deps(t)
+			recorded := 0
+			deps.recordChoice = func() error { recorded++; return nil }
+			command := newSetupProvidersCommand(deps)
 			var output bytes.Buffer
 			command.SetOut(&output)
 			command.SetErr(io.Discard)
@@ -1268,6 +1272,11 @@ func TestSetupProvidersLocalDownloadTransaction(t *testing.T) {
 			loaded := fixture.load(t)
 			assert.Equal(tc.enabled, loaded.Vector.Enabled)
 			assert.Equal(tc.enabled, loaded.Vector.Embeddings.LocalOnly)
+			if tc.enabled {
+				assert.Equal(1, recorded)
+			} else {
+				assert.Zero(recorded)
+			}
 			assert.Equal(tc.enabled, loaded.Vector.People.Enabled)
 			if !tc.enabled {
 				assert.Contains(output.String(), "msgvault setup providers --local-embeddings")
@@ -1448,4 +1457,36 @@ func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
 			assert.Equal(t, 1, discoveries)
 		})
 	}
+}
+
+func TestSetupProvidersRecordsLocalChoice(t *testing.T) {
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+	deps := fixture.deps(t)
+	calls := 0
+	deps.recordChoice = func() error { calls++; return nil }
+	command := newSetupProvidersCommand(deps)
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{"--local-embeddings", "--yes"})
+	require.NoError(t, command.ExecuteContext(t.Context()))
+	assert.Equal(t, 1, calls)
+	assert.True(t, fixture.load(t).Vector.Embeddings.LocalOnly)
+}
+
+func TestSetupProvidersChoiceFailureIsLogged(t *testing.T) {
+	checks := assert.New(t)
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+	deps := fixture.deps(t)
+	calls := 0
+	deps.recordChoice = func() error { calls++; return errors.New("marker failure") }
+	var log bytes.Buffer
+	ctx := withInvocation(t.Context(), &invocation{logger: slog.New(slog.NewTextHandler(&log, nil))})
+	command := newSetupProvidersCommand(deps)
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{"--local-embeddings", "--yes"})
+	require.NoError(t, command.ExecuteContext(ctx))
+	checks.Equal(1, calls)
+	checks.Contains(log.String(), "marker failure")
+	checks.True(fixture.load(t).Vector.Enabled)
 }

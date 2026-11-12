@@ -114,3 +114,37 @@ func TestLocalEmbeddingsHostDisplay(t *testing.T) {
 		})
 	}
 }
+
+func TestStartupLocalEmbeddingsSharesAdmission(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger()})
+		defer func() { _ = srv.Shutdown(t.Context()) }()
+		controller := &localSetupTestController{started: make(chan context.Context, 2), release: make(chan struct{})}
+		srv.SetLocalEmbeddings(controller)
+		srv.StartLocalEmbeddings(controller.Enable)
+		<-controller.started
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodPost, localEmbeddingsEndpointPath, nil))
+		require.Equal(t, http.StatusAccepted, response.Code)
+		assert.Equal(t, int32(1), controller.calls.Load())
+		close(controller.release)
+	})
+}
+
+func TestLocalEmbeddingsCapturesAdmittedController(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger()})
+		defer func() { _ = srv.Shutdown(t.Context()) }()
+		first := &localSetupTestController{started: make(chan context.Context, 1), release: make(chan struct{})}
+		second := &localSetupTestController{started: make(chan context.Context, 1), release: make(chan struct{})}
+		srv.SetLocalEmbeddings(first)
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodPost, localEmbeddingsEndpointPath, nil))
+		require.Equal(t, http.StatusAccepted, response.Code)
+		srv.SetLocalEmbeddings(second)
+		synctest.Wait()
+		assert.Equal(t, int32(1), first.calls.Load())
+		assert.Zero(t, second.calls.Load())
+		close(first.release)
+	})
+}
