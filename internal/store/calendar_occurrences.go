@@ -278,7 +278,11 @@ func calendarRangeShift(master calevent.Event, edits []CalendarEventRow) calenda
 	shifts := make([]calendarShift, len(edits))
 	var pad time.Duration
 	for i, row := range edits {
-		if shifts[i] = calendarEditShift(master, row.Event, zone); shifts[i].move == nil || err != nil {
+		shifts[i] = calendarEditShift(master, row.Event, zone)
+		if row.Event.Status == "cancelled" && row.Event.Start == nil && i > 0 {
+			shifts[i] = calendarCancelShift(row.Event, shifts[i-1])
+		}
+		if shifts[i].move == nil || err != nil {
 			return calendarShift{}
 		}
 		pad = max(pad, shifts[i].pad)

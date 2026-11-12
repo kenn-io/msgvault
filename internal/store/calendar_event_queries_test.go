@@ -218,6 +218,15 @@ func TestCalendarEventRowsEndedSeriesOutsideWindow(t *testing.T) {
 	bulkCalendarCandidates(t, st, data.Message.SourceID, data.Message.ConversationID, "series", 2001)
 	_, err := st.db.Exec(`UPDATE calendar_events SET start_at = '2027-03-01 00:00:00+00:00', end_at = '2027-03-02 00:00:00+00:00', start_date = '2027-03-01', end_date = '2027-03-02', recurrence_end_at = '2027-03-02 00:00:00+00:00', recurrence_json = '["RRULE:FREQ=DAILY;COUNT=1"]' WHERE kind = 'series'`)
 	require.NoError(err)
+	override := ""
+	if st.IsPostgreSQL() {
+		override = " OVERRIDING SYSTEM VALUE"
+	}
+	_, err = st.db.Exec(`INSERT INTO messages (id,source_id,conversation_id,source_message_id,message_type)` + override + ` SELECT id+200000,source_id,conversation_id,source_message_id || '-edit',message_type FROM messages WHERE id >= 100000 AND id < 102001`)
+	require.NoError(err)
+	_, err = st.db.Exec(`INSERT INTO calendar_events (message_id,projection_version,content_hash,provider_event_id,series_provider_id,kind,original_start_at,start_at,end_at,status,all_day,calendar_time_zone,recurrence_json)
+		SELECT message_id+200000,1,'fixture',provider_event_id || '-edit',provider_event_id,'exception','2027-03-01 00:00:00+00:00','2027-03-01 01:00:00+00:00','2027-03-01 02:00:00+00:00','confirmed',false,'UTC','["RECURRENCE-ID;RANGE=THISANDFUTURE"]' FROM calendar_events WHERE kind='series'`)
+	require.NoError(err)
 	from := time.Date(2027, 3, 12, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 	require.NoError(err)
