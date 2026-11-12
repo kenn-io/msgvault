@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"io"
@@ -4039,6 +4040,89 @@ func TestHandleSourceStatusLeavesOutWebhookRuns(t *testing.T) {
 	got = byID[neverSucceeded.ID]
 	require.NotNil(got.LatestSync, "LatestSync")
 	assert.Equal(neverSucceededRun, got.LatestSync.ID, "LatestSync.ID")
+	assert.Nil(got.LastSuccessfulSync, "LastSuccessfulSync")
+}
+
+// statusGraph is a synthetic Facebook Page: post 100_200 lists comments
+// 401 and 402 on its first page and 403 on the next, and reading the replies
+// of 401 fails.
+type statusGraph struct{}
+
+func (statusGraph) VerifyPage(context.Context, string) (meta.Page, error) {
+	return meta.Page{ID: "100", Name: "Example Page", Category: "Community"}, nil
+}
+
+func (statusGraph) Posts(_ context.Context, _ string, edge meta.PostEdge, _ string) (meta.ObjectPage, error) {
+	if edge != meta.Posts {
+		return meta.ObjectPage{}, nil
+	}
+	return meta.ObjectPage{Data: []meta.Object{{ID: "100_200", Message: "Example post", From: &meta.Actor{ID: "100", Name: "Example Page"}}}}, nil
+}
+
+func (statusGraph) Comments(_ context.Context, parent, after string) (meta.ObjectPage, error) {
+	comment := func(id string) meta.Object {
+		return meta.Object{ID: id, Message: "Example comment", CreatedTime: "2026-10-01T12:00:00+0000", From: &meta.Actor{ID: "300", Name: "Example Customer"}, Parent: &meta.Actor{ID: parent}}
+	}
+	switch {
+	case parent == "401":
+		return meta.ObjectPage{}, errors.New("synthetic token expired")
+	case parent == "100_200" && after == "":
+		return meta.ObjectPage{Data: []meta.Object{comment("401"), comment("402")}, After: "2"}, nil
+	case parent == "100_200":
+		return meta.ObjectPage{Data: []meta.Object{comment("403")}}, nil
+	}
+	return meta.ObjectPage{}, nil
+}
+
+// A removal only marks archived rows, so ApplyFeed never reads Graph.
+func (statusGraph) Post(context.Context, string) (meta.Object, error) {
+	return meta.Object{}, errors.New("unexpected Graph read")
+}
+
+func (statusGraph) Comment(context.Context, string) (meta.Object, error) {
+	return meta.Object{}, errors.New("unexpected Graph read")
+}
+
+func (statusGraph) CommentHidden(context.Context, string) (bool, error) {
+	return false, errors.New("unexpected Graph read")
+}
+
+// A webhook removal prunes a failed polling sync's saved progress, but the
+// source still reports the failed run and its error as the latest sync.
+func TestHandleSourceStatusKeepsFailedPollingAfterRemoval(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+	ctx := t.Context()
+	imp := meta.NewImporter(st, statusGraph{})
+	src, err := imp.Register(ctx, "9", "100")
+	require.NoError(err)
+	_, err = imp.Import(ctx, "9", "100", meta.ImportOptions{})
+	require.Error(err, "the reply read of 401 fails")
+	failed, err := st.GetLatestSyncExcludingTypeContext(ctx, src.ID, meta.WebhookSyncType)
+	require.NoError(err)
+	require.Equal(store.SyncStatusFailed, failed.Status)
+	require.True(failed.ErrorMessage.Valid)
+
+	require.NoError(meta.ApplyFeed(ctx, st, statusGraph{}, "9", "100", []jsontext.Value{
+		jsontext.Value(`{"item":"comment","verb":"remove","post_id":"100_200","comment_id":"401"}`),
+	}))
+
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/sources/status?source_type="+meta.SourceType, nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusOK, w.Code, "status")
+	var resp SourceStatusResponse
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
+	require.Len(resp.Sources, 1, "sources")
+	got := resp.Sources[0]
+	require.NotNil(got.LatestSync, "LatestSync")
+	assert.Equal(failed.ID, got.LatestSync.ID, "LatestSync.ID")
+	assert.Equal(store.SyncStatusFailed, got.LatestSync.Status, "LatestSync.Status")
+	require.NotNil(got.LatestSync.ErrorMessage, "LatestSync.ErrorMessage")
+	assert.Equal(failed.ErrorMessage.String, *got.LatestSync.ErrorMessage, "LatestSync.ErrorMessage")
 	assert.Nil(got.LastSuccessfulSync, "LastSuccessfulSync")
 }
 

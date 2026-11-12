@@ -108,16 +108,15 @@ func applyWebhook(ctx context.Context, st *store.Store, sourceType, identifier s
 }
 
 // applyWebhookRemoving is applyWebhook for a delivery that removes comments
-// or posts. Before the webhook run starts, it prunes a paused polling sync's
-// saved traversal of the removed objects and the archived replies below a
-// removed comment, and publishes that as a new paused polling run. Pruning
-// first means `msgvault gc` can never purge the archive rows that link a
-// saved reply frame to a removed comment while the prune still needs them: a
-// failure after the prune leaves the marks to the retry, and a failure before
-// it leaves nothing marked. The prune comes before the webhook run starts
-// because a newer run fences the older one's scoped writes. Pruning only
-// drops saved traversal, so it is safe even when the same delivery adds the
-// comment before removing it.
+// or posts. Before the webhook run starts, it prunes the removed objects and
+// the archived replies below a removed comment from the saved traversal of an
+// unfinished polling sync, in that polling run's own checkpoint. Pruning
+// before anything is marked means `msgvault gc` can never purge the archive
+// rows that link a saved reply frame to a removed comment while the prune
+// still needs them: a failure after the prune leaves the marks to the retry,
+// and a failure before it leaves nothing marked. Pruning only drops saved
+// traversal, so it is safe even when the same delivery adds the comment
+// before removing it.
 func applyWebhookRemoving(ctx context.Context, st *store.Store, sourceType, identifier string, removed []feedChange, apply func(*store.Store, *store.Source, *ImportSummary) error) (retErr error) {
 	source, execution, err := acquireSource(ctx, st, sourceType, identifier)
 	if err != nil {
@@ -140,7 +139,7 @@ func applyWebhookRemoving(ctx context.Context, st *store.Store, sourceType, iden
 			ids = append(ids, change.CommentID)
 			ids = append(ids, thread...)
 		}
-		if err := dropDeletedTraversal(ctx, st, execution, source, ids); err != nil {
+		if err := dropDeletedTraversal(ctx, st, source, ids); err != nil {
 			return err
 		}
 	}
