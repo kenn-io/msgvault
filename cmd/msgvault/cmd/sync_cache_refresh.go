@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/store"
@@ -56,6 +57,12 @@ func manualSyncCLICommand(args []string) bool {
 	default:
 		return false
 	}
+}
+
+// commentWriteCLICommand reports a comment command that can change messages
+// in the analytics cache. A dry run changes nothing.
+func commentWriteCLICommand(args []string) bool {
+	return len(args) >= 2 && args[0] == "comment" && args[1] == "moderate" && !slices.Contains(args, "--dry-run") && !slices.Contains(args, "--dry-run=true")
 }
 
 func manualSyncCacheFlagValues(args []string) (force, skip bool) {

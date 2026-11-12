@@ -18,6 +18,8 @@ type FacebookCommentsSource struct {
 	TokenEnv   string `toml:"token_env"`
 	Enabled    bool   `toml:"enabled"`
 	Schedule   string `toml:"schedule"`
+	// Actions opts the profile in to changing comments on Meta.
+	Actions []string `toml:"actions"`
 }
 
 func (c *Config) GetFacebookCommentsSource(identifier string) *FacebookCommentsSource {
@@ -63,6 +65,9 @@ func (c *Config) validateFacebookCommentsSources() error {
 		if !envutil.ValidName(source.TokenEnv) {
 			return fmt.Errorf("facebook_comments[%d].token_env must name an explicit environment variable", i)
 		}
+		if err := validateCommentActions(source.Actions); err != nil {
+			return fmt.Errorf("facebook_comments[%d].actions: %w", i, err)
+		}
 		if source.Schedule != "" {
 			if _, err := cronexpr.Parser.Parse(source.Schedule); err != nil {
 				return fmt.Errorf("facebook_comments[%d].schedule: %w", i, err)
@@ -82,6 +87,8 @@ type InstagramCommentsSource struct {
 	TokenEnv           string `toml:"token_env"`
 	Enabled            bool   `toml:"enabled"`
 	Schedule           string `toml:"schedule"`
+	// Actions opts the profile in to changing comments on Meta.
+	Actions []string `toml:"actions"`
 }
 
 func (c *Config) GetInstagramCommentsSource(identifier string) *InstagramCommentsSource {
@@ -127,10 +134,23 @@ func (c *Config) validateInstagramCommentsSources() error {
 		if !envutil.ValidName(source.TokenEnv) {
 			return fmt.Errorf("instagram_comments[%d].token_env must name an explicit environment variable", i)
 		}
+		if err := validateCommentActions(source.Actions); err != nil {
+			return fmt.Errorf("instagram_comments[%d].actions: %w", i, err)
+		}
 		if source.Schedule != "" {
 			if _, err := cronexpr.Parser.Parse(source.Schedule); err != nil {
 				return fmt.Errorf("instagram_comments[%d].schedule: %w", i, err)
 			}
+		}
+	}
+	return nil
+}
+
+// validateCommentActions accepts the comment changes a profile can opt in to.
+func validateCommentActions(actions []string) error {
+	for _, action := range actions {
+		if action != string(meta.ActionHide) && action != string(meta.ActionDelete) {
+			return fmt.Errorf("unknown action %q; use \"hide\" or \"delete\"", action)
 		}
 	}
 	return nil

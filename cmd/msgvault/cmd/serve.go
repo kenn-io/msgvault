@@ -2652,7 +2652,7 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	if api.IsCLIRunEmbeddingsOptimize(req.Args) {
 		return a.runCLIEmbeddingsOptimize(ctx, req, emit)
 	}
-	if manualSyncCLICommand(req.Args) {
+	if manualSyncCLICommand(req.Args) || commentWriteCLICommand(req.Args) {
 		defer func() {
 			force, skip := manualSyncCacheFlagValues(req.Args)
 			runErr = errors.Join(runErr, a.queueCacheRefreshAfterManualSync(force, skip))
