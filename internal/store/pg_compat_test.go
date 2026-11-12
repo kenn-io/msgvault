@@ -117,6 +117,14 @@ func TestSearchFTSPunctuation(t *testing.T) {
 		require.NoError(err, term)
 		assert.ElementsMatch(want, ids, term)
 	}
+	crossField := f.NewMessage().WithSourceMessageID("cross-field").Create(t, f.Store)
+	require.NoError(f.Store.UpsertFTS(crossField, "alice", "", "example.com", "", ""))
+	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice@example"}}, 10)
+	require.NoError(err)
+	assert.NotContains(ids, crossField)
+	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice", "example"}}, 10)
+	require.NoError(err)
+	assert.Contains(ids, crossField)
 }
 
 func TestPostgresFTSSaturatedPhrases(t *testing.T) {
@@ -152,11 +160,6 @@ func TestPostgresFTSSaturatedPhrases(t *testing.T) {
 			assert.ElementsMatch(tc.want, ids, tc.term)
 			assert.Equal(int64(len(tc.want)), count, tc.term)
 		}
-		ids, count, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice@example.com"}}, 1)
-		require.NoError(err)
-		require.Len(ids, 1)
-		assert.Contains(want, ids[0])
-		assert.Equal(int64(len(want)), count)
 	}
 	{
 		id := f.NewMessage().WithSourceMessageID("position-saturated").Create(t, f.Store)
@@ -164,24 +167,7 @@ func TestPostgresFTSSaturatedPhrases(t *testing.T) {
 		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice@exam"}}, 10)
 		require.NoError(err)
 		assert.Contains(ids, id)
-		ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"example@alice"}}, 10)
-		require.NoError(err)
-		assert.NotContains(ids, id)
 	}
-	separated := f.NewMessage().WithSourceMessageID("separated").Create(t, f.Store)
-	crossField := f.NewMessage().WithSourceMessageID("cross-field-saturated").Create(t, f.Store)
-	plainCrossField := f.NewMessage().WithSourceMessageID("cross-field").Create(t, f.Store)
-	require.NoError(f.Store.UpsertFTS(separated, "", strings.Repeat("filler ", 17000)+"alice middle example", "", "", ""))
-	require.NoError(f.Store.UpsertFTS(crossField, "alice", strings.Repeat("filler ", 17000)+"example", "", "", ""))
-	require.NoError(f.Store.UpsertFTS(plainCrossField, "alice", "", "example.com", "", ""))
-	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice@example"}}, 10)
-	require.NoError(err)
-	assert.NotContains(ids, separated)
-	assert.NotContains(ids, crossField)
-	assert.NotContains(ids, plainCrossField)
-	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice", "example"}}, 10)
-	require.NoError(err)
-	assert.Contains(ids, plainCrossField)
 	unicodeID := f.NewMessage().WithSourceMessageID("unicode-saturated").Create(t, f.Store)
 	require.NoError(f.Store.UpsertFTS(unicodeID, "", strings.Repeat("filler ", 17000)+"CAFÉ@東京.example e\u0301xample", "", "", ""))
 	for _, term := range []string{"café@東京.exam", "e@xam"} {

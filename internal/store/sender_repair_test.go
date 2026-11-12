@@ -267,12 +267,11 @@ func TestApplySenderRepairRefreshesFTS(t *testing.T) {
 	require.NoError(f.Store.UpsertMessageRaw(messageID,
 		[]byte("From: repairftsneedle@example.test\r\n\r\nBody\r\n")),
 		"UpsertMessageRaw repair candidate")
-	body := "preservedbodyneedle"
 	require.NoError(f.Store.UpsertMessageBody(messageID,
-		sql.NullString{String: body, Valid: true}, sql.NullString{}),
+		sql.NullString{String: "preservedbodyneedle", Valid: true}, sql.NullString{}),
 		"UpsertMessageBody repair candidate")
 	require.NoError(f.Store.UpsertFTS(
-		messageID, "Repair subject", body, "", "", "",
+		messageID, "Repair subject", "preservedbodyneedle", "", "", "",
 	), "seed FTS without sender")
 	candidate := senderRepairCandidateForMessage(t, f.Store, messageID)
 

@@ -100,20 +100,6 @@ func TestPostgreSQLDialect_FTSSearchClause(t *testing.T) {
 	assert.Equal(1, orderArgCount)
 }
 
-func TestPostgreSQLDialect_BuildFTSArg(t *testing.T) {
-	d := &PostgreSQLDialect{}
-	for _, tc := range []struct {
-		terms []string
-		want  string
-	}{
-		{[]string{"---"}, ""},
-		{[]string{"foo-bar"}, "foo & bar:*"},
-		{[]string{"monthly", "foo-bar", "or"}, "monthly:* & foo & bar:* & or:*"},
-	} {
-		assert.Equal(t, tc.want, d.BuildFTSArg(tc.terms))
-	}
-}
-
 type recordingFTSQuerier struct {
 	query string
 	args  []any
