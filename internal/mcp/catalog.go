@@ -40,6 +40,8 @@ const (
 )
 
 type catalogCapabilities struct {
+	collections     bool
+	stageSelection  bool
 	sqlQuery        bool
 	semanticSearch  bool
 	vectorInMessage bool
@@ -129,7 +131,10 @@ func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*t
 }
 
 func capabilitiesFor(opts ServeOptions) catalogCapabilities {
+	_, collections := opts.Engine.(query.CollectionScopeLister)
 	return catalogCapabilities{
+		collections:     collections && opts.CollectionScopesAvailable && !opts.DelegatedOnly,
+		stageSelection:  opts.Operations != nil && !opts.DelegatedOnly && slices.Contains(opts.OperationCapabilities, "stage_deletion_selection"),
 		sqlQuery:        opts.ArchiveSQLQuerier != nil,
 		semanticSearch:  opts.HybridEngine != nil || opts.HybridSearcher != nil,
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
@@ -220,6 +225,9 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 	available := definitions[:0]
 	for _, definition := range definitions {
 		if definition.availability(capabilities) {
+			if !capabilities.collections && definition.inputSchema != nil {
+				delete(definition.inputSchema.Properties, "collection")
+			}
 			available = append(available, definition)
 		}
 	}
@@ -232,6 +240,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 	definitions := []toolDefinition{
 		aggregateDefinition(nil),
+		listMessageCollectionsDefinition(),
 		createSavedViewDefinition(nil),
 		deleteSavedViewDefinition(nil),
 		exportAttachmentDefinition(nil),
@@ -278,7 +287,7 @@ func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 		searchVisualAttachmentsDefinition(),
 		embeddingStatusDefinition(),
 		semanticSearchMessagesDefinition(nil, capabilities.semanticSearch),
-		stageDeletionDefinition(nil),
+		stageDeletionDefinitionForCapability(capabilities.stageSelection),
 		promotePersonDefinition(nil),
 		acceptIdentityMatchDefinition(),
 		mergePersonDefinition(),
@@ -546,6 +555,7 @@ func searchMetadataDefinition(_ *handlers) toolDefinition {
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgQuery:   stringSchema(queryDesc),
 			toolArgAccount: accountProperty(),
+			"collection":   collectionProperty(),
 			toolArgLimit:   searchLimitProperty(),
 			toolArgOffset:  offsetProperty(),
 		}, toolArgQuery),
@@ -562,6 +572,7 @@ func searchMessagesDefinition(_ *handlers, vectorAvailable bool) toolDefinition 
 			"Search query; omit mode for metadata search or set mode=vector|hybrid for semantic search",
 		),
 		toolArgAccount: accountProperty(),
+		"collection":   collectionProperty(),
 		toolArgLimit:   searchLimitProperty(),
 		toolArgOffset:  offsetProperty(),
 	}
@@ -607,6 +618,7 @@ func searchMessageBodiesDefinition(_ *handlers) toolDefinition {
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgQuery:   stringSchema(queryDesc),
 			toolArgAccount: accountProperty(),
+			"collection":   collectionProperty(),
 			toolArgLimit:   searchLimitProperty(),
 			toolArgOffset:  offsetProperty(),
 		}, toolArgQuery),
@@ -649,6 +661,7 @@ func semanticSearchMessagesDefinition(_ *handlers, vectorAvailable bool) toolDef
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgQuery:    stringSchema(queryDesc),
 			toolArgAccount:  accountProperty(),
+			"collection":    collectionProperty(),
 			toolArgLimit:    searchLimitProperty(),
 			toolArgOffset:   offsetProperty(),
 			toolArgMode:     mode,
@@ -678,6 +691,7 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 			"Note: snippet is pre-stored source metadata (may be empty for non-Gmail sources).",
 		closedObject(map[string]*jsonschema.Schema{
 			"id":               safeIDSchema("Message ID"),
+			"collection":       collectionProperty(),
 			toolArgOffset:      nonNegativeIntegerSchema("Byte offset from the start of the selected body to begin reading (default 0). Ignored when center_at is provided.", 0),
 			"center_at":        signedSafeIntegerSchema("Byte offset from the start of the selected body to center the window on. Takes precedence over offset.", -1),
 			toolArgMaxChars:    signedSafeIntegerSchema("Maximum selected-body bytes to return (default 2000, max 4000). Values above 4000 are clamped to 4000; zero or negative values use the default.", 2000),
@@ -827,6 +841,7 @@ func listMessagesDefinition(_ *handlers) toolDefinition {
 			"total=-1 because the full count is not computed; use has_more for paging.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgAccount:    accountProperty(),
+			"collection":      collectionProperty(),
 			toolArgFrom:       stringSchema("Filter by sender email address"),
 			"to":              stringSchema("Filter by recipient email address"),
 			"label":           stringSchema("Filter by Gmail label"),
@@ -860,6 +875,7 @@ func aggregateDefinition(_ *handlers) toolDefinition {
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgGroupBy: stringSchema("Dimension to group by. When 'time', buckets are by calendar year only (Key is a year string like \"2024\").", toolArgSender, "recipient", "domain", "label", toolArgList, "time"),
 			toolArgAccount: accountProperty(),
+			"collection":   collectionProperty(),
 			toolArgLimit:   nonNegativeIntegerSchema("Maximum results to return (default 50)", 50),
 			toolArgAfter:   afterProperty(),
 			toolArgBefore:  beforeProperty(),
@@ -886,22 +902,33 @@ func searchByDomainsDefinition(_ *handlers) toolDefinition {
 	)
 }
 
-func stageDeletionDefinition(_ *handlers) toolDefinition {
+func stageDeletionDefinitionForCapability(available bool) toolDefinition {
+	selectionInput := selectionInputSchema()
+	selection := selectionInput.Properties["selection"]
+	input := closedObject(map[string]*jsonschema.Schema{
+		toolArgAccount: accountProperty(), toolArgQuery: stringSchema("Gmail-style search query (e.g. 'from:linkedin subject:job alert'). Cannot be combined with structured filters."),
+		toolArgFrom: stringSchema("Filter by sender email address"), "domain": stringSchema("Filter by sender domain (e.g. 'linkedin.com')"),
+		"label": stringSchema("Filter by Gmail label (e.g. 'CATEGORY_PROMOTIONS')"), toolArgAfter: afterProperty(), toolArgBefore: beforeProperty(),
+		"has_attachment": booleanSchema("Only messages with attachments"),
+	})
+	if available {
+		input.Properties["selection"] = selection
+		input.Properties["operation_token"] = stringSchema("Exact native operation token from preflight")
+		input.Defs, input.Definitions = selectionInput.Defs, selectionInput.Definitions
+	}
+	description := fmt.Sprintf("Stage deletion without deleting immediately. Queries select Gmail, Microsoft Graph, and IMAP mail, report undeletable matches in skipped_count, and refuse above %d matches or when none are deletable. Structured filters select eligible Gmail and Microsoft Graph mail. ", maxStageDeletionResults) +
+		"Use EITHER 'query' (Gmail-style search) OR structured filters (from, domain, label, etc.), not both. "
+	output := outputSchemaFor[stageDeletionResponse]()
+	if available {
+		description += "Alternatively pass an unchanged preflight selection and operation token, with client confirmation. "
+		output = operationalOutputSchema(output)
+	}
+	description += "To execute, set '[deletion] remote_enabled = true' in the invoking CLI's config.toml for durable consent, then run 'msgvault delete-staged'. One-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged."
 	return writeDefinition(
 		ToolStageDeletion,
-		fmt.Sprintf("Stage deletion without deleting immediately. Queries select Gmail, Microsoft Graph, and IMAP mail, report undeletable matches in skipped_count, and refuse above %d matches or when none are deletable. Structured filters select eligible Gmail and Microsoft Graph mail. ", maxStageDeletionResults)+
-			"Use EITHER 'query' (Gmail-style search) OR structured filters (from, domain, label, etc.), not both. To execute, set '[deletion] remote_enabled = true' in the invoking CLI's config.toml for durable consent, then run 'msgvault delete-staged'. One-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged.",
-		closedObject(map[string]*jsonschema.Schema{
-			toolArgAccount:   accountProperty(),
-			toolArgQuery:     stringSchema("Gmail-style search query (e.g. 'from:linkedin subject:job alert'). Cannot be combined with structured filters."),
-			toolArgFrom:      stringSchema("Filter by sender email address"),
-			"domain":         stringSchema("Filter by sender domain (e.g. 'linkedin.com')"),
-			"label":          stringSchema("Filter by Gmail label (e.g. 'CATEGORY_PROMOTIONS')"),
-			toolArgAfter:     afterProperty(),
-			toolArgBefore:    beforeProperty(),
-			"has_attachment": booleanSchema("Only messages with attachments"),
-		}),
-		outputSchemaFor[stageDeletionResponse](),
+		description,
+		input,
+		output,
 		(*handlers).stageDeletion,
 	)
 }

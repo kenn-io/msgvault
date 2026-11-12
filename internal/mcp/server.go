@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/visual"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 // Tool name constants.
@@ -115,8 +116,9 @@ type ServeOptions struct {
 	Families         *ArchiveFamilies
 	EmbeddingStatus  EmbeddingStatusReader
 	// Operations exposes only fixed, actually supported daemon workflows.
-	Operations            OperationBackend
-	OperationCapabilities []string
+	Operations                OperationBackend
+	OperationCapabilities     []string
+	CollectionScopesAvailable bool
 	// OperationWriteFamilies is empty unless the operator opts into a family.
 	OperationWriteFamilies []OperationFamily
 	legacyHTTP             bool
@@ -421,6 +423,7 @@ func newMCPServerWithPolicy(
 		drafts:               opts.Drafts,
 		contactRoutesBackend: opts.ContactRoutesBackend,
 		chatDiscoveryBackend: opts.ChatDiscoveryBackend,
+		operations:           opts.Operations,
 	}
 
 	for _, definition := range operationCatalog(opts, h) {
@@ -434,7 +437,16 @@ func newMCPServerWithPolicy(
 	}
 
 	for _, definition := range operationalCatalog(opts, allowWrites) {
-		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations), confirmation))
+		handler := definition.bind(opts.Operations)
+		if definition.definition.name == "explore_deletion_selection" {
+			handler = h.exploreDeletionSelection
+			if capabilitiesFor(opts).collections {
+				input := outputSchemaFor[generated.ExploreHTTPRequest]()
+				input.Properties["collection"] = collectionProperty()
+				definition.definition.inputSchema = input
+			}
+		}
+		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(handler, confirmation))
 	}
 
 	return s

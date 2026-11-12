@@ -8,6 +8,10 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- MCP owners can preflight an exact revision-bound deletion selection and stage the reviewed selection with client confirmation. Staging creates a manifest without deleting remotely.
+
+- Owner MCP clients can list message collections with `list_message_collections` and pass `collection` to message searches, `list_messages`, `get_message` and `aggregate` to read only that collection's sources, when the daemon advertises collection discovery.
+
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).

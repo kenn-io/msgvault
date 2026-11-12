@@ -63,10 +63,11 @@ func mcpRouteDescriptors(doc *huma.OpenAPI) []apiprotocol.MCPRouteDescriptor {
 // tools, and only when their real routes are registered.
 func mcpOperationDescribed(operationID string) bool {
 	switch operationID {
-	case "listSourceStatus", "listSourceIdentities", "getSchedulerStatus", "triggerSync",
+	case "listCLICollections", "listSourceStatus", "listSourceIdentities", "getSchedulerStatus", "triggerSync",
 		"getSettings", "patchSettings", "getParticipant", "getCacheBuildStatus",
 		"getPersonProfile", "patchPerson", "createPerson", "enableLocalEmbeddings",
-		"listLoops", "markLoopDone", "snoozeLoop", "reopenLoop":
+		"listLoops", "markLoopDone", "snoozeLoop", "reopenLoop",
+		"explore", "preflightExploreSelection", "stageDeletion":
 		return true
 	default:
 		return false
