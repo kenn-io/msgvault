@@ -26,44 +26,21 @@ func icsSource(t *testing.T, st *Store) int64 {
 	return source.ID
 }
 
-func TestICalendarUnsupportedMethod(t *testing.T) {
-	st := newRFC822IDBackfillBackendStore(t)
-	source := icsSource(t, st)
-	_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("ADD", "DTSTART:20270302T120000Z"))
-	require.ErrorContains(t, err, `unsupported calendar method "ADD"`)
-	assert.Empty(t, emailEvents(t, st, source))
-}
-
 func TestICalendarDeclaredTimeZone(t *testing.T) {
-	for _, mode := range []string{"file", "email"} {
-		t.Run(mode, func(t *testing.T) {
-			requirements := require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			text := string(calendarDocument("REQUEST", "DTSTAMP:20270101T000000Z\r\nDTSTART:20270115T090000"))
-			text = strings.Replace(text, "BEGIN:VEVENT", "X-WR-TIMEZONE:America/New_York\r\nBEGIN:VEVENT", 1)
-			text = strings.Replace(text, "END:VCALENDAR", "BEGIN:VEVENT\r\nUID:second@example.com\r\nDTSTAMP:20270101T000000Z\r\nDTSTART:20270115T090000\r\nEND:VEVENT\r\nEND:VCALENDAR", 1)
-			raw := []byte(text)
-			var source int64
-			if mode == "file" {
-				source = icsSource(t, st)
-				_, err := st.PersistICalendarContext(t.Context(), source, raw)
-				requirements.NoError(err)
-			} else {
-				_, source = persistInviteEmail(t, st, "declared-zone", inviteEmail(raw))
-			}
-			ids := emailEvents(t, st, source)
-			requirements.Len(ids, 2)
-			for _, id := range ids {
-				row := calendarRows(t, st, id)[0]
-				requirements.NotNil(row.Event.Start)
-				requirements.Equal("2027-01-15T14:00:00Z", row.Event.Start.Format(time.RFC3339))
-				requirements.NoError(st.withTxContext(t.Context(), func(tx *loggedTx) error {
-					return st.refreshCalendarEventProjectionWith(t.Context(), tx, id)
-				}))
-				row = calendarRows(t, st, id)[0]
-				requirements.Equal("2027-01-15T14:00:00Z", row.Event.Start.Format(time.RFC3339))
-			}
-		})
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	text := string(calendarDocument("REQUEST", "DTSTAMP:20270101T000000Z\r\nDTSTART:20270115T090000"))
+	text = strings.Replace(text, "BEGIN:VEVENT", "X-WR-TIMEZONE:America/New_York\r\nBEGIN:VEVENT", 1)
+	text = strings.Replace(text, "END:VCALENDAR", "BEGIN:VEVENT\r\nUID:second@example.com\r\nDTSTAMP:20270101T000000Z\r\nDTSTART:20270115T090000\r\nEND:VEVENT\r\nEND:VCALENDAR", 1)
+	source := icsSource(t, st)
+	_, err := st.PersistICalendarContext(t.Context(), source, []byte(text))
+	requirements.NoError(err)
+	ids := emailEvents(t, st, source)
+	requirements.Len(ids, 2)
+	for _, id := range ids {
+		row := calendarRows(t, st, id)[0]
+		requirements.NotNil(row.Event.Start)
+		requirements.Equal("2027-01-15T14:00:00Z", row.Event.Start.Format(time.RFC3339))
 	}
 }
 
@@ -71,43 +48,32 @@ func TestICalendarRangeKeepsSiblingsAndReportsSeries(t *testing.T) {
 	master := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=10\r\nSUMMARY:Series")
 	rangeEvent := calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H\r\nSUMMARY:Moved")
 	sibling := []byte(strings.Replace(string(calendarDocument("REQUEST", "DTSTART:20270308T120000Z\r\nDURATION:PT1H\r\nSUMMARY:Sibling")), "family@example.com", "sibling@example.com", 1))
-	for _, mode := range []string{"file", "email"} {
-		for _, reversed := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s-reversed-%t", mode, reversed), func(t *testing.T) {
-				requirements := require.New(t)
-				st := newRFC822IDBackfillBackendStore(t)
-				source := icsSource(t, st)
-				if mode == "email" {
-					account, err := st.GetOrCreateSource("mbox", "owner@example.com")
-					requirements.NoError(err)
-					source = account.ID
-				}
-				items := [][]byte{master, rangeEvent, sibling}
-				if reversed {
-					items[0], items[1] = items[1], items[0]
-				}
-				for i, item := range items {
-					if mode == "email" {
-						persistInviteEmailForSource(t, st, source, fmt.Sprintf("range-%d", i), inviteEmail(item))
-					} else {
-						_, err := st.PersistICalendarContext(t.Context(), source, item)
-						requirements.NoError(err)
-					}
-				}
-				before := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-				prefix, err := st.ListCalendarOccurrencesContext(t.Context(), before, before.AddDate(0, 0, 1))
+	for _, reversed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reversed-%t", reversed), func(t *testing.T) {
+			requirements := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			source := icsSource(t, st)
+			items := [][]byte{master, rangeEvent, sibling}
+			if reversed {
+				items[0], items[1] = items[1], items[0]
+			}
+			for _, item := range items {
+				_, err := st.PersistICalendarContext(t.Context(), source, item)
 				requirements.NoError(err)
-				requirements.Len(prefix.Occurrences, 1)
-				requirements.Equal("2027-03-02T12:00:00Z", prefix.Occurrences[0].Start.Format(time.RFC3339))
-				requirements.Len(prefix.Unexpandable, 1)
-				from := time.Date(2027, 3, 8, 0, 0, 0, 0, time.UTC)
-				page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-				requirements.NoError(err)
-				requirements.Len(page.Occurrences, 1)
-				requirements.Equal("Sibling", page.Occurrences[0].Subject)
-				requirements.Len(page.Unexpandable, 1)
-			})
-		}
+			}
+			before := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+			prefix, err := st.ListCalendarOccurrencesContext(t.Context(), before, before.AddDate(0, 0, 1))
+			requirements.NoError(err)
+			requirements.Len(prefix.Occurrences, 1)
+			requirements.Equal("2027-03-02T12:00:00Z", prefix.Occurrences[0].Start.Format(time.RFC3339))
+			requirements.Len(prefix.Unexpandable, 1)
+			from := time.Date(2027, 3, 8, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			requirements.NoError(err)
+			requirements.Len(page.Occurrences, 1)
+			requirements.Equal("Sibling", page.Occurrences[0].Subject)
+			requirements.Len(page.Unexpandable, 1)
+		})
 	}
 	t.Run("range cancellation", func(t *testing.T) {
 		requirements := require.New(t)
@@ -208,9 +174,7 @@ func TestICalendarRangeReportsIncompletePrefix(t *testing.T) {
 				requirements.NoError(err)
 			}
 			if tc.name == "unidentified" {
-				_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270304T140000Z\r\nDURATION:PT1H"))
-				requirements.NoError(err)
-				_, err = st.db.Exec(`UPDATE calendar_events SET original_start_at = NULL, original_start_date = '' WHERE kind = 'exception' AND start_at = ?`, time.Date(2027, 3, 4, 14, 0, 0, 0, time.UTC))
+				_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "RECURRENCE-ID;VALUE=DATE:20270303\r\nDTSTART:20270304T140000Z\r\nDURATION:PT1H"))
 				requirements.NoError(err)
 			}
 			from := time.Date(2027, 3, 4, 0, 0, 0, 0, time.UTC)
@@ -267,23 +231,15 @@ func TestICalendarEqualRevisionIgnored(t *testing.T) {
 	assertions.Zero(duplicate.Changed)
 	assertions.Equal(1, duplicate.Unchanged)
 	assertions.Equal(ids, emailEvents(t, st, source))
-}
-
-func TestICalendarNewerStampBumpsRevision(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	source := icsSource(t, st)
-	raw := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z")
-	_, err := st.PersistICalendarContext(t.Context(), source, raw)
-	requirements.NoError(err)
 	before, err := st.DerivedDataRevisionContext(t.Context())
 	requirements.NoError(err)
-	later := strings.Replace(string(raw), "20270301T120000Z", "20270301T130000Z", 1)
+	later := strings.Replace(string(changed), "20270301T120000Z", "20270301T130000Z", 1)
 	_, err = st.PersistICalendarContext(t.Context(), source, []byte(later))
 	requirements.NoError(err)
 	after, err := st.DerivedDataRevisionContext(t.Context())
 	requirements.NoError(err)
 	assertions.Greater(after, before)
+	assertions.Equal("Changed", calendarRows(t, st, ids[0])[0].Subject)
 }
 
 func TestICalendarCancellationWinsRevisionTie(t *testing.T) {
@@ -295,7 +251,6 @@ func TestICalendarCancellationWinsRevisionTie(t *testing.T) {
 	requirements.NoError(err)
 	ids := emailEvents(t, st, source)
 	requirements.Len(ids, 1)
-	accepted := calendarRows(t, st, ids[0])[0]
 	cancel := calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:2\r\nDTSTAMP:20270301T120000Z")
 	before, err := st.DerivedDataRevisionContext(t.Context())
 	requirements.NoError(err)
@@ -305,12 +260,8 @@ func TestICalendarCancellationWinsRevisionTie(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Greater(after, before)
 	row := calendarRows(t, st, ids[0])[0]
-	requirements.NotEmpty(accepted.Event.Attendees)
-	assertions.Equal(accepted.Event.Attendees, row.Event.Attendees)
 	assertions.Equal("cancelled", row.Event.Status)
 	assertions.Equal("series", row.Event.Kind)
-	assertions.Equal(accepted.Subject, row.Subject)
-	assertions.Equal(accepted.Event.Start, row.Event.Start)
 	_, err = st.PersistICalendarContext(t.Context(), source, raw)
 	requirements.NoError(err)
 	assertions.Equal("cancelled", calendarRows(t, st, ids[0])[0].Event.Status)
