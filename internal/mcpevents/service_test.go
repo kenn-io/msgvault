@@ -502,7 +502,7 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 		state.positions = make(map[string]string)
 		rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT key, value FROM archive_metadata WHERE key LIKE ?`), "mcpevents:v1:pos:%")
 		require.NoError(t, err)
-		defer rows.Close()
+		defer func() { require.NoError(t, rows.Close()) }()
 		for rows.Next() {
 			var key, value string
 			require.NoError(t, rows.Scan(&key, &value))
@@ -522,6 +522,7 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 		run  func(*testing.T)
 	}{
 		{"CredentialWriteFailurePreservesSubscriptionState", func(t *testing.T) {
+			t.Helper()
 			require := require.New(t)
 			assert := assert.New(t)
 			st := newEventsTestStore(t)
@@ -533,7 +534,12 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 			before := snapshot(t, st, tokens)
 			_, err := service.Subscribe(t.Context(), in, acceptCallback)
-			assert.Equal(before, snapshot(t, st, tokens))
+			after := snapshot(t, st, tokens)
+			// An emptied catalog is stored as [] after rollback.
+			if string(after.catalog) == "[]" {
+				after.catalog = nil
+			}
+			assert.Equal(before, after)
 			var eventErr *Error
 			require.ErrorAs(err, &eventErr)
 			assert.Equal("credential_unavailable", eventErr.Reason)
@@ -556,8 +562,22 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			now = now.Add(time.Hour)
 			before = snapshot(t, st, tokens)
 			_, err = service.Subscribe(t.Context(), in, acceptCallback)
-			assert.Equal(before, snapshot(t, st, tokens))
-			require.ErrorAs(err, &eventErr)
+			refreshErr := err
+			after = snapshot(t, st, tokens)
+			// A failed refresh may publish its lease before the credential write (R2 #1).
+			var beforeEntries, afterEntries []entry
+			require.NoError(json.Unmarshal(before.catalog, &beforeEntries))
+			require.NoError(json.Unmarshal(after.catalog, &afterEntries))
+			require.Len(beforeEntries, 1)
+			require.Len(afterEntries, 1)
+			beforeEntries[0].Expires = time.Time{}
+			afterEntries[0].Expires = time.Time{}
+			before.catalog, err = json.Marshal(beforeEntries)
+			require.NoError(err)
+			after.catalog, err = json.Marshal(afterEntries)
+			require.NoError(err)
+			assert.Equal(before, after)
+			require.ErrorAs(refreshErr, &eventErr)
 			assert.Equal("credential_unavailable", eventErr.Reason)
 			entries, _, err = service.catalog(t.Context())
 			require.NoError(err)
@@ -569,9 +589,9 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			afterCredentials, err := os.ReadFile(filepath.Join(tokens, providercredentials.EventsFilename))
 			require.NoError(err)
 			assert.Equal(credentials, afterCredentials)
-
 		}},
 		{"IncompatibleCatalogRefusedWithoutRewriting", func(t *testing.T) {
+			t.Helper()
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			st := newEventsTestStore(t)
@@ -607,9 +627,9 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			afterCredential, err := os.ReadFile(path)
 			requirements.NoError(err)
 			assertions.Equal(credential, afterCredential)
-
 		}},
 		{"RefreshRejectsMissingOrCorruptPositionBeforePublication", func(t *testing.T) {
+			t.Helper()
 			for _, corrupted := range []bool{false, true} {
 				t.Run(fmt.Sprintf("corrupt=%t", corrupted), func(t *testing.T) {
 					requirements := require.New(t)
@@ -656,9 +676,9 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 					}
 				})
 			}
-
 		}},
 		{"CredentialReadFailureDoesNotChangeCatalogOrPositions", func(t *testing.T) {
+			t.Helper()
 			require := require.New(t)
 			assert := assert.New(t)
 			st := newEventsTestStore(t)
@@ -699,9 +719,9 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 				require.NoError(err)
 				assert.Equal(invalidCredential, afterCredential)
 			}
-
 		}},
 		{"SubscribeVerifiesBeforeWritingAndOnRefresh", func(t *testing.T) {
+			t.Helper()
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			st := newEventsTestStore(t)
@@ -733,15 +753,15 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			requirements.NoError(err)
 			assertions.Nil(raw)
 			_, err = os.Stat(filepath.Join(tokens, providercredentials.EventsFilename))
-			assertions.ErrorIs(err, os.ErrNotExist)
+			requirements.ErrorIs(err, os.ErrNotExist)
 			_, err = service.Subscribe(t.Context(), in, verify)
 			requirements.NoError(err)
 			_, err = service.Subscribe(t.Context(), in, verify)
 			requirements.NoError(err)
 			assertions.Equal(3, calls)
-
 		}},
 		{"SubscribeRejectsLocalFailuresBeforeVerification", func(t *testing.T) {
+			t.Helper()
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			st := newEventsTestStore(t)
@@ -780,7 +800,6 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			assertions.Equal(Unavailable, eventErr.Code)
 			assertions.Equal("store_unavailable", eventErr.Reason)
 			assertions.Equal(1, calls)
-
 		}},
 	} {
 		t.Run(tc.name, tc.run)
@@ -818,6 +837,7 @@ func TestCredentialCleanupFailuresRemoveEntries(t *testing.T) {
 		run  func(*testing.T)
 	}{
 		{"UnsubscribeCredentialCleanupFailureRemovesEntry", func(t *testing.T) {
+			t.Helper()
 			require := require.New(t)
 			assert := assert.New(t)
 			st := newEventsTestStore(t)
@@ -839,9 +859,9 @@ func TestCredentialCleanupFailuresRemoveEntries(t *testing.T) {
 			assert.Contains(logs.String(), "credential_unavailable")
 			assert.NotContains(logs.String(), service.TokensDir)
 			assert.NotContains(logs.String(), in.Delivery.URL)
-
 		}},
 		{"NativeContinuesAfterExpiredCredentialCleanupFails", func(t *testing.T) {
+			t.Helper()
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			st := newEventsTestStore(t)
@@ -874,7 +894,6 @@ func TestCredentialCleanupFailuresRemoveEntries(t *testing.T) {
 			assertions.NotContains(logs.String(), "sensitive-marker")
 			assertions.NotContains(logs.String(), in.Delivery.Secret)
 			assertions.NotContains(logs.String(), service.TokensDir)
-
 		}},
 	} {
 		t.Run(tc.name, tc.run)

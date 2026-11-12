@@ -644,13 +644,14 @@ func hardenPersonSearchSchemas(doc *huma.OpenAPI) {
 }
 
 func hardenMCPEventsSchemas(doc *huma.OpenAPI) {
+	const sourceIDProperty = "source_id"
 	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
 		return
 	}
 	schemas := doc.Components.Schemas.Map()
 	if arguments := schemas["MCPEventsArguments"]; arguments != nil {
 		minimum := float64(1)
-		for _, field := range []string{"person_id", "source_id"} {
+		for _, field := range []string{"person_id", sourceIDProperty} {
 			if property := arguments.Properties[field]; property != nil {
 				property.Minimum = &minimum
 			}
