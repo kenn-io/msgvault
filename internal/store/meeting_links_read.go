@@ -240,9 +240,6 @@ func (s *Store) meetingOccurrencesForKeys(ctx context.Context, keys []meetingLin
 			}
 		}
 	}
-	for key, occurrences := range matches {
-		matches[key] = uniqueMeetingOccurrences(occurrences)
-	}
 	return matches, nil
 }
 
@@ -250,7 +247,7 @@ func uniqueMeetingOccurrences(in []CalendarOccurrence) []CalendarOccurrence {
 	slices.SortFunc(in, func(a, b CalendarOccurrence) int { return cmp.Compare(a.Ref, b.Ref) })
 	in = slices.CompactFunc(in, func(a, b CalendarOccurrence) bool { return a.Ref == b.Ref })
 	slices.SortFunc(in, func(a, b CalendarOccurrence) int {
-		if c := compareMeetingStart(a.Start, b.Start); c != 0 {
+		if c := a.Start.Compare(b.Start); c != 0 {
 			return c
 		}
 		if c := cmp.Compare(a.MessageID, b.MessageID); c != 0 {
