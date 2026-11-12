@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/kit/consolewindow"
 )
@@ -211,12 +212,30 @@ func streamDaemonCLIPipe(
 ) error {
 	buf := make([]byte, 32*1024)
 	var firstErr error
+	held := 0
 	for {
-		n, err := r.Read(buf)
-		if n > 0 && firstErr == nil {
-			if emitErr := emit(stream, string(buf[:n])); emitErr != nil {
+		n, err := r.Read(buf[held:])
+		data := buf[:held+n]
+		cut := len(data)
+		if err == nil && firstErr == nil {
+			// Only an incomplete rune at the end needs the next read.
+			for i := len(data) - 1; i >= 0 && i >= len(data)-(utf8.UTFMax-1); i-- {
+				if utf8.RuneStart(data[i]) {
+					if !utf8.FullRune(data[i:]) {
+						cut = i
+					}
+					break
+				}
+			}
+		}
+		if cut > 0 && firstErr == nil {
+			if emitErr := emit(stream, string(data[:cut])); emitErr != nil {
 				firstErr = emitErr
 			}
+		}
+		held = 0
+		if firstErr == nil {
+			held = copy(buf, data[cut:])
 		}
 		if errors.Is(err, io.EOF) {
 			return firstErr
