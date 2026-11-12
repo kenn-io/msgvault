@@ -72,7 +72,7 @@ func TestMeetingLinksCLIPartialRecord(t *testing.T) {
 	}
 }
 
-func TestMeetingLinksCLIEventRecord(t *testing.T) {
+func TestMeetingLinksCLIReferenceNormalizationAndSchemaGate(t *testing.T) {
 	for _, tc := range []struct{ input, want string }{{"evt:23", "evt:23"}, {"23", "msg:23"}} {
 		t.Run(tc.input, func(t *testing.T) {
 			require := require.New(t)

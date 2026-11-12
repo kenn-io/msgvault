@@ -50,9 +50,12 @@ func TestMeetingRecordUntimedCancellation(t *testing.T) {
 func TestMeetingRecordUntimedDoesNotOverrideDatedAmbiguity(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	_, event := calendarFixture(t, st, "untimed", `{"id":"event","status":"cancelled"}`, "owner@example.com")
-	calendarFixture(t, st, "first", `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, "owner@example.com")
-	calendarFixture(t, st, "second", `{"id":"event","start":{"dateTime":"2027-03-21T10:00:00Z"},"end":{"dateTime":"2027-03-21T11:00:00Z"}}`, "owner@example.com")
+	data, event := calendarFixture(t, st, "event", `{"id":"event","status":"cancelled"}`, "first@example.com")
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), data.Message.SourceID, `{"calendar_id":"owner@example.com","account_email":"first@example.com","time_zone":"UTC"}`))
+	data, _ = calendarFixture(t, st, "event", `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, "second@example.com")
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), data.Message.SourceID, `{"calendar_id":"owner@example.com","account_email":"second@example.com","time_zone":"UTC"}`))
+	data, _ = calendarFixture(t, st, "event", `{"id":"event","start":{"dateTime":"2027-03-21T10:00:00Z"},"end":{"dateTime":"2027-03-21T11:00:00Z"}}`, "third@example.com")
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), data.Message.SourceID, `{"calendar_id":"owner@example.com","account_email":"third@example.com","time_zone":"UTC"}`))
 	_, note := projectionFixture(t, st, "note", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"event"}}`)
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event})
 	require.NoError(err)
@@ -64,19 +67,14 @@ func TestMeetingRecordUntimedDoesNotOverrideDatedAmbiguity(t *testing.T) {
 func TestMeetingRecordUntimedCopies(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw, reason, status string
-		master                    bool
 	}{
-		{"confirmed", `{"id":"event"}`, "missing event bounds", "confirmed", false},
-		{"decode-error", `{"id":`, "event data could not be decoded", "decode_error", false},
-		{"exception", `{"id":"edit","recurringEventId":"series","status":"cancelled"}`, "exception has no original start", "cancelled", false},
-		{"exception-with-master", `{"id":"edit","recurringEventId":"series","status":"cancelled"}`, "exception has no original start", "cancelled", true},
+		{"confirmed", `{"id":"event"}`, "missing event bounds", "confirmed"},
+		{"decode-error", `{"id":`, "event data could not be decoded", "decode_error"},
+		{"exception", `{"id":"edit","recurringEventId":"series","status":"cancelled"}`, "exception has no original start", "cancelled"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
-			if tc.master {
-				calendarFixture(t, st, "master", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, "owner@example.com")
-			}
 			_, event := calendarFixture(t, st, tc.name, tc.raw, "owner@example.com")
 			record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event})
 			require.NoError(err)
@@ -330,41 +328,41 @@ func TestMeetingRecordCancelledOccurrenceWithUnsupportedMaster(t *testing.T) {
 }
 
 func TestMeetingRecordReportsUnsupportedSeries(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
+	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, series := calendarFixture(t, st, "unsupported-series", `{"id":"unsupported","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`)
 	_, supportedCopy := calendarFixture(t, st, "supported-copy", `{"id":"copy","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
 	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	for _, ref := range []MeetingLinkRef{{Kind: "msg", MessageID: note}, {Kind: "evt", MessageID: series, Identity: occurrenceIdentity(t, "20270314T100000Z")}} {
 		record, err := st.MeetingRecordContext(t.Context(), ref)
-		require.NoError(err)
-		assert.Equal([]CalendarUnexpandable{{MessageID: series, Reason: "unsupported recurrence"}}, record.Unexpandable)
+		requirements.NoError(err)
+		assertions.Equal([]CalendarUnexpandable{{MessageID: series, Reason: "unsupported recurrence"}}, record.Unexpandable)
 		if ref.Kind == "msg" {
-			require.Len(record.Links, 1)
-			assert.Equal(fmt.Sprintf("evt:%d", supportedCopy), record.Links[0].Ref)
-			assert.Equal([]int64{note}, record.MessageIDs)
+			requirements.Len(record.Links, 1)
+			assertions.Equal(fmt.Sprintf("evt:%d", supportedCopy), record.Links[0].Ref)
+			assertions.Equal([]int64{note}, record.MessageIDs)
 		} else {
-			assert.Empty(record.Links)
-			assert.Empty(record.MessageIDs)
+			assertions.Empty(record.Links)
+			assertions.Empty(record.MessageIDs)
 		}
 	}
 	_, supported := calendarFixture(t, st, "supported-series", `{"id":"supported","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: supported, Identity: occurrenceIdentity(t, "20270314T100000Z")})
-	require.NoError(err)
-	assert.Empty(record.Unexpandable)
-}
+	requirements.NoError(err)
+	assertions.Empty(record.Unexpandable)
 
-func TestMeetingRecordUnsupportedSeriesDoesNotProveOccurrence(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, series := calendarFixture(t, st, "unsupported-series", `{"id":"unsupported","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`)
-	_, note := projectionFixture(t, st, "unproven-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-21T10:00:00Z"}}`)
-	calendarFixture(t, st, "unproven-copy", `{"id":"copy","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-21T10:00:00Z"},"end":{"dateTime":"2027-03-21T11:00:00Z"}}`)
-	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: series, Identity: occurrenceIdentity(t, "20270321T100000Z")})
-	require.NoError(err)
-	assert.Equal([]CalendarUnexpandable{{MessageID: series, Reason: "unsupported recurrence"}}, record.Unexpandable)
-	assert.NotContains(record.MessageIDs, note)
-	assert.Empty(record.Links)
+	t.Run("later-date", func(t *testing.T) {
+		require, assert := require.New(t), assert.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		_, series := calendarFixture(t, st, "unsupported-series", `{"id":"unsupported","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`)
+		_, note := projectionFixture(t, st, "unproven-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-21T10:00:00Z"}}`)
+		calendarFixture(t, st, "unproven-copy", `{"id":"copy","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-21T10:00:00Z"},"end":{"dateTime":"2027-03-21T11:00:00Z"}}`)
+		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: series, Identity: occurrenceIdentity(t, "20270321T100000Z")})
+		require.NoError(err)
+		assert.Equal([]CalendarUnexpandable{{MessageID: series, Reason: "unsupported recurrence"}}, record.Unexpandable)
+		assert.NotContains(record.MessageIDs, note)
+		assert.Empty(record.Links)
+	})
 }
 
 func TestMeetingRecordReadsNotesBeforeCalendarImport(t *testing.T) {
@@ -391,22 +389,6 @@ func TestMeetingRecordReadsNotesBeforeCalendarImport(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestMeetingRecordSeparatesSingleEventsWithSameUID(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, first := calendarFixture(t, st, "first-event", `{"id":"first","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
-	_, second := calendarFixture(t, st, "second-event", `{"id":"second","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-21T10:00:00Z"},"end":{"dateTime":"2027-03-21T11:00:00Z"}}`)
-	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
-	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
-	require.NoError(err)
-	require.Len(record.Links, 1)
-	assert.Equal(fmt.Sprintf("evt:%d", first), record.Links[0].Ref)
-	record, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: second})
-	require.NoError(err)
-	assert.Empty(record.MessageIDs)
 }
 
 func TestMeetingRecordOccurrenceResolution(t *testing.T) {
@@ -446,19 +428,46 @@ func TestMeetingRecordOccurrenceResolution(t *testing.T) {
 }
 
 func TestMeetingRecordAllDayOccurrence(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "series", `{"id":"series","iCalUID":"uid@example.org","start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
 	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T00:00:00Z"}}`)
 	ref := fmt.Sprintf("evt:%d@20270314", master)
 	for _, seed := range []MeetingLinkRef{{Kind: "msg", MessageID: note}, {Kind: "evt", MessageID: master, Identity: occurrenceIdentity(t, "20270314")}} {
 		record, err := st.MeetingRecordContext(t.Context(), seed)
-		require.NoError(err)
-		require.Len(record.Links, 1)
-		assert.Equal(ref, record.Links[0].Ref)
-		assert.Equal(time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC), *record.Links[0].Start)
-		assert.Equal([]int64{note}, record.MessageIDs)
+		requirements.NoError(err)
+		requirements.Len(record.Links, 1)
+		assertions.Equal(ref, record.Links[0].Ref)
+		assertions.Equal(time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC), *record.Links[0].Start)
+		assertions.Equal([]int64{note}, record.MessageIDs)
+	}
+	for _, tc := range []struct {
+		name, raw    string
+		keys, starts []string
+	}{
+		{"timed", `{"id":"timed","iCalUID":"timed@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, []string{"20270314T100000Z", "20270321T100000Z"}, []string{"2027-03-14T10:00:00Z", "2027-03-21T10:00:00Z"}},
+		{"all-day", `{"id":"all-day","iCalUID":"all-day@example.org","start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, []string{"20270314", "20270321"}, []string{"2027-03-14T00:00:00Z", "2027-03-21T00:00:00Z"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, master := calendarFixture(t, st, tc.name, tc.raw)
+			var notes []int64
+			for i, start := range tc.starts {
+				_, note := projectionFixture(t, st, fmt.Sprintf("note-%d", i), "twenty_json", fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"%s@example.org","startsAt":%q}}`, tc.name, start))
+				notes = append(notes, note)
+			}
+			for i, key := range tc.keys {
+				record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: master, Identity: occurrenceIdentity(t, key)})
+				require.NoError(err)
+				require.Len(record.Links, 1)
+				assert.Equal(fmt.Sprintf("evt:%d@%s", master, key), record.Links[0].Ref)
+				require.NotNil(record.Links[0].Start)
+				assert.Equal(tc.starts[i], record.Links[0].Start.UTC().Format(time.RFC3339))
+				assert.Equal([]int64{notes[i]}, record.MessageIDs)
+			}
+		})
 	}
 }
 
@@ -591,23 +600,39 @@ func TestMeetingRecordDerivedGoogleAlias(t *testing.T) {
 }
 
 func TestMeetingRecordExactFractionalAndOffsetTimes(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, event := calendarFixture(t, st, "fractional", `{"id":"event","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00.123Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
 	_, match := projectionFixture(t, st, "match", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T06:00:00.123-04:00"}}`)
 	_, other := projectionFixture(t, st, "other", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00.124Z"}}`)
 	for _, seed := range []MeetingLinkRef{{Kind: "msg", MessageID: match}, {Kind: "evt", MessageID: event}} {
 		record, err := st.MeetingRecordContext(t.Context(), seed)
-		require.NoError(err)
-		require.Len(record.Links, 1)
-		assert.Equal(fmt.Sprintf("evt:%d", event), record.Links[0].Ref)
-		assert.Equal([]int64{match}, record.MessageIDs)
+		requirements.NoError(err)
+		requirements.Len(record.Links, 1)
+		assertions.Equal(fmt.Sprintf("evt:%d", event), record.Links[0].Ref)
+		assertions.Equal([]int64{match}, record.MessageIDs)
 	}
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: other})
-	require.NoError(err)
-	assert.Empty(record.Links)
-	assert.Equal([]int64{other}, record.MessageIDs)
+	requirements.NoError(err)
+	assertions.Empty(record.Links)
+	assertions.Equal([]int64{other}, record.MessageIDs)
+
+	t.Run("separate-dates", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		_, first := calendarFixture(t, st, "first-event", `{"id":"first","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+		_, second := calendarFixture(t, st, "second-event", `{"id":"second","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-21T10:00:00Z"},"end":{"dateTime":"2027-03-21T11:00:00Z"}}`)
+		_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+		require.NoError(err)
+		require.Len(record.Links, 1)
+		assert.Equal(fmt.Sprintf("evt:%d", first), record.Links[0].Ref)
+		record, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: second})
+		require.NoError(err)
+		assert.Empty(record.MessageIDs)
+	})
 }
 
 func TestMeetingRecordAmbiguousUIDKeepsNotesTogether(t *testing.T) {
@@ -761,7 +786,8 @@ func TestMeetingRecordBareGoogleIDBeforeAndAfterSingle(t *testing.T) {
 		assert.Equal([]int64{id}, record.MessageIDs)
 		assert.Empty(record.Links)
 	}
-	_, event := calendarFixture(t, st, "single-bare", `{"id":"event","start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`, "owner@example.com")
+	data, event := calendarFixture(t, st, "event", `{"id":"event","start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`, "first@example.com")
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), data.Message.SourceID, `{"calendar_id":"owner@example.com","account_email":"first@example.com","time_zone":"UTC"}`))
 	for _, seed := range []MeetingLinkRef{{Kind: "msg", MessageID: first}, {Kind: "msg", MessageID: second}, {Kind: "evt", MessageID: event}} {
 		record, err := st.MeetingRecordContext(t.Context(), seed)
 		require.NoError(err)
@@ -769,14 +795,15 @@ func TestMeetingRecordBareGoogleIDBeforeAndAfterSingle(t *testing.T) {
 		assert.Equal(fmt.Sprintf("evt:%d", event), record.Links[0].Ref)
 		assert.Equal([]int64{first, second}, record.MessageIDs)
 	}
-	calendarFixture(t, st, "duplicate-bare", `{"id":"event","start":{"dateTime":"2027-03-21T12:00:00Z"},"end":{"dateTime":"2027-03-21T13:00:00Z"}}`, "owner@example.com")
+	data, _ = calendarFixture(t, st, "event", `{"id":"event","start":{"dateTime":"2027-03-21T12:00:00Z"},"end":{"dateTime":"2027-03-21T13:00:00Z"}}`, "second@example.com")
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), data.Message.SourceID, `{"calendar_id":"owner@example.com","account_email":"second@example.com","time_zone":"UTC"}`))
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: first})
 	require.NoError(err)
 	assert.Equal([]int64{first}, record.MessageIDs)
 	assert.Empty(record.Links)
 }
 
-func TestMeetingRecordAllDayCancellationAndOriginalZone(t *testing.T) {
+func TestMeetingRecordAllDayMovedEditOriginalZone(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
