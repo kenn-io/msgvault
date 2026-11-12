@@ -66,6 +66,7 @@ provide different ways to use the same archive.
   rebuilt.
 - Keep at most five PRs open from your fork, counting every agent working for
   you. Each one waits for a maintainer, and the ones nobody gets to go stale.
+  At five, hold the next PR and tell the user. Leave open PRs as they are.
 - Before each push, check that your schema, API, and protocol version numbers
   are still the next ones free on `main`.
 
