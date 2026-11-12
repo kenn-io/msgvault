@@ -85,7 +85,7 @@ func apiBaseMarkers(ctx context.Context, base string) ([]string, error) {
 		}
 		base = strings.TrimSpace(string(out))
 	}
-	cmd := exec.CommandContext(ctx, "git", "ls-tree", "-z", "--name-only", "--full-tree", base, "--", "internal/api/"+apiContractsDir+"/")
+	cmd := exec.CommandContext(ctx, "git", "ls-tree", "-z", "--name-only", "--full-tree", base, "--", "internal/api/"+apiContractsDir+"/") // #nosec G702 -- base is a Git ref supplied by the test runner.
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("read API contract markers at %q: %w", base, err)
@@ -149,7 +149,7 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 	}
 	for _, marker := range base {
 		if !candidates[marker] {
-			return nextMinor(fmt.Sprintf("restore removed API contract marker %s", marker))
+			return nextMinor("restore removed API contract marker " + marker)
 		}
 	}
 	marker := path.Join(apiContractsDir, version+"_"+digest+"_<summary-sha256>")
