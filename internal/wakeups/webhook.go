@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -42,12 +44,43 @@ type webhookClient struct {
 	trusted       []netip.Addr
 }
 
-func (c webhookClient) sendEvent(ctx context.Context, endpoint, id, subscriptionID string, secret, body []byte) (string, int) {
+// VerifyEventCallback sends a signed challenge through the same checked transport as delivery.
+func VerifyEventCallback(ctx context.Context, endpoint, subscriptionID string, secret []byte) string {
+	return (webhookClient{timeout: 10 * time.Second}).verifyEventCallback(ctx, endpoint, subscriptionID, secret)
+}
+
+func (c webhookClient) verifyEventCallback(ctx context.Context, endpoint, subscriptionID string, secret []byte) string {
+	var nonce [32]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "challenge_failed"
+	}
+	challenge := base64.RawURLEncoding.EncodeToString(nonce[:])
+	body, err := json.Marshal(struct {
+		Type      string `json:"type"`
+		Challenge string `json:"challenge"`
+	}{"verification", challenge})
+	if err != nil {
+		return "challenge_failed"
+	}
+	category, _, response := c.request(ctx, endpoint, "msg_verification_"+challenge, subscriptionID, secret, body, true)
+	var echo struct {
+		Challenge string `json:"challenge"`
+	}
+	if category != "" {
+		return category
+	}
+	if json.Unmarshal(response, &echo) != nil || !hmac.Equal([]byte(echo.Challenge), []byte(challenge)) {
+		return "challenge_failed"
+	}
+	return ""
+}
+
+func (c webhookClient) request(ctx context.Context, endpoint, id, subscriptionID string, secret, body []byte, verification bool) (string, int, []byte) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	target, err := url.Parse(endpoint)
 	if err != nil {
-		return "invalid_callback", 0
+		return "invalid_callback", 0, nil
 	}
 	resolver := c.resolver
 	if resolver == nil {
@@ -60,15 +93,15 @@ func (c webhookClient) sendEvent(ctx context.Context, endpoint, id, subscription
 	pinned, err := netguard.PinnedAddresses(ctx, resolver, target, c.trustedOrigin, c.trusted, false)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return "timeout", 0
+			return "timeout", 0, nil
 		}
 		if _, ok := errors.AsType[*net.DNSError](err); ok {
-			return "dns_error", 0
+			return "dns_error", 0, nil
 		}
 		if errors.Is(err, netguard.ErrUnsafeTarget) {
-			return "invalid_callback", 0
+			return "invalid_callback", 0, nil
 		}
-		return "connection_refused", 0
+		return "connection_refused", 0, nil
 	}
 	tlsConfig := c.roots
 	if tlsConfig == nil {
@@ -87,7 +120,7 @@ func (c webhookClient) sendEvent(ctx context.Context, endpoint, id, subscription
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "invalid_callback", 0
+		return "invalid_callback", 0, nil
 	}
 	stamp := strconv.FormatInt(time.Now().Unix(), 10)
 	mac := hmac.New(sha256.New, secret)
@@ -103,30 +136,38 @@ func (c webhookClient) sendEvent(ctx context.Context, endpoint, id, subscription
 	resp, err := client.Do(req)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return "timeout", 0
+			return "timeout", 0, nil
 		}
 		var op *net.OpError
 		if errors.As(err, &op) && op.Timeout() {
-			return "timeout", 0
+			return "timeout", 0, nil
 		}
 		if _, ok := errors.AsType[tls.RecordHeaderError](err); ok {
-			return "tls_error", 0
+			return "tls_error", 0, nil
 		}
 		if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
-			return "tls_error", 0
+			return "tls_error", 0, nil
 		}
-		return "connection_refused", 0
+		return "connection_refused", 0, nil
 	}
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	_ = resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
+	var response []byte
+	if verification {
+		response, err = io.ReadAll(io.LimitReader(resp.Body, 4097))
+		if err != nil || len(response) > 4096 {
+			return "invalid_callback", resp.StatusCode, nil
+		}
+	} else {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	}
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		return "", resp.StatusCode
+		return "", resp.StatusCode, response
 	case resp.StatusCode >= 300 && resp.StatusCode < 400:
-		return "http_3xx", resp.StatusCode
+		return "http_3xx", resp.StatusCode, nil
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
-		return "http_4xx", resp.StatusCode
+		return "http_4xx", resp.StatusCode, nil
 	default:
-		return "http_5xx", resp.StatusCode
+		return "http_5xx", resp.StatusCode, nil
 	}
 }

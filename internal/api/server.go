@@ -272,6 +272,7 @@ type Server struct {
 	cfg                    *config.Config
 	store                  MessageStore
 	mcpEvents              *mcpevents.Service
+	verifyEventsCallback   func(context.Context, string, string, []byte) error
 	analyticsState         atomic.Pointer[analyticsEngineState]
 	savedViewStore         SavedViewStore
 	sqlQueryRunner         SQLQueryRunner

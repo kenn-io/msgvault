@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
@@ -49,7 +50,7 @@ func TestMCPEventsBackupRestoreTokens(t *testing.T) {
 			req, err = mcpevents.DecodeSubscribe(raw)
 			require.NoError(err)
 			service := mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}
-			_, err = service.Subscribe(t.Context(), req)
+			_, err = service.Subscribe(t.Context(), req, func(context.Context, string, string, []byte) error { return nil })
 			require.NoError(err)
 			key, err := providercredentials.EnsureServerKey(cfg.TokensDir())
 			require.NoError(err)

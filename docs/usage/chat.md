@@ -51,6 +51,8 @@ is clamped to one minute through 30 days, and null selects 30 days. Refreshing
 with the same event, arguments and URL replaces the secret and lease while
 keeping the saved position. After a default restore, refresh the secret to resume; a backup with `--include-tokens` restores it. If the refresh returns `lastError: "secret_unavailable"`, immediately read `list_changes` from your own cursor to catch up. This historical signal does not mean an earlier delivery retry succeeded. `events/unsubscribe` uses the same identity.
 
+Subscribe and refresh send a signed verification challenge; a callback that cannot confirm it returns `-32027`.
+
 Subscribe accepts but ignores `cursor` and `maxAgeMs`; then read `list_changes` once from your own cursor to catch up.
 Each signed ping names the subscription in its data and has a null cursor. Verify
 the Standard Webhooks signature and deduplicate by `webhook-id`, then read

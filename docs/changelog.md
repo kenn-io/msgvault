@@ -9,6 +9,8 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
+- MCP Events subscribe and refresh verify the callback with a signed challenge; failures return `-32027`.
+
 - Let owner MCP clients subscribe to signed message-change Events for a person or source over stdio or modern HTTP. Enable `[mcp_events]` and read `list_changes` after each ping. Restored subscriptions resume when clients refresh their secrets; `--include-tokens` backups include those credentials. Callback URLs and secrets are stored separately in `tokens/mcp-events-credentials.json`.
 
 - Configure signed HTTPS wake-up notifications for matching recent messages,

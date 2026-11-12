@@ -365,7 +365,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		if sub.Native {
 			subscriptionID = sub.Name
 		}
-		category, status := sub.Client.sendEvent(ctx, sub.URL, id, subscriptionID, sub.Secret, body)
+		category, status, _ := sub.Client.request(ctx, sub.URL, id, subscriptionID, sub.Secret, body, false)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

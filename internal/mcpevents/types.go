@@ -19,6 +19,7 @@ const (
 	NotFound          = -32023
 	ResourceExhausted = -32025
 	Unsupported       = -32026
+	CallbackEndpoint  = -32027
 	Unavailable       = -32010
 )
 
@@ -32,12 +33,24 @@ func (e *Error) Status() int {
 	switch e.Code {
 	case InvalidParams, Unsupported:
 		return http.StatusBadRequest
+	case CallbackEndpoint:
+		return http.StatusBadGateway
 	case NotFound:
 		return http.StatusNotFound
 	case ResourceExhausted:
 		return http.StatusTooManyRequests
 	default:
 		return http.StatusServiceUnavailable
+	}
+}
+
+// CallbackReason limits diagnostics to transport-owned categories.
+func CallbackReason(reason string) string {
+	switch reason {
+	case "challenge_failed", "timeout", "dns_error", "invalid_callback", "connection_refused", "tls_error", "http_3xx", "http_4xx", "http_5xx":
+		return reason
+	default:
+		return "challenge_failed"
 	}
 }
 func failure(code int, reason string) error { return &Error{code, reason} }
@@ -188,7 +201,7 @@ func validate(name string, args *MCPEventsArguments, delivery MCPEventsDelivery,
 		v := true
 		args.IncomingOnly = &v
 	}
-	if delivery.Mode != "webhook" {
+	if (secret && delivery.Mode != "webhook") || (!secret && delivery.Mode != "" && delivery.Mode != "webhook") {
 		return failure(Unsupported, "delivery")
 	}
 	if delivery.URL == "" || (secret && delivery.Secret == "") {

@@ -40,6 +40,8 @@ func (c *Client) mcpEventsRequest(ctx context.Context, method, path string, body
 					reason = e.Reason
 				}
 				return &mcpevents.Error{Code: e.Code, Reason: reason}
+			case mcpevents.CallbackEndpoint:
+				return &mcpevents.Error{Code: e.Code, Reason: mcpevents.CallbackReason(e.Reason)}
 			case mcpevents.Unavailable:
 				switch e.Reason {
 				case "disabled", "head_unavailable", "store_unavailable", "credential_unavailable":

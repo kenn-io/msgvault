@@ -113,7 +113,7 @@ func find(entries []entry, args MCPEventsArguments, url string) int {
 }
 
 // Subscribe requires a request returned by DecodeSubscribe.
-func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (MCPEventsSubscribeResult, error) {
+func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, verify func(context.Context, string, string, []byte) error) (MCPEventsSubscribeResult, error) {
 	var out MCPEventsSubscribeResult
 	if !s.Enabled || s.Store == nil {
 		return out, failure(Unavailable, "disabled")
@@ -143,11 +143,17 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (
 	index := find(entries, in.Arguments, in.Delivery.URL)
 	var id string
 	var initial *store.WakeupState
+	var state store.WakeupState
 	if index >= 0 {
 		if len(entries)+s.ConfigTargets > 32 {
 			return out, failure(ResourceExhausted, "subscriptions")
 		}
 		id = entries[index].ID
+		var position []byte
+		state, position, err = s.Store.LoadWakeupStateKey(ctx, store.MCPEventsPositionKey(id))
+		if err != nil || position == nil {
+			return out, failure(Unavailable, "store_unavailable")
+		}
 	} else {
 		if len(entries)+s.ConfigTargets >= 32 {
 			return out, failure(ResourceExhausted, "subscriptions")
@@ -162,6 +168,17 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (
 	origin, err := callbackOrigin(in.Delivery.URL)
 	if err != nil {
 		return out, failure(InvalidParams, "invalid_callback")
+	}
+	if err := verify(ctx, in.Delivery.URL, id, in.secret); err != nil {
+		var callbackErr *Error
+		if errors.As(err, &callbackErr) && callbackErr.Code == Unavailable {
+			return out, callbackErr
+		}
+		reason := "challenge_failed"
+		if errors.As(err, &callbackErr) {
+			reason = CallbackReason(callbackErr.Reason)
+		}
+		return out, failure(CallbackEndpoint, reason)
 	}
 	previous, revision, credentialErr := s.credentialSnapshot(id)
 	if credentialErr != nil {
@@ -203,10 +220,6 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (
 		return out, failure(Unavailable, "credential_unavailable")
 	}
 	status := MCPEventsDeliveryStatus{Active: true}
-	state, _, loadErr := s.Store.LoadWakeupStateKey(ctx, store.MCPEventsPositionKey(id))
-	if loadErr != nil {
-		return out, failure(Unavailable, "store_unavailable")
-	}
 	status.LastDeliveryAt = state.LastDeliveryAt
 	status.LastError = state.LastError
 	status.FailedSince = state.FailedSince
@@ -230,10 +243,7 @@ func (s *Service) Unsubscribe(ctx context.Context, in MCPEventsUnsubscribeReques
 	if idx < 0 {
 		return failure(NotFound, "subscription")
 	}
-	if err := s.deleteCredential(entries[idx].ID); err != nil {
-		return failure(Unavailable, "credential_unavailable")
-	}
-	ok, err := s.removeEntry(ctx, entries, raw, idx)
+	ok, err := s.removeEntryAndCredential(ctx, entries, raw, idx)
 	if err != nil || !ok {
 		return failure(Unavailable, "store_unavailable")
 	}
@@ -248,6 +258,20 @@ func (s *Service) removeEntry(ctx context.Context, entries []entry, raw []byte, 
 		return false, err
 	}
 	return s.Store.SwapMCPEventsCatalog(ctx, raw, next, "", nil, id)
+}
+
+func (s *Service) removeEntryAndCredential(ctx context.Context, entries []entry, raw []byte, index int) (bool, error) {
+	id := entries[index].ID
+	credentialErr := s.deleteCredential(id)
+	ok, err := s.removeEntry(ctx, entries, raw, index)
+	if credentialErr != nil {
+		logger := s.Logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		logger.Warn("wakeup credential cleanup failed", "id", id, "category", "credential_unavailable")
+	}
+	return ok, err
 }
 
 // purgeExpired removes expired entries and positions.
@@ -267,16 +291,8 @@ func (s *Service) purgeExpired(ctx context.Context) error {
 		if index < 0 {
 			return nil
 		}
-		credentialErr := s.deleteCredential(entries[index].ID)
-		if _, err = s.removeEntry(ctx, entries, raw, index); err != nil {
+		if _, err = s.removeEntryAndCredential(ctx, entries, raw, index); err != nil {
 			return err
-		}
-		if credentialErr != nil {
-			logger := s.Logger
-			if logger == nil {
-				logger = slog.Default()
-			}
-			logger.Warn("expired wakeup credential cleanup failed", "id", entries[index].ID, "category", "credential_unavailable")
 		}
 	}
 }

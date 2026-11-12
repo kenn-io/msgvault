@@ -39,13 +39,15 @@ func TestEventsListDoesNotUseOperationGate(t *testing.T) {
 }
 
 func TestEventsErrorMapsCallbackFailure(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	w := httptest.NewRecorder()
 	eventsError(w, &mcpevents.Error{Code: -32027, Reason: "challenge_failed"})
-	assert.Equal(t, http.StatusBadGateway, w.Code)
+	assertions.Equal(http.StatusBadGateway, w.Code)
 	var response mcpevents.Error
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
-	assert.Equal(t, -32027, response.Code)
-	assert.Equal(t, "challenge_failed", response.Reason)
+	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	assertions.Equal(-32027, response.Code)
+	assertions.Equal("challenge_failed", response.Reason)
 }
 
 func TestEventsRouterRejectsUnverifiedCallback(t *testing.T) {
@@ -57,6 +59,9 @@ func TestEventsRouterRejectsUnverifiedCallback(t *testing.T) {
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}}
 	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, Logger: testLogger()})
+	srv.verifyEventsCallback = func(context.Context, string, string, []byte) error {
+		return &mcpevents.Error{Code: mcpevents.CallbackEndpoint, Reason: "dns_error"}
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	body := `{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://callback.invalid/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`
@@ -72,7 +77,7 @@ func TestEventsRouterRejectsUnverifiedCallback(t *testing.T) {
 	}
 	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 	assertions.Equal(-32027, response.Code)
-	assertions.Contains([]string{"challenge_failed", "dns_error", "timeout", "invalid_callback", "connection_refused", "tls_error", "http_3xx", "http_4xx", "http_5xx"}, response.Reason)
+	assertions.Equal("dns_error", response.Reason)
 	catalog, err := st.LoadMCPEventsCatalog(t.Context())
 	requirements.NoError(err)
 	assertions.Empty(catalog)
@@ -101,6 +106,16 @@ func TestEventsRouterSerialGate(t *testing.T) {
 	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}
 	gate := NewSerialOperationGate()
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, OperationGate: gate, Logger: testLogger()})
+	srv.verifyEventsCallback = func(ctx context.Context, _ string, _ string, _ []byte) error {
+		checkCtx, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+		release, ok := gate.BeginWorkContext(checkCtx)
+		if !ok {
+			return &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "unavailable"}
+		}
+		release()
+		return nil
+	}
 	body := `{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`
 	unsubscribeBody := `{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"url":"https://example.com/hook"}}`
 	var subscribed mcpevents.MCPEventsSubscribeResult

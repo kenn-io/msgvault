@@ -101,6 +101,8 @@ func rpcEventError(err error) error {
 		name = "ResourceExhausted"
 	case mcpevents.Unsupported:
 		name = "Unsupported"
+	case mcpevents.CallbackEndpoint:
+		name = "CallbackEndpointError"
 	case mcpevents.Unavailable:
 	default:
 		e.Code = mcpevents.Unavailable
@@ -109,7 +111,7 @@ func rpcEventError(err error) error {
 	data, _ := json.Marshal(map[string]any{"reason": e.Reason})
 	return &jsonrpc.Error{Code: int64(e.Code), Message: name, Data: data}
 }
-func registerNativeEvents(server *sdkmcp.Server, backend EventsBackend) {
+func registerNativeEvents(server *sdkmcp.Server, backend EventsBackend, allowWrites bool) {
 	_ = sdkmcp.AddReceivingCustomMethod(server, "events/list", func(ctx context.Context, _ *sdkmcp.ServerSession, p *nativeEventParams) (*nativeEventResult, error) {
 		b, err := p.clean()
 		if err != nil {
@@ -125,35 +127,37 @@ func registerNativeEvents(server *sdkmcp.Server, backend EventsBackend) {
 		}
 		return &nativeEventResult{value: map[string]any{"events": out.Events}, complete: true}, nil
 	})
-	_ = sdkmcp.AddReceivingCustomMethod(server, "events/subscribe", func(ctx context.Context, _ *sdkmcp.ServerSession, p *nativeEventParams) (*nativeEventResult, error) {
-		b, err := p.clean()
-		if err != nil {
-			return nil, err
-		}
-		in, err := mcpevents.DecodeSubscribe(b)
-		if err != nil {
-			return nil, rpcEventError(err)
-		}
-		out, err := backend.MCPEventsSubscribe(ctx, in)
-		if err != nil {
-			return nil, rpcEventError(err)
-		}
-		return &nativeEventResult{value: out, complete: true}, nil
-	})
-	_ = sdkmcp.AddReceivingCustomMethod(server, "events/unsubscribe", func(ctx context.Context, _ *sdkmcp.ServerSession, p *nativeEventParams) (*nativeEventResult, error) {
-		b, err := p.clean()
-		if err != nil {
-			return nil, err
-		}
-		in, err := mcpevents.DecodeUnsubscribe(b)
-		if err != nil {
-			return nil, rpcEventError(err)
-		}
-		if err = backend.MCPEventsUnsubscribe(ctx, in); err != nil {
-			return nil, rpcEventError(err)
-		}
-		return &nativeEventResult{value: struct{}{}, complete: true}, nil
-	})
+	if allowWrites {
+		_ = sdkmcp.AddReceivingCustomMethod(server, "events/subscribe", func(ctx context.Context, _ *sdkmcp.ServerSession, p *nativeEventParams) (*nativeEventResult, error) {
+			b, err := p.clean()
+			if err != nil {
+				return nil, err
+			}
+			in, err := mcpevents.DecodeSubscribe(b)
+			if err != nil {
+				return nil, rpcEventError(err)
+			}
+			out, err := backend.MCPEventsSubscribe(ctx, in)
+			if err != nil {
+				return nil, rpcEventError(err)
+			}
+			return &nativeEventResult{value: out, complete: true}, nil
+		})
+		_ = sdkmcp.AddReceivingCustomMethod(server, "events/unsubscribe", func(ctx context.Context, _ *sdkmcp.ServerSession, p *nativeEventParams) (*nativeEventResult, error) {
+			b, err := p.clean()
+			if err != nil {
+				return nil, err
+			}
+			in, err := mcpevents.DecodeUnsubscribe(b)
+			if err != nil {
+				return nil, rpcEventError(err)
+			}
+			if err = backend.MCPEventsUnsubscribe(ctx, in); err != nil {
+				return nil, rpcEventError(err)
+			}
+			return &nativeEventResult{value: struct{}{}, complete: true}, nil
+		})
+	}
 	server.AddReceivingMiddleware(nativeEventsCapabilities)
 }
 func nativeEventsCapabilities(next sdkmcp.MethodHandler) sdkmcp.MethodHandler {

@@ -440,7 +440,7 @@ func newMCPServerWithPolicy(
 	}
 
 	if opts.Events != nil && !opts.DelegatedOnly && !opts.legacyHTTP {
-		registerNativeEvents(s, opts.Events)
+		registerNativeEvents(s, opts.Events, allowWrites)
 	}
 	return s
 }
