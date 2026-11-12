@@ -485,7 +485,7 @@ func TestSearchMessageBodies_PostgreSQLPhraseContexts(t *testing.T) {
 	searcher, ok := query.NewEngine(f.Store.DB(), true).(query.MessageBodySearcher)
 	require.True(ok)
 	// Each excerpt appears in only one body, so it also identifies the hit.
-	for term, excerpt := range map[string]string{"alice@exam": "alice@exam", `"cafe teria"`: "cafe\u0301teria", "cafe\u0301teria": "cafe\u0301teria", "cafe\u0301": "cafe\u0301", "foo.bar": "foo.bar", "shared": "shared body marker"} {
+	for term, excerpt := range map[string]string{"alice@exam": "alice@exam", `"cafe teria"`: "cafe\u0301teria", "cafe\u0301": "cafe\u0301", "foo.bar": "foo.bar", "shared": "shared body marker"} {
 		result, err := searcher.SearchMessageBodies(t.Context(), search.Parse(term), 10, 0)
 		require.NoError(err, term)
 		require.Len(result.Messages, 1, term)

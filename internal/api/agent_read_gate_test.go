@@ -1149,12 +1149,12 @@ func TestPostgresStartupRepairsAgentSearch(t *testing.T) {
 		require.ErrorIs(t, <-done, http.ErrServerClosed)
 	})
 	require.NoError(t, srv.WaitStarted(t.Context()))
-	require.Eventually(t, srv.ftsIndexComplete.Load, 30*time.Second, 20*time.Millisecond)
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/search?q=startupneedle", nil)
-	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set(apiprotocol.AgentTokenHeader, token)
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	assert.Contains(t, w.Body.String(), "visiblemarker")
+	require.Eventually(t, func() bool {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/search?q=startupneedle", nil)
+		req.RemoteAddr = "127.0.0.1:1234"
+		req.Header.Set(apiprotocol.AgentTokenHeader, token)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		return w.Code == http.StatusOK && strings.Contains(w.Body.String(), "visiblemarker")
+	}, 30*time.Second, 20*time.Millisecond)
 }

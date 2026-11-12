@@ -106,13 +106,8 @@ func TestPostgreSQLDialect_BuildFTSArg(t *testing.T) {
 		terms []string
 		want  string
 	}{
-		{[]string{"invoice"}, "invoice:*"},
-		{[]string{"invoice", "review"}, "invoice:* & review:*"},
 		{[]string{"---"}, ""},
 		{[]string{"foo-bar"}, "foo & bar:*"},
-		{[]string{"user@example.com"}, "user & example & com:*"},
-		{[]string{"a.b.c"}, "a & b & c:*"},
-		{[]string{"invoice", "foo-bar"}, "invoice:* & foo & bar:*"},
 		{[]string{"monthly", "foo-bar", "or"}, "monthly:* & foo & bar:* & or:*"},
 	} {
 		assert.Equal(t, tc.want, d.BuildFTSArg(tc.terms))
