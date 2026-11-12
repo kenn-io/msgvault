@@ -13,7 +13,7 @@ describe('SearchCoverage', () => {
   it.each([
     ['disabled', 'Semantic search is disabled'],
     ['initializing', 'Semantic index is initializing'],
-    ['stale', 'Semantic index is stale'],
+    ['stale', 'Semantic search is unavailable; check the index'],
     ['incomplete', 'Semantic index: 84% of 12,430 items'],
     ['unavailable', 'Semantic index is unavailable'],
     ['ready', 'Semantic index: 100% of 12,430 items']
@@ -33,7 +33,7 @@ describe('SearchCoverage', () => {
 
   it('states that semantic-only results exclude unembedded content', () => {
     render(SearchCoverage, { props: { requestedMode: 'semantic', coverage: { ...base, status: 'incomplete' } } });
-    expect(screen.getByRole('status').textContent).toContain('Unembedded items cannot appear');
+    expect(screen.getByRole('status').textContent).toContain("Items not yet prepared for semantic search won't appear");
   });
 
   it('offers only daemon-supported actions', async () => {
