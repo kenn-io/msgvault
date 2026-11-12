@@ -23,6 +23,7 @@
   // Waits between catalog reads while the daemon reports the account catalog
   // unavailable, so the picker recovers once a slow first read finishes.
   const retryDelaysMs = [2000, 5000, 10000, 20000, 30000];
+  const retryWindowMs = 300000;
 
   let options = $state<Option[]>([]);
   // Every catalog entry by key, including those a source does not list
@@ -32,6 +33,7 @@
   let error = $state('');
   let pending = $state<{ id: number; email: string; count: number }[]>([]);
   let repairing = $state<number[]>([]);
+  let requested = $state<number[]>([]);
   let repairError = $state('');
   let retryRepair: (id: number) => void = () => {};
   let unavailable = $state(false);
@@ -106,20 +108,21 @@
     let controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
+    let retryUntil = Date.now() + retryWindowMs;
     let shown = 0;
     let blocked = false;
 
-    const scheduleRetry = (): void => {
+    const scheduleRetry = (failed = false): void => {
       clearTimeout(timer);
       if (blocked || lifetime.signal.aborted) return;
-      if (pending.length > 0 || unavailable) {
-        retrying = true;
-        timer = setTimeout(load, retryDelaysMs[Math.min(attempt++, retryDelaysMs.length - 1)]);
-      } else {
-        retrying = false;
+      const waiting = pending.length > 0 || unavailable || failed;
+      if (!waiting) {
         attempt = 0;
-        timer = setTimeout(load, 30000);
+        retryUntil = Date.now() + retryWindowMs;
       }
+      const delay = waiting ? retryDelaysMs[Math.min(attempt++, retryDelaysMs.length - 1)] : 30000;
+      retrying = waiting && Date.now() + delay <= retryUntil;
+      if (retrying || !waiting) timer = setTimeout(load, delay);
     };
     const load = (): void => {
       controller.abort();
@@ -135,7 +138,7 @@
         }
         if (!data) {
           if (!unavailable && pending.length === 0) error = 'Unable to load accounts.';
-          scheduleRetry();
+          scheduleRetry(true);
           return;
         }
         error = '';
@@ -145,24 +148,29 @@
           options = read.options;
           known = read.known;
           pending = read.pending;
+          requested = requested.filter((id) => read.pending.some((source) => source.id === id));
           shown = read.options.length;
         }
         scheduleRetry();
       }).catch((cause: unknown) => {
         if (signal.aborted) return;
         if (!unavailable && pending.length === 0) error = cause instanceof Error ? cause.message : 'Unable to load accounts.';
-        scheduleRetry();
+        scheduleRetry(true);
       }).finally(() => {
         if (!signal.aborted) loading = false;
       });
     };
     retryRepair = (id: number): void => {
       clearTimeout(timer);
+      retryUntil = Date.now() + retryWindowMs;
+      attempt = 0;
       repairError = '';
+      requested = requested.filter((sourceID) => sourceID !== id);
       repairing = [...repairing, id];
       controller.abort();
       void repairAccountAttribution({ sourceId: id }, { ...client, signal: lifetime.signal }).then(({ response }) => {
         if (!response.ok) throw new Error('Repair failed');
+        if (!lifetime.signal.aborted) requested = [...requested, id];
       }).catch(() => {
         if (!lifetime.signal.aborted) repairError = 'Unable to retry account matching.';
       }).finally(() => {
@@ -200,7 +208,10 @@
     {#each pending as source (source.id)}
       <div class="pending-source">
         <span role="status">{source.email}: {source.count} {source.count === 1 ? 'message' : 'messages'} awaiting account matching.</span>
-        <Button size="sm" surface="soft" label="Retry" disabled={repairing.includes(source.id)} onclick={() => retryRepair(source.id)} />
+        <div class="retry-line">
+          <Button size="sm" surface="soft" label={repairing.includes(source.id) ? 'Retrying…' : 'Retry'} disabled={repairing.includes(source.id)} onclick={() => retryRepair(source.id)} />
+          {#if requested.includes(source.id)}<span role="status">Retry requested</span>{/if}
+        </div>
       </div>
     {/each}
   </div>
@@ -221,6 +232,11 @@
     flex-direction: column;
     align-items: flex-start;
     flex-basis: 100%;
+    gap: var(--space-2);
+  }
+  .retry-line {
+    display: flex;
+    align-items: center;
     gap: var(--space-2);
   }
   span {

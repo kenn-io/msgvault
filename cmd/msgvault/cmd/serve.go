@@ -3103,11 +3103,18 @@ func (a *storeAPIAdapter) AccountIdentityRevisionContext(ctx context.Context) (i
 	return a.store.AccountIdentityRevisionContext(ctx)
 }
 
+// AccountCatalogRevisionContext reports attribution rewrites, including ones
+// committed outside the daemon's repair queue.
+func (a *storeAPIAdapter) AccountCatalogRevisionContext(ctx context.Context) (int64, error) {
+	return a.store.AccountCatalogRevisionContext(ctx)
+}
+
 // The API serves the account catalog only from a store that also reports
-// the identity revision, so the adapter must keep both.
+// the identity and catalog revisions, so the adapter must keep all three.
 var _ interface {
 	ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error)
 	AccountIdentityRevisionContext(ctx context.Context) (int64, error)
+	AccountCatalogRevisionContext(ctx context.Context) (int64, error)
 } = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) ResolveAccountIdentityContext(

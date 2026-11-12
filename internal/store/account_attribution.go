@@ -194,7 +194,7 @@ func (s *Store) refreshAccountAttributionAfterWriteTx(
 		return fmt.Errorf("read message %d for account attribution: %w", id, err)
 	}
 	if (IsEmailMessageType(messageType) || messageType == "calendar_event") && !tx.attribution.holds(sourceID) {
-		if _, err := tx.ExecContext(ctx, `
+		if _, err := tx.execAttributionContext(ctx, `
 			UPDATE messages SET account_address = NULL, account_path = NULL
 			WHERE id = ? AND (account_address IS NOT NULL OR account_path IS NOT NULL)`, id); err != nil {
 			return fmt.Errorf("mark message %d account attribution pending: %w", id, err)
@@ -603,7 +603,7 @@ func (s *Store) writeAccountAttributionTx(
 	if path != "" {
 		pathValue = path
 	}
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := tx.execAttributionContext(ctx, `
 		UPDATE messages SET account_address = ?, account_path = ?
 		WHERE id = ? AND COALESCE(message_type, '') = ?`,
 		addressValue, pathValue, id, messageType,
@@ -1112,7 +1112,7 @@ func markPendingIfSentFolderChangedTx(f *labelOutboundFlips) error {
 	if err != nil || after == before {
 		return err
 	}
-	if _, err := f.tx.ExecContext(f.ctx, `
+	if _, err := f.tx.execAttributionContext(f.ctx, `
 		UPDATE messages SET account_address = NULL, account_path = NULL
 		WHERE source_id = ? AND COALESCE(message_type, '') IN ('', 'email') AND account_path IS NOT NULL`,
 		f.sourceID); err != nil {
@@ -1224,7 +1224,7 @@ func (s *Store) markAccountAttributionPendingForAddressesTx(
 	}
 
 	list := slices.Sorted(maps.Keys(ids))
-	if err := execInChunksContext(ctx, tx, list, nil,
+	if err := execInChunksContext(ctx, attributionWriter{tx}, list, nil,
 		`UPDATE messages SET account_address = NULL, account_path = NULL WHERE id IN (%s)`); err != nil {
 		return nil, fmt.Errorf("mark account attribution pending for source %d: %w", sourceID, err)
 	}
