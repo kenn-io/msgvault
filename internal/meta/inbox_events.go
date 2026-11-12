@@ -29,6 +29,10 @@ type messagingEvent struct {
 // carries its first text, and polling keeps the current text. Messages
 // without text, reactions, edits, deletions, reads and other messaging
 // events are ignored.
+//
+// It trusts the signed payload instead of reading the message from Graph, so
+// it refuses, with ErrInvalidChange, a message that is not between the inbox
+// owner and another account, or that has no timestamp.
 func ApplyInboxMessages(ctx context.Context, st *store.Store, b Inbox, values []jsontext.Value) error {
 	type item struct {
 		customer InboxParticipant
@@ -43,11 +47,18 @@ func ApplyInboxMessages(ctx context.Context, st *store.Store, b Inbox, values []
 		if event.Message == nil || event.Message.IsDeleted || event.Message.Text == "" {
 			continue
 		}
+		fromOwner, toOwner := event.Sender.ID == b.Owner(), event.Recipient.ID == b.Owner()
+		if fromOwner == toOwner {
+			return fmt.Errorf("%w: message is not between the inbox owner and another account", ErrInvalidChange)
+		}
+		if event.Timestamp <= 0 {
+			return fmt.Errorf("%w: message has no timestamp", ErrInvalidChange)
+		}
 		customer := event.Sender
-		if event.Sender.ID == b.Owner() {
+		if fromOwner {
 			customer = event.Recipient
 		}
-		if !safeObjectID(event.Message.Mid) || !safeObjectID(customer.ID) || customer.ID == b.Owner() {
+		if !safeObjectID(event.Message.Mid) || !safeObjectID(customer.ID) {
 			return fmt.Errorf("%w: invalid message identity", ErrInvalidChange)
 		}
 		items = append(items, item{customer, InboxMessage{
