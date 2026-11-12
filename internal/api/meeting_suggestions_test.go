@@ -159,3 +159,39 @@ func TestGrantedMeetingSuggestionsTitleWords(t *testing.T) {
 		})
 	}
 }
+
+func TestGrantedMeetingSuggestionsReadableTitleRanking(t *testing.T) {
+	r := require.New(t)
+	st := testutil.NewTestStore(t)
+	notes, err := st.GetOrCreateSource("meeting_import", "notes@example.com")
+	r.NoError(err)
+	calendar, err := st.GetOrCreateSource("gcal", "calendar@example.com")
+	r.NoError(err)
+	at := time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)
+	var planning int64
+	for _, title := range []string{"Budget", "Planning"} {
+		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: notes.ID, SourceMessageID: title, MessageType: "meeting_transcript", Subject: sql.NullString{String: title, Valid: true}, SentAt: sql.NullTime{Time: at, Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: title, ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"})
+		r.NoError(err)
+		if title == "Planning" {
+			planning = id
+		}
+	}
+	event, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: calendar.ID, SourceMessageID: "event", MessageType: "calendar_event", Subject: sql.NullString{String: "Planning", Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"}, RawMIME: []byte(`{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`), RawFormat: "gcal_json"})
+	r.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(srv.agentGrants.Close)
+	sources := []agentgrant.SourceRef{{ID: notes.ID, Type: notes.SourceType, Identifier: notes.Identifier}, {ID: calendar.ID, Type: calendar.SourceType, Identifier: calendar.Identifier}}
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, sources, time.Time{})
+	r.NoError(err)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/meetings/suggestions?ref=evt:%d&limit=1", event), nil)
+	req.Header.Set(apiprotocol.AgentTokenHeader, token)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	r.Equal(http.StatusOK, w.Code, w.Body.String())
+	var page store.MeetingSuggestionPage
+	r.NoError(json.Unmarshal(w.Body.Bytes(), &page))
+	r.Len(page.Suggestions, 1)
+	r.Equal(planning, page.Suggestions[0].MemberMessageID)
+	r.Equal(1, page.Suggestions[0].TitleTokens)
+}

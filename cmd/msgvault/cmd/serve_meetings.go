@@ -37,6 +37,6 @@ func (a *storeAPIAdapter) DecideMeetingLinkContext(ctx context.Context, left, ri
 	return a.store.DecideMeetingLinkContext(ctx, left, right, decision)
 }
 
-func (a *storeAPIAdapter) SuggestMeetingLinksContext(ctx context.Context, ref store.MeetingLinkRef, limit int, titleWords bool) (store.MeetingSuggestionPage, error) {
-	return a.store.SuggestMeetingLinksContext(ctx, ref, limit, titleWords)
+func (a *storeAPIAdapter) SuggestMeetingLinksContext(ctx context.Context, ref store.MeetingLinkRef, limit int, withheld func(context.Context, []int64) (map[int64]bool, error)) (store.MeetingSuggestionPage, error) {
+	return a.store.SuggestMeetingLinksContext(ctx, ref, limit, withheld)
 }

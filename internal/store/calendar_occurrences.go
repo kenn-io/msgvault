@@ -46,6 +46,10 @@ type CalendarOccurrencePage struct {
 
 // ListCalendarOccurrencesContext expands archived series in a half-open window.
 func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to time.Time) (CalendarOccurrencePage, error) {
+	return s.listCalendarOccurrences(ctx, from, to, true)
+}
+
+func (s *Store) listCalendarOccurrences(ctx context.Context, from, to time.Time, filterOverlap bool) (CalendarOccurrencePage, error) {
 	page := CalendarOccurrencePage{Occurrences: []CalendarOccurrence{}, Unexpandable: []CalendarUnexpandable{}}
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
@@ -57,7 +61,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		return page, err
 	}
 	remaining := calrecur.RequestReadBudget - len(rows)
-	return s.expandCalendarRows(ctx, rows, from, to, true, &remaining)
+	return s.expandCalendarRows(ctx, rows, from, to, filterOverlap, &remaining)
 }
 
 // expandCalendarRows supplies the same effective occurrences to listing and record reads.

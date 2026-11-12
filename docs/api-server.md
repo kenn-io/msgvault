@@ -2441,7 +2441,7 @@ for the user workflow and coverage meanings.
 | `POST /api/v1/meetings/actions` | Optional `scope` or `explore`, plus action filters; returns rows, coverage, count, and cursor |
 | `POST /api/v1/meetings/metrics` | Optional `scope` or `explore`; returns totals, duration bases, monthly rows, and undated count |
 
-`GET /api/v1/meetings/suggestions?ref=...` ranks overlapping meeting notes and calendar events; use `POST /api/v1/meetings/links/decisions` to link a suggested pair. It requires API schema 5.3.0. Without `verification.read`, title words do not affect ranking, `title_tokens` is 0, and withheld partner titles are masked.
+`GET /api/v1/meetings/suggestions?ref=...` ranks overlapping meeting notes and calendar events; use `POST /api/v1/meetings/links/decisions` to link a suggested pair. It requires API schema 5.3.0. Without `verification.read`, withheld titles add no title words and withheld partner titles are masked.
 
 `GET /api/v1/meetings/record?ref=...` returns the notes and calendar copies
 for a `msg:<id>` or `evt:<id>[@occurrence key]` reference. It requires API

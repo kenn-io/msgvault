@@ -36,7 +36,7 @@ type suggestMember struct {
 	Emails     map[string]bool
 }
 
-func rankMeetingSuggestion(member suggestMember, event CalendarOccurrence, titleWords bool) (MeetingSuggestion, bool) {
+func rankMeetingSuggestion(member suggestMember, event CalendarOccurrence) (MeetingSuggestion, bool) {
 	if event.Status == "cancelled" || event.Start.IsZero() || event.End.IsZero() || member.Start.IsZero() {
 		return MeetingSuggestion{}, false
 	}
@@ -59,12 +59,10 @@ func rankMeetingSuggestion(member suggestMember, event CalendarOccurrence, title
 			result.SharedAttendees++
 		}
 	}
-	if titleWords {
-		tokens := uniqueChatTokens(member.Title)
-		for _, token := range uniqueChatTokens(event.Subject) {
-			if slices.Contains(tokens, token) {
-				result.TitleTokens++
-			}
+	tokens := uniqueChatTokens(member.Title)
+	for _, token := range uniqueChatTokens(event.Subject) {
+		if slices.Contains(tokens, token) {
+			result.TitleTokens++
 		}
 	}
 	return result, true
@@ -124,7 +122,7 @@ func (s *Store) suggestionMembers(ctx context.Context, ids []int64) ([]suggestMe
 	return members, nil
 }
 
-func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkRef, limit int, titleWords bool) (MeetingSuggestionPage, error) {
+func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkRef, limit int, withheld func(context.Context, []int64) (map[int64]bool, error)) (MeetingSuggestionPage, error) {
 	page := MeetingSuggestionPage{Suggestions: []MeetingSuggestion{}, Unexpandable: []CalendarUnexpandable{}}
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
@@ -132,6 +130,7 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 	}
 	defer release()
 	var candidates []MeetingSuggestion
+	seedIDs := []int64{ref.MessageID}
 	if ref.Kind == meetingRefMessage {
 		members, err := s.suggestionMembers(ctx, []int64{ref.MessageID})
 		if err != nil {
@@ -144,13 +143,13 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		if member.Start.IsZero() {
 			return page, nil
 		}
-		events, err := s.ListCalendarOccurrencesContext(ctx, member.Start.Add(-24*time.Hour), member.End.Add(24*time.Hour))
+		events, err := s.listCalendarOccurrences(ctx, member.Start, member.End, false)
 		if err != nil {
 			return page, err
 		}
 		page.Unexpandable = events.Unexpandable
 		for _, event := range events.Occurrences {
-			if item, ok := rankMeetingSuggestion(member, event, titleWords); ok {
+			if item, ok := rankMeetingSuggestion(member, event); ok {
 				item.Title = event.Subject
 				item.TitleMessageID = event.MessageID
 				item.TitleOriginID = event.row.SubjectOriginID
@@ -179,7 +178,11 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		if seed.Start == nil || seed.End == nil || seed.Status == "cancelled" {
 			return page, nil
 		}
-		events, err := s.ListCalendarOccurrencesContext(ctx, seed.Start.Add(-24*time.Hour), seed.End.Add(24*time.Hour))
+		seedIDs = []int64{seed.MessageID}
+		if seed.SubjectOriginID != 0 {
+			seedIDs = append(seedIDs, seed.SubjectOriginID)
+		}
+		events, err := s.listCalendarOccurrences(ctx, *seed.Start, *seed.End, false)
 		if err != nil {
 			return page, err
 		}
@@ -192,21 +195,18 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			}
 		}
 		r := s.db
-		var longest float64
 		scope, args := sourceScopeClause(ctx, "m.source_id")
-		if err := r.QueryRowContext(ctx, `SELECT COALESCE(MAX(d.duration_seconds),1800) FROM meeting_details d JOIN messages m ON m.id=d.message_id WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL`+scope, args...).Scan(&longest); err != nil {
-			return page, err
-		}
-		lower := seed.Start.Add(-time.Duration(max(1800, longest) * float64(time.Second)))
 		startExpr := "COALESCE(m.sent_at,m.received_at,m.internal_date)"
-		bound := "?"
+		endExpr := startExpr + " + (CASE WHEN d.duration_seconds > 0 THEN d.duration_seconds ELSE 1800 END) * interval '1 second'"
+		startBound, endBound := "?", "?"
 		if !s.IsPostgreSQL() {
 			startExpr = "julianday(" + startExpr + ")"
-			bound = "julianday(?)"
+			endExpr = startExpr + " + (CASE WHEN d.duration_seconds > 0 THEN d.duration_seconds ELSE 1800 END) / 86400.0"
+			startBound, endBound = "julianday(?)", "julianday(?)"
 		}
-		values := []any{lower, *seed.End}
+		values := []any{*seed.End, *seed.Start}
 		values = append(values, args...)
-		rows, err := r.QueryContext(ctx, `SELECT m.id FROM messages m WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL AND `+startExpr+` >= `+bound+` AND `+startExpr+` < `+bound+scope+` ORDER BY m.id LIMIT 2001`, values...)
+		rows, err := r.QueryContext(ctx, `SELECT m.id FROM messages m LEFT JOIN meeting_details d ON d.message_id=m.id WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL AND `+startExpr+` < `+startBound+` AND `+endExpr+` > `+endBound+scope+` ORDER BY m.id LIMIT 2001`, values...)
 		if err != nil {
 			return page, err
 		}
@@ -231,11 +231,37 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 				return page, err
 			}
 			for _, member := range members {
-				if item, ok := rankMeetingSuggestion(member, event, titleWords); ok {
+				if item, ok := rankMeetingSuggestion(member, event); ok {
 					item.Title = member.Title
 					item.TitleMessageID = member.ID
 					item.Start = member.Start
 					candidates = append(candidates, item)
+				}
+			}
+		}
+	}
+	if withheld != nil {
+		ids := append([]int64(nil), seedIDs...)
+		for _, candidate := range candidates {
+			if candidate.TitleTokens > 0 {
+				ids = append(ids, candidate.TitleMessageID)
+				if candidate.TitleOriginID != 0 {
+					ids = append(ids, candidate.TitleOriginID)
+				}
+			}
+		}
+		if len(ids) > len(seedIDs) {
+			masked, err := withheld(ctx, ids)
+			if err != nil {
+				return page, err
+			}
+			seedMasked := false
+			for _, id := range seedIDs {
+				seedMasked = seedMasked || masked[id]
+			}
+			for i := range candidates {
+				if seedMasked || masked[candidates[i].TitleMessageID] || masked[candidates[i].TitleOriginID] {
+					candidates[i].TitleTokens = 0
 				}
 			}
 		}

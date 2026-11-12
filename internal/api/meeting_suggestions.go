@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -11,7 +12,7 @@ import (
 )
 
 type MeetingSuggestionStore interface {
-	SuggestMeetingLinksContext(context.Context, store.MeetingLinkRef, int, bool) (store.MeetingSuggestionPage, error)
+	SuggestMeetingLinksContext(context.Context, store.MeetingLinkRef, int, func(context.Context, []int64) (map[int64]bool, error)) (store.MeetingSuggestionPage, error)
 }
 
 func (s *Server) registerMeetingSuggestionRoute(api huma.API) {
@@ -45,8 +46,16 @@ func (s *Server) handleMeetingSuggestions(w http.ResponseWriter, r *http.Request
 		writeError(w, 503, "meetings_unavailable", "Meeting suggestions are unavailable")
 		return
 	}
-	page, err := backend.SuggestMeetingLinksContext(r.Context(), ref, limit, !s.withholdsVerification(r))
+	var classify func(context.Context, []int64) (map[int64]bool, error)
+	if s.withholdsVerification(r) {
+		classify = s.classifyVerification
+	}
+	page, err := backend.SuggestMeetingLinksContext(r.Context(), ref, limit, classify)
 	if err != nil {
+		if errors.Is(err, errVerificationUnavailable) {
+			writeAPIHTTPError(w, newAPIHTTPError(503, "source_scope_unavailable", "Message content classification is unavailable"))
+			return
+		}
 		s.writeMeetingLinkError(w, err)
 		return
 	}
