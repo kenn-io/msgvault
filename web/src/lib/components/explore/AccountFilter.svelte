@@ -208,7 +208,7 @@
     {#if repairError}<span role="alert">{repairError}</span>{/if}
     {#each pending as source (source.id)}
       <div class="pending-source">
-        <span role="status">{source.email}: {source.count} {source.count === 1 ? 'message' : 'messages'} awaiting account matching.</span>
+        <span role="status">{source.email}: {source.count} {source.count === 1 ? 'message' : 'messages'} to match.</span>
         <div class="retry-line">
           <Button size="sm" surface="soft" label={repairing.includes(source.id) ? 'Retrying…' : 'Retry'} disabled={repairing.includes(source.id)} onclick={() => retryRepair(source.id)} />
           {#if requested.includes(source.id)}<span role="status">Retry requested</span>{/if}
@@ -234,6 +234,9 @@
     align-items: flex-start;
     flex-basis: 100%;
     gap: var(--space-2);
+  }
+  .pending-source + .pending-source {
+    margin-top: var(--space-2);
   }
   .retry-line {
     display: flex;
