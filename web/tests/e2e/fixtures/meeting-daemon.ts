@@ -47,7 +47,7 @@ export const test = base.extend<{ daemon: MeetingDaemon; twoDates: boolean }>({
   userAgent,
   twoDates: [false, { option: true }],
   daemon: [
-    async ({ twoDates }, use) => {
+    async ({ twoDates }, use, testInfo) => {
       const scratch = await mkdtemp(join(tmpdir(), "msgvault-meeting-e2e-"));
       const archive = join(scratch, "archive");
       let child: ChildProcess | undefined;

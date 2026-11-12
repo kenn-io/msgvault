@@ -26,7 +26,6 @@ type meetingMetricUnit struct {
 	duration    *float64
 	basis       meetingcontent.DurationBasis
 	memberID    int64
-	calendarID  int64
 	hasCalendar bool
 }
 
@@ -140,13 +139,13 @@ func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQuery
 		if !counted {
 			continue
 		}
-		if row.ScheduledSeconds != nil && (!unit.hasCalendar || member.id < unit.calendarID) {
+		if row.ScheduledSeconds != nil && (!unit.hasCalendar || row.OccurredAt.Before(unit.at)) {
 			unit.at = row.OccurredAt
 			unit.month = ""
 			if len(row.StartDate) >= 7 {
 				unit.month = row.StartDate[:7]
 			}
-			unit.calendarID, unit.hasCalendar = member.id, true
+			unit.hasCalendar = true
 		}
 		if member.duration.Valid {
 			unit.choose(member.duration.Float64, meetingcontent.DurationBasis(member.basis), member.id)

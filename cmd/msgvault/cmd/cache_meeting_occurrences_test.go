@@ -443,10 +443,11 @@ func TestMeetingCountsAllDayCalendarUsesCivilDate(t *testing.T) {
 	require.NoError(t, err)
 	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
 	require.NoError(t, err)
+	var allDayIDs []int64
 	for _, tc := range []struct {
 		date, calendar string
 		source         int64
-	}{{"2024-01-01", "owner@example.com", source.ID}, {"2024-12-31", "western@example.com", western.ID}} {
+	}{{"2024-01-01", "owner@example.com", source.ID}, {"2024-12-31", "western@example.com", western.ID}, {"2024-01-02", "western@example.com", western.ID}} {
 		date := tc.date
 		start, err := time.Parse(time.DateOnly, date)
 		require.NoError(t, err)
@@ -457,9 +458,12 @@ func TestMeetingCountsAllDayCalendarUsesCivilDate(t *testing.T) {
 			RawMIME:      []byte(raw), RawFormat: "gcal_json", Metadata: &sql.NullString{String: fmt.Sprintf(`{"calendar_id":%q}`, tc.calendar), Valid: true},
 		})
 		require.NoError(t, err)
+		allDayIDs = append(allDayIDs, id)
 		require.NoError(t, st.ReplaceMessageRecipients(id, "from", []int64{owner}, []string{""}))
 		require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
 	}
+	_, err = st.DecideMeetingLinkContext(t.Context(), store.MeetingLinkRef{Kind: "evt", MessageID: allDayIDs[0]}, store.MeetingLinkRef{Kind: "evt", MessageID: allDayIDs[2]}, "link")
+	require.NoError(t, err)
 	_, err = buildCache(t.Context(), dbPath, analytics, true)
 	require.NoError(t, err)
 	engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)

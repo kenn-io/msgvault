@@ -128,21 +128,21 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 	for _, owner := range owners {
 		args = append(args, owner)
 	}
-	meetingDates := ""
-	if request.Context.After != nil {
-		meetingDates += " AND (a.entry_kind NOT IN ('event','meeting') OR a.occurred_at >= CAST(? AS TIMESTAMP))"
-		args = append(args, request.Context.After.UTC())
-	}
-	if request.Context.Before != nil {
-		meetingDates += " AND (a.entry_kind NOT IN ('event','meeting') OR a.occurred_at < CAST(? AS TIMESTAMP))"
-		args = append(args, request.Context.Before.UTC())
-	}
-
 	timezone := request.Timezone
 	if timezone == "" {
 		timezone = relationshipScoringTimezone
 	}
 	args = append(args, timezone)
+	meetingDates := ""
+	if request.Context.After != nil {
+		meetingDates += " AND (s.entry_kind NOT IN ('event','meeting') OR s.occurred_at >= CAST(? AS TIMESTAMP))"
+		args = append(args, request.Context.After.UTC())
+	}
+	if request.Context.Before != nil {
+		meetingDates += " AND (s.entry_kind NOT IN ('event','meeting') OR s.occurred_at < CAST(? AS TIMESTAMP))"
+		args = append(args, request.Context.Before.UTC())
+	}
+
 	limit := request.Limit
 	if limit == 0 {
 		limit = defaultRelationshipTimelineLimit
@@ -298,17 +298,17 @@ WITH subject_facts AS (
         bool_or(a.is_owner AND a.is_direct) AS with_owner
     FROM relationship_counting_activity a
     JOIN (
-        SELECT f.entry_key, min(f.message_id) AS message_id
+        SELECT f.entry_key, arg_min(f.message_id, struct_pack(occurred_at := f.occurred_at, message_id := f.message_id)) AS message_id
         FROM relationship_counting_activity f
         WHERE NOT f.unsent AND f.canonical_id = ? AND (` + conditions + `)
         GROUP BY f.entry_key
     ) selected ON selected.entry_key=a.entry_key
-    WHERE a.canonical_id IN (` + strings.TrimSuffix(strings.Repeat("?,", canonicalCount), ",") + `)` + meetingDates + `
+    WHERE a.canonical_id IN (` + strings.TrimSuffix(strings.Repeat("?,", canonicalCount), ",") + `)
     GROUP BY a.entry_key
 ), day_bucketed AS (
     SELECT s.*,
         strftime(timezone(?, timezone('UTC', s.occurred_at)), '%Y-%m-%d') AS local_day
-    FROM subject_facts s
+    FROM subject_facts s WHERE true` + meetingDates + `
 ), timeline_entries AS (
     SELECT
         entry_key,

@@ -257,8 +257,8 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 	countingActivity := "relationship_counting_activity"
 	activity := fmt.Sprintf(`(
 		SELECT * FROM %[1]s
-		WHERE occurred_at >= TIMESTAMP '%[2]s'
-		  AND occurred_at < TIMESTAMP '%[3]s'
+		WHERE ((occurred_at >= TIMESTAMP '%[2]s'
+		  AND occurred_at < TIMESTAMP '%[3]s') OR entry_kind IN ('event', 'meeting'))
 		  AND (occurred_year IN (%[6]s) OR entry_kind IN ('event', 'meeting'))
 		  AND canonical_id IN (%[4]s)
 		  AND entry_key IN (
@@ -282,9 +282,9 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 		    ELSE strftime(timezone(?, timezone('UTC', f.occurred_at)), '%Y-%m-%d') END AS local_date
 		  FROM relationship_facts f
 		  LEFT JOIN (
-		    SELECT DISTINCT 'meeting:' || occurrence_key AS entry_key, start_date
-		    FROM read_parquet('`+quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingOccurrences))+`') WHERE start_date IS NOT NULL
-		  ) o ON o.entry_key=f.entry_key
+		    SELECT 'meeting:' || occurrence_key AS entry_key, occurred_at, min(start_date) AS start_date
+		    FROM read_parquet('`+quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingOccurrences))+`') WHERE start_date IS NOT NULL AND counted GROUP BY 1, occurred_at
+		  ) o ON o.entry_key=f.entry_key AND o.occurred_at=f.occurred_at
 		)
 		SELECT local_date,
 		       count(*) FILTER (WHERE sent)::BIGINT AS sent_count,

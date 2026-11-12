@@ -51,7 +51,8 @@ func TestMeetingDecisionCopyRootsKeepOccurrencesSeparate(t *testing.T) {
 	for _, endpoint := range []meetingDecisionEndpoint{first, copyEvent, second, note} {
 		g.nodes[endpoint.ref()] = meetingDecisionNode{endpoint: endpoint}
 	}
-	g.groups = [][]meetingDecisionEndpoint{{first, copyEvent}, {first, note}, {second, note}}
+	g.groups = [][]meetingDecisionEndpoint{{first, copyEvent}}
+	g.candidates = []meetingDecisionEdge{{a: first, b: note, decision: "link"}, {a: second, b: note, decision: "link"}}
 	root, _, copies := g.reduce()
 	r.Equal(root(first.ref()), root(second.ref()))
 	r.Equal(copies[first.ref()], copies[copyEvent.ref()])

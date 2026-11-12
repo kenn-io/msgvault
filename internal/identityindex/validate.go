@@ -150,7 +150,7 @@ func Validate(
 			       IS DISTINCT FROM p.first_at
 			    OR (SELECT max(item.last_at)::TIMESTAMP
 			        FROM unnest(p.source_rollups) AS source(item))
-			       IS DISTINCT FROM p.last_at
+			       < p.last_at
 			    OR (SELECT sum(item.count)::BIGINT
 			        FROM unnest(p.source_counts) AS source(item))
 			       < p.activity_count`,

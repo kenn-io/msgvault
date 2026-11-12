@@ -181,8 +181,8 @@ func TestMeetingMetricsEditedOccurrenceDuration(t *testing.T) {
 func TestMeetingMetricsScopedCalendarCopies(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	for _, tc := range []struct{ owner, start, end string }{
-		{"first@example.com", "2024-01-02T10:00:00Z", "2024-01-02T11:00:00Z"},
-		{"second@example.com", "2024-01-03T12:00:00Z", "2024-01-03T14:00:00Z"},
+		{"first@example.com", "2024-01-03T12:00:00Z", "2024-01-03T14:00:00Z"},
+		{"second@example.com", "2024-01-02T10:00:00Z", "2024-01-02T11:00:00Z"},
 	} {
 		_, _ = calendarFixture(t, st, "master-"+tc.owner, `{"id":"series","iCalUID":"shared@example.org","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=1"]}`, tc.owner)
 		data, _ := calendarFixture(t, st, "edit-"+tc.owner, fmt.Sprintf(`{"id":"edit","recurringEventId":"series","iCalUID":"shared@example.org","originalStartTime":{"dateTime":"2024-01-02T10:00:00Z"},"start":{"dateTime":%q},"end":{"dateTime":%q}}`, tc.start, tc.end), tc.owner)
@@ -197,6 +197,12 @@ func TestMeetingMetricsScopedCalendarCopies(t *testing.T) {
 		require.NotNil(t, metrics.FirstMeetingAt)
 		assert.True(t, start.Equal(*metrics.FirstMeetingAt))
 	}
+	before := time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC)
+	metrics, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{Before: &before})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, metrics.Totals.MeetingCount)
+	require.NotNil(t, metrics.FirstMeetingAt)
+	assert.Equal(t, time.Date(2024, 1, 2, 10, 0, 0, 0, time.UTC), *metrics.FirstMeetingAt)
 }
 
 func TestMeetingMetricsSelectedNoteUsesEventDuration(t *testing.T) {

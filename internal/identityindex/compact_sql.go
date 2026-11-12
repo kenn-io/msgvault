@@ -23,7 +23,7 @@ WITH file_messages AS (
 	SELECT canonical_id, source_id, source_type, sum(attachment_count)::BIGINT AS file_count FROM file_messages GROUP BY canonical_id, source_id, source_type
 ), logical_people AS (
 	SELECT entry_key, source_id, source_type, occurred_at, message_type, entry_kind, attachment_count,
-	       canonical_id, with_owner
+	       canonical_id, with_owner, min(occurred_at) OVER (PARTITION BY canonical_id, entry_key) AS overall_at
 	FROM ` + logicalBuildRelation + `
 	WHERE relation_kind = 1
 ), people_totals AS (
@@ -31,8 +31,8 @@ WITH file_messages AS (
 	       count(DISTINCT entry_key)::BIGINT AS activity_count,
 	       count(DISTINCT entry_key) FILTER (WHERE entry_kind IN ('event', 'meeting') AND with_owner)::BIGINT AS meeting_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
-	       min(occurred_at)::TIMESTAMP AS first_at,
-	       max(occurred_at)::TIMESTAMP AS last_at
+	       min(overall_at)::TIMESTAMP AS first_at,
+	       max(overall_at)::TIMESTAMP AS last_at
 	FROM logical_people
 	GROUP BY canonical_id
 ), source_rows AS (

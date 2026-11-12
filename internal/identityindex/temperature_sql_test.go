@@ -35,6 +35,7 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 			(5::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 16:00:00', true, 'item'::VARCHAR, 'group_chat'::VARCHAR, true, true, true, false, false),
 			-- Owner-present and owner-absent meetings.
 			(6::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 17:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, true, false, false, true),
+			(6::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 17:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, true, false, false, false),
 			(6::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 17:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, true, false, false, false),
 			(7::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 18:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, true, false, false, false),
 			-- A duplicate linked-alias edge for canonical person 2.
@@ -65,6 +66,9 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 	assert.Equal(int64(3), chat)
 	assert.Equal(int64(4), total)
 	assert.Equal(ModalityChat|ModalityMeeting, modality)
+	var owners int
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM (`+query+`) WHERE canonical_id = 1`).Scan(&owners))
+	assert.Zero(owners)
 }
 
 func TestRelationshipTemperatureDailyExcludesUnsent(t *testing.T) {

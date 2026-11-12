@@ -42,9 +42,10 @@ func TestLinkedMeetingCopiesUseScopedDate(t *testing.T) {
 		require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
 		return id
 	}
-	dec := time.Date(2024, 12, 31, 10, 0, 0, 0, time.UTC)
-	jan := dec.Add(24 * time.Hour)
-	left, right := persist(first.ID, other, true, "first", dec), persist(second.ID, owner, false, "second", jan)
+	dec := time.Date(2024, 12, 29, 10, 0, 0, 0, time.UTC)
+	jan := dec.Add(5 * 24 * time.Hour)
+	right := persist(second.ID, owner, false, "second", jan)
+	left := persist(first.ID, other, true, "first", dec)
 	late, err := st.EnsureParticipant("late@example.com", "Late", "example.com")
 	require.NoError(t, err)
 	require.NoError(t, st.ReplaceMessageRecipients(right, "to", []int64{person, other, late}, []string{"", "", ""}))
@@ -60,6 +61,18 @@ func TestLinkedMeetingCopiesUseScopedDate(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, timeline.Rows, 1)
 	assert.Equal(t, jan, timeline.Rows[0].OccurredAt)
+	for _, tc := range []struct {
+		year int
+		want int64
+	}{{2024, 1}, {2025, 0}} {
+		calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: person, Year: tc.year, Timezone: "UTC"})
+		require.NoError(t, err)
+		var meetings int64
+		for _, day := range calendar.Days {
+			meetings += day.Meetings
+		}
+		assert.Equal(t, tc.want, meetings, "year %d", tc.year)
+	}
 	for _, tc := range []struct {
 		name  string
 		scope query.Context
@@ -82,12 +95,19 @@ func TestLinkedMeetingCopiesUseScopedDate(t *testing.T) {
 				got = detail.MeetingCount
 			}
 			assert.Equal(t, tc.want, got)
+			timeline, err := engine.RelationshipTimeline(t.Context(), query.RelationshipTimelineRequest{CanonicalID: person, Context: tc.scope})
+			require.NoError(t, err)
+			assert.Len(t, timeline.Rows, int(tc.want))
 			people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Explore: query.ExploreRequest{Context: tc.scope}})
 			require.NoError(t, err)
 			got = 0
 			for _, p := range people.Rows {
 				if p.ID == person {
 					got = p.MeetingCount
+					if tc.name == "unfiltered" || tc.name == "both_sources" {
+						assert.Equal(t, dec, p.FirstAt)
+						assert.Equal(t, dec, p.LastAt)
+					}
 				}
 			}
 			assert.Equal(t, tc.want, got)

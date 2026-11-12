@@ -39,7 +39,7 @@ WITH message_owner AS (
 	FROM %[1]s f
 	JOIN message_owner o USING (entry_key)
 	WHERE f.canonical_id IS NOT NULL
-	  AND NOT f.is_owner
+	  AND (NOT f.is_owner OR f.entry_kind IN ('event', 'meeting'))
 	  AND NOT f.unsent
 	  AND f.occurred_at <= TIMESTAMP '%[2]s'
 	  AND (
