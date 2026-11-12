@@ -574,13 +574,13 @@ func TestInstagramSharedLinkWithoutType(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	record := instagramTestRecord("")
-	record["share"] = map[string]string{"link": "https://example.com/article"}
+	record["share"] = map[string]string{"link": "https://example.com/cafÃ©"}
 	instagramTestShard(t, root, "circle", "message_1.json", record)
 	_, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"})
 	require.NoError(t, err)
 	var body string
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT body_text FROM message_bodies`).Scan(&body))
-	assert.Equal(t, "[shared link] https://example.com/article", body)
+	assert.Equal(t, "[shared link] https://example.com/café", body)
 }
 
 func TestInstagramReplayChangedUnknownMetadata(t *testing.T) {
