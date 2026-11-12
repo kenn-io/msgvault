@@ -254,6 +254,16 @@ func matchInstagramGroup(group []*instagramPending, old []string, archived map[s
 		}
 	}
 	summary.Errors += len(uncertain)
+	// Preserve content matches before considering surplus across changed fields.
+	for content, items := range remaining {
+		if len(items) == 1 && len(unused[content]) == 1 && (!instagramIsSurplus(archived[unused[content][0]]) || instagramCanResolveSurplus(archived[unused[content][0]], items[0].record)) {
+			reconcileInstagramCopies(map[instagramContent][]*instagramPending{content: items}, map[instagramContent][]string{content: unused[content]}, used, summary, repairs, archived)
+			if items[0].id != "" {
+				delete(remaining, content)
+				delete(unused, content)
+			}
+		}
+	}
 	reconcileInstagramExtraSurplus(remaining, unused, used, summary, repairs, archived)
 	reconcileInstagramCopies(remaining, unused, used, summary, repairs, archived)
 	matchInstagramExtraChanges(remaining, unused, used, archived, summary, repairs)
@@ -265,9 +275,11 @@ func reconcileInstagramExtraSurplus(remaining map[instagramContent][]*instagramP
 	loose := func(c instagramContent) instagramContent { c.extra = ""; return c }
 	items, rows := map[instagramContent][]*instagramPending{}, map[instagramContent][]string{}
 	crosses, hasSurplus := map[instagramContent]bool{}, map[instagramContent]bool{}
+	kinds := map[instagramContent]int{}
 	for content, list := range remaining {
 		key := loose(content)
 		items[key] = append(items[key], list...)
+		kinds[key]++
 		crosses[key] = crosses[key] || len(unused[content]) == 0
 	}
 	for content, ids := range unused {
@@ -280,7 +292,7 @@ func reconcileInstagramExtraSurplus(remaining map[instagramContent][]*instagramP
 	}
 	handled := map[instagramContent]bool{}
 	for key, list := range items {
-		if !crosses[key] || len(rows[key]) == 0 || (len(list) <= len(rows[key]) && !hasSurplus[key]) {
+		if !crosses[key] || len(rows[key]) == 0 || (!hasSurplus[key] && len(list) <= len(rows[key]) && kinds[key] == 1 && instagramSameEvidence(rows[key], archived)) {
 			continue
 		}
 		reconcileInstagramCopies(map[instagramContent][]*instagramPending{key: list}, map[instagramContent][]string{key: rows[key]}, used, summary, repairs, archived)

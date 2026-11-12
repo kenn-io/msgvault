@@ -1512,3 +1512,71 @@ func TestInstagramDuplicateOccurrences(t *testing.T) {
 		assert.Zero(run.ErrorsCount)
 	})
 }
+
+func TestInstagramMixedMetadataReactionsPreserveArchivedCopies(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		old  []string
+	}{
+		{"equal distinct", []string{"A", "A", "B"}},
+		{"equal identical", []string{"A", "A", "A"}},
+		{"partial distinct", []string{"A", "A", "B", "B"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, root := testutil.NewTestStore(t), t.TempDir()
+			var records []map[string]any
+			for _, value := range tc.old {
+				record := instagramTestRecord("same")
+				record["extra_field"] = value
+				records = append(records, record)
+			}
+			instagramTestShard(t, root, "circle", "message_1.json", records...)
+			opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+			_, err := ImportDYI(t.Context(), st, opts)
+			require.NoError(t, err)
+			before, _ := instagramSnapshot(t, st)
+			for i, record := range records[:3] {
+				if i > 0 {
+					record["extra_field"] = "C"
+				}
+				record["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "like"}}
+			}
+			instagramTestShard(t, root, "circle", "message_1.json", records[:3]...)
+			for range 2 {
+				summary, err := ImportDYI(t.Context(), st, opts)
+				require.NoError(t, err)
+				assert.True(t, summary.Incomplete)
+				assert.Zero(t, summary.MessagesAdded)
+				after, _ := instagramSnapshot(t, st)
+				assert.Equal(t, before, after)
+			}
+		})
+	}
+}
+
+func TestInstagramMixedMetadataKeepsUnambiguousMatches(t *testing.T) {
+	st, root := testutil.NewTestStore(t), t.TempDir()
+	a, b := instagramTestRecord("same"), instagramTestRecord("same")
+	a["extra_field"], b["extra_field"] = "A", "B"
+	instagramTestShard(t, root, "circle", "message_1.json", a, b)
+	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	before, _ := instagramSnapshot(t, st)
+	b["extra_field"] = "C"
+	a["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "like"}}
+	b["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "love"}}
+	instagramTestShard(t, root, "circle", "message_1.json", a, b)
+	summary, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.False(t, summary.Incomplete)
+	assert.Zero(t, summary.MessagesAdded)
+	_, reactions := instagramSnapshot(t, st)
+	for id, raw := range before {
+		if strings.Contains(raw, `"extra_field":"A"`) {
+			assert.Equal(t, "like", reactions[id])
+		} else {
+			assert.Equal(t, "love", reactions[id])
+		}
+	}
+}
