@@ -3,11 +3,16 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -15,6 +20,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/testutil"
 	extOAuth2 "golang.org/x/oauth2"
 )
 
@@ -60,6 +67,175 @@ func TestSyncUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 	assert.Equal(int32(1), requests.Load(), "HTTP requests")
 	assert.Equal("Starting incremental sync for alice@example.com\n", stdout.String())
 	assert.Equal("sync warning\n", stderr.String())
+}
+
+func TestSyncFullInterruptionHint(t *testing.T) {
+	for _, mode := range []string{"child", "child-extra", "child-noresume", "error"} {
+		t.Run(mode, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/x-ndjson")
+				if mode != "error" {
+					_, _ = w.Write([]byte("{\"type\":\"outcome\",\"data\":\"interrupted\"}\n"))
+					message := cliSubprocessExitSentinel
+					if mode == "child-extra" {
+						message += "\ncache refresh failed"
+					}
+					_ = json.NewEncoder(w).Encode(map[string]string{"type": "error", "error": message})
+				} else {
+					_, _ = w.Write([]byte("{\"type\":\"error\",\"error\":\"provider failed\"}\n"))
+				}
+			}))
+			t.Cleanup(server.Close)
+			ctx := configureRemoteSyncTest(t, server.URL)
+			resetSyncFullFlagsForTest(t)
+			var stderr bytes.Buffer
+			command := &cobra.Command{Use: syncFullCmd.Use, Args: syncFullCmd.Args, RunE: syncFullCmd.RunE}
+			command.SetContext(ctx)
+			command.SetErr(&stderr)
+			command.Flags().BoolVar(&syncNoResume, "noresume", false, "")
+			args := []string{"reader@example.test"}
+			if mode == "child-noresume" {
+				args = append(args, "--noresume")
+			}
+			command.SetArgs(args)
+			err := command.Execute()
+			switch mode {
+			case "child", "child-extra", "child-noresume":
+				require.ErrorIs(t, err, ErrSyncInterrupted)
+			default:
+				require.Error(t, err)
+			}
+			if mode == "error" {
+				assert.NotContains(t, stderr.String(), "Sync interrupted.")
+			} else {
+				assert.Equal(t, 1, strings.Count(stderr.String(), "Sync interrupted."))
+				assert.Contains(t, stderr.String(), "reader@example.test")
+				assert.NotContains(t, stderr.String(), cliSubprocessExitSentinel)
+				if mode == "child-noresume" {
+					assert.Contains(t, stderr.String(), "With --noresume, the sync starts over and skips already-imported messages.")
+					lines := strings.Split(strings.TrimSpace(stderr.String()), "\n")
+					require.Len(t, lines, 3)
+					assert.Contains(t, lines[2], "--noresume")
+				} else {
+					assert.NotContains(t, stderr.String(), "With --noresume")
+				}
+				if mode == "child-extra" {
+					assert.Equal(t, 1, strings.Count(stderr.String(), "cache refresh failed"))
+				}
+			}
+		})
+	}
+}
+
+func TestSyncResumeCommandNativeArguments(t *testing.T) {
+	resetSyncFullFlagsForTest(t)
+	root := &cobra.Command{Use: "msgvault"}
+	registerRootFlags(root)
+	command := &cobra.Command{Use: "sync-full"}
+	root.AddCommand(command)
+	command.Flags().String("query", "", "")
+	command.Flags().StringArray("folder", nil, "")
+	command.Flags().Bool("noresume", false, "")
+	command.Flags().Bool("build-cache", false, "")
+	command.Flags().Bool("no-build-cache", false, "")
+	query := `from:"a b" $HOME;echo`
+	require.NoError(t, command.ParseFlags([]string{"--config", "config file", "--home", "home dir", "--local=false", "--log-file=", "--verbose=false", "--query", query, "--folder", "A B", "--folder", "C", "--noresume", "--build-cache=false", "--", "reader@example.test"}))
+	got, err := cobraCommandArgs(command, command.Flags().Args(), true)
+	require.NoError(t, err)
+	want := []string{"--config=config file", "--home=home dir", "--local=false", "--log-file=", "--verbose=false", "sync-full", "--build-cache=false", "--folder=A B", "--folder=C", "--noresume", "--query=" + query, "--", "reader@example.test"}
+	assert.Equal(t, want, got)
+}
+
+func TestSyncFullHintCancellationPhases(t *testing.T) {
+	for _, phase := range []string{"connection", "completed"} {
+		t.Run(phase, func(t *testing.T) {
+			var cancel context.CancelFunc
+			server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				cancel()
+				<-r.Context().Done()
+			}))
+			t.Cleanup(server.Close)
+			ctx, cancel := context.WithCancel(configureRemoteSyncTest(t, server.URL))
+			defer cancel()
+			var stderr bytes.Buffer
+			command := &cobra.Command{}
+			command.SetContext(ctx)
+			command.SetErr(&stderr)
+			err := runSyncFullWithHint(command, "msgvault sync-full", false, func() (bool, error) {
+				if phase == "connection" {
+					return runSyncHTTPWithOutcome(command, daemonclient.CLISyncRequest{Full: true})
+				}
+				cancel()
+				return false, nil
+			})
+			if phase == "completed" {
+				require.NoError(t, err)
+				assert.Empty(t, stderr.String())
+			} else {
+				require.ErrorIs(t, err, context.Canceled)
+				assert.Equal(t, 1, strings.Count(stderr.String(), "Sync interrupted."))
+			}
+		})
+	}
+}
+
+func TestSyncFullHintWriteFailurePreservesInterruption(t *testing.T) {
+	want := errors.New("write failed")
+	command := &cobra.Command{}
+	command.SetErr(credentialsTestErrorWriter{err: want})
+	err := runSyncFullWithHint(command, "msgvault sync-full", false, func() (bool, error) { return true, nil })
+	require.ErrorIs(t, err, ErrSyncInterrupted)
+	require.ErrorIs(t, err, want)
+}
+
+func TestSyncResumeCommandShellArguments(t *testing.T) {
+	for _, tc := range []struct {
+		name, shell, goos, query string
+	}{
+		{"posix-ordinary", "sh", "linux", `--query=from:'a b' $HOME;echo`},
+		{"posix-control", "sh", "linux", "--query=😀\n\x1b[31m\tend\n"},
+		{"powershell-ordinary", "pwsh", "windows", `--query=from:'a b' $HOME;echo`},
+		{"powershell-control", "pwsh", "windows", "--query=😀\n\x1b[31m\tend\n"},
+		{"powershell-smart-quotes", "pwsh", "windows", "--query=subject:\u2018one\u2019 \u201ctwo\u201d $HOME;echo"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.shell == "sh" && runtime.GOOS == "windows" {
+				t.Skip("POSIX shell fixture")
+			}
+			shell, err := exec.LookPath(tc.shell)
+			if err != nil {
+				t.Skipf("%s unavailable", tc.shell)
+			}
+			fixture := testutil.SecretCommand(t, "argv")[0]
+			if runtime.GOOS != "windows" {
+				data, err := os.ReadFile(fixture)
+				require.NoError(t, err)
+				fixture = filepath.Join(t.TempDir(), "sync executable ")
+				require.NoError(t, os.WriteFile(fixture, data, 0o700))
+			}
+			want := []string{"argv", "sync-full", tc.query, "--folder=A B", "--folder=C", "--", "reader@example.test"}
+			line, err := formatCommand(fixture, want, tc.goos)
+			require.NoError(t, err)
+			var out bytes.Buffer
+			require.NoError(t, printSyncResumeCommand(&out, line, tc.goos))
+			assert.NotContains(t, out.String(), "\x1b")
+			assert.NotContains(t, out.String(), "\t")
+			assert.Equal(t, 2, strings.Count(out.String(), "\n"))
+			if tc.goos == "windows" {
+				assert.Contains(t, out.String(), "In PowerShell 7.3+, run:")
+			}
+			line = strings.TrimSpace(strings.SplitN(out.String(), "\n", 2)[1])
+			args := []string{"-c", line}
+			if tc.goos == "windows" {
+				args = []string{"-NoProfile", "-NonInteractive", "-Command", line}
+			}
+			data, err := exec.CommandContext(t.Context(), shell, args...).CombinedOutput()
+			require.NoError(t, err, "%s", data)
+			var got []string
+			require.NoError(t, json.Unmarshal(data, &got))
+			assert.Equal(t, want[1:], got)
+		})
+	}
 }
 
 func TestSyncSourceIDUsesConfiguredRemoteHTTP(t *testing.T) {

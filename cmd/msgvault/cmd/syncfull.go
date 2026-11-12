@@ -198,7 +198,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 		}
 		if len(sources) == 0 {
 			if len(syncErrors) > 0 {
-				return fmt.Errorf("%s", syncErrors[0])
+				return errors.Join(errors.New(syncErrors[0]), cmd.Context().Err())
 			}
 			return errors.New("no accounts are ready to sync")
 		}
@@ -238,28 +238,26 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		if err := runFullSync(ctx, s, getOAuthMgr, src, state); err != nil {
+		if err := runFullSync(ctx, s, getOAuthMgr, src, state, false); err != nil {
 			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
 			continue
 		}
 	}
 
-	// Rebuild analytics cache.
 	cacheErr := rebuildCacheAfterManualSync(dbPath, state)
-
+	var sourceErr error
 	if len(syncErrors) > 0 {
 		fmt.Println()
 		fmt.Println("Errors:")
 		for _, e := range syncErrors {
 			fmt.Printf("  %s\n", e)
 		}
-		return errors.Join(
-			fmt.Errorf("%d account(s) failed to sync: %s", len(syncErrors), strings.Join(syncErrors, "; ")),
-			cacheErr,
-		)
+		sourceErr = fmt.Errorf("%d account(s) failed to sync: %s", len(syncErrors), strings.Join(syncErrors, "; "))
 	}
-
-	return cacheErr
+	if ctx.Err() != nil {
+		cmd.SilenceErrors = true
+	}
+	return errors.Join(sourceErr, cacheErr, ctx.Err())
 }
 
 // buildAPIClient creates the appropriate gmail.API client for the given
@@ -603,7 +601,7 @@ func saveIMAPFolderStates(
 	return nil
 }
 
-func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), src *store.Source, state *invocation) error {
+func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), src *store.Source, state *invocation, reportInterrupt bool) error {
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
@@ -706,10 +704,12 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 	)
 	if err != nil {
 		if ctx.Err() != nil {
-			if opts.NoResume {
-				fmt.Println("\nSync interrupted. Run again to restart (already-imported messages will be skipped).")
-			} else {
-				fmt.Println("\nSync interrupted. Run again to resume.")
+			if reportInterrupt {
+				if opts.NoResume {
+					fmt.Println("\nSync interrupted. Run again to restart (already-imported messages will be skipped).")
+				} else {
+					fmt.Println("\nSync interrupted. Run again to resume.")
+				}
 			}
 			return nil
 		}

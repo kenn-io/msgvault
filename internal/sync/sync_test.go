@@ -1886,6 +1886,10 @@ func TestFullSyncNoResume(t *testing.T) {
 	summary := runFullSync(t, env)
 	assert.False(t, summary.WasResumed, "expected WasResumed to be false with NoResume option")
 	assertSummary(t, summary, WantSummary{Added: new(int64(2))})
+
+	summary = runFullSync(t, env)
+	assert.False(t, summary.WasResumed, "the next run starts over")
+	assertSummary(t, summary, WantSummary{Added: new(int64(0)), Skipped: new(int64(2))})
 }
 
 func TestFullSyncAllErrors(t *testing.T) {

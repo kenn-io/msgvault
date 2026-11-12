@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -14,6 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/shirou/gopsutil/v4/process"
 	"go.kenn.io/kit/agenthook"
@@ -690,16 +694,64 @@ func reportRetainedDaemonVersion(ctx context.Context, w io.Writer, rt *DaemonRun
 func daemonRestartCommand(ctx context.Context) string {
 	options := optionsFromContext(ctx)
 	args := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
+	restart, _ := formatNativeCommand(append(args, "daemon", "restart"))
+	return restart
+}
+
+func formatNativeCommand(args []string) (string, error) {
+	return formatCommand(nativeCommandExecutable(), args, runtime.GOOS)
+}
+
+func formatCommand(executable string, args []string, goos string) (string, error) {
+	if executable == "" {
+		return "", errors.New("executable is empty")
+	}
+	values := append([]string{executable}, args...)
+
+	var parts, assignments []string
+	for i, value := range values {
+		if !utf8.ValidString(value) || strings.IndexFunc(value, unicode.IsControl) >= 0 || (goos == "windows" && strings.ContainsAny(value, "\u2018\u2019\u201c\u201d")) {
+			if goos == "windows" {
+				var chars []string
+				for _, char := range utf16.Encode([]rune(value)) {
+					chars = append(chars, fmt.Sprintf("0x%04x", char))
+				}
+				parts = append(parts, "([string]::new([char[]]@("+strings.Join(chars, ",")+")))")
+			} else {
+				var encoded strings.Builder
+				for _, b := range []byte(value) {
+					fmt.Fprintf(&encoded, "\\0%03o", b)
+				}
+				name := fmt.Sprintf("_msgvault_arg_%d", i)
+				// The suffix keeps command substitution from dropping trailing newlines.
+				assignments = append(assignments, fmt.Sprintf("%s=$(printf '%%b_' '%s')", name, encoded.String()))
+				parts = append(parts, "\"${"+name+"%_}\"")
+			}
+			continue
+		}
+		quoted, _ := agenthook.BuildCommand("x", value)
+		if goos == "windows" {
+			parts = append(parts, strings.TrimPrefix(quoted.PowerShell, "& 'x' "))
+		} else {
+			parts = append(parts, strings.TrimPrefix(quoted.POSIX, "x "))
+		}
+	}
+	line := strings.Join(parts, " ")
+	if goos == "windows" {
+		return "& " + line, nil
+	}
+	if len(assignments) != 0 {
+		return "( " + strings.Join(assignments, "; ") + "; " + line + " )", nil
+	}
+	return line, nil
+}
+
+func nativeCommandExecutable() string {
 	executable, err := daemonCLIExecutableResolver()
 	if err != nil {
 		executable = os.Args[0]
 	}
-	commands, _ := agenthook.BuildCommand(executable, append(args, "daemon", "restart")...)
-	restart := commands.POSIX
-	if runtime.GOOS == "windows" {
-		restart = commands.PowerShell
-	}
-	return restart
+	return executable
 }
 
 func shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(rt *DaemonRuntime, currentVersion string, policy string) bool {

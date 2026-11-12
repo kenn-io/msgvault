@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/mattn/go-isatty"
@@ -63,22 +65,94 @@ func runSyncFullHTTP(cmd *cobra.Command, args []string) error {
 	if len(args) == 1 {
 		req.Email = selector.Account
 	}
-	return runSyncHTTP(cmd, req)
+	resume, err := syncResumeCommand(cmd, args)
+	if err != nil {
+		return err
+	}
+	return runSyncFullWithHint(cmd, resume, req.NoResume, func() (bool, error) {
+		return runSyncHTTPWithOutcome(cmd, req)
+	})
+}
+
+func runSyncFullWithHint(cmd *cobra.Command, resume string, noResume bool, run func() (bool, error)) error {
+	interrupted, err := run()
+	if !interrupted && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	var writeErr error
+	if detail := syncInterruptionDetails(err); detail != "" {
+		if _, err := fmt.Fprintln(cmd.ErrOrStderr(), detail); err != nil {
+			writeErr = fmt.Errorf("write sync error: %w", err)
+		}
+	}
+	if interrupted {
+		err = errors.Join(ErrSyncInterrupted, err)
+	}
+	cmd.SilenceErrors = true
+	if noResume {
+		if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "With --noresume, the sync starts over and skips already-imported messages."); err != nil {
+			writeErr = errors.Join(writeErr, fmt.Errorf("write sync restart explanation: %w", err))
+		}
+	}
+	return errors.Join(err, writeErr, printSyncResumeCommand(cmd.ErrOrStderr(), resume, runtime.GOOS))
+}
+
+func syncInterruptionDetails(err error) string {
+	if streamErr, ok := errors.AsType[*daemonclient.CLIRunError](err); ok {
+		var details []string
+		for line := range strings.SplitSeq(streamErr.Error(), "\n") {
+			if line != cliSubprocessExitSentinel {
+				details = append(details, line)
+			}
+		}
+		return strings.Join(details, "\n")
+	}
+	if err == nil || errors.Is(err, context.Canceled) {
+		return ""
+	}
+	return err.Error()
+}
+
+func syncResumeCommand(cmd *cobra.Command, args []string) (string, error) {
+	runArgs, err := cobraCommandArgs(cmd, args, true)
+	if err != nil {
+		return "", err
+	}
+	return formatNativeCommand(runArgs)
+}
+
+func printSyncResumeCommand(w io.Writer, command, goos string) error {
+	message := "Sync interrupted. To run it again, run:"
+	if goos == "windows" {
+		message = "Sync interrupted. In PowerShell 7.3+, run:"
+	}
+	if _, err := fmt.Fprintf(w, "%s\n  %s\n", message, command); err != nil {
+		return fmt.Errorf("write sync instruction: %w", err)
+	}
+	return nil
 }
 
 func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) error {
+	_, err := runSyncHTTPWithOutcome(cmd, req)
+	return err
+}
+
+func runSyncHTTPWithOutcome(cmd *cobra.Command, req daemonclient.CLISyncRequest) (bool, error) {
 	st, info, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() { _ = st.Close() }()
 
 	if err := preflightReauth(cmd.Context(), buildSyncPreflight(st, info, invocationFromCommand(cmd)), req.Email, req.SourceID); err != nil {
-		return err
+		return false, err
 	}
 
+	interrupted := false
 	err = st.RunCLISync(cmd.Context(), req, func(stream, data string) error {
 		switch stream {
+		case "outcome":
+			interrupted = interrupted || data == "interrupted"
 		case cliStreamStdout:
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), data); err != nil {
 				return fmt.Errorf("write sync stdout: %w", err)
@@ -93,7 +167,7 @@ func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) error {
 	if err == nil {
 		reportCLISyncFinished(cmd, st)
 	}
-	return err
+	return interrupted, err
 }
 
 // preflightReauthManager is the subset of oauth.Manager the sync preflight
