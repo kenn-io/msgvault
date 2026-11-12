@@ -22,6 +22,7 @@ describe('meeting panel surfaces', () => {
     window.history.replaceState(null, '', '/');
     const metrics: MeetingMetricsRequest[] = [];
     let groupLoads = 0;
+    let narrowedLoads = 0;
     const client = createAPIClient(async (input) => {
       const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
       if (path.endsWith('/meetings/metrics')) { metrics.push(await request.clone().json()); return Response.json(meetingMetrics()); }
@@ -31,11 +32,18 @@ describe('meeting panel surfaces', () => {
         if (body.group_key) {
           groupLoads += 1;
           return Response.json({ rows: [ { key: 'frequent.example', label: 'Frequent domain', count: 20, estimated_bytes: 200 }, { key: 'exact.example', label: 'Exact domain', count: 2, estimated_bytes: 20 } ], total_count: 2,
-            cache_revision: 'detail-cache', search_provenance: { lexical_index_revision: 'detail-lex', vector_generation: 2 }, candidate_snapshot_id: 'detail-candidate' });
+            cache_revision: 'lookup-cache', search_provenance: { lexical_index_revision: 'lookup-lex', vector_generation: 3 }, candidate_snapshot_id: 'lookup-candidate' });
         }
       }
       if (path.endsWith('/explore/files')) return Response.json({ files: [], total_count: 0, cache_revision: 'files-cache', search_provenance: {} });
-      if (path.endsWith('/explore')) return Response.json({ rows: [], total_count: 0, cache_revision: 'outer-cache', search_provenance: { lexical_index_revision: 'outer-lex', vector_generation: 1 }, candidate_snapshot_id: 'outer-candidate' });
+      if (path.endsWith('/explore')) {
+        const body = await request.clone().json();
+        if (body.filters?.some((filter: { dimension: string; values: string[] }) => filter.dimension === 'domain' && filter.values.includes('exact.example'))) {
+          narrowedLoads += 1;
+          return Response.json({ rows: [], total_count: 0, cache_revision: 'detail-cache', search_provenance: { lexical_index_revision: 'detail-lex', vector_generation: 2 }, candidate_snapshot_id: 'detail-candidate' });
+        }
+        return Response.json({ rows: [], total_count: 0, cache_revision: 'outer-cache', search_provenance: { lexical_index_revision: 'outer-lex', vector_generation: 1 }, candidate_snapshot_id: 'outer-candidate' });
+      }
       return ancillary(path);
     });
     const state = new ExploreState(window);
@@ -51,6 +59,7 @@ describe('meeting panel surfaces', () => {
     await screen.findByText('4 meetings');
     expect(metrics.at(-1)).toEqual(metrics[0]);
     expect(groupLoads).toBe(1);
+    expect(narrowedLoads).toBe(1);
     view.unmount(); state.destroy();
   });
 

@@ -229,7 +229,9 @@ test.describe('compact toolbar', () => {
     await expect(page.getByRole('button', { name: 'Filter', exact: true })).toHaveAttribute('aria-expanded', 'true');
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'View', exact: true }).click();
+    await expect(page.getByRole('menu', { name: 'View' })).toBeVisible();
     await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(page.getByRole('combobox', { name: 'Show as: Table' })).toBeVisible();
     await page.getByRole('grid', { name: 'Messages results' }).focus();
     await page.keyboard.press('f');
     await expect(page.getByRole('button', { name: 'Filter', exact: true })).toHaveAttribute('aria-expanded', 'true');

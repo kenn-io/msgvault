@@ -14,7 +14,7 @@ func (c *Client) VerifyPage(ctx context.Context, id string) (Page, error) {
 	if !ValidAccountID(id) {
 		return page, errors.New("invalid selected Page ID")
 	}
-	if err := c.get(ctx, "me", url.Values{fieldsParam: {"id,name,category"}}, &page); err != nil {
+	if err := c.get(ctx, "me", url.Values{"fields": {"id,name,category"}}, &page); err != nil {
 		return Page{}, err
 	}
 	// Category is Page-only evidence in the pinned SDK, not a token-type
@@ -29,7 +29,7 @@ func (c *Client) Posts(ctx context.Context, page string, edge PostEdge, after st
 	if !ValidAccountID(page) || !edge.valid() {
 		return ObjectPage{}, errors.New("invalid selected Page or discovery edge")
 	}
-	q := url.Values{fieldsParam: {"id,message,created_time,from"}, "limit": {"100"}}
+	q := url.Values{"fields": {"id,message,created_time,from"}, "limit": {"100"}}
 	if edge == AdsPosts {
 		q.Set("include_inline_create", "true")
 	}
@@ -41,7 +41,7 @@ func (c *Client) Comments(ctx context.Context, object, after string) (ObjectPage
 		return ObjectPage{}, errors.New("invalid Graph object ID")
 	}
 	return c.objects(ctx, url.PathEscape(object)+"/comments", after, url.Values{
-		fieldsParam: {facebookCommentFields}, "order": {"chronological"}, "filter": {"toplevel"}, "limit": {"100"},
+		"fields": {facebookCommentFields}, "order": {"chronological"}, "filter": {"toplevel"}, "limit": {"100"},
 	})
 }
 

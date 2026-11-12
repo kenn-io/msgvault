@@ -148,7 +148,7 @@ describe('TaskLinks', () => {
     await waitFor(() => expect(resolve).toBeTypeOf('function'));
     resolve(Response.json({ state: 'partial', complete: false, last_scan: '2026-07-19T01:00:00Z', remote_revision: 'remote-1', reason: 'safety_limit', tasks: [{ id: 'task-1', title: 'Follow up', revision: 'r1' }] }));
     expect(await screen.findByText('Follow up')).toBeDefined();
-    expect(screen.getByRole('alert').textContent).toContain('partial');
+    expect(screen.getByRole('alert').textContent).toContain('Some linked tasks may be missing');
     expect(screen.getByRole('alert').textContent).toContain('2026');
   });
 
@@ -157,7 +157,7 @@ describe('TaskLinks', () => {
     ['incompatible', 'incompatible'],
     ['unavailable', 'unavailable'],
     ['stale', 'stale'],
-    ['partial', 'partial'],
+    ['partial', 'some linked tasks may be missing'],
     ['disabled', 'disabled'],
     ['not_found', 'not found'],
     ['wrong_project', 'wrong project']
@@ -242,7 +242,7 @@ describe('TaskLinks', () => {
     const view = render(TaskLinks, { client, messageId: 42, title: 'Synthetic' });
 
     expect(await screen.findByText('Partial task')).toBeDefined();
-    expect(screen.getByRole('alert').textContent).toContain('partial');
+    expect(screen.getByRole('alert').textContent).toContain('Some linked tasks may be missing');
     expect((screen.getByRole('button', { name: 'Unlink Partial task' }) as HTMLButtonElement).disabled).toBe(false);
     await view.rerender({ mode: 'add' });
     expect(await screen.findByRole('button', { name: 'Create task' })).toBeDefined();
