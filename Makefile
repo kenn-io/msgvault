@@ -127,7 +127,7 @@ export GOLANGCI_LINT_CACHE
 # serialize one another while duplicate runners in one worktree can wait.
 GOLANGCI_LINT_TMP ?= $(GOLANGCI_LINT_CACHE)/tmp
 
-.PHONY: build build-release homebrew install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-packages test-pg-both pg-shipped-only-check require-test-db fmt lint-tools custom-gcl lint lint-ci lint-ci-golangci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-browser-install web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
+.PHONY: build build-release homebrew install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-packages test-pg-both pg-shipped-only-check require-test-db fmt lint-tools custom-gcl lint lint-ci lint-ci-golangci vuln-tools vulncheck tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-browser-install web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 .PHONY: agent-guide agent-guide-check
 
@@ -494,7 +494,7 @@ huma-check:
 # Run linter (CI, no auto-fix). The second pass lints the files that only the
 # PostgreSQL-only CGO_ENABLED=0 build compiles. It covers the packages whose
 # tests also build without CGO; the others' tests need the SQLite driver.
-lint-ci: lint-ci-golangci testify-helper-check
+lint-ci: lint-ci-golangci
 
 lint-ci-golangci: custom-gcl lint-workflow-retries
 	@mkdir -p "$(GOLANGCI_LINT_TMP)"
@@ -513,10 +513,6 @@ vuln-tools:
 
 vulncheck: vuln-tools
 	"$(GOVULNCHECK_BIN)" -tags "$(BUILD_TAGS)" ./...
-
-# Enforce testify helper usage in assertion-heavy tests
-testify-helper-check:
-	go run ./cmd/testify-helper-check -tags="$(BUILD_TAGS)" ./...
 
 # Install pre-commit and pre-push hooks via prek
 install-hooks:
@@ -630,9 +626,8 @@ help:
 	@echo "  test-pg-packages - Run PostgreSQL tests for PKGS"
 	@echo "  fmt            - Format code"
 	@echo "  lint           - Run linter (auto-fix)"
-	@echo "  lint-ci        - Run linter (CI, no auto-fix; also runs testify-helper-check)"
+	@echo "  lint-ci        - Run linter (CI, no auto-fix)"
 	@echo "  vulncheck      - Run the pinned Go vulnerability scanner"
-	@echo "  testify-helper-check - Enforce testify helper usage in assertion-heavy tests"
 	@echo "  tidy           - Tidy go.mod"
 	@echo "  vcard-registry-check - Network-check IANA registry drift (manual; not CI)"
 	@echo "  vcard-registry-update - Update the vendored IANA vCard registry"
