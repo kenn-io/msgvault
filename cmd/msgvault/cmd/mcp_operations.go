@@ -50,6 +50,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 		backend.supported = append(backend.supported, "sync_source")
 	}
 	backend.supported = append(backend.supported, deletionReviewMCPCapabilities(hasRoute)...)
+	backend.supported = append(backend.supported, "export_person_messages")
 	backend.supported = append(backend.supported, loopMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
 	return backend
@@ -62,6 +63,8 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		return operationFailure("operation_not_supported", false), nil
 	}
 	switch name {
+	case "export_person_messages":
+		return b.exportPersonMessages(ctx, args)
 	case "get_source_scheduler_status":
 		return readMCPOperationJSON[generated.SchedulerStatusResponse](ctx, b.client, http.MethodGet, "/api/v1/scheduler/status", nil, http.StatusOK)
 	case "sync_source":
