@@ -96,3 +96,77 @@ func TestIntroductionReadErrorsAndSnapshotCapacity(t *testing.T) {
 		assert.Len(t, srv.readSnapshotSlots, readSnapshotConcurrency)
 	}
 }
+
+// introductionBoundaryRecorder observes capacity before the underlying writer sends headers.
+type introductionBoundaryRecorder struct {
+	*httptest.ResponseRecorder
+	slots          chan struct{}
+	firstSlotCount int
+	observed       bool
+}
+
+func (w *introductionBoundaryRecorder) WriteHeader(status int) {
+	if !w.observed {
+		w.firstSlotCount = len(w.slots)
+		w.observed = true
+	}
+	w.ResponseRecorder.WriteHeader(status)
+}
+
+func (w *introductionBoundaryRecorder) Write(body []byte) (int, error) {
+	if !w.observed {
+		w.firstSlotCount = len(w.slots)
+		w.observed = true
+	}
+	return w.ResponseRecorder.Write(body)
+}
+
+func TestIntroductionReadReleasesSlotBeforeResponse(t *testing.T) {
+	for _, path := range []string{"/api/v1/intros", "/api/v1/intros/id"} {
+		for _, tc := range []struct {
+			name   string
+			err    error
+			status int
+		}{
+			{"success", nil, http.StatusOK},
+			{"error", store.ErrIntroductionNotFound, http.StatusNotFound},
+		} {
+			t.Run(path+"/"+tc.name, func(t *testing.T) {
+				st := &introductionTestStore{err: tc.err}
+				srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}, st, nil, testLogger())
+				t.Cleanup(srv.agentGrants.Close)
+				_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{{ID: 1, Type: "beeper", Identifier: "account"}}, time.Time{})
+				require.NoError(t, err)
+				// A separate occupied slot exposes accidental duplicate cleanup without masking the boundary check.
+				srv.readSnapshotSlots <- struct{}{}
+				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
+				req.Header.Set("X-Msgvault-Agent-Token", token)
+				response := &introductionBoundaryRecorder{ResponseRecorder: httptest.NewRecorder(), slots: srv.readSnapshotSlots}
+				done := make(chan struct{})
+				go func() {
+					srv.Router().ServeHTTP(response, req)
+					close(done)
+				}()
+				select {
+				case <-done:
+				case <-time.After(5 * time.Second):
+					assert.Fail(t, "response cleanup blocked")
+					// Unblock duplicate receives so the request can finish before cleanup.
+					for i := 0; i < 3; i++ {
+						select {
+						case <-done:
+							return
+						case srv.readSnapshotSlots <- struct{}{}:
+						}
+					}
+					<-done
+					return
+				}
+				assert.True(t, response.observed)
+				assert.Equal(t, 1, response.firstSlotCount, "only the unrelated slot should remain at the response boundary")
+				assert.Equal(t, tc.status, response.Code)
+				assert.Len(t, srv.readSnapshotSlots, 1, "deferred cleanup must not release another read's slot")
+			})
+		}
+	}
+}

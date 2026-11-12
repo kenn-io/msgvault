@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"sync"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -105,7 +106,12 @@ func (s *Server) admitIntroductionRead(w http.ResponseWriter, r *http.Request) (
 		writeError(w, http.StatusServiceUnavailable, "agent_read_busy", "Agent reads are at capacity; retry later")
 		return nil, nil, false
 	}
-	return grant, func() { <-s.readSnapshotSlots }, true
+	var once sync.Once
+	release := func() { once.Do(func() { <-s.readSnapshotSlots }) }
+	if boundary, ok := r.Context().Value(readResponseKey{}).(*readResponseWriter); ok {
+		boundary.release = release
+	}
+	return grant, release, true
 }
 
 func (s *Server) writeIntroductionError(w http.ResponseWriter, err error) {
