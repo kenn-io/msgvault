@@ -29,8 +29,8 @@ func decodeGranola(fields map[string]jsontext.Value) Content {
 	}
 	content.SourceParticipants = granolaParticipants(fields, owner)
 
-	start, startOK := rawTime(calendar["scheduled_start_time"], false)
-	end, endOK := rawTime(calendar["scheduled_end_time"], false)
+	start, startOK := rawTime(calendar["scheduled_start_time"], true)
+	end, endOK := rawTime(calendar["scheduled_end_time"], true)
 	if startOK && endOK && end.After(start) {
 		content.LinkEvidence.ScheduledAt = &start
 		seconds := end.Sub(start).Seconds()
