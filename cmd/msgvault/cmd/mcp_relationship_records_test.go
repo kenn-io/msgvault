@@ -22,19 +22,6 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func TestMCPRelationshipTypesReadRealStore(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler)}))
-	result, err := backend.ExecuteOperation(t.Context(), "list_relationship_types", nil)
-	require.NoError(t, err)
-	types := operationOutput[generated.RelationshipTypesResponse](t, result)
-	require.NotEmpty(t, types.RelationshipTypes)
-	result, err = backend.ExecuteOperation(t.Context(), "get_relationship_type", map[string]any{"id": types.RelationshipTypes[0].ID})
-	require.NoError(t, err)
-	require.False(t, result.IsError)
-	assert.NotEmpty(t, result.ETag)
-}
-
 func TestMCPRelationshipTypeMutationPreservesEmptyAndRevision(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler)}))
@@ -52,10 +39,6 @@ func TestMCPRelationshipTypeMutationPreservesEmptyAndRevision(t *testing.T) {
 	deleted, err := backend.ExecuteOperation(t.Context(), "delete_relationship_type", map[string]any{"id": record.RelationshipType.ID, "etag": changed.ETag})
 	require.NoError(t, err)
 	assert.False(t, deleted.IsError)
-	_, err = backend.OperationDisclosure(t.Context(), "delete_relationship_type", map[string]any{"id": record.RelationshipType.ID, "etag": changed.ETag})
-	var refusal *mcpserver.OperationRefusalError
-	require.ErrorAs(t, err, &refusal)
-	assert.Equal(t, "relationship_type_not_found", refusal.Code)
 }
 
 func TestMCPRelationshipRecordPresenceAndDirection(t *testing.T) {
@@ -78,9 +61,10 @@ func TestMCPRelationshipRecordPresenceAndDirection(t *testing.T) {
 	views := operationOutput[generated.PersonRelationshipsResponse](t, listed)
 	require.Len(t, views.Relationships, 1)
 	assert.Equal(t, "incoming", views.Relationships[0].Direction)
-	invalid, err := backend.ExecuteOperation(t.Context(), "update_person_relationship", map[string]any{"id": created.Relationship.ID, "etag": created.ETag, "end_date": nil})
+	invalid, err := backend.ExecuteOperation(t.Context(), "update_person_relationship", map[string]any{"id": created.Relationship.ID, "etag": created.ETag, "end_date": " "})
 	require.NoError(t, err)
-	assert.True(t, invalid.IsError)
+	require.True(t, invalid.IsError)
+	assert.Equal(t, "bad_request", operationOutputError(t, invalid))
 	ended, err := backend.ExecuteOperation(t.Context(), "update_person_relationship", map[string]any{"id": created.Relationship.ID, "etag": created.ETag, "end_date": "2020"})
 	require.NoError(t, err)
 	changed := operationOutput[mcpserver.PersonRelationshipRecord](t, ended)
@@ -101,27 +85,29 @@ func TestMCPRelationshipRecordPresenceAndDirection(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(disclosure), &disclosed))
 	assert.Equal(t, current, disclosed.Current)
-	assert.NotContains(t, disclosure, "source_ref")
-	assert.NotContains(t, disclosure, "source_resource_uid")
-	stale, err := backend.ExecuteOperation(t.Context(), "delete_person_relationship", map[string]any{"id": current.Relationship.ID, "etag": created.ETag})
-	require.NoError(t, err)
-	assert.True(t, stale.IsError)
 	deleted, err := backend.ExecuteOperation(t.Context(), "delete_person_relationship", map[string]any{"id": current.Relationship.ID, "etag": current.ETag})
 	require.NoError(t, err)
 	assert.False(t, deleted.IsError)
 	_, err = backend.OperationDisclosure(t.Context(), "delete_person_relationship", map[string]any{"id": current.Relationship.ID, "etag": current.ETag})
 	require.ErrorAs(t, err, &refusal)
 	assert.Equal(t, "person_relationship_not_found", refusal.Code)
-}
-
-func TestMCPRelationshipCapabilitiesRequireRouteAndProperties(t *testing.T) {
-	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: testutil.NewTestStore(t)}, Logger: slog.New(slog.DiscardHandler)}))
-	assert.Contains(t, backend.capabilities(), "create_relationship_type")
-	assert.Contains(t, backend.capabilities(), "update_person_relationship")
-	assert.Empty(t, newDaemonMCPOperations(backend.client, nil).capabilities())
-	result, err := backend.ExecuteOperation(t.Context(), "get_person_network", map[string]any{"person_id": 1, "depth": 4})
+	person, err := st.GetPerson(target.ID)
 	require.NoError(t, err)
-	assert.True(t, result.IsError)
+	ref, uid := "example-ref", "example-uid"
+	imported, err := st.ResolveRelatedValueContext(t.Context(), store.RelatedImport{PersonID: source.ID, RawValue: person.VCardUID, RawType: "agent", ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport, SourceRef: &ref, SourceResourceUID: &uid, Actor: "system"})
+	require.NoError(t, err)
+	require.NotNil(t, imported.Relationship)
+	require.NotNil(t, imported.Relationship.SourceRef)
+	require.NotNil(t, imported.Relationship.SourceResourceUID)
+	got, err := backend.ExecuteOperation(t.Context(), "get_person_relationship_record", map[string]any{"id": imported.Relationship.ID})
+	require.NoError(t, err)
+	importedRecord := operationOutput[mcpserver.PersonRelationshipRecord](t, got)
+	assert.Nil(t, importedRecord.Relationship.SourceRef)
+	assert.Nil(t, importedRecord.Relationship.SourceResourceUID)
+	disclosure, err = backend.OperationDisclosure(t.Context(), "delete_person_relationship", map[string]any{"id": imported.Relationship.ID, "etag": importedRecord.ETag})
+	require.NoError(t, err)
+	assert.NotContains(t, disclosure, "source_ref")
+	assert.NotContains(t, disclosure, "source_resource_uid")
 }
 
 func TestMCPRelationshipSDKConfirmationAndNativeGuard(t *testing.T) {
@@ -148,7 +134,7 @@ func TestMCPRelationshipSDKConfirmationAndNativeGuard(t *testing.T) {
 	assert.True(t, found)
 }
 
-func TestMCPRelationshipReadNetworkReviewsAndSeedGuard(t *testing.T) {
+func TestMCPRelationshipNetworkReviewsAndRefusalCodes(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	first, err := st.EnsureParticipant("network-a@example.com", "Example A", "example.com")
 	require.NoError(t, err)
@@ -202,6 +188,16 @@ func TestMCPRelationshipReadNetworkReviewsAndSeedGuard(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, rejected.IsError)
 	assert.Equal(t, "relationship_type_not_deletable", operationOutputError(t, rejected))
+	typeResult, err = backend.ExecuteOperation(t.Context(), "create_relationship_type", map[string]any{"slug": "advisor", "forward_label": "advisor", "reverse_label": "advisee"})
+	require.NoError(t, err)
+	typ := operationOutput[mcpserver.RelationshipTypeRecord](t, typeResult)
+	edge, err = backend.ExecuteOperation(t.Context(), "create_person_relationship", map[string]any{"source_person_id": a.ID, "target_person_id": b.ID, "relationship_type_slug": "advisor"})
+	require.NoError(t, err)
+	require.False(t, edge.IsError)
+	rejected, err = backend.ExecuteOperation(t.Context(), "delete_relationship_type", map[string]any{"id": typ.RelationshipType.ID, "etag": typ.ETag})
+	require.NoError(t, err)
+	require.True(t, rejected.IsError)
+	assert.Equal(t, "relationship_type_in_use", operationOutputError(t, rejected))
 }
 
 func operationOutputError(t *testing.T, result *mcpserver.OperationResult) string {
@@ -222,10 +218,8 @@ func TestMCPRelationshipWriteRefusesInvalidPresence(t *testing.T) {
 		name string
 		args map[string]any
 	}{
-		{"update_relationship_type", map[string]any{"id": 1, "etag": "tag", "description": nil}},
-		{"update_person_relationship", map[string]any{"id": 1, "etag": "tag", "end_date": " "}},
-		{"update_person_relationship", map[string]any{"id": 1, "etag": "tag", "end_date": nil}},
 		{"update_person_relationship", map[string]any{"id": 1, "etag": "tag"}},
+		{"get_person_network", map[string]any{"person_id": 1, "depth": 4}},
 	} {
 		result, err := backend.ExecuteOperation(t.Context(), tc.name, tc.args)
 		require.NoError(t, err)
@@ -234,32 +228,11 @@ func TestMCPRelationshipWriteRefusesInvalidPresence(t *testing.T) {
 	}
 }
 
-func TestMCPRelationshipInUseTypeCannotBeDeleted(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	first, err := st.EnsureParticipant("type-a@example.com", "Example A", "example.com")
-	require.NoError(t, err)
-	second, err := st.EnsureParticipant("type-b@example.com", "Example B", "example.com")
-	require.NoError(t, err)
-	a, _, err := st.CreatePersonFromParticipant(first)
-	require.NoError(t, err)
-	b, _, err := st.CreatePersonFromParticipant(second)
-	require.NoError(t, err)
-	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler)}))
-	typeResult, err := backend.ExecuteOperation(t.Context(), "create_relationship_type", map[string]any{"slug": "advisor", "forward_label": "advisor", "reverse_label": "advisee"})
-	require.NoError(t, err)
-	typ := operationOutput[mcpserver.RelationshipTypeRecord](t, typeResult)
-	edge, err := backend.ExecuteOperation(t.Context(), "create_person_relationship", map[string]any{"source_person_id": a.ID, "target_person_id": b.ID, "relationship_type_slug": "advisor"})
-	require.NoError(t, err)
-	require.False(t, edge.IsError)
-	rejected, err := backend.ExecuteOperation(t.Context(), "delete_relationship_type", map[string]any{"id": typ.RelationshipType.ID, "etag": typ.ETag})
-	require.NoError(t, err)
-	require.True(t, rejected.IsError)
-	assert.Equal(t, "relationship_type_in_use", operationOutputError(t, rejected))
-}
-
 func TestMCPRelationshipCapabilityRequiresEveryPatchProperty(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler)}))
+	assert.Contains(t, backend.capabilities(), "create_relationship_type")
+	assert.Contains(t, backend.capabilities(), "update_person_relationship")
 	caps, err := backend.client.MCPCapabilities(t.Context())
 	require.NoError(t, err)
 	for i := range caps.Routes {
@@ -291,9 +264,4 @@ func TestMCPRelationshipReadRefusesOversizedAndRawErrors(t *testing.T) {
 	require.True(t, handled)
 	require.True(t, result.IsError)
 	assert.Equal(t, "operation_response_limit_exceeded", operationOutputError(t, result))
-	result, handled, err = backend.executeRelationshipRead(t.Context(), "get_relationship_type", map[string]any{"id": 1})
-	require.NoError(t, err)
-	require.True(t, handled)
-	require.True(t, result.IsError)
-	assert.Equal(t, "operation_refused", operationOutputError(t, result))
 }

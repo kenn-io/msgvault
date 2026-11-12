@@ -75,9 +75,6 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		if result, handled, err := b.executeRelationshipWrite(ctx, name, args); handled {
 			return result, err
 		}
-		if result, handled, err := b.executeRelationshipRead(ctx, name, args); handled {
-			return result, err
-		}
 		if result, handled, err := b.executePersonRecord(ctx, name, args); handled {
 			return result, err
 		}

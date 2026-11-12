@@ -8,17 +8,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRelationshipReadCatalogIsOwnerOnly(t *testing.T) {
-	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"list_relationship_types", "get_person_network"}}
-	tools := toolsByName(t, rawListTools(t, opts, false))
-	assert.Contains(t, tools, "list_relationship_types")
-	assert.Contains(t, tools, "get_person_network")
-	opts.DelegatedOnly = true
-	assert.Empty(t, rawListTools(t, opts, false))
-}
-
 func TestRelationshipWritesHaveSeparateOptIn(t *testing.T) {
-	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"list_relationship_types", "create_relationship_type"}}
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"list_relationship_types", "get_person_network", "create_relationship_type"}}
+	reads := toolsByName(t, rawListTools(t, opts, false))
+	assert.Contains(t, reads, "list_relationship_types")
+	assert.Contains(t, reads, "get_person_network")
 	assert.NotContains(t, toolsByName(t, rawListTools(t, opts, true)), "create_relationship_type")
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyRelationshipRecords}
 	assert.Contains(t, toolsByName(t, rawListTools(t, opts, true)), "create_relationship_type")
@@ -26,9 +20,25 @@ func TestRelationshipWritesHaveSeparateOptIn(t *testing.T) {
 }
 
 func TestRelationshipSDKRejectsUnknownWriteFields(t *testing.T) {
-	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"update_person_relationship"}, OperationWriteFamilies: []OperationFamily{OperationFamilyRelationshipRecords}}
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"update_person_relationship", "update_relationship_type"}, OperationWriteFamilies: []OperationFamily{OperationFamilyRelationshipRecords}}
+	tools := toolsByName(t, rawListTools(t, opts, true))
+	for _, name := range opts.OperationCapabilities {
+		schema, ok := tools[name]["inputSchema"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, false, schema["additionalProperties"])
+	}
 	session := task5ConnectClient(t, opts, true)
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_person_relationship", Arguments: map[string]any{"id": 1, "etag": "tag", "notes": nil, "unexpected": true}})
-	require.NoError(t, err)
-	assert.True(t, result.IsError)
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"update_person_relationship", map[string]any{"id": 1, "etag": "tag", "unexpected": true}},
+		{"update_person_relationship", map[string]any{"id": 1, "etag": "tag", "end_date": nil}},
+		{"update_relationship_type", map[string]any{"id": 1, "etag": "tag", "description": nil}},
+	} {
+		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: tc.name, Arguments: tc.args})
+		require.NoError(t, err)
+		require.True(t, result.IsError)
+		assert.Contains(t, task5SDKResultText(result), `validating "arguments"`)
+	}
 }

@@ -50,22 +50,28 @@ func relationshipRecordCapabilities(hasRoute mcpRouteCheck, capabilities *apipro
 		{"update_person_relationship", "patchPersonRelationship", http.MethodPatch, "/api/v1/person-relationships/{id}", relationshipWriteBodyKeys["update_person_relationship"]},
 		{"delete_person_relationship", "deletePersonRelationship", http.MethodDelete, "/api/v1/person-relationships/{id}", nil},
 	} {
-		if hasRoute(route.id, route.method, route.path) && (len(route.properties) == 0 || mcpRequestPropertiesPresent(capabilities, route.id, route.properties...)) && (strings.HasPrefix(route.name, "create_") || strings.Contains(route.name, "relationship_type") && hasRoute("getRelationshipType", http.MethodGet, "/api/v1/relationship-types/{id}") || strings.Contains(route.name, "person_relationship") && hasRoute("getPersonRelationship", http.MethodGet, "/api/v1/person-relationships/{id}")) {
+		if hasRoute(route.id, route.method, route.path) && mcpRequestPropertiesPresent(capabilities, route.id, route.properties...) && (strings.HasPrefix(route.name, "create_") || strings.Contains(route.name, "relationship_type") && hasRoute("getRelationshipType", http.MethodGet, "/api/v1/relationship-types/{id}") || strings.Contains(route.name, "person_relationship") && hasRoute("getPersonRelationship", http.MethodGet, "/api/v1/person-relationships/{id}")) {
 			names = append(names, route.name)
 		}
 	}
 	return names
 }
 
-func relationshipTypeProjection(result *mcpserver.OperationResult, writes bool) *mcpserver.OperationResult {
+func relationshipProjection(result *mcpserver.OperationResult, writes bool) *mcpserver.OperationResult {
 	if result == nil || result.IsError {
 		return result
 	}
-	value, ok := result.Output.(generated.RelationshipType)
-	if !ok || result.ETag == "" {
+	if result.ETag == "" {
 		return operationFailure("invalid_operation_response", writes)
 	}
-	result.Output = mcpserver.RelationshipTypeRecord{ETag: result.ETag, RelationshipType: value}
+	switch value := result.Output.(type) {
+	case generated.RelationshipType:
+		result.Output = mcpserver.RelationshipTypeRecord{ETag: result.ETag, RelationshipType: value}
+	case generated.PersonRelationship:
+		result.Output = mcpserver.PersonRelationshipRecord{ETag: result.ETag, Relationship: redactPersonRelationship(value)}
+	default:
+		return operationFailure("invalid_operation_response", writes)
+	}
 	return result
 }
 
@@ -73,18 +79,6 @@ func redactPersonRelationship(value generated.PersonRelationship) generated.Pers
 	value.SourceRef = nil
 	value.SourceResourceUID = nil
 	return value
-}
-
-func personRelationshipProjection(result *mcpserver.OperationResult, writes bool) *mcpserver.OperationResult {
-	if result == nil || result.IsError {
-		return result
-	}
-	value, ok := result.Output.(generated.PersonRelationship)
-	if !ok || result.ETag == "" {
-		return operationFailure("invalid_operation_response", writes)
-	}
-	result.Output = mcpserver.PersonRelationshipRecord{ETag: result.ETag, Relationship: redactPersonRelationship(value)}
-	return result
 }
 
 type relationshipReadArguments struct {
@@ -114,13 +108,13 @@ func (b *daemonMCPOperations) executeRelationshipRead(ctx context.Context, name 
 			return operationFailure("invalid_arguments", false), true, nil
 		}
 		result, err = readMCPOperationJSONWithClassifier[generated.RelationshipType](ctx, b.client, http.MethodGet, "/api/v1/relationship-types/{id}", &generated.GetRelationshipTypeRequestOptions{PathParams: &generated.GetRelationshipTypePath{ID: input.ID}}, relationshipRefusal, http.StatusOK)
-		result = relationshipTypeProjection(result, false)
+		result = relationshipProjection(result, false)
 	case "get_person_relationship_record":
 		if !validLoopID(input.ID) {
 			return operationFailure("invalid_arguments", false), true, nil
 		}
 		result, err = readMCPOperationJSONWithClassifier[generated.PersonRelationship](ctx, b.client, http.MethodGet, "/api/v1/person-relationships/{id}", &generated.GetPersonRelationshipRequestOptions{PathParams: &generated.GetPersonRelationshipPath{ID: input.ID}}, relationshipRefusal, http.StatusOK)
-		result = personRelationshipProjection(result, false)
+		result = relationshipProjection(result, false)
 	case "list_person_relationships":
 		if !validLoopID(input.PersonID) {
 			return operationFailure("invalid_arguments", false), true, nil
@@ -140,8 +134,6 @@ func (b *daemonMCPOperations) executeRelationshipRead(ctx context.Context, name 
 			return operationFailure("invalid_arguments", false), true, nil
 		}
 		result, err = readMCPOperationJSONWithClassifier[generated.PersonNetwork](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/network", &generated.GetPersonNetworkRequestOptions{PathParams: &generated.GetPersonNetworkPath{ID: input.PersonID}, Query: &generated.GetPersonNetworkQuery{Depth: input.Depth, IncludeEnded: input.IncludeEnded}}, relationshipRefusal, http.StatusOK)
-	default:
-		return nil, false, nil
 	}
 	if result != nil && !result.IsError {
 		switch value := result.Output.(type) {
@@ -194,24 +186,14 @@ func relationshipWriteInput(name string, args map[string]any) (relationshipWrite
 	if err != nil {
 		return input, nil, false
 	}
-	bodyKeys, hasBody := relationshipWriteBodyKeys[name]
-	var hasIdentity bool
-	switch name {
-	case "create_relationship_type", "create_person_relationship":
-	case "update_relationship_type", "update_person_relationship", "delete_relationship_type", "delete_person_relationship":
-		hasIdentity = true
-	default:
-		return input, nil, false
-	}
+	bodyKeys := relationshipWriteBodyKeys[name]
+	hasIdentity := !strings.HasPrefix(name, "create_")
 	body := make(map[string]any)
 	for key, value := range args {
 		if hasIdentity && (key == "id" || key == "etag") {
 			continue
 		}
-		if !hasBody || !slices.Contains(bodyKeys, key) {
-			return input, nil, false
-		}
-		if value == nil && !(name == "update_person_relationship" && key == "notes") && !(name == "create_person_relationship" && key == "notes") && !(name == "create_relationship_type" && slices.Contains([]string{"vcard_related_type", "color", "icon", "description"}, key)) {
+		if !slices.Contains(bodyKeys, key) {
 			return input, nil, false
 		}
 		body[key] = value
@@ -234,20 +216,12 @@ func relationshipWriteInput(name string, args map[string]any) (relationshipWrite
 			return input, nil, false
 		}
 	}
-	if name == "update_person_relationship" {
-		if v, ok := body["end_date"]; ok {
-			date, ok := v.(string)
-			if !ok || strings.TrimSpace(date) == "" {
-				return input, nil, false
-			}
-		}
-	}
 	return input, body, true
 }
 
 func relationshipRefusal(code string) bool {
 	switch code {
-	case "invalid_relationship", "invalid_relationship_type", "invalid_partial_date", "invalid_status", "invalid_if_match", "if_match_required", "relationship_revision_conflict", "relationship_type_not_found", "person_relationship_not_found", "person_not_found", "relationship_type_slug_conflict", "relationship_type_related_type_conflict", "relationship_type_not_deletable", "relationship_type_in_use", "person_relationship_duplicate", "person_relationships_unavailable":
+	case "invalid_relationship", "invalid_relationship_type", "invalid_partial_date", "invalid_status", "invalid_if_match", "relationship_revision_conflict", "relationship_type_not_found", "person_relationship_not_found", "person_not_found", "relationship_type_slug_conflict", "relationship_type_related_type_conflict", "relationship_type_not_deletable", "relationship_type_in_use", "person_relationship_duplicate", "person_relationships_unavailable":
 		return true
 	}
 	return false
@@ -257,7 +231,7 @@ func (b *daemonMCPOperations) executeRelationshipWrite(ctx context.Context, name
 	switch name {
 	case "create_relationship_type", "update_relationship_type", "delete_relationship_type", "create_person_relationship", "update_person_relationship", "delete_person_relationship":
 	default:
-		return nil, false, nil
+		return b.executeRelationshipRead(ctx, name, args)
 	}
 	input, body, ok := relationshipWriteInput(name, args)
 	if !ok {
@@ -294,10 +268,10 @@ func (b *daemonMCPOperations) executeRelationshipWrite(ctx context.Context, name
 	}
 	if strings.Contains(name, "relationship_type") {
 		result, err := readMCPOperationJSONWithClassifier[generated.RelationshipType](ctx, b.client, method, path, options, relationshipRefusal, http.StatusOK, http.StatusCreated)
-		return relationshipTypeProjection(result, true), true, err
+		return relationshipProjection(result, true), true, err
 	}
 	result, err := readMCPOperationJSONWithClassifier[generated.PersonRelationship](ctx, b.client, method, path, options, relationshipRefusal, http.StatusOK, http.StatusCreated)
-	return personRelationshipProjection(result, true), true, err
+	return relationshipProjection(result, true), true, err
 }
 
 func (b *daemonMCPOperations) relationshipDisclosure(ctx context.Context, name string, args map[string]any) (string, bool, error) {
