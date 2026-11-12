@@ -66,6 +66,9 @@ func organizationInputSchema[T any](required ...string) *jsonschema.Schema {
 	s := outputSchemaFor[T]()
 	s.Required = required
 	s.AdditionalProperties = rejectAllSchema()
+	if _, ok := s.Properties["organization_id"]; ok {
+		s.Properties["organization_id"] = safeIDSchema("Durable organization ID")
+	}
 	return s
 }
 
