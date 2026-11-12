@@ -37,7 +37,7 @@
 
 <style>
   .field-picker { display: grid; gap: var(--space-pane); min-width: 0; --typeahead-max-width: none; --typeahead-min-width: 0px; }
-  .no-matches { padding-inline-start: var(--space-tight); }
+  .no-matches { padding-inline-start: var(--space-box); }
   .creation { --creation-indent: calc(var(--space-box) + 2px); display: grid; gap: var(--space-pane); min-width: 0; padding-inline-start: var(--space-box); border-inline-start: 2px solid var(--border-muted); border-start-start-radius: 0; border-end-start-radius: 0; }
   /* A pair in the indented block splits where the form's pairs below it do: its first column gives up the indent. */
   @media (min-width: 641px) {
