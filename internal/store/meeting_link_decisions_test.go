@@ -1475,3 +1475,25 @@ func TestMeetingDecisionNewestWinsAfterDedupAndPurge(t *testing.T) {
 		})
 	}
 }
+
+func TestMeetingDecisionUpdatedChoiceIsNewest(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"updated_20270314T100000Z"}}`
+	_, survivor := projectionFixture(t, st, "updated-survivor", "granola_json", raw)
+	_, duplicate := projectionFixture(t, st, "updated-duplicate", "granola_json", raw)
+	_, other := projectionFixture(t, st, "updated-other", "granola_json", raw)
+	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+	for _, step := range []struct {
+		left     int64
+		decision string
+	}{{survivor, "unlink"}, {duplicate, "unlink"}, {survivor, "link"}} {
+		_, err := st.DecideMeetingLinkContext(t.Context(), ref(step.left), ref(other), step.decision)
+		r.NoError(err)
+	}
+	_, err := st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "updated")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), ref(other))
+	r.NoError(err)
+	r.Contains(record.MessageIDs, survivor)
+}
