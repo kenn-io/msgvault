@@ -1,0 +1,9 @@
+{
+  "id": "726000000000000051",
+  "type": "GUILD_TEXT",
+  "name": "paper-trails",
+  "guild": {
+    "id": "726000000000000071",
+    "name": "Comet Workshop"
+  }
+}

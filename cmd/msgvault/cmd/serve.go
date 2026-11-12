@@ -2451,15 +2451,9 @@ func (a *storeAPIAdapter) runCLISyncWithRunner(
 		}
 		return emit(api.CLISyncEvent{Type: stream, Data: data})
 	}
-	emitWarning := func(message string) error {
-		if emit == nil {
-			return nil
-		}
-		return emit(api.CLISyncEvent{Type: "stderr", Data: message})
-	}
-	return runAfterSuccessfulAttachmentIngest(ctx, a.attachmentMaintenance, func(ctx context.Context) error {
+	return runAttachmentIngest(ctx, a.attachmentMaintenance, func(ctx context.Context) error {
 		return run(ctx, cliSyncSubprocessArgs(req), emitSubprocess)
-	}, emitWarning)
+	})
 }
 
 // emitFolderArgs appends a --folder/--skip-folder flag for each
@@ -2598,13 +2592,7 @@ func (a *storeAPIAdapter) runCLIRepairMessageWithRunner(
 	if req.Audit {
 		return runRepair(ctx)
 	}
-	emitWarning := func(message string) error {
-		if emit == nil {
-			return nil
-		}
-		return emit(api.CLIRepairMessageEvent{Type: "stderr", Data: message})
-	}
-	return runAfterSuccessfulAttachmentIngest(ctx, a.attachmentMaintenance, runRepair, emitWarning)
+	return runAttachmentIngest(ctx, a.attachmentMaintenance, runRepair)
 }
 
 func cliRepairMessageSubprocessArgs(req api.CLIRepairMessageRequest) []string {
@@ -2728,18 +2716,7 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 			ctx, a.attachmentMaintenance, runSubprocess, emitWarning,
 		)
 	}
-	emitWarning := func(message string) error {
-		if emit == nil {
-			return nil
-		}
-		return emit(api.CLIRunEvent{Type: "stderr", Data: message})
-	}
-	return runAfterSuccessfulAttachmentIngest(
-		ctx,
-		a.attachmentMaintenance,
-		runSubprocess,
-		emitWarning,
-	)
+	return runAttachmentIngest(ctx, a.attachmentMaintenance, runSubprocess)
 }
 
 // Lease each media write so downloads can proceed while packing runs.

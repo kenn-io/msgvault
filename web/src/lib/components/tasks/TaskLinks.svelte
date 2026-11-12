@@ -254,7 +254,7 @@
           : indexState === 'incompatible'
             ? 'The configured task service is incompatible.'
             : indexState === 'partial'
-              ? `The reverse index is partial${lastScan ? ` (last scanned ${new Date(lastScan).toLocaleString()})` : ''}; an empty result is not authoritative.`
+              ? `Some linked tasks may be missing${lastScan ? ` (last scanned ${new Date(lastScan).toLocaleString()})` : ''}.`
               : indexState === 'stale'
                 ? `The linked-task index is stale${lastScan ? ` (last scanned ${new Date(lastScan).toLocaleString()})` : ''}.`
                 : indexState === 'unavailable'
