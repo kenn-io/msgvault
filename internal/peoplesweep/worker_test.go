@@ -1344,7 +1344,7 @@ func TestHowWeMetWorkerGatesAndStoreErrors(t *testing.T) {
 		worker := Worker{Config: config, Store: st, HowWeMet: recorder}
 		require.ErrorIs(t, worker.reconcile(t.Context(), profile, catalog, time.Now(), RunRequest{}), sentinel)
 	})
-	t.Run("disabled", func(t *testing.T) {
+	t.Run("disabled gate precedes how-we-met hook", func(t *testing.T) {
 		disabled := config
 		disabled.Enabled = false
 		st := &workerFailureStore{gapResults: []GapResult{page}}

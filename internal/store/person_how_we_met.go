@@ -36,13 +36,13 @@ func renderHowWeMet(first *firstAppearance) string {
 		}
 		return fmt.Sprintf("%s introduced them by email in %s.", name, month)
 	case FirstContactOwnerOutreach:
-		return fmt.Sprintf("You contacted them by %s in %s.", channel, month)
+		return fmt.Sprintf("In your archive, you contacted them first by %s in %s.", channel, month)
 	case FirstContactInboundOutreach:
-		return fmt.Sprintf("They contacted you by %s in %s.", channel, month)
+		return fmt.Sprintf("In your archive, they contacted you first by %s in %s.", channel, month)
 	case FirstContactGroupShared:
-		return fmt.Sprintf("You shared a group conversation in %s.", month)
+		return fmt.Sprintf("In your archive, they first appeared in a group conversation in %s.", month)
 	case FirstContactMeeting:
-		return fmt.Sprintf("You shared a meeting in %s.", month)
+		return fmt.Sprintf("In your archive, they first appeared in a meeting in %s.", month)
 	default:
 		return ""
 	}
@@ -56,7 +56,29 @@ func (s *Store) FillPersonHowWeMetContext(ctx context.Context, request peopleswe
 		return err
 	}
 	for _, personID := range request.PersonIDs {
-		_, err := s.runAttributeWrite(ctx, "fill how we met", false, func(tx *loggedTx, _ time.Time) (*attributeValueWrite, error) {
+		text, ref := "", ""
+		err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+			first, err := s.firstAppearanceTx(ctx, tx, personID)
+			if err != nil {
+				return err
+			}
+			if first != nil && (after == nil || !first.event.OccurredAt.Before(*after)) && (before == nil || first.event.OccurredAt.Before(*before)) {
+				var allowed bool
+				query := `SELECT EXISTS(SELECT 1 FROM messages m WHERE m.id = ? AND (` + personSweepHistoricalLanePredicate(request.AllowedSources) + `))`
+				if err := tx.QueryRowContext(ctx, query, first.event.MessageID).Scan(&allowed); err != nil {
+					return err
+				}
+				if allowed {
+					text = renderHowWeMet(first)
+					ref = fmt.Sprintf("%s%s:%d", firstAppearanceSourcePrefix, first.kind, first.event.MessageID)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("fill how we met for person %d: %w", personID, err)
+		}
+		_, err = s.runAttributeWrite(ctx, "fill how we met", false, func(tx *loggedTx, _ time.Time) (*attributeValueWrite, error) {
 			empty := &attributeValueWrite{}
 			var slug string
 			err := tx.QueryRowContext(ctx, `SELECT slug FROM attribute_definitions WHERE universal_id = ? AND object_type = ?`, AttributeUniversalIDHowWeMet, string(AttributeObjectPerson)).Scan(&slug)
@@ -106,22 +128,6 @@ func (s *Store) FillPersonHowWeMetContext(ctx context.Context, request peopleswe
 			ours := found && current.Source == ProvenanceSystem && current.SourceRef != nil && strings.HasPrefix(*current.SourceRef, firstAppearanceSourcePrefix)
 			if found && !ours {
 				return empty, nil
-			}
-			first, err := s.firstAppearanceTx(ctx, tx, personID)
-			if err != nil {
-				return nil, err
-			}
-			text, ref := "", ""
-			if first != nil && (after == nil || !first.event.OccurredAt.Before(*after)) && (before == nil || first.event.OccurredAt.Before(*before)) {
-				var allowed bool
-				query := `SELECT EXISTS(SELECT 1 FROM messages m WHERE m.id = ? AND (` + personSweepHistoricalLanePredicate(request.AllowedSources) + `))`
-				if err := tx.QueryRowContext(ctx, query, first.event.MessageID).Scan(&allowed); err != nil {
-					return nil, err
-				}
-				if allowed {
-					text = renderHowWeMet(first)
-					ref = fmt.Sprintf("%s%s:%d", firstAppearanceSourcePrefix, first.kind, first.event.MessageID)
-				}
 			}
 			if text == "" && !ours {
 				return empty, nil

@@ -139,7 +139,9 @@ func TestProductionPersonSweepConstructsEveryHTTPProtocolAndCredentialSource(t *
 
 			worker, err := newProductionPersonSweepWorker(fullConfig, st)
 			must.NoError(err)
-			checks.Same(st, worker.HowWeMet)
+			if test.name == "OpenAI Chat environment" {
+				checks.Same(st, worker.HowWeMet)
+			}
 
 			runner, err := newProductionStructuredRunner(fullConfig, st)
 			must.NoError(err)

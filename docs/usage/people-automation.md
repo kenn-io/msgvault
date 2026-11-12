@@ -87,6 +87,8 @@ appearance](/docs/usage/people/#see-a-persons-first-archived-appearance). For
 example, it may write “Sam Example introduced them by email in March 2021.”
 This deterministic step uses event metadata and does not request a model or
 read message bodies. It does not require a successful provider check.
+A run fills or retires this field for every tracked person: `--limit` caps
+extraction claims, while `--person` restricts the fill to that person.
 
 The selected first appearance must fall within the profile's allowed source
 lanes and date range; the sweep does not substitute a later event. When that
