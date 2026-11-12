@@ -5787,13 +5787,20 @@ and [session pricing](https://developers.google.com/maps/documentation/places/we
 Set `[federation] role = "spoke"` on a personal archive and run
 `msgvault federation identity` to obtain its archive UID. On a dedicated hub,
 run `msgvault federation enroll --spoke-instance <uid> --member <handle>`.
-Optionally supply `--spoke-name` and `--hub-url https://hub.example.org`. The
+The UID is 64 lowercase hexadecimal digits. The member handle is 1–64
+lowercase ASCII letters, digits, dots, underscores or hyphens, starting with a
+letter or digit. Optionally supply `--spoke-name` (at most 128 bytes, without
+control characters) and `--hub-url https://hub.example.org`. The
 URL must be an HTTPS origin, except that loopback origins can use HTTP.
 The command prints the one-time token to standard output and a token-free join
-command to standard error. Save the token securely; it cannot be retrieved again.
+command for the upcoming `federation join` to standard error. Save the token
+securely; it cannot be retrieved again.
 Without `--hub-url`, the join command uses a placeholder. `--json` prints the
 response, including the token, once. Joining is not yet available.
 
 Use `msgvault federation enrollments list [--json]` to inspect enrollments and
-`msgvault federation revoke <enrollment-uid>` to revoke one. Enrollment alone
-shares no messages or sources.
+`msgvault federation revoke <enrollment-uid>` to revoke one. The last-seen value
+is the last handshake the hub recorded; `-` means none was recorded. If a token
+is lost, list enrollments, revoke the one never seen, and enroll again.
+Enrolling the same spoke twice leaves both enrollments active until you revoke
+one. Enrollment alone shares no messages or sources.

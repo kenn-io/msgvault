@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/store"
@@ -109,8 +110,7 @@ func (s *Server) handleFederationHandshake(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := s.federationStore.TouchFederationEnrollmentContext(r.Context(), auth.Federation.EnrollmentUID); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "Could not update enrollment")
-		return
+		s.logger.Warn("federation last-seen update failed", "enrollment_uid", auth.Federation.EnrollmentUID, "error", err)
 	}
 	e := auth.Federation
 	writeJSON(w, http.StatusOK, federationHandshakeResponse{[]int{1}, uid, federationHandshakeEnrollment{e.EnrollmentUID, e.Member, e.SpokeName, "active"}})
@@ -144,7 +144,12 @@ func (s *Server) handleFederationCreate(w http.ResponseWriter, r *http.Request) 
 	}
 	e, token, err := s.federationStore.CreateFederationEnrollmentContext(r.Context(), req.SpokeInstance, req.Member, req.SpokeName)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid enrollment request")
+		if errors.Is(err, store.ErrFederationValidation) {
+			message := strings.TrimSuffix(err.Error(), ": "+store.ErrFederationValidation.Error())
+			writeError(w, http.StatusBadRequest, "invalid_request", message)
+		} else {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Could not create enrollment")
+		}
 		return
 	}
 	writeJSON(w, http.StatusCreated, federationCreateResponse{*e, token, uid})

@@ -253,14 +253,6 @@ func withAPIKeySecurity(op huma.Operation) huma.Operation {
 func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 	req, _ := humago.Unwrap(ctx)
 	auth := s.requestAuthentication(req)
-	if auth.Mode == AuthModeFederation {
-		if op := ctx.Operation(); op != nil && op.OperationID == "getFederationHandshake" {
-			next(ctx)
-			return
-		}
-		writeHumaError(ctx, http.StatusForbidden, "forbidden", "Operation is not available to federation credentials")
-		return
-	}
 	if auth.Mode == AuthModeDelegated {
 		if op := ctx.Operation(); op != nil && delegatedOperationAllowed(op.OperationID) {
 			permission, err := agentReadPermission(op.OperationID, auth.Grant)

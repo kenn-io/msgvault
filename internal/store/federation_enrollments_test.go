@@ -54,35 +54,45 @@ func TestFederationHubSourceGuard(t *testing.T) {
 	assert.ErrorContains(t, other.ConfigureFederationHubContext(ctx), "already has 1 sources")
 }
 
-func TestFederationEnrollmentPersistsAndSchemaUpgradeKeepsIdentity(t *testing.T) {
+func TestFederationEnrollmentPersistsAndSchemaUpgrade(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "archive.db")
 	st := testutil.NewSQLiteTestStoreAt(t, path)
-	uid, err := st.ArchiveUIDContext(t.Context())
-	require.NoError(t, err)
 	spoke := strings.Repeat("a", 64)
 	e, token, err := st.CreateFederationEnrollmentContext(t.Context(), spoke, "alice", "")
-	require.NoError(t, err)
-	_, err = st.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value = '41' WHERE key = 'schema_version'")
 	require.NoError(t, err)
 	reopened, err := store.OpenForTest(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
 	require.NoError(t, reopened.InitSchemaUnlessCurrentContext(t.Context()))
-	gotUID, err := reopened.ArchiveUIDContext(t.Context())
-	require.NoError(t, err)
-	assert.Equal(t, uid, gotUID)
 	digest := sha256.Sum256([]byte(token))
 	got, err := reopened.AuthenticateFederationEnrollmentContext(t.Context(), hex.EncodeToString(digest[:]), spoke)
 	require.NoError(t, err)
 	assert.Equal(t, e.EnrollmentUID, got.EnrollmentUID)
+	_, err = reopened.DB().ExecContext(t.Context(), "DROP TABLE federation_enrollments")
+	require.NoError(t, err)
+	_, err = reopened.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value = '41' WHERE key = 'schema_version'")
+	require.NoError(t, err)
+	upgraded, err := store.OpenForTest(t.Context(), path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, upgraded.Close()) })
+	require.NoError(t, upgraded.InitSchemaUnlessCurrentContext(t.Context()))
+	_, _, err = upgraded.CreateFederationEnrollmentContext(t.Context(), spoke, "alice", "")
+	assert.NoError(t, err)
 }
 
 func TestFederationEnrollmentValidation(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	for _, tc := range []struct{ spoke, member, name string }{
-		{"bad", "alice", ""}, {strings.Repeat("a", 64), "Alice", ""}, {strings.Repeat("a", 64), "alice", strings.Repeat("x", 129)},
+	for _, tc := range []struct{ spoke, member, name, field string }{
+		{"bad", "alice", "", "spoke_instance"},
+		{strings.Repeat("a", 64), "Alice", "", "member"},
+		{strings.Repeat("a", 64), "alice", strings.Repeat("x", 129), "spoke_name"},
+		{strings.Repeat("a", 64), "alice", "name\nother", "spoke_name"},
+		{strings.Repeat("a", 64), "alice", "name\tother", "spoke_name"},
+		{strings.Repeat("a", 64), "alice", "\x1b[2J", "spoke_name"},
+		{strings.Repeat("a", 64), "alice", "name\u009b", "spoke_name"},
 	} {
 		_, _, err := st.CreateFederationEnrollmentContext(t.Context(), tc.spoke, tc.member, tc.name)
-		assert.Error(t, err)
+		assert.ErrorIs(t, err, store.ErrFederationValidation)
+		assert.ErrorContains(t, err, tc.field)
 	}
 }

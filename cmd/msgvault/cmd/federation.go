@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/netguard"
@@ -65,12 +66,12 @@ func init() {
 		if _, err := fmt.Fprintln(cmd.OutOrStdout(), result.Token); err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(cmd.ErrOrStderr(), "Enrollment: %s\nMember: %s\nSpoke: %s\nJoin: msgvault federation join %s --hub-instance %s --token-file <path>\n", result.Enrollment.EnrollmentUID, result.Enrollment.Member, result.Enrollment.SpokeName, origin, result.HubInstance)
+		_, err = fmt.Fprintf(cmd.ErrOrStderr(), "Enrollment: %s\nMember: %s\nSpoke: %s\nJoin (upcoming, not in this release): msgvault federation join %s --hub-instance %s --token-file <path>\n", result.Enrollment.EnrollmentUID, result.Enrollment.Member, result.Enrollment.SpokeName, origin, result.HubInstance)
 		return err
 	}}
-	enroll.Flags().StringVar(&spoke, "spoke-instance", "", "Spoke archive UID")
-	enroll.Flags().StringVar(&member, "member", "", "Member handle")
-	enroll.Flags().StringVar(&name, "spoke-name", "", "Spoke display name")
+	enroll.Flags().StringVar(&spoke, "spoke-instance", "", "Spoke archive UID (64 lowercase hexadecimal digits)")
+	enroll.Flags().StringVar(&member, "member", "", "Member handle: 1–64 lowercase ASCII letters, digits, dots, underscores or hyphens; start with a letter or digit")
+	enroll.Flags().StringVar(&name, "spoke-name", "", "Spoke display name (up to 128 bytes; no control characters)")
 	enroll.Flags().StringVar(&hub, "hub-url", "", "Public hub origin")
 	enroll.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	var listJSON bool
@@ -91,7 +92,11 @@ func init() {
 			if e.RevokedAt != nil {
 				state = "revoked"
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", e.EnrollmentUID, e.Member, e.SpokeName, state)
+			lastSeen := "-"
+			if e.LastSeenAt != nil {
+				lastSeen = e.LastSeenAt.UTC().Format(time.RFC3339)
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", e.EnrollmentUID, e.Member, e.SpokeName, state, lastSeen)
 		}
 		return nil
 	}}

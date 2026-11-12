@@ -67,6 +67,26 @@ func TestFederationEnrollOutput(t *testing.T) {
 	token := strings.TrimSpace(stdout.String())
 	assert.True(t, strings.HasPrefix(token, "mvf1_"))
 	assert.NotContains(t, stderr.String(), token)
-	assert.Contains(t, stderr.String(), "join <hub-url>")
+	assert.Contains(t, stderr.String(), "Join (upcoming, not in this release): msgvault federation join <hub-url>")
 	assert.NotContains(t, stderr.String(), srv.URL)
+
+	listTemplate, _, err := rootCmd.Find([]string{"federation", "enrollments", "list"})
+	require.NoError(t, err)
+	list := &cobra.Command{Use: listTemplate.Use, Args: listTemplate.Args, RunE: listTemplate.RunE}
+	list.Flags().AddFlagSet(listTemplate.Flags())
+	var output bytes.Buffer
+	list.SetOut(&output)
+	require.NoError(t, list.ExecuteContext(ctx))
+	assert.Contains(t, output.String(), "\talice\talice\tactive\t-\n")
+	entries, err := st.ListFederationEnrollmentsContext(t.Context())
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.NoError(t, st.TouchFederationEnrollmentContext(t.Context(), entries[0].EnrollmentUID))
+	output.Reset()
+	require.NoError(t, list.ExecuteContext(ctx))
+	assert.Contains(t, output.String(), "\talice\talice\tactive\t")
+	assert.NotContains(t, output.String(), "\t-\n")
+	command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "Alice"})
+	err = command.ExecuteContext(ctx)
+	assert.ErrorContains(t, err, "member must be 1–64 lowercase ASCII")
 }

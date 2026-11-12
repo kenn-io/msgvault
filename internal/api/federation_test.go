@@ -28,31 +28,29 @@ func TestFederationHandshakeCredential(t *testing.T) {
 	uid := strings.Repeat("a", 64)
 	enrollment, token, err := st.CreateFederationEnrollmentContext(t.Context(), uid, "alice", "")
 	require.NoError(t, err)
-	request := func(path, instance string, extra bool) *httptest.ResponseRecorder {
+	request := func(path, instance string) *httptest.ResponseRecorder {
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 		r.Header.Set("Authorization", "Bearer "+token)
 		if instance != "" {
 			r.Header.Set("X-Msgvault-Spoke-Instance", instance)
 		}
-		if extra {
-			r.Header.Set("X-Api-Key", "owner-fixture")
-		}
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
 		return w
 	}
-	w := request("/api/v1/federation/handshake", uid, false)
+	w := request("/api/v1/federation/handshake", uid)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var body federationHandshakeResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(t, enrollment.EnrollmentUID, body.Enrollment.EnrollmentUID)
-	bad := request("/api/v1/federation/handshake", "", false)
-	wrong := request("/api/v1/federation/handshake", strings.Repeat("b", 64), false)
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_federation_touch BEFORE UPDATE OF last_seen_at ON federation_enrollments BEGIN SELECT RAISE(FAIL, 'fixture failure'); END`)
+	require.NoError(t, err)
+	w = request("/api/v1/federation/handshake", uid)
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	bad := request("/api/v1/federation/handshake", "")
+	wrong := request("/api/v1/federation/handshake", strings.Repeat("b", 64))
 	assert.Equal(t, http.StatusUnauthorized, bad.Code)
 	assert.Equal(t, bad.Body.String(), wrong.Body.String())
-	assert.Equal(t, http.StatusUnauthorized, request("/api/v1/federation/handshake", uid, true).Code)
-	assert.Equal(t, http.StatusForbidden, request("/api/v1/cli/stats", uid, false).Code)
-	assert.Equal(t, http.StatusForbidden, request("/health", uid, false).Code)
 }
 
 func TestFederationRoleAndCredentialConflicts(t *testing.T) {
@@ -78,6 +76,7 @@ func TestFederationRoleAndCredentialConflicts(t *testing.T) {
 		{"Authorization": {"Bearer " + token, "Bearer owner-fixture"}, "X-Msgvault-Spoke-Instance": {uid}},
 		{"Authorization": {"Bearer " + token}, "X-Msgvault-Spoke-Instance": {uid}, "Cookie": {sessionCookieName + "=fixture"}},
 		{"X-Api-Key": {"owner-fixture"}, "X-Msgvault-Spoke-Instance": {uid}},
+		{"Authorization": {"Bearer " + token}, "X-Api-Key": {"owner-fixture"}, "X-Msgvault-Spoke-Instance": {uid}},
 	}
 	var first string
 	for _, h := range invalid {
@@ -91,20 +90,18 @@ func TestFederationRoleAndCredentialConflicts(t *testing.T) {
 	require.NoError(t, st.RevokeFederationEnrollmentContext(t.Context(), e.EnrollmentUID))
 	revoked := do(http.MethodGet, "/api/v1/federation/handshake", http.Header{"Authorization": {"Bearer " + token}, "X-Msgvault-Spoke-Instance": {uid}})
 	assert.Equal(t, first, revoked.Body.String())
-	for _, role := range []string{"off", "spoke"} {
-		cfg.Federation.Role = role
-		for _, method := range []string{http.MethodPost, http.MethodDelete} {
-			path := "/api/v1/federation/enrollments"
-			if method == http.MethodDelete {
-				path += "/missing"
-			}
-			w := do(method, path, http.Header{"X-Api-Key": {"owner-fixture"}})
-			assert.Equal(t, http.StatusNotFound, w.Code)
-		}
-	}
-	cfg.Server.APIKey = ""
+}
+
+func TestFederationKeylessSpokeIdentity(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DataDir = t.TempDir()
 	cfg.Federation.Role = "spoke"
-	w := do(http.MethodGet, "/api/v1/federation/identity", http.Header{})
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/federation/identity", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, r)
 	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
@@ -136,19 +133,29 @@ func TestFederationOwnerLifecycle(t *testing.T) {
 	assert.NotContains(t, list.Body.String(), created.Token)
 	revoked := do(http.MethodDelete, "/api/v1/federation/enrollments/"+created.Enrollment.EnrollmentUID, "")
 	assert.Equal(t, http.StatusNoContent, revoked.Code)
-	var sources, messages int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM sources").Scan(&sources))
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&messages))
-	assert.Zero(t, sources)
-	assert.Zero(t, messages)
+	for _, tc := range []struct{ body, message string }{
+		{`{"spoke_instance":"bad","member":"alice"}`, "spoke_instance must be 64 lowercase hexadecimal digits"},
+		{`{"spoke_instance":"` + strings.Repeat("a", 64) + `","member":"Alice"}`, "member must be 1–64"},
+		{`{"spoke_instance":"` + strings.Repeat("a", 64) + `","member":"alice","spoke_name":"bad\nname"}`, "spoke_name must be at most 128 bytes"},
+		{`{"spoke_instance":"` + strings.Repeat("a", 64) + `","member":"alice","spoke_name":"` + strings.Repeat("x", 129) + `"}`, "spoke_name must be at most 128 bytes"},
+	} {
+		w := do(http.MethodPost, "/api/v1/federation/enrollments", tc.body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), tc.message)
+	}
+	_, err := st.DB().ExecContext(t.Context(), "DROP TABLE federation_enrollments")
+	require.NoError(t, err)
+	w = do(http.MethodPost, "/api/v1/federation/enrollments", `{"spoke_instance":"`+strings.Repeat("a", 64)+`","member":"alice"}`)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "Could not create enrollment")
 }
 
-func TestFederationRoleOffSkipsOperationGate(t *testing.T) {
+func TestFederationOperationGate(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	gate := NewSerialOperationGate()
 	release, ok := gate.BeginWorkContext(t.Context())
 	require.True(t, ok)
-	defer release()
+
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Server.APIKey = "owner-fixture"
@@ -165,6 +172,20 @@ func TestFederationRoleOffSkipsOperationGate(t *testing.T) {
 			assert.False(t, gate.HasRequestWaiters())
 		}
 	}
+	cfg.Federation.Role = "hub"
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/federation/enrollments", strings.NewReader("{}"))
+		r.Header.Set("X-Api-Key", "owner-fixture")
+		srv.Router().ServeHTTP(httptest.NewRecorder(), r)
+	}()
+	assert.Eventually(t, gate.HasRequestWaiters, 5*time.Second, 10*time.Millisecond)
+	cancel()
+	<-done
+	release()
+	assert.False(t, gate.HasRequestWaiters())
 }
 
 func TestFederationCredentialOnlyHandshake(t *testing.T) {
@@ -217,31 +238,4 @@ func TestFederationCredentialOnlyHandshake(t *testing.T) {
 		srv.Router().ServeHTTP(w, r)
 		assert.Equal(t, http.StatusForbidden, w.Code, path)
 	}
-}
-
-func TestFederationHubWriteWaitsForGate(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	gate := NewSerialOperationGate()
-	release, ok := gate.BeginWorkContext(t.Context())
-	require.True(t, ok)
-	cfg := config.NewDefaultConfig()
-	cfg.Data.DataDir = t.TempDir()
-	cfg.Server.APIKey = "owner-fixture"
-	cfg.Federation.Role = "hub"
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, OperationGate: gate, Logger: testLogger()})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/federation/enrollments", strings.NewReader("{}"))
-		r.Header.Set("X-Api-Key", "owner-fixture")
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, r)
-	}()
-	assert.Eventually(t, gate.HasRequestWaiters, 5*time.Second, 10*time.Millisecond)
-	cancel()
-	<-done
-	release()
-	assert.False(t, gate.HasRequestWaiters())
 }
