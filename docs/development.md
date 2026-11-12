@@ -563,18 +563,18 @@ ignored.
 ## API schema version maintenance
 
 When the HTTP API contract changes, bump `APISchemaVersion` in
-`internal/api/openapi.go` and run `make api-generate` and `make web-generate`.
-`TestAPISchemaVersionContract` hashes both generated documents. It tracks routes,
-parameters, requests, responses, tags, schemas, constraints, defaults, and
+`internal/api/openapi.go`. `TestAPISchemaVersionContract` hashes both generated
+documents. It tracks routes, parameters, requests, responses, tags, schemas,
+constraints, defaults, and
 extensions. It ignores wording such as descriptions, summaries, titles, examples,
 and external documentation. Handler changes that leave the documents unchanged
 still need an explicit version bump when they change the API contract.
 
 Add a marker under `internal/api/testdata/api-version-contracts/` using the path
-printed by the test. Replace `<summary-sha256>` with the SHA-256 of the one-line
-summary, without its trailing newline. For example, calculate it with
-`printf '%s' 'Your summary' | sha256sum`, then put that summary in the marker
-file. Each marker has its own summary. Different summaries for the same contract
+printed by the test. Put a one-line summary in the file, then replace
+`<summary-sha256>` in its name with the hash from
+`printf '%s' 'Your summary' | sha256sum`.
+Each marker has its own summary. Different summaries for the same contract
 produce different paths; the guard treats them as the same contract.
 
 Keep every contract recorded on the base. To correct a summary, rename its marker

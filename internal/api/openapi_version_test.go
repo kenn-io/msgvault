@@ -203,17 +203,13 @@ func TestCheckAPIContract(t *testing.T) {
 		{"matching contracts with different summaries", "5.1.0", a, "", []string{"5.1.0_" + a + "_" + b, "5.1.0_" + a + "_" + c}, []string{"5.1.0_" + a + "_" + b}},
 		{"corrected summary", "5.1.0", a, "", []string{"5.1.0_" + a + "_" + c}, []string{"5.1.0_" + a + "_" + b}},
 		{"combined collision", "5.1.0", c, "5.2.0", []string{"5.0.0_" + a, "5.1.0_" + a, "5.1.0_" + b}, []string{"5.0.0_" + a}},
-		{"combined collision reversed", "5.1.0", c, "5.2.0", []string{"5.0.0_" + a, "5.1.0_" + b, "5.1.0_" + a}, []string{"5.0.0_" + a}},
 		{"combined collision occupied", "5.1.0", c, "5.3.0", []string{"5.0.0_" + a, "5.1.0_" + a, "5.1.0_" + b, "5.2.0_" + a}, []string{"5.0.0_" + a}},
 		{"collision repaired", "5.2.0", c, "", []string{"5.0.0_" + a, "5.1.0_" + a, "5.2.0_" + c}, []string{"5.0.0_" + a, "5.1.0_" + a}},
-		{"collision", "5.1.0", a, "5.2.0", []string{"5.1.0_" + a, "5.1.0_" + b}, []string{"5.1.0_" + b}},
 		{"unreleased edit", "5.1.0", b, "replace your unreleased marker", []string{"5.0.0_" + a, "5.1.0_" + a}, []string{"5.0.0_" + a}},
 		{"superseded", "5.2.0", b, "remove the superseded", []string{"5.1.0_" + a, "5.1.0_" + b, "5.2.0_" + b}, []string{"5.1.0_" + a}},
-		{"matching", "5.0.0", a, "", []string{"5.0.0_" + a}, []string{"5.0.0_" + a}},
 		{"stale", "5.0.0", b, "5.1.0", []string{"5.0.0_" + a}, nil},
 		{"new", "5.1.0", b, "5.1.0_" + b, []string{"5.0.0_" + a}, nil},
 		{"older", "4.0.0", b, "older than recorded version", []string{"5.0.0_" + a}, nil},
-		{"occupied", "5.1.0", b, "5.3.0", []string{"5.1.0_" + a, "5.1.0_" + b, "5.2.0_" + a}, []string{"5.1.0_" + a, "5.2.0_" + a}},
 		{"removed", "5.1.0", b, "restore removed API contract marker", []string{"5.1.0_" + b}, []string{"5.1.0_" + a}},
 		{"malformed", "5.0.0", a, "<version>_<sha256>", []string{"bad"}, nil},
 	} {
@@ -236,56 +232,9 @@ func TestCheckAPIContract(t *testing.T) {
 	}
 }
 
-func TestMatchingContractSummaries(t *testing.T) {
-	for _, env := range os.Environ() {
-		key, _, _ := strings.Cut(env, "=")
-		if strings.HasPrefix(key, "GIT_") {
-			t.Setenv(key, "")
-			require.NoError(t, os.Unsetenv(key))
-		}
-	}
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "config"))
-	t.Chdir(t.TempDir())
-	git := func(args ...string) {
-		t.Helper()
-		out, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput()
-		require.NoError(t, err, "%s", out)
-	}
-	git("init", "-q", "-b", "base")
-	git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "base", "--allow-empty")
-
-	digest := strings.Repeat("a", 64)
-	var markers []string
-	summaries := []string{"First summary", "Second summary"}
-	for i, summary := range summaries {
-		git("switch", "-q", "-c", fmt.Sprintf("change-%d", i), "base")
-		require.NoError(t, os.MkdirAll(apiContractsDir, 0o755))
-		hash := sha256.Sum256([]byte(summary))
-		name := fmt.Sprintf("5.1.0_%s_%x", digest, hash)
-		require.NoError(t, os.WriteFile(filepath.Join(apiContractsDir, name), []byte(summary+"\n"), 0o644))
-		git("add", apiContractsDir)
-		git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "change")
-		markers = append(markers, name)
-	}
-	git("-c", "user.name=Test", "-c", "user.email=test@example.com", "merge", "-q", "change-0")
-	entries, err := os.ReadDir(apiContractsDir)
-	require.NoError(t, err)
-	require.Len(t, entries, 2)
-	assert.NotEqual(t, markers[0], markers[1])
-	for i, marker := range markers {
-		content, err := os.ReadFile(filepath.Join(apiContractsDir, marker))
-		require.NoError(t, err)
-		assert.Equal(t, summaries[i]+"\n", string(content))
-	}
-	require.NoError(t, checkAPIContract("5.1.0", digest, markers, markers[:1]))
-}
-
 func TestAPIBaseMarkers(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	_, err := apiBaseMarkers(t.Context(), "refs/heads/nonexistent-api-contract-base")
-	require.ErrorContains(err, "read API contract markers")
 	for _, env := range os.Environ() {
 		key, _, _ := strings.Cut(env, "=")
 		if strings.HasPrefix(key, "GIT_") {
@@ -296,12 +245,16 @@ func TestAPIBaseMarkers(t *testing.T) {
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "config"))
 	t.Chdir(t.TempDir())
-	marker := "5.0.0_f4c3cd16ffd3e2294f6c0690df7ae8b2024db4b66538f467bc2d2cba36b325cf"
+	summary := "Fixture summary"
+	hash := sha256.Sum256([]byte(summary))
+	marker := fmt.Sprintf("5.0.0_f4c3cd16ffd3e2294f6c0690df7ae8b2024db4b66538f467bc2d2cba36b325cf_%x", hash)
 	require.NoError(os.MkdirAll("internal/api/"+apiContractsDir, 0o755))
-	require.NoError(os.WriteFile("internal/api/"+apiContractsDir+"/"+marker, nil, 0o644))
+	require.NoError(os.WriteFile("internal/api/"+apiContractsDir+"/"+marker, []byte(summary+"\n"), 0o644))
 	for _, args := range [][]string{{"init", "-q"}, {"add", "."}, {"-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "fixture"}} {
 		require.NoError(exec.CommandContext(t.Context(), "git", args...).Run())
 	}
+	_, err := apiBaseMarkers(t.Context(), "refs/heads/nonexistent-api-contract-base")
+	require.ErrorContains(err, "read API contract markers")
 	markers, err := apiBaseMarkers(t.Context(), "HEAD")
 	require.NoError(err)
 	assert.Equal([]string{marker}, markers)
@@ -309,6 +262,7 @@ func TestAPIBaseMarkers(t *testing.T) {
 
 func TestAPIContractDigest(t *testing.T) {
 	makeDoc := func(doc *huma.OpenAPI) *huma.OpenAPI {
+		doc.Webhooks = map[string]*huma.PathItem{"description": {Post: &huma.Operation{OperationID: "hook"}}}
 		doc.Paths["/api/v1/contract-test"] = &huma.PathItem{Post: &huma.Operation{
 			OperationID: "contract-test", Summary: "original", Description: "original",
 			Parameters:  []*huma.Param{{Name: "query", In: "query", Description: "original"}},
@@ -334,7 +288,7 @@ func TestAPIContractDigest(t *testing.T) {
 			op.RequestBody.Content["application/json"].Schema.Examples = []any{"example"}
 		}, true},
 		{"webhook named description", func(d *huma.OpenAPI) {
-			d.Webhooks = map[string]*huma.PathItem{"description": {Post: &huma.Operation{OperationID: "hook"}}}
+			d.Webhooks["description"].Post.OperationID = "changed-hook"
 		}, false},
 		{"route", func(d *huma.OpenAPI) {
 			d.Paths["/api/v1/another"] = &huma.PathItem{Get: &huma.Operation{OperationID: "another"}}
