@@ -208,6 +208,27 @@ func TestBriefEventRetainedFutureSourceKeepsPriorWatermark(t *testing.T) {
 	assert.Empty(t, parsed.Output.Highlights)
 }
 
+func TestBriefEventRevisionSourceLossRemovesMemory(t *testing.T) {
+	anchor, later, window, _, _, replayed := revisedBriefEventFixture(t)
+	for _, loss := range []string{"deleted", "excluded"} {
+		t.Run(loss, func(t *testing.T) {
+			checks, required := assert.New(t), require.New(t)
+			items := []EvidenceItem{anchor, later}
+			request := window.Request
+			request.Previous = &replayed.Boundary
+			switch loss {
+			case "deleted":
+				items = []EvidenceItem{anchor}
+			case "excluded":
+				request.Profile.SourceUntil = "2026-08-11"
+			}
+			next, err := BuildBriefWindow(t.Context(), &briefFakeArchive{items: items}, request)
+			required.NoError(err)
+			checks.Empty(next.Batch.Packet.BriefContext.Events)
+		})
+	}
+}
+
 func TestBriefEventMemoryRespectsExclusionAndOperationalErrors(t *testing.T) {
 	require := require.New(t)
 	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
