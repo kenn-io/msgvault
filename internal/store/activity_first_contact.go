@@ -114,7 +114,7 @@ type firstAppearance struct {
 func (s *Store) firstAppearanceTx(ctx context.Context, tx *loggedTx, personID int64) (*firstAppearance, error) {
 	event, refKind, err := earliestFirstContactTx(ctx, tx, personID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		return nil, nil //nolint:nilnil // No linked event is a normal absence, not an error.
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read first contact: %w", err)

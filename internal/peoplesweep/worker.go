@@ -367,7 +367,7 @@ type HowWeMetRequest struct {
 	SourceSince, SourceUntil string
 }
 type HowWeMetStore interface {
-	FillPersonHowWeMetContext(context.Context, HowWeMetRequest) error
+	FillPersonHowWeMetContext(ctx context.Context, request HowWeMetRequest) error
 }
 
 type RunRequest struct {

@@ -379,5 +379,4 @@ func TestHowWeMetFirstAppearanceHistoryAndPolicy(t *testing.T) {
 	observedValues, err := f.Store.ListPersonAttributeValuesContext(ctx, observed.ID, store.PersonAttributeQuery{DefinitionSlug: store.AttributeSlugHowWeMet})
 	require.NoError(t, err)
 	assert.Empty(t, observedValues)
-
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1303,7 +1304,7 @@ func TestHowWeMetReconcilePagesAndPersonFilter(t *testing.T) {
 	profile, err := config.Profile()
 	require.NoError(t, err)
 	for _, personID := range []int64{0, 3} {
-		t.Run(fmt.Sprint(personID), func(t *testing.T) {
+		t.Run(strconv.FormatInt(personID, 10), func(t *testing.T) {
 			st := &workerFailureStore{gapResults: []GapResult{
 				{PeopleScanned: 2, NextPersonID: 2, PersonIDs: []int64{1, 2}},
 				{PeopleScanned: 1, NextPersonID: 3, PersonIDs: []int64{3}}, {},
