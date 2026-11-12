@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,29 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/sourcescope"
 )
+
+func TestMeetingDecisionLargeGroupMemory(t *testing.T) {
+	r := require.New(t)
+	g := meetingDecisionGraph{nodes: map[string]meetingDecisionNode{}}
+	var group []meetingDecisionEndpoint
+	for i := range 1200 {
+		e := meetingDecisionEndpoint{ID: int64(i + 1), Kind: meetingRefMessage}
+		group = append(group, e)
+		g.nodes[e.ref()] = meetingDecisionNode{endpoint: e}
+	}
+	extra := meetingDecisionEndpoint{ID: 1201, Kind: meetingRefMessage}
+	g.nodes[extra.ref()] = meetingDecisionNode{endpoint: extra}
+	g.groups = [][]meetingDecisionEndpoint{group}
+	g.candidates = []meetingDecisionEdge{{a: group[0], b: extra, decision: "link", isExplicit: true}}
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	root, _ := g.reduce()
+	runtime.ReadMemStats(&after)
+	r.Equal(root(group[0].ref()), root(extra.ref()))
+	r.Equal(root(group[0].ref()), root(group[1199].ref()))
+	r.Less(after.TotalAlloc-before.TotalAlloc, uint64(100<<20), "joining a large group must not retain every pair")
+}
 
 func TestMeetingLinkDecisionReadsOnlyRequestedOccurrence(t *testing.T) {
 	r := require.New(t)

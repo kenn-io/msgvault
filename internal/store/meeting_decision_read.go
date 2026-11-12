@@ -336,39 +336,37 @@ func (g *meetingDecisionGraph) reduce() (func(string) string, []meetingDecisionE
 		if a == b {
 			return
 		}
-		blocked := false
 		for _, split := range splits {
 			x, y := root(split.a.ref()), root(split.b.ref())
 			if x == a && y == b || x == b && y == a {
-				blocked = true
-				break
+				return
 			}
 		}
-		if !blocked {
-			parent[b] = a
-		}
+		parent[b] = a
 	}
-	pairs := slices.Clone(explicit)
 	slices.SortFunc(vertices, compareMeetingEndpoints)
-	for _, member := range vertices {
-		var others []meetingDecisionEndpoint
-		for _, group := range groupByMember[member.ref()] {
-			for _, other := range group {
-				if compareMeetingEndpoints(member, other) < 0 {
-					others = append(others, other)
-				}
-			}
-		}
-		slices.SortFunc(others, compareMeetingEndpoints)
-		for _, other := range others {
-			pairs = append(pairs, meetingDecisionEdge{a: member, b: other})
-		}
-	}
 	// Join copies first so a note split applies to every copy still joined.
+	var others []meetingDecisionEndpoint
 	for _, events := range []bool{true, false} {
-		for _, pair := range pairs {
+		for _, pair := range explicit {
 			if (pair.a.Kind == meetingRefEvent && pair.b.Kind == meetingRefEvent) == events {
 				join(pair)
+			}
+		}
+		for _, member := range vertices {
+			others = others[:0]
+			for _, group := range groupByMember[member.ref()] {
+				for _, other := range group {
+					if compareMeetingEndpoints(member, other) < 0 {
+						others = append(others, other)
+					}
+				}
+			}
+			slices.SortFunc(others, compareMeetingEndpoints)
+			for _, other := range others {
+				if (member.Kind == meetingRefEvent && other.Kind == meetingRefEvent) == events {
+					join(meetingDecisionEdge{a: member, b: other})
+				}
 			}
 		}
 	}
