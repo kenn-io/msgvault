@@ -57,10 +57,20 @@ func (s *Store) refreshCommittedEmailCalendar(ctx context.Context, id int64, raw
 	return err
 }
 
+// upsertEmailRaw stores raw data and, for MIME that may hold an invitation,
+// reopens the email repair pass in the same transaction.
+func upsertEmailRaw(q querier, messageID int64, rawData []byte, format string) error {
+	if err := upsertMessageRawWithFormat(q, messageID, rawData, format); err != nil || format != emailLinkageRawFormat || !hasCalendarToken(rawData) {
+		return err
+	}
+	return reopenEmailRepair(q, messageID)
+}
+
 // reopenEmailRepair marks the message's source's email repair pass incomplete
 // in the transaction that stores the message, so a failed invitation write
 // after the commit still leaves the pass stale for the next sync. It lowers the
-// ledger version instead of deleting the row, which the pass raises on completion.
+// ledger version of the pass and its walk state, which restart the walk from
+// the first message, instead of deleting rows. The pass raises them on completion.
 func reopenEmailRepair(q querier, messageID int64) error {
 	_, err := q.Exec(`UPDATE applied_migrations SET version = 0 WHERE EXISTS (
 		SELECT 1 FROM (
@@ -69,7 +79,6 @@ func reopenEmailRepair(q querier, messageID int64) error {
 		) repair_source
 		WHERE SUBSTR(name, 1, LENGTH(prefix)) = prefix
 		  AND SUBSTR(name, LENGTH(prefix) + 1) NOT LIKE '%:%'
-		  AND SUBSTR(name, LENGTH(prefix) + 1) NOT LIKE '%#%'
 	)`, messageID)
 	return err
 }
