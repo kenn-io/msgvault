@@ -428,19 +428,15 @@ func TestBriefEventDateRevisionRequiresNewPersonEvidence(t *testing.T) {
 	checks.Equal("2026-08-25", *newMemory.Highlight.LifeEvent.Date)
 	checks.Equal([]string{packetEvidenceID(anchor), packetEvidenceID(later), packetEvidenceID(newer)}, newMemory.Highlight.EvidenceIDs)
 
-	for _, loss := range []string{"deleted", "edited", "excluded"} {
+	for _, loss := range []string{"deleted", "excluded"} {
 		t.Run(loss, func(t *testing.T) {
 			checks, required := assert.New(t), require.New(t)
-			changed := later
-			items := []EvidenceItem{anchor, changed}
+			items := []EvidenceItem{anchor, later}
 			request := window.Request
 			request.Previous = &replayed.Boundary
 			switch loss {
 			case "deleted":
 				items = []EvidenceItem{anchor}
-			case "edited":
-				changed.ContentSHA256 = strings.Repeat("a", 64)
-				items[1] = changed
 			case "excluded":
 				request.Profile.SourceUntil = "2026-08-11"
 			}

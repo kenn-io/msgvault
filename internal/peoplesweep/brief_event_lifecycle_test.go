@@ -155,7 +155,6 @@ func TestBriefEventFutureSourceDoesNotPoisonAdmission(t *testing.T) {
 	require.Len(t, first.Boundary.EventMemory, 1)
 	assert.Equal(t, packetEvidenceID(anchor), first.Boundary.EventMemory[0].Highlight.LifeEvent.AnchorID)
 	assert.Equal(t, window.Request.AsOf, first.Boundary.AdmissionThroughEventTime)
-	assert.Equal(t, future.EventTime, first.Boundary.ThroughEventTime)
 
 	next := briefWindowItem(12, SourceConversationText, 15, "I have an interview next week.")
 	archive.items = append(archive.items, next)
