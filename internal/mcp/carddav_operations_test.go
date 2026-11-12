@@ -1,9 +1,11 @@
 package mcp
 
 import (
+	"encoding/json/v2"
 	"fmt"
 	"testing"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,6 +31,26 @@ func TestCardDAVOperationalCatalogWriteGate(t *testing.T) {
 	}
 	assert.Equal([]string{"before_id", "connection", "limit"}, toolPropertyNames(t, write["list_carddav_runs"]))
 	assert.Equal([]string{"book_id", "lookup_source", "subscribed", "write_target"}, toolPropertyNames(t, write["update_carddav_book_roles"]))
+	for _, tc := range []struct {
+		name      string
+		openWorld bool
+	}{
+		{"update_carddav_book_roles", false},
+		{"resolve_carddav_conflict", true},
+	} {
+		annotations, ok := write[tc.name]["annotations"].(map[string]any)
+		require.True(ok)
+		assert.Equal(true, annotations["destructiveHint"])
+		assert.Equal(tc.openWorld, annotations["openWorldHint"])
+	}
+	encoded, err := json.Marshal(write["resolve_carddav_conflict"]["inputSchema"])
+	require.NoError(err)
+	var inputSchema jsonschema.Schema
+	require.NoError(json.Unmarshal(encoded, &inputSchema))
+	resolved, err := inputSchema.Resolve(nil)
+	require.NoError(err)
+	assert.Error(resolved.Validate(map[string]any{"conflict_id": float64(1), "choice": "keep_both"}))
+	assert.NoError(resolved.Validate(map[string]any{"conflict_id": float64(1), "choice": "keep_local"}))
 	for _, name := range names[5:] {
 		require.Contains(write, name)
 		readOnly, ok := toolReadOnlyHint(t, write[name]).(bool)
