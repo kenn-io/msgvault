@@ -134,7 +134,7 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 		}
 		apply := !foreign && (!exists || icsRevisionNewer(item.component, old))
 		details := !foreign && e.Status != SyncStatusCancelled && (!exists || old.Details == nil || icsRevisionNewer(item.component, calevent.ICSMetadata{Sequence: old.Details.Sequence, Stamp: old.Details.Stamp}))
-		if apply && exists && e.Status == SyncStatusCancelled && (old.Details != nil || e.Start == nil || e.End == nil || item.component.Summary == "") {
+		if apply && exists && e.Status == SyncStatusCancelled {
 			// Like a provider cancellation, keep the accepted details.
 			old.Sequence, old.Stamp, old.Status = item.meta.Sequence, item.meta.Stamp, SyncStatusCancelled
 			old.Range = item.meta.Range
