@@ -211,30 +211,9 @@ func TestCalendarExceptionsShortenedSeriesDuration(t *testing.T) {
 	}
 }
 
-func TestCalendarEventRowsEndedSeriesOutsideWindow(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, event := calendarFixture(t, st, "current", `{"id":"current","start":{"dateTime":"2027-03-12T09:00:00Z"},"end":{"dateTime":"2027-03-12T10:00:00Z"}}`)
-	source := icsSource(t, st)
-	var document strings.Builder
-	document.WriteString("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nMETHOD:REQUEST\r\n")
-	for i := range 2001 {
-		fmt.Fprintf(&document, "BEGIN:VEVENT\r\nUID:series-%d@example.com\r\nDTSTAMP:20270101T000000Z\r\nDTSTART:20270301T000000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=1\r\nEND:VEVENT\r\n", i)
-		fmt.Fprintf(&document, "BEGIN:VEVENT\r\nUID:series-%d@example.com\r\nDTSTAMP:20270101T000000Z\r\nRECURRENCE-ID;RANGE=THISANDFUTURE:20270301T000000Z\r\nDTSTART:20270301T010000Z\r\nDURATION:PT1H\r\nEND:VEVENT\r\n", i)
-	}
-	document.WriteString("END:VCALENDAR\r\n")
-	_, err := importICalendarForTest(st, t.Context(), source, []byte(document.String()))
-	require.NoError(err)
-	var series, edits int
-	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FILTER (WHERE e.kind='series'), COUNT(*) FILTER (WHERE e.kind='exception') FROM calendar_events e JOIN messages m ON m.id=e.message_id WHERE m.source_id=?`, source).Scan(&series, &edits))
-	require.Equal(2001, series)
-	require.Equal(2001, edits)
-	from := time.Date(2027, 3, 12, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	require.NoError(err)
-	assert.Empty(page.Unexpandable)
-	require.Len(page.Occurrences, 1)
-	assert.Equal(event, page.Occurrences[0].MessageID)
+func TestCalendarEventSeriesLimit(t *testing.T) {
+	t.Run("ended", func(t *testing.T) { calendarEventSeriesLimit(t, false) })
+	t.Run("future", func(t *testing.T) { calendarEventSeriesLimit(t, true) })
 }
 
 func TestCalendarExceptionsClearedRecurrence(t *testing.T) {

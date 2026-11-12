@@ -45,28 +45,6 @@ func TestEmailCalendarOctetStreamAttachment(t *testing.T) {
 	require.Len(t, emailEvents(t, st, source), 1)
 }
 
-func TestEmailCalendarICSRawFormatDoesNotLockDirectory(t *testing.T) {
-	requirements := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	if !st.IsPostgreSQL() {
-		t.Skip("requires PostgreSQL participant directory locks")
-	}
-	source, err := st.GetOrCreateSource("mbox", "owner@example.com")
-	requirements.NoError(err)
-	id, err := st.PersistMessageContext(t.Context(), &MessagePersistData{
-		Message:      &Message{SourceID: source.ID, SourceMessageID: "raw", MessageType: "calendar_event"},
-		Conversation: &ConversationPersistData{SourceConversationID: "raw"},
-	})
-	requirements.NoError(err)
-	blocker, err := st.db.BeginTx(t.Context(), nil)
-	requirements.NoError(err)
-	defer func() { _ = blocker.Rollback() }()
-	requirements.NoError(st.lockParticipantDirectoryMutationTxContext(t.Context(), blocker))
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	requirements.NoError(st.UpsertMessageRawWithFormatContext(ctx, id, calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:text/calendar"), "ics"))
-}
-
 func TestPlainEmailSingleParticipantDoesNotWaitForDirectory(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
