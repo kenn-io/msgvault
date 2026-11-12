@@ -46,21 +46,17 @@ func ClassifyFirstContact(candidate ActivityCandidate, personID int64, maxDirect
 	if !email && !direct {
 		return FirstContactObserved, nil
 	}
-	var sender, ownerSender *ActivityCounterpart
-	addressed, introAddressed, targetSender := false, false, false
+	var sender *ActivityCounterpart
+	fromCount := 0
+	addressed, introAddressed := false, false
 	others := map[audienceKey]struct{}{}
 	for i := range counterparts {
 		c := &counterparts[i]
 		isTarget := c.PersonID != nil && *c.PersonID == personID
 		if c.RecipientType == recipientTypeFrom {
-			if sender == nil {
+			fromCount++
+			if candidate.SenderID == nil || *candidate.SenderID == c.ParticipantID {
 				sender = c
-			}
-			if ownerLinked(*c) {
-				ownerSender = c
-			}
-			if isTarget {
-				targetSender = true
 			}
 			continue
 		}
@@ -75,6 +71,10 @@ func ClassifyFirstContact(candidate ActivityCandidate, personID int64, maxDirect
 			others[activityAudienceKey(*c)] = struct{}{}
 		}
 	}
+	if candidate.SenderID == nil && fromCount != 1 {
+		sender = nil
+	}
+	targetSender := sender != nil && sender.PersonID != nil && *sender.PersonID == personID
 	introducer := func(c *ActivityCounterpart) *FirstContactIntroducer {
 		if c == nil {
 			return nil
@@ -85,8 +85,8 @@ func ClassifyFirstContact(candidate ActivityCandidate, personID int64, maxDirect
 		return FirstContactEmailIntro, introducer(sender)
 	}
 	if classification.Direction == DirectionOutbound && addressed && !classification.Broadcast {
-		if ownerSender != nil {
-			return FirstContactOwnerOutreach, introducer(ownerSender)
+		if sender != nil && ownerLinked(*sender) {
+			return FirstContactOwnerOutreach, introducer(sender)
 		}
 		return FirstContactOwnerOutreach, nil
 	}

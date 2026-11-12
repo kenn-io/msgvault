@@ -28,6 +28,10 @@ func TestClassifyFirstContact(t *testing.T) {
 	}
 	tests := []testCase{
 		{"introduction", email, FirstContactEmailIntro, 2, &sender, 25},
+		{"ambiguous from", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{owner, from, {ParticipantID: 4, RecipientType: "from"}, addressed}}, FirstContactObserved, 0, nil, 25},
+		{"ambiguous target sender", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{owner, from, {ParticipantID: 4, PersonID: &target, RecipientType: "from"}}}, FirstContactObserved, 0, nil, 25},
+		{"ambiguous owner sender", ActivityCandidate{ConversationType: "email_thread", SourceIsFromMe: true, Counterparts: []ActivityCounterpart{{ParticipantID: 1, IsOwner: true, RecipientType: "from"}, from, addressed}}, FirstContactOwnerOutreach, 0, nil, 25},
+		{"recorded sender absent from envelope", ActivityCandidate{ConversationType: "email_thread", SenderID: new(int64(99)), Counterparts: email.Counterparts}, FirstContactObserved, 0, nil, 25},
 		{"meeting", ActivityCandidate{MessageType: "calendar_event", Counterparts: email.Counterparts}, FirstContactMeeting, 0, nil, 25},
 		{"owner absent", ActivityCandidate{ConversationType: "group_chat", Counterparts: []ActivityCounterpart{from, addressed}}, FirstContactObserved, 0, nil, 25},
 		{"group", ActivityCandidate{ConversationType: "group_chat", Counterparts: email.Counterparts}, FirstContactGroupShared, 0, nil, 25},
