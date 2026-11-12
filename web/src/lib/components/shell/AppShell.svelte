@@ -1331,7 +1331,7 @@
     </header>
     {#if relationshipsController.pendingIdentityCacheRevision !== null}
       <div class="identity-cache-notice"><InlineNotice tone="warning" message={relationshipsController.identityCacheRefreshing ? 'Refreshing...' : pendingMergeCacheError?.message ?? 'Changes saved, but related views may be out of date.'} actions={[
-          ...(pendingMergeCacheError?.dismissible || pendingMergeCacheError?.unsupported ? [{ label: 'Dismiss', onclick: () => (relationshipsController.pendingIdentityCacheRevision = null), disabled: relationshipsController.identityCacheRefreshing }] : []),
+          ...(pendingMergeCacheError?.dismissible ? [{ label: 'Dismiss', onclick: () => (relationshipsController.pendingIdentityCacheRevision = null), disabled: relationshipsController.identityCacheRefreshing }] : []),
           ...(pendingMergeCacheError?.unsupported ? [] : [{ label: 'Retry', onclick: () => void retryMergeCache(), disabled: relationshipsController.identityCacheRefreshing }]),
         ]} /></div>
     {/if}
