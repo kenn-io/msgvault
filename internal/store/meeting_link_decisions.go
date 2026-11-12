@@ -139,10 +139,11 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		if err != nil {
 			return clearStored(err)
 		}
-		if compareMeetingEndpoints(canonicalA, canonicalB) == 0 {
+		comparison := compareMeetingEndpoints(canonicalA, canonicalB)
+		if comparison == 0 {
 			return ErrMeetingLinkSameCopy
 		}
-		if compareMeetingEndpoints(canonicalA, canonicalB) > 0 {
+		if comparison > 0 {
 			canonicalA, canonicalB = canonicalB, canonicalA
 			recordA, recordB = recordB, recordA
 		}
