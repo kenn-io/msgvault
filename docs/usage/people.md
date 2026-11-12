@@ -61,10 +61,11 @@ copied. `first_seen_at` and `first_seen_ref` describe that appearance;
 The HTTP contact-state route, assembled profiles, and `person get --json` carry the same fields. `person get` includes them when daemon API schema 5.1.0 or newer is available; older daemons still return the person. The Web UI and TUI do not yet show first appearance.
 
 `first_contact_kind` describes the envelope evidence, not a verified introduction: `email_intro` is an inbound email
-from a third party to you and the person with at most four other non-owner
-recipients; `owner_outreach` is your addressed, non-broadcast email or direct
+from a third party with you among the recipients, the person in To or Cc, and
+at most four other non-owner recipients (counting linked aliases once per saved
+person); `owner_outreach` is your addressed, non-broadcast email or direct
 chat; `inbound_outreach` is a non-broadcast direct email or chat sent by the person;
-`group_shared` is a group or channel message; `meeting` is a meeting; and
+`group_shared` is a group or channel message involving you; `meeting` is a meeting; and
 `observed` covers other evidence, including messages without your identity.
 When known, `introducer` identifies the sender of an introduction email or
 your sending identity. Group inviter evidence is not yet used. These fields
