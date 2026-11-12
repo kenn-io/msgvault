@@ -37,7 +37,9 @@ func init() {
 		if err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Token)
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), result.Token); err != nil {
+			return fmt.Errorf("enrollment %s was created but token delivery failed; revoke it and re-enroll: %w", result.Enrollment.EnrollmentUID, err)
+		}
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Enrollment: %s\nMember: %s\n", result.Enrollment.EnrollmentUID, result.Enrollment.Member)
 		if result.Enrollment.SpokeName != result.Enrollment.Member {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Spoke: %s\n", result.Enrollment.SpokeName)

@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"net/http/httptest"
 	"strings"
@@ -72,6 +73,23 @@ func TestFederationEnrollOutput(t *testing.T) {
 				assertions.NotContains(stderr.String(), "http://")
 			})
 		}
+	})
+	t.Run("token write failure", func(t *testing.T) {
+		st, command, ctx := setup(t)
+		var stderr bytes.Buffer
+		command.SetOut(failingSearchWriter{})
+		command.SetErr(&stderr)
+		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice"})
+		err := command.ExecuteContext(ctx)
+		require.ErrorIs(t, err, io.ErrClosedPipe)
+		enrollments, listErr := st.ListFederationEnrollmentsContext(t.Context())
+		require.NoError(t, listErr)
+		require.Len(t, enrollments, 1)
+		assert.Contains(t, err.Error(), enrollments[0].EnrollmentUID)
+		assert.Contains(t, err.Error(), "revoke")
+		assert.Contains(t, err.Error(), "re-enroll")
+		assert.NotContains(t, err.Error(), "mvf1_")
+		assert.NotContains(t, stderr.String(), "msgvault federation join")
 	})
 	t.Run("list", func(t *testing.T) {
 		requirements := require.New(t)
