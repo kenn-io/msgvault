@@ -1326,3 +1326,36 @@ func TestHowWeMetReconcilePagesAndPersonFilter(t *testing.T) {
 		})
 	}
 }
+
+func TestHowWeMetWorkerGatesAndStoreErrors(t *testing.T) {
+	config, catalog := workerTestConfig(t)
+	profile, err := config.Profile()
+	require.NoError(t, err)
+	page := GapResult{PeopleScanned: 1, NextPersonID: 7, PersonIDs: []int64{7}}
+	t.Run("nil dependency", func(t *testing.T) {
+		st := &workerFailureStore{gapResults: []GapResult{page, {}}}
+		worker := Worker{Config: config, Store: st}
+		require.NoError(t, worker.reconcile(t.Context(), profile, catalog, time.Now(), RunRequest{}))
+	})
+	t.Run("store error", func(t *testing.T) {
+		st := &workerFailureStore{gapResults: []GapResult{page}}
+		sentinel := errors.New("synthetic fill failure")
+		recorder := &howWeMetRecorder{err: sentinel}
+		worker := Worker{Config: config, Store: st, HowWeMet: recorder}
+		require.ErrorIs(t, worker.reconcile(t.Context(), profile, catalog, time.Now(), RunRequest{}), sentinel)
+	})
+	t.Run("disabled", func(t *testing.T) {
+		disabled := config
+		disabled.Enabled = false
+		st := &workerFailureStore{gapResults: []GapResult{page}}
+		recorder := &howWeMetRecorder{}
+		source := workerFailureSource{}
+		worker := Worker{Config: disabled, Store: st, Source: source, Context: NewContextRetriever(source),
+			Sink: workerFailureSink{}, Runner: workerFailureRunner{}, Catalog: workerFailureCatalog{catalog: catalog},
+			Clock: time.Now, NewID: func() string { return "disabled" }, WorkerID: "test", HowWeMet: recorder}
+		_, err := worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental})
+		require.Error(t, err)
+		assert.Empty(t, recorder.requests)
+		assert.Empty(t, st.gaps)
+	})
+}

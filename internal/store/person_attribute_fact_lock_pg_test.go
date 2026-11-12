@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
 )
 
@@ -356,4 +357,59 @@ func TestPostgreSQLDefinitionExposureSerializesBeforePeople(t *testing.T) {
 			})
 		}
 	}
+}
+
+// The fill's write time must be sampled after a competing target write, even
+// when the sweep began earlier. PostgreSQL exposes its advisory lock queue.
+func TestPostgreSQLHowWeMetRetirementUsesTimeAfterTargetLock(t *testing.T) {
+	st, personID, _ := newPersonFactProjectionStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("PostgreSQL advisory-lock concurrency regression")
+	}
+	config := peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderSelection{Name: "default"}, Providers: map[string]peoplesweep.ProviderConfig{"default": {
+		Protocol: peoplesweep.ProtocolOpenAIChat, Endpoint: "https://api.example.test/v1", Model: "test", Auth: peoplesweep.AuthBearer,
+		Credential: peoplesweep.CredentialEnv, CredentialEnv: "TEST_KEY", OutputMode: peoplesweep.OutputModeNativeJSONSchema,
+		TokenLimitParameter: "max_completion_tokens", RetentionPosture: "zero_retention", TrainingPosture: "no_training",
+		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}, SourceSince: "2020-01-01", RequestTimeout: time.Second,
+	}}}
+	config.ApplyDefaults()
+	profile, err := config.Profile()
+	require.NoError(t, err)
+	_, err = st.EnsurePersonInferenceProfile(t.Context(), profile)
+	require.NoError(t, err)
+	_, _, err = st.GrantPersonInferenceConsent(t.Context(), profile.Fingerprint, "test")
+	require.NoError(t, err)
+	target := projectionTargetBySlug(t, st, AttributeSlugHowWeMet)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	t.Cleanup(cancel)
+	blocker, err := st.db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = blocker.Rollback() })
+	var blockerPID int
+	require.NoError(t, blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
+	require.NoError(t, st.lockProfileIdentityKeyTxContext(ctx, blocker, "person-fact-target", personID, target.Kind, target.Key))
+	done := make(chan error, 1)
+	go func() {
+		done <- st.FillPersonHowWeMetContext(ctx, peoplesweep.HowWeMetRequest{PersonIDs: []int64{personID}, ProviderFingerprint: profile.Fingerprint, AllowedSources: profile.AllowedSources, SourceSince: profile.SourceSince})
+	}()
+	waitForManualPersonAttributeTargetLock(t, st, personID, blockerPID, done)
+	// Insert after the waiting sweep began, within the transaction holding its target lock.
+	definition, err := st.getAttributeDefinitionByUniversalIDTx(ctx, blocker, AttributeUniversalIDHowWeMet)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	ref, value := "first-appearance:email_intro:123", "Earlier appearance"
+	_, err = st.setPersonAttributeValueTx(ctx, blocker, *definition, PersonAttributeValueInput{PersonID: personID, Source: ProvenanceSystem, SourceRef: &ref, Value: AttributeValue{Type: AttributeValueText, Text: &value}}, now, now)
+	require.NoError(t, err)
+	require.NoError(t, blocker.Commit())
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-ctx.Done():
+		require.FailNow(t, "fill did not finish", ctx.Err())
+	}
+	rows, err := st.ListPersonAttributeValuesContext(ctx, personID, PersonAttributeQuery{DefinitionSlug: AttributeSlugHowWeMet, IncludeHistory: true})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.NotNil(t, rows[0].ActiveUntil)
+	assert.False(t, rows[0].ActiveUntil.Before(rows[0].ActiveFrom))
 }
