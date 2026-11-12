@@ -189,3 +189,10 @@ func TestVerificationEchoAndFailures(t *testing.T) {
 		})
 	}
 }
+
+// FixtureWebhookSubscription gives external integration tests the same pinned
+// local TLS transport used by the wakeup engine tests.
+func FixtureWebhookSubscription(t *testing.T, server *httptest.Server) Subscription {
+	t.Helper()
+	return Subscription{Client: testWebhookClient(t, server)}
+}
