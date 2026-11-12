@@ -370,7 +370,7 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			}
 		}
 		graph.candidates = append(graph.candidates, meetingDecisionEdge{id: int64(^uint64(0) >> 1), a: a, b: b, decision: "link"})
-		if !meetingDecisionAccepted(graph, a, b, "link", active) {
+		if _, conflict := meetingDecisionConflict(graph, a, b, true, active); conflict {
 			continue
 		}
 		page.Suggestions = append(page.Suggestions, candidate)
@@ -392,17 +392,4 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		}
 	}
 	return page, nil
-}
-
-func meetingDecisionAccepted(graph *meetingDecisionGraph, a, b meetingDecisionEndpoint, state string, active []meetingDecisionEdge) bool {
-	root, _ := graph.reduce()
-	if (root(a.ref()) == root(b.ref())) != (state == "link") {
-		return false
-	}
-	for _, link := range active {
-		if root(link.a.ref()) != root(link.b.ref()) {
-			return false
-		}
-	}
-	return true
 }
