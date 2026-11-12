@@ -109,7 +109,7 @@ func ParsedBriefOutput(t *testing.T, result BriefResult) BriefOutput {
 	return output
 }
 
-func TestBriefEventReplayNeverReintroducesEvictedOrEditedAnchors(t *testing.T) {
+func TestBriefEventReplayNeverReintroducesEvictedAnchors(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
@@ -120,6 +120,7 @@ func TestBriefEventReplayNeverReintroducesEvictedOrEditedAnchors(t *testing.T) {
 	assert.Equal(anchor.EventTime, first.Boundary.AdmissionThroughEventTime)
 	previous := first.Boundary
 	previous.EventMemory = nil // resolved event evicted; watermark survives
+	previous.NextEventAt = nil
 	request := initial.Request
 	request.Previous = &previous
 	request.OverlapItems = 4
@@ -418,7 +419,7 @@ func TestBriefEventFreshActivityRespectsIntervalForResolvedMemory(t *testing.T) 
 			}
 			store := &briefFakeStore{enrolled: true, highWater: 41, changedAfter: 41,
 				eligibility: BriefEligibility{Version: 3, Status: BriefStatusCurrent, GeneratedAt: &generated,
-					Boundary: &BriefBoundary{ThroughSequence: 40, EventMemory: memory}}}
+					Boundary: &BriefBoundary{ThroughSequence: 40, EventMemoryVersion: 1, EventMemory: memory}}}
 			worker := Worker{Config: config, Brief: store, Archive: &briefFakeArchive{}}
 			plan, err := worker.planPersonBrief(t.Context(), 7, BriefModeAuto, briefWindowProfile(), now)
 			required.NoError(err)

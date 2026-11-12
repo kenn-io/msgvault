@@ -333,7 +333,8 @@ func TestPersonSweepEventBootstrapsLegacyBriefWithoutActivityBeyondOverlap(t *te
 	legacyBoundary, err := json.Marshal(boundary)
 	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs
-		SET program_version = 'v1', boundary_json = ? WHERE id = ?`), string(legacyBoundary), current.ID)
+		SET program_version = 'v1', renderer_policy = ?, boundary_json = ? WHERE id = ?`),
+		peoplesweep.BriefRendererPolicyV1, string(legacyBoundary), current.ID)
 	require.NoError(err)
 	f.runner.candidate = func(packet map[string]any) json.RawMessage {
 		return storeEventCandidate(t, packet, "I interview on September 2.", "2026-09-02", "their interview", "How did the interview go?")
