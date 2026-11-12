@@ -260,7 +260,7 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 		WHERE ((occurred_at >= TIMESTAMP '%[2]s'
 		  AND occurred_at < TIMESTAMP '%[3]s') OR entry_kind IN ('event', 'meeting'))
 		  AND (occurred_year IN (%[6]s) OR entry_kind IN ('event', 'meeting'))
-		  AND canonical_id IN (%[4]s)
+		  AND (canonical_id IN (%[4]s) OR entry_kind IN ('event', 'meeting'))
 		  AND entry_key IN (
 		    SELECT entry_key FROM %[1]s
 		    WHERE canonical_id = %[5]d

@@ -21,12 +21,12 @@ func RelationshipTemperatureFactsSQL(activity string, effectiveAt time.Time) str
 	cutoff := effectiveAt.UTC().Format("2006-01-02 15:04:05.999999999")
 	return fmt.Sprintf(`
 WITH message_owner AS (
-	SELECT entry_key, bool_or(is_owner) AS owner_present
+	SELECT entry_key, bool_or(is_owner) AS owner_present, min(occurred_at) AS meeting_at
 	FROM %[1]s
 	GROUP BY entry_key
 ), person_messages AS (
 	SELECT f.entry_key, min(f.message_id) AS message_id, f.canonical_id,
-	       min(f.occurred_at)::TIMESTAMP AS occurred_at,
+	       min(CASE WHEN f.entry_kind IN ('event', 'meeting') THEN o.meeting_at ELSE f.occurred_at END)::TIMESTAMP AS occurred_at,
 	       bool_or(f.is_chat) AS is_chat,
 	       arg_min(f.entry_kind, f.occurred_at)::VARCHAR AS entry_kind,
 	       arg_min(f.conversation_type, f.occurred_at)::VARCHAR AS conversation_type,
@@ -41,7 +41,7 @@ WITH message_owner AS (
 	WHERE f.canonical_id IS NOT NULL
 	  AND (NOT f.is_owner OR f.entry_kind IN ('event', 'meeting'))
 	  AND NOT f.unsent
-	  AND f.occurred_at <= TIMESTAMP '%[2]s'
+	  AND (CASE WHEN f.entry_kind IN ('event', 'meeting') THEN o.meeting_at ELSE f.occurred_at END) <= TIMESTAMP '%[2]s'
 	  AND (
 	      (f.entry_kind IN ('event', 'meeting'))
 	      OR (f.is_chat AND lower(f.conversation_type) = 'direct_chat'

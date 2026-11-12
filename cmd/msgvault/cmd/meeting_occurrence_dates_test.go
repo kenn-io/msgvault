@@ -99,13 +99,17 @@ func TestLinkedMeetingCopiesUseScopedDate(t *testing.T) {
 		year int
 		want int64
 	}{{2024, 1}, {2025, 0}} {
-		calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: person, Year: tc.year, Timezone: "UTC"})
-		require.NoError(t, err)
-		var meetings int64
-		for _, day := range calendar.Days {
-			meetings += day.Meetings
+		for _, id := range []int64{person, late} {
+			calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: id, Year: tc.year, Timezone: "UTC"})
+			require.NoError(t, err)
+			var meetings int64
+			for _, day := range calendar.Days {
+				meetings += day.Meetings
+			}
+			assert.Equal(t, tc.want, meetings, "person %d, year %d", id, tc.year)
+			require.Len(t, calendar.Annual, 1)
+			assert.Equal(t, 2024, calendar.Annual[0].Year)
 		}
-		assert.Equal(t, tc.want, meetings, "year %d", tc.year)
 	}
 	for _, tc := range []struct {
 		name  string
