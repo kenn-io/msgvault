@@ -334,18 +334,27 @@ func TestMeetingOccurrenceCountsDeletedFromSource(t *testing.T) {
 }
 
 func TestMeetingOccurrencesShareDateAnchorAndDeclines(t *testing.T) {
-	st := newRFC822IDBackfillBackendStore(t)
-	_, early := calendarFixture(t, st, "early", `{"id":"early","start":{"dateTime":"2024-12-29T10:00:00Z"},"end":{"dateTime":"2024-12-29T11:00:00Z"},"attendees":[{"email":"person@example.org","responseStatus":"declined"}]}`)
-	_, late := calendarFixture(t, st, "late", `{"id":"late","start":{"dateTime":"2025-01-03T10:00:00Z"},"end":{"dateTime":"2025-01-03T11:00:00Z"},"attendees":[{"email":"person@example.org","responseStatus":"accepted"}]}`)
-	_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: early}, MeetingLinkRef{Kind: "evt", MessageID: late}, "link")
-	require.NoError(t, err)
-	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC), nil)
-	require.NoError(t, err)
-	require.Len(t, rows, 2)
-	for _, row := range rows {
-		assert.Equal(t, time.Date(2024, 12, 29, 10, 0, 0, 0, time.UTC), row.OccurredAt)
-		assert.Equal(t, early, row.AnchorMessageID)
-		assert.True(t, row.Counted)
-		assert.Equal(t, []string{"person@example.org"}, row.DeclinedEmails)
+	for _, tc := range []struct {
+		name, earlyResponse, lateResponse string
+	}{
+		{"decline on early copy", "declined", "accepted"},
+		{"decline on late copy", "accepted", "declined"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newRFC822IDBackfillBackendStore(t)
+			_, early := calendarFixture(t, st, "early", fmt.Sprintf(`{"id":"early","start":{"dateTime":"2024-12-29T10:00:00Z"},"end":{"dateTime":"2024-12-29T11:00:00Z"},"attendees":[{"email":"person@example.org","responseStatus":%q}]}`, tc.earlyResponse))
+			_, late := calendarFixture(t, st, "late", fmt.Sprintf(`{"id":"late","start":{"dateTime":"2025-01-03T10:00:00Z"},"end":{"dateTime":"2025-01-03T11:00:00Z"},"attendees":[{"email":"person@example.org","responseStatus":%q}]}`, tc.lateResponse))
+			_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: early}, MeetingLinkRef{Kind: "evt", MessageID: late}, "link")
+			require.NoError(t, err)
+			rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC), nil)
+			require.NoError(t, err)
+			require.Len(t, rows, 2)
+			for _, row := range rows {
+				assert.Equal(t, time.Date(2024, 12, 29, 10, 0, 0, 0, time.UTC), row.OccurredAt)
+				assert.Equal(t, early, row.AnchorMessageID)
+				assert.True(t, row.Counted)
+				assert.Equal(t, []string{"person@example.org"}, row.DeclinedEmails)
+			}
+		})
 	}
 }

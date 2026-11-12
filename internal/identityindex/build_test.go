@@ -1111,7 +1111,7 @@ func TestMeetingOccurrenceCountsInRelationshipIndex(t *testing.T) {
 	assert.EqualValues(t, 2, dailyMeetings)
 }
 
-func TestMeetingAttachmentSourceWithoutCountedActivity(t *testing.T) {
+func TestMeetingAttachmentUsesAnchorSource(t *testing.T) {
 	root, db := writeRelationshipBaseFixture(t, false)
 	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE meeting_messages AS
 		SELECT * REPLACE ('calendar_event' AS message_type, 0 AS attachment_count) FROM read_parquet(?)
@@ -1124,15 +1124,15 @@ func TestMeetingAttachmentSourceWithoutCountedActivity(t *testing.T) {
 	replaceRelationshipParquet(t, db, root, "attachments", `SELECT 1::BIGINT AS attachment_id, 101::BIGINT AS message_id, 12::BIGINT AS size, 'file.txt' AS filename, 'text/plain' AS mime_type`)
 	replaceRelationshipParquet(t, db, root, DatasetMeetingOccurrences, `SELECT t.*, 100::BIGINT AS anchor_message_id FROM (VALUES
 		(100::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0)),
-		(101::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, false, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0))
+		(101::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0))
 	) AS t(message_id, occurrence_key, occurred_at, start_date, counted, declined_emails, occurrence_id)`)
 	_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root, EffectiveAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)})
 	require.NoError(t, err)
 	require.NoError(t, Validate(t.Context(), db, ValidationOptions{OutputRoot: root, RequiredOutputDatasets: RequiredDatasets}))
 	var activities, meetings, files int64
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT rollup.activity_count, rollup.meeting_count, rollup.file_count FROM (SELECT unnest(source_rollups) AS rollup FROM read_parquet(?) WHERE canonical_id=2) WHERE rollup.source_id=2`, relationshipParquetGlob(root, DatasetPeople)).Scan(&activities, &meetings, &files))
-	assert.Zero(t, activities)
-	assert.Zero(t, meetings)
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT rollup.activity_count, rollup.meeting_count, rollup.file_count FROM (SELECT unnest(source_rollups) AS rollup FROM read_parquet(?) WHERE canonical_id=2) WHERE rollup.source_id=1`, relationshipParquetGlob(root, DatasetPeople)).Scan(&activities, &meetings, &files))
+	assert.EqualValues(t, 1, activities)
+	assert.EqualValues(t, 1, meetings)
 	assert.EqualValues(t, 1, files)
 }
 
@@ -1148,7 +1148,7 @@ func TestMeetingDomainStaysWithItsSource(t *testing.T) {
 	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type, '' AS display_name UNION ALL SELECT 100, 2, 'to', '' UNION ALL SELECT 101, 1, 'from', ''`)
 	replaceRelationshipParquet(t, db, root, DatasetMeetingOccurrences, `SELECT t.*, 100::BIGINT AS anchor_message_id FROM (VALUES
 		(100::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0)),
-		(101::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-21', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0))
+		(101::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0))
 	) AS t(message_id, occurrence_key, occurred_at, start_date, counted, declined_emails, occurrence_id)`)
 	_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root, EffectiveAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)})
 	require.NoError(t, err)

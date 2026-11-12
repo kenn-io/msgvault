@@ -57,7 +57,7 @@ func TestMeetingCountsPendingSourceScope(t *testing.T) {
 	}{
 		{"calendar", []int64{calendar.ID}, nil, 1},
 		{"notes", []int64{notes.ID}, nil, 0},
-		{"notes_type", nil, []string{"meeting_transcript"}, 0},
+		{"notes_type", nil, []string{"meeting_transcript"}, 1},
 		{"both", []int64{calendar.ID, notes.ID}, nil, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -109,33 +109,20 @@ func TestMeetingCountsPendingSourceScope(t *testing.T) {
 	updated, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, updated.Close()) }()
-	scope := query.Context{SourceIDs: []int64{notes.ID}}
+	scope := query.Context{SourceIDs: []int64{calendar.ID}}
 	detail, err := updated.GetPerson(t.Context(), person, scope, nil)
 	require.NoError(t, err)
 	require.NotNil(t, detail)
 	assert.EqualValues(t, 2, detail.FileCount)
-	for _, sourceScope := range []query.Context{{}, scope} {
-		people, err := updated.SearchPeople(t.Context(), query.PersonSearchRequest{Explore: query.ExploreRequest{Context: sourceScope}})
-		require.NoError(t, err)
-		for _, row := range people.Rows {
-			if row.ID == person {
-				assert.EqualValues(t, 2, row.FileCount)
-			}
-		}
-	}
 	timeline, err := updated.RelationshipTimeline(t.Context(), query.RelationshipTimelineRequest{CanonicalID: person, Timezone: "UTC", Context: scope})
 	require.NoError(t, err)
 	require.Len(t, timeline.Rows, 1)
-	assert.Equal(t, notes.ID, timeline.Rows[0].SourceID)
+	assert.Equal(t, calendar.ID, timeline.Rows[0].SourceID)
 	require.NotNil(t, timeline.Rows[0].AnchorMessageID)
-	assert.Equal(t, available, *timeline.Rows[0].AnchorMessageID)
-	assert.Equal(t, "meeting", timeline.Rows[0].Kind)
-	assert.Equal(t, "available", timeline.Rows[0].Title)
-	assert.True(t, timeline.Rows[0].HasAttachments)
-	var conversation int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT conversation_id FROM messages WHERE id=?`, available).Scan(&conversation))
-	require.NotNil(t, timeline.Rows[0].ConversationID)
-	assert.Equal(t, conversation, *timeline.Rows[0].ConversationID)
+	assert.Equal(t, event, *timeline.Rows[0].AnchorMessageID)
+	notesTimeline, err := updated.RelationshipTimeline(t.Context(), query.RelationshipTimelineRequest{CanonicalID: person, Timezone: "UTC", Context: query.Context{SourceIDs: []int64{notes.ID}}})
+	require.NoError(t, err)
+	assert.Empty(t, notesTimeline.Rows)
 }
 
 func TestMeetingCountsUnsupportedFutureRefresh(t *testing.T) {

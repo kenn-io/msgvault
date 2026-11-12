@@ -153,10 +153,15 @@ func Build(
 		"SELECT * FROM "+logicalBuildRelation); err != nil {
 		return BuildResult{}, err
 	}
-	if err := b.copyDataset(ctx, DatasetPeople, buildRelationshipPeopleSQL(effectiveAt, activity)); err != nil {
+	occurrences := "read_parquet('" + quoteSQLString(b.base(DatasetMeetingOccurrences)) + "')"
+	participants := "read_parquet('" + quoteSQLString(b.base("participants")) + "')"
+	identifiers := "read_parquet('" + quoteSQLString(b.base("participant_identifiers")) + "')"
+	clusters := "read_parquet('" + quoteSQLString(b.base("participant_clusters")) + "')"
+	fileActivity := MeetingOccurrenceActivitySQL(activity, b.sparseActivityRelation(), occurrences, participants, identifiers, clusters, effectiveAt)
+	if err := b.copyDataset(ctx, DatasetPeople, buildRelationshipPeopleSQL(effectiveAt, fileActivity)); err != nil {
 		return BuildResult{}, err
 	}
-	if err := b.copyDataset(ctx, DatasetDomains, buildRelationshipDomainsSQL(activity)); err != nil {
+	if err := b.copyDataset(ctx, DatasetDomains, buildRelationshipDomainsSQL(fileActivity)); err != nil {
 		return BuildResult{}, err
 	}
 	if err := b.copyDataset(ctx, DatasetRelationshipDaily, buildRelationshipDailySQL()); err != nil {
@@ -243,11 +248,19 @@ func (b builder) outputActivity() string {
 }
 
 func (b builder) activityRelation() string {
+	return b.expandedActivity(b.activityPaths())
+}
+
+func (b builder) sparseActivityRelation() string {
+	return readParquetRelation(b.activityPaths(), true)
+}
+
+func (b builder) activityPaths() []string {
 	paths := []string{b.outputActivity()}
 	if b.opts.Mode == ModeIncremental {
 		paths = append([]string{b.committed(DatasetActivity)}, paths...)
 	}
-	return b.expandedActivity(paths)
+	return paths
 }
 
 func (b builder) deltaActivityRelation() string {

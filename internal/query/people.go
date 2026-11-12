@@ -387,6 +387,11 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	WHERE true` + meetingMembership + `
 	  AND EXISTS (SELECT 1 FROM ` + activity + ` owner_edge WHERE owner_edge.entry_key=a.entry_key AND owner_edge.is_owner)
 	GROUP BY person_id
+), meeting_files AS (
+	SELECT person_id, sum(attachment_count)::BIGINT AS file_count FROM (
+		SELECT DISTINCT ` + meetingPerson + ` AS person_id, a.message_id, a.attachment_count
+		FROM meeting_activity a WHERE a.attachment_count > 0` + meetingMembership + `
+	) GROUP BY person_id
 ), person_entries AS (
 	SELECT entry_key, person_id, occurred_at::TIMESTAMP AS occurred_at, message_type, attachment_count, source_type
 	FROM person_entries_raw WHERE message_type NOT IN ('calendar_event','meeting_transcript')
@@ -510,7 +515,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		` + sqlPersonIdentifierFallbackExpr("p") + ` AS fallback_label,
 		COUNT(DISTINCT pe.entry_key)::BIGINT AS activity_count,
 		COALESCE((SELECT meeting_count FROM meeting_counts mc WHERE mc.person_id=p.id), 0)::BIGINT AS meeting_count,
-		COALESCE((SELECT SUM(raw.attachment_count) FROM person_entries_raw raw WHERE raw.person_id=p.id), 0)::BIGINT AS file_count,
+		(COALESCE((SELECT SUM(raw.attachment_count) FROM person_entries_raw raw WHERE raw.person_id=p.id AND raw.message_type NOT IN ('calendar_event','meeting_transcript')), 0) + COALESCE((SELECT mf.file_count FROM meeting_files mf WHERE mf.person_id=p.id), 0))::BIGINT AS file_count,
 		MIN(pe.occurred_at) AS first_at, MAX(pe.occurred_at) AS last_at
 	` + populationFrom + `
 	GROUP BY p.id, p.display_name, p.email_address, p.phone_number

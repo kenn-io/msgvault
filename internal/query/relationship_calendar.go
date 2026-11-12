@@ -282,8 +282,8 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 		    ELSE strftime(timezone(?, timezone('UTC', f.occurred_at)), '%Y-%m-%d') END AS local_date
 		  FROM relationship_facts f
 		  LEFT JOIN (
-		    SELECT 'meeting:' || occurrence_key AS entry_key, occurred_at, min(start_date) AS start_date
-		    FROM read_parquet('`+quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingOccurrences))+`') WHERE start_date IS NOT NULL AND counted GROUP BY 1, occurred_at
+		    SELECT DISTINCT 'meeting:' || occurrence_key AS entry_key, occurred_at, start_date
+		    FROM read_parquet('`+quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingOccurrences))+`') WHERE start_date IS NOT NULL AND counted
 		  ) o ON o.entry_key=f.entry_key AND o.occurred_at=f.occurred_at
 		)
 		SELECT local_date,

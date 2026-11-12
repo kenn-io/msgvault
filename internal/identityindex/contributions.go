@@ -34,7 +34,7 @@ func (b builder) materializeContributions(ctx context.Context, activity string, 
 	clusters := "read_parquet('" + quoteSQLString(b.base("participant_clusters")) + "')"
 	participants := "read_parquet('" + quoteSQLString(b.base("participants")) + "')"
 	identifiers := "read_parquet('" + quoteSQLString(b.base("participant_identifiers")) + "')"
-	anchors := activity
+	anchors := b.sparseActivityRelation()
 	activity = MeetingOccurrenceActivitySQL(activity, anchors, occurrences, participants, identifiers, clusters, effectiveAt)
 	temperatureSQL := buildRelationshipTemperatureDailySQL(activity, effectiveAt)
 	logicalSQL := buildLogicalActivityMaterializationSQL(activity)

@@ -13,7 +13,7 @@ import (
 func meetingCountActivityCTE(dates string) string {
 	return `meeting_activity AS (
 	SELECT a.* FROM relationship_counting_activity a
-	JOIN selected_meeting_messages s USING (message_id)
+	JOIN selected_meeting_messages s USING (entry_num)
 	WHERE a.entry_kind IN ('event', 'meeting') AND a.canonical_id IS NOT NULL AND a.is_direct` + dates + `
 )`
 }
@@ -21,12 +21,22 @@ func meetingCountActivityCTE(dates string) string {
 func (e *DuckDBEngine) meetingScopeCTE(request ExploreRequest) (string, []any, error) {
 	unbounded := request
 	unbounded.Context.After, unbounded.Context.Before = nil, nil
+	unbounded.Context.SourceIDs = nil
+	unbounded.Context.AccountScopes = nil
 	conditions, args := buildExploreConditions(unbounded)
 	conditions, err := e.sentIdentityConditions(conditions)
 	if err != nil {
 		return "", nil, err
 	}
 	dates := ""
+	if len(request.Context.SourceIDs) > 0 {
+		dates += " AND a.source_id IN (SELECT UNNEST(?::BIGINT[]))"
+		args = append(args, request.Context.SourceIDs)
+	}
+	if scopeConditions, scopeArgs := search.AccountScopeConditions(request.Context.AccountScopes, "account_m"); len(scopeConditions) > 0 {
+		dates += " AND a.anchor_message_id IN (SELECT account_m.id FROM messages account_m WHERE " + strings.Join(scopeConditions, " AND ") + ")"
+		args = append(args, scopeArgs...)
+	}
 	if request.Context.After != nil {
 		dates += " AND a.occurred_at >= CAST(? AS TIMESTAMP)"
 		args = append(args, request.Context.After.UTC())
@@ -36,7 +46,7 @@ func (e *DuckDBEngine) meetingScopeCTE(request ExploreRequest) (string, []any, e
 		args = append(args, request.Context.Before.UTC())
 	}
 	return `selected_meeting_messages AS (
-	SELECT message_id FROM analytical_entries WHERE ` + conditions + `
+	SELECT DISTINCT a.entry_num FROM relationship_counting_activity a WHERE a.message_id IN (SELECT message_id FROM analytical_entries WHERE ` + conditions + `)
 ), ` + meetingCountActivityCTE(dates), args, nil
 }
 
@@ -200,7 +210,9 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	SELECT canonical_id, sum(attachment_count)::BIGINT AS file_count FROM (
 		SELECT DISTINCT a.message_id, a.canonical_id, a.attachment_count
 		FROM relationship_activity_expanded a JOIN classified f ON f.message_id=a.message_id
-		WHERE a.canonical_id IS NOT NULL AND a.attachment_count > 0 AND (a.is_direct OR a.is_conversation_member)
+		WHERE a.canonical_id IS NOT NULL AND a.attachment_count > 0 AND a.entry_kind NOT IN ('event','meeting') AND (a.is_direct OR a.is_conversation_member)
+		UNION
+		SELECT a.message_id, a.canonical_id, a.attachment_count FROM meeting_activity a WHERE a.attachment_count > 0
 	) GROUP BY canonical_id
 )`
 	if strings.TrimSpace(identityCandidateSQL) != "" {
@@ -283,7 +295,9 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 	SELECT domain, sum(attachment_count)::BIGINT AS file_count FROM (
 		SELECT DISTINCT a.message_id, a.participant_domain AS domain, a.attachment_count
 		FROM relationship_activity_expanded a JOIN classified f ON f.message_id=a.message_id
-		WHERE a.canonical_id IS NOT NULL AND a.attachment_count > 0 AND a.participant_domain <> '' AND (a.is_direct OR a.is_conversation_member)` + domainCondition + `
+		WHERE a.canonical_id IS NOT NULL AND a.attachment_count > 0 AND a.participant_domain <> '' AND a.entry_kind NOT IN ('event','meeting') AND (a.is_direct OR a.is_conversation_member)` + domainCondition + `
+		UNION
+		SELECT a.message_id, a.participant_domain AS domain, a.attachment_count FROM meeting_activity a WHERE a.attachment_count > 0 AND a.participant_domain <> ''` + domainCondition + `
 	) GROUP BY domain
 )`
 	return sql, args, nil
@@ -294,7 +308,7 @@ func exactDomainPredicates(domain string) (string, []any) {
 	if domain == "" {
 		return "", nil
 	}
-	return " AND a.participant_domain = ?", []any{domain, domain, domain, domain, domain, domain, domain}
+	return " AND a.participant_domain = ?", []any{domain, domain, domain, domain, domain, domain, domain, domain}
 }
 
 func identityRequestHasEdgeFilters(request ExploreRequest) bool {
@@ -322,7 +336,7 @@ func (e *DuckDBEngine) narrowIdentityFactCandidates(
 	args = append(args, conditionArgs...)
 	queryText := `
 SELECT f.message_id
-FROM relationship_activity_expanded f
+FROM relationship_counting_activity f
 WHERE ` + leading + ` AND ` + conditions + `
 GROUP BY f.message_id
 LIMIT ?`
@@ -396,7 +410,7 @@ func buildIdentityFactConditions(request ExploreRequest) (string, []any) {
 	}
 	appendIntGroup(request.Context.SourceIDs, "f.source_id = ?")
 	if scopeConditions, scopeArgs := search.AccountScopeConditions(request.Context.AccountScopes, "account_m"); len(scopeConditions) > 0 {
-		conditions = append(conditions, "f.message_id IN (SELECT account_m.id FROM messages account_m WHERE "+
+		conditions = append(conditions, "f.anchor_message_id IN (SELECT account_m.id FROM messages account_m WHERE "+
 			strings.Join(scopeConditions, " AND ")+")")
 		args = append(args, scopeArgs...)
 	}

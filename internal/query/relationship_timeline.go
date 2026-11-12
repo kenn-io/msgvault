@@ -289,20 +289,21 @@ func buildRelationshipTimelineSQL(conditions, meetingDates string, canonicalCoun
 	return `
 WITH subject_facts AS (
     SELECT a.entry_key, min(selected.message_id) AS message_id,
-        any_value(a.conversation_id) FILTER (WHERE a.message_id=selected.message_id) AS conversation_id,
-        any_value(a.source_id) FILTER (WHERE a.message_id=selected.message_id) AS source_id,
-        min(a.occurred_at) FILTER (WHERE a.message_id=selected.message_id) AS occurred_at,
-        any_value(a.entry_kind) FILTER (WHERE a.message_id=selected.message_id) AS entry_kind,
-        any_value(a.is_chat) FILTER (WHERE a.message_id=selected.message_id) AS is_chat,
-        any_value(a.has_attachments) FILTER (WHERE a.message_id=selected.message_id) AS has_attachments,
+        any_value(anchor.conversation_id) AS conversation_id,
+        any_value(a.source_id) AS source_id,
+        min(a.occurred_at) AS occurred_at,
+        any_value(anchor.entry_kind) AS entry_kind,
+        any_value(anchor.is_chat) AS is_chat,
+        any_value(anchor.has_attachments) AS has_attachments,
         bool_or(a.is_owner AND a.is_direct) AS with_owner
     FROM relationship_counting_activity a
     JOIN (
-        SELECT f.entry_key, arg_min(f.message_id, struct_pack(occurred_at := f.occurred_at, message_id := f.message_id)) AS message_id
+        SELECT f.entry_key, any_value(f.anchor_message_id) AS message_id
         FROM relationship_counting_activity f
         WHERE NOT f.unsent AND f.entry_key IN (SELECT entry_key FROM relationship_counting_activity WHERE canonical_id = ?) AND (` + conditions + `) AND (f.entry_kind IN ('event','meeting') OR f.canonical_id = ?) AND f.canonical_id = ?
         GROUP BY f.entry_key
     ) selected ON selected.entry_key=a.entry_key
+    JOIN relationship_activity_sparse anchor ON anchor.message_id=selected.message_id
     WHERE a.canonical_id IN (` + strings.TrimSuffix(strings.Repeat("?,", canonicalCount), ",") + `)
     GROUP BY a.entry_key
 ), day_bucketed AS (
