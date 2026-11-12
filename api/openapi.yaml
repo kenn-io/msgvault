@@ -29315,6 +29315,12 @@ paths:
           schema:
             format: int64
             type: integer
+        - description: Restrict to one evidence row
+          in: query
+          name: evidence_id
+          schema:
+            format: int64
+            type: integer
       responses:
         "200":
           content:

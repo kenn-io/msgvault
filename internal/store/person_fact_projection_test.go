@@ -1985,6 +1985,35 @@ func TestPersonFactSummaryIncludesEvidenceAndPins(t *testing.T) {
 	}
 }
 
+func TestPersonFactSummaryIncludesSavedValues(t *testing.T) {
+	for _, kind := range []string{"empty", "attribute", "employment"} {
+		t.Run(kind, func(t *testing.T) {
+			st, personID, _ := newPersonFactProjectionStore(t)
+			switch kind {
+			case "attribute":
+				_, err := st.SetPersonAttributeValueContext(t.Context(), PersonAttributeValueInput{
+					PersonID: personID, DefinitionSlug: AttributeSlugPrimaryChannel,
+					Value: AttributeValue{Type: AttributeValueText, Text: new("email")}, Source: ProvenanceUser,
+				})
+				require.NoError(t, err)
+			case "employment":
+				org := createPersonFactOrganization(t, st, "Example", "example.com")
+				_, err := st.AddEmploymentContext(t.Context(), EmploymentInput{
+					PersonID: personID, OrganizationID: org.ID, Title: new("Engineer"), Source: ProvenanceUser,
+				})
+				require.NoError(t, err)
+			}
+			_, err := st.db.ExecContext(t.Context(), `DELETE FROM person_fact_pin_events WHERE person_id = ?`, personID)
+			require.NoError(t, err)
+			summary, err := st.PersonFactSummaryContext(t.Context(), personID)
+			require.NoError(t, err)
+			assert.Equal(t, kind != "empty", summary.HasStoredFacts)
+			assert.Zero(t, summary.ClaimedFields)
+			assert.Nil(t, summary.LatestClaimAt)
+		})
+	}
+}
+
 func TestPersonFactNegativeClaimTiedWithSavedValue(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

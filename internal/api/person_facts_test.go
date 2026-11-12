@@ -143,6 +143,30 @@ func TestPersonFactHistoryHTTPFiltersRealEmploymentTargetWithColonKey(t *testing
 	assertions.Len(body.Evidence, 1)
 }
 
+func TestPersonFactEvidenceHTTPFiltersByID(t *testing.T) {
+	t.Parallel()
+	srv, st, personID, _ := newPersonFactAPIFixture(t)
+	evidence, err := st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{})
+	require.NoError(t, err)
+	require.Len(t, evidence, 1)
+	path := fmt.Sprintf("/api/v1/people/%d/fact-evidence?evidence_id=", personID)
+	response := doRequest(t, srv.Router(), http.MethodGet, path+strconv.FormatInt(evidence[0].ID, 10), nil, nil)
+	require.Equal(t, http.StatusOK, response.Code)
+	var body PersonFactEvidenceResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.Len(t, body.Evidence, 1)
+	assert.Equal(t, evidence[0].ID, body.Evidence[0].ID)
+	response = doRequest(t, srv.Router(), http.MethodGet, path+strconv.FormatInt(evidence[0].ID+1, 10), nil, nil)
+	require.Equal(t, http.StatusOK, response.Code)
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	assert.Empty(t, body.Evidence)
+	for _, value := range []string{"", "0", "-1", "abc"} {
+		response = doRequest(t, srv.Router(), http.MethodGet, path+value, nil, nil)
+		assert.Equal(t, http.StatusBadRequest, response.Code)
+		assert.Contains(t, response.Body.String(), "invalid_evidence_id")
+	}
+}
+
 func TestPersonFactEvidenceStatusHTTPFiltersPaginatesAndExposesSafeReactivationHistory(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

@@ -500,6 +500,21 @@ func (s *Store) PersonFactSummaryContext(ctx context.Context, personID int64) (p
 		if err != nil {
 			return fmt.Errorf("load person fact summary: %w", err)
 		}
+		if !summary.HasStoredFacts {
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS (`+personFactPinAttributeTargetCandidatesSQL+`)`,
+				personID, ProvenanceUser, ProvenanceCardDAVImport, ProvenanceVCardImport, "person_attribute").Scan(&summary.HasStoredFacts)
+			if err != nil {
+				return fmt.Errorf("load saved attribute summary: %w", err)
+			}
+		}
+		if !summary.HasStoredFacts {
+			err = tx.QueryRowContext(ctx, personFactPinEmploymentTargetCandidateSQL,
+				personID, ProvenanceUser, ProvenanceCardDAVImport, ProvenanceVCardImport,
+				personID, "employment", personFactDecisionSourceRefPrefix).Scan(&summary.HasStoredFacts)
+			if err != nil {
+				return fmt.Errorf("load saved employment summary: %w", err)
+			}
+		}
 		if latest.Valid {
 			value := latest.Time.UTC()
 			summary.LatestClaimAt = &value
@@ -523,7 +538,7 @@ func (s *Store) ListPersonFactEvidenceContext(
 	evidence := make([]personfacts.Evidence, 0)
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		evidence, err = s.queryPersonFactEvidenceTx(ctx, tx, personID,
-			personfacts.EvidenceFilter{Target: filter.Target, Limit: limit, Offset: offset})
+			personfacts.EvidenceFilter{EvidenceID: filter.EvidenceID, Target: filter.Target, Limit: limit, Offset: offset})
 		if err != nil {
 			return err
 		}
@@ -608,6 +623,10 @@ func (s *Store) queryPersonFactEvidenceTx(
 	query := `SELECT ` + personFactEvidenceColumns + `
 		FROM person_fact_evidence e WHERE e.person_id = ?`
 	args := []any{personID}
+	if filter.EvidenceID != 0 {
+		query += ` AND e.id = ?`
+		args = append(args, filter.EvidenceID)
+	}
 	if filter.Target != nil {
 		query += ` AND EXISTS (
 			SELECT 1 FROM person_fact_claim_evidence ce
