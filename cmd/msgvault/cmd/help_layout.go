@@ -68,6 +68,7 @@ var topLevelCommandGroups = map[string]string{
 	"cancel-deletion":         helpGroupDelete,
 	"carddav":                 helpGroupPeople,
 	"collection":              helpGroupPeople,
+	"comment":                 helpGroupWrite,
 	"completion":              helpGroupOperations,
 	"create-subset":           helpGroupExport,
 	"credentials":             helpGroupOperations,

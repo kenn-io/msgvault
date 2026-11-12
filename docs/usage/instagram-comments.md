@@ -1,13 +1,13 @@
 ---
-last_edited: "2026-11-11"
+last_edited: "2026-11-12"
 title: Instagram Comments
 description: Archive a linked professional Instagram account's media comments and replies.
 ---
 
 Search returned Instagram media captions, comments, and replies beside your
 other communications, and link commenters with existing person tools. This
-unreleased integration reads comments; it does not publish replies or send
-messages.
+unreleased integration reads comments, and can hide, delete, or publicly reply
+to comments you choose. It does not send messages.
 
 ## Connect a professional account
 
@@ -61,11 +61,6 @@ Missing authors stay unknown; later omissions preserve stronger stored evidence.
 Comment self attribution is unproven when Meta returns only a non-comparable
 commenter identity; equal digits do not establish account ownership.
 
-Only media returned by the verified account's media edge is discovered here,
-unless you [include ad media](#include-ad-media). Missing media owners remain
-unknown; explicit foreign owners are refused. Media downloads and public
-replies are separate work.
-
 ## Include ad media
 
 The account's media list can leave out media made only for ads, so comments on
@@ -117,3 +112,20 @@ next sync also continues reading the ad account where it stopped.
 Ad account reads and media lookups count toward the same request budget. Adding,
 changing, or removing `ad_account_id` restarts that profile's sync cycle from
 the beginning; archived rows are kept.
+
+## Hide, delete, or reply to comments
+
+Add `actions = ["hide", "delete", "reply"]` to the `[[instagram_comments]]`
+profile, then use `msgvault comment moderate` or `msgvault comment reply`. The
+steps are the same as for Facebook comments: see
+[Hide or delete comments](facebook-comments.md#hide-or-delete-comments) and
+[Reply to comments](facebook-comments.md#reply-to-comments). Instagram accepts
+replies to top-level comments only. Comments on ad media are hidden, deleted,
+and replied to the same way, with the Page token; the ad token is only used to
+read the ad account.
+
+## Limits
+
+Only media returned by the verified account's media edge is discovered here,
+unless you [include ad media](#include-ad-media). Missing media owners remain
+unknown; explicit foreign owners are refused. Media downloads are separate work.
