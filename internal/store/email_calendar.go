@@ -81,6 +81,9 @@ func upsertEmailRaw(q querier, messageID int64, rawData []byte, format string) e
 // (rederive.LedgerKey), which the store's reopen markers extend.
 const EmailRepairVersion = "email-v3"
 
+// emailHoldSuffix extends the pass key to name one message's hold marker.
+const emailHoldSuffix = "#o"
+
 // emailRepairSourceSQL yields the source's ledger prefix, up to the version,
 // of the message bound to its single placeholder.
 const emailRepairSourceSQL = `SELECT 'rederive:' || source_type || ':' || identifier || ':' AS prefix
@@ -94,7 +97,7 @@ func holdEmailRepair(q querier, messageID int64) error {
 	if err := reopenEmailRepair(q, messageID); err != nil {
 		return err
 	}
-	_, err := q.Exec(`INSERT INTO applied_migrations (name) SELECT prefix || '`+EmailRepairVersion+`#o' || ?
+	_, err := q.Exec(`INSERT INTO applied_migrations (name) SELECT prefix || '`+EmailRepairVersion+emailHoldSuffix+`' || ?
 		FROM (`+emailRepairSourceSQL+`) repair_source WHERE true ON CONFLICT (name) DO NOTHING`,
 		strconv.FormatInt(messageID, 16), messageID)
 	return err
@@ -107,7 +110,7 @@ func holdEmailRepair(q querier, messageID int64) error {
 // writer committed is always seen; a failed or unfinished derive keeps its
 // marker and with it the reopened pass.
 func settleEmailRepair(q querier, messageID int64) error {
-	const markerPrefix = `prefix || '` + EmailRepairVersion + `#o'`
+	const markerPrefix = `prefix || '` + EmailRepairVersion + emailHoldSuffix + `'`
 	if _, err := q.Exec(`DELETE FROM applied_migrations WHERE name IN (
 		SELECT `+markerPrefix+` || ? FROM (`+emailRepairSourceSQL+`) repair_source)`,
 		strconv.FormatInt(messageID, 16), messageID); err != nil {
@@ -120,6 +123,17 @@ func settleEmailRepair(q querier, messageID int64) error {
 		  AND NOT EXISTS (SELECT 1 FROM applied_migrations marker
 			WHERE SUBSTR(marker.name, 1, LENGTH(`+markerPrefix+`)) = `+markerPrefix+`))`, messageID)
 	return err
+}
+
+// EmailRepairHeldContext reports whether any message still owes an invitation
+// derive to the pass recorded under ledger key base, whether or not the
+// reopened versions were raised since.
+func (s *Store) EmailRepairHeldContext(ctx context.Context, base string) (bool, error) {
+	var held bool
+	prefix := base + emailHoldSuffix
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM applied_migrations
+		WHERE SUBSTR(name, 1, LENGTH(?)) = ?)`, prefix, prefix).Scan(&held)
+	return held, err
 }
 
 // reopenEmailRepair marks the message's source's email repair pass incomplete
