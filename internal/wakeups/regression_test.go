@@ -359,6 +359,40 @@ func TestEndpointFailuresAreIndependent(t *testing.T) {
 	}
 }
 
+func TestEmptyPageCorrectsFutureCursorAfterClockRollback(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	base := testutil.NewTestStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	bound := now.Add(-10 * time.Minute)
+	future := now.Add(time.Hour)
+	initializedWakeup(t, base, "rollback", future)
+	var deliveries []payload
+	var decodeErr error
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body payload
+		decodeErr = json.NewDecoder(r.Body).Decode(&body)
+		deliveries = append(deliveries, body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	observed := &observedStore{Store: base, fixedBound: bound}
+	engine := Engine{Store: observed, Subscriptions: []Subscription{testSubscription(t, "rollback", server, changefeed.Filter{IncomingOnly: true})}, Now: func() time.Time { return now }}
+
+	require.NoError(engine.RunPass(t.Context()))
+	state, _, err := base.LoadWakeupState(t.Context(), "rollback")
+	require.NoError(err)
+	assert.Equal(bound, state.At)
+	assert.Empty(deliveries)
+
+	id := seedWakeup(t, base, "rollback@example.com", 0, 1, now)
+	observed.fixedBound = now.Add(time.Minute)
+	require.NoError(engine.RunPass(t.Context()))
+	require.NoError(decodeErr)
+	require.Len(deliveries, 1)
+	assert.Equal([]int64{id}, deliveries[0].Matched.MessageIDs)
+}
+
 func TestSetupInitializesBeforeFirstPass(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)

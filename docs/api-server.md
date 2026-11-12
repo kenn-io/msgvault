@@ -3505,9 +3505,10 @@ Search can confirm a withheld value through exact or prefix queries, and draft o
 Configured wake-ups POST a Standard Webhooks signed JSON notification when a
 matching recent message changes. Configure them in [the configuration
 reference](configuration.md#wake-up-webhooks). A new entry starts at the
-archive's current completion bound, so existing history does not trigger a
-notification. Editing a filter applies it from the entry's current position.
-Removing an entry discards its position.
+archive's current completion bound when it first loads successfully, so existing
+history does not trigger a notification. An entry whose secret cannot be resolved
+is not started until a later restart. Editing a filter applies it from the
+entry's current position. Removing an entry discards its position.
 
 A notification contains `schema_version`, `type` (`msgvault.wakeup`),
 `delivery_id`, `name`, `filter`, `cursor_from`, `cursor_to`, `matched` and
