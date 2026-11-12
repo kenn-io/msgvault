@@ -221,18 +221,6 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			if raw == nil {
 				return e.initializeMissing(ctx, sub.Name, &head)
 			}
-			filter, err := changefeed.ResolveFilter(ctx, e.Store, sub.Filter)
-			if err != nil {
-				if !errors.Is(err, store.ErrPersonNotFound) && !errors.Is(err, resolver.ErrEmptyPopulation) {
-					return err
-				}
-				state.NextAttemptAt = now.Add(retryDelay(1))
-				_, err = advance(raw)
-				if err == nil {
-					logger.Warn("wakeup failed", "name", sub.Name, "category", "person_unavailable", "failures", state.Failures)
-				}
-				return err
-			}
 			uid, err = e.Store.ArchiveUIDContext(ctx)
 			if err != nil {
 				return err
@@ -245,6 +233,18 @@ func (e *Engine) RunPass(ctx context.Context) error {
 					return err
 				}
 				pages[since] = page
+			}
+			filter, err := changefeed.ResolveFilter(ctx, e.Store, sub.Filter)
+			if err != nil {
+				if !errors.Is(err, store.ErrPersonNotFound) && !errors.Is(err, resolver.ErrEmptyPopulation) {
+					return err
+				}
+				state.NextAttemptAt = now.Add(retryDelay(1))
+				_, err = advance(raw)
+				if err == nil {
+					logger.Warn("wakeup failed", "name", sub.Name, "category", "person_unavailable", "failures", state.Failures)
+				}
+				return err
 			}
 			rows, position, _ := changefeed.Scan(page, since, filter, changefeed.ScanBudget)
 			next = position

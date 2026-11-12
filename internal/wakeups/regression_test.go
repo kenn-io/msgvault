@@ -483,6 +483,7 @@ func TestSetupInitializesOtherEntriesAfterStateLoadError(t *testing.T) {
 // linkBeforeWakeupPage commits the link and arrival at the real page boundary.
 type linkBeforeWakeupPage struct {
 	*store.Store
+
 	before func()
 }
 
