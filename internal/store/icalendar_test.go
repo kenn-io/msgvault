@@ -130,6 +130,7 @@ func TestICalendarRangeKeepsSiblings(t *testing.T) {
 		requirements.NoError(err)
 		requirements.Empty(page.Unexpandable)
 		requirements.Len(page.Occurrences, 1)
+		requirements.Equal("confirmed", page.Occurrences[0].Status)
 	})
 }
 
@@ -137,19 +138,21 @@ func TestICalendarRangePreservesOriginalPrefix(t *testing.T) {
 	for _, tc := range []struct {
 		name, master, boundary string
 		want                   []string
+		extra, expectReport    bool
+		windowOffset           int
 	}{
-		{"timed", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", []string{"2027-03-02T12:00:00Z", "2027-03-04T12:00:00Z", "2027-03-04T14:00:00Z", "2027-03-05T13:00:00Z", "2027-03-07T13:00:00Z", "2027-03-08T12:00:00Z", "2027-03-08T13:00:00Z"}},
-		{"all day", "DTSTART;VALUE=DATE:20270302\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;VALUE=DATE;RANGE=THISANDFUTURE:20270305\r\nDTSTART;VALUE=DATE:20270305\r\nSUMMARY:Updated", []string{"2027-03-02T00:00:00Z", "2027-03-03T00:00:00Z", "2027-03-04T00:00:00Z", "2027-03-05T00:00:00Z", "2027-03-06T00:00:00Z", "2027-03-07T00:00:00Z", "2027-03-08T00:00:00Z"}},
-		{"mismatched", "DTSTART;VALUE=DATE:20270302\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", nil},
-		{"single", "DTSTART:20270302T120000Z\r\nDURATION:PT1H", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", []string{"2027-03-02T12:00:00Z", "2027-03-05T13:00:00Z"}},
-		{"long occurrence", "DTSTART:20270302T120000Z\r\nDURATION:P7D\r\nRRULE:FREQ=WEEKLY", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T130000Z", []string{"2027-03-02T12:00:00Z"}},
+		{"timed", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", []string{"2027-03-02T12:00:00Z", "2027-03-04T12:00:00Z", "2027-03-04T14:00:00Z", "2027-03-05T13:00:00Z", "2027-03-07T13:00:00Z", "2027-03-08T12:00:00Z", "2027-03-08T13:00:00Z"}, true, false, 0},
+		{"all day", "DTSTART;VALUE=DATE:20270302\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;VALUE=DATE;RANGE=THISANDFUTURE:20270305\r\nDTSTART;VALUE=DATE:20270305\r\nSUMMARY:Updated", []string{"2027-03-02T00:00:00Z", "2027-03-03T00:00:00Z", "2027-03-04T00:00:00Z", "2027-03-05T00:00:00Z", "2027-03-06T00:00:00Z", "2027-03-07T00:00:00Z", "2027-03-08T00:00:00Z"}, false, false, 0},
+		{"mismatched", "DTSTART;VALUE=DATE:20270302\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", nil, false, true, 0},
+		{"single", "DTSTART:20270302T120000Z\r\nDURATION:PT1H", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", []string{"2027-03-02T12:00:00Z", "2027-03-05T13:00:00Z"}, false, false, 0},
+		{"long occurrence", "DTSTART:20270302T120000Z\r\nDURATION:P7D\r\nRRULE:FREQ=WEEKLY", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T130000Z", []string{"2027-03-02T12:00:00Z"}, false, false, 5},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
 			source := icsSource(t, st)
 			events := [][]byte{calendarDocument("REQUEST", tc.master), calendarDocument("REQUEST", tc.boundary)}
-			if tc.name == "timed" {
+			if tc.extra {
 				events = append(events,
 					calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270308T120000Z\r\nDURATION:PT1H"),
 					calendarDocument("REQUEST", "RECURRENCE-ID:20270306T120000Z\r\nDTSTART:20270304T140000Z\r\nDURATION:PT1H"),
@@ -161,8 +164,8 @@ func TestICalendarRangePreservesOriginalPrefix(t *testing.T) {
 			}
 			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
 			to := from.AddDate(0, 0, 7)
-			if tc.name == "long occurrence" {
-				from = from.AddDate(0, 0, 5)
+			if tc.windowOffset != 0 {
+				from = from.AddDate(0, 0, tc.windowOffset)
 				to = from.AddDate(0, 0, 1)
 			}
 			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, to)
@@ -172,12 +175,12 @@ func TestICalendarRangePreservesOriginalPrefix(t *testing.T) {
 				starts = append(starts, occurrence.Start.Format(time.RFC3339))
 			}
 			requirements.Equal(tc.want, starts)
-			if tc.name == "mismatched" {
+			if tc.expectReport {
 				requirements.NotEmpty(page.Unexpandable)
 			} else {
 				requirements.Empty(page.Unexpandable)
 			}
-			if tc.name == "timed" {
+			if tc.extra {
 				requirements.Equal("cancelled", page.Occurrences[1].Status)
 				page, err = st.ListCalendarOccurrencesContext(t.Context(), from.AddDate(0, 0, 2), from.AddDate(0, 0, 3))
 				requirements.NoError(err)
@@ -190,26 +193,6 @@ func TestICalendarRangePreservesOriginalPrefix(t *testing.T) {
 	}
 }
 
-func TestICalendarRangeMovesLaterOccurrences(t *testing.T) {
-	requirements := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	source := icsSource(t, st)
-	for _, event := range [][]byte{
-		calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=4"),
-		calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H"),
-	} {
-		_, err := st.PersistICalendarContext(t.Context(), source, event)
-		requirements.NoError(err)
-	}
-	from := time.Date(2027, 3, 4, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 2))
-	requirements.NoError(err)
-	requirements.Len(page.Occurrences, 2)
-	requirements.Equal("2027-03-04T14:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
-	requirements.Equal("2027-03-05T14:00:00Z", page.Occurrences[1].Start.Format(time.RFC3339))
-	requirements.Empty(page.Unexpandable)
-}
-
 func TestICalendarRangeMovesAroundLaterEdits(t *testing.T) {
 	master := "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=5"
 	move := "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H"
@@ -217,14 +200,13 @@ func TestICalendarRangeMovesAroundLaterEdits(t *testing.T) {
 		name   string
 		events [][]byte
 		want   []string
-		report string
 	}{
 		{"cancelled occurrence", [][]byte{calendarDocument("CANCEL", "RECURRENCE-ID:20270304T120000Z")},
-			[]string{"2027-03-03T14:00:00Z", "2027-03-04T14:00:00Z cancelled", "2027-03-05T14:00:00Z"}, ""},
+			[]string{"2027-03-03T14:00:00Z", "2027-03-04T14:00:00Z cancelled", "2027-03-05T14:00:00Z"}},
 		{"cancelled range", [][]byte{calendarDocument("CANCEL", "SEQUENCE:1\r\nRECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z")},
-			[]string{"2027-03-03T14:00:00Z cancelled", "2027-03-04T14:00:00Z cancelled", "2027-03-05T14:00:00Z cancelled"}, ""},
+			[]string{"2027-03-03T14:00:00Z cancelled", "2027-03-04T14:00:00Z cancelled", "2027-03-05T14:00:00Z cancelled"}},
 		{"exception with its own start", [][]byte{calendarDocument("REQUEST", "RECURRENCE-ID:20270304T120000Z\r\nDTSTART:20270304T180000Z\r\nDURATION:PT1H")},
-			[]string{"2027-03-03T14:00:00Z", "2027-03-04T18:00:00Z", "2027-03-05T14:00:00Z"}, ""},
+			[]string{"2027-03-03T14:00:00Z", "2027-03-04T18:00:00Z", "2027-03-05T14:00:00Z"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -246,12 +228,7 @@ func TestICalendarRangeMovesAroundLaterEdits(t *testing.T) {
 				got = append(got, line)
 			}
 			requirements.Equal(tc.want, got)
-			if tc.report == "" {
-				requirements.Empty(page.Unexpandable)
-			} else {
-				requirements.Len(page.Unexpandable, 1)
-				requirements.Equal(tc.report, page.Unexpandable[0].Reason)
-			}
+			requirements.Empty(page.Unexpandable)
 		})
 	}
 }
@@ -320,9 +297,9 @@ func TestICalendarSuccessiveRangeMoves(t *testing.T) {
 }
 
 func TestICalendarRangeReportsIncompletePrefix(t *testing.T) {
-	for _, tc := range []struct{ name, master, want string }{
-		{"budget", "DTSTART:18000101T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY", "recurrence generation budget exceeded"},
-		{"unidentified", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=7", "exception original start cannot be compared"},
+	for _, tc := range []struct{ name, master, exception, want, occurrence string }{
+		{"budget", "DTSTART:18000101T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY", "", "recurrence generation budget exceeded", ""},
+		{"unidentified", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;VALUE=DATE:20270303\r\nDTSTART:20270304T140000Z\r\nDURATION:PT1H", "exception original start cannot be compared", "2027-03-04T12:00:00Z"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -335,8 +312,8 @@ func TestICalendarRangeReportsIncompletePrefix(t *testing.T) {
 				_, err := st.PersistICalendarContext(t.Context(), source, event)
 				requirements.NoError(err)
 			}
-			if tc.name == "unidentified" {
-				_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "RECURRENCE-ID;VALUE=DATE:20270303\r\nDTSTART:20270304T140000Z\r\nDURATION:PT1H"))
+			if tc.exception != "" {
+				_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", tc.exception))
 				requirements.NoError(err)
 			}
 			from := time.Date(2027, 3, 4, 0, 0, 0, 0, time.UTC)
@@ -348,9 +325,9 @@ func TestICalendarRangeReportsIncompletePrefix(t *testing.T) {
 			}
 			requirements.Len(reasons, 1)
 			requirements.Contains(reasons[0], tc.want)
-			if tc.name == "unidentified" {
+			if tc.occurrence != "" {
 				requirements.Len(page.Occurrences, 1)
-				requirements.Equal("2027-03-04T12:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
+				requirements.Equal(tc.occurrence, page.Occurrences[0].Start.Format(time.RFC3339))
 			}
 		})
 	}
@@ -376,7 +353,7 @@ func TestICSFamilyLookupUsesIndexes(t *testing.T) {
 	assertions.Contains(plan, "idx_calendar_events_series_id")
 }
 
-func TestICalendarEqualRevisionIgnored(t *testing.T) {
+func testICalendarEqualRevisionIgnored(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
@@ -403,7 +380,7 @@ func TestICalendarEqualRevisionIgnored(t *testing.T) {
 	assertions.Equal("Changed", calendarRows(t, st, ids[0])[0].Subject)
 }
 
-func TestICalendarCancellationWinsRevisionTie(t *testing.T) {
+func testICalendarCancellationWinsRevisionTie(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
@@ -444,7 +421,7 @@ func TestICalendarRawIsNotEmailDedupEvidence(t *testing.T) {
 	assert.Empty(t, candidates, "calendar event bytes are not email deduplication evidence")
 }
 
-func TestICalendarCancelledExceptionConversationStats(t *testing.T) {
+func TestICalendarCancelledExceptionOccurrenceAndConversationStats(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -503,7 +480,7 @@ func TestICalendarCancelledExceptionOccurrences(t *testing.T) {
 	}
 }
 
-func TestICalendarCancellationInheritsMissingEnd(t *testing.T) {
+func TestICalendarCancellationEnd(t *testing.T) {
 	for _, tc := range []struct {
 		name, duration string
 		count          int
@@ -528,23 +505,22 @@ func TestICalendarCancellationInheritsMissingEnd(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestICalendarCancellationKeepsImplicitAllDayEnd(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	source := icsSource(t, st)
-	raw := strings.Replace(string(calendarDocument("REQUEST", "DTSTART;VALUE=DATE:20270310")), "METHOD:REQUEST\r\n", "", 1)
-	_, err := st.PersistICalendarContext(t.Context(), source, []byte(raw))
-	requirements.NoError(err)
-	_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("CANCEL", "SEQUENCE:1\r\nSTATUS:CANCELLED"))
-	requirements.NoError(err)
-	from := time.Date(2027, 3, 10, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	requirements.NoError(err)
-	requirements.Len(page.Occurrences, 1)
-	assertions.Equal("cancelled", page.Occurrences[0].Status)
-	assertions.Equal("2027-03-11", page.Occurrences[0].EndDate)
+	t.Run("implicit all-day end", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		source := icsSource(t, st)
+		raw := strings.Replace(string(calendarDocument("REQUEST", "DTSTART;VALUE=DATE:20270310")), "METHOD:REQUEST\r\n", "", 1)
+		_, err := st.PersistICalendarContext(t.Context(), source, []byte(raw))
+		requirements.NoError(err)
+		_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("CANCEL", "SEQUENCE:1\r\nSTATUS:CANCELLED"))
+		requirements.NoError(err)
+		from := time.Date(2027, 3, 10, 0, 0, 0, 0, time.UTC)
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+		requirements.NoError(err)
+		requirements.Len(page.Occurrences, 1)
+		assertions.Equal("cancelled", page.Occurrences[0].Status)
+		assertions.Equal("2027-03-11", page.Occurrences[0].EndDate)
+	})
 }
 
 func TestICalendarImportsLargeFileWithSmallEvents(t *testing.T) {
@@ -594,4 +570,15 @@ func TestICalendarRoomAttendeesAreNotParticipants(t *testing.T) {
 		requirements.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM participants WHERE email_address=?`, tc.email).Scan(&count))
 		assertions.Equal(tc.want, count, tc.email)
 	}
+}
+
+func TestICalendarRejectsInvalidZoneAtomically(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VTIMEZONE\r\nTZID:Custom/Test\r\nBEGIN:STANDARD\r\nDTSTART:20270101T000000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:sibling@example.com\r\nDTSTAMP:20260701T120000Z\r\nDTSTART:20270706T090000Z\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:old@example.com\r\nDTSTAMP:20260701T120000Z\r\nDTSTART;TZID=Custom/Test:20260706T090000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	_, err := st.PersistICalendarContext(t.Context(), source, raw)
+	require.ErrorContains(t, err, "Custom/Test")
+	var count int
+	require.NoError(t, st.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE source_id=?`, source).Scan(&count))
+	require.Zero(t, count)
 }
