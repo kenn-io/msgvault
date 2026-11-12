@@ -59,7 +59,7 @@
   }
 
   function coverageSummary(coverage: ActionCoverage): string {
-    return `Coverage: ${coverage.available} available · ${coverage.partial} partial · ${coverage.unsupported} unsupported · ${coverage.unavailable} unavailable`;
+    return `Action item records by meeting: ${coverage.available} complete · ${coverage.partial} partial · ${coverage.unsupported} not supported · ${coverage.unavailable} unavailable`;
   }
 
 </script>
@@ -118,7 +118,7 @@
         </div>
       </div>
       {#if displayedPage.rows.length === 0}
-        <EmptyState title={emptyState(displayedPage.coverage)} description="Source evidence is shown without local completion state." />
+        <EmptyState title={emptyState(displayedPage.coverage)} description="Action item status comes from the meeting record." />
       {:else}
         <ol>
           {#each displayedPage.rows as row (`${row.meeting.message_id}:${row.action.locator}`)}

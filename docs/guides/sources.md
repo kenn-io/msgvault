@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-10"
 title: Choose a Source
 description: Find the right sync or import path for mail, chat, meetings, calendars, and contacts.
 ---
@@ -36,7 +36,7 @@ also a separate opt-in because downloading an image can activate email tracking.
 | Slack | [Slack sync](../usage/slack.md) | Channels you have joined, group DMs, DMs, threads, and available files |
 | Slackdump export | [Slackdump import](../usage/slack.md) | Local directory or ZIP; no Slack token needed |
 | Microsoft Teams | [Teams sync](../usage/teams.md) | Chats, self-chat, channels, replies, and available media |
-| Discord | [Discord sync](../usage/discord.md) | Bot-accessible guild channels, threads, and forums; personal DMs are outside this integration |
+| Discord | [Discord sync and packages](../usage/discord.md) | Bot-accessible guild history; on `main`, official packages import sent-only messages, including DMs, into a separate account source |
 | X | [X posts and replies](../usage/x.md) | Own posts and returned public replies/mentions, explicit capped backfill, and reviewed owner replies; unreleased |
 | Chatwoot | [Chatwoot sync](chatwoot.md) | Shared inboxes, contact and employee messages, media, and linked call meetings |
 | Facebook Page comments | [Page comment sync](../usage/facebook-comments.md) | Selected Page token and app/Page IDs; returned organic, visitor, and ad-post comment conversations; unreleased |

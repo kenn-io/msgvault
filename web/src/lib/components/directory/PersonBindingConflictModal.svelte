@@ -98,7 +98,7 @@
         return { person: result.data, etag };
       });
       if (!refreshed[0] || !refreshed[1]) {
-        error = 'The merge was stale, but could not load both current profile revisions. Try again.';
+        error = "The profiles changed, but couldn't be reloaded. Retry profile reload.";
         return;
       }
       const next = validatePersonMergeRequired({
@@ -107,7 +107,7 @@
         profiles: refreshed,
       });
       if (!next) {
-        error = 'The merge was stale, but could not load both current profile revisions. Try again.';
+        error = "The profiles changed, but couldn't be reloaded. Retry profile reload.";
         return;
       }
       profiles = next.profiles;
@@ -115,10 +115,10 @@
       confirmed = false;
       idempotencyKey = null;
       reloadRequired = false;
-      error = 'Profiles changed while you were reviewing them. Confirm the current revisions before merging.';
+      error = 'The profiles changed. Review them, choose which to keep, and confirm the merge.';
     } catch (cause) {
       if (disposed || generation !== requestGeneration || signal.aborted) return;
-      error = 'The merge was stale, but could not load both current profile revisions. Try again.';
+      error = "The profiles changed, but couldn't be reloaded. Retry profile reload.";
     }
   }
   async function retryProfileReload(): Promise<void> {
