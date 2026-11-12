@@ -122,6 +122,7 @@ type ContextCLIStore interface {
 	CountSourceDeletedMessagesContext(ctx context.Context, sourceIDs ...int64) (int64, error)
 	NeedsFTSBackfillQuickContext(ctx context.Context) bool
 	NeedsFTSBackfillContext(ctx context.Context) (bool, error)
+	BackfillFTSContext(ctx context.Context, progress func(done, total int64)) (int64, error)
 	RebuildFTSContext(ctx context.Context, progress func(done, total int64)) (int64, error)
 }
 
@@ -268,6 +269,10 @@ func (s *requestCLIStore) CountSourceDeletedMessages(sourceIDs ...int64) (int64,
 
 func (s *requestCLIStore) NeedsFTSBackfillQuick() bool {
 	return s.contextStore.NeedsFTSBackfillQuickContext(s.ctx)
+}
+
+func (s *requestCLIStore) BackfillFTS(progress func(done, total int64)) (int64, error) {
+	return s.contextStore.BackfillFTSContext(s.ctx, progress)
 }
 
 func (s *requestCLIStore) RebuildFTS(
@@ -1679,7 +1684,19 @@ func cliRunCommandAllowed(args []string) bool {
 		return false
 	}
 	if args[0] == "source" {
-		return len(args) >= 3 && (args[1] == "facebook-comments" || args[1] == "instagram-comments") && (args[2] == "add" || args[2] == "sync")
+		if len(args) < 3 {
+			return false
+		}
+		switch args[1] {
+		case "facebook-comments", "instagram-comments":
+			return args[2] == "add" || args[2] == "sync"
+		case "feeds":
+			switch args[2] {
+			case "add", "list", "remove", "sync":
+				return true
+			}
+		}
+		return false
 	}
 	// Internal subprocess commands are callable only by their owning public
 	// command on the daemon host, never through the generic HTTP runner.
@@ -1771,6 +1788,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"import-pst",
 		"import-slackdump",
 		"import-telegram",
+		"import-discord-package",
 		"import-x",
 		"import-synctech-sms",
 		"import-whatsapp",
@@ -2473,10 +2491,26 @@ func (s *Server) ensureCLISearchIndexAsync(cliStore CLIStore, mayRepair bool) st
 	if bound, ok := cliStore.(*requestCLIStore); ok {
 		cliStore = bound.CLIStore
 	}
+	s.importMu.Lock()
+	if s.importsClosed {
+		s.importMu.Unlock()
+		return state
+	}
+	finishIdle, ok := s.idleTracker.BeginMaintenanceWorkContext(s.importContext)
+	if !ok {
+		s.importMu.Unlock()
+		return state
+	}
+	s.importWG.Add(1)
+	s.importMu.Unlock()
 	s.ftsEnsureMayRepair = mayRepair
 	s.ftsEnsureRunning.Store(true)
 	s.ftsIndexState.Store(state)
-	go s.runCLISearchIndexEnsure(cliStore, knownIncomplete, !mayRepair)
+	go func() {
+		defer s.importWG.Done()
+		defer finishIdle()
+		s.runCLISearchIndexEnsure(cliStore, knownIncomplete, !mayRepair)
+	}()
 	return state
 }
 

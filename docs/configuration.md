@@ -1688,6 +1688,22 @@ The canonical source identifier is
 `app:<app_id>:page:<page_id>:instagram:<instagram_account_id>`; its generic
 scheduler job is `instagram_comments:<source-identifier>`.
 
+### `[feeds]` {#feeds}
+
+Fetch the RSS, Atom, and JSON feeds followed with `msgvault source feeds add`. The
+feeds themselves are kept in the archive, not here; see [Feeds](usage/feeds.md).
+
+```toml
+[feeds]
+enabled = true                    # gate for the daemon schedule
+schedule = "*/30 * * * *"         # 5-field cron; empty = manual sync only
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Whether the daemon schedules feed sync |
+| `schedule` | — | Cron expression used by `msgvault serve` |
+
 ### `[[chatwoot]]` {#chatwoot}
 
 Configure one account per Chatwoot instance. Each registered inbox becomes a
@@ -2182,8 +2198,8 @@ Text embeddings use a configured endpoint or the shared local `kennembed` server
 | `document_prefix` | `""` | Model-specific instruction prepended to every document chunk after chunking (for example, `"search_document: "` for `nomic-embed-text`). The prefix does not reduce `max_input_chars`; maximum 4096 UTF-8 bytes. |
 | `query_prefix` | `""` | Model-specific instruction prepended to every vector-search query (for example, `"search_query: "` for `nomic-embed-text`); maximum 4096 UTF-8 bytes. |
 | `api_key_env` | — | Name of an environment variable containing the API key. Omit for anonymous endpoints. |
-| `batch_size` | `32` | Embedding inputs per HTTP call. Long messages can contribute multiple chunk inputs. |
-| `timeout` | `30s` | Per-request timeout. |
+| `batch_size` | `32`, or `8` for `local_only` | Embedding inputs per HTTP call. Long messages can contribute multiple chunk inputs. |
+| `timeout` | `30s`, or `5m` for `local_only` | Per-request timeout. |
 | `max_retries` | `3` | Retries per batch on transient failures. |
 | `max_input_chars` | `32768` | Character cap per embedding chunk, counted in characters rather than tokens. Too high and chunks are rejected or silently truncated; too low and long messages split into more chunks, adding embedding overhead. For example, start around `6000` for a 2k-token model such as Ollama's `nomic-embed-text`, then check representative content. See [Matching `max_input_chars` to your embedder's context window](usage/vector-search.md#matching-max_input_chars-to-your-embedders-context-window). |
 | `eta_window` | `10` | Number of completed batches used for foreground throughput and ETA smoothing; daemon status retains at most 20. Zero or negative values use 10. |
