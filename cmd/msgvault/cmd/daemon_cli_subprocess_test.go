@@ -249,7 +249,7 @@ func TestStreamDaemonCLIPipeTerminalAndMalformedBytes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var got bytes.Buffer
 			err := streamDaemonCLIPipe(tc.reader, cliStreamStdout, func(_ string, data string) error { _, _ = got.WriteString(data); return nil })
-			assert.ErrorIs(t, err, tc.err)
+			require.ErrorIs(t, err, tc.err)
 			assert.Equal(t, tc.want, got.String())
 		})
 	}
@@ -260,7 +260,7 @@ func TestStreamDaemonCLIPipeDrainsAfterEmitFailure(t *testing.T) {
 	reader := &pipeReadScript{fragments: [][]byte{[]byte("first"), []byte("second"), []byte("third")}, terminal: readErr}
 	calls := 0
 	err := streamDaemonCLIPipe(reader, cliStreamStderr, func(_, _ string) error { calls++; return emitErr })
-	assert.ErrorIs(t, err, emitErr)
+	require.ErrorIs(t, err, emitErr)
 	assert.Equal(t, 1, calls)
 	assert.Empty(t, reader.fragments)
 }

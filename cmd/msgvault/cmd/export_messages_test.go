@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -511,6 +512,7 @@ func TestExportMessagesCommandConcurrentParticipantMerge(t *testing.T) {
 // exportPipeRunner connects real export bytes to the API's event writer.
 type exportPipeRunner struct {
 	*storeAPIAdapter
+
 	fragments [][]byte
 }
 
@@ -566,7 +568,10 @@ func TestExportMessagesUnicodeThroughDaemonCLI(t *testing.T) {
 	err = client.RunCLICommand(t.Context(), daemonclient.CLIRunRequest{Args: []string{"export-messages"}}, func(stream, data string) error {
 		assert.Equal(t, cliStreamStdout, stream)
 		_, writeErr := received.WriteString(data)
-		return writeErr
+		if writeErr != nil {
+			return fmt.Errorf("write received export: %w", writeErr)
+		}
+		return nil
 	})
 	require.NoError(t, err)
 	assert.Equal(t, native.String(), received.String())
