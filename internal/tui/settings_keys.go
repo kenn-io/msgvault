@@ -32,16 +32,20 @@ func (m Model) handleSettingsKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		return updated, cmd
 	}
 	before, after := m.settings, next.settings
-	if before.peopleControls.active != after.peopleControls.active || before.codex.active != after.codex.active || before.peopleControls.confirm != after.peopleControls.confirm || before.peopleControls.exitBlocked != after.peopleControls.exitBlocked || before.peopleControls.pending != after.peopleControls.pending || before.codex.stage != after.codex.stage || before.editing != after.editing || before.groupCursor != after.groupCursor || before.rowCursor != after.rowCursor || before.narrowFields != after.narrowFields || before.status != after.status || before.codex.message != after.codex.message || before.peopleControls.message != after.peopleControls.message {
+	if before.peopleControls.active != after.peopleControls.active || before.codex.active != after.codex.active || before.peopleControls.confirm != after.peopleControls.confirm || before.peopleControls.exitBlocked != after.peopleControls.exitBlocked || before.peopleControls.pending != after.peopleControls.pending || before.codex.stage != after.codex.stage || codexSelectionChanged(before, after) || before.editing != after.editing || before.groupCursor != after.groupCursor || before.rowCursor != after.rowCursor || before.narrowFields != after.narrowFields || before.status != after.status || before.codex.message != after.codex.message || before.peopleControls.message != after.peopleControls.message {
 		next.settings.scrollOffset = 0
 		if before.peopleControls.confirm != after.peopleControls.confirm && after.peopleControls.confirm != "" {
-			next.settings.scrollOffset = -1
+			next.settings.scrollOffset = settingsScrollBottom
 		}
-		if !after.peopleControls.active && !after.codex.active && after.status == "" && !after.pendingRestart && (after.peopleInferenceStatus == nil || !after.peopleInferenceStatus.PendingRestart) && (before.rowCursor != after.rowCursor || before.narrowFields != after.narrowFields) && after.narrowFields {
-			next.settings.scrollOffset = -1
+		if codexSelectionChanged(before, after) || (!after.peopleControls.active && !after.codex.active && (before.rowCursor != after.rowCursor || before.narrowFields != after.narrowFields || before.editing != after.editing)) {
+			next.settings.scrollOffset = settingsScrollBottom
 		}
 	}
 	return next, cmd
+}
+
+func codexSelectionChanged(before, after settingsState) bool {
+	return before.codex.editing != after.codex.editing || before.codex.modelCursor != after.codex.modelCursor || before.codex.effortCursor != after.codex.effortCursor
 }
 
 func (m Model) handleSettingsKeyPressInner(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

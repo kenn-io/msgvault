@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -33,6 +34,28 @@ func TestSettingsViewportEndpointDetail(t *testing.T) {
 	screen = uv.NewScreenBuffer(80, 12)
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, screen.String(), "Key: search.field")
+}
+
+func TestSettingsViewportPendingSelectionKeepsDetail(t *testing.T) {
+	for _, width := range []int{80, 100} {
+		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
+			snapshot := SettingsSnapshot{PendingRestart: true, Groups: []SettingsGroup{{ID: "search", Label: "Search"}}}
+			for i := range 6 {
+				snapshot.Fields = append(snapshot.Fields, SettingField{Key: fmt.Sprintf("search.field%d", i), Group: "search", Label: "Other", Kind: SettingKindString, Value: stringSettingValue("auto")})
+			}
+			snapshot.Fields = append(snapshot.Fields, SettingField{Key: "vector.embeddings.endpoint", Group: "search", Label: "Embedding endpoint", Description: "Endpoint for the embedding service.", RestartRequired: true, Kind: SettingKindString, Value: stringSettingValue(""), Validation: SettingValidation{Hint: "HTTP or HTTPS URL without credentials, query, or fragment."}})
+			model := resizeModel(t, loadedSettingsModel(t, snapshot), width, 12)
+			if width < settingsWideWidth {
+				model, _ = sendKey(t, model, keyEnter())
+			}
+			for range 6 {
+				model, _ = sendKey(t, model, key('j'))
+			}
+			screen := uv.NewScreenBuffer(width, 12)
+			uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+			assert.Contains(t, screen.String(), "HTTP or HTTPS URL without credentials")
+		})
+	}
 }
 
 func TestSettingsViewportFingerprint(t *testing.T) {
@@ -96,4 +119,39 @@ func TestSettingsViewportCodexRestartNotice(t *testing.T) {
 	view := strings.Join(strings.Fields(screen.String()), " ")
 	assert.Contains(t, view, "on the daemon host, run msgvault daemon restart with its --home and --config, or restart its service")
 	assert.Contains(t, view, "[Esc] Cancel and return")
+}
+
+func TestSettingsViewportCodexModelSelectionRemainsVisible(t *testing.T) {
+	model := resizeModel(t, loadedSettingsModel(t, settingsFixture()), 40, 12)
+	model.settings.codex.active = true
+	model.settings.codex.stage = "models"
+	for i := range 12 {
+		model.settings.codex.models = append(model.settings.codex.models, CodexModelChoice{ID: fmt.Sprintf("model-%02d", i), ReasoningEfforts: []string{"medium"}})
+	}
+	for range 10 {
+		model, _ = sendKey(t, model, key('j'))
+	}
+	screen := uv.NewScreenBuffer(40, 12)
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, screen.String(), "▶ model-10")
+	assert.Contains(t, screen.String(), "[Esc]")
+	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgUp})
+	model, _ = sendKey(t, model, key('j'))
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, screen.String(), "▶ model-11")
+}
+
+func TestSettingsViewportCodexPolicyEditorRemainsVisible(t *testing.T) {
+	backend := &fakePeopleInferenceBackend{loads: []SettingsSnapshot{settingsFixture()}}
+	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 40, 13)
+	model.settingsBackend = backend
+	model, _ = sendKey(t, model, key('p'))
+	model, _ = sendKey(t, model, key('1'))
+	for _, r := range "example-profile" {
+		model, _ = sendKey(t, model, key(r))
+	}
+	screen := uv.NewScreenBuffer(40, 13)
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, screen.String(), "Edit field 1:")
+	assert.Contains(t, screen.String(), "example-profile")
 }

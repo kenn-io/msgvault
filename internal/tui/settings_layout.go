@@ -7,6 +7,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+const settingsScrollBottom = -1
+
 // settingsViewport keeps the actions outside the scrollable settings content.
 func (m Model) settingsViewport(body, actions string) (viewport.Model, string) {
 	width := max(m.width, 20)
@@ -16,17 +18,41 @@ func (m Model) settingsViewport(body, actions string) (viewport.Model, string) {
 	footer := wrapText(actions, width)
 	v := viewport.New(viewport.WithWidth(width), viewport.WithHeight(max(m.height-len(footer)-1, 1)))
 	v.SoftWrap = true
-	v.SetContent(ansi.Wrap(body, width, ""))
+	wrapped := strings.ReplaceAll(ansi.Wrap(body, width, ""), "\u00a0", " ")
+	v.SetContent(wrapped)
 	if v.TotalLineCount() > v.Height() {
 		footer = append(footer, "[PgUp/PgDn] Scroll")
 		v.SetHeight(max(m.height-len(footer)-1, 1))
 	}
-	if m.settings.scrollOffset < 0 {
-		v.GotoBottom()
-	} else {
-		v.SetYOffset(m.settings.scrollOffset)
-	}
+	v.SetYOffset(m.settingsYOffset(v, wrapped))
 	return v, strings.Join(footer, "\n")
+}
+
+// settingsYOffset resolves the stored scroll request against the wrapped body.
+// A negative request keeps the selected row visible; results and notices that
+// follow an operation stay at the top, and paging reaches the selection.
+func (m Model) settingsYOffset(v viewport.Model, wrapped string) int {
+	request := m.settings.scrollOffset
+	if request >= 0 {
+		return request
+	}
+	bottom, cursor := max(v.TotalLineCount()-v.Height(), 0), settingsCursorLine(wrapped)
+	if cursor < 0 {
+		return bottom
+	}
+	return min(bottom, cursor)
+}
+
+// settingsCursorLine finds the selected row: the marker furthest right, which
+// is the field marker when categories are shown beside the fields.
+func settingsCursorLine(wrapped string) int {
+	line, best := -1, -1
+	for i, text := range strings.Split(ansi.Strip(wrapped), "\n") {
+		if at := strings.LastIndex(text, "▶ "); at > best {
+			line, best = i, at
+		}
+	}
+	return line
 }
 
 func (m Model) settingsScreen() (string, string, string) {

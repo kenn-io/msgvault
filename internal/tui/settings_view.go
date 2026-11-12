@@ -45,7 +45,7 @@ func (m Model) mainSettingsParts() (string, string, string) {
 		}
 		lines = append(lines, "People inference: "+configured+" · Running: "+running)
 		if status.ConfiguredFingerprint != "" {
-			lines = append(lines, "Profile fingerprint: "+textutil.SanitizeTerminal(status.ConfiguredFingerprint))
+			lines = append(lines, "Profile fingerprint:\u00a0"+textutil.SanitizeTerminal(status.ConfiguredFingerprint))
 		}
 	}
 	if m.settings.loading {
