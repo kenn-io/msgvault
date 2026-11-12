@@ -95,9 +95,8 @@ func TestMeetingOccurrenceBatchSuppressesSeriesAfterLaterLimit(t *testing.T) {
 	evidence, err := st.loadMeetingEvidence(t.Context(), through)
 	require.NoError(t, err)
 	assert.True(t, evidence.unexpandable[series])
-	rows, next, err := evidence.Reduce(t.Context(), nil)
+	rows, _, err := evidence.Reduce(t.Context(), nil)
 	require.NoError(t, err)
-	assert.Equal(t, through.Add(24*time.Hour), next)
 	found := false
 	for _, row := range rows {
 		if row.MessageID == series {

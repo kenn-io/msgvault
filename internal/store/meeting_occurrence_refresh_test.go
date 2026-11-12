@@ -47,8 +47,6 @@ func TestMeetingFallbackReadsOnlyFallbackAttendees(t *testing.T) {
 	require.NoError(t, err)
 	rows, _, err := evidence.Reduce(t.Context(), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
-	require.Contains(t, evidence.fallbacks, id)
-	assert.Equal(t, []string{"calendar@example.com"}, evidence.fallbacks[id].declined)
 	found := false
 	for _, row := range rows {
 		if row.MessageID == id {

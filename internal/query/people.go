@@ -429,11 +429,8 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	overrideExpr := sqlPersonNameOverrideExpr(e.parquetPath(datasetPersonDisplayNames), overrideFilter)
 	personWhere := []string{"true"}
 	populationFrom := "FROM person_entries pe JOIN participants p ON p.id = pe.person_id"
-	if keepInactive || exactID != nil {
+	if keepInactive {
 		populationFrom = "FROM participants p LEFT JOIN person_entries pe ON pe.person_id = p.id"
-	}
-	if exactID != nil && !keepInactive {
-		personWhere = append(personWhere, "(activity_count > 0 OR meeting_count > 0)")
 	}
 	if exactID != nil {
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",")
