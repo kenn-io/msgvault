@@ -12,7 +12,10 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
-const calendarExceptionKind = "exception"
+const (
+	calendarExceptionKind = "exception"
+	calendarSeriesKind    = "series"
+)
 
 type CalendarOccurrence struct {
 	row               CalendarEventRow
@@ -69,7 +72,7 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 	byID := make(map[int64]CalendarEventRow, len(rows))
 	for _, row := range rows {
 		byID[row.MessageID] = row
-		if row.Event.Kind == "series" || row.Event.Kind == "single" {
+		if row.Event.Kind == calendarSeriesKind || row.Event.Kind == "single" {
 			masters[seriesKey{row.SourceID, row.Event.ProviderEventID}] = true
 		}
 		if row.Event.Kind == calendarExceptionKind {
@@ -163,7 +166,7 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 				continue
 			}
 			fallthrough
-		case "series":
+		case calendarSeriesKind:
 			for _, exception := range exceptions[seriesKey{row.SourceID, e.ProviderEventID}] {
 				edit := exception.Event
 				if edit.Original != nil && edit.Original.AllDay != e.AllDay && (edit.Start == nil || edit.End == nil) {

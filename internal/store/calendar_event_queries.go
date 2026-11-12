@@ -229,7 +229,7 @@ func calendarEventRowsInWindow(ctx context.Context, r *loggedDB, dialect Dialect
 		for _, row := range parents {
 			if _, exists := byID[row.MessageID]; !exists {
 				byID[row.MessageID] = row
-				if row.Event.Kind == "series" {
+				if row.Event.Kind == calendarSeriesKind {
 					seriesCount++
 				}
 				if seriesCount > maxCalendarSeries {

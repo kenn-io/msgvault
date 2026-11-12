@@ -92,20 +92,22 @@ func TestMeetingLinksCLIReferenceNormalizationAndSchemaGate(t *testing.T) {
 		})
 	}
 	t.Run("previous schema", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
 		client := &meetingRecordClient{version: "5.0.0"}
 		command := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 		command.SetArgs([]string{"evt:23", "--json"})
-		require.ErrorContains(t, command.Execute(), "daemon API schema 5.1.0 or newer")
-		assert.Empty(t, client.refs)
+		require.ErrorContains(command.Execute(), "daemon API schema 5.1.0 or newer")
+		assert.Empty(client.refs)
 	})
 }
 
 func TestMeetingLinksCLIWithoutNotes(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	client := &meetingRecordClient{version: "5.1.0", record: &store.MeetingRecord{Links: []store.MeetingLink{{Ref: "evt:23", Start: new(time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)), End: new(time.Date(2027, 3, 14, 11, 0, 0, 0, time.UTC))}}, MessageIDs: []int64{}, Unexpandable: []store.CalendarUnexpandable{}}}
 	command := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 	var out bytes.Buffer
 	command.SetOut(&out)
 	command.SetArgs([]string{"evt:23"})
-	require.NoError(t, command.Execute())
-	assert.Contains(t, out.String(), "Notes: none\n")
+	require.NoError(command.Execute())
+	assert.Contains(out.String(), "Notes: none\n")
 }
