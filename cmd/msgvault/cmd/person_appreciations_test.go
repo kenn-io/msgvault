@@ -21,7 +21,7 @@ func TestAppreciationsListWireAndOutput(t *testing.T) {
 	assert.Equal(t, http.MethodGet, daemon.method)
 	assert.Equal(t, "/api/v1/people/7/appreciations", daemon.path)
 	assert.Empty(t, daemon.body)
-	for _, value := range []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "café", "exact peer quote", "lane=chat", "message_id=42", "source_message_id=native-42", "suggested", "prior thanks unknown", "already_thanked", "prior thanks evidenced", "exact owner thanks", "message_id=44"} {
+	for _, value := range []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "café", "exact peer quote", "lane=chat", "message_id=42", "source_message_id=native-42", "Prior thanks unknown.", "Already thanked (with evidence).", "exact owner thanks", "message_id=44"} {
 		assert.Contains(t, out, value)
 	}
 	assert.NotContains(t, out, "\x1b")

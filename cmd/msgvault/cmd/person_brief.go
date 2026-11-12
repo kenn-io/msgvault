@@ -422,8 +422,10 @@ func newPersonBriefEnrollmentsCommand() *cobra.Command {
 			return writePersonBriefRawJSON(cmd, response.Body)
 		}
 		if len(response.JSON200.Enrollments) == 0 {
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), "No enrolled people on this page.")
-			return err
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "No enrolled people on this page."); err != nil {
+				return fmt.Errorf("write person brief enrollments: %w", err)
+			}
+			return nil
 		}
 		for _, row := range response.JSON200.Enrollments {
 			enabled := "-"

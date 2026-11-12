@@ -48,13 +48,18 @@ func newPersonAppreciationsListCommand() *cobra.Command {
 
 func writeAppreciationRef(w io.Writer, label, quote string, ref generated.EvidenceRef) error {
 	_, err := fmt.Fprintf(w, "  %s quote: %s\n  %s source: lane=%s source_id=%d message_id=%d attachment_id=%d source_message_id=%s occurrence_key=%s chunk_key=%s span=%d:%d\n", label, textutil.SanitizeTerminal(quote), label, textutil.SanitizeTerminal(ref.SourceLane), ref.SourceID, ref.MessageID, ref.AttachmentID, textutil.SanitizeTerminal(ref.SourceMessageID), textutil.SanitizeTerminal(ref.OccurrenceKey), textutil.SanitizeTerminal(ref.ChunkKey), ref.SpanStart, ref.SpanEnd)
-	return err
+	if err != nil {
+		return fmt.Errorf("write appreciation: %w", err)
+	}
+	return nil
 }
 
 func writePersonAppreciations(w io.Writer, items []generated.PersonAppreciation) error {
 	if len(items) == 0 {
-		_, err := fmt.Fprintln(w, "No supported, undismissed appreciation suggestions.")
-		return err
+		if _, err := fmt.Fprintln(w, "No supported, undismissed appreciation suggestions."); err != nil {
+			return fmt.Errorf("write appreciation: %w", err)
+		}
+		return nil
 	}
 	for i, item := range items {
 		if i > 0 {
@@ -63,7 +68,11 @@ func writePersonAppreciations(w io.Writer, items []generated.PersonAppreciation)
 			}
 		}
 		s := item.Suggestion
-		if _, err := fmt.Fprintf(w, "Key: %s\nReason: %s\nState: %s; prior thanks %s\n", textutil.SanitizeTerminal(stringOrEmpty(s.Key)), textutil.SanitizeTerminal(s.Text), textutil.SanitizeTerminal(stringOrEmpty(s.State)), textutil.SanitizeTerminal(stringOrEmpty(s.PriorThanks))); err != nil {
+		status := "Prior thanks unknown."
+		if stringOrEmpty(s.State) == "already_thanked" && stringOrEmpty(s.PriorThanks) == "evidenced" {
+			status = "Already thanked (with evidence)."
+		}
+		if _, err := fmt.Fprintf(w, "Key: %s\nReason: %s\n%s\n", textutil.SanitizeTerminal(stringOrEmpty(s.Key)), textutil.SanitizeTerminal(s.Text), status); err != nil {
 			return fmt.Errorf("write appreciation: %w", err)
 		}
 		if err := writeAppreciationRef(w, "Peer", s.Quote, item.Peer); err != nil {
@@ -76,7 +85,10 @@ func writePersonAppreciations(w io.Writer, items []generated.PersonAppreciation)
 		}
 	}
 	_, err := fmt.Fprintln(w, "Prior thanks unknown does not mean never thanked; evidence is limited to supported direct chats.")
-	return err
+	if err != nil {
+		return fmt.Errorf("write appreciation: %w", err)
+	}
+	return nil
 }
 
 func newPersonAppreciationsDismissCommand() *cobra.Command {
