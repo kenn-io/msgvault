@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/backupapp"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -287,7 +288,59 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("restoring snapshot: %w", err)
 	}
+	if err := secureRestoredTokens(cmd.Context(), r, res.SnapshotID, backupRestoreTarget); err != nil {
+		if errors.Is(err, providercredentials.ErrRestorePermissionsConflict) {
+			return fmt.Errorf("snapshot %s was restored, but credentials were not secured: %w; no permissions were changed and strict credential reads may fail; move or re-save the affected files and restore again", res.SnapshotID, err)
+		}
+		return fmt.Errorf("snapshot %s was restored, but securing restored credentials failed (some permissions may have changed): %w", res.SnapshotID, err)
+	}
 	return printBackupRestoreSummary(cmd.OutOrStdout(), backupRestoreTarget, res, looseAttachments)
+}
+
+func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, target string) error {
+	snapshot, err := repo.OpenSnapshot(ctx, snapshotID, backupapp.New(Version).PackFileExtension())
+	if err != nil {
+		return fmt.Errorf("open restored snapshot: %w", err)
+	}
+	defer snapshot.Close() //nolint:errcheck // membership lookup is authoritative
+	strict := false
+	for _, name := range []string{providercredentials.Filename, providercredentials.ServerKeyFilename} {
+		_, err := snapshot.Extra("tokens/" + name)
+		if err == nil {
+			strict = true
+			continue
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("inspect restored token membership: %w", err)
+		}
+	}
+	if !strict {
+		return nil
+	}
+	dir := filepath.Join(target, "tokens")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read restored tokens: %w", err)
+	}
+	var selected []string
+	for _, entry := range entries {
+		_, err := snapshot.Extra("tokens/" + entry.Name())
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect restored token membership: %w", err)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("inspect restored token %q: %w", entry.Name(), err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("restored token %q is not a regular file", entry.Name())
+		}
+		selected = append(selected, entry.Name())
+	}
+	return providercredentials.SecureRestored(dir, selected)
 }
 
 func removeSQLiteVectorBackendPath(path string) error {
