@@ -1137,6 +1137,7 @@ type personSplitSnapshotDependency struct {
 var errPersonSplitReferenceMissing = errors.New("person split reference target is missing")
 
 var personSplitSnapshotDependencies = map[string][]personSplitSnapshotDependency{
+	"person_introductions": {{column: "source_id", table: "sources", key: "id"}},
 	personRelationshipsTableName: {
 		{column: "relationship_type_id", table: "relationship_types", key: "id"},
 	},
@@ -1770,7 +1771,7 @@ func (s *Store) insertPersonSplitSnapshotRowTx(
 
 func personSplitRevisionedTable(table string) bool {
 	switch table {
-	case "vcard_resource_envelopes", personRelationshipsTableName, "employments":
+	case "vcard_resource_envelopes", personRelationshipsTableName, "employments", "person_introductions":
 		return true
 	default:
 		return false

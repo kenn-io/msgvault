@@ -159,6 +159,10 @@ const personMergePersonIDColumn = "person_id"
 // point at a person. Operation tables are classified but not recursively
 // snapshotted; their targeted lineage updates are journaled separately.
 var personMergeTableRegistry = map[string]personMergeTableSpec{
+	"person_introductions": {
+		TableName: "person_introductions", KeyColumn: "intro_id", Snapshot: true,
+		PersonReferences: []personMergeReference{directPersonReference("person_a_id"), directPersonReference("person_b_id")},
+	},
 	"person_participants": {
 		TableName: "person_participants", KeyColumn: "participant_id", Snapshot: false,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},
@@ -859,7 +863,7 @@ func personMergeTableProvenance(table string) personMergeProvenanceKind {
 	switch table {
 	case "activity_event_persons", "person_contact_state":
 		return personMergeProvenanceDerived
-	case "organization_attribute_values", "person_uid_aliases", personRelationshipsTableName,
+	case "organization_attribute_values", "person_uid_aliases", "person_introductions", personRelationshipsTableName,
 		personRelationshipReviewsTableName, identityMatchCandidatesTableName,
 		"identity_match_candidate_redirects", identityMatchCandidateSourcesTableName,
 		identityMatchEvidenceTableName, identityMatchEvidenceSourcesTableName, "person_merges",

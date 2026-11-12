@@ -1460,7 +1460,7 @@ func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
 	if name == clirun.EnvInlineOAuth {
 		return len(args) > 0 && args[0] == "add-inline"
 	}
-	if IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) {
+	if IsCLIRunIntro(args) || IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) {
 		return false
 	}
 	if len(args) >= 3 && args[0] == cliRunPersonCommand {
@@ -1682,6 +1682,9 @@ const cliRunPersonCommand = "person"
 func cliRunCommandAllowed(args []string) bool {
 	if len(args) == 0 {
 		return false
+	}
+	if IsCLIRunIntro(args) {
+		return introActionAllowed(args)
 	}
 	if args[0] == "source" {
 		return len(args) >= 3 && (args[1] == "facebook-comments" || args[1] == "instagram-comments") && (args[2] == "add" || args[2] == "sync")

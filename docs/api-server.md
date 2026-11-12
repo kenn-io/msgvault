@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-12"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -26,6 +26,14 @@ browser login, secure remote deployment, search states, and keyboard controls.
 | Integrate an AI assistant | [MCP server](usage/chat.md) |
 
 Connect AI assistants through the [native MCP endpoints](usage/chat.md#native-daemon-endpoints).
+
+### Local introductions
+
+On unreleased `main`, the existing daemon CLI runner carries the local
+[initial introduction workflow](usage/people.md#prepare-an-introduction).
+The `intro` commands use the runner's source-scoped agent grants and return the
+same JSON records to CLI clients. Dedicated introduction HTTP routes are not
+available yet.
 
 ### Filename suggestions
 

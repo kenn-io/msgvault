@@ -2286,7 +2286,7 @@ var exclusiveLockTables = []string{
 	// persons and person_participants: MergeParticipants (reached from the
 	// Beeper import path) repoints bindings and bumps person revisions, so
 	// both belong to the sync/import write set this lock mirrors.
-	"persons", "person_participants",
+	"persons", "person_participants", "person_introductions",
 	"person_sweep_changes", "person_sweep_sync_publications",
 	// Activity projection rows are written from and cascade with the sync
 	// archive. The queue is trigger-written by every message/participant

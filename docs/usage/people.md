@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: "2026-11-12"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -15,6 +15,7 @@ Google resource addresses not linked to a person are excluded from observed peop
 | I want to… | Start here |
 |---|---|
 | Save someone's name, details, or notes | [Create a profile](#promote-a-durable-person) |
+| Prepare an introduction | [Prepare an introduction](#prepare-an-introduction) |
 | See which conversations still need an answer | [Open loops](open-loops.md) |
 | Remember what they recently shared | [Person briefs](/docs/usage/people-briefs/) |
 | Review meeting time and recorded follow-ups | [Meeting activity](meetings.md#export-context-and-read-follow-ups) |
@@ -28,6 +29,36 @@ Google resource addresses not linked to a person are excluded from observed peop
 Ordinary profile editing and identity discovery use your archive. Briefs,
 automatic fact extraction, semantic person search, and external enrichment
 need separate provider configuration and consent. You can edit saved profiles without enabling them.
+
+## Prepare an introduction
+
+On unreleased `main`, save an introduction locally for two distinct saved
+people and a Beeper source. Find their person IDs and the source ID first,
+then provide your own title and text:
+
+```bash
+msgvault intro prepare --source-id 4 --person 12 --person 18 --title "Introduction" --body "Hello both"
+msgvault intro list --json
+msgvault intro show <intro-id>
+msgvault intro edit <intro-id> --revision 1 --body "Updated text"
+msgvault intro cancel <intro-id> --revision 2
+```
+
+The record stays on your hardware. Preparing it does not contact Beeper,
+create a group, or send a message. Cancellation clears its stored body. Edit
+and cancel require the current revision and a prepared record; inspect it
+again if another change has advanced the revision.
+
+Preflight reports `no_identity_on_account` when a person has no saved Beeper
+identity on that account, `ambiguous_identity` when there is more than one,
+and `owner_selected` when a selected person is you. The same person cannot be
+selected twice. These checks use archived identities, not a live lookup. Group
+creation and confirmation are future work.
+
+An agent with source-scoped `draft.create` can prepare, list, show, and cancel.
+Its responses include the body only with `draft.edit` on that source. Editing
+an introduction is owner-only. See the [CLI reference](../cli-reference.md#intro)
+for flags and pagination.
 
 ## Understand the records
 

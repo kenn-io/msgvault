@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-12"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -18,7 +18,7 @@ appear in full under Inherited Flags.
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-discord-package](#import-discord-package), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
-| Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
+| Maintain people and contacts | [loops](#loops), [intro](#intro), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
 | Find a partial address | [address](#address) |
 | Inspect staged room policy | [policy](#policy) |
@@ -29,6 +29,25 @@ appear in full under Inherited Flags.
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
 | Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-attachment-roles](#repair-attachment-roles), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
 | Operate or integrate | [setup](#setup), [credentials](#credentials), [daemon](#daemon), [serve](#serve), [activity](#activity), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
+
+## intro
+
+On unreleased `main`, prepare and manage local introduction records through the
+daemon. See [Prepare an introduction](usage/people.md#prepare-an-introduction)
+for preflight blockers and agent permissions.
+
+```text
+msgvault intro prepare --source-id N --person A --person B --title T --body B [--json]
+msgvault intro list [--source-id N] [--limit N] [--after-id CURSOR] [--json]
+msgvault intro show ID [--json]
+msgvault intro edit ID --revision N [--title T] [--body B] [--json]
+msgvault intro cancel ID --revision N [--json]
+```
+
+List defaults to 20 records and accepts a limit from 1 to 100. Results are
+newest first; pass `next_after_id` as `--after-id` for the next JSON page.
+Edit needs at least one replacement field. A stale revision or a record that
+is no longer prepared is refused. Cancel removes the stored body.
 
 ## loops
 
