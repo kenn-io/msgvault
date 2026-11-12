@@ -2361,6 +2361,10 @@ func (a *storeAPIAdapter) BackfillFTS(progress func(done, total int64)) (int64, 
 	return a.store.BackfillFTS(progress)
 }
 
+func (a *storeAPIAdapter) BackfillFTSContext(ctx context.Context, progress func(done, total int64)) (int64, error) {
+	return a.store.BackfillFTSContext(ctx, progress)
+}
+
 func (a *storeAPIAdapter) RebuildFTS(progress func(done, total int64)) (int64, error) {
 	return a.store.RebuildFTS(progress)
 }
