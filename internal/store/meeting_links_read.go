@@ -48,7 +48,7 @@ func occurrenceKeys(o CalendarOccurrence) []meetingLinkKey {
 		if row.Event.Kind != "series" {
 			keys = append(keys, canonicalMeetingKey("google_event_id", owner, row.Event.ProviderEventID, nil))
 		}
-		if o.SeriesMessageID != 0 && o.original != (calrecur.Identity{}) {
+		if o.SeriesMessageID != 0 && o.original != (calrecur.Identity{}) && (o.original.AllDay || o.original.Instant.Nanosecond() == 0) {
 			series := row.Event.SeriesProviderID
 			if series == "" {
 				series = row.Event.ProviderEventID

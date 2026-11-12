@@ -545,6 +545,51 @@ func TestMeetingRecordScopedGoogleIDs(t *testing.T) {
 	}
 }
 
+func TestMeetingRecordFractionalExceptionGoogleAlias(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	calendarFixture(t, st, "master", `{"id":"series","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, "owner@example.com")
+	_, edit := calendarFixture(t, st, "edit", `{"id":"edit","recurringEventId":"series","iCalUID":"uid@example.org","originalStartTime":{"dateTime":"2027-03-14T10:00:00.500Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`, "owner@example.com")
+	_, exactID := projectionFixture(t, st, "exact-id", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"edit"}}`)
+	_, exactTime := projectionFixture(t, st, "exact-time", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00.500Z"}}`)
+	_, wholeSecond := projectionFixture(t, st, "whole-second", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"series_20270314T100000Z"}}`)
+	for _, seed := range []MeetingLinkRef{{Kind: "evt", MessageID: edit}, {Kind: "msg", MessageID: exactID}, {Kind: "msg", MessageID: exactTime}} {
+		record, err := st.MeetingRecordContext(t.Context(), seed)
+		require.NoError(err)
+		require.Len(record.Links, 1)
+		assert.Equal(fmt.Sprintf("evt:%d", edit), record.Links[0].Ref)
+		assert.Equal([]int64{exactID, exactTime}, record.MessageIDs)
+		assert.NotContains(record.MessageIDs, wholeSecond)
+	}
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: wholeSecond})
+	require.NoError(err)
+	for _, link := range record.Links {
+		assert.NotEqual(edit, link.MessageID)
+	}
+}
+
+func TestMeetingRecordDerivedGoogleAlias(t *testing.T) {
+	for _, tc := range []struct{ name, start, end, original, movedStart, movedEnd, key string }{
+		{"timed", `{"dateTime":"2027-03-14T10:00:00Z"}`, `{"dateTime":"2027-03-14T11:00:00Z"}`, `{"dateTime":"2027-03-14T10:00:00Z"}`, `{"dateTime":"2027-03-15T10:00:00Z"}`, `{"dateTime":"2027-03-15T11:00:00Z"}`, "20270314T100000Z"},
+		{"all-day", `{"date":"2027-03-14"}`, `{"date":"2027-03-15"}`, `{"date":"2027-03-14"}`, `{"date":"2027-03-15"}`, `{"date":"2027-03-16"}`, "20270314"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			calendarFixture(t, st, "master", fmt.Sprintf(`{"id":"series","start":%s,"end":%s,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, tc.start, tc.end), "owner@example.com")
+			_, edit := calendarFixture(t, st, "edit", fmt.Sprintf(`{"id":"edit","recurringEventId":"series","originalStartTime":%s,"start":%s,"end":%s}`, tc.original, tc.movedStart, tc.movedEnd), "owner@example.com")
+			_, note := projectionFixture(t, st, "derived", "granola_json", fmt.Sprintf(`{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"series_%s"}}`, tc.key))
+			for _, seed := range []MeetingLinkRef{{Kind: "evt", MessageID: edit}, {Kind: "msg", MessageID: note}} {
+				record, err := st.MeetingRecordContext(t.Context(), seed)
+				require.NoError(err)
+				require.Len(record.Links, 1)
+				assert.Equal(edit, record.Links[0].MessageID)
+				assert.Equal([]int64{note}, record.MessageIDs)
+			}
+		})
+	}
+}
+
 func TestMeetingRecordExactFractionalAndOffsetTimes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
