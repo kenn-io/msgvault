@@ -19,6 +19,8 @@ func cliRunNeedsContentLease(args []string) bool {
 	}
 	if len(args) > 0 {
 		switch args[0] {
+		case "logs":
+			return false // Log files are not archive content and follow may stream indefinitely.
 		case "remove-account", "gc", "purge-excluded-media":
 			return false // Content removal emits metadata and must remain available.
 		}
@@ -31,7 +33,13 @@ func cliRunNeedsContentLease(args []string) bool {
 func (s *Server) contentReadMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sqlRead := r.Method == http.MethodPost && (r.URL.Path == "/api/v1/query" || r.URL.Path == "/api/v1/query/archive")
-		read := r.Method == http.MethodGet || r.Method == http.MethodHead || readOnlyPostRouteRequest(r) || sqlRead
+		// The read-only MCP catalog serializes its result after nested API reads
+		// return, so retain the fence until its outer JSON response finishes.
+		mcpRead := r.Method == http.MethodPost && r.URL.Path == "/mcp"
+		read := r.Method == http.MethodGet || r.Method == http.MethodHead || readOnlyPostRouteRequest(r) || sqlRead || mcpRead
+		if isNativeMCPPath(r.URL.Path) && r.Method != http.MethodPost {
+			read = false // Native MCP GET may be an open-ended event stream.
+		}
 		if !read || s.contentReadGuard == nil || r.URL.Path == "/health" || r.URL.Path == "/api/v1/health" || r.URL.Path == "/api/ping" || r.URL.Path == "/api/v1/sources/status" {
 			next.ServeHTTP(w, r)
 			return
