@@ -233,7 +233,8 @@ func TestMCPEmploymentNativePrimaryConflictAndDisclosure(t *testing.T) {
 }
 
 func TestMCPEmploymentCapabilityRequiresNativeRoute(t *testing.T) {
-	backend, _, _, _ := employmentFixture(t)
+	backend, _, _, org := employmentFixture(t)
+	_ = org
 	capabilities, err := backend.client.MCPCapabilities(t.Context())
 	require.NoError(t, err)
 	for i := range capabilities.Routes {

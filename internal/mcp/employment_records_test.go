@@ -51,10 +51,10 @@ func TestEmploymentCatalogGatesAndClosedInput(t *testing.T) {
 	good := map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "user", "is_primary": false, "title": nil}}
 	assert.NoError(t, resolved.Validate(good))
 	bad := map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "user", "other": true}}
-	assert.Error(t, resolved.Validate(bad))
+	require.Error(t, resolved.Validate(bad))
 	assert.NoError(t, resolved.Validate(map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "extraction", "confidence": 2}}))
 	assert.NoError(t, resolved.Validate(map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "extraction", "confidence": nil}}))
-	assert.Error(t, resolved.Validate(map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "extraction", "confidence": "high"}}))
+	require.Error(t, resolved.Validate(map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "extraction", "confidence": "high"}}))
 	body := schema.Properties["employment"]
 	confidence := body.Properties["confidence"]
 	require.Len(t, confidence.AnyOf, 2)

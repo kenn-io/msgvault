@@ -76,7 +76,7 @@ func employmentDefiniteRefusal(code string) bool {
 
 func (b *daemonMCPOperations) executeEmploymentOperation(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	invalid := func() (*mcpserver.OperationResult, bool, error) {
-		return operationFailure("invalid_arguments", false), true, nil
+		return operationFailure(invalidArguments, false), true, nil
 	}
 	var result *mcpserver.OperationResult
 	var err error
@@ -142,7 +142,7 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 		return "", false, nil
 	}
 	invalid := func() (string, bool, error) {
-		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+		return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 	}
 	var id int64
 	switch name {
