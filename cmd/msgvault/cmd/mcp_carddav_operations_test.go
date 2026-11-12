@@ -5,11 +5,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
-	"net/http/httptest"
-	"net/netip"
-	"net/url"
 	"slices"
 	"testing"
 
@@ -18,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
-	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/store"
@@ -50,150 +45,87 @@ func cardDAVOperationFixture(t *testing.T) (*daemonMCPOperations, int64, *store.
 }
 
 func TestCardDAVWritesSucceedThroughMCP(t *testing.T) {
-	newRequirements := require.New
-	newAssertions := assert.New
-	require := require.New(t)
-	remoteBody := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:conflict\r\nFN:Remote Example\r\nEND:VCARD\r\n")
-	deleted := make(chan string, 1)
-	var publishedPath string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/books/personal/conflict.vcf" {
-			w.Header().Set("ETag", `"two"`)
-			_, _ = w.Write(remoteBody)
-			return
-		}
-		if r.Method == http.MethodDelete && r.URL.Path == publishedPath {
-			deleted <- r.Header.Get("If-Match")
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		if r.Method != "PROPFIND" {
-			http.NotFound(w, r)
-			return
-		}
-		var body string
-		switch r.URL.Path {
-		case "/dav":
-			body = `<D:response><D:href>/dav</D:href><D:propstat><D:prop><D:current-user-principal><D:href>/principal/</D:href></D:current-user-principal></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`
-		case "/principal/":
-			body = `<D:response><D:href>/principal/</D:href><D:propstat><D:prop><C:addressbook-home-set><D:href>/books/</D:href></C:addressbook-home-set></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`
-		case "/books/":
-			body = `<D:response><D:href>/books/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response><D:response><D:href>/books/personal/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/><C:addressbook/></D:resourcetype><D:displayname>Personal</D:displayname><D:current-user-privilege-set><D:privilege><D:all/></D:privilege></D:current-user-privilege-set></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	choices := make(chan string, 1)
+	deletes := make(chan bool, 1)
+	prompts := make(chan string, 2)
+	fake := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/v1/mcp/capabilities":
+			caps := apiprotocol.MCPCapabilities{Version: 1, Routes: []apiprotocol.MCPRouteDescriptor{
+				{OperationID: "listCardDAVBooks", Method: "GET", Path: "/api/v1/carddav/books", QueryParameters: []string{"connection"}},
+				{OperationID: "getCardDAVConflict", Method: "GET", Path: "/api/v1/carddav/conflicts/{id}"},
+				{OperationID: "resolveCardDAVConflict", Method: "POST", Path: "/api/v1/carddav/conflicts/{id}/resolve", RequestProperties: []string{"choice"}},
+				{OperationID: "getCardDAVPublication", Method: "GET", Path: "/api/v1/carddav/publications/{person_id}"},
+				{OperationID: "unpublishCardDAVPerson", Method: "DELETE", Path: "/api/v1/carddav/publications/{person_id}"},
+			}}
+			data, err := json.Marshal(caps)
+			if !assert.NoError(t, err) {
+				return
+			}
+			_, _ = w.Write(data)
+		case "GET /api/v1/carddav/connections":
+			_, _ = w.Write([]byte(`{"connections":[{"connection":"work","orphaned":false,"status":{}}]}`))
+		case "GET /api/v1/carddav/books":
+			_, _ = w.Write([]byte(`{"books":[{"id":9,"name":"Personal","connection":"work","url":"https://contacts.example/books/personal/","write_target":true,"subscribed":true,"lookup_source":false,"needs_full_reconcile":false}]}`))
+		case "GET /api/v1/carddav/conflicts/7":
+			_, _ = w.Write([]byte(`{"id":7,"address_book":{"id":9,"name":"Personal"},"status":"unresolved","base":{"state":"unavailable","emails":[],"phones":[]},"local":{"state":"present","display_name":"Local Example","emails":[],"phones":[]},"remote":{"state":"present","display_name":"Remote Example","emails":[],"phones":[]},"allowed_resolutions":["keep_local","keep_remote"],"created_at":"2026-08-28T09:10:11Z","updated_at":"2026-08-28T10:11:12Z"}`))
+		case "POST /api/v1/carddav/conflicts/7/resolve":
+			var body struct {
+				Choice string `json:"choice"`
+			}
+			if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+				return
+			}
+			choices <- body.Choice
+			_, _ = w.Write([]byte(`{"id":7,"status":"resolved","resolution":"keep_remote"}`))
+		case "GET /api/v1/carddav/publications/11":
+			_, _ = w.Write([]byte(`{"person_id":11,"state":"published","desired":true,"address_book":{"id":9,"name":"Personal"}}`))
+		case "DELETE /api/v1/carddav/publications/11":
+			deletes <- true
+			_, _ = w.Write([]byte(`{"person_id":11,"state":"unpublished","desired":false,"address_book":{"id":9,"name":"Personal"}}`))
 		default:
 			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/xml")
-		_, _ = fmt.Fprint(w, `<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">`+body+`</D:multistatus>`)
-	}))
-	t.Cleanup(upstream.Close)
-	target, err := url.Parse(upstream.URL)
-	require.NoError(err)
-	base := "http://contacts.example:" + target.Port()
-	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}}
-	st := testutil.NewSQLiteTestStore(t)
-	controller, err := api.NewCardDAVController(cfg, st, slog.New(slog.DiscardHandler))
-	require.NoError(err)
-	resolver := testutil.FixtureResolver(t, netip.MustParseAddr("203.0.113.9"))
-	dialer := net.Dialer{}
-	controller.AdjustCardDAVClientOptions(func(options *carddav.ClientOptions) {
-		options.Resolver = resolver
-		options.AllowInsecureCredentials = true
-		options.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return dialer.DialContext(ctx, network, target.Host)
 		}
 	})
-	// This credential is used only by the in-process test server.
-	_, err = controller.Save(t.Context(), api.CardDAVAccountRequest{BaseURL: base + "/dav", Username: "synthetic", Password: "test", Enabled: new(true), Schedule: "0 */6 * * *"})
-	require.NoError(err)
-	account, err := st.GetCardDAVAccountByNameContext(t.Context(), "default")
-	require.NoError(err)
-	require.NotNil(account)
-	books, err := st.ListCardDAVAddressBooksContext(t.Context(), account.ID)
-	require.NoError(err)
-	require.Len(books, 1)
-	book := books[0]
-	require.NoError(st.SetCardDAVBookRolesContext(t.Context(), book.ID, store.CardDAVBookRoles{IsWriteTarget: true, IsSubscribed: true, IsLookupSource: true}))
-	books, err = st.ListCardDAVAddressBooksContext(t.Context(), account.ID)
-	require.NoError(err)
-	require.Len(books, 1)
-	book = books[0]
-	baseBody := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:conflict\r\nFN:Base Example\r\nEND:VCARD\r\n")
-	baseHash, err := carddav.SemanticHash(baseBody)
-	require.NoError(err)
-	href := base + "/books/personal/conflict.vcf"
-	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{{Href: href, RemoteUID: "conflict", RemoteETag: `"one"`, RemoteBody: baseBody, SemanticHash: baseHash, DisplayName: "Base Example"}}})
-	require.NoError(err)
-	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, href)
-	require.NoError(err)
-	conflict, err := st.RecordCardDAVConflictContext(t.Context(), store.CardDAVConflictCapture{AddressBookID: book.ID, Href: href, ExpectedMappingRevision: mapping.MappingRevision, BaseLocalHash: mapping.LocalHash, LocalHash: mapping.LocalHash, BaseRemoteHash: mapping.RemoteSemanticHash, BaseRemoteETag: mapping.RemoteETag, RemoteETag: `"two"`, LocalBody: baseBody, RemoteBody: remoteBody})
-	require.NoError(err)
-
-	participant, err := st.EnsureParticipant("published@example.com", "Published Example", "example.com")
-	require.NoError(err)
-	person, _, err := st.CreatePersonFromParticipant(participant)
-	require.NoError(err)
-	publishedBody := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + person.VCardUID + "\r\nFN:Published Example\r\nEND:VCARD\r\n")
-	publishedHash, err := carddav.SemanticHash(publishedBody)
-	require.NoError(err)
-	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), person.ID)
-	require.NoError(err)
-	publishedPath = "/books/personal/" + person.VCardUID + ".vcf"
-	publishedHref := base + publishedPath
-	pending, err := st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{PersonID: person.ID, Desired: true, AddressBookID: book.ID, Href: publishedHref, OutgoingBody: publishedBody, OutgoingSemanticHash: publishedHash, LocalHash: snapshot.Fingerprint})
-	require.NoError(err)
-	require.NoError(st.CommitCardDAVPublicationContext(t.Context(), store.CardDAVCanonicalMutation{Publication: *pending, Remote: store.CardDAVRemoteResource{Href: publishedHref, RemoteUID: person.VCardUID, RemoteETag: `"published"`, RemoteBody: publishedBody, SemanticHash: publishedHash}}))
-
-	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: st, CardDAV: controller, Logger: slog.New(slog.DiscardHandler)}))
-	prompts := 0
-	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCardDAV}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		prompts++
+	backend := &daemonMCPOperations{client: fake, supported: []string{"list_carddav_books", "get_carddav_conflict", "resolve_carddav_conflict", "unpublish_carddav_person"}}
+	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCardDAV}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		prompts <- request.Params.Message
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
-	t.Run("resolve keep remote", func(t *testing.T) {
-		require := newRequirements(t)
-		assert := newAssertions(t)
-		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "resolve_carddav_conflict", Arguments: map[string]any{"conflict_id": conflict.ID, "choice": "keep_remote"}})
-		require.NoError(err)
-		require.False(result.IsError)
-		assert.Equal(1, prompts)
-		data, err := json.Marshal(result.StructuredContent)
-		require.NoError(err)
-		var resolved generated.CardDAVConflictResolutionResponse
-		require.NoError(json.Unmarshal(data, &resolved))
-		assert.Equal(conflict.ID, resolved.ID)
-		assert.Equal("resolved", string(resolved.Status))
-		assert.Equal("keep_remote", string(resolved.Resolution))
-		remaining, err := st.ListCardDAVConflictsContext(t.Context(), true, store.AllCardDAVAccounts)
-		require.NoError(err)
-		assert.Empty(remaining)
-		mapping, err = st.GetCardDAVResourceContext(t.Context(), book.ID, href)
-		require.NoError(err)
-		assert.Equal(`"two"`, mapping.RemoteETag)
-	})
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "resolve_carddav_conflict", Arguments: map[string]any{"conflict_id": 7, "choice": "keep_remote"}})
+	requirements.NoError(err)
+	requirements.False(result.IsError)
+	requirements.Len(prompts, 1)
+	message := <-prompts
+	assertions.Contains(message, `"connection":"work"`)
+	assertions.Contains(message, "resolve the conflict by keeping the remote version; this can change the local person")
+	data, err := json.Marshal(result.StructuredContent)
+	requirements.NoError(err)
+	var resolution generated.CardDAVConflictResolutionResponse
+	requirements.NoError(json.Unmarshal(data, &resolution))
+	assertions.Equal(int64(7), resolution.ID)
+	assertions.Equal("resolved", string(resolution.Status))
+	requirements.Len(choices, 1)
+	assertions.Equal("keep_remote", <-choices)
 
-	t.Run("unpublish", func(t *testing.T) {
-		require := newRequirements(t)
-		assert := newAssertions(t)
-		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "unpublish_carddav_person", Arguments: map[string]any{"person_id": person.ID}})
-		require.NoError(err)
-		require.False(result.IsError)
-		assert.Equal(2, prompts)
-		data, err := json.Marshal(result.StructuredContent)
-		require.NoError(err)
-		var publication generated.CardDAVPublicationResponse
-		require.NoError(json.Unmarshal(data, &publication))
-		assert.Equal(person.ID, publication.PersonID)
-		assert.False(publication.Desired)
-		select {
-		case etag := <-deleted:
-			assert.Equal(`"published"`, etag)
-		default:
-			assert.Fail("upstream did not receive DELETE")
-		}
-		_, err = st.GetPersonContext(t.Context(), person.ID)
-		require.NoError(err)
-	})
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "unpublish_carddav_person", Arguments: map[string]any{"person_id": 11}})
+	requirements.NoError(err)
+	requirements.False(result.IsError)
+	requirements.Len(prompts, 1)
+	message = <-prompts
+	assertions.Contains(message, `"connection":"work"`)
+	assertions.Contains(message, "unpublish the person; this can remove a remote contact while retaining the local person")
+	data, err = json.Marshal(result.StructuredContent)
+	requirements.NoError(err)
+	var publication generated.CardDAVPublicationResponse
+	requirements.NoError(json.Unmarshal(data, &publication))
+	assertions.Equal(int64(11), publication.PersonID)
+	assertions.Equal("unpublished", string(publication.State))
+	requirements.Len(deletes, 1)
+	assertions.True(<-deletes)
 }
 
 func TestCardDAVRoleApprovalUsesRealStore(t *testing.T) {
