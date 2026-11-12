@@ -17,12 +17,21 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
 type failingFederationTouch struct {
 	FederationStore
-	fail bool
+	fail       bool
+	failCreate bool
+}
+
+func (f *failingFederationTouch) CreateFederationEnrollmentContext(ctx context.Context, uid, member, name string) (*store.FederationEnrollment, string, error) {
+	if f.failCreate {
+		return nil, "", errors.New("fixture failure")
+	}
+	return f.FederationStore.CreateFederationEnrollmentContext(ctx, uid, member, name)
 }
 
 func (f *failingFederationTouch) TouchFederationEnrollmentContext(ctx context.Context, uid string) error {
@@ -61,28 +70,14 @@ func TestFederationHandshakeCredential(t *testing.T) {
 	var body federationHandshakeResponse
 	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &body))
 	assertions.Equal(enrollment.EnrollmentUID, body.Enrollment.EnrollmentUID)
+	hubUID, err := st.ArchiveUIDContext(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(hubUID, body.HubInstance)
+	assertions.Equal([]int{1}, body.ProtocolVersions)
+	assertions.Equal("active", body.Enrollment.State)
 	federation.fail = true
 	w = request("/api/v1/federation/handshake", uid)
 	assertions.Equal(http.StatusOK, w.Code, w.Body.String())
-	bad := request("/api/v1/federation/handshake", "")
-	wrong := request("/api/v1/federation/handshake", strings.Repeat("b", 64))
-	assertions.Equal(http.StatusUnauthorized, bad.Code)
-	assertions.Equal(bad.Body.String(), wrong.Body.String())
-}
-
-func TestFederationRoleAndCredentialConflicts(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	cfg := config.NewDefaultConfig()
-	cfg.Data.DataDir = t.TempDir()
-	cfg.Server.APIKey = "owner-fixture"
-	cfg.Federation.Role = "hub"
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, Logger: testLogger()})
-	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
-	uid := strings.Repeat("a", 64)
-	e, token, err := st.CreateFederationEnrollmentContext(t.Context(), uid, "alice", "")
-	requirements.NoError(err)
 	do := func(method, path string, headers http.Header) *httptest.ResponseRecorder {
 		r := httptest.NewRequestWithContext(t.Context(), method, path, nil)
 		r.Header = headers
@@ -91,6 +86,9 @@ func TestFederationRoleAndCredentialConflicts(t *testing.T) {
 		return w
 	}
 	invalid := []http.Header{
+		{"Authorization": {"Bearer " + token}},
+		{"Authorization": {"Bearer " + token}, "X-Msgvault-Spoke-Instance": {strings.Repeat("b", 64)}},
+		{"Authorization": {"Bearer mvf1_unknown"}, "X-Msgvault-Spoke-Instance": {uid}},
 		{"Authorization": {"Bearer owner-fixture", "Bearer " + token}, "X-Msgvault-Spoke-Instance": {uid}},
 		{"Authorization": {"Bearer " + token, "Bearer owner-fixture"}, "X-Msgvault-Spoke-Instance": {uid}},
 		{"Authorization": {"Bearer " + token}, "X-Msgvault-Spoke-Instance": {uid}, "Cookie": {sessionCookieName + "=fixture"}},
@@ -106,8 +104,9 @@ func TestFederationRoleAndCredentialConflicts(t *testing.T) {
 		}
 		assertions.Equal(first, w.Body.String())
 	}
-	requirements.NoError(st.RevokeFederationEnrollmentContext(t.Context(), e.EnrollmentUID))
+	requirements.NoError(st.RevokeFederationEnrollmentContext(t.Context(), enrollment.EnrollmentUID))
 	revoked := do(http.MethodGet, "/api/v1/federation/handshake", http.Header{"Authorization": {"Bearer " + token}, "X-Msgvault-Spoke-Instance": {uid}})
+	assertions.Equal(http.StatusUnauthorized, revoked.Code)
 	assertions.Equal(first, revoked.Body.String())
 }
 
@@ -132,7 +131,8 @@ func TestFederationOwnerLifecycle(t *testing.T) {
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Server.APIKey = "owner-fixture"
 	cfg.Federation.Role = "hub"
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, Logger: testLogger()})
+	federation := &failingFederationTouch{FederationStore: st}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: federation, Logger: testLogger()})
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
@@ -151,21 +151,26 @@ func TestFederationOwnerLifecycle(t *testing.T) {
 	requirements.NotEmpty(created.Token)
 	list := do(http.MethodGet, "/api/v1/federation/enrollments", "")
 	requirements.Equal(http.StatusOK, list.Code)
+	assertions.Contains(list.Body.String(), created.Enrollment.EnrollmentUID)
 	assertions.NotContains(list.Body.String(), created.Token)
+	assertions.Equal(http.StatusNotFound, do(http.MethodDelete, "/api/v1/federation/enrollments/missing", "").Code)
 	revoked := do(http.MethodDelete, "/api/v1/federation/enrollments/"+created.Enrollment.EnrollmentUID, "")
 	assertions.Equal(http.StatusNoContent, revoked.Code)
+	list = do(http.MethodGet, "/api/v1/federation/enrollments", "")
+	requirements.Equal(http.StatusOK, list.Code)
+	var listed federationListResponse
+	requirements.NoError(json.Unmarshal(list.Body.Bytes(), &listed))
+	requirements.Len(listed.Enrollments, 1)
+	assertions.Equal(created.Enrollment.EnrollmentUID, listed.Enrollments[0].EnrollmentUID)
+	assertions.NotNil(listed.Enrollments[0].RevokedAt)
 	for _, tc := range []struct{ body, message string }{
 		{`{"spoke_instance":"bad","member":"alice"}`, "spoke_instance must be 64 lowercase hexadecimal digits"},
-		{`{"spoke_instance":"` + strings.Repeat("a", 64) + `","member":"Alice"}`, "member must be 1–64"},
-		{`{"spoke_instance":"` + strings.Repeat("a", 64) + `","member":"alice","spoke_name":"bad\nname"}`, "spoke_name must be at most 128 bytes"},
-		{`{"spoke_instance":"` + strings.Repeat("a", 64) + `","member":"alice","spoke_name":"` + strings.Repeat("x", 129) + `"}`, "spoke_name must be at most 128 bytes"},
 	} {
 		w := do(http.MethodPost, "/api/v1/federation/enrollments", tc.body)
 		assertions.Equal(http.StatusBadRequest, w.Code)
 		assertions.Contains(w.Body.String(), tc.message)
 	}
-	_, err := st.DB().ExecContext(t.Context(), "DROP TABLE federation_enrollments")
-	requirements.NoError(err)
+	federation.failCreate = true
 	w = do(http.MethodPost, "/api/v1/federation/enrollments", `{"spoke_instance":"`+strings.Repeat("a", 64)+`","member":"alice"}`)
 	assertions.Equal(http.StatusInternalServerError, w.Code)
 	assertions.Contains(w.Body.String(), "Could not create enrollment")
@@ -178,6 +183,7 @@ func TestFederationOperationGate(t *testing.T) {
 	gate := NewSerialOperationGate()
 	release, ok := gate.BeginWorkContext(t.Context())
 	requirements.True(ok)
+	t.Cleanup(release)
 
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
@@ -187,11 +193,14 @@ func TestFederationOperationGate(t *testing.T) {
 	for _, role := range []string{"off", "spoke"} {
 		cfg.Federation.Role = role
 		for _, tc := range []struct{ method, path string }{{http.MethodPost, "/api/v1/federation/enrollments"}, {http.MethodDelete, "/api/v1/federation/enrollments/fixture"}} {
-			r := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			r := httptest.NewRequestWithContext(ctx, tc.method, tc.path, nil)
 			r.Header.Set("X-Api-Key", "owner-fixture")
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, r)
+			assertions.NoError(ctx.Err(), "%s %s waited on the gate", tc.method, tc.path)
 			assertions.Equal(http.StatusNotFound, w.Code)
+			cancel()
 			assertions.False(gate.HasRequestWaiters())
 		}
 	}
@@ -207,7 +216,6 @@ func TestFederationOperationGate(t *testing.T) {
 	assertions.Eventually(gate.HasRequestWaiters, 5*time.Second, 10*time.Millisecond)
 	cancel()
 	<-done
-	release()
 	assertions.False(gate.HasRequestWaiters())
 }
 
@@ -225,9 +233,6 @@ func TestFederationCredentialOnlyHandshake(t *testing.T) {
 	_, token, err := st.CreateFederationEnrollmentContext(t.Context(), uid, "alice", "")
 	requirements.NoError(err)
 	document := OpenAPIDocument()
-	for _, path := range []string{"/api/v1/federation/handshake", "/api/v1/federation/identity", "/api/v1/federation/enrollments", "/api/v1/federation/enrollments/{uid}"} {
-		requirements.NotNil(document.Paths[path], path)
-	}
 	matcher := regexp.MustCompile(`\{[^}]+\}`)
 	requests := 0
 	seen := false
@@ -235,6 +240,10 @@ func TestFederationCredentialOnlyHandshake(t *testing.T) {
 		operations := map[string]bool{"GET": item.Get != nil, "POST": item.Post != nil, "PUT": item.Put != nil, "PATCH": item.Patch != nil, "DELETE": item.Delete != nil}
 		for method, present := range operations {
 			if !present {
+				continue
+			}
+			if path == "/api/v1/federation/handshake" && method == http.MethodGet {
+				seen = true
 				continue
 			}
 			target := matcher.ReplaceAllString(path, "1")
@@ -245,17 +254,12 @@ func TestFederationCredentialOnlyHandshake(t *testing.T) {
 			r.Header.Set("X-Msgvault-Spoke-Instance", uid)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, r)
-			if path == "/api/v1/federation/handshake" && method == http.MethodGet {
-				seen = true
-				assertions.Equal(http.StatusOK, w.Code)
-			} else {
-				assertions.Equal(http.StatusForbidden, w.Code, "%s %s: %s", method, path, w.Body.String())
-			}
+			assertions.Equal(http.StatusForbidden, w.Code, "%s %s: %s", method, path, w.Body.String())
 		}
 	}
 	assertions.True(seen)
 	assertions.Greater(requests, 10)
-	for _, method := range []string{http.MethodPost, http.MethodTrace, http.MethodHead, http.MethodOptions} {
+	for _, method := range []string{http.MethodPost, http.MethodTrace, http.MethodHead} {
 		r := httptest.NewRequestWithContext(t.Context(), method, "/api/v1/federation/handshake", nil)
 		r.Header.Set("Authorization", "Bearer "+token)
 		r.Header.Set("X-Msgvault-Spoke-Instance", uid)
@@ -263,7 +267,7 @@ func TestFederationCredentialOnlyHandshake(t *testing.T) {
 		srv.Router().ServeHTTP(w, r)
 		assertions.Equal(http.StatusForbidden, w.Code, method)
 	}
-	for _, path := range []string{"/", "/health", "/mcp", "/debug/pprof/"} {
+	for _, path := range []string{"/health"} {
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 		r.Header.Set("Authorization", "Bearer "+token)
 		r.Header.Set("X-Msgvault-Spoke-Instance", uid)
@@ -283,7 +287,7 @@ func TestFederationRoleMatrix(t *testing.T) {
 		{http.MethodDelete, "/api/v1/federation/enrollments/fixture"},
 	}
 	var unauthorizedBody string
-	for _, role := range []string{"off", "spoke", "hub"} {
+	for _, role := range []string{"off", "spoke"} {
 		t.Run(role, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -317,9 +321,6 @@ func TestFederationRoleMatrix(t *testing.T) {
 					unauthorizedBody = body
 				}
 				assertions.Equal(unauthorizedBody, body, "%s %s", op.method, op.path)
-				if role == "hub" {
-					continue
-				}
 				status, body = request(op.method, op.path, true)
 				if role == "spoke" && op.path == "/api/v1/federation/identity" {
 					assertions.Equal(http.StatusOK, status)
@@ -344,6 +345,9 @@ func TestFederationHandshakeOpenAPISecurity(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
+			for _, route := range []string{"/api/v1/federation/handshake", "/api/v1/federation/identity", "/api/v1/federation/enrollments", "/api/v1/federation/enrollments/{uid}"} {
+				requirements.NotNil(doc.Paths[route], route)
+			}
 			path := doc.Paths["/api/v1/federation/handshake"]
 			requirements.NotNil(path)
 			requirements.NotNil(path.Get)

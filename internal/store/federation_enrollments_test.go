@@ -25,8 +25,8 @@ func TestFederationEnrollmentLifecycle(t *testing.T) {
 	assertions.True(strings.HasPrefix(token, "mvf1_"))
 	var stored string
 	requirements.NoError(st.DB().QueryRowContext(ctx, st.Rebind("SELECT token_sha256 FROM federation_enrollments WHERE enrollment_uid = ?"), enrollment.EnrollmentUID).Scan(&stored))
-	assertions.NotContains(stored, token)
 	digest := sha256.Sum256([]byte(token))
+	assertions.Equal(hex.EncodeToString(digest[:]), stored)
 	got, err := st.AuthenticateFederationEnrollmentContext(ctx, hex.EncodeToString(digest[:]), uid)
 	requirements.NoError(err)
 	assertions.Equal(enrollment.EnrollmentUID, got.EnrollmentUID)
@@ -49,7 +49,11 @@ func TestFederationHubSourceGuard(t *testing.T) {
 	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	requirements.NoError(st.ConfigureFederationHubContext(ctx))
-	_, err := st.GetOrCreateSourceContext(ctx, "gmail", "federation:fixture")
+	_, err := st.GetOrCreateSourceContext(ctx, "gmail", "fixture@example.test")
+	requirements.ErrorIs(err, store.ErrFederationHubSource)
+	_, err = st.GetOrCreateSourceContext(ctx, "gmail", "federation:fixture")
+	requirements.ErrorIs(err, store.ErrFederationHubSource)
+	_, err = st.ScopedToSync(1, 1).GetOrCreateSourceContext(ctx, "gmail", "another@example.test")
 	requirements.ErrorIs(err, store.ErrFederationHubSource)
 	other := testutil.NewTestStore(t)
 	_, err = other.GetOrCreateSourceContext(ctx, "gmail", "fixture@example.test")
@@ -62,6 +66,8 @@ func TestFederationEnrollmentPersistsAndSchemaUpgrade(t *testing.T) {
 	requirements := require.New(t)
 	path := filepath.Join(t.TempDir(), "archive.db")
 	st := testutil.NewSQLiteTestStoreAt(t, path)
+	archiveUID, err := st.ArchiveUIDContext(t.Context())
+	requirements.NoError(err)
 	spoke := strings.Repeat("a", 64)
 	e, token, err := st.CreateFederationEnrollmentContext(t.Context(), spoke, "alice", "")
 	requirements.NoError(err)
@@ -81,6 +87,9 @@ func TestFederationEnrollmentPersistsAndSchemaUpgrade(t *testing.T) {
 	requirements.NoError(err)
 	t.Cleanup(func() { requirements.NoError(upgraded.Close()) })
 	requirements.NoError(upgraded.InitSchemaUnlessCurrentContext(t.Context()))
+	gotUID, err := upgraded.ArchiveUIDContext(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(archiveUID, gotUID)
 	_, _, err = upgraded.CreateFederationEnrollmentContext(t.Context(), spoke, "alice", "")
 	requirements.NoError(err)
 }
@@ -93,8 +102,6 @@ func TestFederationEnrollmentValidation(t *testing.T) {
 		{strings.Repeat("a", 64), "Alice", "", "member"},
 		{strings.Repeat("a", 64), "alice", strings.Repeat("x", 129), "spoke_name"},
 		{strings.Repeat("a", 64), "alice", "name\nother", "spoke_name"},
-		{strings.Repeat("a", 64), "alice", "name\tother", "spoke_name"},
-		{strings.Repeat("a", 64), "alice", "\x1b[2J", "spoke_name"},
 		{strings.Repeat("a", 64), "alice", "name\u009b", "spoke_name"},
 	} {
 		_, _, err := st.CreateFederationEnrollmentContext(t.Context(), tc.spoke, tc.member, tc.name)

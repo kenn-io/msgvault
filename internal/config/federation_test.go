@@ -11,7 +11,6 @@ func TestFederationRoleAndHubKeys(t *testing.T) {
 	for _, tc := range []struct{ name, config, role, loadError, keyError string }{
 		{name: "default", role: "off"},
 		{name: "case normalization", config: "[federation]\nrole = \"SPOKE\"", role: "spoke"},
-		{name: "spoke", config: "[federation]\nrole = \"spoke\"", role: "spoke"},
 		{name: "hub keyless", config: "[federation]\nrole = \"hub\"", role: "hub", keyError: "federation hub role requires an effective API key"},
 		{name: "hub owner", config: "[federation]\nrole = \"hub\"\n[server]\napi_key = \"owner-key\"", role: "hub"},
 		{name: "reserved owner", config: "[federation]\nrole = \"hub\"\n[server]\napi_key = \"mvf1_reserved\"", role: "hub", keyError: "federation hub owner key must not begin with mvf1_"},

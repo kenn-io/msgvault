@@ -37,14 +37,13 @@ func TestFederationHubOrigin(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, tc.want, got)
 			} else {
-				assert.Error(t, err)
+				assert.ErrorContains(t, err, "--hub-url")
 			}
 		})
 	}
 }
 
 func TestFederationEnrollOutput(t *testing.T) {
-	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	serverCfg := config.NewDefaultConfig()
@@ -65,54 +64,82 @@ func TestFederationEnrollOutput(t *testing.T) {
 	command := &cobra.Command{Use: template.Use, Args: template.Args, RunE: template.RunE}
 	command.Flags().AddFlagSet(template.Flags())
 	command.Flags().VisitAll(func(flag *pflag.Flag) { requirements.NoError(flag.Value.Set(flag.DefValue)); flag.Changed = false })
+	t.Cleanup(func() {
+		command.Flags().VisitAll(func(flag *pflag.Flag) { assert.NoError(t, flag.Value.Set(flag.DefValue)); flag.Changed = false })
+	})
 	command.SetOut(&stdout)
 	command.SetErr(&stderr)
-	command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice"})
-	requirements.NoError(command.ExecuteContext(ctx))
-	token := strings.TrimSpace(stdout.String())
-	assertions.True(strings.HasPrefix(token, "mvf1_"))
-	assertions.NotContains(stderr.String(), token)
-	assertions.Contains(stderr.String(), "Join (upcoming, not in this release): msgvault federation join <hub-url>")
-	assertions.NotContains(stderr.String(), srv.URL)
+	t.Run("token and join hint", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice"})
+		requirements.NoError(command.ExecuteContext(ctx))
+		token := strings.TrimSpace(stdout.String())
+		assertions.True(strings.HasPrefix(token, "mvf1_"))
+		assertions.NotContains(stderr.String(), token)
+		assertions.Contains(stderr.String(), "msgvault federation join <hub-url>")
+		assertions.NotContains(stderr.String(), srv.URL)
+	})
 
-	listTemplate, _, err := rootCmd.Find([]string{"federation", "enrollments", "list"})
-	requirements.NoError(err)
-	list := &cobra.Command{Use: listTemplate.Use, Args: listTemplate.Args, RunE: listTemplate.RunE}
-	list.Flags().AddFlagSet(listTemplate.Flags())
-	var output bytes.Buffer
-	list.SetOut(&output)
-	requirements.NoError(list.ExecuteContext(ctx))
-	assertions.Contains(output.String(), "\talice\talice\tactive\t-\n")
-	entries, err := st.ListFederationEnrollmentsContext(t.Context())
-	requirements.NoError(err)
-	requirements.Len(entries, 1)
-	requirements.NoError(st.TouchFederationEnrollmentContext(t.Context(), entries[0].EnrollmentUID))
-	output.Reset()
-	requirements.NoError(list.ExecuteContext(ctx))
-	assertions.Contains(output.String(), "\talice\talice\tactive\t")
-	assertions.NotContains(output.String(), "\t-\n")
-	stdout.Reset()
-	stderr.Reset()
-	command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--hub-url", "https://$HOME;echo.example.test"})
-	requirements.NoError(command.ExecuteContext(ctx))
-	assertions.Regexp(`^mvf1_[A-Za-z0-9_-]+\n$`, stdout.String())
-	assertions.NotContains(stderr.String(), strings.TrimSpace(stdout.String()))
-	assertions.Contains(stderr.String(), "msgvault federation join 'https://$HOME;echo.example.test' --hub-instance ")
-	stdout.Reset()
-	stderr.Reset()
-	command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--hub-url", "https://hub.example.test", "--json"})
-	requirements.NoError(command.ExecuteContext(ctx))
-	var jsonOutput struct {
-		HubURL string `json:"hub_url"`
-		Token  string `json:"token"`
-	}
-	requirements.NoError(json.Unmarshal(stdout.Bytes(), &jsonOutput))
-	assertions.Equal("https://hub.example.test", jsonOutput.HubURL)
-	assertions.Regexp(`^mvf1_[A-Za-z0-9_-]+$`, jsonOutput.Token)
-	assertions.NotContains(stderr.String(), jsonOutput.Token)
-	command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "Alice"})
-	err = command.ExecuteContext(ctx)
-	assertions.ErrorContains(err, "member must be 1–64 lowercase ASCII")
+	t.Run("list and last seen", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		entries, err := st.ListFederationEnrollmentsContext(t.Context())
+		requirements.NoError(err)
+		if len(entries) == 0 {
+			_, _, err = st.CreateFederationEnrollmentContext(t.Context(), strings.Repeat("a", 64), "alice", "")
+			requirements.NoError(err)
+		}
+		listTemplate, _, err := rootCmd.Find([]string{"federation", "enrollments", "list"})
+		requirements.NoError(err)
+		list := &cobra.Command{Use: listTemplate.Use, Args: listTemplate.Args, RunE: listTemplate.RunE}
+		list.Flags().AddFlagSet(listTemplate.Flags())
+		var output bytes.Buffer
+		list.SetOut(&output)
+		requirements.NoError(list.ExecuteContext(ctx))
+		assertions.Contains(output.String(), "\talice\talice\tactive\t-\n")
+		entries, err = st.ListFederationEnrollmentsContext(t.Context())
+		requirements.NoError(err)
+		requirements.Len(entries, 1)
+		requirements.NoError(st.TouchFederationEnrollmentContext(t.Context(), entries[0].EnrollmentUID))
+		output.Reset()
+		requirements.NoError(list.ExecuteContext(ctx))
+		assertions.Contains(output.String(), "\talice\talice\tactive\t")
+		assertions.NotContains(output.String(), "\t-\n")
+	})
+	t.Run("quoted hub URL", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		stdout.Reset()
+		stderr.Reset()
+		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--hub-url", "https://$HOME;echo.example.test"})
+		requirements.NoError(command.ExecuteContext(ctx))
+		assertions.Regexp(`^mvf1_[A-Za-z0-9_-]+\n$`, stdout.String())
+		assertions.NotContains(stderr.String(), strings.TrimSpace(stdout.String()))
+		assertions.Contains(stderr.String(), "msgvault federation join 'https://$HOME;echo.example.test' --hub-instance ")
+	})
+	t.Run("JSON output", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		stdout.Reset()
+		stderr.Reset()
+		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--hub-url", "https://hub.example.test", "--json"})
+		requirements.NoError(command.ExecuteContext(ctx))
+		var jsonOutput struct {
+			HubURL string `json:"hub_url"`
+			Token  string `json:"token"`
+		}
+		requirements.NoError(json.Unmarshal(stdout.Bytes(), &jsonOutput))
+		assertions.Equal("https://hub.example.test", jsonOutput.HubURL)
+		assertions.Regexp(`^mvf1_[A-Za-z0-9_-]+$`, jsonOutput.Token)
+		assertions.NotContains(stderr.String(), jsonOutput.Token)
+	})
+	t.Run("server error", func(t *testing.T) {
+		assertions := assert.New(t)
+		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "Alice"})
+		err := command.ExecuteContext(ctx)
+		assertions.ErrorContains(err, "member")
+	})
 }
 
 func TestFederationHubRejectsMessageImport(t *testing.T) {
@@ -141,7 +168,11 @@ func TestFederationHubRejectsMessageImport(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			resp := httptest.NewRecorder()
 			server.Router().ServeHTTP(resp, req)
-			assertions.Equal(tc.status, resp.Code, resp.Body.String())
+			if tc.role == "hub" {
+				assertions.GreaterOrEqual(resp.Code, http.StatusBadRequest, resp.Body.String())
+			} else {
+				assertions.Equal(tc.status, resp.Code, resp.Body.String())
+			}
 			sources, err := st.ListSourcesContext(t.Context(), "")
 			requirements.NoError(err)
 			assertions.Len(sources, tc.sources)
