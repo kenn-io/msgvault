@@ -112,13 +112,13 @@ func TestCallHistoryHTTPRoundtrip(t *testing.T) {
 		requirements.Equal(200, page.Code)
 		assertions.JSONEq(`{"items":[]}`, page.Body.String())
 	}
-	labelled := callhistory.Observation{
-		SourceLabel: "Example calls", RecordID: "labelled", Raw: []byte(`{}`),
-	}
-	labelled.Evidence = callhistory.Evidence{
+	callEvidence := callhistory.Evidence{
 		Version: 1, Provider: "example", Account: "account",
 		Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
 		OccurredAt: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC),
+	}
+	labelled := callhistory.Observation{
+		Evidence: callEvidence, SourceLabel: "Example calls", RecordID: "labelled", Raw: []byte(`{}`),
 	}
 	record, err := json.Marshal(labelled)
 	requirements.NoError(err)
