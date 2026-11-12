@@ -26,9 +26,12 @@ func TestCallLabelLocksCatalogBeforeSource(t *testing.T) {
 	require.NoError(err)
 	var blockerPID int
 	require.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
-	o := callhistory.Observation{Evidence: {Version: 1, Provider: "example", Account: "account",
-		Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined", OccurredAt: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)},
-		SourceLabel: "Example calls", RecordID: "example", Raw: []byte(`{}`)}
+	o := callhistory.Observation{SourceLabel: "Example calls", RecordID: "example", Raw: []byte(`{}`)}
+	o.Evidence = callhistory.Evidence{
+		Version: 1, Provider: "example", Account: "account",
+		Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
+		OccurredAt: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC),
+	}
 	done := make(chan error, 1)
 	go func() { _, err := st.PutCallObservationContext(ctx, source.ID, o); done <- err }()
 	waitForPGBlockedQuery(ctx, t, st, blockerPID, "%UPDATE source_maintenance_lock%")
