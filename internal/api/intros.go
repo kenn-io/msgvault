@@ -106,8 +106,7 @@ func (s *Server) admitIntroductionRead(w http.ResponseWriter, r *http.Request) (
 		writeError(w, http.StatusServiceUnavailable, "agent_read_busy", "Agent reads are at capacity; retry later")
 		return nil, nil, false
 	}
-	var once sync.Once
-	release := func() { once.Do(func() { <-s.readSnapshotSlots }) }
+	release := sync.OnceFunc(func() { <-s.readSnapshotSlots })
 	if boundary, ok := r.Context().Value(readResponseKey{}).(*readResponseWriter); ok {
 		boundary.release = release
 	}

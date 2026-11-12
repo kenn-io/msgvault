@@ -153,11 +153,3 @@ func (w *introductionBoundaryRecorder) WriteHeader(status int) {
 	}
 	w.ResponseRecorder.WriteHeader(status)
 }
-
-func (w *introductionBoundaryRecorder) Write(body []byte) (int, error) {
-	if !w.observed {
-		w.firstSlotCount = len(w.slots)
-		w.observed = true
-	}
-	return w.ResponseRecorder.Write(body)
-}
