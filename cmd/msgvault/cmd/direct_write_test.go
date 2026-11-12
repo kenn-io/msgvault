@@ -602,7 +602,7 @@ func TestFederationHubDirectWriteSourceGuard(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	_, err = st.GetOrCreateSourceContext(t.Context(), "gmail", "fixture@example.test")
-	assert.ErrorIs(t, err, store.ErrFederationHubSource)
+	require.ErrorIs(t, err, store.ErrFederationHubSource)
 
 	personal := lifecycleTestConfig(t.TempDir())
 	prior, err := openStoreAndInitWithInvocation(t.Context(), testInvocationWithConfig(personal), func(*store.Store) error { return nil })

@@ -20,7 +20,7 @@ import (
 )
 
 func TestFederationEnrollOutput(t *testing.T) {
-	setup := func(t *testing.T) (*store.Store, *cobra.Command, context.Context, *bytes.Buffer, *bytes.Buffer) {
+	setup := func(t *testing.T) (*store.Store, *cobra.Command, context.Context, *bytes.Buffer) {
 		t.Helper()
 		st := testutil.NewTestStore(t)
 		serverCfg := config.NewDefaultConfig()
@@ -47,7 +47,7 @@ func TestFederationEnrollOutput(t *testing.T) {
 		stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 		command.SetOut(stdout)
 		command.SetErr(stderr)
-		return st, command, ctx, stdout, stderr
+		return st, command, ctx, stderr
 	}
 	t.Run("token and join hint", func(t *testing.T) {
 		for _, tc := range []struct {
@@ -55,7 +55,9 @@ func TestFederationEnrollOutput(t *testing.T) {
 		}{{"matching", ""}, {"distinct", "laptop"}} {
 			t.Run(tc.name, func(t *testing.T) {
 				assertions := assert.New(t)
-				_, command, ctx, stdout, stderr := setup(t)
+				_, command, ctx, stderr := setup(t)
+				stdout := &bytes.Buffer{}
+				command.SetOut(stdout)
 				command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--spoke-name", tc.spokeName})
 				require.NoError(t, command.ExecuteContext(ctx))
 				token := strings.TrimSpace(stdout.String())
@@ -75,7 +77,7 @@ func TestFederationEnrollOutput(t *testing.T) {
 	})
 	t.Run("list", func(t *testing.T) {
 		requirements := require.New(t)
-		st, _, ctx, _, _ := setup(t)
+		st, _, ctx, _ := setup(t)
 		matching, _, err := st.CreateFederationEnrollmentContext(t.Context(), strings.Repeat("a", 64), "alice", "")
 		requirements.NoError(err)
 		distinct, _, err := st.CreateFederationEnrollmentContext(t.Context(), strings.Repeat("b", 64), "bob", "laptop")
@@ -91,7 +93,7 @@ func TestFederationEnrollOutput(t *testing.T) {
 		assert.Contains(t, output.String(), distinct.EnrollmentUID+"\tbob (laptop)\tactive\n")
 	})
 	t.Run("server error", func(t *testing.T) {
-		_, command, ctx, _, _ := setup(t)
+		_, command, ctx, _ := setup(t)
 		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", " "})
 		assert.ErrorContains(t, command.ExecuteContext(ctx), "member")
 	})

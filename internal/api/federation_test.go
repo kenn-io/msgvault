@@ -41,6 +41,7 @@ func (f failingFederationCreate) CreateFederationEnrollmentContext(context.Conte
 
 type observedFederationStore struct {
 	FederationStore
+
 	lookups int
 	bounded bool
 }
