@@ -10,7 +10,7 @@ All notable changes to msgvault, grouped by release.
 
 - People Sweep can fill an empty “how we met” field from the first archived appearance while preserving edits and history. See [profile automation](usage/people-automation.md#fill-how-you-met).
 
-- Saved people show their first archived appearance, including copied recipients, and the introducing sender when the evidence identifies one. See [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance).
+- Person JSON and contact state can show a first archived appearance, including copied recipients, and the sender when envelope evidence indicates an introduction. See [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance).
 
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 

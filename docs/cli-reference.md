@@ -3606,7 +3606,7 @@ msgvault person attributes set <person-id> <slug> (--value <scalar> | --value-js
 msgvault person attributes clear <person-id> <slug> [flags]
 ```
 
-`person get --json` includes first archived appearance and the first direct contact
+`person get --json` can include first archived appearance and the first direct contact
 when the daemon supports them. JSON includes the appearance reference, kind and introducer when known. See
 [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance)
 for evidence rules and limitations.
