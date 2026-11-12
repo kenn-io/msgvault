@@ -5464,6 +5464,9 @@ components:
           format: date-time
           nullable: true
           type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
       required:
         - claimed_fields
         - latest_claim_at

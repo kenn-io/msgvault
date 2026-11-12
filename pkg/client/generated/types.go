@@ -5261,7 +5261,7 @@ func (e ExploreUnavailableAction) Validate() error {
 type FactSummary struct {
 	ClaimedFields  int64      `json:"claimed_fields"`
 	HasStoredFacts bool       `json:"has_stored_facts"`
-	LatestClaimAt  *time.Time `json:"latest_claim_at" validate:"required"`
+	LatestClaimAt  *time.Time `json:"latest_claim_at" validate:"omitempty"`
 }
 
 func (f FactSummary) Validate() error {
