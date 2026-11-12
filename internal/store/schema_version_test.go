@@ -143,6 +143,36 @@ func TestSchemaVersionMeetingDecisionsPreviousUpgrade(t *testing.T) {
 	require.NoError(f.Store.ValidateSchemaContext(ctx))
 }
 
+func TestSchemaVersionMeetingDecisionsParentUpgrade(t *testing.T) {
+	for _, operation := range []string{"runtime", "initialize"} {
+		t.Run(operation, func(t *testing.T) {
+			require := require.New(t)
+			f := storetest.New(t)
+			ctx := t.Context()
+			_, err := f.Store.DB().ExecContext(ctx, `DROP TABLE meeting_link_decision_dependencies`)
+			require.NoError(err)
+			_, err = f.Store.DB().ExecContext(ctx, `DROP TABLE meeting_link_decisions`)
+			require.NoError(err)
+			_, err = f.Store.DB().ExecContext(ctx, `UPDATE archive_metadata SET value = '42' WHERE key = 'schema_version'`)
+			require.NoError(err)
+			if operation == "runtime" {
+				require.ErrorContains(f.Store.ValidateSchemaContext(ctx), "archive schema version 42 does not match 43")
+				return
+			}
+			require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx))
+			var count int
+			require.NoError(f.Store.DB().QueryRowContext(ctx, `SELECT count(*) FROM meeting_link_decisions`).Scan(&count))
+			require.Zero(count)
+			require.NoError(f.Store.DB().QueryRowContext(ctx, `SELECT count(*) FROM meeting_link_decision_dependencies`).Scan(&count))
+			require.Zero(count)
+			version, err := f.Store.SchemaVersionContext(ctx)
+			require.NoError(err)
+			require.Equal(43, version)
+			require.NoError(f.Store.ValidateSchemaContext(ctx))
+		})
+	}
+}
+
 func TestSchemaVersionDocbankUpgrade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
