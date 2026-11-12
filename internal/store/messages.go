@@ -2536,7 +2536,7 @@ func (s *Store) persistMessageWith(
 		if rawFormat == "" {
 			rawFormat = "mime"
 		}
-		if err := upsertEmailRaw(q, s.IsPostgreSQL(), messageID, data.RawMIME, rawFormat); err != nil {
+		if err := upsertEmailRaw(q, messageID, data.RawMIME, rawFormat); err != nil {
 			return 0, fmt.Errorf("upsert raw: %w", err)
 		}
 		// Only email has linkage, so other message types skip the refresh's lookups.
@@ -6297,7 +6297,7 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 				return errRawNeedsAttributionLock
 			}
 		}
-		if err := upsertEmailRaw(boundQuerier{ctx: ctx, q: tx}, s.IsPostgreSQL(), messageID, rawData, format); err != nil {
+		if err := upsertEmailRaw(boundQuerier{ctx: ctx, q: tx}, messageID, rawData, format); err != nil {
 			return err
 		}
 		// Non-MIME raw has no linkage to derive, and only a replaced MIME payload

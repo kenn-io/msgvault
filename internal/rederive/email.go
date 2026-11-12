@@ -16,8 +16,7 @@ import (
 )
 
 // Bump the version when parsing the same retained MIME produces different text or calendar events.
-// The store names its reopen markers after it, so a restarted walk clears them.
-const emailVersion = store.EmailRepairVersion
+const emailVersion = "email-v3"
 
 // emailRetrySlots caps exact failed-row markers; later failures widen one
 // overflow range, so retry state is at most emailRetrySlots+2 ledger rows.
@@ -99,7 +98,7 @@ func repairEmail(ctx context.Context, w *emailWalk) (sum *Summary, err error) {
 	if w.sum.incomplete {
 		return w.sum, w.s.ReplaceMigrationContext(ctx, "", w.base+emailRetryPhase)
 	}
-	return w.sum, w.finish(ctx, "")
+	return w.sum, nil
 }
 
 // retryEmail repairs the failed rows a finished full walk recorded. A marker
@@ -118,23 +117,7 @@ func retryEmail(ctx context.Context, w *emailWalk) (*Summary, error) {
 	if w.sum.Errors > 0 {
 		return w.sum, nil
 	}
-	return w.sum, w.finish(ctx, w.base+emailRetryPhase)
-}
-
-// finish drops the phase marker once the pass resolved every failed row. A write
-// that reached an already-scanned email during the pass left an invitation derive
-// owed, so the pass instead stays incomplete and discards its walk state, which
-// restarts the walk from the first message at the next sync.
-func (w *emailWalk) finish(ctx context.Context, phase string) error {
-	held, err := w.s.EmailRepairHeldContext(ctx, w.base)
-	if err != nil {
-		return err
-	}
-	if held {
-		w.sum.incomplete = true
-		return w.s.ForgetMigrationsContext(ctx, w.base)
-	}
-	return w.s.ReplaceMigrationContext(ctx, phase, "")
+	return w.sum, w.s.ReplaceMigrationContext(ctx, w.base+emailRetryPhase, "")
 }
 
 // scan repairs each retained MIME row with afterID < id <= throughID.

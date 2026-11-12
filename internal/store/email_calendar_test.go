@@ -41,8 +41,11 @@ func TestEmailCalendarOctetStreamAttachment(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	calendar := emailCalendarDocument("DTSTART:20270302T120000Z")
 	raw := "From: organizer@example.com\r\nMIME-Version: 1.0\r\nContent-Type: application/octet-stream; name=invite.ics\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString(calendar)
-	_, source := persistInviteEmail(t, st, "encoded-invite", []byte(raw))
+	id, source := persistInviteEmail(t, st, "encoded-invite", []byte(raw))
 	require.Len(t, emailEvents(t, st, source), 1)
+	var pending bool
+	require.NoError(t, st.db.QueryRowContext(t.Context(), `SELECT EXISTS (SELECT 1 FROM email_calendar_pending WHERE message_id=?)`, id).Scan(&pending))
+	assert.False(t, pending)
 }
 
 func TestPlainEmailSingleParticipantDoesNotWaitForDirectory(t *testing.T) {
@@ -347,6 +350,9 @@ func TestEmailCalendarMaterializesOnRawMIMEUpsert(t *testing.T) {
 	raw := inviteEmail(emailCalendarDocument("DTSTART:20270302T120000Z"))
 	requirements.NoError(st.UpsertMessageRawWithFormat(parent, raw, "mime"))
 	assertions.Len(emailEvents(t, st, source), 1)
+	var pending bool
+	requirements.NoError(st.db.QueryRowContext(t.Context(), `SELECT EXISTS (SELECT 1 FROM email_calendar_pending WHERE message_id=?)`, parent).Scan(&pending))
+	assertions.False(pending)
 }
 
 func TestEmailCalendarInvalidPartPreservesEmail(t *testing.T) {
@@ -582,4 +588,32 @@ func TestEmailCalendarDuplicateParts(t *testing.T) {
 	raw := "From: organizer@example.com\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\nContent-Type: text/calendar\r\n\r\n" + string(calendar) + "\r\n--x\r\nContent-Type: application/ics\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString(calendar) + "\r\n--x--\r\n"
 	_, source := persistInviteEmail(t, st, "duplicate-parts", []byte(raw))
 	assertions.Len(emailEvents(t, st, source), 1)
+}
+
+func TestEmailCalendarPendingChangedRaw(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	id, source := persistInviteEmail(t, st, "changed-raw", []byte("Subject: ordinary\r\n\r\nBody"))
+	first := inviteEmail(emailCalendarDocument("DTSTART:20270302T120000Z"))
+	require.NoError(t, upsertEmailRaw(boundQuerier{ctx: t.Context(), q: st.db}, id, first, "mime"))
+	item, err := st.ScanArchivedEmailContext(t.Context(), source, id-1, id)
+	require.NoError(t, err)
+	require.NotNil(t, item)
+	parsed, err := mime.Parse(first)
+	require.NoError(t, err)
+	second := inviteEmail(emailCalendarDocument("DTSTART:20270303T120000Z"))
+	require.NoError(t, upsertEmailRaw(boundQuerier{ctx: t.Context(), q: st.db}, id, second, "mime"))
+	_, err = st.RefreshArchivedEmailCalendarContext(t.Context(), source, item, parsed)
+	require.Error(t, err)
+	var pending bool
+	require.NoError(t, st.db.QueryRowContext(t.Context(), `SELECT EXISTS (SELECT 1 FROM email_calendar_pending WHERE message_id=?)`, id).Scan(&pending))
+	assert.True(t, pending)
+}
+
+func TestEmailCalendarPendingOctetStreamWithoutInvite(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	id, source := persistInviteEmail(t, st, "octet-no-invite", []byte("Content-Type: application/octet-stream\r\n\r\nordinary attachment"))
+	assert.Empty(t, emailEvents(t, st, source))
+	var pending bool
+	require.NoError(t, st.db.QueryRowContext(t.Context(), `SELECT EXISTS (SELECT 1 FROM email_calendar_pending WHERE message_id=?)`, id).Scan(&pending))
+	assert.False(t, pending)
 }

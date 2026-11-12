@@ -1564,6 +1564,10 @@ CREATE TABLE IF NOT EXISTS message_raw (
     encryption_version INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS email_calendar_pending (
+    message_id BIGINT PRIMARY KEY REFERENCES message_raw(message_id) ON DELETE CASCADE
+);
+
 -- Explicit MIME identifiers (In-Reply-To, References, attached originals),
 -- indexed across archived email copies. A copy's own Message-ID is
 -- messages.rfc822_message_id. messages.email_linkage_outcome IS NULL marks a

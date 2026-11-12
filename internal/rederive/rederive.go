@@ -162,6 +162,9 @@ func RunIfStale(
 }
 
 func run(ctx context.Context, s *store.Store, sourceType, identifier string, sourceID int64, progress func(string), onlyStale bool) (sum *Summary, ran bool, err error) {
+	if err := s.RetryPendingEmailCalendarsContext(ctx, sourceID); err != nil {
+		return sum, ran, err
+	}
 	for _, pass := range passes(sourceType, identifier, onlyStale) {
 		if onlyStale {
 			applied, err := s.IsMigrationAppliedContext(ctx, LedgerKey(sourceType, identifier, pass.version), 1)
