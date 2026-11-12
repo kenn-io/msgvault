@@ -22,7 +22,7 @@ func TestCollectionsThroughDaemonAndSDK(t *testing.T) {
 	require.NoError(t, err)
 	second, secondID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "second@example.test", "second", "other alpine fixture", "alpine body")
 	require.NoError(t, err)
-	_, err = st.DB().ExecContext(t.Context(), "UPDATE messages SET sent_at = ? WHERE id IN (?, ?)", "2025-01-01T00:00:00Z", firstID, secondID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET sent_at = ? WHERE id IN (?, ?)"), "2025-01-01T00:00:00Z", firstID, secondID)
 	require.NoError(t, err)
 	_, err = st.CreateCollection("selected", "", []int64{first.ID})
 	require.NoError(t, err)
@@ -99,7 +99,9 @@ func TestCollectionsThroughDaemonAndSDK(t *testing.T) {
 			require.Len(t, rows, 1)
 			row, ok := rows[0].(map[string]any)
 			require.True(t, ok)
-			assert.Equal(t, tc.count, row["Count"])
+			count, ok := row["Count"].(float64)
+			require.True(t, ok)
+			assert.InDelta(t, tc.count, count, 0)
 		}
 	}
 	bad, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolListMessageCollections, Arguments: map[string]any{"unexpected": true}})

@@ -14,6 +14,7 @@ import (
 
 type collectionTestEngine struct {
 	query.Engine
+
 	collections []query.CollectionScope
 }
 
@@ -60,7 +61,9 @@ func TestCollectionScopesFilterRealMessageReads(t *testing.T) {
 
 func TestCollectionCatalogAvailability(t *testing.T) {
 	e := &collectionTestEngine{Engine: query.NewSQLiteEngine(nil), collections: []query.CollectionScope{{Name: "empty", SourceIDs: []int64{}}}}
-	searcher := hybridSearcherFunc(func(context.Context, HybridSearchRequest) (*HybridSearchResult, error) { return nil, nil })
+	searcher := hybridSearcherFunc(func(context.Context, HybridSearchRequest) (*HybridSearchResult, error) {
+		return &HybridSearchResult{}, nil
+	})
 	for _, tc := range []struct {
 		name      string
 		opts      ServeOptions
