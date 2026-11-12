@@ -38,7 +38,7 @@ func testICalendarCancelledDetailsRevisionOrder(t *testing.T) {
 			source := icsSource(t, st)
 			items := [][]byte{initial, updated, cancel}
 			for _, i := range order {
-				_, err := st.PersistICalendarContext(t.Context(), source, items[i])
+				_, err := importICalendarForTest(st, t.Context(), source, items[i])
 				requirements.NoError(err)
 			}
 			ids := emailEvents(t, st, source)
@@ -62,7 +62,7 @@ func testICalendarCancelledDetailsRevisionOrder(t *testing.T) {
 			st := newRFC822IDBackfillBackendStore(t)
 			source := icsSource(t, st)
 			for _, event := range [][]byte{initial, updated, cancel} {
-				_, err := st.PersistICalendarContext(t.Context(), source, event)
+				_, err := importICalendarForTest(st, t.Context(), source, event)
 				requirements.NoError(err)
 			}
 			ids := emailEvents(t, st, source)
@@ -79,7 +79,7 @@ func testICalendarCancelledDetailsRevisionOrder(t *testing.T) {
 				assertions.Equal(row.Event, calendarRows(t, st, ids[0])[0].Event)
 			} else {
 				restored := calendarDocument("REQUEST", "SEQUENCE:4\r\nDTSTART:20270302T150000Z\r\nSUMMARY:Restored\r\nORGANIZER:mailto:organizer@example.com")
-				_, err := st.PersistICalendarContext(t.Context(), source, restored)
+				_, err := importICalendarForTest(st, t.Context(), source, restored)
 				requirements.NoError(err)
 				row := calendarRows(t, st, ids[0])[0]
 				assertions.Equal("confirmed", row.Event.Status)
@@ -96,7 +96,7 @@ func TestICalendarCancellationRetainsAttendees(t *testing.T) {
 	first := calendarDocument("CANCEL", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z\r\nSUMMARY:Cancelled meeting\r\nATTENDEE;PARTSTAT=ACCEPTED:mailto:guest@example.org")
 	later := calendarDocument("CANCEL", "SEQUENCE:2\r\nDTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z\r\nSUMMARY:Cancelled meeting")
 	for _, raw := range [][]byte{first, later} {
-		_, err := st.PersistICalendarContext(t.Context(), source, raw)
+		_, err := importICalendarForTest(st, t.Context(), source, raw)
 		requirements.NoError(err)
 	}
 	ids := emailEvents(t, st, source)
@@ -135,7 +135,7 @@ func testICalendarCancelledDetailsStamp(t *testing.T) {
 		"SEQUENCE:2\r\nDTSTAMP:20270301T090000Z\r\nDTSTART:20270302T100000Z\r\nSUMMARY:Older",
 	} {
 		raw := strings.Replace(string(calendarDocument("", fields)), "METHOD:\r\n", "", 1)
-		_, err := st.PersistICalendarContext(t.Context(), source, []byte(raw))
+		_, err := importICalendarForTest(st, t.Context(), source, []byte(raw))
 		requirements.NoError(err)
 	}
 	ids := emailEvents(t, st, source)

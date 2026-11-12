@@ -223,7 +223,7 @@ func TestCalendarEventRowsEndedSeriesOutsideWindow(t *testing.T) {
 		fmt.Fprintf(&document, "BEGIN:VEVENT\r\nUID:series-%d@example.com\r\nDTSTAMP:20270101T000000Z\r\nRECURRENCE-ID;RANGE=THISANDFUTURE:20270301T000000Z\r\nDTSTART:20270301T010000Z\r\nDURATION:PT1H\r\nEND:VEVENT\r\n", i)
 	}
 	document.WriteString("END:VCALENDAR\r\n")
-	_, err := st.PersistICalendarContext(t.Context(), source, []byte(document.String()))
+	_, err := importICalendarForTest(st, t.Context(), source, []byte(document.String()))
 	require.NoError(err)
 	var series, edits int
 	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FILTER (WHERE e.kind='series'), COUNT(*) FILTER (WHERE e.kind='exception') FROM calendar_events e JOIN messages m ON m.id=e.message_id WHERE m.source_id=?`, source).Scan(&series, &edits))

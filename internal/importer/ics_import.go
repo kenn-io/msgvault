@@ -14,14 +14,15 @@ func ImportICS(ctx context.Context, st *store.Store, path, identifier string) (*
 	if err != nil {
 		return nil, fmt.Errorf("read ICS file: %w", err)
 	}
-	if err := store.ValidateICalendar(raw); err != nil {
+	prepared, err := store.PrepareICalendar(raw)
+	if err != nil {
 		return nil, err
 	}
 	source, err := st.GetOrCreateSourceContext(ctx, "ics", identifier)
 	if err != nil {
 		return nil, fmt.Errorf("create ICS source: %w", err)
 	}
-	summary, err := st.PersistICalendarContext(ctx, source.ID, raw)
+	summary, err := st.PersistICalendarContext(ctx, source.ID, prepared)
 	if err != nil {
 		return nil, err
 	}

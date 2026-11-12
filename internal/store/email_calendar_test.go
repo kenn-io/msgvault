@@ -166,7 +166,7 @@ func TestEmailCalendarSourceCountsAndActivityCandidates(t *testing.T) {
 	mailEvents := emailEvents(t, st, mailSource)
 	requirements.Len(mailEvents, 1)
 	icsSource := icsSource(t, st)
-	_, err := st.PersistICalendarContext(t.Context(), icsSource, raw)
+	_, err := importICalendarForTest(st, t.Context(), icsSource, raw)
 	requirements.NoError(err)
 	icsEvents := emailEvents(t, st, icsSource)
 	requirements.Len(icsEvents, 1)
