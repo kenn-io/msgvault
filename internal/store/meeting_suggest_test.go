@@ -542,3 +542,24 @@ func TestMeetingSuggestionsKeepsEligibleGroupedNote(t *testing.T) {
 	_, err = st.DecideMeetingLinkContext(t.Context(), eventRef, MeetingLinkRef{Kind: "msg", MessageID: notes[0]}, "link")
 	r.NoError(err)
 }
+
+func TestMeetingSuggestionsIncompleteEventWarnings(t *testing.T) {
+	for _, tc := range []struct{ name, raw, reason string }{
+		{"missing end", `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"}}`, "missing event bounds"},
+		{"cancelled", `{"id":"event","status":"cancelled"}`, "missing event bounds"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, event := calendarFixture(t, st, "incomplete-event", tc.raw)
+			ref := MeetingLinkRef{Kind: "evt", MessageID: event}
+			record, err := st.MeetingRecordContext(t.Context(), ref)
+			r.NoError(err)
+			r.Equal([]CalendarUnexpandable{{MessageID: event, Reason: tc.reason}}, record.Unexpandable)
+			page, err := st.SuggestMeetingLinksContext(t.Context(), ref, 10, nil)
+			r.NoError(err)
+			r.Empty(page.Suggestions)
+			r.Equal(record.Unexpandable, page.Unexpandable)
+		})
+	}
+}

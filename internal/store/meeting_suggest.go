@@ -169,6 +169,7 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		if err != nil {
 			return page, err
 		}
+		page.Unexpandable = record.Unexpandable
 		var seed *MeetingLink
 		for i := range record.Links {
 			occurrence := record.Links[i].occurrence
@@ -190,7 +191,6 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		if seed.SubjectOriginID != 0 {
 			seedIDs = append(seedIDs, seed.SubjectOriginID)
 		}
-		page.Unexpandable = record.Unexpandable
 		event := seed.occurrence
 		r := s.db
 		scope, args := sourceScopeClause(ctx, "m.source_id")
