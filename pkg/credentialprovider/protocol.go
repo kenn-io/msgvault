@@ -1,4 +1,5 @@
-// Package credentialprovider exchanges scoped message MCP credentials with a
+// Package credentialprovider exchanges scoped message MCP credentials, and the
+// inbound credentials msgvault sends to external source endpoints, with a
 // trusted local executable. It does not grant access or implement a login flow.
 // The caller retains operation identities, keeps secrets in memory, and owns
 // retries. See docs/guides/credential-providers.md for the wire contract.
