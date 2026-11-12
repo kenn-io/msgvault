@@ -185,6 +185,42 @@ describe('PersonBriefCard', () => {
     expect(document.getElementById(followUp.getAttribute('aria-controls') ?? '')).toBeNull();
   });
 
+  it.each([true, false])('shows a known event without repeated detail (metadata: %s)', async (withMetadata) => {
+    const data = structured();
+    const event = {
+      ...data.highlights[0],
+      speaker: withMetadata ? 'person' : '',
+      observed_at: withMetadata ? '2026-08-29' : '',
+      life_event: { state: 'follow_up', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }
+    };
+    render(PersonBriefCard, {
+      client: createAPIClient(enrolledArchive({ brief: { structured: { ...data, highlights: [event] } } })),
+      personID: 7
+    });
+
+    const highlight = await screen.findByRole('button', { name: sentenceTexts[1] });
+    await fireEvent.click(highlight);
+    await waitFor(() => expect(highlight.getAttribute('aria-expanded')).toBe('true'));
+    const panel = document.getElementById(highlight.getAttribute('aria-controls') ?? '');
+    expect(panel?.textContent).not.toContain('no structured item');
+    expect(panel?.textContent).not.toContain('They were preparing for a role change.');
+    expect(panel?.textContent).toContain('message:1');
+    if (withMetadata) expect(panel?.textContent).toContain('Said by this person');
+  });
+
+  it('reports a missing structured item', async () => {
+    const data = structured();
+    render(PersonBriefCard, {
+      client: createAPIClient(enrolledArchive({ brief: { structured: { ...data, highlights: [] } } })),
+      personID: 7
+    });
+    const highlight = await screen.findByRole('button', { name: sentenceTexts[1] });
+    await fireEvent.click(highlight);
+    await waitFor(() => expect(highlight.getAttribute('aria-expanded')).toBe('true'));
+    const panel = document.getElementById(highlight.getAttribute('aria-controls') ?? '');
+    expect(panel?.textContent).toContain('This brief version carries no structured item for that sentence.');
+  });
+
   it('labels evidence directness relative to the person, not the owner', async () => {
     const archive = enrolledArchive({
       brief: {
