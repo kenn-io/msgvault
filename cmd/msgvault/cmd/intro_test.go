@@ -97,6 +97,44 @@ func TestIntroThroughDaemonCLI(t *testing.T) {
 		check.Equal("no-store", response.Header.Get("Cache-Control"))
 		check.Equal(want, got)
 	}
+
+	// Two records on this source and one elsewhere exercise the owner filter and cursor.
+	second, err := (introops.Service{Store: st}).Prepare(ctx, nil, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID})
+	req.NoError(err)
+	other, err := st.GetOrCreateSource("beeper", "another-account")
+	req.NoError(err)
+	_, err = (introops.Service{Store: st}).Prepare(ctx, nil, store.PersonIntroductionPrepare{SourceID: other.ID, PersonAID: a.ID, PersonBID: b.ID})
+	req.NoError(err)
+	var seen []string
+	cursor := ""
+	for range 2 {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/v1/intros", nil)
+		req.NoError(err)
+		q := request.URL.Query()
+		q.Set("source_id", strconv.FormatInt(src.ID, 10))
+		q.Set("limit", "1")
+		if cursor != "" {
+			q.Set("after_id", cursor)
+		}
+		request.URL.RawQuery = q.Encode()
+		response, err := http.DefaultClient.Do(request)
+		req.NoError(err)
+		req.Equal(http.StatusOK, response.StatusCode)
+		var result introops.Page
+		req.NoError(json.NewDecoder(response.Body).Decode(&result))
+		req.NoError(response.Body.Close())
+		req.Len(result.Items, 1)
+		seen = append(seen, result.Items[0].IntroID)
+		cursor = result.NextAfterID
+		if len(seen) == 1 {
+			req.True(result.HasMore)
+			req.NotEmpty(cursor)
+		} else {
+			check.False(result.HasMore)
+		}
+	}
+	check.ElementsMatch([]string{row.IntroID, second.IntroID}, seen)
+	check.Empty(cursor)
 	missing, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/v1/intros/missing", nil)
 	req.NoError(err)
 	missingResponse, err := http.DefaultClient.Do(missing)
@@ -210,6 +248,9 @@ func TestIntroDelegatedThroughRunner(t *testing.T) {
 		check.Equal(http.StatusBadRequest, read(create, "/api/v1/intros?"+query).Code)
 	}
 	check.Equal(http.StatusOK, read(create, "/api/v1/intros?source_id="+strconv.FormatInt(src.ID, 10)+"&limit=1").Code)
+	filtered := read(create, "/api/v1/intros?source_id="+strconv.FormatInt(other.ID, 10))
+	check.Equal(http.StatusOK, filtered.Code)
+	check.NotContains(filtered.Body.String(), row.IntroID)
 	pc, err := st.EnsureParticipant("hidden@example.test", "Hidden", "example.test")
 	req.NoError(err)
 	c, _, err := st.CreatePersonFromParticipantContext(ctx, pc)
@@ -223,6 +264,18 @@ func TestIntroDelegatedThroughRunner(t *testing.T) {
 	check.Equal(read(create, "/api/v1/intros/missing").Body.String(), hiddenResponse.Body.String())
 	check.Equal(http.StatusForbidden, hiddenResponse.Code)
 	check.NotContains(read(create, "/api/v1/intros?limit=1").Body.String(), hidden.IntroID)
+
+	// A person identified as the owner on another account is also ineligible.
+	req.NoError(st.AddAccountIdentityContext(ctx, other.ID, "self", "manual"))
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pc, beeperidentity.Fallback("grant-account", "c"), pc, beeperidentity.Fallback("other-account", "self"))
+	req.NoError(err)
+	ownerSelected, err := (introops.Service{Store: st}).Prepare(ctx, nil, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: c.ID})
+	req.NoError(err)
+	ownerRefusal := read(create, "/api/v1/intros/"+ownerSelected.IntroID)
+	check.Equal(http.StatusForbidden, ownerRefusal.Code)
+	check.Equal(read(create, "/api/v1/intros/missing").Body.String(), ownerRefusal.Body.String())
+	check.Equal("no-store", ownerRefusal.Header().Get("Cache-Control"))
+	check.NotContains(read(create, "/api/v1/intros").Body.String(), ownerSelected.IntroID)
 	edit, _ := issue([]string{"draft.create", "draft.edit"}, src.ID)
 	check.Contains(read(edit, "/api/v1/intros/"+row.IntroID).Body.String(), "secret")
 	denied := run(outsider, "intro", "show", row.IntroID, "--json")

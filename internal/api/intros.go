@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -38,7 +39,10 @@ func addIntroductionNoStoreHeader(response *huma.Response) {
 }
 
 func (s *Server) handleListIntroductions(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
+	if _, err := url.ParseQuery(r.URL.RawQuery); err != nil {
+		s.writeIntroductionError(w, store.ErrIntroductionInvalid)
+		return
+	}
 	source, err := contactQueryInteger(r, "source_id", 1, 0)
 	if err != nil {
 		s.writeIntroductionError(w, store.ErrIntroductionInvalid)
@@ -56,10 +60,23 @@ func (s *Server) handleListIntroductions(w http.ResponseWriter, r *http.Request)
 	}
 	ops, ok := s.store.(IntroductionOperations)
 	if !ok {
-		s.writeIntroductionError(w, nil)
+		writeError(w, http.StatusServiceUnavailable, "feature_unavailable", "Introduction reads are unavailable")
 		return
 	}
-	page, err := ops.ListIntroductionsContext(r.Context(), s.requestAuthentication(r).Grant, store.PersonIntroductionQuery{SourceID: source, Limit: int(limit), AfterID: after})
+	grant := s.requestAuthentication(r).Grant
+	var release func()
+	if grant != nil {
+		var apiErr *apiHTTPError
+		release, apiErr = s.acquireReadSnapshotSlot(r.Context(), "agent_read_busy", "Agent reads are at capacity; retry later")
+		if apiErr != nil {
+			writeAPIHTTPError(w, apiErr)
+			return
+		}
+	}
+	page, err := ops.ListIntroductionsContext(r.Context(), grant, store.PersonIntroductionQuery{SourceID: source, Limit: int(limit), AfterID: after})
+	if release != nil {
+		release()
+	}
 	if err != nil {
 		s.writeIntroductionError(w, err)
 		return
@@ -68,13 +85,25 @@ func (s *Server) handleListIntroductions(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleGetIntroduction(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
 	ops, ok := s.store.(IntroductionOperations)
 	if !ok {
-		s.writeIntroductionError(w, nil)
+		writeError(w, http.StatusServiceUnavailable, "feature_unavailable", "Introduction reads are unavailable")
 		return
 	}
-	row, err := ops.GetIntroductionContext(r.Context(), s.requestAuthentication(r).Grant, r.PathValue("id"))
+	grant := s.requestAuthentication(r).Grant
+	var release func()
+	if grant != nil {
+		var apiErr *apiHTTPError
+		release, apiErr = s.acquireReadSnapshotSlot(r.Context(), "agent_read_busy", "Agent reads are at capacity; retry later")
+		if apiErr != nil {
+			writeAPIHTTPError(w, apiErr)
+			return
+		}
+	}
+	row, err := ops.GetIntroductionContext(r.Context(), grant, r.PathValue("id"))
+	if release != nil {
+		release()
+	}
 	if err != nil {
 		s.writeIntroductionError(w, err)
 		return

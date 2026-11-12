@@ -70,6 +70,17 @@ type agentReadSnapshotStore interface {
 	IsPostgreSQL() bool
 }
 
+// acquireReadSnapshotSlot shares the connection budget across scoped reads.
+func (s *Server) acquireReadSnapshotSlot(ctx context.Context, code, message string) (func(), *apiHTTPError) {
+	select {
+	case s.readSnapshotSlots <- struct{}{}:
+	case <-ctx.Done():
+		return nil, newAPIHTTPError(http.StatusServiceUnavailable, code, message)
+	}
+	var once sync.Once
+	return func() { once.Do(func() { <-s.readSnapshotSlots }) }, nil
+}
+
 // beginAgentRead binds req to one read snapshot and authorizes its source scope.
 // The returned release frees the snapshot and its concurrency slot.
 func (s *Server) beginAgentRead(req *http.Request, operation string, grant *agentgrant.Grant, permission agentgrant.Permission) (func(), *apiHTTPError) {
@@ -77,23 +88,22 @@ func (s *Server) beginAgentRead(req *http.Request, operation string, grant *agen
 	if !ok {
 		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
 	}
-	select {
-	case s.readSnapshotSlots <- struct{}{}:
-	case <-req.Context().Done():
-		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "agent_read_busy", "Agent reads are at capacity; retry later")
+	releaseSlot, apiErr := s.acquireReadSnapshotSlot(req.Context(), "agent_read_busy", "Agent reads are at capacity; retry later")
+	if apiErr != nil {
+		return nil, apiErr
 	}
 	indexGeneration := s.ftsRebuildGen.Load()
 	indexComplete := s.ftsIndexComplete.Load()
 	readContext, releaseSnapshot, err := snapshotStore.BeginReadSnapshotContext(req.Context())
 	if err != nil {
-		<-s.readSnapshotSlots
+		releaseSlot()
 		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
 	}
 	var once sync.Once
 	release := func() {
 		once.Do(func() {
 			releaseSnapshot()
-			<-s.readSnapshotSlots
+			releaseSlot()
 		})
 	}
 	if boundary, ok := req.Context().Value(readResponseKey{}).(*readResponseWriter); ok {
