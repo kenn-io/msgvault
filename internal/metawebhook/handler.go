@@ -109,7 +109,8 @@ func NewHandler(apps map[string]App, pending string, wake func()) (*Handler, err
 
 // removeStaging deletes atomicfile staging files, named
 // ".<final name>.tmp-<random>", that a crash left in dir. Other dot-names,
-// such as set-aside deliveries, stay.
+// such as set-aside deliveries, stay. A staging file that cannot be removed
+// is logged and left, since nothing reads it.
 func removeStaging(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -121,7 +122,7 @@ func removeStaging(dir string) error {
 			continue
 		}
 		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("remove Meta webhook staging file: %w", err)
+			slog.Warn("Meta webhook staging file cannot be removed", "file", name, "error", err)
 		}
 	}
 	return nil

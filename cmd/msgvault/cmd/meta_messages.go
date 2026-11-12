@@ -185,7 +185,11 @@ func (p inboxProvider) syncCmd(short, long string) *cobra.Command {
 				}
 				sum, err := p.importProfile(ctx, st, profile, options)
 				if sum != nil {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %d messages processed (%d added, %d updated), %d requests\n", profile.identifier, sum.MessagesProcessed, sum.MessagesAdded, sum.MessagesUpdated, sum.Requests)
+					skipped := ""
+					if sum.ConversationsSkipped > 0 {
+						skipped = fmt.Sprintf(", %d conversations skipped (not a one-to-one chat)", sum.ConversationsSkipped)
+					}
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %d messages processed (%d added, %d updated), %d requests%s\n", profile.identifier, sum.MessagesProcessed, sum.MessagesAdded, sum.MessagesUpdated, sum.Requests, skipped)
 					if sum.Partial {
 						_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Partial coverage; the next sync resumes where this one stopped.")
 					}

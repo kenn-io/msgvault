@@ -22,24 +22,79 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+type metaWebhookErrorCase struct {
+	name string
+	err  error
+	want error // ErrUnrecoverable, ErrBusy, or nil for a retryable failure
+}
+
 func TestMetaWebhookErrorRetriesOnlyRecoverableFailures(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		err       error
-		permanent bool
+	cases := []metaWebhookErrorCase{
+		{"source busy", fmt.Errorf("apply: %w", store.ErrSyncAlreadyActive), metawebhook.ErrBusy},
+		{"source not registered", store.ErrSourceNotFound, metawebhook.ErrUnrecoverable},
+		{"invalid change", fmt.Errorf("%w: bad", meta.ErrInvalidChange), metawebhook.ErrUnrecoverable},
+		{"post deleted, wrapped", fmt.Errorf("read post: %w", &meta.APIError{Status: 400, Code: 100, Subcode: 33}), metawebhook.ErrUnrecoverable},
+	}
+	// With a code, the status does not decide: Meta can refuse with HTTP 200.
+	for _, code := range []struct {
+		name          string
+		code, subcode int
+		want          error
 	}{
-		{"source busy", fmt.Errorf("apply: %w", store.ErrSyncAlreadyActive), false},
-		{"Graph unavailable", &meta.APIError{Status: 503}, false},
-		{"Graph throttled with 400", &meta.APIError{Status: 400, Code: 4}, false},
-		{"Graph throttled with 429", &meta.APIError{Status: 429}, false},
-		{"post deleted", fmt.Errorf("read post: %w", &meta.APIError{Status: 400, Code: 100, Subcode: 33}), true},
-		{"source not registered", store.ErrSourceNotFound, true},
-		{"invalid change", fmt.Errorf("%w: bad", meta.ErrInvalidChange), true},
+		{"object missing", 100, 33, metawebhook.ErrUnrecoverable},
+		{"invalid parameter", 100, 0, metawebhook.ErrUnrecoverable},
+		{"permission denied", 10, 0, metawebhook.ErrUnrecoverable},
+		{"permission 200", 200, 0, metawebhook.ErrUnrecoverable},
+		{"permission 299", 299, 0, metawebhook.ErrUnrecoverable},
+		{"capability missing", 3, 0, metawebhook.ErrUnrecoverable},
+		{"throttled 4", 4, 0, nil},
+		{"throttled 17", 17, 0, nil},
+		{"throttled 32", 32, 0, nil},
+		{"throttled 613", 613, 0, nil},
+		{"business use case throttled 80000", 80000, 0, nil},
+		{"business use case throttled 80001", 80001, 0, nil},
+		{"business use case throttled 80002", 80002, 0, nil},
+		{"business use case throttled 80006", 80006, 0, nil},
+		{"business use case throttled 80014", 80014, 0, nil},
+		{"Page token expired", 190, 0, nil},
+		{"Page token invalidated", 190, 463, nil},
+		{"API session", 102, 0, nil},
+		{"API unknown", 1, 0, nil},
+		{"API service", 2, 0, nil},
+		{"application limit reached", 341, 0, nil},
+		{"temporarily blocked", 368, 0, nil},
+		{"unknown code", 12345, 0, nil},
 	} {
+		for _, status := range []int{200, 400, 403} {
+			cases = append(cases, metaWebhookErrorCase{
+				fmt.Sprintf("%s with HTTP %d", code.name, status),
+				&meta.APIError{Status: status, Code: code.code, Subcode: code.subcode}, code.want,
+			})
+		}
+	}
+	for _, status := range []struct {
+		status int
+		want   error
+	}{
+		{400, metawebhook.ErrUnrecoverable},
+		{403, metawebhook.ErrUnrecoverable},
+		{404, metawebhook.ErrUnrecoverable},
+		{401, nil},
+		{429, nil},
+		{503, nil},
+		{200, nil},
+	} {
+		cases = append(cases, metaWebhookErrorCase{
+			fmt.Sprintf("HTTP %d without a code", status.status), &meta.APIError{Status: status.status}, status.want,
+		})
+	}
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := metaWebhookError(tc.err)
 			require.ErrorIs(t, err, tc.err)
-			assert.Equal(t, tc.permanent, errors.Is(err, metawebhook.ErrUnrecoverable))
+			for _, class := range []error{metawebhook.ErrUnrecoverable, metawebhook.ErrBusy} {
+				assert.Equal(t, errors.Is(tc.want, class), errors.Is(err, class), "is %v", class)
+			}
 		})
 	}
 }
