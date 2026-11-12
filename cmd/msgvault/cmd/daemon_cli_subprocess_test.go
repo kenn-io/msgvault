@@ -115,6 +115,13 @@ func TestClassifyDaemonCLIWaitErrOtherFailure(t *testing.T) {
 	require.ErrorIs(got, base, "wraps the original error")
 }
 
+func TestClassifyDaemonCLIWaitErrOmitsReplyText(t *testing.T) {
+	base := errors.New("fork/exec: permission denied")
+	got := classifyDaemonCLIWaitErr(base, []string{"comment", "reply", "42", "--body", "Thanks, we fixed it"}, nil)
+	require.ErrorContains(t, got, "CLI subprocess comment reply 42 --body [redacted]")
+	assert.NotContains(t, got.Error(), "we fixed it")
+}
+
 func TestDaemonCLIChildEnvAppliesAllowlistedEnvOverrides(t *testing.T) {
 	got := daemonCLIChildEnv(
 		[]string{

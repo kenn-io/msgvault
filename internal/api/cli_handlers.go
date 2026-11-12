@@ -1439,7 +1439,7 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
 			s.logger.Error("failed to run CLI command", "command", req.Args[0], "error_code", coded.Code, "cause", coded.Err)
 		} else {
-			s.logger.Error("failed to run CLI command", "args", req.Args, "error", err)
+			s.logger.Error("failed to run CLI command", "args", RedactedCLIRunArgs(req.Args), "error", err)
 		}
 		if writeErr := writeEvent(CLIRunEvent{Type: cliStreamEventTypeError, Error: err.Error()}); writeErr != nil {
 			s.logger.Error("failed to stream CLI run error event", "error", writeErr)
@@ -1534,6 +1534,25 @@ func cliRunArgsContainFlag(args []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// RedactedCLIRunArgs returns args for logging. For `comment reply` it
+// replaces the reply text given with --body by a placeholder; other commands'
+// args are returned as they are.
+func RedactedCLIRunArgs(args []string) []string {
+	if len(args) < 2 || args[0] != "comment" || args[1] != "reply" {
+		return args
+	}
+	redacted := slices.Clone(args)
+	for i, arg := range redacted {
+		switch {
+		case arg == "--body" && i+1 < len(redacted):
+			redacted[i+1] = "[redacted]"
+		case strings.HasPrefix(arg, "--body="):
+			redacted[i] = "--body=[redacted]"
+		}
+	}
+	return redacted
 }
 
 func (s *Server) handleCLIAddCalendarPlan(w http.ResponseWriter, r *http.Request) {
@@ -1680,6 +1699,9 @@ func cliRunCommandAllowed(args []string) bool {
 	}
 	if args[0] == "source" {
 		return len(args) >= 3 && slices.Contains([]string{"facebook-comments", "instagram-comments", "instagram-mentions", "facebook-messages", "instagram-messages"}, args[1]) && (args[2] == "add" || args[2] == "sync")
+	}
+	if args[0] == "comment" {
+		return len(args) >= 2 && (args[1] == "moderate" || args[1] == "reply")
 	}
 	// Internal subprocess commands are callable only by their owning public
 	// command on the daemon host, never through the generic HTTP runner.

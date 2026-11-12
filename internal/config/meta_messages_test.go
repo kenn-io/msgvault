@@ -19,5 +19,8 @@ func TestMetaInboxProfiles(t *testing.T) {
 
 	require.ErrorContains(loadConfigTextError(t, facebook+facebook), "facebook_messages[1]")
 	require.ErrorContains(loadConfigTextError(t, instagram+"mentions=true\n"), "mentions")
+	// Comment moderation and replies do not apply to an inbox.
+	require.ErrorContains(loadConfigTextError(t, facebook+"actions=[\"reply\"]\n"), "facebook_messages[0].actions")
+	require.ErrorContains(loadConfigTextError(t, instagram+"actions=[\"hide\"]\n"), "instagram_messages[0].actions")
 	require.ErrorContains(loadConfigTextError(t, strings.Replace(facebook, `page_id="100"`, `page_id="x"`, 1)), "facebook_messages[0]")
 }

@@ -58,7 +58,12 @@ func startMetaWebhooks(ctx context.Context, cfg *config.Config, st *store.Store,
 		{Object: "page", Name: "messages"}:           inboxMessagesHandler(cfg, st, work, facebookInbox),
 		{Object: "instagram", Name: "messages"}:      inboxMessagesHandler(cfg, st, work, instagramInbox),
 	})
-	handler, err := metawebhook.NewHandler(apps, pending, worker.Wake)
+	// Only a stored delivery counts as activity, so unsigned requests cannot
+	// keep the daemon from idle shutdown.
+	handler, err := metawebhook.NewHandler(apps, pending, func() {
+		idle.Touch()
+		worker.Wake()
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +74,7 @@ func startMetaWebhooks(ctx context.Context, cfg *config.Config, st *store.Store,
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	r := &metaWebhookRuntime{
-		server: &http.Server{Handler: idle.Wrap(handler), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},
+		server: &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},
 		cancel: cancel, done: make(chan struct{}), errs: make(chan error, 2),
 	}
 	var wg sync.WaitGroup
