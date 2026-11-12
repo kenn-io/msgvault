@@ -572,7 +572,7 @@ function mergeRows(current: DirectoryPerson[], incoming: DirectoryPerson[]): Dir
   const seen = new Set(current.map((row) => row.id));
   return [...current, ...incoming.filter((row) => !seen.has(row.id))];
 }
-function isRetryableStatus(status: number): boolean {
+export function isRetryableStatus(status: number): boolean {
   return status === 0 || status === 408 || status === 429 || status >= 500;
 }
 function errorCode(error: unknown): string | undefined {
