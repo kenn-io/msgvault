@@ -1126,7 +1126,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		localController := &localEmbeddingsController{
 			state: state, store: s, dbPath: dbPath, handle: vectorInit, server: apiServer, scheduler: sched,
 			gate: operationGate, runner: storeAdapter, openers: []visual.StreamOpener{blobStore},
-			inspect: embedlocal.Inspect, install: embedlocal.Install, choice: embedlocal.ChoiceRecorded, recordChoice: embedlocal.RecordChoice,
+			inspect: embedlocal.Inspect, install: embedlocal.Install, choice: embedlocal.ChoiceRecorded,
 		}
 		apiServer.SetLocalEmbeddings(localController)
 		apiServer.StartLocalEmbeddings(localController.Start)

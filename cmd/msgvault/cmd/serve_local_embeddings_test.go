@@ -3,13 +3,11 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -45,7 +43,6 @@ type localBuildTestRunner struct {
 	calls       [][]string
 	contexts    []context.Context
 	beforeBuild func()
-	buildErr    error
 }
 
 func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRunRequest, emit func(api.CLIRunEvent) error) error {
@@ -70,9 +67,6 @@ func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRun
 	}
 	if r.beforeBuild != nil {
 		r.beforeBuild()
-	}
-	if r.buildErr != nil {
-		return r.buildErr
 	}
 	state := *invocationFromContext(ctx)
 	state.cfg = cfg
@@ -808,40 +802,11 @@ func TestLocalEmbeddingsStartupReportsErrors(t *testing.T) {
 	}
 }
 
-func TestLocalEmbeddingsStartupAllowsAccountSave(t *testing.T) {
-	f := newLocalActivationFixture(t, "")
-	f.start(t)
-	f.controller.choice = func() (bool, error) { return true, nil }
-	f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) { return embedlocal.Status{}, nil }
-	f.controller.runner = &storeAPIAdapter{config: f.cfg, store: f.store, operationGate: f.controller.gate}
-	original := localEmbeddingEndpoint
-	calls := 0
-	localEmbeddingEndpoint = func(ctx context.Context, opts embedlocal.Options) (string, error) {
-		calls++
-		if calls == 2 {
-			file, err := os.OpenFile(f.cfg.ConfigFilePath(), os.O_APPEND|os.O_WRONLY, 0)
-			require.NoError(t, err)
-			_, err = file.WriteString("\n[[accounts]]\nemail = \"account@example.test\"\nenabled = false\n")
-			require.NoError(t, err)
-			require.NoError(t, file.Close())
-		}
-		return original(ctx, opts)
-	}
-	require.NoError(t, f.controller.Start(f.ctx, func(api.LocalEmbeddingsStatus) {}))
-	assert.GreaterOrEqual(t, calls, 2)
-	content, err := os.ReadFile(f.cfg.ConfigFilePath())
-	require.NoError(t, err)
-	assert.Contains(t, string(content), "account@example.test")
-	assert.False(t, f.cfg.Vector.Enabled)
-	assert.Positive(t, f.inputs.Load())
-}
-
 func TestManagedBuiltinBuildHonorsSavedSettings(t *testing.T) {
-	for _, scenario := range []string{"saved provider", "saved scope"} {
+	for _, scenario := range []string{"saved provider", "published builtin"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newLocalActivationFixture(t, "")
 			var ctx context.Context
-			var before int32
 			adapter := &storeAPIAdapter{config: f.cfg, store: f.store, operationGate: f.controller.gate}
 			if scenario == "saved provider" {
 				endpoint, err := localEmbeddingEndpoint(f.ctx, embedlocal.Options{SkipOllama: true})
@@ -867,14 +832,6 @@ func TestManagedBuiltinBuildHonorsSavedSettings(t *testing.T) {
 				f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) { return embedlocal.Status{}, nil }
 				f.controller.runner = adapter
 				require.NoError(t, f.controller.Start(f.ctx, func(api.LocalEmbeddingsStatus) {}))
-				before = f.inputs.Load()
-				snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-				require.NoError(t, err)
-				_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{
-					{Path: []string{"vector", "embed", "scope"}, Values: map[string]any{"message_types": []string{"sms"}}},
-					{Path: []string{"vector", "preprocess"}, Values: map[string]any{"strip_quotes": false}},
-				})
-				require.NoError(t, err)
 				ctx = f.server.WithPublishedVectorConfig(f.ctx)
 			}
 			err := adapter.RunCLICommand(ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil)
@@ -887,51 +844,7 @@ func TestManagedBuiltinBuildHonorsSavedSettings(t *testing.T) {
 			if scenario == "saved provider" {
 				assert.Equal(t, "saved-model", active.Model)
 			} else {
-				assert.Equal(t, before, f.inputs.Load())
-				expected := f.handle.vf.Cfg
-				expected.Embed.Scope.MessageTypes = []string{"sms"}
-				stripQuotes := false
-				expected.Preprocess.StripQuotes = &stripQuotes
-				assert.Equal(t, expected.GenerationFingerprint(), active.Fingerprint)
-			}
-		})
-	}
-}
-
-func TestLocalEmbeddingsRecordsChoice(t *testing.T) {
-	for _, scenario := range []string{"record failure", "build failure"} {
-		t.Run(scenario, func(t *testing.T) {
-			checks, must := assert.New(t), require.New(t)
-			f := newLocalActivationFixture(t, "")
-			f.start(t)
-			var log bytes.Buffer
-			f.state.logger = slog.New(slog.NewTextHandler(&log, nil))
-			recorded := 0
-			f.controller.recordChoice = func() error {
-				recorded++
-				if scenario == "record failure" {
-					return errors.New("marker failure")
-				}
-				return nil
-			}
-			if scenario == "build failure" {
-				f.runner.buildErr = errors.New("indexing failed")
-				f.runner.beforeBuild = func() { checks.Equal(1, recorded) }
-			}
-			err := f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
-			checks.Equal(1, recorded)
-			if scenario == "record failure" {
-				must.NoError(err)
-				checks.Contains(log.String(), "marker failure")
-				checks.NotEmpty(f.runner.calls)
-			} else {
-				must.ErrorContains(err, "indexing failed")
-				snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-				must.NoError(err)
-				saved, err := f.cfg.ReloadConfigFile(snapshot)
-				must.NoError(err)
-				checks.True(saved.Vector.Enabled)
-				checks.True(saved.Vector.Embeddings.LocalOnly)
+				assert.Equal(t, f.handle.vf.Cfg.GenerationFingerprint(), active.Fingerprint)
 			}
 		})
 	}

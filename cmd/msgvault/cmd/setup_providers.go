@@ -87,7 +87,6 @@ type setupProvidersDeps struct {
 	probeOllama       func(context.Context, string) ollamaProbeResult
 	localEndpoint     func(context.Context, embedlocal.Options) (string, error)
 	localInstall      func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error)
-	recordChoice      func() error
 	consentState      func(context.Context, *config.Config) *setupConsentState
 	daemonAlive       func(context.Context, *config.Config) bool
 	personProvider    func() personProviderCommandDeps
@@ -152,7 +151,6 @@ func defaultSetupProvidersDeps(contexts ...context.Context) setupProvidersDeps {
 		probeOllama:      probeOllamaServer,
 		localEndpoint:    embedlocal.Endpoint,
 		localInstall:     embedlocal.Install,
-		recordChoice:     embedlocal.RecordChoice,
 		consentState:     readSetupConsentState,
 		daemonAlive: func(ctx context.Context, loaded *config.Config) bool {
 			return findAnyDaemonRuntimeContext(ctx, loaded.Data.DataDir) != nil
@@ -998,13 +996,11 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 		}
 	}
 
-	chosen := options.localEmbeddings
 	for i, lane := range plan.Lanes {
 		if !lane.local || lane.Action != planActionEnable || (detection.embeddingError == nil && detection.embeddingEndpoint != "") {
 			continue
 		}
-		accepted, err := installSetupLocalEmbeddings(command, deps, options, reader)
-		chosen = chosen || accepted
+		err := installSetupLocalEmbeddings(command, deps, options, reader)
 		if err != nil {
 			plan.Lanes[i].Action, plan.Lanes[i].Reason = planActionPending, err.Error()
 			plan.Lanes[i].edits = nil
@@ -1015,27 +1011,18 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 	if err := applySetupProvidersPlan(command, deps, before, &plan, options.jsonOutput); err != nil {
 		return err
 	}
-	recordLocalSearchChoice(ctx, deps, &plan, chosen)
 	return writeSetupProvidersResult(command, deps, nil, &plan, options, plan.writes(), declined)
 }
 
-func installSetupLocalEmbeddings(command *cobra.Command, deps setupProvidersDeps, options setupProvidersOptions, reader *bufio.Reader) (bool, error) {
+func installSetupLocalEmbeddings(command *cobra.Command, deps setupProvidersDeps, options setupProvidersOptions, reader *bufio.Reader) error {
 	if !options.localEmbeddings && (options.yes || options.jsonOutput || deps.isTerminal == nil || !deps.isTerminal(command)) {
-		return false, errors.New("local embeddings need an explicit selection; run msgvault setup providers --local-embeddings")
+		return errors.New("local embeddings need an explicit selection; run msgvault setup providers --local-embeddings")
 	}
 	dir, err := localEmbeddingsDir()
 	if err != nil {
-		return false, fmt.Errorf("local embedding directory: %w", err)
+		return fmt.Errorf("local embedding directory: %w", err)
 	}
-	accepted := false
-	_, err = deps.localInstall(command.Context(), embedlocal.InstallOptions{DataDir: dir, Confirm: confirmSetupLocalDownload(command, deps, options, reader, &accepted)})
-	return accepted, err
-}
-
-// confirmSetupLocalDownload asks before the download and sets accepted only
-// when the user answers yes at the prompt.
-func confirmSetupLocalDownload(command *cobra.Command, deps setupProvidersDeps, options setupProvidersOptions, reader *bufio.Reader, accepted *bool) func(context.Context, int64) (bool, error) {
-	return func(_ context.Context, size int64) (bool, error) {
+	_, err = deps.localInstall(command.Context(), embedlocal.InstallOptions{DataDir: dir, Confirm: func(_ context.Context, size int64) (bool, error) {
 		if options.yes {
 			return true, nil
 		}
@@ -1047,21 +1034,9 @@ func confirmSetupLocalDownload(command *cobra.Command, deps setupProvidersDeps, 
 		if err != nil && !errors.Is(err, io.EOF) {
 			return false, fmt.Errorf("read download answer: %w", err)
 		}
-		*accepted = isYesAnswer(strings.ToLower(strings.TrimSpace(answer)))
-		return *accepted, nil
-	}
-}
-
-// recordLocalSearchChoice records the shared choice only when the user made
-// it: an explicit --local-embeddings or an accepted download prompt.
-func recordLocalSearchChoice(ctx context.Context, deps setupProvidersDeps, plan *setupProvidersPlan, chosen bool) {
-	for _, lane := range plan.Lanes {
-		if lane.local && lane.Action == planActionEnable && chosen && deps.recordChoice != nil {
-			if err := deps.recordChoice(); err != nil {
-				loggerFromContext(ctx).Warn("Could not record local search choice", "error", err)
-			}
-		}
-	}
+		return isYesAnswer(strings.ToLower(strings.TrimSpace(answer))), nil
+	}})
+	return err
 }
 
 func setupPosture(saved, proposed string, override bool) string {

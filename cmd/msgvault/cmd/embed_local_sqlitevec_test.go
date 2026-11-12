@@ -163,28 +163,3 @@ func TestLocalEmbeddingRuntimeInstallError(t *testing.T) {
 		assert.NotContains(t, err.Error(), "msgvault setup providers")
 	})
 }
-
-func TestLocalEmbeddingRuntimeStartsInstalledServer(t *testing.T) {
-	dir := t.TempDir()
-	oldDir, oldEndpoint, oldInstall := localEmbeddingsDir, localEmbeddingEndpoint, installLocalEmbeddingsForRuntime
-	t.Cleanup(func() {
-		localEmbeddingsDir, localEmbeddingEndpoint, installLocalEmbeddingsForRuntime = oldDir, oldEndpoint, oldInstall
-	})
-	localEmbeddingsDir = func() (string, error) { return dir, nil }
-	localEmbeddingEndpoint = func(_ context.Context, opts embedlocal.Options) (string, error) {
-		assert.Equal(t, dir, opts.DataDir)
-		if opts.Executable == "" {
-			return "", embedlocal.ErrNotFound
-		}
-		assert.Equal(t, filepath.Join(dir, "kennembed"), opts.Executable)
-		return "http://127.0.0.1:12345/v1", nil
-	}
-	installLocalEmbeddingsForRuntime = func(_ context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
-		assert.Equal(t, dir, opts.DataDir)
-		return embedlocal.Installation{DataDir: dir, Executable: filepath.Join(dir, "kennembed")}, nil
-	}
-	cfg := vector.Config{Enabled: true, Embeddings: vector.EmbeddingsConfig{LocalOnly: true}}
-	resolved, err := resolveLocalVectorConfig(t.Context(), cfg)
-	require.NoError(t, err)
-	assert.Equal(t, "http://127.0.0.1:12345/v1", resolved.Embeddings.Endpoint)
-}

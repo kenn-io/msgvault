@@ -233,7 +233,6 @@ func openResolvedVectorConfig(ctx context.Context, state *invocation) (vector.Co
 var localEmbeddingsDir = embedlocal.DefaultDir
 
 var localEmbeddingEndpoint = embedlocal.Endpoint
-var installLocalEmbeddingsForRuntime = embedlocal.Install
 
 var errLocalEmbeddingDownloadRequired = errors.New("local embedding download required")
 
@@ -249,7 +248,7 @@ func resolveLocalVectorConfig(ctx context.Context, cfg vector.Config) (vector.Co
 	}
 	endpoint, err := localEmbeddingEndpoint(ctx, embedlocal.Options{DataDir: dir, SkipOllama: true})
 	if errors.Is(err, embedlocal.ErrNotFound) {
-		installation, installErr := installLocalEmbeddingsForRuntime(ctx, embedlocal.InstallOptions{DataDir: dir, Confirm: func(context.Context, int64) (bool, error) {
+		installation, installErr := embedlocal.Install(ctx, embedlocal.InstallOptions{DataDir: dir, Confirm: func(context.Context, int64) (bool, error) {
 			return false, errLocalEmbeddingDownloadRequired
 		}})
 		if errors.Is(installErr, errLocalEmbeddingDownloadRequired) {

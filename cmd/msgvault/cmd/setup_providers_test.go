@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1245,25 +1244,21 @@ func TestSetupProvidersRejectsExplicitProviderWhenSweepEnabled(t *testing.T) {
 
 func TestSetupProvidersLocalDownloadTransaction(t *testing.T) {
 	for _, tc := range []struct {
-		name, input                     string
-		args                            []string
-		tty, enabled, recorded, confirm bool
+		name, input  string
+		args         []string
+		tty, enabled bool
 	}{
-		{name: "accept", tty: true, input: "yes\n", enabled: true, recorded: true, confirm: true},
-		{name: "decline", tty: true, input: "no\n", confirm: true},
-		{name: "implicit nonterminal", args: []string{"--yes", "--json"}, confirm: true},
-		{name: "yes alone", tty: true, args: []string{"--yes"}, confirm: true},
-		{name: "explicit yes", args: []string{"--local-embeddings", "--yes"}, enabled: true, recorded: true, confirm: true},
-		{name: "cached without prompt", tty: true, enabled: true},
+		{name: "accept", tty: true, input: "yes\n", enabled: true},
+		{name: "decline", tty: true, input: "no\n"},
+		{name: "implicit nonterminal", args: []string{"--yes", "--json"}},
+		{name: "yes alone", tty: true, args: []string{"--yes"}},
+		{name: "explicit yes", args: []string{"--local-embeddings", "--yes"}, enabled: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-			fixture.tty, fixture.confirm = tc.tty, tc.confirm
-			deps := fixture.deps(t)
-			recorded := 0
-			deps.recordChoice = func() error { recorded++; return nil }
-			command := newSetupProvidersCommand(deps)
+			fixture.tty, fixture.confirm = tc.tty, true
+			command := newSetupProvidersCommand(fixture.deps(t))
 			var output bytes.Buffer
 			command.SetOut(&output)
 			command.SetErr(io.Discard)
@@ -1273,11 +1268,6 @@ func TestSetupProvidersLocalDownloadTransaction(t *testing.T) {
 			loaded := fixture.load(t)
 			assert.Equal(tc.enabled, loaded.Vector.Enabled)
 			assert.Equal(tc.enabled, loaded.Vector.Embeddings.LocalOnly)
-			if tc.recorded {
-				assert.Equal(1, recorded)
-			} else {
-				assert.Zero(recorded)
-			}
 			assert.Equal(tc.enabled, loaded.Vector.People.Enabled)
 			if !tc.enabled {
 				assert.Contains(output.String(), "msgvault setup providers --local-embeddings")
@@ -1414,18 +1404,15 @@ training_posture = "declared"
 }
 
 func TestSetupProvidersReusesDiscoveredLocalServer(t *testing.T) {
-	for _, args := range [][]string{nil, {"--yes"}, {"--local-embeddings"}} {
+	for _, args := range [][]string{nil, {"--local-embeddings"}} {
 		t.Run(fmt.Sprint(args), func(t *testing.T) {
-			checks := assert.New(t)
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
 			deps := fixture.deps(t)
-			recorded := 0
-			deps.recordChoice = func() error { recorded++; return nil }
 			deps.localEndpoint = func(context.Context, embedlocal.Options) (string, error) {
 				return "http://127.0.0.1:54321/v1", nil
 			}
 			deps.localInstall = func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error) {
-				checks.Fail("a discovered server needs no installation or download")
+				assert.Fail(t, "a discovered server needs no installation or download")
 				return embedlocal.Installation{}, errors.New("unexpected installation")
 			}
 			command := newSetupProvidersCommand(deps)
@@ -1434,13 +1421,8 @@ func TestSetupProvidersReusesDiscoveredLocalServer(t *testing.T) {
 			command.SetArgs(args)
 			require.NoError(t, command.ExecuteContext(t.Context()))
 			loaded := fixture.load(t)
-			checks.True(loaded.Vector.Enabled)
-			checks.True(loaded.Vector.Embeddings.LocalOnly)
-			if slices.Contains(args, "--local-embeddings") {
-				checks.Equal(1, recorded)
-			} else {
-				checks.Zero(recorded)
-			}
+			assert.True(t, loaded.Vector.Enabled)
+			assert.True(t, loaded.Vector.Embeddings.LocalOnly)
 		})
 	}
 }
@@ -1466,22 +1448,4 @@ func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
 			assert.Equal(t, 1, discoveries)
 		})
 	}
-}
-
-func TestSetupProvidersChoiceFailureIsLogged(t *testing.T) {
-	checks := assert.New(t)
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-	deps := fixture.deps(t)
-	calls := 0
-	deps.recordChoice = func() error { calls++; return errors.New("marker failure") }
-	var log bytes.Buffer
-	ctx := withInvocation(t.Context(), &invocation{logger: slog.New(slog.NewTextHandler(&log, nil))})
-	command := newSetupProvidersCommand(deps)
-	command.SetOut(io.Discard)
-	command.SetErr(io.Discard)
-	command.SetArgs([]string{"--local-embeddings", "--yes"})
-	require.NoError(t, command.ExecuteContext(ctx))
-	checks.Equal(1, calls)
-	checks.Contains(log.String(), "marker failure")
-	checks.True(fixture.load(t).Vector.Enabled)
 }

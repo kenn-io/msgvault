@@ -20,19 +20,18 @@ import (
 )
 
 type localEmbeddingsController struct {
-	gate         api.OperationGate
-	state        *invocation
-	store        *store.Store
-	dbPath       string
-	handle       *vectorInitHandle
-	server       *api.Server
-	scheduler    *scheduler.Scheduler
-	runner       api.CLIRunner
-	openers      []visual.StreamOpener
-	inspect      func(context.Context, embedlocal.Options) (embedlocal.Status, error)
-	install      func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error)
-	choice       func() (bool, error)
-	recordChoice func() error
+	gate      api.OperationGate
+	state     *invocation
+	store     *store.Store
+	dbPath    string
+	handle    *vectorInitHandle
+	server    *api.Server
+	scheduler *scheduler.Scheduler
+	runner    api.CLIRunner
+	openers   []visual.StreamOpener
+	inspect   func(context.Context, embedlocal.Options) (embedlocal.Status, error)
+	install   func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error)
+	choice    func() (bool, error)
 }
 
 type localEmbeddingsConflictError struct{ cause error }
@@ -171,9 +170,6 @@ func (c *localEmbeddingsController) enable(ctx context.Context, report func(api.
 	if err != nil {
 		return err
 	}
-	if startup && textProviderConfigured(loaded.Vector) {
-		return nil
-	}
 	dir, err := localEmbeddingsDir()
 	if err != nil {
 		return err
@@ -302,20 +298,6 @@ func (c *localEmbeddingsController) enable(ctx context.Context, report func(api.
 			closeNew()
 			return errors.New("An existing search index uses a different model. Turn on search in Settings to rebuild it.") //nolint:revive,staticcheck // Displayed in Settings.
 		}
-		latest, readErr := config.ReadConfigFile(c.state.cfg.ConfigFilePath())
-		if readErr != nil {
-			closeNew()
-			return readErr
-		}
-		current, readErr := c.state.cfg.ReloadConfigFile(latest)
-		if readErr != nil {
-			closeNew()
-			return readErr
-		}
-		if textProviderConfigured(current.Vector) || current.DatabaseDSN() != c.dbPath || current.Data.DataDir != c.state.cfg.Data.DataDir || current.Vector.DBPath != loaded.Vector.DBPath {
-			closeNew()
-			return errors.New("Settings changed during setup. Restart msgvault to apply them.") //nolint:revive,staticcheck // Displayed in Settings.
-		}
 	}
 	if !startup {
 		if _, err := config.EditConfigTables(loaded.ConfigFilePath(), snapshot.ETag, lane.edits); err != nil {
@@ -336,11 +318,6 @@ func (c *localEmbeddingsController) enable(ctx context.Context, report func(api.
 		publishVisualVectorFeatures(c.store, c.server, c.scheduler, vf, &state)
 	}
 	defer func() { result = errors.Join(result, publicationErr) }()
-	if publicationErr == nil && !startup && lane.local && c.recordChoice != nil {
-		if choiceErr := c.recordChoice(); choiceErr != nil {
-			loggerFromContext(ctx).Warn("Could not record local search choice", "error", choiceErr)
-		}
-	}
 	releaseGate()
 	releaseGate = func() {}
 
