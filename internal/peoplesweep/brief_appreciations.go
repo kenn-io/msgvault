@@ -141,12 +141,14 @@ func retainedAppreciations(ctx context.Context, archive BriefArchive, request Br
 		return nil, nil, errors.New("person brief appreciation memory exceeds supported state bounds")
 	}
 	keys := make([]string, 0, len(request.Previous.AppreciationMemory))
+	retainedQuotes := make(map[string]string, len(request.Previous.AppreciationMemory))
 	for _, memory := range request.Previous.AppreciationMemory {
 		if memory.Suggestion.State == "suggested" {
 			keys = append(keys, memory.Suggestion.Key)
+			retainedQuotes[memory.Suggestion.Key] = memory.Suggestion.Quote
 		}
 	}
-	retired, err := archive.PersonSweepAppreciationRetired(ctx, request.PersonID, keys, request.Profile)
+	retired, err := archive.PersonSweepAppreciationRetired(ctx, request.PersonID, keys, retainedQuotes, request.Profile)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read retained appreciation retirement: %w", err)
 	}

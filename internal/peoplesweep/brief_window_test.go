@@ -59,7 +59,7 @@ func (a *briefFakeArchive) PersonSweepAppreciationOwners(_ context.Context, _ in
 	return a.appreciationOwners, nil
 }
 
-func (a *briefFakeArchive) PersonSweepAppreciationRetired(_ context.Context, _ int64, _ []string, _ ProviderProfile) (map[string]bool, error) {
+func (a *briefFakeArchive) PersonSweepAppreciationRetired(_ context.Context, _ int64, _ []string, _ map[string]string, _ ProviderProfile) (map[string]bool, error) {
 	return a.dismissedAppreciations, nil
 }
 

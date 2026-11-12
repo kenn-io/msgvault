@@ -26,11 +26,11 @@ func TestAppreciationRetirementBatchesLargeKeySets(t *testing.T) {
 		_, err := f.Store.RecordPersonAppreciationDismissalContext(t.Context(), keys[index], "person", "owner", time.Now())
 		require.NoError(t, err)
 	}
-	retired, err := f.Store.PersonSweepAppreciationRetired(t.Context(), 1, keys, peoplesweep.ProviderProfile{})
+	retired, err := f.Store.PersonSweepAppreciationRetired(t.Context(), 1, keys, nil, peoplesweep.ProviderProfile{})
 	require.NoError(t, err)
 	assert.Equal(t, map[string]bool{keys[0]: true, keys[len(keys)-1]: true}, retired)
 	keys[len(keys)-1] = "invalid"
-	_, err = f.Store.PersonSweepAppreciationRetired(t.Context(), 1, keys, peoplesweep.ProviderProfile{})
+	_, err = f.Store.PersonSweepAppreciationRetired(t.Context(), 1, keys, nil, peoplesweep.ProviderProfile{})
 	assert.ErrorIs(t, err, store.ErrInvalidPersonAppreciationKey)
 }
 
