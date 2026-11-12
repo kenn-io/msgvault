@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/importer"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -55,4 +56,10 @@ func TestImportICSCommandImportsFile(t *testing.T) {
 	t.Cleanup(func() { requirements.NoError(st.Close()) })
 	_, err = st.GetSourceByTypeAndIdentifier(t.Context(), "ics", "example-export")
 	requirements.NoError(err)
+	invalid := filepath.Join(t.TempDir(), "invalid.ics")
+	requirements.NoError(os.WriteFile(invalid, []byte("invalid calendar"), 0600))
+	_, err = importer.ImportICS(t.Context(), st, invalid, "invalid-export")
+	requirements.Error(err)
+	_, err = st.GetSourceByTypeAndIdentifier(t.Context(), "ics", "invalid-export")
+	requirements.ErrorIs(err, store.ErrSourceNotFound)
 }
