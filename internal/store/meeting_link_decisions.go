@@ -259,7 +259,7 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			for _, link := range record.Links {
 				found = found || b.Kind == meetingRefEvent && (link.Ref == b.ref() || b.Key == "" && link.MessageID == b.ID)
 			}
-			if (state == "link") != found {
+			if found {
 				return fmt.Errorf("%w: cannot save %s for %s %s", ErrMeetingLinkConflict, state, a.ref(), b.ref())
 			}
 		}
