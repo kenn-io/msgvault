@@ -1589,3 +1589,32 @@ func TestCatalogIdentityRequiresValidGeneration(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeRejectsSuffixedOwnerIdentity(t *testing.T) {
+	st := newEventsTestStore(t)
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	created, err := service.Subscribe(t.Context(), in, "owner", acceptCallback, nil)
+	require.NoError(t, err)
+	credentials, err := providercredentials.ReadEvents(service.TokensDir)
+	require.NoError(t, err)
+	value, _, err := credentials.Resolve(providercredentials.EventsID(created.ID), "https://example.com", "", nil)
+	require.NoError(t, err)
+	badID := created.ID + "0123456789abcdef0123456789abcdef"
+	revision, err := credentials.Revision(providercredentials.EventsID(badID))
+	require.NoError(t, err)
+	_, err = providercredentials.PutIfRevision(service.TokensDir, revision, providercredentials.EventsID(badID), "https://example.com", value)
+	require.NoError(t, err)
+	entries, raw, err := service.catalog(t.Context())
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	entries[0].ID = badID
+	next, err := json.Marshal(entries)
+	require.NoError(t, err)
+	ok, err := st.SwapMCPEventsCatalog(t.Context(), raw, next, "", nil, "")
+	require.NoError(t, err)
+	require.True(t, ok)
+	targets, err := service.Native(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, targets)
+}
