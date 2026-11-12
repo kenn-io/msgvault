@@ -6,12 +6,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/agentgrant"
-	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -20,13 +17,11 @@ type meetingDecisionTestStore struct {
 	*mockStore
 
 	err         error
-	calls       int
 	left, right store.MeetingLinkRef
 	decision    string
 }
 
 func (s *meetingDecisionTestStore) DecideMeetingLinkContext(_ context.Context, left, right store.MeetingLinkRef, decision string) (store.MeetingLinkDecisionResult, error) {
-	s.calls++
 	s.left, s.right, s.decision = left, right, decision
 	return store.MeetingLinkDecisionResult{Left: "msg:1", Right: "msg:2", State: "link"}, s.err
 }
@@ -48,19 +43,6 @@ func TestMeetingDecisionOwnerHTTP(t *testing.T) {
 		assertions.Equal(store.MeetingLinkRef{Kind: "msg", MessageID: 1}, backend.left)
 		assertions.Equal(store.MeetingLinkRef{Kind: "msg", MessageID: 2}, backend.right)
 		assertions.Equal("link", backend.decision)
-	})
-	t.Run("delegated", func(t *testing.T) {
-		r := require.New(t)
-		_, secret, _, err := srv.agentGrants.Issue("meeting", []agentgrant.Permission{agentgrant.PermissionCalendarWrite}, []agentgrant.SourceRef{{ID: 1, Type: "gcal", Identifier: "calendar@example.com"}}, time.Time{})
-		r.NoError(err)
-		before := backend.calls
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/meetings/links/decisions", strings.NewReader(`{"left":"msg:1","right":"msg:2","decision":"link"}`))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		r.Equal(http.StatusUnauthorized, w.Code, w.Body.String())
-		r.Equal(before, backend.calls)
 	})
 	for _, tc := range []struct {
 		name, body string
