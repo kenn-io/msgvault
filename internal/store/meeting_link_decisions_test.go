@@ -280,6 +280,39 @@ func TestMeetingLinkDecisionRejectsSameCopy(t *testing.T) {
 	requirements.ErrorIs(err, ErrMeetingLinkSameCopy)
 }
 
+func TestMeetingLinkDecisionOppositeChoiceOnEquivalentEvent(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"id":"event","iCalUID":"shared@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+	_, first := calendarFixture(t, st, "equivalent-first", raw, "first@example.com")
+	_, second := calendarFixture(t, st, "equivalent-second", raw, "second@example.com")
+	_, note := projectionFixture(t, st, "equivalent-note", "meeting_json", `{}`)
+	member := MeetingLinkRef{Kind: "msg", MessageID: note}
+	firstRef := MeetingLinkRef{Kind: "evt", MessageID: first}
+	secondRef := MeetingLinkRef{Kind: "evt", MessageID: second}
+	_, err := st.DecideMeetingLinkContext(t.Context(), member, firstRef, "link")
+	r.NoError(err)
+	_, err = st.DecideMeetingLinkContext(t.Context(), member, secondRef, "unlink")
+	r.NoError(err)
+	for _, ref := range []MeetingLinkRef{firstRef, secondRef} {
+		record, err := st.MeetingRecordContext(t.Context(), ref)
+		r.NoError(err)
+		r.Empty(record.MessageIDs)
+	}
+	_, err = st.DecideMeetingLinkContext(t.Context(), member, secondRef, "clear")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), member)
+	r.NoError(err)
+	r.Len(record.Links, 2)
+	_, err = st.DecideMeetingLinkContext(t.Context(), member, secondRef, "unlink")
+	r.NoError(err)
+	_, err = st.DecideMeetingLinkContext(t.Context(), member, firstRef, "link")
+	r.NoError(err)
+	record, err = st.MeetingRecordContext(t.Context(), member)
+	r.NoError(err)
+	r.Len(record.Links, 2)
+}
+
 func TestMeetingLinkDecisionSplitAppliesToEveryEventCopy(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

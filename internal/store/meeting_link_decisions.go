@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/calrecur"
@@ -157,9 +158,6 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			}
 			root, links := graph.reduce()
 			for _, link := range links {
-				if compareMeetingEndpoints(link.a, canonicalA) == 0 && compareMeetingEndpoints(link.b, canonicalB) == 0 {
-					continue
-				}
 				if root(link.a.ref()) == root(link.b.ref()) {
 					active = append(active, link)
 				}
@@ -196,22 +194,18 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 				}
 				matches := compareMeetingEndpoints(left, canonicalA) == 0 && compareMeetingEndpoints(right, canonicalB) == 0
 				equivalent := !matches
-				if !matches && decision == "link" && choice.decision == "split" {
-					note, event, requestedNote, requestedEvent, record := left, right, canonicalA, canonicalB, recordB
-					if note.Kind == meetingRefEvent {
-						note, event = event, note
-					}
-					if requestedNote.Kind == meetingRefEvent {
-						requestedNote, requestedEvent, record = requestedEvent, requestedNote, recordA
-					}
-					if note.Kind == meetingRefMessage && event.Kind == meetingRefEvent && requestedEvent.Kind == meetingRefEvent && compareMeetingEndpoints(note, requestedNote) == 0 {
-						for _, link := range record.Links {
-							matches = matches || link.Ref == event.ref()
-						}
-					}
+				if !matches && decision != "clear" && (decision == "link") != (choice.decision == "link") {
+					matches = equivalentMeetingChoice(left, right, canonicalA, canonicalB, recordA, recordB)
 				}
 				if matches {
-					if equivalent && decision == "link" && choice.decision == "split" && !choice.isExplicit {
+					active = slices.DeleteFunc(active, func(link meetingDecisionEdge) bool {
+						return compareMeetingEndpoints(link.a, left) == 0 && compareMeetingEndpoints(link.b, right) == 0
+					})
+					if equivalent && choice.decision == "link" {
+						// Keep the suppressed link so clearing the split restores it.
+						continue
+					}
+					if equivalent && !choice.isExplicit {
 						_, err = tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id=?`, choice.id)
 					} else {
 						err = deleteMeetingDecisionTx(ctx, tx, choice, decision == "clear")
@@ -254,6 +248,24 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		return nil
 	})
 	return result, err
+}
+
+func equivalentMeetingChoice(left, right, requestedA, requestedB meetingDecisionEndpoint, recordA, recordB MeetingRecord) bool {
+	note, event, requestedNote, requestedEvent, record := left, right, requestedA, requestedB, recordB
+	if note.Kind == meetingRefEvent {
+		note, event = event, note
+	}
+	if requestedNote.Kind == meetingRefEvent {
+		requestedNote, requestedEvent, record = requestedEvent, requestedNote, recordA
+	}
+	if note.Kind == meetingRefMessage && event.Kind == meetingRefEvent && requestedEvent.Kind == meetingRefEvent && compareMeetingEndpoints(note, requestedNote) == 0 {
+		for _, link := range record.Links {
+			if link.Ref == event.ref() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // materializedMeetingEndpoint follows an event reference to its current occurrence.
