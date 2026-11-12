@@ -177,6 +177,8 @@ person and UID.
 
 Drafts and unsent messages don't set last contact, cadence, or relationship temperature. They stay out of the relationship calendar, relationship list, person and domain timelines, and chat inbox summaries. Explore, search, and the Files view still include them for lookup. A person's or domain's Files tab, `person files`, and MCP `search_person_files` list only files on sent or received mail. A contact you've only drafted to reads as existing with no sent or received messages and no relationship calendar. A person ID that doesn't exist reads as not found.
 
+A derived cache refresh uses the current date to recalculate relationship temperature, including when meeting changes trigger the refresh.
+
 Cached views update after a cache refresh. Full checks at startup and during explicit cache builds detect sent-state changes. Scheduled post-sync refresh checks indexed changes first. If those already require a build, `min_rebuild_interval` can delay both the full sent-state check and the visible update. If indexed state is clean, sent state is checked before that interval is applied. Ordinary requests use a cache marker check; they don't scan the archive for sent-state changes.
 
 Use `person directory` to browse promoted people, most recent contact first. It queries the selected daemon and returns a page of up to 50 people by default.

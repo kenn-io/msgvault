@@ -254,7 +254,7 @@ func (s *Store) loadMeetingEvidence(ctx context.Context, through time.Time) (*Me
 			unexpandable[warning.MessageID] = true
 		}
 		for _, occurrence := range page.Occurrences {
-			if occurrence.Start.After(through) {
+			if occurrence.Status != "cancelled" && !occurrence.DeletedFromSource && occurrence.Start.After(through) {
 				if nextAt.IsZero() || occurrence.Start.Before(nextAt) {
 					nextAt = occurrence.Start
 				}
@@ -293,29 +293,14 @@ func (s *Store) loadMeetingEvidence(ctx context.Context, through time.Time) (*Me
 				event.startDate = startDate
 			}
 			fallbacks[id] = event
-			if event.start.After(through) && (nextAt.IsZero() || event.start.Before(nextAt)) {
+			if !event.cancelled && !event.deleted && event.start.After(through) && (nextAt.IsZero() || event.start.Before(nextAt)) {
 				nextAt = event.start
 			}
 		}
 		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 			return nil, err
 		}
-		rows, err = s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT message_id, email FROM calendar_event_attendees WHERE rsvp='declined'`)
-		if err != nil {
-			return nil, fmt.Errorf("read fallback attendees: %w", err)
-		}
-		for rows.Next() {
-			var id int64
-			var email string
-			if err := rows.Scan(&id, &email); err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
-			if event := fallbacks[id]; event != nil {
-				event.declined = append(event.declined, strings.ToLower(strings.TrimSpace(email)))
-			}
-		}
-		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		if err := readFallbackAttendees(ctx, s.meetingSQLReader(ctx), fallbacks); err != nil {
 			return nil, err
 		}
 	}
@@ -433,6 +418,37 @@ func (s *Store) loadMeetingEvidence(ctx context.Context, through time.Time) (*Me
 	}
 
 	return &MeetingEvidence{through: through, nextAt: nextAt, fallbacks: fallbacks, occurrences: occurrences, notes: notes, choices: choices, seriesAttendees: seriesAttendees, suppressed: suppressed, unexpandable: unexpandable, tooBroadYears: tooBroadYears, skippedChoices: skippedChoices}, nil
+}
+
+func readFallbackAttendees(ctx context.Context, reader SQLReader, fallbacks map[int64]*meetingFallbackEvent) error {
+	ids := make([]int64, 0, len(fallbacks))
+	for id := range fallbacks {
+		ids = append(ids, id)
+	}
+	for start := 0; start < len(ids); start += 500 {
+		batch := ids[start:min(start+500, len(ids))]
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
+		}
+		rows, err := reader.QueryContext(ctx, `SELECT message_id, email FROM calendar_event_attendees WHERE rsvp='declined' AND message_id IN (`+placeholders(len(batch))+`)`, args...)
+		if err != nil {
+			return fmt.Errorf("read fallback attendees: %w", err)
+		}
+		for rows.Next() {
+			var id int64
+			var email string
+			if err := rows.Scan(&id, &email); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			fallbacks[id].declined = append(fallbacks[id].declined, strings.ToLower(strings.TrimSpace(email)))
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Reduce derives occurrence rows without reading the archive again.
