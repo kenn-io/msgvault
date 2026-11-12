@@ -171,9 +171,12 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		}
 		var seed *MeetingLink
 		for i := range record.Links {
-			if record.Links[i].Ref == endpointFromRef(ref).ref() || record.Links[i].MessageID == ref.MessageID {
+			if record.Links[i].Ref == endpointFromRef(ref).ref() {
 				seed = &record.Links[i]
 				break
+			}
+			if seed == nil && record.Links[i].MessageID == ref.MessageID {
+				seed = &record.Links[i]
 			}
 		}
 		if seed == nil {

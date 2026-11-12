@@ -112,6 +112,30 @@ func TestMeetingSuggestionsOccurrences(t *testing.T) {
 	r.Equal(note, page.Suggestions[0].MemberMessageID)
 }
 
+func TestMeetingSuggestionsSecondLinkedOccurrence(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "linked-series", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+	_, bridge := projectionFixture(t, st, "linked-bridge", "meeting_json", `{}`)
+	data, candidate := projectionFixture(t, st, "linked-candidate", "meeting_json", `{}`)
+	data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 21, 10, 0, 0, 0, time.UTC), Valid: true}
+	_, err := st.UpsertMessage(data.Message)
+	r.NoError(err)
+	first, err := ParseMeetingLinkRef(fmt.Sprintf("evt:%d@20270314T100000Z", master))
+	r.NoError(err)
+	second, err := ParseMeetingLinkRef(fmt.Sprintf("evt:%d@20270321T100000Z", master))
+	r.NoError(err)
+	bridgeRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: bridge}}
+	_, err = st.DecideMeetingLinkContext(t.Context(), bridgeRef, first, "link")
+	r.NoError(err)
+	_, err = st.DecideMeetingLinkContext(t.Context(), bridgeRef, second, "link")
+	r.NoError(err)
+	page, err := st.SuggestMeetingLinksContext(t.Context(), second, 10)
+	r.NoError(err)
+	r.Len(page.Suggestions, 1)
+	r.Equal(candidate, page.Suggestions[0].MemberMessageID)
+}
+
 func TestMeetingSuggestionsSavable(t *testing.T) {
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
