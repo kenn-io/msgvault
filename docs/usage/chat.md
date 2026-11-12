@@ -987,6 +987,14 @@ Queries with OR and text terms use full-text search once, so body and metadata m
 
 When called, `stage_deletion` creates a pending deletion manifest through the selected daemon. With a remote server configured, the manifest is saved on that remote host; otherwise it is saved by the local daemon. It does **not** delete anything. To execute the deletion, you must run `msgvault delete-staged` from the CLI. See [Deleting Email](/docs/usage/deletion/) for the full workflow.
 
+Owner sessions with a supported daemon can use `explore_deletion_selection` to
+obtain rows, cache and search revisions, and any candidate snapshot. Pass the
+exact native selection to `preflight_deletion_selection` to review its matched
+and deletable counts. Pass that unchanged selection and its operation token to
+`stage_deletion`; the client must confirm the action. Expired or used tokens,
+changed revisions, and saturated candidate pools require a fresh, narrower
+selection or preflight. Staging creates only a local manifest.
+
 The tool returns the batch ID, message count, and next steps:
 
 ```json

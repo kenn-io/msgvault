@@ -133,35 +133,37 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
-	embeddingStatus      EmbeddingStatusReader
-	delegatedOnly        bool
-	sensitiveConfirm     bool
-	downloads            *downloadCache
-	engine               query.Engine
-	archiveSQLQuerier    ArchiveSQLQuerier
-	attachmentsDir       string
-	attachmentReader     AttachmentReader
-	manifestSaver        DeletionManifestSaver
-	hybridSearcher       HybridSearcher
-	similarSearcher      SimilarSearcher
-	dataDir              string
-	mediaSearcher        MediaSearcher
-	personFileSearcher   PersonFileSearcher
-	peopleBackend        peoplebrowser.Backend
-	directoryBackend     peoplebrowser.DirectoryLister
-	savedViews           savedview.Service
-	meetings             MeetingBackend
-	calendar             CalendarBackend
-	personAgendaBackend  PersonAgendaBackend
-	personTierBackend    PersonTierBackend
-	kata                 KataBackend
-	identityReview       IdentityReviewBackend
-	personCardDAV        PersonCardDAVBackend
-	messageTags          MessageTagBackend
-	identityScoring      IdentityScoringBackend
-	drafts               DraftRunner
-	contactRoutesBackend ContactRoutesBackend
-	chatDiscoveryBackend ChatDiscoveryBackend
+	operations            OperationBackend
+	operationCapabilities []string
+	embeddingStatus       EmbeddingStatusReader
+	delegatedOnly         bool
+	sensitiveConfirm      bool
+	downloads             *downloadCache
+	engine                query.Engine
+	archiveSQLQuerier     ArchiveSQLQuerier
+	attachmentsDir        string
+	attachmentReader      AttachmentReader
+	manifestSaver         DeletionManifestSaver
+	hybridSearcher        HybridSearcher
+	similarSearcher       SimilarSearcher
+	dataDir               string
+	mediaSearcher         MediaSearcher
+	personFileSearcher    PersonFileSearcher
+	peopleBackend         peoplebrowser.Backend
+	directoryBackend      peoplebrowser.DirectoryLister
+	savedViews            savedview.Service
+	meetings              MeetingBackend
+	calendar              CalendarBackend
+	personAgendaBackend   PersonAgendaBackend
+	personTierBackend     PersonTierBackend
+	kata                  KataBackend
+	identityReview        IdentityReviewBackend
+	personCardDAV         PersonCardDAVBackend
+	messageTags           MessageTagBackend
+	identityScoring       IdentityScoringBackend
+	drafts                DraftRunner
+	contactRoutesBackend  ContactRoutesBackend
+	chatDiscoveryBackend  ChatDiscoveryBackend
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with
@@ -2281,6 +2283,12 @@ const maxStageDeletionResults = query.MaxDeletionTargetSearchResults - 1
 
 func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
+	if _, ok := args["selection"]; ok {
+		return h.stageDeletionSelection(ctx, req)
+	}
+	if _, ok := args["operation_token"]; ok {
+		return toolErrorResult("operation_token requires selection"), nil
+	}
 
 	// Look up account filter
 	account, _ := args[toolArgAccount].(string)

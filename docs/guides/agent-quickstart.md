@@ -235,6 +235,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `draft_get` | read | — | backend-dependent |
 | `draft_send_as` | read | — | backend-dependent |
 | `explain_person_tier` | read | — | owner-only |
+| `explore_deletion_selection` | read | — | owner-only |
 | `export_eml` | read | — | owner-only |
 | `find_chat` | read | — | owner-only |
 | `find_contact_candidates` | read | — | owner-only |
@@ -274,6 +275,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |
+| `preflight_deletion_selection` | read | — | owner-only |
 | `prepare_kata_evidence` | read | — | owner-only |
 | `preview_carddav_publication` | read | — | owner-only |
 | `preview_person_tiers` | read | — | owner-only |

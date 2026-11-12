@@ -887,21 +887,22 @@ func searchByDomainsDefinition(_ *handlers) toolDefinition {
 }
 
 func stageDeletionDefinition(_ *handlers) toolDefinition {
+	selectionInput := selectionInputSchema()
+	selection := selectionInput.Properties["selection"]
+	input := closedObject(map[string]*jsonschema.Schema{
+		toolArgAccount: accountProperty(), toolArgQuery: stringSchema("Gmail-style search query (e.g. 'from:linkedin subject:job alert'). Cannot be combined with structured filters."),
+		toolArgFrom: stringSchema("Filter by sender email address"), "domain": stringSchema("Filter by sender domain (e.g. 'linkedin.com')"),
+		"label": stringSchema("Filter by Gmail label (e.g. 'CATEGORY_PROMOTIONS')"), toolArgAfter: afterProperty(), toolArgBefore: beforeProperty(),
+		"has_attachment": booleanSchema("Only messages with attachments"),
+		"selection":      selection, "operation_token": stringSchema("Exact native operation token from preflight"),
+	})
+	input.Defs, input.Definitions = selectionInput.Defs, selectionInput.Definitions
 	return writeDefinition(
 		ToolStageDeletion,
 		fmt.Sprintf("Stage deletion without deleting immediately. Queries select Gmail, Microsoft Graph, and IMAP mail, report undeletable matches in skipped_count, and refuse above %d matches or when none are deletable. Structured filters select eligible Gmail and Microsoft Graph mail. ", maxStageDeletionResults)+
-			"Use EITHER 'query' (Gmail-style search) OR structured filters (from, domain, label, etc.), not both. To execute, set '[deletion] remote_enabled = true' in the invoking CLI's config.toml for durable consent, then run 'msgvault delete-staged'. One-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged.",
-		closedObject(map[string]*jsonschema.Schema{
-			toolArgAccount:   accountProperty(),
-			toolArgQuery:     stringSchema("Gmail-style search query (e.g. 'from:linkedin subject:job alert'). Cannot be combined with structured filters."),
-			toolArgFrom:      stringSchema("Filter by sender email address"),
-			"domain":         stringSchema("Filter by sender domain (e.g. 'linkedin.com')"),
-			"label":          stringSchema("Filter by Gmail label (e.g. 'CATEGORY_PROMOTIONS')"),
-			toolArgAfter:     afterProperty(),
-			toolArgBefore:    beforeProperty(),
-			"has_attachment": booleanSchema("Only messages with attachments"),
-		}),
-		outputSchemaFor[stageDeletionResponse](),
+			"Use EITHER 'query' (Gmail-style search) OR structured filters (from, domain, label, etc.), not both. Alternatively pass an unchanged preflight selection and operation token, with client confirmation. To execute, set '[deletion] remote_enabled = true' in the invoking CLI's config.toml for durable consent, then run 'msgvault delete-staged'. One-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged.",
+		input,
+		operationalOutputSchema(outputSchemaFor[stageDeletionResponse]()),
 		(*handlers).stageDeletion,
 	)
 }
