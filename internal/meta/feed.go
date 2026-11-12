@@ -12,7 +12,7 @@ import (
 )
 
 // WebhookSyncType names the sync runs that apply webhook deliveries.
-const WebhookSyncType = "webhook"
+const WebhookSyncType = store.SyncTypeWebhook
 
 // maxAncestorReads bounds the Graph reads one feed change may make to archive
 // a missing post and parent comments.
