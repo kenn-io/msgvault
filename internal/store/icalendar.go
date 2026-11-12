@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -79,7 +78,7 @@ func prepareICalendar(raw []byte, method string, fromEmail bool) ([]PreparedICS,
 		if len(c.Raw) > maxMeetingRawBytes {
 			return nil, &icsInterpretationError{errMeetingRawTooLarge}
 		}
-		out = append(out, PreparedICS{component: c, fromEmail: fromEmail, meta: calevent.ICSMetadata{Sequence: c.Sequence, Stamp: c.Stamp, Status: c.Event.Status, AllDay: c.Event.AllDay, Range: slices.Contains(c.Event.Recurrence, calevent.ICSRangeRecurrence)}})
+		out = append(out, PreparedICS{component: c, fromEmail: fromEmail, meta: calevent.ICSMetadata{Sequence: c.Sequence, Stamp: c.Stamp, Status: c.Event.Status, AllDay: c.Event.AllDay}})
 	}
 	return out, nil
 }
@@ -130,7 +129,6 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 		if apply && exists && e.Status == SyncStatusCancelled {
 			// Like a provider cancellation, keep the accepted details.
 			old.Sequence, old.Stamp, old.Status = item.meta.Sequence, item.meta.Stamp, SyncStatusCancelled
-			old.Range = item.meta.Range
 			if err := s.setICSMetadataWith(ctx, tx, id, old); err != nil {
 				return err
 			}
@@ -139,7 +137,6 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 				item.meta.Details = &calevent.ICSRevision{Sequence: item.component.Sequence, Stamp: item.component.Stamp}
 				if !apply {
 					item.meta.Sequence, item.meta.Stamp, item.meta.Status = old.Sequence, old.Stamp, old.Status
-					item.meta.Range = old.Range
 				}
 			}
 			if err := s.persistICSDetailsWith(ctx, tx, sourceID, sourceMessageID, familyKey, item); err != nil {
