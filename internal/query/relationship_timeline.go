@@ -123,11 +123,11 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 	}
 	args := make([]any, 0, len(owners)+len(factArgs)+5)
 	args = append(args, request.CanonicalID)
+	args = append(args, factArgs...)
+	args = append(args, request.CanonicalID)
 	for _, owner := range owners {
 		args = append(args, owner)
 	}
-	args = append(args, request.CanonicalID)
-	args = append(args, factArgs...)
 	meetingDates := ""
 	if request.Context.After != nil {
 		meetingDates += " AND (a.entry_kind NOT IN ('event','meeting') OR a.occurred_at >= CAST(? AS TIMESTAMP))"
@@ -288,22 +288,22 @@ func buildRelationshipTimelineSQL(conditions, meetingDates string, canonicalCoun
 	// whole interactive memory budget regardless of subject size.
 	return `
 WITH subject_facts AS (
-    SELECT a.entry_key, min(a.message_id) AS message_id,
-        any_value(a.conversation_id) AS conversation_id,
-        any_value(a.source_id) AS source_id,
-        any_value(a.occurred_at) AS occurred_at,
-        any_value(a.entry_kind) AS entry_kind,
-        any_value(a.is_chat) AS is_chat,
-        any_value(a.has_attachments) AS has_attachments,
+    SELECT a.entry_key, min(selected.message_id) AS message_id,
+        any_value(a.conversation_id) FILTER (WHERE a.message_id=selected.message_id) AS conversation_id,
+        any_value(a.source_id) FILTER (WHERE a.message_id=selected.message_id) AS source_id,
+        min(a.occurred_at) AS occurred_at,
+        any_value(a.entry_kind) FILTER (WHERE a.message_id=selected.message_id) AS entry_kind,
+        any_value(a.is_chat) FILTER (WHERE a.message_id=selected.message_id) AS is_chat,
+        any_value(a.has_attachments) FILTER (WHERE a.message_id=selected.message_id) AS has_attachments,
         bool_or(a.is_owner AND a.is_direct) AS with_owner
     FROM relationship_counting_activity a
-    -- Outer rows only need the subject's message facts and owner rows for with_owner.
-    WHERE a.canonical_id IN (` + strings.TrimSuffix(strings.Repeat("?,", canonicalCount), ",") + `)
-      AND a.entry_key IN (
-        SELECT f.entry_key
+    JOIN (
+        SELECT f.entry_key, min(f.message_id) AS message_id
         FROM relationship_counting_activity f
         WHERE NOT f.unsent AND f.canonical_id = ? AND (` + conditions + `)
-    )` + meetingDates + `
+        GROUP BY f.entry_key
+    ) selected ON selected.entry_key=a.entry_key
+    WHERE a.canonical_id IN (` + strings.TrimSuffix(strings.Repeat("?,", canonicalCount), ",") + `)` + meetingDates + `
     GROUP BY a.entry_key
 ), day_bucketed AS (
     SELECT s.*,

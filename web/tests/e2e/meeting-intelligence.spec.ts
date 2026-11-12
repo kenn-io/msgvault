@@ -369,6 +369,46 @@ async function importLongActions(daemon: import('./fixtures/meeting-daemon').Mee
   return response.json() as Promise<{ message_id: number }>;
 }
 
+test('opens an archived note without an available transcript', async ({ page, daemon }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+  const response = await daemon.post('import/meeting', {
+    source: { identifier: 'fixture-pending-note', account_email: 'owner@example.org' },
+    meeting: { external_id: 'pending-note', title: 'Pending meeting note', started_at: '2026-03-01T10:00:00Z', summary_text: 'Meeting notes are pending.' },
+  });
+  expect(response.status, await response.clone().text()).toBe(201);
+  const imported = await response.json() as { message_id: number };
+  const metrics = await daemon.post('meetings/metrics', { scope: { message_ids: [imported.message_id] } });
+  expect(metrics.ok).toBe(true);
+  expect((await metrics.json()).totals.meeting_count).toBe(0);
+  await page.goto(meetingURL(daemon, { selectedRow: `archive-meeting:${imported.message_id}` }));
+  const reader = page.getByRole('dialog', { name: 'Archived meeting', exact: true });
+  await expect(reader).toBeVisible();
+  await expect(reader.getByText('Pending meeting note', { exact: true }).first()).toBeVisible();
+  await page.screenshot({ path: info.outputPath('pending-note.png') });
+  expect(errors).toEqual([]);
+});
+
+test('opens a note linked to two dates', async ({ page, daemon }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+  const id = daemon.two_dates_note;
+  expect(id).toBeDefined();
+  const record = await page.request.get(`${daemon.origin}/api/v1/meetings/record?ref=msg:${id}`, { headers: { Authorization: 'Bearer synthetic-meeting-acceptance-key' } });
+  expect(record.ok()).toBe(true);
+  expect((await record.json()).links).toHaveLength(2);
+  const metrics = await daemon.post('meetings/metrics', { scope: { message_ids: [id] } });
+  expect(metrics.ok).toBe(true);
+  expect((await metrics.json()).totals.meeting_count).toBe(2);
+  await page.goto(meetingURL(daemon, { selectedRow: `archive-meeting:${id}` }));
+  await expect(page.getByRole('dialog', { name: 'Archived meeting', exact: true })).toBeVisible();
+  await expect(page.getByText('Two date meeting note', { exact: true }).first()).toBeVisible();
+  await page.screenshot({ path: info.outputPath('two-dates-note.png') });
+  expect(errors).toEqual([]);
+});
+
 for (const viewport of [{ width: 1280, height: 720 }, { width: 700, height: 560 }]) {
   test(`reader scrolls long evidence and reaches action 201 at ${viewport.width}`, async ({ page, daemon }, info) => {
     const imported = await importLongActions(daemon);

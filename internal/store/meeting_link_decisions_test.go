@@ -44,17 +44,17 @@ func TestMeetingDecisionLargeGroupMemory(t *testing.T) {
 func TestMeetingDecisionCopyRootsKeepOccurrencesSeparate(t *testing.T) {
 	r := require.New(t)
 	first := meetingDecisionEndpoint{ID: 1, Kind: meetingRefEvent, Key: "20270314"}
-	copy := meetingDecisionEndpoint{ID: 2, Kind: meetingRefEvent, Key: "20270314"}
+	copyEvent := meetingDecisionEndpoint{ID: 2, Kind: meetingRefEvent, Key: "20270314"}
 	second := meetingDecisionEndpoint{ID: 1, Kind: meetingRefEvent, Key: "20270321"}
 	note := meetingDecisionEndpoint{ID: 3, Kind: meetingRefMessage}
 	g := meetingDecisionGraph{nodes: map[string]meetingDecisionNode{}}
-	for _, endpoint := range []meetingDecisionEndpoint{first, copy, second, note} {
+	for _, endpoint := range []meetingDecisionEndpoint{first, copyEvent, second, note} {
 		g.nodes[endpoint.ref()] = meetingDecisionNode{endpoint: endpoint}
 	}
-	g.groups = [][]meetingDecisionEndpoint{{first, copy}, {first, note}, {second, note}}
+	g.groups = [][]meetingDecisionEndpoint{{first, copyEvent}, {first, note}, {second, note}}
 	root, _, copies := g.reduce()
 	r.Equal(root(first.ref()), root(second.ref()))
-	r.Equal(copies[first.ref()], copies[copy.ref()])
+	r.Equal(copies[first.ref()], copies[copyEvent.ref()])
 	r.NotEqual(copies[first.ref()], copies[second.ref()])
 }
 

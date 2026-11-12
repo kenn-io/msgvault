@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestDaemonBuildCacheChildUsesQuietConsolePolicy(t *testing.T) {
@@ -69,6 +70,17 @@ func TestBuildCacheLockedAcceptsSQLiteFileURI(t *testing.T) {
 
 	require.NoError(t, err, "buildCacheLocked with file URI")
 	assert.NotNil(t, result)
+}
+
+func addMeetingSchema(t *testing.T, db *sql.DB) {
+	t.Helper()
+	template := testutil.NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "meeting-schema.db"))
+	for _, table := range []string{"calendar_events", "calendar_event_attendees", "meeting_details", "meeting_link_decisions", "meeting_link_decision_dependencies"} {
+		var statement string
+		require.NoError(t, template.DB().QueryRowContext(t.Context(), `SELECT sql FROM sqlite_schema WHERE type='table' AND name=?`, table).Scan(&statement))
+		_, err := db.ExecContext(t.Context(), statement)
+		require.NoError(t, err)
+	}
 }
 
 // setupTestSQLite creates a test SQLite database with realistic email data.
@@ -229,6 +241,8 @@ func setupTestSQLite(t *testing.T) string {
 		_ = os.RemoveAll(tmpDir)
 		require.NoError(t, err, "create schema")
 	}
+
+	addMeetingSchema(t, db)
 
 	// Insert test data
 	testData := `
@@ -3086,6 +3100,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 			UNIQUE(participant_id)
 		);
 	`)
+	addMeetingSchema(t, db)
 	_ = db.Close()
 
 	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
@@ -3453,6 +3468,7 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 	`
 	_, err = db.ExecContext(t.Context(), schema)
 	require.NoError(t, err, "create schema")
+	addMeetingSchema(t, db)
 
 	// Insert metadata but NO messages
 	metadata := `

@@ -71,6 +71,7 @@ func TestMeetingCountsCalendarHistoryAndAvailableTranscripts(t *testing.T) {
 		for _, row := range people.Rows {
 			if row.ID == person {
 				assert.Equal(t, tc.want, row.MeetingCount)
+				assert.Equal(t, tc.want, row.ActivityCount)
 				found = true
 			}
 		}
@@ -115,12 +116,19 @@ func TestMeetingCountsCalendarHistoryAndAvailableTranscripts(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, detail)
 	assert.EqualValues(t, 2, detail.MeetingCount)
+	assert.EqualValues(t, 2, detail.ActivityCount)
+	assert.Equal(t, time.Date(2024, 1, 9, 10, 0, 0, 0, time.UTC), detail.FirstAt)
+	domain, err := engine.GetDomain(t.Context(), "example.com", filtered)
+	require.NoError(t, err)
+	require.NotNil(t, domain)
+	assert.EqualValues(t, 2, domain.ActivityCount)
 	people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Explore: query.ExploreRequest{Context: filtered}})
 	require.NoError(t, err)
 	var found bool
 	for _, row := range people.Rows {
 		if row.ID == person {
 			assert.EqualValues(t, 2, row.MeetingCount)
+			assert.EqualValues(t, 2, row.ActivityCount)
 			found = true
 		}
 	}
@@ -172,7 +180,7 @@ func TestMeetingCountsRefresh(t *testing.T) {
 	}
 	event := makeMessage(source.ID, "event", "calendar_event", "gcal_json", `{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"attendees":[{"email":"person-alias@example.com","responseStatus":"accepted"}]}`)
 	note := makeMessage(notesSource.ID, "note", "meeting_transcript", "meeting_json", `{"transcript":"Notes"}`)
-	eventRef, noteRef := store.MeetingLinkRef{Kind: "evt", OccurrenceRef: store.OccurrenceRef{MessageID: event}}, store.MeetingLinkRef{Kind: "msg", OccurrenceRef: store.OccurrenceRef{MessageID: note}}
+	eventRef, noteRef := store.MeetingLinkRef{Kind: "evt", MessageID: event}, store.MeetingLinkRef{Kind: "msg", MessageID: note}
 	_, err = st.DecideMeetingLinkContext(t.Context(), eventRef, noteRef, "link")
 	require.NoError(t, err)
 	_, err = buildCache(t.Context(), dbPath, analytics, true)

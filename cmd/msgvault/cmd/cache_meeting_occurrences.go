@@ -29,6 +29,7 @@ SELECT DISTINCT lower(trim(e.email)) FROM emails e JOIN canon c ON c.participant
 	if err != nil {
 		return time.Time{}, fmt.Errorf("read meeting owners: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
 	ownerEmails := map[string]bool{}
 	for rows.Next() {
 		var email string
@@ -72,7 +73,11 @@ SELECT DISTINCT lower(trim(e.email)) FROM emails e JOIN canon c ON c.participant
 	}
 	for _, occurrence := range occurrences {
 		values = append(values, `(?, ?, ?, NULLIF(?, '')::DATE, ?, [`+strings.TrimSuffix(strings.Repeat("?,", len(occurrence.DeclinedEmails)), ",")+`]::VARCHAR[])`)
-		args = append(args, occurrence.MessageID, occurrence.OccurrenceKey, occurrence.OccurredAt, occurrence.StartDate, occurrence.Counted)
+		var occurredAt any
+		if !occurrence.OccurredAt.IsZero() {
+			occurredAt = occurrence.OccurredAt.UTC().Format("2006-01-02 15:04:05.999999999")
+		}
+		args = append(args, occurrence.MessageID, occurrence.OccurrenceKey, occurredAt, occurrence.StartDate, occurrence.Counted)
 		for _, email := range occurrence.DeclinedEmails {
 			args = append(args, email)
 		}

@@ -188,6 +188,12 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	SELECT pf.*, op.with_owner
 	FROM person_flags pf
 	JOIN owner_presence op USING (entry_num)
+), file_people AS (
+	SELECT canonical_id, sum(attachment_count)::BIGINT AS file_count FROM (
+		SELECT DISTINCT a.message_id, a.canonical_id, a.attachment_count
+		FROM relationship_activity_expanded a JOIN classified f ON f.message_id=a.message_id
+		WHERE a.canonical_id IS NOT NULL AND (a.is_direct OR a.is_conversation_member)
+	) GROUP BY canonical_id
 )`
 	if strings.TrimSpace(identityCandidateSQL) != "" {
 		sql += ", identity_candidates AS (" + identityCandidateSQL + ")"
@@ -217,16 +223,35 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 	if err != nil {
 		return "", nil, err
 	}
+	meetingRequest := request
+	meetingRequest.Context.After, meetingRequest.Context.Before = nil, nil
+	meetingConditions, meetingArgs := buildExploreConditions(meetingRequest)
+	meetingConditions, err = e.sentIdentityConditions(meetingConditions)
+	if err != nil {
+		return "", nil, err
+	}
+	args = append(args, meetingArgs...)
+	meetingDates := ""
+	if request.Context.After != nil {
+		meetingDates += " AND a.occurred_at >= CAST(? AS TIMESTAMP)"
+		args = append(args, request.Context.After.UTC())
+	}
+	if request.Context.Before != nil {
+		meetingDates += " AND a.occurred_at < CAST(? AS TIMESTAMP)"
+		args = append(args, request.Context.Before.UTC())
+	}
 	// entry_num mirrors buildIdentityLogicalSQL: the per-(entry, domain)
 	// dedup hash stays numeric-keyed so a broad filter fits the interactive
 	// memory budget.
 	sql := buildExploreLogicalSQLNoLists(conditions) + `
-), logical_domains AS (
+), selected_meeting_messages AS (
+	SELECT message_id FROM analytical_entries WHERE ` + meetingConditions + `
+), ` + meetingCountActivityCTE(meetingDates) + `, logical_domains AS (
 	SELECT le.anchor_message_id AS entry_num, a.participant_domain AS domain,
 	       le.occurred_at, le.attachment_count, le.source_type
 	FROM logical_entries le
 	JOIN relationship_activity_expanded a ON a.message_id = le.anchor_message_id
-	WHERE le.entry_kind <> 'conversation'
+	WHERE le.entry_kind NOT IN ('conversation','event','meeting')
 	  AND a.canonical_id IS NOT NULL
 	  AND a.participant_domain <> ''
 	UNION
@@ -238,11 +263,16 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 	WHERE le.entry_kind = 'conversation'
 	  AND a.canonical_id IS NOT NULL
 	  AND a.participant_domain <> ''
+	UNION
+	SELECT a.entry_num, a.participant_domain AS domain, min(a.occurred_at) AS occurred_at,
+	       max(a.attachment_count) AS attachment_count, a.source_type
+	FROM meeting_activity a WHERE a.participant_domain <> ''
+	GROUP BY a.entry_num, a.participant_domain, a.source_type
 ), logical_person_domains AS (
 	SELECT DISTINCT a.participant_domain AS domain, a.canonical_id
 	FROM logical_entries le
 	JOIN relationship_activity_expanded a ON a.message_id = le.anchor_message_id
-	WHERE le.entry_kind <> 'conversation'
+	WHERE le.entry_kind NOT IN ('conversation','event','meeting')
 	  AND a.canonical_id IS NOT NULL
 	  AND a.participant_domain <> '' AND a.is_direct
 	UNION
@@ -253,6 +283,15 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 	WHERE le.entry_kind = 'conversation'
 	  AND a.canonical_id IS NOT NULL
 	  AND a.participant_domain <> ''
+	UNION
+	SELECT DISTINCT a.participant_domain AS domain, a.canonical_id
+	FROM meeting_activity a WHERE a.participant_domain <> '' AND a.is_direct
+), file_domains AS (
+	SELECT domain, sum(attachment_count)::BIGINT AS file_count FROM (
+		SELECT DISTINCT a.message_id, a.participant_domain AS domain, a.attachment_count
+		FROM relationship_activity_expanded a JOIN classified f ON f.message_id=a.message_id
+		WHERE a.canonical_id IS NOT NULL AND a.participant_domain <> '' AND (a.is_direct OR a.is_conversation_member)
+	) GROUP BY domain
 )`
 	return sql, args, nil
 }
@@ -616,29 +655,29 @@ func (e *DuckDBEngine) filteredPeopleSQL(
 	return logicalSQL + `,
 person_stats AS (
 	SELECT p.canonical_id, p.source_type,
-	       count(*)::BIGINT AS source_count,
+	       count(DISTINCT entry_num)::BIGINT AS source_count,
 	       coalesce(sum(p.attachment_count), 0)::BIGINT AS file_count,
 	       min(p.occurred_at)::TIMESTAMP AS first_at,
 	       max(p.occurred_at)::TIMESTAMP AS last_at
 	FROM logical_people p
-	GROUP BY p.canonical_id, p.source_type
+	GROUP BY GROUPING SETS ((p.canonical_id, p.source_type), (p.canonical_id))
 ), meeting_totals AS (
 	SELECT canonical_id, count(DISTINCT entry_num) FILTER (WHERE entry_kind IN ('event', 'meeting') AND with_owner)::BIGINT AS meeting_count
 	FROM logical_people GROUP BY canonical_id
 ), person_totals AS (
 	SELECT p.canonical_id,
-	       sum(source_count)::BIGINT AS activity_count,
-	       max(m.meeting_count)::BIGINT AS meeting_count,
-	       sum(file_count)::BIGINT AS file_count,
-	       min(first_at)::TIMESTAMP AS first_at,
-	       max(last_at)::TIMESTAMP AS last_at
+	       source_count AS activity_count,
+	       m.meeting_count,
+	       coalesce((SELECT fp.file_count FROM file_people fp WHERE fp.canonical_id=p.canonical_id), 0)::BIGINT AS file_count,
+	       first_at, last_at
 	FROM person_stats p JOIN meeting_totals m USING (canonical_id)
-	GROUP BY p.canonical_id
+	WHERE p.source_type IS NULL
 ), person_sources AS (
 	SELECT canonical_id,
 	       list(struct_pack(source_type := source_type, count := source_count)
 	            ORDER BY source_type) AS source_counts
 	FROM person_stats
+	WHERE source_type IS NOT NULL
 	GROUP BY canonical_id
 ), population AS (
 	SELECT c.canonical_id, c.person_id, c.display_label, c.partial_label,
@@ -891,26 +930,24 @@ func filteredDomainsSQL(logicalSQL, domainWhere, order string) string {
 	return logicalSQL + `,
 domain_stats AS (
 	SELECT domain, source_type,
-	       count(*)::BIGINT AS source_count,
+	       count(DISTINCT entry_num)::BIGINT AS source_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
 	FROM logical_domains
 	WHERE ` + domainWhere + `
-	GROUP BY domain, source_type
+	GROUP BY GROUPING SETS ((domain, source_type), (domain))
 ), domain_totals AS (
-	SELECT domain,
-	       sum(source_count)::BIGINT AS activity_count,
-	       sum(file_count)::BIGINT AS file_count,
-	       min(first_at)::TIMESTAMP AS first_at,
-	       max(last_at)::TIMESTAMP AS last_at
-	FROM domain_stats
-	GROUP BY domain
+	SELECT domain, source_count AS activity_count,
+	       coalesce((SELECT fd.file_count FROM file_domains fd WHERE fd.domain=domain_stats.domain), 0)::BIGINT AS file_count,
+	       first_at, last_at
+	FROM domain_stats WHERE source_type IS NULL
 ), domain_sources AS (
 	SELECT domain,
 	       list(struct_pack(source_type := source_type, count := source_count)
 	            ORDER BY source_type) AS source_counts
 	FROM domain_stats
+	WHERE source_type IS NOT NULL
 	GROUP BY domain
 ), domain_people AS (
 	SELECT domain, count(DISTINCT canonical_id)::BIGINT AS person_count

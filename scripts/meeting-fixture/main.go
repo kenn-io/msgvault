@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -30,6 +31,7 @@ type manifest struct {
 	Chatwoot      [2]int64              `json:"chatwoot"`
 	Meetings      map[string]meetingRef `json:"meetings"`
 	ParticipantID int64                 `json:"participant_id"`
+	TwoDatesNote  int64                 `json:"two_dates_note,omitempty"`
 }
 
 func main() {
@@ -115,7 +117,42 @@ func seed(ctx context.Context, dataDir string) (*manifest, error) {
 	if out.ParticipantID == 0 {
 		return nil, errors.New("importers did not record the synthetic attendee")
 	}
+	if os.Getenv("MSGVAULT_FIXTURE_TWO_DATES") == "1" {
+		out.TwoDatesNote, err = seedTwoDates(ctx, st)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return out, nil
+}
+
+func seedTwoDates(ctx context.Context, st *store.Store) (int64, error) {
+	source, err := st.GetOrCreateSource("gcal", "two-dates@example.com")
+	if err != nil {
+		return 0, err
+	}
+	event, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: "series", MessageType: "calendar_event"}, Conversation: &store.ConversationPersistData{SourceConversationID: "series", ConversationType: "calendar"}, RawMIME: []byte(`{"id":"series","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`), RawFormat: "gcal_json"})
+	if err != nil {
+		return 0, err
+	}
+	notes, err := st.GetOrCreateSource("meeting_import", "two-dates@example.com")
+	if err != nil {
+		return 0, err
+	}
+	note, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: notes.ID, SourceMessageID: "two-dates", MessageType: "meeting_transcript", Subject: sql.NullString{String: "Two date meeting note", Valid: true}, SentAt: sql.NullTime{Time: time.Date(2024, 1, 2, 10, 0, 0, 0, time.UTC), Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: "two-dates", ConversationType: "meeting"}, BodyText: sql.NullString{String: "Two date transcript", Valid: true}, RawMIME: []byte(`{"transcript":"Two date transcript"}`), RawFormat: "meeting_json"})
+	if err != nil {
+		return 0, err
+	}
+	for _, date := range []string{"20240102T100000Z", "20240109T100000Z"} {
+		ref, err := store.ParseMeetingLinkRef(fmt.Sprintf("evt:%d@%s", event, date))
+		if err != nil {
+			return 0, err
+		}
+		if _, err := st.DecideMeetingLinkContext(ctx, ref, store.MeetingLinkRef{Kind: "msg", MessageID: note}, "link"); err != nil {
+			return 0, err
+		}
+	}
+	return note, nil
 }
 
 // Every unrecognized request fails. The production clients receive only a

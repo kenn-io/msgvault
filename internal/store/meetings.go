@@ -413,8 +413,16 @@ func newMeetingSelectionError(kind error, ids []int64) *MeetingSelectionError {
 }
 
 func (s *Store) buildMeetingScopeStatement(scope MeetingQueryScope) (meetingScopeStatement, error) {
+	return s.buildMeetingScopeStatementFor(scope, false)
+}
+
+func (s *Store) buildMeetingScopeStatementFor(scope MeetingQueryScope, includeCalendar bool) (meetingScopeStatement, error) {
+	messageType := `m.message_type = 'meeting_transcript'`
+	if includeCalendar {
+		messageType = `m.message_type IN ('meeting_transcript', 'calendar_event')`
+	}
 	conditions := []string{
-		`m.message_type = 'meeting_transcript'`,
+		messageType,
 		`m.deleted_at IS NULL`,
 	}
 	args := make([]any, 0)
@@ -584,13 +592,5 @@ func nullableTimePointer(value nullableTimestamp) *time.Time {
 		return nil
 	}
 	result := value.Time.UTC()
-	return &result
-}
-
-func nullableFloatPointer(value sql.NullFloat64) *float64 {
-	if !value.Valid {
-		return nil
-	}
-	result := value.Float64
 	return &result
 }

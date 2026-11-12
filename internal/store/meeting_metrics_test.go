@@ -102,14 +102,14 @@ func TestMeetingMetricsDeletionUndatedAndMissingProjection(t *testing.T) {
 
 	metrics, err := fixture.store.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{})
 	requirements.NoError(err)
-	assertions.Equal(int64(6), metrics.Totals.MeetingCount)
+	assertions.Equal(int64(5), metrics.Totals.MeetingCount)
 	assertions.Equal(int64(3), metrics.Totals.KnownDurationCount)
-	assertions.Equal(int64(3), metrics.Totals.UnknownDurationCount)
-	assertions.Equal(int64(2), metrics.UndatedCount)
+	assertions.Equal(int64(2), metrics.Totals.UnknownDurationCount)
+	assertions.Equal(int64(1), metrics.UndatedCount)
 
 	active, err := fixture.store.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{Deletion: "active"})
 	requirements.NoError(err)
-	assertions.Equal(int64(5), active.Totals.MeetingCount)
+	assertions.Equal(int64(4), active.Totals.MeetingCount)
 	deleted, err := fixture.store.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{Deletion: "deleted"})
 	requirements.NoError(err)
 	assertions.Equal(int64(1), deleted.Totals.MeetingCount)
@@ -130,8 +130,8 @@ func TestMeetingMetricsDeletionUndatedAndMissingProjection(t *testing.T) {
 	missingProjection := []int64{fixture.missingProj}
 	unknown, err := fixture.store.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{MessageIDs: &missingProjection})
 	requirements.NoError(err)
-	assertions.Equal(int64(1), unknown.Totals.MeetingCount)
-	assertions.Equal(int64(1), unknown.Totals.UnknownDurationCount)
+	assertions.Zero(unknown.Totals.MeetingCount)
+	assertions.Zero(unknown.Totals.UnknownDurationCount)
 	assertions.Nil(unknown.Totals.AverageKnownSeconds)
 }
 
@@ -158,12 +158,12 @@ func TestMeetingMetricsScopeIntersectionsAndPersonSemantics(t *testing.T) {
 		ParticipantIDs: []int64{fixture.attendee},
 	})
 	requirements.NoError(err)
-	assertions.Equal(int64(6), exactParticipant.Totals.MeetingCount)
+	assertions.Equal(int64(5), exactParticipant.Totals.MeetingCount)
 	organizerAppearsOnEveryEdge, err := fixture.store.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{
 		ParticipantIDs: []int64{fixture.organizer},
 	})
 	requirements.NoError(err)
-	assertions.Equal(int64(6), organizerAppearsOnEveryEdge.Totals.MeetingCount)
+	assertions.Equal(int64(5), organizerAppearsOnEveryEdge.Totals.MeetingCount)
 	fromPerson, err := fixture.store.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{
 		Person: &personscope.Scope{
 			ParticipantIDs: []int64{fixture.attendee},

@@ -17,6 +17,7 @@ type SeedManifest = {
   chatwoot: [number, number];
   meetings: Record<"granola" | "notion" | "circleback", MeetingRef>;
   participant_id: number;
+  two_dates_note?: number;
 };
 export type MeetingDaemon = SeedManifest & {
   origin: string;
@@ -96,6 +97,7 @@ export const test = base.extend<{ daemon: MeetingDaemon }>({
             cwd: repo,
             env: {
               ...env, ...caches, CGO_ENABLED: "1",
+              ...(testInfo.title.includes('note linked to two dates') ? { MSGVAULT_FIXTURE_TWO_DATES: '1' } : {}),
               ...(process.platform === "win32" ? Object.fromEntries(
                 ["CC", "CGO_CFLAGS", "CGO_LDFLAGS"].flatMap((key) =>
                   process.env[key] ? [[key, process.env[key]]] : [],

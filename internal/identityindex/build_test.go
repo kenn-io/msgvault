@@ -306,6 +306,7 @@ func assertIncrementalDatasetsMatchFullBuild(
 ) {
 	t.Helper()
 	fullRoot := t.TempDir()
+	writeRelationshipParquet(t, db, fullRoot, DatasetMeetingOccurrences, `SELECT * FROM read_parquet('`+quoteSQLString(relationshipParquetGlob(stagedRoot, DatasetMeetingOccurrences))+`')`)
 	appendDatasets := map[string]string{
 		"messages": "UNION ALL", "message_recipients": "UNION ALL",
 		"attachments": "UNION ALL", "conversations": "UNION",
@@ -352,7 +353,6 @@ func assertIncrementalContributionsMatchFullReduction(
 ) {
 	t.Helper()
 	fullActivity := testExpandedActivity(stagedRoot, committedRoot, stagedRoot)
-	fullActivity = "(SELECT *, 'message:' || message_id AS entry_key FROM " + fullActivity + ")"
 	for _, check := range []struct {
 		name     string
 		dataset  string
@@ -388,9 +388,10 @@ func testExpandedActivity(baseRoot string, activityRoots ...string) string {
 	base := func(dataset string) string {
 		return readParquetRelation([]string{parquetDatasetGlob(baseRoot, dataset)}, false)
 	}
-	return ExpandedActivityRelation(readParquetRelation(paths, true),
+	expanded := ExpandedActivityRelation(readParquetRelation(paths, true),
 		base("conversation_participants"), base("participants"),
 		base("participant_clusters"), base("owner_participants"))
+	return MeetingOccurrenceActivitySQL(expanded, base(DatasetMeetingOccurrences), base("participants"), base("participant_identifiers"), base("participant_clusters"), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
 }
 
 func TestBuildIncrementalChatContributionsMatchFullReductionAcrossYears(t *testing.T) {

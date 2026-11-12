@@ -17,12 +17,13 @@ import (
 
 // MeetingOccurrence is one message's contribution to an occurrence.
 type MeetingOccurrence struct {
-	MessageID      int64
-	OccurrenceKey  string
-	OccurredAt     time.Time
-	StartDate      string
-	Counted        bool
-	DeclinedEmails []string
+	MessageID        int64
+	OccurrenceKey    string
+	OccurredAt       time.Time
+	StartDate        string
+	Counted          bool
+	DeclinedEmails   []string
+	ScheduledSeconds *float64
 }
 
 type occurrenceNote struct {
@@ -109,14 +110,78 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 		}
 	}
 
-	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.sent_at, d.link_key, COALESCE(d.transcript_state, '') FROM messages m LEFT JOIN meeting_details d ON d.message_id=m.id WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL`)
+	type fallbackEvent struct {
+		start, end         time.Time
+		startDate          string
+		cancelled, deleted bool
+		declined           []string
+	}
+	fallbacks := map[int64]*fallbackEvent{}
+	var rows *loggedRows
+	if len(unexpandable) > 0 {
+		rows, err = s.db.QueryContext(ctx, `SELECT e.message_id, e.start_at, e.end_at, e.all_day, e.start_date, e.status, m.deleted_from_source_at FROM calendar_events e JOIN messages m ON m.id=e.message_id WHERE m.deleted_at IS NULL`)
+		if err != nil {
+			return nil, time.Time{}, fmt.Errorf("read future calendar starts: %w", err)
+		}
+		for rows.Next() {
+			var id int64
+			var start, end nullableTimestamp
+			var deleted nullableTimestamp
+			var allDay bool
+			var startDate, status string
+			if err := rows.Scan(&id, &start, &end, &allDay, &startDate, &status, &deleted); err != nil {
+				_ = rows.Close()
+				return nil, time.Time{}, err
+			}
+			if !unexpandable[id] {
+				continue
+			}
+			event := &fallbackEvent{cancelled: status == "cancelled", deleted: deleted.Valid}
+			if start.Valid {
+				event.start = start.Time
+			}
+			if end.Valid {
+				event.end = end.Time
+			}
+			if allDay {
+				event.startDate = startDate
+			}
+			fallbacks[id] = event
+			if event.start.After(through) && (nextAt.IsZero() || event.start.Before(nextAt)) {
+				nextAt = event.start
+			}
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return nil, time.Time{}, err
+		}
+		rows, err = s.db.QueryContext(ctx, `SELECT message_id, email FROM calendar_event_attendees WHERE rsvp='declined'`)
+		if err != nil {
+			return nil, time.Time{}, fmt.Errorf("read fallback attendees: %w", err)
+		}
+		for rows.Next() {
+			var id int64
+			var email string
+			if err := rows.Scan(&id, &email); err != nil {
+				_ = rows.Close()
+				return nil, time.Time{}, err
+			}
+			if event := fallbacks[id]; event != nil {
+				event.declined = append(event.declined, strings.ToLower(strings.TrimSpace(email)))
+			}
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return nil, time.Time{}, err
+		}
+	}
+
+	rows, err = s.db.QueryContext(ctx, `SELECT m.id, COALESCE(m.sent_at, m.received_at, m.internal_date), d.link_key, COALESCE(d.transcript_state, '') FROM messages m LEFT JOIN meeting_details d ON d.message_id=m.id WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL`)
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("read meeting notes: %w", err)
 	}
 	var notes []occurrenceNote
 	for rows.Next() {
 		var note occurrenceNote
-		var at sql.NullTime
+		var at nullableTimestamp
 		var key sql.NullString
 		if err := rows.Scan(&note.id, &at, &key, &note.state); err != nil {
 			_ = rows.Close()
@@ -251,7 +316,56 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 		}
 	}
 
+	seriesIDs := map[int64]bool{}
+	for _, occurrence := range occurrences {
+		if occurrence.SeriesMessageID != 0 && occurrence.SeriesMessageID != occurrence.MessageID {
+			seriesIDs[occurrence.SeriesMessageID] = true
+		}
+	}
+	seriesAttendees := map[int64][]string{}
+	ids := make([]int64, 0, len(seriesIDs))
+	for id := range seriesIDs {
+		ids = append(ids, id)
+	}
+	for start := 0; start < len(ids); start += 500 {
+		batch := ids[start:min(start+500, len(ids))]
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
+		}
+		rows, err := s.db.QueryContext(ctx, `SELECT message_id, email FROM calendar_event_attendees WHERE message_id IN (`+placeholders(len(batch))+`)`, args...)
+		if err != nil {
+			return nil, time.Time{}, fmt.Errorf("read series attendees: %w", err)
+		}
+		for rows.Next() {
+			var id int64
+			var email string
+			if err := rows.Scan(&id, &email); err != nil {
+				_ = rows.Close()
+				return nil, time.Time{}, err
+			}
+			seriesAttendees[id] = append(seriesAttendees[id], strings.ToLower(strings.TrimSpace(email)))
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return nil, time.Time{}, err
+		}
+	}
+
 	var result []MeetingOccurrence
+	for id, event := range fallbacks {
+		counted := !event.cancelled && !event.deleted && !event.start.After(through)
+		for _, email := range event.declined {
+			if owners[email] {
+				counted = false
+			}
+		}
+		var duration *float64
+		if !event.start.IsZero() && !event.end.IsZero() && !event.end.Before(event.start) {
+			seconds := event.end.Sub(event.start).Seconds()
+			duration = &seconds
+		}
+		result = append(result, MeetingOccurrence{MessageID: id, OccurrenceKey: fmt.Sprintf("fallback:%d", id), OccurredAt: event.start, StartDate: event.startDate, Counted: counted, DeclinedEmails: event.declined, ScheduledSeconds: duration})
+	}
 	for _, unit := range units {
 		slices.SortFunc(unit.events, func(a, b CalendarOccurrence) int {
 			if a.DeletedFromSource != b.DeletedFromSource {
@@ -273,7 +387,7 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 		})
 		var key string
 		var at time.Time
-		cancelled, eligible := false, false
+		cancelled := false
 		var startDate string
 		declined := map[string]bool{}
 		for _, event := range unit.events {
@@ -281,16 +395,22 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 				key = event.Ref
 			}
 			cancelled = cancelled || event.Status == "cancelled"
-			ownerDeclined := false
+			currentAttendees := map[string]bool{}
 			for _, attendee := range event.Attendees {
+				currentAttendees[strings.ToLower(strings.TrimSpace(attendee.Email))] = true
 				if attendee.RSVP != "declined" {
 					continue
 				}
 				email := strings.ToLower(strings.TrimSpace(attendee.Email))
-				ownerDeclined = ownerDeclined || owners[email]
 				declined[email] = true
 			}
-			eligible = eligible || !event.DeletedFromSource && !ownerDeclined
+			if event.SeriesMessageID != 0 && event.MessageID != event.SeriesMessageID {
+				for _, email := range seriesAttendees[event.SeriesMessageID] {
+					if !currentAttendees[email] {
+						declined[email] = true
+					}
+				}
+			}
 		}
 		if len(unit.events) > 0 && (!unit.events[0].DeletedFromSource || len(unit.notes) == 0) {
 			at = unit.events[0].Start
@@ -298,8 +418,10 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 				startDate = unit.events[0].StartDate
 			}
 		} else if len(unit.notes) > 0 {
-			at = unit.notes[0].at
 			for _, note := range unit.notes {
+				if at.IsZero() && !note.at.IsZero() {
+					at = note.at
+				}
 				ref := (meetingDecisionEndpoint{ID: note.id, Kind: meetingRefMessage}).ref()
 				if len(unit.events) == 0 && (key == "" || ref < key) {
 					key = ref
@@ -318,23 +440,31 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 			}
 			for _, id := range []int64{event.MessageID, event.SeriesMessageID} {
 				if id != 0 {
-					result = append(result, MeetingOccurrence{id, key, at, startDate, !cancelled && !event.DeletedFromSource && !ownerDeclined, declinedEmails})
+					var duration *float64
+					if !event.Start.IsZero() && !event.End.IsZero() && !event.End.Before(event.Start) {
+						seconds := event.End.Sub(event.Start).Seconds()
+						duration = &seconds
+					}
+					result = append(result, MeetingOccurrence{MessageID: id, OccurrenceKey: key, OccurredAt: at, StartDate: startDate, Counted: !cancelled && !event.DeletedFromSource && !ownerDeclined, DeclinedEmails: declinedEmails, ScheduledSeconds: duration})
 				}
 			}
 		}
 		for _, note := range unit.notes {
+			if !cancelled && note.state == "available" && at.After(through) && (nextAt.IsZero() || at.Before(nextAt)) {
+				nextAt = at
+			}
 			ids := declinedEmails
 			if note.state == "available" {
 				ids = nil
 			}
-			result = append(result, MeetingOccurrence{note.id, key, at, startDate, !cancelled && (eligible || note.state == "available"), ids})
+			result = append(result, MeetingOccurrence{MessageID: note.id, OccurrenceKey: key, OccurredAt: at, StartDate: startDate, Counted: !cancelled && note.state == "available", DeclinedEmails: ids})
 		}
 	}
 	seenMessages := map[int64]bool{}
 	for _, row := range result {
 		seenMessages[row.MessageID] = true
 	}
-	rows, err = s.db.QueryContext(ctx, `SELECT e.message_id FROM calendar_events e JOIN messages m ON m.id=e.message_id WHERE (e.status='cancelled' OR e.start_at > ?) AND m.deleted_at IS NULL`, through)
+	rows, err = s.db.QueryContext(ctx, `SELECT e.message_id FROM calendar_events e JOIN messages m ON m.id=e.message_id WHERE (e.status='cancelled' OR e.start_at > ? OR e.kind='series') AND m.deleted_at IS NULL`, through)
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("read cancelled or future meetings: %w", err)
 	}
@@ -344,7 +474,7 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 			_ = rows.Close()
 			return nil, time.Time{}, fmt.Errorf("scan cancelled meeting: %w", err)
 		}
-		if !seenMessages[id] {
+		if !seenMessages[id] && !unexpandable[id] {
 			result = append(result, MeetingOccurrence{MessageID: id, OccurrenceKey: formatMeetingOccurrence(OccurrenceRef{MessageID: id})})
 		}
 	}

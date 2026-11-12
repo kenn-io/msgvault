@@ -12,16 +12,23 @@ const (
 	directoryBuildRelation = "relationship_build_directory"
 )
 
-func buildRelationshipPeopleSQL(effectiveAt time.Time) string {
+func buildRelationshipPeopleSQL(effectiveAt time.Time, activity string) string {
 	return `
-WITH logical_people AS (
+WITH file_messages AS (
+	SELECT DISTINCT message_id, canonical_id, source_id, attachment_count
+	FROM ` + activity + ` WHERE canonical_id IS NOT NULL AND NOT unsent AND (is_direct OR is_conversation_member)
+), file_totals AS (
+	SELECT canonical_id, sum(attachment_count)::BIGINT AS file_count FROM file_messages GROUP BY canonical_id
+), source_file_totals AS (
+	SELECT canonical_id, source_id, sum(attachment_count)::BIGINT AS file_count FROM file_messages GROUP BY canonical_id, source_id
+), logical_people AS (
 	SELECT entry_key, source_id, source_type, occurred_at, message_type, entry_kind, attachment_count,
 	       canonical_id, with_owner
 	FROM ` + logicalBuildRelation + `
 	WHERE relation_kind = 1
 ), people_totals AS (
 	SELECT canonical_id,
-	       count(*)::BIGINT AS activity_count,
+	       count(DISTINCT entry_key)::BIGINT AS activity_count,
 	       count(DISTINCT entry_key) FILTER (WHERE entry_kind IN ('event', 'meeting') AND with_owner)::BIGINT AS meeting_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
@@ -55,7 +62,7 @@ WITH logical_people AS (
 		       source_type := source_type,
 		       activity_count := activity_count,
 		       meeting_count := meeting_count,
-		       file_count := file_count,
+		       file_count := coalesce((SELECT sf.file_count FROM source_file_totals sf WHERE sf.canonical_id=source_rows.canonical_id AND sf.source_id=source_rows.source_id), 0),
 		       first_at := first_at,
 		       last_at := last_at
 	       ) ORDER BY source_id, source_type) AS source_rollups
@@ -65,7 +72,7 @@ WITH logical_people AS (
 ` + relationshipTemperatureCTEs(effectiveAt) + `
 SELECT d.canonical_id, d.display_label, d.partial_label, d.member_ids,
 	   d.search_values, d.search_primitives, d.is_owner,
-	   t.activity_count, t.meeting_count, t.file_count,
+	   t.activity_count, t.meeting_count, coalesce(ft.file_count, 0) AS file_count,
        t.first_at, t.last_at, c.source_counts, r.source_rollups,
 	   coalesce(cr.temperature, 0)::INTEGER AS current_temperature,
 	   coalesce(cr.score_rank, 0)::BIGINT AS current_temperature_rank,
@@ -87,6 +94,7 @@ SELECT d.canonical_id, d.display_label, d.partial_label, d.member_ids,
 	   coalesce(pk.peak_year, 0)::INTEGER AS peak_year
 FROM ` + directoryBuildRelation + ` d
 JOIN people_totals t USING (canonical_id)
+LEFT JOIN file_totals ft USING (canonical_id)
 JOIN source_counts c USING (canonical_id)
 JOIN source_rollups r USING (canonical_id)
 LEFT JOIN current_ranked cr USING (canonical_id)
@@ -95,9 +103,14 @@ LEFT JOIN peaks pk USING (canonical_id)
 ORDER BY d.canonical_id`
 }
 
-func buildRelationshipDomainsSQL() string {
+func buildRelationshipDomainsSQL(activity string) string {
 	return `
-WITH domain_entries AS (
+WITH domain_file_messages AS (
+	SELECT DISTINCT message_id, participant_domain AS domain, attachment_count
+	FROM ` + activity + ` WHERE canonical_id IS NOT NULL AND participant_domain <> '' AND NOT unsent AND (is_direct OR is_conversation_member)
+), domain_file_totals AS (
+	SELECT domain, sum(attachment_count)::BIGINT AS file_count FROM domain_file_messages GROUP BY domain
+), domain_entries AS (
 	SELECT entry_key, domain, source_type, attachment_count, occurred_at
 	FROM ` + logicalBuildRelation + `
 	WHERE relation_kind = 2
@@ -107,7 +120,7 @@ WITH domain_entries AS (
 	WHERE relation_kind = 3
 ), domain_totals AS (
 	SELECT domain,
-	       count(*)::BIGINT AS activity_count,
+	       count(DISTINCT entry_key)::BIGINT AS activity_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
@@ -130,8 +143,9 @@ WITH domain_entries AS (
 	GROUP BY domain
 )
 SELECT t.domain, t.activity_count, coalesce(p.person_count, 0)::BIGINT AS person_count,
-       t.file_count, t.first_at, t.last_at, s.source_counts
+       coalesce(df.file_count, 0) AS file_count, t.first_at, t.last_at, s.source_counts
 FROM domain_totals t
+LEFT JOIN domain_file_totals df USING (domain)
 JOIN domain_sources s USING (domain)
 LEFT JOIN domain_people p USING (domain)
 ORDER BY t.domain`

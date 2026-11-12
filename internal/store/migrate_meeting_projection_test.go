@@ -22,6 +22,7 @@ func TestMeetingLinkProjectionBackfill(t *testing.T) {
 	_, note := projectionFixture(t, st, "link-backfill", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	for _, query := range []string{
 		`DROP INDEX idx_meeting_details_link_key`,
+		`DROP TRIGGER trg_cache_meeting_details_update`,
 		`ALTER TABLE meeting_details DROP COLUMN link_key`,
 		`UPDATE meeting_details SET projection_version = 1`,
 		`UPDATE applied_migrations SET version = 1 WHERE name = 'meeting_projection_v1'`,
@@ -35,6 +36,9 @@ func TestMeetingLinkProjectionBackfill(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(reopened.Close()) })
 	require.NoError(reopened.InitSchemaContext(t.Context()))
+	var triggerCount int
+	require.NoError(reopened.db.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_cache_meeting_details_update'`).Scan(&triggerCount))
+	assert.Equal(1, triggerCount)
 	var key string
 	require.NoError(reopened.db.QueryRowContext(t.Context(), `SELECT link_key FROM meeting_details WHERE message_id = ?`, note).Scan(&key))
 	assert.Equal(`["ical_uid","","weekly@example.org","2027-03-14T10:00:00Z"]`, key)

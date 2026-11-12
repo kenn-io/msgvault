@@ -400,7 +400,16 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	FROM meeting_activity a
 	WHERE true` + meetingMembership + `
 	  AND EXISTS (SELECT 1 FROM ` + activity + ` owner_edge WHERE owner_edge.entry_key=a.entry_key AND owner_edge.is_owner)
-	GROUP BY person_id`
+	GROUP BY person_id
+), person_entries AS (
+	SELECT entry_key, person_id, occurred_at::TIMESTAMP AS occurred_at, message_type, attachment_count, source_type
+	FROM person_entries_raw WHERE message_type NOT IN ('calendar_event','meeting_transcript')
+	UNION ALL
+	SELECT a.entry_key, ` + meetingPerson + ` AS person_id, min(a.occurred_at) AS occurred_at,
+	       arg_min(a.message_type, a.message_id) AS message_type, 0::BIGINT AS attachment_count, a.source_type
+	FROM meeting_activity a
+	WHERE true` + meetingMembership + `
+	GROUP BY person_id, a.entry_key, a.source_type`
 	// bestNameExpr is the shared cluster label policy (see person_label.go).
 	// Listing/search rows are canonical identities, so the label evaluates
 	// every member of the row's cluster (resolved through the canon CTE that
@@ -516,9 +525,9 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		` + bestNameExpr + ` AS best_display_name,
 		` + overrideExpr + ` AS person_display_name,
 		` + sqlPersonIdentifierFallbackExpr("p") + ` AS fallback_label,
-		COUNT(pe.person_id)::BIGINT AS activity_count,
+		COUNT(DISTINCT pe.entry_key)::BIGINT AS activity_count,
 		COALESCE((SELECT meeting_count FROM meeting_counts mc WHERE mc.person_id=p.id), 0)::BIGINT AS meeting_count,
-		COALESCE(SUM(pe.attachment_count), 0)::BIGINT AS file_count,
+		COALESCE((SELECT SUM(raw.attachment_count) FROM person_entries_raw raw WHERE raw.person_id=p.id), 0)::BIGINT AS file_count,
 		MIN(pe.occurred_at) AS first_at, MAX(pe.occurred_at) AS last_at
 	` + populationFrom + `
 	GROUP BY p.id, p.display_name, p.email_address, p.phone_number
@@ -605,7 +614,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (s
 ), canon AS (
 	SELECT p.id AS participant_id, COALESCE(c.canonical_id, p.id) AS canonical_id
 	FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
-), person_entries AS (`, quoteIdentitySQLPath(clustersGlob)) +
+), person_entries_raw AS (`, quoteIdentitySQLPath(clustersGlob)) +
 			sqlActivityEntryEdges(
 				"a.canonical_id AS person_id, le.occurred_at, le.message_type, le.attachment_count, le.source_type",
 				"a.is_direct", "(a.is_direct OR a.is_conversation_member)"), nil
@@ -628,8 +637,8 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (s
 	UNION
 	SELECT f.conversation_id FROM classified f
 	WHERE f.is_chat AND f.message_id IN (SELECT message_id FROM person_message_ids)
-), person_entries AS (
-	SELECT ?::BIGINT AS person_id, occurred_at, message_type, attachment_count, source_type
+), person_entries_raw AS (
+	SELECT le.entry_key, ?::BIGINT AS person_id, occurred_at, message_type, attachment_count, source_type
 	FROM logical_entries le
 	WHERE (le.entry_kind <> 'conversation'
 	       AND le.anchor_message_id IN (SELECT message_id FROM person_message_ids))
@@ -693,71 +702,22 @@ func (e *DuckDBEngine) searchDomainsLegacy(ctx context.Context, request DomainSe
 	if err != nil {
 		return nil, err
 	}
-	conditions, args := buildExploreConditions(request.Explore)
-	conditions, err = e.sentIdentityConditions(conditions)
+	logicalSQL, args, err := e.buildIdentityDomainLogicalSQL(ctx, request.Explore)
 	if err != nil {
 		return nil, err
 	}
-	domainWhere := []string{"domain <> ''"}
-	// An exact lookup reads only that domain's activity edges. Filtering after
-	// domain_population would first expand and aggregate every domain in the
-	// archive, which exhausts the interactive memory budget on large archives.
-	edgePredicate := "a.participant_domain <> ''"
+	domainWhere, domainArgs := identityDomainWhere(request.Query)
+	args = append(args, domainArgs...)
 	if exactDomain != "" {
-		edgePredicate = "a.participant_domain = ?"
-		args = append(args, exactDomain, exactDomain)
-	}
-	if searchText := strings.TrimSpace(request.Query); searchText != "" {
-		domainWhere = append(domainWhere, "contains(lower(domain), lower(?))")
-		args = append(args, searchText)
+		domainWhere += " AND domain = ?"
+		args = append(args, exactDomain)
 	}
 	limit := request.Page.Limit
 	if limit == 0 {
 		limit = defaultExploreLimit
 	}
 	args = append(args, limit, request.Page.Offset)
-	// person_count counts identities with at least one address on the domain:
-	// each relationship_activity edge pairs the participant's OWN address
-	// domain with its baked cluster canonical_id, so counting distinct
-	// canonical IDs per domain matches the cluster-aware People and
-	// Relationships views — linked aliases on the same domain count once, and
-	// a cluster whose canonical member lives on another domain still counts.
-	// The dedup only counts direct edges for non-chat entries (chat entries
-	// keep conversation-roster edges), mirroring the relationship_domains
-	// person-domain pairing so opening a domain cannot change its person
-	// count; the domain activity rows themselves keep roster domains exactly
-	// as the index's domain entries do.
-	queryText := buildExploreLogicalSQLNoLists(conditions) + `
-), domain_edges AS (` +
-		sqlActivityEntryEdges(
-			"a.participant_domain AS domain, a.canonical_id AS person_id, "+
-				"a.is_direct AS is_direct, "+
-				"(le.entry_kind = 'conversation') AS is_chat_entry, "+
-				"le.occurred_at, le.attachment_count, le.source_type",
-			edgePredicate, edgePredicate) + `
-), domain_entries AS (
-	SELECT DISTINCT entry_key, domain, occurred_at, attachment_count, source_type
-	FROM domain_edges
-), domain_population AS (
-	SELECT domain, COUNT(*)::BIGINT AS activity_count,
-		COALESCE(SUM(attachment_count), 0)::BIGINT AS file_count,
-		MIN(occurred_at) AS first_at, MAX(occurred_at) AS last_at
-	FROM domain_entries GROUP BY domain
-), filtered_domains AS (
-	SELECT * FROM domain_population WHERE ` + strings.Join(domainWhere, " AND ") + `
-), counted AS (
-	SELECT *, COUNT(*) OVER () AS total_count FROM filtered_domains
-)
-SELECT domain, activity_count,
-	(SELECT COUNT(DISTINCT de.person_id)::BIGINT
-		FROM domain_edges de WHERE de.domain = counted.domain
-		  AND (de.is_chat_entry OR de.is_direct)) AS person_count,
-	file_count,
-	COALESCE(CAST((SELECT to_json(list(struct_pack(source_type := source_type, count := source_count)
-		ORDER BY source_type)) FROM (SELECT source_type, COUNT(*)::BIGINT AS source_count
-		FROM domain_entries de WHERE de.domain = counted.domain GROUP BY source_type)) AS VARCHAR), '[]'),
-	first_at, last_at, total_count
-FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
+	queryText := filteredDomainsSQL(logicalSQL, domainWhere, order)
 	rows, err := e.db.QueryContext(ctx, queryText, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search analytical domains: %w", err)

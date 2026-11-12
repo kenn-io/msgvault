@@ -134,7 +134,9 @@ func Validate(
 			 WHERE len(p.source_rollups) = 0
 			    OR (SELECT sum(item.activity_count)::BIGINT
 			        FROM unnest(p.source_rollups) AS source(item))
-			       IS DISTINCT FROM p.activity_count
+			       < p.activity_count
+			    OR (SELECT max(item.activity_count)::BIGINT
+			        FROM unnest(p.source_rollups) AS source(item)) > p.activity_count
 			    OR (SELECT sum(item.file_count)::BIGINT
 			        FROM unnest(p.source_rollups) AS source(item))
 			       IS DISTINCT FROM p.file_count
@@ -151,7 +153,7 @@ func Validate(
 			       IS DISTINCT FROM p.last_at
 			    OR (SELECT sum(item.count)::BIGINT
 			        FROM unnest(p.source_counts) AS source(item))
-			       IS DISTINCT FROM p.activity_count`,
+			       < p.activity_count`,
 		},
 		{
 			DatasetPeople,
