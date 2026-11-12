@@ -45,7 +45,7 @@ func TestSettingsViewportFingerprint(t *testing.T) {
 		width, height int
 		pending       bool
 	}{
-		{name: "pending", width: 80, height: 24, pending: true},
+		{name: "pending", width: 80, height: 12, pending: true},
 		{name: "no_pending", width: 40, height: 12},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -83,7 +83,7 @@
   {:else}
     {#if controller.error}<p role="alert" class="error">{controller.error}</p>{/if}
     {#if controller.status.pending_restart}
-      <p role="status">The running daemon still uses {controller.status.running_name ? `the ${controller.status.running_name} profile` : 'no profile'}.</p>
+      <p role="status">The running daemon still uses {controller.status.running_name || 'no profile'}.</p>
     {/if}
     <div class="state">
       <p><strong>Configured:</strong> {controller.status.configured_name || 'None'} ({controller.status.configured_enabled ? 'enabled' : 'disabled'})</p>

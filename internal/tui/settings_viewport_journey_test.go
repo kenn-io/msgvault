@@ -123,9 +123,14 @@ func TestSettingsViewportShortScreenSaveErrorAfterDisable(t *testing.T) {
 func TestSettingsViewportStalePeopleLoadKeepsPage(t *testing.T) {
 	snapshot := settingsFixture()
 	snapshot.PendingRestart = true
-	backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{snapshot}}
+	backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{snapshot, snapshot}}
 	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 40, 8)
 	model.settingsBackend = backend
+	oldRequestID := model.settings.requestID
+	model, _ = sendKey(t, model, keyEsc())
+	model, reload := sendKey(t, model, key(','))
+	require.NotNil(t, reload)
+	model = sendSettingsMsg(t, model, reload())
 	model, load := sendKey(t, model, key('i'))
 	require.NotNil(t, load)
 	model, _ = sendKey(t, model, keyEsc())
@@ -140,8 +145,8 @@ func TestSettingsViewportStalePeopleLoadKeepsPage(t *testing.T) {
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Equal(t, before, screen.String())
 	for _, stale := range []tea.Msg{
-		settingsLoadedMsg{requestID: model.settings.requestID + 1},
-		settingsSavedMsg{requestID: model.settings.requestID + 1},
+		settingsLoadedMsg{requestID: oldRequestID},
+		settingsSavedMsg{requestID: oldRequestID},
 		peopleControlsActionMsg{requestID: 1},
 		codexModelsLoadedMsg{requestID: 1},
 		codexLoginPolledMsg{requestID: 1},
