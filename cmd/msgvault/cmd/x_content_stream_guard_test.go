@@ -41,7 +41,10 @@ func (a *xLogsRunner) RunCLICommand(ctx context.Context, req api.CLIRunRequest, 
 		}
 		return len(p), nil
 	}))
-	return cmd.Execute()
+	if err := cmd.Execute(); err != nil {
+		return fmt.Errorf("run logs command: %w", err)
+	}
+	return nil
 }
 
 type pausedMCPWriter struct {
@@ -81,21 +84,23 @@ func (w *pausedMCPWriter) Write(p []byte) (int, error) {
 }
 
 func TestXCleanupProceedsDuringLogsFollow(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	resetLogsRoutingGlobals(t)
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 	f := newXRestoreFixture(t)
-	require.NoError(t, os.MkdirAll(f.cfg.LogsDir(), 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(f.cfg.Data.DataDir, "serve.log"), []byte("synthetic log line\n"), 0o600))
+	require.NoError(os.MkdirAll(f.cfg.LogsDir(), 0o700))
+	require.NoError(os.WriteFile(filepath.Join(f.cfg.Data.DataDir, "serve.log"), []byte("synthetic log line\n"), 0o600))
 	cleaner := NewXContentCleanup(f.st, f.cfg, nil)
 	runner := &xLogsRunner{&storeAPIAdapter{store: f.st, config: f.cfg, logger: slog.New(slog.DiscardHandler), xCleanup: cleaner}}
 	server := api.NewServerWithOptions(api.ServerOptions{Config: f.cfg, Store: runner, Logger: slog.New(slog.DiscardHandler), ContentReadGuard: cleaner.AcquireRead})
 	cleaner.SetServer(server)
 	t.Cleanup(func() {
 		// Shutdown must finish after the test context is canceled.
-		require.NoError(t, server.Shutdown(context.WithoutCancel(t.Context())))
+		require.NoError(server.Shutdown(context.WithoutCancel(t.Context())))
 	})
 	body, err := json.Marshal(api.CLIRunRequest{Args: []string{"logs", "--follow"}})
-	require.NoError(t, err)
+	require.NoError(err)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
@@ -108,23 +113,25 @@ func TestXCleanupProceedsDuringLogsFollow(t *testing.T) {
 	select {
 	case <-response.wrote:
 	case <-time.After(10 * time.Second):
-		require.FailNow(t, "logs stream did not start")
+		require.FailNow("logs stream did not start")
 	}
 	removeCtx, stop := context.WithTimeout(t.Context(), 10*time.Second)
 	defer stop()
 	_, err = cleaner.RemovePost(removeCtx, f.source.ID, "100", "removed")
-	require.NoError(t, err)
+	require.NoError(err)
 	select {
 	case <-done:
-		require.FailNow(t, "logs follow ended before cleanup")
+		require.FailNow("logs follow ended before cleanup")
 	default:
 	}
 	cancel()
 	<-done
-	assert.Contains(t, response.Body.String(), "synthetic log line")
+	assert.Contains(response.Body.String(), "synthetic log line")
 }
 
 func TestXCleanupWaitsForNativeMCPReadResponse(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	f := newXRestoreFixture(t)
 	cleaner := NewXContentCleanup(f.st, f.cfg, nil)
 	adapter := &storeAPIAdapter{store: f.st, config: f.cfg, logger: slog.New(slog.DiscardHandler), xCleanup: cleaner}
@@ -132,10 +139,10 @@ func TestXCleanupWaitsForNativeMCPReadResponse(t *testing.T) {
 	cleaner.SetServer(server)
 	cmd := &cobra.Command{Use: "serve"}
 	addServeConfigFlags(cmd)
-	require.NoError(t, installServeMCP(t.Context(), cmd, server, &invocation{cfg: f.cfg}))
+	require.NoError(installServeMCP(t.Context(), cmd, server, &invocation{cfg: f.cfg}))
 	t.Cleanup(func() {
 		// Shutdown must finish after the test context is canceled.
-		require.NoError(t, server.Shutdown(context.WithoutCancel(t.Context())))
+		require.NoError(server.Shutdown(context.WithoutCancel(t.Context())))
 	})
 	payload := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_message","arguments":{"id":%d}}}`, f.message)
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(payload))
@@ -152,18 +159,18 @@ func TestXCleanupWaitsForNativeMCPReadResponse(t *testing.T) {
 	select {
 	case <-response.entered:
 	case <-time.After(10 * time.Second):
-		require.FailNow(t, "MCP response did not reach outer writer")
+		require.FailNow("MCP response did not reach outer writer")
 	}
-	require.Contains(t, string(response.captured), "synthetic aurora payload")
-	require.NotContains(t, string(response.captured), `"error":`)
+	require.Contains(string(response.captured), "synthetic aurora payload")
+	require.NotContains(string(response.captured), `"error":`)
 	probe := flock.New(f.cfg.AnalyticsDir() + ".x-content.lock")
 	locked, err := probe.TryLock()
-	require.NoError(t, err)
+	require.NoError(err)
 	if locked {
-		require.NoError(t, probe.Unlock())
+		require.NoError(probe.Unlock())
 	}
-	require.NoError(t, probe.Close())
-	assert.False(t, locked, "outer response must retain the content lease")
+	require.NoError(probe.Close())
+	assert.False(locked, "outer response must retain the content lease")
 	removeCtx, stop := context.WithTimeout(t.Context(), 10*time.Second)
 	removed := make(chan error, 1)
 	removeDone := make(chan struct{})
@@ -174,12 +181,12 @@ func TestXCleanupWaitsForNativeMCPReadResponse(t *testing.T) {
 	}()
 	t.Cleanup(func() { stop(); unblock(); <-removeDone })
 	dbPath, err := f.cfg.DatabasePath()
-	require.NoError(t, err)
+	require.NoError(err)
 	sourceLock := flock.New(dbPath + ".sync-" + strconv.FormatInt(f.source.ID, 10) + ".lock")
-	t.Cleanup(func() { require.NoError(t, sourceLock.Close()) })
+	t.Cleanup(func() { require.NoError(sourceLock.Close()) })
 	// Source ownership is taken before the content fence; observing it proves
 	// the actual removal has started while the response is still paused.
-	require.Eventually(t, func() bool {
+	require.Eventually(func() bool {
 		ok, err := sourceLock.TryLock()
 		if err != nil {
 			return false
@@ -191,13 +198,13 @@ func TestXCleanupWaitsForNativeMCPReadResponse(t *testing.T) {
 	}, 10*time.Second, 20*time.Millisecond)
 	select {
 	case <-removeDone:
-		require.FailNow(t, "removal finished while the response was paused")
+		require.FailNow("removal finished while the response was paused")
 	default:
 	}
 	unblock()
 	<-done
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), "synthetic aurora payload")
-	require.NoError(t, <-removed)
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	assert.Contains(response.Body.String(), "synthetic aurora payload")
+	require.NoError(<-removed)
 	stop()
 }
