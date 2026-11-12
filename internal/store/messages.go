@@ -1848,7 +1848,10 @@ func upsertMessageRawWithFormat(q querier, messageID int64, rawData []byte, form
 			raw_format = excluded.raw_format,
 			compression = excluded.compression
 	`, messageID, compressed.Bytes(), format)
-	return err
+	if err != nil || format != emailLinkageRawFormat || !hasCalendarToken(rawData) {
+		return err
+	}
+	return reopenEmailRepair(q, messageID)
 }
 
 // ErrInvalidMessageRaw marks raw message data that cannot be decompressed.
