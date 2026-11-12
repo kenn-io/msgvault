@@ -473,6 +473,26 @@ The MCP server exposes the following tools to connected AI clients:
 | `get_person_profile` | Read a saved person profile: contact history, current brief and its sources, contact details, non-sensitive attributes, employment, relationships, and categories. Includes the vCard UID and mapped CardDAV bindings when the daemon provides them; older daemons return no CardDAV binding entries. Excludes sensitive attributes, private Notes, and media; makes no provider calls. See [Brief text is data](#brief-text-is-data). | Exactly one of `person_id` (int) or `vcard_uid` (string; current or retired person UID, or mapped CardDAV UID) |
 | `list_directory_people` | List durable Directory people with filtering and last-contact ordering when the daemon supports API schema 2.13.0 or newer. `address` requires API schema 3.29.0 or newer and matches a literal, case-insensitive substring of current bound participant addresses and identifiers or curated contact points on saved people. Sparse or absent address matches can scan all saved people; combine a known `query` to narrow candidates. `last_contact_after` and `last_contact_before` accept inclusive RFC3339 timestamps or `YYYY-MM-DD` dates (midnight UTC). Pages default to 50 rows and are capped at 100. Sort defaults to `last_contact_desc`; allowed values are `last_contact_desc`, `last_contact_asc`, and `name`. Rows include identity, revision, contact state, last contact time, primary channel, categories, and organizations; API schema 3.10.0 or newer also provides the vCard UID and CardDAV bindings. Older daemons return empty values for those fields. `next_cursor` is opaque and belongs to the same filter set. `search_people` remains the separate observed-contact and profile search on older compatible daemons. | `query`, `address`, `cursor`, `limit`, `sort`, `last_contact_after`, `last_contact_before`, `contact_state`, `category`, `organization`, `primary_channel` |
 
+On unreleased `main`, owner sessions can use `list_carddav_connections`,
+`list_carddav_books`, `list_carddav_runs`, `list_carddav_conflicts` and
+`get_carddav_conflict` to inspect configured CardDAV state. Books and runs
+accept an optional exact `connection`; runs also accept `limit` (1–100) and
+`before_id`. Use the returned book and conflict IDs with
+`update_carddav_book_roles` and `resolve_carddav_conflict`. For
+`unpublish_carddav_person`, use a durable person ID from Directory or profile
+reads. Each write requires approval. Standalone `msgvault mcp` requires
+`--allow-carddav-writes`, plus `--http-allow-writes` for HTTP. Native
+`msgvault serve` requires `--mcp-allow-writes` and
+`--mcp-allow-carddav-writes` on `/mcp/writes`. Both HTTP paths require
+protocol `2026-07-28` or newer. Unpublication can remove the remote contact
+immediately. `sync_carddav` and `get_carddav_sync_status`
+also accept `connection`; a named selection is refused when the daemon cannot
+prove it supports the selector. Tools are advertised only when their native
+contracts are available. An archive with only orphaned saved connections also
+exposes the existing publication and sync tools when their contracts are available;
+their native availability checks still apply. Publication preview and approval
+remain separate.
+
 `query_sql` needs a SQLite daemon with API schema 2.31.0 or newer. It can read archive
 analytics files and views; DuckDB file access outside the analytics directory,
 network access, and extension loading are disabled. CLI and owner HTTP SQL
@@ -1032,7 +1052,7 @@ msgvault mcp --http 8080
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-person-merges` | `false` | Expose local person merge tools. Each merge needs client confirmation; HTTP also requires `--http-allow-writes`. |
-| `--allow-carddav-writes` | `false` | Expose CardDAV publication and sync tools. Each write needs client confirmation; HTTP also requires `--http-allow-writes`. |
+| `--allow-carddav-writes` | `false` | Expose CardDAV publication, sync, book-role, conflict-resolution and unpublication tools. Each write needs client confirmation; HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`, which write quoted archive text to the configured Kata project. The flag is the consent for these writes; they ask for no per-call confirmation, so stdio clients and reviews that file several issues work. `link_kata_evidence` writes only to issues in the configured project. HTTP also requires `--http-allow-writes`. The read-only `find_kata_issues` and `get_kata_issue_context` need API schema 3.12.0 or newer. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`. Treat event text as untrusted input and enable this only for sessions where the user has authorized calendar writes. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced. Without a key, use only behind your own network or authentication layer. |

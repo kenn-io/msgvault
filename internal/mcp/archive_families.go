@@ -21,13 +21,15 @@ func (f *ArchiveFamilies) allows(name string) bool {
 		return f.Kata
 	case strings.Contains(name, "_slack_"):
 		return f.Slack
+	case strings.Contains(name, "_carddav_"):
+		return f.CardDAV
 	}
 	switch name {
 	case ToolGetMeetingContext, ToolListMeetingActionItems, ToolGetMeetingMetrics:
 		return f.Meetings
 	case ToolFindChat:
 		return f.Chat
-	case ToolGetCardDAVPublication, ToolPreviewCardDAVPublication, ToolApproveCardDAVPublication, ToolSyncCardDAV, ToolGetCardDAVSyncStatus:
+	case ToolSyncCardDAV:
 		return f.CardDAV
 	}
 	return true

@@ -29,29 +29,37 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	if capabilities == nil {
 		return backend
 	}
-	hasRoute := func(id, method, path string, query ...string) bool {
-		for _, route := range capabilities.Routes {
-			if route.OperationID != id || route.Method != method || route.Path != path {
-				continue
-			}
-			for _, name := range query {
-				if !slices.Contains(route.QueryParameters, name) {
-					return false
-				}
-			}
-			return true
-		}
-		return false
+	routeCheck := func(id, method, path string, query ...string) bool {
+		return hasRoute(capabilities, id, method, path, query...)
 	}
-	if hasRoute("getSchedulerStatus", http.MethodGet, "/api/v1/scheduler/status") {
+	if routeCheck("getSchedulerStatus", http.MethodGet, "/api/v1/scheduler/status") {
 		backend.supported = append(backend.supported, "get_source_scheduler_status")
 	}
-	if hasRoute("triggerSync", http.MethodPost, "/api/v1/sync/{account}", "source_type") && hasRoute("listSourceStatus", http.MethodGet, "/api/v1/sources/status", "source_type") {
+	if routeCheck("triggerSync", http.MethodPost, "/api/v1/sync/{account}", "source_type") && routeCheck("listSourceStatus", http.MethodGet, "/api/v1/sources/status", "source_type") {
 		backend.supported = append(backend.supported, "sync_source")
 	}
-	backend.supported = append(backend.supported, loopMCPCapabilities(hasRoute, capabilities)...)
-	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, loopMCPCapabilities(routeCheck, capabilities)...)
+	backend.supported = append(backend.supported, sourceMCPCapabilities(routeCheck, capabilities)...)
+	backend.supported = append(backend.supported, cardDAVMCPCapabilities(routeCheck, capabilities)...)
 	return backend
+}
+
+func hasRoute(capabilities *apiprotocol.MCPCapabilities, id, method, path string, query ...string) bool {
+	if capabilities == nil {
+		return false
+	}
+	for _, route := range capabilities.Routes {
+		if route.OperationID != id || route.Method != method || route.Path != path {
+			continue
+		}
+		for _, name := range query {
+			if !slices.Contains(route.QueryParameters, name) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func (b *daemonMCPOperations) capabilities() []string { return slices.Clone(b.supported) }
@@ -70,6 +78,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		}
 		return readMCPOperationJSON[generated.TriggerSyncResponse](ctx, b.client, http.MethodPost, "/api/v1/sync/{account}", &generated.TriggerSyncRequestOptions{PathParams: &generated.TriggerSyncPath{Account: account}, Query: &generated.TriggerSyncQuery{SourceType: &sourceType}}, http.StatusAccepted)
 	default:
+		if result, handled, err := b.executeCardDAVOperation(ctx, name, args); handled {
+			return result, err
+		}
 		if result, handled, err := b.executeLoopOperation(ctx, name, args); handled {
 			return result, err
 		}
@@ -82,6 +93,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 
 func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name string, args map[string]any) (string, error) {
 	if slices.Contains(b.supported, name) {
+		if disclosure, handled, err := b.cardDAVOperationDisclosure(ctx, name, args); handled {
+			return disclosure, err
+		}
 		if disclosure, handled, err := b.loopOperationDisclosure(name, args); handled {
 			return disclosure, err
 		}
@@ -159,6 +173,10 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 }
 
 func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, success ...int) (*mcpserver.OperationResult, error) {
+	return readMCPOperationJSONWithUncertainCodes[T](ctx, client, method, path, options, classify, nil, success...)
+}
+
+func readMCPOperationJSONWithUncertainCodes[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, uncertainCodes []string, success ...int) (*mcpserver.OperationResult, error) {
 	writes := method != http.MethodGet
 	response, err := client.DoGeneratedRequestWithContext(ctx, method, path, options)
 	if err != nil {
@@ -181,6 +199,9 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 		}
 		_ = json.Unmarshal(data, &failure)
 		code := failure.Error
+		if slices.Contains(uncertainCodes, code) {
+			return operationFailure(code, true), nil
+		}
 		if classify != nil && classify(code) {
 			return operationFailure(code, false), nil
 		}

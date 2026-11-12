@@ -66,6 +66,8 @@ func mcpOperationDescribed(operationID string) bool {
 	case "listSourceStatus", "listSourceIdentities", "getSchedulerStatus", "triggerSync",
 		"getSettings", "patchSettings", "getParticipant", "getCacheBuildStatus",
 		"getPersonProfile", "patchPerson", "createPerson", "enableLocalEmbeddings",
+		"listCardDAVConnections", "listCardDAVBooks", "listCardDAVRuns", "getCardDAVStatus", "syncCardDAV",
+		"listCardDAVConflicts", "getCardDAVConflict", "updateCardDAVBookRoles", "resolveCardDAVConflict", "unpublishCardDAVPerson", "getCardDAVPublication",
 		"listLoops", "markLoopDone", "snoozeLoop", "reopenLoop":
 		return true
 	default:

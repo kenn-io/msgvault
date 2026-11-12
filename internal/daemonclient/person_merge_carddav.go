@@ -99,9 +99,13 @@ func (c *Client) ApproveCardDAVPublication(ctx context.Context, id int64, token 
 	return response.JSON200, nil
 }
 
-func (c *Client) SyncCardDAV(ctx context.Context, full bool) (*generated.SyncResult, error) {
+// SupportsCardDAVSelector is false without a discovery-backed wrapper.
+func (c *Client) SupportsCardDAVSelector() bool { return false }
+
+// SyncCardDAV synchronizes the selected connection, or all if nil.
+func (c *Client) SyncCardDAV(ctx context.Context, full bool, connection *string) (*generated.SyncResult, error) {
 	response, err := APIResponse(c, func(api *apiclient.Client) (*generated.SyncCardDAVResp, error) {
-		return api.SyncCardDAVWithResponse(ctx, &generated.SyncCardDAVRequestOptions{Body: &generated.SyncCardDAVBody{Full: &full}})
+		return api.SyncCardDAVWithResponse(ctx, &generated.SyncCardDAVRequestOptions{Body: &generated.SyncCardDAVBody{Full: &full, Connection: connection}})
 	})
 	if err != nil {
 		return nil, err
@@ -112,9 +116,10 @@ func (c *Client) SyncCardDAV(ctx context.Context, full bool) (*generated.SyncRes
 	return response.JSON200, nil
 }
 
-func (c *Client) GetCardDAVSyncStatus(ctx context.Context) (*generated.CardDAVStatusResponse, error) {
+// GetCardDAVSyncStatus reads the selected connection, or the aggregate if nil.
+func (c *Client) GetCardDAVSyncStatus(ctx context.Context, connection *string) (*generated.CardDAVStatusResponse, error) {
 	response, err := APIResponse(c, func(api *apiclient.Client) (*generated.GetCardDAVStatusResp, error) {
-		return api.GetCardDAVStatusWithResponse(ctx, &generated.GetCardDAVStatusRequestOptions{})
+		return api.GetCardDAVStatusWithResponse(ctx, &generated.GetCardDAVStatusRequestOptions{Query: &generated.GetCardDAVStatusQuery{Connection: connection}})
 	})
 	if err != nil {
 		return nil, err

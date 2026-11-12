@@ -20,8 +20,24 @@ type PersonCardDAVBackend interface {
 	GetCardDAVPublication(ctx context.Context, personID int64) (*generated.CardDAVPublicationResponse, error)
 	PreviewCardDAVPublication(ctx context.Context, personID int64) (*generated.CardDAVPublicationPreviewResponse, error)
 	ApproveCardDAVPublication(ctx context.Context, personID int64, token string) (*generated.CardDAVPublicationResponse, error)
-	SyncCardDAV(ctx context.Context, full bool) (*generated.SyncResult, error)
-	GetCardDAVSyncStatus(ctx context.Context) (*generated.CardDAVStatusResponse, error)
+	SupportsCardDAVSelector() bool
+	SyncCardDAV(ctx context.Context, full bool, connection *string) (*generated.SyncResult, error)
+	GetCardDAVSyncStatus(ctx context.Context, connection *string) (*generated.CardDAVStatusResponse, error)
+}
+
+func cardDAVSelector(args map[string]any, backend PersonCardDAVBackend) (*string, error) {
+	value, present := args["connection"]
+	if !present {
+		return nil, nil //nolint:nilnil // An absent optional connection means all configured connections.
+	}
+	connection, ok := value.(string)
+	if !ok || connection == "" {
+		return nil, errors.New("invalid CardDAV connection")
+	}
+	if !backend.SupportsCardDAVSelector() {
+		return nil, errors.New("named CardDAV connection is not supported by the daemon")
+	}
+	return &connection, nil
 }
 
 func personCardDAVAvailable(c catalogCapabilities) bool { return c.personCardDAV }
@@ -83,12 +99,13 @@ func approveCardDAVPublicationDefinition() toolDefinition {
 
 func syncCardDAVDefinition() toolDefinition {
 	return personCardDAVDefinition(ToolSyncCardDAV, "Run synchronous CardDAV reconciliation and return actual book, create, update, and remove counters. Zero writes do not prove a remote contact changed.", map[string]*jsonschema.Schema{
-		"full": booleanSchema("Force full reconciliation; default false"),
+		"full":       booleanSchema("Force full reconciliation; default false"),
+		"connection": stringSchema("Exact saved connection name; omit for all"),
 	}, nil, outputSchemaFor[generated.SyncResult](), true, true, (*handlers).syncCardDAV)
 }
 
 func getCardDAVSyncStatusDefinition() toolDefinition {
-	return personCardDAVDefinition(ToolGetCardDAVSyncStatus, "Read current and latest CardDAV sync state, including pending, failed, and successful runs.", nil, nil, outputSchemaFor[generated.CardDAVStatusResponse](), false, false, (*handlers).getCardDAVSyncStatus)
+	return personCardDAVDefinition(ToolGetCardDAVSyncStatus, "Read current and latest CardDAV sync state, including pending, failed, and successful runs.", map[string]*jsonschema.Schema{"connection": stringSchema("Exact saved connection name; omit for all")}, nil, outputSchemaFor[generated.CardDAVStatusResponse](), false, false, (*handlers).getCardDAVSyncStatus)
 }
 
 func mcpPersonCardDAVResult(value any, err error) (*toolResult, error) {
@@ -224,13 +241,21 @@ func (h *handlers) approveCardDAVPublication(ctx context.Context, req toolReques
 }
 
 func (h *handlers) syncCardDAV(ctx context.Context, req toolRequest) (*toolResult, error) {
+	connection, err := cardDAVSelector(req.GetArguments(), h.personCardDAV)
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
 	full, _ := req.GetArguments()["full"].(bool)
 	mode := "incremental"
 	if full {
 		mode = "full"
 	}
 	message := fmt.Sprintf("Run %s CardDAV synchronization across the configured address books? This may create, update, or remove remote contacts.", mode)
-	if status, err := h.personCardDAV.GetCardDAVSyncStatus(ctx); err == nil && status != nil && status.Account != nil {
+	if connection != nil {
+		message = fmt.Sprintf("Run %s CardDAV synchronization for connection %q? This may create, update, or remove remote contacts.", mode, *connection)
+	}
+	status, _ := h.personCardDAV.GetCardDAVSyncStatus(ctx, connection)
+	if status != nil && status.Account != nil {
 		message += fmt.Sprintf("\nAccount: %q at %q.", status.Account.Username, status.Account.BaseURL)
 	} else {
 		message += "\nAccount details unavailable."
@@ -238,11 +263,15 @@ func (h *handlers) syncCardDAV(ctx context.Context, req toolRequest) (*toolResul
 	if err := req.confirmUserAction(ctx, message); err != nil {
 		return confirmationToolError(err)
 	}
-	value, err := h.personCardDAV.SyncCardDAV(ctx, full)
+	value, err := h.personCardDAV.SyncCardDAV(ctx, full, connection)
 	return mcpPersonCardDAVResult(value, err)
 }
 
-func (h *handlers) getCardDAVSyncStatus(ctx context.Context, _ toolRequest) (*toolResult, error) {
-	value, err := h.personCardDAV.GetCardDAVSyncStatus(ctx)
+func (h *handlers) getCardDAVSyncStatus(ctx context.Context, req toolRequest) (*toolResult, error) {
+	connection, err := cardDAVSelector(req.GetArguments(), h.personCardDAV)
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	value, err := h.personCardDAV.GetCardDAVSyncStatus(ctx, connection)
 	return mcpPersonCardDAVResult(value, err)
 }
