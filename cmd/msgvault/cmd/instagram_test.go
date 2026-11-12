@@ -134,7 +134,7 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 	assert.Contains(err.Error(), "instagram profile example-account")
 	assert.Contains(err.Error(), "instagram profile second")
 	assert.Contains(err.Error(), "instagram profile ads")
-	assert.Contains(output.String(), "Partial coverage")
+	assert.Contains(output.String(), "Some comments weren't synced")
 	assert.Equal(1, strings.Count(output.String(), ", 1 ad media skipped"), "only the ads profile skips another account's media")
 	for _, source := range cfg.InstagramComments {
 		row, err := st.GetSourceByTypeAndIdentifier(t.Context(), meta.InstagramSourceType, meta.InstagramSourceIdentifier(source.AppID, source.PageID, source.InstagramAccountID))

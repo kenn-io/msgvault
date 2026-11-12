@@ -46,9 +46,9 @@ func TestExecutableStateRejectsWhatTheStoreWouldNotPersist(t *testing.T) {
 	}{
 		{
 			name:    "unsupported schema version",
-			view:    store.SavedView{ID: 1, SchemaVersion: 3, CanonicalState: json.RawMessage(`{}`)},
+			view:    store.SavedView{ID: 1, SchemaVersion: 4, CanonicalState: json.RawMessage(`{}`)},
 			wantErr: store.ErrSavedViewUnsupportedSchemaVersion,
-			message: "schema version 3",
+			message: "schema version 4",
 		},
 		{
 			name:    "malformed state",
