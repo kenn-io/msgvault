@@ -52,7 +52,7 @@ func (m Model) mainSettingsParts() (string, string, string, int) {
 	if m.settings.loading {
 		return m.styles.titleBar.Render(title), strings.Join(append(lines, m.styles.loading.Render("Loading settings…")), "\n"), "[Esc] Back", 0
 	}
-	availableHeight := m.settingsListHeight(lines)
+	availableHeight := max(m.height-3-settingsWrappedRows(lines, max(m.width, 20)), 4)
 	focus := settingsWrappedRows(lines, max(m.width, 20))
 	if m.settingsIsNarrow() && !m.settings.narrowFields {
 		focus += min(m.settings.groupCursor, max(availableHeight-2, 0)) + 1

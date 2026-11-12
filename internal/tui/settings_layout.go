@@ -64,17 +64,6 @@ func (m *Model) revealSettingsFocus() {
 	m.settings.scrollOffset = v.YOffset()
 }
 
-// settingsListHeight keeps the notices, the selected row, and the footer on one
-// screen: the list gets the lines left once they and the scroll hint are placed.
-func (m Model) settingsListHeight(notices []string) int {
-	width := max(m.width, 20)
-	used := 2 + len(wrapActions(m.settingsFooter(), width))
-	for _, notice := range notices {
-		used += strings.Count(ansi.Wrap(notice, width, ""), "\n") + 1
-	}
-	return min(max(m.height-4-len(notices), 4), max(m.height-used, 2))
-}
-
 func (m Model) settingsScreen() (string, string, string, int) {
 	if m.settings.confirmDiscard {
 		return m.styles.titleBar.Render("Settings *"), m.styles.modalTitle.Render("Discard unsaved changes?") + "\n\nYour settings drafts have not been saved.", "[Y] Discard  [N/Esc] Keep editing", 0
