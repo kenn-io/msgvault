@@ -579,7 +579,8 @@ next minor above the greatest recorded version, and move feature minimum constan
 introduced to it. Local tests read the base from the common ancestor of `HEAD` and `origin/main`;
 if that fails, fetch `origin/main` with its history, or set `MSGVAULT_API_CONTRACT_BASE` to a SHA
 or ref. CI uses the pull request or merge group base, the previous SHA for main pushes, and the
-common ancestor with `main` for manual and scheduled runs.
+common ancestor with `main` for scheduled and manual main runs. Manual feature runs merge `main`
+into the checkout and use `main` as the base.
 
 ## Archive schema version maintenance
 
