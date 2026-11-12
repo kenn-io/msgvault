@@ -120,6 +120,34 @@ func TestMeetingSuggestionsScheduledDuration(t *testing.T) {
 	}
 }
 
+func TestMeetingSuggestionsScheduledStartEvidence(t *testing.T) {
+	for _, metadata := range []struct{ name, value string }{{"missing", `{}`}, {"malformed", `{"scheduled_start":"tomorrow-ish"}`}} {
+		t.Run(metadata.name, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, first := calendarFixture(t, st, "evidence-first", `{"id":"first","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+			_, next := calendarFixture(t, st, "evidence-next", `{"id":"next","start":{"dateTime":"2027-03-14T11:00:00Z"},"end":{"dateTime":"2027-03-14T12:00:00Z"}}`)
+			data, note := projectionFixture(t, st, "evidence-note", "twenty_json", `{"schema_version":1,"recording":{"startedAt":"2027-03-14T10:50:00Z","summary":{"markdown":"Summary"}},"calendar_event":{"startsAt":"2027-03-14T10:00:00Z","endsAt":"2027-03-14T11:00:00Z"}}`)
+			data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, 50, 0, 0, time.UTC), Valid: true}
+			_, err := st.UpsertMessage(data.Message)
+			r.NoError(err)
+			_, err = st.db.ExecContext(t.Context(), `UPDATE messages SET metadata=? WHERE id=?`, metadata.value, note)
+			r.NoError(err)
+			page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}}, 10, nil)
+			r.NoError(err)
+			r.Len(page.Suggestions, 1)
+			r.Equal(fmt.Sprintf("evt:%d", first), page.Suggestions[0].Ref)
+			page, err = st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: first}}, 10, nil)
+			r.NoError(err)
+			r.Len(page.Suggestions, 1)
+			r.Equal(time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), page.Suggestions[0].Start.UTC())
+			page, err = st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: next}}, 10, nil)
+			r.NoError(err)
+			r.Empty(page.Suggestions)
+		})
+	}
+}
+
 func TestMeetingSuggestionsRankingAndSavedChoices(t *testing.T) {
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
