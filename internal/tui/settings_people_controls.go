@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
@@ -218,12 +217,6 @@ func (m Model) handlePeopleInferenceControlMsg(msg tea.Msg) (tea.Model, tea.Cmd)
 	return m, nil
 }
 
-// fingerprintLine fills the first line with the start of the value, so the
-// label is never left alone when the value is wider than the screen.
-func (m Model) fingerprintLine(fingerprint string) string {
-	return ansi.Hardwrap("Fingerprint: "+textutil.SanitizeTerminal(fingerprint), max(m.width, 20), true)
-}
-
 func (m Model) peopleControlsParts() (string, string, string) {
 	s := m.settings.peopleControls
 	var lines []string
@@ -244,7 +237,7 @@ func (m Model) peopleControlsParts() (string, string, string) {
 		if configured == "" {
 			configured = "none"
 		}
-		lines = append(lines, "Configured: "+configured, m.fingerprintLine(status.ConfiguredFingerprint))
+		lines = append(lines, "Configured: "+configured, strings.Join(wrapText("Fingerprint: "+textutil.SanitizeTerminal(status.ConfiguredFingerprint), max(m.width, 20)), "\n"))
 		if status.ConfiguredEnabled {
 			lines = append(lines, "People inference: enabled")
 		} else {
@@ -262,7 +255,7 @@ func (m Model) peopleControlsParts() (string, string, string) {
 		default:
 			lines = append(lines, "Revoke consent for "+textutil.SanitizeTerminal(s.confirmProfile)+"?")
 		}
-		lines = append(lines, m.fingerprintLine(s.confirmFingerprint))
+		lines = append(lines, strings.Join(wrapText("Fingerprint: "+textutil.SanitizeTerminal(s.confirmFingerprint), max(m.width, 20)), "\n"))
 		actions = "[y] Confirm  [n/Esc] Cancel"
 	} else if s.pending {
 		actions = "Applying people inference change…"

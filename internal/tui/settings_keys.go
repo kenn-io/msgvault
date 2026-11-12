@@ -37,7 +37,7 @@ func (m Model) handleSettingsKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		if before.peopleControls.confirm != after.peopleControls.confirm && after.peopleControls.confirm != "" {
 			next.settings.scrollOffset = settingsScrollBottom
 		}
-		if codexSelectionChanged(before, after) || (!after.peopleControls.active && !after.codex.active && (before.rowCursor != after.rowCursor || before.narrowFields != after.narrowFields || before.editing != after.editing)) {
+		if codexSelectionChanged(before, after) || (!after.peopleControls.active && !after.codex.active && (before.groupCursor != after.groupCursor || before.rowCursor != after.rowCursor || before.narrowFields != after.narrowFields || before.editing != after.editing)) {
 			next.settings.scrollOffset = settingsScrollBottom
 		}
 	}

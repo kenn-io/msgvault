@@ -74,6 +74,22 @@ func TestSettingsViewportFingerprint(t *testing.T) {
 	}
 }
 
+func TestSettingsViewportCategorySelectionAfterPeopleControls(t *testing.T) {
+	snapshot := SettingsSnapshot{Groups: []SettingsGroup{{ID: "archive", Label: "Archive"}, {ID: "daemon", Label: "Daemon"}}, Fields: []SettingField{{Key: "archive.enabled", Group: "archive", Label: "Archive", Kind: SettingKindBoolean, Value: boolSettingValue(true)}, {Key: "daemon.enabled", Group: "daemon", Label: "Daemon", Kind: SettingKindBoolean, Value: boolSettingValue(true)}}}
+	backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{snapshot}, status: PeopleInferenceStatus{Configured: "example-profile", Running: "example-profile", ConfiguredFingerprint: strings.Repeat("a", 64), PendingRestart: true}}
+	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 40, 12)
+	model.settingsBackend = backend
+	model, load := sendKey(t, model, key('i'))
+	model = sendSettingsMsg(t, model, load())
+	model, _ = sendKey(t, model, keyEsc())
+	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	model, _ = sendKey(t, model, key('j'))
+	screen := uv.NewScreenBuffer(40, 12)
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, screen.String(), "▶ Daemon")
+	assert.Contains(t, screen.String(), "[Esc]")
+}
+
 func TestSettingsViewportSettingsRestartNotice(t *testing.T) {
 	for _, tc := range []struct {
 		name             string

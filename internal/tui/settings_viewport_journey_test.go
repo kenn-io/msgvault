@@ -14,9 +14,9 @@ import (
 )
 
 type viewportControlActions interface {
-	DisablePeopleInference(context.Context, string) (PeopleInferenceStatus, error)
-	RevokePeopleInferenceConsent(context.Context, string, string) (PeopleInferenceStatus, error)
-	RemovePeopleInferenceProfile(context.Context, string, string) (PeopleInferenceStatus, error)
+	DisablePeopleInference(ctx context.Context, fingerprint string) (PeopleInferenceStatus, error)
+	RevokePeopleInferenceConsent(ctx context.Context, profile, fingerprint string) (PeopleInferenceStatus, error)
+	RemovePeopleInferenceProfile(ctx context.Context, profile, fingerprint string) (PeopleInferenceStatus, error)
 }
 
 type viewportFullBackend struct {
@@ -74,7 +74,7 @@ func TestSettingsViewportSaveKeepsSelectedFieldVisible(t *testing.T) {
 	snapshot.Fields = append(snapshot.Fields, SettingField{Key: "server.daemon_auto_start", Group: "server", Label: "Automatic start", Kind: SettingKindBoolean, Value: boolSettingValue(true), RestartRequired: true})
 	saved := snapshot
 	saved.PendingRestart = true
-	backend := &viewportFullBackend{fakePeopleInferenceBackend: &fakePeopleInferenceBackend{fakeSettingsBackend: fakeSettingsBackend{loads: []SettingsSnapshot{snapshot}, save: saved}}, viewportControlActions: &fakePeopleInferenceControlBackend{}}
+	backend := &viewportFullBackend{fakePeopleInferenceBackend: &fakePeopleInferenceBackend{loads: []SettingsSnapshot{snapshot}, save: saved}, viewportControlActions: &fakePeopleInferenceControlBackend{}}
 	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 40, 12)
 	model.settingsBackend = backend
 	model, _ = sendKey(t, model, keyEnter())

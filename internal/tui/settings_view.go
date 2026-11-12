@@ -36,20 +36,21 @@ func (m Model) mainSettingsParts() (string, string, string) {
 		lines = append(lines, m.styles.flash.Render(settingsRestartNotice))
 	}
 	if status := m.settings.peopleInferenceStatus; status != nil {
-		configured, running := textutil.SanitizeTerminal(status.Configured), textutil.SanitizeTerminal(status.Running)
+		configured := textutil.SanitizeTerminal(status.Configured)
+		running := textutil.SanitizeTerminal(status.Running)
 		if configured == "" {
 			configured = "none"
 		}
 		if running == "" {
 			running = "none"
 		}
-		lines = append(lines, "People inference: "+configured+" · Running: "+running)
+		lines = append(lines, strings.Join(wrapText("People inference: "+configured+" · Running: "+running, max(m.width, 20)), "\n"))
 		if status.ConfiguredFingerprint != "" {
-			lines = append(lines, "Profile fingerprint: "+textutil.SanitizeTerminal(status.ConfiguredFingerprint))
+			lines = append(lines, strings.Join(wrapText("Profile fingerprint: "+textutil.SanitizeTerminal(status.ConfiguredFingerprint), max(m.width, 20)), "\n"))
 		}
 	}
 	if m.settings.loading {
-		return m.styles.titleBar.Render(title), strings.Join(append(lines, "Loading settings…"), "\n"), "[Esc] Back"
+		return m.styles.titleBar.Render(title), strings.Join(append(lines, m.styles.loading.Render("Loading settings…")), "\n"), "[Esc] Back"
 	}
 	availableHeight := m.settingsListHeight(lines)
 	if m.settingsIsNarrow() {
@@ -121,7 +122,7 @@ func (m Model) renderSettingsFields(width, height int) string {
 		sb.WriteString("No settings in this category")
 		return sb.String()
 	}
-	maxRows := max(min(len(fields), height/2, height-1), 1)
+	maxRows := max(min(len(fields), height/2), 1)
 	start := 0
 	if m.settings.rowCursor >= maxRows {
 		start = m.settings.rowCursor - maxRows + 1
@@ -238,5 +239,5 @@ func (m Model) settingsFooter() string {
 		field.Kind == SettingKindSecret && !field.ReadOnly {
 		return "[j/k] Row  [h/l] Category  [Enter] Set secret  [x] Clear" + peopleEntry + "  [Ctrl+S] Save  [Esc] Back"
 	}
-	return "[j/k] Row [h/l] Category [Enter] Edit [Space] Toggle" + peopleEntry + " [Ctrl+S] Save [Esc] Back"
+	return "[j/k] Row  [h/l] Category  [Enter] Edit  [Space] Toggle" + peopleEntry + "  [Ctrl+S] Save  [Esc] Back"
 }
