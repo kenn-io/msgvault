@@ -106,6 +106,11 @@ func TestMeetingLinkDecisionLargeGroupsLinkAndSplit(t *testing.T) {
 	record, err := st.MeetingRecordContext(t.Context(), ref(groups[0][1]))
 	requirements.NoError(err)
 	requirements.Equal([]int64{groups[0][1]}, record.MessageIDs)
+	_, err = st.DecideMeetingLinkContext(t.Context(), ref(groups[0][0]), ref(groups[0][1]), "clear")
+	requirements.NoError(err)
+	record, err = st.MeetingRecordContext(t.Context(), ref(groups[0][1]))
+	requirements.NoError(err)
+	requirements.Equal(all, record.MessageIDs)
 }
 
 func TestMeetingLinkDecisionJoinsUnscheduledNotesAndUndoes(t *testing.T) {
@@ -160,6 +165,31 @@ func TestMeetingLinkDecisionJoinsUnscheduledNotesAndUndoes(t *testing.T) {
 func TestMeetingLinkDecisionConflictAndClear(t *testing.T) {
 	for _, order := range [][3]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}} {
 		for _, reverse := range []bool{false, true} {
+			t.Run(fmt.Sprintf("split_order_%v_reverse_%v", order, reverse), func(t *testing.T) {
+				r := require.New(t)
+				st := newRFC822IDBackfillBackendStore(t)
+				var refs [3]MeetingLinkRef
+				for i := range refs {
+					_, id := projectionFixture(t, st, fmt.Sprintf("split-permutation-%d", i), "meeting_json", `{}`)
+					refs[i] = MeetingLinkRef{Kind: "msg", MessageID: id}
+				}
+				a, b, c := refs[order[0]], refs[order[1]], refs[order[2]]
+				_, err := st.DecideMeetingLinkContext(t.Context(), a, b, "link")
+				r.NoError(err)
+				_, err = st.DecideMeetingLinkContext(t.Context(), b, c, "link")
+				r.NoError(err)
+				left, right := a, c
+				if reverse {
+					left, right = right, left
+				}
+				_, err = st.DecideMeetingLinkContext(t.Context(), left, right, "unlink")
+				r.ErrorIs(err, ErrMeetingLinkConflict)
+				for _, ref := range refs {
+					record, err := st.MeetingRecordContext(t.Context(), ref)
+					r.NoError(err)
+					r.ElementsMatch([]int64{a.MessageID, b.MessageID, c.MessageID}, record.MessageIDs)
+				}
+			})
 			t.Run(fmt.Sprintf("order_%v_reverse_%v", order, reverse), func(t *testing.T) {
 				r := require.New(t)
 				st := newRFC822IDBackfillBackendStore(t)
@@ -203,7 +233,7 @@ func TestMeetingLinkDecisionConflictAndClear(t *testing.T) {
 		_, err := st.DecideMeetingLinkContext(t.Context(), refs[pair[0]], refs[pair[1]], "link")
 		requirements.NoError(err)
 	}
-	result, err := st.DecideMeetingLinkContext(t.Context(), refs[0], refs[2], "unlink")
+	result, err := st.DecideMeetingLinkContext(t.Context(), refs[1], refs[2], "unlink")
 	requirements.NoError(err)
 	assertions.Equal("split", result.State)
 	for i, ref := range refs[:3] {

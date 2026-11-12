@@ -72,7 +72,8 @@ keeping later explicit choices. Permanently deleting either message removes
 its choices. A choice saved directly on a pair takes precedence over copied
 choices. When copied choices disagree, unlink takes precedence. If a third copy
 matches both sides of a split, it joins the first compatible group in a stable
-order.
+order. A link or split that would break another saved link returns a conflict.
+Reset the conflicting pair first to make that change.
 
 Records show whether a calendar copy was cancelled or deleted at its source.
 When a recurrence cannot be expanded, the record keeps the copies it found and

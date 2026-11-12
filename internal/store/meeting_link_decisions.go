@@ -149,14 +149,17 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			canonicalA, canonicalB = canonicalB, canonicalA
 			recordA, recordB = recordB, recordA
 		}
-		active := []meetingDecisionEdge{{a: canonicalA, b: canonicalB}}
-		if decision == "link" {
+		var active []meetingDecisionEdge
+		if decision != "clear" {
 			graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{a, b}, &budget)
 			if err != nil {
 				return err
 			}
 			root, links := graph.reduce()
 			for _, link := range links {
+				if compareMeetingEndpoints(link.a, canonicalA) == 0 && compareMeetingEndpoints(link.b, canonicalB) == 0 {
+					continue
+				}
 				if root(link.a.ref()) == root(link.b.ref()) {
 					active = append(active, link)
 				}
@@ -231,36 +234,20 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		if err != nil {
 			return err
 		}
-		if state == "link" {
+		if state != "automatic" {
 			budget = calrecur.RequestReadBudget
 			graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{a, b}, &budget)
 			if err != nil {
 				return err
 			}
 			root, _ := graph.reduce()
+			if (root(canonicalA.ref()) == root(canonicalB.ref())) != (state == "link") {
+				return fmt.Errorf("%w: cannot save %s for %s %s", ErrMeetingLinkConflict, state, a.ref(), b.ref())
+			}
 			for _, link := range active {
 				if root(link.a.ref()) != root(link.b.ref()) {
-					return fmt.Errorf("%w: cannot save link for %s %s", ErrMeetingLinkConflict, a.ref(), b.ref())
+					return fmt.Errorf("%w: cannot save %s for %s %s", ErrMeetingLinkConflict, state, a.ref(), b.ref())
 				}
-			}
-		} else if state != "automatic" {
-			leftRef, err := a.meetingRef()
-			if err != nil {
-				return err
-			}
-			record, err := s.meetingRecordContext(ctx, leftRef)
-			if err != nil {
-				return err
-			}
-			found := false
-			for _, id := range record.MessageIDs {
-				found = found || b.Kind == meetingRefMessage && id == b.ID
-			}
-			for _, link := range record.Links {
-				found = found || b.Kind == meetingRefEvent && (link.Ref == b.ref() || b.Key == "" && link.MessageID == b.ID)
-			}
-			if found {
-				return fmt.Errorf("%w: cannot save %s for %s %s", ErrMeetingLinkConflict, state, a.ref(), b.ref())
 			}
 		}
 		result = MeetingLinkDecisionResult{Left: canonicalA.ref(), Right: canonicalB.ref(), State: state}
