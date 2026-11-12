@@ -24,20 +24,21 @@ func (w *MediaSubmitter) readVoiceTranscripts(ctx context.Context) error {
 		cancel()
 		if err == nil && transcript.VaultUID == mapping.VaultUID && transcript.EvidenceState == "ready" {
 			text := generatedVoiceText(transcript)
-			evidence, err := w.candidateEvidence(ctx, archiveUID, mapping.AttachmentID)
-			if err != nil {
-				return err
-			}
-			if !evidence.missing && evidence.gapCode == "" {
-				err = w.gated(ctx, func() error {
-					if evidence.transcript != "" {
-						return w.store.ReconcileBeeperMediaMapping(ctx, descriptorMapping(w.destination, evidence.candidate, evidence.descriptor))
-					}
-					return w.store.SaveVoiceTranscript(ctx, mapping, text)
-				})
+			err = w.gated(ctx, func() error {
+				evidence, err := w.candidateEvidence(ctx, archiveUID, mapping.AttachmentID)
 				if err != nil {
 					return err
 				}
+				if evidence.missing || evidence.gapCode != "" {
+					return nil
+				}
+				if evidence.transcript != "" {
+					return w.store.ReconcileBeeperMediaMapping(ctx, descriptorMapping(w.destination, evidence.candidate, evidence.descriptor))
+				}
+				return w.store.SaveVoiceTranscript(ctx, mapping, text)
+			})
+			if err != nil {
+				return err
 			}
 		}
 		if ctx.Err() != nil {
