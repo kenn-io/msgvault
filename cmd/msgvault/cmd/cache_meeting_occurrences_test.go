@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -331,7 +332,7 @@ func TestMeetingCountsPinnedSnapshot(t *testing.T) {
 					} else {
 						cancelled := persist(calendar.ID, "event", "calendar_event", "gcal_json", `{"id":"event","status":"cancelled","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"}}`)
 						if cancelled != event {
-							return fmt.Errorf("updated event ID changed")
+							return errors.New("updated event ID changed")
 						}
 					}
 					if err != nil {

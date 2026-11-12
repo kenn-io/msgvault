@@ -22,6 +22,7 @@ type meetingSQLReaderKey struct{}
 
 type reboundSQLReader struct {
 	SQLReader
+
 	rebind func(string) string
 }
 

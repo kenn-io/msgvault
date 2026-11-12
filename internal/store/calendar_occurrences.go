@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	calendarExceptionKind = "exception"
-	calendarSeriesKind    = "series"
+	calendarCancelledStatus = "cancelled"
+	calendarExceptionKind   = "exception"
+	calendarSeriesKind      = "series"
 )
 
 type CalendarOccurrence struct {
@@ -111,7 +112,7 @@ func (s *Store) calendarRowsCursor(ctx context.Context, rows []CalendarEventRow,
 		}
 		status := e.Status
 		if o.Cancelled {
-			status = "cancelled"
+			status = calendarCancelledStatus
 		}
 		attendees := e.Attendees
 		if attendees == nil {
@@ -139,11 +140,11 @@ func (s *Store) calendarRowsCursor(ctx context.Context, rows []CalendarEventRow,
 			if effective.Event.ICalUID == "" {
 				effective.Event.ICalUID = row.Event.ICalUID
 			}
-			if effective.Event.Status == "cancelled" && fields["start"] == nil && fields["end"] == nil {
+			if effective.Event.Status == calendarCancelledStatus && fields["start"] == nil && fields["end"] == nil {
 				effective = inheritSparseCalendarCancellation(effective, row, fields)
 			}
 		}
-		if row.Event.Status == "cancelled" {
+		if row.Event.Status == calendarCancelledStatus {
 			o.Cancelled = true
 		}
 		original := o.Original
@@ -225,7 +226,7 @@ func (s *Store) calendarRowsCursor(ctx context.Context, rows []CalendarEventRow,
 
 // calendarEventOccurrence keeps each known bound and leaves unavailable ones zero.
 func calendarEventOccurrence(e calevent.Event, id int64) calrecur.Occurrence {
-	o := calrecur.Occurrence{AllDay: e.AllDay, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == "cancelled", ExceptionRef: id, HasException: true}
+	o := calrecur.Occurrence{AllDay: e.AllDay, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == calendarCancelledStatus, ExceptionRef: id, HasException: true}
 	if e.Start != nil {
 		o.Start = *e.Start
 	}
@@ -272,7 +273,7 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 		return bounded, 0, "unsupported recurrence", nil //nolint:nilerr // Report an unsupported series alongside readable occurrences.
 	}
 	// A deleted series keeps only its archived exceptions.
-	if row.Event.Kind == "single" || row.Event.Status == "cancelled" {
+	if row.Event.Kind == "single" || row.Event.Status == calendarCancelledStatus {
 		return resolved, 0, "", nil
 	}
 	const requestLimit = "request work limit reached; long-running series count their steps from their start"
@@ -377,7 +378,7 @@ func calendarRecurrenceExceptions(rows []CalendarEventRow) ([]calrecur.Exception
 				return nil, err
 			}
 		}
-		exceptions = append(exceptions, calrecur.Exception{Original: *e.Original, Start: e.Start, End: e.End, StartDate: e.StartDate, EndDate: e.EndDate, Zone: zone, Cancelled: e.Status == "cancelled", Ref: row.MessageID})
+		exceptions = append(exceptions, calrecur.Exception{Original: *e.Original, Start: e.Start, End: e.End, StartDate: e.StartDate, EndDate: e.EndDate, Zone: zone, Cancelled: e.Status == calendarCancelledStatus, Ref: row.MessageID})
 	}
 	return exceptions, nil
 }

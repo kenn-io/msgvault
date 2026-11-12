@@ -55,7 +55,7 @@ func TestLinkedMeetingCopiesUseScopedDate(t *testing.T) {
 	require.NoError(t, err)
 	engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
 	require.NoError(t, err)
-	defer engine.Close()
+	defer func() { assert.NoError(t, engine.Close()) }()
 	after := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	latePerson, err := engine.GetPerson(t.Context(), late, query.Context{}, nil)
 	require.NoError(t, err)

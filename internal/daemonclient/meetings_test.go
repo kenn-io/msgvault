@@ -49,7 +49,7 @@ func newMeetingDaemonClient(t *testing.T) (*daemonclient.Client, []meetingimport
 			Source: meetingimport.Source{Identifier: "meeting-client-unrelated", AccountEmail: "owner@other.example"},
 			Meeting: meetingimport.Meeting{
 				ExternalID: "undated-duration", Title: "Follow-up review",
-				StartedAt: "2026-02-03T09:00:00Z", SummaryText: "Reviewed open work.",
+				StartedAt: "2026-02-03T09:00:00Z", SummaryText: "Reviewed open work.", Transcript: "Reviewed open work.",
 				Organizer:   &meetingimport.MeetingPerson{Name: "Other Owner", Email: "owner@other.example"},
 				Attendees:   []meetingimport.MeetingPerson{{Name: "Bob", Email: "bob@other.example"}},
 				ActionItems: &unrelatedActions,

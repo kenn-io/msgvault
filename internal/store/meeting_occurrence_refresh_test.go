@@ -12,6 +12,7 @@ import (
 
 type countingFallbackReader struct {
 	SQLReader
+
 	t    *testing.T
 	rows int
 }

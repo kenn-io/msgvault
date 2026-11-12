@@ -81,6 +81,7 @@ func LoadMeetingEvidenceContext(ctx context.Context, reader SQLReader, through t
 	return s.loadMeetingEvidence(ctx, through)
 }
 
+//nolint:sqlclosecheck // Rows close before the snapshot is reused.
 func (s *Store) loadMeetingEvidence(ctx context.Context, through time.Time) (*MeetingEvidence, error) {
 	sourceScope, sourceArgs := sourceScopeClause(ctx, "m.source_id")
 	var first nullableTimestamp
@@ -254,7 +255,7 @@ func (s *Store) loadMeetingEvidence(ctx context.Context, through time.Time) (*Me
 			unexpandable[warning.MessageID] = true
 		}
 		for _, occurrence := range page.Occurrences {
-			if occurrence.Status != "cancelled" && !occurrence.DeletedFromSource && occurrence.Start.After(through) {
+			if occurrence.Status != calendarCancelledStatus && !occurrence.DeletedFromSource && occurrence.Start.After(through) {
 				if nextAt.IsZero() || occurrence.Start.Before(nextAt) {
 					nextAt = occurrence.Start
 				}
@@ -282,7 +283,7 @@ func (s *Store) loadMeetingEvidence(ctx context.Context, through time.Time) (*Me
 			if !unexpandable[id] {
 				continue
 			}
-			event := &meetingFallbackEvent{cancelled: status == "cancelled", deleted: deleted.Valid}
+			event := &meetingFallbackEvent{cancelled: status == calendarCancelledStatus, deleted: deleted.Valid}
 			if start.Valid {
 				event.start = start.Time
 			}
@@ -420,6 +421,7 @@ func (s *Store) loadMeetingEvidence(ctx context.Context, through time.Time) (*Me
 	return &MeetingEvidence{through: through, nextAt: nextAt, fallbacks: fallbacks, occurrences: occurrences, notes: notes, choices: choices, seriesAttendees: seriesAttendees, suppressed: suppressed, unexpandable: unexpandable, tooBroadYears: tooBroadYears, skippedChoices: skippedChoices}, nil
 }
 
+//nolint:sqlclosecheck // Rows close before the snapshot is reused.
 func readFallbackAttendees(ctx context.Context, reader SQLReader, fallbacks map[int64]*meetingFallbackEvent) error {
 	ids := make([]int64, 0, len(fallbacks))
 	for id := range fallbacks {
@@ -613,7 +615,7 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 			if key == "" || event.Ref < key {
 				key = event.Ref
 			}
-			cancelled = cancelled || event.Status == "cancelled"
+			cancelled = cancelled || event.Status == calendarCancelledStatus
 			eventDeclines[event.Ref] = occurrenceDeclines(event, seriesAttendees[event.SeriesMessageID])
 			for email := range eventDeclines[event.Ref] {
 				declined[email] = true
@@ -703,6 +705,8 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 
 // futureMeetingYears identifies years named by archived events, note keys, or
 // saved choices, so future links can be resolved before applying the cutoff.
+//
+//nolint:sqlclosecheck // Rows close before the snapshot is reused.
 func (s *Store) futureMeetingYears(ctx context.Context, lastYear int, notes []occurrenceNote, decisions []meetingDecisionEdge) (map[int]bool, error) {
 	years := map[int]bool{}
 	sourceScope, sourceArgs := sourceScopeClause(ctx, "m.source_id")
@@ -763,6 +767,7 @@ func (s *Store) futureMeetingYears(ctx context.Context, lastYear int, notes []oc
 	return years, nil
 }
 
+//nolint:sqlclosecheck // Rows close before the snapshot is reused.
 func (s *Store) markBroadMeetingWindow(ctx context.Context, from, to time.Time, unexpandable map[int64]bool) error {
 	lower, upper := from.Add(-calendarCandidateMargin), to.Add(calendarCandidateMargin)
 	exceptions, exceptionArgs := calendarExceptionWindow(s.dialect, lower, upper)

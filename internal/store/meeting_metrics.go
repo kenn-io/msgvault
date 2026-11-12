@@ -54,8 +54,8 @@ func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQuery
 		return nil, err
 	}
 	allowed, allowedArgs := sourceScopeClause(ctx, "sm.source_id")
-	args := append(statement.args, allowedArgs...)
-	rows, err := s.db.QueryContext(ctx, statement.cte+` SELECT sm.message_id, COALESCE(e.start_at, sm.occurred_at), sm.duration_seconds, sm.duration_basis FROM scoped_meetings sm LEFT JOIN calendar_events e ON e.message_id=sm.message_id WHERE 1=1`+allowed, args...)
+	statement.args = append(statement.args, allowedArgs...)
+	rows, err := s.db.QueryContext(ctx, statement.cte+` SELECT sm.message_id, COALESCE(e.start_at, sm.occurred_at), sm.duration_seconds, sm.duration_basis FROM scoped_meetings sm LEFT JOIN calendar_events e ON e.message_id=sm.message_id WHERE 1=1`+allowed, statement.args...)
 	if err != nil {
 		return nil, fmt.Errorf("select meeting metrics members: %w", err)
 	}

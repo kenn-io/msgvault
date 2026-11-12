@@ -141,6 +141,7 @@ func queryCalendarEventRows(ctx context.Context, r SQLReader, predicate string, 
 	return out, nil
 }
 
+//nolint:sqlclosecheck // Rows close before the snapshot is reused.
 func loadCalendarAttendees(ctx context.Context, r SQLReader, events []CalendarEventRow) error {
 	byID := make(map[int64]int, len(events))
 	for i, event := range events {

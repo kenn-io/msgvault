@@ -3,6 +3,7 @@ package calrecur
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -196,7 +197,7 @@ func NewWindowExpander(ctx context.Context, s Set, duration time.Duration, durat
 		var err error
 		horizon, err = time.Parse(dateLayout, date)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("parse recurrence horizon: %w", err)
 		}
 	}
 	for i, opt := range s.rules {

@@ -86,7 +86,7 @@ func TestMeetingHistoryExpandsSeriesOnce(t *testing.T) {
 	assert.Equal(t, 734, results[1].Candidates)
 	windows[0].Budget = 100
 	results, _ = testExpandWindows(t.Context(), s, time.Hour, 0, windows)
-	assert.ErrorIs(t, results[0].Err, ErrBudgetExceeded)
+	require.ErrorIs(t, results[0].Err, ErrBudgetExceeded)
 	assert.Equal(t, 101, results[0].Candidates)
 	assert.Empty(t, results[0].Occurrences)
 	require.NoError(t, results[1].Err)
@@ -142,7 +142,7 @@ func TestExpandWindowsStopsPullingAfterBudgetFailure(t *testing.T) {
 		{From: instant(t, "2021-01-01T00:00:00Z"), To: instant(t, "2022-01-02T04:00:00Z"), Budget: 1},
 	})
 	require.NoError(t, results[0].Err)
-	assert.ErrorIs(t, results[1].Err, ErrBudgetExceeded)
+	require.ErrorIs(t, results[1].Err, ErrBudgetExceeded)
 	// A stream needs one lookahead to identify the shorter window's end.
 	assert.Equal(t, 369, pulls)
 }
