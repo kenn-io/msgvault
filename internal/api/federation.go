@@ -106,7 +106,10 @@ func (s *Server) handleFederationHandshake(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	auth := s.requestAuthentication(r)
-	if auth.Mode != AuthModeFederation && auth.Mode != AuthModeCaller {
+	if auth.Mode == AuthModeCaller {
+		auth = s.classifyAPIRequestDirect(r)
+	}
+	if auth.Mode != AuthModeFederation {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
 		return
 	}
@@ -114,12 +117,7 @@ func (s *Server) handleFederationHandshake(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	// An empty state means the library callback admitted the request without checking an enrollment.
-	state := ""
-	if auth.Mode == AuthModeFederation {
-		state = "active"
-	}
-	writeJSON(w, http.StatusOK, federationHandshakeResponse{ProtocolVersions: []int{1}, HubInstance: uid, EnrollmentState: state})
+	writeJSON(w, http.StatusOK, federationHandshakeResponse{ProtocolVersions: []int{1}, HubInstance: uid, EnrollmentState: "active"})
 }
 
 func (s *Server) federationManagement(w http.ResponseWriter, r *http.Request) bool {

@@ -163,20 +163,40 @@ func TestFederationHandshakeLibraryAuthorization(t *testing.T) {
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	hubUID, err := st.ArchiveUIDContext(t.Context())
 	requirements.NoError(err)
+	spokeUID := strings.Repeat("a", 64)
+	enrollment, token, err := st.CreateFederationEnrollmentContext(t.Context(), spokeUID, "alice", "")
+	requirements.NoError(err)
+	observed := &observedFederationStore{FederationStore: st}
+	srv.federationStore = observed
+	admit := true
 	handler := srv.Handler(func(_ http.ResponseWriter, _ *http.Request, op Operation) bool {
 		requirements.Equal(Operation{ID: "getFederationHandshake", Method: http.MethodGet, Path: "/api/v1/federation/handshake"}, op)
-		return true
+		return admit
 	})
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/federation/handshake", nil))
+	request := func(withCredentials bool) *httptest.ResponseRecorder {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/federation/handshake", nil)
+		if withCredentials {
+			r.Header.Set("Authorization", "Bearer "+token)
+			r.Header.Set("X-Msgvault-Spoke-Instance", spokeUID)
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	admit = false
+	request(true)
+	requirements.Zero(observed.lookups)
+	admit = true
+	requirements.Equal(http.StatusUnauthorized, request(false).Code)
+	w := request(true)
 	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 	var body federationHandshakeResponse
 	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &body))
-	requirements.Equal(federationHandshakeResponse{ProtocolVersions: []int{1}, HubInstance: hubUID, EnrollmentState: ""}, body)
-	var fields map[string]any
-	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &fields))
-	requirements.Contains(fields, "enrollment_state")
-	requirements.Empty(fields["enrollment_state"])
+	requirements.Equal(federationHandshakeResponse{ProtocolVersions: []int{1}, HubInstance: hubUID, EnrollmentState: "active"}, body)
+	requirements.Equal(1, observed.lookups)
+	requirements.True(observed.bounded)
+	requirements.NoError(st.RevokeFederationEnrollmentContext(t.Context(), enrollment.EnrollmentUID))
+	requirements.Equal(http.StatusUnauthorized, request(true).Code)
 }
 
 func TestFederationKeylessSpokeIdentity(t *testing.T) {
