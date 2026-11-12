@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 const voiceSearchSetting = "voice_transcript_search_enabled"
@@ -21,13 +20,6 @@ func voiceSearchSQL(pg bool, messageID string) string {
 // SetVoiceTranscriptSearch changes the search setting and removes saved speech when disabled.
 func (s *Store) SetVoiceTranscriptSearch(ctx context.Context, enabled bool) error {
 	return s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO archive_metadata (key,value) VALUES (?, '0') ON CONFLICT(key) DO NOTHING`, voiceSearchSetting); err != nil {
-			return err
-		}
-		// This update locks the setting row before it is read on PostgreSQL.
-		if _, err := tx.ExecContext(ctx, `UPDATE archive_metadata SET value=value WHERE key=?`, voiceSearchSetting); err != nil {
-			return err
-		}
 		value := "0"
 		if enabled {
 			value = "1"
@@ -60,13 +52,6 @@ func (s *Store) SetVoiceTranscriptSearch(ctx context.Context, enabled bool) erro
 
 // VoiceTranscriptMappings returns a bounded page of retained Beeper recordings.
 func (s *Store) VoiceTranscriptMappings(ctx context.Context, destination string, after int64, limit int) ([]BeeperMediaMapping, error) {
-	enabled, err := archiveMetadataValue(ctx, s.db, voiceSearchSetting)
-	if err != nil {
-		return nil, err
-	}
-	if enabled != "1" {
-		return nil, nil
-	}
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT `+beeperMediaOccurrenceColumns("o")+` FROM beeper_media_occurrences o`+beeperMediaCurrentJoin+`
 		AND o.destination_key=? AND o.source_type='beeper' AND a.media_type='voice_note' AND o.retention_state='retained'
 		AND o.transcript_sha256='' AND o.attachment_id>?
@@ -112,14 +97,9 @@ func (s *Store) SaveVoiceTranscript(ctx context.Context, m BeeperMediaMapping, t
 		if err != nil || current != 1 {
 			return err
 		}
-		result, err = tx.ExecContext(ctx, `INSERT INTO voice_transcripts(message_id,attachment_id,transcript_text) VALUES(?,?,?)
-			ON CONFLICT(message_id,attachment_id) DO UPDATE SET transcript_text=excluded.transcript_text
-			WHERE voice_transcripts.transcript_text <> excluded.transcript_text`, m.MessageID, m.AttachmentID, text)
+		_, err = tx.ExecContext(ctx, `INSERT INTO voice_transcripts(message_id,attachment_id,transcript_text) VALUES(?,?,?)
+			ON CONFLICT(message_id,attachment_id) DO UPDATE SET transcript_text=excluded.transcript_text`, m.MessageID, m.AttachmentID, text)
 		if err != nil {
-			return err
-		}
-		n, err = result.RowsAffected()
-		if err != nil || n == 0 {
 			return err
 		}
 		return s.reindexVoiceMessages(ctx, tx, []int64{m.MessageID})
@@ -131,24 +111,17 @@ func (s *Store) reindexVoiceMessages(ctx context.Context, tx *loggedTx, ids []in
 		return nil
 	}
 	for _, id := range ids {
-		if _, err := tx.ExecContext(ctx, "SAVEPOINT voice_fts"); err != nil {
+		if _, err := tx.ExecContext(ctx, "SAVEPOINT derived_fts"); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, s.dialect.FTSBackfillBatchSQL(), id, id+1)
 		if s.dialect.IsFTSValueTooLargeError(err) {
-			if _, rollbackErr := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT voice_fts"); rollbackErr != nil {
-				return rollbackErr
-			}
 			_, err = markFTSOverflowUnsearchable(boundQuerier{ctx: ctx, q: tx}, id)
 		}
-		if err != nil && s.dialect.IsNoSuchTableError(err) && strings.Contains(err.Error(), "messages_fts") {
-			if _, err = tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT voice_fts"); err != nil {
-				return err
-			}
-		} else if err != nil {
+		if err != nil {
 			return fmt.Errorf("index voice transcript: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT voice_fts"); err != nil {
+		if _, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT derived_fts"); err != nil {
 			return err
 		}
 	}

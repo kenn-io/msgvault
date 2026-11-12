@@ -24,7 +24,7 @@ func (w *MediaSubmitter) readVoiceTranscripts(ctx context.Context) error {
 		transcript, err := w.transcriptClient.Transcript(readCtx, mapping.DocbankSourceID, mapping.SourceVersionID, mapping.ContentVersionID)
 		cancel()
 		if err == nil && transcript.VaultUID == mapping.VaultUID && transcript.EvidenceState == "ready" && transcript.CoverageState == "transcribed" {
-			text, _ := generatedVoiceText(transcript)
+			text := generatedVoiceText(transcript)
 			evidence, err := w.candidateEvidence(ctx, archiveUID, mapping.AttachmentID)
 			if err != nil {
 				return err
@@ -69,23 +69,20 @@ func (w *MediaSubmitter) readVoiceTranscripts(ctx context.Context) error {
 	return nil
 }
 
-func generatedVoiceText(t docbankmedia.MediaTranscript) (string, bool) {
+func generatedVoiceText(t docbankmedia.MediaTranscript) string {
 	e := t.Transcript
-	if t.EvidenceState != "ready" || t.CoverageState != "transcribed" || e == nil || e.Origin != "generated" || e.BuildID == "" || !docbankmedia.ValidSearchTranscript(e.Origin, e.SuppliedInputID, e.Completeness) {
-		return "", false
+	if e.Origin != "generated" || e.BuildID == "" || !docbankmedia.ValidSearchTranscript(e.Origin, e.SuppliedInputID, e.Completeness) {
+		return ""
 	}
 	var text strings.Builder
 	for _, unit := range e.Units {
-		if strings.TrimSpace(unit.Text) == "" || strings.ContainsRune(unit.Text, 0) {
+		if strings.TrimSpace(unit.Text) == "" {
 			continue
 		}
 		if text.Len() > 0 {
 			text.WriteByte('\n')
 		}
 		text.WriteString(unit.Text)
-		if text.Len() > beeperMediaTranscriptLimit {
-			return "", false
-		}
 	}
-	return text.String(), true
+	return text.String()
 }

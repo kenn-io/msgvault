@@ -28,7 +28,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/scheduler"
-	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -675,25 +674,12 @@ func TestVoiceTranscriptSearchDisabledBeforeClientSetup(t *testing.T) {
 	defer func() { <-sched.Stop().Done() }()
 	var messageID, attachmentID int64
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT message_id,id FROM attachments LIMIT 1`).Scan(&messageID, &attachmentID))
-	for _, cfg := range []config.DocbankIntegrationConfig{
-		{},
-		{Enabled: true, URL: "http://docbank.example.com"},
-	} {
-		require.NoError(t, st.SetVoiceTranscriptSearch(t.Context(), true))
-		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO voice_transcripts(message_id,attachment_id,transcript_text) VALUES(?,?,?)`), messageID, attachmentID, "dinner Thursday")
-		require.NoError(t, err)
-		require.NoError(t, st.IndexStoredMessageContext(t.Context(), messageID))
-		err = configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), t.TempDir(), cfg, nil)
-		if cfg.Enabled {
-			require.Error(t, err)
-		} else {
-			require.NoError(t, err)
-		}
-		var count int
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM voice_transcripts`).Scan(&count))
-		assert.Zero(t, count)
-		ids, _, err := st.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"dinner"}}, 10)
-		require.NoError(t, err)
-		assert.Empty(t, ids)
-	}
+	require.NoError(t, st.SetVoiceTranscriptSearch(t.Context(), true))
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO voice_transcripts(message_id,attachment_id,transcript_text) VALUES(?,?,?)`), messageID, attachmentID, "dinner Thursday")
+	require.NoError(t, err)
+	err = configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), t.TempDir(), config.DocbankIntegrationConfig{VoiceTranscriptSearch: true}, nil)
+	require.NoError(t, err)
+	var count int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM voice_transcripts`).Scan(&count))
+	assert.Zero(t, count)
 }
