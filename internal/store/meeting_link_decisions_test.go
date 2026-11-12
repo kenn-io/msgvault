@@ -30,7 +30,7 @@ func TestMeetingDecisionLargeGroupMemory(t *testing.T) {
 	extra := meetingDecisionEndpoint{ID: 1201, Kind: meetingRefMessage}
 	g.nodes[extra.ref()] = meetingDecisionNode{endpoint: extra}
 	g.groups = [][]meetingDecisionEndpoint{group}
-	g.candidates = []meetingDecisionEdge{{a: group[0], b: extra, decision: "link", direct: true}}
+	g.candidates = []meetingDecisionEdge{{a: group[0], b: extra, decision: "link"}}
 	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
@@ -44,7 +44,9 @@ func TestMeetingDecisionLargeGroupMemory(t *testing.T) {
 func TestMeetingLinkDecisionReadsOnlyRequestedOccurrence(t *testing.T) {
 	r := require.New(t)
 	base := newRFC822IDBackfillBackendStore(t)
-	_, event := calendarFixture(t, base, "separate-series", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=52"]}`)
+	raw := `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=52"]}`
+	_, event := calendarFixture(t, base, "separate-series", raw)
+	_, duplicate := calendarFixture(t, base, "separate-duplicate", raw)
 	var firstNote int64
 	for i := range 52 {
 		_, note := projectionFixture(t, base, fmt.Sprintf("separate-note-%d", i), "meeting_json", `{}`)
@@ -52,11 +54,13 @@ func TestMeetingLinkDecisionReadsOnlyRequestedOccurrence(t *testing.T) {
 			firstNote = note
 		}
 		date := time.Date(2027, 3, 14+7*i, 10, 0, 0, 0, time.UTC).Format("20060102T150405Z")
-		occurrence, err := ParseMeetingLinkRef(fmt.Sprintf("evt:%d@%s", event, date))
+		occurrence, err := ParseMeetingLinkRef(fmt.Sprintf("evt:%d@%s", duplicate, date))
 		r.NoError(err)
 		_, err = base.DecideMeetingLinkContext(t.Context(), occurrence, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
 		r.NoError(err)
 	}
+	_, err := base.MergeDuplicates(t.Context(), event, []int64{duplicate}, "series-dedup")
+	r.NoError(err)
 	occurrence, err := ParseMeetingLinkRef(fmt.Sprintf("evt:%d@20270314T100000Z", event))
 	r.NoError(err)
 	budget := 20
@@ -87,6 +91,19 @@ func TestMeetingDecisionScopedReadHidesOtherSource(t *testing.T) {
 	r.NoError(err)
 	r.Equal([]int64{refs[0].MessageID}, record.MessageIDs)
 	r.Empty(record.Links)
+	_, err = st.DecideMeetingLinkContext(t.Context(), refs[0], refs[1], "clear")
+	r.NoError(err)
+	other, err := st.PersistMessage(&MessagePersistData{Message: &Message{SourceID: visible.ID, SourceMessageID: "other", MessageType: "meeting_transcript"}, Conversation: &ConversationPersistData{SourceConversationID: "other", ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"})
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), refs[0].MessageID, []int64{refs[1].MessageID}, "scoped")
+	r.NoError(err)
+	_, err = st.DecideMeetingLinkContext(ctx, refs[0], MeetingLinkRef{Kind: "msg", MessageID: other}, "link")
+	r.NoError(err)
+	_, err = st.UndoDedup(t.Context(), "scoped")
+	r.NoError(err)
+	record, err = st.MeetingRecordContext(t.Context(), refs[1])
+	r.NoError(err)
+	r.NotContains(record.MessageIDs, other)
 }
 
 func TestMeetingLinkDecisionLargeGroupsLinkAndSplit(t *testing.T) {
@@ -543,6 +560,12 @@ func TestMeetingLinkDecisionSubsetOmitsHiddenOrigin(t *testing.T) {
 			_, duplicate := projectionFixture(t, st, "subset-hidden", format, raw)
 			dupRef := MeetingLinkRef{Kind: "msg", MessageID: duplicate}
 			otherRef := MeetingLinkRef{Kind: "msg", MessageID: other}
+			earlier := "unlink"
+			if action == "unlink" {
+				earlier = "link"
+			}
+			_, err = st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: survivor}, otherRef, earlier)
+			requirements.NoError(err)
 			_, err = st.DecideMeetingLinkContext(t.Context(), dupRef, otherRef, action)
 			requirements.NoError(err)
 			_, err = st.MergeDuplicates(t.Context(), intermediate, []int64{duplicate}, "subset-undo")
@@ -558,9 +581,9 @@ func TestMeetingLinkDecisionSubsetOmitsHiddenOrigin(t *testing.T) {
 			record, err := dst.MeetingRecordContext(t.Context(), otherRef)
 			requirements.NoError(err)
 			if action == "link" {
-				assertions.Equal([]int64{other}, record.MessageIDs)
-			} else {
 				assertions.Equal([]int64{survivor, other}, record.MessageIDs)
+			} else {
+				assertions.Equal([]int64{other}, record.MessageIDs)
 			}
 		})
 	}
@@ -1365,4 +1388,96 @@ func TestMeetingLinkDecisionEquivalentCopiesConflict(t *testing.T) {
 	_, err = st.DecideMeetingLinkContext(t.Context(), noteRef, secondRef, "unlink")
 	r.ErrorIs(err, ErrMeetingLinkConflict)
 	r.ErrorContains(err, fmt.Sprintf("evt:%d msg:%d", first, note))
+}
+
+func TestMeetingDecisionRepeatingOriginalReferencesAfterDedup(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, survivor := projectionFixture(t, st, "survivor-repeat", "meeting_json", `{}`)
+	_, duplicate := projectionFixture(t, st, "duplicate-repeat", "meeting_json", `{}`)
+	_, other := projectionFixture(t, st, "other-repeat", "meeting_json", `{}`)
+	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+	_, err := st.DecideMeetingLinkContext(t.Context(), ref(duplicate), ref(other), "link")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "repeat")
+	r.NoError(err)
+	for range 2 {
+		_, err = st.DecideMeetingLinkContext(t.Context(), ref(duplicate), ref(other), "link")
+		r.NoError(err)
+	}
+	var count int
+	r.NoError(st.db.QueryRowContext(t.Context(), `SELECT count(*) FROM meeting_link_decisions`).Scan(&count))
+	r.Equal(2, count)
+	_, err = st.UndoDedup(t.Context(), "repeat")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), ref(other))
+	r.NoError(err)
+	r.ElementsMatch([]int64{survivor, duplicate, other}, record.MessageIDs)
+	t.Run("first choice after merge", func(t *testing.T) {
+		r := require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		_, survivor := projectionFixture(t, st, "late-survivor", "meeting_json", `{}`)
+		_, duplicate := projectionFixture(t, st, "late-duplicate", "meeting_json", `{}`)
+		_, other := projectionFixture(t, st, "late-other", "meeting_json", `{}`)
+		ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+		_, err := st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "late")
+		r.NoError(err)
+		_, err = st.DecideMeetingLinkContext(t.Context(), ref(survivor), ref(other), "link")
+		r.NoError(err)
+		_, err = st.UndoDedup(t.Context(), "late")
+		r.NoError(err)
+		record, err := st.MeetingRecordContext(t.Context(), ref(other))
+		r.NoError(err)
+		r.ElementsMatch([]int64{survivor, duplicate, other}, record.MessageIDs)
+	})
+	t.Run("single event", func(t *testing.T) {
+		r := require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		raw := `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+		_, survivor := calendarFixture(t, st, "repeat-survivor", raw)
+		_, duplicate := calendarFixture(t, st, "repeat-duplicate", raw)
+		_, note := projectionFixture(t, st, "repeat-note", "meeting_json", `{}`)
+		event := MeetingLinkRef{Kind: "evt", MessageID: duplicate}
+		other := MeetingLinkRef{Kind: "msg", MessageID: note}
+		_, err := st.DecideMeetingLinkContext(t.Context(), event, other, "link")
+		r.NoError(err)
+		_, err = st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "event-repeat")
+		r.NoError(err)
+		_, err = st.DecideMeetingLinkContext(t.Context(), event, other, "link")
+		r.NoError(err)
+		var count int
+		r.NoError(st.db.QueryRowContext(t.Context(), `SELECT count(*) FROM meeting_link_decisions`).Scan(&count))
+		r.Equal(2, count)
+	})
+}
+
+func TestMeetingDecisionNewestWinsAfterDedupAndPurge(t *testing.T) {
+	for _, purge := range []string{"none", "batch", "all"} {
+		t.Run(purge, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			raw := `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"newest_20270314T100000Z"}}`
+			_, survivor := projectionFixture(t, st, "newest-survivor", "granola_json", raw)
+			_, duplicate := projectionFixture(t, st, "newest-duplicate", "granola_json", raw)
+			_, other := projectionFixture(t, st, "newest-other", "granola_json", raw)
+			ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+			_, err := st.DecideMeetingLinkContext(t.Context(), ref(survivor), ref(other), "link")
+			r.NoError(err)
+			_, err = st.DecideMeetingLinkContext(t.Context(), ref(duplicate), ref(other), "unlink")
+			r.NoError(err)
+			_, err = st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "newest")
+			r.NoError(err)
+			switch purge {
+			case "batch":
+				_, err = st.DeleteDedupedBatchContext(t.Context(), "newest")
+				r.NoError(err)
+			case "all":
+				_, _, err = st.DeleteAllDedupedContext(t.Context())
+				r.NoError(err)
+			}
+			record, err := st.MeetingRecordContext(t.Context(), ref(other))
+			r.NoError(err)
+			r.NotContains(record.MessageIDs, survivor)
+		})
+	}
 }

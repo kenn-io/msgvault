@@ -1343,11 +1343,18 @@ func (s *Store) repointDeletedMeetingCopies(ctx context.Context, tx *loggedTx, p
 			if compareMeetingEndpoints(d.a, d.b) > 0 {
 				d.a, d.b = d.b, d.a
 			}
-			var collision bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meeting_link_decisions WHERE id<>? AND left_message_id=? AND left_kind=? AND left_key=? AND right_message_id=? AND right_kind=? AND right_key=?)`, d.id, d.a.ID, d.a.Kind, d.a.Key, d.b.ID, d.b.Kind, d.b.Key).Scan(&collision); err != nil {
+			var existingID int64
+			err := tx.QueryRowContext(ctx, `SELECT id FROM meeting_link_decisions WHERE id<>? AND left_message_id=? AND left_kind=? AND left_key=? AND right_message_id=? AND right_kind=? AND right_key=?`, d.id, d.a.ID, d.a.Kind, d.a.Key, d.b.ID, d.b.Kind, d.b.Key).Scan(&existingID)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
-			if collision || compareMeetingEndpoints(d.a, d.b) == 0 {
+			if existingID != 0 && newerMeetingDecision(d, meetingDecisionEdge{id: existingID}) {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id=?`, existingID); err != nil {
+					return err
+				}
+				existingID = 0
+			}
+			if existingID != 0 || compareMeetingEndpoints(d.a, d.b) == 0 {
 				_, err = tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id=?`, d.id)
 			} else {
 				_, err = tx.ExecContext(ctx, `UPDATE meeting_link_decisions SET left_message_id=?,left_kind=?,left_key=?,right_message_id=?,right_kind=?,right_key=? WHERE id=?`, d.a.ID, d.a.Kind, d.a.Key, d.b.ID, d.b.Kind, d.b.Key, d.id)

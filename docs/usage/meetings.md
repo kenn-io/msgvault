@@ -67,11 +67,10 @@ an unscheduled call. Use `msgvault meetings unlink <ref> <ref>` to separate an
 automatic match. Either command replaces the previous choice. Use
 `msgvault meetings reset-link <ref> <ref>` to clear the choice and restore
 automatic matching. Choices survive projection rebuilds and follow
-deduplication survivors. Undoing deduplication restores earlier groups while
-keeping later explicit choices. Permanently deleting a deduplicated copy moves its choices to the survivor.
-Deleting a surviving message removes its choices. A choice saved on live
-messages takes precedence over one inherited from a hidden copy. Otherwise,
-the newest choice takes precedence. If a third copy
+deduplication survivors. Undoing deduplication restores copies with their latest
+saved choices. Permanently deleting a deduplicated copy moves its choices to the survivor.
+Deleting a surviving message removes its choices. When saved choices resolve
+to the same pair, the newest choice takes precedence. If a third copy
 matches both sides of a split, it joins the first compatible group in a stable
 order. A link or split that would break another saved link returns a conflict.
 Reset the conflicting pair first to make that change.

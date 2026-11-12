@@ -12,9 +12,12 @@ import (
 
 type meetingDecisionEdge struct {
 	id       int64
-	direct   bool
 	a, b     meetingDecisionEndpoint
 	decision string
+}
+
+func newerMeetingDecision(a, b meetingDecisionEdge) bool {
+	return a.id > b.id
 }
 
 // meetingDecisionEdges finds choices saved on the occurrence or its hidden copies.
@@ -34,7 +37,7 @@ func (s *Store) meetingDecisionEdges(ctx context.Context, endpoint meetingDecisi
 			originalTime = ref.Identity.Instant
 		}
 	}
-	args := []any{originalDate, originalTime, endpoint.ID, endpoint.ID, endpoint.Kind, endpoint.Key, endpoint.Key, endpoint.ID, endpoint.Kind, endpoint.Key, endpoint.Key}
+	args := []any{originalDate, originalTime, endpoint.ID, endpoint.Kind, endpoint.Key, endpoint.Key, endpoint.Kind, endpoint.Key, endpoint.Key}
 	args = append(args, leftArgs...)
 	args = append(args, rightArgs...)
 	args = append(args, *budget+1)
@@ -43,7 +46,7 @@ func (s *Store) meetingDecisionEdges(ctx context.Context, endpoint meetingDecisi
  UNION SELECT c.message_id,c.survivor_message_id FROM source_merge_messages c JOIN messages m ON m.id=c.message_id WHERE m.deleted_at IS NOT NULL AND (m.delete_batch_id IS NULL OR NOT EXISTS (SELECT 1 FROM meeting_copy_survivors x WHERE x.message_id=m.id)) AND c.survivor_message_id IS NOT NULL
  UNION SELECT e.message_id,series.message_id FROM calendar_events e JOIN messages m ON m.id=e.message_id JOIN calendar_events series ON series.provider_event_id=e.series_provider_id JOIN messages sm ON sm.id=series.message_id AND sm.source_id=m.source_id WHERE e.kind='exception' AND e.series_provider_id<>'' AND series.kind='series' AND m.deleted_at IS NULL AND ((e.original_start_date<>'' AND e.original_start_date=?) OR e.original_start_at=?)
  ), ids(id) AS (SELECT CAST(? AS BIGINT) UNION SELECT edges.child FROM edges JOIN ids ON edges.parent=ids.id
- ) SELECT d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision,l.deleted_at IS NULL AND r.deleted_at IS NULL FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE ((d.left_message_id IN (SELECT id FROM ids) AND (d.left_message_id<>? OR d.left_kind=? AND (d.left_key=? OR d.left_key='' OR ?=''))) OR (d.right_message_id IN (SELECT id FROM ids) AND (d.right_message_id<>? OR d.right_kind=? AND (d.right_key=? OR d.right_key='' OR ?=''))))`+leftScope+rightScope+` LIMIT ?`, args...)
+ ) SELECT d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE ((d.left_message_id IN (SELECT id FROM ids) AND (d.left_kind=? AND (d.left_key=? OR d.left_key='' OR ?=''))) OR (d.right_message_id IN (SELECT id FROM ids) AND (d.right_kind=? AND (d.right_key=? OR d.right_key='' OR ?=''))))`+leftScope+rightScope+` LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +54,7 @@ func (s *Store) meetingDecisionEdges(ctx context.Context, endpoint meetingDecisi
 	var edges []meetingDecisionEdge
 	for rows.Next() {
 		var edge meetingDecisionEdge
-		if err := rows.Scan(&edge.id, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.decision, &edge.direct); err != nil {
+		if err := rows.Scan(&edge.id, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.decision); err != nil {
 			return nil, err
 		}
 		edges = append(edges, edge)
@@ -227,7 +230,7 @@ func (g *meetingDecisionGraph) reduce() (func(string) string, []meetingDecisionE
 		choice.a, choice.b = left, right
 		key := left.ref() + "/" + right.ref()
 		old, exists := effective[key]
-		if !exists || choice.direct && !old.direct || choice.direct == old.direct && choice.id > old.id {
+		if !exists || newerMeetingDecision(choice, old) {
 			effective[key] = choice
 		}
 	}
