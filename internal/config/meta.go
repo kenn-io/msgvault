@@ -46,6 +46,11 @@ func (c *Config) validateFacebookCommentsSources() error {
 	if err := validateFacebookPageProfiles("facebook_comments", c.FacebookComments); err != nil {
 		return err
 	}
+	for i, source := range c.FacebookMessages {
+		if len(source.Actions) > 0 {
+			return fmt.Errorf("facebook_messages[%d].actions is only valid on [[facebook_comments]]", i)
+		}
+	}
 	return validateFacebookPageProfiles("facebook_messages", c.FacebookMessages)
 }
 
@@ -130,6 +135,9 @@ func (c *Config) validateInstagramCommentsSources() error {
 	for i, source := range c.InstagramMessages {
 		if source.Mentions {
 			return fmt.Errorf("instagram_messages[%d].mentions is only valid on [[instagram_comments]]", i)
+		}
+		if len(source.Actions) > 0 {
+			return fmt.Errorf("instagram_messages[%d].actions is only valid on [[instagram_comments]]", i)
 		}
 	}
 	return validateInstagramProfiles("instagram_messages", c.InstagramMessages)
