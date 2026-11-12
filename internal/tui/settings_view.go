@@ -116,9 +116,6 @@ func (m Model) renderSettingsCategories(width, height int) string {
 			sb.WriteString("\n")
 		}
 	}
-	if m.settingsIsNarrow() {
-		sb.WriteString("\n\n[↑/↓] Category  [Enter/l] Open  [Esc] Back")
-	}
 	return sb.String()
 }
 

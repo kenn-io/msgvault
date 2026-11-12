@@ -64,6 +64,15 @@ func (m *Model) revealSettingsFocus() {
 	m.settings.scrollOffset = v.YOffset()
 }
 
+func (m Model) settingsFocusVisible() bool {
+	if !m.settings.active || m.settings.scrollOffset == 0 || m.settings.confirmDiscard || m.settings.peopleControls.active || m.settings.codex.active {
+		return false
+	}
+	title, body, actions, focus := m.settingsScreen()
+	v, _ := m.settingsViewport(title, body, actions)
+	return focus >= v.YOffset() && focus < v.YOffset()+v.Height()
+}
+
 func (m Model) settingsScreen() (string, string, string, int) {
 	if m.settings.confirmDiscard {
 		return m.styles.titleBar.Render("Settings *"), m.styles.modalTitle.Render("Discard unsaved changes?") + "\n\nYour settings drafts have not been saved.", "[Y] Yes [N/Esc] No", 0

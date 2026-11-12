@@ -119,6 +119,26 @@ func TestSettingsViewportExitEditorKeepsSelectionVisible(t *testing.T) {
 	}
 }
 
+func TestSettingsViewportResizeKeepsVisibleSelection(t *testing.T) {
+	snapshot := SettingsSnapshot{PendingRestart: true, Groups: []SettingsGroup{{ID: "search", Label: "Search"}}}
+	for i := range 7 {
+		snapshot.Fields = append(snapshot.Fields, SettingField{Key: fmt.Sprintf("search.field%d", i), Group: "search", Label: fmt.Sprintf("Field %d", i), Kind: SettingKindString, Value: stringSettingValue("value")})
+	}
+	model := resizeModel(t, loadedSettingsModel(t, snapshot), 40, 12)
+	model, _ = sendKey(t, model, keyEnter())
+	for range 6 {
+		model, _ = sendKey(t, model, key('j'))
+	}
+	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	screen := uv.NewScreenBuffer(40, 12)
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	require.Contains(t, screen.String(), "▶   Field 6")
+	model = resizeModel(t, model, 40, 8)
+	screen = uv.NewScreenBuffer(40, 8)
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, screen.String(), "▶   Field 6")
+}
+
 func TestSettingsViewportDiscardConfirmationPaging(t *testing.T) {
 	model := resizeModel(t, loadedSettingsModel(t, settingsFixture()), 20, 6)
 	model, _ = sendKey(t, model, keyEnter())
