@@ -38,7 +38,18 @@ func TestAppreciationHTTPProjectsDismissalAndPreservesHistory(t *testing.T) {
 		SourceMessageID: "peer-help", MessageType: "chat", SenderID: sql.NullInt64{Int64: participantID, Valid: true},
 		SentAt: sql.NullTime{Time: personBriefAPINow.Add(-time.Hour), Valid: true}})
 	require.NoError(t, err)
-	const body = "I carried the boxes upstairs."
+	ownerID, err := f.store.EnsureParticipantContext(t.Context(), "owner@example.test", "Owner", "example.test")
+	require.NoError(t, err)
+	require.NoError(t, f.store.EnsureConversationParticipantContext(t.Context(), conversationID, participantID, "member"))
+	require.NoError(t, f.store.EnsureConversationParticipantContext(t.Context(), conversationID, ownerID, "member"))
+	require.NoError(t, f.store.SetConversationMemberCountContext(t.Context(), conversationID, 2))
+	ownerMessageID, err := f.store.UpsertMessageContext(t.Context(), &store.Message{SourceID: source.ID, ConversationID: conversationID,
+		SourceMessageID: "owner-thanks", MessageType: "chat", SenderID: sql.NullInt64{Int64: ownerID, Valid: true},
+		SentAt: sql.NullTime{Time: personBriefAPINow.Add(-time.Minute), Valid: true}, IsFromMe: true, IsSent: sql.NullBool{Bool: true, Valid: true}})
+	require.NoError(t, err)
+	const ownerBody = "Thank you for\ncarrying the boxes!"
+	require.NoError(t, f.store.UpsertMessageBodyContext(t.Context(), ownerMessageID, sql.NullString{String: ownerBody, Valid: true}, sql.NullString{}))
+	const body = "I carried the boxes\nupstairs."
 	require.NoError(t, f.store.UpsertMessageBodyContext(t.Context(), messageID, sql.NullString{String: body, Valid: true}, sql.NullString{}))
 	key, err := peoplesweep.AppreciationContributionKey("slack", "api-appreciation", "peer-help")
 	require.NoError(t, err)
@@ -47,26 +58,36 @@ func TestAppreciationHTTPProjectsDismissalAndPreservesHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, peerItems, 1)
 	suggestion := peoplesweep.BriefThanksSuggestion{Text: "carrying the boxes", AnchorID: personBriefAPIEvidenceID,
-		Quote: "carried the boxes", Key: key, State: "suggested", PriorThanks: "unknown"}
+		Quote: "carried the boxes\nupstairs", Key: key, State: "already_thanked", PriorThanks: "evidenced",
+		Thanked: &peoplesweep.BriefThanksEvidence{EvidenceID: "owner:test", Quote: ownerBody}}
 	output := personBriefAPIStructure()
 	output.ThanksSuggestions = []peoplesweep.BriefThanksSuggestion{suggestion}
 	seed := personBriefAPISeedFor(t, output, personBriefAPINow, []int64{f.evidence[0].ID})
 	rendered, err := peoplesweep.RenderBrief(peoplesweep.ParsedBrief{Output: output}, peoplesweep.BriefWindow{})
 	require.NoError(t, err)
 	seed.rendered = rendered.Text
+	ownerHash := sha256.Sum256([]byte(ownerBody))
+	ownerRef := peoplesweep.EvidenceRef{SourceLane: peoplesweep.SourceConversationText, SourceID: source.ID, MessageID: ownerMessageID, SourceMessageID: "owner-thanks"}
 	boundary, err := json.Marshal(peoplesweep.BriefBoundary{AppreciationMemory: []peoplesweep.BriefAppreciationMemory{{
 		Suggestion: suggestion, PeerRef: peerItems[0].Ref,
-		PeerRawSHA256: hex.EncodeToString(hash[:]), ConversationID: conversationID,
+		PeerRawSHA256: hex.EncodeToString(hash[:]), ConversationID: conversationID, OwnerRef: &ownerRef, OwnerRawSHA256: hex.EncodeToString(ownerHash[:]),
 	}}})
 	require.NoError(t, err)
 	seed.boundary = string(boundary)
 	f.seedBrief(t, seed)
-	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE person_briefs SET program_version = ?, renderer_policy = ? WHERE person_id = ?`), "v3", peoplesweep.BriefRendererPolicyV3, f.personID)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE person_briefs SET program_version = ?, program_fingerprint = ?, renderer_policy = ? WHERE person_id = ?`), "v3", peoplesweep.BriefProgramFingerprint(), peoplesweep.BriefRendererPolicyV3, f.personID)
+	require.NoError(t, err)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`INSERT INTO person_appreciation_state (contribution_key, thanks_brief_id) SELECT ?, id FROM person_briefs WHERE person_id = ? AND status = 'current'`), key, f.personID)
 	require.NoError(t, err)
 	base := fmt.Sprintf("/api/v1/people/%d/appreciations", f.personID)
 	response := doRequest(t, f.server.Router(), http.MethodGet, base, nil, nil)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), key)
+	var listed PersonAppreciationsResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &listed))
+	require.Len(t, listed.Appreciations, 1)
+	assert.Equal(t, suggestion.Quote, listed.Appreciations[0].Suggestion.Quote)
+	require.NotNil(t, listed.Appreciations[0].Suggestion.Thanked)
+	assert.Equal(t, ownerBody, listed.Appreciations[0].Suggestion.Thanked.Quote)
 	response = doRequest(t, f.server.Router(), http.MethodGet, personBriefPath(f.personID, ""), nil, nil)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.Contains(t, response.Body.String(), "carrying the boxes")
