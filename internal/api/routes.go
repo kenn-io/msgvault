@@ -28,11 +28,9 @@ const (
 )
 
 const (
-	queryParamLocation            = "query"
-	apiKeySecurityScheme          = "apiKey"
-	federationTokenSecurityScheme = "federationToken"
-	federationSpokeSecurityScheme = "federationSpoke"
-	cliRouteTag                   = "CLI"
+	queryParamLocation   = "query"
+	apiKeySecurityScheme = "apiKey"
+	cliRouteTag          = "CLI"
 )
 
 var configureHumaOnce sync.Once

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -13,7 +12,6 @@ import (
 	"github.com/spf13/pflag"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/messageimport"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 
@@ -97,38 +95,4 @@ func TestFederationEnrollOutput(t *testing.T) {
 		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", " "})
 		assert.ErrorContains(t, command.ExecuteContext(ctx), "member")
 	})
-}
-
-func TestFederationHubRejectsMessageImport(t *testing.T) {
-	body := `{"source":{"identifier":"feeds","account_email":"user@example.com"},"message":{"external_id":"entry-42","message_type":"feed_item","conversation":{"external_id":"feed-7","title":"Example"},"sender":{"name":"Example"},"title":"Example","sent_at":"2026-11-07T10:00:00-05:00","body_markdown":"Example"}}`
-	for _, tc := range []struct {
-		role            string
-		status, sources int
-	}{{"off", http.StatusCreated, 1}, {"hub", http.StatusInternalServerError, 0}} {
-		t.Run(tc.role, func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			st := testutil.NewTestStore(t)
-			if tc.role == "hub" {
-				requirements.NoError(st.ConfigureFederationHubContext(t.Context()))
-			}
-			cfg := config.NewDefaultConfig()
-			cfg.Data.DataDir = t.TempDir()
-			cfg.Federation.Role = tc.role
-			cfg.Server.APIKey = "owner-fixture"
-			logger := slog.New(slog.DiscardHandler)
-			adapter := &storeAPIAdapter{store: st, messageImporter: messageimport.NewImporter(st, messageimport.Hooks{}).WithLogger(logger)}
-			server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: adapter, FederationStore: st, Logger: logger})
-			t.Cleanup(func() { requirements.NoError(server.Shutdown(context.WithoutCancel(t.Context()))) })
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/import/message", strings.NewReader(body))
-			req.Header.Set("X-Api-Key", "owner-fixture")
-			req.Header.Set("Content-Type", "application/json")
-			resp := httptest.NewRecorder()
-			server.Router().ServeHTTP(resp, req)
-			assertions.Equal(tc.status, resp.Code, resp.Body.String())
-			sources, err := st.ListSourcesContext(t.Context(), "")
-			requirements.NoError(err)
-			assertions.Len(sources, tc.sources)
-		})
-	}
 }

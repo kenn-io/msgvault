@@ -12,6 +12,11 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+const (
+	federationTokenSecurityScheme = "federationToken"
+	federationSpokeSecurityScheme = "federationSpoke"
+)
+
 type FederationStore interface {
 	CreateFederationEnrollmentContext(ctx context.Context, spokeUID, member, name string) (*store.FederationEnrollment, string, error)
 	ListFederationEnrollmentsContext(ctx context.Context) ([]store.FederationEnrollment, error)

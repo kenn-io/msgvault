@@ -538,13 +538,13 @@ const (
 
 // ServerOptions configures the API server.
 type ServerOptions struct {
-	Config          *config.Config
-	Store           MessageStore
-	FederationStore FederationStore
+	Config *config.Config
+	Store  MessageStore
 	// SavedViewStore owns durable analytical view definitions. It is separate
 	// from the minimal MessageStore so API consumers do not need to implement
 	// unrelated persistence methods.
 	SavedViewStore         SavedViewStore
+	FederationStore        FederationStore
 	Engine                 query.Engine // Optional: query engine for aggregates and TUI support
 	SQLQueryRunner         SQLQueryRunner
 	ArchiveSQLQueryRunner  SQLQueryRunner

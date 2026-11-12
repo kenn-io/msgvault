@@ -116,6 +116,12 @@ func openStoreAndInitWithInvocation(ctx context.Context, state *invocation, migr
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
+	if currentCfg.Federation.Role == "hub" {
+		if err := st.ConfigureFederationHubContext(ctx); err != nil {
+			_ = st.Close()
+			return nil, err
+		}
+	}
 	if err := st.InitSchemaUnlessCurrentContext(ctx); err != nil {
 		_ = st.Close()
 		return nil, fmt.Errorf("init schema: %w", err)

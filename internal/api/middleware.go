@@ -273,15 +273,12 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 	}
 
 	if s.federationClaim(r) {
-		auths := r.Header.Values("Authorization")
+		token, bearer := apiprotocol.BearerAuthorization(r)
 		instances := r.Header.Values(apiprotocol.SpokeInstanceHeader)
-		if len(auths) == 1 && len(instances) == 1 && instances[0] != "" && len(r.Header.Values("X-Api-Key")) == 0 && len(r.Header.Values(apiprotocol.DaemonRuntimeTokenHeader)) == 0 && s.federationStore != nil {
-			_, cookieErr := r.Cookie(sessionCookieName)
-			parts := strings.Fields(auths[0])
-			if cookieErr != nil && len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && strings.HasPrefix(parts[1], "mvf1_") {
-				if _, err := s.federationStore.AuthenticateFederationEnrollmentContext(r.Context(), parts[1], instances[0]); err == nil {
-					return requestAuthentication{Mode: AuthModeFederation}
-				}
+		_, cookieErr := r.Cookie(sessionCookieName)
+		if bearer && strings.HasPrefix(token, "mvf1_") && len(instances) == 1 && instances[0] != "" && len(r.Header.Values("X-Api-Key")) == 0 && len(r.Header.Values(apiprotocol.DaemonRuntimeTokenHeader)) == 0 && cookieErr != nil && s.federationStore != nil {
+			if _, err := s.federationStore.AuthenticateFederationEnrollmentContext(r.Context(), token, instances[0]); err == nil {
+				return requestAuthentication{Mode: AuthModeFederation}
 			}
 		}
 		return requestAuthentication{Mode: AuthModeRequired}

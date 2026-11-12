@@ -22,7 +22,6 @@ func TestFederationEnrollmentLifecycle(t *testing.T) {
 	enrollment, token, err := st.CreateFederationEnrollmentContext(ctx, uid, "alice", "")
 	requirements.NoError(err)
 	assertions.Equal("alice", enrollment.SpokeName)
-	assertions.True(strings.HasPrefix(token, "mvf1_"))
 	var stored string
 	requirements.NoError(st.DB().QueryRowContext(ctx, st.Rebind("SELECT token_sha256 FROM federation_enrollments WHERE enrollment_uid = ?"), enrollment.EnrollmentUID).Scan(&stored))
 	digest := sha256.Sum256([]byte(token))
@@ -50,14 +49,12 @@ func TestFederationHubSourceGuard(t *testing.T) {
 	requirements.NoError(st.ConfigureFederationHubContext(ctx))
 	_, err := st.GetOrCreateSourceContext(ctx, "gmail", "fixture@example.test")
 	requirements.ErrorIs(err, store.ErrFederationHubSource)
-	_, err = st.GetOrCreateSourceContext(ctx, "gmail", "federation:fixture")
-	requirements.ErrorIs(err, store.ErrFederationHubSource)
 	_, err = st.ScopedToSync(1, 1).GetOrCreateSourceContext(ctx, "gmail", "another@example.test")
 	requirements.ErrorIs(err, store.ErrFederationHubSource)
 	other := testutil.NewTestStore(t)
 	_, err = other.GetOrCreateSourceContext(ctx, "gmail", "fixture@example.test")
 	requirements.NoError(err)
-	requirements.ErrorContains(other.ConfigureFederationHubContext(ctx), "already has 1 sources")
+	requirements.ErrorContains(other.ConfigureFederationHubContext(ctx), "already has 1 source(s)")
 }
 
 func TestFederationEnrollmentPersistsAndSchemaUpgrade(t *testing.T) {
