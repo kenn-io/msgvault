@@ -171,10 +171,12 @@ func (s *Store) ListPersonIntroductionsContext(ctx context.Context, q PersonIntr
 			args = append(args, id)
 		}
 
+		var predicates strings.Builder
 		for _, person := range []string{"i.person_a_id", "i.person_b_id"} {
-			query += ` AND EXISTS (` + s.introductionIdentitySQL(person, "s.identifier") + `)`
-			query += ` AND NOT EXISTS (SELECT 1 FROM person_participants owner_pp WHERE owner_pp.person_id = ` + person + ` AND owner_pp.participant_id IN (` + s.loopOwnerParticipantsSQL() + `))`
+			predicates.WriteString(` AND EXISTS (` + s.introductionIdentitySQL(person, "s.identifier") + `)`)
+			predicates.WriteString(` AND NOT EXISTS (SELECT 1 FROM person_participants owner_pp WHERE owner_pp.person_id = ` + person + ` AND owner_pp.participant_id IN (` + s.loopOwnerParticipantsSQL() + `))`)
 		}
+		query += predicates.String()
 	}
 	if q.AfterID != "" {
 		var position any = c.CreatedAt
