@@ -51,3 +51,15 @@ func TestMeetingSuggestionsCLI(t *testing.T) {
 		})
 	}
 }
+
+func TestMeetingSuggestionsCLILimit(t *testing.T) {
+	for _, limit := range []string{"0", "-1", "101"} {
+		t.Run(limit, func(t *testing.T) {
+			client := &suggestionCLIClient{meetingRecordClient: meetingRecordClient{version: "5.3.0"}}
+			command := newMeetingsCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
+			command.SetArgs([]string{"suggest", "msg:3", "--limit", limit})
+			require.ErrorContains(t, command.Execute(), "limit must be between 1 and 100")
+			require.False(t, client.called)
+		})
+	}
+}

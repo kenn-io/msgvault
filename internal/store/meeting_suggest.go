@@ -136,7 +136,6 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		return page, err
 	}
 	defer release()
-	ctx = context.WithValue(ctx, meetingSuggestionMemoKey{}, map[meetingDecisionEndpoint]meetingSuggestionMemoEntry{})
 	var candidates []MeetingSuggestion
 	if ref.Kind == meetingRefMessage {
 		members, err := s.suggestionMembers(ctx, []int64{ref.MessageID})

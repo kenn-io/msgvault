@@ -20,10 +20,13 @@ type meetingSuggestionClient interface {
 func newMeetingSuggestionsCommand(deps meetingCommandDeps) *cobra.Command {
 	var limit int
 	var jsonOutput bool
-	command := &cobra.Command{Use: "suggest <ref>", Short: "Suggest links between meeting copies", Args: cobra.ExactArgs(1)}
+	command := &cobra.Command{Use: "suggest <ref>", Short: "Suggest links between meeting notes and calendar events", Args: cobra.ExactArgs(1)}
 	command.Flags().IntVar(&limit, "limit", 10, "maximum suggestions")
 	command.Flags().BoolVar(&jsonOutput, "json", false, "print suggestions as JSON")
 	command.RunE = func(cmd *cobra.Command, args []string) error {
+		if limit < 1 || limit > 100 {
+			return usageErr(cmd, fmt.Errorf("limit must be between 1 and 100"))
+		}
 		ref, err := meetingLinksRef(args[0])
 		if err != nil {
 			return usageErr(cmd, err)

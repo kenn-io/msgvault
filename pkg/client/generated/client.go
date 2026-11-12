@@ -675,7 +675,7 @@ type ClientInterface interface {
 	GetMeetingRecord(ctx context.Context, options *GetMeetingRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMeetingRecordResponse, error)
 	GetMeetingRecordWithResponse(ctx context.Context, options *GetMeetingRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMeetingRecordResp, error)
 
-	// SuggestMeetingLinks Suggest links between archived meetings
+	// SuggestMeetingLinks Suggest links between meeting notes and calendar events
 	SuggestMeetingLinks(ctx context.Context, options *SuggestMeetingLinksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SuggestMeetingLinksResponse, error)
 	SuggestMeetingLinksWithResponse(ctx context.Context, options *SuggestMeetingLinksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SuggestMeetingLinksResp, error)
 
@@ -11176,7 +11176,7 @@ func (c *Client) GetMeetingRecord(ctx context.Context, options *GetMeetingRecord
 	return responseParser(ctx, resp)
 }
 
-// SuggestMeetingLinks Suggest links between archived meetings
+// SuggestMeetingLinks Suggest links between meeting notes and calendar events
 func (c *Client) SuggestMeetingLinks(ctx context.Context, options *SuggestMeetingLinksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SuggestMeetingLinksResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

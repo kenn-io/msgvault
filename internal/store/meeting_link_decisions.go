@@ -322,29 +322,7 @@ func (s *Store) materializedMeetingEndpoint(ctx context.Context, endpoint meetin
 	return resolved, aliases, err
 }
 
-type meetingSuggestionMemoKey struct{}
-
-type meetingSuggestionMemoEntry struct {
-	record MeetingRecord
-	err    error
-	cost   int
-}
-
 func (s *Store) meetingAutomaticRecordForEndpoint(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) (record MeetingRecord, err error) {
-	memo, _ := ctx.Value(meetingSuggestionMemoKey{}).(map[meetingDecisionEndpoint]meetingSuggestionMemoEntry)
-	if cached, ok := memo[endpoint]; ok {
-		*budget -= cached.cost
-		if *budget < 0 {
-			return MeetingRecord{}, calendarRecurrenceBudgetError()
-		}
-		return cached.record, cached.err
-	}
-	before := *budget
-	defer func() {
-		if memo != nil && !errors.Is(err, ErrQueryTooBroad) {
-			memo[endpoint] = meetingSuggestionMemoEntry{record: record, err: err, cost: before - *budget}
-		}
-	}()
 	ref, err := endpoint.meetingRef()
 	if err != nil {
 		return MeetingRecord{}, err

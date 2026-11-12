@@ -101,7 +101,7 @@ export const getMeetingRecord = (
   );
 };
 /**
- * @summary Suggest links between archived meetings
+ * @summary Suggest links between meeting notes and calendar events
  */
 export const suggestMeetingLinks = (
   params: SuggestMeetingLinksParams,

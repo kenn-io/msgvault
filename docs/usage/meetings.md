@@ -62,7 +62,7 @@ Google series ID cannot identify one week, so those notes remain separate.
 A calendar single or exception can prove that a bare ID names one event,
 including after a reschedule. Other note formats remain separate unless linked by the owner.
 
-Use `msgvault meetings suggest <ref>` to find overlapping notes or events, then use `msgvault meetings link <ref> <ref>` to accept a suggestion. Suggestions rank shared attendees, overlap, and title words. The API and MCP tool `suggest_meeting_links` return the same suggestions.
+Use `msgvault meetings suggest <ref>` to find events that overlap a meeting note, or notes that overlap a calendar event. Use `msgvault meetings link <ref> <ref>` to accept a suggestion. Suggestions rank shared attendees, overlap, and title words. The API and MCP tool `suggest_meeting_links` return the same suggestions.
 
 Use `msgvault meetings link <ref> <ref>` to join copies, including notes from
 an unscheduled call. Use `msgvault meetings unlink <ref> <ref>` to separate an

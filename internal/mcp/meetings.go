@@ -421,7 +421,7 @@ func (h *handlers) suggestMeetingLinks(ctx context.Context, req toolRequest) (*t
 }
 
 func suggestMeetingLinksDefinition() toolDefinition {
-	definition := readDefinition(ToolSuggestMeetingLinks, "Suggest links between archived meetings.", closedObject(map[string]*jsonschema.Schema{"ref": stringSchema("msg:<id> or evt:<id>[@occurrence key]"), "limit": boundedIntegerWithDefault("Maximum suggestions", 1, 100, 10)}, "ref"), outputSchemaFor[store.MeetingSuggestionPage](), (*handlers).suggestMeetingLinks)
+	definition := readDefinition(ToolSuggestMeetingLinks, "Suggest links between meeting notes and calendar events.", closedObject(map[string]*jsonschema.Schema{"ref": stringSchema("msg:<id> or evt:<id>[@occurrence key]"), "limit": boundedIntegerWithDefault("Maximum suggestions", 1, 100, 10)}, "ref"), outputSchemaFor[store.MeetingSuggestionPage](), (*handlers).suggestMeetingLinks)
 	definition.availability = meetingSuggestionsAvailable
 	return definition
 }

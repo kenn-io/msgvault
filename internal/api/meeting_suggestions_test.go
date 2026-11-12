@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -68,4 +69,28 @@ func TestGrantedMeetingSuggestions(t *testing.T) {
 			}
 		})
 	}
+	t.Run("embedded source scope", func(t *testing.T) {
+		for _, tc := range []struct {
+			sources []int64
+			count   int
+		}{{[]int64{notes.ID, calendar.ID}, 1}, {[]int64{notes.ID}, 0}} {
+			ctx := sourcescope.WithSourceIDs(t.Context(), tc.sources)
+			req := httptest.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("/api/v1/meetings/suggestions?ref=msg:%d", note), nil)
+			w := httptest.NewRecorder()
+			srv.Handler(nil).ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			var page store.MeetingSuggestionPage
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page))
+			require.Len(t, page.Suggestions, tc.count)
+		}
+	})
+	t.Run("limit", func(t *testing.T) {
+		for _, limit := range []string{"0", "-1", "101", "bad"} {
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/meetings/suggestions?ref=msg:%d&limit=%s", note, limit), nil)
+			req.Header.Set("Authorization", "Bearer owner")
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		}
+	})
 }

@@ -15,9 +15,11 @@ type MeetingSuggestionStore interface {
 }
 
 func (s *Server) registerMeetingSuggestionRoute(api huma.API) {
-	op := rawAPIV1Operation("suggestMeetingLinks", http.MethodGet, "/meetings/suggestions", "Suggest links between archived meetings")
+	op := rawAPIV1Operation("suggestMeetingLinks", http.MethodGet, "/meetings/suggestions", "Suggest links between meeting notes and calendar events")
 	op.Tags = []string{"Meetings"}
-	op.Parameters = []*huma.Param{{Name: "ref", In: "query", Required: true, Schema: &huma.Schema{Type: huma.TypeString}}, {Name: "limit", In: "query", Schema: &huma.Schema{Type: huma.TypeInteger}}}
+	limit := contactIntegerParam("limit", 1, 100)
+	limit.Schema.Default = 10
+	op.Parameters = []*huma.Param{{Name: "ref", In: "query", Required: true, Schema: &huma.Schema{Type: huma.TypeString}}, limit}
 	op.Responses = jsonResponsesFor[store.MeetingSuggestionPage](api)
 	op.Errors = []int{400, 401, 403, 404, 500, 503}
 	addErrorResponses(api, op.Responses, op.Errors...)
@@ -33,8 +35,8 @@ func (s *Server) handleMeetingSuggestions(w http.ResponseWriter, r *http.Request
 	limit := 0
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		limit, err = strconv.Atoi(raw)
-		if err != nil {
-			writeError(w, 400, "invalid_argument", "limit must be an integer")
+		if err != nil || limit < 1 || limit > 100 {
+			writeError(w, 400, "invalid_argument", "limit must be an integer between 1 and 100")
 			return
 		}
 	}

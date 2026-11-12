@@ -611,7 +611,7 @@ func (g GetMeetingRecordQuery) Validate() error {
 
 type SuggestMeetingLinksQuery struct {
 	Ref   string `json:"ref" validate:"required"`
-	Limit *int   `json:"limit,omitempty"`
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
 }
 
 func (s SuggestMeetingLinksQuery) Validate() error {

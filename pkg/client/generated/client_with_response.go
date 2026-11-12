@@ -16809,7 +16809,7 @@ func (c *Client) GetMeetingRecordWithResponse(ctx context.Context, options *GetM
 	}
 }
 
-// SuggestMeetingLinks Suggest links between archived meetings
+// SuggestMeetingLinks Suggest links between meeting notes and calendar events
 func (c *Client) SuggestMeetingLinksWithResponse(ctx context.Context, options *SuggestMeetingLinksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SuggestMeetingLinksResp, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

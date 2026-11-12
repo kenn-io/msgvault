@@ -25206,6 +25206,10 @@ paths:
         - in: query
           name: limit
           schema:
+            default: 10
+            format: int64
+            maximum: 100
+            minimum: 1
             type: integer
       responses:
         "200":
@@ -25258,7 +25262,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Suggest links between archived meetings
+      summary: Suggest links between meeting notes and calendar events
       tags:
         - Meetings
   /api/v1/messages:

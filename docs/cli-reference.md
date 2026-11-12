@@ -83,7 +83,7 @@ schema 5.1.0 or newer.
 
 ### meetings suggest
 
-`msgvault meetings suggest <ref> [--limit N] [--json]` ranks overlapping meeting copies. Use `meetings link` to accept a suggestion.
+`msgvault meetings suggest <ref> [--limit N] [--json]` ranks overlapping meeting notes and calendar events. Use `meetings link` to accept a suggestion.
 
 ### meetings link, unlink, and reset-link
 
