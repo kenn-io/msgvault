@@ -12,7 +12,7 @@ const settingsScrollBottom = -1
 // settingsViewport keeps the actions outside the scrollable settings content.
 func (m Model) settingsViewport(body, actions string) (viewport.Model, string) {
 	width := max(m.width, 20)
-	footer := wrapText(actions, width)
+	footer := wrapActions(actions, width)
 	v := viewport.New(viewport.WithWidth(width), viewport.WithHeight(max(m.height-len(footer)-1, 1)))
 	v.SoftWrap = true
 	wrapped := ansi.Wrap(body, width, "")
@@ -23,6 +23,15 @@ func (m Model) settingsViewport(body, actions string) (viewport.Model, string) {
 	}
 	v.SetYOffset(m.settingsYOffset(v, wrapped))
 	return v, strings.Join(footer, "\n")
+}
+
+// wrapActions keeps each key beside the first word of its label when wrapping.
+func wrapActions(actions string, width int) []string {
+	lines := wrapText(strings.ReplaceAll(actions, "] ", "]\u00a0"), width)
+	for i := range lines {
+		lines[i] = strings.ReplaceAll(lines[i], "\u00a0", " ")
+	}
+	return lines
 }
 
 // settingsYOffset resolves the stored scroll request against the wrapped body.
@@ -56,7 +65,7 @@ func settingsCursorLine(wrapped string) int {
 // screen: the list gets the lines left once they and the scroll hint are placed.
 func (m Model) settingsListHeight(notices []string) int {
 	width := max(m.width, 20)
-	used := 2 + len(wrapText(m.settingsFooter(), width))
+	used := 2 + len(wrapActions(m.settingsFooter(), width))
 	for _, notice := range notices {
 		used += strings.Count(ansi.Wrap(notice, width, ""), "\n") + 1
 	}
