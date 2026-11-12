@@ -369,12 +369,15 @@ jobs:
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
-      - name: Fetch API contract base
-        if: ${{ matrix.name == 'api' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
+      - name: Set API contract base
+        if: ${{ matrix.name == 'api' }}
+        shell: bash
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
         run: |
-          kit-retry 3 5 git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          if [ "$BASE_SHA" != "$(git rev-parse HEAD)" ]; then
+            kit-retry 3 5 git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          fi
           echo "MSGVAULT_API_CONTRACT_BASE=$BASE_SHA" >> "$GITHUB_ENV"
 
       - name: Install test dependencies
@@ -846,6 +849,16 @@ jobs:
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
+      - name: Set API contract base
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+        run: |
+          if [ "$BASE_SHA" != "$(git rev-parse HEAD)" ]; then
+            kit-retry 3 5 git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          fi
+          echo "MSGVAULT_API_CONTRACT_BASE=$BASE_SHA" >> "$GITHUB_ENV"
+
       - name: Install SQLite development headers
         shell: bash
         run: kit-retry 3 5 C:/msys64/usr/bin/pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
@@ -1238,6 +1251,17 @@ jobs:
           group: linux-postgres
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+
+      - name: Set API contract base
+        if: ${{ matrix.name == 'api' }}
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+        run: |
+          if [ "$BASE_SHA" != "$(git rev-parse HEAD)" ]; then
+            kit-retry 3 5 git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          fi
+          echo "MSGVAULT_API_CONTRACT_BASE=$BASE_SHA" >> "$GITHUB_ENV"
 
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap

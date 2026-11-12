@@ -576,12 +576,14 @@ markers for the same contract. You can correct a summary without renaming its ma
 Keep every contract recorded on the base. If your contract changes and main has no marker for
 that version, replace your marker. If another change has used that version, keep its marker,
 remove yours, and take the next minor above the greatest recorded version. Move feature minimum
-constants introduced by your change to that version. A failing local run offers both remedies
-because it cannot tell which applies without the base.
+constants introduced by your change to that version. Add a separate marker for each change, even
+when the contract matches an existing marker.
 
-Do not add version entries to the comment above `APISchemaVersion`. CI compares markers with its
-exact base. Local tests skip the history comparison unless `MSGVAULT_API_CONTRACT_BASE` is set to
-a local base SHA or ref.
+Do not add version entries to the comment above `APISchemaVersion`. Local tests compare markers
+with the common ancestor of `HEAD` and `origin/main`. Fetch `origin/main` and its history if the
+base cannot be found. CI uses the exact pull request or merge group base, or the checked-out SHA
+for main and dispatch runs. Set `MSGVAULT_API_CONTRACT_BASE` to a local SHA or ref to override the
+local base.
 
 ## Archive schema version maintenance
 

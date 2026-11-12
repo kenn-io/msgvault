@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -80,6 +81,13 @@ func normalizeAPIContract(value any, namedMap bool) {
 }
 
 func apiBaseMarkers(ctx context.Context, base string) ([]string, error) {
+	if base == "" {
+		out, err := exec.CommandContext(ctx, "git", "merge-base", "HEAD", "origin/main").Output()
+		if err != nil {
+			return nil, fmt.Errorf("find API contract base; fetch origin/main and its history: %w", err)
+		}
+		base = strings.TrimSpace(string(out))
+	}
 	cmd := exec.CommandContext(ctx, "git", "ls-tree", "-z", "--name-only", "--full-tree", base, "--", "internal/api/"+apiContractsDir+"/")
 	out, err := cmd.Output()
 	if err != nil {
@@ -144,10 +152,10 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 	}
 	for _, marker := range base {
 		if !candidates[marker] {
-			return fmt.Errorf("restore removed API contract marker %s", marker)
+			return nextMinor(fmt.Sprintf("restore removed API contract marker %s", marker))
 		}
 	}
-	marker := filepath.Join(apiContractsDir, version+"_"+digest+"_<summary-sha256>")
+	marker := path.Join(apiContractsDir, version+"_"+digest+"_<summary-sha256>")
 	switch c := semver.Compare(current, greatest); {
 	case c < 0:
 		return nextMinor(fmt.Sprintf("API schema version %s is older than recorded version %s", version, strings.TrimPrefix(greatest, "v")))
@@ -169,11 +177,8 @@ func TestAPISchemaVersionContract(t *testing.T) {
 	for _, entry := range entries {
 		markers = append(markers, entry.Name())
 	}
-	var baseMarkers []string
-	if base, ok := os.LookupEnv("MSGVAULT_API_CONTRACT_BASE"); ok {
-		baseMarkers, err = apiBaseMarkers(t.Context(), base)
-		require.NoError(err)
-	}
+	baseMarkers, err := apiBaseMarkers(t.Context(), os.Getenv("MSGVAULT_API_CONTRACT_BASE"))
+	require.NoError(err)
 	require.NoError(checkAPIContract(APISchemaVersion, digest, markers, baseMarkers))
 }
 
@@ -234,11 +239,36 @@ func TestAPIBaseMarkers(t *testing.T) {
 	for _, args := range [][]string{{"init", "-q"}, {"add", "."}, {"-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "fixture"}} {
 		require.NoError(exec.CommandContext(t.Context(), "git", args...).Run())
 	}
-	_, err := apiBaseMarkers(t.Context(), "refs/heads/nonexistent-api-contract-base")
-	require.ErrorContains(err, "read API contract markers")
-	markers, err := apiBaseMarkers(t.Context(), "HEAD")
+	git := func(args ...string) {
+		require.NoError(exec.CommandContext(t.Context(), "git", args...).Run())
+	}
+	git("update-ref", "refs/remotes/origin/main", "HEAD")
+	base, err := exec.CommandContext(t.Context(), "git", "rev-parse", "HEAD").Output()
+	require.NoError(err)
+	git("checkout", "-qb", "feature")
+	require.NoError(os.Remove("internal/api/" + apiContractsDir + "/" + marker))
+	changed := "5.0.0_" + strings.Repeat("e", 64) + "_" + strings.Repeat("b", 64)
+	require.NoError(os.WriteFile("internal/api/"+apiContractsDir+"/"+changed, nil, 0o644))
+	git("add", "-A")
+	git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "change")
+	markers, err := apiBaseMarkers(t.Context(), "")
+	require.NoError(err)
+	require.ErrorContains(checkAPIContract("5.0.0", strings.Repeat("e", 64), []string{changed}, markers), "use 5.1.0")
+
+	// Advance origin/main beyond the branch point; local checks still use the ancestor.
+	git("update-ref", "refs/remotes/origin/main", "HEAD")
+	git("checkout", "-q", strings.TrimSpace(string(base)))
+	markers, err = apiBaseMarkers(t.Context(), "")
 	require.NoError(err)
 	assert.Equal(t, []string{marker}, markers)
+	markers, err = apiBaseMarkers(t.Context(), "refs/remotes/origin/main")
+	require.NoError(err)
+	assert.Equal(t, []string{changed}, markers)
+	git("update-ref", "-d", "refs/remotes/origin/main")
+	_, err = apiBaseMarkers(t.Context(), "")
+	require.ErrorContains(err, "fetch origin/main")
+	_, err = apiBaseMarkers(t.Context(), "refs/heads/nonexistent-api-contract-base")
+	require.ErrorContains(err, "read API contract markers")
 }
 
 func TestAPIContractDigest(t *testing.T) {
