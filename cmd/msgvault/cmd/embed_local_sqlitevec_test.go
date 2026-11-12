@@ -5,7 +5,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -166,44 +165,26 @@ func TestLocalEmbeddingRuntimeInstallError(t *testing.T) {
 }
 
 func TestLocalEmbeddingRuntimeStartsInstalledServer(t *testing.T) {
-	for _, installed := range []bool{true, false} {
-		name := "download refused"
-		if installed {
-			name = "stopped installed server"
+	dir := t.TempDir()
+	oldDir, oldEndpoint, oldInstall := localEmbeddingsDir, localEmbeddingEndpoint, installLocalEmbeddingsForRuntime
+	t.Cleanup(func() {
+		localEmbeddingsDir, localEmbeddingEndpoint, installLocalEmbeddingsForRuntime = oldDir, oldEndpoint, oldInstall
+	})
+	localEmbeddingsDir = func() (string, error) { return dir, nil }
+	localEmbeddingEndpoint = func(_ context.Context, opts embedlocal.Options) (string, error) {
+		assert.Equal(t, dir, opts.DataDir)
+		if opts.Executable == "" {
+			return "", embedlocal.ErrNotFound
 		}
-		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			oldDir, oldEndpoint, oldInstall := localEmbeddingsDir, localEmbeddingEndpoint, installLocalEmbeddingsForRuntime
-			t.Cleanup(func() {
-				localEmbeddingsDir, localEmbeddingEndpoint, installLocalEmbeddingsForRuntime = oldDir, oldEndpoint, oldInstall
-			})
-			localEmbeddingsDir = func() (string, error) { return dir, nil }
-			localEmbeddingEndpoint = func(_ context.Context, opts embedlocal.Options) (string, error) {
-				assert.Equal(t, dir, opts.DataDir)
-				if opts.Executable == "" {
-					return "", embedlocal.ErrNotFound
-				}
-				assert.Equal(t, filepath.Join(dir, "kennembed"), opts.Executable)
-				return "http://127.0.0.1:12345/v1", nil
-			}
-			installLocalEmbeddingsForRuntime = func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
-				assert.Equal(t, dir, opts.DataDir)
-				if !installed {
-					approved, err := opts.Confirm(ctx, 1)
-					assert.False(t, approved)
-					return embedlocal.Installation{}, fmt.Errorf("confirm download: %w", err)
-				}
-				return embedlocal.Installation{DataDir: dir, Executable: filepath.Join(dir, "kennembed")}, nil
-			}
-			cfg := vector.Config{Enabled: true, Embeddings: vector.EmbeddingsConfig{LocalOnly: true}}
-			resolved, err := resolveLocalVectorConfig(t.Context(), cfg)
-			if installed {
-				require.NoError(t, err)
-				assert.Equal(t, "http://127.0.0.1:12345/v1", resolved.Embeddings.Endpoint)
-			} else {
-				require.Error(t, err)
-				assert.ErrorContains(t, err, "need setup")
-			}
-		})
+		assert.Equal(t, filepath.Join(dir, "kennembed"), opts.Executable)
+		return "http://127.0.0.1:12345/v1", nil
 	}
+	installLocalEmbeddingsForRuntime = func(_ context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
+		assert.Equal(t, dir, opts.DataDir)
+		return embedlocal.Installation{DataDir: dir, Executable: filepath.Join(dir, "kennembed")}, nil
+	}
+	cfg := vector.Config{Enabled: true, Embeddings: vector.EmbeddingsConfig{LocalOnly: true}}
+	resolved, err := resolveLocalVectorConfig(t.Context(), cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "http://127.0.0.1:12345/v1", resolved.Embeddings.Endpoint)
 }

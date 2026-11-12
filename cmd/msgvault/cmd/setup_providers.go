@@ -998,13 +998,13 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 		}
 	}
 
-	localDownloadAccepted := false
+	chosen := options.localEmbeddings
 	for i, lane := range plan.Lanes {
 		if !lane.local || lane.Action != planActionEnable || (detection.embeddingError == nil && detection.embeddingEndpoint != "") {
 			continue
 		}
 		accepted, err := installSetupLocalEmbeddings(command, deps, options, reader)
-		localDownloadAccepted = accepted
+		chosen = chosen || accepted
 		if err != nil {
 			plan.Lanes[i].Action, plan.Lanes[i].Reason = planActionPending, err.Error()
 			plan.Lanes[i].edits = nil
@@ -1015,13 +1015,7 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 	if err := applySetupProvidersPlan(command, deps, before, &plan, options.jsonOutput); err != nil {
 		return err
 	}
-	for _, lane := range plan.Lanes {
-		if lane.local && lane.Action == planActionEnable && (options.localEmbeddings || localDownloadAccepted) && deps.recordChoice != nil {
-			if err := deps.recordChoice(); err != nil {
-				loggerFromContext(ctx).Warn("Could not record local search choice", "error", err)
-			}
-		}
-	}
+	recordLocalSearchChoice(ctx, deps, &plan, chosen)
 	return writeSetupProvidersResult(command, deps, nil, &plan, options, plan.writes(), declined)
 }
 
@@ -1034,7 +1028,14 @@ func installSetupLocalEmbeddings(command *cobra.Command, deps setupProvidersDeps
 		return false, fmt.Errorf("local embedding directory: %w", err)
 	}
 	accepted := false
-	_, err = deps.localInstall(command.Context(), embedlocal.InstallOptions{DataDir: dir, Confirm: func(_ context.Context, size int64) (bool, error) {
+	_, err = deps.localInstall(command.Context(), embedlocal.InstallOptions{DataDir: dir, Confirm: confirmSetupLocalDownload(command, deps, options, reader, &accepted)})
+	return accepted, err
+}
+
+// confirmSetupLocalDownload asks before the download and sets accepted only
+// when the user answers yes at the prompt.
+func confirmSetupLocalDownload(command *cobra.Command, deps setupProvidersDeps, options setupProvidersOptions, reader *bufio.Reader, accepted *bool) func(context.Context, int64) (bool, error) {
+	return func(_ context.Context, size int64) (bool, error) {
 		if options.yes {
 			return true, nil
 		}
@@ -1046,10 +1047,21 @@ func installSetupLocalEmbeddings(command *cobra.Command, deps setupProvidersDeps
 		if err != nil && !errors.Is(err, io.EOF) {
 			return false, fmt.Errorf("read download answer: %w", err)
 		}
-		accepted = isYesAnswer(strings.ToLower(strings.TrimSpace(answer)))
-		return accepted, nil
-	}})
-	return accepted, err
+		*accepted = isYesAnswer(strings.ToLower(strings.TrimSpace(answer)))
+		return *accepted, nil
+	}
+}
+
+// recordLocalSearchChoice records the shared choice only when the user made
+// it: an explicit --local-embeddings or an accepted download prompt.
+func recordLocalSearchChoice(ctx context.Context, deps setupProvidersDeps, plan *setupProvidersPlan, chosen bool) {
+	for _, lane := range plan.Lanes {
+		if lane.local && lane.Action == planActionEnable && chosen && deps.recordChoice != nil {
+			if err := deps.recordChoice(); err != nil {
+				loggerFromContext(ctx).Warn("Could not record local search choice", "error", err)
+			}
+		}
+	}
 }
 
 func setupPosture(saved, proposed string, override bool) string {

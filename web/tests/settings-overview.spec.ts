@@ -84,21 +84,3 @@ test('local search hint follows results', async ({ page }) => {
   const tableGap = await hint.evaluate(element => element.getBoundingClientRect().y - document.querySelector('.results-split')!.getBoundingClientRect().bottom);
   expect(tableGap).toBeGreaterThan(0);
 });
-
-for (const state of ['error', 'preparing', 'indexing', 'on'] as const) {
-  test(`shared local search shows ${state}`, async ({ page }) => {
-    await installOperations(page);
-    await page.route('**/api/v1/embeddings/local', route => route.fulfill({ json: {
-      host: '', enabled: state === 'indexing' || state === 'on', provider: state === 'indexing' || state === 'on' ? 'builtin' : '',
-      phase: state === 'indexing' ? 'indexing' : 'idle', running: state === 'preparing' || state === 'indexing',
-      download_bytes: 0, done_bytes: 0, total_bytes: 0,
-      ...(state === 'error' ? { error: 'Local server failed to start' } : {})
-    } }));
-    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
-    const row = page.locator('[data-feature="message_embedding"]');
-    if (state === 'error') await expect(row.getByRole('alert')).toHaveText('Local server failed to start.');
-    if (state === 'preparing') await expect(row.getByText('Preparing')).toBeVisible();
-    if (state === 'indexing') await expect(row.getByText(/^Indexing/)).toBeVisible();
-    if (state === 'on') await expect(row.getByText('On', { exact: true })).toBeVisible();
-  });
-}

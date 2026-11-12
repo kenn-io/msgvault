@@ -1245,21 +1245,21 @@ func TestSetupProvidersRejectsExplicitProviderWhenSweepEnabled(t *testing.T) {
 
 func TestSetupProvidersLocalDownloadTransaction(t *testing.T) {
 	for _, tc := range []struct {
-		name, input            string
-		args                   []string
-		tty, enabled, recorded bool
+		name, input                     string
+		args                            []string
+		tty, enabled, recorded, confirm bool
 	}{
-		{name: "accept", tty: true, input: "yes\n", enabled: true, recorded: true},
-		{name: "decline", tty: true, input: "no\n"},
-		{name: "implicit nonterminal", args: []string{"--yes", "--json"}},
-		{name: "yes alone", tty: true, args: []string{"--yes"}},
-		{name: "explicit yes", args: []string{"--local-embeddings", "--yes"}, enabled: true, recorded: true},
+		{name: "accept", tty: true, input: "yes\n", enabled: true, recorded: true, confirm: true},
+		{name: "decline", tty: true, input: "no\n", confirm: true},
+		{name: "implicit nonterminal", args: []string{"--yes", "--json"}, confirm: true},
+		{name: "yes alone", tty: true, args: []string{"--yes"}, confirm: true},
+		{name: "explicit yes", args: []string{"--local-embeddings", "--yes"}, enabled: true, recorded: true, confirm: true},
 		{name: "cached without prompt", tty: true, enabled: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-			fixture.tty, fixture.confirm = tc.tty, tc.name != "cached without prompt"
+			fixture.tty, fixture.confirm = tc.tty, tc.confirm
 			deps := fixture.deps(t)
 			recorded := 0
 			deps.recordChoice = func() error { recorded++; return nil }
@@ -1466,20 +1466,6 @@ func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
 			assert.Equal(t, 1, discoveries)
 		})
 	}
-}
-
-func TestSetupProvidersRecordsLocalChoice(t *testing.T) {
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-	deps := fixture.deps(t)
-	calls := 0
-	deps.recordChoice = func() error { calls++; return nil }
-	command := newSetupProvidersCommand(deps)
-	command.SetOut(io.Discard)
-	command.SetErr(io.Discard)
-	command.SetArgs([]string{"--local-embeddings", "--yes"})
-	require.NoError(t, command.ExecuteContext(t.Context()))
-	assert.Equal(t, 1, calls)
-	assert.True(t, fixture.load(t).Vector.Embeddings.LocalOnly)
 }
 
 func TestSetupProvidersChoiceFailureIsLogged(t *testing.T) {
