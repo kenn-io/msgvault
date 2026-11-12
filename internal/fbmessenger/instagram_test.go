@@ -863,9 +863,11 @@ func TestInstagramReplayChangedMetadataPreservesDistinctReactionEvidence(t *test
 	a["is_geoblocked_for_viewer"], b["is_geoblocked_for_viewer"] = false, false
 	a["reactions"], b["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "a"}}, []map[string]string{{"actor": "Nova Example", "reaction": "a"}}
 	instagramTestShard(t, root, "circle", "message_1.json", b, a)
-	_, err = ImportDYI(t.Context(), st, opts)
+	summary, err := ImportDYI(t.Context(), st, opts)
 	require.NoError(t, err)
+	assert.Zero(t, summary.MessagesAdded)
 	after, _ := instagramSnapshot(t, st)
+	assert.Len(t, after, 2)
 	for id, raw := range before {
 		assert.Equal(t, raw, after[id])
 	}
