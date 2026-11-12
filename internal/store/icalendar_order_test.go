@@ -27,6 +27,7 @@ func TestICalendarRevisionPrecedence(t *testing.T) {
 }
 
 func testICalendarCancelledDetailsRevisionOrder(t *testing.T) {
+	t.Helper()
 	initial := calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Initial\r\nORGANIZER:mailto:organizer@example.com")
 	updated := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Updated\r\nORGANIZER:mailto:organizer@example.com")
 	cancel := calendarDocument("CANCEL", "SEQUENCE:3\r\nSTATUS:CANCELLED\r\nORGANIZER:mailto:organizer@example.com")
@@ -117,6 +118,7 @@ func TestICalendarCancellationRetainsAttendees(t *testing.T) {
 }
 
 func testICalendarCancelledDetailsStamp(t *testing.T) {
+	t.Helper()
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)

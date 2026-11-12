@@ -272,73 +272,85 @@ func TestEmailCalendarMaterialization(t *testing.T) {
 		return st, parent, source, ids, request
 	}
 	t.Run("email retained", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
 		st, parent, source, _, _ := setup(t)
 		email, err := st.GetMessage(parent)
-		require.NoError(t, err)
-		assert.Equal(t, "Original email", email.Subject)
-		assert.Equal(t, "Email body stays intact", email.BodyText)
+		requirements.NoError(err)
+		assertions.Equal("Original email", email.Subject)
+		assertions.Equal("Email body stays intact", email.BodyText)
 		var emails int
-		require.NoError(t, st.db.QueryRow(`SELECT count(*) FROM messages WHERE source_id=? AND message_type='email'`, source).Scan(&emails))
-		assert.Equal(t, 1, emails)
+		requirements.NoError(st.db.QueryRow(`SELECT count(*) FROM messages WHERE source_id=? AND message_type='email'`, source).Scan(&emails))
+		assertions.Equal(1, emails)
 	})
 	t.Run("event participants and search", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
 		st, _, _, ids, _ := setup(t)
-		assert.Len(t, calendarRows(t, st, ids...)[0].Event.Attendees, 2)
+		assertions.Len(calendarRows(t, st, ids...)[0].Event.Attendees, 2)
 		matches, _, err := st.SearchMessagesQuery(search.Parse("from:organizer@example.com"), 0, 10)
-		require.NoError(t, err)
+		requirements.NoError(err)
 		var found bool
 		for _, match := range matches {
 			if match.ID == ids[0] {
 				found = true
 			}
 		}
-		assert.True(t, found)
+		assertions.True(found)
 	})
 	t.Run("rebuild preserves events", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
 		st, _, source, ids, request := setup(t)
 		_, err := st.PersistMessageContext(t.Context(), &MessagePersistData{
 			Message:      &Message{SourceID: source, SourceMessageID: "organizer-message", MessageType: "email", Subject: sql.NullString{String: "Original email", Valid: true}},
 			Conversation: &ConversationPersistData{SourceConversationID: "organizer-message", Title: "Original email"},
 			RawMIME:      request,
 		})
-		require.NoError(t, err)
-		assert.Equal(t, ids, emailEvents(t, st, source), "rebuilding the same email keeps its claim identity")
+		requirements.NoError(err)
+		assertions.Equal(ids, emailEvents(t, st, source), "rebuilding the same email keeps its claim identity")
 	})
 	t.Run("deleted email retains events", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
 		st, parent, _, ids, _ := setup(t)
 		_, err := st.db.Exec(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`, parent)
-		require.NoError(t, err)
+		requirements.NoError(err)
 		from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
 		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 2))
-		require.NoError(t, err)
-		require.Len(t, page.Occurrences, 2)
-		assert.ElementsMatch(t, ids, []int64{page.Occurrences[0].MessageID, page.Occurrences[1].MessageID})
+		requirements.NoError(err)
+		requirements.Len(page.Occurrences, 2)
+		assertions.ElementsMatch(ids, []int64{page.Occurrences[0].MessageID, page.Occurrences[1].MessageID})
 	})
 	t.Run("garbage collection", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
 		st, _, source, _, _ := setup(t)
 		if st.IsPostgreSQL() {
 			t.Skip("garbage collection requires SQLite")
 		}
-		require.NoError(t, st.MarkMessageDeletedContext(t.Context(), source, "organizer-message"))
+		requirements.NoError(st.MarkMessageDeletedContext(t.Context(), source, "organizer-message"))
 		plan, err := st.PlanGCContext(t.Context())
-		require.NoError(t, err)
+		requirements.NoError(err)
 		deleted, err := st.ExecuteGCContext(t.Context(), plan)
-		require.NoError(t, err)
-		assert.Equal(t, int64(1), deleted)
+		requirements.NoError(err)
+		assertions.Equal(int64(1), deleted)
 		from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
 		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 2))
-		require.NoError(t, err)
-		assert.Len(t, page.Occurrences, 2)
+		requirements.NoError(err)
+		assertions.Len(page.Occurrences, 2)
 	})
 	t.Run("source removal", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
 		st, _, source, _, _ := setup(t)
-		require.NoError(t, st.MarkMessageDeletedContext(t.Context(), source, "organizer-message"))
+		requirements.NoError(st.MarkMessageDeletedContext(t.Context(), source, "organizer-message"))
 		_, _, err := st.RemoveSourceSerialized(t.Context(), source)
-		require.NoError(t, err)
+		requirements.NoError(err)
 		from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
 		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 2))
-		require.NoError(t, err)
-		assert.Empty(t, page.Occurrences)
+		requirements.NoError(err)
+		assertions.Empty(page.Occurrences)
 	})
 }
 

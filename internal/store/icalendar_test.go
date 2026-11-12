@@ -354,6 +354,7 @@ func TestICSFamilyLookupUsesIndexes(t *testing.T) {
 }
 
 func testICalendarEqualRevisionIgnored(t *testing.T) {
+	t.Helper()
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
@@ -381,6 +382,7 @@ func testICalendarEqualRevisionIgnored(t *testing.T) {
 }
 
 func testICalendarCancellationWinsRevisionTie(t *testing.T) {
+	t.Helper()
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
