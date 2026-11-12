@@ -231,7 +231,7 @@ func TestAPIBaseMarkers(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "config"))
 	t.Chdir(t.TempDir())
 	git := func(args ...string) {
-		require.NoError(exec.CommandContext(t.Context(), "git", append([]string{"-c", "user.name=Test", "-c", "user.email=test@example.com"}, args...)...).Run())
+		require.NoError(exec.CommandContext(t.Context(), "git", append([]string{"-c", "user.name=Test", "-c", "user.email=fixture"}, args...)...).Run())
 	}
 	dir := "internal/api/" + apiContractsDir + "/"
 	marker := "5.0.0_" + strings.Repeat("f", 64) + "_" + strings.Repeat("a", 64)
