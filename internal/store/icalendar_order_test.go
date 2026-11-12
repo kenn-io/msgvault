@@ -51,19 +51,39 @@ func testICalendarCancelledDetailsRevisionOrder(t *testing.T) {
 			stored, err := st.GetMessageRaw(ids[0])
 			requirements.NoError(err)
 			assertions.Equal(updated, stored)
-			if order == [3]int{0, 1, 2} {
-				t.Run("projection rebuild and restoration", func(t *testing.T) {
-					_, err := st.db.ExecContext(t.Context(), `DELETE FROM calendar_events WHERE message_id=?`, ids[0])
-					require.NoError(t, err)
-					require.NoError(t, st.UpsertMessageRawWithFormat(ids[0], stored, "ics"))
-					assert.Equal(t, row.Event, calendarRows(t, st, ids[0])[0].Event)
-					restored := calendarDocument("REQUEST", "SEQUENCE:4\r\nDTSTART:20270302T150000Z\r\nSUMMARY:Restored\r\nORGANIZER:mailto:organizer@example.com")
-					_, err = st.PersistICalendarContext(t.Context(), source, restored)
-					require.NoError(t, err)
-					row := calendarRows(t, st, ids[0])[0]
-					assert.Equal(t, "confirmed", row.Event.Status)
-					assert.Equal(t, "Restored", row.Subject)
-				})
+		})
+	}
+	for _, tc := range []struct {
+		name    string
+		rebuild bool
+	}{{"projection rebuild", true}, {"restoration", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			source := icsSource(t, st)
+			for _, event := range [][]byte{initial, updated, cancel} {
+				_, err := st.PersistICalendarContext(t.Context(), source, event)
+				requirements.NoError(err)
+			}
+			ids := emailEvents(t, st, source)
+			requirements.Len(ids, 1)
+			row := calendarRows(t, st, ids[0])[0]
+			requirements.Equal("cancelled", row.Event.Status)
+			if tc.rebuild {
+				stored, err := st.GetMessageRaw(ids[0])
+				requirements.NoError(err)
+				requirements.Equal(updated, stored)
+				_, err = st.db.ExecContext(t.Context(), `DELETE FROM calendar_events WHERE message_id=?`, ids[0])
+				requirements.NoError(err)
+				requirements.NoError(st.UpsertMessageRawWithFormat(ids[0], stored, "ics"))
+				assertions.Equal(row.Event, calendarRows(t, st, ids[0])[0].Event)
+			} else {
+				restored := calendarDocument("REQUEST", "SEQUENCE:4\r\nDTSTART:20270302T150000Z\r\nSUMMARY:Restored\r\nORGANIZER:mailto:organizer@example.com")
+				_, err := st.PersistICalendarContext(t.Context(), source, restored)
+				requirements.NoError(err)
+				row := calendarRows(t, st, ids[0])[0]
+				assertions.Equal("confirmed", row.Event.Status)
+				assertions.Equal("Restored", row.Subject)
 			}
 		})
 	}
