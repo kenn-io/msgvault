@@ -1275,7 +1275,7 @@ func TestGrantLeaseRefreshAndOwnership(t *testing.T) {
 	assert.Len(entries, 1)
 }
 
-func TestCreationAdmissionRunsAfterVerificationAndNotForRefresh(t *testing.T) {
+func TestCreationAdmissionBeforeAndAfterVerification(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -1285,12 +1285,18 @@ func TestCreationAdmissionRunsAfterVerificationAndNotForRefresh(t *testing.T) {
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: registry}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	verified, allowed := false, false
-	verify := func(context.Context, string, string, []byte) error { verified = true; return nil }
+	var steps []string
+	verify := func(context.Context, string, string, []byte) error {
+		verified = true
+		steps = append(steps, "verify")
+		return nil
+	}
 	check := func(_ context.Context, creating bool) error {
 		if !creating {
+			steps = append(steps, "refresh")
 			return nil
 		}
-		assert.True(verified)
+		steps = append(steps, "creation")
 		if !allowed {
 			return failure(Forbidden, "person_scope_exceeds_grant")
 		}
@@ -1300,13 +1306,17 @@ func TestCreationAdmissionRunsAfterVerificationAndNotForRefresh(t *testing.T) {
 	var eventErr *Error
 	require.ErrorAs(err, &eventErr)
 	assert.Equal("person_scope_exceeds_grant", eventErr.Reason)
-	allowed, verified = true, false
+	assert.False(verified)
+	assert.Equal([]string{"creation"}, steps)
+	allowed, verified, steps = true, false, nil
 	first, err := service.Subscribe(t.Context(), in, agentgrant.Owner(id), verify, check)
 	require.NoError(err)
-	allowed, verified = false, false
+	assert.Equal([]string{"creation", "verify", "creation"}, steps)
+	allowed, verified, steps = false, false, nil
 	second, err := service.Subscribe(t.Context(), in, agentgrant.Owner(id), verify, check)
 	require.NoError(err)
 	assert.True(verified)
+	assert.Equal([]string{"verify", "refresh"}, steps)
 	assert.Equal(first.ID, second.ID)
 }
 
