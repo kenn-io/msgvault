@@ -3318,7 +3318,7 @@ it.each(['everything', 'files', 'ungrouped files'] as const)('reloads %s after i
   } finally { rendered.unmount(); state.destroy(); }
 });
 
-it.each(['ready', 'build required', 'unsupported', 'failure'] as const)('keeps link recovery across workspaces: %s', async outcome => {
+it.each(['ready', 'build required', 'build dismissed', 'unsupported', 'failure'] as const)('keeps link recovery across workspaces: %s', async outcome => {
   let writes = 0, refreshes = 0, recovered = false;
   let release!: (response: Response) => void;
   const client = createAPIClient(async input => {
@@ -3330,7 +3330,7 @@ it.each(['ready', 'build required', 'unsupported', 'failure'] as const)('keeps l
     if (path.endsWith('/identity/links')) { writes++; return Response.json({ identity_revision: 2, cache_state: 'stale' }); }
     if (path.endsWith('/identity/cache-refresh')) {
       refreshes++;
-      if (refreshes === 1 && outcome === 'build required') return Response.json({ error: 'identity_cache_build_required', message: 'Run msgvault build-cache to refresh related views.' }, { status: 503 });
+      if (refreshes === 1 && (outcome === 'build required' || outcome === 'build dismissed')) return Response.json({ error: 'identity_cache_build_required', message: 'Run msgvault build-cache to refresh related views.' }, { status: 503 });
       if (refreshes === 1 && outcome === 'unsupported') return Response.json({ error: 'identity_cache_unsupported', message: 'People and relationship analytics are unavailable with PostgreSQL.' }, { status: 503 });
       if (refreshes === 1 && outcome === 'failure') return Response.json({ error: 'internal_error', message: 'Refresh failed.' }, { status: 500 });
       recovered = true;
@@ -3356,10 +3356,10 @@ it.each(['ready', 'build required', 'unsupported', 'failure'] as const)('keeps l
       await screen.findByText('Refreshing...');
       expect(within(notice).getByRole('button', { name: 'Retry' })).toHaveProperty('disabled', true);
       release(Response.json({ identity_revision: 2, cache_state: 'ready' }));
-    } else if (outcome === 'build required') {
+    } else if (outcome === 'build required' || outcome === 'build dismissed') {
       await screen.findByText('Run msgvault build-cache to refresh related views.');
-      await fireEvent.click(within(notice).getByRole('button', { name: 'Dismiss' }));
-      expect(screen.queryByText('Run msgvault build-cache to refresh related views.')).toBeNull();
+      expect(within(notice).getByRole('button', { name: 'Retry' })).toBeDefined();
+      await fireEvent.click(within(notice).getByRole('button', { name: outcome === 'build required' ? 'Retry' : 'Dismiss' }));
     } else if (outcome === 'failure') {
       await screen.findByText('Refresh failed.');
       await fireEvent.click(within(notice).getByRole('button', { name: 'Retry' }));
@@ -3368,10 +3368,10 @@ it.each(['ready', 'build required', 'unsupported', 'failure'] as const)('keeps l
       expect(within(notice).queryByRole('button', { name: 'Retry' })).toBeNull();
       await fireEvent.click(within(notice).getByRole('button', { name: 'Dismiss' }));
     }
-    if (outcome === 'ready' || outcome === 'failure') await screen.findByRole('heading', { name: 'Updated person' });
+    if (outcome !== 'unsupported' && outcome !== 'build dismissed') await screen.findByRole('heading', { name: 'Updated person' });
     await waitFor(() => expect(screen.queryByText('Changes saved, but related views may be out of date.')).toBeNull());
     expect(writes).toBe(1);
-    expect(refreshes).toBe(outcome === 'failure' ? 2 : 1);
+    expect(refreshes).toBe(outcome === 'failure' || outcome === 'build required' ? 2 : 1);
   } finally { release?.(Response.json({ identity_revision: 2, cache_state: 'ready' })); rendered.unmount(); state.destroy(); }
 });
 
