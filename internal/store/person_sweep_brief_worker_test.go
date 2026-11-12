@@ -367,6 +367,30 @@ func TestPersonSweepWorkerStoresARealBriefThroughApplyPersonSweep(t *testing.T) 
 	checks.Equal(1, briefBatches, "the brief call is reconciled like any other")
 }
 
+func TestPersonAppreciationsRefuseUnknownBriefVersions(t *testing.T) {
+	f := newBriefWorkerEndToEndFixture(t, "brief-version")
+	st, personID := f.journal.store, f.journal.alicePersonID
+	result, err := f.worker.Run(t.Context(), peoplesweep.RunRequest{
+		Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
+		PersonID: personID, Limit: 1, Brief: peoplesweep.BriefModeForce,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.PeopleSucceeded)
+	profile, err := f.config.Profile()
+	require.NoError(t, err)
+	for _, version := range []string{"v1", "v2", "v4"} {
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET program_version = ? WHERE person_id = ? AND status = 'current'`), version, personID)
+		require.NoError(t, err)
+		projection, err := st.ProjectPersonAppreciationsContext(t.Context(), personID, profile)
+		if version == "v4" {
+			assert.ErrorIs(t, err, store.ErrPersonAppreciationVersionUnsupported)
+		} else {
+			require.NoError(t, err)
+			assert.Empty(t, projection.Appreciations)
+		}
+	}
+}
+
 func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	f := newBriefWorkerEndToEndFixture(t, "appreciation-proof")
 	st, journal := f.journal.store, f.journal

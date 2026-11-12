@@ -26,24 +26,27 @@ func (s *Store) PersonSweepAppreciationRetired(ctx context.Context, personID int
 // any exact proof in that same snapshot. No nested store transaction is opened.
 func (s *Store) appreciationRetiredTx(ctx context.Context, tx *loggedTx, personID int64, keys []string, profile peoplesweep.ProviderProfile, lock bool) (map[string]bool, error) {
 	retired := make(map[string]bool)
-	states, err := getPersonAppreciationStates(ctx, tx, keys)
-	if err != nil {
-		return nil, err
-	}
-	for key, state := range states {
-		if state.DismissedAt != nil {
-			retired[key] = true
-			continue
-		}
-		if state.ThanksBriefID == nil {
-			continue
-		}
-		_, valid, err := s.validAppreciationProofTx(ctx, tx, personID, key, *state.ThanksBriefID, profile, lock)
+	for start := 0; start < len(keys); start += MaxPersonAppreciationStateKeys {
+		end := min(start+MaxPersonAppreciationStateKeys, len(keys))
+		states, err := getPersonAppreciationStates(ctx, tx, keys[start:end])
 		if err != nil {
 			return nil, err
 		}
-		if valid {
-			retired[key] = true
+		for key, state := range states {
+			if state.DismissedAt != nil {
+				retired[key] = true
+				continue
+			}
+			if state.ThanksBriefID == nil {
+				continue
+			}
+			_, valid, err := s.validAppreciationProofTx(ctx, tx, personID, key, *state.ThanksBriefID, profile, lock)
+			if err != nil {
+				return nil, err
+			}
+			if valid {
+				retired[key] = true
+			}
 		}
 	}
 	return retired, nil

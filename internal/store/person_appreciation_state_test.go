@@ -10,10 +10,29 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestAppreciationRetirementBatchesLargeKeySets(t *testing.T) {
+	f := storetest.New(t)
+	keys := make([]string, store.MaxPersonAppreciationStateKeys+1)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("%064x", i+1)
+	}
+	for _, index := range []int{0, len(keys) - 1} {
+		_, err := f.Store.RecordPersonAppreciationDismissalContext(t.Context(), keys[index], "person", "owner", time.Now())
+		require.NoError(t, err)
+	}
+	retired, err := f.Store.PersonSweepAppreciationRetired(t.Context(), 1, keys, peoplesweep.ProviderProfile{})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{keys[0]: true, keys[len(keys)-1]: true}, retired)
+	keys[len(keys)-1] = "invalid"
+	_, err = f.Store.PersonSweepAppreciationRetired(t.Context(), 1, keys, peoplesweep.ProviderProfile{})
+	assert.ErrorIs(t, err, store.ErrInvalidPersonAppreciationKey)
+}
 
 func TestAppreciationDismissalFirstWriteAndProofOnly(t *testing.T) {
 	assert := assert.New(t)

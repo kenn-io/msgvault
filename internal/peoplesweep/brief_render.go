@@ -110,7 +110,7 @@ func RenderBrief(parsed ParsedBrief, window BriefWindow) (RenderedBrief, error) 
 		})
 	}
 	for index, suggestion := range parsed.Output.ThanksSuggestions {
-		prefix := "If you have not already, consider thanking them for "
+		prefix := "If you haven't already, you could thank them for "
 		if suggestion.State == "already_thanked" {
 			prefix = "You already thanked them for "
 		}

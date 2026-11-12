@@ -14,6 +14,9 @@ import (
 
 var ErrPersonAppreciationNotFound = errors.New("eligible person appreciation not found")
 
+// ErrPersonAppreciationVersionUnsupported prevents treating a newer brief as empty.
+var ErrPersonAppreciationVersionUnsupported = errors.New("unsupported person appreciation brief version")
+
 // PersonAppreciationProjection contains the exact current version and the
 // revalidated, undismissed contribution snapshots that may be shown from it.
 type PersonAppreciationProjection struct {
@@ -30,8 +33,12 @@ func (s *Store) currentAppreciationsTx(ctx context.Context, tx *loggedTx, person
 		return PersonAppreciationProjection{}, err
 	}
 	projection := PersonAppreciationProjection{Brief: brief, Appreciations: []peoplesweep.BriefAppreciationMemory{}}
-	if brief.ProgramVersion != "v3" {
+	switch brief.ProgramVersion {
+	case "v1", "v2":
 		return projection, nil
+	case peoplesweep.BriefProgramVersion:
+	default:
+		return PersonAppreciationProjection{}, fmt.Errorf("%w: %q", ErrPersonAppreciationVersionUnsupported, brief.ProgramVersion)
 	}
 	var boundary peoplesweep.BriefBoundary
 	if err := json.Unmarshal(brief.Boundary, &boundary); err != nil || !peoplesweep.ValidBriefAppreciationMemory(boundary.AppreciationMemory) {

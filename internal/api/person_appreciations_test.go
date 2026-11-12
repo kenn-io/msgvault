@@ -92,4 +92,13 @@ func TestAppreciationHTTPProjectsDismissalAndPreservesHistory(t *testing.T) {
 	assert.Contains(t, response.Body.String(), `"historical_snapshot":true`)
 	assert.Contains(t, response.Body.String(), `"appreciation_dismissal_keys":["`+key+`"]`)
 	assert.NotContains(t, response.Body.String(), hex.EncodeToString(hash[:]))
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE person_briefs SET program_version = ? WHERE person_id = ?`), "v4", f.personID)
+	require.NoError(t, err)
+	for _, request := range []struct{ method, path string }{
+		{http.MethodGet, base}, {http.MethodPost, base + "/" + key + "/dismiss"},
+	} {
+		response = doRequest(t, f.server.Router(), request.method, request.path, nil, nil)
+		assert.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+		assert.Contains(t, response.Body.String(), "appreciations_unavailable")
+	}
 }

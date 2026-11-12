@@ -69,6 +69,10 @@ func (s *Server) loadPersonAppreciations(w http.ResponseWriter, r *http.Request,
 	}
 	projection, err := archive.ProjectPersonAppreciationsContext(r.Context(), personID, profile)
 	if err != nil {
+		if errors.Is(err, store.ErrPersonAppreciationVersionUnsupported) {
+			writeError(w, http.StatusServiceUnavailable, "appreciations_unavailable", "Person appreciations are unavailable for this brief version")
+			return store.PersonAppreciationProjection{}, false
+		}
 		s.writePersonBriefError(w, err)
 		return store.PersonAppreciationProjection{}, false
 	}
@@ -115,6 +119,10 @@ func (s *Server) handleDismissPersonAppreciation(w http.ResponseWriter, r *http.
 		return
 	}
 	state, err := archive.DismissPersonAppreciationContext(r.Context(), personID, r.PathValue("key"), personBriefActor, s.clockNow().UTC(), profile)
+	if errors.Is(err, store.ErrPersonAppreciationVersionUnsupported) {
+		writeError(w, http.StatusServiceUnavailable, "appreciations_unavailable", "Person appreciations are unavailable for this brief version")
+		return
+	}
 	if errors.Is(err, store.ErrInvalidPersonAppreciationKey) {
 		writeError(w, http.StatusBadRequest, "invalid_appreciation_key", "Appreciation key must be exactly 64 lowercase hexadecimal characters")
 		return
