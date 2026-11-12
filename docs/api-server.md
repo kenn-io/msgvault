@@ -1032,10 +1032,12 @@ Generation reports these conditions before running:
 | `409` | `person_brief_busy` | Another worker holds the person's sweep lease; retry after it finishes |
 | `503` | `brief_generation_unavailable` | The daemon started without the people sweep worker, for example with `[people.sweep] enabled = false` |
 
-Briefs use only supported chat and text-message sources within
-`conversation_text`; email, meeting transcripts, documents, and owner-authored
-messages are excluded. A scheduled sweep skips brief generation when the
-profile does not permit its sources or sensitive content.
+Briefs use supported chat and text-message sources within `conversation_text`;
+email, meeting transcripts, and documents are excluded. Your own messages may
+be sent to the selected provider as bounded context to check for a specific
+earlier thank-you in a direct conversation with a complete provider roster. They
+do not become facts about the other person. A scheduled sweep skips brief
+generation when the profile does not permit its sources or sensitive content.
 
 Restart the daemon after enabling sweeps or changing the selected provider.
 Manual brief generation uses the configuration loaded at daemon startup.

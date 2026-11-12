@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -1395,4 +1396,158 @@ func TestPersonSweepEmptyAfterConcurrentDismissalPreservesExtraction(t *testing.
 	var retryClass string
 	require.NoError(t, f.journal.store.DB().QueryRowContext(t.Context(), f.journal.store.Rebind(`SELECT last_failure_class FROM person_sweep_work WHERE person_id = ?`), f.journal.alicePersonID).Scan(&retryClass))
 	assert.Equal(t, string(peoplesweep.FailureInvalidOutput), retryClass)
+}
+
+// appreciationApplyProbe changes owner evidence after parsing but before the
+// first real apply, and records whether the worker retries without the brief.
+type appreciationApplyProbe struct {
+	store      *store.Store
+	before     func()
+	afterFirst func(error)
+	requests   []peoplesweep.ApplyRequest
+	errors     []error
+}
+
+func (p *appreciationApplyProbe) ApplyPersonSweep(ctx context.Context, request peoplesweep.ApplyRequest) (peoplesweep.ApplyResult, error) {
+	p.requests = append(p.requests, request)
+	if len(p.requests) == 1 && p.before != nil {
+		p.before()
+	}
+	result, err := p.store.ApplyPersonSweep(ctx, request)
+	p.errors = append(p.errors, err)
+	if len(p.requests) == 1 && p.afterFirst != nil {
+		p.afterFirst(err)
+	}
+	return result, err
+}
+
+func TestAppreciationOwnerDowngradePreservesBriefAndRetries(t *testing.T) {
+	for _, invalidate := range []bool{false, true} {
+		t.Run(fmt.Sprintf("owner_changed_%t", invalidate), func(t *testing.T) {
+			f := newBriefWorkerEndToEndFixture(t, fmt.Sprintf("appreciation-bound-%t", invalidate))
+			st, journal := f.journal.store, f.journal
+			require.NoError(t, st.EnsureConversationParticipantContext(t.Context(), journal.conversationID, journal.aliceID, "member"))
+			require.NoError(t, st.EnsureConversationParticipantContext(t.Context(), journal.conversationID, journal.bobID, "member"))
+			require.NoError(t, st.SetConversationMemberCountContext(t.Context(), journal.conversationID, 2))
+			texts := []string{"I carried your boxes.", "I repaired your chair.", "I delivered your parcel.", "I reviewed your draft."}
+			for i := 0; i < 3; i++ {
+				id := journal.insertMessage(t, fmt.Sprintf("bound-peer-%d", i), "chat", journal.aliceID, f.now.Add(time.Duration(-6+i)*time.Hour))
+				addSweepBody(t, journal, id, texts[i])
+			}
+			f.runner.candidate = func(packet map[string]any) json.RawMessage {
+				var suggestions []string
+				for _, value := range packet["appreciation_peers"].([]any) {
+					peer := value.(map[string]any)
+					for _, body := range texts[:3] {
+						if peer["exact_excerpt"] == body {
+							suggestions = append(suggestions, fmt.Sprintf(`{"text":"help","anchor_id":%q,"quote":%q,"thanked":null}`, peer["anchor_id"].(string), body))
+						}
+					}
+				}
+				require.Len(t, suggestions, 3)
+				return json.RawMessage(fmt.Sprintf(`{"last_meaningful_interaction":null,"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[%s],"uncertainties":[],"possible_attributes":[]}`, strings.Join(suggestions, ",")))
+			}
+			first, err := f.worker.Run(t.Context(), peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental, PersonID: journal.alicePersonID, Limit: 1, Brief: peoplesweep.BriefModeForce})
+			require.NoError(t, err)
+			require.Equal(t, 1, first.PeopleSucceeded)
+			prior, err := st.GetPersonBriefContext(t.Context(), journal.alicePersonID, 0)
+			require.NoError(t, err)
+			var priorBoundary peoplesweep.BriefBoundary
+			require.NoError(t, json.Unmarshal(prior.Boundary, &priorBoundary))
+			require.Len(t, priorBoundary.AppreciationMemory, 3)
+			var cursorBefore int64
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT MAX(optimistic_sequence) FROM person_sweep_cursors WHERE person_id = ?`), journal.alicePersonID).Scan(&cursorBefore))
+			ownerID := journal.insertMessage(t, "bound-thanks", "chat", journal.bobID, f.now.Add(-2*time.Hour))
+			addSweepBody(t, journal, ownerID, "Thanks for carrying my boxes!")
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET source_is_from_me = TRUE, is_sent = TRUE WHERE id = ?`), ownerID)
+			require.NoError(t, err)
+			freshID := journal.insertMessage(t, "bound-fresh", "chat", journal.aliceID, f.now.Add(-time.Hour))
+			addSweepBody(t, journal, freshID, texts[3])
+			key, err := peoplesweep.AppreciationContributionKey("slack", "person-sweep-journal", "bound-peer-0")
+			require.NoError(t, err)
+			f.runner.candidate = func(packet map[string]any) json.RawMessage {
+				anchors := map[string]string{}
+				for _, value := range packet["appreciation_peers"].([]any) {
+					peer := value.(map[string]any)
+					anchors[peer["exact_excerpt"].(string)] = peer["anchor_id"].(string)
+				}
+				require.NotEmpty(t, anchors[texts[0]])
+				require.NotEmpty(t, anchors[texts[3]])
+				owners := packet["appreciation_owners"].([]any)
+				require.NotEmpty(t, owners)
+				return json.RawMessage(fmt.Sprintf(`{"last_meaningful_interaction":null,"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[{"text":"new help","anchor_id":%q,"quote":%q,"thanked":null},{"text":"carrying boxes","anchor_id":%q,"quote":%q,"thanked":{"evidence_id":%q,"quote":"Thanks for carrying my boxes!"}}],"uncertainties":[],"possible_attributes":[]}`, anchors[texts[3]], texts[3], anchors[texts[0]], texts[0], owners[0].(map[string]any)["evidence_id"].(string)))
+			}
+			probe := &appreciationApplyProbe{store: st}
+			if invalidate {
+				probe.before = func() {
+					_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "Changed thanks", ownerID)
+					require.NoError(t, err)
+				}
+				probe.afterFirst = func(applyErr error) {
+					assert.Error(t, applyErr)
+					current, err := st.GetPersonBriefContext(t.Context(), journal.alicePersonID, 0)
+					require.NoError(t, err)
+					assert.Equal(t, prior.ID, current.ID, "the refused apply leaves the current brief intact")
+					states, err := st.GetPersonAppreciationStatesContext(t.Context(), []string{key})
+					require.NoError(t, err)
+					assert.Nil(t, states[key].ThanksBriefID, "the refused apply cannot publish a proof")
+				}
+			}
+			f.worker.Sink = probe
+			var seq int
+			f.worker.NewID = func() string { seq++; return fmt.Sprintf("bound-second-%t-%d", invalidate, seq) }
+			second, err := f.worker.Run(t.Context(), peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental, PersonID: journal.alicePersonID, Limit: 1, Brief: peoplesweep.BriefModeForce})
+			require.NoError(t, err)
+			require.Equal(t, 1, second.PeopleSucceeded)
+			require.Len(t, second.People, 1)
+			current, err := st.GetPersonBriefContext(t.Context(), journal.alicePersonID, 0)
+			require.NoError(t, err)
+			states, err := st.GetPersonAppreciationStatesContext(t.Context(), []string{key})
+			require.NoError(t, err)
+			if !invalidate {
+				require.Len(t, probe.requests, 1)
+				require.NoError(t, probe.errors[0])
+				var boundary peoplesweep.BriefBoundary
+				require.NoError(t, json.Unmarshal(current.Boundary, &boundary))
+				assert.True(t, peoplesweep.ValidBriefAppreciationMemory(boundary.AppreciationMemory))
+				assert.Len(t, boundary.AppreciationMemory, 4)
+				var active, resolved int
+				for _, memory := range boundary.AppreciationMemory {
+					if memory.Suggestion.State == "suggested" {
+						active++
+					} else if memory.Suggestion.State == "already_thanked" {
+						resolved++
+					}
+				}
+				assert.Equal(t, 3, active)
+				assert.Equal(t, 1, resolved)
+				assert.NotNil(t, states[key].ThanksBriefID)
+				return
+			}
+			require.Len(t, probe.requests, 2)
+			assert.ErrorIs(t, probe.errors[0], peoplesweep.ErrBriefAppreciationMemoryInvalid)
+			require.NotNil(t, probe.requests[0].Brief)
+			assert.Nil(t, probe.requests[1].Brief)
+			assert.NoError(t, probe.errors[1])
+			assert.Equal(t, prior.ID, current.ID)
+			assert.Nil(t, states[key].ThanksBriefID)
+			projection, err := st.ProjectPersonAppreciationsContext(t.Context(), journal.alicePersonID, probe.requests[0].Brief.ValidationProfile)
+			require.NoError(t, err)
+			assert.Len(t, projection.Appreciations, 3)
+			var generationID sql.NullInt64
+			var inputTokens, outputTokens int
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT generation_id, input_tokens, output_tokens FROM person_sweep_attempts WHERE id = ?`), second.People[0].AttemptID).Scan(&generationID, &inputTokens, &outputTokens))
+			assert.True(t, generationID.Valid)
+			assert.GreaterOrEqual(t, inputTokens, 22)
+			assert.GreaterOrEqual(t, outputTokens, 8)
+			var cursorAfter int64
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT MAX(optimistic_sequence) FROM person_sweep_cursors WHERE person_id = ?`), journal.alicePersonID).Scan(&cursorAfter))
+			assert.Greater(t, cursorAfter, cursorBefore)
+			var retryClass string
+			var backedOff bool
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT last_failure_class, available_at > ? FROM person_sweep_work WHERE person_id = ?`), f.now, journal.alicePersonID).Scan(&retryClass, &backedOff))
+			assert.Equal(t, string(peoplesweep.FailureInvalidOutput), retryClass)
+			assert.True(t, backedOff)
+		})
+	}
 }
