@@ -1328,6 +1328,8 @@ func TestInstagramDuplicateOccurrences(t *testing.T) {
 		opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
 		_, err := ImportDYI(t.Context(), st, opts)
 		require.NoError(err)
+		_, beforeReactions := instagramSnapshot(t, st)
+		require.Len(beforeReactions, 2)
 		a["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "c"}}
 		b["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "d"}}
 		instagramTestShard(t, root, "circle", "message_1.json", b, a)
@@ -1336,8 +1338,14 @@ func TestInstagramDuplicateOccurrences(t *testing.T) {
 		assert.False(summary.Incomplete)
 		assert.Zero(summary.MessagesAdded)
 		_, reactions := instagramSnapshot(t, st)
-		assert.Contains(slices.Collect(maps.Values(reactions)), "c")
-		assert.Contains(slices.Collect(maps.Values(reactions)), "d")
+		for id, reaction := range beforeReactions {
+			if reaction == "a" {
+				assert.Equal("c", reactions[id])
+			} else {
+				assert.Equal("b", reaction)
+				assert.Equal("d", reactions[id])
+			}
+		}
 	})
 	for _, field := range []string{"photo timestamp", "video timestamp", "unknown field", "large identifier", "large media identifier", "nested field", "share field", "sticker field", "reaction field"} {
 		t.Run(field, func(t *testing.T) {
@@ -1606,11 +1614,12 @@ func TestInstagramReportsPossibleSenderDuplicates(t *testing.T) {
 	require.NoError(err)
 	before, _ := instagramSnapshot(t, st)
 	record["sender_name"] = "Lumen Example"
-	instagramTestShard(t, root, "circle", "message_1.json", record)
+	original := instagramTestRecord("same")
+	instagramTestShard(t, root, "circle", "message_1.json", original, record)
 	for i := range 2 {
 		summary, err := ImportDYI(t.Context(), st, opts)
 		require.NoError(err)
-		assert.Equal(1, summary.PossibleDuplicates)
+		assert.Equal(1+i, summary.PossibleDuplicates)
 		assert.Equal(int64(1-i), summary.MessagesAdded)
 		after, _ := instagramSnapshot(t, st)
 		assert.Len(after, 2)

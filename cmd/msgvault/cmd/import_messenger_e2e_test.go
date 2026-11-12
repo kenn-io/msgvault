@@ -220,4 +220,6 @@ func TestImportMessengerInstagramEndToEnd(t *testing.T) {
 	var count int
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE message_type='instagram'").Scan(&count))
 	assert.Positive(count)
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE message_type='instagram' AND is_from_me").Scan(&count))
+	assert.Positive(count)
 }

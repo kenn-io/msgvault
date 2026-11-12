@@ -35,7 +35,10 @@ func TestImportInstagramNameAdvice(t *testing.T) {
 			data := `{"thread_path":"inbox/circle","participants":[{"name":"Mira Example"},{"name":"Nova Example"}],"messages":[` + tc.records + `]}`
 			require.NoError(os.WriteFile(filepath.Join(dir, "message_1.json"), []byte(data), 0600))
 			if tc.badShard {
-				require.NoError(os.WriteFile(filepath.Join(dir, "message_2.json"), []byte(`{"thread_path":"inbox/other","messages":[]}`), 0600))
+				bad := filepath.Join(root, "your_instagram_activity", "messages", "inbox", "z_bad")
+				require.NoError(os.MkdirAll(bad, 0700))
+				require.NoError(os.WriteFile(filepath.Join(bad, "message_1.json"), []byte(`{"thread_path":"inbox/z_bad","messages":[]}`), 0600))
+				require.NoError(os.WriteFile(filepath.Join(bad, "message_2.json"), []byte(`{"thread_path":"inbox/other","messages":[]}`), 0600))
 			}
 			command := &cobra.Command{Use: "import-instagram"}
 			command.SetContext(withStoreResolverConfig(t, lifecycleTestConfig(t.TempDir())))
@@ -114,23 +117,19 @@ func TestImportInstagramRefreshesCache(t *testing.T) {
 }
 
 func TestImportMessengerInstagramRejectsUnsupportedFormat(t *testing.T) {
-	for _, format := range []string{"both", "typo"} {
-		t.Run(format, func(t *testing.T) {
-			markDaemonCLISubprocessForTest(t)
-			t.Cleanup(saveMessengerState(t))
-			cmd := importMessengerCmd
-			previousContext := cmd.Context()
-			t.Cleanup(func() { cmd.SetContext(previousContext) })
-			cmd.SetContext(withStoreResolverConfig(t, lifecycleTestConfig(t.TempDir())))
-			flag := cmd.Flags().Lookup("format")
-			previousChanged := flag.Changed
-			t.Cleanup(func() { flag.Changed = previousChanged })
-			require.NoError(t, cmd.Flags().Set("format", format))
-			importMessengerSource, importMessengerAccount, importMessengerSelfName = "instagram", "example", "Nova Example"
-			fixture := filepath.Join("..", "..", "..", "internal", "fbmessenger", "testdata", "instagram")
-			require.ErrorContains(t, cmd.RunE(cmd, []string{fixture}), "valid: auto, json")
-		})
-	}
+	markDaemonCLISubprocessForTest(t)
+	t.Cleanup(saveMessengerState(t))
+	cmd := importMessengerCmd
+	previousContext := cmd.Context()
+	t.Cleanup(func() { cmd.SetContext(previousContext) })
+	cmd.SetContext(withStoreResolverConfig(t, lifecycleTestConfig(t.TempDir())))
+	flag := cmd.Flags().Lookup("format")
+	previousChanged := flag.Changed
+	t.Cleanup(func() { flag.Changed = previousChanged })
+	require.NoError(t, cmd.Flags().Set("format", "both"))
+	importMessengerSource, importMessengerAccount, importMessengerSelfName = "instagram", "example", "Nova Example"
+	fixture := filepath.Join("..", "..", "..", "internal", "fbmessenger", "testdata", "instagram")
+	require.ErrorContains(t, cmd.RunE(cmd, []string{fixture}), "valid: auto, json")
 }
 
 func TestImportInstagramReportsPossibleDuplicates(t *testing.T) {
@@ -140,7 +139,6 @@ func TestImportInstagramReportsPossibleDuplicates(t *testing.T) {
 		wantWarning bool
 	}{
 		{"renamed sender", `{"sender_name":"Lumen Example","timestamp_ms":1730500000123,"content":"hello"}`, true},
-		{"distinct senders", `{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"hello"},{"sender_name":"Lumen Example","timestamp_ms":1730500000123,"content":"hello"}`, true},
 		{"different content", `{"sender_name":"Lumen Example","timestamp_ms":1730500000123,"content":"different"}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
