@@ -349,7 +349,7 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 		}
 		f := e.Arguments.filter()
 		sub := wakeups.NewSubscription(e.ID, private.URL, secret, f, 72*time.Hour, 10*time.Second, nil, nil)
-		sub.Native = true
+		sub.Native, sub.Expires = true, e.Expires
 		sub.StateKey = store.MCPEventsPositionKey(e.ID)
 		out = append(out, sub)
 	}

@@ -23,6 +23,7 @@ type Subscription struct {
 	Name, URL     string
 	StateKey      string
 	Native        bool
+	Expires       time.Time
 	Secret        []byte
 	Filter        changefeed.Filter
 	MaxMessageAge time.Duration
@@ -241,6 +242,9 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		}
 		err := e.GatedSetup(ctx, func() error {
 			now := e.now()
+			if !sub.Expires.IsZero() && !now.Before(sub.Expires) {
+				return nil
+			}
 			var err error
 			state, raw, err = e.Store.LoadWakeupStateKey(ctx, sub.StateKey)
 			if err != nil {
@@ -315,11 +319,8 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				return err
 			}
 			swapped, err := advance(raw)
-			if err != nil {
+			if err != nil || !swapped {
 				return err
-			}
-			if !swapped {
-				return nil
 			}
 			raw = nextRaw
 			ready = true
@@ -332,7 +333,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			logStoreError(err)
 			continue
 		}
-		if !ready {
+		if !ready || (!sub.Expires.IsZero() && !e.now().Before(sub.Expires)) {
 			continue
 		}
 		from := changefeed.EncodeCursor(uid, since, sub.Filter.Digest())
