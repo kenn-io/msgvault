@@ -32,6 +32,8 @@
   let controller: AbortController | undefined;
   const prefix = $derived(SOURCE_SETTING_PREFIX[source.source_type]);
   const title = $derived(sourceLabel(source));
+  const subtitle = $derived([sourceTypeLabel(source.source_type) !== title ? sourceTypeLabel(source.source_type) : undefined,
+    source.source_type !== 'call_history' && source.identifier !== title ? source.identifier : undefined].filter(Boolean).join(' · '));
   const failure = $derived(sourceFailure(source));
   const chip = $derived(operationStateChip(sourceRunState(source) ?? 'Never synced'));
   const lastGood = $derived(source.last_successful_sync?.completed_at);
@@ -67,7 +69,7 @@
 <SidePanel {title} {onclose}>
   <div class="panel">
     <div class="summary">
-      <span class="type">{[sourceTypeLabel(source.source_type), source.source_type !== 'call_history' && source.identifier !== title ? source.identifier : undefined].filter(Boolean).join(' · ')}</span>
+      {#if subtitle}<span class="type">{subtitle}</span>{/if}
       <div class="status">
         <Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>
         <span class="muted">{lastGood ? `Last good sync ${formatDateTime(lastGood)}` : 'No good sync yet'}</span>

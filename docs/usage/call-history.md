@@ -72,7 +72,7 @@ This normalized request binds the call to existing archive participant `42`. Tim
 Allowed values: `direction`: `incoming`, `outgoing`, `unknown`; `outcome`: `answered`, `missed`, `declined`, `cancelled`, `unknown`; `owner_participation`: `joined`, `not_joined`, `unknown`; participant `participation`: `joined`, `invited`, `unknown`.
 
 A normalized record may include `source_label` as a display name for its source. A nonempty label must contain non-whitespace text, contain no NUL, and be at most 2,048 bytes.
-The first supplied label fills an empty source display name; reimports preserve an existing name.
+The first supplied label fills an empty source display name unless it conflicts with another source’s identifier or alias. Imports still succeed on a conflict, and reimports preserve an existing name.
 
 The request limit is 1 MiB; its record and original raw payload are each limited
 to 512 KiB. No importer opens protected databases, retrieves encryption keys,

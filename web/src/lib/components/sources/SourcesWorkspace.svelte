@@ -450,7 +450,7 @@
                   toggle(key);
                 }}>{label(source)}</button
               >
-              <span class="muted">{sourceTypeLabel(source.source_type)}</span>
+              {#if sourceTypeLabel(source.source_type) && sourceTypeLabel(source.source_type) !== label(source)}<span class="muted">{sourceTypeLabel(source.source_type)}</span>{/if}
             </div>
           </td>
           <td><div class="name"><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>{#if source.active_sync}<span class="muted">{source.active_sync.messages_processed.toLocaleString()} processed</span><span class="muted">{source.active_sync.messages_added.toLocaleString()} added · {source.active_sync.errors_count.toLocaleString()} errors</span>{:else if staleLastResult(source)}<span class="muted">This result may be out of date.</span>{/if}

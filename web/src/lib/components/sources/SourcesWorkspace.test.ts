@@ -75,7 +75,9 @@ describe('SourcesWorkspace', () => {
     })])) });
     await fireEvent.click(await screen.findByRole('button', { name: `Details for ${expected}` }));
     const panel = screen.getByRole('dialog', { name: expected });
-    expect(within(panel).getAllByText('Call history').length).toBeGreaterThan(0);
+    expect(within(panel).getAllByText('Call history')).toHaveLength(1);
+    expect(screen.getAllByText('Call history')).toHaveLength(2);
+    if (!displayName) expect(panel.querySelector('.type')).toBeNull();
     expect(document.body.textContent).not.toContain(identifier);
   });
 
