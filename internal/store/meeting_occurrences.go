@@ -81,32 +81,48 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 	}
 	unexpandable := map[int64]bool{}
 	var tooBroadYears []int
-	if err == nil {
+	hasEarliest := err == nil
+	futureYears, err := s.futureMeetingYears(ctx, lastYear)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	years := map[int]bool{}
+	if hasEarliest {
 		for year := earliest.Year(); year <= lastYear; year++ {
-			from := time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
-			page, err := s.ListCalendarOccurrencesContext(ctx, from, from.AddDate(1, 0, 0))
-			if errors.Is(err, ErrQueryTooBroad) {
-				tooBroadYears = append(tooBroadYears, year)
-				if err := s.markBroadMeetingWindow(ctx, from, from.AddDate(1, 0, 0), unexpandable); err != nil {
-					return nil, time.Time{}, err
+			years[year] = true
+		}
+	}
+	for year := range futureYears {
+		years[year] = true
+	}
+	orderedYears := make([]int, 0, len(years))
+	for year := range years {
+		orderedYears = append(orderedYears, year)
+	}
+	slices.Sort(orderedYears)
+	for _, year := range orderedYears {
+		from := time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
+		page, err := s.ListCalendarOccurrencesContext(ctx, from, from.AddDate(1, 0, 0))
+		if errors.Is(err, ErrQueryTooBroad) {
+			tooBroadYears = append(tooBroadYears, year)
+			if err := s.markBroadMeetingWindow(ctx, from, from.AddDate(1, 0, 0), unexpandable); err != nil {
+				return nil, time.Time{}, err
+			}
+			continue
+		}
+		if err != nil {
+			return nil, time.Time{}, fmt.Errorf("list meeting occurrences for %d: %w", year, err)
+		}
+		for _, warning := range page.Unexpandable {
+			unexpandable[warning.MessageID] = true
+		}
+		for _, occurrence := range page.Occurrences {
+			if occurrence.Start.After(through) {
+				if nextAt.IsZero() || occurrence.Start.Before(nextAt) {
+					nextAt = occurrence.Start
 				}
-				continue
 			}
-			if err != nil {
-				return nil, time.Time{}, fmt.Errorf("list meeting occurrences for %d: %w", year, err)
-			}
-			for _, warning := range page.Unexpandable {
-				unexpandable[warning.MessageID] = true
-			}
-			for _, occurrence := range page.Occurrences {
-				if occurrence.Start.After(through) {
-					if nextAt.IsZero() || occurrence.Start.Before(nextAt) {
-						nextAt = occurrence.Start
-					}
-					continue
-				}
-				occurrences[occurrence.Ref] = occurrence
-			}
+			occurrences[occurrence.Ref] = occurrence
 		}
 	}
 
@@ -445,7 +461,7 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 						seconds := event.End.Sub(event.Start).Seconds()
 						duration = &seconds
 					}
-					result = append(result, MeetingOccurrence{MessageID: id, OccurrenceKey: key, OccurredAt: at, StartDate: startDate, Counted: !cancelled && !event.DeletedFromSource && !ownerDeclined, DeclinedEmails: declinedEmails, ScheduledSeconds: duration})
+					result = append(result, MeetingOccurrence{MessageID: id, OccurrenceKey: key, OccurredAt: at, StartDate: startDate, Counted: !at.After(through) && !cancelled && !event.DeletedFromSource && !ownerDeclined, DeclinedEmails: declinedEmails, ScheduledSeconds: duration})
 				}
 			}
 		}
@@ -457,7 +473,7 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 			if note.state == "available" {
 				ids = nil
 			}
-			result = append(result, MeetingOccurrence{MessageID: note.id, OccurrenceKey: key, OccurredAt: at, StartDate: startDate, Counted: !cancelled && note.state == "available", DeclinedEmails: ids})
+			result = append(result, MeetingOccurrence{MessageID: note.id, OccurrenceKey: key, OccurredAt: at, StartDate: startDate, Counted: !at.After(through) && !cancelled && note.state == "available", DeclinedEmails: ids})
 		}
 	}
 	seenMessages := map[int64]bool{}
@@ -500,6 +516,102 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 		slog.WarnContext(ctx, "some meetings count once per calendar message because their recurrence could not be expanded", "messages", len(unexpandable), "message_ids", ids, "too_broad_years", tooBroadYears, "skipped_choices", skippedChoices)
 	}
 	return result, nextAt, nil
+}
+
+// futureMeetingYears identifies years named by archived events, note keys, or
+// saved choices, so future links can be resolved before applying the cutoff.
+func (s *Store) futureMeetingYears(ctx context.Context, lastYear int) (map[int]bool, error) {
+	years := map[int]bool{}
+	add := func(at time.Time) {
+		if !at.IsZero() && at.UTC().Year() > lastYear {
+			years[at.UTC().Year()] = true
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT e.start_at FROM calendar_events e JOIN messages m ON m.id=e.message_id WHERE e.start_at IS NOT NULL AND m.deleted_at IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var at nullableTimestamp
+		if err := rows.Scan(&at); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if at.Valid {
+			add(at.Time)
+		}
+	}
+	if err := errorsJoinRows(rows); err != nil {
+		return nil, err
+	}
+	rows, err = s.db.QueryContext(ctx, `SELECT d.link_key FROM meeting_details d JOIN messages m ON m.id=d.message_id WHERE d.link_key IS NOT NULL AND m.message_type='meeting_transcript' AND m.deleted_at IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		var key meetingLinkKey
+		if err := json.Unmarshal([]byte(raw), &key); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if key[0] == "ical_uid" {
+			at, err := time.Parse(time.RFC3339Nano, key[3])
+			if err == nil {
+				add(at)
+			}
+		}
+		if key[0] == "google_event_id" {
+			if _, instance, ok := calrecur.ParseInstanceID(key[2]); ok {
+				at, err := meetingIdentityTime(instance)
+				if err == nil {
+					add(at)
+				}
+			}
+		}
+	}
+	if err := errorsJoinRows(rows); err != nil {
+		return nil, err
+	}
+	rows, err = s.db.QueryContext(ctx, `SELECT d.left_message_id,d.left_kind,d.left_key,d.left_anchor,d.right_message_id,d.right_kind,d.right_key,d.right_anchor FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE l.deleted_at IS NULL AND r.deleted_at IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var left, right meetingDecisionEndpoint
+		if err := rows.Scan(&left.ID, &left.Kind, &left.Key, &left.Anchor, &right.ID, &right.Kind, &right.Key, &right.Anchor); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		for _, endpoint := range []meetingDecisionEndpoint{left, right} {
+			if endpoint.Kind != meetingRefEvent {
+				continue
+			}
+			key := endpoint.Key
+			if key == "" {
+				key = endpoint.Anchor
+			}
+			if key == "" {
+				continue
+			}
+			ref, err := ParseMeetingLinkRef(fmt.Sprintf("evt:%d@%s", endpoint.ID, key))
+			if err != nil {
+				continue
+			}
+			at, err := meetingIdentityTime(ref.Identity)
+			if err == nil {
+				add(at)
+			}
+		}
+	}
+	if err := errorsJoinRows(rows); err != nil {
+		return nil, err
+	}
+	return years, nil
 }
 
 func (s *Store) markBroadMeetingWindow(ctx context.Context, from, to time.Time, unexpandable map[int64]bool) error {

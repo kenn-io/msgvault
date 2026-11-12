@@ -417,6 +417,10 @@ func (s *Store) buildMeetingScopeStatement(scope MeetingQueryScope) (meetingScop
 }
 
 func (s *Store) buildMeetingScopeStatementFor(scope MeetingQueryScope, includeCalendar bool) (meetingScopeStatement, error) {
+	return s.buildMeetingScopeStatementExcluding(scope, includeCalendar, nil)
+}
+
+func (s *Store) buildMeetingScopeStatementExcluding(scope MeetingQueryScope, includeCalendar bool, excluded []int64) (meetingScopeStatement, error) {
 	messageType := `m.message_type = 'meeting_transcript'`
 	if includeCalendar {
 		messageType = `m.message_type IN ('meeting_transcript', 'calendar_event')`
@@ -468,9 +472,13 @@ func (s *Store) buildMeetingScopeStatementFor(scope MeetingQueryScope, includeCa
 	}
 	if domains := normalizedMeetingDomains(scope.Domains); len(domains) > 0 {
 		placeholders := meetingPlaceholders(len(domains))
+		exclusion := ""
+		if len(excluded) > 0 {
+			exclusion = ` AND domain_participant.id NOT IN (` + meetingPlaceholders(len(excluded)) + `)`
+		}
 		conditions = append(conditions, `EXISTS (
 			SELECT 1 FROM participants domain_participant
-			WHERE LOWER(TRIM(COALESCE(domain_participant.domain, ''))) IN (`+placeholders+`)
+			WHERE LOWER(TRIM(COALESCE(domain_participant.domain, ''))) IN (`+placeholders+`)`+exclusion+`
 			  AND (domain_participant.id = m.sender_id OR EXISTS (
 				SELECT 1 FROM message_recipients domain_recipient
 				WHERE domain_recipient.message_id = m.id
@@ -484,6 +492,7 @@ func (s *Store) buildMeetingScopeStatementFor(scope MeetingQueryScope, includeCa
 		for _, domain := range domains {
 			args = append(args, domain)
 		}
+		args = appendInt64Args(args, excluded)
 	}
 	occurredAt := `COALESCE(m.sent_at, m.received_at, m.internal_date)`
 	occurredKey := occurredAt

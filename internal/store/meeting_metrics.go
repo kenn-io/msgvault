@@ -77,7 +77,7 @@ func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQuery
 	if err := errorsJoinRows(rows); err != nil {
 		return nil, err
 	}
-	owners, err := s.meetingMetricOwners(ctx)
+	owners, canonical, emailOwners, err := s.meetingMetricOwners(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -88,6 +88,7 @@ func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQuery
 	}
 	units := map[string]*meetingMetricUnit{}
 	seen := map[int64]bool{}
+	eligible := map[string]map[int64]bool{}
 	for _, row := range occurrences {
 		member, selected := members[row.MessageID]
 		if !selected {
@@ -105,7 +106,23 @@ func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQuery
 			}
 			units[row.OccurrenceKey] = unit
 		}
-		unit.counted = unit.counted || row.Counted
+		counted := row.Counted
+		if counted && len(row.DeclinedEmails) > 0 && (len(scope.ParticipantIDs) > 0 || scope.Person != nil || len(scope.Domains) > 0) {
+			key := strings.Join(row.DeclinedEmails, "\x00")
+			matching, ok := eligible[key]
+			if !ok {
+				matching, err = s.meetingMetricEligibleMembers(ctx, unbounded, row.DeclinedEmails, canonical, emailOwners)
+				if err != nil {
+					return nil, err
+				}
+				eligible[key] = matching
+			}
+			counted = matching[row.MessageID]
+		}
+		unit.counted = unit.counted || counted
+		if !counted {
+			continue
+		}
 		if member.duration.Valid {
 			unit.choose(member.duration.Float64, meetingcontent.DurationBasis(member.basis), member.id)
 		}
@@ -222,30 +239,30 @@ func errorsJoinRows(rows *loggedRows) error {
 	return closeErr
 }
 
-func (s *Store) meetingMetricOwners(ctx context.Context) (map[string]bool, error) {
+func (s *Store) meetingMetricOwners(ctx context.Context) (map[string]bool, map[int64]int64, map[string][]int64, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT LOWER(TRIM(address)) FROM account_identities`)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	owners := map[string]bool{}
 	for rows.Next() {
 		var email string
 		if err := rows.Scan(&email); err != nil {
 			_ = rows.Close()
-			return nil, err
+			return nil, nil, nil, err
 		}
 		owners[email] = true
 	}
 	if err := errorsJoinRows(rows); err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	clusters, err := s.ParticipantClusters(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	rows, err = s.db.QueryContext(ctx, `SELECT id, email_address FROM participants WHERE email_address IS NOT NULL UNION ALL SELECT participant_id, identifier_value FROM participant_identifiers WHERE identifier_type='email'`)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	type address struct {
 		id    int64
@@ -256,13 +273,13 @@ func (s *Store) meetingMetricOwners(ctx context.Context) (map[string]bool, error
 		var a address
 		if err := rows.Scan(&a.id, &a.email); err != nil {
 			_ = rows.Close()
-			return nil, err
+			return nil, nil, nil, err
 		}
 		a.email = strings.ToLower(strings.TrimSpace(a.email))
 		addresses = append(addresses, a)
 	}
 	if err := errorsJoinRows(rows); err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	canonical := func(id int64) int64 {
 		if c, ok := clusters[id]; ok {
@@ -271,7 +288,9 @@ func (s *Store) meetingMetricOwners(ctx context.Context) (map[string]bool, error
 		return id
 	}
 	ownerClusters := map[int64]bool{}
+	emailClusters := map[string][]int64{}
 	for _, a := range addresses {
+		emailClusters[a.email] = append(emailClusters[a.email], canonical(a.id))
 		if owners[a.email] {
 			ownerClusters[canonical(a.id)] = true
 		}
@@ -281,5 +300,79 @@ func (s *Store) meetingMetricOwners(ctx context.Context) (map[string]bool, error
 			owners[a.email] = true
 		}
 	}
-	return owners, nil
+	return owners, clusters, emailClusters, nil
+}
+
+func (s *Store) meetingMetricEligibleMembers(ctx context.Context, scope MeetingQueryScope, declined []string, clusters map[int64]int64, emails map[string][]int64) (map[int64]bool, error) {
+	declinedClusters := map[int64]bool{}
+	for _, email := range declined {
+		for _, id := range emails[email] {
+			declinedClusters[id] = true
+		}
+	}
+	canonical := func(id int64) int64 {
+		if c, ok := clusters[id]; ok {
+			return c
+		}
+		return id
+	}
+	keep := func(ids []int64) []int64 {
+		result := make([]int64, 0, len(ids))
+		for _, id := range ids {
+			if !declinedClusters[canonical(id)] {
+				result = append(result, id)
+			}
+		}
+		return result
+	}
+	result := map[int64]bool{}
+	if len(scope.ParticipantIDs) > 0 {
+		scope.ParticipantIDs = keep(scope.ParticipantIDs)
+		if len(scope.ParticipantIDs) == 0 {
+			return result, nil
+		}
+	}
+	if scope.Person != nil {
+		person := *scope.Person
+		person.ParticipantIDs = keep(person.ParticipantIDs)
+		if len(person.ParticipantIDs) == 0 {
+			return result, nil
+		}
+		scope.Person = &person
+	}
+	var excluded []int64
+	for id := range clusters {
+		if declinedClusters[canonical(id)] {
+			excluded = append(excluded, id)
+		}
+	}
+	for _, ids := range emails {
+		for _, id := range ids {
+			if declinedClusters[id] {
+				excluded = append(excluded, id)
+			}
+		}
+	}
+	slices.Sort(excluded)
+	excluded = slices.Compact(excluded)
+	statement, err := s.buildMeetingScopeStatementExcluding(scope, scope.MessageIDs == nil, excluded)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, statement.cte+` SELECT message_id FROM scoped_meetings`, statement.args...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		result[id] = true
+	}
+	if err := errorsJoinRows(rows); err != nil {
+		return nil, err
+	}
+	return result, nil
 }

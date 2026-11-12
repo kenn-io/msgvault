@@ -2,12 +2,14 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/meetingcontent"
+	"go.kenn.io/msgvault/internal/personscope"
 )
 
 func TestMeetingOccurrenceEvidence(t *testing.T) {
@@ -115,7 +117,7 @@ func TestMeetingMetricsUnsupportedFutureEvent(t *testing.T) {
 	assert.Zero(t, metrics.Totals.MeetingCount)
 }
 
-func TestMeetingMetricsUsesSelectedPendingDuration(t *testing.T) {
+func TestMeetingMetricsIgnoresPendingDuration(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	_, event := calendarFixture(t, st, "duration-event", `{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"}}`)
 	_, note := projectionFixture(t, st, "pending-duration", "meeting_json", `{"started_at":"2024-01-02T10:00:00Z","ended_at":"2024-01-02T10:30:00Z"}`)
@@ -124,7 +126,89 @@ func TestMeetingMetricsUsesSelectedPendingDuration(t *testing.T) {
 	metrics, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{})
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, metrics.Totals.MeetingCount)
-	assert.InDelta(t, 1800, metrics.Totals.TotalKnownSeconds, 0)
+	assert.InDelta(t, 3600, metrics.Totals.TotalKnownSeconds, 0)
+}
+
+func TestMeetingMetricsExcludeDeclinedPerson(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "declined", `{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"attendees":[{"email":"person@example.com","responseStatus":"declined"}]}`)
+	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
+	require.NoError(t, err)
+	require.NoError(t, st.ReplaceMessageRecipients(event, "to", []int64{person}, []string{""}))
+	metrics, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{ParticipantIDs: []int64{person}})
+	require.NoError(t, err)
+	assert.Zero(t, metrics.Totals.MeetingCount)
+	personScope, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{Person: &personscope.Scope{ParticipantIDs: []int64{person}, Directions: []personscope.Direction{personscope.ToPerson}}})
+	require.NoError(t, err)
+	assert.Zero(t, personScope.Totals.MeetingCount)
+	domainScope, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{Domains: []string{"example.com"}})
+	require.NoError(t, err)
+	assert.Zero(t, domainScope.Totals.MeetingCount)
+	alias, err := st.EnsureParticipant("alias@example.com", "Alias", "example.com")
+	require.NoError(t, err)
+	_, err = st.LinkParticipants(person, alias)
+	require.NoError(t, err)
+	accepted, err := st.EnsureParticipant("accepted@example.com", "Accepted", "example.com")
+	require.NoError(t, err)
+	require.NoError(t, st.ReplaceMessageRecipients(event, "to", []int64{person, alias, accepted}, []string{"", "", ""}))
+	aliasScope, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{ParticipantIDs: []int64{alias}})
+	require.NoError(t, err)
+	assert.Zero(t, aliasScope.Totals.MeetingCount)
+	mixedScope, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{ParticipantIDs: []int64{person, accepted}})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, mixedScope.Totals.MeetingCount)
+	domainScope, err = st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{Domains: []string{"example.com"}})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, domainScope.Totals.MeetingCount)
+}
+
+func TestMeetingOccurrenceFutureLinkedNote(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		start     time.Time
+		automatic bool
+	}{
+		{"same-year", time.Date(2027, 4, 1, 1, 0, 0, 0, time.UTC), false},
+		{"later-year-choice", time.Date(2029, 4, 1, 1, 0, 0, 0, time.UTC), false},
+		{"later-year-automatic", time.Date(2029, 4, 1, 1, 0, 0, 0, time.UTC), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newRFC822IDBackfillBackendStore(t)
+			_, event := calendarFixture(t, st, "future-linked", fmt.Sprintf(`{"id":"future","start":{"dateTime":%q},"end":{"dateTime":%q}}`, tc.start.Format(time.RFC3339), tc.start.Add(time.Hour).Format(time.RFC3339)))
+			format, raw := "meeting_json", `{"transcript":"Notes"}`
+			if tc.automatic {
+				format, raw = "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"future"},"transcript":[{"text":"Notes"}]}`
+			}
+			data, note := projectionFixture(t, st, "old-note", format, raw)
+			data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC), Valid: true}
+			_, err := st.PersistMessage(data)
+			require.NoError(t, err)
+			if !tc.automatic {
+				_, err = st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+				require.NoError(t, err)
+			}
+			rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), nil)
+			require.NoError(t, err)
+			found := false
+			for _, row := range rows {
+				if row.MessageID == note {
+					found = true
+					assert.False(t, row.Counted && !row.OccurredAt.After(time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC)))
+				}
+			}
+			assert.True(t, found)
+			rows, _, err = st.MeetingOccurrencesContext(t.Context(), tc.start.Add(time.Second), nil)
+			require.NoError(t, err)
+			found = false
+			for _, row := range rows {
+				if row.MessageID == note && row.Counted {
+					found = true
+					assert.True(t, tc.start.Equal(row.OccurredAt))
+				}
+			}
+			assert.True(t, found)
+		})
+	}
 }
 
 func TestMeetingMetricsNoteLinkedToTwoDates(t *testing.T) {
