@@ -29,6 +29,7 @@ import (
 
 type partialDeletionSaver struct {
 	*storeAPIAdapter
+
 	path string
 }
 
