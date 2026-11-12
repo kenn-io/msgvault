@@ -32,17 +32,16 @@ func EmailInviteSQL(messageType, sourceType, archiveOnly string) string {
 
 // ICSMetadata records the accepted revision independently of the retained raw.
 type ICSMetadata struct {
-	Status    string       `json:"status,omitempty"`
-	AllDay    bool         `json:"all_day"`
-	Sequence  int64        `json:"sequence"`
-	Start     string       `json:"start,omitempty"`
-	End       string       `json:"end,omitempty"`
-	TimeZone  string       `json:"time_zone,omitempty"`
-	ICalUID   string       `json:"ical_uid,omitempty"`
-	Stamp     time.Time    `json:"ics_stamp"`
-	Organizer string       `json:"organizer,omitempty"`
-	Details   *ICSRevision `json:"ics_details,omitempty"`
-	Range     bool         `json:"ics_range,omitempty"`
+	Status   string       `json:"status,omitempty"`
+	AllDay   bool         `json:"all_day"`
+	Sequence int64        `json:"sequence"`
+	Start    string       `json:"start,omitempty"`
+	End      string       `json:"end,omitempty"`
+	TimeZone string       `json:"time_zone,omitempty"`
+	ICalUID  string       `json:"ical_uid,omitempty"`
+	Stamp    time.Time    `json:"ics_stamp"`
+	Details  *ICSRevision `json:"ics_details,omitempty"`
+	Range    bool         `json:"ics_range,omitempty"`
 }
 
 type ICSRevision struct {
@@ -130,7 +129,7 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 	if !utf8.Valid(raw) {
 		text = []byte(textutil.EnsureUTF8(string(raw)))
 	}
-	decoder := ical.NewDecoder(bytes.NewReader(text))
+	decoder := ical.NewDecoder(bytes.NewReader(bytes.TrimPrefix(text, []byte{0xef, 0xbb, 0xbf})))
 	cal, err := decoder.Decode()
 	if err != nil {
 		return nil, fmt.Errorf("decode iCalendar: %w", err)

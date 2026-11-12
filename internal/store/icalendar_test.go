@@ -67,6 +67,42 @@ func TestICalendarInvalidFloatingRecurrenceDate(t *testing.T) {
 	}
 }
 
+func TestICalendarCancelledSeriesOccurrences(t *testing.T) {
+	for _, mode := range []string{"file", "email"} {
+		t.Run(mode, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			source := icsSource(t, st)
+			if mode == "email" {
+				mail, err := st.GetOrCreateSource("mbox", "owner@example.com")
+				r.NoError(err)
+				source = mail.ID
+			}
+			for i, event := range [][]byte{
+				calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=3\r\nSUMMARY:Original"),
+				calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T140000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=3\r\nSUMMARY:Updated"),
+				calendarDocument("CANCEL", "SEQUENCE:2"),
+			} {
+				if mode == "email" {
+					persistInviteEmailForSource(t, st, source, fmt.Sprintf("cancelled-series-%d", i), inviteEmail(event))
+				} else {
+					_, err := st.PersistICalendarContext(t.Context(), source, event)
+					r.NoError(err)
+				}
+			}
+			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+			r.NoError(err)
+			r.Len(page.Occurrences, 3)
+			for _, occurrence := range page.Occurrences {
+				r.Equal("cancelled", occurrence.Status)
+				r.Equal("Updated", occurrence.Subject)
+				r.Equal(14, occurrence.Start.Hour())
+			}
+		})
+	}
+}
+
 func TestICalendarRangeKeepsSiblings(t *testing.T) {
 	master := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=10\r\nSUMMARY:Series")
 	rangeEvent := calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H\r\nSUMMARY:Moved")
