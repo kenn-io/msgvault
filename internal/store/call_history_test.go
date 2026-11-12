@@ -25,6 +25,32 @@ func validCallObservation(t *testing.T, st *store.Store) (callhistory.Observatio
 	return o, src.ID
 }
 
+func TestCallSourceLabelIsTransactionalAndPreservesDisplayName(t *testing.T) {
+	f := storetest.New(t)
+	o, sourceID := validCallObservation(t, f.Store)
+	o.SourceLabel = "Example calls"
+	o.Participants = []callhistory.Participant{{ID: 123456789, Participation: "joined"}}
+	_, err := f.Store.PutCallObservationContext(t.Context(), sourceID, o)
+	require.ErrorIs(t, err, callhistory.ErrInvalid)
+	source, err := f.Store.GetSourceByIDContext(t.Context(), sourceID)
+	require.NoError(t, err)
+	assert.Empty(t, source.DisplayName.String)
+
+	o.Participants = nil
+	_, err = f.Store.PutCallObservationContext(t.Context(), sourceID, o)
+	require.NoError(t, err)
+	source, err = f.Store.GetSourceByIDContext(t.Context(), sourceID)
+	require.NoError(t, err)
+	assert.Equal(t, "Example calls", source.DisplayName.String)
+	require.NoError(t, f.Store.UpdateSourceDisplayNameContext(t.Context(), sourceID, "My archive"))
+	o.SourceLabel = "Updated provider label"
+	_, err = f.Store.PutCallObservationContext(t.Context(), sourceID, o)
+	require.NoError(t, err)
+	source, err = f.Store.GetSourceByIDContext(t.Context(), sourceID)
+	require.NoError(t, err)
+	assert.Equal(t, "My archive", source.DisplayName.String)
+}
+
 func TestCallObservationSearchAndMessageProjections(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

@@ -76,6 +76,18 @@ func TestSignalNativeStatuses(t *testing.T) {
 	})
 }
 
+func TestNormalizedImportPreservesSourceLabel(t *testing.T) {
+	o := exampleObservation()
+	o.SourceLabel = "Example calls"
+	record, err := json.Marshal(o)
+	require.NoError(t, err)
+	got, err := (ImportRequest{Format: "normalized", Account: o.Account, Record: record}).Observation()
+	require.NoError(t, err)
+	assert.Equal(t, o.SourceLabel, got.SourceLabel)
+	assert.Equal(t, o.SourceIdentifier(), got.SourceIdentifier())
+	assert.JSONEq(t, string(o.Raw), string(got.Raw))
+}
+
 func TestNormalizedImportValidatesObservation(t *testing.T) {
 	for _, field := range []string{"occurred_at", "ended_at"} {
 		t.Run(field+" exceeds UTC year range", func(t *testing.T) {

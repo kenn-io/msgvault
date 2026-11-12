@@ -42,6 +42,7 @@ type Participant struct {
 type Observation struct {
 	Evidence
 
+	SourceLabel  string         `json:"source_label,omitempty"`
 	RecordID     string         `json:"record_id"`
 	Participants []Participant  `json:"participants"`
 	Raw          jsontext.Value `json:"raw"`
@@ -83,6 +84,9 @@ func (e Evidence) Validate() error {
 func (o Observation) Validate() error {
 	if err := o.Evidence.Validate(); err != nil {
 		return err
+	}
+	if o.SourceLabel != "" && !validID(o.SourceLabel) {
+		return invalid("source_label")
 	}
 	if !validID(o.RecordID) || len(o.Raw) == 0 {
 		return invalid("record_id or raw")

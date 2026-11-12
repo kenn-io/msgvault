@@ -112,6 +112,23 @@ func TestCallHistoryHTTPRoundtrip(t *testing.T) {
 		requirements.Equal(200, page.Code)
 		assertions.JSONEq(`{"items":[]}`, page.Body.String())
 	}
+	labelled := callhistory.Observation{
+		Evidence: callhistory.Evidence{Version: 1, Provider: "example", Account: "account",
+			Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
+			OccurredAt: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)},
+		SourceLabel: "Example calls", RecordID: "labelled", Raw: []byte(`{}`),
+	}
+	record, err := json.Marshal(labelled)
+	requirements.NoError(err)
+	normalized, err := json.Marshal(callhistory.ImportRequest{Format: "normalized", Account: labelled.Account, Record: record})
+	requirements.NoError(err)
+	labelOut := do("POST", "/api/v1/import/calls", string(normalized))
+	requirements.Equal(200, labelOut.Code, labelOut.Body.String())
+	var imported CallImportResponse
+	requirements.NoError(json.Unmarshal(labelOut.Body.Bytes(), &imported))
+	source, err := archive.GetSourceByIDContext(t.Context(), imported.SourceID)
+	requirements.NoError(err)
+	assertions.Equal("Example calls", source.DisplayName.String)
 	for _, tc := range []struct {
 		path, body string
 		status     int
