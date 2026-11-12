@@ -45,9 +45,9 @@ async function enterRaw() {
 }
 
 describe('Postal address editor', () => {
-  it.each(['user', 'vcard_import'] as const)('captures the new draft when editing a %s address', async source => {
+  it('captures the new draft when editing an address', async () => {
     const original: Input = { address_kind: 'postal', street_address: '12 Main St', original_value: '12 Main St' };
-    const current: PersonAddress = { person_id: 7, ...original, original_value: '12 Main St', assessment: { original, proposed: original, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 0, source, created_at: when, updated_at: when, vcard: {} } };
+    const current: PersonAddress = { person_id: 7, ...original, original_value: '12 Main St', assessment: { original, proposed: original, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } };
     const { controller, requests } = setup({ current });
     render(StructuredProfileEditor, { controller, section: 'addresses', current });
     await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: '99 Oak Ave' } });

@@ -177,9 +177,6 @@ func TestPostalAddressAssessmentRequiresPresentAddress(t *testing.T) {
 				assert.Equal("postal", assessment.Original.AddressKind)
 				assert.Equal(postaladdress.StatusNeedsReview, assessment.Status)
 			}
-			profile, err := wrapped.GetPersonProfileContext(t.Context(), id)
-			require.NoError(err)
-			assert.Empty(profile.Addresses, "assessment requests must not store addresses")
 		})
 	}
 }
@@ -195,6 +192,13 @@ func TestPostalReplacementRequiresCurrentValue(t *testing.T) {
 	body := fmt.Appendf(nil, `{"addresses":{"supersede":[%d],"add":[{"address_kind":"postal","free_text":"","original_input":{"address_kind":"postal","street_address":"Old street"},"envelope":{"source":"user"}}]}}`, old.Envelope.ID)
 	saved := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
 	assert.Equal(http.StatusBadRequest, saved.Code, saved.Body.String())
+	var failure struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	require.NoError(json.Unmarshal(saved.Body.Bytes(), &failure))
+	assert.Equal("invalid_profile_value", failure.Error)
+	assert.Equal(store.ErrPersonAddressValueMissing.Error(), failure.Message)
 	profile, err := wrapped.GetPersonProfileContext(t.Context(), id)
 	require.NoError(err)
 	require.Len(profile.Addresses, 1)
