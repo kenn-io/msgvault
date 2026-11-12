@@ -562,17 +562,22 @@ ignored.
 
 ## API schema version maintenance
 
-When the generated HTTP API documents change, bump `APISchemaVersion` in
+When the HTTP API contract changes, bump `APISchemaVersion` in
 `internal/api/openapi.go` and run `make api-generate` and `make web-generate`.
-`TestAPISchemaVersionContract` hashes both complete documents, except for
-`info.version`, and prints the path of an empty marker to add under
-`internal/api/testdata/api-version-contracts/`. Marker filenames record the
-version and contract digest. Keep markers recorded on the base. Replace your
-unreleased marker when your contract changes. If two changes use the same version, remove
-your superseded marker, take the next minor version, and move any feature
-minimum constants introduced by your change to that version. Handler changes
-that leave the documents unchanged still need an explicit version bump when they
-change the API contract.
+`TestAPISchemaVersionContract` hashes both generated documents. It tracks routes,
+parameters, requests, responses, tags, schemas, constraints, defaults, and
+extensions. It ignores wording such as descriptions, summaries, titles, examples,
+and external documentation. Handler changes that leave the documents unchanged
+still need an explicit version bump when they change the API contract.
+
+Add the marker path printed by the test under
+`internal/api/testdata/api-version-contracts/`. Put a one-line summary of the
+change in the marker file. Each marker records its version and digest in its
+filename and its history in its contents. Keep every marker recorded on the base.
+If your unreleased contract changes, replace its marker with the new path and
+summary. If another change has already used that version, remove your marker,
+take the next minor version, and move any feature minimum constants introduced
+by your change to that version.
 
 The comment above `APISchemaVersion` preserves earlier version history. Do not
 add new version entries to that shared comment. To reproduce the CI history

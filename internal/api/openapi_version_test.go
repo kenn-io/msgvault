@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"encoding/json/jsontext"
 	"fmt"
 	"os"
@@ -28,6 +30,17 @@ func apiContractDigest(docs ...*huma.OpenAPI) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("marshal API document: %w", err)
 		}
+		var document any
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		if err := decoder.Decode(&document); err != nil {
+			return "", err
+		}
+		normalizeAPIContract(document, false)
+		raw, err = json.Marshal(document)
+		if err != nil {
+			return "", err
+		}
 		value := jsontext.Value(raw)
 		if err := value.Format(jsontext.ReorderRawObjects(true)); err != nil {
 			return "", err
@@ -35,6 +48,39 @@ func apiContractDigest(docs ...*huma.OpenAPI) (string, error) {
 		parts = append(parts, string(value))
 	}
 	return fmt.Sprintf("%x", sha256.Sum256([]byte("["+strings.Join(parts, ",")+"]"))), nil
+}
+
+// Map keys in OpenAPI containers are user-defined names, not field names.
+func normalizeAPIContract(value any, namedMap bool) {
+	switch v := value.(type) {
+	case []any:
+		for _, item := range v {
+			normalizeAPIContract(item, false)
+		}
+	case map[string]any:
+		for key, item := range v {
+			if namedMap {
+				normalizeAPIContract(item, false)
+				continue
+			}
+			switch key {
+			case "description", "summary", "title", "example", "examples", "externalDocs", "patternDescription":
+				delete(v, key)
+			case "default", "enum", "const", "dependentRequired", "security", "mapping":
+				continue
+			default:
+				if strings.HasPrefix(key, "x-") {
+					continue
+				}
+				switch key {
+				case "paths", "schemas", "properties", "patternProperties", "responses", "content", "headers", "parameters", "requestBodies", "securitySchemes", "callbacks", "links", "encoding", "mapping", "variables":
+					normalizeAPIContract(item, true)
+				default:
+					normalizeAPIContract(item, false)
+				}
+			}
+		}
+	}
 }
 
 func apiBaseMarkers(ctx context.Context, base string, explicit bool) ([]string, error) {
@@ -58,6 +104,7 @@ func apiBaseMarkers(ctx context.Context, base string, explicit bool) ([]string, 
 func checkAPIContract(version, digest string, markers, base []string) error {
 	current := "v" + version
 	greatest := ""
+	baseGreatest := ""
 	contracts := make(map[string][]string)
 	candidate := make(map[string]bool)
 	baseVersions := make(map[string]bool)
@@ -73,6 +120,9 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 				contracts[v] = append(contracts[v], hash)
 			} else {
 				baseVersions[v] = true
+				if semver.Compare(v, baseGreatest) > 0 {
+					baseGreatest = v
+				}
 			}
 			if semver.Compare(v, greatest) > 0 {
 				greatest = v
@@ -103,6 +153,9 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 		if base != nil && !baseVersions[current] && semver.Compare(current, greatest) >= 0 {
 			return fmt.Errorf("%s; replace your unreleased marker with %s", problem, filepath.Join(apiContractsDir, version+"_"+digest))
 		}
+		if baseGreatest != "" {
+			greatest = baseGreatest
+		}
 		major, minor, _ := strings.Cut(strings.TrimPrefix(semver.MajorMinor(greatest), "v"), ".")
 		n, _ := strconv.Atoi(minor)
 		return fmt.Errorf("%s; use %s.%d.0 and move feature minimum constants introduced by your change", problem, major, n+1)
@@ -130,6 +183,16 @@ func TestAPISchemaVersionContract(t *testing.T) {
 		t.Log("API contract base unavailable; skipping history comparison")
 	}
 	require.NoError(checkAPIContract(APISchemaVersion, digest, markers, baseMarkers))
+}
+
+func TestAPIVersionMarkerSummary(t *testing.T) {
+	entries, err := os.ReadDir(apiContractsDir)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		content, err := os.ReadFile(filepath.Join(apiContractsDir, entry.Name()))
+		require.NoError(t, err)
+		assert.NotEmpty(t, strings.TrimSpace(string(content)), entry.Name())
+	}
 }
 
 func TestCheckAPIContract(t *testing.T) {
@@ -162,30 +225,70 @@ func TestCheckAPIContract(t *testing.T) {
 }
 
 func TestAPIContractConcurrentEndpoints(t *testing.T) {
-	require := require.New(t)
-	baseDigest, err := apiContractDigest(OpenAPIDocument(), openAPIClientDocument())
-	require.NoError(err)
-	base := []string{"5.0.0_" + baseDigest}
-
-	first := OpenAPIDocument()
-	first.Paths["/api/v1/test-first"] = &huma.PathItem{Get: &huma.Operation{OperationID: "test-first"}}
-	firstDigest, err := apiContractDigest(first, openAPIClientDocument())
-	require.NoError(err)
-	firstMarker := "5.1.0_" + firstDigest
-	require.NoError(checkAPIContract("5.1.0", firstDigest, append(base, firstMarker), base))
-
-	second := OpenAPIDocument()
-	second.Paths["/api/v1/test-second"] = &huma.PathItem{Get: &huma.Operation{OperationID: "test-second"}}
-	secondDigest, err := apiContractDigest(second, openAPIClientDocument())
-	require.NoError(err)
-	secondMarker := "5.1.0_" + secondDigest
-	require.NotEqual(firstMarker, secondMarker)
-	require.NoError(checkAPIContract("5.1.0", secondDigest, append(base, secondMarker), base))
-
-	first.Paths["/api/v1/test-second"] = second.Paths["/api/v1/test-second"]
-	combinedDigest, err := apiContractDigest(first, openAPIClientDocument())
-	require.NoError(err)
-	require.ErrorContains(checkAPIContract("5.1.0", combinedDigest, []string{base[0], firstMarker, secondMarker}, []string{base[0], firstMarker}), "5.2.0")
+	for _, order := range [][]string{{"first", "second"}, {"second", "first"}} {
+		t.Run(strings.Join(order, "-"), func(t *testing.T) {
+			require := require.New(t)
+			for _, env := range os.Environ() {
+				key, _, _ := strings.Cut(env, "=")
+				if strings.HasPrefix(key, "GIT_") {
+					t.Setenv(key, "")
+					require.NoError(os.Unsetenv(key))
+				}
+			}
+			t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+			t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "config"))
+			t.Chdir(t.TempDir())
+			git := func(args ...string) {
+				out, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput()
+				require.NoError(err, "%s", out)
+			}
+			git("init", "-q")
+			git("config", "user.name", "Test")
+			git("config", "user.email", "test@example.com")
+			require.NoError(os.MkdirAll(apiContractsDir, 0o755))
+			baseDigest, err := apiContractDigest(OpenAPIDocument(), openAPIClientDocument())
+			require.NoError(err)
+			baseMarker := "5.0.0_" + baseDigest
+			require.NoError(os.WriteFile(filepath.Join(apiContractsDir, baseMarker), []byte("base\n"), 0o644))
+			git("add", ".")
+			git("commit", "-qm", "base")
+			git("branch", "base")
+			markers := map[string]string{}
+			for _, name := range []string{"first", "second"} {
+				git("checkout", "-qb", name, "base")
+				doc := OpenAPIDocument()
+				doc.Paths["/api/v1/test-"+name] = &huma.PathItem{Get: &huma.Operation{OperationID: "test-" + name}}
+				digest, err := apiContractDigest(doc, openAPIClientDocument())
+				require.NoError(err)
+				markers[name] = "5.1.0_" + digest
+				require.NoError(checkAPIContract("5.1.0", digest, []string{baseMarker, markers[name]}, []string{baseMarker}))
+				require.NoError(os.WriteFile(name+".go", []byte("package fixture\nimport \"github.com/danielgtaylor/huma/v2\"\nfunc add"+name+"(doc *huma.OpenAPI) { doc.Paths[\"/api/v1/test-"+name+"\"] = &huma.PathItem{Get: &huma.Operation{OperationID: \"test-"+name+"\"}} }\n"), 0o644))
+				require.NoError(os.WriteFile(filepath.Join(apiContractsDir, markers[name]), []byte(name+"\n"), 0o644))
+				git("add", ".")
+				git("commit", "-qm", name)
+			}
+			git("checkout", "-q", order[0])
+			git("merge", "--no-edit", order[1])
+			doc := OpenAPIDocument()
+			for _, name := range order {
+				data, err := os.ReadFile(name + ".go")
+				require.NoError(err)
+				require.Contains(string(data), "/api/v1/test-"+name)
+				doc.Paths["/api/v1/test-"+name] = &huma.PathItem{Get: &huma.Operation{OperationID: "test-" + name}}
+			}
+			entries, err := os.ReadDir(apiContractsDir)
+			require.NoError(err)
+			var merged []string
+			for _, entry := range entries {
+				merged = append(merged, entry.Name())
+			}
+			require.Contains(merged, markers[order[0]])
+			require.Contains(merged, markers[order[1]])
+			digest, err := apiContractDigest(doc, openAPIClientDocument())
+			require.NoError(err)
+			require.ErrorContains(checkAPIContract("5.1.0", digest, merged, []string{baseMarker, markers[order[0]]}), "5.2.0")
+		})
+	}
 }
 
 func TestAPIBaseMarkers(t *testing.T) {
@@ -218,18 +321,63 @@ func TestAPIBaseMarkers(t *testing.T) {
 }
 
 func TestAPIContractDigest(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	base, err := apiContractDigest(OpenAPIDocument(), openAPIClientDocument())
-	require.NoError(err)
-	public := OpenAPIDocument()
-	public.Paths["/api/v1/test-contract"] = &huma.PathItem{Get: &huma.Operation{OperationID: "test-contract"}}
-	changed, err := apiContractDigest(public, openAPIClientDocument())
-	require.NoError(err)
-	assert.NotEqual(base, changed)
+	makeDoc := func() *huma.OpenAPI {
+		doc := OpenAPIDocument()
+		doc.Paths["/api/v1/contract-test"] = &huma.PathItem{Post: &huma.Operation{
+			OperationID: "contract-test", Summary: "original", Description: "original",
+			Parameters:  []*huma.Param{{Name: "query", In: "query", Description: "original"}},
+			RequestBody: &huma.RequestBody{Content: map[string]*huma.MediaType{"application/json": {Schema: &huma.Schema{Type: "object", Properties: map[string]*huma.Schema{"description": {Type: "string"}, "summary": {Type: "string"}}}}}},
+			Responses:   map[string]*huma.Response{"200": {Description: "original", Content: map[string]*huma.MediaType{"application/json": {Schema: &huma.Schema{Type: "string"}}}}},
+		}}
+		return doc
+	}
+	base, err := apiContractDigest(makeDoc(), openAPIClientDocument())
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name   string
+		change func(*huma.OpenAPI)
+		same   bool
+	}{
+		{"wording", func(d *huma.OpenAPI) {
+			op := d.Paths["/api/v1/contract-test"].Post
+			op.Summary = "new"
+			op.Description = "new"
+			op.Parameters[0].Description = "new"
+			op.Responses["200"].Description = "new"
+			op.RequestBody.Content["application/json"].Schema.Title = "new"
+			op.RequestBody.Content["application/json"].Schema.Examples = []any{"example"}
+		}, true},
+		{"route", func(d *huma.OpenAPI) {
+			d.Paths["/api/v1/another"] = &huma.PathItem{Get: &huma.Operation{OperationID: "another"}}
+		}, false},
+		{"parameter", func(d *huma.OpenAPI) { d.Paths["/api/v1/contract-test"].Post.Parameters[0].Required = true }, false},
+		{"request", func(d *huma.OpenAPI) { d.Paths["/api/v1/contract-test"].Post.RequestBody.Required = true }, false},
+		{"response", func(d *huma.OpenAPI) {
+			d.Paths["/api/v1/contract-test"].Post.Responses["200"].Content["application/json"].Schema.Type = "integer"
+		}, false},
+		{"tag", func(d *huma.OpenAPI) { d.Paths["/api/v1/contract-test"].Post.Tags = []string{"new"} }, false},
+		{"description property", func(d *huma.OpenAPI) {
+			d.Paths["/api/v1/contract-test"].Post.RequestBody.Content["application/json"].Schema.Properties["description"].Type = "integer"
+		}, false},
+		{"summary property", func(d *huma.OpenAPI) {
+			d.Paths["/api/v1/contract-test"].Post.RequestBody.Content["application/json"].Schema.Properties["summary"].Type = "integer"
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := makeDoc()
+			tc.change(doc)
+			digest, err := apiContractDigest(doc, openAPIClientDocument())
+			require.NoError(t, err)
+			if tc.same {
+				assert.Equal(t, base, digest)
+			} else {
+				assert.NotEqual(t, base, digest)
+			}
+		})
+	}
 	client := openAPIClientDocument()
 	client.Paths["/api/v1/test-contract"] = &huma.PathItem{Get: &huma.Operation{OperationID: "test-contract"}}
-	changed, err = apiContractDigest(OpenAPIDocument(), client)
-	require.NoError(err)
-	assert.NotEqual(base, changed)
+	digest, err := apiContractDigest(makeDoc(), client)
+	require.NoError(t, err)
+	assert.NotEqual(t, base, digest)
 }
