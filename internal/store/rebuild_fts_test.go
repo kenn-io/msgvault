@@ -268,5 +268,4 @@ func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
 			assert.Equal(t, later, matches[0].ID)
 		})
 	}
-
 }
