@@ -63,20 +63,12 @@ func (s *Server) handleListIntroductions(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, "feature_unavailable", "Introduction reads are unavailable")
 		return
 	}
-	grant := s.requestAuthentication(r).Grant
-	var release func()
-	if grant != nil {
-		var apiErr *apiHTTPError
-		release, apiErr = s.acquireReadSnapshotSlot(r.Context(), "agent_read_busy", "Agent reads are at capacity; retry later")
-		if apiErr != nil {
-			writeAPIHTTPError(w, apiErr)
-			return
-		}
+	grant, release, ok := s.admitIntroductionRead(w, r)
+	if !ok {
+		return
 	}
+	defer release()
 	page, err := ops.ListIntroductionsContext(r.Context(), grant, store.PersonIntroductionQuery{SourceID: source, Limit: int(limit), AfterID: after})
-	if release != nil {
-		release()
-	}
 	if err != nil {
 		s.writeIntroductionError(w, err)
 		return
@@ -90,25 +82,35 @@ func (s *Server) handleGetIntroduction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "feature_unavailable", "Introduction reads are unavailable")
 		return
 	}
-	grant := s.requestAuthentication(r).Grant
-	var release func()
-	if grant != nil {
-		var apiErr *apiHTTPError
-		release, apiErr = s.acquireReadSnapshotSlot(r.Context(), "agent_read_busy", "Agent reads are at capacity; retry later")
-		if apiErr != nil {
-			writeAPIHTTPError(w, apiErr)
-			return
-		}
+	grant, release, ok := s.admitIntroductionRead(w, r)
+	if !ok {
+		return
 	}
+	defer release()
 	row, err := ops.GetIntroductionContext(r.Context(), grant, r.PathValue("id"))
-	if release != nil {
-		release()
-	}
 	if err != nil {
 		s.writeIntroductionError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, row)
+}
+
+// admitIntroductionRead reserves the shared snapshot budget only for authorized agents.
+func (s *Server) admitIntroductionRead(w http.ResponseWriter, r *http.Request) (*agentgrant.Grant, func(), bool) {
+	grant := s.requestAuthentication(r).Grant
+	if grant == nil {
+		return nil, func() {}, true
+	}
+	if !grant.HasPermission(agentgrant.PermissionDraftCreate) {
+		s.writeIntroductionError(w, introops.ErrForbidden)
+		return nil, nil, false
+	}
+	release, apiErr := s.acquireReadSnapshotSlot(r.Context(), "agent_read_busy", "Agent reads are at capacity; retry later")
+	if apiErr != nil {
+		writeAPIHTTPError(w, apiErr)
+		return nil, nil, false
+	}
+	return grant, release, true
 }
 
 func (s *Server) writeIntroductionError(w http.ResponseWriter, err error) {

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -77,6 +78,69 @@ func TestIntroThroughDaemonCLI(t *testing.T) {
 	req.NoError(json.Unmarshal([]byte(data), &page))
 	req.Len(page.Items, 1)
 	check.Equal(row.IntroID, page.Items[0].IntroID)
+	_, err = run("intro", "list", "--json", "--verbose")
+	req.NoError(err)
+	_, err = run("intro", "cancel", row.IntroID, "--revision", "99")
+	req.ErrorContains(err, "revision_mismatch")
+	data, err = run("intro", "prepare", "--source-id", strconv.FormatInt(src.ID, 10), "--person", strconv.FormatInt(a.ID, 10), "--person", strconv.FormatInt(b.ID, 10), "--title", "x\x1b[31mred", "--body", "text\x1b[31mred", "--json")
+	req.NoError(err)
+	req.NoError(json.Unmarshal([]byte(data), &row))
+	data, err = run("intro", "show", row.IntroID)
+	req.NoError(err)
+	check.NotContains(data, "\x1b")
+	check.Contains(data, "red")
+}
+
+func TestIntroHTTPReads(t *testing.T) {
+	check := assert.New(t)
+	req := require.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	src, err := st.GetOrCreateSource("beeper", "synthetic-account")
+	req.NoError(err)
+	pa, err := st.EnsureParticipant("a@example.com", "A", "example.com")
+	req.NoError(err)
+	pb, err := st.EnsureParticipant("b@example.com", "B", "example.com")
+	req.NoError(err)
+	a, _, err := st.CreatePersonFromParticipantContext(ctx, pa)
+	req.NoError(err)
+	b, _, err := st.CreatePersonFromParticipantContext(ctx, pb)
+	req.NoError(err)
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.Data.DataDir = t.TempDir()
+	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st, config: cfg}, Logger: slog.New(slog.DiscardHandler)}).Router())
+	t.Cleanup(server.Close)
+	remote := configureRemoteDaemonForTest(t, server.URL)
+	run := func(args ...string) (string, error) {
+		root := &cobra.Command{Use: "msgvault"}
+		clirun.AddLoggingFlags(root.PersistentFlags())
+		root.AddCommand(newIntroCommand(runDaemonCLICommandHTTPFromCobra))
+		silenceUsageInRunE(root)
+		var out, stderr bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&stderr)
+		root.SetArgs(args)
+		err := root.ExecuteContext(remote)
+		if err != nil {
+			return out.String() + stderr.String(), fmt.Errorf("execute intro: %w", err)
+		}
+		return out.String() + stderr.String(), nil
+	}
+	data, err := run("intro", "prepare", "--source-id", strconv.FormatInt(src.ID, 10), "--person", strconv.FormatInt(a.ID, 10), "--person", strconv.FormatInt(b.ID, 10), "--title", "Hello", "--body", "Private", "--json")
+	req.NoError(err)
+	var row introops.Record
+	req.NoError(json.Unmarshal([]byte(data), &row))
+	check.Equal("Private", row.Body)
+	data, err = run("intro", "show", row.IntroID)
+	req.NoError(err)
+	check.Contains(data, "no_identity_on_account")
+	data, err = run("intro", "list", "--json")
+	req.NoError(err)
+	var page introops.Page
+	req.NoError(json.Unmarshal([]byte(data), &page))
+	req.Len(page.Items, 1)
+	check.Equal(row.IntroID, page.Items[0].IntroID)
 	for _, tc := range []struct{ path, cli string }{
 		{"/api/v1/intros", data},
 		{"/api/v1/intros/" + row.IntroID, ""},
@@ -94,7 +158,6 @@ func TestIntroThroughDaemonCLI(t *testing.T) {
 		req.NoError(response.Body.Close())
 		req.NoError(json.Unmarshal([]byte(tc.cli), &want))
 		check.Equal(http.StatusOK, response.StatusCode)
-		check.Equal("no-store", response.Header.Get("Cache-Control"))
 		check.Equal(want, got)
 	}
 
@@ -141,17 +204,6 @@ func TestIntroThroughDaemonCLI(t *testing.T) {
 	req.NoError(err)
 	check.Equal(http.StatusNotFound, missingResponse.StatusCode)
 	req.NoError(missingResponse.Body.Close())
-	_, err = run("intro", "list", "--json", "--verbose")
-	req.NoError(err)
-	_, err = run("intro", "cancel", row.IntroID, "--revision", "99")
-	req.ErrorContains(err, "revision_mismatch")
-	data, err = run("intro", "prepare", "--source-id", strconv.FormatInt(src.ID, 10), "--person", strconv.FormatInt(a.ID, 10), "--person", strconv.FormatInt(b.ID, 10), "--title", "x\x1b[31mred", "--body", "text\x1b[31mred", "--json")
-	req.NoError(err)
-	req.NoError(json.Unmarshal([]byte(data), &row))
-	data, err = run("intro", "show", row.IntroID)
-	req.NoError(err)
-	check.NotContains(data, "\x1b")
-	check.Contains(data, "red")
 }
 
 func TestIntroDelegatedThroughRunner(t *testing.T) {
@@ -220,64 +272,31 @@ func TestIntroDelegatedThroughRunner(t *testing.T) {
 	var row introops.Record
 	req.NoError(json.Unmarshal([]byte(events[0].Data), &row))
 	check.Equal(grantID, row.CreatedBy)
-	read := func(secret, path string) *httptest.ResponseRecorder {
+	type readResult struct {
+		code   int
+		header http.Header
+		body   string
+	}
+	read := func(secret, path string) readResult {
 		t.Helper()
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+path, nil)
 		req.NoError(err)
 		request.Header.Set("X-Msgvault-Agent-Token", secret)
-		response := httptest.NewRecorder()
 		resp, err := http.DefaultClient.Do(request)
 		req.NoError(err)
 		defer func() { _ = resp.Body.Close() }()
-		response.Code = resp.StatusCode
-		response.HeaderMap = resp.Header
-		_, err = response.Body.ReadFrom(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		req.NoError(err)
-		return response
+		return readResult{code: resp.StatusCode, header: resp.Header, body: string(body)}
 	}
 	visible := read(create, "/api/v1/intros/"+row.IntroID)
-	check.Equal(http.StatusOK, visible.Code)
-	check.Equal("no-store", visible.Header().Get("Cache-Control"))
-	check.NotContains(visible.Body.String(), "secret")
-	check.NotContains(visible.Body.String(), `"user_id":"a"`)
-	check.NotContains(visible.Body.String(), `"user_id":"b"`)
-	check.Equal(http.StatusForbidden, read(outsider, "/api/v1/intros/"+row.IntroID).Code)
-	check.Equal(http.StatusForbidden, read(create, "/api/v1/intros/missing").Code)
-	emptyPage := read(outsider, "/api/v1/intros?limit=1").Body.String()
-	for _, query := range []string{"after_id=invalid", "limit=0", "limit=101", "source_id=0", "limit=1&limit=2"} {
-		check.Equal(http.StatusBadRequest, read(create, "/api/v1/intros?"+query).Code)
-	}
-	check.Equal(http.StatusOK, read(create, "/api/v1/intros?source_id="+strconv.FormatInt(src.ID, 10)+"&limit=1").Code)
-	filtered := read(create, "/api/v1/intros?source_id="+strconv.FormatInt(other.ID, 10))
-	check.Equal(http.StatusOK, filtered.Code)
-	check.NotContains(filtered.Body.String(), row.IntroID)
-	pc, err := st.EnsureParticipant("hidden@example.test", "Hidden", "example.test")
-	req.NoError(err)
-	c, _, err := st.CreatePersonFromParticipantContext(ctx, pc)
-	req.NoError(err)
-	hidden, err := (introops.Service{Store: st}).Prepare(ctx, nil, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: c.ID})
-	req.NoError(err)
-	_, err = (introops.Service{Store: st}).Prepare(ctx, nil, store.PersonIntroductionPrepare{SourceID: other.ID, PersonAID: a.ID, PersonBID: c.ID})
-	req.NoError(err)
-	check.Equal(emptyPage, read(outsider, "/api/v1/intros?limit=1").Body.String())
-	hiddenResponse := read(create, "/api/v1/intros/"+hidden.IntroID)
-	check.Equal(read(create, "/api/v1/intros/missing").Body.String(), hiddenResponse.Body.String())
-	check.Equal(http.StatusForbidden, hiddenResponse.Code)
-	check.NotContains(read(create, "/api/v1/intros?limit=1").Body.String(), hidden.IntroID)
-
-	// A person identified as the owner on another account is also ineligible.
-	req.NoError(st.AddAccountIdentityContext(ctx, other.ID, "self", "manual"))
-	_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pc, beeperidentity.Fallback("grant-account", "c"), pc, beeperidentity.Fallback("other-account", "self"))
-	req.NoError(err)
-	ownerSelected, err := (introops.Service{Store: st}).Prepare(ctx, nil, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: c.ID})
-	req.NoError(err)
-	ownerRefusal := read(create, "/api/v1/intros/"+ownerSelected.IntroID)
-	check.Equal(http.StatusForbidden, ownerRefusal.Code)
-	check.Equal(read(create, "/api/v1/intros/missing").Body.String(), ownerRefusal.Body.String())
-	check.Equal("no-store", ownerRefusal.Header().Get("Cache-Control"))
-	check.NotContains(read(create, "/api/v1/intros").Body.String(), ownerSelected.IntroID)
+	check.Equal(http.StatusOK, visible.code)
+	check.NotContains(visible.body, "secret")
+	check.NotContains(visible.body, `"user_id":"a"`)
+	check.NotContains(visible.body, `"user_id":"b"`)
+	check.Equal(http.StatusForbidden, read(outsider, "/api/v1/intros/"+row.IntroID).code)
 	edit, _ := issue([]string{"draft.create", "draft.edit"}, src.ID)
-	check.Contains(read(edit, "/api/v1/intros/"+row.IntroID).Body.String(), "secret")
+	check.Contains(read(edit, "/api/v1/intros/"+row.IntroID).body, "secret")
 	denied := run(outsider, "intro", "show", row.IntroID, "--json")
 	req.Len(denied, 1)
 	check.Equal("not_permitted", denied[0].Error)

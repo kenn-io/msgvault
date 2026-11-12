@@ -100,8 +100,13 @@ func TestDelegatedListFiltersBeforeLimit(t *testing.T) {
 	g := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{Type: "beeper", Identifier: "account"}}}
 	empty, err := svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
 	req.NoError(err)
-	_, err = svc.Prepare(ctx, nil, store.PersonIntroductionPrepare{SourceID: other.ID, PersonAID: a.ID, PersonBID: b.ID})
+	otherRow, err := svc.Prepare(ctx, nil, store.PersonIntroductionPrepare{SourceID: other.ID, PersonAID: a.ID, PersonBID: b.ID})
 	req.NoError(err)
+	filtered, err := svc.List(ctx, g, store.PersonIntroductionQuery{SourceID: other.ID})
+	req.NoError(err)
+	for _, row := range filtered.Items {
+		check.NotEqual(otherRow.IntroID, row.IntroID)
+	}
 	in.PersonBID = c.ID
 	for range 101 {
 		_, err = svc.Prepare(ctx, nil, in)
@@ -154,6 +159,12 @@ func TestDelegatedPersonVisibility(t *testing.T) {
 	}
 	a, b := person("a", "scope-a"), person("b", "scope-a")
 	absent, cross, owner := person("absent", ""), person("cross", "scope-b"), person("self", "scope-a")
+	scopedOwner := person("scoped-owner", "scope-a")
+	var scopedParticipant int64
+	req.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT participant_id FROM person_participants WHERE person_id = ?`), scopedOwner).Scan(&scopedParticipant))
+	req.NoError(f.Store.AddAccountIdentityContext(ctx, other.ID, "self", "manual"))
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?)`), scopedParticipant, beeperidentity.Fallback("scope-b", "self"))
+	req.NoError(err)
 	req.NoError(f.Store.AddAccountIdentityContext(ctx, other.ID, "self@example.test", "manual"))
 	svc := introops.Service{Store: f.Store}
 	g := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{ID: src.ID, Type: "beeper", Identifier: "scope-a"}}}
@@ -195,7 +206,7 @@ func TestDelegatedPersonVisibility(t *testing.T) {
 	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?)`), participant, beeperidentity.Fallback("scope-a", "second-b"))
 	req.NoError(err)
 	parity(visible.IntroID, true) // ambiguous identities remain visible
-	for _, id := range []int64{absent, cross, owner, 99999999} {
+	for _, id := range []int64{absent, cross, owner, scopedOwner, 99999999} {
 		in.PersonBID = id
 		_, err := svc.Prepare(ctx, g, in)
 		req.ErrorIs(err, introops.ErrForbidden)
@@ -205,7 +216,7 @@ func TestDelegatedPersonVisibility(t *testing.T) {
 	req.NoError(err)
 	check.Contains(pre.Blockers, store.IntroductionBlocker{Code: "no_identity_on_account", PersonID: cross})
 	rows := []introops.Record{visible}
-	for _, id := range []int64{absent, cross, owner} {
+	for _, id := range []int64{absent, cross, owner, scopedOwner} {
 		in.PersonBID = id
 		row, err := svc.Prepare(ctx, nil, in)
 		req.NoError(err)
@@ -216,7 +227,7 @@ func TestDelegatedPersonVisibility(t *testing.T) {
 	}
 	all, err := svc.List(ctx, nil, store.PersonIntroductionQuery{})
 	req.NoError(err)
-	check.Len(all.Items, 4)
+	check.Len(all.Items, 5)
 	pa, err := f.Store.GetPersonContext(ctx, a)
 	req.NoError(err)
 	pb, err := f.Store.GetPersonContext(ctx, b)

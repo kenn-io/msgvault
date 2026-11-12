@@ -68,8 +68,9 @@ may be an owner, including through any linked participant across accounts.
 Account-present people with ambiguous identities remain visible with a blocker.
 Agent list pages count only eligible records, so hidden records do not create continuation pages.
 Responses omit network user IDs and include the body only with `draft.edit` on
-that source. Editing an introduction is owner-only. See the [CLI reference](../cli-reference.md#intro)
-for flags and pagination.
+that source. Editing an introduction is owner-only. See the [HTTP API guide](../api-server.md)
+for introduction reads and the [CLI reference](../cli-reference.md#intro) for flags
+and pagination.
 
 ## Understand the records
 
