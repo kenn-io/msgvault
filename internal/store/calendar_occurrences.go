@@ -215,7 +215,7 @@ func calendarRangeScope(row CalendarEventRow, hasMaster bool, seriesExceptions [
 	return boundary, id != 0 && boundary == nil
 }
 
-// calendarKeepBeforeBoundary keeps occurrences whose original start precedes the range boundary,
+// calendarKeepBeforeBoundary keeps occurrences whose original start precedes or equals the range boundary,
 // whatever their effective start; occurrences with no comparable original start are dropped and reported.
 func calendarKeepBeforeBoundary(o calrecur.Occurrence, byID map[int64]CalendarEventRow, boundary *calrecur.Identity, report func(int64, string)) bool {
 	if boundary == nil {
@@ -229,7 +229,7 @@ func calendarKeepBeforeBoundary(o calrecur.Occurrence, byID map[int64]CalendarEv
 		report(o.ExceptionRef, "exception original start cannot be compared to recurrence range")
 		return false
 	}
-	return calendarIdentityBefore(original, boundary)
+	return !calendarIdentityBefore(boundary, original)
 }
 
 func calendarRangeBoundary(master calevent.Event, exceptions []CalendarEventRow) (*calrecur.Identity, int64) {
