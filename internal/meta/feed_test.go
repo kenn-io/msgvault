@@ -158,6 +158,9 @@ func TestApplyFeedReportsArchiveInvariantsAsInvalidChanges(t *testing.T) {
 			_, _ = fmt.Fprintf(w, `{"id":%q,"message":"Example post","from":{"id":"100","name":"Example Page"}}`, id)
 		case id == "100_201":
 			_, _ = fmt.Fprint(w, `{"id":"100_201","message":"first","created_time":"2026-10-01T12:00:00+0000","from":{"id":"300","name":"Example Customer"}}`)
+		case id == "100_400":
+			// Graph answers with a different comment than the one asked for.
+			_, _ = fmt.Fprint(w, `{"id":"100_401","message":"other","created_time":"2026-10-01T12:00:00+0000","from":{"id":"300","name":"Example Customer"}}`)
 		case strings.HasPrefix(id, "100_3"):
 			// Each reply in this chain answers the one after it, past the read limit.
 			n, err := strconv.Atoi(strings.TrimPrefix(id, "100_3"))
@@ -171,22 +174,28 @@ func TestApplyFeedReportsArchiveInvariantsAsInvalidChanges(t *testing.T) {
 			http.Error(w, "unexpected", http.StatusNotFound)
 		}
 	})
-	_, err := NewImporter(st, c).Register(t.Context(), "9", "100")
+	src, err := NewImporter(st, c).Register(t.Context(), "9", "100")
 	require.NoError(err)
 	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(
 		`{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_201"}`)))
 
 	err = ApplyFeed(t.Context(), st, c, "9", "100", feedValues(
 		`{"item":"comment","verb":"add","post_id":"100_900","comment_id":"100_201"}`))
-	require.Error(err)
-	assert.ErrorIs(err, ErrInvalidChange, "a comment archived under another post")
+	require.ErrorIs(err, ErrInvalidChange, "a comment archived under another post")
 	assert.Contains(err.Error(), "comment object already belongs to a different root or parent")
 
 	err = ApplyFeed(t.Context(), st, c, "9", "100", feedValues(
 		`{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_300"}`))
-	require.Error(err)
-	assert.ErrorIs(err, ErrInvalidChange, "a reply chain longer than the read limit")
+	require.ErrorIs(err, ErrInvalidChange, "a reply chain longer than the read limit")
 	assert.Contains(err.Error(), "comment ancestors exceed the read limit")
+
+	err = ApplyFeed(t.Context(), st, c, "9", "100", feedValues(
+		`{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_400"}`))
+	require.ErrorIs(err, ErrInvalidChange, "Graph answered with a different comment")
+	assert.Contains(err.Error(), "graph object identity mismatch")
+	ids, err := st.MessageExistsBatchContext(t.Context(), src.ID, []string{"100_400", "100_401"})
+	require.NoError(err)
+	assert.Empty(ids, "neither comment is archived")
 }
 
 func TestApplyFeedRefusesUnregisteredPage(t *testing.T) {
