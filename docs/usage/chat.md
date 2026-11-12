@@ -225,6 +225,8 @@ need daemon API schema 2.27.0 or newer. They make no AI call and require no
 profile-write permission. Source action status remains archived evidence;
 these tools do not complete tasks or infer new ones.
 
+`link_meeting`, `unlink_meeting`, and `reset_meeting_link` join or separate copies, or clear a saved choice. They need daemon API schema 5.3.0 or newer and follow the normal [write controls](#write-controls).
+
 ## Setup
 
 The `mcp` command starts a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes your archive as a set of tools. This lets AI assistants like Claude Desktop search, read, and analyze archived email, chats, calendar events, and meeting notes directly.

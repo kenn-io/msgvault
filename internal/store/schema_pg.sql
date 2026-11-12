@@ -3998,3 +3998,22 @@ CREATE TABLE IF NOT EXISTS docbank_attachment_processing (
 CREATE INDEX IF NOT EXISTS idx_docbank_processing_due
  ON docbank_attachment_processing(destination_key, fingerprint, next_action_at, content_hash)
  WHERE next_action_at IS NOT NULL;
+CREATE TABLE IF NOT EXISTS meeting_link_decisions (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    left_message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    left_kind TEXT NOT NULL CHECK (left_kind IN ('msg', 'evt')),
+    left_key TEXT NOT NULL,
+    right_message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    right_kind TEXT NOT NULL CHECK (right_kind IN ('msg', 'evt')),
+    right_key TEXT NOT NULL,
+    decision TEXT NOT NULL CHECK (decision IN ('link', 'split'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_link_decisions_pair ON meeting_link_decisions(left_message_id, left_kind, left_key, right_message_id, right_kind, right_key);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_left ON meeting_link_decisions(left_message_id);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_right ON meeting_link_decisions(right_message_id);
+CREATE TABLE IF NOT EXISTS meeting_copy_survivors (
+    message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    survivor_message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_copy_survivors_survivor ON meeting_copy_survivors(survivor_message_id);
+CREATE INDEX IF NOT EXISTS idx_source_merge_messages_survivor ON source_merge_messages(survivor_message_id);

@@ -304,17 +304,16 @@ func (s *Store) meetingNoteKeys(ctx context.Context, keys []string, budget *int)
 	return out, nil
 }
 
-func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (MeetingRecord, error) {
+func (s *Store) meetingAutomaticRecordContext(ctx context.Context, ref MeetingLinkRef, budget *int) (MeetingRecord, error) {
 	record := MeetingRecord{Links: []MeetingLink{}, MessageIDs: []int64{}, Unexpandable: []CalendarUnexpandable{}}
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
 		return record, err
 	}
 	defer release()
-	budget := calrecur.RequestReadBudget
 	var keys []meetingLinkKey
 	var seed CalendarOccurrence
-	if ref.Kind == "msg" {
+	if ref.Kind == meetingRefMessage {
 		var raw sql.NullString
 		scope, args := sourceScopeClause(ctx, "m.source_id")
 		err = s.db.QueryRowContext(ctx, `SELECT k.link_key FROM messages m LEFT JOIN meeting_details k ON k.message_id=m.id WHERE m.id=? AND m.message_type='meeting_transcript' AND m.deleted_at IS NULL`+scope, append([]any{ref.MessageID}, args...)...).Scan(&raw)
@@ -330,7 +329,7 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			keys = append(keys, key)
 		}
 	} else {
-		rows, err := s.meetingEventRows(ctx, `e.message_id = ?`, []any{ref.MessageID}, &budget)
+		rows, err := s.meetingEventRows(ctx, `e.message_id = ?`, []any{ref.MessageID}, budget)
 		if err != nil {
 			return record, err
 		}
@@ -359,7 +358,7 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			seed, diagnostic = untimedMeetingCopy(row)
 			record.Unexpandable = append(record.Unexpandable, diagnostic)
 		} else {
-			page, err := s.meetingExpand(ctx, rows, at, &budget)
+			page, err := s.meetingExpand(ctx, rows, at, budget)
 			if err != nil {
 				return record, err
 			}
@@ -370,6 +369,25 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 					ref.Identity != (calrecur.Identity{}) && o.SeriesMessageID == ref.MessageID && o.original.AllDay == ref.Identity.AllDay &&
 						(ref.Identity.AllDay && o.original.Date == ref.Identity.Date || !ref.Identity.AllDay && o.original.Instant.Equal(ref.Identity.Instant)) {
 					seed = o
+					break
+				}
+			}
+		}
+		if seed.Ref == "" && row.Event.Kind == calendarSeriesKind && len(record.Unexpandable) > 0 {
+			edits, err := s.meetingEventRows(ctx, `m.source_id = ? AND e.series_provider_id = ? AND e.kind = 'exception'`, []any{row.SourceID, row.Event.ProviderEventID}, budget)
+			if err != nil {
+				return record, err
+			}
+			for _, edit := range edits {
+				if edit.Event.Original == nil || edit.Event.Original.Key() != ref.Identity.Key() {
+					continue
+				}
+				page, err := s.expandCalendarRows(ctx, []CalendarEventRow{edit}, at, at.Add(time.Second), false, budget)
+				if err != nil {
+					return record, err
+				}
+				if len(page.Occurrences) > 0 {
+					seed = page.Occurrences[0]
 					break
 				}
 			}
@@ -402,11 +420,11 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 		if len(pending) == 0 {
 			break
 		}
-		notes, err := s.meetingNoteKeys(ctx, texts, &budget)
+		notes, err := s.meetingNoteKeys(ctx, texts, budget)
 		if err != nil {
 			return record, err
 		}
-		matches, err := s.meetingOccurrencesForKeys(ctx, pending, &budget, &record.Unexpandable)
+		matches, err := s.meetingOccurrencesForKeys(ctx, pending, budget, &record.Unexpandable)
 		if err != nil {
 			return record, err
 		}
@@ -435,7 +453,7 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			allowNotes := key[0] != "google_event_id" || instance || len(identities) == 1 || len(identities) == 0 && len(matched) > 0
 			if len(identities) > 1 {
 				// Notes with exact keys remain peers even if calendar matches are ambiguous.
-				if allowNotes && ref.Kind == "msg" && len(copies) == 0 {
+				if allowNotes && ref.Kind == meetingRefMessage && len(copies) == 0 {
 					record.MessageIDs = append(record.MessageIDs, notes[key.text()]...)
 				}
 				continue

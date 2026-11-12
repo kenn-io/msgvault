@@ -89,6 +89,7 @@ type MeetingMetricsRequest struct {
 }
 
 func (s *Server) registerMeetingRoutes(api huma.API) {
+	registerMeetingRoute[MeetingDecisionRequest, store.MeetingLinkDecisionResult](api, "decideMeetingLink", "/meetings/links/decisions", "Link or split archived meeting copies", s.handleMeetingDecision)
 	registerMeetingRoute[MeetingContextRequest, meetingcontent.PacketResult](
 		api, "getMeetingContext", "/meetings/context", "Render bounded archived meeting context", s.handleMeetingContext,
 	)

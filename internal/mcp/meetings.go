@@ -346,3 +346,45 @@ func getMeetingRecordDefinition() toolDefinition {
 	definition.availability = meetingRecordsAvailable
 	return definition
 }
+
+type meetingDecisionBackend interface {
+	DecideMeetingLink(ctx context.Context, left, right, decision string) (store.MeetingLinkDecisionResult, error)
+}
+
+func (h *handlers) decideMeetingLink(ctx context.Context, req toolRequest, decision string) (*toolResult, error) {
+	left, _ := req.GetArguments()["left"].(string)
+	right, _ := req.GetArguments()["right"].(string)
+	if left == "" || right == "" {
+		return toolErrorResult("left and right are required"), nil
+	}
+	backend, ok := h.meetings.(meetingDecisionBackend)
+	if !ok {
+		return toolErrorResult("meeting decisions are unavailable"), nil
+	}
+	result, err := backend.DecideMeetingLink(ctx, left, right, decision)
+	if err != nil {
+		if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && apiErr.Status >= 400 && apiErr.Status < 500 {
+			return toolErrorResult(apiErr.Code + ": " + apiErr.Message), nil
+		}
+		return nil, newInternalError("decide meeting link", err)
+	}
+	return jsonResult(result)
+}
+
+func (h *handlers) linkMeeting(ctx context.Context, req toolRequest) (*toolResult, error) {
+	return h.decideMeetingLink(ctx, req, "link")
+}
+func (h *handlers) unlinkMeeting(ctx context.Context, req toolRequest) (*toolResult, error) {
+	return h.decideMeetingLink(ctx, req, "unlink")
+}
+func (h *handlers) resetMeetingLink(ctx context.Context, req toolRequest) (*toolResult, error) {
+	return h.decideMeetingLink(ctx, req, "clear")
+}
+
+func meetingDecisionDefinition(name, description string, handler catalogToolHandler) toolDefinition {
+	definition := writeDefinition(name, description, closedObject(map[string]*jsonschema.Schema{
+		"left": stringSchema("First msg: or evt: reference"), "right": stringSchema("Second msg: or evt: reference"),
+	}, "left", "right"), outputSchemaFor[store.MeetingLinkDecisionResult](), handler)
+	definition.availability = meetingDecisionsAvailable
+	return definition
+}

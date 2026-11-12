@@ -52,7 +52,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 		source, tool string
 		noDrafts     bool
 	}{
-		{"mbox", "", false},
+		{"mbox", "", false}, {"gcal", "link_meeting", false},
 		{"granola", "get_meeting_context", false}, {"chatwoot", "get_meeting_context", false},
 		{"circleback", "get_meeting_context", false}, {"pocket", "get_meeting_context", false},
 		{"muesli", "get_meeting_context", false}, {"notion_meetings", "get_meeting_context", false},

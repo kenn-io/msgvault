@@ -1029,6 +1029,16 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 			return nil, fmt.Errorf("copy loop decisions: %w", err)
 		}
 	}
+	if present, err := sourceTableExists(ctx, tx, "meeting_link_decisions"); err != nil {
+		return nil, err
+	} else if present {
+		if _, err := copyByName(ctx, tx, "meeting_link_decisions", `left_message_id IN (SELECT id FROM selected_messages) AND right_message_id IN (SELECT id FROM selected_messages)`); err != nil {
+			return nil, fmt.Errorf("copy meeting link decisions: %w", err)
+		}
+		if _, err := copyByName(ctx, tx, "meeting_copy_survivors", `message_id IN (SELECT id FROM selected_messages) AND survivor_message_id IN (SELECT id FROM selected_messages)`); err != nil {
+			return nil, fmt.Errorf("copy meeting copy survivors: %w", err)
+		}
+	}
 
 	// A Matrix cursor can carry pending relation events from rooms outside
 	// the subset, so exports start Matrix sync over.

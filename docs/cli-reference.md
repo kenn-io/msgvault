@@ -81,6 +81,14 @@ notes that share an exact meeting occurrence. Use a note ID, `msg:<id>`, or an
 event `ref` from `calendar events --json`. This command requires daemon API
 schema 5.2.0 or newer.
 
+### meetings link, unlink, and reset-link
+
+`msgvault meetings link <ref> <ref>` joins two meeting copies, and
+`msgvault meetings unlink <ref> <ref>` separates them. Either replaces the
+previous choice. `msgvault meetings reset-link <ref> <ref>` clears the choice
+and restores automatic matching. These commands require
+daemon API schema 5.3.0 or newer.
+
 ### meetings context
 
 | Flag | Contract |

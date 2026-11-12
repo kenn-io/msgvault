@@ -663,6 +663,10 @@ type ClientInterface interface {
 	GetMeetingContext(ctx context.Context, options *GetMeetingContextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMeetingContextResponse, error)
 	GetMeetingContextWithResponse(ctx context.Context, options *GetMeetingContextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMeetingContextResp, error)
 
+	// DecideMeetingLink Link or split archived meeting copies
+	DecideMeetingLink(ctx context.Context, options *DecideMeetingLinkRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DecideMeetingLinkResponse, error)
+	DecideMeetingLinkWithResponse(ctx context.Context, options *DecideMeetingLinkRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DecideMeetingLinkResp, error)
+
 	// GetMeetingMetrics Get archived meeting duration metrics
 	GetMeetingMetrics(ctx context.Context, options *GetMeetingMetricsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMeetingMetricsResponse, error)
 	GetMeetingMetricsWithResponse(ctx context.Context, options *GetMeetingMetricsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMeetingMetricsResp, error)
@@ -10971,6 +10975,70 @@ func (c *Client) GetMeetingContext(ctx context.Context, options *GetMeetingConte
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/meetings/context")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DecideMeetingLink Link or split archived meeting copies
+func (c *Client) DecideMeetingLink(ctx context.Context, options *DecideMeetingLinkRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DecideMeetingLinkResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/meetings/links/decisions",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*DecideMeetingLinkResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(DecideMeetingLinkErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "DecideMeetingLinkErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(DecideMeetingLinkResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "DecideMeetingLinkResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/meetings/links/decisions")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

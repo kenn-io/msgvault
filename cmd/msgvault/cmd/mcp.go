@@ -318,6 +318,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingsMinAPISchemaVersion) {
 		opts.Meetings = st
 		opts.MeetingRecords = daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingLinksMinAPISchemaVersion)
+		opts.MeetingDecisions = daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingDecisionsMinAPISchemaVersion)
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st

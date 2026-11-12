@@ -32,3 +32,7 @@ var _ api.MeetingRecordStore = (*storeAPIAdapter)(nil)
 func (a *storeAPIAdapter) MeetingRecordContext(ctx context.Context, ref store.MeetingLinkRef) (store.MeetingRecord, error) {
 	return a.store.MeetingRecordContext(ctx, ref)
 }
+
+func (a *storeAPIAdapter) DecideMeetingLinkContext(ctx context.Context, left, right store.MeetingLinkRef, decision string) (store.MeetingLinkDecisionResult, error) {
+	return a.store.DecideMeetingLinkContext(ctx, left, right, decision)
+}

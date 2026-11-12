@@ -6014,6 +6014,50 @@ func (o *GetMeetingContextRequestOptions) GetHeader() (map[string]string, error)
 	return nil, nil
 }
 
+// DecideMeetingLinkRequestOptions is the options needed to make a request to DecideMeetingLink.
+type DecideMeetingLinkRequestOptions struct {
+	Body *DecideMeetingLinkBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *DecideMeetingLinkRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DecideMeetingLinkRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *DecideMeetingLinkRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DecideMeetingLinkRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *DecideMeetingLinkRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetMeetingMetricsRequestOptions is the options needed to make a request to GetMeetingMetrics.
 type GetMeetingMetricsRequestOptions struct {
 	Body *GetMeetingMetricsBody
