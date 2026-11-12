@@ -251,7 +251,6 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_meeting_context` | read | — | owner-only |
 | `get_meeting_metrics` | read | — | owner-only |
 | `get_meeting_record` | read | — | message.read |
-| `suggest_meeting_links` | read | — | message.read |
 | `get_message` | read | — | message.read |
 | `get_message_tags` | read | — | owner-only |
 | `get_participant_identity` | read | — | owner-only |
@@ -291,6 +290,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `search_person_files` | read | — | owner-only |
 | `search_visual_attachments` | read | — | owner-only |
 | `semantic_search_messages` | read | — | owner-only |
+| `suggest_meeting_links` | read | — | message.read |
 | `sync_source` | source_write | `--allow-source-writes` | owner-only |
 | `update_slack_sync_policy` | source_write | `--allow-source-writes` | owner-only |
 | `create_saved_view` | write | — | owner-only |
