@@ -36,9 +36,9 @@ func TestFederationRoleAndHubKeys(t *testing.T) {
 			assertions.Equal(tc.role, cfg.Federation.Role)
 			err = cfg.ValidateServerKey()
 			if tc.keyError != "" {
-				assertions.ErrorContains(err, tc.keyError)
+				requirements.ErrorContains(err, tc.keyError)
 			} else {
-				assertions.NoError(err)
+				requirements.NoError(err)
 			}
 			if tc.autoMint {
 				err = cfg.PrepareServerKey()
