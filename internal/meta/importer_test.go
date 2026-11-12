@@ -31,6 +31,10 @@ type graphFixture struct {
 	paths                []string
 	// pageSize is how many objects a page lists; zero means two.
 	pageSize int
+	// postPages answers the next read of the posts page at a cursor with
+	// these posts instead, once. Paging is unchanged.
+	postPages      map[string][]Object
+	freshPostReads int
 }
 
 func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
@@ -45,6 +49,9 @@ func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
 		}
 		if r.URL.Path == "/v26.0/100_200/comments" && r.URL.Query().Get("after") == "" {
 			f.freshCommentReads++
+		}
+		if r.URL.Path == "/v26.0/100/posts" && r.URL.Query().Get("after") == "" {
+			f.freshPostReads++
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/v26.0/")
 		if f.denied[path] {
@@ -97,6 +104,10 @@ func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
 			data = []Object{}
 		}
 		response := map[string]any{"data": data[start:end]}
+		if override, ok := f.postPages[after]; ok && path == "100/posts" {
+			delete(f.postPages, after)
+			response["data"] = override
+		}
 		if end < len(data) {
 			response["paging"] = map[string]any{"cursors": map[string]string{"after": strconv.Itoa(end)}, "next": "https://graph.facebook.com/unused"}
 		}

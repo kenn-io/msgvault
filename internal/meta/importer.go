@@ -368,15 +368,23 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 			if err != nil {
 				return err
 			}
-			if kept := keepSaved(p.Posts, page.Data); len(kept) == len(p.Posts) {
-				p.Posts, p.postsRead = kept, true
-			} else {
-				// The page no longer lists every saved post, or the cursor
-				// that read it is missing, as in checkpoints saved before
-				// posts_after existed. Continuing at After would skip the
-				// missing posts and still report complete coverage, so the
-				// phase starts over from the first page.
+			kept := keepSaved(p.Posts, page.Data)
+			unlisted := slices.ContainsFunc(p.Posts, func(saved Object) bool {
+				return !slices.ContainsFunc(kept, func(object Object) bool { return object.ID == saved.ID })
+			})
+			if p.PostsAfter == "" && unlisted {
+				// A checkpoint saved by an earlier build from `main`, before
+				// posts_after existed, has saved posts but no cursor, so the
+				// read above landed on the first page. Continuing at After
+				// would skip saved posts that are not there and still report
+				// complete coverage, so the phase starts over from the first
+				// page. A saved first page also has no cursor; restarting it
+				// costs one request and reads the same page.
 				*p = phaseState{}
+			} else {
+				// With a cursor the read found the saved page, so a saved post
+				// it no longer lists was deleted on Meta and is dropped.
+				p.Posts, p.postsRead = kept, true
 			}
 		} else if len(p.Posts) > 0 {
 			post := p.Posts[0]
@@ -443,12 +451,18 @@ func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) 
 	return nil
 }
 
-// keepSaved returns the fresh objects whose IDs are in saved, in fresh order.
-// An object no longer on the page is left for the next complete scan.
+// keepSaved returns the fresh objects whose IDs are in saved, in fresh order,
+// each at most once. An object no longer on the page is left for the next
+// complete scan.
 func keepSaved(saved, fresh []Object) []Object {
 	ids := make(map[string]bool, len(saved))
 	for _, object := range saved {
 		ids[object.ID] = true
 	}
-	return slices.DeleteFunc(fresh, func(object Object) bool { return !ids[object.ID] })
+	return slices.DeleteFunc(fresh, func(object Object) bool {
+		keep := ids[object.ID]
+		// A later listing of the same ID is dropped.
+		delete(ids, object.ID)
+		return !keep
+	})
 }
