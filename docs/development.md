@@ -574,10 +574,11 @@ Add the marker path printed by the test under
 `internal/api/testdata/api-version-contracts/`. Put a one-line summary of the
 change in the marker file. Each marker records its version and digest in its
 filename and its history in its contents. Keep every marker recorded on the base.
-If your unreleased contract changes, replace its marker with the new path and
-summary. If another change has already used that version, remove your marker,
-take the next minor version, and move any feature minimum constants introduced
-by your change to that version.
+If your unreleased contract changes and the base has no marker for that version,
+replace your marker with the new path and summary. If another change has already
+used that version, keep its marker, remove yours, and take the next minor above
+the greatest recorded version. Move any feature minimum constants introduced by
+your change to that version.
 
 The comment above `APISchemaVersion` preserves earlier version history. Do not
 add new version entries to that shared comment. To reproduce the CI history

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"encoding/json/jsontext"
 	"fmt"
 	"os"
 	"os/exec"
@@ -41,11 +40,7 @@ func apiContractDigest(docs ...*huma.OpenAPI) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		value := jsontext.Value(raw)
-		if err := value.Format(jsontext.ReorderRawObjects(true)); err != nil {
-			return "", err
-		}
-		parts = append(parts, string(value))
+		parts = append(parts, string(raw))
 	}
 	return fmt.Sprintf("%x", sha256.Sum256([]byte("["+strings.Join(parts, ",")+"]"))), nil
 }
@@ -104,7 +99,6 @@ func apiBaseMarkers(ctx context.Context, base string, explicit bool) ([]string, 
 func checkAPIContract(version, digest string, markers, base []string) error {
 	current := "v" + version
 	greatest := ""
-	baseGreatest := ""
 	contracts := make(map[string][]string)
 	candidate := make(map[string]bool)
 	baseVersions := make(map[string]bool)
@@ -120,14 +114,19 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 				contracts[v] = append(contracts[v], hash)
 			} else {
 				baseVersions[v] = true
-				if semver.Compare(v, baseGreatest) > 0 {
-					baseGreatest = v
-				}
 			}
 			if semver.Compare(v, greatest) > 0 {
 				greatest = v
 			}
 		}
+	}
+	nextMinor := func(problem string) error {
+		major, minor, _ := strings.Cut(strings.TrimPrefix(semver.MajorMinor(greatest), "v"), ".")
+		n, _ := strconv.Atoi(minor)
+		return fmt.Errorf("%s; use %s.%d.0 and move feature minimum constants introduced by your change", problem, major, n+1)
+	}
+	if len(contracts[current]) > 1 {
+		return nextMinor("API contract has multiple markers for " + version)
 	}
 	for v, hashes := range contracts {
 		if v != current && len(hashes) > 1 {
@@ -150,15 +149,10 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 		problem = "API contract changed or has multiple markers for " + version
 	}
 	if problem != "" {
-		if base != nil && !baseVersions[current] && semver.Compare(current, greatest) >= 0 {
+		if len(contracts[current]) == 1 && base != nil && !baseVersions[current] && semver.Compare(current, greatest) >= 0 {
 			return fmt.Errorf("%s; replace your unreleased marker with %s", problem, filepath.Join(apiContractsDir, version+"_"+digest))
 		}
-		if baseGreatest != "" {
-			greatest = baseGreatest
-		}
-		major, minor, _ := strings.Cut(strings.TrimPrefix(semver.MajorMinor(greatest), "v"), ".")
-		n, _ := strconv.Atoi(minor)
-		return fmt.Errorf("%s; use %s.%d.0 and move feature minimum constants introduced by your change", problem, major, n+1)
+		return nextMinor(problem)
 	}
 	return nil
 }
@@ -191,16 +185,22 @@ func TestAPIVersionMarkerSummary(t *testing.T) {
 	for _, entry := range entries {
 		content, err := os.ReadFile(filepath.Join(apiContractsDir, entry.Name()))
 		require.NoError(t, err)
-		assert.NotEmpty(t, strings.TrimSpace(string(content)), entry.Name())
+		summary := strings.TrimSpace(string(content))
+		assert.NotEmpty(t, summary, entry.Name())
+		assert.NotContains(t, summary, "\n", entry.Name())
 	}
 }
 
 func TestCheckAPIContract(t *testing.T) {
-	a, b := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	a, b, c := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
 	for _, tc := range []struct {
 		name, version, digest, want string
 		markers, base               []string
 	}{
+		{"combined collision", "5.1.0", c, "5.2.0", []string{"5.0.0_" + a, "5.1.0_" + a, "5.1.0_" + b}, []string{"5.0.0_" + a}},
+		{"combined collision reversed", "5.1.0", c, "5.2.0", []string{"5.0.0_" + a, "5.1.0_" + b, "5.1.0_" + a}, []string{"5.0.0_" + a}},
+		{"combined collision occupied", "5.1.0", c, "5.3.0", []string{"5.0.0_" + a, "5.1.0_" + a, "5.1.0_" + b, "5.2.0_" + a}, []string{"5.0.0_" + a}},
+		{"collision repaired", "5.2.0", c, "", []string{"5.0.0_" + a, "5.1.0_" + a, "5.2.0_" + c}, []string{"5.0.0_" + a, "5.1.0_" + a}},
 		{"collision", "5.1.0", a, "5.2.0", []string{"5.1.0_" + a, "5.1.0_" + b}, []string{"5.1.0_" + b}},
 		{"unreleased edit", "5.1.0", b, "replace your unreleased marker", []string{"5.0.0_" + a, "5.1.0_" + a}, []string{"5.0.0_" + a}},
 		{"superseded", "5.2.0", b, "remove the superseded", []string{"5.1.0_" + a, "5.1.0_" + b, "5.2.0_" + b}, []string{"5.1.0_" + a}},
@@ -254,8 +254,7 @@ func TestAPIBaseMarkers(t *testing.T) {
 }
 
 func TestAPIContractDigest(t *testing.T) {
-	makeDoc := func() *huma.OpenAPI {
-		doc := OpenAPIDocument()
+	makeDoc := func(doc *huma.OpenAPI) *huma.OpenAPI {
 		doc.Paths["/api/v1/contract-test"] = &huma.PathItem{Post: &huma.Operation{
 			OperationID: "contract-test", Summary: "original", Description: "original",
 			Parameters:  []*huma.Param{{Name: "query", In: "query", Description: "original"}},
@@ -264,7 +263,7 @@ func TestAPIContractDigest(t *testing.T) {
 		}}
 		return doc
 	}
-	base, err := apiContractDigest(makeDoc(), openAPIClientDocument())
+	base, err := apiContractDigest(makeDoc(OpenAPIDocument()), makeDoc(openAPIClientDocument()))
 	require.NoError(t, err)
 	for _, tc := range []struct {
 		name   string
@@ -296,21 +295,23 @@ func TestAPIContractDigest(t *testing.T) {
 			d.Paths["/api/v1/contract-test"].Post.RequestBody.Content["application/json"].Schema.Properties["summary"].Type = "integer"
 		}, false},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			doc := makeDoc()
-			tc.change(doc)
-			digest, err := apiContractDigest(doc, openAPIClientDocument())
-			require.NoError(t, err)
-			if tc.same {
-				assert.Equal(t, base, digest)
-			} else {
-				assert.NotEqual(t, base, digest)
-			}
-		})
+		for _, document := range []string{"public", "client"} {
+			t.Run(tc.name+"/"+document, func(t *testing.T) {
+				public := makeDoc(OpenAPIDocument())
+				client := makeDoc(openAPIClientDocument())
+				if document == "public" {
+					tc.change(public)
+				} else {
+					tc.change(client)
+				}
+				digest, err := apiContractDigest(public, client)
+				require.NoError(t, err)
+				if tc.same {
+					assert.Equal(t, base, digest)
+				} else {
+					assert.NotEqual(t, base, digest)
+				}
+			})
+		}
 	}
-	client := openAPIClientDocument()
-	client.Paths["/api/v1/test-contract"] = &huma.PathItem{Get: &huma.Operation{OperationID: "test-contract"}}
-	digest, err := apiContractDigest(makeDoc(), client)
-	require.NoError(t, err)
-	assert.NotEqual(t, base, digest)
 }
