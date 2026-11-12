@@ -402,7 +402,7 @@ func TestMeetingCountsExcludeFutureEventWithPastMessageDate(t *testing.T) {
 	require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
 	_, err = buildCache(t.Context(), dbPath, analytics, true)
 	require.NoError(t, err)
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE calendar_events SET content_hash='refresh-fixture' WHERE message_id=?`, id)
+	err = st.UpsertMessageRawWithFormatContext(t.Context(), id, []byte(raw[:len(raw)-1]+`,"status":"tentative"}`), "gcal_json")
 	require.NoError(t, err)
 	_, err = buildCache(t.Context(), dbPath, analytics, false)
 	require.NoError(t, err)
@@ -574,7 +574,7 @@ func TestMeetingCountsAllDayRefresh(t *testing.T) {
 				require.NotNil(t, detail)
 				return detail.MeetingCount
 			}
-			_, err = st.DB().ExecContext(t.Context(), `UPDATE calendar_events SET content_hash='refresh-fixture' WHERE message_id=?`, id)
+			err = st.UpsertMessageRawWithFormatContext(t.Context(), id, []byte(raw[:len(raw)-1]+`,"status":"tentative"}`), "gcal_json")
 			require.NoError(t, err)
 			refresh(tc.before)
 			assert.Zero(t, count())

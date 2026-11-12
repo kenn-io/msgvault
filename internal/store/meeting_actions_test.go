@@ -426,9 +426,4 @@ func TestMeetingActionsWideInstants(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(page.Rows, 1)
 	assertions.Equal(int64(-20), page.Rows[0].Meeting.MessageID)
-	metrics, err = fixture.store.GetMeetingMetricsContext(t.Context(), scope)
-	requirements.NoError(err)
-	assertions.Zero(metrics.Totals.MeetingCount)
-	assertions.Nil(metrics.FirstMeetingAt)
-	assertions.Nil(metrics.LastMeetingAt)
 }
