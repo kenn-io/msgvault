@@ -969,12 +969,10 @@ func TestMeetingLinkDecisionConcurrentLinks(t *testing.T) {
 			done := make(chan result, 2)
 			pairs := [][2]int{{0, 1}, {2, 3}}
 			start := func(i int, pause bool) {
-				writers.Add(1)
-				go func() {
-					defer writers.Done()
+				writers.Go(func() {
 					_, err := st.DecideMeetingLinkContext(context.WithValue(ctx, meetingDecisionWriterKey{}, pause), refs[pairs[i][0]], refs[pairs[i][1]], "link")
 					done <- result{i, err}
-				}()
+				})
 			}
 			start(first, true)
 			select {
