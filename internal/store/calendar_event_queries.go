@@ -297,7 +297,6 @@ func calendarExceptionWindow(dialect Dialect, lower, upper time.Time) (string, [
 	}
 }
 
-// Only sparse cancellations inherit omitted details from the master.
 func calendarEventRawFields(ctx context.Context, r SQLReader, dialect Dialect, id int64) (map[string]any, error) {
 	var encoded string
 	var compression sql.NullString
@@ -323,6 +322,7 @@ func calendarEventRawFields(ctx context.Context, r SQLReader, dialect Dialect, i
 	return fields, nil
 }
 
+// Only sparse cancellations inherit omitted details from the master.
 func inheritSparseCalendarCancellation(row, master CalendarEventRow, fields map[string]any) CalendarEventRow {
 	if _, supplied := fields["summary"]; !supplied {
 		row.Subject = master.Subject
