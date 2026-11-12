@@ -70,3 +70,13 @@ func TestListFiltersSourcesBeforePagination(t *testing.T) {
 	assert.NotEqual(t, first.Items[0].IntroID, next.Items[0].IntroID)
 	assert.False(t, next.HasMore)
 }
+
+func TestPrepareRejectsNonpositiveSourceID(t *testing.T) {
+	f := storetest.New(t)
+	svc := introops.Service{Store: f.Store}
+	for _, id := range []int64{0, -1} {
+		_, err := svc.Prepare(t.Context(), nil, store.PersonIntroductionPrepare{SourceID: id})
+		assert.ErrorIs(t, err, store.ErrIntroductionInvalid)
+		assert.Equal(t, "invalid_args", introops.ErrorCode(err))
+	}
+}

@@ -224,6 +224,9 @@ func (s *Store) updateIntroduction(ctx context.Context, id string, revision int6
 		if cancel {
 			updated, err = tx.ExecContext(ctx, `UPDATE person_introductions SET status = 'cancelled', body = NULL, cancelled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, revision = revision + 1 WHERE intro_id = ? AND revision = ? AND status = 'prepared'`, id, revision)
 		} else {
+			if err := requireSourceWritableWith(tx, row.SourceID); err != nil {
+				return err
+			}
 			if title == nil {
 				title = &row.Title
 			}

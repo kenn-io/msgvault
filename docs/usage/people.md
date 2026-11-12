@@ -47,7 +47,13 @@ msgvault intro cancel <intro-id> --revision 2
 The record stays on your hardware. Preparing it does not contact Beeper,
 create a group, or send a message. Cancellation clears its stored body. Edit
 and cancel require the current revision and a prepared record; inspect it
-again if another change has advanced the revision.
+again if another change has advanced the revision. A source with an active
+introduction cannot be merged into another source. If its source is retired,
+the record reports `source_retired`; you can cancel it to clear the body.
+
+If a person merge combines both people, the record remains visible with a
+`same_person` blocker. Splitting the merge restores its person references.
+Merge snapshots do not retain introduction body text.
 
 Preflight reports `no_identity_on_account` when a person has no saved Beeper
 identity on that account, `ambiguous_identity` when there is more than one,

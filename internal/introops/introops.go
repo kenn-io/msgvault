@@ -32,16 +32,22 @@ func (s Service) project(ctx context.Context, g *agentgrant.Grant, row store.Per
 	if !allowed(g, row) {
 		return Record{}, ErrForbidden
 	}
-	if g != nil && !g.Allows(agentgrant.PermissionDraftEdit, ref(row)) {
-		row.Body = ""
-	}
 	p, err := s.Store.GetPersonIntroductionPreflightContext(ctx, row.SourceID, row.PersonAID, row.PersonBID)
 	if err != nil {
 		return Record{}, err
 	}
-	return Record{row, p.Members, p.Blockers}, nil
+	return projectedRecord(g, row, p), nil
+}
+func projectedRecord(g *agentgrant.Grant, row store.PersonIntroduction, p store.PersonIntroductionPreflight) Record {
+	if g != nil && !g.Allows(agentgrant.PermissionDraftEdit, ref(row)) {
+		row.Body = ""
+	}
+	return Record{row, p.Members, p.Blockers}
 }
 func (s Service) Prepare(ctx context.Context, g *agentgrant.Grant, in store.PersonIntroductionPrepare) (Record, error) {
+	if in.SourceID <= 0 {
+		return Record{}, store.ErrIntroductionInvalid
+	}
 	src, err := s.Store.GetSourceByIDContext(ctx, in.SourceID)
 	if err != nil {
 		if g != nil {
@@ -52,6 +58,10 @@ func (s Service) Prepare(ctx context.Context, g *agentgrant.Grant, in store.Pers
 	if g != nil && !g.Allows(agentgrant.PermissionDraftCreate, agentgrant.SourceRef{Type: src.SourceType, Identifier: src.Identifier}) {
 		return Record{}, ErrForbidden
 	}
+	p, err := s.Store.GetPersonIntroductionPreflightContext(ctx, in.SourceID, in.PersonAID, in.PersonBID)
+	if err != nil {
+		return Record{}, err
+	}
 	actor := "owner"
 	if g != nil {
 		actor = g.ID
@@ -60,7 +70,7 @@ func (s Service) Prepare(ctx context.Context, g *agentgrant.Grant, in store.Pers
 	if err != nil {
 		return Record{}, err
 	}
-	return s.project(ctx, g, row)
+	return projectedRecord(g, row, p), nil
 }
 func (s Service) Get(ctx context.Context, g *agentgrant.Grant, id string) (Record, error) {
 	row, err := s.Store.GetPersonIntroductionContext(ctx, id)
@@ -93,13 +103,20 @@ func (s Service) List(ctx context.Context, g *agentgrant.Grant, q store.PersonIn
 	if err != nil {
 		return Page{}, err
 	}
-	out := Page{Items: []Record{}, HasMore: rows.HasMore, NextAfterID: rows.NextAfterID}
+	inputs := make([]store.PersonIntroductionPrepare, 0, len(rows.Items))
 	for _, row := range rows.Items {
-		record, err := s.project(ctx, g, row)
-		if err != nil {
-			return Page{}, err
+		if !allowed(g, row) {
+			return Page{}, ErrForbidden
 		}
-		out.Items = append(out.Items, record)
+		inputs = append(inputs, store.PersonIntroductionPrepare{SourceID: row.SourceID, PersonAID: row.PersonAID, PersonBID: row.PersonBID})
+	}
+	preflights, err := s.Store.GetPersonIntroductionPreflightsContext(ctx, inputs)
+	if err != nil {
+		return Page{}, err
+	}
+	out := Page{Items: []Record{}, HasMore: rows.HasMore, NextAfterID: rows.NextAfterID}
+	for i, row := range rows.Items {
+		out.Items = append(out.Items, projectedRecord(g, row, preflights[i]))
 	}
 	return out, nil
 }
@@ -107,21 +124,26 @@ func (s Service) Edit(ctx context.Context, g *agentgrant.Grant, id string, in st
 	if g != nil {
 		return Record{}, ErrForbidden
 	}
+	pre, err := s.Get(ctx, g, id)
+	if err != nil {
+		return Record{}, err
+	}
 	row, err := s.Store.EditPersonIntroductionContext(ctx, id, in)
 	if err != nil {
 		return Record{}, err
 	}
-	return s.project(ctx, g, row)
+	return Record{row, pre.Members, pre.Blockers}, nil
 }
 func (s Service) Cancel(ctx context.Context, g *agentgrant.Grant, id string, revision int64) (Record, error) {
-	if _, err := s.Get(ctx, g, id); err != nil {
+	pre, err := s.Get(ctx, g, id)
+	if err != nil {
 		return Record{}, err
 	}
 	row, err := s.Store.CancelPersonIntroductionContext(ctx, id, revision)
 	if err != nil {
 		return Record{}, err
 	}
-	return s.project(ctx, g, row)
+	return projectedRecord(g, row, store.PersonIntroductionPreflight{Members: pre.Members, Blockers: pre.Blockers}), nil
 }
 
 // ErrorCode maps failures to stable, content-free codes shared by transports.

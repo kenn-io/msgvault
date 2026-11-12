@@ -389,7 +389,7 @@ func (s *Store) mergePersonsOnce(
 		); err != nil {
 			return err
 		}
-		if err := s.reconcilePersonIntroductionsTx(ctx, tx, mergeID, survivor.ID, absorbed.ID); err != nil {
+		if err := s.reconcilePersonIntroductionsTx(ctx, tx, survivor.ID, absorbed.ID); err != nil {
 			return err
 		}
 		projectionIDs := []int64{}
@@ -2344,7 +2344,7 @@ func listPersonMergeReviewCandidatesTx(
 	return result, nil
 }
 
-func (s *Store) reconcilePersonIntroductionsTx(ctx context.Context, tx *loggedTx, mergeID, survivorID, absorbedID int64) error {
+func (s *Store) reconcilePersonIntroductionsTx(ctx context.Context, tx *loggedTx, survivorID, absorbedID int64) error {
 	rows, err := tx.QueryContext(ctx, `SELECT intro_id, person_a_id, person_b_id FROM person_introductions WHERE person_a_id = ? OR person_b_id = ?`, absorbedID, absorbedID)
 	if err != nil {
 		return err
@@ -2374,18 +2374,7 @@ func (s *Store) reconcilePersonIntroductionsTx(ctx context.Context, tx *loggedTx
 		if m.b == absorbedID {
 			m.b = survivorID
 		}
-		if m.a == m.b {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM person_introductions WHERE intro_id = ?`, m.id); err != nil {
-				return err
-			}
-			key, err := canonicalPersonMergeSnapshotRowKey([]personMergeSnapshotColumn{{Name: "intro_id", Value: personMergeSnapshotValue{Kind: personMergeSnapshotText, Text: &m.id}}}, []string{"intro_id"})
-			if err != nil {
-				return err
-			}
-			if err := s.setPersonMergeRowKeyDispositionTx(ctx, tx, mergeID, "person_introductions", key, "deleted_snapshot", nil); err != nil {
-				return err
-			}
-		} else if _, err := tx.ExecContext(ctx, `UPDATE person_introductions SET person_a_id = ?, person_b_id = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE intro_id = ?`, m.a, m.b, m.id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_introductions SET person_a_id = ?, person_b_id = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE intro_id = ?`, m.a, m.b, m.id); err != nil {
 			return err
 		}
 	}

@@ -4408,8 +4408,7 @@ CREATE TABLE IF NOT EXISTS person_introductions (
     drafted_at DATETIME,
     cancelled_at DATETIME,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CHECK (person_a_id <> person_b_id)
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_person_introductions_a ON person_introductions(person_a_id);
 CREATE INDEX IF NOT EXISTS idx_person_introductions_b ON person_introductions(person_b_id);

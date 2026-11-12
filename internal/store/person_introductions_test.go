@@ -77,8 +77,17 @@ func TestIntroductionMergeAndSplit(t *testing.T) {
 	got, err = f.Store.GetPersonIntroductionContext(ctx, right.IntroID)
 	require.NoError(t, err)
 	assert.Equal(t, a.ID, got.PersonBID)
-	_, err = f.Store.GetPersonIntroductionContext(ctx, collapsed.IntroID)
-	assert.ErrorIs(t, err, store.ErrIntroductionNotFound)
+	got, err = f.Store.GetPersonIntroductionContext(ctx, collapsed.IntroID)
+	require.NoError(t, err)
+	assert.Equal(t, a.ID, got.PersonAID)
+	assert.Equal(t, a.ID, got.PersonBID)
+	assert.Equal(t, int64(2), got.Revision)
+	preflight, err := f.Store.GetPersonIntroductionPreflightContext(ctx, source.ID, got.PersonAID, got.PersonBID)
+	require.NoError(t, err)
+	assert.Contains(t, preflight.Blockers, store.IntroductionBlocker{Code: "same_person", PersonID: a.ID})
+	body := "edited body"
+	_, err = f.Store.EditPersonIntroductionContext(ctx, collapsed.IntroID, store.PersonIntroductionEdit{Revision: 2, Body: &body})
+	require.NoError(t, err)
 	title := "edited after merge"
 	_, err = f.Store.EditPersonIntroductionContext(ctx, left.IntroID, store.PersonIntroductionEdit{Revision: 2, Title: &title})
 	require.NoError(t, err)
@@ -100,6 +109,8 @@ func TestIntroductionMergeAndSplit(t *testing.T) {
 	got, err = f.Store.GetPersonIntroductionContext(ctx, collapsed.IntroID)
 	require.NoError(t, err)
 	assert.Equal(t, split.NewPerson.ID, got.PersonBID)
+	assert.Equal(t, body, got.Body)
+	assert.Greater(t, got.Revision, int64(3))
 }
 
 func TestIntroductionPaginationAndScope(t *testing.T) {
@@ -189,13 +200,26 @@ func TestIntroductionRefusesRetiredSource(t *testing.T) {
 	require.NoError(t, err)
 	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, f.EnsureParticipant("retired-b@example.com", "B", "example.com"))
 	require.NoError(t, err)
+	row, err := f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID, Body: "private"}, "owner")
+	require.NoError(t, err)
+	_, err = f.Store.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: src.ID, IntoSourceID: target.ID})
+	assert.ErrorIs(t, err, store.ErrSourceMergeInvalid)
 	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO source_settings (source_id, merged_into_source_id) VALUES (?, ?) ON CONFLICT (source_id) DO UPDATE SET merged_into_source_id = excluded.merged_into_source_id`), src.ID, target.ID)
 	require.NoError(t, err)
 	_, err = f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID}, "owner")
 	assert.ErrorIs(t, err, store.ErrSourceRetired)
-	page, err := f.Store.ListPersonIntroductionsContext(ctx, store.PersonIntroductionQuery{}, nil)
+	preflight, err := f.Store.GetPersonIntroductionPreflightContext(ctx, src.ID, a.ID, b.ID)
 	require.NoError(t, err)
-	assert.Empty(t, page.Items)
+	assert.Contains(t, preflight.Blockers, store.IntroductionBlocker{Code: "source_retired"})
+	body := "new body"
+	_, err = f.Store.EditPersonIntroductionContext(ctx, row.IntroID, store.PersonIntroductionEdit{Revision: 1, Body: &body})
+	assert.ErrorIs(t, err, store.ErrSourceRetired)
+	cancelled, err := f.Store.CancelPersonIntroductionContext(ctx, row.IntroID, 1)
+	require.NoError(t, err)
+	assert.Empty(t, cancelled.Body)
+	preflight, err = f.Store.GetPersonIntroductionPreflightContext(ctx, src.ID, a.ID, b.ID)
+	require.NoError(t, err)
+	assert.Contains(t, preflight.Blockers, store.IntroductionBlocker{Code: "source_retired"})
 }
 
 func TestIntroductionSplitDoesNotRestoreDeletedSource(t *testing.T) {

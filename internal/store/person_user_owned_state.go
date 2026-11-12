@@ -48,6 +48,8 @@ func (s *Store) personHasUserOwnedStateTx(
 				WHERE person_id = persons.id AND source = 'user')
 			OR EXISTS (SELECT 1 FROM person_media
 				WHERE person_id = persons.id AND source = 'user')
+			OR EXISTS (SELECT 1 FROM person_introductions
+				WHERE person_a_id = persons.id OR person_b_id = persons.id)
 			OR EXISTS (SELECT 1 FROM person_relationships
 				WHERE source_person_id = persons.id OR target_person_id = persons.id)
 			OR EXISTS (SELECT 1 FROM person_relationship_reviews

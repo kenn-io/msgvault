@@ -653,6 +653,9 @@ func (s *Store) capturePersonMergeQueryTx(
 			Columns:        make([]personMergeSnapshotColumn, 0, len(columns)),
 		}
 		for i, column := range columns {
+			if spec.TableName == "person_introductions" && column == "body" {
+				continue
+			}
 			value, normalizeErr := normalizePersonMergeSnapshotValue(
 				values[i], columnTypes[i].DatabaseTypeName(),
 			)

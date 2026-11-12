@@ -271,3 +271,108 @@ func TestNormalizePersonMergeSnapshotJSONPreservesLargeIntegers(t *testing.T) {
 	require.NotNil(t, value.Text)
 	assert.Equal(t, `{"large":9007199254740993,"small":1}`, *value.Text)
 }
+
+func TestIntroductionMergeSnapshotsOmitBody(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "intro-snapshot.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(t, st.InitSchema())
+	checkIntroductionMergeSnapshotsOmitBody(t, st)
+}
+
+func TestPostgresIntroductionMergeSnapshotsOmitBody(t *testing.T) {
+	skipUnlessPostgresInternal(t)
+	checkIntroductionMergeSnapshotsOmitBody(t, newPGStoreInternal(t))
+}
+
+func checkIntroductionMergeSnapshotsOmitBody(t *testing.T, st *Store) {
+	t.Helper()
+	ctx := t.Context()
+	src, err := st.GetOrCreateSource("beeper", "snapshot-intro")
+	require.NoError(t, err)
+	pa, err := st.EnsureParticipant("intro-a@example.com", "A", "example.com")
+	require.NoError(t, err)
+	pb, err := st.EnsureParticipant("intro-b@example.com", "B", "example.com")
+	require.NoError(t, err)
+	a, _, err := st.CreatePersonFromParticipantContext(ctx, pa)
+	require.NoError(t, err)
+	b, _, err := st.CreatePersonFromParticipantContext(ctx, pb)
+	require.NoError(t, err)
+	intro, err := st.PreparePersonIntroductionContext(ctx, PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID, Body: "sensitive synthetic text"}, "owner")
+	require.NoError(t, err)
+	target, err := st.GetOrCreateSource("beeper", "snapshot-target")
+	require.NoError(t, err)
+	_, err = st.MergeSourcesContext(ctx, MergeSourcesRequest{FromSourceID: src.ID, IntoSourceID: target.ID})
+	assert.ErrorIs(t, err, ErrSourceMergeInvalid)
+	merged, err := st.MergePersonsContext(ctx, PersonMergeRequest{SurvivorID: a.ID, AbsorbedID: b.ID, ExpectedSurvivorRevision: a.Revision, ExpectedAbsorbedRevision: b.Revision, IdempotencyKey: "intro-snapshot", Actor: "test"})
+	require.NoError(t, err)
+	var blob []byte
+	var digest string
+	require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT snapshot_blob, snapshot_sha256 FROM person_merges WHERE id = ?`), merged.Merge.ID).Scan(&blob, &digest))
+	snapshot, err := decodePersonMergeSnapshot(blob, digest)
+	require.NoError(t, err)
+	var introRows []personMergeSnapshotRow
+	for _, row := range snapshot.Rows {
+		if row.TableName == "person_introductions" {
+			introRows = append(introRows, row)
+		}
+	}
+	require.Len(t, introRows, 1)
+	for _, column := range introRows[0].Columns {
+		assert.NotEqual(t, "body", column.Name)
+	}
+	var postJSON string
+	require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT post_merge_row_json FROM person_merge_rows WHERE merge_id = ? AND table_name = 'person_introductions'`), merged.Merge.ID).Scan(&postJSON))
+	var post personMergeSnapshotRow
+	require.NoError(t, json.Unmarshal([]byte(postJSON), &post))
+	for _, column := range post.Columns {
+		assert.NotEqual(t, "body", column.Name)
+	}
+	_, err = st.CancelPersonIntroductionContext(ctx, intro.IntroID, 2)
+	require.NoError(t, err)
+	_, err = st.MergeSourcesContext(ctx, MergeSourcesRequest{FromSourceID: src.ID, IntoSourceID: target.ID})
+	require.NoError(t, err)
+	preflight, err := st.GetPersonIntroductionPreflightContext(ctx, src.ID, a.ID, a.ID)
+	require.NoError(t, err)
+	assert.Contains(t, preflight.Blockers, IntroductionBlocker{Code: "source_retired"})
+}
+
+func TestIntroductionProtectsUserOwnedPerson(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "intro-protection.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(t, st.InitSchema())
+	checkIntroductionProtectsUserOwnedPerson(t, st)
+}
+
+func TestPostgresIntroductionProtectsUserOwnedPerson(t *testing.T) {
+	skipUnlessPostgresInternal(t)
+	checkIntroductionProtectsUserOwnedPerson(t, newPGStoreInternal(t))
+}
+
+func checkIntroductionProtectsUserOwnedPerson(t *testing.T, st *Store) {
+	t.Helper()
+	ctx := t.Context()
+	src, err := st.GetOrCreateSource("beeper", "protection-intro")
+	require.NoError(t, err)
+	pa, err := st.EnsureParticipant("protect-a@example.com", "A", "example.com")
+	require.NoError(t, err)
+	pb, err := st.EnsureParticipant("protect-b@example.com", "B", "example.com")
+	require.NoError(t, err)
+	a, _, err := st.CreatePersonFromParticipantContext(ctx, pa)
+	require.NoError(t, err)
+	b, _, err := st.CreatePersonFromParticipantContext(ctx, pb)
+	require.NoError(t, err)
+	_, err = st.PreparePersonIntroductionContext(ctx, PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID}, "owner")
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`DELETE FROM person_participants WHERE person_id IN (?, ?)`), a.ID, b.ID)
+	require.NoError(t, err)
+	for _, person := range []*Person{a, b} {
+		require.NoError(t, st.withTxContext(ctx, func(tx *loggedTx) error {
+			protected, err := st.personHasUserOwnedStateTx(ctx, tx, person.ID, person.Revision)
+			require.NoError(t, err)
+			assert.True(t, protected)
+			return nil
+		}))
+	}
+}

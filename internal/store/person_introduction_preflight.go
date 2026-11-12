@@ -22,7 +22,36 @@ type PersonIntroductionPreflight struct {
 	Blockers []IntroductionBlocker `json:"blockers"`
 }
 
+// GetPersonIntroductionPreflightsContext shares the global owner lookup while
+// retaining account-scoped checks for each introduction.
+func (s *Store) GetPersonIntroductionPreflightsContext(ctx context.Context, inputs []PersonIntroductionPrepare) ([]PersonIntroductionPreflight, error) {
+	results := make([]PersonIntroductionPreflight, 0, len(inputs))
+	if len(inputs) == 0 {
+		return results, nil
+	}
+	owners, err := s.loopOwnerIdentities(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, in := range inputs {
+		result, err := s.introductionPreflightContext(ctx, in.SourceID, in.PersonAID, in.PersonBID, owners)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
 func (s *Store) GetPersonIntroductionPreflightContext(ctx context.Context, sourceID, personAID, personBID int64) (PersonIntroductionPreflight, error) {
+	results, err := s.GetPersonIntroductionPreflightsContext(ctx, []PersonIntroductionPrepare{{SourceID: sourceID, PersonAID: personAID, PersonBID: personBID}})
+	if err != nil {
+		return PersonIntroductionPreflight{}, err
+	}
+	return results[0], nil
+}
+
+func (s *Store) introductionPreflightContext(ctx context.Context, sourceID, personAID, personBID int64, owners loopOwners) (PersonIntroductionPreflight, error) {
 	out := PersonIntroductionPreflight{Members: []IntroductionMember{}, Blockers: []IntroductionBlocker{}}
 	source, err := s.GetSourceByIDContext(ctx, sourceID)
 	if err != nil {
@@ -31,10 +60,10 @@ func (s *Store) GetPersonIntroductionPreflightContext(ctx context.Context, sourc
 	if source.SourceType != "beeper" {
 		return out, ErrIntroductionSource
 	}
-	owners, err := s.loopOwnerIdentities(ctx)
-	if err != nil {
-		return out, err
+	if source.MergedIntoSourceID != 0 {
+		out.Blockers = append(out.Blockers, IntroductionBlocker{Code: "source_retired"})
 	}
+	scopedOwners := map[int64]struct{}{}
 	rows, err := s.db.QueryContext(ctx, `SELECT pi.participant_id FROM account_identities ai JOIN sources src ON src.id = ai.source_id JOIN participant_identifiers pi ON pi.identifier_type = 'beeper' AND pi.identifier_value = `+beeperidentity.FallbackSQL(s.dialect.DriverName(), "src.identifier", "ai.address")+` WHERE ai.source_id = ?`, sourceID)
 	if err != nil {
 		return out, fmt.Errorf("load scoped owner identities: %w", err)
@@ -45,7 +74,7 @@ func (s *Store) GetPersonIntroductionPreflightContext(ctx context.Context, sourc
 			_ = rows.Close()
 			return out, err
 		}
-		owners.participants[id] = struct{}{}
+		scopedOwners[id] = struct{}{}
 	}
 	err = rows.Err()
 	_ = rows.Close()
@@ -73,6 +102,9 @@ func (s *Store) GetPersonIntroductionPreflightContext(ctx context.Context, sourc
 				return out, err
 			}
 			if _, ok := owners.participants[participant]; ok {
+				owner = true
+			}
+			if _, ok := scopedOwners[participant]; ok {
 				owner = true
 			}
 			if key != nil {
