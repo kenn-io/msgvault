@@ -7062,7 +7062,7 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 				}
 				doc.FromAddr = message.SenderName
 			}
-			doc, fields := preparePostgresFTSDoc(doc, false)
+			doc, fields := preparePostgresFTSDoc(doc)
 			encoded, err := json.Marshal(fields, json.FormatNilSliceAsNull(true))
 			if err != nil {
 				_ = rows.Close()

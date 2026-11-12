@@ -906,6 +906,31 @@ func TestSearchMessageBodies_RealEngineFTSNormalizedContext(t *testing.T) {
 	}
 }
 
+func TestPostgresSearchMessageBodiesExactExcerpts(t *testing.T) {
+	for _, tc := range []struct {
+		name, text, body, excerpt string
+	}{
+		{"decomposed", "cafe teria", "cafe\u0301teria", "cafe\u0301teria"},
+		{"accent lookalikes", "resume marker", "résumé résumé " + strings.Repeat("x", 400) + " resume marker", strings.Repeat("x", 286) + " resume marker"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := storetest.New(t)
+			if !f.Store.IsPostgreSQL() {
+				t.Skip("PostgreSQL indexing")
+			}
+			id := f.NewMessage().WithSourceMessageID(tc.name).WithSubject("ordinary").Create(t, f.Store)
+			require.NoError(t, f.Store.UpsertMessageBody(id, sql.NullString{String: tc.body, Valid: true}, sql.NullString{}))
+			_, err := f.Store.BackfillFTS(nil)
+			require.NoError(t, err)
+			resp := runTool[paginatedSearchMessages](t, "search_message_bodies", newTestHandlers(query.NewEngine(f.Store.DB(), true)).searchMessageBodies, map[string]any{"query": tc.text})
+			require.Len(t, resp.Data, 1)
+			assert.Equal(t, id, resp.Data[0].ID)
+			require.Len(t, resp.Data[0].Matches, 1)
+			assert.Equal(t, tc.excerpt, resp.Data[0].Matches[0].Snippet)
+		})
+	}
+}
+
 func TestSearchMessageBodies_ContextIgnoresFullFoldExpansionLookalikes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

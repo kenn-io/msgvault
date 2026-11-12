@@ -436,25 +436,20 @@ func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 // arguments, with $1 bound to doc.MessageID. The punctuation lexeme inserts
 // a position between fields and cannot appear in a normalized search term.
 func pgFTSVector(doc FTSDoc) (string, []any) {
-	doc, fields := preparePostgresFTSDoc(doc, true)
+	doc, fields := preparePostgresFTSDoc(doc)
 	vector := pgFTSVectorFields("$2", "$3", "$4", "$5", "$6")
 	return vector, []any{doc.MessageID, doc.Subject, doc.Body, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, fields}
 }
 
-func preparePostgresFTSDoc(doc FTSDoc, liveWrite bool) (FTSDoc, []string) {
+func preparePostgresFTSDoc(doc FTSDoc) (FTSDoc, []string) {
 	prepare := func(s string) string {
-		if liveWrite {
-			s = truncateBytesRuneSafe(s)
-		}
+		s = truncateBytesRuneSafe(s)
 		runes := []rune(s)
 		if len(runes) > maxFTSBodyChars {
 			s = string(runes[:maxFTSBodyChars])
 		}
 		s = sqldialect.CanonicalFTSText(s)
-		if liveWrite {
-			s = truncateBytesRuneSafe(s)
-		}
-		return s
+		return truncateBytesRuneSafe(s)
 	}
 	doc.Subject = prepare(doc.Subject)
 	doc.Body = prepare(doc.Body)

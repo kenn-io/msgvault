@@ -131,18 +131,21 @@ func TestPG_FTSMultibyteWriteAndBackfillBounds(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
-	body := strings.Repeat("é ", 250_000) + "latebeacon " + strings.Repeat("x", 100_000) + " beyondbeacon"
+	body := "earlybeacon " + strings.Repeat("é ", 250_000) + "latebeacon " + strings.Repeat("x", 100_000) + " beyondbeacon"
 	live := f.CreateMessage("live-multibyte")
 	require.NoError(f.Store.UpsertFTS(live, "", body, "", "", ""))
 	backfill := f.CreateMessage("backfill-multibyte")
 	require.NoError(f.Store.UpsertMessageBody(backfill, sql.NullString{String: body, Valid: true}, sql.NullString{}))
 	_, err := f.Store.BackfillFTS(nil)
 	require.NoError(err)
-	matches, total, err := f.Store.SearchMessages("latebeacon", 0, 10)
+	matches, total, err := f.Store.SearchMessages("earlybeacon", 0, 10)
 	require.NoError(err)
-	require.EqualValues(1, total)
-	require.Len(matches, 1)
-	assert.Equal(backfill, matches[0].ID)
+	require.EqualValues(2, total)
+	require.Len(matches, 2)
+	assert.ElementsMatch([]int64{live, backfill}, []int64{matches[0].ID, matches[1].ID})
+	_, total, err = f.Store.SearchMessages("latebeacon", 0, 10)
+	require.NoError(err)
+	assert.Zero(total)
 	_, total, err = f.Store.SearchMessages("beyondbeacon", 0, 10)
 	require.NoError(err)
 	assert.Zero(total)
@@ -292,12 +295,8 @@ func TestPG_FTSUpsert_OversizedSubjectAndRecipients(t *testing.T) {
 
 // TestPG_BackfillFTS_MultibyteOversizedBodyDoesNotWedge (finding B1) seeds a
 // batch containing one message whose DB body is a pathological multibyte
-// document (distinct 2-byte tokens, >1MB tsvector pre-cap). The backfill SQL
-// path applies only the LEFT char cap (a UTF-8-safe byte truncation is not
-// cleanly available in SQL), so for adversarial multibyte input the row may
-// still overflow — in which case backfillFTSRowByRow skips it. The pinned
-// property: BackfillFTS COMPLETES WITHOUT ERROR and indexes every OTHER row,
-// regardless of whether the pathological row itself survives the char cap.
+// document (distinct 2-byte tokens, >1MB tsvector pre-cap). The backfill
+// applies the same byte bound as live writes and continues indexing later rows.
 func TestPG_BackfillFTS_MultibyteOversizedBodyDoesNotWedge(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -400,4 +399,18 @@ func TestPG_PersistMessage_OverflowingIndexKeepsMessage(t *testing.T) {
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(),
 		"SELECT search_fts = ''::tsvector FROM messages WHERE id = $1", messageID).Scan(&unsearchable))
 	assert.True(t, unsearchable, "the overflowing message is marked unsearchable")
+}
+
+func TestPG_BackfillOversizedMultibyteBodyKeepsSubject(t *testing.T) {
+	skipUnlessPostgres(t)
+	f := storetest.New(t)
+	id := f.NewMessage().WithSourceMessageID("oversized-repair").WithSubject("repairsubject").Create(t, f.Store)
+	require.NoError(t, f.Store.UpsertMessageBody(id, sql.NullString{String: multibyteOversizedBody(), Valid: true}, sql.NullString{}))
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(t, err)
+	matches, total, err := f.Store.SearchMessages("repairsubject", 0, 10)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, matches, 1)
+	assert.Equal(t, id, matches[0].ID)
 }

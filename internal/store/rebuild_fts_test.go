@@ -185,6 +185,10 @@ func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
 	}{
 		{"slack", "slacksnapshot"},
 		{"teams", "teamssnapshot"},
+		{"inline", "inlinesnapshot"},
+		{"discord", "discordsnapshot"},
+		{"facebook_comments", "facebooksnapshot"},
+		{"instagram_comments", "instagramsnapshot"},
 		{"fbmessenger", "messengertitle"},
 		{"imessage", "15550100777"},
 		{"beeper", "beepersnapshot"},
@@ -197,9 +201,13 @@ func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
 			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`), tc.kind, id)
 			require.NoError(t, err)
 			switch tc.kind {
-			case "slack", "teams":
+			case "slack", "teams", "inline", "facebook_comments", "instagram_comments", "discord":
 				pid := f.EnsureParticipant(tc.kind+"@example.test", "Participant", "example.test")
 				require.NoError(t, f.Store.ReplaceMessageRecipients(id, "from", []int64{pid}, []string{tc.term}))
+				if tc.kind == "discord" {
+					mentioned := f.EnsureParticipant("mention@example.test", "Mention", "example.test")
+					require.NoError(t, f.Store.ReplaceMessageRecipients(id, "mention", []int64{mentioned}, []string{"discordmention"}))
+				}
 			case "fbmessenger":
 				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET title = ? WHERE id = ?`), tc.term, f.ConvID)
 				require.NoError(t, err)
@@ -211,8 +219,15 @@ func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
 			case "beeper":
 				require.NoError(t, f.Store.UpsertMessageRawWithFormat(id, []byte(`{"senderName":"beepersnapshot"}`), "beeper_json"))
 			}
-			require.NoError(t, f.Store.UpsertFTS(id, "", "", tc.term, "", ""))
+			to := ""
+			if tc.kind == "discord" {
+				to = "discordmention"
+			}
+			require.NoError(t, f.Store.UpsertFTS(id, "", "", tc.term, to, ""))
 			assertFTSContains(t, f.Store, tc.term, 1)
+			if tc.kind == "discord" {
+				assertFTSContains(t, f.Store, "discordmention", 1)
+			}
 			if f.Store.IsPostgreSQL() {
 				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET indexing_version = 2 WHERE id = ?`), id)
 			} else {
@@ -222,6 +237,9 @@ func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
 			_, err = f.Store.BackfillFTS(nil)
 			require.NoError(t, err)
 			assertFTSContains(t, f.Store, tc.term, 1)
+			if tc.kind == "discord" {
+				assertFTSContains(t, f.Store, "discordmention", 1)
+			}
 		})
 	}
 }
