@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"log/slog"
 
 	"go.kenn.io/msgvault/internal/mime"
@@ -23,33 +22,28 @@ func hasCalendarToken(raw []byte) bool {
 	return false
 }
 
-func (s *Store) lockEmailCalendarParticipantsWith(ctx context.Context, tx *loggedTx) error {
-	if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
-		return fmt.Errorf("lock email calendar participant directory: %w", err)
-	}
-	return nil
-}
-
-func (s *Store) refreshEmailCalendarEventsWith(ctx context.Context, tx *loggedTx, id int64, raw []byte) error {
-	q := boundQuerier{ctx: ctx, q: tx}
-	var kind string
-	var sourceID int64
-	if err := q.QueryRow(`SELECT COALESCE(message_type,''),source_id FROM messages WHERE id=?`, id).Scan(&kind, &sourceID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		return err
-	}
-	if !IsEmailMessageType(kind) {
-		return nil
-	}
+func (s *Store) deriveEmailCalendarAfterCommit(ctx context.Context, id int64, raw []byte) {
 	parsed, err := mime.Parse(raw)
-	if err != nil {
-		slog.Warn("email MIME could not be decoded for calendar invites", "message_id", id, "error", err)
-		return nil
+	if err == nil && len(parsed.CalendarParts) == 0 {
+		return
 	}
-	_, err = s.persistEmailCalendarPartsWith(ctx, tx, id, sourceID, parsed)
-	return err
+	if err == nil {
+		var sourceID int64
+		err = s.db.QueryRowContext(ctx, `SELECT source_id FROM messages WHERE id=?`, id).Scan(&sourceID)
+		if err == nil {
+			var item *ArchivedRawMessage
+			item, err = s.ScanArchivedEmailContext(ctx, sourceID, id-1, id)
+			if err == nil && item != nil && item.RawDecodeError != nil {
+				err = item.RawDecodeError
+			}
+			if err == nil && item != nil && bytes.Equal(item.RawData, raw) {
+				_, err = s.RefreshArchivedEmailCalendarContext(ctx, sourceID, item, parsed)
+			}
+		}
+	}
+	if err != nil {
+		slog.Warn("derive email calendar after commit failed", "message_id", id, "error", err)
+	}
 }
 
 // RefreshArchivedEmailCalendarContext derives invites from the MIME already

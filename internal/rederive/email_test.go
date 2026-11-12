@@ -280,6 +280,40 @@ func TestEmailUnchangedRetryPublishesPendingRevisionWithRowErrors(t *testing.T) 
 	assert.False(t, applied, "unresolved row failures keep the pass retryable")
 }
 
+func TestEmailRederivationRetriesPostCommitInvite(t *testing.T) {
+	requirements := require.New(t)
+	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
+	if !st.IsPostgreSQL() {
+		t.Skip("requires PostgreSQL participant directory locks")
+	}
+	requirements.NoError(st.MarkMigrationApplied(LedgerKey(src.SourceType, src.Identifier, emailVersion)))
+	blocker, err := st.DB().BeginTx(t.Context(), nil)
+	requirements.NoError(err)
+	defer func() { _ = blocker.Rollback() }()
+	_, err = blocker.ExecContext(t.Context(), `SELECT pg_advisory_xact_lock(hashtextextended('participant-directory-mutation', 0))`)
+	requirements.NoError(err)
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	raw := []byte("Content-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:retry@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Retry invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	requirements.NoError(st.UpsertMessageRawWithFormatContext(ctx, id, raw, "mime"))
+	requirements.Contains(logs.String(), "derive email calendar after commit failed")
+	requirements.NoError(blocker.Rollback())
+	item, err := st.ScanArchivedEmailContext(t.Context(), src.ID, id-1, id)
+	requirements.NoError(err)
+	requirements.NotNil(item)
+	requirements.Equal(raw, item.RawData)
+	_, err = Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	requirements.NoError(err)
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+}
+
 func TestEmailRederivationExtractsMissingInvites(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
