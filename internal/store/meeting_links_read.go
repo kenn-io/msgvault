@@ -171,11 +171,17 @@ func (s *Store) meetingOccurrencesForKeys(ctx context.Context, keys []meetingLin
 	wanted := make(map[meetingLinkKey]bool, len(keys))
 	matches := make(map[meetingLinkKey][]CalendarOccurrence)
 	for _, key := range keys {
-		wanted[key] = true
 		rows, err := s.meetingRowsForKey(ctx, key, budget)
 		if err != nil {
 			return nil, err
 		}
+		_, _, instance := calrecur.ParseInstanceID(key[2])
+		if key[0] == "google_event_id" && !instance && slices.ContainsFunc(rows, func(row CalendarEventRow) bool {
+			return row.Event.Kind == "series" && canonicalMeetingKey("google_event_id", row.CalendarID, row.Event.ProviderEventID, nil) == key
+		}) {
+			continue
+		}
+		wanted[key] = true
 		for _, row := range rows {
 			if row.Event.Kind != "series" && row.Event.Start == nil && row.Event.End == nil && row.Event.Original == nil {
 				occurrence, diagnostic := untimedMeetingCopy(row)

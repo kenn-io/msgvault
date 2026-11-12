@@ -283,9 +283,9 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []CalendarEventRow, duration time.Duration, days int) (resolved, bounded []calrecur.Occurrence, err error) {
 	for _, row := range rows {
 		e := row.Event
-		if e.Start != nil && e.End != nil || e.Original != nil {
+		if e.Start != nil || e.End != nil || e.Original != nil {
 			bounded = append(bounded, calendarEventOccurrence(e, row.MessageID))
-			if e.Start != nil && e.End != nil && (e.Original == nil || set != nil && e.Original.AllDay != set.AllDay) {
+			if e.Original == nil && (e.Start != nil || e.End != nil) || e.Start != nil && e.End != nil && set != nil && e.Original != nil && e.Original.AllDay != set.AllDay {
 				resolved = append(resolved, bounded[len(bounded)-1])
 			}
 		}
