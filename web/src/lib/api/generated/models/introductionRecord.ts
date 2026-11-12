@@ -3,7 +3,6 @@
  */
 import type { IntroductionBlocker } from "./introductionBlocker";
 import type { IntroductionMember } from "./introductionMember";
-import type { IntroductionRecordStatus } from "./introductionRecordStatus";
 
 export interface IntroductionRecord {
   blockers: IntroductionBlocker[];
@@ -18,7 +17,7 @@ export interface IntroductionRecord {
   person_b_id: number;
   revision: number;
   source_id: number;
-  status: IntroductionRecordStatus;
+  status: string;
   title: string;
   updated_at: string;
   [key: string]: unknown;

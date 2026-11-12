@@ -14906,9 +14906,6 @@ func (c *Client) ListIntroductionsWithResponse(ctx context.Context, options *Lis
 				}
 			}
 		}
-		out.Headers200 = &ListIntroductionsResp200Headers{
-			CacheControl: resp.Headers.Get("Cache-Control"),
-		}
 		return out, nil
 	case 400:
 		out.JSON400 = new(ListIntroductionsErrorResponse)
@@ -15033,9 +15030,6 @@ func (c *Client) GetIntroductionWithResponse(ctx context.Context, options *GetIn
 					Err:           err,
 				}
 			}
-		}
-		out.Headers200 = &GetIntroductionResp200Headers{
-			CacheControl: resp.Headers.Get("Cache-Control"),
 		}
 		return out, nil
 	case 401:

@@ -457,7 +457,6 @@ export * from "./introductionBlocker";
 export * from "./introductionMember";
 export * from "./introductionPage";
 export * from "./introductionRecord";
-export * from "./introductionRecordStatus";
 export * from "./kataEvidenceLinkRequest";
 export * from "./kataEvidencePrepareRequest";
 export * from "./kataEvidencePrepareResponse";

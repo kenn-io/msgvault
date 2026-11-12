@@ -5781,16 +5781,11 @@ type TestTaskIntegrationResp struct {
 	JSONDefault  *TestTaskIntegrationErrorResponse
 }
 
-type ListIntroductionsResp200Headers struct {
-	CacheControl string `header:"Cache-Control"`
-}
-
 type ListIntroductionsResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
 	StatusCode   int
 	JSON200      *ListIntroductionsResponse
-	Headers200   *ListIntroductionsResp200Headers
 	JSON400      *ListIntroductionsErrorResponse
 	JSON401      *ListIntroductionsErrorResponseJSON
 	JSON403      *ListIntroductionsErrorResponseJSON403
@@ -5798,16 +5793,11 @@ type ListIntroductionsResp struct {
 	JSONDefault  *ListIntroductionsErrorResponseJSONDefault
 }
 
-type GetIntroductionResp200Headers struct {
-	CacheControl string `header:"Cache-Control"`
-}
-
 type GetIntroductionResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
 	StatusCode   int
 	JSON200      *GetIntroductionResponse
-	Headers200   *GetIntroductionResp200Headers
 	JSON401      *GetIntroductionErrorResponse
 	JSON403      *GetIntroductionErrorResponseJSON
 	JSON404      *GetIntroductionErrorResponseJSON404

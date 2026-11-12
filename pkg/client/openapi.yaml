@@ -7111,9 +7111,6 @@ components:
           format: int64
           type: integer
         status:
-          enum:
-            - prepared
-            - cancelled
           type: string
         title:
           type: string
@@ -24140,11 +24137,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/IntroductionPage"
           description: OK
-          headers:
-            Cache-Control:
-              description: Always no-store
-              schema:
-                type: string
         "400":
           content:
             application/json:
@@ -24196,11 +24188,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/IntroductionRecord"
           description: OK
-          headers:
-            Cache-Control:
-              description: Always no-store
-              schema:
-                type: string
         "401":
           content:
             application/json:
