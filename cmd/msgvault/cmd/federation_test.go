@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/messageimport"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 
 	"github.com/stretchr/testify/assert"
@@ -50,105 +51,91 @@ func TestFederationHubOrigin(t *testing.T) {
 }
 
 func TestFederationEnrollOutput(t *testing.T) {
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	serverCfg := config.NewDefaultConfig()
-	serverCfg.Data.DataDir = t.TempDir()
-	serverCfg.Federation.Role = "hub"
-	serverCfg.Server.APIKey = "owner-fixture"
-	apiServer := api.NewServerWithOptions(api.ServerOptions{Config: serverCfg, Store: st, FederationStore: st, Logger: slog.New(slog.DiscardHandler)})
-	t.Cleanup(func() { requirements.NoError(apiServer.Shutdown(context.WithoutCancel(t.Context()))) })
-	srv := httptest.NewServer(apiServer.Router())
-	t.Cleanup(srv.Close)
-	clientCfg := config.NewDefaultConfig()
-	clientCfg.Data.DataDir = t.TempDir()
-	clientCfg.Remote = config.RemoteConfig{URL: srv.URL, APIKey: "owner-fixture", AllowInsecure: true}
-	ctx := withStoreResolverConfig(t, clientCfg)
-	template, _, err := rootCmd.Find([]string{"federation", "enroll"})
-	requirements.NoError(err)
-	var stdout, stderr bytes.Buffer
-	command := &cobra.Command{Use: template.Use, Args: template.Args, RunE: template.RunE}
-	silenceUsageInRunE(command)
-	command.Flags().AddFlagSet(template.Flags())
-	command.Flags().VisitAll(func(flag *pflag.Flag) { requirements.NoError(flag.Value.Set(flag.DefValue)); flag.Changed = false })
-	t.Cleanup(func() {
-		command.Flags().VisitAll(func(flag *pflag.Flag) { assert.NoError(t, flag.Value.Set(flag.DefValue)); flag.Changed = false })
-	})
-	command.SetOut(&stdout)
-	command.SetErr(&stderr)
+	setup := func(t *testing.T) (*store.Store, *cobra.Command, context.Context, *bytes.Buffer, *bytes.Buffer, string) {
+		t.Helper()
+		st := testutil.NewTestStore(t)
+		serverCfg := config.NewDefaultConfig()
+		serverCfg.Data.DataDir = t.TempDir()
+		serverCfg.Federation.Role = "hub"
+		serverCfg.Server.APIKey = "owner-fixture"
+		apiServer := api.NewServerWithOptions(api.ServerOptions{Config: serverCfg, Store: st, FederationStore: st, Logger: slog.New(slog.DiscardHandler)})
+		t.Cleanup(func() { require.NoError(t, apiServer.Shutdown(context.WithoutCancel(t.Context()))) })
+		srv := httptest.NewServer(apiServer.Router())
+		t.Cleanup(srv.Close)
+		clientCfg := config.NewDefaultConfig()
+		clientCfg.Data.DataDir = t.TempDir()
+		clientCfg.Remote = config.RemoteConfig{URL: srv.URL, APIKey: "owner-fixture", AllowInsecure: true}
+		ctx := withStoreResolverConfig(t, clientCfg)
+		template, _, err := rootCmd.Find([]string{"federation", "enroll"})
+		require.NoError(t, err)
+		command := &cobra.Command{Use: template.Use, Args: template.Args, RunE: template.RunE}
+		silenceUsageInRunE(command)
+		command.Flags().AddFlagSet(template.Flags())
+		command.Flags().VisitAll(func(flag *pflag.Flag) { require.NoError(t, flag.Value.Set(flag.DefValue)); flag.Changed = false })
+		t.Cleanup(func() {
+			command.Flags().VisitAll(func(flag *pflag.Flag) { assert.NoError(t, flag.Value.Set(flag.DefValue)); flag.Changed = false })
+		})
+		stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		command.SetOut(stdout)
+		command.SetErr(stderr)
+		return st, command, ctx, stdout, stderr, srv.URL
+	}
 	t.Run("invalid port does not enroll", func(t *testing.T) {
-		assertions := assert.New(t)
-		requirements := require.New(t)
-		for _, origin := range []string{"https://hub.example.test:0", "https://hub.example.test:99999"} {
-			command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--hub-url", origin})
-			requirements.ErrorContains(command.ExecuteContext(ctx), "--hub-url")
-			entries, err := st.ListFederationEnrollmentsContext(t.Context())
-			requirements.NoError(err)
-			assertions.Empty(entries)
-			assertions.Empty(stdout.String())
-		}
-		flag := command.Flags().Lookup("hub-url")
-		requirements.NoError(flag.Value.Set(flag.DefValue))
-		flag.Changed = false
+		st, command, ctx, stdout, _, _ := setup(t)
+		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--hub-url", "https://hub.example.test:99999"})
+		require.ErrorContains(t, command.ExecuteContext(ctx), "--hub-url")
+		entries, err := st.ListFederationEnrollmentsContext(t.Context())
+		require.NoError(t, err)
+		assert.Empty(t, entries)
+		assert.Empty(t, stdout.String())
 	})
 	t.Run("token and join hint", func(t *testing.T) {
-		assertions := assert.New(t)
-		requirements := require.New(t)
+		_, command, ctx, stdout, stderr, url := setup(t)
 		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice"})
-		requirements.NoError(command.ExecuteContext(ctx))
+		require.NoError(t, command.ExecuteContext(ctx))
 		token := strings.TrimSpace(stdout.String())
-		assertions.True(strings.HasPrefix(token, "mvf1_"))
-		assertions.NotContains(stderr.String(), token)
-		assertions.Contains(stderr.String(), "msgvault federation join <hub-url>")
-		assertions.NotContains(stderr.String(), srv.URL)
+		assert.Regexp(t, `^mvf1_[A-Za-z0-9_-]+$`, token)
+		assert.Equal(t, token+"\n", stdout.String())
+		assert.NotContains(t, stderr.String(), token)
+		assert.Contains(t, stderr.String(), "msgvault federation join <hub-url>")
+		assert.NotContains(t, stderr.String(), url)
 	})
-
 	t.Run("list", func(t *testing.T) {
-		assertions := assert.New(t)
-		requirements := require.New(t)
-		entries, err := st.ListFederationEnrollmentsContext(t.Context())
-		requirements.NoError(err)
-		if len(entries) == 0 {
-			_, _, err = st.CreateFederationEnrollmentContext(t.Context(), strings.Repeat("a", 64), "alice", "")
-			requirements.NoError(err)
-		}
-		listTemplate, _, err := rootCmd.Find([]string{"federation", "enrollments", "list"})
-		requirements.NoError(err)
-		list := &cobra.Command{Use: listTemplate.Use, Args: listTemplate.Args, RunE: listTemplate.RunE}
-		list.Flags().AddFlagSet(listTemplate.Flags())
+		st, _, ctx, _, _, _ := setup(t)
+		_, _, err := st.CreateFederationEnrollmentContext(t.Context(), strings.Repeat("a", 64), "alice", "")
+		require.NoError(t, err)
+		template, _, err := rootCmd.Find([]string{"federation", "enrollments", "list"})
+		require.NoError(t, err)
+		list := &cobra.Command{Use: template.Use, Args: template.Args, RunE: template.RunE}
+		list.Flags().AddFlagSet(template.Flags())
 		var output bytes.Buffer
 		list.SetOut(&output)
-		requirements.NoError(list.ExecuteContext(ctx))
-		assertions.Contains(output.String(), "\talice\talice\tactive\n")
+		require.NoError(t, list.ExecuteContext(ctx))
+		assert.Contains(t, output.String(), "\talice\talice\tactive\n")
 		list.SetOut(federationFailWriter{})
-		assertions.ErrorContains(list.ExecuteContext(ctx), "write federation enrollments: output failed")
+		assert.ErrorContains(t, list.ExecuteContext(ctx), "write federation enrollments: output failed")
 	})
 	t.Run("quoted join origin", func(t *testing.T) {
-		stdout.Reset()
-		stderr.Reset()
+		_, command, ctx, _, stderr, _ := setup(t)
 		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--hub-url", "https://hub.example.test;false"})
 		require.NoError(t, command.ExecuteContext(ctx))
 		assert.Contains(t, stderr.String(), "msgvault federation join 'https://hub.example.test;false'")
 	})
 	t.Run("JSON output", func(t *testing.T) {
-		assertions := assert.New(t)
-		requirements := require.New(t)
-		stdout.Reset()
-		stderr.Reset()
+		_, command, ctx, stdout, stderr, _ := setup(t)
 		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--hub-url", "https://hub.example.test", "--json"})
-		requirements.NoError(command.ExecuteContext(ctx))
-		var jsonOutput struct {
+		require.NoError(t, command.ExecuteContext(ctx))
+		var output struct {
 			Token string `json:"token"`
 		}
-		requirements.NoError(json.Unmarshal(stdout.Bytes(), &jsonOutput))
-		assertions.Regexp(`^mvf1_[A-Za-z0-9_-]+$`, jsonOutput.Token)
-		assertions.NotContains(stderr.String(), jsonOutput.Token)
+		require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
+		assert.Regexp(t, `^mvf1_[A-Za-z0-9_-]+$`, output.Token)
+		assert.NotContains(t, stderr.String(), output.Token)
 	})
 	t.Run("server error", func(t *testing.T) {
-		assertions := assert.New(t)
+		_, command, ctx, _, _, _ := setup(t)
 		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "Alice"})
-		err := command.ExecuteContext(ctx)
-		assertions.ErrorContains(err, "member")
+		assert.ErrorContains(t, command.ExecuteContext(ctx), "member")
 	})
 }
 

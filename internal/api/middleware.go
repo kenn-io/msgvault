@@ -236,7 +236,6 @@ type requestAuthentication struct {
 	trustedForCLIDuration bool
 	Grant                 *agentgrant.Grant
 	RemoteClient          *config.RemoteClientConfig
-	Federation            *store.FederationEnrollment
 }
 
 func (s *Server) requestAuthentication(r *http.Request) requestAuthentication {
@@ -274,9 +273,9 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 				_, cookieErr := r.Cookie(sessionCookieName)
 				parts := strings.Fields(auths[0])
 				if cookieErr != nil && len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && strings.HasPrefix(parts[1], "mvf1_") {
-					enrollment, err := s.federationStore.AuthenticateFederationEnrollmentContext(r.Context(), parts[1], instances[0])
+					_, err := s.federationStore.AuthenticateFederationEnrollmentContext(r.Context(), parts[1], instances[0])
 					if err == nil {
-						return requestAuthentication{Mode: AuthModeFederation, Federation: enrollment}
+						return requestAuthentication{Mode: AuthModeFederation}
 					}
 					if !errors.Is(err, store.ErrNotFound) {
 						s.logger.Warn("federation enrollment lookup failed", "error", err)

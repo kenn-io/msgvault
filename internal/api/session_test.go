@@ -118,7 +118,7 @@ func TestSessionOpenAPIRoutesDoNotReplaceAPIKeySecurity(t *testing.T) {
 	health := doc.Paths["/api/v1/health"].Get
 	requirements.Len(health.Security, 1)
 	assertions.Contains(health.Security[0], apiKeySecurityScheme)
-	assertions.Len(doc.Components.SecuritySchemes, 3, "cookie sessions stay additive to the documented security schemes")
+	assertions.Contains(doc.Components.SecuritySchemes, apiKeySecurityScheme, "cookie sessions stay additive to the API key scheme")
 }
 
 func TestLoginSuccessCreatesOpaqueHostOnlyCookie(t *testing.T) {

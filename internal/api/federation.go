@@ -70,7 +70,7 @@ func (s *Server) federationRole(w http.ResponseWriter, r *http.Request, identity
 
 func (s *Server) federationOwner(w http.ResponseWriter, r *http.Request, identity bool) bool {
 	mode := s.requestAuthentication(r).Mode
-	if !s.ownerAccessAuthorized(r) && (!identity || mode != AuthModeLoopback) {
+	if !s.ownerAccessAuthorized(r) && (!identity || mode != AuthModeLoopback || !isLoopbackRequest(r)) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
 		return false
 	}

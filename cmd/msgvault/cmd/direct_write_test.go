@@ -597,7 +597,6 @@ func TestOpenReadOnlyStoreRejectsUnsupportedSchema(t *testing.T) {
 
 func TestFederationHubDirectWriteSourceGuard(t *testing.T) {
 	cfg := lifecycleTestConfig(t.TempDir())
-	cfg.Data.DataDir = t.TempDir()
 	cfg.Federation.Role = "hub"
 	st, err := openStoreAndInitWithInvocation(t.Context(), testInvocationWithConfig(cfg), func(*store.Store) error { return nil })
 	require.NoError(t, err)
