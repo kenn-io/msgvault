@@ -22,6 +22,11 @@ func TestEmploymentCatalogGatesAndClosedInput(t *testing.T) {
 	for _, name := range names {
 		assert.Contains(t, listed, name)
 	}
+	for name, destructive := range map[string]bool{"create_employment": false, "replace_employment": true, "delete_employment": true} {
+		annotations, ok := listed[name]["annotations"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, destructive, annotations["destructiveHint"])
+	}
 	assert.NotContains(t, toolsByName(t, rawListTools(t, opts, false)), "create_employment")
 	input, ok := listed["create_employment"]["inputSchema"].(map[string]any)
 	require.True(t, ok)
@@ -35,7 +40,18 @@ func TestEmploymentCatalogGatesAndClosedInput(t *testing.T) {
 	assert.NoError(t, resolved.Validate(good))
 	bad := map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "user", "other": true}}
 	assert.Error(t, resolved.Validate(bad))
-	assert.Error(t, resolved.Validate(map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "extraction", "confidence": 2}}))
+	assert.NoError(t, resolved.Validate(map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "extraction", "confidence": 2}}))
+	assert.NoError(t, resolved.Validate(map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "extraction", "confidence": nil}}))
+	assert.Error(t, resolved.Validate(map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "extraction", "confidence": "high"}}))
+	body := schema.Properties["employment"]
+	confidence := body.Properties["confidence"]
+	require.Len(t, confidence.AnyOf, 2)
+	assert.Equal(t, "number", confidence.AnyOf[0].Type)
+	assert.Equal(t, "null", confidence.AnyOf[1].Type)
+	assert.NotContains(t, body.Required, "confidence")
+	assert.Nil(t, confidence.AnyOf[0].Minimum)
+	assert.Nil(t, confidence.AnyOf[0].Maximum)
+	assert.Nil(t, confidence.AnyOf[0].Default)
 	opts.DelegatedOnly = true
 	assert.Empty(t, operationalCatalog(opts, true))
 	found := false
