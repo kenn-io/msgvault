@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"strconv"
 
 	"go.kenn.io/msgvault/internal/mime"
 )
@@ -24,9 +25,6 @@ func hasCalendarToken(raw []byte) bool {
 
 func (s *Store) deriveEmailCalendarAfterCommit(ctx context.Context, id int64, raw []byte) {
 	parsed, err := mime.Parse(raw)
-	if err == nil && len(parsed.CalendarParts) == 0 {
-		return
-	}
 	if err == nil {
 		err = s.refreshCommittedEmailCalendar(ctx, id, raw, parsed)
 	}
@@ -53,8 +51,21 @@ func (s *Store) refreshCommittedEmailCalendar(ctx context.Context, id int64, raw
 	if !bytes.Equal(item.RawData, raw) {
 		return nil
 	}
-	_, err = s.RefreshArchivedEmailCalendarContext(ctx, sourceID, item, parsed)
-	return err
+	return s.refreshAndSettleEmailCalendar(ctx, sourceID, item, parsed)
+}
+
+// refreshAndSettleEmailCalendar derives the invitation and then releases the
+// repair hold the message's write took.
+func (s *Store) refreshAndSettleEmailCalendar(ctx context.Context, sourceID int64, item *ArchivedRawMessage, parsed *mime.Message) error {
+	if _, err := s.RefreshArchivedEmailCalendarContext(ctx, sourceID, item, parsed); err != nil {
+		return err
+	}
+	return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
+		if err := s.lockArchivedEmailTextContext(ctx, tx, item); err != nil {
+			return err
+		}
+		return settleEmailRepair(boundQuerier{ctx: ctx, q: tx}, item.MessageID)
+	})
 }
 
 // upsertEmailRaw stores raw data and, for MIME that may hold an invitation,
@@ -63,7 +74,52 @@ func upsertEmailRaw(q querier, messageID int64, rawData []byte, format string) e
 	if err := upsertMessageRawWithFormat(q, messageID, rawData, format); err != nil || format != emailLinkageRawFormat || !hasCalendarToken(rawData) {
 		return err
 	}
-	return reopenEmailRepair(q, messageID)
+	return holdEmailRepair(q, messageID)
+}
+
+// EmailRepairVersion is the ledger version suffix of the email repair pass
+// (rederive.LedgerKey), which the store's reopen markers extend.
+const EmailRepairVersion = "email-v3"
+
+// emailRepairSourceSQL yields the source's ledger prefix, up to the version,
+// of the message bound to its single placeholder.
+const emailRepairSourceSQL = `SELECT 'rederive:' || source_type || ':' || identifier || ':' AS prefix
+	FROM sources WHERE id = (SELECT source_id FROM messages WHERE id = ?)`
+
+// holdEmailRepair reopens the repair pass and records, in the same transaction,
+// one marker per message whose invitation derive is still owed. The markers
+// extend the pass key with a colon-free suffix, so a restarted walk (which
+// covers every message) and a source merge or removal clear them with its rows.
+func holdEmailRepair(q querier, messageID int64) error {
+	if err := reopenEmailRepair(q, messageID); err != nil {
+		return err
+	}
+	_, err := q.Exec(`INSERT INTO applied_migrations (name) SELECT prefix || '`+EmailRepairVersion+`#o' || ?
+		FROM (`+emailRepairSourceSQL+`) repair_source WHERE true ON CONFLICT (name) DO NOTHING`,
+		strconv.FormatInt(messageID, 16), messageID)
+	return err
+}
+
+// settleEmailRepair drops the message's marker after its invitation derive
+// succeeded and, when no other message still owes one, raises the versions
+// reopenEmailRepair lowered. Callers hold the source's attribution lock, which
+// serializes it with every writer that reopens the pass, so a marker another
+// writer committed is always seen; a failed or unfinished derive keeps its
+// marker and with it the reopened pass.
+func settleEmailRepair(q querier, messageID int64) error {
+	const markerPrefix = `prefix || '` + EmailRepairVersion + `#o'`
+	if _, err := q.Exec(`DELETE FROM applied_migrations WHERE name IN (
+		SELECT `+markerPrefix+` || ? FROM (`+emailRepairSourceSQL+`) repair_source)`,
+		strconv.FormatInt(messageID, 16), messageID); err != nil {
+		return err
+	}
+	_, err := q.Exec(`UPDATE applied_migrations SET version = 1 WHERE version = 0 AND EXISTS (
+		SELECT 1 FROM (`+emailRepairSourceSQL+`) repair_source
+		WHERE SUBSTR(name, 1, LENGTH(prefix) + 7) = prefix || 'email-v'
+		  AND SUBSTR(name, LENGTH(prefix) + 8) NOT LIKE '%:%'
+		  AND NOT EXISTS (SELECT 1 FROM applied_migrations marker
+			WHERE SUBSTR(marker.name, 1, LENGTH(`+markerPrefix+`)) = `+markerPrefix+`))`, messageID)
+	return err
 }
 
 // reopenEmailRepair marks the message's source's email repair pass incomplete

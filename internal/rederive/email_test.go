@@ -280,6 +280,23 @@ func TestEmailUnchangedRetryPublishesPendingRevisionWithRowErrors(t *testing.T) 
 	assert.False(t, applied, "unresolved row failures keep the pass retryable")
 }
 
+func TestEmailRederivationDoesNotRescanAfterSuccessfulInvite(t *testing.T) {
+	requirements := require.New(t)
+	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
+	archiveEmail(t, st, src, "other", "Other email")
+	_, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	requirements.NoError(err)
+	raw := []byte("Content-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:invite@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	requirements.NoError(st.UpsertMessageRawWithFormatContext(t.Context(), id, raw, "mime"))
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	sum, ran, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	requirements.NoError(err)
+	requirements.False(ran, "a successful invitation must not force a full email rescan: %+v", sum)
+}
+
 func TestEmailRederivationRetriesInviteBeforeCompletedCursor(t *testing.T) {
 	requirements := require.New(t)
 	st, src, id := archiveEmailSource(t, "gmail", "Invitation")

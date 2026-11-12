@@ -16,7 +16,8 @@ import (
 )
 
 // Bump the version when parsing the same retained MIME produces different text or calendar events.
-const emailVersion = "email-v3"
+// The store names its reopen markers after it, so a restarted walk clears them.
+const emailVersion = store.EmailRepairVersion
 
 // emailRetrySlots caps exact failed-row markers; later failures widen one
 // overflow range, so retry state is at most emailRetrySlots+2 ledger rows.
