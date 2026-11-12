@@ -279,7 +279,7 @@ func calendarRangeShift(master calevent.Event, edits []CalendarEventRow) calenda
 	var pad time.Duration
 	for i, row := range edits {
 		shifts[i] = calendarEditShift(master, row.Event, zone)
-		if row.Event.Status == "cancelled" && row.Event.Start == nil && i > 0 {
+		if row.Event.Status == SyncStatusCancelled && row.Event.Start == nil && i > 0 {
 			shifts[i] = calendarCancelShift(row.Event, shifts[i-1])
 		}
 		if shifts[i].move == nil || err != nil {
@@ -323,7 +323,7 @@ func calendarEditShift(master, edit calevent.Event, zone *time.Location) calenda
 // calendarCancelShift makes a cancellation also cancel the later occurrences its edit moves. A
 // cancellation that sets no start has nothing to move, so it only cancels.
 func calendarCancelShift(edit calevent.Event, shift calendarShift) calendarShift {
-	if edit.Status != "cancelled" {
+	if edit.Status != SyncStatusCancelled {
 		return shift
 	}
 	move := shift.move
