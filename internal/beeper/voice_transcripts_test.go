@@ -17,10 +17,11 @@ import (
 func TestVoiceTranscriptSearchReadsReadyEvidence(t *testing.T) {
 	for _, scenario := range []string{"pending to ready", "late provider", "supplied origin"} {
 		t.Run(scenario, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
 			world := importVoiceChat(t, voiceSpec{id: "voice", asset: "mxc://beeper.local/voice", mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(1600, 1)})
 			docbank := newFakeDocbank(t)
 			var messageID int64
-			require.NoError(t, world.st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='voice'`).Scan(&messageID))
+			require.NoError(world.st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='voice'`).Scan(&messageID))
 			var reads atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if !strings.HasSuffix(r.URL.Path, "/transcript") {
@@ -35,16 +36,16 @@ func TestVoiceTranscriptSearchReadsReadyEvidence(t *testing.T) {
 				}
 				if scenario == "late provider" {
 					raw, err := world.st.GetMessageRawContext(r.Context(), messageID)
-					if !assert.NoError(t, err) {
+					if !assert.NoError(err) {
 						return
 					}
 					var message Message
-					if !assert.NoError(t, json.Unmarshal(raw, &message)) || !assert.Len(t, message.Attachments, 1) {
+					if !assert.NoError(json.Unmarshal(raw, &message)) || !assert.Len(message.Attachments, 1) {
 						return
 					}
 					message.Attachments[0].Transcription = &Transcription{Transcription: "provider words"}
 					raw, err = json.Marshal(message)
-					if !assert.NoError(t, err) || !assert.NoError(t, world.st.UpsertMessageRawWithFormat(messageID, raw, "beeper_json")) {
+					if !assert.NoError(err) || !assert.NoError(world.st.UpsertMessageRawWithFormat(messageID, raw, "beeper_json")) {
 						return
 					}
 				}
@@ -55,33 +56,34 @@ func TestVoiceTranscriptSearchReadsReadyEvidence(t *testing.T) {
 				_, _ = fmt.Fprint(w, `{"vault_uid":"vault-1","source_id":"source-1","source_version_id":"audio-version-1","content_version_id":"audio-content-1","evidence_state":"ready","coverage_state":"transcribed","transcript":{"origin":"generated","completeness":"complete","units":[{"text":"dinner\u0000 Thursday"}]}}`)
 			}))
 			defer server.Close()
-			require.NoError(t, world.st.SetVoiceTranscriptSearch(t.Context(), true))
+			require.NoError(world.st.SetVoiceTranscriptSearch(t.Context(), true))
 			submitter := world.submitter(t, server, "destination")
 			submitter.WithASRProfile("asr").WithVoiceTranscriptSearch(submitter.client)
 			runPasses(t, submitter, 7)
 			if scenario == "late provider" {
-				assert.Positive(t, reads.Load())
+				assert.Positive(reads.Load())
 				var count int
-				require.NoError(t, world.st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM voice_transcripts`).Scan(&count))
-				assert.Zero(t, count)
+				require.NoError(world.st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM voice_transcripts`).Scan(&count))
+				assert.Zero(count)
 				return
 			}
 			var text string
-			require.NoError(t, world.st.DB().QueryRowContext(t.Context(), `SELECT transcript_text FROM voice_transcripts`).Scan(&text))
+			require.NoError(world.st.DB().QueryRowContext(t.Context(), `SELECT transcript_text FROM voice_transcripts`).Scan(&text))
 			if scenario == "pending to ready" {
-				assert.Equal(t, "dinner\uFFFD Thursday", text)
-				assert.GreaterOrEqual(t, reads.Load(), int32(2))
+				assert.Equal("dinner\uFFFD Thursday", text)
+				assert.GreaterOrEqual(reads.Load(), int32(2))
 			} else {
-				assert.Empty(t, text)
-				assert.Equal(t, int32(1), reads.Load())
+				assert.Empty(text)
+				assert.Equal(int32(1), reads.Load())
 			}
 		})
 	}
 }
 
 func TestGeneratedVoiceTextRejectsEmptyAndSuppliedEvidence(t *testing.T) {
+	assert := assert.New(t)
 	empty := docbankmedia.MediaTranscript{Transcript: &docbankmedia.MediaTranscriptEvidence{BuildID: "build", Origin: "generated", Completeness: "complete"}}
-	assert.Empty(t, generatedVoiceText(empty))
+	assert.Empty(generatedVoiceText(empty))
 	provider := docbankmedia.MediaTranscript{Transcript: &docbankmedia.MediaTranscriptEvidence{BuildID: "build", Origin: "supplied", SuppliedInputID: "input", Completeness: "complete", Units: []docbankmedia.MediaTranscriptUnit{{Text: "provider words"}}}}
-	assert.Empty(t, generatedVoiceText(provider))
+	assert.Empty(generatedVoiceText(provider))
 }
