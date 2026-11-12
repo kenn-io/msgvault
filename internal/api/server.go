@@ -1154,7 +1154,7 @@ func (s *Server) CloseAnalyticsEngine() error {
 }
 
 func (s *Server) requestUsesCLITimeoutPolicy(r *http.Request) bool {
-	if r.Header.Get(apiprotocol.ClientClassHeader) != apiprotocol.ClientClassCLI {
+	if r.Header.Get(apiprotocol.ClientClassHeader) != apiprotocol.ClientClassCLI || s.federationClaim(r) {
 		return false
 	}
 	return s.requestAuthentication(r).trustedForCLIDuration
@@ -1209,6 +1209,14 @@ func serveWithProtectiveRequestDeadline(
 
 func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Federation credentials are authenticated after rate limiting, under
+		// the ordinary deadline, even on otherwise long-running routes.
+		if s.federationClaim(r) {
+			ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
+			defer cancel()
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		if r.Method == http.MethodPost &&
 			(isNativeMCPPath(r.URL.Path) || r.URL.Path == meetingImportEndpointPath || r.URL.Path == messageImportEndpointPath || r.URL.Path == muesliImportEndpointPath || r.URL.Path == muesliRecordingEndpointPath) &&
 			s.apiRequestAuthorized(r) {
@@ -1540,6 +1548,9 @@ func (w *trackingResponseWriter) WroteHeader() bool {
 // returns true in exactly those two cases, so it is reused here to avoid the
 // auth logic drifting. A valid remote client key is trusted the same way.
 func (s *Server) loopbackRateLimitExempt(r *http.Request) bool {
+	if s.federationClaim(r) {
+		return false
+	}
 	if r.Method == http.MethodPost && r.URL.Path == sessionLoginPath {
 		return false
 	}

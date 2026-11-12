@@ -16,6 +16,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -37,6 +38,69 @@ type failingFederationCreate struct{ FederationStore }
 
 func (f failingFederationCreate) CreateFederationEnrollmentContext(context.Context, string, string, string) (*store.FederationEnrollment, string, error) {
 	return nil, "", errors.New("private fixture error")
+}
+
+type observedFederationStore struct {
+	FederationStore
+	lookups int
+	bounded bool
+}
+
+func (f *observedFederationStore) AuthenticateFederationEnrollmentContext(ctx context.Context, token, spokeUID string) (*store.FederationEnrollment, error) {
+	f.lookups++
+	_, f.bounded = ctx.Deadline()
+	return f.FederationStore.AuthenticateFederationEnrollmentContext(ctx, token, spokeUID)
+}
+
+func TestFederationAuthenticationAfterRateLimitAndDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, path, peer string
+		limited, instanceOnly    bool
+	}{
+		{"handshake", http.MethodGet, "/api/v1/federation/handshake", "192.0.2.1:1234", false, false},
+		{"long CLI route", http.MethodGet, "/api/v1/cli/build-cache", "192.0.2.1:1234", false, false},
+		{"import special case", http.MethodPost, messageImportEndpointPath, "192.0.2.1:1234", false, false},
+		{"remote limited", http.MethodGet, "/api/v1/federation/handshake", "192.0.2.1:1234", true, false},
+		{"loopback limited", http.MethodGet, "/api/v1/federation/handshake", "127.0.0.1:1234", true, false},
+		{"loopback discovery limited", http.MethodGet, daemon.DefaultPingPath, "127.0.0.1:1234", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			srv, st := federationHubFixture(t)
+			uid := strings.Repeat("a", 64)
+			_, token, err := st.CreateFederationEnrollmentContext(t.Context(), uid, "alice", "")
+			requirements.NoError(err)
+			observed := &observedFederationStore{FederationStore: st}
+			srv.federationStore = observed
+			if tc.limited {
+				srv.rateLimiter.rate = 0
+				srv.rateLimiter.burst = 1
+				requirements.True(srv.rateLimiter.Allow(clientIP(&http.Request{RemoteAddr: tc.peer})))
+			}
+			r := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)
+			r.RemoteAddr = tc.peer
+			if !tc.instanceOnly {
+				r.Header.Set("Authorization", "Bearer "+token)
+			}
+			r.Header.Set("X-Msgvault-Spoke-Instance", uid)
+			r.Header.Set("X-Msgvault-Client", "cli")
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, r)
+			if tc.limited {
+				assertions.Equal(http.StatusTooManyRequests, w.Code)
+				assertions.Zero(observed.lookups)
+			} else {
+				assertions.Equal(1, observed.lookups)
+				assertions.True(observed.bounded)
+				if tc.path == "/api/v1/federation/handshake" {
+					assertions.Equal(http.StatusOK, w.Code)
+				} else {
+					assertions.Equal(http.StatusForbidden, w.Code)
+				}
+			}
+		})
+	}
 }
 
 func TestFederationHandshakeCredential(t *testing.T) {

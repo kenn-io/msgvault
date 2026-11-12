@@ -243,6 +243,22 @@ func (s *Server) requestAuthentication(r *http.Request) requestAuthentication {
 	return s.classifyAPIRequestDirect(r)
 }
 
+func (s *Server) federationClaim(r *http.Request) bool {
+	if s.cfg.Federation.Role != "hub" {
+		return false
+	}
+	if len(r.Header.Values(apiprotocol.SpokeInstanceHeader)) > 0 {
+		return true
+	}
+	for _, value := range r.Header.Values("Authorization") {
+		parts := strings.Fields(value)
+		if len(parts) >= 2 && strings.EqualFold(parts[0], "Bearer") && strings.HasPrefix(parts[1], "mvf1_") {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication {
 	// Agent token takes priority: if the header is present, the request must
 	// authenticate as a delegated caller; we never fall through to other modes.
@@ -256,28 +272,19 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 		return requestAuthentication{Mode: AuthModeRequired}
 	}
 
-	if s.cfg.Federation.Role == "hub" {
+	if s.federationClaim(r) {
 		auths := r.Header.Values("Authorization")
 		instances := r.Header.Values(apiprotocol.SpokeInstanceHeader)
-		claim := len(instances) > 0
-		for _, value := range auths {
-			parts := strings.Fields(value)
-			if len(parts) >= 2 && strings.EqualFold(parts[0], "Bearer") && strings.HasPrefix(parts[1], "mvf1_") {
-				claim = true
-			}
-		}
-		if claim {
-			if len(auths) == 1 && len(instances) == 1 && instances[0] != "" && len(r.Header.Values("X-Api-Key")) == 0 && len(r.Header.Values(apiprotocol.DaemonRuntimeTokenHeader)) == 0 && s.federationStore != nil {
-				_, cookieErr := r.Cookie(sessionCookieName)
-				parts := strings.Fields(auths[0])
-				if cookieErr != nil && len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && strings.HasPrefix(parts[1], "mvf1_") {
-					if _, err := s.federationStore.AuthenticateFederationEnrollmentContext(r.Context(), parts[1], instances[0]); err == nil {
-						return requestAuthentication{Mode: AuthModeFederation}
-					}
+		if len(auths) == 1 && len(instances) == 1 && instances[0] != "" && len(r.Header.Values("X-Api-Key")) == 0 && len(r.Header.Values(apiprotocol.DaemonRuntimeTokenHeader)) == 0 && s.federationStore != nil {
+			_, cookieErr := r.Cookie(sessionCookieName)
+			parts := strings.Fields(auths[0])
+			if cookieErr != nil && len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && strings.HasPrefix(parts[1], "mvf1_") {
+				if _, err := s.federationStore.AuthenticateFederationEnrollmentContext(r.Context(), parts[1], instances[0]); err == nil {
+					return requestAuthentication{Mode: AuthModeFederation}
 				}
 			}
-			return requestAuthentication{Mode: AuthModeRequired}
 		}
+		return requestAuthentication{Mode: AuthModeRequired}
 	}
 
 	// Preserve the existing keyless mode: secure startup confines the daemon to
