@@ -21,6 +21,7 @@ func TestPostgresIntroductionPreflightScopedIdentity(t *testing.T) {
 	checkIntroductionPreflightScopedIdentity(t)
 }
 func checkIntroductionPreflightScopedIdentity(t *testing.T) {
+	t.Helper()
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
@@ -54,6 +55,7 @@ func TestPostgresIntroductionPreflightAmbiguityAndOwner(t *testing.T) {
 	checkIntroductionPreflightAmbiguityAndOwner(t)
 }
 func checkIntroductionPreflightAmbiguityAndOwner(t *testing.T) {
+	t.Helper()
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)

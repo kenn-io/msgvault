@@ -22,6 +22,7 @@ func TestPostgresPersonIntroductionLifecycle(t *testing.T) {
 	checkPersonIntroductionLifecycle(t)
 }
 func checkPersonIntroductionLifecycle(t *testing.T) {
+	t.Helper()
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
@@ -73,6 +74,7 @@ func TestPostgresIntroductionMergeAndSplit(t *testing.T) {
 	checkIntroductionMergeAndSplit(t)
 }
 func checkIntroductionMergeAndSplit(t *testing.T) {
+	t.Helper()
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
@@ -89,6 +91,7 @@ func checkIntroductionMergeAndSplit(t *testing.T) {
 	c, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pc)
 	req.NoError(err)
 	prepare := func(x, y int64) store.PersonIntroduction {
+		t.Helper()
 		v, err := f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: source.ID, PersonAID: x, PersonBID: y, Title: "hello", Body: "body"}, "owner")
 		req.NoError(err)
 		return v
@@ -185,6 +188,7 @@ func TestPostgresIntroductionPaginationAndScope(t *testing.T) {
 	checkIntroductionPaginationAndScope(t)
 }
 func checkIntroductionPaginationAndScope(t *testing.T) {
+	t.Helper()
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
@@ -261,6 +265,7 @@ func TestPostgresIntroductionPersonDeleteCascades(t *testing.T) {
 	checkIntroductionPersonDeleteCascades(t)
 }
 func checkIntroductionPersonDeleteCascades(t *testing.T) {
+	t.Helper()
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
@@ -288,6 +293,7 @@ func TestPostgresIntroductionRefusesRetiredSource(t *testing.T) {
 	checkIntroductionRefusesRetiredSource(t)
 }
 func checkIntroductionRefusesRetiredSource(t *testing.T) {
+	t.Helper()
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)

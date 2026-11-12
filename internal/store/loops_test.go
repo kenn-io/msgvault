@@ -370,6 +370,7 @@ func TestLoopIgnoresAddressesLinkedToTheOwner(t *testing.T) {
 			return 0
 		}},
 		{"from-me beeper message", func(t *testing.T, f *storetest.Fixture) int64 {
+			t.Helper()
 			source, err := f.Store.GetOrCreateSource("beeper", "loop-account")
 			require.NoError(t, err)
 			return source.ID

@@ -112,11 +112,13 @@ func TestIntroDelegatedThroughRunner(t *testing.T) {
 	req.NoError(err)
 	t.Cleanup(func() { _ = owner.Close() })
 	issue := func(perms []string, sourceID int64) (string, string) {
+		t.Helper()
 		grant, err := owner.IssueAgentToken(ctx, "test", perms, []int64{sourceID}, nil, time.Time{})
 		req.NoError(err)
 		return grant.Secret, grant.ID
 	}
 	run := func(secret string, args ...string) []api.CLIRunEvent {
+		t.Helper()
 		body, err := json.Marshal(api.CLIRunRequest{Args: args})
 		req.NoError(err)
 		request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))

@@ -180,6 +180,7 @@ func TestDelegatedPersonVisibility(t *testing.T) {
 	other, err := f.Store.GetOrCreateSource("beeper", "scope-b")
 	req.NoError(err)
 	person := func(name, account string) int64 {
+		t.Helper()
 		participant := f.EnsureParticipant(name+"@example.test", name, "example.test")
 		p, _, err := f.Store.CreatePersonFromParticipantContext(ctx, participant)
 		req.NoError(err)
