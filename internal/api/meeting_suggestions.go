@@ -12,7 +12,7 @@ import (
 )
 
 type MeetingSuggestionStore interface {
-	SuggestMeetingLinksContext(context.Context, store.MeetingLinkRef, int, func(context.Context, []int64) (map[int64]bool, error)) (store.MeetingSuggestionPage, error)
+	SuggestMeetingLinksContext(ctx context.Context, ref store.MeetingLinkRef, limit int, classify func(context.Context, []int64) (map[int64]bool, error)) (store.MeetingSuggestionPage, error)
 }
 
 func (s *Server) registerMeetingSuggestionRoute(api huma.API) {

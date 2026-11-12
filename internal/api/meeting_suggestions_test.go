@@ -22,6 +22,7 @@ import (
 
 type suggestionClassificationStore struct {
 	*store.Store
+
 	counts map[int64]int
 }
 
@@ -149,10 +150,8 @@ func TestGrantedMeetingSuggestions(t *testing.T) {
 							if ref[0:3] == "msg" {
 								require.Equal(t, "Your verification code is 482913", item.Title)
 							}
-						} else {
-							if ref[0:3] == "msg" {
-								require.Equal(t, "[verification content masked]", item.Title)
-							}
+						} else if ref[0:3] == "msg" {
+							require.Equal(t, "[verification content masked]", item.Title)
 						}
 					})
 				}

@@ -540,7 +540,7 @@ func nullableFloatPointer(value sql.NullFloat64) *float64 {
 	return &result
 }
 func loadMeetingContextParticipantsPage(ctx context.Context, r interface {
-	QueryContext(context.Context, string, ...any) (*loggedRows, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*loggedRows, error)
 }, ids []int64) (map[int64][]meetingcontent.Participant, error) {
 	out := make(map[int64][]meetingcontent.Participant, len(ids))
 	if len(ids) == 0 {

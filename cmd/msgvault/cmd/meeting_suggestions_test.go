@@ -12,6 +12,7 @@ import (
 
 type suggestionCLIClient struct {
 	meetingRecordClient
+
 	called bool
 	ref    string
 	limit  int
@@ -35,7 +36,7 @@ func TestMeetingSuggestionsCLI(t *testing.T) {
 	} {
 		t.Run(tc.version+tc.want+tc.limit, func(t *testing.T) {
 			r := require.New(t)
-			client := &suggestionCLIClient{meetingRecordClient: meetingRecordClient{version: tc.version}}
+			client := &suggestionCLIClient{version: tc.version}
 			command := newMeetingsCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 			var out bytes.Buffer
 			command.SetOut(&out)

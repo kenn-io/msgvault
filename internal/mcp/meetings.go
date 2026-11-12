@@ -390,7 +390,7 @@ func meetingDecisionDefinition(name, description string, handler catalogToolHand
 }
 
 type meetingSuggestionBackend interface {
-	SuggestMeetingLinks(context.Context, string, int) (store.MeetingSuggestionPage, error)
+	SuggestMeetingLinks(ctx context.Context, ref string, limit int) (store.MeetingSuggestionPage, error)
 }
 
 func (h *handlers) suggestMeetingLinks(ctx context.Context, req toolRequest) (*toolResult, error) {

@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Find overlapping meeting notes and calendar events with `meetings suggest`, the API, or MCP, then link the copies you choose. Suggestions require API schema 5.3.0.
+- Find overlapping meeting notes and calendar events with `meetings suggest`, the API, or MCP, then link the copies you choose. Suggestions require API schema 5.3.0; existing archives upgrade to schema 44 and rebuild meeting projections once.
 
 - Join or separate archived meeting copies with `meetings link` and `meetings unlink`, the API, or MCP. Choices survive sync and rebuilds. `meetings reset-link` restores automatic matching. Requires HTTP API schema 5.2.0; existing archives upgrade to schema 43.
 

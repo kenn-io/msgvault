@@ -322,7 +322,7 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 	seen := map[string]bool{}
 	budget := calrecur.RequestReadBudget
 	for _, candidate := range candidates {
-		note := MeetingLinkRef{Kind: meetingRefMessage, OccurrenceRef: OccurrenceRef{MessageID: candidate.MemberMessageID}}
+		note := MeetingLinkRef{Kind: meetingRefMessage, MessageID: candidate.MemberMessageID}
 		a, b := endpointFromRef(note), candidate.eventEndpoint
 		partner := b
 		if ref.Kind == meetingRefEvent {
