@@ -2374,12 +2374,14 @@ func TestSearchAttachmentMetadataSchemaScope(t *testing.T) {
 }
 
 func TestPersonFactDecisionOutcomeOpenAPIEnum(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
 		schema := document.Components.Schemas.Map()["PersonFactDecision"]
-		require.NotNil(t, schema)
+		require.NotNil(schema)
 		outcome := schema.Properties["outcome"]
-		require.NotNil(t, outcome)
-		assert.ElementsMatch(t, []any{"saved", "value-retired", "current-value-kept", "pinned-value-kept", "too-close-to-choose", "not-used", nil}, outcome.Enum)
-		assert.True(t, outcome.Nullable)
+		require.NotNil(outcome)
+		assert.ElementsMatch([]any{"saved", "value-retired", "current-value-kept", "pinned-value-kept", "too-close-to-choose", "not-used", nil}, outcome.Enum)
+		assert.True(outcome.Nullable)
 	}
 }
