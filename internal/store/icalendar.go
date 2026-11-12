@@ -28,20 +28,21 @@ type icsInterpretationError struct{ err error }
 func (e *icsInterpretationError) Error() string { return e.err.Error() }
 func (e *icsInterpretationError) Unwrap() error { return e.err }
 
-type preparedICS struct {
+// PreparedICS holds an event ready to persist.
+type PreparedICS struct {
 	component calevent.ICSComponent
 	meta      calevent.ICSMetadata
 	fromEmail bool
 }
 
 // PrepareICalendar parses a calendar and checks retained event sizes.
-func PrepareICalendar(raw []byte) ([]preparedICS, error) {
+func PrepareICalendar(raw []byte) ([]PreparedICS, error) {
 	return prepareICalendar(raw, "", false)
 }
 
 // PersistICalendarContext imports prepared events atomically under the same
 // source lock as email/calendar ingestion.
-func (s *Store) PersistICalendarContext(ctx context.Context, sourceID int64, prepared []preparedICS) (ICalendarImportSummary, error) {
+func (s *Store) PersistICalendarContext(ctx context.Context, sourceID int64, prepared []PreparedICS) (ICalendarImportSummary, error) {
 	var summary ICalendarImportSummary
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return summary, err
@@ -68,17 +69,17 @@ func parseICalendar(raw []byte, method string) ([]calevent.ICSComponent, error) 
 	return components, nil
 }
 
-func prepareICalendar(raw []byte, method string, fromEmail bool) ([]preparedICS, error) {
+func prepareICalendar(raw []byte, method string, fromEmail bool) ([]PreparedICS, error) {
 	components, err := parseICalendar(raw, method)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]preparedICS, 0, len(components))
+	out := make([]PreparedICS, 0, len(components))
 	for _, c := range components {
 		if len(c.Raw) > maxMeetingRawBytes {
 			return nil, &icsInterpretationError{errMeetingRawTooLarge}
 		}
-		out = append(out, preparedICS{component: c, fromEmail: fromEmail, meta: calevent.ICSMetadata{Sequence: c.Sequence, Stamp: c.Stamp, Status: c.Event.Status, AllDay: c.Event.AllDay, Range: slices.Contains(c.Event.Recurrence, calevent.ICSRangeRecurrence)}})
+		out = append(out, PreparedICS{component: c, fromEmail: fromEmail, meta: calevent.ICSMetadata{Sequence: c.Sequence, Stamp: c.Stamp, Status: c.Event.Status, AllDay: c.Event.AllDay, Range: slices.Contains(c.Event.Recurrence, calevent.ICSRangeRecurrence)}})
 	}
 	return out, nil
 }
@@ -95,7 +96,7 @@ func icsRevisionNewer(c calevent.ICSComponent, old calevent.ICSMetadata) bool {
 }
 
 // The caller holds the participant directory lock before writing calendar events.
-func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID int64, items []preparedICS, summary *ICalendarImportSummary) error {
+func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID int64, items []PreparedICS, summary *ICalendarImportSummary) error {
 	q := boundQuerier{ctx: ctx, q: tx}
 	for _, item := range items {
 		if err := ctx.Err(); err != nil {
@@ -211,7 +212,7 @@ func icsEventSentAt(e calevent.Event) (sql.NullTime, error) {
 	return sql.NullTime{Time: sent, Valid: true}, nil
 }
 
-func (s *Store) persistICSDetailsWith(ctx context.Context, tx *loggedTx, sourceID int64, sourceMessageID, familyKey string, item preparedICS) error {
+func (s *Store) persistICSDetailsWith(ctx context.Context, tx *loggedTx, sourceID int64, sourceMessageID, familyKey string, item PreparedICS) error {
 	c := item.component
 	e := c.Event
 	item.meta.ICalUID = c.UID
