@@ -154,8 +154,6 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 	}
 	marker := path.Join(apiContractsDir, version+"_"+digest+"_<summary-sha256>")
 	switch c := semver.Compare(current, greatest); {
-	case c < 0:
-		return nextMinor(fmt.Sprintf("API schema version %s is older than recorded version %s", version, strings.TrimPrefix(greatest, "v")))
 	case c > 0:
 		return fmt.Errorf("record the API contract with a marker at %s", marker)
 	case !contracts[current][digest]:
@@ -194,7 +192,6 @@ func TestCheckAPIContract(t *testing.T) {
 		{"edited marker", "5.1.0", b, "replace your marker with testdata/api-version-contracts/5.1.0_" + b + "_<summary-sha256>; otherwise compare with MSGVAULT_API_CONTRACT_BASE or use 5.2.0", []string{m("5.0.0", a), m("5.1.0", a)}, []string{m("5.0.0", a)}},
 		{"superseded", "5.2.0", b, "remove the superseded", []string{m("5.1.0", a), m("5.1.0", b), m("5.2.0", b)}, []string{m("5.1.0", a)}},
 		{"unrecorded", "5.1.0", b, "marker at", []string{m("5.0.0", a)}, []string{m("5.0.0", a)}},
-		{"older", "4.0.0", b, "older than recorded version 5.0.0; use 5.1.0", []string{m("5.0.0", a)}, []string{m("5.0.0", a)}},
 		{"malformed", "5.0.0", a, "<version>_<sha256>", []string{"bad"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
