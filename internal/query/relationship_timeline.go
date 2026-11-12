@@ -293,7 +293,7 @@ WITH subject_facts AS (
       AND a.message_id IN (
         SELECT f.message_id
         FROM relationship_activity_expanded f
-        WHERE NOT f.unsent AND f.canonical_id = ? AND (` + conditions + `)
+        WHERE NOT f.unsent AND NOT f.email_invite AND f.canonical_id = ? AND (` + conditions + `)
     )
     GROUP BY a.message_id
 ), day_bucketed AS (

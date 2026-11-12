@@ -17,6 +17,7 @@ labels where the format provides them.
 | Maildir or Maildir++ archive | [`import-maildir`](#import-maildir) |
 | MailMate-style tree of `.eml` files | [`import-eml`](#import-eml) |
 | Apple Mail directory or backup | [`import-emlx`](#import-emlx) |
+| Calendar `.ics` file | [`import-ics`](../cli-reference.md#import-ics) |
 | Older messages still in Gmail or IMAP | [Historical import jobs](#historical-import-jobs) |
 | Chat database or export | [Text messages](/docs/usage/text-messages/) or [Slackdump](/docs/usage/slack/#import-a-slackdump-export) |
 | Messages from a source without a connector, such as feed items | [Messages from any source](/docs/usage/message-import/) |

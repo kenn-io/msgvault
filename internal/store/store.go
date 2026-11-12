@@ -1296,6 +1296,8 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_beeper_media_occurrences_source", "ON beeper_media_occurrences(source_type, source_identifier, source_message_id, destination_key)"},
 		{"idx_message_recipients_email_from", "ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'"},
 		{"idx_message_recipients_normalized_email", messageRecipientsNormalizedEmailIndexDefinition},
+		{"idx_source_merge_archive_only_original", "ON source_merge_archive_only_messages(original_source_message_id)"},
+		{"idx_calendar_events_series_id", "ON calendar_events(series_provider_id, message_id)"},
 	}
 	for _, index := range concurrentIndexes {
 		if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {
@@ -2980,8 +2982,8 @@ func (s *Store) NeedsFTSBackfillQuickContext(ctx context.Context) bool {
 
 // Stats holds database statistics.
 //
-// MessageCount is the count of active messages: those still present in the
-// source account (deleted_at IS NULL AND deleted_from_source_at IS NULL).
+// MessageCount counts messages not deleted from the archive or source
+// (deleted_at IS NULL AND deleted_from_source_at IS NULL).
 // SourceDeletedCount is the count of archived messages that were deleted from
 // the source account but are retained in the archive (deleted_at IS NULL AND
 // deleted_from_source_at IS NOT NULL). The archive is the system of record,

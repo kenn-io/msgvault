@@ -801,24 +801,31 @@ func newDeduplicateRoutingTestCommand() *cobra.Command {
 }
 
 func TestDeduplicateAccountResolutionExcludesCalendarSources(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f, accountID, _ := setupScopeFixture(t)
-
-	cal, err := f.Store.GetOrCreateSource(sourceTypeCalendar, accountID+"/primary")
-	require.NoError(err, "GetOrCreateSource calendar")
-	cfg, err := json.Marshal(map[string]string{
-		"account_email": accountID,
-		"calendar_id":   "primary",
-	})
-	require.NoError(err, "marshal sync_config")
-	require.NoError(f.Store.UpdateSourceSyncConfig(t.Context(), cal.ID, string(cfg)), "UpdateSourceSyncConfig")
-
-	scope, err := ResolveEmailAccountFlag(t.Context(), f.Store, accountID)
-	require.NoError(err)
-
-	assert.ElementsMatch([]int64{f.Source.ID}, scope.SourceIDs())
-	assert.NotContains(scope.SourceIDs(), cal.ID, "dedup account scope must not include Calendar sources")
+	for _, tc := range []struct {
+		sourceType, suffix string
+		sharedDisplayName  bool
+	}{
+		{sourceTypeCalendar, "/primary", true},
+		{sourceTypeICS, "", false},
+	} {
+		t.Run(tc.sourceType, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f, accountID, _ := setupScopeFixture(t)
+			calendar, err := f.Store.GetOrCreateSource(tc.sourceType, accountID+tc.suffix)
+			require.NoError(err)
+			selector := accountID
+			if tc.sharedDisplayName {
+				selector = "Shared"
+				require.NoError(f.Store.UpdateSourceDisplayName(f.Source.ID, selector))
+				require.NoError(f.Store.UpdateSourceDisplayName(calendar.ID, selector))
+			}
+			scope, err := ResolveEmailAccountFlag(t.Context(), f.Store, selector)
+			require.NoError(err)
+			assert.ElementsMatch([]int64{f.Source.ID}, scope.SourceIDs())
+			assert.NotContains(scope.SourceIDs(), calendar.ID)
+		})
+	}
 }
 
 // TestDeduplicateCollectionResolution_MultiSource confirms SourceIDs expands

@@ -145,10 +145,9 @@ func TestEmailFirstSyncBoundsReadQueries(t *testing.T) {
 	require.NoError(err)
 	require.Equal(int64(32), sum.MessagesScanned)
 	reads := strings.Count(logs.String(), `"kind":"query`)
-	// Each row needs its MIME/envelope scan and FTS comparison. The four
-	// fixed reads check completion, check the retry phase, finish the scan, and
-	// check whether a prior interrupted repair still needs a cache revision.
-	require.LessOrEqual(reads, 2*32+4, "first-sync repair must share stored-envelope reads with the bounded MIME scan")
+	// Each row needs its MIME/envelope scan and FTS comparison. Fixed reads
+	// cover the pending sweep, completion, retry phase, and scan exhaustion.
+	require.LessOrEqual(reads, 2*32+5, "first-sync repair must share stored-envelope reads with the bounded MIME scan")
 }
 
 func TestEmailPreservesProviderSnippets(t *testing.T) {
@@ -278,4 +277,124 @@ func TestEmailUnchangedRetryPublishesPendingRevisionWithRowErrors(t *testing.T) 
 	applied, err := st.IsMigrationApplied(LedgerKey(src.SourceType, src.Identifier, emailVersion))
 	require.NoError(err)
 	assert.False(t, applied, "unresolved row failures keep the pass retryable")
+}
+
+func calendarInviteEmail(uid, summary string) []byte {
+	return []byte("From: organizer@example.com\r\nContent-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:" + uid + "\r\nDTSTART:20270302T120000Z\r\nSUMMARY:" + summary + "\r\nORGANIZER:mailto:organizer@example.com\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+}
+
+func TestEmailRederivationRetriesInviteWrittenDuringScan(t *testing.T) {
+	requirements := require.New(t)
+	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
+	if st.IsPostgreSQL() {
+		t.Skip("uses a SQLite trigger to interrupt calendar writes")
+	}
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_invite_write BEFORE INSERT ON messages WHEN NEW.message_type = 'calendar_event' BEGIN SELECT RAISE(ABORT, 'database unavailable'); END`)
+	requirements.NoError(err)
+	raw := calendarInviteEmail("retry@example.org", "Retry invite")
+	written := false
+	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, func(string) {
+		if !written {
+			written = true
+			requirements.NoError(st.UpsertMessageRawWithFormatContext(t.Context(), id, raw, "mime"))
+		}
+	})
+	requirements.NoError(err)
+	requirements.True(written)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_invite_write`)
+	requirements.NoError(err)
+	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	requirements.NoError(err)
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1, "a write during repair must remain eligible for retry")
+}
+
+func TestEmailRederivationSweepsPendingAfterCompletion(t *testing.T) {
+	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
+	if st.IsPostgreSQL() {
+		t.Skip("uses a SQLite trigger to interrupt calendar writes")
+	}
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_invite_write BEFORE INSERT ON messages WHEN NEW.message_type = 'calendar_event' BEGIN SELECT RAISE(ABORT, 'database unavailable'); END`)
+	require.NoError(t, err)
+	require.NoError(t, st.UpsertMessageRawWithFormatContext(t.Context(), id, calendarInviteEmail("pending@example.org", "Pending invite"), "mime"))
+	var pending bool
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT EXISTS (SELECT 1 FROM email_calendar_pending WHERE message_id=?)`), id).Scan(&pending))
+	assert.True(t, pending)
+	require.NoError(t, st.MarkMigrationApplied(LedgerKey(src.SourceType, src.Identifier, emailVersion)))
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_invite_write`)
+	require.NoError(t, err)
+	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	require.NoError(t, err)
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	require.NoError(t, err)
+	assert.Len(t, page.Occurrences, 1)
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT EXISTS (SELECT 1 FROM email_calendar_pending WHERE message_id=?)`), id).Scan(&pending))
+	assert.False(t, pending)
+}
+
+func TestEmailRederivationDoesNotRescanAfterSuccessfulInvite(t *testing.T) {
+	requirements := require.New(t)
+	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
+	archiveEmail(t, st, src, "other", "Other email")
+	_, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	requirements.NoError(err)
+	raw := calendarInviteEmail("invite@example.org", "Invite")
+	requirements.NoError(st.UpsertMessageRawWithFormatContext(t.Context(), id, raw, "mime"))
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	sum, ran, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	requirements.NoError(err)
+	requirements.False(ran, "a successful invitation must not force a full email rescan: %+v", sum)
+}
+
+func TestEmailRederivationRetriesPostCommitInvite(t *testing.T) {
+	requirements := require.New(t)
+	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
+	if !st.IsPostgreSQL() {
+		t.Skip("requires PostgreSQL participant directory locks")
+	}
+	requirements.NoError(st.MarkMigrationApplied(LedgerKey(src.SourceType, src.Identifier, emailVersion)))
+	blocker, err := st.DB().BeginTx(t.Context(), nil)
+	requirements.NoError(err)
+	defer func() { _ = blocker.Rollback() }()
+	_, err = blocker.ExecContext(t.Context(), `SELECT pg_advisory_xact_lock(hashtextextended('participant-directory-mutation', 0))`)
+	requirements.NoError(err)
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	raw := calendarInviteEmail("retry@example.org", "Retry invite")
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	requirements.NoError(st.UpsertMessageRawWithFormatContext(ctx, id, raw, "mime"))
+	requirements.Contains(logs.String(), "derive email calendar after commit failed")
+	requirements.NoError(blocker.Rollback())
+	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	requirements.NoError(err)
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1, "the next sync must retry the missed invitation")
+}
+
+func TestEmailRederivationExtractsMissingInvites(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
+	raw := []byte("From: organizer@example.com\r\nContent-Type: multipart/alternative; boundary=invite\r\n\r\n--invite\r\nContent-Type: text/plain\r\n\r\nInvitation\r\n--invite\r\nContent-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:backfill@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Archived invite\r\nORGANIZER:mailto:organizer@example.com\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n--invite--\r\n")
+	// Represent retained MIME written before invitation extraction existed.
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_raw SET raw_data=?, compression=NULL WHERE message_id=?`), raw, id)
+	requirements.NoError(err)
+	requirements.NoError(st.MarkMigrationApplied(LedgerKey(src.SourceType, src.Identifier, "email-v2")))
+	sum, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	requirements.NoError(err)
+	assertions.Zero(sum.Errors)
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/calevent"
@@ -115,14 +116,25 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		if e.Kind == "exception" && e.Original == nil {
 			report(row.MessageID, "exception has no original start")
 		}
+		if e.Kind == "exception" && calendarRangeException(e) && !masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
+			report(row.MessageID, "unsupported recurrence: RANGE=THISANDFUTURE")
+			continue
+		}
+		if (e.Kind == "single" || e.Kind == "series") && slices.ContainsFunc(exceptions[seriesKey{row.SourceID, e.ProviderEventID}], func(row CalendarEventRow) bool {
+			return calendarRangeException(row.Event)
+		}) {
+			report(row.MessageID, "unsupported recurrence: RANGE=THISANDFUTURE")
+			continue
+		}
 		switch e.Kind {
 		case "exception", "single":
 			if e.Kind == "exception" && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
 				continue
 			}
-			if e.Start != nil && e.End != nil {
+			switch {
+			case e.Start != nil && e.End != nil:
 				add(row, 0, calrecur.Occurrence{Start: *e.Start, End: *e.End, AllDay: e.AllDay, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == "cancelled"})
-			} else {
+			default:
 				report(row.MessageID, calendarMissingBoundsReason(e))
 			}
 			if e.Kind == "exception" || len(exceptions[seriesKey{row.SourceID, e.ProviderEventID}]) == 0 {
@@ -130,12 +142,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 			}
 			fallthrough
 		case "series":
-			for _, exception := range exceptions[seriesKey{row.SourceID, e.ProviderEventID}] {
-				edit := exception.Event
-				if edit.Original != nil && edit.Original.AllDay != e.AllDay && (edit.Start == nil || edit.End == nil) {
-					report(exception.MessageID, "exception original type differs from series and event bounds are missing")
-				}
-			}
+			calendarReportMismatchedExceptions(e, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], report)
 			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining)
 			remaining -= count
 			if err != nil {
@@ -158,6 +165,21 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		return cmp.Compare(a.MessageID, b.MessageID)
 	})
 	return page, nil
+}
+
+func calendarRangeException(event calevent.Event) bool {
+	return slices.ContainsFunc(event.Recurrence, func(line string) bool {
+		return strings.HasPrefix(line, "RECURRENCE-ID;RANGE=THISANDFUTURE:")
+	})
+}
+
+func calendarReportMismatchedExceptions(master calevent.Event, exceptions []CalendarEventRow, report func(int64, string)) {
+	for _, exception := range exceptions {
+		edit := exception.Event
+		if edit.Original != nil && edit.Original.AllDay != master.AllDay && (edit.Start == nil || edit.End == nil) {
+			report(exception.MessageID, "exception original type differs from series and event bounds are missing")
+		}
+	}
 }
 
 func calendarMissingBoundsReason(event calevent.Event) string {
@@ -184,8 +206,8 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 	if prepared == nil || err != nil {
 		return bounded, 0, "unsupported recurrence", nil //nolint:nilerr // Report an unsupported series alongside readable occurrences.
 	}
-	// A deleted series keeps only its archived exceptions.
-	if row.Event.Kind == "single" || row.Event.Status == "cancelled" {
+	// A deleted provider series keeps only its archived exceptions.
+	if row.Event.Kind == "single" || (row.Event.Status == "cancelled" && !row.ics) {
 		return resolved, 0, "", nil
 	}
 	const requestLimit = "request work limit reached; long-running series count their steps from their start"
@@ -283,7 +305,7 @@ func calendarEventZone(e calevent.Event) (*time.Location, error) {
 	if name == "" {
 		return time.UTC, nil
 	}
-	zone, err := time.LoadLocation(name)
+	zone, err := calevent.LoadZone(name)
 	if err != nil {
 		return nil, fmt.Errorf("calendar time zone: %w", err)
 	}

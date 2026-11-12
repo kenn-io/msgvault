@@ -21,6 +21,7 @@ type CalendarEventRow struct {
 	MessageID, SourceID int64
 	Subject             string
 	DeletedFromSource   bool
+	ics                 bool
 	Event               calevent.Event
 }
 
@@ -29,7 +30,7 @@ const maxCalendarExceptions = 20000
 const calendarCandidateMargin = 28 * time.Hour
 
 var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''),
- m.deleted_from_source_at IS NOT NULL,
+ m.deleted_from_source_at IS NOT NULL, EXISTS (SELECT 1 FROM message_raw raw WHERE raw.message_id=m.id AND raw.raw_format='ics'),
  e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
  e.status, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
  e.event_time_zone, e.calendar_time_zone, e.recurrence_json
@@ -45,11 +46,11 @@ var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.mess
 func calendarEventVisibility(event, message string) string {
 	return fmt.Sprintf(`NOT EXISTS (
  SELECT 1 FROM source_merge_archive_only_messages am
- WHERE am.message_id = %[2]s.id AND EXISTS (
+ WHERE am.message_id = %[2]s.id AND am.original_source_message_id <> '' AND EXISTS (
   SELECT 1 FROM calendar_events other JOIN messages om ON om.id = other.message_id
   WHERE other.provider_event_id = %[1]s.provider_event_id
   AND om.source_id = %[2]s.source_id AND om.deleted_at IS NULL
-  AND (NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages oa WHERE oa.message_id = om.id)
+  AND (NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages oa WHERE oa.message_id = om.id AND oa.original_source_message_id <> '')
    OR other.message_id < %[1]s.message_id)))`, event, message)
 }
 
@@ -92,7 +93,7 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 		e := &row.Event
 		var original, start, end sql.NullTime
 		var originalDate, recurrence string
-		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.DeletedFromSource,
+		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.DeletedFromSource, &row.ics,
 			&e.ProviderEventID, &e.SeriesProviderID, &e.Kind, &original, &originalDate, &e.Status, &e.AllDay,
 			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence)
 		if err != nil {
@@ -171,8 +172,8 @@ func calendarEventRowsInWindow(ctx context.Context, r *loggedDB, dialect Dialect
 	lower, upper := from.UTC().Add(-calendarCandidateMargin), to.UTC().Add(calendarCandidateMargin)
 	// RDATE can precede DTSTART by any amount. Retain those masters for exact
 	// expansion rather than treating their stored start as the earliest instance.
-	// A cancelled master generates nothing; its archived exceptions load it below.
-	masters, err := queryCalendarSeriesWithinBudget(ctx, r, `e.kind = 'series' AND e.status <> 'cancelled' AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`, []any{upper, lower})
+	// Provider deletions keep only archived exceptions; cancelled ICS series retain their occurrences.
+	masters, err := queryCalendarSeriesWithinBudget(ctx, r, `e.kind = 'series' AND (e.status <> 'cancelled' OR EXISTS (SELECT 1 FROM message_raw raw WHERE raw.message_id=e.message_id AND raw.raw_format='ics')) AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`, []any{upper, lower})
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +264,12 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect D
 		timedEnd = `e.original_start_at + (p.end_at - p.start_at) >= ?`
 		dateEnd = `NULLIF(e.original_start_date, '')::date + (NULLIF(p.end_date, '')::date - NULLIF(p.start_date, '')::date) >= ?::date`
 	}
-	predicate := `e.kind = 'exception' AND ((e.start_at < ? AND e.end_at >= ?) OR
+	predicate := `e.kind = 'exception' AND ((e.recurrence_json LIKE '%RECURRENCE-ID;RANGE=THISANDFUTURE:%' AND EXISTS (
+    SELECT 1 FROM calendar_events p JOIN messages pm ON pm.id = p.message_id
+    WHERE p.kind = 'series' AND p.provider_event_id = e.series_provider_id AND pm.source_id = m.source_id
+    AND pm.deleted_at IS NULL AND ` + calendarEventVisibility("p", "pm") + `
+    AND (p.start_at IS NULL OR p.start_at < ? OR p.recurrence_json LIKE '%RDATE%')
+    AND (p.recurrence_end_at IS NULL OR p.recurrence_end_at >= ?))) OR (e.start_at < ? AND e.end_at >= ?) OR
   (e.start_at IS NULL AND e.end_at >= ?) OR
   (e.end_at IS NULL AND e.start_at < ?) OR
   (e.original_start_at >= ? AND e.original_start_at < ?) OR
@@ -274,10 +280,10 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect D
      AND ` + calendarEventVisibility("p", "pm") + `) = m.source_id
     AND ((e.original_start_at < ? AND ` + timedEnd + `) OR
     (e.original_start_date < ? AND ` + dateEnd + `))) OR
-   (e.original_start_at IS NULL AND e.original_start_date = ''))`
+	   (e.original_start_at IS NULL AND e.original_start_date = ''))`
 	dateLower, dateUpper := lower.Format(time.DateOnly), upper.AddDate(0, 0, 1).Format(time.DateOnly)
 	return queryCalendarEventRowsWithinBudget(ctx, r, predicate, []any{
-		upper, lower, lower, upper, lower, upper, dateLower, dateUpper,
+		upper, lower, upper, lower, lower, upper, lower, upper, dateLower, dateUpper,
 		upper, dialect.TimestampParam(lower), dateUpper, dateLower,
 	}, maxCalendarExceptions)
 }
@@ -285,9 +291,12 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect D
 // Only sparse cancellations inherit omitted details from the master.
 func inheritCalendarCancellation(ctx context.Context, r *loggedDB, row, master CalendarEventRow) (CalendarEventRow, error) {
 	var stored []byte
-	var compression sql.NullString
-	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression FROM message_raw WHERE message_id = ?`, row.MessageID).Scan(&stored, &compression); err != nil {
+	var compression, format sql.NullString
+	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression, raw_format FROM message_raw WHERE message_id = ?`, row.MessageID).Scan(&stored, &compression, &format); err != nil {
 		return row, fmt.Errorf("read cancellation evidence: %w", err)
+	}
+	if format.String == rawFormatICS {
+		return inheritSparseCalendarCancellation(row, master, nil), nil
 	}
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
 	if err != nil {

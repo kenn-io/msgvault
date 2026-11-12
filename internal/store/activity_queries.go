@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/calevent"
 )
 
 // ActivityCounterpart is one participant on a candidate event, resolved to
@@ -69,6 +71,7 @@ type activityCandidateRow struct {
 	deletedAt           *time.Time
 	deletedFromSourceAt *time.Time
 	metadata            sql.NullString
+	emailInvite         bool
 }
 
 const activityCandidateStateCTE = `
@@ -142,7 +145,7 @@ func (s *Store) activityCandidateColumns() string {
 	COALESCE(c.conversation_type, ''), COALESCE(m.message_type, ''),
 	m.sent_at, m.received_at, m.internal_date, m.last_modified,
 	m.deleted_at, m.deleted_from_source_at, m.metadata,
-	COALESCE(m.source_is_from_me, FALSE), ` + s.activityUnsentSQL() + `,
+	COALESCE(m.source_is_from_me, FALSE), ` + s.activityUnsentSQL() + `, ` + calevent.EmailInviteSQL("m.message_type", "src.source_type", "EXISTS (SELECT 1 FROM source_merge_archive_only_messages a WHERE a.message_id = m.id)") + `,
 	r.identity_revision, r.account_identity_revision,
 	r.timezone_active, r.timezone_target, r.timezone_generation,
 	r.direct_limit_active, r.direct_limit_target, r.direct_limit_generation`
@@ -437,6 +440,7 @@ func scanActivityCandidateRows(rows rowsScanner) ([]ActivityCandidate, error) {
 			&row.metadata,
 			&row.candidate.SourceIsFromMe,
 			&row.candidate.Unsent,
+			&row.emailInvite,
 			&row.candidate.IdentityRevision,
 			&row.candidate.AccountIdentityRevision,
 			&timezoneActive,
@@ -491,7 +495,7 @@ func applyActivityEligibility(row *activityCandidateRow) {
 	row.candidate.Eligible = row.deletedAt == nil &&
 		row.deletedFromSourceAt == nil &&
 		hasTimestamp &&
-		!cancelled && !row.candidate.Unsent
+		!cancelled && !row.candidate.Unsent && !row.emailInvite
 }
 
 func activityUsableTime(value *time.Time) bool {

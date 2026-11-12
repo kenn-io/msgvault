@@ -34,6 +34,65 @@ func TestExploreGroupsAggregatesCompleteLogicalPopulation(t *testing.T) {
 	assertions.NotEmpty(result.CacheRevision)
 }
 
+func TestEmailInvitesAppearInExploreButNotActivity(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("owner@example.test", "gmail")
+	organizer := b.AddParticipant("organizer@example.test", "example.test", "Organizer")
+	attendee := b.AddParticipant("guest@other.test", "other.test", "Guest")
+	b.AddOwnerParticipant(source, organizer)
+	nativeSource := b.AddSourceWithType("calendar@example.test", "gcal")
+	mail := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", SentAt: time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)})
+	b.AddFrom(mail, organizer, "Organizer")
+	b.AddTo(mail, attendee, "Guest")
+	native := b.AddMessage(MessageOpt{SourceID: nativeSource, MessageType: "calendar_event", SentAt: time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)})
+	b.AddFrom(native, organizer, "Organizer")
+	b.AddTo(native, attendee, "Guest")
+	event := b.AddMessage(MessageOpt{SourceID: source, MessageType: "calendar_event", ArchiveOnly: true, SentAt: time.Date(2030, 7, 12, 12, 0, 0, 0, time.UTC)})
+	b.AddFrom(event, organizer, "Organizer")
+	b.AddTo(event, attendee, "Guest")
+	engine := b.BuildEngine()
+	after := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+	filter := ExploreRequest{Context: Context{MessageTypes: []string{"calendar_event"}, After: &after}, Page: PageSpec{Limit: 10}}
+	people, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Explore: filter, Dimension: "participant", Page: PageSpec{Limit: 10}})
+	requirements.NoError(err)
+	requirements.Len(people.Rows, 2)
+	assertions.ElementsMatch([]string{strconv.FormatInt(organizer, 10), strconv.FormatInt(attendee, 10)}, []string{people.Rows[0].Key, people.Rows[1].Key})
+	domains, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Explore: filter, Dimension: "domain", Page: PageSpec{Limit: 10}})
+	requirements.NoError(err)
+	requirements.Len(domains.Rows, 2)
+	assertions.ElementsMatch([]string{"example.test", "other.test"}, []string{domains.Rows[0].Key, domains.Rows[1].Key})
+	filter.Context.ParticipantIDs = []int64{attendee}
+	result, err := engine.Explore(t.Context(), filter)
+	requirements.NoError(err)
+	assertions.Equal(int64(1), result.TotalCount)
+	filter.SentOnly = true
+	result, err = engine.Explore(t.Context(), filter)
+	requirements.NoError(err)
+	assertions.Zero(result.TotalCount)
+	filter.SentOnly = false
+	filter.PersonInteractionsOnly = true
+	result, err = engine.Explore(t.Context(), filter)
+	requirements.NoError(err)
+	assertions.Zero(result.TotalCount)
+	for _, context := range []Context{{}, {After: new(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))}} {
+		people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Explore: ExploreRequest{Context: context}, Query: "guest@other.test"})
+		requirements.NoError(err)
+		requirements.Len(people.Rows, 1)
+		assertions.Equal(int64(2), people.Rows[0].ActivityCount)
+		domains, err := engine.SearchDomains(t.Context(), DomainSearchRequest{Explore: ExploreRequest{Context: context}, Query: "other.test"})
+		requirements.NoError(err)
+		requirements.Len(domains.Rows, 1)
+		assertions.Equal(int64(2), domains.Rows[0].ActivityCount)
+	}
+	timeline, err := engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{CanonicalID: attendee, Timezone: "UTC", Limit: 10})
+	requirements.NoError(err)
+	assertions.Len(timeline.Rows, 2)
+	calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: attendee, Year: 2026, Timezone: "UTC"})
+	requirements.NoError(err)
+	assertions.Equal("2026-07-11", calendar.EffectiveDate)
+}
+
 func TestExploreGroupTimezoneValidationAndCalendarBuckets(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

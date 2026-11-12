@@ -16,7 +16,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-discord-package](#import-discord-package), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-ics](#import-ics), [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-discord-package](#import-discord-package), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -2130,6 +2130,55 @@ receipts. Reconcile the reported event; do not repeat a completed mutation.
 
 ---
 
+## import-ics
+
+On unreleased `main`, import a local iCalendar file as separate calendar event
+messages:
+
+```bash
+msgvault import-ics calendar.ics --identifier personal-calendar
+```
+
+Choose a stable `--identifier` for each calendar. Each VEVENT becomes its own
+event, identified by UID and original recurrence identity, and keeps its own
+VEVENT with the time zone definitions it uses. A single-VEVENT file stays
+byte-identical. Events omitted from a later file remain archived with their previous status. Re-importing updates events: higher SEQUENCE wins, equal
+sequences use DTSTAMP, and a cancellation wins an exact tie. msgvault converts text in another charset to
+UTF-8, as it does for email. A series with unsupported recurrence stays archived and is reported as unexpandable by `calendar events`. For an unsupported range edit, results may include earlier occurrences while omitting later ones; an edit that cannot be placed may omit the series. The import command
+reports how many events were updated and how many were not. Floating times use the calendar's `X-WR-TIMEZONE` when declared, or UTC otherwise. The daemon
+reads the file locally; importing files through a remote daemon is unavailable.
+
+A file with `METHOD:ADD` is rejected as unsupported.
+
+A cancellation keeps the event's last accepted title, times, participants, and
+raw iCalendar data, and only marks it cancelled.
+
+### Invitations in email
+
+On unreleased `main`, archiving email extracts decoded `text/calendar` and `application/ics` MIME
+parts into event messages in the same source. Attached forwarded emails and iTIP messages with the
+REPLY, REFRESH, COUNTER, or DECLINECOUNTER method are ignored. ADD is unsupported; the email is kept and a warning is logged.
+Attendee RSVPs come from the invitation snapshot; Google Calendar sync supplies provider-reported RSVPs.
+
+An invitation, its updates, and its cancellation share one event. Every
+contributing email keeps its full MIME and attachments, and the event survives
+deletion of any of them.
+Invalid calendar parts leave the email intact and log a warning with its message ID.
+If event extraction fails after the email is archived, run `repair-derived` to retry it.
+
+An email and its event count as two archive records in account listings and
+statistics. Provider verification counts the email once. Hiding the
+email keeps the event; removing its account removes both.
+
+The next email re-derivation extracts invites from archived MIME automatically
+after a sync or import. To run it on demand, use
+[`repair-derived`](#repair-derived). It works from stored MIME without a provider
+connection:
+
+```bash
+msgvault repair-derived --source-type mbox
+```
+
 ## import-eml
 
 Import RFC 5322 `.eml` files inside MailMate-style `.mailbox` directories.
@@ -3144,8 +3193,9 @@ msgvault export-token <email> [flags]
 ## verify
 
 Verify archive integrity against Gmail through the configured remote server or
-local daemon. The command streams the daemon's stdout/stderr back to the
-terminal.
+local daemon. The provider-message counts used by `verify` exclude calendar
+events extracted from invitations. The command streams the daemon's
+stdout/stderr back to the terminal.
 
 ```bash
 msgvault verify <email> [flags]
@@ -5305,6 +5355,7 @@ repair's error output for diagnosis.
 Recompute derived text and metadata from retained provider payloads without
 contacting the provider. The command writes immediately and refreshes analytics;
 it leaves raw payloads, downloaded media, and sync cursors in place.
+It also extracts calendar invites from archived email MIME.
 
 ```bash
 msgvault repair-derived

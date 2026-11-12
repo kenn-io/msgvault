@@ -52,9 +52,16 @@ type Message struct {
 	References      []string
 	BodyText        string
 	BodyHTML        string
+	CalendarParts   []CalendarPart
 	Attachments     []Attachment
 	Errors          []string // Non-fatal parsing errors
 	Incomplete      bool     // The parser reports that some message content was lost.
+}
+
+// CalendarPart is decoded calendar evidence from a physical MIME part.
+type CalendarPart struct {
+	Content []byte
+	Method  string
 }
 
 // Address represents an email address with optional display name.
@@ -162,6 +169,8 @@ func parse(raw []byte, inspect func(*enmime.Part)) (*Message, error) {
 	// enmime can list one inline octet-stream part in both categories.
 	// Preserve physical occurrences so parsed evidence matches keyed storage.
 	msg.Attachments = DistinctAttachments(msg.Attachments)
+
+	msg.CalendarParts = calendarParts(root)
 
 	// Collect any parsing errors
 	for _, e := range env.Errors {
@@ -863,4 +872,24 @@ func (m *Message) GetFirstFrom() Address {
 		return m.From[0]
 	}
 	return Address{}
+}
+
+// calendarParts visits physical parts, excluding attached forwarded messages.
+func calendarParts(root *enmime.Part) []CalendarPart {
+	var out []CalendarPart
+	var walk func(*enmime.Part)
+	walk = func(part *enmime.Part) {
+		if strings.EqualFold(part.ContentType, "message/rfc822") {
+			return
+		}
+		if strings.EqualFold(part.ContentType, "text/calendar") || strings.EqualFold(part.ContentType, "application/ics") || (strings.EqualFold(part.ContentType, "application/octet-stream") && strings.HasSuffix(strings.ToLower(part.FileName), ".ics")) {
+			_, params, _, _ := parseMediaTypeLenient(part.Header.Get("Content-Type"))
+			out = append(out, CalendarPart{Content: part.Content, Method: strings.ToUpper(params["method"])})
+		}
+		for child := part.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(root)
+	return out
 }

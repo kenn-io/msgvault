@@ -474,7 +474,7 @@ func createRelationshipActivityView(ctx context.Context, db *sql.DB, analyticsDi
 	return nil
 }
 
-// refreshRelationshipQuerySets loads unsent and owner event message IDs and owner canonicals once
+// refreshRelationshipQuerySets loads excluded and owner event message IDs and owner canonicals once
 // per committed cache publication, avoiding sparse-fact scans on each request.
 func refreshRelationshipQuerySets(ctx context.Context, db *sql.DB, analyticsDir string) error {
 	if analyticsDir == "" {
@@ -490,9 +490,9 @@ func refreshRelationshipQuerySets(ctx context.Context, db *sql.DB, analyticsDir 
 		return fmt.Errorf("begin relationship query set refresh: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	_, err = tx.ExecContext(ctx, "CREATE OR REPLACE TEMP TABLE relationship_unsent_messages AS SELECT message_id FROM read_parquet('"+quoteIdentitySQLPath(path)+"', hive_partitioning=true, union_by_name=true) WHERE canonical_id IS NULL AND unsent")
+	_, err = tx.ExecContext(ctx, "CREATE OR REPLACE TEMP TABLE relationship_activity_exclusions AS SELECT message_id FROM read_parquet('"+quoteIdentitySQLPath(path)+"', hive_partitioning=true, union_by_name=true) WHERE canonical_id IS NULL AND (unsent OR email_invite)")
 	if err != nil {
-		return errors.Join(fmt.Errorf("load unsent message IDs: %w", err), tx.Rollback())
+		return errors.Join(fmt.Errorf("load activity exclusion IDs: %w", err), tx.Rollback())
 	}
 	ownerSQL := "SELECT NULL::BIGINT AS canonical_id WHERE false"
 	// Match the expanded view: unpartitioned caches have no normalized activity.
@@ -507,7 +507,7 @@ func refreshRelationshipQuerySets(ctx context.Context, db *sql.DB, analyticsDir 
   %s
   UNION
   SELECT canonical_id FROM read_parquet('%s', hive_partitioning=true, union_by_name=true)
-  WHERE canonical_id IS NOT NULL AND is_owner`,
+  WHERE canonical_id IS NOT NULL AND is_owner AND NOT email_invite`,
 			identityindex.OwnerCanonicalsSQL(owners, canon), quoteIdentitySQLPath(path))
 	}
 	_, err = tx.ExecContext(ctx, "CREATE OR REPLACE TEMP TABLE relationship_owner_canonicals AS "+ownerSQL)
@@ -517,7 +517,7 @@ func refreshRelationshipQuerySets(ctx context.Context, db *sql.DB, analyticsDir 
 	eventSQL := "SELECT NULL::BIGINT AS message_id WHERE false"
 	if hasActivity {
 		// Sparse activity marks is_owner only on direct rows with a confirmed owner canonical or the is_from_me owner sender, so roster expansion adds no owner-attended events.
-		eventSQL = "SELECT message_id FROM read_parquet('" + quoteIdentitySQLPath(path) + "', hive_partitioning=true, union_by_name=true) WHERE entry_kind IN ('event', 'meeting') AND is_owner"
+		eventSQL = "SELECT message_id FROM read_parquet('" + quoteIdentitySQLPath(path) + "', hive_partitioning=true, union_by_name=true) WHERE entry_kind IN ('event', 'meeting') AND is_owner AND NOT email_invite"
 	}
 	if _, err := tx.ExecContext(ctx, "CREATE OR REPLACE TEMP TABLE relationship_owner_event_messages AS "+eventSQL); err != nil {
 		return errors.Join(fmt.Errorf("load owner event message IDs: %w", err), tx.Rollback())

@@ -15,7 +15,7 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 	_, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.ExecContext(t.Context(), `
 		CREATE TEMP TABLE synthetic_temperature_activity AS
-		SELECT *, false AS unsent FROM (VALUES
+		SELECT *, false AS unsent, false AS email_invite FROM (VALUES
 			-- Direct chat written by the owner: the explicit edge identifies
 			-- person 2 even when the importer has no conversation roster.
 			(1::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 12:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, false, true, false, true),
@@ -43,6 +43,10 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 			conversation_type, is_from_me, is_direct, is_conversation_member,
 			is_author, is_owner)
 	`)
+	require.NoError(err)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO synthetic_temperature_activity
+		SELECT * REPLACE (8::BIGINT AS message_id, true AS email_invite, 'event' AS entry_kind, 'calendar' AS conversation_type)
+		FROM synthetic_temperature_activity WHERE message_id = 6`)
 	require.NoError(err)
 
 	var sent, received, meetings, email, chat, total int64
@@ -72,7 +76,7 @@ func TestRelationshipTemperatureDailyExcludesUnsent(t *testing.T) {
 	_, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.ExecContext(t.Context(), `
 		CREATE TEMP TABLE synthetic_unsent_activity AS
-		SELECT * FROM (VALUES
+		SELECT *, false AS email_invite FROM (VALUES
 			(8::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 19:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, false, true, true, true, true),
 			(8::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 19:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, true, true, false, false, true)
 		) AS t(message_id, canonical_id, occurred_at, is_chat, entry_kind,

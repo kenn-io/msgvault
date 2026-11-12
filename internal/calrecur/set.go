@@ -547,7 +547,7 @@ func (s Set) parseDates(line string) ([]Identity, string, error) {
 		if dateValue || strings.HasSuffix(v, "Z") {
 			d, err = time.Parse(layout, v)
 		} else {
-			d, err = parseLocalDateTime(layout, v, valueLoc)
+			d, err = ParseLocalDateTime(layout, v, valueLoc)
 		}
 		if err != nil {
 			return nil, "", fmt.Errorf("parse recurrence value: %w", err)
@@ -564,7 +564,9 @@ func (s Set) parseDates(line string) ([]Identity, string, error) {
 	return ids, property, nil
 }
 
-func parseLocalDateTime(layout, value string, loc *time.Location) (time.Time, error) {
+// ParseLocalDateTime resolves an explicit RFC 5545 local time. Folds use the
+// first occurrence; gaps use the offset before the transition.
+func ParseLocalDateTime(layout, value string, loc *time.Location) (time.Time, error) {
 	anchor, err := time.Parse(layout, value)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("parse local recurrence time: %w", err)

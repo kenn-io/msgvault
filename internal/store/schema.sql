@@ -1791,6 +1791,10 @@ CREATE TABLE IF NOT EXISTS message_raw (
     encryption_version INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS email_calendar_pending (
+    message_id INTEGER PRIMARY KEY REFERENCES message_raw(message_id) ON DELETE CASCADE
+);
+
 -- Explicit MIME identifiers (In-Reply-To, References, attached originals),
 -- indexed across archived email copies. A copy's own Message-ID is
 -- messages.rfc822_message_id. messages.email_linkage_outcome IS NULL marks a
@@ -4222,6 +4226,7 @@ CREATE TABLE IF NOT EXISTS source_merge_archive_only_messages (
     message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
     original_source_message_id TEXT NOT NULL DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS idx_source_merge_archive_only_original ON source_merge_archive_only_messages(original_source_message_id);
 
 CREATE TRIGGER IF NOT EXISTS source_retired_conversations_insert
 BEFORE INSERT ON conversations
@@ -4325,6 +4330,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
 CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_recurrence_end ON calendar_events(recurrence_end_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_provider_id ON calendar_events(provider_event_id);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_series_id ON calendar_events(series_provider_id, message_id);
 CREATE TABLE IF NOT EXISTS calendar_event_attendees (
     message_id INTEGER NOT NULL REFERENCES calendar_events(message_id) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL,

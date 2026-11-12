@@ -275,6 +275,7 @@ func (s *Store) gmailAuditPageIDsTx(
 		FROM messages m
 		JOIN sources src ON src.id = m.source_id AND src.source_type = 'gmail'
 		WHERE m.id > ? AND (? = 0 OR m.source_id = ?)
+		AND COALESCE(m.message_type, '') <> 'calendar_event'
 		ORDER BY m.id
 		LIMIT ?
 	`, afterID, sourceID, sourceID, limit)
@@ -2319,13 +2320,28 @@ func (s *Store) persistMessageWithParticipantsTransaction(
 		}
 	}
 	var messageID int64
+	var calendarRaw []byte
+	wrappedAfterPersist := func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
+		if afterPersist != nil {
+			if err := afterPersist(ctx, tx, data, id); err != nil {
+				return err
+			}
+		}
+		if IsEmailMessageType(data.Message.MessageType) && (data.RawFormat == "" || data.RawFormat == emailLinkageRawFormat) && hasCalendarToken(data.RawMIME) {
+			calendarRaw = data.RawMIME
+		}
+		return nil
+	}
 	err := s.withAttributionTxContext(ctx, lock, func(tx *loggedTx) error {
 		var err error
 		messageID, err = s.persistMessageWithParticipantsTx(
-			ctx, tx, beforeParticipants, participants, build, prepare, afterPersist,
+			ctx, tx, beforeParticipants, participants, build, prepare, wrappedAfterPersist,
 		)
 		return err
 	})
+	if err == nil && calendarRaw != nil {
+		s.deriveEmailCalendarAfterCommit(ctx, messageID, calendarRaw)
+	}
 	return messageID, err
 }
 
@@ -2520,7 +2536,7 @@ func (s *Store) persistMessageWith(
 		if rawFormat == "" {
 			rawFormat = "mime"
 		}
-		if err := upsertMessageRawWithFormat(q, messageID, data.RawMIME, rawFormat); err != nil {
+		if err := upsertEmailRaw(q, messageID, data.RawMIME, rawFormat); err != nil {
 			return 0, fmt.Errorf("upsert raw: %w", err)
 		}
 		// Only email has linkage, so other message types skip the refresh's lookups.
@@ -3902,8 +3918,8 @@ func (s *Store) CountMessagesWithRaw(sourceID int64) (int64, error) {
 	err := s.db.QueryRow(fmt.Sprintf(`
 		SELECT COUNT(*) FROM messages m
 		JOIN message_raw mr ON m.id = mr.message_id
-		WHERE m.source_id = ? AND %s
-	`, LiveMessagesWhere("m", true)), sourceID).Scan(&count)
+		WHERE m.source_id = ? AND %s AND %s
+	`, LiveMessagesWhere("m", true), SourceNativeMessagesWhere("m", "sources")), sourceID).Scan(&count)
 	return count, err
 }
 
@@ -3941,7 +3957,7 @@ func (s *Store) CountMessagesPerMailbox(sourceID int64) (map[string]int64, error
 
 // GetRandomMessageIDs returns a random sample of message IDs for a source.
 func (s *Store) GetRandomMessageIDs(sourceID int64, limit int) ([]int64, error) {
-	live := LiveMessagesWhere("", true)
+	live := LiveMessagesWhere("", true) + " AND " + SourceNativeMessagesWhere("messages", "sources")
 	rows, err := s.db.Query(fmt.Sprintf(`
 		SELECT id FROM messages
 		WHERE source_id = ? AND %s
@@ -6286,7 +6302,7 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 				return errRawNeedsAttributionLock
 			}
 		}
-		if err := upsertMessageRawWithFormat(boundQuerier{ctx: ctx, q: tx}, messageID, rawData, format); err != nil {
+		if err := upsertEmailRaw(boundQuerier{ctx: ctx, q: tx}, messageID, rawData, format); err != nil {
 			return err
 		}
 		// Non-MIME raw has no linkage to derive, and only a replaced MIME payload
@@ -6320,7 +6336,11 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 			return err
 		}
 	}
-	return s.withMessageAttributionTxContext(ctx, messageID, write)
+	err := s.withMessageAttributionTxContext(ctx, messageID, write)
+	if err == nil && format == emailLinkageRawFormat && hasCalendarToken(rawData) {
+		s.deriveEmailCalendarAfterCommit(ctx, messageID, rawData)
+	}
+	return err
 }
 
 // errRawNeedsAttributionLock rolls back a non-MIME raw write that found MIME
