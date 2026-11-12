@@ -178,7 +178,7 @@ func (s *Store) appreciationDirectOwnerTx(ctx context.Context, tx *loggedTx, per
 		return 0, 0, false, fmt.Errorf("read appreciation conversation: %w", err)
 	}
 	record := decodeMembershipRecord(metadata)
-	if kind != MessageExportConversationDirectChat || !personSweepSourceAuthenticatesSender(sourceType) ||
+	if kind != string(MessageExportConversationDirectChat) || !personSweepSourceAuthenticatesSender(sourceType) ||
 		!record.counted || record.unknown || record.repairPending {
 		return 0, 0, false, nil
 	}
