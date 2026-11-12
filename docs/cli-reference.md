@@ -81,6 +81,10 @@ notes that share an exact meeting occurrence. Use a note ID, `msg:<id>`, or an
 event `ref` from `calendar events --json`. This command requires daemon API
 schema 5.1.0 or newer.
 
+### meetings suggest
+
+`msgvault meetings suggest <ref> [--limit N] [--json]` ranks overlapping meeting copies. Use `meetings link` to accept a suggestion.
+
 ### meetings link, unlink, and reset-link
 
 `msgvault meetings link <ref> <ref>` joins two meeting copies, and

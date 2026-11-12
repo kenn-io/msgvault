@@ -238,20 +238,27 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			if err != nil {
 				return err
 			}
-			root, _ := graph.reduce()
-			if (root(canonicalA.ref()) == root(canonicalB.ref())) != (state == "link") {
+			if !meetingDecisionAccepted(graph, canonicalA, canonicalB, state, active) {
 				return fmt.Errorf("%w: cannot save %s for %s %s", ErrMeetingLinkConflict, state, a.ref(), b.ref())
-			}
-			for _, link := range active {
-				if root(link.a.ref()) != root(link.b.ref()) {
-					return fmt.Errorf("%w: cannot save %s for %s %s", ErrMeetingLinkConflict, state, a.ref(), b.ref())
-				}
 			}
 		}
 		result = MeetingLinkDecisionResult{Left: canonicalA.ref(), Right: canonicalB.ref(), State: state}
 		return nil
 	})
 	return result, err
+}
+
+func meetingDecisionAccepted(graph *meetingDecisionGraph, a, b meetingDecisionEndpoint, state string, active []meetingDecisionEdge) bool {
+	root, _ := graph.reduce()
+	if (root(a.ref()) == root(b.ref())) != (state == "link") {
+		return false
+	}
+	for _, link := range active {
+		if root(link.a.ref()) != root(link.b.ref()) {
+			return false
+		}
+	}
+	return true
 }
 
 func meetingDecisionRelevantEndpoints(a, b meetingDecisionEndpoint, recordA, recordB MeetingRecord, aliases []int64) (map[int64][]meetingDecisionEndpoint, error) {
@@ -315,12 +322,34 @@ func (s *Store) materializedMeetingEndpoint(ctx context.Context, endpoint meetin
 	return resolved, aliases, err
 }
 
-func (s *Store) meetingAutomaticRecordForEndpoint(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) (MeetingRecord, error) {
+type meetingSuggestionMemoKey struct{}
+
+type meetingSuggestionMemoEntry struct {
+	record MeetingRecord
+	err    error
+	cost   int
+}
+
+func (s *Store) meetingAutomaticRecordForEndpoint(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) (record MeetingRecord, err error) {
+	memo, _ := ctx.Value(meetingSuggestionMemoKey{}).(map[meetingDecisionEndpoint]meetingSuggestionMemoEntry)
+	if cached, ok := memo[endpoint]; ok {
+		*budget -= cached.cost
+		if *budget < 0 {
+			return MeetingRecord{}, calendarRecurrenceBudgetError()
+		}
+		return cached.record, cached.err
+	}
+	before := *budget
+	defer func() {
+		if memo != nil && !errors.Is(err, ErrQueryTooBroad) {
+			memo[endpoint] = meetingSuggestionMemoEntry{record: record, err: err, cost: before - *budget}
+		}
+	}()
 	ref, err := endpoint.meetingRef()
 	if err != nil {
 		return MeetingRecord{}, err
 	}
-	record, err := s.meetingAutomaticRecordContext(ctx, ref, budget)
+	record, err = s.meetingAutomaticRecordContext(ctx, ref, budget)
 	if errors.Is(err, ErrMeetingOccurrenceRequired) && endpoint.Anchor != "" {
 		endpoint.Key = endpoint.Anchor
 		ref, err = endpoint.meetingRef()

@@ -2441,6 +2441,8 @@ for the user workflow and coverage meanings.
 | `POST /api/v1/meetings/actions` | Optional `scope` or `explore`, plus action filters; returns rows, coverage, count, and cursor |
 | `POST /api/v1/meetings/metrics` | Optional `scope` or `explore`; returns totals, duration bases, monthly rows, and undated count |
 
+`GET /api/v1/meetings/suggestions?ref=...` ranks overlapping copies; use `POST /api/v1/meetings/links/decisions` to link a suggested pair.
+
 `GET /api/v1/meetings/record?ref=...` returns the notes and calendar copies
 for a `msg:<id>` or `evt:<id>[@occurrence key]` reference. It requires API
 schema 5.1.0 and accepts a `message.read` grant.
