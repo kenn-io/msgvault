@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -133,35 +134,36 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
-	embeddingStatus      EmbeddingStatusReader
-	delegatedOnly        bool
-	sensitiveConfirm     bool
-	downloads            *downloadCache
-	engine               query.Engine
-	archiveSQLQuerier    ArchiveSQLQuerier
-	attachmentsDir       string
-	attachmentReader     AttachmentReader
-	manifestSaver        DeletionManifestSaver
-	hybridSearcher       HybridSearcher
-	similarSearcher      SimilarSearcher
-	dataDir              string
-	mediaSearcher        MediaSearcher
-	personFileSearcher   PersonFileSearcher
-	peopleBackend        peoplebrowser.Backend
-	directoryBackend     peoplebrowser.DirectoryLister
-	savedViews           savedview.Service
-	meetings             MeetingBackend
-	calendar             CalendarBackend
-	personAgendaBackend  PersonAgendaBackend
-	personTierBackend    PersonTierBackend
-	kata                 KataBackend
-	identityReview       IdentityReviewBackend
-	personCardDAV        PersonCardDAVBackend
-	messageTags          MessageTagBackend
-	identityScoring      IdentityScoringBackend
-	drafts               DraftRunner
-	contactRoutesBackend ContactRoutesBackend
-	chatDiscoveryBackend ChatDiscoveryBackend
+	embeddingStatus           EmbeddingStatusReader
+	delegatedOnly             bool
+	sensitiveConfirm          bool
+	downloads                 *downloadCache
+	engine                    query.Engine
+	archiveSQLQuerier         ArchiveSQLQuerier
+	attachmentsDir            string
+	attachmentReader          AttachmentReader
+	manifestSaver             DeletionManifestSaver
+	hybridSearcher            HybridSearcher
+	similarSearcher           SimilarSearcher
+	dataDir                   string
+	mediaSearcher             MediaSearcher
+	collectionScopesAvailable bool
+	personFileSearcher        PersonFileSearcher
+	peopleBackend             peoplebrowser.Backend
+	directoryBackend          peoplebrowser.DirectoryLister
+	savedViews                savedview.Service
+	meetings                  MeetingBackend
+	calendar                  CalendarBackend
+	personAgendaBackend       PersonAgendaBackend
+	personTierBackend         PersonTierBackend
+	kata                      KataBackend
+	identityReview            IdentityReviewBackend
+	personCardDAV             PersonCardDAVBackend
+	messageTags               MessageTagBackend
+	identityScoring           IdentityScoringBackend
+	drafts                    DraftRunner
+	contactRoutesBackend      ContactRoutesBackend
+	chatDiscoveryBackend      ChatDiscoveryBackend
 
 	// Optional vector-search wiring. When hybridEngine is nil, the
 	// search_message_bodies handler rejects mode=vector and mode=hybrid with
@@ -445,6 +447,7 @@ type HybridSearchRequest struct {
 	Mode           string
 	Account        string
 	AccountScopes  []search.AccountScope
+	SourceID       *int64
 	Limit          int
 	Offset         int
 	IncludeMatches bool
@@ -731,9 +734,6 @@ func (h *handlers) searchMessages(ctx context.Context, req toolRequest) (*toolRe
 	case "":
 		return h.searchMetadata(ctx, req)
 	case searchModeVector, searchModeHybrid:
-		if stringArgument(req.GetArguments(), "collection") != "" {
-			return toolErrorResult("collection scope is unavailable for semantic search"), nil
-		}
 		return h.semanticSearchMessages(ctx, req)
 	default:
 		return toolErrorResult(
@@ -969,8 +969,25 @@ func (h *handlers) searchMessageBodiesHybrid(
 	ctx context.Context, args map[string]any,
 	queryStr string, parsed *search.Query, mode string, explain bool,
 ) (*toolResult, error) {
+	var selection accountSelection
+	var err error
+	if stringArgument(args, "collection") != "" {
+		selection, err = h.resolveReadSelection(ctx, stringArgument(args, toolArgAccount), stringArgument(args, "collection"))
+		if err != nil {
+			return dependencyError("resolve semantic-search collection", err)
+		}
+	}
+	if err := selection.singleSourceCollection(); err != nil {
+		return dependencyError("resolve semantic-search collection", err)
+	}
+	if selection.sourceIDs != nil && len(selection.sourceIDs) == 0 {
+		return jsonResult(searchMessageBodiesResponse{paginatedResponse: newPaginatedResponseNoTotal([]searchMessageItem{}, intArg(args, toolArgOffset, 0), false), Mode: mode})
+	}
+	if selection.sourceIDs != nil {
+		selection.sourceID = &selection.sourceIDs[0]
+	}
 	if h.hybridSearcher != nil {
-		return h.searchMessageBodiesHybridViaSearcher(ctx, args, queryStr, parsed, mode, explain)
+		return h.searchMessageBodiesHybridViaSearcher(ctx, args, queryStr, parsed, mode, explain, selection)
 	}
 	if h.hybridEngine == nil {
 		return toolErrorResult(
@@ -978,12 +995,11 @@ func (h *handlers) searchMessageBodiesHybrid(
 		), nil
 	}
 	started := time.Now()
-
-	// Resolve account filter to a source ID for the structured Filter.
-	account, _ := args[toolArgAccount].(string)
-	selection, err := h.resolveAccount(ctx, account)
-	if err != nil {
-		return dependencyError("resolve semantic-search account", err)
+	if selection.sourceIDs == nil {
+		selection, err = h.resolveAccount(ctx, stringArgument(args, toolArgAccount))
+		if err != nil {
+			return dependencyError("resolve semantic-search account", err)
+		}
 	}
 	sourceID := selection.sourceID
 
@@ -1137,7 +1153,7 @@ func (h *handlers) searchMessageBodiesHybrid(
 
 func (h *handlers) searchMessageBodiesHybridViaSearcher(
 	ctx context.Context, args map[string]any,
-	queryStr string, parsed *search.Query, mode string, explain bool,
+	queryStr string, parsed *search.Query, mode string, explain bool, selection accountSelection,
 ) (*toolResult, error) {
 	limit := searchLimitArg(args)
 	offset := intArg(args, toolArgOffset, 0)
@@ -1150,15 +1166,21 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 		), nil
 	}
 
-	account, accountScopes, err := h.resolveForwardedAccount(ctx, stringArgument(args, toolArgAccount))
-	if err != nil {
-		return dependencyError("resolve semantic-search account", err)
+	var account string
+	var accountScopes []search.AccountScope
+	if selection.sourceIDs == nil {
+		var err error
+		account, accountScopes, err = h.resolveForwardedAccount(ctx, stringArgument(args, toolArgAccount))
+		if err != nil {
+			return dependencyError("resolve semantic-search account", err)
+		}
 	}
 	result, err := h.hybridSearcher.SearchHybrid(ctx, HybridSearchRequest{
 		Query:          queryStr,
 		Mode:           mode,
 		Account:        account,
 		AccountScopes:  accountScopes,
+		SourceID:       selection.sourceID,
 		Limit:          limit,
 		Offset:         offset,
 		IncludeMatches: true,
@@ -1561,11 +1583,18 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 		return toolErrorResult(err.Error()), nil
 	}
 
+	selection, err := h.resolveReadSelection(ctx, "", stringArgument(args, "collection"))
+	if err != nil {
+		return dependencyError("resolve message collection", err)
+	}
+	if selection.sourceIDs != nil && len(selection.sourceIDs) == 0 {
+		return toolErrorResult("message not found"), nil
+	}
 	msg, err := h.engine.GetMessage(ctx, id)
 	if err != nil {
 		return messageLookupError("load message", err)
 	}
-	if msg == nil {
+	if msg == nil || (selection.sourceIDs != nil && !slices.Contains(selection.sourceIDs, msg.SourceID)) {
 		return toolErrorResult("message not found"), nil
 	}
 

@@ -421,7 +421,7 @@ func (s daemonMCPHybridSearcher) SearchHybrid(
 	resp, err := s.client.GetCLIHybridSearch(ctx, daemonclient.CLIHybridSearchRequest{
 		Query:          req.Query,
 		Account:        req.Account,
-		Filter:         query.MessageFilter{AccountScopes: search.CloneAccountScopes(req.AccountScopes)},
+		Filter:         query.MessageFilter{SourceID: req.SourceID, AccountScopes: search.CloneAccountScopes(req.AccountScopes)},
 		Mode:           req.Mode,
 		Limit:          req.Limit,
 		Offset:         req.Offset,
