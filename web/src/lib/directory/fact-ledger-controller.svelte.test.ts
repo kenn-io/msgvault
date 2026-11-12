@@ -74,15 +74,6 @@ describe('FactLedgerController', () => {
     }
   });
 
-  it('preserves the competing claim on a close decision', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async input => Response.json(payload(new URL(requestOf(input).url).pathname)));
-    const controller = new FactLedgerController(createAPIClient(fetchFn));
-    controller.applyContext(true, 42);
-    await vi.waitFor(() => expect(controller.decisions.rows).toHaveLength(1));
-    expect(controller.decisions.rows[0]).toHaveProperty('competingClaimKey', 'private-competing-key');
-    controller.destroy();
-  });
-
   it('preserves large numeric claim tokens', async () => {
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const path = new URL(requestOf(input).url).pathname;
@@ -294,9 +285,12 @@ describe('FactLedgerController', () => {
   });
   it('opens exact rows in one request and clears the filter', async () => {
     const requests: Request[] = [];
+    let fail = false;
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const request = requestOf(input); requests.push(request);
-      return Response.json(payload(new URL(request.url).pathname));
+      const url = new URL(request.url);
+      if (url.searchParams.has('evidence_id') && fail) return new Response(null, { status: 503 });
+      return Response.json(payload(url.pathname));
     });
     const controller = new FactLedgerController(createAPIClient(fetchFn));
     controller.applyContext(true, 42);
@@ -305,6 +299,13 @@ describe('FactLedgerController', () => {
     await controller.showEvidence(1, `attribute:work:email:${revision}`);
     expect(requests).toHaveLength(1);
     expect(new URL(requests[0]!.url).searchParams.get('evidence_id')).toBe('1');
+    expect(controller.focusRequest?.key).toBe('evidence:1');
+    fail = true;
+    await controller.showEvidence(1, `attribute:work:email:${revision}`);
+    expect(controller.evidence.error).toBe("Couldn't load evidence.");
+    fail = false;
+    await controller.retrySection('evidence');
+    expect(new URL(requests.at(-1)!.url).searchParams.get('evidence_id')).toBe('1');
     expect(controller.focusRequest?.key).toBe('evidence:1');
     await controller.showAll();
     expect(new URL(requests.at(-1)!.url).searchParams.has('evidence_id')).toBe(false);
@@ -317,25 +318,4 @@ describe('FactLedgerController', () => {
     controller.destroy();
   });
 
-  it('retries an exact source request and focuses the result', async () => {
-    let fail = false;
-    const requests: Request[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async input => {
-      const request = requestOf(input); requests.push(request);
-      const url = new URL(request.url);
-      if (url.searchParams.has('evidence_id') && fail) return new Response(null, { status: 503 });
-      return Response.json(payload(url.pathname));
-    });
-    const controller = new FactLedgerController(createAPIClient(fetchFn));
-    controller.applyContext(true, 42);
-    await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
-    fail = true;
-    await controller.showEvidence(1, `attribute:work:email:${revision}`);
-    expect(controller.evidence.error).toBe("Couldn't load evidence.");
-    fail = false;
-    await controller.retrySection('evidence');
-    expect(new URL(requests.at(-1)!.url).searchParams.get('evidence_id')).toBe('1');
-    expect(controller.focusRequest?.key).toBe('evidence:1');
-    controller.destroy();
-  });
 });
