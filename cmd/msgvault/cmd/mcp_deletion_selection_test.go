@@ -37,6 +37,14 @@ func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
 		_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: id, MessageType: "email", Subject: sql.NullString{String: "Synthetic", Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}})
 		require.NoError(t, err)
 	}
+	other, err := st.GetOrCreateSource("gmail", "other@example.test")
+	require.NoError(t, err)
+	otherConversation, err := st.EnsureConversation(t.Context(), other.ID, "other-thread", "Synthetic")
+	require.NoError(t, err)
+	_, err = st.UpsertMessage(&store.Message{SourceID: other.ID, ConversationID: otherConversation, SourceMessageID: "other", MessageType: "email", Subject: sql.NullString{String: "Synthetic", Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}})
+	require.NoError(t, err)
+	_, err = st.CreateCollection("selected", "", []int64{source.ID})
+	require.NoError(t, err)
 	_, err = buildCache(t.Context(), dbPath, analytics, false)
 	require.NoError(t, err)
 	engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", st.DB())
@@ -48,8 +56,10 @@ func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: adapter, Engine: engine, Logger: slog.New(slog.DiscardHandler)}))
 	assert.Contains(t, backend.capabilities(), "stage_deletion_selection")
 	approved := false
+	elicitations := 0
 	var disclosure string
 	session := loopOperationMCPSession(t, backend, nil, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		elicitations++
 		disclosure = request.Params.Message
 		action := "decline"
 		if approved {
@@ -64,7 +74,7 @@ func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
 		return result
 	}
 	predicate := map[string]any{"filters": []any{map[string]any{"dimension": "source", "values": []string{fmt.Sprint(source.ID)}}}}
-	explored := loopToolOutput[generated.ExploreHTTPResponse](t, call("explore_deletion_selection", predicate))
+	explored := loopToolOutput[generated.ExploreHTTPResponse](t, call("explore_deletion_selection", map[string]any{"collection": "selected"}))
 	selection := map[string]any{"mode": "all_matching", "predicate": predicate, "cache_revision": explored.CacheRevision, "search_provenance": explored.SearchProvenance, "exclusions": []string{fmt.Sprintf("source:%d:message:first", source.ID)}}
 	preflight := loopToolOutput[generated.ExplorePreflightResponse](t, call("preflight_deletion_selection", map[string]any{"selection": selection}))
 	assert.Equal(t, int64(1), preflight.Count)
@@ -76,20 +86,39 @@ func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
 	assert.Empty(t, manifests)
 	approved = true
 	tampered := map[string]any{"mode": "all_matching", "predicate": predicate, "cache_revision": explored.CacheRevision, "search_provenance": explored.SearchProvenance}
+	before := elicitations
 	assert.Equal(t, "operation_token_invalid", loopToolFailure(t, call("stage_deletion", map[string]any{"selection": tampered, "operation_token": preflight.OperationToken}))["error"])
+	assert.Equal(t, before, elicitations)
 	manifests, err = adapter.ListDeletionManifests(t.Context(), "")
 	require.NoError(t, err)
 	assert.Empty(t, manifests)
 	result := call("stage_deletion", args)
 	require.False(t, result.IsError)
-	assert.Contains(t, disclosure, "Matched: 1; deletable: 1")
+	assert.Contains(t, disclosure, "owner@example.test")
+	assert.Contains(t, disclosure, "Matched: 1; staged: 1; skipped: 0")
+	assert.NotContains(t, disclosure, "predicate")
 	manifests, err = adapter.ListDeletionManifests(t.Context(), "")
 	require.NoError(t, err)
 	require.Len(t, manifests, 1)
 	assert.Equal(t, []string{"second"}, manifests[0].GmailIDs)
+	assert.Equal(t, "selection: all_matching", manifests[0].Description)
+	before = elicitations
 	assert.Equal(t, "operation_token_invalid", loopToolFailure(t, call("stage_deletion", args))["error"])
-	selection["cache_revision"] = "stale"
-	assert.Equal(t, "archive_revision_changed", loopToolFailure(t, call("preflight_deletion_selection", map[string]any{"selection": selection}))["error"])
+	assert.Equal(t, before, elicitations)
+	preflight = loopToolOutput[generated.ExplorePreflightResponse](t, call("preflight_deletion_selection", map[string]any{"selection": selection}))
+	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "third", MessageType: "email", Subject: sql.NullString{String: "Synthetic", Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}})
+	require.NoError(t, err)
+	_, err = buildCache(t.Context(), dbPath, analytics, false)
+	require.NoError(t, err)
+	failure := loopToolFailure(t, call("stage_deletion", map[string]any{"selection": selection, "operation_token": preflight.OperationToken}))
+	assert.Equal(t, "archive_revision_changed", failure["error"])
+	assert.Equal(t, false, failure["operation_may_have_completed"])
+	manifests, err = adapter.ListDeletionManifests(t.Context(), "")
+	require.NoError(t, err)
+	assert.Len(t, manifests, 1)
+	invalid := loopToolFailure(t, call("explore_deletion_selection", map[string]any{"filters": []any{map[string]any{"dimension": "source", "values": []string{"bad"}}}}))
+	assert.Equal(t, "invalid_filter", invalid["error"])
+	assert.Equal(t, false, invalid["operation_may_have_completed"])
 }
 
 // These native failures and an oversized response are supplied by a transport
@@ -100,6 +129,11 @@ func TestMCPDeletionSelectionRefusalsAndResponseBound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if code == "oversized" {
 			_, _ = w.Write([]byte(strings.Repeat("x", (1<<20)+1)))
+			return
+		}
+		if code == "uncoded" {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{}`))
 			return
 		}
 		w.WriteHeader(http.StatusConflict)
@@ -116,7 +150,19 @@ func TestMCPDeletionSelectionRefusalsAndResponseBound(t *testing.T) {
 		require.NoError(t, err)
 		assertLoopRefusal(t, result, nativeCode, false)
 	}
+	args["operation_token"] = "token"
+	for _, nativeCode := range []string{"selection_changed", "stage_deletion_failed", "uncoded"} {
+		code = nativeCode
+		result, err := backend.ExecuteOperation(t.Context(), "stage_deletion_selection", args)
+		require.NoError(t, err)
+		if nativeCode == "uncoded" {
+			assertLoopRefusal(t, result, "operation_refused", true)
+		} else {
+			assertLoopRefusal(t, result, nativeCode, false)
+		}
+	}
 	code = "oversized"
+	delete(args, "operation_token")
 	result, err := backend.ExecuteOperation(t.Context(), "preflight_deletion_selection", args)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)

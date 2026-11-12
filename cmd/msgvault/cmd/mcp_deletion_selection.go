@@ -16,7 +16,7 @@ func deletionSelectionCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCP
 		return nil
 	}
 	names := []string{"explore_deletion_selection", "preflight_deletion_selection"}
-	if hasRoute("stageDeletion", http.MethodPost, "/api/v1/deletions") && mcpRequestPropertiesPresent(caps, "stageDeletion", "selection", "operation_token") {
+	if hasRoute("stageDeletion", http.MethodPost, "/api/v1/deletions") && mcpRequestPropertiesPresent(caps, "stageDeletion", "selection", "operation_token", "dry_run", "description") {
 		names = append(names, "stage_deletion_selection")
 	}
 	return names
@@ -25,14 +25,12 @@ func deletionSelectionCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCP
 type deletionSelectionArgs struct {
 	Selection      generated.ExploreSelection `json:"selection"`
 	OperationToken string                     `json:"operation_token,omitempty"`
+	DryRun         bool                       `json:"dry_run,omitempty"`
+	Description    string                     `json:"description,omitempty"`
 }
 
 func deletionSelectionRefusal(code string) bool {
-	switch code {
-	case "invalid_request", "invalid_selection", "invalid_selection_predicate", "preflight_required", "candidate_snapshot_required", "candidate_snapshot_expired", "candidate_pool_saturated", "archive_revision_changed", "search_revision_changed", "operation_token_invalid", "no_messages_matched", "selection_not_deletable", "multi_account_selection", "source_resolution_conflict":
-		return true
-	}
-	return false
+	return code != ""
 }
 
 func (b *daemonMCPOperations) executeDeletionSelection(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
@@ -56,7 +54,11 @@ func (b *daemonMCPOperations) executeDeletionSelection(ctx context.Context, name
 		result, err := readMCPOperationJSONWithClassifier[generated.ExplorePreflightResponse](ctx, b.client, http.MethodPost, "/api/v1/explore/preflight", &generated.PreflightExploreSelectionRequestOptions{Body: &body}, deletionSelectionRefusal, http.StatusOK)
 		return result, true, err
 	}
-	body := generated.StageDeletionBody{Selection: &input.Selection, OperationToken: &input.OperationToken}
-	result, err := readMCPOperationJSONWithClassifier[generated.StageDeletionResponse](ctx, b.client, http.MethodPost, "/api/v1/deletions", &generated.StageDeletionRequestOptions{Body: &body}, deletionSelectionRefusal, http.StatusCreated)
+	body := generated.StageDeletionBody{Selection: &input.Selection, OperationToken: &input.OperationToken, DryRun: &input.DryRun, Description: &input.Description}
+	status := http.StatusCreated
+	if input.DryRun {
+		status = http.StatusOK
+	}
+	result, err := readMCPOperationJSONWithClassifier[generated.StageDeletionResponse](ctx, b.client, http.MethodPost, "/api/v1/deletions", &generated.StageDeletionRequestOptions{Body: &body}, deletionSelectionRefusal, status)
 	return result, true, err
 }

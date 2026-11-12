@@ -2486,13 +2486,17 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		SkippedCount: skipped,
 		MessageCount: len(gmailIDs),
 		Status:       string(manifest.Status),
-		NextStep:     searchNote + "In the invoking CLI's config.toml, set '[deletion] remote_enabled = true' for durable consent and run 'msgvault delete-staged'; for one command instead, run 'MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged'. Run 'msgvault cancel-deletion " + manifest.ID + "' to cancel",
-	}
-
-	if skipped > 0 {
-		resp.NextStep = fmt.Sprintf("%d of %d matching item(s) were skipped because they are no longer in the archive or cannot be deleted from their source. ", skipped, skipped+len(targets)) + resp.NextStep
+		NextStep:     deletionNextStep(manifest.ID, skipped, len(targets), searchNote),
 	}
 	return jsonResult(resp)
+}
+
+func deletionNextStep(id string, skipped, staged int, searchNote string) string {
+	next := searchNote + "In the invoking CLI's config.toml, set '[deletion] remote_enabled = true' for durable consent and run 'msgvault delete-staged'; for one command instead, run 'MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged'. Run 'msgvault cancel-deletion " + id + "' to cancel"
+	if skipped > 0 {
+		next = fmt.Sprintf("%d of %d matching item(s) were skipped because they are no longer in the archive or cannot be deleted from their source. ", skipped, skipped+staged) + next
+	}
+	return next
 }
 
 func (h *handlers) saveDeletionManifest(ctx context.Context, manifest *deletion.Manifest) error {

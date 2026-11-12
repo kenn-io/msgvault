@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/visual"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 // Tool name constants.
@@ -437,7 +438,16 @@ func newMCPServerWithPolicy(
 	}
 
 	for _, definition := range operationalCatalog(opts, allowWrites) {
-		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations), confirmation))
+		handler := definition.bind(opts.Operations)
+		if definition.definition.name == "explore_deletion_selection" {
+			handler = h.exploreDeletionSelection
+			if capabilitiesFor(opts).collections {
+				input := outputSchemaFor[generated.ExploreHTTPRequest]()
+				input.Properties["collection"] = collectionProperty()
+				definition.definition.inputSchema = input
+			}
+		}
+		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(handler, confirmation))
 	}
 
 	return s
