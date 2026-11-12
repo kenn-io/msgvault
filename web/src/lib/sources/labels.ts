@@ -11,7 +11,7 @@ import { sentenceCase } from '../explore/labels';
 // the identifier stands alone.
 const SOURCE_TYPES: Readonly<Record<string, string>> = {
   '': '', gmail: 'Gmail', imap: 'IMAP', msmail: 'Microsoft mail', teams: 'Teams',
-  discord: 'Discord', chatwoot: 'Chatwoot', meeting_import: 'Meeting import', message_import: 'Message import', synctech_sms: 'SMS backup',
+  discord: 'Discord', feed: 'Feeds', chatwoot: 'Chatwoot', meeting_import: 'Meeting import', message_import: 'Message import', synctech_sms: 'SMS backup',
   imazing_csv: 'iMazing CSV', circleback: 'Circleback', plaud: 'Plaud', pocket: 'Pocket', gcal: 'Google Calendar', muesli: 'Muesli',
   granola: 'Granola', notion_meetings: 'Notion meetings', twilio: 'Twilio', pst: 'PST import',
   'apple-mail': 'Apple Mail', mbox: 'Mbox import', beeper: 'Beeper', slack: 'Slack', inline: 'Inline', matrix: 'Matrix',
@@ -28,6 +28,22 @@ export function sourceTypeLabel(code: string): string {
 // API import sources receive data when a client posts it; they have nothing
 // to sync or schedule.
 const ON_DEMAND_SOURCE_TYPES: ReadonlySet<string> = new Set(['meeting_import', 'message_import']);
+/**
+ * The parts that tell a source apart from its displayed name, in order: a
+ * part that repeats the name, or an earlier part, exactly says nothing new.
+ * Case counts, since an identifier is typed as spelled.
+ */
+export function sourceDetails(name: string, ...parts: (string | undefined)[]): string[] {
+  const shown = [name];
+  const details: string[] = [];
+  for (const part of parts) {
+    if (!part || shown.includes(part)) continue;
+    shown.push(part);
+    details.push(part);
+  }
+  return details;
+}
+
 export function isOnDemandSourceType(code: string): boolean {
   return ON_DEMAND_SOURCE_TYPES.has(code);
 }
