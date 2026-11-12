@@ -12,9 +12,12 @@ import (
 
 func meetingCountActivityCTE(dates string) string {
 	return `meeting_activity AS (
-	SELECT a.* FROM relationship_counting_activity a
-	JOIN selected_meeting_messages s USING (message_id)
-	WHERE a.entry_kind IN ('event', 'meeting') AND a.canonical_id IS NOT NULL AND a.is_direct` + dates + `
+	SELECT a.* FROM (
+		SELECT a.* REPLACE (min(a.occurred_at) OVER (PARTITION BY a.entry_num) AS occurred_at)
+		FROM relationship_counting_activity a
+		JOIN selected_meeting_messages s USING (message_id)
+		WHERE a.entry_kind IN ('event', 'meeting') AND a.canonical_id IS NOT NULL AND a.is_direct
+	) a WHERE true` + dates + `
 )`
 }
 

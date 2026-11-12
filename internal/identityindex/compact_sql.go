@@ -157,7 +157,16 @@ WITH logical_people AS (
 	SELECT entry_key, occurred_at, entry_kind, is_from_me, canonical_id,
 	       is_author, is_owner, with_owner
 	FROM `+logicalBuildRelation+`
-	WHERE relation_kind = 1
+	WHERE relation_kind = 1 AND entry_kind NOT IN ('event', 'meeting')
+	UNION ALL
+	SELECT entry_key, min(occurred_at) AS occurred_at,
+	       arg_min(entry_kind, occurred_at) AS entry_kind,
+	       bool_or(is_from_me) AS is_from_me, canonical_id,
+	       bool_or(is_author) AS is_author, bool_or(is_owner) AS is_owner,
+	       bool_or(with_owner) AS with_owner
+	FROM `+logicalBuildRelation+`
+	WHERE relation_kind = 1 AND entry_kind IN ('event', 'meeting')
+	GROUP BY entry_key, canonical_id
 ), interactions AS (
 	SELECT p.*,
 	       CASE WHEN p.is_from_me
