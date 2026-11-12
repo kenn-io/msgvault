@@ -139,6 +139,23 @@ func (s *Store) ListPersonIntroductionsContext(ctx context.Context, q PersonIntr
 	if q.Limit < 1 || q.Limit > 100 || q.SourceID < 0 {
 		return page, ErrIntroductionInvalid
 	}
+	var c introductionCursor
+	if q.AfterID != "" {
+		if len(q.AfterID) > base64.RawURLEncoding.EncodedLen(introductionCursorBytes) {
+			return page, ErrIntroductionInvalid
+		}
+		raw, err := base64.RawURLEncoding.DecodeString(q.AfterID)
+		if err != nil || len(raw) > introductionCursorBytes {
+			return page, ErrIntroductionInvalid
+		}
+		decoder := jsontext.NewDecoder(strings.NewReader(string(raw)))
+		if json.UnmarshalDecode(decoder, &c, json.RejectUnknownMembers(true)) != nil {
+			return page, ErrIntroductionInvalid
+		}
+		if _, err := decoder.ReadValue(); !errors.Is(err, io.EOF) || c.Version != 1 || c.ID == "" || c.CreatedAt.IsZero() {
+			return page, ErrIntroductionInvalid
+		}
+	}
 	if allowed != nil && len(allowed) == 0 {
 		return page, nil
 	}
@@ -154,38 +171,12 @@ func (s *Store) ListPersonIntroductionsContext(ctx context.Context, q PersonIntr
 			args = append(args, id)
 		}
 
-		owners, err := s.loopOwnerIdentities(ctx)
-		if err != nil {
-			return page, err
-		}
 		for _, person := range []string{"i.person_a_id", "i.person_b_id"} {
 			query += ` AND EXISTS (` + s.introductionIdentitySQL(person, "s.identifier") + `)`
-			if len(owners.persons) > 400 {
-				query += ` AND NOT EXISTS (SELECT 1 FROM person_participants owner_pp WHERE owner_pp.person_id = ` + person + ` AND owner_pp.participant_id IN (` + s.loopOwnerParticipantsSQL() + `))`
-			} else if len(owners.persons) > 0 {
-				query += ` AND ` + person + ` NOT IN (` + strings.TrimRight(strings.Repeat("?,", len(owners.persons)), ",") + `)`
-				for id := range owners.persons {
-					args = append(args, id)
-				}
-			}
+			query += ` AND NOT EXISTS (SELECT 1 FROM person_participants owner_pp WHERE owner_pp.person_id = ` + person + ` AND owner_pp.participant_id IN (` + s.loopOwnerParticipantsSQL() + `))`
 		}
 	}
 	if q.AfterID != "" {
-		if len(q.AfterID) > base64.RawURLEncoding.EncodedLen(introductionCursorBytes) {
-			return page, ErrIntroductionInvalid
-		}
-		raw, err := base64.RawURLEncoding.DecodeString(q.AfterID)
-		var c introductionCursor
-		if err != nil || len(raw) > introductionCursorBytes {
-			return page, ErrIntroductionInvalid
-		}
-		decoder := jsontext.NewDecoder(strings.NewReader(string(raw)))
-		if json.UnmarshalDecode(decoder, &c, json.RejectUnknownMembers(true)) != nil {
-			return page, ErrIntroductionInvalid
-		}
-		if _, err := decoder.ReadValue(); !errors.Is(err, io.EOF) || c.Version != 1 || c.ID == "" || c.CreatedAt.IsZero() {
-			return page, ErrIntroductionInvalid
-		}
 		var position any = c.CreatedAt
 		if s.IsPostgreSQL() {
 			query += ` AND (i.created_at < ? OR (i.created_at = ? AND i.intro_id < ?))`

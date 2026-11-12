@@ -230,11 +230,20 @@ func TestIntroductionPaginationAndScope(t *testing.T) {
 		`{"version":1,"t":"2026-01-01T00:00:00Z","i":"x","extra":true}`,
 		`{"version":1,"t":"2026-01-01T00:00:00Z","i":"x"} {}`,
 	} {
-		_, err := f.Store.ListPersonIntroductionsContext(ctx, store.PersonIntroductionQuery{AfterID: base64.RawURLEncoding.EncodeToString([]byte(raw))}, nil)
+		for _, allowed := range [][]int64{nil, {}} {
+			_, err := f.Store.ListPersonIntroductionsContext(ctx, store.PersonIntroductionQuery{AfterID: base64.RawURLEncoding.EncodeToString([]byte(raw))}, allowed)
+			req.ErrorIs(err, store.ErrIntroductionInvalid)
+		}
+	}
+	for _, token := range []string{"!", strings.Repeat("a", 4000)} {
+		_, err = f.Store.ListPersonIntroductionsContext(ctx, store.PersonIntroductionQuery{AfterID: token}, []int64{})
 		req.ErrorIs(err, store.ErrIntroductionInvalid)
 	}
-	_, err = f.Store.ListPersonIntroductionsContext(ctx, store.PersonIntroductionQuery{AfterID: strings.Repeat("a", 4000)}, nil)
-	req.ErrorIs(err, store.ErrIntroductionInvalid)
+	valid, err := store.IntroductionCursor(store.PersonIntroduction{IntroID: "x", CreatedAt: time.Now()})
+	req.NoError(err)
+	empty, err = f.Store.ListPersonIntroductionsContext(ctx, store.PersonIntroductionQuery{AfterID: valid}, []int64{})
+	req.NoError(err)
+	check.Empty(empty.Items)
 }
 
 func TestIntroductionPersonDeleteCascades(t *testing.T) {

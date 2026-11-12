@@ -145,6 +145,40 @@ func TestSubsetCompletePersonMergePacket(t *testing.T) {
 	assert.Equal(fixture.sourcePersonID, *alias.SurvivingPersonID)
 }
 
+func TestSubsetOmitsIntroductionDependentMergePacket(t *testing.T) {
+	ctx := t.Context()
+	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
+	source, err := Open(sourcePath)
+	require.NoError(t, err)
+	survivor, _, err := source.CreatePersonFromParticipant(1)
+	require.NoError(t, err)
+	absorbed, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(t, err)
+	third, _, err := source.CreatePersonFromParticipant(3)
+	require.NoError(t, err)
+	account, err := source.GetOrCreateSource("beeper", "subset-intro")
+	require.NoError(t, err)
+	intro, err := source.PreparePersonIntroductionContext(ctx, PersonIntroductionPrepare{SourceID: account.ID, PersonAID: absorbed.ID, PersonBID: third.ID, Title: "Introduction", Body: "Private draft"}, "owner")
+	require.NoError(t, err)
+	merged, err := source.MergePersonsContext(ctx, PersonMergeRequest{SurvivorID: survivor.ID, AbsorbedID: absorbed.ID, ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision, IdempotencyKey: "subset-intro-merge", Actor: "test"})
+	require.NoError(t, err)
+	require.NoError(t, source.Close())
+
+	dir := filepath.Join(t.TempDir(), "subset")
+	result, err := CopySubsetWithOptions(ctx, sourcePath, dir, 4, CopySubsetOptions{IncludeIdentity: true, IncludeProfiles: true, IncludeAttributes: true, IncludeVCardResources: true})
+	require.NoError(t, err)
+	assert.Zero(t, result.PersonMergePackets)
+	assert.Equal(t, int64(1), result.OmittedPersonMergePackets)
+	destination, err := Open(filepath.Join(dir, "msgvault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, destination.Close()) })
+	_, err = destination.GetPersonIntroductionContext(ctx, intro.IntroID)
+	assert.ErrorIs(t, err, ErrIntroductionNotFound)
+	var count int
+	require.NoError(t, destination.DB().QueryRowContext(ctx, destination.Rebind(`SELECT COUNT(*) FROM person_merges WHERE id = ?`), merged.Merge.ID).Scan(&count))
+	assert.Zero(t, count)
+}
+
 func TestSubsetIncludesFullySplitPersonMergePacket(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

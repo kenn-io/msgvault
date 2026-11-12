@@ -10,30 +10,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestIntroductionPreflightScopedIdentity(t *testing.T) {
-	check := assert.New(t)
-	req := require.New(t)
-	f := storetest.New(t)
-	ctx := t.Context()
-	source, err := f.Store.GetOrCreateSource("beeper", "account-a")
-	req.NoError(err)
-	pa := f.EnsureParticipant("a@example.com", "A", "example.com")
-	pb := f.EnsureParticipant("b@example.com", "B", "example.com")
-	a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pa)
-	req.NoError(err)
-	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pb)
-	req.NoError(err)
-	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("account-a", "alice"), pb, beeperidentity.Fallback("account-b", "bob"))
-	req.NoError(err)
-	p, err := f.Store.GetPersonIntroductionPreflightContext(ctx, source.ID, a.ID, b.ID)
-	req.NoError(err)
-	req.Len(p.Members, 1)
-	check.Equal("alice", p.Members[0].UserID)
-	req.Len(p.Blockers, 1)
-	check.Equal("no_identity_on_account", p.Blockers[0].Code)
-	check.Equal(b.ID, p.Blockers[0].PersonID)
-}
-
 func TestIntroductionPreflightAmbiguityAndOwner(t *testing.T) {
 	check := assert.New(t)
 	req := require.New(t)
@@ -101,6 +77,11 @@ func TestIntroductionListPreflightEligibilityParity(t *testing.T) {
 	for _, person := range []int64{b, missing, cross, owner} {
 		pre, err := f.Store.GetPersonIntroductionPreflightContext(ctx, src.ID, a, person)
 		require.NoError(t, err)
+		if person == cross {
+			assert.Contains(t, pre.Blockers, store.IntroductionBlocker{Code: "no_identity_on_account", PersonID: cross})
+			require.Len(t, pre.Members, 1)
+			assert.Equal(t, "parity-a", pre.Members[0].UserID)
+		}
 		row, err := f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a, PersonBID: person}, "owner")
 		require.NoError(t, err)
 		page, err := f.Store.ListPersonIntroductionsContext(ctx, store.PersonIntroductionQuery{}, []int64{src.ID})

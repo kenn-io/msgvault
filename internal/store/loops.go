@@ -410,8 +410,9 @@ func (s *Store) loopOwnerParticipantsSQL() string {
 		JOIN sources src ON src.id = ai.source_id AND src.source_type = 'beeper'
 		JOIN participant_identifiers pi ON pi.identifier_type = 'beeper' AND pi.identifier_value = ` + beeperidentity.FallbackSQL(s.dialect.DriverName(), "src.identifier", "ai.address") + `
 		UNION ALL
-		SELECT m.sender_id FROM messages m JOIN sources src ON src.id = m.source_id
-		WHERE src.source_type = 'beeper' AND m.source_is_from_me = TRUE AND m.sender_id IS NOT NULL`
+		SELECT p.id FROM participants p WHERE EXISTS (
+			SELECT 1 FROM messages m JOIN sources src ON src.id = m.source_id
+			WHERE m.sender_id = p.id AND src.source_type = 'beeper' AND m.source_is_from_me = TRUE)`
 }
 
 // loopOwnerIdentities loads the owners once per request. A participant that

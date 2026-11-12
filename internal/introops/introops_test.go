@@ -73,6 +73,8 @@ func TestDelegatedListContinuesPastScanLimit(t *testing.T) {
 	ctx := t.Context()
 	src, err := f.Store.GetOrCreateSource("beeper", "account")
 	req.NoError(err)
+	other, err := f.Store.GetOrCreateSource("beeper", "other")
+	req.NoError(err)
 	pa := f.EnsureParticipant("scan-a@example.test", "A", "example.test")
 	pb := f.EnsureParticipant("scan-b@example.test", "B", "example.test")
 	pc := f.EnsureParticipant("scan-hidden@example.test", "C", "example.test")
@@ -84,10 +86,14 @@ func TestDelegatedListContinuesPastScanLimit(t *testing.T) {
 	req.NoError(err)
 	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("account", "a"), pb, beeperidentity.Fallback("account", "b"))
 	req.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("other", "a"), pb, beeperidentity.Fallback("other", "b"))
+	req.NoError(err)
 	svc := introops.Service{Store: f.Store}
 	in := store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID}
 	g := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{Type: "beeper", Identifier: "account"}}}
 	empty, err := svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
+	req.NoError(err)
+	_, err = svc.Prepare(ctx, nil, store.PersonIntroductionPrepare{SourceID: other.ID, PersonAID: a.ID, PersonBID: b.ID})
 	req.NoError(err)
 	in.PersonBID = c.ID
 	for range 101 {
@@ -153,38 +159,6 @@ func TestDelegatedListContinuesPastScanLimit(t *testing.T) {
 		cursor = page.NextAfterID
 	}
 	assert.Len(t, seen, 104)
-}
-
-func TestListFiltersSourcesBeforePagination(t *testing.T) {
-	check := assert.New(t)
-	req := require.New(t)
-	f := storetest.New(t)
-	ctx := t.Context()
-	allowed, err := f.Store.GetOrCreateSource("beeper", "allowed")
-	req.NoError(err)
-	other, err := f.Store.GetOrCreateSource("beeper", "other")
-	req.NoError(err)
-	pa := f.EnsureParticipant("list-a@example.com", "A", "example.com")
-	pb := f.EnsureParticipant("list-b@example.com", "B", "example.com")
-	a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pa)
-	req.NoError(err)
-	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pb)
-	req.NoError(err)
-	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("allowed", "a"), pb, beeperidentity.Fallback("allowed", "b"))
-	req.NoError(err)
-	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("other", "a"), pb, beeperidentity.Fallback("other", "b"))
-	req.NoError(err)
-	for _, id := range []int64{allowed.ID, other.ID} {
-		_, err = f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: id, PersonAID: a.ID, PersonBID: b.ID, Body: "hidden"}, "owner")
-		req.NoError(err)
-	}
-	g := &agentgrant.Grant{ID: "reader", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{ID: allowed.ID, Type: "beeper", Identifier: "allowed"}}}
-	svc := introops.Service{Store: f.Store}
-	first, err := svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
-	req.NoError(err)
-	req.Len(first.Items, 1)
-	check.Equal(allowed.ID, first.Items[0].SourceID)
-	check.False(first.HasMore)
 }
 
 func TestPrepareRejectsNonpositiveSourceID(t *testing.T) {
