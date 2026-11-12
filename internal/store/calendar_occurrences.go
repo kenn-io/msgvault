@@ -143,7 +143,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 					report(exception.MessageID, "exception original type differs from series and event bounds are missing")
 				}
 			}
-			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining, boundary)
+			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining)
 			remaining -= count
 			if err != nil {
 				return page, err
@@ -232,24 +232,6 @@ func calendarKeepBeforeBoundary(o calrecur.Occurrence, byID map[int64]CalendarEv
 	return calendarIdentityBefore(original, boundary)
 }
 
-// calendarExpansionEnd stops generation at the range boundary; callers drop later occurrences by original start.
-func calendarExpansionEnd(zone *time.Location, upper time.Time, boundary *calrecur.Identity) time.Time {
-	if boundary == nil {
-		return upper
-	}
-	cutoff := boundary.Instant
-	if boundary.AllDay {
-		var err error
-		if cutoff, _, err = calrecur.CivilDateBoundary(boundary.Date, zone); err != nil {
-			return upper
-		}
-	}
-	if cutoff.Before(upper) {
-		return cutoff
-	}
-	return upper
-}
-
 func calendarRangeBoundary(master calevent.Event, exceptions []CalendarEventRow) (*calrecur.Identity, int64) {
 	var boundary *calrecur.Identity
 	var id int64
@@ -279,7 +261,7 @@ func calendarMissingBoundsReason(event calevent.Event) string {
 }
 
 // Resolve archived exceptions once, then suppress their original generated instances.
-func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRows []CalendarEventRow, from, to time.Time, remaining int, boundary *calrecur.Identity) ([]calrecur.Occurrence, int, string, error) {
+func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRows []CalendarEventRow, from, to time.Time, remaining int) ([]calrecur.Occurrence, int, string, error) {
 	set, duration, days, prepareErr := prepareCalendarRecurrence(row.Event)
 	var prepared *calrecur.Set
 	if prepareErr == nil {
@@ -300,13 +282,7 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 	if remaining <= 0 {
 		return resolved, 0, requestLimit, nil
 	}
-	end := calendarExpansionEnd(set.Zone, to.Add(calendarCandidateMargin), boundary)
-	start := from.Add(-calendarCandidateMargin)
-	if !start.Before(end) {
-		// Keep long occurrences crossing the cutoff; the caller filters the query window.
-		start = end.Add(-time.Nanosecond)
-	}
-	occurrences, count, err := calrecur.Expand(ctx, set, duration, days, start, end, min(remaining, calrecur.SeriesReadBudget))
+	occurrences, count, err := calrecur.Expand(ctx, set, duration, days, from.Add(-calendarCandidateMargin), to.Add(calendarCandidateMargin), min(remaining, calrecur.SeriesReadBudget))
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, count, "", ctx.Err()
