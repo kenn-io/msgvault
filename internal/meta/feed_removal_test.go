@@ -3,6 +3,7 @@ package meta
 import (
 	"database/sql"
 	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -125,6 +126,40 @@ func TestWebhookRemovalOfPendingComment(t *testing.T) {
 	}
 }
 
+// A removal whose post ID is missing or invalid is rejected before it prunes
+// the paused sync, so the resumed sync still archives the comment Graph lists.
+func TestWebhookInvalidRemovalLeavesPausedSyncAlone(t *testing.T) {
+	for _, postID := range []string{"", "100/200"} {
+		t.Run("post_id "+strconv.Quote(postID), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, f, imp, src := setupImport(t)
+			f.comments["100_200"] = []Object{*comment("100_201", "100_200", "First comment"), *comment("100_203", "100_200", "Second comment")}
+			sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 3})
+			require.NoError(err)
+			require.True(sum.Partial)
+			require.Equal([]string{"100_200: 100_203", "100_201:"}, savedFrames(t, st, src))
+			runs := syncRuns(t, st, src)
+			saved, err := st.GetLatestCheckpointedSyncContext(t.Context(), src.ID)
+			require.NoError(err)
+
+			client, ok := imp.api.(*Client)
+			require.True(ok)
+			removal := `{"item":"comment","verb":"remove","post_id":"` + postID + `","comment_id":"100_203"}`
+			require.ErrorIs(ApplyFeed(t.Context(), st, client, "9", "100", feedValues(removal)), ErrInvalidChange)
+
+			assert.Equal(runs, syncRuns(t, st, src), "no run was recorded")
+			after, err := st.GetLatestCheckpointedSyncContext(t.Context(), src.ID)
+			require.NoError(err)
+			assert.Equal(saved.ID, after.ID)
+			assert.Equal(saved.CursorBefore.String, after.CursorBefore.String, "the saved checkpoint is unchanged")
+			sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.NoError(err)
+			assert.False(sum.Partial)
+			message(t, st, src.ID, "100_203")
+		})
+	}
+}
+
 // Removing a post marks only the post deleted, but reading its comments fails
 // once it is gone, so the paused sync's traversal inside it is dropped.
 func TestWebhookPostRemovalPrunesPausedSyncInsidePost(t *testing.T) {
@@ -184,9 +219,10 @@ func TestWebhookRunsKeepPausedPollingProgress(t *testing.T) {
 	require.NoError(ApplyFeed(t.Context(), st, client, "9", "100", feedValues(
 		`{"item":"comment","verb":"edited","post_id":"100_200","comment_id":"402"}`)))
 
+	// The removal saves the pruned progress before its webhook run starts.
 	assert.Equal([]string{
-		src.SourceType + " paused", WebhookSyncType + " completed",
-		src.SourceType + " paused", WebhookSyncType + " completed",
+		src.SourceType + " paused", src.SourceType + " paused",
+		WebhookSyncType + " completed", WebhookSyncType + " completed",
 	}, syncRuns(t, st, src))
 	assert.Equal([]string{"100_200: 402"}, savedFrames(t, st, src), "the latest paused run holds the pruned progress")
 
@@ -227,10 +263,11 @@ func TestWebhookPostRemovalPrunesQueuedPost(t *testing.T) {
 	assert.Contains(ids, "100_400")
 }
 
-// A retried removal finds the replies already marked by the attempt whose
-// prune did not happen. It still prunes them, including a declared descendant
-// whose frame sits in the stack without its parent's frame, so the resume
-// after `msgvault gc` does not read their replies.
+// A removal can find the replies already marked, for example by a `comment
+// moderate --delete` whose prune did not happen. It still prunes them,
+// including a declared descendant whose frame sits in the stack without its
+// parent's frame, so the resume after `msgvault gc` does not read their
+// replies.
 func TestWebhookRetriedRemovalPrunesMarkedDescendants(t *testing.T) {
 	require := require.New(t)
 	st, f, imp, src := setupImport(t)
@@ -248,4 +285,52 @@ func TestWebhookRetriedRemovalPrunesMarkedDescendants(t *testing.T) {
 	assert.Equal(t, []string{"100_200:"}, savedFrames(t, st, src))
 	purgeDeleted(t, st, 2)
 	assertDeclaredThreadGone(t, st, f, imp, src, "100_201", "100_202")
+}
+
+// collectGarbage runs `msgvault gc`, whatever it finds to purge.
+func collectGarbage(t *testing.T, st *store.Store) {
+	t.Helper()
+	plan, err := st.PlanGCContext(t.Context())
+	require.NoError(t, err)
+	_, err = st.ExecuteGCContext(t.Context(), plan)
+	require.NoError(t, err)
+}
+
+// A removal that fails between two of its durable steps, followed by
+// `msgvault gc` before the delivery is retried, still leaves the resumed sync
+// nothing to read under the removed thread. The saved traversal has frames for
+// the post and the declared child 100_202, none for 100_201, so only the
+// archive links 100_202 to the removed comment until the prune is published.
+func TestWebhookRemovalFailureThenGCThenRetry(t *testing.T) {
+	for _, tt := range []struct{ name, trigger string }{
+		{"the checkpoint write fails", `CREATE TRIGGER fail_removal BEFORE INSERT ON sync_runs
+			WHEN NEW.sync_type = '` + SourceType + `'
+			BEGIN SELECT RAISE(ABORT, 'injected checkpoint failure'); END`},
+		{"the mark fails", `CREATE TRIGGER fail_removal BEFORE UPDATE OF deleted_from_source_at ON messages
+			WHEN NEW.deleted_from_source_at IS NOT NULL
+			BEGIN SELECT RAISE(ABORT, 'injected mark failure'); END`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			st, f, imp, src := setupImport(t)
+			f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Parent comment"), *comment("100_202", "100_201", "Declared child")}
+			sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 4})
+			require.NoError(err)
+			require.True(sum.Partial)
+			require.Equal([]string{"100_200:", "100_202:"}, savedFrames(t, st, src))
+			_, err = st.DB().ExecContext(t.Context(), tt.trigger)
+			require.NoError(err)
+
+			client, ok := imp.api.(*Client)
+			require.True(ok)
+			removal := feedValues(`{"item":"comment","verb":"remove","post_id":"100_200","comment_id":"100_201"}`)
+			require.ErrorContains(ApplyFeed(t.Context(), st, client, "9", "100", removal), "injected")
+			_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_removal`)
+			require.NoError(err)
+			collectGarbage(t, st)
+			applyRemoval(t, st, imp, "comment", "100_201")
+			collectGarbage(t, st)
+			assertDeclaredThreadGone(t, st, f, imp, src, "100_201", "100_202")
+		})
+	}
 }

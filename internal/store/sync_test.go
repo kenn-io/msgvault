@@ -228,16 +228,18 @@ func TestLastSuccessfulSyncLookupUsesCompletedIndex(t *testing.T) {
 	req.NoError(err)
 
 	for _, tc := range []struct {
-		name string
-		args []any
+		name   string
+		typeOp string
+		args   []any
 	}{
 		{name: "any type", args: []any{f.Source.ID}},
-		{name: "by type", args: []any{f.Source.ID, "incremental"}},
+		{name: "by type", typeOp: "=", args: []any{f.Source.ID, "incremental"}},
+		{name: "excluding type", typeOp: "<>", args: []any{f.Source.ID, "webhook"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			query := store.LastSuccessfulSyncQueryForTest(len(tc.args) > 1)
+			query := store.LastSuccessfulSyncQueryForTest(tc.typeOp)
 			rows, err := f.Store.DB().QueryContext(t.Context(), `EXPLAIN QUERY PLAN `+query, tc.args...)
 			require.NoError(err)
 			defer func() { _ = rows.Close() }()
@@ -254,6 +256,54 @@ func TestLastSuccessfulSyncLookupUsesCompletedIndex(t *testing.T) {
 			assert.NotContains(joined, "TEMP B-TREE")
 		})
 	}
+}
+
+// TestStore_SyncRunsExcludingType checks that the excluding reads skip runs of
+// one type while the plain reads still see every run.
+func TestStore_SyncRunsExcludingType(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("facebook_comments", "app:1:page:2")
+	require.NoError(err)
+
+	run := func(syncType string, complete bool) int64 {
+		t.Helper()
+		id, err := st.StartSyncContext(ctx, src.ID, syncType)
+		require.NoError(err)
+		if complete {
+			require.NoError(st.CompleteSyncContext(ctx, id, ""))
+		} else {
+			require.NoError(st.FailSyncContext(ctx, id, "synthetic failure"))
+		}
+		return id
+	}
+	_, err = st.GetLatestSyncExcludingTypeContext(ctx, src.ID, "webhook")
+	require.ErrorIs(err, store.ErrSyncRunNotFound)
+	run("webhook", true)
+	_, err = st.GetLatestSyncExcludingTypeContext(ctx, src.ID, "webhook")
+	require.ErrorIs(err, store.ErrSyncRunNotFound, "only a webhook run exists")
+	_, err = st.GetLastSuccessfulSyncExcludingTypeContext(ctx, src.ID, "webhook")
+	require.ErrorIs(err, store.ErrSyncRunNotFound, "only a webhook run exists")
+
+	succeeded := run("incremental", true)
+	failed := run("incremental", false)
+	webhook := run("webhook", true)
+
+	latest, err := st.GetLatestSyncExcludingTypeContext(ctx, src.ID, "webhook")
+	require.NoError(err)
+	assert.Equal(failed, latest.ID)
+	lastSuccessful, err := st.GetLastSuccessfulSyncExcludingTypeContext(ctx, src.ID, "webhook")
+	require.NoError(err)
+	assert.Equal(succeeded, lastSuccessful.ID)
+
+	latest, err = st.GetLatestSyncContext(ctx, src.ID, 0)
+	require.NoError(err)
+	assert.Equal(webhook, latest.ID)
+	lastSuccessful, err = st.GetLastSuccessfulSyncContext(ctx, src.ID)
+	require.NoError(err)
+	assert.Equal(webhook, lastSuccessful.ID)
 }
 
 func TestStore_StartSyncRejectsConcurrentRun(t *testing.T) {
