@@ -205,7 +205,7 @@ func TestMeetingOccurrenceJournalTriggersAfterSchema42Upgrade(t *testing.T) {
 		DROP TRIGGER trg_cache_meeting_events_delete;
 		DROP TRIGGER trg_cache_meeting_details_update;
 		DROP TABLE meeting_link_decisions;
-		UPDATE archive_metadata SET value = '42' WHERE key = 'schema_version'`)
+		UPDATE archive_metadata SET value = '44' WHERE key = 'schema_version'`)
 	require.NoError(t, err)
 	require.NoError(t, s.InitSchemaUnlessCurrentContext(ctx))
 	version, err := s.SchemaVersionContext(ctx)
