@@ -142,16 +142,17 @@ func ModerateComment(ctx context.Context, st *store.Store, client *Client, targe
 }
 
 // dropDeletedTraversal republishes a paused sync's saved traversal without the
-// deleted comment and its replies. It prunes now, so a later `msgvault gc`
-// cannot matter, and by the Meta IDs of the deleted comment and the archived
-// replies marked with it, so it does not depend on the archive rows.
-func dropDeletedTraversal(ctx context.Context, st *store.Store, execution *store.SyncExecution, source *store.Source, commentIDs []string) error {
+// deleted comments and posts and the replies below them. It prunes now, so a
+// later `msgvault gc` cannot matter, and by the Meta IDs of the deleted objects
+// and the archived replies marked with them, so it does not depend on the
+// archive rows.
+func dropDeletedTraversal(ctx context.Context, st *store.Store, execution *store.SyncExecution, source *store.Source, ids []string) error {
 	state, err := loadState(ctx, st, source, false)
 	if err != nil {
 		return err
 	}
 	run := &importRun{state: state, sum: &ImportSummary{}}
-	changed, err := run.dropDeletedFrames(func(id string) (bool, error) { return slices.Contains(commentIDs, id), nil })
+	changed, err := run.dropDeletedFrames(func(id string) (bool, error) { return slices.Contains(ids, id), nil })
 	if err != nil || !changed {
 		return err
 	}

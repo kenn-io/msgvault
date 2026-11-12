@@ -135,6 +135,9 @@ type importRun struct {
 	sum         *ImportSummary
 	maxRequests int
 	syncID      int64
+	// removed lists the Meta IDs a webhook run removed, for pruning a paused
+	// sync's saved traversal once the run is finished.
+	removed []string
 }
 
 func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOptions) (sum *ImportSummary, retErr error) {
@@ -213,12 +216,12 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 	return sum, phaseErr
 }
 
-// dropDeletedFrames removes saved traversal of comments deleted through
-// msgvault since the checkpoint was saved: frames reading their replies and
+// dropDeletedFrames removes saved traversal of comments and posts deleted
+// since the checkpoint was saved: frames reading their comments or replies and
 // saved copies still waiting to be archived, including those that declare a
 // deleted or dropped parent. Meta has no replies left to read
 // there, so asking would fail on every run. The run holds the source lock, so
-// no comment is deleted while it traverses. It reports whether it dropped
+// nothing is deleted while it traverses. It reports whether it dropped
 // anything.
 func (r *importRun) dropDeletedFrames(deleted func(id string) (bool, error)) (bool, error) {
 	changed := false
@@ -228,23 +231,23 @@ func (r *importRun) dropDeletedFrames(deleted func(id string) (bool, error)) (bo
 		for _, p := range r.state.Phases {
 			for i := range p.Stack {
 				f := &p.Stack[i]
-				if f.Parent != f.Root {
-					gone, err := deleted(f.Parent)
-					if err != nil {
-						return changed, err
-					}
-					if gone {
-						for _, cut := range p.Stack[i:] {
-							for _, child := range cut.Pending {
-								dropped[child.ID] = true
-							}
+				// A post's own frame is the bottom of its stack, so a deleted
+				// post drops the whole stack.
+				gone, err := deleted(f.Parent)
+				if err != nil {
+					return changed, err
+				}
+				if gone {
+					for _, cut := range p.Stack[i:] {
+						for _, child := range cut.Pending {
+							dropped[child.ID] = true
 						}
-						// Each frame's comment was already taken from the frame
-						// below, so cutting here loses only its own subtree.
-						p.Stack = p.Stack[:i]
-						changed, more = true, true
-						break
 					}
+					// Each frame's comment was already taken from the frame
+					// below, so cutting here loses only its own subtree.
+					p.Stack = p.Stack[:i]
+					changed, more = true, true
+					break
 				}
 				// A new slice keeps the saved list intact if a lookup fails.
 				pending := make([]Object, 0, len(f.Pending))
