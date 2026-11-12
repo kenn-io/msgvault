@@ -23,7 +23,7 @@ func (w *MediaSubmitter) readVoiceTranscripts(ctx context.Context) error {
 		readCtx, cancel := context.WithTimeout(ctx, w.actionTimeout)
 		transcript, err := w.transcriptClient.Transcript(readCtx, mapping.DocbankSourceID, mapping.SourceVersionID, mapping.ContentVersionID)
 		cancel()
-		if err == nil && transcript.VaultUID == mapping.VaultUID && transcript.EvidenceState == "ready" && transcript.CoverageState == "transcribed" {
+		if err == nil && transcript.VaultUID == mapping.VaultUID && transcript.EvidenceState == "ready" {
 			text := generatedVoiceText(transcript)
 			evidence, err := w.candidateEvidence(ctx, archiveUID, mapping.AttachmentID)
 			if err != nil {
