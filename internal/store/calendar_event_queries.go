@@ -298,32 +298,29 @@ func calendarExceptionWindow(dialect Dialect, lower, upper time.Time) (string, [
 }
 
 // Only sparse cancellations inherit omitted details from the master.
-func inheritCalendarCancellation(ctx context.Context, r SQLReader, dialect Dialect, row, master CalendarEventRow) (CalendarEventRow, error) {
+func calendarEventRawFields(ctx context.Context, r SQLReader, dialect Dialect, id int64) (map[string]any, error) {
 	var encoded string
 	var compression sql.NullString
 	blob := `hex(raw_data)`
 	if dialect.DriverName() == postgresDriverName {
 		blob = `encode(raw_data, 'hex')`
 	}
-	if err := r.QueryRowContext(ctx, `SELECT `+blob+`, compression FROM message_raw WHERE message_id = ?`, row.MessageID).Scan(&encoded, &compression); err != nil {
-		return row, fmt.Errorf("read cancellation evidence: %w", err)
+	if err := r.QueryRowContext(ctx, `SELECT `+blob+`, compression FROM message_raw WHERE message_id = ?`, id).Scan(&encoded, &compression); err != nil {
+		return nil, fmt.Errorf("read calendar evidence: %w", err)
 	}
 	stored, err := hex.DecodeString(encoded)
 	if err != nil {
-		return row, fmt.Errorf("decode cancellation bytes: %w", err)
+		return nil, fmt.Errorf("decode calendar bytes: %w", err)
 	}
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
 	if err != nil {
-		return row, err
+		return nil, err
 	}
 	var fields map[string]any
 	if err := json.Unmarshal(raw, &fields); err != nil {
-		return row, fmt.Errorf("decode cancellation evidence: %w", err)
+		return nil, fmt.Errorf("decode calendar evidence: %w", err)
 	}
-	if fields["start"] != nil || fields["end"] != nil {
-		return row, nil
-	}
-	return inheritSparseCalendarCancellation(row, master, fields), nil
+	return fields, nil
 }
 
 func inheritSparseCalendarCancellation(row, master CalendarEventRow, fields map[string]any) CalendarEventRow {

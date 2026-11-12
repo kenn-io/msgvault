@@ -204,7 +204,6 @@ func TestMeetingOccurrenceJournalTriggersAfterSchema42Upgrade(t *testing.T) {
 		DROP TRIGGER trg_cache_meeting_events_update;
 		DROP TRIGGER trg_cache_meeting_events_delete;
 		DROP TRIGGER trg_cache_meeting_details_update;
-		DROP TABLE meeting_link_decision_dependencies;
 		DROP TABLE meeting_link_decisions;
 		UPDATE archive_metadata SET value = '42' WHERE key = 'schema_version'`)
 	require.NoError(t, err)
@@ -228,11 +227,11 @@ func TestMeetingOccurrenceJournalTriggersAfterSchema42Upgrade(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.DB().ExecContext(ctx, `UPDATE meeting_details SET content_json='{"transcript":{"state":"available","text":"Notes"}}', transcript_state='available' WHERE message_id=?`, second)
 	require.NoError(t, err)
-	_, err = s.DB().ExecContext(ctx, `INSERT INTO meeting_link_decisions (left_message_id, left_kind, left_key, left_anchor, right_message_id, right_kind, right_key, right_anchor, decision, choice_key) VALUES (?, 'evt', '', '', ?, 'msg', '', '', 'link', 'choice')`, first, second)
+	_, err = s.DB().ExecContext(ctx, `INSERT INTO meeting_link_decisions (left_message_id, left_kind, left_key, right_message_id, right_kind, right_key, decision) VALUES (?, 'evt', '', ?, 'msg', '', 'link')`, first, second)
 	require.NoError(t, err)
-	_, err = s.DB().ExecContext(ctx, `UPDATE meeting_link_decisions SET decision='split' WHERE choice_key='choice'`)
+	_, err = s.DB().ExecContext(ctx, `UPDATE meeting_link_decisions SET decision='split' WHERE left_message_id=? AND right_message_id=?`, first, second)
 	require.NoError(t, err)
-	_, err = s.DB().ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE choice_key='choice'`)
+	_, err = s.DB().ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE left_message_id=? AND right_message_id=?`, first, second)
 	require.NoError(t, err)
 	var changes int
 	require.NoError(t, s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset='meeting_occurrences' AND message_id=0`, baseline).Scan(&changes))

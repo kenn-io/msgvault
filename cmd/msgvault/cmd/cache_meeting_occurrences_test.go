@@ -145,6 +145,54 @@ func TestMeetingCountsCalendarHistoryAndAvailableTranscripts(t *testing.T) {
 	assert.True(t, found)
 }
 
+func TestMeetingCountsEditedOccurrenceWithOmittedAttendees(t *testing.T) {
+	for _, csv := range []bool{false, true} {
+		t.Run(fmt.Sprintf("csv-%t", csv), func(t *testing.T) {
+			if csv {
+				t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+			}
+			dir := t.TempDir()
+			dbPath, analytics := filepath.Join(dir, "archive.db"), filepath.Join(dir, "analytics")
+			st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+			source, err := st.GetOrCreateSource("gcal", "owner@example.com")
+			require.NoError(t, err)
+			require.NoError(t, st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
+			owner, err := st.EnsureParticipant("owner@example.com", "Owner", "example.com")
+			require.NoError(t, err)
+			person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
+			require.NoError(t, err)
+			persist := func(key, raw string) *store.MessagePersistData {
+				data := &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: key, MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2024, 1, 2, 10, 0, 0, 0, time.UTC), Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"}, RawMIME: []byte(raw), RawFormat: "gcal_json"}
+				id, err := st.PersistMessage(data)
+				require.NoError(t, err)
+				require.NoError(t, st.ReplaceMessageRecipients(id, "from", []int64{owner}, []string{""}))
+				require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
+				return data
+			}
+			persist("series", `{"id":"series","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"attendees":[{"email":"person@example.com","responseStatus":"accepted"}],"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+			edit := persist("edit", `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2024-01-09T10:00:00Z"},"start":{"dateTime":"2024-01-09T10:00:00Z"},"end":{"dateTime":"2024-01-09T11:00:00Z"},"attendeesOmitted":true}`)
+			_, err = buildCache(t.Context(), dbPath, analytics, true)
+			require.NoError(t, err)
+			count := func() int64 {
+				engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, engine.Close()) }()
+				row, err := engine.GetPerson(t.Context(), person, query.Context{}, nil)
+				require.NoError(t, err)
+				require.NotNil(t, row)
+				return row.MeetingCount
+			}
+			assert.EqualValues(t, 2, count())
+			edit.RawMIME = []byte(`{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2024-01-09T10:00:00Z"},"start":{"dateTime":"2024-01-09T10:00:00Z"},"end":{"dateTime":"2024-01-09T11:00:00Z"},"attendeesOmitted":false}`)
+			_, err = st.PersistMessage(edit)
+			require.NoError(t, err)
+			_, err = buildCache(t.Context(), dbPath, analytics, false)
+			require.NoError(t, err)
+			assert.EqualValues(t, 1, count())
+		})
+	}
+}
+
 func TestMeetingCountsRefresh(t *testing.T) {
 	dir := t.TempDir()
 	dbPath, analytics := filepath.Join(dir, "archive.db"), filepath.Join(dir, "analytics")

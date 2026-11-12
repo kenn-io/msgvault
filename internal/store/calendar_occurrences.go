@@ -111,14 +111,16 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 		effective := row
 		if o.HasException {
 			effective = byID[o.ExceptionRef]
+			fields, readErr := calendarEventRawFields(ctx, s.meetingSQLReader(ctx), s.dialect, effective.MessageID)
+			if readErr != nil {
+				return readErr
+			}
+			effective.Event.AttendeesOmitted, _ = fields["attendeesOmitted"].(bool)
 			if effective.Event.ICalUID == "" {
 				effective.Event.ICalUID = row.Event.ICalUID
 			}
-			if effective.Event.Status == "cancelled" {
-				effective, err = inheritCalendarCancellation(ctx, s.meetingSQLReader(ctx), s.dialect, effective, row)
-				if err != nil {
-					return err
-				}
+			if effective.Event.Status == "cancelled" && fields["start"] == nil && fields["end"] == nil {
+				effective = inheritSparseCalendarCancellation(effective, row, fields)
 			}
 		}
 		if row.Event.Status == "cancelled" {

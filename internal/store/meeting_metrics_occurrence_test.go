@@ -271,6 +271,39 @@ func TestMeetingMetricsExcludeDeclinedPerson(t *testing.T) {
 	assert.EqualValues(t, 1, domainScope.Totals.MeetingCount)
 }
 
+func TestMeetingMetricsEditedOccurrenceWithOmittedAttendees(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "series", `{"id":"series","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"attendees":[{"email":"person@example.com","responseStatus":"accepted"}],"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+	edit, _ := calendarFixture(t, st, "edited", `{"id":"edited","recurringEventId":"series","originalStartTime":{"dateTime":"2024-01-09T10:00:00Z"},"start":{"dateTime":"2024-01-09T10:00:00Z"},"end":{"dateTime":"2024-01-09T11:00:00Z"},"attendeesOmitted":true}`)
+	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
+	require.NoError(t, err)
+	require.NoError(t, st.ReplaceMessageRecipients(master, "to", []int64{person}, []string{""}))
+	metrics, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{ParticipantIDs: []int64{person}})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, metrics.Totals.MeetingCount)
+	var before int64
+	if !st.IsPostgreSQL() {
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&before))
+	}
+	edit.RawMIME = []byte(`{"id":"edited","recurringEventId":"series","originalStartTime":{"dateTime":"2024-01-09T10:00:00Z"},"start":{"dateTime":"2024-01-09T10:00:00Z"},"end":{"dateTime":"2024-01-09T11:00:00Z"},"attendeesOmitted":false}`)
+	_, err = st.PersistMessage(edit)
+	require.NoError(t, err)
+	metrics, err = st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{ParticipantIDs: []int64{person}})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, metrics.Totals.MeetingCount)
+	if !st.IsPostgreSQL() {
+		var changes int
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset='meeting_occurrences'`, before).Scan(&changes))
+		assert.Positive(t, changes)
+	}
+	edit.RawMIME = []byte(`{"id":"edited","recurringEventId":"series","originalStartTime":{"dateTime":"2024-01-09T10:00:00Z"},"start":{"dateTime":"2024-01-09T10:00:00Z"},"end":{"dateTime":"2024-01-09T11:00:00Z"},"attendeesOmitted":true,"attendees":[{"email":"person@example.com","responseStatus":"declined"}]}`)
+	_, err = st.PersistMessage(edit)
+	require.NoError(t, err)
+	metrics, err = st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{ParticipantIDs: []int64{person}})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, metrics.Totals.MeetingCount)
+}
+
 func TestMeetingOccurrenceFutureLinkedNote(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

@@ -82,6 +82,7 @@ type wireEvent struct {
 	ICalUID           string             `json:"iCalUID"`
 	Sequence          int                `json:"sequence"`
 	Attendees         []wireAttendee     `json:"attendees"`
+	AttendeesOmitted  bool               `json:"attendeesOmitted"`
 	Transparency      string             `json:"transparency"`
 	Visibility        string             `json:"visibility"`
 	EventType         string             `json:"eventType"`
@@ -119,6 +120,7 @@ func (w wireEvent) toEvent() Event {
 		OriginalStartTime: w.OriginalStartTime.toEventDateTime(),
 		ICalUID:           w.ICalUID,
 		Sequence:          w.Sequence,
+		AttendeesOmitted:  w.AttendeesOmitted,
 		Transparency:      w.Transparency,
 		Visibility:        w.Visibility,
 		EventType:         w.EventType,

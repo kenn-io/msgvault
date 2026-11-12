@@ -531,7 +531,7 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 				email := strings.ToLower(strings.TrimSpace(attendee.Email))
 				declined[email] = true
 			}
-			if event.SeriesMessageID != 0 && event.MessageID != event.SeriesMessageID {
+			if event.SeriesMessageID != 0 && event.MessageID != event.SeriesMessageID && !event.row.Event.AttendeesOmitted {
 				for _, email := range seriesAttendees[event.SeriesMessageID] {
 					if !currentAttendees[email] {
 						declined[email] = true

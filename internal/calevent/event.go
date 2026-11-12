@@ -40,6 +40,7 @@ type Event struct {
 	EventTimeZone, CalendarTimeZone         string
 	Recurrence                              []string
 	Attendees                               []Attendee
+	AttendeesOmitted                        bool
 }
 
 // Decode reads a provider snapshot with the source calendar's time zone.
