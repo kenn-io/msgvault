@@ -487,6 +487,36 @@ func TestNativeRespectsConfiguredTargetLimitAfterRestart(t *testing.T) {
 }
 
 func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
+	type stateSnapshot struct {
+		catalog          []byte
+		positions        map[string]string
+		credential       []byte
+		credentialExists bool
+	}
+	snapshot := func(t *testing.T, st *store.Store, tokens string) stateSnapshot {
+		t.Helper()
+		var state stateSnapshot
+		var err error
+		state.catalog, err = st.LoadMCPEventsCatalog(t.Context())
+		require.NoError(t, err)
+		state.positions = make(map[string]string)
+		rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT key, value FROM archive_metadata WHERE key LIKE ?`), "mcpevents:v1:pos:%")
+		require.NoError(t, err)
+		defer rows.Close()
+		for rows.Next() {
+			var key, value string
+			require.NoError(t, rows.Scan(&key, &value))
+			state.positions[key] = value
+		}
+		require.NoError(t, rows.Err())
+		state.credential, err = os.ReadFile(filepath.Join(tokens, providercredentials.EventsFilename))
+		if os.IsNotExist(err) {
+			return state
+		}
+		require.NoError(t, err)
+		state.credentialExists = true
+		return state
+	}
 	for _, tc := range []struct {
 		name string
 		run  func(*testing.T)
@@ -501,7 +531,9 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			now := time.Now().UTC()
 			service := Service{Store: st, TokensDir: tokens, Enabled: true, Now: func() time.Time { return now }}
 			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+			before := snapshot(t, st, tokens)
 			_, err := service.Subscribe(t.Context(), in, acceptCallback)
+			assert.Equal(before, snapshot(t, st, tokens))
 			var eventErr *Error
 			require.ErrorAs(err, &eventErr)
 			assert.Equal("credential_unavailable", eventErr.Reason)
@@ -522,7 +554,9 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			require.NoError(os.Remove(lock))
 			require.NoError(os.Mkdir(lock, 0700))
 			now = now.Add(time.Hour)
+			before = snapshot(t, st, tokens)
 			_, err = service.Subscribe(t.Context(), in, acceptCallback)
+			assert.Equal(before, snapshot(t, st, tokens))
 			require.ErrorAs(err, &eventErr)
 			assert.Equal("credential_unavailable", eventErr.Reason)
 			entries, _, err = service.catalog(t.Context())
@@ -557,7 +591,9 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			path := filepath.Join(service.TokensDir, providercredentials.EventsFilename)
 			credential, err := os.ReadFile(path)
 			requirements.NoError(err)
+			beforeState := snapshot(t, st, service.TokensDir)
 			_, err = service.Subscribe(t.Context(), in, acceptCallback)
+			assertions.Equal(beforeState, snapshot(t, st, service.TokensDir))
 			var eventErr *Error
 			requirements.ErrorAs(err, &eventErr)
 			assertions.Equal(Unavailable, eventErr.Code)
@@ -597,7 +633,9 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 					credential, err := os.ReadFile(credentialPath)
 					requirements.NoError(err)
 					now = now.Add(time.Hour)
+					beforeState := snapshot(t, st, service.TokensDir)
 					_, err = service.Subscribe(t.Context(), in, acceptCallback)
+					assertions.Equal(beforeState, snapshot(t, st, service.TokensDir))
 					var eventErr *Error
 					requirements.ErrorAs(err, &eventErr)
 					assertions.Equal("store_unavailable", eventErr.Reason)
@@ -642,7 +680,9 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			now = now.Add(time.Hour)
 			for _, endpoint := range []string{"https://example.com/one", "https://example.com/two"} {
 				in.Delivery.URL = endpoint
+				beforeState := snapshot(t, st, service.TokensDir)
 				_, err = service.Subscribe(t.Context(), in, acceptCallback)
+				assert.Equal(beforeState, snapshot(t, st, service.TokensDir))
 				var eventErr *Error
 				require.ErrorAs(err, &eventErr)
 				assert.Equal("credential_unavailable", eventErr.Reason)
@@ -679,7 +719,9 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 				}
 				return nil
 			}
+			beforeState := snapshot(t, st, tokens)
 			_, err := service.Subscribe(t.Context(), in, verify)
+			assertions.Equal(beforeState, snapshot(t, st, tokens))
 			var callbackErr *Error
 			requirements.ErrorAs(err, &callbackErr)
 			assertions.Equal(CallbackEndpoint, callbackErr.Code)
@@ -709,14 +751,18 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			verify := func(context.Context, string, string, []byte) error { calls++; return nil }
 			bad := in
 			bad.Arguments.SourceID = 999999
+			beforeState := snapshot(t, st, service.TokensDir)
 			_, err := service.Subscribe(t.Context(), bad, verify)
+			assertions.Equal(beforeState, snapshot(t, st, service.TokensDir))
 			var eventErr *Error
 			requirements.ErrorAs(err, &eventErr)
 			assertions.Equal(InvalidParams, eventErr.Code)
 			assertions.Equal("invalid_scope", eventErr.Reason)
 			assertions.Zero(calls)
 			service.ConfigTargets = 32
+			beforeState = snapshot(t, st, service.TokensDir)
 			_, err = service.Subscribe(t.Context(), in, verify)
+			assertions.Equal(beforeState, snapshot(t, st, service.TokensDir))
 			requirements.ErrorAs(err, &eventErr)
 			assertions.Equal(ResourceExhausted, eventErr.Code)
 			assertions.Equal("subscriptions", eventErr.Reason)
@@ -727,7 +773,9 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			assertions.Equal(1, calls)
 			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM archive_metadata WHERE key = ?`), store.MCPEventsPositionKey(result.ID))
 			requirements.NoError(err)
+			beforeState = snapshot(t, st, service.TokensDir)
 			_, err = service.Subscribe(t.Context(), in, verify)
+			assertions.Equal(beforeState, snapshot(t, st, service.TokensDir))
 			requirements.ErrorAs(err, &eventErr)
 			assertions.Equal(Unavailable, eventErr.Code)
 			assertions.Equal("store_unavailable", eventErr.Reason)
