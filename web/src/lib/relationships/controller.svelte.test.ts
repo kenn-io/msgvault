@@ -1167,20 +1167,8 @@ describe('RelationshipsController filtered header metrics', () => {
 });
 
 describe('RelationshipsController.linkParticipants / unlinkParticipants', () => {
-  it('ignores an older stale link response after a newer cache refresh', async () => {
-    let release!: (response: Response) => void;
-    const client = createAPIClient(async input => {
-      const path = pathOf(input instanceof Request ? input : new Request(input));
-      if (path.endsWith('/identity/links')) return new Promise<Response>(resolve => { release = resolve; });
-      if (path.endsWith('/identity/cache-refresh')) return Response.json({ identity_revision: 5, cache_state: 'ready' });
-      throw new Error(`unexpected path ${path}`);
-    });
-    const controller = new RelationshipsController(client, () => 'UTC');
-    const link = controller.linkParticipants(1, 2);
-    await controller.refreshIdentityCache();
-    release(Response.json({ identity_revision: 4, cache_state: 'stale' }));
-    await link;
-    expect(controller.pendingIdentityCacheRevision).toBeNull();
+  it('keeps a newer stale revision after an older ready response', () => {
+    const controller = new RelationshipsController(createAPIClient(async () => { throw new Error('unexpected request'); }), () => 'UTC');
     controller.recordIdentityCacheState(5, 'stale');
     expect(controller.pendingIdentityCacheRevision).toBe(5);
     controller.recordIdentityCacheState(4, 'ready');

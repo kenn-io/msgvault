@@ -3179,7 +3179,7 @@ function duplicateReviewArchive(savedViews: ReturnType<typeof view>[] = []) {
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const url = new URL(request.url), path = url.pathname;
-    if (path.endsWith('/17/review/reject')) { server.decisions.push(await request.json()); return Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' }); }
+    if (path.endsWith('/17/review/reject')) { server.decisions.push(await request.json()); return Response.json({ candidate: { ...pair, state: 'rejected' }, identity_revision: 1, cache_state: 'ready' }); }
     if (path.endsWith('/saved-views/3') && request.method === 'DELETE') { server.deleted = true; return new Response(null, { status: 204 }); }
     if (path.endsWith('/saved-views')) return Response.json({ saved_views: server.deleted ? [] : savedViews });
     if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: [{ ...pair, review_token: server.changed ? 'fresh-17' : pair.review_token }], limit: Number(url.searchParams.get('limit')), offset: 0 });
@@ -3264,10 +3264,10 @@ it.each([
       await fireEvent.click(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', { name: /^People(?: |$)/ }));
       await screen.findByRole('dialog', { name: 'Resolve person merge' });
     } else {
-      finish(Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' }));
+      finish(Response.json({ candidate: { ...pair, state: 'rejected' }, identity_revision: 1, cache_state: 'ready' }));
       await waitFor(() => expect(document.activeElement).toBe(outcome === 'pagehide' ? screen.getByRole('radio', { name: 'To review' }) : messages));
     }
-  } finally { finish?.(Response.json({ candidate: { ...pair, state: 'rejected' }, cache_state: 'ready' })); rendered.unmount(); state.destroy(); vi.useRealTimers(); }
+  } finally { finish?.(Response.json({ candidate: { ...pair, state: 'rejected' }, identity_revision: 1, cache_state: 'ready' })); rendered.unmount(); state.destroy(); vi.useRealTimers(); }
 });
 
 it('refreshes cached duplicate cards after explicit reentry', async () => {

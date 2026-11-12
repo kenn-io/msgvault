@@ -138,7 +138,6 @@ export class RelationshipsController {
   canonicalID = $state<number | null>(null);
   identityRevision = $state<number | null>(null);
   pendingIdentityCacheRevision = $state<number | null>(null);
-  private readyIdentityCacheRevision: number | null = null;
   identityCacheRefreshing = $state(false);
   activityRevision = $state(0);
   relationshipCalendar = $state<RelationshipCalendar | null>(null);
@@ -654,7 +653,6 @@ export class RelationshipsController {
     }
   }
   async refreshIdentityCache(): Promise<LinkOutcome> {
-    if (this.identityCacheRefreshing) return { ok: false, code: 'error', message: 'Refresh already in progress' };
     this.identityCacheRefreshing = true;
     try {
       return await this.applyLinkResponse(await generatedRefreshIdentityCache(this.client), true);
@@ -666,9 +664,8 @@ export class RelationshipsController {
   }
   recordIdentityCacheState(revision: number, state: 'ready' | 'stale'): void {
     if (state === 'stale') {
-      if (this.readyIdentityCacheRevision === null || revision >= this.readyIdentityCacheRevision) this.pendingIdentityCacheRevision = Math.max(this.pendingIdentityCacheRevision ?? revision, revision);
+      this.pendingIdentityCacheRevision = Math.max(this.pendingIdentityCacheRevision ?? revision, revision);
     } else {
-      this.readyIdentityCacheRevision = Math.max(this.readyIdentityCacheRevision ?? revision, revision);
       if (this.pendingIdentityCacheRevision !== null && revision >= this.pendingIdentityCacheRevision) this.pendingIdentityCacheRevision = null;
     }
   }
@@ -690,7 +687,7 @@ export class RelationshipsController {
       // list reloads unconditionally: a link/unlink can move rows (merge or
       // split a cluster) regardless of whether the currently open target's
       // own revision moved.
-      const changed = force || this.identityRevision === null || this.identityRevision !== data.identity_revision;
+      const changed = this.identityRevision === null || this.identityRevision !== data.identity_revision;
       const reloads: Promise<void>[] = [];
       const reopened = changed && this.target !== null && this.lastPredicate !== undefined;
       if (reopened) reloads.push(this.openTarget(this.target!, this.lastPredicate!));

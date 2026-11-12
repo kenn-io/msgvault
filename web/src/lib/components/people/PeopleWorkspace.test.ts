@@ -216,7 +216,7 @@ it.each([
     '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
     '/api/v1/identity/links': async request => {
       links.push(await request.json()); calls += 1;
-      if (outcome === 'merges') return calls === 1 ? Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1]) }, { etag: '"person-9-r2"', person: profile(9, 2, [2]) }] }, { status: 409 }) : Response.json({ identity_revision: calls === 2 ? 9 : 10, cache_state: 'stale' });
+      if (outcome === 'merges') return calls === 1 ? Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1]) }, { etag: '"person-9-r2"', person: profile(9, 2, [2]) }] }, { status: 409 }) : Response.json({ identity_revision: 9, cache_state: 'stale' });
       return calls === 1 ? Response.json({ identity_revision: 5, cache_state: 'ready' }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 });
     },
     '/api/v1/people/9/merge': () => { merged = true; return Response.json(mergeResult(survivor, 'stale'), { headers: { ETag: '"person-9-r3"' } }); },
@@ -247,7 +247,6 @@ it.each([
       }
       releaseReconcile?.();
       expect(await screen.findByText('People are now treated as the same person.')).toBeDefined();
-      expect(controller.pendingIdentityCacheRevision).toBe(10);
       expect(links).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }]);
       if (selectedID !== null) {
         const expectedID = selectedID === 7 ? 9 : 42;

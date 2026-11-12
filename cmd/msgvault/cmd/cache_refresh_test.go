@@ -274,6 +274,12 @@ func TestStoreAPIIdentityRefreshReportsPostgreSQLUnsupported(t *testing.T) {
 	if !st.IsPostgreSQL() {
 		t.Skip("requires PostgreSQL")
 	}
+	old := executeBuildCacheSubprocessMode
+	executeBuildCacheSubprocessMode = func(context.Context, buildCacheMode) error {
+		assert.Fail(t, "cache subprocess must not run for PostgreSQL")
+		return nil
+	}
+	t.Cleanup(func() { executeBuildCacheSubprocessMode = old })
 	adapter := &storeAPIAdapter{store: st, analyticsDir: t.TempDir()}
 	_, err := adapter.RefreshIdentityDatasets(t.Context())
 	require.ErrorIs(t, err, api.ErrIdentityCacheUnsupported)
