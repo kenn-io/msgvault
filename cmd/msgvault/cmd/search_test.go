@@ -569,7 +569,7 @@ func TestSearchCmd_PrintsBackgroundIndexNote(t *testing.T) {
 		{
 			name:       "unverified check warns",
 			indexState: "unverified",
-			wantNote:   "could not be verified for this request; results may be incomplete. Search again to retry the check, or run rebuild-fts.",
+			wantNote:   "couldn't check the text-search index, so results may miss messages. Search again or run msgvault rebuild-fts.",
 		},
 		{
 			name:       "building warns about rebuilding or awaiting rebuild",

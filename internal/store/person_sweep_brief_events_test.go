@@ -154,6 +154,39 @@ func TestPersonSweepEventLifecyclePersistsDateOnlyRefreshAndResolution(t *testin
 	assert.NotContains(current.RenderedText, "How did the interview go?")
 }
 
+func TestPersonSweepEventAtLastJSONDatePreservesBoundaryAndMemory(t *testing.T) {
+	f, _, _ := newStoreEventFixture(t, "last-json-date")
+	f.runner.candidate = func(packet map[string]any) json.RawMessage {
+		return storeEventCandidate(t, packet, "I interview on September 2.", "9999-12-31", "their interview", "How did the interview go?")
+	}
+	result := runStoreEvent(t, f, peoplesweep.BriefModeForce)
+	require.Equal(t, 1, result.PeopleSucceeded)
+	stored, err := f.journal.store.GetPersonBriefContext(t.Context(), f.journal.alicePersonID, 0)
+	require.NoError(t, err)
+	var boundary peoplesweep.BriefBoundary
+	require.NoError(t, json.Unmarshal(stored.Boundary, &boundary))
+	assert.Positive(t, boundary.ThroughSequence)
+	assert.False(t, boundary.AdmissionThroughEventTime.IsZero())
+	assert.Nil(t, boundary.NextEventAt)
+	require.Len(t, boundary.EventMemory, 1)
+	require.NotNil(t, boundary.EventMemory[0].Highlight.LifeEvent)
+	require.NotNil(t, boundary.EventMemory[0].Highlight.LifeEvent.Date)
+	assert.Equal(t, "9999-12-31", *boundary.EventMemory[0].Highlight.LifeEvent.Date)
+	require.Len(t, boundary.EventMemory[0].Sources, 1)
+
+	f.runner.candidate = func(map[string]any) json.RawMessage { return emptyEventBrief() }
+	result = runStoreEvent(t, f, peoplesweep.BriefModeForce)
+	require.Equal(t, 1, result.PeopleSucceeded)
+	replayed, err := f.journal.store.GetPersonBriefContext(t.Context(), f.journal.alicePersonID, 0)
+	require.NoError(t, err)
+	assert.Equal(t, stored.Version+1, replayed.Version)
+	var replayBoundary peoplesweep.BriefBoundary
+	require.NoError(t, json.Unmarshal(replayed.Boundary, &replayBoundary))
+	assert.Equal(t, boundary.ThroughSequence, replayBoundary.ThroughSequence)
+	assert.Equal(t, boundary.AdmissionThroughEventTime, replayBoundary.AdmissionThroughEventTime)
+	assert.Equal(t, boundary.EventMemory, replayBoundary.EventMemory)
+}
+
 func TestPersonSweepEventRetiresCurrentParagraphOnceWhenAllTextIsGone(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -447,8 +446,11 @@ func (s *Store) applyPersonSweepWithAligner(
 			if evidenceErr != nil {
 				return evidenceErr
 			}
-			brief, briefErr := s.applyPersonBriefTx(ctx, tx, personBriefInsertFromResult(
-				request, generation.GenerationID, briefIDs))
+			insert, briefErr := personBriefInsertFromResult(request, generation.GenerationID, briefIDs)
+			if briefErr != nil {
+				return briefErr
+			}
+			brief, briefErr := s.applyPersonBriefTx(ctx, tx, insert)
 			if briefErr != nil {
 				return briefErr
 			}
@@ -1163,8 +1165,12 @@ func (s *Store) insertPersonSweepBriefEvidenceTx(
 
 func personBriefInsertFromResult(
 	request peoplesweep.ApplyRequest, generationID int64, evidenceIDs []int64,
-) PersonBriefInsert {
+) (PersonBriefInsert, error) {
 	brief := request.Brief
+	boundary, err := json.Marshal(brief.Boundary.Canonical(), json.Deterministic(true))
+	if err != nil {
+		return PersonBriefInsert{}, fmt.Errorf("marshal person brief boundary: %w", err)
+	}
 	return PersonBriefInsert{
 		PersonID: request.Lease.PersonID, GenerationID: generationID,
 		ProgramID: brief.ProgramID, ProgramVersion: brief.ProgramVersion,
@@ -1175,24 +1181,14 @@ func personBriefInsertFromResult(
 		ModelVersion:              request.Generation.ModelVersion,
 		ProviderPolicyFingerprint: request.Generation.Policy.ProviderPolicyFingerprint,
 		EventMemorySourceVersion:  brief.EventMemorySourceVersion,
-		Boundary:                  personBriefBoundaryJSON(brief.Boundary),
+		Boundary:                  boundary,
 		Structured:                brief.Structured,
 		RenderedText:              brief.Rendered.Text,
 		RendererPolicy:            brief.Rendered.Policy,
 		DroppedItemCount:          brief.DroppedItemCount,
 		GeneratedAt:               brief.GeneratedAt,
 		EvidenceIDs:               evidenceIDs,
-	}
-}
-
-func personBriefBoundaryJSON(boundary peoplesweep.BriefBoundary) jsontext.Value {
-	encoded, err := json.Marshal(boundary.Canonical(), json.Deterministic(true))
-	if err != nil {
-		// BriefBoundary and its nested event fields contain JSON-safe values, so
-		// an empty object keeps the column valid if marshalling ever fails.
-		return jsontext.Value(`{}`)
-	}
-	return encoded
+	}, nil
 }
 
 // failPersonSweepBriefBatchTx terminalizes a brief reservation whose call never
