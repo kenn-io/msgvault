@@ -141,7 +141,7 @@ the default SQLite TUI path. The TUI's Senders/Domains/Labels/Time aggregate
 views run as live SQL, so very large archives should be validated with
 realistic data before PostgreSQL becomes your primary backend.
 
-`msgvault build-cache` is SQLite-only — it refuses to run against a
+`msgvault cache build` is SQLite-only — it refuses to run against a
 PostgreSQL `database_url`. This means the Web UI's cache-backed analytical
 surfaces (Explore, including its base listing and its
 grouping/coverage/selection endpoints; Files; the People and domains
@@ -177,7 +177,7 @@ Not implemented:
   base listing and its grouping/coverage/selection endpoints; Files; the
   People and domains workspaces; and Relationships' ranking, timeline, and
   identity link/unlink cache refresh): these require the DuckDB/Parquet
-  cache, which `build-cache` refuses to build against PostgreSQL, so they
+  cache, which `cache build` refuses to build against PostgreSQL, so they
   return an unavailable-cache state rather than running as live SQL.
 - PostgreSQL corruption checks inside `msgvault verify`; use PostgreSQL
   operational tooling such as `pg_amcheck`.

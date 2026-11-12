@@ -186,7 +186,7 @@ func TestShowMessageHiddenHTMLText(t *testing.T) {
 			writeStatsHTTPDaemonRuntime(t, dataDir, server)
 			cfg := &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
 			testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{useLocal: true})
-			cmd := &cobra.Command{Use: "show-message", RunE: showMessageCmd.RunE, Args: showMessageCmd.Args}
+			cmd := &cobra.Command{Use: "show-message", RunE: showMessageCmd.RunE, Args: cobra.ExactArgs(1)}
 			var stdout, stderr bytes.Buffer
 			cmd.SetOut(&stdout)
 			cmd.SetErr(&stderr)
@@ -318,7 +318,7 @@ func TestOutputMessageSanitizesTextLabelsAndPreservesRelatedID(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(out, "Labels:  Résolulink, ordinary\n")
 	assert.NotContains(out, "\x1b")
-	assert.Contains(out, "show-message 43")
+	assert.Contains(out, "show 43")
 
 	done = captureStdout(t)
 	err = outputMessageJSON(os.Stdout, msg)

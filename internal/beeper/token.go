@@ -46,7 +46,7 @@ func LoadToken(tokensDir string) (string, error) {
 	data, err := os.ReadFile(tokenPath(tokensDir))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", errors.New("no Beeper Desktop token found (run 'add-beeper' first)")
+			return "", errors.New("no Beeper Desktop token found (run 'source beeper add' first)")
 		}
 		return "", fmt.Errorf("read beeper token: %w", err)
 	}

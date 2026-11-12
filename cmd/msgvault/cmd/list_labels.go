@@ -18,8 +18,8 @@ source account (the archive retains them), so per-label totals may exceed the
 active message count shown by 'stats'.
 
 JSON rows have key, count, total_size, and attachment_size.`,
-	Example: `  msgvault list-labels --json
-  msgvault list-labels --limit 50`,
+	Example: `  msgvault label list --json
+  msgvault label list --limit 50`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAggregateListCommand(cmd, query.ViewLabels, "No labels found.", "Label", "label")

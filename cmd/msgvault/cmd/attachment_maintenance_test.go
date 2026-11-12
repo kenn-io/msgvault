@@ -249,7 +249,7 @@ func TestAutomaticAttachmentMaintenanceFailureLogsPartialStatsAndRetry(t *testin
 	assert.NotContains(logOutput, "automatic attachment maintenance complete")
 	assert.Contains(logOutput, "blobs_deferred_oversized=0")
 	assert.Contains(logOutput, "packs_deferred_oversized=0")
-	assert.Contains(logOutput, "pack-attachments", "log names the explicit retry command")
+	assert.Contains(logOutput, "attachment pack", "log names the explicit retry command")
 }
 
 func TestPendingPackFailureReachesSchedulerAndStaysPending(t *testing.T) {
@@ -550,7 +550,7 @@ func TestPostRemovalRepackFailureWarnsWithoutReplacingSuccess(t *testing.T) {
 	)
 
 	require.NoError(err)
-	assert.Contains(warning, "repack-attachments")
+	assert.Contains(warning, "attachment repack")
 	assert.Contains(warning, "retry")
 	logOutput := logs.String()
 	progressAt := strings.Index(logOutput, "level=INFO msg=\"automatic attachment repack progress\"")
@@ -593,7 +593,7 @@ func TestAutomaticRepackLogsCommittedSiblingProgressBeforeAggregateWarning(t *te
 
 	require.Error(err, "corrupt source remains an aggregate maintenance error")
 	assert.Contains(err.Error(), corruptPackID)
-	assert.Contains(warning, "repack-attachments")
+	assert.Contains(warning, "attachment repack")
 	newEntry := f.packedEntry(healthyHash)
 	require.NotNil(newEntry)
 	assert.NotEqual(healthyPackID, newEntry.PackID, "healthy sibling mapping commits")

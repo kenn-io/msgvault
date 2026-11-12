@@ -5,6 +5,8 @@
 export interface CLIVerifyEvent {
   data?: string;
   error?: string;
+  error_reported?: boolean;
+  exit_code?: number;
   type: string;
   [key: string]: unknown;
 }

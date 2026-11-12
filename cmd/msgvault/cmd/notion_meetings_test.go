@@ -166,7 +166,7 @@ func TestRunConfiguredNotionMeetingsSyncRefusesRemovedSource(t *testing.T) {
 		Identifier: "removed", Token: "secret-token",
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "add-notion-meetings removed")
+	assert.Contains(t, err.Error(), "source notion-meetings add removed")
 }
 
 type fakeNotionUsersProbe struct {

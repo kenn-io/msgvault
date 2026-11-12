@@ -77,7 +77,7 @@ func TestBeeperMissingTokenRecordsResolvedAccountFailures(t *testing.T) {
 	}}
 	ctx := withInvocation(t.Context(), state)
 	err := runConfiguredBeeperSync(ctx, st)
-	require.EqualError(err, "no Beeper Desktop token found (run 'add-beeper' first)")
+	require.EqualError(err, "no Beeper Desktop token found (run 'source beeper add' first)")
 	assert.Equal(2, events, "each resolved account records a failure")
 }
 

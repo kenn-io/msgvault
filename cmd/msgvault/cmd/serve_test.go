@@ -2065,6 +2065,25 @@ func TestCLISyncSubprocessArgs(t *testing.T) {
 		cliSyncSubprocessArgs(api.CLISyncRequest{Full: true, Email: "-reader@example.org"}))
 }
 
+func TestCLISyncSubprocessArgsKeepsFullNamedAccountIncremental(t *testing.T) {
+	if helpTestSubprocess(t) {
+		return
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	ensureCommandGrammar(rootCmd)
+	args := cliSyncSubprocessArgs(api.CLISyncRequest{Email: "full"})
+	require.Equal([]string{"sync", "--", "full"}, args)
+
+	selected, _, err := rootCmd.Find(args)
+	require.NoError(err)
+	syncCommand := directCommand(rootCmd, "sync")
+	assert.Same(syncCommand, selected)
+	fullSync, _, err := rootCmd.Find([]string{"sync-full"})
+	require.NoError(err)
+	assert.NotSame(fullSync, selected)
+}
+
 func TestCLISyncSubprocessArgsIncludesExactSourceID(t *testing.T) {
 	assert.Equal(t,
 		[]string{"sync", "--source-id", "42"},
@@ -2149,9 +2168,10 @@ remote_enabled = true
 		require.NoError(decoder.Decode(&event))
 		events = append(events, event)
 	}
-	require.Len(events, 3, response.Body.String())
+	require.NotEmpty(events, response.Body.String())
+	assert.Equal("error", events[len(events)-1].Type, "terminal event")
 	blocked := "remote deletion is gated; set [deletion] remote_enabled = true in the invoking CLI's config.toml for durable consent; one-command alternative: " +
-		remoteDeleteEnvVar + "=1"
+		remoteDeleteEnvVar + "=1\nhint: ask the archive owner to approve remote deletion in the invoking CLI configuration; agent grants cannot enable it"
 	var stdout, stderr, subprocessError string
 	for _, event := range events {
 		switch event.Type {
@@ -2229,6 +2249,7 @@ func TestStoreAPIAdapterRunCLICommandDefersPackingForAllowlistedCommands(t *test
 	tests := []struct {
 		name           string
 		args           []string
+		wantArgs       []string
 		predecessorErr error
 		wantPending    bool
 	}{
@@ -2236,6 +2257,19 @@ func TestStoreAPIAdapterRunCLICommandDefersPackingForAllowlistedCommands(t *test
 			name:        "allowlisted success",
 			args:        []string{importMboxCommand, "archive.mbox"},
 			wantPending: true,
+		},
+		{
+			name:        "canonical import",
+			args:        []string{"import", "mbox", "archive@example.com", "archive.mbox"},
+			wantArgs:    []string{"import-mbox", "archive@example.com", "archive.mbox"},
+			wantPending: true,
+		},
+		{
+			name:           "canonical sync failure",
+			args:           []string{"source", "teams", "sync", "user@example.com"},
+			wantArgs:       []string{"sync-teams", "user@example.com"},
+			predecessorErr: errors.New("command subprocess failed"),
+			wantPending:    true,
 		},
 		{
 			name: "unrelated success",
@@ -2274,7 +2308,11 @@ func TestStoreAPIAdapterRunCLICommandDefersPackingForAllowlistedCommands(t *test
 					_ func(string, string) error,
 				) error {
 					runnerCalls++
-					assert.Equal(tt.args, args)
+					wantArgs := tt.wantArgs
+					if wantArgs == nil {
+						wantArgs = tt.args
+					}
+					assert.Equal(wantArgs, args)
 					assert.Equal(map[string]string{"TEST": "value"}, env)
 					assert.Equal("/tmp", cwd)
 					assert.Nil(f.packedEntry(hash), "packing must follow subprocess success")
@@ -2554,7 +2592,7 @@ func TestStoreAPIAdapterPostRemovalRepackWarningPreservesSuccess(t *testing.T) {
 	require.NoError(err)
 	require.Len(events, 1)
 	assert.Equal("stderr", events[0].Type)
-	assert.Contains(events[0].Data, "repack-attachments")
+	assert.Contains(events[0].Data, "attachment repack")
 }
 
 func TestStoreAPIAdapterPostRemovalRepackCancellationPreservesSuccess(t *testing.T) {
@@ -2757,8 +2795,8 @@ func TestRunScheduledGmailSync_ReauthGuidance(t *testing.T) {
 			_, err = runScheduledGmailSync(scheduledCtx, scopeEscalationAccount, nil, nil,
 				func(ctx context.Context, _ string) (*oauth.Manager, error) { return mgr, nil }, invocationFromContext(scheduledCtx))
 			require.Error(err)
-			assert.Contains(err.Error(), "msgvault add-account user@example.com"+tc.flags+" --force")
-			assert.Contains(err.Error(), "msgvault add-account user@example.com"+tc.flags+" --headless")
+			assert.Contains(err.Error(), "msgvault source gmail add user@example.com"+tc.flags+" --force")
+			assert.Contains(err.Error(), "msgvault source gmail add user@example.com"+tc.flags+" --headless")
 		})
 	}
 }
@@ -2819,7 +2857,7 @@ func TestDaemonGmailClientCredentialFailures(t *testing.T) {
 		name, providerCode, remediation, tokenJSON string
 		removeToken                                bool
 	}{
-		{"missing token", "", "msgvault add-account", "", true},
+		{"missing token", "", "msgvault source gmail add", "", true},
 		{"revoked token", "invalid_grant", "expired or been revoked", "", false},
 		{"expired without refresh token", "", "expired or been revoked", `{"access_token":"expired","expiry":"2000-01-01T00:00:00Z"}`, false},
 		{"malformed file token", "", "expired or been revoked", "{", false},

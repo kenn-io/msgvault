@@ -15,6 +15,9 @@ func newRepairLabelsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "repair-labels [identifier] [--apply]",
 		Short: "Rebuild IMAP message labels from stored mailbox memberships",
+		Example: `  msgvault repair labels                    # all IMAP sources
+  msgvault repair labels you@example.com    # one source
+  msgvault repair labels --apply`,
 		Long: `Rebuild each IMAP source's message labels from its stored
 imap_message_memberships rows — the same rebuild a full mailbox enumeration
 performs, run on demand instead of on every sync.
@@ -26,12 +29,7 @@ label can persist. This command finds and removes it.
 
 The default is a dry run: it reports what would change without modifying the
 archive. Pass --apply to write the repaired labels. This command works
-entirely offline and never contacts a provider.
-
-Examples:
-  msgvault repair-labels                    # all IMAP sources
-  msgvault repair-labels you@example.com    # one source
-  msgvault repair-labels --apply`,
+entirely offline and never contacts a provider.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {

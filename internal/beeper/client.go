@@ -194,7 +194,7 @@ func (c *Client) fetch(ctx context.Context, path string, maxBytes int64, asset b
 			}
 			return body, nil
 		case resp.StatusCode == http.StatusUnauthorized:
-			return nil, fmt.Errorf("beeper GET %s: unauthorized (401): the access token was rejected; mint a new token in Beeper Desktop (Settings > Developer) and re-run 'msgvault add-beeper': %w: %w", reqURL, errPermanentResponse, ErrUnauthorized)
+			return nil, fmt.Errorf("beeper GET %s: unauthorized (401): the access token was rejected; mint a new token in Beeper Desktop (Settings > Developer) and re-run 'msgvault source beeper add': %w: %w", reqURL, errPermanentResponse, ErrUnauthorized)
 		case resp.StatusCode == http.StatusTooManyRequests:
 			// Throttling is transient whatever the body says.
 			if asset && assetAttempts >= maxAssetAttempts {

@@ -120,6 +120,6 @@ func TestEmitGmailDraftLifecycleHumanPendingOutput(t *testing.T) {
 	assertions.Contains(event.Data, "candidate content:\ncandidate content")
 	assertions.Contains(event.Data, "old provider receipt: state=unknown code=remote_unknown")
 	assertions.Contains(event.Data, "provider outcome: remote_unknown")
-	assertions.Contains(event.Data, "retry draft-edit with --revision 2 to reconcile with Gmail")
+	assertions.Contains(event.Data, "retry draft edit with --revision 2 to reconcile with Gmail")
 	assertions.Equal(1, strings.Count(event.Data, "provider outcome:"))
 }

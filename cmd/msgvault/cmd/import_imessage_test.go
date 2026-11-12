@@ -306,7 +306,7 @@ func TestImessageMaxMediaMBRejectedBeforeStoreOpens(t *testing.T) {
 			err := executeRootContext(t.Context(), rootCmd)
 			require.Error(err)
 			require.ErrorContains(err, "--max-media-mb")
-			assert.Contains(output.String(), "Usage:", "a bad flag prints usage")
+			assert.Contains(output.String(), "hint: run 'msgvault import imessage --help'", "a bad flag includes recovery guidance")
 			assert.NoFileExists(filepath.Join(home, "msgvault.db"))
 		})
 	}

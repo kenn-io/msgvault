@@ -21,7 +21,7 @@ func resolvePocketSources(args []string, cfg *config.Config) ([]config.PocketSou
 		return nil, errors.New("configuration is unavailable")
 	}
 	if len(cfg.Pocket) == 0 {
-		return nil, errors.New("no [[pocket]] sources configured; add account_email and api_key_env to config.toml")
+		return nil, sourceNotConfigured("pocket", errors.New("no [[pocket]] sources configured; add account_email and api_key_env to config.toml"))
 	}
 	if len(args) == 0 {
 		return cfg.Pocket, nil
@@ -49,7 +49,7 @@ func newAddPocketCmd() *cobra.Command {
 	return &cobra.Command{Use: "add-pocket [identifier]", Short: "Verify and register a personal Pocket account", Long: `Validate the API key of a [[pocket]] entry in config.toml and register it
 as a meeting source. The identifier may be omitted when exactly one
 [[pocket]] entry exists. The daemon reads the key from api_key_env
-(default POCKET_API_KEY); the live account email must match account_email.`, Example: "  msgvault add-pocket personal", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+(default POCKET_API_KEY); the live account email must match account_email.`, Example: "  msgvault source pocket add personal", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
@@ -132,8 +132,8 @@ Limited and failed runs preserve that order. Processing sections retain prior
 content; successful explicit empty sections clear it. Source deletions do not
 remove archived meetings. --full repairs projections and invalid sync state.
 The daemon reads API keys from the configured environment variables.`, Args: cobra.MaximumNArgs(1)}
-	cmd.Example = `  msgvault sync-pocket personal --limit 10
-  msgvault sync-pocket personal --full --after 2026-01-01`
+	cmd.Example = `  msgvault source pocket sync personal --limit 10
+  msgvault source pocket sync personal --full --after 2026-01-01`
 	cmd.Flags().Int("limit", 0, "maximum recordings fetched in this run (0 = unlimited)")
 	cmd.Flags().String("after", "", "include meetings on or after this UTC date (YYYY-MM-DD; implies --full)")
 	cmd.Flags().Bool("full", false, "repair projections and invalid state while preserving valid attempt order")
@@ -228,7 +228,7 @@ func finishPocketImport(ctx context.Context, sum *pocket.ImportSummary, importEr
 
 func runConfiguredPocketSync(ctx context.Context, st *store.Store, src config.PocketSource) error {
 	if _, err := st.GetSourceByTypeAndIdentifier(ctx, pocket.SourceType, src.Identifier); err != nil {
-		return recordSyncAttempt(ctx, pocket.SourceType, src.Identifier, fmt.Errorf("register Pocket with add-pocket first: %w", err))
+		return recordSyncAttempt(ctx, pocket.SourceType, src.Identifier, fmt.Errorf("register Pocket with source pocket add first: %w", err))
 	}
 	email, err := src.EffectiveAccountEmail()
 	if err != nil {

@@ -1052,7 +1052,7 @@ func TestAddAccount_DeferredLegacyIdentityMigrationFires(t *testing.T) {
 
 	applied, err := s.IsMigrationApplied("legacy_identity_to_per_account")
 	require.NoError(err, "IsMigrationApplied")
-	assert.True(applied, "migration sentinel should be set after first successful add-account")
+	assert.True(applied, "migration sentinel should be set after first successful source gmail add")
 }
 
 // TestAddAccount_LegacyMigrationDoesNotSuppressDefaultIdentity verifies

@@ -9,9 +9,11 @@ import (
 )
 
 var embeddingsOptimizeCmd = &cobra.Command{
-	Use:   "optimize [generation-id]",
-	Short: "Build or remove the SQLite search accelerator",
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "optimize [generation-id]",
+	Short:   "Build or remove the SQLite search accelerator",
+	Long:    "Build a local SQLite approximate-search accelerator from existing message vectors. This binary needs SQLite vector support to run the operation.",
+	Example: "  msgvault embeddings optimize",
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(*cobra.Command, []string) error {
 		return errors.New("SQLite accelerator unavailable without sqlite_vec")
 	},

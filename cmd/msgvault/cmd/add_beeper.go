@@ -40,12 +40,10 @@ the MSGVAULT_BEEPER_TOKEN environment variable, or the interactive prompt.
 
 Use [beeper].accounts / exclude_accounts in config.toml to limit which
 networks are archived (e.g. exclude "whatsapp" if you already archive it
-with import-whatsapp).
-
-Examples:
-  msgvault add-beeper
-  msgvault add-beeper --token-file ~/beeper-token.txt
-  MSGVAULT_BEEPER_TOKEN="..." msgvault add-beeper`,
+with import-whatsapp).`,
+		Example: `  msgvault source beeper add
+  msgvault source beeper add --token-file ~/beeper-token.txt
+  MSGVAULT_BEEPER_TOKEN="..." msgvault source beeper add`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
@@ -124,7 +122,7 @@ Examples:
 
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nBeeper Desktop added: %d account(s).\n", added)
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nYou can now run:")
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  msgvault sync-beeper")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  msgvault source beeper sync")
 			return nil
 		},
 	}

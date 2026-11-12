@@ -41,7 +41,8 @@ var importImessageCmd = &cobra.Command{
 
 Reads messages from ~/Library/Messages/chat.db and stores them in the
 msgvault archive. This is a read-only operation that does not modify
-the iMessage database.
+the iMessage database. --db-path reads a specific chat.db instead of the
+default path.
 
 Available local attachments are copied with their messages. Missing or
 offloaded files remain unavailable; this command does not fetch iCloud media.
@@ -60,11 +61,11 @@ Contact names:
   vCard export (e.g. macOS Contacts.app → File → Export → Export vCard).
 
 Examples:
-  msgvault import-imessage
-  msgvault import-imessage --after 2024-01-01
-  msgvault import-imessage --limit 100
-  msgvault import-imessage --db-path /path/to/chat.db
-  msgvault import-imessage --contacts ~/contacts.vcf`,
+  msgvault import imessage
+  msgvault import imessage --after 2024-01-01
+  msgvault import imessage --limit 100
+  msgvault import imessage --db-path /path/to/chat.db
+  msgvault import imessage --contacts ~/contacts.vcf`,
 	PreRunE: validateImessageFlags,
 	RunE:    runImportImessage,
 }

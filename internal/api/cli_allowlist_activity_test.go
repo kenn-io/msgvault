@@ -8,5 +8,5 @@ import (
 
 func TestActivityBuildAllowedThroughDaemonCLIRunner(t *testing.T) {
 	t.Parallel()
-	assert.True(t, cliRunCommandAllowed([]string{"activity", "build"}))
+	assert.True(t, CLIRunCommandAllowed([]string{"activity", "build"}))
 }

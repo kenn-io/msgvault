@@ -14,6 +14,7 @@ import (
 
 func TestRepairEncodingUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 	assert := assert.New(t)
+	ensureCommandGrammar(rootCmd)
 
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -32,12 +33,15 @@ func TestRepairEncodingUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) 
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	cmd := &cobra.Command{Use: repairEncodingCmd.Use, Args: repairEncodingCmd.Args, RunE: repairEncodingCmd.RunE}
+	canonical, rest, err := rootCmd.Find([]string{"repair", "encoding"})
+	require.NoError(t, err)
+	require.Empty(t, rest)
+	cmd := &cobra.Command{Use: canonical.Use, Args: canonical.Args, RunE: canonical.RunE}
 	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 
-	err := cmd.Execute()
+	err = cmd.Execute()
 	require.NoError(t, err, "repair-encoding command")
 	assert.Equal(int32(1), requests.Load(), "HTTP requests")
 	assert.Equal("Scanning messages for invalid UTF-8...\n", stdout.String())

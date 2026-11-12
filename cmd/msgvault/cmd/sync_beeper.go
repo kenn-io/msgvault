@@ -43,13 +43,11 @@ re-run after an interruption and the sync continues where it stopped.
 Requires Beeper Desktop to be running on this machine (run 'add-beeper'
 first). Use --full to ignore stored cursors and re-fetch every message;
 re-fetched messages are upserted in place, so this repairs existing rows
-without creating duplicates.
-
-Examples:
-  msgvault sync-beeper
-  msgvault sync-beeper --account signal --account telegram
-  msgvault sync-beeper --limit 500
-  msgvault sync-beeper --full`,
+without creating duplicates.`,
+		Example: `  msgvault source beeper sync
+  msgvault source beeper sync --account signal --account telegram
+  msgvault source beeper sync --limit 500
+  msgvault source beeper sync --full`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
@@ -83,7 +81,7 @@ Examples:
 			// regardless of interruptions or per-account failures.
 			cacheErr := rebuildCacheAfterManualSync(dbPath, state)
 			if ctx.Err() != nil {
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run sync-beeper to resume.")
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run msgvault source beeper sync to resume.")
 				return cacheErr
 			}
 			if len(syncErrors) > 0 {
@@ -132,7 +130,8 @@ func runBeeperSyncAccounts(ctx context.Context, out io.Writer, s *store.Store, a
 }
 
 func writeBeeperRunFailures(ctx context.Context, out io.Writer, s *store.Store, sum *beeper.ImportSummary, accountID, fetchCmd string) {
-	const mediaCmd = "backfill-beeper-media"
+	fetchCmd = canonicalHelpText(fetchCmd)
+	const mediaCmd = "source beeper backfill-media"
 	if sum == nil || sum.Errors == 0 {
 		return
 	}
@@ -237,7 +236,7 @@ func printBeeperSummary(out io.Writer, accountID string, sum *beeper.ImportSumma
 		_, _ = fmt.Fprintf(out, ", %d attachments", sum.AttachmentsDownloaded)
 	}
 	if sum.AttachmentsPending > 0 {
-		_, _ = fmt.Fprintf(out, ", %d media pending (see backfill-beeper-media)", sum.AttachmentsPending)
+		_, _ = fmt.Fprintf(out, ", %d media pending (run msgvault source beeper backfill-media)", sum.AttachmentsPending)
 	}
 	writeBeeperMediaSkipSummary(out, sum)
 	if sum.Errors > 0 {
@@ -293,13 +292,13 @@ func resolveBeeperAccounts(ctx context.Context, s *store.Store, flagAccounts []s
 				src, ok = aliases[strings.ToLower(accountID)]
 			}
 			if !ok {
-				return nil, fmt.Errorf("beeper account %q is not registered (run 'add-beeper' first)", accountID)
+				return nil, fmt.Errorf("beeper account %q is not registered (run 'msgvault source beeper add' first)", accountID)
 			}
 			if src.MergedIntoSourceID != 0 {
 				return nil, fmt.Errorf("beeper source %d: %w", src.ID, store.ErrSourceRetired)
 			}
 			if src.HistoryOnly && !allowHistoryOnly {
-				return nil, fmt.Errorf("beeper source %d is history-only; use update-account --source-id %d --history-only=false before syncing", src.ID, src.ID)
+				return nil, fmt.Errorf("beeper source %d is history-only; use account update --source-id %d --history-only=false before syncing", src.ID, src.ID)
 			}
 			accountID = src.Identifier
 			if _, duplicate := seen[accountID]; duplicate {
@@ -323,7 +322,7 @@ func resolveBeeperAccounts(ctx context.Context, s *store.Store, flagAccounts []s
 		}
 	}
 	if len(sources) == 0 {
-		return nil, errors.New("no Beeper accounts registered (run 'add-beeper' first)")
+		return nil, sourceNotConfigured("beeper", errors.New("no Beeper accounts registered (run 'msgvault source beeper add' first)"))
 	}
 	return out, nil
 }

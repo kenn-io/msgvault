@@ -8,6 +8,6 @@ import (
 
 func TestCLIRunEmbeddingsRejectsInternalWorkers(t *testing.T) {
 	t.Parallel()
-	assert.True(t, cliRunCommandAllowed([]string{"embeddings", "optimize"}))
-	assert.False(t, cliRunCommandAllowed([]string{"embeddings", "__optimize-worker", "/tmp/other.db", "1", "1"}))
+	assert.True(t, CLIRunCommandAllowed([]string{"embeddings", "optimize"}))
+	assert.False(t, CLIRunCommandAllowed([]string{"embeddings", "__optimize-worker", "/tmp/other.db", "1", "1"}))
 }

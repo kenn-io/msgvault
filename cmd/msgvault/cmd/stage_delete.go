@@ -23,8 +23,9 @@ const (
 
 func newStageDeleteCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "stage-delete [query]",
-		Short: "Stage messages matching a query or IDs for deletion",
+		Use:     "stage-delete [query]",
+		Short:   "Stage messages matching a query or IDs for deletion",
+		Example: "  msgvault deletion stage 'from:sender@example.com' --dry-run\n  msgvault deletion stage --ids 12,34 --dry-run",
 		Long: `Stage the deletable messages matching a search query for deletion.
 
 The search runs with the same semantics as msgvault search. Matches that no
@@ -33,7 +34,8 @@ reported and skipped rather than rejecting the whole search. Use --dry-run to
 see the same staged subset and counts without creating a batch.
 Alternatively, pass a comma-separated --ids list to stage explicit internal
 message IDs; this form bypasses search and analytical-cache readiness.
-Review a created batch with show-deletion before running delete-staged.`,
+The result includes a batch ID. Review it with msgvault deletion show <batch-id>
+before running msgvault deletion execute <batch-id>.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: runStageDelete,
 	}
@@ -59,17 +61,17 @@ func runStageDelete(cmd *cobra.Command, args []string) error {
 func runStageDeleteFromQuery(cmd *cobra.Command, queryText string) error {
 	parsed := search.ParseOR(queryText)
 	if err := parsed.Err(); err != nil {
-		return usageErr(cmd, err)
+		return validationErr(cmd, err)
 	}
 	if parsed.IsEmpty() {
-		return usageErr(cmd, errors.New("empty search query"))
+		return withHint(usageErr(cmd, errors.New("empty search query")), "provide a query or --ids; preview with 'msgvault deletion stage --ids 12,34 --dry-run'")
 	}
 	sourceID, err := cmd.Flags().GetInt64("source-id")
 	if err != nil {
 		return usageErr(cmd, fmt.Errorf("invalid source ID: %w", err))
 	}
 	if cmd.Flags().Changed("source-id") && sourceID <= 0 {
-		return usageErr(cmd, errors.New("source ID must be positive"))
+		return validationErr(cmd, errors.New("source ID must be positive"))
 	}
 
 	// Default cache intent: a daemon this command has to spawn builds its
@@ -208,7 +210,7 @@ func runStageDeleteFromQuery(cmd *cobra.Command, queryText string) error {
 func runStageDeleteFromIDs(cmd *cobra.Command) error {
 	rawIDs, err := cmd.Flags().GetString("ids")
 	if err != nil {
-		return usageErr(cmd, fmt.Errorf("invalid --ids: %w", err))
+		return validationErr(cmd, fmt.Errorf("invalid --ids: %w", err))
 	}
 	messageIDs, err := parseStageDeleteMessageIDs(rawIDs)
 	if err != nil {
@@ -303,7 +305,7 @@ func writeStageDeleteOutcome(w io.Writer, result *generated.StageDeletionRespons
 	if err := writeStageDeleteSkipped(w, result); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "Review with 'msgvault show-deletion %s', then execute with 'msgvault delete-staged %s'.\n", *result.ID, *result.ID); err != nil {
+	if _, err := fmt.Fprintf(w, "Review with 'msgvault deletion show %s', then execute with 'msgvault deletion execute %s'.\n", *result.ID, *result.ID); err != nil {
 		return fmt.Errorf("write staging summary: %w", err)
 	}
 	return nil
@@ -341,14 +343,14 @@ func stageDeleteDaemonErr(op string, err error) error {
 	switch apiErr.APIErrorCode() {
 	case analyticalCacheUnavailableCode:
 		return fmt.Errorf("%s: %s; retry shortly if the analytical cache is still building, "+
-			"or run 'msgvault build-cache' and rerun stage-delete", op, apiErr.Message)
+			"or run 'msgvault cache build' and rerun deletion stage", op, apiErr.Message)
 	case "selection_not_deletable":
 		return fmt.Errorf("%s: %s; nothing the search matched can be deleted from its "+
 			"source. Deletion currently covers Gmail and Microsoft Graph mail only, so widen or retarget the "+
 			"search, for example with --source-id <source-id>",
 			op, apiErr.Message)
 	case "multi_account_selection":
-		return fmt.Errorf("%s: %s; rerun stage-delete once per source with --source-id",
+		return fmt.Errorf("%s: %s; rerun deletion stage once per source with --source-id",
 			op, apiErr.Message)
 	}
 	return fmt.Errorf("%s: %w", op, err)

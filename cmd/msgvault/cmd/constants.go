@@ -52,8 +52,24 @@ const flagJSON = "json"
 // cmdUseList is the shared Cobra use/name for list subcommands.
 const cmdUseList = "list"
 
+// cmdUseSource is the shared Cobra name for provider source commands.
+const cmdUseSource = "source"
+
+// exportRecordTypeSource identifies source records in an export stream.
+const exportRecordTypeSource = "source"
+
+// cmdUseAccount is the shared Cobra use/name for account commands.
+const cmdUseAccount = "account"
+
 // cmdUseResume is the shared Cobra use/name for resume subcommands.
 const cmdUseResume = "resume"
+
+// cmdUseUpdate is the shared Cobra use/name for the top-level update command.
+const cmdUseUpdate = "update"
+
+// calendarActionUpdate is the calendar control subcommand name for the
+// action that changes an existing event's fields, guests, or recurrence.
+const calendarActionUpdate = "update"
 
 // cmdUseConsent is the shared Cobra use/name for consent subcommands.
 const cmdUseConsent = "consent"

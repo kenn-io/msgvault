@@ -40,7 +40,7 @@ config is invalid. `msgvault serve`, `msgvault daemon start`, and
 anything. When no usable daemon is running, the on-demand start fails with the
 config error instead of launching one. Saving configuration is refused while
 the file on disk would not load cleanly, the daemon's add-account API returns
-the reason when it refuses, and `msgvault add-synctech-sms-drive` fails at
+the reason when it refuses, and `msgvault source synctech-sms add` fails at
 start. `msgvault update` also stays strict.
 
 ## Remote Deletion Consent
@@ -462,7 +462,7 @@ Daylight saving time changes how a schedule in the affected hour runs:
   same minute. In New York, `30 2 * * *` runs at 03:30 on the spring-forward
   day.
 - When clocks repeat an hour, `msgvault serve` runs a schedule in that hour
-  once, on the first pass. `sync-muesli --watch` runs it on both passes.
+  once, on the first pass. `source muesli sync --watch` runs it on both passes.
 
 ## Sections
 
@@ -484,7 +484,7 @@ listed in [Recommended Configuration](/docs/usage/recommended-configuration/).
 Attachments and OAuth tokens are stored in subdirectories of `data_dir` (`attachments/` and `tokens/` respectively). These paths are not independently configurable.
 
 Setting `loose_attachments = true` prevents new pack files but does not
-convert existing packs. Stop the daemon and run `msgvault unpack-attachments`
+convert existing packs. Stop the daemon and run `msgvault attachment unpack`
 once to materialize their contents as loose files. Backup restore also restores
 attachments loose while this setting is enabled.
 
@@ -498,7 +498,7 @@ attachments loose while this setting is enabled.
 
 #### `[oauth.apps.<name>]`
 
-Named OAuth apps for Google Workspace organizations that require their own OAuth credentials. Each entry can define a separate browser OAuth `client_secret.json`, service account key, or both. Use `--oauth-app <name>` with `add-account` to bind an account to a named app.
+Named OAuth apps for Google Workspace organizations that require their own OAuth credentials. Each entry can define a separate browser OAuth `client_secret.json`, service account key, or both. Use `--oauth-app <name>` with `source gmail add` to bind an account to a named app.
 
 | Key | Default | Description |
 |---|---|---|
@@ -510,13 +510,13 @@ See [OAuth Setup: Google Workspace Accounts](/docs/guides/oauth-setup/#google-wo
 
 Discord's `--oauth-app` value is only a protected bot-token binding label. It
 is not resolved from this section and does not require an `[oauth.apps]` entry.
-`export-messages` uses the same daemon and database configuration as other
+`export messages` uses the same daemon and database configuration as other
 archive commands. It does not load provider credentials or make provider API
 calls. It reads one database snapshot and runs alongside imports and syncs.
-The older `export-discord` compatibility command has the same read-only
+The older `export discord` compatibility command has the same read-only
 provider behavior.
 
-When `service_account_key` is configured, `msgvault add-account <email>` validates the delegated Gmail profile and registers the account without storing a per-user refresh token. The service account key file must be owner-only on Unix-like systems, for example `chmod 600 /path/to/service-account.json`.
+When `service_account_key` is configured, `msgvault source gmail add <email>` validates the delegated Gmail profile and registers the account without storing a per-user refresh token. The service account key file must be owner-only on Unix-like systems, for example `chmod 600 /path/to/service-account.json`.
 
 #### Command-backed Google credentials and tokens
 
@@ -612,7 +612,7 @@ Configure the command backend separately on each machine. To migrate a file
 credential, move its JSON into your store under its namespace and account
 and verify a sync before removing the old file. Changing configuration leaves
 existing plaintext files in place; msgvault does not migrate them automatically.
-`export-token` reads the selected backend, and the receiving server's token-upload
+`account export-token` reads the selected backend, and the receiving server's token-upload
 endpoint writes its configured backend. Configure the receiving backend before
 uploading. Client credentials remain separately configured; setup does not put
 command output into a NAS bundle.
@@ -654,7 +654,7 @@ enabled = true
 schedule = "0 */6 * * *"
 ```
 
-Use `add-carddav --connection work` or **Add connection** in Settings to save
+Use `source carddav add --connection work` or **Add connection** in Settings to save
 its credential and discover books. Passwords are rejected in these TOML tables.
 The default binding remains `tokens/carddav.json`; named bindings use
 `tokens/carddav-connections/<name>/carddav.json`. Google authorizations are
@@ -672,7 +672,7 @@ for browser and terminal authorization.
 ### `[microsoft]`
 
 Configuration for Microsoft 365 / Outlook.com OAuth and Microsoft Teams Graph
-sync. Required only if you use `add-o365`, `add-teams`, or `sync-teams`.
+sync. Required only if you use `source o365 add`, `source teams add`, or `source teams sync`.
 
 | Key | Default | Description |
 |---|---|---|
@@ -705,7 +705,7 @@ Profiles, and Source Identities](/docs/usage/people/#fastmail-alias-inventory).
 
 Provider-wide Discord import settings and optional message-container filters.
 Register guilds and store their bot credential first with `msgvault
-add-discord`; tokens and binding labels do not belong in `config.toml`.
+source discord add`; tokens and binding labels do not belong in `config.toml`.
 
 | Key | Default | Description |
 |---|---|---|
@@ -841,7 +841,7 @@ media = false
 ```
 
 Policy changes apply to future downloads. Media already stored under an
-earlier policy stays until you run `msgvault purge-excluded-media`, which
+earlier policy stays until you run `msgvault attachment purge-excluded`, which
 removes attachment bytes the current policy would no longer collect.
 
 Participant limits use provider membership, not the number of senders observed
@@ -851,7 +851,7 @@ changed. Repairs follow message sync in bounded batches. Failed repairs retry
 after a day and do not hold up new messages; a full sync retries sooner. Discord
 records its guild member estimate when a participant limit is configured,
 including syncs with media downloading disabled. If the provider
-still cannot report membership, `purge-excluded-media` retains that room's media
+still cannot report membership, `attachment purge-excluded` retains that room's media
 and reports the unresolved count. Sync again after access is restored, then
 preview the purge again.
 
@@ -881,10 +881,10 @@ Use `msgvault logs` to view and tail log files from the selected local or remote
 | `imap_max_commands_per_minute` | `0` | Evenly spaces each IMAP client's explicit sync read commands and authentication attempts. `0` disables pacing; negative values are invalid. Applies to manual and scheduled syncs. Retries wait for the full delay requested by the server, with at most three retries per command. See [IMAP command limits](usage/imap.md#handle-server-command-limits) for retry behavior and scope. |
 | `archive_remote_images` | `false` | Download remote email images during Gmail/IMAP sync and EML, EMLX, MBOX, and PST imports |
 | `imap_skip_folders` | `{}` | Per-IMAP-account folders excluded from scheduled syncs and manual syncs without folder flags |
-| `trusted_imap_sent_mailboxes` | `{}` | Per-IMAP-account Sent-folder names (keyed by the ACCOUNT identifier from `msgvault list-accounts`) that enable edited-copy snapshot refresh for servers without advertised special-use roles |
+| `trusted_imap_sent_mailboxes` | `{}` | Per-IMAP-account Sent-folder names (keyed by the ACCOUNT identifier from `msgvault account list`) that enable edited-copy snapshot refresh for servers without advertised special-use roles |
 
 To skip folders on every sync, key `imap_skip_folders` by the exact `ACCOUNT`
-identifier printed by `msgvault list-accounts`:
+identifier printed by `msgvault account list`:
 
 ```toml
 [sync]
@@ -921,7 +921,7 @@ folder and holds only mail the account itself authored, which re-enables
 refreshing the archived snapshot from an edited copy found there.
 
 The mapping is keyed by the exact source identifier — copy the `ACCOUNT`
-value printed by `msgvault list-accounts` (for example
+value printed by `msgvault account list` (for example
 `imaps://user@example.com@imap.example.com:993`), not the email or display
 name. Trust never crosses accounts: a same-named mailbox in another synced
 account stays untrusted, and an account with no entry has no explicit trust.
@@ -1178,7 +1178,7 @@ For a constrained host, lower `builder_memory_limit` and set
 If a cache build exhausts memory or spill space, its error names the effective
 `builder_memory_limit`, `builder_threads`, and `builder_temp_limit`. Check memory
 and free disk space before raising the relevant limit in `config.toml`, then
-retry `msgvault build-cache`. A large archive may need an explicit budget above
+retry `msgvault cache build`. A large archive may need an explicit budget above
 the adaptive cap. Failed builds leave the previously published cache intact.
 
 Builders spill temporary work under the cache staging directory, beside the
@@ -1205,7 +1205,7 @@ usable cache is ready. If no usable cache can be built or opened, `msgvault serv
 fails instead of silently falling back. A failed automatic refresh after a sync
 keeps serving the last usable publication, and the daemon checks again 15
 minutes later even if later syncs write nothing. With `auto_build_cache = false`, use
-`msgvault build-cache`, `query --fresh`, or sync `--build-cache` for explicit
+`msgvault cache build`, `query --fresh`, or sync `--build-cache` for explicit
 cache maintenance. Deprecated in 0.17.0:
 per-command analytics flags such as `msgvault tui --force-sql`,
 `msgvault mcp --force-sql`, `msgvault tui --no-cache-build`, and
@@ -1241,7 +1241,7 @@ Cache build memory and temporary disk usage scale with archive size, so a
 minimum interval can prevent repeated archive-scale work when sources sync
 frequently. Changes under `[analytics]` take effect after the daemon restarts.
 
-This setting governs the aggregate views (Senders/Domains/Labels/Time) and is ignored entirely when `[data].database_url` points at PostgreSQL — a PostgreSQL backend always uses live SQL for those views, and `build-cache` refuses to run against it. In auto mode on SQLite, Messages serves live archive rows while the cache rebuilds and after a failed build. Grouping, person filters, semantic search, per-row exact-match counts, bulk actions, Files, People/domains, and the reader’s Open person action still require the analytical cache. Messages shows a recovery notice after a failed build. These workspaces remain unavailable on PostgreSQL; see [PostgreSQL Backend](/docs/architecture/postgresql/) for the current scope.
+This setting governs the aggregate views (Senders/Domains/Labels/Time) and is ignored entirely when `[data].database_url` points at PostgreSQL — a PostgreSQL backend always uses live SQL for those views, and `cache build` refuses to run against it. In auto mode on SQLite, Messages serves live archive rows while the cache rebuilds and after a failed build. Grouping, person filters, semantic search, per-row exact-match counts, bulk actions, Files, People/domains, and the reader’s Open person action still require the analytical cache. Messages shows a recovery notice after a failed build. These workspaces remain unavailable on PostgreSQL; see [PostgreSQL Backend](/docs/architecture/postgresql/) for the current scope.
 
 ### `[backup]`
 
@@ -1265,13 +1265,13 @@ When set, archive-access CLI commands use the remote server by default. Without 
 | `api_key_env` | — | Name of an environment variable holding the remote API key |
 | `allow_insecure` | `false` | Allow HTTP remote connections |
 
-Affected CLI commands include `search` (FTS mode), `query`, `show-message`, `stats`, `list-accounts`, `list-senders`, `list-domains`, `list-labels`, `identity` subcommands, `collection` subcommands, `export-eml`, `export-attachment`, `export-attachments`, and `tui`. With a [read-only remote client](guides/remote-deployment.md#read-only-remote-clients) key, `list-senders`, `list-domains`, `list-labels`, `query`, vector search, `tui`, and `mcp` aren't available.
+Affected CLI commands include `search` (FTS mode), `query`, `show`, `stats`, `account list`, `sender list`, `domain list`, `label list`, `identity` subcommands, `collection` subcommands, `export eml`, `export attachment`, `export attachments`, and `tui`. With a [read-only remote client](guides/remote-deployment.md#read-only-remote-clients) key, `sender list`, `domain list`, `label list`, `query`, vector search, `tui`, and `mcp` aren't available.
 
 The same settings route `mcp` to a remote daemon. Secret precedence and file
 requirements match [server credentials](#server). `--local` ignores the remote
 destination and its secret sources. An unused destination's secret is not read.
 Runtime keys from files or environment variables are never copied into saved
-`api_key` fields by `setup` or `export-token`.
+`api_key` fields by `setup` or `account export-token`.
 
 ### `[[accounts]]`
 
@@ -1299,11 +1299,11 @@ enabled = true
 
 ### SyncTech SMS Sources
 
-Scheduled SMS Backup & Restore sources are configured with `[[synctech_sms.sources]]` entries. These are created automatically by `msgvault add-synctech-sms-drive`, but can also be edited directly.
+Scheduled SMS Backup & Restore sources are configured with `[[synctech_sms.sources]]` entries. These are created automatically by `msgvault source synctech-sms add`, but can also be edited directly.
 
 | Key | Default | Description |
 |---|---|---|
-| `name` | (required) | Source name used by `sync-synctech-sms <name>` and scheduler logs |
+| `name` | (required) | Source name used by `source synctech-sms sync <name>` and scheduler logs |
 | `enabled` | `true` | Whether the source is active |
 | `backend` | `local` | `local` for a path on disk, or `drive` for Google Drive |
 | `path` | — | Local XML/ZIP file or directory when `backend = "local"` |
@@ -1320,7 +1320,7 @@ Scheduled SMS Backup & Restore sources are configured with `[[synctech_sms.sourc
 
 ### Google Calendar Sources
 
-Scheduled Google Calendar sync is configured with top-level `[[gcal]]` entries. Each entry is one OAuth account; `msgvault serve` runs it on the given cron schedule (first run full-syncs and registers calendars, later runs are incremental). Authorize the account first with `msgvault add-calendar`.
+Scheduled Google Calendar sync is configured with top-level `[[gcal]]` entries. Each entry is one OAuth account; `msgvault serve` runs it on the given cron schedule (first run full-syncs and registers calendars, later runs are incremental). Authorize the account first with `msgvault source calendar add`.
 
 ```toml
 [[gcal]]
@@ -1337,7 +1337,7 @@ invite_calendars = []            # subset allowed to change guests or notify the
 
 | Key | Default | Description |
 |---|---|---|
-| `name` | email | Source name used by `sync-calendar <name>` and scheduler logs |
+| `name` | email | Source name used by `source calendar sync <name>` and scheduler logs |
 | `email` | (required) | Google account that owns the token (the token key) |
 | `oauth_app` | — | Named Google OAuth app to use |
 | `calendars` | — | Specific calendar IDs to sync; empty syncs owned/writable calendars |
@@ -1358,7 +1358,7 @@ both permission lists; neither list supports wildcards or alias names.
 ### `[matrix]`
 
 Archive joined rooms from native [Matrix](/docs/usage/matrix/) accounts. One
-block controls every account registered with `msgvault add-matrix`; credentials
+block controls every account registered with `msgvault source matrix add`; credentials
 never belong in `config.toml`.
 
 ```toml
@@ -1394,7 +1394,7 @@ max_media_mb = 250                # per-file download cap (MiB)
 Archive chats from a locally running [Beeper Desktop](/docs/usage/beeper/). A single
 block (not a list): the Beeper Desktop API is loopback-only, so there is one
 instance per machine and the daemon must run beside it. Authorize first with
-`msgvault add-beeper`.
+`msgvault source beeper add`.
 
 ```toml
 [beeper]
@@ -1422,7 +1422,7 @@ max_media_mb = 250                # per-attachment download cap (MiB)
 | `accounts` | all | Beeper accountIDs to sync (include filter) |
 | `exclude_accounts` | — | Beeper accountIDs to skip (wins over `accounts`) |
 | `rate_limit_qps` | `20` | Request rate limit against the local API |
-| `media` | `true` | Download attachment bytes (failed downloads retry via `backfill-beeper-media`) |
+| `media` | `true` | Download attachment bytes (failed downloads retry via `source beeper backfill-media`) |
 | `media_scope` | `all` | `all`, `direct`, or `none`; see [Media policy](#media-policy) |
 | `media_max_participants` | `20` | Skip media from conversations above this many participants; `0` = no cap |
 | `max_media_mb` | `250` | Per-attachment download cap in MiB (over-cap media is recorded as a `size_cap` skip and retried only after the cap changes) |
@@ -1580,7 +1580,7 @@ Agents can quote the transcripts of delivered files in
 ### `[inline]`
 
 Archive [all accessible Inline chats](usage/inline.md) by default, including
-hidden and archived chats and accessible child threads. `add-inline` verifies
+hidden and archived chats and accessible child threads. `source inline add` verifies
 the account and adds it to `[[inline.accounts]]`. Optional chat IDs restrict
 capture to an exact filter. One provider block controls scheduling and media
 policy for all registered Inline accounts. Credentials are separate from this
@@ -1623,14 +1623,14 @@ Each `[[inline.accounts]]` entry has:
 
 | Key | Default | Description |
 |---|---|---|
-| `identifier` | required | Canonical authenticated account identifier written by `add-inline` |
+| `identifier` | required | Canonical authenticated account identifier written by `source inline add` |
 | `transport` | `mcp` | OAuth MCP or the explicitly selected `cli` transport; there is no automatic fallback |
 | `chat_ids` | all accessible chats | Optional numeric chat IDs as strings for an exact filter; empty or omitted discovers all chats, while filtered child chats must be selected separately |
 | `endpoint` | `https://mcp.inline.chat/mcp/v2` | Only this production URL is accepted; omit the key to use the default |
 | `cli_path` | `inline` | CLI executable path on the daemon host, used only for `transport = "cli"` |
 
 An explicit filter pauses future capture outside that filter without removing
-archived records. Re-running `add-inline` with IDs merges existing explicit
+archived records. Re-running `source inline add` with IDs merges existing explicit
 filters; running it without IDs restores all-chat mode. Changing transports
 retains the canonical account, conversation, and message identities. All-chat
 mode requires a complete catalog from the deployed Inline backend
@@ -1723,7 +1723,7 @@ reconcile_interval_hours = 24
 | `inboxes` | all accessible | Positive inbox IDs to register and sync |
 | `exclude_inboxes` | — | Positive inbox IDs to exclude; wins over `inboxes` |
 | `self_agent_ids` | — | Positive user IDs representing the archive owner; outgoing replies alone do not establish ownership |
-| `include_private` | `false` | Include private notes; turning it on later and running `sync-chatwoot --full` backfills the notes already skipped. Sync refuses to run with it off once private notes are archived |
+| `include_private` | `false` | Include private notes; turning it on later and running `source chatwoot sync --full` backfills the notes already skipped. Sync refuses to run with it off once private notes are archived |
 | `media` | `true` | Download attachment and call-recording bytes; retain metadata and source transcripts when disabled |
 | `max_media_mb` | `250` | Cap in MiB for media other than call recordings; zero selects the default; negative/overflowing values are rejected |
 | `recording_max_bytes` | `4294967296` (4 GiB) | Per-file cap in bytes for audio on voice-call messages and linked call meetings; zero selects the default; negative values and `MaxInt64` are rejected. Does not enable media downloads or Docbank uploads |
@@ -1737,7 +1737,7 @@ keep instance identities stable. Add another profile for another account or inst
 
 Archive [Slack workspaces](/docs/usage/slack/). A single block covers every
 registered workspace (tokens are per-workspace files). Authorize each
-workspace first with `msgvault add-slack`.
+workspace first with `msgvault source slack add`.
 
 ```toml
 [slack]
@@ -1766,7 +1766,7 @@ max_media_mb = 250                # per-file download cap (MiB)
 | `private_channels` | `true` | Sync private channels; `false` pauses them without removing archived messages or affecting DMs |
 | `dms` | `true` | Sync one-to-one DMs; `false` pauses them without removing archived messages |
 | `group_dms` | `true` | Sync group DMs; `false` pauses them without removing archived messages |
-| `media` | `true` | Download shared-file bytes (failed downloads retry via `backfill-slack-media`) |
+| `media` | `true` | Download shared-file bytes (failed downloads retry via `source slack backfill-media`) |
 | `media_scope` | `all` | `all`, `direct` (DMs and group DMs only), or `none`; see [Media policy](#media-policy) |
 | `media_max_participants` | `20` | Skip files from conversations above this many members; `0` = no cap |
 | `max_media_mb` | `250` | Per-file download cap in MiB (over-cap files are recorded as a `size_cap` skip and retried only after the cap changes) |
@@ -1798,7 +1798,7 @@ max_media_mb = 500
 
 | Key | Default | Description |
 |---|---|---|
-| `media` | `true` | Download attachment and inline hosted-content bytes (failed downloads retry via `backfill-teams-media`) |
+| `media` | `true` | Download attachment and inline hosted-content bytes (failed downloads retry via `source teams backfill-media`) |
 | `media_scope` | `all` | `all`, `direct` (chats only, not channels), or `none`; see [Media policy](#media-policy) |
 | `media_max_participants` | `20` | Skip media from chats and channels above this many members; `0` = no cap |
 | `max_media_mb` | `250` | Per-attachment download cap in MiB |
@@ -1859,7 +1859,7 @@ Choose a schedule interval that allows for the time it takes to read your databa
 ### Omi Sources
 
 Use one `[[omi]]` entry per hosted or self-hosted Omi account. Register each
-entry with `msgvault add-omi`; see [Omi setup](usage/meetings.md#omi).
+entry with `msgvault source omi add`; see [Omi setup](usage/meetings.md#omi).
 Use HTTPS for non-loopback backends. Plain HTTP is accepted only for loopback
 hosts such as `localhost`, `127.0.0.1`, or `[::1]`.
 
@@ -1893,7 +1893,7 @@ Granola meeting-notes sync is configured with top-level `[[granola]]` entries.
 Each entry is one Granola account. `identifier` is a stable source label;
 `account_email` is the primary identity used for organizer attribution.
 `msgvault serve` runs it on the given cron schedule. Register the account
-first with `msgvault add-granola`. See
+first with `msgvault source granola add`. See
 [Meeting Transcripts](/docs/usage/meetings/).
 
 ```toml
@@ -1907,17 +1907,17 @@ enabled = true
 
 | Key | Default | Description |
 |---|---|---|
-| `identifier` | `default` (single entry) | Source name used by `sync-granola <identifier>` and scheduler logs |
+| `identifier` | `default` (single entry) | Source name used by `source granola sync <identifier>` and scheduler logs |
 | `account_email` | (required) | Normalized primary account identity used for `is_from_me` |
 | `api_key` | (required) | Granola API key (`grn_…`) |
 | `schedule` | — | Cron expression used by `msgvault serve` |
 | `enabled` | `false` | Whether the source is daemon-scheduled |
 
 Config loading preserves `identifier` and rejects labels without an effective
-email, instructing you to add `account_email`. `msgvault add-granola` confirms
+email, instructing you to add `account_email`. `msgvault source granola add` confirms
 the primary identity even if aliases already exist. Manage aliases with
 `msgvault identity add <identifier> <email>`, then run
-`msgvault sync-granola <identifier> --full` after identity changes to repair
+`msgvault source granola sync <identifier> --full` after identity changes to repair
 existing meeting attribution. A scheduled source must still be registered in
 the archive; removing it prevents the scheduler from silently recreating it.
 
@@ -1946,7 +1946,7 @@ enabled = true
 | `limit` | `0` (all) | Most recordings a scheduled run checks; works like `sync-plaud --limit` |
 | `enabled` | `false` | Whether a scheduled entry runs in the daemon |
 
-Authorize with `msgvault add-plaud <identifier>` on the daemon host. The callback
+Authorize with `msgvault source plaud add <identifier>` on the daemon host. The callback
 uses `localhost:8091/callback/plaud`; tokens use
 `tokens/plaud_<identifier>.json`. An existing source retains its confirmed
 owner even if configuration changes. Use a new identifier for another account.
@@ -1957,7 +1957,7 @@ recreating it automatically.
 
 Top-level `[[twenty]]` entries connect Twenty workspaces' call recordings through
 read-only API keys. Keep these entries on the daemon host. Register each source
-with `msgvault add-twenty` before syncing or scheduling it. See
+with `msgvault source twenty add` before syncing or scheduling it. See
 [Meeting Transcripts](/docs/usage/meetings/#twenty-call-recordings) for API permissions.
 
 ```toml
@@ -2011,7 +2011,7 @@ it. A variable set only in a remote CLI shell does not reach the daemon.
 msgvault sends the key only to Pocket's fixed REST and MCP endpoints. It does
 not store the key in source configuration or raw meeting evidence.
 
-Run `msgvault add-pocket personal` to verify access and bind the source to the
+Run `msgvault source pocket add personal` to verify access and bind the source to the
 authenticated email and stable Pocket user ID. A replacement key for that same
 account works. Another account requires a new source label, even if the email
 matches. Removing an account does not revoke its Pocket key. See the
@@ -2020,7 +2020,7 @@ matches. Removing an account does not revoke its Pocket key. See the
 ### Circleback Sources
 
 Circleback meeting sync is configured with top-level `[[circleback]]`
-entries. Authentication is browser OAuth (`msgvault add-circleback`); no
+entries. Authentication is browser OAuth (`msgvault source circleback add`); no
 secret lives in the config file. See
 [Meeting Transcripts](/docs/usage/meetings/).
 
@@ -2034,7 +2034,7 @@ enabled = true
 
 | Key | Default | Description |
 |---|---|---|
-| `identifier` | `default` (single entry) | Source name used by `sync-circleback <identifier>`, the token filename, and scheduler logs |
+| `identifier` | `default` (single entry) | Source name used by `source circleback sync <identifier>`, the token filename, and scheduler logs |
 | `account_email` | (required) | Normalized primary account identity used for `is_from_me` |
 | `endpoint` | production | MCP endpoint override (testing only) |
 | `schedule` | — | Cron expression used by `msgvault serve` |
@@ -2042,7 +2042,7 @@ enabled = true
 
 Config loading and alias repair follow the same rules as Granola: preserve the
 label, add `account_email`, manage aliases with `msgvault identity`, and run
-`msgvault sync-circleback <identifier> --full` after identity changes.
+`msgvault source circleback sync <identifier> --full` after identity changes.
 Circleback OAuth always confirms the primary identity; there is no identity
 opt-out flag.
 
@@ -2079,7 +2079,7 @@ Token values stay out of diagnostics and archived evidence. See
 [Notion attendee emails](https://msgvault.io/docs/usage/meetings/#notion-attendee-emails)
 for lookup timeouts, failures, and retries.
 
-Run `msgvault add-notion-meetings <identifier>` to validate access and register
+Run `msgvault source notion-meetings add <identifier>` to validate access and register
 the source before enabling a schedule. Removing the source prevents the
 scheduler from recreating it. See [Meeting Transcripts](/docs/usage/meetings/) for
 the 50-result discovery limit, attendee visibility, transcript retries, and
@@ -2113,8 +2113,8 @@ schedule = "15 */6 * * *"
 | `intelligence_service_sid` | — | Only read Conversation Intelligence transcripts from this service; without it, transcripts from every service are read |
 | `enabled` | `false` | Allow daemon scheduling |
 | `schedule` | — | Five-field cron expression |
-| `media` | `true` | Download recordings; `false` archives calls and transcripts only. After turning it back on, run `sync-twilio --full` to fetch the skipped recordings |
-| `max_media_mb` | `1024` (1 GiB) | Per-recording size cap in MiB; `0` uses the default. Oversized recordings are skipped; raise the cap and run `sync-twilio --full` to retry |
+| `media` | `true` | Download recordings; `false` archives calls and transcripts only. After turning it back on, run `source twilio sync --full` to fetch the skipped recordings |
+| `max_media_mb` | `1024` (1 GiB) | Per-recording size cap in MiB; `0` uses the default. Oversized recordings are skipped; raise the cap and run `source twilio sync --full` to retry |
 
 ### Muesli Sources
 
@@ -2138,7 +2138,7 @@ enabled = true
 
 | Key | Default | Description |
 |---|---|---|
-| `identifier` | `default` (single entry) | Source name used by `sync-muesli <identifier>` and scheduler logs |
+| `identifier` | `default` (single entry) | Source name used by `source muesli sync <identifier>` and scheduler logs |
 | `account_email` | (required) | Normalized primary identity; attributed as the organizer of every meeting |
 | `db_path` | `~/Library/Application Support/Muesli/muesli.db` | Muesli database path; `~` expands, and a relative path resolves against the config directory when `--config` is used |
 | `recordings` | `false` | Archive retained M4A or WAV audio as meeting attachments; works in same-host and native remote mode |
@@ -2146,13 +2146,13 @@ enabled = true
 | `contacts` | `true` | Resolve attendees through Apple Contacts; the process reading the files needs Full Disk Access |
 | `contacts_path` | `~/Library/Application Support/AddressBook` | Apple Contacts data folder; expands like `db_path` |
 | `phone_country_code` | — | Country calling code (1–3 digits, such as `"1"` or `"44"`) used for Contacts phone numbers typed without one; unset means only international numbers are used |
-| `schedule` | — | 5-field cron used by the local daemon or recorder-side `sync-muesli --watch` |
+| `schedule` | — | 5-field cron used by the local daemon or recorder-side `source muesli sync --watch` |
 | `enabled` | `false` | Whether automatic rescanning includes this source |
 
-Run `msgvault add-muesli <identifier>` to check the database and register the
+Run `msgvault source muesli add <identifier>` to check the database and register the
 source before enabling a schedule. On a remote recorder, keep
-`msgvault sync-muesli --watch` running to use enabled schedules. Run
-`msgvault sync-muesli <identifier> --full`
+`msgvault source muesli sync --watch` running to use enabled schedules. Run
+`msgvault source muesli sync <identifier> --full`
 after identity changes to repair existing meeting attribution. Removing the
 source prevents the scheduler from recreating it. See
 [Meeting Transcripts](/docs/usage/meetings/#muesli) for what gets stored.
@@ -2437,7 +2437,7 @@ ownership and permission checks to the target directory.
 | `MSGVAULT_CORS_CREDENTIALS` | Whether browser CORS requests may use credentials |
 | `MSGVAULT_TRUSTED_PROXIES` | Comma-separated proxy IP addresses or CIDRs; empty clears the list |
 | `MSGVAULT_REMOTE_URL` | Remote daemon URL for all commands with remote support |
-| `MSGVAULT_REMOTE_API_KEY` | Inline remote key for this process; `export-token --api-key` wins |
+| `MSGVAULT_REMOTE_API_KEY` | Inline remote key for this process; `account export-token --api-key` wins |
 | `MSGVAULT_REMOTE_API_KEY_FILE` | Mounted remote key file |
 | `MSGVAULT_REMOTE_API_KEY_ENV` | Name of the environment variable holding the remote key |
 | `MSGVAULT_REMOTE_ALLOW_INSECURE` | Allow plaintext HTTP to the remote daemon |
@@ -2450,7 +2450,7 @@ the group, inline wins over file, then named environment. A supplied empty
 credential variable is an error when that destination is used. Booleans accept
 Go's `strconv.ParseBool` values, such as `true`, `false`, `1`, and `0`; empty or
 invalid values fail. Origin and proxy lists trim whitespace and ignore empty
-entries, including a trailing comma. Explicit `export-token --to`, `--api-key`,
+entries, including a trailing comma. Explicit `account export-token --to`, `--api-key`,
 and `--allow-insecure` choices are saved even when they match an environment
 override; environment-only values are not saved. An explicit
 `--allow-insecure=false` overrides the environment and saved configuration,
@@ -2491,7 +2491,7 @@ and stores its home at `/data`. No startup hook or entrypoint wrapper is require
 - `error_shown` when the web or TUI shows an error for search, archive loading, message opening, or a Sync now request on Sources that is refused or times out. TUI People readers and recording transcript hits aren't covered. A Sync now run that fails later counts through `sync_failed`. Its `kind` is `search`, `message`, `sync`, or `other`. It has no daily deduplication, so retries can send repeated events.
 - `sync_failed` when a scheduled sync or Sync now on Sources finds a source starting to fail, with its registered type as `sync_source` and `reason=auth|network|rate_limited|other`. The first observed failure counts, including the first sync attempt. Calendar outages count once per account. Repeated failures count once until recovery. State stays in memory, so a restart can count an outage again. Manual CLI syncs and Settings → Contacts Sync now neither record nor clear outages; the next successful scheduled pass clears them. Cache refresh failures don't count as source failures. Unlisted outcome values become `other`. Twenty, Plaud, Circleback, and Muesli HTTP failures always report `other` because their clients return HTTP status as text. Slack's exhausted throttling and HTTP auth failures, IMAP throttling and auth failures without an `AUTHENTICATIONFAILED` code, and Granola throttling also report `other`. A sync counts as failing when it returns an error, even if it read some messages; a sync that returns no error counts as good, even when its summary records skipped or failed items. Partial Granola and Beeper syncs report `other`.
 - `message_opened` when a selected message becomes readable in web, TUI, or CLI
-  `show-message` or a nonempty `show-thread` page, including meeting transcripts. Each surface counts once per install
+  `show` or a nonempty `thread show` page, including meeting transcripts. Each surface counts once per install
   and UTC day. Event and item readers don't count.
 - `sync_finished` after each successful manual archive sync, including no-change runs
   and remote Muesli scans. Runs that pause for Omi cooldown or a time budget don't count

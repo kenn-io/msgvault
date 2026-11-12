@@ -18,6 +18,7 @@ func TestImportSlackdumpEndToEnd(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
+	ensureCommandGrammar(rootCmd)
 	markDaemonCLISubprocessForTest(t)
 	t.Cleanup(saveMessengerState(t))
 	resetImportSlackdumpFlagsAfterTest(t)
@@ -31,7 +32,7 @@ func TestImportSlackdumpEndToEnd(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", home,
-		"import-slackdump",
+		"import", "slackdump",
 		"--me", "alice@example.com",
 		fixture,
 	})
@@ -91,6 +92,7 @@ func TestImportSlackdumpEndToEnd(t *testing.T) {
 func TestImportSlackdumpNoDefaultIdentity(t *testing.T) {
 	require := require.New(t)
 
+	ensureCommandGrammar(rootCmd)
 	markDaemonCLISubprocessForTest(t)
 	t.Cleanup(saveMessengerState(t))
 	resetImportSlackdumpFlagsAfterTest(t)
@@ -103,7 +105,7 @@ func TestImportSlackdumpNoDefaultIdentity(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", home,
-		"import-slackdump",
+		"import", "slackdump",
 		"--me", "UALICE",
 		"--no-default-identity",
 		fixture,
@@ -124,6 +126,7 @@ func TestImportSlackdumpNoDefaultIdentity(t *testing.T) {
 func TestImportSlackdumpPartialFailureConfirmsIdentity(t *testing.T) {
 	require := require.New(t)
 
+	ensureCommandGrammar(rootCmd)
 	markDaemonCLISubprocessForTest(t)
 	t.Cleanup(saveMessengerState(t))
 	resetImportSlackdumpFlagsAfterTest(t)
@@ -143,7 +146,7 @@ func TestImportSlackdumpPartialFailureConfirmsIdentity(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", home,
-		"import-slackdump",
+		"import", "slackdump",
 		"--me", "UALICE",
 		exportRoot,
 	})
@@ -168,7 +171,7 @@ func TestImportSlackdumpPartialFailureConfirmsIdentity(t *testing.T) {
 
 func resetImportSlackdumpFlagsAfterTest(t *testing.T) {
 	t.Helper()
-	command, _, err := rootCmd.Find([]string{"import-slackdump"})
+	command, _, err := rootCmd.Find([]string{"import", "slackdump"})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		command.Flags().VisitAll(func(flag *pflag.Flag) {

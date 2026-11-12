@@ -2,6 +2,7 @@ package sourceops_test
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -45,6 +46,81 @@ func TestResolveExactOneRequiresExactlyOneSelector(t *testing.T) {
 			require.Error(t, err)
 			assert.Equal(t, opserr.KindInvalid, opserr.KindOf(err))
 			assert.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
+func TestSourceSelectorRecoveryGuidance(t *testing.T) {
+	f := storetest.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
+	_, err := sourceops.ResolveExactOne(f.Store, sourceops.Selector{Account: "missing@example.com"})
+	require.Error(err)
+	assert.Equal(opserr.KindNotFound, opserr.KindOf(err))
+	hint, ok := errors.AsType[interface {
+		error
+		Hint() string
+	}](err)
+	require.True(ok)
+	assert.Contains(hint.Hint(), "msgvault account list")
+	assert.Equal(`no account found for "missing@example.com"`, err.Error())
+	_, err = f.Store.GetOrCreateSource("gmail", "shared@example.com")
+	require.NoError(err)
+	_, err = f.Store.GetOrCreateSource("imap", "shared@example.com")
+	require.NoError(err)
+	_, err = sourceops.ResolveExactOne(f.Store, sourceops.Selector{Account: "shared@example.com"})
+	require.Error(err)
+	assert.Equal(opserr.KindInvalid, opserr.KindOf(err))
+	hint, ok = errors.AsType[interface {
+		error
+		Hint() string
+	}](err)
+	require.True(ok)
+	assert.Contains(hint.Hint(), "msgvault account list")
+	assert.Contains(hint.Hint(), "--source-id")
+}
+
+func TestSourceResolverSiblingRecoveryGuidance(t *testing.T) {
+	f := storetest.New(t)
+	resolvers := map[string]func(sourceops.Selector) error{
+		"exact": func(selector sourceops.Selector) error {
+			_, err := sourceops.ResolveExactOne(f.Store, selector)
+			return err
+		},
+		"exact context": func(selector sourceops.Selector) error {
+			_, err := sourceops.ResolveExactOneContext(t.Context(), f.Store, selector)
+			return err
+		},
+		"family": func(selector sourceops.Selector) error {
+			_, err := sourceops.ResolveAccountFamily(f.Store, selector)
+			return err
+		},
+		"family context": func(selector sourceops.Selector) error {
+			_, err := sourceops.ResolveAccountFamilyContext(t.Context(), f.Store, selector)
+			return err
+		},
+		"all": func(selector sourceops.Selector) error {
+			_, err := sourceops.ResolveAllMatches(f.Store, selector)
+			return err
+		},
+	}
+	for name, resolve := range resolvers {
+		t.Run(name, func(t *testing.T) {
+			for _, selector := range []sourceops.Selector{{}, {Account: "missing@example.com"}, {SourceID: 9223372036854775807, SourceIDSet: true}} {
+				assert := assert.New(t)
+				require := require.New(t)
+				err := resolve(selector)
+				require.Error(err)
+				hint, ok := errors.AsType[interface {
+					error
+					Hint() string
+				}](err)
+				require.True(ok)
+				assert.Contains(hint.Hint(), "msgvault account list --json")
+				if selector.SourceIDSet {
+					assert.ErrorIs(err, store.ErrSourceNotFound)
+				}
+			}
 		})
 	}
 }

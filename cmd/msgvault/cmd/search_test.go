@@ -564,12 +564,12 @@ func TestSearchCmd_PrintsBackgroundIndexNote(t *testing.T) {
 		{
 			name:       "awaiting owner warns",
 			indexState: "awaiting_owner",
-			wantNote:   "run rebuild-fts with owner access",
+			wantNote:   "run fts rebuild with owner access",
 		},
 		{
 			name:       "unverified check warns",
 			indexState: "unverified",
-			wantNote:   "couldn't check the text-search index, so results may miss messages. Search again or run msgvault rebuild-fts.",
+			wantNote:   "couldn't check the text-search index, so results may miss messages. Search again or run msgvault fts rebuild.",
 		},
 		{
 			name:       "building warns about rebuilding or awaiting rebuild",

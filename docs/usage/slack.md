@@ -16,13 +16,13 @@ only reads Slack; it does not post or edit messages or mark them read.
 
 ## Import a Slackdump export
 
-Use `import-slackdump` when you already have an export created by
+Use `import slackdump` when you already have an export created by
 [Slackdump](https://github.com/rusq/slackdump). The import runs entirely from
 the local directory or ZIP and does not need a Slack token:
 
 ```bash
-msgvault import-slackdump --me you@example.com /path/to/slackdump-export
-msgvault import-slackdump --me U0123456789 /path/to/slackdump-export.zip
+msgvault import slackdump --me you@example.com /path/to/slackdump-export
+msgvault import slackdump --me U0123456789 /path/to/slackdump-export.zip
 ```
 
 `--me` accepts your exact Slack user ID or a unique profile email from the
@@ -130,7 +130,7 @@ and `search:read` for faster discovery of replies. `reactions:read` and
 ## Add a workspace
 
 ```bash
-msgvault add-slack
+msgvault source slack add
 ```
 
 The command validates the token with `auth.test`, stores it at
@@ -142,8 +142,8 @@ Provide the token via the interactive prompt, `--token-file <path>`, or the
 `MSGVAULT_SLACK_TOKEN` environment variable:
 
 ```bash
-MSGVAULT_SLACK_TOKEN="xoxp-..." msgvault add-slack
-msgvault add-slack --token-file ~/slack-token.txt
+MSGVAULT_SLACK_TOKEN="xoxp-..." msgvault source slack add
+msgvault source slack add --token-file ~/slack-token.txt
 ```
 
 Repeat for additional workspaces — tokens are per-workspace and sources stay
@@ -153,16 +153,16 @@ separately filterable in the TUI.
 
 ```bash
 # First run backfills all history; later runs are incremental.
-msgvault sync-slack
+msgvault source slack sync
 
 # One workspace only.
-msgvault sync-slack T0123456789
+msgvault source slack sync T0123456789
 
 # Repair path: re-fetch everything, upserting in place.
-msgvault sync-slack --full
+msgvault source slack sync --full
 
 # Override conversation selection for a public-only run.
-msgvault sync-slack --private-channels=false --dms=false --group-dms=false
+msgvault source slack sync --private-channels=false --dms=false --group-dms=false
 ```
 
 | Flag | Description |
@@ -174,7 +174,7 @@ msgvault sync-slack --private-channels=false --dms=false --group-dms=false
 | `--private-channels BOOL` | Override private-channel selection for this run |
 | `--no-threads` | Skip thread-reply fetching this run (a later threaded run pays the debt automatically) |
 | `--maintenance` | Refresh recent messages and replies for edits and reaction changes |
-| `--no-media` | Skip file downloads this run (files stay pending for `backfill-slack-media`) |
+| `--no-media` | Skip file downloads this run (files stay pending for `source slack backfill-media`) |
 
 Backfills are resumable: interrupt with Ctrl-C and the next run continues
 from the last checkpoint. A `--full` repair also resumes on later runs,
@@ -252,7 +252,7 @@ collect only from DMs and group DMs (see
 permalink only. Failed downloads leave pending markers:
 
 ```bash
-msgvault backfill-slack-media
+msgvault source slack backfill-media
 ```
 
 retries them (idempotent; already-downloaded files are never re-fetched).

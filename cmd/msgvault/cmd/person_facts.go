@@ -59,7 +59,7 @@ func newPersonFactsCommand() *cobra.Command {
 				return err
 			}
 			if response.JSON200 == nil {
-				return errors.New("person fact catalog response was empty")
+				return readDaemonResponseError(errors.New("person fact catalog response was empty"))
 			}
 			if options.jsonOutput {
 				return writePersonFactCLIRawJSON(cmd, response.Body)
@@ -105,7 +105,7 @@ func newPersonFactsCommand() *cobra.Command {
 				return err
 			}
 			if response.JSON200 == nil {
-				return errors.New("person fact evidence response was empty")
+				return readDaemonResponseError(errors.New("person fact evidence response was empty"))
 			}
 			if options.jsonOutput {
 				return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), response.JSON200.Evidence, json.Deterministic(true))
@@ -161,7 +161,7 @@ func newPersonFactsCommand() *cobra.Command {
 				return err
 			}
 			if response.JSON200 == nil {
-				return errors.New("person fact evidence status response was empty")
+				return readDaemonResponseError(errors.New("person fact evidence status response was empty"))
 			}
 			if options.jsonOutput {
 				return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), response.JSON200.Events, json.Deterministic(true))
@@ -208,7 +208,7 @@ func newPersonFactsCommand() *cobra.Command {
 				return err
 			}
 			if response.JSON200 == nil {
-				return errors.New("person fact claims response was empty")
+				return readDaemonResponseError(errors.New("person fact claims response was empty"))
 			}
 			if options.jsonOutput {
 				return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), response.JSON200.Claims, json.Deterministic(true))
@@ -252,7 +252,7 @@ func newPersonFactsCommand() *cobra.Command {
 				return err
 			}
 			if response.JSON200 == nil {
-				return errors.New("person fact decisions response was empty")
+				return readDaemonResponseError(errors.New("person fact decisions response was empty"))
 			}
 			if options.jsonOutput {
 				return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), response.JSON200.Decisions, json.Deterministic(true))
@@ -293,7 +293,7 @@ func newPersonFactsCommand() *cobra.Command {
 				return err
 			}
 			if response.JSON200 == nil {
-				return errors.New("person fact pins response was empty")
+				return readDaemonResponseError(errors.New("person fact pins response was empty"))
 			}
 			if options.jsonOutput {
 				return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), response.JSON200.Pins, json.Deterministic(true))
@@ -372,7 +372,7 @@ func newPersonFactPinCommand(options *personFactsCLIOptions, pinned bool) *cobra
 				return err
 			}
 			if response.JSON200 == nil {
-				return errors.New("person fact pin response was empty")
+				return readDaemonResponseError(errors.New("person fact pin response was empty"))
 			}
 			if options.jsonOutput {
 				return writePersonFactCLIRawJSON(cmd, response.Body)

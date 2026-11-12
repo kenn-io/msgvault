@@ -51,7 +51,7 @@ func LoadToken(tokensDir, teamID, userID string) (string, error) {
 	data, err := os.ReadFile(tokenPath(tokensDir, teamID, userID))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("no Slack token for %s in workspace %s (run 'add-slack' first)", userID, teamID)
+			return "", fmt.Errorf("no Slack token for %s in workspace %s (run 'source slack add' first)", userID, teamID)
 		}
 		return "", fmt.Errorf("read slack token: %w", err)
 	}
@@ -60,7 +60,7 @@ func LoadToken(tokensDir, teamID, userID string) (string, error) {
 		return "", fmt.Errorf("parse slack token: %w", err)
 	}
 	if (tf.TeamID != "" && tf.TeamID != teamID) || (tf.UserID != "" && tf.UserID != userID) {
-		return "", fmt.Errorf("slack token file for %s/%s holds identity %s/%s — re-run 'add-slack'",
+		return "", fmt.Errorf("slack token file for %s/%s holds identity %s/%s — re-run 'source slack add'",
 			teamID, userID, tf.TeamID, tf.UserID)
 	}
 	return tf.AccessToken, nil

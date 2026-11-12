@@ -49,7 +49,7 @@ var personNotesGetCmd = &cobra.Command{
 		}
 		group, value := personNotesAttribute(attributes)
 		if group == nil {
-			return errors.New("notes attribute definition is unavailable")
+			return withHint(errors.New("notes attribute definition is unavailable"), "inspect 'msgvault attribute-definition list --object-type person --json' and check 'msgvault daemon status'")
 		}
 		if personNotesJSON {
 			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), value, json.Deterministic(true))
@@ -103,7 +103,7 @@ var personNotesSetCmd = &cobra.Command{
 		}
 		group, _ := personNotesAttribute(attributes)
 		if group == nil {
-			return errors.New("notes attribute definition is unavailable")
+			return withHint(errors.New("notes attribute definition is unavailable"), "inspect 'msgvault attribute-definition list --object-type person --json' and check 'msgvault daemon status'")
 		}
 		write, err := backend.SetAttribute(cmd.Context(), peoplebrowser.SetAttributeRequest{
 			PersonID: personID, Slug: group.Definition.Slug,
@@ -158,7 +158,7 @@ func personNotesWriteInput(cmd *cobra.Command, args []string) (int64, string, er
 		return 0, "", err
 	}
 	if !cmd.Flags().Changed("text") {
-		return 0, "", usageErr(cmd, errors.New("--text is required"))
+		return 0, "", withHint(usageErr(cmd, errors.New("--text is required")), "use 'msgvault person notes set <person-id> --text \"Met at the 2026 offsite\"'; --text also accepts @path or - for standard input")
 	}
 	if strings.TrimSpace(personNotesText) == "" {
 		return 0, "", usageErr(cmd, errors.New("notes text must not be blank"))
@@ -195,7 +195,7 @@ func personNotesAttribute(attributes *peoplebrowser.Attributes) (
 
 func writePersonNotesResult(cmd *cobra.Command, write *store.PersonAttributeWrite) error {
 	if write == nil {
-		return errors.New("person notes response was empty")
+		return readDaemonResponseError(errors.New("person notes response was empty"))
 	}
 	if personNotesJSON {
 		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), write, json.Deterministic(true))

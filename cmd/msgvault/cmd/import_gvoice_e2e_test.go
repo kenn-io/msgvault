@@ -24,6 +24,7 @@ func TestImportGvoiceStoresVoicemailAudioEndToEnd(t *testing.T) {
 
 	assert := assert.New(t)
 	require := require.New(t)
+	ensureCommandGrammar(rootCmd)
 	markDaemonCLISubprocessForTest(t)
 	previousBefore := importGvoiceBefore
 	previousAfter := importGvoiceAfter
@@ -50,7 +51,7 @@ func TestImportGvoiceStoresVoicemailAudioEndToEnd(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", home,
-		"import-gvoice",
+		"import", "gvoice",
 		"--no-default-identity",
 		voice,
 	})
@@ -109,7 +110,7 @@ func TestImportGvoiceStoresVoicemailAudioEndToEnd(t *testing.T) {
 	require.NoError(err)
 	rootCmd.SetArgs([]string{
 		"--home", home,
-		"import-gvoice",
+		"import", "gvoice",
 		"--no-default-identity",
 		voice,
 	})

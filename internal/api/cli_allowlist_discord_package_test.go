@@ -9,4 +9,5 @@ import (
 func TestImportDiscordPackageAllowedThroughDaemonCLIRunner(t *testing.T) {
 	t.Parallel()
 	assert.True(t, cliRunCommandAllowed([]string{"import-discord-package", "--no-default-identity", "/package"}))
+	assert.True(t, cliRunCommandAllowed([]string{"import", "discord-package", "--no-default-identity", "/package"}))
 }

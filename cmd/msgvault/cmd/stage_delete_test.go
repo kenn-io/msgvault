@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/cligrammar"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -35,7 +36,7 @@ func issue769CommandArgs(t *testing.T, dryRun bool) []string {
 		}
 		lineIsDryRun := len(fields) == 5 && fields[4] == "--dry-run"
 		if (dryRun && lineIsDryRun) || (!dryRun && len(fields) == 4) {
-			return fields[1:]
+			return cligrammar.Canonical(fields[1:])
 		}
 	}
 	require.FailNow(t, "issue 769 reproduction command not found", dryRun)
@@ -44,9 +45,10 @@ func issue769CommandArgs(t *testing.T, dryRun bool) []string {
 
 func newRegisteredStageDeleteTestRoot(t *testing.T, contexts ...context.Context) *cobra.Command {
 	t.Helper()
-	registered, _, err := rootCmd.Find([]string{"stage-delete"})
-	require.NoError(t, err, "find registered stage-delete command")
-	require.NotNil(t, registered, "registered stage-delete command")
+	ensureCommandGrammar(rootCmd)
+	registered, _, err := rootCmd.Find([]string{"deletion", "stage"})
+	require.NoError(t, err, "find registered deletion stage command")
+	require.NotNil(t, registered, "registered deletion stage command")
 
 	stageDeleteDryRun = false
 	require.NoError(t, registered.Flags().Set("dry-run", "false"))
@@ -55,11 +57,13 @@ func newRegisteredStageDeleteTestRoot(t *testing.T, contexts ...context.Context)
 	require.NoError(t, registered.Flags().Set("ids", ""))
 	registered.Flags().Lookup("ids").Changed = false
 	root := &cobra.Command{Use: "msgvault"}
+	deletion := &cobra.Command{Use: "deletion"}
 	if len(contexts) > 0 {
 		root.SetContext(contexts[0])
-		registered.SetContext(contexts[0])
+		deletion.SetContext(contexts[0])
 	}
-	root.AddCommand(registered)
+	deletion.AddCommand(cloneCommandDefinition(registered, "stage"))
+	root.AddCommand(deletion)
 	return root
 }
 
@@ -79,14 +83,14 @@ func TestStageDeleteCommand(t *testing.T) {
 			query:      []string{"from:alice@example.com", "older_than:1y"},
 			status:     http.StatusCreated,
 			wantQuery:  "from:alice@example.com older_than:1y",
-			wantOutput: "Staged 3 message(s) for deletion in batch batch-191.\nReview with 'msgvault show-deletion batch-191', then execute with 'msgvault delete-staged batch-191'.\n",
+			wantOutput: "Staged 3 message(s) for deletion in batch batch-191.\nReview with 'msgvault deletion show batch-191', then execute with 'msgvault deletion execute batch-191'.\n",
 		},
 		{
 			name:       "filter_only_criteria",
 			query:      []string{"label:INBOX"},
 			status:     http.StatusCreated,
 			wantQuery:  "label:INBOX",
-			wantOutput: "Staged 3 message(s) for deletion in batch batch-191.\nReview with 'msgvault show-deletion batch-191', then execute with 'msgvault delete-staged batch-191'.\n",
+			wantOutput: "Staged 3 message(s) for deletion in batch batch-191.\nReview with 'msgvault deletion show batch-191', then execute with 'msgvault deletion execute batch-191'.\n",
 		},
 		{
 			name:       "dry_run",
@@ -103,21 +107,21 @@ func TestStageDeleteCommand(t *testing.T) {
 			status:     http.StatusCreated,
 			wantQuery:  "from:alice@example.com",
 			wantSource: 42,
-			wantOutput: "Staged 3 message(s) for deletion in batch batch-191.\nReview with 'msgvault show-deletion batch-191', then execute with 'msgvault delete-staged batch-191'.\n",
+			wantOutput: "Staged 3 message(s) for deletion in batch batch-191.\nReview with 'msgvault deletion show batch-191', then execute with 'msgvault deletion execute batch-191'.\n",
 		},
 		{
 			name:       "list_id",
 			query:      []string{"list:announce.example.org"},
 			status:     http.StatusCreated,
 			wantQuery:  "list:announce.example.org",
-			wantOutput: "Staged 3 message(s) for deletion in batch batch-191.\nReview with 'msgvault show-deletion batch-191', then execute with 'msgvault delete-staged batch-191'.\n",
+			wantOutput: "Staged 3 message(s) for deletion in batch batch-191.\nReview with 'msgvault deletion show batch-191', then execute with 'msgvault deletion execute batch-191'.\n",
 		},
 		{
 			name:       "list_id_alias",
 			query:      []string{"list-id:announce.example.org"},
 			status:     http.StatusCreated,
 			wantQuery:  "list-id:announce.example.org",
-			wantOutput: "Staged 3 message(s) for deletion in batch batch-191.\nReview with 'msgvault show-deletion batch-191', then execute with 'msgvault delete-staged batch-191'.\n",
+			wantOutput: "Staged 3 message(s) for deletion in batch batch-191.\nReview with 'msgvault deletion show batch-191', then execute with 'msgvault deletion execute batch-191'.\n",
 		},
 	}
 
@@ -135,7 +139,7 @@ func TestStageDeleteCommand(t *testing.T) {
 			var stdout bytes.Buffer
 			root := newRegisteredStageDeleteTestRoot(t, testCtx)
 			root.SetOut(&stdout)
-			args := append([]string{"stage-delete"}, tt.query...)
+			args := append([]string{"deletion", "stage"}, tt.query...)
 			args = append(args, tt.flags...)
 			args = append(args, boolFlag(tt.dryRun, "--dry-run")...)
 			root.SetArgs(args)
@@ -155,7 +159,7 @@ func TestStageDeleteCommand(t *testing.T) {
 		var stdout bytes.Buffer
 		root := newRegisteredStageDeleteTestRoot(t, testCtx)
 		root.SetOut(&stdout)
-		root.SetArgs([]string{"stage-delete", "from:bob@example.com"})
+		root.SetArgs([]string{"deletion", "stage", "from:bob@example.com"})
 
 		require.NoError(t, root.Execute())
 		assert.Contains(t, stdout.String(), "batch-191")
@@ -188,7 +192,7 @@ func TestStageDeleteCommand(t *testing.T) {
 				})
 
 				root := newRegisteredStageDeleteTestRoot(t, testCtx)
-				root.SetArgs(append([]string{"stage-delete"}, tt.args...))
+				root.SetArgs(append([]string{"deletion", "stage"}, tt.args...))
 				err := root.Execute()
 
 				require.ErrorContains(t, err, tt.want)
@@ -220,11 +224,11 @@ func TestStageDeleteCommand(t *testing.T) {
 		})
 
 		root := newRegisteredStageDeleteTestRoot(t, testCtx)
-		root.SetArgs([]string{"stage-delete", "subject:receipt"})
+		root.SetArgs([]string{"deletion", "stage", "subject:receipt"})
 		err := root.Execute()
 
 		require.ErrorContains(t, err, "The analytical cache is being prepared")
-		require.ErrorContains(t, err, "msgvault build-cache")
+		require.ErrorContains(t, err, "msgvault cache build")
 	})
 
 	// Issue #768: a mixed search stages its deletable subset, and the command
@@ -241,7 +245,7 @@ func TestStageDeleteCommand(t *testing.T) {
 				wantOutput: "Preflight: 3 matching item(s); 2 message(s) can be staged; 1 item(s) will be skipped.\n" +
 					"Staged 2 message(s) for deletion in batch batch-191.\n" +
 					"1 of 3 matching item(s) cannot be deleted from their source (chats, meetings, or mail from other sources) and were skipped.\n" +
-					"Review with 'msgvault show-deletion batch-191', then execute with 'msgvault delete-staged batch-191'.\n",
+					"Review with 'msgvault deletion show batch-191', then execute with 'msgvault deletion execute batch-191'.\n",
 			},
 			{
 				name: "dry_run", dryRun: true, status: http.StatusOK,
@@ -300,7 +304,7 @@ func TestStageDeleteCommand(t *testing.T) {
 				var stdout bytes.Buffer
 				root := newRegisteredStageDeleteTestRoot(t, testCtx)
 				root.SetOut(&stdout)
-				root.SetArgs(append([]string{"stage-delete", "subject:receipt"}, boolFlag(tt.dryRun, "--dry-run")...))
+				root.SetArgs(append([]string{"deletion", "stage", "subject:receipt"}, boolFlag(tt.dryRun, "--dry-run")...))
 
 				require.NoError(t, root.Execute())
 				assert.Equal(t, tt.wantOutput, stdout.String())
@@ -357,7 +361,7 @@ func TestStageDeleteCommand(t *testing.T) {
 				})
 
 				root := newRegisteredStageDeleteTestRoot(t, testCtx)
-				root.SetArgs([]string{"stage-delete", "from:alice@example.com"})
+				root.SetArgs([]string{"deletion", "stage", "from:alice@example.com"})
 				err := root.Execute()
 
 				require.ErrorContains(t, err, "the daemon rejected the reviewed selection")
@@ -390,7 +394,7 @@ func TestStageDeleteCommand(t *testing.T) {
 		})
 
 		root := newRegisteredStageDeleteTestRoot(t, testCtx)
-		root.SetArgs([]string{"stage-delete", "subject:receipt"})
+		root.SetArgs([]string{"deletion", "stage", "subject:receipt"})
 		err := root.Execute()
 
 		require.ErrorContains(t, err, "could miss matching messages")
@@ -428,7 +432,7 @@ func TestStageDeleteCommand(t *testing.T) {
 				})
 
 				root := newRegisteredStageDeleteTestRoot(t, testCtx)
-				root.SetArgs([]string{"stage-delete", tt.query})
+				root.SetArgs([]string{"deletion", "stage", tt.query})
 				err := root.Execute()
 
 				require.ErrorContains(t, err, "query staging requires daemon API schema 2.18.0 or newer")
@@ -479,7 +483,7 @@ func TestStageDeleteCommand(t *testing.T) {
 				})
 
 				root := newRegisteredStageDeleteTestRoot(t, testCtx)
-				root.SetArgs([]string{"stage-delete", "list:announce.example.org"})
+				root.SetArgs([]string{"deletion", "stage", "list:announce.example.org"})
 				err := root.Execute()
 
 				require.ErrorContains(t, err, "check daemon query staging capability")
@@ -497,7 +501,7 @@ func TestStageDeleteCommand(t *testing.T) {
 			})
 
 			root := newRegisteredStageDeleteTestRoot(t, testCtx)
-			root.SetArgs([]string{"stage-delete", "list:announce.example.org"})
+			root.SetArgs([]string{"deletion", "stage", "list:announce.example.org"})
 			require.NoError(t, root.Execute())
 			assert.Equal(t, []string{"/api/v1/cli/search", "/api/v1/explore", "/api/v1/explore/preflight", "/api/v1/deletions"}, *routes)
 			assert.Equal(t, 2, *healthRequests,
@@ -511,7 +515,7 @@ func TestStageDeleteCommand(t *testing.T) {
 			})
 
 			root := newRegisteredStageDeleteTestRoot(t, testCtx)
-			root.SetArgs([]string{"stage-delete", "subject:test"})
+			root.SetArgs([]string{"deletion", "stage", "subject:test"})
 			require.NoError(t, root.Execute())
 			assert.Equal(t, []string{"/api/v1/cli/search", "/api/v1/explore", "/api/v1/explore/preflight", "/api/v1/deletions"}, *routes)
 			assert.Equal(t, 1, *healthRequests)
@@ -639,7 +643,7 @@ func newStageDeleteTestServerWithSchema(t *testing.T, wantQuery string, dryRun b
 		writeStageDeleteJSON(t, w, stageStatus, response)
 	})
 	mux.HandleFunc("/api/v1/cli/run", func(w http.ResponseWriter, r *http.Request) {
-		assert.Fail(t, "stage-delete must not use the daemon CLI runner", r.URL.Path)
+		assert.Fail(t, "deletion stage must not use the daemon CLI runner", r.URL.Path)
 		http.Error(w, "unexpected CLI runner request", http.StatusInternalServerError)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -709,7 +713,7 @@ func TestStageDeleteCommandByIDs(t *testing.T) {
 		assert.Nil(request.OperationToken)
 		assert.Nil(request.Selection)
 		assert.Equal([]string{"/api/v1/deletions"}, routes)
-		assert.Equal("Staged 3 message(s) for deletion in batch batch-769.\nReview with 'msgvault show-deletion batch-769', then execute with 'msgvault delete-staged batch-769'.\n", stdout.String())
+		assert.Equal("Staged 3 message(s) for deletion in batch batch-769.\nReview with 'msgvault deletion show batch-769', then execute with 'msgvault deletion execute batch-769'.\n", stdout.String())
 	})
 
 	t.Run("reproduction_dry_run", func(t *testing.T) {
@@ -767,7 +771,7 @@ func TestStageDeleteCommandByIDs(t *testing.T) {
 		})
 
 		root := newRegisteredStageDeleteTestRoot(t, testCtx)
-		root.SetArgs([]string{"stage-delete", "--ids", "123,456"})
+		root.SetArgs([]string{"deletion", "stage", "--ids", "123,456"})
 		err := root.Execute()
 
 		require.ErrorContains(err, "the requested IDs span multiple sources")
@@ -805,7 +809,7 @@ func TestStageDeleteCommandByIDs(t *testing.T) {
 			})
 
 			root := newRegisteredStageDeleteTestRoot(t, testCtx)
-			root.SetArgs(append([]string{"stage-delete"}, tt.args...))
+			root.SetArgs(append([]string{"deletion", "stage"}, tt.args...))
 			err := root.Execute()
 
 			require.ErrorContains(err, tt.want)

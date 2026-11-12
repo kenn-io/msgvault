@@ -77,6 +77,11 @@ func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) error {
 		return err
 	}
 
+	stderr, err := newChildStderr(cmd)
+	if err != nil {
+		return err
+	}
+	defer stderr.close()
 	err = st.RunCLISync(cmd.Context(), req, func(stream, data string) error {
 		switch stream {
 		case cliStreamStdout:
@@ -84,12 +89,13 @@ func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) error {
 				return fmt.Errorf("write sync stdout: %w", err)
 			}
 		case cliStreamStderr:
-			if _, err := fmt.Fprint(cmd.ErrOrStderr(), data); err != nil {
+			if _, err := fmt.Fprint(stderr, data); err != nil {
 				return fmt.Errorf("write sync stderr: %w", err)
 			}
 		}
 		return nil
 	})
+	err = stderr.finish(cmd, err)
 	if err == nil {
 		reportCLISyncFinished(cmd, st)
 	}

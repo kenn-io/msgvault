@@ -225,7 +225,7 @@ func apiError(method string, envelope *apiResponse) error {
 		if envelope.Error == "missing_scope" {
 			detail = fmt.Sprintf(" (needs scope %q, token has %q)", envelope.Needed, envelope.Provided)
 		}
-		return fmt.Errorf("slack %s: %s%s: re-run 'msgvault add-slack' with an updated token: %w",
+		return fmt.Errorf("slack %s: %s%s: re-run 'msgvault source slack add' with an updated token: %w",
 			method, envelope.Error, detail, ErrAuth)
 	default:
 		return fmt.Errorf("slack %s: %s", method, envelope.Error)

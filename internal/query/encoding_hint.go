@@ -28,7 +28,7 @@ func HintRepairEncoding(err error) error {
 		return err
 	}
 	if strings.Contains(err.Error(), csvEncodingErrorSubstring) {
-		return fmt.Errorf("%w\nHint: run 'msgvault repair-encoding' to repair supported archive fields and rebuild the cache; if it still fails, report the affected table. DuckDB's ignore_errors setting is not a msgvault option", err)
+		return fmt.Errorf("%w\nHint: run 'msgvault repair encoding' to repair supported archive fields and rebuild the cache; if it still fails, report the affected table. DuckDB's ignore_errors setting is not a msgvault option", err)
 	}
-	return fmt.Errorf("%w\nHint: run 'msgvault build-cache --full-rebuild' to rebuild the analytics cache, then retry", err)
+	return fmt.Errorf("%w\nHint: run 'msgvault cache build --full-rebuild' to rebuild the analytics cache, then retry", err)
 }

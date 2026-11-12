@@ -7,12 +7,12 @@ description: Common questions about msgvault, Gmail API safety, and what the too
 <p class="faq-question">Can msgvault send email or prepare a reply?</p>
 
 msgvault never sends email. For an IMAP source, an operator can grant access to
-one exact Drafts folder; `draft-reply` can then create a plain-text reply draft
+one exact Drafts folder; `draft reply` can then create a plain-text reply draft
 for review and sending in your usual mail application. The grant is disabled by
 default. See [IMAP drafts](usage/imap.md#drafts).
 
 Gmail authorization requests `gmail.modify` by default for archive and deletion
-workflows. `add-account --readonly` requests read-only access instead. See
+workflows. `source gmail add --readonly` requests read-only access instead. See
 [read-only Gmail access](guides/oauth-setup.md#read-only-access) for
 existing-account restrictions.
 
@@ -96,7 +96,7 @@ there is no planned automatic removal of the guardrail. A remote daemon's own
 IMAP move messages to Trash by default; `--permanent` requests permanent
 deletion. Recovery from Trash depends on the provider. Remote deletion retains
 archived content and records source-deletion state. A separate local purge
-with `gc` or `delete-deduped` can remove archive data. See
+with `gc` or `deletion purge-deduped` can remove archive data. See
 [Deleting Email](/docs/usage/deletion/) for the complete process.
 
 ---

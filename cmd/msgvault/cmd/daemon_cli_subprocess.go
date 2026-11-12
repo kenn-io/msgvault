@@ -14,15 +14,10 @@ import (
 	"time"
 
 	"go.kenn.io/kit/consolewindow"
+	"go.kenn.io/msgvault/internal/cligrammar"
 )
 
 const daemonCLISubprocessEnv = "MSGVAULT_DAEMON_CLI_PARENT_PID"
-
-// ErrSyncPaused signals a sync that paused until a later run.
-var ErrSyncPaused = errors.New("sync paused")
-
-// ExitCodeSyncPaused carries a paused outcome from the CLI child to the daemon.
-const ExitCodeSyncPaused = 75
 
 var daemonCLIExecutableResolver = os.Executable
 
@@ -99,6 +94,15 @@ const cliSubprocessExitSentinel = "msgvault: cli subprocess exited non-zero"
 // client must not print a second, redundant "CLI subprocess ...: exit status
 // 1" wrapper. Any other failure (couldn't start, signal, etc.) is wrapped with
 // context because nothing else surfaced it.
+type subprocessExitError struct{ code int }
+
+func (e *subprocessExitError) Error() string { return cliSubprocessExitSentinel }
+func (e *subprocessExitError) ExitCode() int { return e.code }
+
+// Normal failures return through main's renderer. A forced second interrupt
+// can exit 130 directly, so that status must rely on the relayed diagnostic.
+func (e *subprocessExitError) ErrorReported() bool { return e.code != 130 }
+
 func classifyDaemonCLIWaitErr(waitErr error, args []string, emit func(string, string) error) error {
 	if waitErr == nil {
 		return nil
@@ -115,7 +119,7 @@ func classifyDaemonCLIWaitErr(waitErr error, args []string, emit func(string, st
 		// so collapse to the silent sentinel. A signal-terminated process
 		// (Exited() is false, ExitCode() == -1) streamed nothing, so keep it
 		// wrapped with context below.
-		return errors.New(cliSubprocessExitSentinel)
+		return &subprocessExitError{code: exitErr.ExitCode()}
 	}
 	return fmt.Errorf("CLI subprocess %s: %w", strings.Join(args, " "), waitErr)
 }
@@ -127,7 +131,7 @@ func newDaemonCLISubprocessCommand(ctx context.Context, commandArgs []string, en
 	}
 	args := globalConfigFlagArgs(optionsFromContext(ctx))
 	args = append(args, "--no-log-file")
-	args = append(args, commandArgs...)
+	args = append(args, cligrammar.Canonical(commandArgs)...)
 
 	cmd := exec.CommandContext(ctx, exe, args...) //nolint:gosec // exe is os.Executable; args are internally constructed.
 	if cwd != "" {

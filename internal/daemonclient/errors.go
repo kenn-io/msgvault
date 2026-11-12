@@ -19,6 +19,7 @@ import (
 )
 
 type apiErrorBody struct {
+	Hint    string `json:"hint,omitempty"`
 	Error   string `json:"error"`
 	Message string `json:"message"`
 }
@@ -26,14 +27,22 @@ type apiErrorBody struct {
 // APIError preserves the daemon's non-CLI HTTP status, stable machine code,
 // and sanitized message. Error retains the historical client-facing text.
 type APIError struct {
-	Status  int
-	Code    string
-	Message string
+	RecoveryHint string
+	cli          bool
+	Status       int
+	Code         string
+	Message      string
 }
 
 func (e *APIError) Error() string {
+	if e.cli {
+		return e.Message
+	}
 	return fmt.Sprintf("API error (%d): %s", e.Status, e.Message)
 }
+
+// Hint returns optional daemon recovery guidance.
+func (e *APIError) Hint() string { return e.RecoveryHint }
 
 // APIErrorCode returns the daemon's stable machine-readable error code.
 func (e *APIError) APIErrorCode() string {
@@ -61,12 +70,36 @@ func (e *APIError) Unwrap() error {
 
 // CLIRunError marks a decoded daemon CLI refusal or stream error event.
 type CLIRunError struct {
-	err error
+	code          string
+	errorReported bool
+	exitCode      int
+	err           error
 }
 
 func (e *CLIRunError) Error() string { return e.err.Error() }
 
 func (e *CLIRunError) Unwrap() error { return e.err }
+
+// ExitCode preserves a new daemon's child status; old streams fall back to 1.
+func (e *CLIRunError) ExitCode() int {
+	if e.exitCode > 0 && e.exitCode <= 255 {
+		return e.exitCode
+	}
+	return 1
+}
+
+// HasExitCode distinguishes explicit child status from an old stream's fallback.
+func (e *CLIRunError) HasExitCode() bool   { return e.exitCode > 0 && e.exitCode <= 255 }
+func (e *CLIRunError) ErrorReported() bool { return e.errorReported }
+func (e *CLIRunError) APIErrorCode() string {
+	if e.code != "" {
+		return e.code
+	}
+	if api, ok := errors.AsType[*APIError](e.err); ok {
+		return api.Code
+	}
+	return ""
+}
 
 // operationInProgressCode is the daemon's error code for "the operation gate
 // is held by other work"; clients wait and retry instead of failing.
@@ -113,16 +146,20 @@ func handleErrorBody(status int, body []byte) error {
 		return err
 	}
 	message, code, _ := apiErrorMessage(body)
-	return &APIError{Status: status, Code: code, Message: message}
+	var detail apiErrorBody
+	_ = json.Unmarshal(body, &detail)
+	return &APIError{Status: status, Code: code, Message: message, RecoveryHint: detail.Hint}
 }
 
 func handleCLIErrorBody(status int, body []byte) error {
 	if err := operationInProgressFromBody(body); err != nil {
 		return err
 	}
-	message, _, decoded := apiErrorMessage(body)
+	message, code, decoded := apiErrorMessage(body)
 	if decoded {
-		return errors.New(message)
+		var detail apiErrorBody
+		_ = json.Unmarshal(body, &detail)
+		return &APIError{Status: status, Code: code, Message: message, RecoveryHint: detail.Hint, cli: true}
 	}
 
 	return fmt.Errorf("API error (%d): %s", status, message)

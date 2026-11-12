@@ -57,13 +57,13 @@ func newAuthorizeGoogleCardDAVCmd() *cobra.Command {
 				return err
 			}
 			if mgr.CommandTokens() {
-				_, err = fmt.Fprintln(cmd.OutOrStdout(), "Google Contacts authorized. Token saved in the configured secret store. Select Google Contacts in Settings → CardDAV account, or run add-carddav --google with this email.")
+				_, err = fmt.Fprintln(cmd.OutOrStdout(), "Google Contacts authorized. Token saved in the configured secret store. Select Google Contacts in Settings → CardDAV account, or run source carddav add --google with this email.")
 				if err != nil {
 					return fmt.Errorf("write Google authorization result: %w", err)
 				}
 				return nil
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Google Contacts authorized. Token saved to %s.\nSelect Google Contacts in Settings → CardDAV account, or run add-carddav --google with this email.\n", textutil.SanitizeTerminal(mgr.TokenPath(email)))
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Google Contacts authorized. Token saved to %s.\nSelect Google Contacts in Settings → CardDAV account, or run source carddav add --google with this email.\n", textutil.SanitizeTerminal(mgr.TokenPath(email)))
 			if err != nil {
 				return fmt.Errorf("write Google authorization result: %w", err)
 			}

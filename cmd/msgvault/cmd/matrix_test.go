@@ -423,7 +423,7 @@ func TestAddMatrixRenewalResumesAfterPublishFailure(t *testing.T) {
 			server, cfg, old := setupMatrixRenewal(t)
 			failMatrixCredentialWrite(t, &saveMatrixCredentials, tc.fail)
 
-			require.ErrorContains(runAddMatrixForRenewal(t, cfg, server.URL, "password"), "retry add-matrix to finish")
+			require.ErrorContains(runAddMatrixForRenewal(t, cfg, server.URL, "password"), "retry source matrix add to finish")
 			pending, ok, err := matrixsource.LoadPendingCredentials(cfg.TokensDir(), old.UserID)
 			require.NoError(err)
 			require.True(ok, "the new login stays recoverable")
@@ -487,7 +487,7 @@ func TestAddMatrixRenewalDiscardsRevokedPendingLogin(t *testing.T) {
 		backupKey string
 		wantError string
 	}{
-		{name: "requires a new login", wantError: "run add-matrix again"},
+		{name: "requires a new login", wantError: "run msgvault source matrix add again"},
 		{name: "keeps backup key", secret: "password", backupKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

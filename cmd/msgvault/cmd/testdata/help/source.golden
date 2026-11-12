@@ -1,11 +1,43 @@
-Add and sync provider sources
+Add a provider source, then sync it to archive its messages or contacts.
+Start by choosing the provider below. Gmail, IMAP and Microsoft mail use
+'msgvault sync'; chat, calendar and meeting providers use their own sync action.
+
+Local exports use 'msgvault import <format>'. List registered sources and
+their IDs with 'msgvault account list --json'.
 
 Usage:
   msgvault source [command]
 
+Examples:
+  msgvault source gmail add you@gmail.com
+  msgvault sync-full you@gmail.com
+  msgvault account list --json
+
 Available Commands:
+  beeper             Archive chats exposed by Beeper Desktop
+  calendar           Archive Google Calendar events with OAuth
+  carddav            Sync CardDAV, Google and Microsoft contacts
+  chatwoot           Archive Chatwoot inbox conversations and calls
+  circleback         Archive Circleback meetings and action items
+  discord            Archive Discord guilds with a bot token
   facebook-comments  Archive comments from a configured Facebook Page
+  gmail              Archive Gmail mail with Google OAuth
+  granola            Archive Granola meeting notes and transcripts
+  imap               Archive mail from an IMAP server
+  inline             Archive Inline chats with read-only authorization
   instagram-comments Archive comments from a linked Instagram account
+  matrix             Archive Matrix rooms with a read-only device
+  muesli             Archive meetings from a local Muesli database
+  notion-meetings    Archive Notion AI Meeting Notes
+  o365               Archive Microsoft 365 or Outlook.com mail
+  omi                Archive Omi meeting conversations and transcripts
+  plaud              Archive Plaud cloud transcripts and notes
+  pocket             Archive Pocket meeting transcripts and summaries
+  slack              Archive Slack workspaces with a user token
+  synctech-sms       Archive SMS Backup & Restore files from Google Drive
+  teams              Archive Microsoft Teams chats with Microsoft OAuth
+  twenty             Archive Twenty Call Recorder meetings
+  twilio             Archive Twilio calls, recordings and transcripts
 
 Flags:
   -h, --help   help for source

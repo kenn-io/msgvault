@@ -422,10 +422,10 @@ func (m *Manager) browserFlow(ctx context.Context, conf *oauth2.Config) (*oauth2
 func (m *Manager) TokenSource(_ context.Context, identifier string) (oauth2.TokenSource, error) {
 	tf, err := m.loadTokenFile(identifier)
 	if err != nil {
-		return nil, fmt.Errorf("no %s token for %s (run 'msgvault add-%s %s' first): %w", m.provider.Name, identifier, m.provider.Name, identifier, err)
+		return nil, fmt.Errorf("no %s token for %s (run 'msgvault source %s add %s' first): %w", m.provider.Name, identifier, m.provider.Name, identifier, err)
 	}
 	if tf.Resource != m.endpoint {
-		return nil, fmt.Errorf("%s credentials belong to a different endpoint; run msgvault add-%s %s", m.provider.Name, m.provider.Name, identifier)
+		return nil, fmt.Errorf("%s credentials belong to a different endpoint; run msgvault source %s add %s", m.provider.Name, m.provider.Name, identifier)
 	}
 	return &refreshingTokenSource{mgr: m, identifier: identifier, tf: tf}, nil
 }
@@ -451,7 +451,7 @@ func (r *refreshingTokenSource) Token() (*oauth2.Token, error) {
 		return &tok, nil
 	}
 	if r.tf.Token.RefreshToken == "" {
-		return nil, fmt.Errorf("%s token for %s expired and has no refresh token — run 'msgvault add-%s %s' to re-authorize", r.mgr.provider.Name, r.identifier, r.mgr.provider.Name, r.identifier)
+		return nil, fmt.Errorf("%s token for %s expired and has no refresh token — run 'msgvault source %s add %s' to re-authorize", r.mgr.provider.Name, r.identifier, r.mgr.provider.Name, r.identifier)
 	}
 	// context.Background so refreshes are not tied to any one request's ctx;
 	// each attempt is bounded by tokenRefreshTimeout.
@@ -459,7 +459,7 @@ func (r *refreshingTokenSource) Token() (*oauth2.Token, error) {
 	defer cancel()
 	tok, err := r.mgr.refreshGrant(ctx, r.tf)
 	if err != nil {
-		return nil, fmt.Errorf("refresh %s token for %s: %w (run 'msgvault add-%s %s' to re-authorize)", r.mgr.provider.Name, r.identifier, err, r.mgr.provider.Name, r.identifier)
+		return nil, fmt.Errorf("refresh %s token for %s: %w (run 'msgvault source %s add %s' to re-authorize)", r.mgr.provider.Name, r.identifier, err, r.mgr.provider.Name, r.identifier)
 	}
 	r.tf.Token = *tok
 	if err := r.mgr.saveToken(r.identifier, r.tf); err != nil {
@@ -548,7 +548,7 @@ func (h *oauthHandler) Authorize(_ context.Context, _ *http.Request, resp *http.
 	if resp != nil {
 		status = resp.Status
 	}
-	return fmt.Errorf("%s rejected the stored credentials (%s): run 'msgvault add-%s %s' to re-authorize", h.mgr.provider.Name, status, h.mgr.provider.Name, h.identifier)
+	return fmt.Errorf("%s rejected the stored credentials (%s): run 'msgvault source %s add %s' to re-authorize", h.mgr.provider.Name, status, h.mgr.provider.Name, h.identifier)
 }
 
 // saveToken atomically persists the token file with 0600 permissions

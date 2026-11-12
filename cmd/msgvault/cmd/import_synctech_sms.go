@@ -15,11 +15,14 @@ func newImportSynctechSMSCmd() *cobra.Command {
 		IncludeAttachments: true,
 	}
 	cmd := &cobra.Command{
-		Use:   "import-synctech-sms <path>",
-		Short: "Import SMS Backup & Restore exports",
+		Use:     "import-synctech-sms <path>",
+		Short:   "Import SMS Backup & Restore exports",
+		Example: `  msgvault import synctech-sms ./sms-backup.xml --owner-phone +15551234567`,
 		Long: `Import SMS, MMS, and call logs from XML or ZIP files produced by
-SMS Backup & Restore by SyncTech Pty Ltd.`,
-		Args: cobra.ExactArgs(1),
+SMS Backup & Restore by SyncTech Pty Ltd. --owner-phone is your E.164 number
+and identifies outgoing messages. For scheduled imports from Google Drive, use
+source synctech-sms add instead.`,
+		Args: sourceImportArgs("owner-phone", "your E.164 number (for example +15551234567)", "msgvault import synctech-sms ./sms-backup.xml --owner-phone +15551234567"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {

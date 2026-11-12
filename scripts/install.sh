@@ -261,9 +261,8 @@ main() {
     configure_path "$install_dir"
 
     echo "Get started:"
-    echo "  msgvault init-db"
-    echo "  msgvault add-account you@gmail.com"
-    echo "  msgvault sync-full you@gmail.com --limit 100"
+    echo "  msgvault quickstart"
+    echo "  msgvault --help"
     echo "  msgvault tui"
 }
 

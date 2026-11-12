@@ -27,6 +27,8 @@ Use the browser, terminal, CLI, HTTP API, or an AI assistant through MCP.
 > **Alpha software.** APIs, storage format, and CLI flags may change. Back up
 > your data. This README follows current `main`; see the
 > [0.23.0 changelog](docs/changelog.md#0230) for features and upgrade steps.
+> The [grouped CLI names](docs/cli-reference.md#command-grammar-and-compatibility)
+> are unreleased. Use your binary's `--help` to check its command names.
 
 ## What you can do
 

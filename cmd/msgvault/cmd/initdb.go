@@ -10,8 +10,9 @@ import (
 )
 
 var initDBCmd = &cobra.Command{
-	Use:   "init-db",
-	Short: "Initialize the database schema",
+	Use:     "init-db",
+	Short:   "Initialize the database schema",
+	Example: "  msgvault database init",
 	Long: `Initialize the msgvault database with the required schema.
 
 This command creates all necessary tables for storing messages, attachments,

@@ -146,17 +146,25 @@ func runEmbedWithOptions(cmd *cobra.Command, opts managedEmbedOptions) error {
 	}
 	defer func() { _ = closeFn() }()
 
+	var confirmationErr error
 	gen, rebuildInProgress, err := pickEmbedGeneration(ctx, backend, embedGenerationOpts{
 		FullRebuild: opts.fullRebuild,
 		Model:       cfg.Vector.Embeddings.Model,
 		Dimension:   cfg.Vector.Embeddings.Dimension,
 		Fingerprint: cfg.Vector.GenerationFingerprint(),
 		Confirm: func() bool {
-			return opts.yes ||
-				confirmEmbed(cmd, "Start a full rebuild? This builds a new generation and atomically swaps it in when complete. ")
+			if opts.yes {
+				return true
+			}
+			var confirmed bool
+			confirmed, confirmationErr = confirmEmbed(cmd, "Start a full rebuild? This builds a new generation and atomically swaps it in when complete. ")
+			return confirmed
 		},
 		Stderr: errOut,
 	})
+	if confirmationErr != nil {
+		return confirmationErr
+	}
 	if err != nil {
 		return err
 	}

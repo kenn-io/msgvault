@@ -20,9 +20,10 @@ func TestImportDiscordPackageEndToEnd(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	markDaemonCLISubprocessForTest(t)
-	command, _, err := rootCmd.Find([]string{"import-discord-package"})
+	ensureHelpLayout(rootCmd)
+	command, _, err := rootCmd.Find([]string{"import", "discord-package"})
 	require.NoError(err)
-	require.Equal("import-discord-package", command.Name())
+	require.Equal("discord-package", command.Name())
 	homeFlag := rootCmd.PersistentFlags().Lookup("home")
 	previousHome, previousChanged := homeFlag.Value.String(), homeFlag.Changed
 	prevOut, prevErr := rootCmd.OutOrStdout(), rootCmd.ErrOrStderr()
@@ -44,7 +45,7 @@ func TestImportDiscordPackageEndToEnd(t *testing.T) {
 	var output bytes.Buffer
 	rootCmd.SetOut(&output)
 	rootCmd.SetErr(io.Discard)
-	rootCmd.SetArgs([]string{"--home", home, "import-discord-package", fixture})
+	rootCmd.SetArgs([]string{"--home", home, "import", "discord-package", fixture})
 	require.NoError(rootCmd.ExecuteContext(t.Context()))
 	assert.Contains(output.String(), "Coverage: exporting account's sent messages only")
 	assert.Contains(output.String(), "Channels: 1 imported, 1 skipped")

@@ -246,7 +246,7 @@ func collectionAccountsFromFlag(cmd *cobra.Command, accounts string) ([]string, 
 	parsed, err := collectionops.ParseAccountsFlag(accounts)
 	if err != nil {
 		if cmd != nil && errors.Is(err, collectionops.ErrAccountsRequired) {
-			return nil, usageErr(cmd, err)
+			return nil, withHint(usageErr(cmd, err), "pass --accounts with comma-separated emails or source IDs from 'msgvault account list', for example --accounts alice@example.com,bob@example.com")
 		}
 		return nil, err
 	}

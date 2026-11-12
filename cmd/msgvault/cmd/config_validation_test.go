@@ -143,6 +143,66 @@ func TestInvalidDaemonConfigWarningAfterProxiedChildFailure(t *testing.T) { //no
 	}
 }
 
+func TestInvalidDaemonConfigPrecedesProxiedTerminalJSON(t *testing.T) {
+	terminal := `{"error":{"code":"unavailable","message":"fixture failure","hint":"retry later","exit_code":7}}` + "\n"
+	savedJSON := verifyJSON
+	t.Cleanup(func() { verifyJSON = savedJSON })
+	spoolDir := t.TempDir()
+	t.Setenv("TMPDIR", spoolDir)
+	t.Setenv("TMP", spoolDir)
+	t.Setenv("TEMP", spoolDir)
+	progress := strings.Repeat("fixture progress\n", childStderrTail/4)
+	for _, route := range []string{"run", "verify"} {
+		for _, chunks := range [][]string{{terminal}, {terminal[:19], terminal[19:]}, {progress, terminal[:19], terminal[19:]}} {
+			t.Run(route+"/"+strconv.Itoa(len(chunks))+" chunks", func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				var events []string
+				for _, chunk := range chunks {
+					event, err := json.Marshal(api.CLIRunEvent{Type: "stderr", Data: chunk})
+					require.NoError(err)
+					events = append(events, string(event))
+				}
+				events = append(events, `{"type":"error","error":"msgvault: cli subprocess exited non-zero","exit_code":7,"error_reported":true}`)
+				mux := http.NewServeMux()
+				mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) { writeDaemonTestHealth(t, w) })
+				mux.HandleFunc("/api/v1/cli/"+route, func(w http.ResponseWriter, r *http.Request) {
+					assert.Equal(http.MethodPost, r.Method)
+					w.Header().Set("Content-Type", "application/x-ndjson")
+					for _, event := range events {
+						_, err := w.Write([]byte(event + "\n"))
+						assert.NoError(err)
+					}
+				})
+				server := httptest.NewServer(mux)
+				t.Cleanup(server.Close)
+				home := writeInvalidKataHome(t, "\n[remote]\nurl = '"+server.URL+"'\nallow_insecure = true\n")
+				root := newRootCommand()
+				leaf := &cobra.Command{Use: "probe", RunE: runDaemonCLICommandHTTPFromCobra}
+				if route == "verify" {
+					leaf.Use = "verify"
+					leaf.RunE = func(cmd *cobra.Command, _ []string) error { return runVerifyHTTP(cmd, "user@example.com") }
+				}
+				leaf.Flags().BoolVar(&verifyJSON, "json", false, "")
+				root.AddCommand(leaf)
+				stdout, stderr, err := runRoot(t, root, "--home", home, leaf.Name(), "--json")
+				require.Error(err)
+				assert.Equal(7, ExitCode(err))
+				assert.Empty(stdout)
+				assert.Equal(1, strings.Count(stderr, "Warning: invalid daemon config:"))
+				assert.Equal(1, strings.Count(stderr, terminal))
+				assert.True(strings.HasSuffix(stderr, terminal), "terminal JSON must be last: %s", stderr)
+				if len(chunks) == 3 {
+					assert.Contains(stderr, progress, "large child stderr must survive unchanged")
+				}
+				files, err := filepath.Glob(filepath.Join(spoolDir, "msgvault-cli-stderr-*"))
+				require.NoError(err)
+				assert.Empty(files, "deferred stderr must be removed after the request")
+			})
+		}
+	}
+}
+
 func TestInvalidDaemonConfigRefusesAutostartOnce(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
 	for _, tc := range []struct {
 		name, extra, wantErr string

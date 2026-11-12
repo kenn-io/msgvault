@@ -159,11 +159,11 @@ credentials. HTTPS is required except for loopback HTTP. Requests reject
 redirects so the key remains at the configured origin.
 
 ```bash
-msgvault add-twenty work
-msgvault sync-twenty work
-msgvault sync-twenty work --probe
-msgvault sync-twenty work --after 2026-01-01 --limit 10
-msgvault sync-twenty work --full
+msgvault source twenty add work
+msgvault source twenty sync work
+msgvault source twenty sync work --probe
+msgvault source twenty sync work --after 2026-01-01 --limit 10
+msgvault source twenty sync work --full
 ```
 
 Registration checks all three object types and the required fields before
@@ -216,7 +216,7 @@ is deleted or unlinked keeps the attendees already archived; a recording linked
 to a different event that the key can't read drops the old event's attendees.
 API, permission, and cancellation failures fail the sync and preserve
 previously committed evidence. Removing the local source prevents scheduled
-sync from recreating it; use `add-twenty` to register it again.
+sync from recreating it; use `source twenty add` to register it again.
 
 ## Source labels and account identity
 
@@ -233,8 +233,8 @@ rejects a missing or invalid value with guidance to preserve the source label
 and add the account email separately. Plaud validates this against the live
 account; it does not assume the account owner organized every recording.
 
-`add-omi`, `add-granola`, `add-plaud`, `add-pocket`, `add-circleback`,
-`add-notion-meetings`, and `add-muesli` always confirm the primary email for
+`source omi add`, `source granola add`, `source plaud add`, `source pocket add`, `source circleback add`,
+`source notion-meetings add`, and `source muesli add` always confirm the primary email for
 their source. Add other confirmed aliases with the identity command:
 
 ```bash
@@ -375,9 +375,9 @@ can coexist as separate entries with different identifiers and keys. Register
 and validate each source, then sync:
 
 ```bash
-msgvault add-omi omi-personal
-msgvault sync-omi omi-personal --limit 5
-msgvault sync-omi omi-personal
+msgvault source omi add omi-personal
+msgvault source omi sync omi-personal --limit 5
+msgvault source omi sync omi-personal
 ```
 
 Registration spends one transcript-list request and may wait for shared pacing or a provider cooldown.
@@ -408,7 +408,7 @@ the same key and backend share that spacing.
 - **Passes.** Each source syncs in passes of up to five minutes. A pass saves
   its place, and the next pass continues the same scan with the same options
   and date range. Conversations created during a scan arrive in the next one.
-  With several sources, `sync-omi` moves on to the next source when a pass pauses.
+  With several sources, `source omi sync` moves on to the next source when a pass pauses.
 - **Paused passes.** A pass that runs out of time, yields to other archive
   work, or waits on a provider cooldown shows as **Paused** in Sources and
   Past runs. It keeps its checkpoint and records no error. A scheduled pass
@@ -426,7 +426,7 @@ An enabled entry with a schedule supports daemon sync and **Sync Now**.
 
 ### Rescans and scan flags
 
-Omi has no updated-since filter. Run `sync-omi --full` to pick up edits to
+Omi has no updated-since filter. Run `source omi sync --full` to pick up edits to
 conversations older than the 48-hour overlap, or conversations that become
 visible later with an older creation date.
 
@@ -443,7 +443,7 @@ visible later with an older creation date.
   locked.
 - Omi removes locked and malformed records after paging. If it removes an
   entire page, older accessible conversations behind that page can be missed.
-  Run `sync-omi --full` after older records become accessible.
+  Run `source omi sync --full` after older records become accessible.
 - If a conversation is deleted or discarded between requests, msgvault detects
   the shifted page and restarts paging from the last confirmed conversation.
 - Conversations without a transcript, including title-only records, are
@@ -474,19 +474,19 @@ Add a [`[[twilio]]` entry](../configuration.md#twilio-sources) for each account
 or subaccount, then register and sync it:
 
 ```bash
-msgvault add-twilio work
-msgvault sync-twilio work --probe        # check access without showing calls
-msgvault sync-twilio work
-msgvault sync-twilio work --limit 20     # process at most 20 calls
-msgvault sync-twilio work --full         # revisit every call Twilio still lists
+msgvault source twilio add work
+msgvault source twilio sync work --probe        # check access without showing calls
+msgvault source twilio sync work
+msgvault source twilio sync work --limit 20     # process at most 20 calls
+msgvault source twilio sync work --full         # revisit every call Twilio still lists
 ```
 
-`sync-twilio` with no identifier syncs every configured account. Set `schedule`
+`source twilio sync` with no identifier syncs every configured account. Set `schedule`
 on the entry to let the daemon sync it. See the
 [CLI reference](../cli-reference.md#sync-twilio) for every flag.
 
 A `--limit` run that stops before the end of the call list says so and prints
-the command to continue, for example `Run: msgvault sync-twilio work --limit 20`.
+the command to continue, for example `Run: msgvault source twilio sync work --limit 20`.
 Run it again until the summary says the sync is complete.
 
 ### What gets stored
@@ -517,7 +517,7 @@ Twilio adds recordings and transcripts after a call ends. Each sync lists every
 recording created since seven days before the previous sync started, and
 fetches each listed recording's call again, so audio and transcripts that
 arrive within seven days of a recording's creation reach its meeting on a later
-sync. Ones that arrive after that need `msgvault sync-twilio work --full`,
+sync. Ones that arrive after that need `msgvault source twilio sync work --full`,
 which reaches calls whose recordings Twilio still lists, including ones
 deleted within the last 40 days. Each listed call costs about 4 to 6 Twilio requests per sync, which
 suits a schedule of every few hours for up to a few hundred calls a day.
@@ -579,7 +579,7 @@ enabled = true
 Then validate the key and register the source:
 
 ```bash
-msgvault add-granola work
+msgvault source granola add work
 ```
 
 With a single configured entry the identifier argument may be omitted.
@@ -587,11 +587,11 @@ With a single configured entry the identifier argument may be omitted.
 ### Sync
 
 ```bash
-msgvault sync-granola                      # all configured accounts
-msgvault sync-granola work                 # one account
-msgvault sync-granola --limit 5            # limited production validation
-msgvault sync-granola --full               # re-fetch everything, repair in place
-msgvault sync-granola --after 2024-01-01   # bound a full sync by creation date
+msgvault source granola sync                      # all configured accounts
+msgvault source granola sync work                 # one account
+msgvault source granola sync --limit 5            # limited production validation
+msgvault source granola sync --full               # re-fetch everything, repair in place
+msgvault source granola sync --after 2024-01-01   # bound a full sync by creation date
 ```
 
 Sync is incremental: only notes updated since the last successful run are
@@ -602,14 +602,14 @@ place — no duplicates.
 To try a newly configured account with a small production sync, start with:
 
 ```bash
-msgvault sync-granola work --limit 5
+msgvault source granola sync work --limit 5
 msgvault search "meeting topic" --message-type meeting_transcript
 ```
 
 Inspect a few results for the expected title, summary, speaker-labeled
 transcript, organizer, attendees, and `is_from_me` attribution. Running the
 same limited sync again updates the existing meeting rows rather than creating
-duplicates. Once the results look correct, run `msgvault sync-granola work`
+duplicates. Once the results look correct, run `msgvault source granola sync work`
 without a limit to continue normal incremental operation.
 
 ### Scheduling and partial results
@@ -617,7 +617,7 @@ without a limit to continue normal incremental operation.
 With a `schedule` set, `msgvault serve` runs the sync on that cron cadence,
 like `[[gcal]]` calendar sources. Registration is intentionally durable: if
 the Granola source is removed from the archive, a configured schedule refuses
-to recreate it and tells you to run `msgvault add-granola <identifier>`.
+to recreate it and tells you to run `msgvault source granola add <identifier>`.
 
 If one note fails after other notes were written, the run is recorded and
 reported as failed and the successful cursor does not advance. The CLI or
@@ -668,8 +668,8 @@ Keep `config.toml` owner-readable: the token is read from config and is never
 written to logs, sync cursors, archived raw evidence, or command output.
 
 ```bash
-msgvault add-notion-meetings notion-personal
-msgvault sync-notion-meetings notion-personal --probe
+msgvault source notion-meetings add notion-personal
+msgvault source notion-meetings sync notion-personal --probe
 ```
 
 Both commands print capability and result-count diagnostics without printing
@@ -691,18 +691,18 @@ exhaustion, and transport failures stop further uncached lookups for that sync.
 Previously verified attendees survive failed or skipped lookups. The next sync
 retries with fresh state. People without a Notion account can't be resolved.
 
-After adding a users token, run `msgvault sync-notion-meetings <identifier>`
+After adding a users token, run `msgvault source notion-meetings sync <identifier>`
 to update participants on existing visible meetings. The 50-meeting discovery
 window still applies.
 
 ### Sync and discovery limit
 
 ```bash
-msgvault sync-notion-meetings                         # all configured identities
-msgvault sync-notion-meetings notion-personal        # one identity
-msgvault sync-notion-meetings notion-personal --limit 3
-msgvault sync-notion-meetings --full
-msgvault sync-notion-meetings --after 2026-01-01
+msgvault source notion-meetings sync                         # all configured identities
+msgvault source notion-meetings sync notion-personal        # one identity
+msgvault source notion-meetings sync notion-personal --limit 3
+msgvault source notion-meetings sync --full
+msgvault source notion-meetings sync --after 2026-01-01
 ```
 
 Notion's Meeting Notes query currently returns at most 50 records and can say
@@ -741,17 +741,17 @@ to be the organizer. Only attendees with provider-verified email addresses
 become participant rows. Unknown IDs and names remain display-only evidence.
 
 If registration reports invalid token, Meeting Notes access, or Read Content
-errors, correct that integration capability and rerun `add-notion-meetings`.
+errors, correct that integration capability and rerun `source notion-meetings add`.
 For attendee emails, correct the separate users integration and its Read user
 information including email addresses capability. A PAT cannot resolve other
 users. Optional lookup failures preserve meeting content. Remove the source with:
 
 ```bash
-msgvault remove-account notion-personal --type notion_meetings --yes
+msgvault account remove notion-personal --type notion_meetings --yes
 ```
 
 A configured schedule will then refuse to recreate it until
-`add-notion-meetings` is run again.
+`source notion-meetings add` is run again.
 
 ## Plaud
 
@@ -773,11 +773,11 @@ enabled = true
 schedule = "30 */6 * * *"
 ```
 
-Run `msgvault add-plaud work` on that host and approve the browser request.
+Run `msgvault source plaud add work` on that host and approve the browser request.
 Plaud redirects to `localhost:8091/callback/plaud`. For a headless host,
 forward that port with SSH and open the authorization URL in your local
-browser. A configured remote refuses `add-plaud` before proxying; run
-`msgvault --local add-plaud work` in the remote shell instead.
+browser. A configured remote refuses `source plaud add` before proxying; run
+`msgvault --local source plaud add work` in the remote shell instead.
 
 msgvault checks the live account email before registration and on every sync.
 It must match `account_email`. The identifier is a stable label, not an email
@@ -789,10 +789,10 @@ authorization before those credentials can be used there.
 ### Sync recordings
 
 ```bash
-msgvault sync-plaud work
-msgvault sync-plaud work --limit 20
-msgvault sync-plaud work --full --after 2025-01-01
-msgvault sync-plaud work --probe
+msgvault source plaud sync work
+msgvault source plaud sync work --limit 20
+msgvault source plaud sync work --full --after 2025-01-01
+msgvault source plaud sync work --probe
 ```
 
 Every normal run enumerates the recording inventory and checks complete
@@ -826,7 +826,7 @@ It prints no meeting titles, file IDs, transcripts, or note bodies. It helps
 diagnose provider contract changes without modifying the archive.
 
 `msgvault serve` runs enabled entries with a schedule. Removing the registered
-source stops sync from recreating it; run `add-plaud` to register it again.
+source stops sync from recreating it; run `source plaud add` to register it again.
 See the [configuration reference](../configuration.md#plaud-sources) and
 [CLI reference](../cli-reference.md#sync-plaud) for exact fields and flags.
 
@@ -841,7 +841,7 @@ structured actions, speaker labels, and provider durations.
    email and a stable label.
 3. Set `POCKET_API_KEY`, or your configured `api_key_env`, in the daemon's
    environment and restart the daemon.
-4. Run `msgvault add-pocket personal`, then `msgvault sync-pocket personal`.
+4. Run `msgvault source pocket add personal`, then `msgvault source pocket sync personal`.
 
 REST discovers recordings and fetches their contents. Pocket's MCP
 `get_account_info` tool verifies the email and stable user ID before registration
@@ -890,21 +890,21 @@ enabled = true
 ```
 
 ```bash
-msgvault add-circleback work
+msgvault source circleback add work
 ```
 
 This opens a browser for Circleback authorization and stores the token under
 `tokens/circleback_<identifier>.json`.
 
 Circleback OAuth uses a fixed `localhost:8090` callback. With a configured
-remote msgvault server, `add-circleback` fails before proxying because the
+remote msgvault server, `source circleback add` fails before proxying because the
 callback and token must live on the daemon host. Run the command in a shell on
 that host instead. When connecting over SSH, forward the callback port:
 
 ```bash
 ssh -L 8090:localhost:8090 user@daemon-host
 # In that SSH session:
-msgvault --local add-circleback work
+msgvault --local source circleback add work
 ```
 
 If the remote host cannot open your workstation's browser, copy the printed
@@ -916,10 +916,10 @@ instead of the configured remote.
 ### Sync
 
 ```bash
-msgvault sync-circleback                     # all configured accounts
-msgvault sync-circleback --limit 5           # limited validation sync
-msgvault sync-circleback --full              # re-fetch everything
-msgvault sync-circleback --probe             # print tool inventory + sample result
+msgvault source circleback sync                     # all configured accounts
+msgvault source circleback sync --limit 5           # limited validation sync
+msgvault source circleback sync --full              # re-fetch everything
+msgvault source circleback sync --probe             # print tool inventory + sample result
 ```
 
 Each incremental run enumerates meeting IDs without a scheduled-date bound,
@@ -1003,7 +1003,7 @@ that number.
 
 - Reading Contacts needs Full Disk Access for the process that runs
   the client in remote mode or `msgvault serve` in same-host mode. Without it,
-  meetings still sync, and `sync-muesli` reports
+  meetings still sync, and `source muesli sync` reports
   `Contacts: unavailable`.
 - Phone numbers typed with `+` or `00` always work. Set `phone_country_code`
   (for example `"1"` or `"44"`) to also use numbers typed without a country
@@ -1019,19 +1019,19 @@ that number.
 - Set `contacts = false` to turn the lookup off.
 
 ```bash
-msgvault add-muesli mac
+msgvault source muesli add mac
 ```
 
-`add-muesli` checks that the file opens read-only as a Muesli database, then
+`source muesli add` checks that the file opens read-only as a Muesli database, then
 registers the source.
 
 ### Sync
 
 ```bash
-msgvault sync-muesli                     # all configured databases
-msgvault sync-muesli mac --limit 5
-msgvault sync-muesli --after 2026-01-01
-msgvault sync-muesli --full
+msgvault source muesli sync                     # all configured databases
+msgvault source muesli sync mac --limit 5
+msgvault source muesli sync --after 2026-01-01
+msgvault source muesli sync --full
 ```
 
 Every run reads the whole database and updates meetings that changed in place,
@@ -1050,7 +1050,7 @@ meetings are skipped.
 After registration, keep the native watcher running on the Mac:
 
 ```bash
-msgvault sync-muesli --watch
+msgvault source muesli sync --watch
 ```
 
 It immediately scans enabled sources with a `schedule`, then rescans on their
@@ -1059,7 +1059,7 @@ install a service. Each rescan reads the whole database, so late transcript,
 notes, and participant edits import. It uploads only meetings that are new or
 changed since the daemon acknowledged them, plus meetings with pending
 duplicate-card suggestions. The record of acknowledged meetings lives in
-`<data_dir>/muesli-sync` on the Mac; `add-muesli` clears it and `--full`
+`<data_dir>/muesli-sync` on the Mac; `source muesli add` clears it and `--full`
 ignores it. Source locks in the same directory serialize overlapping native
 watcher, hook, and manual processes before they read a snapshot. A lost acknowledgement is safe to retry:
 the source label, meeting row ID, and creation time preserve archive identity.
@@ -1067,7 +1067,7 @@ the source label, meeting row ID, and creation time preserve archive identity.
 For prompt import after recording, install the native executable launcher:
 
 ```bash
-msgvault muesli-hook --install /path/to/launchers
+msgvault source muesli hook --install /path/to/launchers
 ```
 
 Select the resulting `msgvault-muesli-hook` executable in Muesli. Its event
@@ -1134,7 +1134,7 @@ file format. It reads `meetings.saved_recording_path` within the
 without that column still sync transcripts. Temporary mic and system captures,
 paths outside that folder, and symlinks to files are skipped.
 
-Run `msgvault sync-muesli mac` normally. Audio becomes an ordinary attachment
+Run `msgvault source muesli sync mac` normally. Audio becomes an ordinary attachment
 on the meeting message, available through the Web UI and message/file API.
 The archive stores bytes by content hash and updates one recording attachment
 per meeting. Rescanning also checks unchanged meetings for late audio. Missing,
@@ -1183,5 +1183,5 @@ template prompts, or Apple Contacts identifiers.
 Remove the archive source with:
 
 ```bash
-msgvault remove-account mac --type muesli --yes
+msgvault account remove mac --type muesli --yes
 ```

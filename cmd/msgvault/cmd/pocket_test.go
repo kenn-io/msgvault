@@ -28,6 +28,8 @@ func TestPocketSourceResolution(t *testing.T) {
 	requirements.Error(err)
 	_, err = resolvePocketSources(nil, &config.Config{})
 	requirements.Error(err)
+	assertions.Equal(5, ExitCode(err))
+	assertions.Contains(classifyCLIError(nil, err).Hint, "msgvault source pocket add")
 	_, err = resolvePocketSources(nil, nil)
 	requirements.Error(err)
 }

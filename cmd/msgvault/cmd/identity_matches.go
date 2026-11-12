@@ -68,7 +68,7 @@ func newIdentityMatchesShowCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := positiveIdentityMatchID(args[0])
 			if err != nil {
-				return usageErr(cmd, err)
+				return err
 			}
 			client, _, err := OpenHTTPStore(cmd.Context())
 			if err != nil {
@@ -98,10 +98,10 @@ func newIdentityMatchesDecisionCommand(action string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := positiveIdentityMatchID(args[0])
 			if err != nil {
-				return usageErr(cmd, err)
+				return err
 			}
 			if strings.TrimSpace(token) == "" {
-				return usageErr(cmd, errors.New("--review-token is required; inspect the match first"))
+				return withHint(usageErr(cmd, errors.New("--review-token is required; inspect the match first")), fmt.Sprintf("inspect 'msgvault identity matches show %d --json', then pass its current token with --review-token", id))
 			}
 			if cmd.Flags().Changed("notes-file") && notesStdin {
 				return usageErr(cmd, errors.New("--notes-file and --notes-stdin are mutually exclusive"))
@@ -147,7 +147,7 @@ func newIdentityMatchesDecisionCommand(action string) *cobra.Command {
 func positiveIdentityMatchID(raw string) (int64, error) {
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || id <= 0 {
-		return 0, errors.New("identity match ID must be a positive integer")
+		return 0, withHint(validationErr(nil, errors.New("identity match ID must be a positive integer")), "find identity match IDs with 'msgvault identity matches list --json'")
 	}
 	return id, nil
 }

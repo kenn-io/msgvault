@@ -33,6 +33,7 @@ var deduplicateCmd = &cobra.Command{
 	Use:     deduplicateCommandName,
 	Aliases: []string{"dedup", "dedupe"},
 	Short:   "Find and merge duplicate messages within an account",
+	Example: "  msgvault deduplicate --account you@example.com --dry-run\n  msgvault deduplicate --undo batch-example",
 	Long: `Find and merge duplicate messages within a single account
 (for example, the same mbox imported twice, or stored MIME that
 generates two copies of the same RFC822 Message-ID inside one ingest
@@ -253,7 +254,7 @@ func runDeduplicateInteractiveHTTP(cmd *cobra.Command) error {
 		}
 		printDeduplicateBackfillPromptNote(cmd, item)
 		printDeduplicatePrompt(cmd, item)
-		ok, err := readDedupYesNo(promptReader)
+		ok, err := readYesNoConfirmation(promptReader)
 		if err != nil {
 			return err
 		}
@@ -809,7 +810,7 @@ func runDeduplicatePerSource(
 		if !dedupYes && !dedupPlanConfirmed {
 			printDeduplicateBackfillPromptNoteTo(os.Stdout, report.PendingRFC822IDBackfill())
 			printDeduplicateConfirmationPrompt(os.Stdout, src.Identifier, report.DuplicateMessages)
-			ok, err := readDedupYesNo(promptReader)
+			ok, err := readYesNoConfirmation(promptReader)
 			if err != nil {
 				return err
 			}
@@ -951,7 +952,7 @@ func runDeduplicateOnce(
 	if !dedupYes && !dedupPlanConfirmed {
 		printDeduplicateBackfillPromptNoteTo(os.Stdout, report.PendingRFC822IDBackfill())
 		printDeduplicateConfirmationPrompt(os.Stdout, "", report.DuplicateMessages)
-		ok, err := readDedupYesNo(newDedupPromptReader(cmd))
+		ok, err := readYesNoConfirmation(newDedupPromptReader(cmd))
 		if err != nil {
 			return err
 		}
@@ -1021,11 +1022,11 @@ func printDedupSummary(summary *dedup.ExecutionSummary) {
 				m.ManifestID, m.SourceType, m.MessageCount, m.Account)
 		}
 		fmt.Println(
-			"\nRun 'msgvault delete-staged --list' to inspect, or " +
+			"\nRun 'msgvault deletion execute --list' to inspect, or " +
 				"enable '[deletion] remote_enabled = true' in the invoking CLI's " +
-				"config.toml and run 'msgvault delete-staged' to remove the " +
+				"config.toml and run 'msgvault deletion execute' to remove the " +
 				"duplicates from the remote server. For one command instead, run " +
-				"'MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged'.",
+				"'MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault deletion execute'.",
 		)
 	}
 	if summary.GroupsMerged > 0 {
@@ -1036,15 +1037,6 @@ func printDedupSummary(summary *dedup.ExecutionSummary) {
 
 func newDedupPromptReader(cmd *cobra.Command) *bufio.Reader {
 	return bufio.NewReader(cmd.InOrStdin())
-}
-
-func readDedupYesNo(reader *bufio.Reader) (bool, error) {
-	response, err := reader.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return false, fmt.Errorf("read confirmation: %w", err)
-	}
-	response = strings.TrimSpace(strings.ToLower(response))
-	return isYesAnswer(response), nil
 }
 
 // randomBatchToken returns a short random hex token used to disambiguate

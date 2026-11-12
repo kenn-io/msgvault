@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Related CLI commands use grouped names, with hidden compatibility commands for older scripts. Help adds agent guidance, recovery hints, and structured error diagnostics; see [CLI reference](cli-reference.md#command-grammar-and-compatibility).
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).

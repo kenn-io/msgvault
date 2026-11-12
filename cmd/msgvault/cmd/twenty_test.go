@@ -51,10 +51,11 @@ func twentySourceConfig(identifier string) config.TwentySource {
 func TestTwentyCommandResolutionAndFlags(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	for _, name := range []string{"add-twenty", "sync-twenty"} {
-		cmd, _, err := rootCmd.Find([]string{name})
+	ensureCommandGrammar(rootCmd)
+	for _, path := range [][]string{{"source", "twenty", "add"}, {"source", "twenty", "sync"}} {
+		cmd, _, err := rootCmd.Find(path)
 		require.NoError(err)
-		assert.Equal(name, cmd.Name())
+		assert.Equal(path[len(path)-1], cmd.Name())
 	}
 	for _, name := range []string{"full", "after", "limit", "probe", "build-cache", "no-build-cache"} {
 		assert.NotNil(syncTwentyCmd.Flags().Lookup(name))
@@ -101,7 +102,7 @@ func TestConfiguredTwentySyncRefusesRemovedSource(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	err := runConfiguredTwentySync(t.Context(), st, twentySourceConfig("removed"))
-	require.ErrorContains(err, "add-twenty")
+	require.ErrorContains(err, "source twenty add")
 }
 func TestConfiguredTwentySyncRefreshesWithUncanceledContext(t *testing.T) {
 	assert := assert.New(t)
