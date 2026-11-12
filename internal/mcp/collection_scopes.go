@@ -50,6 +50,9 @@ func (h *handlers) resolveReadSelection(ctx context.Context, account, collection
 	if account != "" {
 		return accountSelection{}, &expectedHandlerError{message: "account and collection are mutually exclusive"}
 	}
+	if !h.collectionScopesAvailable {
+		return accountSelection{}, &expectedHandlerError{message: "message collections are unavailable"}
+	}
 	lister, ok := h.engine.(query.CollectionScopeLister)
 	if !ok {
 		return accountSelection{}, &expectedHandlerError{message: "message collections are unavailable"}

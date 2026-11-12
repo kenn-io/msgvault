@@ -656,6 +656,7 @@ func semanticSearchMessagesDefinition(_ *handlers, vectorAvailable bool) toolDef
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgQuery:    stringSchema(queryDesc),
 			toolArgAccount:  accountProperty(),
+			"collection":    collectionProperty(),
 			toolArgLimit:    searchLimitProperty(),
 			toolArgOffset:   offsetProperty(),
 			toolArgMode:     mode,
@@ -685,6 +686,7 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 			"Note: snippet is pre-stored source metadata (may be empty for non-Gmail sources).",
 		closedObject(map[string]*jsonschema.Schema{
 			"id":               safeIDSchema("Message ID"),
+			"collection":       collectionProperty(),
 			toolArgOffset:      nonNegativeIntegerSchema("Byte offset from the start of the selected body to begin reading (default 0). Ignored when center_at is provided.", 0),
 			"center_at":        signedSafeIntegerSchema("Byte offset from the start of the selected body to center the window on. Takes precedence over offset.", -1),
 			toolArgMaxChars:    signedSafeIntegerSchema("Maximum selected-body bytes to return (default 2000, max 4000). Values above 4000 are clamped to 4000; zero or negative values use the default.", 2000),

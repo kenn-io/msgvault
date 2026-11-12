@@ -18,9 +18,9 @@ import (
 
 func TestCollectionsThroughDaemonAndSDK(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	first, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "first@example.test", "first", "alpine fixture", "alpine body")
+	first, firstID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "first@example.test", "first", "alpine fixture", "alpine body")
 	require.NoError(t, err)
-	second, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "second@example.test", "second", "other alpine fixture", "alpine body")
+	second, secondID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "second@example.test", "second", "other alpine fixture", "alpine body")
 	require.NoError(t, err)
 	_, err = st.CreateCollection("selected", "", []int64{first.ID})
 	require.NoError(t, err)
@@ -74,6 +74,40 @@ func TestCollectionsThroughDaemonAndSDK(t *testing.T) {
 		require.NoError(t, callErr)
 		assert.True(t, got.IsError)
 	}
+	for _, tc := range []struct {
+		id         int64
+		collection string
+		denied     bool
+	}{
+		{firstID, "selected", false}, {secondID, "selected", true}, {firstID, "empty", true},
+	} {
+		got, callErr := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolGetMessage, Arguments: map[string]any{"id": tc.id, "collection": tc.collection}})
+		require.NoError(t, callErr)
+		assert.Equal(t, tc.denied, got.IsError)
+	}
+	for _, collection := range []string{"empty", "selected"} {
+		got, callErr := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolSearchMessageBodies, Arguments: map[string]any{"query": "alpine", "collection": collection}})
+		require.NoError(t, callErr)
+		require.False(t, got.IsError)
+		if collection == "empty" {
+			assert.NotContains(t, fmt.Sprint(got.StructuredContent), "alpine fixture")
+		} else {
+			assert.Contains(t, fmt.Sprint(got.StructuredContent), "alpine fixture")
+			assert.NotContains(t, fmt.Sprint(got.StructuredContent), "other alpine fixture")
+		}
+	}
+	for _, collection := range []string{"empty", "selected"} {
+		got, callErr := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolAggregate, Arguments: map[string]any{"group_by": "time", "collection": collection}})
+		require.NoError(t, callErr)
+		require.False(t, got.IsError)
+		if collection == "empty" {
+			assert.Contains(t, fmt.Sprint(got.StructuredContent), "data:[]")
+		}
+	}
+	unsupported := task5ConnectClient(t, ServeOptions{Engine: daemonclient.NewEngineAdapter(client)}, false)
+	denied, err := unsupported.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolSearchMetadata, Arguments: map[string]any{"query": "alpine", "collection": "selected"}})
+	require.NoError(t, err)
+	assert.True(t, denied.IsError)
 	bad, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolListMessageCollections, Arguments: map[string]any{"unexpected": true}})
 	require.NoError(t, err)
 	assert.True(t, bad.IsError)

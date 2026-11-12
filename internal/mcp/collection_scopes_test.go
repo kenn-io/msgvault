@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -29,6 +30,7 @@ func TestCollectionScopesFilterRealMessageReads(t *testing.T) {
 	require.NoError(t, err)
 	e := &collectionTestEngine{Engine: query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()), collections: []query.CollectionScope{{Name: "one", SourceIDs: []int64{f.Source.ID}}, {Name: "empty", SourceIDs: []int64{}}}}
 	h := newTestHandlers(e)
+	h.collectionScopesAvailable = true
 	for _, tc := range []struct {
 		name string
 		want []int64
@@ -62,4 +64,24 @@ func TestCollectionCatalogAvailability(t *testing.T) {
 	assert.NotContains(t, toolsByName(t, tools), ToolListMessageCollections)
 	tools = rawListTools(t, ServeOptions{Engine: e, CollectionScopesAvailable: true, DelegatedOnly: true}, false)
 	assert.NotContains(t, toolsByName(t, tools), ToolListMessageCollections)
+}
+
+func TestSemanticCollectionUsesOneResolvedSource(t *testing.T) {
+	e := &collectionTestEngine{Engine: &querytest.MockEngine{}, collections: []query.CollectionScope{{Name: "one", SourceIDs: []int64{42}}, {Name: "empty", SourceIDs: []int64{}}, {Name: "many", SourceIDs: []int64{42, 43}}}}
+	h := newTestHandlers(e)
+	h.collectionScopesAvailable = true
+	calls := 0
+	h.hybridSearcher = hybridSearcherFunc(func(_ context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
+		calls++
+		require.NotNil(t, req.SourceID)
+		assert.Equal(t, int64(42), *req.SourceID)
+		return &HybridSearchResult{}, nil
+	})
+	runTool[searchMessageBodiesResponse](t, ToolSemanticSearchMessages, h.semanticSearchMessages, map[string]any{"query": "fixture", "collection": "one"})
+	runTool[searchMessageBodiesResponse](t, ToolSemanticSearchMessages, h.semanticSearchMessages, map[string]any{"query": "fixture", "collection": "empty"})
+	assert.Equal(t, 1, calls)
+	result, err := h.semanticSearchMessages(t.Context(), toolRequest{arguments: map[string]any{"query": "fixture", "collection": "many"}})
+	require.NoError(t, err)
+	assert.True(t, result.isError)
+	assert.Equal(t, 1, calls)
 }
