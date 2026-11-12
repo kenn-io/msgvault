@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"net/url"
 
@@ -35,7 +34,7 @@ type MentionedComment struct {
 // this read only through the mentioned account's node.
 func (c *Client) MentionedMedia(ctx context.Context, account, mediaID string) (IGMedia, error) {
 	if !ValidAccountID(account) || !ValidAccountID(mediaID) {
-		return IGMedia{}, errors.New("invalid Instagram mention identity")
+		return IGMedia{}, invariantError("invalid Instagram mention identity")
 	}
 	var wire struct {
 		Media IGMedia `json:"mentioned_media"`
@@ -44,7 +43,7 @@ func (c *Client) MentionedMedia(ctx context.Context, account, mediaID string) (I
 		return IGMedia{}, err
 	}
 	if wire.Media.ID != mediaID {
-		return IGMedia{}, errors.New("instagram mention identity mismatch")
+		return IGMedia{}, invariantError("instagram mention identity mismatch")
 	}
 	return wire.Media, nil
 }
@@ -52,7 +51,7 @@ func (c *Client) MentionedMedia(ctx context.Context, account, mediaID string) (I
 // MentionedComment reads a comment that mentions account, with its media.
 func (c *Client) MentionedComment(ctx context.Context, account, commentID string) (MentionedComment, error) {
 	if !ValidAccountID(account) || !ValidAccountID(commentID) {
-		return MentionedComment{}, errors.New("invalid Instagram mention identity")
+		return MentionedComment{}, invariantError("invalid Instagram mention identity")
 	}
 	var wire struct {
 		Comment MentionedComment `json:"mentioned_comment"`
@@ -61,7 +60,7 @@ func (c *Client) MentionedComment(ctx context.Context, account, commentID string
 		return MentionedComment{}, err
 	}
 	if wire.Comment.ID != commentID || wire.Comment.Media == nil || !ValidAccountID(wire.Comment.Media.ID) {
-		return MentionedComment{}, errors.New("instagram mention identity mismatch")
+		return MentionedComment{}, invariantError("instagram mention identity mismatch")
 	}
 	return wire.Comment, nil
 }

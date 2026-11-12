@@ -150,3 +150,34 @@ func TestCommentMentionLeavesTaggedMediaKinds(t *testing.T) {
 	assert.JSONEq(`{"app_id":"9","page_id":"100","instagram_account_id":"200","media_id":"700","comment_id":"901","kinds":["comment_mention"]}`,
 		mentionMetadataOf(t, st, src.ID, "901"))
 }
+
+// Graph answering a mention read with a different object is answered the same
+// way on every retry, so the change is skipped at once and nothing is archived.
+func TestApplyMentionsSkipsMentionGraphAnswersWithOtherObject(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		fields := r.URL.Query().Get("fields")
+		switch {
+		case r.URL.Path == "/v26.0/me":
+			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
+		case r.URL.Path == "/v26.0/100":
+			_, _ = fmt.Fprint(w, `{"id":"100","instagram_business_account":{"id":"200","username":"example_business"}}`)
+		case r.URL.Path == "/v26.0/200" && fields == "mentioned_media.media_id(800){"+mentionMediaFields+"}":
+			_, _ = fmt.Fprint(w, `{"id":"200","mentioned_media":{"id":"899","caption":"thanks @example_business","username":"example_visitor"}}`)
+		case r.URL.Path == "/v26.0/200" && fields == "mentioned_comment.comment_id(901){id,text,timestamp,media{"+mentionMediaFields+"}}":
+			_, _ = fmt.Fprint(w, `{"id":"200","mentioned_comment":{"id":"999","text":"ask @example_business","media":{"id":"810","username":"example_friend"}}}`)
+		default:
+			assert.Fail("unexpected Graph read", r.URL.String())
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	src, err := NewMentionImporter(st, c).Register(t.Context(), "9", "100", "200")
+	require.NoError(err)
+
+	require.ErrorIs(ApplyMentions(t.Context(), st, c, "9", "100", "200", feedValues(`{"media_id":"800"}`)), ErrInvalidChange)
+	require.ErrorIs(ApplyMentions(t.Context(), st, c, "9", "100", "200", feedValues(`{"media_id":"810","comment_id":"901"}`)), ErrInvalidChange)
+	var count int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
+	assert.Zero(count)
+}
