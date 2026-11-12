@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/mattn/go-sqlite3"
@@ -25,6 +26,93 @@ type gatedRepairStore struct {
 
 	started chan int64
 	release chan struct{}
+}
+
+type failFirstRepairStore struct {
+	*gatedRepairStore
+
+	attempts atomic.Int32
+}
+
+func (s *failFirstRepairStore) RepairAccountAttributionContext(ctx context.Context, id int64, progress func(store.AccountAttributionRepairSummary)) (store.AccountAttributionRepairSummary, error) {
+	if s.attempts.Add(1) == 1 {
+		s.started <- id
+		select {
+		case <-s.release:
+			return store.AccountAttributionRepairSummary{}, errors.New("repair failed")
+		case <-ctx.Done():
+			return store.AccountAttributionRepairSummary{}, ctx.Err()
+		}
+	}
+	return s.gatedRepairStore.RepairAccountAttributionContext(ctx, id, progress)
+}
+
+func TestAccountAttributionRetryDuringFailedAutomaticRepair(t *testing.T) {
+	_, st, id := newIdentityRebuildTestServer(t)
+	var conversationID int64
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO conversations(source_id,source_conversation_id,conversation_type) VALUES(?,'thread','email_thread') RETURNING id`), id).Scan(&conversationID)
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO messages(source_id,source_message_id,conversation_id,message_type) VALUES(?,'one',?,'email')`), id, conversationID)
+	require.NoError(t, err)
+	wrapped := &failFirstRepairStore{gatedRepairStore: &gatedRepairStore{stubIdentityRebuildStore: st, started: make(chan int64, 2), release: make(chan struct{})}}
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, wrapped, nil, testLogger())
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer cancel()
+		assert.NoError(t, srv.Shutdown(ctx))
+	})
+	require.True(t, srv.queueAccountAttributionRepair(t.Context(), wrapped, id, true))
+	select {
+	case <-wrapped.started:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "automatic repair did not start")
+	}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, fmt.Sprintf("/api/v1/sources/%d/account-attribution/repair", id), nil)
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(t, http.StatusAccepted, w.Code)
+	close(wrapped.release)
+	select {
+	case <-wrapped.started:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "retry did not start after the failed automatic repair")
+	}
+	done := make(chan struct{})
+	go func() { srv.importWG.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "retry did not finish")
+	}
+	pending, err := st.PendingAccountAttributionSourcesContext(t.Context())
+	require.NoError(t, err)
+	assert.NotContains(t, pending, id)
+}
+
+func TestAccountAttributionRepairKeepsWindowAfterGateWait(t *testing.T) {
+	_, st, id := newIdentityRebuildTestServer(t)
+	synctest.Test(t, func(t *testing.T) {
+		wrapped := &failFirstRepairStore{gatedRepairStore: &gatedRepairStore{stubIdentityRebuildStore: st, started: make(chan int64, 1), release: make(chan struct{})}}
+		gate := NewSerialOperationGate()
+		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: wrapped, Logger: testLogger(), OperationGate: gate})
+		release, ok := gate.BeginWorkContext(t.Context())
+		require.True(t, ok)
+		require.True(t, srv.queueAccountAttributionRepair(t.Context(), wrapped, id, true))
+		synctest.Wait()
+		time.Sleep(11 * time.Minute)
+		release()
+		synctest.Wait()
+		select {
+		case got := <-wrapped.started:
+			assert.Equal(t, id, got)
+		default:
+			assert.Fail(t, "repair did not start after waiting for the operation gate")
+		}
+		close(wrapped.release)
+		ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+		defer cancel()
+		require.NoError(t, srv.Shutdown(ctx))
+	})
 }
 
 func (s *gatedRepairStore) RepairAccountAttributionContext(ctx context.Context, id int64, _ func(store.AccountAttributionRepairSummary)) (store.AccountAttributionRepairSummary, error) {
@@ -305,6 +393,31 @@ func TestAccountAttributionRecoveryAfterChildCancellation(t *testing.T) {
 	assert.Equal(t, "inbound", otherPath)
 	assert.Equal(t, "first-cursor", firstCursor)
 	assert.Equal(t, "other-cursor", otherCursor)
+}
+
+func TestAccountCatalogRefreshesAfterExternalRepair(t *testing.T) {
+	_, st, id := newIdentityRebuildTestServer(t)
+	var conversationID int64
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO conversations(source_id,source_conversation_id,conversation_type) VALUES(?,'thread','email_thread') RETURNING id`), id).Scan(&conversationID)
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO messages(source_id,source_message_id,conversation_id,message_type) VALUES(?,'one',?,'email')`), id, conversationID)
+	require.NoError(t, err)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer cancel()
+		assert.NoError(t, srv.Shutdown(ctx))
+	})
+	get := func() string {
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil))
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		return w.Body.String()
+	}
+	require.Contains(t, get(), `"pending_count":1`)
+	_, err = st.RepairAccountAttributionContext(t.Context(), id, nil)
+	require.NoError(t, err)
+	assert.NotContains(t, get(), `"pending_count":1`)
 }
 
 func TestAccountCatalogRefreshesAfterRepair(t *testing.T) {

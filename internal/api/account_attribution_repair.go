@@ -96,6 +96,14 @@ func (s *Server) observeAccountAttribution(st accountAttributionRecoveryStore, t
 
 type accountAttributionRepairJob struct {
 	dirty bool
+	retry bool
+}
+
+func (s *Server) accountAttributionJob(id int64) *accountAttributionRepairJob {
+	if s.accountRepairs == nil {
+		s.accountRepairs = make(map[int64]*accountAttributionRepairJob)
+	}
+	return s.accountRepairs[id]
 }
 
 func (s *Server) queueAccountAttributionRepair(ctx context.Context, st accountAttributionRepairStore, id int64, maintenance bool) bool {
@@ -104,19 +112,18 @@ func (s *Server) queueAccountAttributionRepair(ctx context.Context, st accountAt
 	if s.importsClosed {
 		return false
 	}
-	if s.accountRepairs == nil {
-		s.accountRepairs = make(map[int64]*accountAttributionRepairJob)
-	}
-	if existing := s.accountRepairs[id]; existing != nil {
+	if existing := s.accountAttributionJob(id); existing != nil {
 		if maintenance {
 			existing.dirty = true
+		} else {
+			existing.retry = true
 		}
 		return true
 	}
 	job := &accountAttributionRepairJob{}
 	s.accountRepairs[id] = job
 	var finishIdle func()
-	var ok bool
+	var ok, failed bool
 	if maintenance {
 		finishIdle, ok = s.idleTracker.BeginMaintenanceWorkContext(ctx)
 	} else {
@@ -130,21 +137,21 @@ func (s *Server) queueAccountAttributionRepair(ctx context.Context, st accountAt
 		defer finishIdle()
 		defer func() {
 			s.importMu.Lock()
-			again := job.dirty
+			again := job.dirty || job.retry && failed
 			delete(s.accountRepairs, id)
 			s.importMu.Unlock()
 			if again {
 				s.queueAccountAttributionRepair(s.importContext, st, id, true)
 			}
 		}()
-		ctx, cancel := context.WithTimeout(s.importContext, 10*time.Minute)
-		defer cancel()
-		release, ok := s.beginBackgroundOperationGateWork(ctx, "account matching")
+		release, ok := s.beginBackgroundOperationGateWork(s.importContext, "account matching")
 		if !ok {
 			return
 		}
+		ctx, cancel := context.WithTimeout(s.importContext, 10*time.Minute)
+		defer cancel()
 		summary, err := st.RepairAccountAttributionContext(ctx, id, nil)
-		s.accountRepairGeneration.Add(1)
+		failed = err != nil
 		release()
 		if summary.Scanned > 0 {
 			s.scheduleAccountIdentityCacheRebuild(ctx)

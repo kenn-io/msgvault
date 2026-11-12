@@ -178,6 +178,51 @@ describe('AccountFilter', () => {
     await waitFor(() => expect(retry).toHaveProperty('disabled', false));
   });
 
+  it('acknowledges an accepted retry while matching is pending', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      if ((input as Request).method === 'POST') return new Response(null, { status: 202 });
+      return Response.json({ accounts: [{ id: 7, email: 'inbox@example.net', virtual_accounts: [
+        { key: 'unattributed:7', source_id: 7, unattributed: true, message_count: 0, source_deleted_count: 0, pending_count: 2 },
+      ] }] });
+    });
+    render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange: vi.fn() });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('Retry requested')).toBeTruthy();
+  });
+
+  it('stops polling persistently pending matching after five minutes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const fetchFn = accountsResponse([
+        { key: 'unattributed:7', source_id: 7, unattributed: true, message_count: 0, source_deleted_count: 0, pending_count: 2 },
+      ]);
+      render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange: vi.fn() });
+      await screen.findByRole('button', { name: 'Retry' });
+      await vi.advanceTimersByTimeAsync(300000);
+      const calls = fetchFn.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(300000);
+      expect(fetchFn).toHaveBeenCalledTimes(calls);
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops retrying persistent catalog errors after five minutes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const fetchFn = vi.fn<typeof fetch>(async () => { throw new Error('offline'); });
+      render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange: vi.fn() });
+      await screen.findByRole('alert');
+      await vi.advanceTimersByTimeAsync(300000);
+      const calls = fetchFn.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(300000);
+      expect(fetchFn).toHaveBeenCalledTimes(calls);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('discovers pending matching after an empty catalog and stops polling on disposal', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
