@@ -19,3 +19,15 @@ it('runs Add from the header, folds history between current and imported rows, a
   expect(header.querySelector('button')?.textContent).toBe('2 steps');
   expect(screen.queryByRole('button', { name: 'Add work' })).toBeNull();
 });
+
+it('keeps a collapsible section\'s notice under its title whether the section is open or closed', async () => {
+  const view = render(DetailSection, { title: 'Facts', collapsible: true, notice: createRawSnippet(() => ({ render: () => '<p>Needs people lookups.</p>' })), children: createRawSnippet(() => ({ render: () => '<p>Ledger</p>' })) });
+  const notice = screen.getByText('Needs people lookups.');
+  expect(notice.closest('details')).toBeNull();
+  expect(screen.queryByText('Ledger')).toBeNull();
+  await fireEvent.click(screen.getByRole('heading', { name: 'Facts' }));
+  await vi.waitFor(() => expect(view.container.querySelector('details .section-body')).not.toBeNull());
+  const body = view.container.querySelector('details .section-body')!;
+  expect(Array.from(body.children, child => child.textContent)).toEqual(['Needs people lookups.', 'Ledger']);
+  expect(screen.getAllByText('Needs people lookups.')).toHaveLength(1);
+});

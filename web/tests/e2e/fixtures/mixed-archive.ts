@@ -694,7 +694,7 @@ export async function installDirectoryReviewArchive(page: Page) {
   });
 
   await page.route(
-    /\/api\/v1\/people\/42\/fact-(?:evidence(?:-status-events)?|claims|decisions|pins)(?:\?.*)?$/,
+    /\/api\/v1\/people\/42\/fact-(?:evidence(?:-status-events)?|claims|decisions|pins|summary)(?:\?.*)?$/,
     (route) => {
       const request = route.request();
       const captured = capture(request);
@@ -718,18 +718,19 @@ export async function installDirectoryReviewArchive(page: Page) {
             ],
           },
         });
+      if (path.endsWith('/fact-summary')) return route.fulfill({ json: { claimed_fields: 1, latest_claim_at: '2026-01-03T12:00:00Z', has_stored_facts: true } });
       if (path.endsWith('/fact-evidence'))
         return route.fulfill({
           json: {
-            evidence: [
+            evidence: new URL(request.url()).searchParams.has('evidence_id') && new URL(request.url()).searchParams.get('evidence_id') !== '51' ? [] : [
               {
                 id: 51,
                 evidence_key: 'forbidden-evidence-key',
-                authority: 'First party',
-                directness: 'Direct',
-                identity_score: 94,
-                source_class: 'Message',
-                event_time: '2026-01-01T12:00:00Z',
+                authority: 'ordinary',
+                directness: 'direct-other',
+                identity_score: 950,
+                source_class: 'archive',
+                event_time: '2025-01-01T12:00:00Z',
                 recorded_time: '2026-01-02T12:00:00Z',
                 created_at: '2026-01-03T12:00:00Z',
                 supported: true,
@@ -766,13 +767,13 @@ export async function installDirectoryReviewArchive(page: Page) {
                 generation_id: 72,
                 evidence_ids: [51],
                 target,
-                submitted_value: 'Allowed synthetic sensitive value.',
-                normalized_value: 'Allowed normalized sensitive value.',
-                relation: 'equals',
-                origin: 'observed',
+                submitted_value: '"Allowed synthetic sensitive value."',
+                normalized_value: '"Allowed normalized sensitive value."',
+                relation: 'support',
+                origin: 'extraction',
                 valid_from: '2026-01-01T00:00:00Z',
                 valid_until: null,
-                confidence: { reported_score: 87 },
+                confidence: { reported_score: 900 },
                 created_at: '2026-01-03T12:00:00Z',
                 program_id: 'forbidden-program-id',
                 program_version: 'forbidden-program-version',
@@ -793,17 +794,18 @@ export async function installDirectoryReviewArchive(page: Page) {
                 claim_key: 'forbidden-claim-key',
                 competing_claim_key: 'forbidden-competing-claim-key',
                 resolution_id: 82,
-                action: 'project',
-                reason: 'Highest score',
-                projection: { kind: 'attribute', row_id: 83 },
+                action: 'retained',
+                outcome: 'not-used', target, resolver_version: 'v1',
+                score_maxima: { authority: 300, confidence: 100, corroboration: 150, directness: 400, freshness: 100, source_class: 500, total: 1550 },
+                reason: 'below-threshold',
                 score: {
-                  authority: 1,
-                  confidence: 2,
-                  corroboration: 3,
-                  directness: 4,
-                  freshness: 5,
-                  source_class: 6,
-                  total: 21,
+                  authority: 100,
+                  confidence: 90,
+                  corroboration: 0,
+                  directness: 200,
+                  freshness: 20,
+                  source_class: 300,
+                  total: 710,
                 },
                 created_at: '2026-01-03T12:00:00Z',
                 extension: 'forbidden-extension-field',

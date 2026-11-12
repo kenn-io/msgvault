@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Menu, MenuTrigger, MenuContent, MenuItem } from '@kenn-io/kit-ui';
+  import { Button, Menu, MenuTrigger, MenuContent, MenuItem } from '@kenn-io/kit-ui';
   import type { Snippet } from 'svelte';
   import type { ProvenanceLine } from '../directory/history-format';
 
@@ -8,6 +8,9 @@
     /** The row's actions, in a ⋯ menu named for the row. */
     menu?: { label: string; onselect: () => void; danger?: boolean; disabled?: boolean }[];
     exception?: string;
+    note?: string;
+    meta?: Snippet;
+    details?: Snippet;
     /** A muted second line under the value: dates or a role, or a provenance line with its timestamps as the tooltip. */
     description?: string | ProvenanceLine;
     children: Snippet;
@@ -18,24 +21,34 @@
     actionLabel?: string;
   }
 
-  let { label = undefined, description = undefined, children, actions = undefined, onclick = undefined, actionLabel = 'Open', menu = [], exception = undefined }: Props = $props();
+  let { label = undefined, description = undefined, children, actions = undefined, onclick = undefined, actionLabel = 'Open', menu = [], exception = undefined, note, meta, details }: Props = $props();
+  let detailsOpen = $state(false);
   const line = $derived(typeof description === 'string' ? { text: description, title: undefined } : description);
 </script>
 
+{#snippet row()}
 <div class="detail-row" class:own-actions={menu.length > 0} class:clickable={!!onclick}>
   {#if onclick}<button class="row-hit" type="button" aria-label={actionLabel} title={line?.title} {onclick}></button>{/if}
   {#if label !== undefined}<span class="label">{label}</span>{/if}
-  <div class="value">{@render children()}{#if line?.text || exception}<span class="description" title={line?.title}>{line?.text}{#if line?.text && exception}{' · '}{/if}{#if exception}<span class="exception">{exception}</span>{/if}</span>{/if}</div>
-  {#if actions || menu.length}<div class="actions">{@render actions?.()}
+  <div class="value">{@render children()}{#if line?.text || exception}<span class="description" title={line?.title}>{line?.text}{#if line?.text && exception}{' · '}{/if}{#if exception}<span class="exception">{exception}</span>{/if}</span>{/if}{#if note}<span class="description">{note}</span>{/if}</div>
+  {#if meta}<div class="meta">{@render meta()}</div>{/if}
+  {#if actions || menu.length || details}<div class="actions">{@render actions?.()}
+    {#if details}<Button label={detailsOpen ? 'Hide details' : 'Details'} class="text-action" size="sm" ariaExpanded={detailsOpen} onclick={() => detailsOpen = !detailsOpen} />{/if}
     {#if menu.length}<Menu align="end"><MenuTrigger ariaLabel={`Actions for ${actionLabel}`}>⋯</MenuTrigger><MenuContent ariaLabel={`Actions for ${actionLabel}`}>
       {#each menu as item}<MenuItem onselect={item.onselect} disabled={item.disabled} tone={item.danger ? 'danger' : 'neutral'}>{item.label}</MenuItem>{/each}
     </MenuContent></Menu>{/if}
   </div>{/if}
 </div>
+{/snippet}
+{#if details}<div class="detail-item">{@render row()}{#if detailsOpen}<div class="details">{@render details()}</div>{/if}</div>{:else}{@render row()}{/if}
 
 <style>
   /* 8 above and below, so one line (Body) is 36 and two lines (Body, then Meta) are 54. The divider is
    * drawn inside the bottom padding, so it adds no height. */
+  .detail-item { box-shadow: inset 0 -1px 0 var(--border-muted); }
+  .detail-item > .detail-row { box-shadow: none; }
+  .details { padding: 0 var(--row-pad-x) var(--row-pad-y); }
+  .meta { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   .detail-row {
     position: relative;
     display: flex;
@@ -114,6 +127,7 @@
   }
 
   .actions :global(.kit-menu__trigger) { width: var(--control-h); height: var(--control-h); min-height: var(--control-h); padding: 0; }
+  .meta + .actions { align-self: baseline; }
 
   /* Keep labeled values beside their labels on phones; rows without labels let actions wrap below. */
   @media (max-width: 640px) {

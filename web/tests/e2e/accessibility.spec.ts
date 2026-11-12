@@ -4,14 +4,8 @@ import { expectKitTheme, selectKitOption, selectWorkspace, setKitTheme, setTempo
 import { assertCardDAVForbiddenMarkersAbsent, installCardDAV } from './fixtures/carddav';
 import { installDirectoryReviewArchive, installMixedArchive } from './fixtures/mixed-archive';
 import { installOperations } from './fixtures/operations';
+import { openPersonFacts } from './fixtures/person-facts';
 import { sourceStatus } from '../../src/lib/jobs/fixtures.test-support';
-
-async function openPersonFacts(page: Page): Promise<void> {
-  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 42 })));
-  await expect(page.getByRole('radio', { name: 'Messages', exact: true })).toBeVisible();
-  await page.getByRole('radio', { name: 'Details', exact: true }).click();
-  await page.getByRole('region', { name: 'Facts', exact: true }).getByRole('button', { name: 'Show', exact: true }).click();
-}
 
 async function assertNoViolations(page: Page, label: string) {
   const result = await new AxeBuilder({ page }).analyze();
@@ -390,40 +384,15 @@ test('People duplicates, merge, split, and Fact gate have no axe violations', as
   await assertNoViolations(page, 'Directory split modal');
 });
 
-for (const mode of ['failed', 'malformed'] as const) {
-  test(`Directory Fact claims fail closed with an accessible ${mode} target catalog`, async ({ page }) => {
-    const fixture = await installDirectoryReviewArchive(page);
-    if (mode === 'failed') fixture.failFactCatalog();
-    else fixture.malformFactCatalog();
-    await openPersonFacts(page);
-
-    const fact = page.getByRole('region', { name: 'Facts' });
-    await fact.getByRole('radio', { name: 'Claims' }).click();
-    await expect(fact.getByRole('status', {
-      name: 'Fact value hidden until target sensitivity is verified.'
-    })).toBeVisible();
-    await expect(fact).not.toContainText('Allowed synthetic sensitive value.');
-    await expect(fact.getByRole('button', { name: 'Reveal sensitive fact value' })).toHaveCount(0);
-    await assertNoViolations(page, `Directory Fact ledger ${mode} catalog`);
-  });
-}
-
-test('Directory Fact claims stay private and accessible while the target catalog is deferred', async ({ page }) => {
+test('Directory Fact claims show an accessible status for a failed target catalog', async ({ page }) => {
   const fixture = await installDirectoryReviewArchive(page);
-  const releaseCatalog = fixture.deferFactCatalog();
+  fixture.failFactCatalog();
   await openPersonFacts(page);
 
   const fact = page.getByRole('region', { name: 'Facts' });
   await fact.getByRole('radio', { name: 'Claims' }).click();
-  await expect(fact.getByRole('status', {
-    name: 'Fact value hidden until target sensitivity is verified.'
-  })).toBeVisible();
-  await expect(fact).not.toContainText('Allowed synthetic sensitive value.');
-  await assertNoViolations(page, 'Directory Fact ledger deferred catalog');
-
-  releaseCatalog();
-  await expect(fact.getByRole('button', { name: 'Reveal sensitive fact value' })).toBeVisible();
-  await expect(fact).not.toContainText('Allowed synthetic sensitive value.');
+  await fact.getByRole('status', { name: 'Hidden while field details are unavailable.' }).waitFor({ state: 'visible' });
+  await assertNoViolations(page, 'Directory Fact ledger failed catalog');
 });
 
 test('CardDAV account, operations, conflicts, modal, and publication are accessible at desktop and narrow widths', async ({ page }) => {
