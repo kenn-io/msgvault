@@ -20,12 +20,14 @@ type ExploreMeetingResolver interface {
 // meeting-only subset. MessageIDs is bounded by limit and LimitExceeded tells
 // callers to reject the selection rather than consume a partial population.
 type ExploreMeetingSelection struct {
-	SelectedCount    int64            `json:"selected_count"`
-	MeetingCount     int64            `json:"meeting_count"`
-	MessageIDs       []int64          `json:"message_ids"`
-	CacheRevision    string           `json:"cache_revision"`
-	SearchProvenance SearchProvenance `json:"search_provenance"`
-	LimitExceeded    bool             `json:"limit_exceeded"`
+	ParticipantIDs              []int64          `json:"-"`
+	AdditionalParticipantGroups [][]int64        `json:"-"`
+	SelectedCount               int64            `json:"selected_count"`
+	MeetingCount                int64            `json:"meeting_count"`
+	MessageIDs                  []int64          `json:"message_ids"`
+	CacheRevision               string           `json:"cache_revision"`
+	SearchProvenance            SearchProvenance `json:"search_provenance"`
+	LimitExceeded               bool             `json:"limit_exceeded"`
 }
 
 // ResolveExploreMeetings resolves an Explore selection against one committed
@@ -86,7 +88,7 @@ ORDER BY meeting_ids.message_id NULLS LAST`, args...)
 	}
 	defer func() { _ = rows.Close() }()
 	result := &ExploreMeetingSelection{
-		MessageIDs: []int64{}, CacheRevision: state.Revision(), SearchProvenance: provenance,
+		MessageIDs: []int64{}, CacheRevision: state.Revision(), SearchProvenance: provenance, ParticipantIDs: explore.Context.ParticipantIDs, AdditionalParticipantGroups: explore.Context.AdditionalParticipantGroups,
 	}
 	for rows.Next() {
 		var id sql.NullInt64

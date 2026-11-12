@@ -23,7 +23,7 @@ WITH file_messages AS (
 	SELECT canonical_id, source_id, source_type, sum(attachment_count)::BIGINT AS file_count FROM file_messages GROUP BY canonical_id, source_id, source_type
 ), logical_people AS (
 	SELECT entry_key, source_id, source_type, occurred_at, message_type, entry_kind, attachment_count,
-	       canonical_id, with_owner, min(occurred_at) OVER (PARTITION BY canonical_id, entry_key) AS overall_at
+	       canonical_id, with_owner, CASE WHEN entry_kind IN ('event', 'meeting') THEN min(occurred_at) OVER (PARTITION BY entry_key) ELSE occurred_at END AS overall_at
 	FROM ` + logicalBuildRelation + `
 	WHERE relation_kind = 1
 ), people_totals AS (
@@ -111,9 +111,9 @@ WITH domain_file_messages AS (
 ), domain_file_totals AS (
 	SELECT domain, sum(attachment_count)::BIGINT AS file_count FROM domain_file_messages GROUP BY domain
 ), domain_entries AS (
-	SELECT entry_key, domain, source_type, attachment_count, occurred_at
-	FROM ` + logicalBuildRelation + `
-	WHERE relation_kind = 2
+	SELECT d.entry_key, d.domain, d.source_type, d.attachment_count, CASE WHEN d.entry_kind IN ('event', 'meeting') THEN coalesce((SELECT min(p.occurred_at) FROM ` + logicalBuildRelation + ` p WHERE p.entry_key=d.entry_key AND p.relation_kind=1), d.occurred_at) ELSE d.occurred_at END AS occurred_at
+	FROM ` + logicalBuildRelation + ` d
+	WHERE d.relation_kind = 2
 ), logical_person_domains AS (
 	SELECT entry_key, canonical_id, domain
 	FROM ` + logicalBuildRelation + `

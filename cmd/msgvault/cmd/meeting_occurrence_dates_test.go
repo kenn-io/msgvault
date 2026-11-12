@@ -46,7 +46,7 @@ func TestLinkedMeetingCopiesUseScopedDate(t *testing.T) {
 	jan := dec.Add(5 * 24 * time.Hour)
 	right := persist(second.ID, owner, false, "second", jan)
 	left := persist(first.ID, other, true, "first", dec)
-	late, err := st.EnsureParticipant("late@example.com", "Late", "example.com")
+	late, err := st.EnsureParticipant("late@late.example", "Late", "late.example")
 	require.NoError(t, err)
 	require.NoError(t, st.ReplaceMessageRecipients(right, "to", []int64{person, other, late}, []string{"", "", ""}))
 	_, err = st.DecideMeetingLinkContext(t.Context(), store.MeetingLinkRef{Kind: "evt", MessageID: left}, store.MeetingLinkRef{Kind: "evt", MessageID: right}, "link")
@@ -57,6 +57,40 @@ func TestLinkedMeetingCopiesUseScopedDate(t *testing.T) {
 	require.NoError(t, err)
 	defer engine.Close()
 	after := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	latePerson, err := engine.GetPerson(t.Context(), late, query.Context{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, latePerson)
+	assert.Equal(t, dec, latePerson.FirstAt)
+	assert.Equal(t, dec, latePerson.LastAt)
+	for _, tc := range []struct {
+		sources []int64
+		want    time.Time
+	}{{[]int64{first.ID, second.ID}, dec}, {[]int64{second.ID}, jan}} {
+		detail, err := engine.GetPerson(t.Context(), late, query.Context{SourceIDs: tc.sources}, nil)
+		require.NoError(t, err)
+		require.NotNil(t, detail)
+		assert.Equal(t, tc.want, detail.FirstAt)
+		assert.Equal(t, tc.want, detail.LastAt)
+	}
+	lateDomain, err := engine.SearchDomains(t.Context(), query.DomainSearchRequest{})
+	require.NoError(t, err)
+	foundLateDomain := false
+	for _, domain := range lateDomain.Rows {
+		if domain.Domain == "late.example" {
+			foundLateDomain = true
+			assert.Equal(t, dec, domain.FirstAt)
+			assert.Equal(t, dec, domain.LastAt)
+		}
+	}
+	assert.True(t, foundLateDomain)
+	lateTimeline, err := engine.RelationshipTimeline(t.Context(), query.RelationshipTimelineRequest{CanonicalID: late, Context: query.Context{Before: &after}})
+	require.NoError(t, err)
+	if assert.Len(t, lateTimeline.Rows, 1) {
+		assert.Equal(t, dec, lateTimeline.Rows[0].OccurredAt)
+		require.NotNil(t, lateTimeline.Rows[0].AnchorMessageID)
+		assert.Equal(t, right, *lateTimeline.Rows[0].AnchorMessageID)
+		assert.Equal(t, second.ID, lateTimeline.Rows[0].SourceID)
+	}
 	timeline, err := engine.RelationshipTimeline(t.Context(), query.RelationshipTimelineRequest{CanonicalID: person, Context: query.Context{SourceIDs: []int64{second.ID}}})
 	require.NoError(t, err)
 	require.Len(t, timeline.Rows, 1)

@@ -155,10 +155,10 @@ func TestMeetingOccurrenceCountsYearBoundaryAndUnexpandable(t *testing.T) {
 	assert.Equal(t, []time.Time{time.Date(2025, 6, 1, 10, 0, 0, 0, time.UTC), time.Date(2027, 2, 1, 10, 0, 0, 0, time.UTC)}, earlierDates)
 	duration := float64(3600)
 	assert.Contains(t, rows, MeetingOccurrence{MessageID: unsupported, OccurrenceKey: fmt.Sprintf("fallback:%d", unsupported), OccurredAt: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Counted: true, ScheduledSeconds: &duration})
-	assert.Contains(t, rows, MeetingOccurrence{MessageID: future, OccurrenceKey: fmt.Sprintf("evt:%d", future), OccurredAt: time.Date(2028, 1, 1, 10, 0, 0, 0, time.UTC), ScheduledSeconds: &duration})
+	assert.Contains(t, rows, MeetingOccurrence{MessageID: future, OccurrenceKey: fmt.Sprintf("evt:%d", future), OccurredAt: time.Date(2028, 1, 1, 10, 0, 0, 0, time.UTC), DeclinedEmails: []string{}, ScheduledSeconds: &duration})
 	rows, _, err = st.MeetingOccurrencesContext(t.Context(), time.Date(2028, 1, 2, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
-	assert.Contains(t, rows, MeetingOccurrence{MessageID: future, OccurrenceKey: fmt.Sprintf("evt:%d", future), OccurredAt: time.Date(2028, 1, 1, 10, 0, 0, 0, time.UTC), Counted: true, ScheduledSeconds: &duration})
+	assert.Contains(t, rows, MeetingOccurrence{MessageID: future, OccurrenceKey: fmt.Sprintf("evt:%d", future), OccurredAt: time.Date(2028, 1, 1, 10, 0, 0, 0, time.UTC), Counted: true, DeclinedEmails: []string{}, ScheduledSeconds: &duration})
 }
 
 func TestMeetingOccurrenceCountsOwnerDeclineAndNoteAvailability(t *testing.T) {
@@ -290,7 +290,7 @@ func TestMeetingOccurrencesMatchRecordsSavedSplit(t *testing.T) {
 		record, err := st.MeetingRecordContext(t.Context(), ref)
 		require.NoError(t, err)
 		require.Len(t, record.Links, 1)
-		assert.Contains(t, rows, MeetingOccurrence{MessageID: ref.MessageID, OccurrenceKey: record.Links[0].Ref, OccurredAt: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Counted: true, ScheduledSeconds: &duration})
+		assert.Contains(t, rows, MeetingOccurrence{MessageID: ref.MessageID, OccurrenceKey: record.Links[0].Ref, OccurredAt: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Counted: true, DeclinedEmails: []string{}, ScheduledSeconds: &duration})
 	}
 }
 

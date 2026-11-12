@@ -75,7 +75,7 @@ func TestBuildCacheLockedAcceptsSQLiteFileURI(t *testing.T) {
 func addMeetingSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
 	template := testutil.NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "meeting-schema.db"))
-	for _, table := range []string{"calendar_events", "calendar_event_attendees", "meeting_details", "meeting_link_decisions", "meeting_link_decision_dependencies"} {
+	for _, table := range []string{"calendar_events", "calendar_event_attendees", "meeting_details", "meeting_link_decisions"} {
 		var statement string
 		require.NoError(t, template.DB().QueryRowContext(t.Context(), `SELECT sql FROM sqlite_schema WHERE type='table' AND name=?`, table).Scan(&statement))
 		_, err := db.ExecContext(t.Context(), statement)
@@ -117,6 +117,7 @@ func setupTestSQLite(t *testing.T) string {
 			snippet TEXT,
 			sent_at TIMESTAMP,
 			received_at TIMESTAMP,
+			internal_date TIMESTAMP,
 			size_estimate INTEGER,
 			has_attachments BOOLEAN DEFAULT FALSE,
 			hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE,

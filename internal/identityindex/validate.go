@@ -145,9 +145,7 @@ func Validate(
 			       < p.meeting_count
 			    OR (SELECT max(item.meeting_count)::BIGINT
 			        FROM unnest(p.source_rollups) AS source(item)) > p.meeting_count
-			    OR (SELECT min(item.first_at)::TIMESTAMP
-			        FROM unnest(p.source_rollups) AS source(item))
-			       IS DISTINCT FROM p.first_at
+			    OR coalesce((SELECT min(item.first_at)::TIMESTAMP FROM unnest(p.source_rollups) AS source(item)) < p.first_at, (SELECT min(item.first_at)::TIMESTAMP FROM unnest(p.source_rollups) AS source(item)) IS DISTINCT FROM p.first_at)
 			    OR (SELECT max(item.last_at)::TIMESTAMP
 			        FROM unnest(p.source_rollups) AS source(item))
 			       < p.last_at

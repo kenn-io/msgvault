@@ -308,7 +308,7 @@ func insertMeetingQueryRowWithID(t *testing.T, fixture *meetingQueryFixture, id 
 	_, err = fixture.store.db.Exec(`
 		INSERT INTO meeting_details
 			(message_id, projection_version, content_hash, content_json, action_coverage, transcript_state)
-		VALUES (?, 1, 'synthetic', '{"summary":{"state":"empty"},"notes":{"state":"unsupported"},"transcript":{"state":"unavailable"},"actions":[],"action_coverage":"available","duration_seconds":null}', 'available', 'unavailable')`, id)
+		VALUES (?, 1, 'synthetic', '{"summary":{"state":"empty"},"notes":{"state":"unsupported"},"transcript":{"state":"available","text":"fixture"},"actions":[],"action_coverage":"available","duration_seconds":null}', 'available', 'available')`, id)
 	require.NoError(t, err)
 	_, err = fixture.store.db.Exec(`
 		INSERT INTO meeting_action_items
@@ -418,7 +418,7 @@ func TestMeetingActionsWideInstants(t *testing.T) {
 	metrics, err := fixture.store.GetMeetingMetricsContext(t.Context(), scope)
 	requirements.NoError(err)
 	assertions.Equal(&earlier, metrics.FirstMeetingAt)
-	assertions.Equal(&later, metrics.LastMeetingAt)
+	assertions.Equal(&earlier, metrics.LastMeetingAt)
 
 	scope.After = new(time.Date(1700, time.January, 1, 0, 0, 0, 0, time.UTC))
 	scope.Before = new(time.Date(9999, time.January, 1, 0, 0, 0, 0, time.UTC))
@@ -428,7 +428,7 @@ func TestMeetingActionsWideInstants(t *testing.T) {
 	assertions.Equal(int64(-20), page.Rows[0].Meeting.MessageID)
 	metrics, err = fixture.store.GetMeetingMetricsContext(t.Context(), scope)
 	requirements.NoError(err)
-	assertions.Equal(int64(1), metrics.Totals.MeetingCount)
-	assertions.Equal(&later, metrics.FirstMeetingAt)
-	assertions.Equal(&later, metrics.LastMeetingAt)
+	assertions.Zero(metrics.Totals.MeetingCount)
+	assertions.Nil(metrics.FirstMeetingAt)
+	assertions.Nil(metrics.LastMeetingAt)
 }

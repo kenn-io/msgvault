@@ -417,8 +417,8 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	after := time.Unix(1767225500, 0)
 	metrics, err := st.GetMeetingMetricsContext(t.Context(), store.MeetingQueryScope{SourceIDs: []int64{source.ID}, After: &after})
 	require.NoError(err)
-	assert.Equal(int64(1), metrics.Totals.MeetingCount)
-	assert.Equal(int64(1), metrics.Totals.KnownDurationCount, "explicit zero differs from unknown duration")
+	assert.Zero(metrics.Totals.MeetingCount, "a call without a transcript is not yet counted")
+	assert.Zero(metrics.Totals.KnownDurationCount)
 	assert.Zero(metrics.Totals.TotalKnownSeconds)
 
 	api.Mu.Lock()

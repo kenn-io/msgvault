@@ -329,7 +329,7 @@ func (s *Server) resolveMeetingExploreScope(
 		CandidateSnapshotID string                 `json:"candidate_snapshot_id,omitempty"`
 	}{prepared.request, result.CacheRevision, result.SearchProvenance, resolvedSnapshotID}, false)
 	return meetingScopeResolution{
-		Scope: meetingScopeForExplore(prepared.query.Context, ids, authority),
+		Scope: meetingScopeForExplore(prepared.query.Context, ids, authority, result),
 		Provenance: meetingcontent.ScopeProvenance{
 			Kind:                 "explore",
 			CacheRevision:        result.CacheRevision,
@@ -340,17 +340,37 @@ func (s *Server) resolveMeetingExploreScope(
 	}, true
 }
 
-func meetingScopeForExplore(ctx query.Context, ids []int64, authority string) store.MeetingQueryScope {
+func meetingScopeForExplore(ctx query.Context, ids []int64, authority string, result *query.ExploreMeetingSelection) store.MeetingQueryScope {
 	sources := slices.Clone(ctx.SourceIDs)
 	if ctx.Identity != nil && len(sources) == 0 {
 		sources = []int64{ctx.Identity.SourceID}
 	}
 	return store.MeetingQueryScope{
-		MessageIDs: &ids, SourceIDs: sources, ParticipantIDs: slices.Clone(ctx.ParticipantIDs),
-		AdditionalParticipantGroups: slices.Clone(ctx.AdditionalParticipantGroups),
+		MessageIDs: &ids, SourceIDs: sources, ParticipantIDs: slices.Clone(result.ParticipantIDs), MessageTypes: exploreMeetingTypes(ctx),
+		AdditionalParticipantGroups: slices.Clone(result.AdditionalParticipantGroups),
 		Domains:                     slices.Clone(ctx.Domains), AdditionalDomainGroups: slices.Clone(ctx.AdditionalDomainGroups),
 		Deletion: string(ctx.Deletion), Authority: authority,
 	}
+}
+
+func exploreMeetingTypes(ctx query.Context) []string {
+	if len(ctx.MessageTypes) == 0 && len(ctx.Kinds) == 0 {
+		return nil
+	}
+	var result []string
+	for _, candidate := range []struct {
+		messageType string
+		kind        query.EntryKind
+	}{{"calendar_event", "event"}, {"meeting_transcript", "meeting"}} {
+		if (len(ctx.MessageTypes) == 0 || slices.Contains(ctx.MessageTypes, candidate.messageType)) && (len(ctx.Kinds) == 0 || slices.Contains(ctx.Kinds, candidate.kind)) {
+			result = append(result, candidate.messageType)
+		}
+	}
+	if len(result) == 0 {
+		// A non-meeting type makes the store's evidence predicate match nothing.
+		return []string{"email"}
+	}
+	return result
 }
 
 func fieldPresent(fields map[string]jsontext.Value, name string) bool {
