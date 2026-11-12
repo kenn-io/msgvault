@@ -99,7 +99,7 @@ func repairEmail(ctx context.Context, w *emailWalk) (sum *Summary, err error) {
 	if w.sum.incomplete {
 		return w.sum, w.s.ReplaceMigrationContext(ctx, "", w.base+emailRetryPhase)
 	}
-	return w.sum, nil
+	return w.sum, w.finish(ctx, "")
 }
 
 // retryEmail repairs the failed rows a finished full walk recorded. A marker
@@ -118,7 +118,23 @@ func retryEmail(ctx context.Context, w *emailWalk) (*Summary, error) {
 	if w.sum.Errors > 0 {
 		return w.sum, nil
 	}
-	return w.sum, w.s.ReplaceMigrationContext(ctx, w.base+emailRetryPhase, "")
+	return w.sum, w.finish(ctx, w.base+emailRetryPhase)
+}
+
+// finish drops the phase marker once the pass resolved every failed row. A write
+// that reached an already-scanned email during the pass left an invitation derive
+// owed, so the pass instead stays incomplete and discards its walk state, which
+// restarts the walk from the first message at the next sync.
+func (w *emailWalk) finish(ctx context.Context, phase string) error {
+	held, err := w.s.EmailRepairHeldContext(ctx, w.base)
+	if err != nil {
+		return err
+	}
+	if held {
+		w.sum.incomplete = true
+		return w.s.ForgetMigrationsContext(ctx, w.base)
+	}
+	return w.s.ReplaceMigrationContext(ctx, phase, "")
 }
 
 // scan repairs each retained MIME row with afterID < id <= throughID.

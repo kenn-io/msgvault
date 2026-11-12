@@ -145,10 +145,11 @@ func TestEmailFirstSyncBoundsReadQueries(t *testing.T) {
 	require.NoError(err)
 	require.Equal(int64(32), sum.MessagesScanned)
 	reads := strings.Count(logs.String(), `"kind":"query`)
-	// Each row needs its MIME/envelope scan and FTS comparison. The four
-	// fixed reads check completion, check the retry phase, finish the scan, and
-	// check whether a prior interrupted repair still needs a cache revision.
-	require.LessOrEqual(reads, 2*32+4, "first-sync repair must share stored-envelope reads with the bounded MIME scan")
+	// Each row needs its MIME/envelope scan and FTS comparison. The five
+	// fixed reads check completion, check the retry phase, finish the scan,
+	// check for a write that reopened the pass, and check whether a prior
+	// interrupted repair still needs a cache revision.
+	require.LessOrEqual(reads, 2*32+5, "first-sync repair must share stored-envelope reads with the bounded MIME scan")
 }
 
 func TestEmailPreservesProviderSnippets(t *testing.T) {
@@ -278,6 +279,34 @@ func TestEmailUnchangedRetryPublishesPendingRevisionWithRowErrors(t *testing.T) 
 	applied, err := st.IsMigrationApplied(LedgerKey(src.SourceType, src.Identifier, emailVersion))
 	require.NoError(err)
 	assert.False(t, applied, "unresolved row failures keep the pass retryable")
+}
+
+func TestEmailRederivationRetriesInviteWrittenDuringScan(t *testing.T) {
+	requirements := require.New(t)
+	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
+	if st.IsPostgreSQL() {
+		t.Skip("uses a SQLite trigger to interrupt calendar writes")
+	}
+	_, err := st.DB().Exec(`CREATE TRIGGER fail_invite_write BEFORE INSERT ON messages WHEN NEW.message_type = 'calendar_event' BEGIN SELECT RAISE(ABORT, 'database unavailable'); END`)
+	requirements.NoError(err)
+	raw := []byte("Content-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:retry@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Retry invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	written := false
+	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, func(string) {
+		if !written {
+			written = true
+			requirements.NoError(st.UpsertMessageRawWithFormatContext(t.Context(), id, raw, "mime"))
+		}
+	})
+	requirements.NoError(err)
+	requirements.True(written)
+	_, err = st.DB().Exec(`DROP TRIGGER fail_invite_write`)
+	requirements.NoError(err)
+	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	requirements.NoError(err)
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1, "a write during repair must remain eligible for retry")
 }
 
 func TestEmailRederivationDoesNotRescanAfterSuccessfulInvite(t *testing.T) {
