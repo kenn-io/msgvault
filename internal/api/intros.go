@@ -23,19 +23,13 @@ func (s *Server) registerIntroductionRoutes(api huma.API) {
 	list.Parameters = []*huma.Param{contactIntegerParam("source_id", 1, 0), contactIntegerParam("limit", 1, 100), queryStringParam("after_id", "Opaque continuation cursor", false)}
 	list.Responses = jsonResponsesFor[introops.Page](api)
 	addErrorResponses(api, list.Responses, http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusServiceUnavailable)
-	addIntroductionNoStoreHeader(list.Responses[httpStatusKey(http.StatusOK)])
 	registerRawHumaRoute(api, list, s.handleListIntroductions)
 
 	get := rawAPIV1Operation("getIntroduction", http.MethodGet, "/intros/{id}", "Get a local introduction")
 	get.Parameters = []*huma.Param{{Name: "id", In: pathKey, Required: true, Schema: &huma.Schema{Type: huma.TypeString}}}
 	get.Responses = jsonResponsesFor[introops.Record](api)
 	addErrorResponses(api, get.Responses, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusServiceUnavailable)
-	addIntroductionNoStoreHeader(get.Responses[httpStatusKey(http.StatusOK)])
 	registerRawHumaRoute(api, get, s.handleGetIntroduction)
-}
-
-func addIntroductionNoStoreHeader(response *huma.Response) {
-	response.Headers = map[string]*huma.Param{"Cache-Control": {Description: "Always no-store", Schema: &huma.Schema{Type: huma.TypeString}}}
 }
 
 func (s *Server) handleListIntroductions(w http.ResponseWriter, r *http.Request) {
@@ -105,12 +99,13 @@ func (s *Server) admitIntroductionRead(w http.ResponseWriter, r *http.Request) (
 		s.writeIntroductionError(w, introops.ErrForbidden)
 		return nil, nil, false
 	}
-	release, apiErr := s.acquireReadSnapshotSlot(r.Context(), "agent_read_busy", "Agent reads are at capacity; retry later")
-	if apiErr != nil {
-		writeAPIHTTPError(w, apiErr)
+	select {
+	case s.readSnapshotSlots <- struct{}{}:
+	case <-r.Context().Done():
+		writeError(w, http.StatusServiceUnavailable, "agent_read_busy", "Agent reads are at capacity; retry later")
 		return nil, nil, false
 	}
-	return grant, release, true
+	return grant, func() { <-s.readSnapshotSlots }, true
 }
 
 func (s *Server) writeIntroductionError(w http.ResponseWriter, err error) {

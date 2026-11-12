@@ -33,20 +33,21 @@ func (s *Server) beginCallerRead(r *http.Request) (func(), *apiHTTPError) {
 	if !ok {
 		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
 	}
-	releaseSlot, apiErr := s.acquireReadSnapshotSlot(r.Context(), "source_scope_busy", "Scoped reads are at capacity; retry later")
-	if apiErr != nil {
-		return nil, apiErr
+	select {
+	case s.readSnapshotSlots <- struct{}{}:
+	case <-r.Context().Done():
+		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_busy", "Scoped reads are at capacity; retry later")
 	}
 	ctx, releaseSnapshot, err := reader.BeginReadSnapshotContext(r.Context())
 	if err != nil {
-		releaseSlot()
+		<-s.readSnapshotSlots
 		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
 	}
 	var once sync.Once
 	release := func() {
 		once.Do(func() {
 			releaseSnapshot()
-			releaseSlot()
+			<-s.readSnapshotSlots
 		})
 	}
 	if boundary, ok := r.Context().Value(readResponseKey{}).(*readResponseWriter); ok {

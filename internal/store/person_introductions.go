@@ -30,7 +30,7 @@ var (
 type PersonIntroduction struct {
 	IntroID          string     `json:"intro_id"`
 	Revision         int64      `json:"revision"`
-	Status           string     `json:"status" enum:"prepared,cancelled"`
+	Status           string     `json:"status"`
 	SourceID         int64      `json:"source_id"`
 	PersonAID        int64      `json:"person_a_id"`
 	PersonBID        int64      `json:"person_b_id"`

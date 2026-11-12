@@ -53,7 +53,7 @@ func TestGeneratedIntroductionClientDecodesListAndDetail(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, detail.JSON200)
-	assert.Equal(t, "cancelled", string(detail.JSON200.Status))
+	assert.Equal(t, "cancelled", detail.JSON200.Status)
 	require.NoError(t, detail.JSON200.Validate())
 }
 
@@ -63,7 +63,7 @@ func assertIntroductionRecord(t *testing.T, record generated.IntroductionRecord)
 	assert.Equal(t, int64(7), record.SourceID)
 	assert.Equal(t, int64(11), record.PersonAId)
 	assert.Equal(t, int64(12), record.PersonBId)
-	assert.Equal(t, "prepared", string(record.Status))
+	assert.Equal(t, "prepared", record.Status)
 	assert.Equal(t, int64(2), record.Revision)
 	assert.Empty(t, record.Title)
 	assert.Empty(t, record.Body)
