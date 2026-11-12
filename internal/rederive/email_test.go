@@ -281,6 +281,33 @@ func TestEmailUnchangedRetryPublishesPendingRevisionWithRowErrors(t *testing.T) 
 	assert.False(t, applied, "unresolved row failures keep the pass retryable")
 }
 
+func TestEmailRederivationRetriesInviteWrittenBeforeCompletion(t *testing.T) {
+	requirements := require.New(t)
+	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
+	if st.IsPostgreSQL() {
+		t.Skip("uses a SQLite trigger to interrupt calendar writes")
+	}
+	_, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	requirements.NoError(err)
+	base := LedgerKey(src.SourceType, src.Identifier, emailVersion)
+	walk := &emailWalk{s: st, sourceID: src.ID, base: base, sum: &Summary{unchanged: true}}
+	requirements.NoError(walk.finish(t.Context(), ""))
+	requirements.False(walk.sum.incomplete)
+	_, err = st.DB().Exec(`CREATE TRIGGER fail_invite_write BEFORE INSERT ON messages WHEN NEW.message_type = 'calendar_event' BEGIN SELECT RAISE(ABORT, 'database unavailable'); END`)
+	requirements.NoError(err)
+	raw := []byte("Content-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:retry@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Retry invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	requirements.NoError(st.UpsertMessageRawWithFormatContext(t.Context(), id, raw, "mime"))
+	requirements.NoError(st.MarkMigrationAppliedWithPendingDerivedRevisionContext(t.Context(), base))
+	_, err = st.DB().Exec(`DROP TRIGGER fail_invite_write`)
+	requirements.NoError(err)
+	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	requirements.NoError(err)
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1, "a write before pass completion must remain eligible for retry")
+}
+
 func TestEmailRederivationRetriesInviteWrittenDuringScan(t *testing.T) {
 	requirements := require.New(t)
 	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
