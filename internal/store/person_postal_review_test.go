@@ -506,3 +506,19 @@ func TestLegacyPostalTextCoveredByComponents(t *testing.T) {
 		})
 	}
 }
+
+func TestPostalComponentsWithSemicolonDoNotInventFreeText(t *testing.T) {
+	st, id, _ := newPersonFactProjectionStore(t)
+	require := require.New(t)
+	address, err := st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{
+		AddressKind: PersonAddressPostal, StreetAddress: new("5 Main St; Rear"),
+		Locality: new("City"), Region: new("ST"), PostalCode: new("12345"), CountryName: new("US"),
+		Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
+	})
+	require.NoError(err)
+	require.Equal(";;5 Main St; Rear;City;ST;12345;US", address.OriginalValue)
+	public, err := address.PublicAddress()
+	require.NoError(err)
+	require.Equal("5 Main St; Rear", *public.StreetAddress)
+	require.Nil(public.FreeText)
+}

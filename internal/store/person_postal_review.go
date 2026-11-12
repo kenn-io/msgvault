@@ -63,7 +63,7 @@ func ResolvePostalInput(input postaladdress.Input, useOriginal bool) postaladdre
 }
 
 func postalTextCovered(raw string, fields []string, extended string) bool {
-	if slices.ContainsFunc(fields, func(value string) bool { return strings.TrimSpace(value) == raw }) {
+	if raw == strings.TrimSpace(strings.Join(fields, ";")) || slices.ContainsFunc(fields, func(value string) bool { return strings.TrimSpace(value) == raw }) {
 		return true
 	}
 	parts, err := vcard.SplitStructuredText(raw)
