@@ -52,7 +52,7 @@ func parseMeetingLinkRef(value string) (store.MeetingLinkRef, error) {
 func (s *Server) writeMeetingLinkError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		writeError(w, 404, "meeting_not_found", "Meeting or event occurrence not found")
+		writeError(w, 404, "meeting_not_found", "Meeting or event occurrence not found; use msg:<id> for notes or copy REF from calendar events.")
 	case errors.Is(err, store.ErrMeetingOccurrenceRequired):
 		writeError(w, 400, "invalid_argument", err.Error())
 	case errors.Is(err, store.ErrQueryTooBroad):

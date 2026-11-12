@@ -135,6 +135,9 @@ func TestMeetingRecordPartialHTTP(t *testing.T) {
 		if tc.status == http.StatusOK {
 			assert.JSONEq(fmt.Sprintf(`{"links":[],"message_ids":[],"unexpandable":[{"message_id":%d,"reason":"unsupported recurrence"}]}`, id), response.Body.String())
 		}
+		if tc.status == http.StatusNotFound {
+			assert.Contains(response.Body.String(), "use msg:<id> for notes or copy REF from calendar events")
+		}
 	}
 }
 
