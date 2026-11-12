@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -15,7 +14,7 @@ func ImportICS(ctx context.Context, st *store.Store, path, identifier string) (*
 	if err != nil {
 		return nil, fmt.Errorf("read ICS file: %w", err)
 	}
-	if _, err := calevent.ParseICS(raw, "", ""); err != nil {
+	if err := store.ValidateICalendar(raw); err != nil {
 		return nil, err
 	}
 	source, err := st.GetOrCreateSourceContext(ctx, "ics", identifier)
