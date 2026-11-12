@@ -54,9 +54,6 @@ func (h *handlers) resolveReadSelection(ctx context.Context, account string, arg
 	if collection == "" {
 		return accountSelection{}, &expectedHandlerError{message: "collection name is required"}
 	}
-	if !h.collectionScopes {
-		return accountSelection{}, &expectedHandlerError{message: "message collections are unavailable"}
-	}
 	lister, ok := h.engine.(query.CollectionScopeLister)
 	if !ok {
 		return accountSelection{}, &expectedHandlerError{message: "message collections are unavailable"}
@@ -75,7 +72,7 @@ func (h *handlers) resolveReadSelection(ctx context.Context, account string, arg
 
 // singleSourceCollection limits native paths whose wire contract has one source.
 func (a accountSelection) singleSourceCollection() error {
-	if a.sourceIDs != nil && len(a.sourceIDs) > 1 {
+	if len(a.sourceIDs) > 1 {
 		return &expectedHandlerError{message: "collection contains multiple sources; this operation requires one source"}
 	}
 	return nil

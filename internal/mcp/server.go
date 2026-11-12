@@ -389,7 +389,6 @@ func newMCPServerWithPolicy(
 		opts.downloads = &downloadCache{}
 	}
 	h := &handlers{
-		collectionScopes:     opts.CollectionScopesAvailable && !opts.DelegatedOnly,
 		embeddingStatus:      opts.EmbeddingStatus,
 		delegatedOnly:        opts.DelegatedOnly,
 		sensitiveConfirm:     opts.ConfirmSensitiveDrafts,

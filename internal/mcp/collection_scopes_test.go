@@ -26,12 +26,11 @@ func TestCollectionScopesFilterRealMessageReads(t *testing.T) {
 	other, err := f.Store.GetOrCreateSource("imap", "other@example.test")
 	require.NoError(t, err)
 	first := f.NewMessage().WithSubject("collection fixture").Create(t, f.Store)
-	second := f.NewMessage().WithSourceMessageID("other").WithSubject("collection fixture").Create(t, f.Store)
-	_, err = f.Store.DB().ExecContext(t.Context(), "UPDATE messages SET source_id = ? WHERE id = ?", other.ID, second)
+	convID, err := f.Store.EnsureConversation(t.Context(), other.ID, "other-thread", "Other Thread")
 	require.NoError(t, err)
+	storetest.NewMessage(other.ID, convID).WithSourceMessageID("other").WithSubject("collection fixture").Create(t, f.Store)
 	e := &collectionTestEngine{Engine: query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()), collections: []query.CollectionScope{{Name: "one", SourceIDs: []int64{f.Source.ID}}, {Name: "empty", SourceIDs: []int64{}}}}
 	h := newTestHandlers(e)
-	h.collectionScopes = true
 	for _, tc := range []struct {
 		name string
 		want []int64
@@ -53,6 +52,8 @@ func TestCollectionScopesFilterRealMessageReads(t *testing.T) {
 	}
 	_, err = h.resolveReadSelection(t.Context(), "account", map[string]any{"collection": "one"})
 	require.ErrorContains(t, err, "mutually exclusive")
+	_, err = h.resolveReadSelection(t.Context(), "", map[string]any{"collection": ""})
+	require.ErrorContains(t, err, "collection name is required")
 	_, err = h.resolveReadSelection(t.Context(), "", map[string]any{"collection": "missing"})
 	require.ErrorContains(t, err, "collection not found")
 }
@@ -97,7 +98,6 @@ func TestCollectionCatalogAvailability(t *testing.T) {
 func TestSemanticCollectionUsesOneResolvedSource(t *testing.T) {
 	e := &collectionTestEngine{Engine: &querytest.MockEngine{}, collections: []query.CollectionScope{{Name: "one", SourceIDs: []int64{42}}, {Name: "empty", SourceIDs: []int64{}}, {Name: "many", SourceIDs: []int64{42, 43}}}}
 	h := newTestHandlers(e)
-	h.collectionScopes = true
 	calls := 0
 	h.hybridSearcher = hybridSearcherFunc(func(_ context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
 		calls++
@@ -109,10 +109,6 @@ func TestSemanticCollectionUsesOneResolvedSource(t *testing.T) {
 	runTool[searchMessageBodiesResponse](t, ToolSemanticSearchMessages, h.semanticSearchMessages, map[string]any{"query": "fixture", "collection": "empty"})
 	assert.Equal(t, 1, calls)
 	result, err := h.semanticSearchMessages(t.Context(), toolRequest{arguments: map[string]any{"query": "fixture", "collection": "many"}})
-	require.NoError(t, err)
-	assert.True(t, result.isError)
-	assert.Equal(t, 1, calls)
-	result, err = h.semanticSearchMessages(t.Context(), toolRequest{arguments: map[string]any{"query": "fixture", "collection": ""}})
 	require.NoError(t, err)
 	assert.True(t, result.isError)
 	assert.Equal(t, 1, calls)
