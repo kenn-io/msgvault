@@ -203,7 +203,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	SELECT canonical_id, sum(attachment_count)::BIGINT AS file_count FROM (
 		SELECT DISTINCT a.message_id, a.canonical_id, a.attachment_count
 		FROM relationship_activity_expanded a JOIN classified f ON f.message_id=a.message_id
-		WHERE a.canonical_id IS NOT NULL AND (a.is_direct OR a.is_conversation_member)
+		WHERE a.canonical_id IS NOT NULL AND a.attachment_count > 0 AND (a.is_direct OR a.is_conversation_member)
 	) GROUP BY canonical_id
 )`
 	if strings.TrimSpace(identityCandidateSQL) != "" {
@@ -222,7 +222,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 // aggregated participant_domains lists did.
 func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 	ctx context.Context,
-	request ExploreRequest,
+	request ExploreRequest, exactDomain string,
 ) (string, []any, error) {
 	var err error
 	request, err = e.narrowIdentityFactCandidates(ctx, request)
@@ -239,9 +239,8 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 		return "", nil, err
 	}
 	args = append(args, meetingArgs...)
-	// entry_num mirrors buildIdentityLogicalSQL: the per-(entry, domain)
-	// dedup hash stays numeric-keyed so a broad filter fits the interactive
-	// memory budget.
+	domainCondition, domainArgs := exactDomainPredicates(exactDomain)
+	args = append(args, domainArgs...)
 	sql := buildExploreLogicalSQLNoLists(conditions) + `
 ), ` + meetingCTE + `, logical_domains AS (
 	SELECT le.anchor_message_id AS entry_num, a.participant_domain AS domain,
@@ -250,7 +249,7 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 	JOIN relationship_activity_expanded a ON a.message_id = le.anchor_message_id
 	WHERE le.entry_kind NOT IN ('conversation','event','meeting')
 	  AND a.canonical_id IS NOT NULL
-	  AND a.participant_domain <> ''
+	  AND a.participant_domain <> ''` + domainCondition + `
 	UNION
 	SELECT -le.conversation_id AS entry_num, a.participant_domain AS domain,
 	       le.occurred_at, le.attachment_count, le.source_type
@@ -259,11 +258,11 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 	JOIN relationship_activity_expanded a ON a.message_id = f.message_id
 	WHERE le.entry_kind = 'conversation'
 	  AND a.canonical_id IS NOT NULL
-	  AND a.participant_domain <> ''
+	  AND a.participant_domain <> ''` + domainCondition + `
 	UNION
 	SELECT a.entry_num, a.participant_domain AS domain, min(a.occurred_at) AS occurred_at,
 	       max(a.attachment_count) AS attachment_count, a.source_type
-	FROM meeting_activity a WHERE a.participant_domain <> ''
+	FROM meeting_activity a WHERE a.participant_domain <> ''` + domainCondition + `
 	GROUP BY a.entry_num, a.participant_domain, a.source_type
 ), logical_person_domains AS (
 	SELECT DISTINCT a.participant_domain AS domain, a.canonical_id
@@ -271,7 +270,7 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 	JOIN relationship_activity_expanded a ON a.message_id = le.anchor_message_id
 	WHERE le.entry_kind NOT IN ('conversation','event','meeting')
 	  AND a.canonical_id IS NOT NULL
-	  AND a.participant_domain <> '' AND a.is_direct
+	  AND a.participant_domain <> '' AND a.is_direct` + domainCondition + `
 	UNION
 	SELECT a.participant_domain AS domain, a.canonical_id
 	FROM logical_entries le
@@ -279,18 +278,26 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 	JOIN relationship_activity_expanded a ON a.message_id = f.message_id
 	WHERE le.entry_kind = 'conversation'
 	  AND a.canonical_id IS NOT NULL
-	  AND a.participant_domain <> ''
+	  AND a.participant_domain <> ''` + domainCondition + `
 	UNION
 	SELECT DISTINCT a.participant_domain AS domain, a.canonical_id
-	FROM meeting_activity a WHERE a.participant_domain <> '' AND a.is_direct
+	FROM meeting_activity a WHERE a.participant_domain <> '' AND a.is_direct` + domainCondition + `
 ), file_domains AS (
 	SELECT domain, sum(attachment_count)::BIGINT AS file_count FROM (
 		SELECT DISTINCT a.message_id, a.participant_domain AS domain, a.attachment_count
 		FROM relationship_activity_expanded a JOIN classified f ON f.message_id=a.message_id
-		WHERE a.canonical_id IS NOT NULL AND a.participant_domain <> '' AND (a.is_direct OR a.is_conversation_member)
+		WHERE a.canonical_id IS NOT NULL AND a.attachment_count > 0 AND a.participant_domain <> '' AND (a.is_direct OR a.is_conversation_member)` + domainCondition + `
 	) GROUP BY domain
 )`
 	return sql, args, nil
+}
+
+// exactDomainPredicates narrows edge scans without narrowing the message scope.
+func exactDomainPredicates(domain string) (string, []any) {
+	if domain == "" {
+		return "", nil
+	}
+	return " AND a.participant_domain = ?", []any{domain, domain, domain, domain, domain, domain, domain}
 }
 
 func identityRequestHasEdgeFilters(request ExploreRequest) bool {
@@ -652,29 +659,28 @@ func (e *DuckDBEngine) filteredPeopleSQL(
 	return logicalSQL + `,
 person_stats AS (
 	SELECT p.canonical_id, p.source_type,
-	       count(DISTINCT entry_num)::BIGINT AS source_count,
+	       count(*)::BIGINT AS source_count,
 	       coalesce(sum(p.attachment_count), 0)::BIGINT AS file_count,
 	       min(p.occurred_at)::TIMESTAMP AS first_at,
 	       max(p.occurred_at)::TIMESTAMP AS last_at
-	FROM logical_people p
-	GROUP BY GROUPING SETS ((p.canonical_id, p.source_type), (p.canonical_id))
+	FROM person_flags p
+	GROUP BY p.canonical_id, p.source_type
 ), meeting_totals AS (
-	SELECT canonical_id, count(DISTINCT entry_num) FILTER (WHERE entry_kind IN ('event', 'meeting') AND with_owner)::BIGINT AS meeting_count
-	FROM logical_people GROUP BY canonical_id
+	SELECT m.canonical_id, count(*) - count(DISTINCT m.entry_num) AS duplicate_count, count(DISTINCT m.entry_num) FILTER (WHERE EXISTS (SELECT 1 FROM relationship_counting_activity o WHERE o.entry_num = m.entry_num AND o.is_owner))::BIGINT AS meeting_count FROM meeting_person m
+	GROUP BY m.canonical_id
 ), person_totals AS (
 	SELECT p.canonical_id,
-	       source_count AS activity_count,
-	       m.meeting_count,
+	       (sum(source_count) - coalesce(max(m.duplicate_count), 0))::BIGINT AS activity_count,
+	       coalesce(max(m.meeting_count), 0)::BIGINT AS meeting_count,
 	       coalesce((SELECT fp.file_count FROM file_people fp WHERE fp.canonical_id=p.canonical_id), 0)::BIGINT AS file_count,
-	       first_at, last_at
-	FROM person_stats p JOIN meeting_totals m USING (canonical_id)
-	WHERE p.source_type IS NULL
+	       min(first_at) AS first_at, max(last_at) AS last_at
+	FROM person_stats p LEFT JOIN meeting_totals m USING (canonical_id)
+	GROUP BY p.canonical_id
 ), person_sources AS (
 	SELECT canonical_id,
 	       list(struct_pack(source_type := source_type, count := source_count)
 	            ORDER BY source_type) AS source_counts
 	FROM person_stats
-	WHERE source_type IS NOT NULL
 	GROUP BY canonical_id
 ), population AS (
 	SELECT c.canonical_id, c.person_id, c.display_label, c.partial_label,
@@ -836,7 +842,7 @@ func (e *DuckDBEngine) searchDomains(
 	} else {
 		logicalSQL, logicalArgs, logicalErr := e.buildIdentityDomainLogicalSQL(
 			ctx,
-			request.Explore,
+			request.Explore, "",
 		)
 		if logicalErr != nil {
 			return nil, logicalErr

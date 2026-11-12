@@ -79,8 +79,8 @@ func buildRelationshipScaleCache(b *testing.B, emailCount, contactCount int) {
 		datasetOwnerParticipants:        `SELECT 1::BIGINT AS source_id, 1::BIGINT AS participant_id`,
 		"message_recipients": `SELECT id AS message_id, sender_id AS participant_id, 'from' AS recipient_type,
 			'' AS display_name, 'person-' || sender_id || '@domain-' || sender_id % 1000 || '.example.test' AS email_address,
-			NULL::VARCHAR AS envelope_address FROM scale_messages
-			UNION ALL SELECT id, 1::BIGINT, 'to', '', 'owner@example.test', NULL::VARCHAR FROM scale_messages`,
+			NULL::VARCHAR AS envelope_address, false AS is_relayed FROM scale_messages
+			UNION ALL SELECT id, 1::BIGINT, 'to', '', 'owner@example.test', NULL::VARCHAR, false FROM scale_messages`,
 	} {
 		dir := filepath.Join(root, dataset)
 		require.NoError(b, os.RemoveAll(dir))
@@ -139,7 +139,7 @@ func BenchmarkExploreScaleQueries(b *testing.B) {
 	if root == "" {
 		b.Skip("run BenchmarkExploreScaleBuild with a scratch directory first")
 	}
-	for _, name := range []string{"People", "Domains", "DomainDrill", "DomainDetail"} {
+	for _, name := range []string{"People", "Domains", "DomainDrill", "DomainDetail", "FilteredPeople"} {
 		b.Run(name, func(b *testing.B) {
 			engine, err := NewDuckDBEngine(b.Context(), root, "", nil, DuckDBOptions{MemoryLimit: *relationshipScaleMemory})
 			require.NoError(b, err)
@@ -155,6 +155,11 @@ func BenchmarkExploreScaleQueries(b *testing.B) {
 			for range b.N {
 				start := time.Now()
 				switch name {
+				case "FilteredPeople":
+					after := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+					result, err := engine.SearchPeople(b.Context(), PersonSearchRequest{Explore: ExploreRequest{Context: Context{After: &after}}, Page: PageSpec{Limit: 50}})
+					require.NoError(b, err)
+					require.Len(b, result.Rows, 50)
 				case "DomainDetail":
 					// Opening one domain must read only its own activity; the
 					// archive has 1,000 other domains.

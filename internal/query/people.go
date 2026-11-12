@@ -688,7 +688,7 @@ func (e *DuckDBEngine) searchDomainsLegacy(ctx context.Context, request DomainSe
 	if err != nil {
 		return nil, err
 	}
-	logicalSQL, args, err := e.buildIdentityDomainLogicalSQL(ctx, request.Explore)
+	logicalSQL, args, err := e.buildIdentityDomainLogicalSQL(ctx, request.Explore, exactDomain)
 	if err != nil {
 		return nil, err
 	}
