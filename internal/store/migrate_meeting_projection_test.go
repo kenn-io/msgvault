@@ -21,10 +21,11 @@ func TestMeetingLinkProjectionBackfill(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	_, note := projectionFixture(t, st, "link-backfill", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	for _, query := range []string{
-		`DROP TABLE meeting_link_key`,
+		`DROP INDEX idx_meeting_details_link_key`,
+		`ALTER TABLE meeting_details DROP COLUMN link_key`,
 		`UPDATE meeting_details SET projection_version = 1`,
 		`UPDATE applied_migrations SET version = 1 WHERE name = 'meeting_projection_v1'`,
-		`UPDATE archive_metadata SET value = '40' WHERE key = 'schema_version'`,
+		`UPDATE archive_metadata SET value = '41' WHERE key = 'schema_version'`,
 	} {
 		_, err := st.db.Exec(query)
 		require.NoError(err)
@@ -35,7 +36,7 @@ func TestMeetingLinkProjectionBackfill(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(reopened.Close()) })
 	require.NoError(reopened.InitSchemaContext(t.Context()))
 	var key string
-	require.NoError(reopened.db.QueryRowContext(t.Context(), `SELECT key FROM meeting_link_key WHERE message_id = ?`, note).Scan(&key))
+	require.NoError(reopened.db.QueryRowContext(t.Context(), `SELECT link_key FROM meeting_details WHERE message_id = ?`, note).Scan(&key))
 	assert.Equal(`["ical_uid","","weekly@example.org","2027-03-14T10:00:00Z"]`, key)
 	applied, err := reopened.IsMigrationAppliedContext(t.Context(), projectionMigrationName, 2)
 	require.NoError(err)
@@ -43,6 +44,7 @@ func TestMeetingLinkProjectionBackfill(t *testing.T) {
 	var version int
 	require.NoError(reopened.db.QueryRowContext(t.Context(), `SELECT projection_version FROM meeting_details WHERE message_id = ?`, note).Scan(&version))
 	assert.Equal(2, version)
+	require.NoError(reopened.InitSchemaContext(t.Context()))
 }
 
 func removeMeetingProjectionSchema(t *testing.T, st *Store) {

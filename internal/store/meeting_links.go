@@ -18,6 +18,19 @@ func (s *Store) meetingEventRows(ctx context.Context, predicate string, args []a
 		return nil, err
 	}
 	*budget -= len(rows)
+	owners := make(map[int64]string)
+	for i := range rows {
+		owner, ok := owners[rows[i].SourceID]
+		if !ok {
+			source, err := s.GetSourceByIDContext(ctx, rows[i].SourceID)
+			if err != nil {
+				return nil, err
+			}
+			owner = calendarMailbox(source.SyncConfig)
+			owners[rows[i].SourceID] = owner
+		}
+		rows[i].CalendarID = owner
+	}
 	return rows, nil
 }
 
