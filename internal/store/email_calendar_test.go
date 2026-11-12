@@ -402,7 +402,8 @@ func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {
 	t.Run("master and exception retain renamed conversation", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
 		st := newRFC822IDBackfillBackendStore(t)
-		_, from := persistInviteEmail(t, st, "family", inviteEmail(calendarFamilyDocument()))
+		family := strings.Replace(string(calendarFamilyDocument()), "SUMMARY:Original series", "ORGANIZER:mailto:organizer@example.com\r\nSUMMARY:Original series", 1)
+		_, from := persistInviteEmail(t, st, "family", inviteEmail([]byte(family)))
 		into, err := st.GetOrCreateSource("mbox", "destination@example.com")
 		requirements.NoError(err)
 		_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: from, IntoSourceID: into.ID})
@@ -413,6 +414,9 @@ func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {
 		requirements.NoError(st.db.QueryRow(`SELECT conversation_id FROM messages WHERE id=?`, ids[0]).Scan(&conversationID))
 		update := calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2\r\nSUMMARY:Updated series")
 		persistInviteEmailForSource(t, st, into.ID, "update", inviteEmail(update))
+		var subject string
+		requirements.NoError(st.db.QueryRow(`SELECT subject FROM messages WHERE id=?`, ids[0]).Scan(&subject))
+		assertions.Equal("Updated series", subject)
 		for _, id := range ids {
 			var got int64
 			requirements.NoError(st.db.QueryRow(`SELECT conversation_id FROM messages WHERE id=?`, id).Scan(&got))
@@ -448,7 +452,7 @@ func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {
 		var gotConversation int64
 		requirements.NoError(st.db.QueryRow(`SELECT conversation_id FROM messages WHERE id=?`, ids[0]).Scan(&gotConversation))
 		assertions.Equal(conversationID, gotConversation)
-		persistInviteEmailForSource(t, st, into.ID, "foreign-master", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nORGANIZER:mailto:other@example.com")))
+		persistInviteEmailForSource(t, st, into.ID, "foreign-master", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nORGANIZER:mailto:organizer@example.com")))
 		assertions.Len(emailEvents(t, st, into.ID), 2)
 		persistInviteEmailForSource(t, st, into.ID, "sibling", inviteEmail(calendarDocument("REQUEST", "RECURRENCE-ID:20270304T120000Z\r\nDTSTART:20270304T130000Z\r\nORGANIZER:mailto:organizer@example.com")))
 		persistInviteEmailForSource(t, st, into.ID, "master", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nORGANIZER:mailto:organizer@example.com")))
@@ -527,6 +531,18 @@ func TestEmailCalendarRejectsOtherSenders(t *testing.T) {
 			r.NoError(err)
 		})
 	}
+	t.Run("unedited occurrence", func(t *testing.T) {
+		r := require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		_, source := persistInviteEmail(t, st, "series", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2\r\nORGANIZER:mailto:organizer@example.com")))
+		persistInviteEmailForSource(t, st, source, "cancel", emailFrom("attendee@example.org", calendarDocument("CANCEL", "RECURRENCE-ID:20270303T120000Z\r\nSEQUENCE:9")))
+		r.Len(emailEvents(t, st, source), 1)
+		from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+		r.NoError(err)
+		r.Len(page.Occurrences, 1)
+		r.Equal("confirmed", page.Occurrences[0].Status)
+	})
 }
 
 func TestEmailCalendarDuplicateParts(t *testing.T) {
