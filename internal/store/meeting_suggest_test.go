@@ -28,6 +28,28 @@ func TestMeetingSuggestionsRankingSignals(t *testing.T) {
 	r.False(ok)
 }
 
+func TestMeetingSuggestionsEventWithManyOtherSeries(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	data, event := calendarFixture(t, st, "seed-event", `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	noteData, note := projectionFixture(t, st, "matching-note", "meeting_json", `{}`)
+	noteData.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Valid: true}
+	_, err := st.UpsertMessage(noteData.Message)
+	r.NoError(err)
+	ref := MeetingLinkRef{Kind: "evt", MessageID: event}
+	page, err := st.SuggestMeetingLinksContext(t.Context(), ref, 10, nil)
+	r.NoError(err)
+	r.Len(page.Suggestions, 1)
+	r.Equal(note, page.Suggestions[0].MemberMessageID)
+	bulkCalendarCandidates(t, st, data.Message.SourceID, data.Message.ConversationID, "series", 2001)
+	_, err = st.db.ExecContext(t.Context(), `UPDATE calendar_events SET start_at='2027-03-01 00:00:00+00:00', end_at='2027-03-02 00:00:00+00:00', start_date='2027-03-01', end_date='2027-03-02', recurrence_json='["RRULE:FREQ=DAILY"]' WHERE kind='series'`)
+	r.NoError(err)
+	page, err = st.SuggestMeetingLinksContext(t.Context(), ref, 10, nil)
+	r.NoError(err)
+	r.Len(page.Suggestions, 1)
+	r.Equal(note, page.Suggestions[0].MemberMessageID)
+}
+
 func TestMeetingSuggestionsWithheldTitle(t *testing.T) {
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
