@@ -562,31 +562,25 @@ ignored.
 
 ## API schema version maintenance
 
-When the HTTP API contract changes, bump `APISchemaVersion` in
-`internal/api/openapi.go`. `TestAPISchemaVersionContract` hashes both generated
-documents. It tracks routes, parameters, requests, responses, tags, schemas,
-constraints, defaults, and extensions. It ignores wording such as descriptions,
-summaries, titles, examples, and external documentation. Handler changes that
-leave the documents unchanged still need an explicit version bump when they change
-the API contract.
+When the HTTP API contract changes, bump `APISchemaVersion` in `internal/api/openapi.go`.
+`TestAPISchemaVersionContract` hashes both generated documents, including routes, parameters,
+requests, responses, tags, schemas, constraints, defaults, and extensions. It ignores wording,
+including descriptions, summaries, titles, examples, and external documentation. Handler changes
+that alter the contract without changing the documents still need a version bump.
 
-Add a marker under `internal/api/testdata/api-version-contracts/` using the path
-printed by the test. Put a one-line summary in the file, then replace
-`<summary-sha256>` in its name with the hash from
-`printf '%s' 'Your summary' | sha256sum`.
-Each marker has its own summary. Different summaries for the same contract
-produce different paths; the guard treats them as the same contract.
+Add the marker path printed by the test under `internal/api/testdata/api-version-contracts/`.
+Put a one-line summary in the file and replace `<summary-sha256>` in the path with the hash from
+`printf '%s' 'Your summary' | sha256sum`. Different summaries produce separate markers for the
+same contract. To correct a summary, rename its marker with the new summary hash.
 
-Keep every contract recorded on the base. To correct a summary, rename its marker
-with the new summary hash. If your unreleased contract changes and the base has no
-marker for that version, replace your marker with the new path and summary. If
-another change has already used that version, keep its marker, remove yours, and
-take the next minor above the greatest recorded version. Move any feature minimum
-constants introduced by your change to that version.
+Keep every contract recorded on the base. If your unreleased contract changes and the base has
+no marker for that version, replace your marker with the new path and summary. If another change
+has used that version, keep its marker, remove yours, and take the next minor above the greatest
+recorded version. Move feature minimum constants introduced by your change to that version.
 
-Do not add version entries to the comment above `APISchemaVersion`. CI compares
-markers with its exact base. Local tests skip that history comparison unless
-`MSGVAULT_API_CONTRACT_BASE` is set to a local base SHA or ref.
+Do not add version entries to the comment above `APISchemaVersion`. CI compares markers with its
+exact base. Local tests skip the history comparison unless `MSGVAULT_API_CONTRACT_BASE` is set to
+a local base SHA or ref.
 
 ## Archive schema version maintenance
 
