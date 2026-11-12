@@ -6998,7 +6998,7 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 	env := storedFTSEnvelopeSQL("STRING_AGG")
 	lockSQL := `SELECT m.id FROM messages m WHERE m.id IN (` + query + `) ORDER BY m.id LIMIT 64 FOR UPDATE OF m`
 	charCap := strconv.Itoa(maxFTSBodyChars)
-	stale := `m.search_fts IS NULL OR m.indexing_version IS DISTINCT FROM ` + strconv.Itoa(CurrentFTSIndexingVersion)
+	stale := postgresFTSStalePredicate("m.")
 	if !onlyStale {
 		stale = "TRUE"
 	}

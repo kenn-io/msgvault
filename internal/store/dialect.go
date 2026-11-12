@@ -42,7 +42,7 @@ func storedFTSEnvelopeSQL(aggregate string) ftsEnvelopeExpressions {
 	return ftsEnvelopeExpressions{
 		subject: "COALESCE(m.subject, CASE WHEN m.message_type = 'fbmessenger' THEN (SELECT c.title FROM conversations c WHERE c.id = m.conversation_id) END, '')",
 		fromAddr: `COALESCE(CASE WHEN m.message_type IN ('slack', 'teams', 'inline', 'facebook_comments', 'instagram_comments', 'discord') THEN (SELECT NULLIF(mr.display_name, '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1) END, CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
-			THEN (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id) END, ` + recipients("from") + `)`,
+			THEN COALESCE((SELECT NULLIF(mr.email_address, '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id)) END, ` + recipients("from") + `)`,
 		toAddrs: `CASE WHEN m.message_type = 'discord' THEN COALESCE((SELECT ` + aggregate + `(mr.display_name, ' ') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'mention'), '') ELSE ` + recipients("to") + ` END`,
 		ccAddrs: recipients("cc"),
 	}

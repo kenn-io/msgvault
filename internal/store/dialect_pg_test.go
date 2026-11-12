@@ -144,7 +144,7 @@ func TestPostgreSQLDialect_FTSLayoutVersioned(t *testing.T) {
 
 func TestPostgreSQLDialect_FTSNeedsBackfillSQLUsesLiteralVersion(t *testing.T) {
 	sql := postgresFTSNeedsBackfillSQL()
-	assert.Contains(t, sql, "indexing_version IS DISTINCT FROM 3")
+	assert.Contains(t, sql, "indexing_version < 3")
 	assert.NotContains(t, sql, "$1", "partial-index predicate must remain plan-time provable")
 }
 
@@ -154,9 +154,9 @@ func TestPostgreSQLDialect_EnsureFTSIndexUsesVersionedStalePredicate(t *testing.
 	d := &PostgreSQLDialect{}
 	q := &recordingFTSQuerier{}
 	require.NoError(d.EnsureFTSIndex(q), "EnsureFTSIndex")
-	require.Len(q.all, 2, "GIN and stale-row indexes")
+	require.Len(q.all, 3, "GIN and stale-row indexes and legacy index removal")
 	assert.Contains(q.all[1], "idx_messages_search_fts_stale_v3")
-	assert.Contains(q.all[1], "search_fts IS NULL OR indexing_version IS DISTINCT FROM 3")
+	assert.Contains(q.all[1], "indexing_version < 3")
 }
 
 func TestPostgreSQLDialect_InsertOrIgnorePrefix(t *testing.T) {

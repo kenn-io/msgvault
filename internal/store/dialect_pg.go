@@ -514,10 +514,11 @@ func (d *PostgreSQLDialect) FTSBackfillBatchSQL() string {
 }
 
 func (d *PostgreSQLDialect) FTSBackfillMissingBatchSQL(_ context.Context, _ *sql.DB) (string, error) {
-	return d.FTSBackfillBatchSQL() + fmt.Sprintf(
-		" AND (search_fts IS NULL OR indexing_version IS DISTINCT FROM %d)",
-		CurrentFTSIndexingVersion,
-	), nil
+	return d.FTSBackfillBatchSQL() + " AND " + postgresFTSStalePredicate(""), nil
+}
+
+func postgresFTSStalePredicate(prefix string) string {
+	return fmt.Sprintf("(%sindexing_version IS NULL OR %sindexing_version < %d OR (%sindexing_version = %d AND %ssearch_fts IS NULL))", prefix, prefix, CurrentFTSIndexingVersion, prefix, CurrentFTSIndexingVersion, prefix)
 }
 
 // FTSAvailable reports whether tsvector search is available.
@@ -532,16 +533,12 @@ func (d *PostgreSQLDialect) FTSAvailable(ctx context.Context, db SQLReader) (boo
 }
 
 func postgresFTSNeedsBackfillSQL() string {
-	return fmt.Sprintf(
-		"SELECT EXISTS (SELECT 1 FROM messages WHERE search_fts IS NULL OR indexing_version IS DISTINCT FROM %d)",
-		CurrentFTSIndexingVersion,
-	)
+	return "SELECT EXISTS (SELECT 1 FROM messages WHERE " + postgresFTSStalePredicate("") + ")"
 }
 
 // FTSNeedsBackfill reports whether the tsvector column needs population or
-// uses an obsolete field-weight layout. It probes for a NULL search_fts or an
-// indexing_version other than CurrentFTSIndexingVersion, so both interrupted
-// backfills and durable layout migrations remain visible.
+// uses an obsolete field-weight layout. It finds older versions and current
+// versions with a NULL search_fts, so interrupted backfills remain visible.
 //
 // Uses EXISTS rather than COUNT(*): a GIN index on search_fts cannot serve an
 // `IS NULL` predicate, so COUNT(*) was a full sequential scan of every message
@@ -759,9 +756,12 @@ func (d *PostgreSQLDialect) EnsureFTSIndex(q querier) error {
 	// cannot alter the legacy NULL-only index on upgraded databases.
 	staleIndexName := fmt.Sprintf("idx_messages_search_fts_stale_v%d", CurrentFTSIndexingVersion)
 	if _, err := q.Exec(
-		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON messages (id) WHERE search_fts IS NULL OR indexing_version IS DISTINCT FROM %d", staleIndexName, CurrentFTSIndexingVersion),
+		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON messages (id) WHERE %s", staleIndexName, postgresFTSStalePredicate("")),
 	); err != nil {
 		return fmt.Errorf("create %s: %w", staleIndexName, err)
+	}
+	if _, err := q.Exec("DROP INDEX IF EXISTS idx_messages_search_fts_stale_v2"); err != nil {
+		return fmt.Errorf("drop idx_messages_search_fts_stale_v2: %w", err)
 	}
 	return nil
 }

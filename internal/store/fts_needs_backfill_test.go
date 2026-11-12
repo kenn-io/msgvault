@@ -116,6 +116,50 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	}
 }
 
+func TestPG_BackfillFTSPreservesFutureEntries(t *testing.T) {
+	skipUnlessPostgres(t)
+	f := storetest.New(t)
+	ids := f.CreateMessages(3)
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 4, search_fts = to_tsvector('simple', 'futuremarker') WHERE id = $1`, ids[0])
+	require.NoError(t, err)
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 4, search_fts = NULL WHERE id = $1`, ids[1])
+	require.NoError(t, err)
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 2, subject = 'legacy marker' WHERE id = $1`, ids[2])
+	require.NoError(t, err)
+	count, err := f.Store.BackfillFTS(nil)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, count)
+	var version int
+	var vector sql.NullString
+	for _, id := range ids[:2] {
+		require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), `SELECT indexing_version, search_fts::text FROM messages WHERE id = $1`, id).Scan(&version, &vector))
+		assert.Equal(t, 4, version)
+		if id == ids[0] {
+			assert.Contains(t, vector.String, "futuremarker")
+		} else {
+			assert.False(t, vector.Valid)
+		}
+	}
+	assert.False(t, f.Store.NeedsFTSBackfill())
+}
+
+func TestBackfillFTSUsesSavedChatSender(t *testing.T) {
+	f := storetest.New(t)
+	id := f.CreateMessage("chat-sender")
+	participant := f.EnsureParticipant("current@example.com", "Current", "example.com")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type = 'google_chat', sender_id = ? WHERE id = ?`), participant, id)
+	require.NoError(t, err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address) VALUES (?, ?, 'from', 'saved@example.com')`), id, participant)
+	require.NoError(t, err)
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(t, err)
+	for term, want := range map[string][]int64{"saved@example.com": {id}, "current@example.com": nil} {
+		got, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, want, got, term)
+	}
+}
+
 func TestPG_BackfillFTS_ContinuesAcrossLargeMessagePages(t *testing.T) {
 	skipUnlessPostgres(t)
 	require := require.New(t)
