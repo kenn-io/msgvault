@@ -1871,27 +1871,29 @@ func TestPersonFactDecisionOutcomesPersist(t *testing.T) {
 }
 
 func TestPersonFactOutcomeUpgrade(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
 	target := targets[AttributeSlugPrimaryChannel]
 	first := personFactProjectionClaim(personID, target, `"chat"`, "legacy-saved")
 	first.Confidence.ReportedScore = 0
 	saved, err := st.ApplyPersonFactGenerationContext(t.Context(), personFactProjectionInput(personID, "legacy-saved", []personfacts.ProposedClaim{first}, nil), nil)
-	require.NoError(t, err)
-	require.Len(t, saved.Decisions, 1)
+	requirements.NoError(err)
+	requirements.Len(saved.Decisions, 1)
 	negative := personFactProjectionClaim(personID, target, `"chat"`, "legacy-retired")
 	negative.Relation = personfacts.RelationSupersede
 	negative.Confidence.ReportedScore = 1000
 	retirement := personFactProjectionInput(personID, "legacy-retired", []personfacts.ProposedClaim{negative}, nil)
 	retirement.ResolvedAt = retirement.ResolvedAt.Add(time.Hour)
 	retired, err := st.ApplyPersonFactGenerationContext(t.Context(), retirement, nil)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	var retiredKey string
 	for _, decision := range retired.Decisions {
 		if decision.Outcome != nil && *decision.Outcome == personfacts.OutcomeValueRetired {
 			retiredKey = decision.DecisionKey
 		}
 	}
-	require.NotEmpty(t, retiredKey)
+	requirements.NotEmpty(retiredKey)
 
 	low := personFactProjectionClaim(personID, targets[AttributeSlugAskMeAbout], `"books"`, "legacy-unprovable")
 	low.Evidence[0].Authority = personfacts.AuthorityOrdinary
@@ -1900,26 +1902,26 @@ func TestPersonFactOutcomeUpgrade(t *testing.T) {
 	input := personFactProjectionInput(personID, "legacy-unprovable", []personfacts.ProposedClaim{low}, nil)
 	input.ResolvedAt = retirement.ResolvedAt.Add(time.Hour)
 	unprovable, err := st.ApplyPersonFactGenerationContext(t.Context(), input, nil)
-	require.NoError(t, err)
-	require.Len(t, unprovable.Decisions, 1)
-	require.NotNil(t, unprovable.Decisions[0].Outcome)
-	require.NotEqual(t, personfacts.DecisionApplied, unprovable.Decisions[0].Action)
+	requirements.NoError(err)
+	requirements.Len(unprovable.Decisions, 1)
+	requirements.NotNil(unprovable.Decisions[0].Outcome)
+	requirements.NotEqual(personfacts.DecisionApplied, unprovable.Decisions[0].Action)
 	for _, row := range []struct{ key, action, reason string }{
 		{"legacy-invalid", "invalid", "malformed-value"},
 		{"legacy-unsupported", "retained", "evidence-unsupported"},
 	} {
 		_, err = st.db.ExecContext(t.Context(), st.Rebind(`INSERT INTO person_fact_decisions (person_id, resolution_id, claim_id, decision_key, action, reason, score_json)
 			SELECT person_id, resolution_id, claim_id, ?, ?, ?, score_json FROM person_fact_decisions WHERE id = ?`), row.key, row.action, row.reason, unprovable.Decisions[0].ID)
-		require.NoError(t, err)
+		requirements.NoError(err)
 	}
 	_, err = st.db.ExecContext(t.Context(), st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), migrationPersonFactOutcomes)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = st.db.ExecContext(t.Context(), `ALTER TABLE person_fact_decisions DROP COLUMN outcome`)
-	require.NoError(t, err)
-	require.NoError(t, st.InitSchemaContext(t.Context()))
+	requirements.NoError(err)
+	requirements.NoError(st.InitSchemaContext(t.Context()))
 	rows, err := st.ListPersonFactDecisionsContext(t.Context(), personID, personfacts.DecisionFilter{})
-	require.NoError(t, err)
-	require.Len(t, rows, 6)
+	requirements.NoError(err)
+	requirements.Len(rows, 6)
 	want := map[string]*personfacts.DecisionOutcome{
 		saved.Decisions[0].DecisionKey:      new(personfacts.OutcomeSaved),
 		retiredKey:                          new(personfacts.OutcomeValueRetired),
@@ -1934,76 +1936,78 @@ func TestPersonFactOutcomeUpgrade(t *testing.T) {
 	}
 	for _, row := range rows {
 		expected, ok := want[row.DecisionKey]
-		require.True(t, ok)
-		assert.Equal(t, expected, row.Outcome)
+		requirements.True(ok)
+		assertions.Equal(expected, row.Outcome)
 	}
-	require.Len(t, unprovable.Resolutions, 1)
+	requirements.Len(unprovable.Resolutions, 1)
 	err = st.withTxContext(t.Context(), func(tx *loggedTx) error {
 		if err := st.insertPersonFactDecisionTx(t.Context(), tx, personID, unprovable.Resolutions[0].ID, unprovable.Resolutions[0].InputFingerprint, unprovable.Decisions[0]); err != nil {
 			return err
 		}
 		row, err := loadPersonFactDecisionByKeyTx(t.Context(), tx, personID, unprovable.Decisions[0].DecisionKey)
 		if err == nil {
-			assert.Nil(t, row.Outcome)
+			assertions.Nil(row.Outcome)
 		}
 		return err
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	replayed, err := st.ApplyPersonFactGenerationContext(t.Context(), input, nil)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	found := false
 	for _, decision := range replayed.Decisions {
 		if decision.DecisionKey == unprovable.Decisions[0].DecisionKey {
 			found = true
-			assert.Nil(t, decision.Outcome)
+			assertions.Nil(decision.Outcome)
 		}
 	}
-	assert.True(t, found)
+	assertions.True(found)
 }
 
 func TestPersonFactSummary(t *testing.T) {
 	for _, kind := range []string{"empty", "evidence", "pin", "attribute", "employment", "claims"} {
 		t.Run(kind, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			st, personID, targets := newPersonFactProjectionStore(t)
 			target := targets[AttributeSlugPrimaryChannel]
 			switch kind {
 			case "evidence":
 				evidence := personFactProjectionClaim(personID, target, `"chat"`, "summary-evidence").Evidence[0]
 				key, err := personfacts.EvidenceKey(evidence)
-				require.NoError(t, err)
+				requirements.NoError(err)
 				err = st.withTxContext(t.Context(), func(tx *loggedTx) error {
 					_, err := st.insertPersonFactEvidenceTx(t.Context(), tx, personID, key, evidence)
 					return err
 				})
-				require.NoError(t, err)
+				requirements.NoError(err)
 			case "pin":
 				_, err := st.SetPersonFactPinContext(t.Context(), personID, personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}, true, "test")
-				require.NoError(t, err)
+				requirements.NoError(err)
 			case "attribute":
 				_, err := st.SetPersonAttributeValueContext(t.Context(), PersonAttributeValueInput{PersonID: personID, DefinitionSlug: AttributeSlugPrimaryChannel, Value: AttributeValue{Type: AttributeValueText, Text: new("email")}, Source: ProvenanceUser})
-				require.NoError(t, err)
+				requirements.NoError(err)
 				_, err = st.db.ExecContext(t.Context(), `DELETE FROM person_fact_pin_events WHERE person_id = ?`, personID)
-				require.NoError(t, err)
+				requirements.NoError(err)
 			case "employment":
 				org := createPersonFactOrganization(t, st, "Example", "example.com")
 				_, err := st.AddEmploymentContext(t.Context(), EmploymentInput{PersonID: personID, OrganizationID: org.ID, Title: new("Engineer"), Source: ProvenanceUser})
-				require.NoError(t, err)
+				requirements.NoError(err)
 				_, err = st.db.ExecContext(t.Context(), `DELETE FROM person_fact_pin_events WHERE person_id = ?`, personID)
-				require.NoError(t, err)
+				requirements.NoError(err)
 			case "claims":
 				claims := []personfacts.ProposedClaim{personFactProjectionClaim(personID, target, `"chat"`, "summary-chat"), personFactProjectionClaim(personID, targets[AttributeSlugAskMeAbout], `"books"`, "summary-books")}
 				_, err := st.ApplyPersonFactGenerationContext(t.Context(), personFactProjectionInput(personID, "summary-claims", claims, nil), nil)
-				require.NoError(t, err)
+				requirements.NoError(err)
 			}
 			summary, err := st.PersonFactSummaryContext(t.Context(), personID)
-			require.NoError(t, err)
-			assert.Equal(t, kind != "empty", summary.HasStoredFacts)
+			requirements.NoError(err)
+			assertions.Equal(kind != "empty", summary.HasStoredFacts)
 			if kind == "claims" {
-				assert.Equal(t, 2, summary.ClaimedFields)
-				assert.NotNil(t, summary.LatestClaimAt)
+				assertions.Equal(2, summary.ClaimedFields)
+				assertions.NotNil(summary.LatestClaimAt)
 			} else {
-				assert.Zero(t, summary.ClaimedFields)
-				assert.Nil(t, summary.LatestClaimAt)
+				assertions.Zero(summary.ClaimedFields)
+				assertions.Nil(summary.LatestClaimAt)
 			}
 		})
 	}
