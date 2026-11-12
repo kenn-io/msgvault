@@ -59,6 +59,6 @@ func (b *daemonMCPOperations) executeDeletionSelection(ctx context.Context, name
 	if input.DryRun {
 		status = http.StatusOK
 	}
-	result, err := readMCPOperationJSONWithClassifier[generated.StageDeletionResponse](ctx, b.client, http.MethodPost, "/api/v1/deletions", &generated.StageDeletionRequestOptions{Body: &body}, deletionSelectionRefusal, status)
+	result, err := readMCPOperationJSONWithClassifier[generated.StageDeletionResponse](ctx, b.client, http.MethodPost, "/api/v1/deletions", &generated.StageDeletionRequestOptions{Body: &body}, func(code string) bool { return code != "" && code != "stage_deletion_failed" }, status)
 	return result, true, err
 }

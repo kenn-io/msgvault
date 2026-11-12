@@ -108,7 +108,7 @@ func (h *handlers) stageDeletionSelection(ctx context.Context, req toolRequest) 
 	predicate, _ := selection["predicate"].(map[string]any)
 	query, _ := predicate["query"].(string)
 	description := "selection: " + stringArgument(selection, "mode")
-	if strings.TrimSpace(query) != "" {
+	if strings.TrimSpace(query) != "" && stringArgument(selection, "mode") != "explicit" {
 		description = "query: " + query
 		description = capDeletionDescription(description)
 	}
