@@ -73,6 +73,7 @@ func decodeTwenty(fields map[string]jsontext.Value) Content {
 		start = *c.LinkEvidence.ScheduledAt
 		end, endOK = rawTime(calendar["endsAt"], false)
 		if endOK && end.After(start) {
+			c.ScheduledStart = &start
 			setDuration(&c, end.Sub(start).Seconds(), DurationScheduled)
 			return c
 		}

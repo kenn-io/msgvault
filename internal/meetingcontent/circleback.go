@@ -37,6 +37,7 @@ func decodeCircleback(fields map[string]jsontext.Value) Content {
 		start, startOK := rawTime(meeting[startKey], true)
 		end, endOK := rawTime(meeting["endTime"], true)
 		if startOK && endOK && end.After(start) {
+			content.ScheduledStart = &start
 			setDuration(&content, end.Sub(start).Seconds(), DurationScheduled)
 			return content
 		}

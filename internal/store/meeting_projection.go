@@ -8,11 +8,12 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"time"
 
 	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
-const meetingProjectionVersion = 2
+const meetingProjectionVersion = 3
 const maxMeetingRawBytes = 64 << 20
 
 var errMeetingRawTooLarge = errors.New("meeting raw exceeds decode limit")
@@ -89,9 +90,10 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 	}
 	key := deriveMeetingLinkKey(content)
 	full, err := json.Marshal(struct {
-		Content meetingcontent.Content
-		Key     meetingLinkKey
-	}{content, key})
+		Content        meetingcontent.Content
+		Key            meetingLinkKey
+		ScheduledStart *time.Time
+	}{content, key, content.ScheduledStart})
 	if err != nil {
 		return fmt.Errorf("marshal meeting content hash: %w", err)
 	}
@@ -117,8 +119,8 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 	_, err = q.Exec(`
 		INSERT INTO meeting_details (
 			message_id, projection_version, content_hash, content_json,
-			duration_seconds, duration_basis, action_coverage, transcript_state, link_key
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			duration_seconds, duration_basis, action_coverage, transcript_state, link_key, scheduled_start
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (message_id) DO UPDATE SET
 			projection_version = excluded.projection_version,
 			content_hash = excluded.content_hash,
@@ -127,10 +129,11 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 			duration_basis = excluded.duration_basis,
 			action_coverage = excluded.action_coverage,
 			transcript_state = excluded.transcript_state,
-			link_key = excluded.link_key`,
+			link_key = excluded.link_key,
+			scheduled_start = excluded.scheduled_start`,
 		messageID, meetingProjectionVersion, hash, string(compact),
 		content.DurationSeconds, string(content.DurationBasis),
-		string(content.ActionCoverage), string(content.Transcript.State), linkKey,
+		string(content.ActionCoverage), string(content.Transcript.State), linkKey, content.ScheduledStart,
 	)
 	if err != nil {
 		return fmt.Errorf("write meeting projection: %w", err)

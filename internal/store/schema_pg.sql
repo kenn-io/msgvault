@@ -3762,6 +3762,7 @@ CREATE TABLE IF NOT EXISTS meeting_details (
     projection_version INTEGER NOT NULL,
     content_hash TEXT NOT NULL,
     content_json TEXT NOT NULL,
+    scheduled_start TIMESTAMPTZ,
     duration_seconds DOUBLE PRECISION,
     duration_basis TEXT NOT NULL DEFAULT '',
     action_coverage TEXT NOT NULL,

@@ -40,6 +40,7 @@ func decodeNotion(fields map[string]jsontext.Value) Content {
 		}
 		if start, startOK := parseTimeString(discovery.Calendar.Start); startOK {
 			if end, endOK := parseTimeString(discovery.Calendar.End); endOK && end.After(start) {
+				content.ScheduledStart = &start
 				setDuration(&content, end.Sub(start).Seconds(), DurationScheduled)
 			}
 		}
