@@ -504,9 +504,6 @@ func DecisionOutcomeFor(f OutcomeFacts) (DecisionOutcome, bool) {
 		return OutcomeSaved, true
 	}
 	if f.Historical {
-		if (d.Action == DecisionRetained || d.Action == DecisionConflictRejected) && d.Reason == ReasonInsufficientMargin && d.CompetingClaimKey == "" {
-			return OutcomeCurrentValueKept, true
-		}
 		return "", false
 	}
 	if d.Reason == ReasonPinRetained {
