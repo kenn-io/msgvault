@@ -1,6 +1,8 @@
 package store
 
 import (
+	"bytes"
+	"compress/zlib"
 	"fmt"
 	"strings"
 	"testing"
@@ -8,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calevent"
 )
 
 func calendarDocument(method, props string) []byte {
@@ -301,7 +304,7 @@ func TestICalendarRangeCancellationInheritsEarlierMove(t *testing.T) {
 			r := require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
 			source := icsSource(t, st)
-			for _, event := range [][]byte{calendarDocument("REQUEST", tc.master), calendarDocument("REQUEST", tc.move), calendarDocument("CANCEL", tc.cancel), calendarDocument("REQUEST", tc.resume)} {
+			for _, event := range [][]byte{calendarDocument("REQUEST", tc.master+"\r\nSUMMARY:Old\r\nATTENDEE:mailto:old@example.org"), calendarDocument("REQUEST", tc.move+"\r\nSUMMARY:New\r\nATTENDEE:mailto:new@example.org"), calendarDocument("CANCEL", tc.cancel), calendarDocument("REQUEST", tc.resume)} {
 				_, err := st.PersistICalendarContext(t.Context(), source, event)
 				r.NoError(err)
 			}
@@ -314,6 +317,9 @@ func TestICalendarRangeCancellationInheritsEarlierMove(t *testing.T) {
 					cancelled = true
 					r.Equal(tc.end, occurrence.End.Format(time.RFC3339))
 					r.Equal("cancelled", occurrence.Status)
+					r.Equal("New", occurrence.Subject)
+					r.Len(occurrence.Attendees, 1)
+					r.Equal("new@example.org", occurrence.Attendees[0].Email)
 				}
 				if occurrence.Start.Format(time.RFC3339) == tc.resumed {
 					resumed = true
@@ -325,6 +331,109 @@ func TestICalendarRangeCancellationInheritsEarlierMove(t *testing.T) {
 			r.Empty(page.Unexpandable)
 		})
 	}
+	t.Run("successive and individual cancellations", func(t *testing.T) {
+		r := require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		source := icsSource(t, st)
+		for _, event := range [][]byte{
+			calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=8\r\nSUMMARY:Old\r\nATTENDEE:mailto:old@example.org\r\nORGANIZER:mailto:old-owner@example.org"),
+			calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H\r\nSUMMARY:New\r\nATTENDEE:mailto:new@example.org\r\nORGANIZER:mailto:new-owner@example.org"),
+			calendarDocument("CANCEL", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270304T120000Z"),
+			calendarDocument("CANCEL", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z"),
+			calendarDocument("CANCEL", "RECURRENCE-ID:20270306T120000Z\r\nSUMMARY:Special\r\nATTENDEE:mailto:special@example.org\r\nORGANIZER:mailto:special-owner@example.org"),
+			calendarDocument("CANCEL", "RECURRENCE-ID:20270307T120000Z"),
+		} {
+			_, err := st.PersistICalendarContext(t.Context(), source, event)
+			r.NoError(err)
+		}
+		from := time.Date(2027, 3, 5, 0, 0, 0, 0, time.UTC)
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 4))
+		r.NoError(err)
+		r.Len(page.Occurrences, 4)
+		for i, occurrence := range page.Occurrences {
+			r.Equal("cancelled", occurrence.Status)
+			r.Equal(14, occurrence.Start.Hour())
+			var emails []string
+			for _, attendee := range occurrence.Attendees {
+				emails = append(emails, attendee.Email)
+			}
+			if i == 1 {
+				r.Equal("Special", occurrence.Subject)
+				r.ElementsMatch([]string{"special@example.org", "special-owner@example.org"}, emails)
+			} else {
+				r.Equal("New", occurrence.Subject)
+				r.ElementsMatch([]string{"new@example.org", "new-owner@example.org"}, emails)
+			}
+		}
+	})
+}
+
+func TestICalendarFutureRangeEditsDoNotExhaustSeriesLimit(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	override := ""
+	if st.IsPostgreSQL() {
+		override = " OVERRIDING SYSTEM VALUE"
+	}
+	start := time.Date(2030, 3, 1, 12, 0, 0, 0, time.UTC)
+	for offset := 0; offset < 2001; offset += 500 {
+		var conversations, messages, events, raws []string
+		var conversationArgs, messageArgs, eventArgs, rawArgs []any
+		for i := offset; i < min(offset+500, 2001); i++ {
+			uid := fmt.Sprintf("future-%d@example.com", i)
+			masterID := calevent.ICSMessageID(uid, "")
+			conversationID := int64(100000 + i)
+			conversations = append(conversations, "(?,?,?,?)")
+			conversationArgs = append(conversationArgs, conversationID, source, masterID, "calendar")
+			for part, props := range []string{
+				"DTSTART:20300301T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2",
+				"RECURRENCE-ID;RANGE=THISANDFUTURE:20300301T120000Z\r\nDTSTART:20300301T140000Z\r\nDURATION:PT1H",
+			} {
+				messageID := int64(100000 + 2*i + part)
+				providerID, seriesID, kind, original, eventStart, recurrence, end := masterID, masterID, "series", any(nil), start, `["RRULE:FREQ=DAILY;COUNT=2"]`, any(start.AddDate(0, 0, 1).Add(time.Hour))
+				if part == 1 {
+					providerID, kind, original, eventStart, recurrence = calevent.ICSMessageID(uid, "20300301T120000Z"), "exception", start, start.Add(2*time.Hour), `["RECURRENCE-ID;RANGE=THISANDFUTURE"]`
+					end = nil
+				}
+				messages = append(messages, "(?,?,?,?,?)")
+				messageArgs = append(messageArgs, messageID, source, conversationID, providerID, "calendar_event")
+				events = append(events, "(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+				eventArgs = append(eventArgs, messageID, 1, "fixture", providerID, seriesID, kind, original, eventStart, eventStart.Add(time.Hour), "confirmed", false, "UTC", recurrence, end)
+				raw := strings.Replace(string(calendarDocument("REQUEST", props)), "family@example.com", uid, 1)
+				var compressed bytes.Buffer
+				writer := zlib.NewWriter(&compressed)
+				_, err := writer.Write([]byte(raw))
+				r.NoError(err)
+				r.NoError(writer.Close())
+				raws = append(raws, "(?,?,?,?)")
+				rawArgs = append(rawArgs, messageID, compressed.Bytes(), "ics", "zlib")
+			}
+		}
+		_, err := st.db.Exec(`INSERT INTO conversations (id,source_id,source_conversation_id,conversation_type)`+override+` VALUES `+strings.Join(conversations, ","), conversationArgs...)
+		r.NoError(err)
+		_, err = st.db.Exec(`INSERT INTO messages (id,source_id,conversation_id,source_message_id,message_type)`+override+` VALUES `+strings.Join(messages, ","), messageArgs...)
+		r.NoError(err)
+		_, err = st.db.Exec(`INSERT INTO calendar_events (message_id,projection_version,content_hash,provider_event_id,series_provider_id,kind,original_start_at,start_at,end_at,status,all_day,calendar_time_zone,recurrence_json,recurrence_end_at) VALUES `+strings.Join(events, ","), eventArgs...)
+		r.NoError(err)
+		_, err = st.db.Exec(`INSERT INTO message_raw (message_id,raw_data,raw_format,compression) VALUES `+strings.Join(raws, ","), rawArgs...)
+		r.NoError(err)
+	}
+	for _, event := range [][]byte{
+		calendarDocument("REQUEST", "DTSTART:20300301T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2\r\nSUMMARY:Shifted"),
+		calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20300301T120000Z\r\nDTSTART:20270302T140000Z\r\nDURATION:PT1H\r\nSUMMARY:Shifted"),
+	} {
+		_, err := st.PersistICalendarContext(t.Context(), source, event)
+		r.NoError(err)
+	}
+	_, current := calendarFixture(t, st, "current-early", `{"id":"current-early","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"}}`)
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	r.NoError(err)
+	r.Len(page.Occurrences, 2)
+	r.Equal(current, page.Occurrences[0].MessageID)
+	r.Equal("Shifted", page.Occurrences[1].Subject)
+	r.Equal("2027-03-02T14:00:00Z", page.Occurrences[1].Start.Format(time.RFC3339))
 }
 
 func TestICalendarRangeMovesEndedSeriesIntoWindow(t *testing.T) {

@@ -75,7 +75,7 @@ func DecodeICS(raw, metadata []byte, calendarZone string) (Event, bool, error) {
 	if meta.Status == "cancelled" && meta.Details == nil {
 		method = "CANCEL"
 	}
-	components, err := ParseICS(raw, method, calendarZone)
+	components, err := parseICS(raw, "", method, calendarZone)
 	if err != nil {
 		return Event{}, false, err
 	}
@@ -115,7 +115,11 @@ func encodeICSEvent(cal *ical.Calendar, zones []*ical.Component, event *ical.Com
 // ParseICS accepts one complete VCALENDAR. A single-event file is retained
 // byte for byte; each event of a larger file keeps its own VEVENT and the
 // shared calendar lines. An unsupported zone rejects the calendar.
-func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err error) {
+func ParseICS(raw []byte, method, calendarZone string) ([]ICSComponent, error) {
+	return parseICS(raw, method, "", calendarZone)
+}
+
+func parseICS(raw []byte, method, fallback, calendarZone string) (out []ICSComponent, err error) {
 	defer func() {
 		if recover() != nil {
 			out = nil
@@ -137,7 +141,7 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 	if _, err := decoder.Decode(); !errors.Is(err, io.EOF) {
 		return nil, errors.New("calendar has trailing content")
 	}
-	method, err = icsMethod(cal, method)
+	method, err = icsMethod(cal, method, fallback)
 	if err != nil {
 		return nil, err
 	}
@@ -191,16 +195,17 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 	return out, nil
 }
 
-func icsMethod(cal *ical.Calendar, method string) (string, error) {
+func icsMethod(cal *ical.Calendar, method, fallback string) (string, error) {
 	declared, err := propText(cal.Props, "METHOD")
 	if err != nil {
 		return "", err
 	}
 	declared = strings.ToUpper(strings.TrimSpace(declared))
 	method = strings.ToUpper(strings.TrimSpace(method))
-	if declared != "" {
-		method = declared
+	if declared != "" && method != "" && declared != method {
+		return "", fmt.Errorf("calendar method %q differs from MIME method %q", declared, method)
 	}
+	method = cmp.Or(declared, method, fallback)
 	switch method {
 	case "", "REQUEST", "PUBLISH", "CANCEL", "REPLY", "REFRESH", "COUNTER", "DECLINECOUNTER":
 		return method, nil

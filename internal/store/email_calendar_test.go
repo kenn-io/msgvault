@@ -370,6 +370,29 @@ func TestEmailCalendarInvalidPartPreservesEmail(t *testing.T) {
 	}
 }
 
+func TestEmailCalendarConflictingMethodPreservesEvent(t *testing.T) {
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	initial := inviteEmail(calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Meeting"))
+	first, source := persistInviteEmail(t, st, "request", initial)
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	conflict := []byte(strings.Replace(string(inviteEmail(calendarDocument("CANCEL", "SEQUENCE:2"))), "text/calendar", "text/calendar; method=REPLY", 1))
+	second := persistInviteEmailForSource(t, st, source, "reply", conflict)
+	ids := emailEvents(t, st, source)
+	requirements.Len(ids, 1)
+	requirements.Equal("confirmed", calendarRows(t, st, ids[0])[0].Event.Status)
+	for id, raw := range map[int64][]byte{first: initial, second: conflict} {
+		stored, err := st.GetMessageRaw(id)
+		requirements.NoError(err)
+		requirements.Equal(raw, stored)
+	}
+	requirements.Contains(logs.String(), "calendar invite ignored")
+	requirements.Contains(logs.String(), fmt.Sprintf("message_id=%d", second))
+}
+
 func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {
 	t.Run("master and exception retain renamed conversation", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
