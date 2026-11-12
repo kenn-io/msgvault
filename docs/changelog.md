@@ -10,6 +10,7 @@ All notable changes to msgvault, grouped by release.
 
 - MCP source sync, source-setting, person-profile, open-loop, and attribute write tools report `operation_receipt_unavailable` when a successful write's receipt is too large or unreadable; read current state before retrying.
 - Let owner MCP clients read person attributes and definitions, and enable attribute edits with `--allow-attribute-writes`.
+- Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
