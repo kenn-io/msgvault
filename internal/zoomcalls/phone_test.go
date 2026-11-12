@@ -40,7 +40,7 @@ func TestPhoneSourceLabelPreservesIdentityAndRaw(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("Zoom Phone — "+account, o.SourceLabel)
 	assert.Equal(AccountNamespace(account, "owner"), o.Account)
-	assert.Equal(syntheticPhoneElement, string(o.Raw))
+	assert.Equal([]byte(syntheticPhoneElement), []byte(o.Raw)) //nolint:testifylint // Raw evidence must retain the original bytes, not just equivalent JSON.
 }
 
 func TestPhoneMissingAnswerRemainsUnknown(t *testing.T) {
