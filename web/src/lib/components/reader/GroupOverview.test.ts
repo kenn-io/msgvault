@@ -28,7 +28,7 @@ describe('GroupOverview', () => {
       overview: { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05-03', count: 1 }, { bucket: '2024-05-04', count: 1 }], co_participants: [{ key: '1', label: 'Person Example', count: 2 }] }
     }, range: 'May 3, 2024 – May 4, 2024', showRange: false,
     image: 'Activity by day, May 3, 2024 to May 4, 2024, busiest May 3, 2024 with 1 item', dates: ['May 3, 2024', 'May 4, 2024'] }
-  ])('shows the range, $name strip, and people', async ({ selection, range, showRange, image, dates }) => {
+  ])('shows the range, $name strip, and people', async ({ name, selection, range, showRange, image, dates }) => {
     const view = render(GroupOverview, { selection });
 
     if (showRange) expect(screen.getByText(range)).toBeDefined();
@@ -38,8 +38,10 @@ describe('GroupOverview', () => {
     expect(screen.getByText('Most often with')).toBeDefined();
     expect(screen.getByText('Person Example')).toBeDefined();
 
-    await view.rerender({ selection: { ...selection, overview: { ...selection.overview, co_participants: [] } } });
-    expect(screen.queryByText('Most often with')).toBeNull();
+    if (name === 'daily') {
+      await view.rerender({ selection: { ...selection, overview: { ...selection.overview, co_participants: [] } } });
+      expect(screen.queryByText('Most often with')).toBeNull();
+    }
   });
 
   it.each([

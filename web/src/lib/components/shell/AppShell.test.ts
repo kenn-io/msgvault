@@ -2241,7 +2241,7 @@ describe('AppShell', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-      if (path.endsWith('/files/groups')) return Response.json({ rows: [{ key: 'file', label: 'File', count: 2 }], total_count: 1 });
+      if (path.endsWith('/files/groups')) return Response.json({ rows: [{ key: 'file', label: 'File', count: 2, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }], total_count: 1 });
       return Response.json(exploreResponse());
     });
     const state = new ExploreState(window);
@@ -2264,7 +2264,7 @@ describe('AppShell', () => {
     window.history.replaceState(null, '', '/');
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname.endsWith('/files/groups')) return Response.json({ rows: [{ key, label: key, count: 2 }], total_count: 1 });
+      if (new URL(request.url).pathname.endsWith('/files/groups')) return Response.json({ rows: [{ key, label: key, count: 2, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }], total_count: 1 });
       return Response.json(exploreResponse());
     });
     const state = new ExploreState(window);

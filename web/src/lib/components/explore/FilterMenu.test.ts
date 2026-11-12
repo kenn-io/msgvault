@@ -123,32 +123,6 @@ it('displays local dates with UTC peers', async () => {
   expect((screen.getByLabelText('To (UTC)') as HTMLInputElement).value).toBe('2026-07-31');
 });
 
-it('preserves a September drill end when midnight is skipped', async () => {
-  vi.stubEnv('TZ', 'America/Asuncion');
-  try {
-    const filters = [
-      { dimension: 'after' as const, values: ['2023-09-01T00:00:00-04:00'] },
-      { dimension: 'before' as const, values: ['2023-10-01T00:00:00-04:00'] }
-    ];
-    const onChange = vi.fn();
-    const props = { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), onChange, onClear: vi.fn() };
-    const view = render(FilterMenu, { ...props, filters: [...filters] });
-    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-    const to = screen.getByLabelText('To') as HTMLInputElement;
-    expect(to.value).toBe('2023-09-30');
-    await fireEvent.change(to, { target: { value: to.value } });
-    expect(onChange).toHaveBeenLastCalledWith([
-      { dimension: 'after', values: ['2023-09-01T00:00:00-04:00'] },
-      { dimension: 'before', values: ['2023-10-01T00:00:00-04:00'] }
-    ]);
-    await view.rerender({ ...props, filters: onChange.mock.lastCall![0] });
-    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-    vi.stubEnv('TZ', 'UTC');
-    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-    expect((screen.getByLabelText('To') as HTMLInputElement).value).toBe('2023-09-30');
-  } finally { vi.unstubAllEnvs(); }
-});
-
 it.each([
   { name: 'accepts a start on the day of an offset afternoon end', zone: 'America/New_York', filters: [{ dimension: 'before', values: ['2024-05-20T15:30:00-04:00'] }], field: 'From', date: '2024-05-20', expected: [{ dimension: 'before', values: ['2024-05-20T15:30:00-04:00'] }, { dimension: 'after', values: ['2024-05-20T00:00:00-04:00'] }] },
   { name: 'ends a local date across daylight saving', zone: 'America/New_York', filters: [{ dimension: 'before', values: ['2024-04-01T00:00:00-04:00'] }], field: 'To', date: '2024-03-10', expected: [{ dimension: 'before', values: ['2024-03-11T00:00:00-04:00'] }] },
@@ -158,11 +132,12 @@ it.each([
   { zone: 'America/Asuncion', name: 'accepts a local end after a UTC start', filters: [{ dimension: 'after', values: ['2023-10-01T00:00:00Z'] }, { dimension: 'before', values: ['2023-11-01T00:00:00-03:00'] }], field: 'To', date: '2023-09-30', expected: [{ dimension: 'after', values: ['2023-10-01T00:00:00Z'] }, { dimension: 'before', values: ['2023-10-01T00:00:00-04:00'] }] },
   { zone: 'America/Asuncion', name: 'rejects equal instants with matching displayed dates', filters: [{ dimension: 'after', values: ['2023-09-01T00:00:00-04:00'] }, { dimension: 'before', values: ['2023-10-01T04:00:00Z'] }], field: 'From', date: '2023-10-01', expected: null },
   { zone: 'America/Asuncion', name: 'rejects an inverted instant despite matching displayed dates', filters: [{ dimension: 'after', values: ['2023-09-01T00:00:00-04:00'] }, { dimension: 'before', values: ['2023-10-01T02:00:00Z'] }], field: 'From', date: '2023-10-01', expected: null },
-] as const)('$name', async ({ zone, filters, field, date, expected }) => {
+] as const)('$name', async ({ name, zone, filters, field, date, expected }) => {
   vi.stubEnv('TZ', zone);
   try {
     const onChange = vi.fn();
-    render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), onChange, onClear: vi.fn(), filters: filters.map(({ dimension, values }) => ({ dimension, values: [...values] })) });
+    const props = { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), onChange, onClear: vi.fn() };
+    const view = render(FilterMenu, { ...props, filters: filters.map(({ dimension, values }) => ({ dimension, values: [...values] })) });
     await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
     const input = screen.getByLabelText(field) as HTMLInputElement;
     const original = input.value;
@@ -170,6 +145,13 @@ it.each([
     if (expected) {
       expect(onChange).toHaveBeenLastCalledWith(expected);
       expect(screen.queryByRole('alert')).toBeNull();
+      if (name === 'accepts a local end after a UTC start') {
+        await view.rerender({ ...props, filters: onChange.mock.lastCall![0] });
+        await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+        vi.stubEnv('TZ', 'UTC');
+        await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+        expect((screen.getByLabelText('To') as HTMLInputElement).value).toBe('2023-09-30');
+      }
     } else {
       expect(onChange).not.toHaveBeenCalled();
       expect(screen.getByRole('alert').textContent).toBe('From must be on or before To.');

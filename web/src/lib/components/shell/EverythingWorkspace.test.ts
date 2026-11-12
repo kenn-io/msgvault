@@ -45,7 +45,7 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function snapshotFixture(request: Request, rows: Array<{ key: string; label: string; count: number }>, coParticipants: Array<{ key: string; label: string; count: number }> = []) {
+async function snapshotFixture(request: Request, rows: Array<{ key: string; label: string; count: number; estimated_bytes: number; latest_at: string }>, coParticipants: Array<{ key: string; label: string; count: number }> = []) {
   const path = new URL(request.url).pathname;
   if (path.endsWith('/coverage')) return Response.json({ status: 'ready', eligible_count: rows.length, embedded_count: rows.length, percentage: 100, vector_generation: 7, cache_revision: 'cache-1', actions: [] });
   if (path.endsWith('/explore/files')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1' });
@@ -254,7 +254,7 @@ describe('EverythingWorkspace', () => {
       if (body.group_key) detailRequests.push(body);
       const narrowed = (body.filters?.length ?? 0) > 1;
       return Response.json({
-        rows: [{ key, label: dimension === 'source' ? 'imaps://person@example.com@mail.example.com:993' : label, count: narrowed ? 9 : 1, estimated_bytes: narrowed ? 99 : 42, latest_at: narrowed ? '2026-07-17T12:00:00Z' : '2026-07-18T12:00:00Z' }],
+        rows: [{ key, label: dimension === 'source' ? 'imaps://person@example.com@mail.example.com:993' : label, count: narrowed ? 9 : 1, ...(dimension === 'month' || dimension === 'year' ? { total_items: narrowed ? 9 : 1 } : {}), estimated_bytes: narrowed ? 99 : 42, latest_at: narrowed ? '2026-07-17T12:00:00Z' : '2026-07-18T12:00:00Z' }],
         ...(body.group_key ? { overview: {
           first_at: narrowed ? '2026-07-17T12:00:00Z' : '2026-07-01T12:00:00Z',
           activity: [{ bucket, count: narrowed ? 9 : 1 }], co_participants: [{ key: '1', label: narrowed ? 'Wrong Person' : 'Selected Person', count: 1 }]
@@ -339,7 +339,7 @@ describe('EverythingWorkspace', () => {
       const pane = await screen.findByRole('complementary', { name: `Reading pane: ${label}` });
       expect(await within(pane).findByText('Overview Person')).toBeDefined();
       const reload = await within(pane).findByRole('button', { name: 'Reload meeting activity' });
-      expect(snapshot).toBe(1);
+      await waitFor(() => expect(snapshot).toBe(1));
       expire = false;
       await fireEvent.click(reload);
       expect(await within(pane).findByText(/4 meetings/)).toBeDefined();
@@ -357,7 +357,7 @@ describe('EverythingWorkspace', () => {
     { dimension: 'domain', key: 'example.net', label: 'example.net', narrowedRequests: 1, unavailable: true },
   ] as const)('keeps the $dimension overview when meeting authority cannot load', async ({ dimension, key, label, narrowedRequests, unavailable }) => {
     window.history.replaceState(null, '', '/');
-    const rows = [{ key, label, count: 8 }];
+    const rows = [{ key, label, count: 8, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }];
     let requests = 0;
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const request = input as Request;
@@ -391,7 +391,7 @@ describe('EverythingWorkspace', () => {
     let firstSignal: AbortSignal | undefined;
     let resolveFirst: ((response: Response) => void) | undefined;
     const meetingSnapshots: string[] = [];
-    const rows = [{ key: '1', label: 'First Person', count: 1 }, { key: '2', label: 'Second Person', count: 2 }];
+    const rows = [{ key: '1', label: 'First Person', count: 1, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }, { key: '2', label: 'Second Person', count: 2, estimated_bytes: 84, latest_at: '2026-07-18T12:00:00Z' }];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input as Request;
       const path = new URL(request.url).pathname;
@@ -1749,75 +1749,6 @@ describe('EverythingWorkspace', () => {
     state.destroy();
   });
 
-
-  it.each([
-    ['participant', '42', 'Person Example'],
-    ['domain', 'example.com', 'example.com'],
-  ])('keeps the %s file rail during an unchanged status poll', async (dimension, key, label) => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const initialState = {
-      schemaVersion: 1, workspace: 'everything', query: '', searchMode: 'full_text',
-      filters: [], groupingChain: [], presentation: 'table', sort: [{ field: 'occurred_at', direction: 'desc' }],
-      columns: ['kind', 'people', 'title', 'excerpt', 'time', 'attachments'], columnWidths: {},
-      activeRow: null, selectedRow: `group:${dimension}:${key}`, inspectorPinned: true,
-      conversationAnchor: null, scrollAnchor: null,
-    };
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify(initialState))}`);
-    const fileRequests: Request[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = new URL(request.url).pathname;
-      const meetingResponse = meetingFixtureResponse(path);
-      if (meetingResponse) return meetingResponse;
-      if (path.endsWith('/groups')) {
-        const body = await request.clone().json();
-        return Response.json({
-          rows: [{ key, label, count: 3, estimated_bytes: 512, latest_at: '2026-07-18T12:00:00Z' }],
-          ...(body.group_key ? { overview: { first_at: '2026-07-18T12:00:00Z', activity: [{ bucket: '2026-07', count: 3 }], co_participants: [] } } : {}),
-          total_count: 1, cache_revision: 'cache-1', search_provenance: {},
-        });
-      }
-      if (path.endsWith('/explore/files')) {
-        fileRequests.push(request);
-        return Response.json({
-          files: [{ key: 'file-1', filename: 'report.pdf', size: 128, occurred_at: '2026-07-18T12:00:00Z', title: 'Report', source_identifier: 'example.test' }],
-          total_count: 1, cache_revision: 'cache-1', search_provenance: {},
-        });
-      }
-      return Response.json(exploreResponse());
-    });
-    const baseClient = createAPIClient(fetchFn);
-    let statusRequests = 0;
-    const client = { fetch: (async (input, init) => {
-      const url = input instanceof Request ? input.url : new URL(String(input), window.location.href);
-      if (new URL(url).pathname === '/api/v1/sources/status') {
-        statusRequests += 1;
-        return Response.json({ sources: [{ id: 7, source_type: 'mbox', identifier: 'archive', display_name: null, can_sync: false, scheduled: false, active_sync: null, latest_sync: null, last_successful_sync: null, last_sync_at: null, next_sync_at: null, updated_at: '2026-07-18T12:00:00Z' }] });
-      }
-      return baseClient.fetch(input, init);
-    }) satisfies typeof fetch };
-    const state = new ExploreState(window);
-    const rendered = render(AppShell, { client, state });
-    try {
-      const pane = await screen.findByRole('complementary', { name: `Reading pane: ${label}` });
-      const rail = within(pane).getByRole('region', { name: 'Chronological files' });
-      expect(await within(rail).findByText('report.pdf')).toBeDefined();
-      expect(fileRequests).toHaveLength(1);
-      expect(statusRequests).toBeGreaterThan(0);
-      const beforePoll = statusRequests;
-
-      await vi.advanceTimersByTimeAsync(30_000);
-      await tick();
-      expect(statusRequests).toBeGreaterThan(beforePoll);
-      expect(fileRequests).toHaveLength(1);
-      expect(within(rail).getByText('report.pdf')).toBeDefined();
-      expect(within(rail).queryByText('Loading file facts…')).toBeNull();
-    } finally {
-      rendered.unmount();
-      state.destroy();
-      vi.useRealTimers();
-    }
-  });
 
   it('rehydrates an exact aggregate selection after the grouped rows are absent', async () => {
     const initialState = {

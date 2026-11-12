@@ -164,7 +164,7 @@ describe('ReadingPane group file drill-down', () => {
 });
 
 it('leads group details with the overview and a friendly grouping label', () => {
- render(ReadingPane, { client: createAPIClient(vi.fn<typeof fetch>()), predicate: {}, selection: {
+ render(ReadingPane, { client: createAPIClient(async () => Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} })), predicate: {}, selection: {
   kind: 'group', dimension: 'participant', key: '7', label: 'Person Example', count: 3, latestAt: '2024-05-31T12:00:00Z',
   overview: { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05', count: 3 }], co_participants: [] }
  } });

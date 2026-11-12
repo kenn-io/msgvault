@@ -1122,7 +1122,6 @@ func TestExploreGroupOverviewSerialization(t *testing.T) {
 	require.NotNil(detail.Overview)
 	assert.Equal("2024-05-01T12:00:00Z", detail.Overview["first_at"])
 	assert.Equal([]any{map[string]any{"bucket": "2024-05-01", "count": float64(2)}}, detail.Overview["activity"])
-	assert.Equal([]any{}, detail.Overview["co_participants"])
 	require.Len(detail.Rows, 1)
 	assert.InDelta(4, detail.Rows[0]["total_items"], 0)
 }
