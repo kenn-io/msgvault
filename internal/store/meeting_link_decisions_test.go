@@ -1250,3 +1250,95 @@ func TestMeetingLinkDecisionDiscoversSavedDates(t *testing.T) {
 		r.Equal(fmt.Sprintf("evt:%d@20270321T100000Z", event), record.Links[1].Ref)
 	}
 }
+
+func TestMeetingLinkDecisionUntimedCopyBecomesSeries(t *testing.T) {
+	for _, action := range []string{"clear", "link"} {
+		t.Run(action, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			data, event := calendarFixture(t, st, "untimed-to-series", `{"id":"event","status":"cancelled"}`)
+			_, note := projectionFixture(t, st, "untimed-note", "meeting_json", `{}`)
+			noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+			bare := MeetingLinkRef{Kind: "evt", MessageID: event}
+			_, err := st.DecideMeetingLinkContext(t.Context(), noteRef, bare, "link")
+			r.NoError(err)
+			data.RawMIME = []byte(`{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+			_, err = st.PersistMessage(data)
+			r.NoError(err)
+			record, err := st.MeetingRecordContext(t.Context(), noteRef)
+			r.NoError(err)
+			r.Equal([]int64{note}, record.MessageIDs)
+			r.Empty(record.Links)
+			for _, decision := range []string{"link", "unlink"} {
+				_, err = st.DecideMeetingLinkContext(t.Context(), noteRef, bare, decision)
+				r.ErrorIs(err, ErrMeetingOccurrenceRequired)
+			}
+			var count int
+			r.NoError(st.db.QueryRowContext(t.Context(), `SELECT count(*) FROM meeting_link_decisions`).Scan(&count))
+			r.Equal(1, count)
+			selected := MeetingLinkRef{Kind: "evt", MessageID: event, Identity: occurrenceIdentity(t, "20270314T100000Z")}
+			if action == "clear" {
+				_, err = st.DecideMeetingLinkContext(t.Context(), noteRef, bare, "clear")
+				r.NoError(err)
+				r.NoError(st.db.QueryRowContext(t.Context(), `SELECT count(*) FROM meeting_link_decisions`).Scan(&count))
+				r.Zero(count)
+			} else {
+				_, err = st.DecideMeetingLinkContext(t.Context(), noteRef, selected, "link")
+				r.NoError(err)
+				record, err = st.MeetingRecordContext(t.Context(), noteRef)
+				r.NoError(err)
+				r.Len(record.Links, 1)
+				r.Equal(endpointFromRef(selected).ref(), record.Links[0].Ref)
+			}
+		})
+	}
+}
+
+func TestMeetingLinkDecisionLongSeriesChoices(t *testing.T) {
+	for _, eventPair := range []bool{false, true} {
+		t.Run(fmt.Sprintf("event_pair_%v", eventPair), func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, first := calendarFixture(t, st, "long-first", `{"id":"first","iCalUID":"first@example.org","start":{"dateTime":"2017-01-01T10:00:00Z"},"end":{"dateTime":"2017-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=4000"]}`, "first@example.com")
+			var second int64
+			if eventPair {
+				_, second = calendarFixture(t, st, "long-second", `{"id":"second","iCalUID":"second@example.org","start":{"dateTime":"2017-01-01T10:00:00Z"},"end":{"dateTime":"2017-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=4000"]}`, "second@example.com")
+			}
+			var left, right []MeetingLinkRef
+			for i := range 150 {
+				date := time.Date(2026, 12, 1, 10, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format("20060102T150405Z")
+				identity := occurrenceIdentity(t, date)
+				a := MeetingLinkRef{Kind: "evt", MessageID: first, Identity: identity}
+				var b MeetingLinkRef
+				if eventPair {
+					b = MeetingLinkRef{Kind: "evt", MessageID: second, Identity: identity}
+				} else {
+					_, note := projectionFixture(t, st, fmt.Sprintf("long-note-%d", i), "meeting_json", `{}`)
+					b = MeetingLinkRef{Kind: "msg", MessageID: note}
+				}
+				left, right = append(left, a), append(right, b)
+				_, err := st.DecideMeetingLinkContext(t.Context(), a, b, "link")
+				r.NoError(err, "save occurrence %d", i)
+			}
+			_, err := st.DecideMeetingLinkContext(t.Context(), right[75], left[75], "clear")
+			r.NoError(err)
+			selected, err := st.MeetingRecordContext(t.Context(), left[75])
+			r.NoError(err)
+			neighbor, err := st.MeetingRecordContext(t.Context(), left[76])
+			r.NoError(err)
+			if eventPair {
+				r.Len(selected.Links, 1)
+				r.Len(neighbor.Links, 2)
+				other, err := st.MeetingRecordContext(t.Context(), right[75])
+				r.NoError(err)
+				r.Len(other.Links, 1)
+			} else {
+				r.Empty(selected.MessageIDs)
+				r.Equal([]int64{right[76].MessageID}, neighbor.MessageIDs)
+				note, err := st.MeetingRecordContext(t.Context(), right[75])
+				r.NoError(err)
+				r.Empty(note.Links)
+			}
+		})
+	}
+}

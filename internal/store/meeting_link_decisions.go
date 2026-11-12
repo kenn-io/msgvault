@@ -96,7 +96,7 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		}
 		ctx := withWritableSnapshot(ctx, s.db.DB, tx)
 		clearStored := func(cause error) error {
-			if decision != "clear" || !errors.Is(cause, sql.ErrNoRows) {
+			if decision != "clear" || (!errors.Is(cause, sql.ErrNoRows) && !errors.Is(cause, ErrMeetingOccurrenceRequired)) {
 				return cause
 			}
 			leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
@@ -146,18 +146,13 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			canonicalA, canonicalB = canonicalB, canonicalA
 			recordA, recordB = recordB, recordA
 		}
-		var active []meetingDecisionEdge
-		if decision != "clear" {
-			graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{a, b}, &budget)
-			if err != nil {
-				return err
-			}
-			root, links := graph.reduce()
-			for _, link := range links {
-				if root(link.a.ref()) == root(link.b.ref()) {
-					active = append(active, link)
-				}
-			}
+		active, err := s.meetingActiveLinks(ctx, a, b, decision, &budget)
+		if err != nil {
+			return err
+		}
+		relevant, err := meetingDecisionRelevantEndpoints(canonicalA, canonicalB, recordA, recordB, append(aliasesA, aliasesB...))
+		if err != nil {
+			return err
 		}
 		seen := map[int64]bool{}
 		decisions := meetingDecisionLoader{store: s}
@@ -171,15 +166,18 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 					continue
 				}
 				seen[choice.id] = true
+				if !meetingDecisionRelevant(relevant, choice.a) || !meetingDecisionRelevant(relevant, choice.b) {
+					continue
+				}
 				left, _, err := s.materializedMeetingEndpoint(ctx, choice.a, &budget)
-				if errors.Is(err, sql.ErrNoRows) {
+				if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrMeetingOccurrenceRequired) {
 					continue
 				}
 				if err != nil {
 					return err
 				}
 				right, _, err := s.materializedMeetingEndpoint(ctx, choice.b, &budget)
-				if errors.Is(err, sql.ErrNoRows) {
+				if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrMeetingOccurrenceRequired) {
 					continue
 				}
 				if err != nil {
@@ -244,6 +242,57 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		return nil
 	})
 	return result, err
+}
+
+func (s *Store) meetingActiveLinks(ctx context.Context, a, b meetingDecisionEndpoint, decision string, budget *int) ([]meetingDecisionEdge, error) {
+	if decision == "clear" {
+		return nil, nil
+	}
+	graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{a, b}, budget)
+	if err != nil {
+		return nil, err
+	}
+	root, links := graph.reduce()
+	return slices.DeleteFunc(links, func(link meetingDecisionEdge) bool {
+		return root(link.a.ref()) != root(link.b.ref())
+	}), nil
+}
+
+func meetingDecisionRelevantEndpoints(a, b meetingDecisionEndpoint, recordA, recordB MeetingRecord, aliases []int64) (map[int64][]meetingDecisionEndpoint, error) {
+	endpoints := map[int64][]meetingDecisionEndpoint{}
+	add := func(endpoint meetingDecisionEndpoint) {
+		endpoints[endpoint.ID] = append(endpoints[endpoint.ID], endpoint)
+	}
+	add(a)
+	add(b)
+	for _, record := range []MeetingRecord{recordA, recordB} {
+		for _, id := range record.MessageIDs {
+			add(meetingDecisionEndpoint{ID: id, Kind: meetingRefMessage})
+		}
+		for _, link := range record.Links {
+			ref, err := ParseMeetingLinkRef(link.Ref)
+			if err != nil {
+				return nil, err
+			}
+			endpoint := endpointFromRef(ref)
+			add(endpoint)
+			if link.MessageID != endpoint.ID {
+				add(meetingDecisionEndpoint{ID: link.MessageID, Kind: meetingRefEvent})
+			}
+		}
+	}
+	for _, id := range aliases {
+		if len(endpoints[id]) == 0 {
+			add(meetingDecisionEndpoint{ID: id, Kind: meetingRefEvent})
+		}
+	}
+	return endpoints, nil
+}
+
+func meetingDecisionRelevant(endpoints map[int64][]meetingDecisionEndpoint, stored meetingDecisionEndpoint) bool {
+	return slices.ContainsFunc(endpoints[stored.ID], func(query meetingDecisionEndpoint) bool {
+		return meetingDecisionEndpointMatches(query, stored)
+	})
 }
 
 func equivalentMeetingChoice(left, right, requestedA, requestedB meetingDecisionEndpoint, recordA, recordB MeetingRecord) bool {

@@ -250,6 +250,10 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 			valid := true
 			for _, endpoint := range []*meetingDecisionEndpoint{&choice.a, &choice.b} {
 				canonical, _, record, err := s.materializedMeetingEndpointRecord(ctx, *endpoint, budget)
+				if errors.Is(err, ErrMeetingOccurrenceRequired) {
+					valid = false
+					break
+				}
 				if errors.Is(err, sql.ErrNoRows) {
 					if len(record.Unexpandable) == 0 {
 						valid = false
