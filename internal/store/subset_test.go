@@ -764,7 +764,7 @@ func TestSubsetIncompletePersonMergePacketIsOmitted(t *testing.T) {
 	}
 	_, err = destination.ResolveRetiredPersonUIDContext(
 		t.Context(), fixture.absorbedUID)
-	assert.ErrorIs(t, err, ErrPersonUIDAliasNotFound)
+	req.ErrorIs(err, ErrPersonUIDAliasNotFound)
 	t.Run("introduction draft stays in source", func(t *testing.T) {
 		check := assert.New(t)
 		req := require.New(t)
