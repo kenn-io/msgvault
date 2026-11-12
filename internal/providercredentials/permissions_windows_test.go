@@ -3,6 +3,7 @@
 package providercredentials
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -420,4 +421,88 @@ func readProviderCredentialTestACL(t *testing.T, handle windows.Handle) (*window
 	dacl, _, err := descriptor.DACL()
 	requirements.NoError(err)
 	return dacl, control
+}
+
+func TestRestorePreflightAllowsOmittedFileWithoutInheritedAccess(t *testing.T) {
+	for _, protected := range []bool{true, false} {
+		t.Run(fmt.Sprintf("protected=%t", protected), func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			dir := filepath.Join(t.TempDir(), "tokens")
+			requirements.NoError((nativePermissions{}).secureDirectory(dir))
+			path := filepath.Join(dir, "omitted")
+			requirements.NoError(os.WriteFile(path, []byte("fixture"), 0600))
+			if protected {
+				file, err := openStoreFile(path)
+				requirements.NoError(err)
+				requirements.NoError((nativePermissions{}).secureFile(file))
+				requirements.NoError(file.Close())
+			}
+			handle, err := openSecurityHandle(path, false, windows.READ_CONTROL)
+			requirements.NoError(err)
+			defer windows.CloseHandle(handle) //nolint:errcheck // test handle
+			before, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+			requirements.NoError(err)
+			control, _, err := before.Control()
+			requirements.NoError(err)
+			assertions.Equal(protected, control&windows.SE_DACL_PROTECTED != 0)
+			affected, err := inheritedAccess(handle)
+			requirements.NoError(err)
+			assertions.False(affected)
+			selected := filepath.Join(dir, "selected")
+			requirements.NoError(os.WriteFile(selected, []byte("selected"), 0600))
+			requirements.NoError(SecureRestored(dir, []string{"selected"}))
+			after, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+			requirements.NoError(err)
+			assertions.Equal(before.String(), after.String())
+			value, err := os.ReadFile(path)
+			requirements.NoError(err)
+			assertions.Equal("fixture", string(value))
+		})
+	}
+}
+
+func TestSecureRestoredRefusesInheritedOmittedACLBeforeChanges(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	dir := filepath.Join(t.TempDir(), "tokens")
+	requirements.NoError(os.Mkdir(dir, 0700))
+	user := currentWindowsProviderCredentialSID(t)
+	access := providerCredentialTestAccess(user, windows.GENERIC_ALL, windows.TRUSTEE_IS_USER)
+	access.Inheritance = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
+	setProviderCredentialTestACL(t, dir, []windows.EXPLICIT_ACCESS{access}, true)
+	selected := filepath.Join(dir, "selected")
+	omitted := filepath.Join(dir, "omitted")
+	requirements.NoError(os.WriteFile(selected, []byte("selected"), 0600))
+	requirements.NoError(os.WriteFile(omitted, []byte("omitted"), 0600))
+	descriptor := func(path string, directory bool) string {
+		t.Helper()
+		h, err := openSecurityHandle(path, directory, windows.READ_CONTROL)
+		requirements.NoError(err)
+		defer windows.CloseHandle(h) //nolint:errcheck
+		sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+		requirements.NoError(err)
+		return sd.String()
+	}
+	beforeDir, beforeSelected, beforeOmitted := descriptor(dir, true), descriptor(selected, false), descriptor(omitted, false)
+	err := SecureRestored(dir, []string{"selected"})
+	requirements.ErrorIs(err, ErrRestorePermissionsConflict)
+	assertions.Equal(beforeDir, descriptor(dir, true))
+	assertions.Equal(beforeSelected, descriptor(selected, false))
+	assertions.Equal(beforeOmitted, descriptor(omitted, false))
+	_, err = os.Stat(filepath.Join(dir, ".provider-credentials.lock"))
+	assertions.ErrorIs(err, os.ErrNotExist)
+}
+
+func TestRestorePreflightRejectsReparseEntry(t *testing.T) {
+	requirements := require.New(t)
+	dir := filepath.Join(t.TempDir(), "tokens")
+	requirements.NoError((nativePermissions{}).secureDirectory(dir))
+	target := filepath.Join(t.TempDir(), "target")
+	requirements.NoError(os.WriteFile(target, []byte("fixture"), 0600))
+	if err := os.Symlink(target, filepath.Join(dir, "link")); err != nil {
+		t.Skipf("creating a symlink requires Windows privileges: %v", err)
+	}
+	err := restorePreflight(dir, map[string]struct{}{})
+	requirements.ErrorIs(err, ErrRestorePermissionsConflict)
 }

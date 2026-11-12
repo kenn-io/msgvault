@@ -25,6 +25,10 @@ func (nativePermissions) prepareDirectory(path string) error {
 		return err
 	}
 	defer windows.CloseHandle(handle) //nolint:errcheck // ownership check is authoritative
+	return verifyHandleOwner(handle)
+}
+
+func verifyHandleOwner(handle windows.Handle) error {
 	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
 		return fmt.Errorf("read credential directory owner: %w", err)
