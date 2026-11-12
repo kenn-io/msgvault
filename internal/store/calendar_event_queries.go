@@ -21,7 +21,6 @@ type CalendarEventRow struct {
 	MessageID, SourceID int64
 	SubjectOriginID     int64
 	Subject             string
-	ICalUID             string
 	CalendarID          string
 	DeletedFromSource   bool
 	Event               calevent.Event
@@ -106,7 +105,7 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 			_ = result.Close()
 			return nil, fmt.Errorf("scan calendar event: %w", err)
 		}
-		row.ICalUID = uid.String
+		e.ICalUID = uid.String
 		if originalDate != "" {
 			e.Original = &calrecur.Identity{Date: originalDate, AllDay: true}
 		} else if original.Valid {

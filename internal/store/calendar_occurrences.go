@@ -108,8 +108,8 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 		effective := row
 		if o.HasException {
 			effective = byID[o.ExceptionRef]
-			if effective.ICalUID == "" {
-				effective.ICalUID = row.ICalUID
+			if effective.Event.ICalUID == "" {
+				effective.Event.ICalUID = row.Event.ICalUID
 			}
 			if effective.Event.Status == "cancelled" {
 				effective, err = inheritCalendarCancellation(ctx, s.db, effective, row)

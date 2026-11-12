@@ -16,8 +16,6 @@ func decodeGranola(fields map[string]jsontext.Value) Content {
 	if json.Unmarshal(fields["calendar_event"], &calendar) == nil {
 		id, _ := optionalString(calendar["calendar_event_id"])
 		content.LinkEvidence.GoogleEventID = strings.TrimSpace(id)
-	} else {
-		calendar = nil
 	}
 	content.Summary = decodeStringAliases(fields, "summary_markdown", "summary_text")
 	content.Notes = Section{State: StateUnsupported}

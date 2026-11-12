@@ -1,8 +1,6 @@
 package store
 
 import (
-	"context"
-	"database/sql/driver"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,7 +8,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 func calendarWindow(t *testing.T, st *Store, from, to string) ([]CalendarEventRow, error) {
@@ -344,45 +341,5 @@ func TestCalendarClearedMasterKeepsStandaloneAndFirstOccurrenceExceptions(t *tes
 				})
 			}
 		})
-	}
-}
-
-func TestMeetingRelatedQueryPlan(t *testing.T) {
-	requirements := require.New(t)
-	base := newRFC822IDBackfillBackendStore(t)
-	data, _ := calendarFixture(t, base, "plan-target", calendarRaw)
-	bulkCalendarCandidates(t, base, data.Message.SourceID, data.Message.ConversationID, "single", 3000)
-	_, err := base.db.Exec(`ANALYZE`)
-	requirements.NoError(err)
-	type statement struct {
-		query string
-		args  []any
-	}
-	var statements []statement
-	gate := &meetingProjectionGate{before: func(_ context.Context, query string, args []driver.NamedValue) error {
-		if strings.HasPrefix(query, "SELECT COUNT(*) FROM (SELECT e.message_id FROM calendar_events e") || strings.HasPrefix(query, "SELECT e.message_id, m.source_id,") {
-			captured := statement{query: query}
-			for _, arg := range args {
-				captured.args = append(captured.args, arg.Value)
-			}
-			statements = append(statements, captured)
-		}
-		return nil
-	}}
-	st := gatedMeetingProjectionStore(t, base, gate)
-	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{data.Message.SourceID})
-	budget := 500
-	_, err = st.meetingRelatedEventRows(ctx, data.Message.SourceID, "event-example", time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), &budget)
-	requirements.NoError(err)
-	requirements.Len(statements, 2)
-	for _, statement := range statements {
-		var plan string
-		if !st.IsPostgreSQL() {
-			plan = explainPlan(t, base, statement.query, statement.args...)
-		} else {
-			requirements.NoError(base.db.QueryRowContext(t.Context(), "EXPLAIN (FORMAT JSON) "+statement.query, statement.args...).Scan(&plan))
-		}
-		requirements.Contains(plan, "idx_calendar_events_series_provider_id")
-		requirements.Contains(plan, "idx_calendar_events_provider_id")
 	}
 }

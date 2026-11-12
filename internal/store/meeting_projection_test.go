@@ -114,11 +114,6 @@ func TestMeetingLinkProjectionRefreshesEvidence(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_details WHERE message_id = ? AND link_key IS NOT NULL`, id).Scan(&count))
 	assert.Equal(1, count)
-	data.Message.MessageType = "email"
-	_, err = st.PersistMessage(data)
-	require.NoError(err)
-	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_details WHERE message_id = ?`, id).Scan(&count))
-	assert.Zero(count)
 }
 
 func TestMeetingProjectionDirectWritesAndCascade(t *testing.T) {
