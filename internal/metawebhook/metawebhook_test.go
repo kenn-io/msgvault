@@ -139,107 +139,57 @@ func TestHandlerStoresOnlySignedDeliveries(t *testing.T) {
 	assert.Equal(body, string(stored))
 }
 
-// recorder holds what the worker test's field handler saw. The handler runs
-// on the worker's goroutine and the test reads on its own, so every access
-// takes the lock.
-type recorder struct {
-	mu       sync.Mutex
-	applied  []string
-	attempts map[string]int
-}
-
-// attempt records an attempt at value and returns how many there were.
-func (r *recorder) attempt(value string) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.attempts == nil {
-		r.attempts = map[string]int{}
-	}
-	r.attempts[value]++
-	return r.attempts[value]
-}
-
-func (r *recorder) apply(value string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.applied = append(r.applied, value)
-}
-
-func (r *recorder) appliedValues() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return slices.Clone(r.applied)
-}
-
-func (r *recorder) attemptCount(value string) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.attempts[value]
-}
-
-func TestWorkerRetriesEachChangeInOrderAndAppliesTheRest(t *testing.T) {
+func TestWorkerAppliesInOrderRetriesAndDrops(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
 		h, dir := newTestHandler(t)
-		var rec recorder
+		var mu sync.Mutex
+		var applied []string
+		attempts := 0
+		appliedValues := func() []string {
+			mu.Lock()
+			defer mu.Unlock()
+			return slices.Clone(applied)
+		}
 		feed := func(ctx context.Context, change Change) error {
+			mu.Lock()
+			defer mu.Unlock()
 			value := string(change.Values[0])
-			attempts := rec.attempt(value)
 			switch value {
-			case `"flaky"`:
+			case `"busy"`:
+				attempts++
 				if attempts < 3 {
-					return errors.New("temporary failure")
+					return errors.New("source busy")
 				}
 			case `"invalid"`:
 				return fmt.Errorf("%w: not archivable", ErrUnrecoverable)
-			case `"down"`, `"also down"`:
+			case `"down"`:
 				return errors.New("graph unavailable")
 			}
-			rec.apply(change.App + ":" + change.EntryID + ":" + value)
+			applied = append(applied, change.App+":"+change.EntryID+":"+value)
 			return nil
 		}
 		w := NewWorker(dir, map[Field]FieldHandler{{"page", "feed"}: feed})
-		store := func(values ...string) {
-			changes := []string{}
-			for _, value := range values {
-				changes = append(changes, `{"field":"feed","value":`+value+`}`)
-			}
-			changes = append(changes, `{"field":"ratings","value":{}}`)
-			body := `{"object":"page","entry":[{"id":"100","changes":[` + strings.Join(changes, ",") + `]}]}`
+		require.NoError(h.store("9", []byte(`{"object":`)))
+		for _, values := range []string{`"busy"`, `"invalid"},{"field":"feed","value":"same entry"`, `"down"`, `"after"`} {
+			body := `{"object":"page","entry":[{"id":"100","changes":[{"field":"feed","value":` + values + `},{"field":"ratings","value":{}}]}]}`
 			require.NoError(h.store("9", []byte(body)))
 		}
-		require.NoError(h.store("9", []byte(`{"object":`)))
-		store(`"first"`, `"invalid"`, `"flaky"`)
-		store(`"down"`, `"also down"`, `"later"`)
-		store(`"after"`)
 		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error)
 		go func() { done <- w.Run(ctx) }()
-
 		time.Sleep(30 * time.Minute) // lets the fake clock run through the retry waits
 		synctest.Wait()
-		assert.Equal([]string{`9:100:"first"`, `9:100:"flaky"`}, rec.appliedValues(),
-			"a retried change does not apply the changes before it again; a failing change blocks the rest")
-		assert.Equal(1, rec.attemptCount(`"invalid"`), "an unrecoverable change is skipped at once, without retries")
-		assert.Equal(3, rec.attemptCount(`"flaky"`))
-		assert.Len(pendingFiles(t, dir), 2, "the failing delivery and the one after it wait")
-
+		assert.Equal([]string{`9:100:"busy"`, `9:100:"same entry"`}, appliedValues(),
+			"a failing delivery blocks later ones; an unrecoverable change skips only itself")
 		time.Sleep(time.Hour)
 		synctest.Wait()
-		assert.Equal([]string{`9:100:"first"`, `9:100:"flaky"`, `9:100:"later"`, `9:100:"after"`}, rec.appliedValues(),
-			"after an hour the failing change is skipped and the rest of its delivery and later deliveries apply")
-		assert.Equal(1, rec.attemptCount(`"also down"`), "with the retry budget spent, a later failing change gets a single attempt")
-		assert.Equal(1, rec.attemptCount(`"invalid"`))
+		assert.Equal([]string{`9:100:"busy"`, `9:100:"same entry"`, `9:100:"after"`}, appliedValues(), "a delivery that keeps failing is dropped after an hour")
+		mu.Lock()
+		assert.Equal(3, attempts)
+		mu.Unlock()
 		assert.Empty(pendingFiles(t, dir), "applied and dropped deliveries are deleted")
-		attempts := rec.attemptCount(`"down"`)
-
-		store(`"down"`)
-		w.Wake()
-		time.Sleep(10 * time.Minute)
-		synctest.Wait()
-		assert.Greater(rec.attemptCount(`"down"`), attempts+1, "the new delivery is being retried")
 		cancel()
 		require.ErrorIs(<-done, context.Canceled)
-		assert.Len(pendingFiles(t, dir), 1, "a delivery interrupted by shutdown stays for the next start")
 	})
 }

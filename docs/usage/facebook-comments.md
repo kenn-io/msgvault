@@ -63,9 +63,7 @@ rotation gives accessible surfaces turns during persistent denial elsewhere.
 Completed surfaces rescan after real provider failures so later runs can find
 new comments on old organic posts. Missing or inaccessible objects never
 delete archived data. A budget pause keeps unfinished work for
-the next run, which first reads each unfinished page again, one request per
-page, so it never archives an older copy over a newer webhook change. Provider
-errors retain partial writes and report a failure.
+the next run. Provider errors retain partial writes and report a failure.
 
 The default budget is **1,000 API reads per Page per run**, including identity
 validation and nested reply reads. `--max-requests` must be positive. A budget

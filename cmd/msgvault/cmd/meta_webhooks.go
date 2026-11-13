@@ -152,39 +152,12 @@ func metaFeedHandler(cfg *config.Config, st *store.Store, work scheduler.WorkTra
 	}
 }
 
-// graphRetryable reports whether retrying a Graph request can succeed. A
-// nonzero Code decides at any status, since Meta can refuse with HTTP 200;
-// the status decides only when there is no code.
-func graphRetryable(e *meta.APIError) bool {
-	switch code := e.Code; {
-	case code == 100:
-		return false // missing or unreadable object (subcode 33) or invalid request, from Meta's "Handle errors" page
-	case code == 10 || code >= 200 && code <= 299 || code == 3:
-		return false // permission or capability missing, from Meta's "Handle errors" page
-	case code == 190 || code == 102:
-		return true // credential failures, from Meta's "Handle errors" page
-	case code == 1 || code == 2 || code == 341 || code == 368:
-		return true // temporary failures, from Meta's "Handle errors" page
-	case code == 4 || code == 17 || code == 32 || code == 613 || code >= 80000 && code <= 80014:
-		return true // throttling, including business use cases, from Meta's "Rate limits" page
-	case code != 0:
-		return true // unknown code: dropping a change cannot be undone, and its retries are bounded
-	default:
-		return e.Status == http.StatusUnauthorized || e.Status == http.StatusTooManyRequests ||
-			e.Status < 400 || e.Status >= 500
-	}
-}
-
-// metaWebhookError marks errors that retrying a delivery cannot fix.
+// metaWebhookError marks a change that cannot be decoded or names an invalid
+// object as one retrying cannot apply. Every other error is retried until the
+// delivery's deadline.
 func metaWebhookError(err error) error {
-	apiErr, isAPI := errors.AsType[*meta.APIError](err)
-	switch {
-	case err == nil:
-		return nil
-	case errors.Is(err, meta.ErrInvalidChange), errors.Is(err, store.ErrSourceNotFound), errors.Is(err, store.ErrSourceRetired),
-		isAPI && !graphRetryable(apiErr):
+	if errors.Is(err, meta.ErrInvalidChange) {
 		return fmt.Errorf("%w: %w", metawebhook.ErrUnrecoverable, err)
-	default:
-		return err
 	}
+	return err
 }
