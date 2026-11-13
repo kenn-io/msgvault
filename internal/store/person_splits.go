@@ -1137,6 +1137,7 @@ type personSplitSnapshotDependency struct {
 var errPersonSplitReferenceMissing = errors.New("person split reference target is missing")
 
 var personSplitSnapshotDependencies = map[string][]personSplitSnapshotDependency{
+	"person_introductions": {{column: sourceIDColumnName, table: "sources", key: "id"}},
 	personRelationshipsTableName: {
 		{column: "relationship_type_id", table: "relationship_types", key: "id"},
 	},

@@ -1575,7 +1575,7 @@ func personMergeSnapshotRowsComplete(
 		journalByPath[row.snapshotPath] = row
 	}
 	for index, row := range snapshot.Rows {
-		if row.TableName == "daily_note_entry_persons" {
+		if row.TableName == "daily_note_entry_persons" || row.TableName == "person_introductions" {
 			// These rows can embed message, owner, or note data outside the
 			// selected archive. The immutable snapshot cannot be redacted.
 			return false, nil
