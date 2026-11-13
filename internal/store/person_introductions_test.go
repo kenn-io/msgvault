@@ -191,6 +191,8 @@ func TestIntroductionPaginationAndScope(t *testing.T) {
 	pb := f.EnsureParticipant("page-b@example.com", "B", "example.com")
 	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("one", "a"), pb, beeperidentity.Fallback("one", "b"))
 	req.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("two", "a"), pb, beeperidentity.Fallback("two", "b"))
+	req.NoError(err)
 	a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pa)
 	req.NoError(err)
 	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pb)
