@@ -58,7 +58,8 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Matrix](https://msgvault.io/docs/usage/matrix.md)
 - [Slack](https://msgvault.io/docs/usage/slack.md)
 - [Meeting Notes and Transcripts](https://msgvault.io/docs/usage/meetings.md)
-- [Messages from Any Source](https://msgvault.io/docs/usage/message-import.md): archive feed items and other messages through the import API
+- [RSS, Atom and JSON Feeds](https://msgvault.io/docs/usage/feeds.md): follow feeds and archive each item once
+- [Messages from Any Source](https://msgvault.io/docs/usage/message-import.md): archive other messages through the import API
 
 ## People and Accounts
 
@@ -85,7 +86,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [CLI Reference](https://msgvault.io/docs/cli-reference.md): every command and flag
 - [Configuration](https://msgvault.io/docs/configuration.md): config.toml reference
 - [Go library](https://msgvault.io/docs/guides/embedding.md): archive lifecycle, synchronization, and message reads
-- [External credential providers](https://msgvault.io/docs/guides/credential-providers.md): scoped message MCP access through a trusted local helper
+- [External credential providers](https://msgvault.io/docs/guides/credential-providers.md): scoped message MCP access, or source read credentials, through a trusted local helper
 - [HTTP API](https://msgvault.io/docs/api-server.md)
 - [MCP Server](https://msgvault.io/docs/usage/chat.md): AI assistant integration
 - [Kata Issues](https://msgvault.io/docs/usage/kata-issues.md): file issues that quote archived messages and files
