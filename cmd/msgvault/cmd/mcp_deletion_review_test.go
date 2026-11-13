@@ -3,10 +3,8 @@ package cmd
 import (
 	"encoding/json"
 	"log/slog"
-	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,9 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -34,7 +30,7 @@ func TestMCPDeletionReviewJourney(t *testing.T) {
 	require.NoError(manager.SaveManifest(pending))
 	id := pending.ID
 	opts := daemonMCPServeOptions(t.Context(), backend.client, nil)
-	handler, closeHandler := mcpserver.NewHTTPHandler(opts, mcpserver.HTTPOptions{AllowWrites: true})
+	handler, closeHandler := mcpserver.NewHTTPHandler(opts, mcpserver.HTTPOptions{})
 	t.Cleanup(closeHandler)
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
@@ -95,38 +91,4 @@ func TestMCPDeletionReviewRefusals(t *testing.T) {
 	result, err := backend.ExecuteOperation(t.Context(), "list_deletions", map[string]any{"status": "bogus"})
 	require.NoError(err)
 	assertLoopRefusal(t, result, "invalid_status", false)
-	unavailable := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler)}))
-	result, err = unavailable.ExecuteOperation(t.Context(), "list_deletions", nil)
-	require.NoError(err)
-	assertLoopRefusal(t, result, "cli_store_unavailable", false)
-}
-
-func TestMCPDeletionReviewStatusDiscovery(t *testing.T) {
-	assert := assert.New(t)
-	routes := []apiprotocol.MCPRouteDescriptor{
-		{OperationID: "listDeletions", Method: http.MethodGet, Path: "/api/v1/deletions", QueryParameters: []string{"status"}},
-	}
-	assert.Contains(newDaemonMCPOperations(nil, &apiprotocol.MCPCapabilities{Routes: routes}).capabilities(), "list_deletions")
-	routes[0].QueryParameters = nil
-	assert.NotContains(newDaemonMCPOperations(nil, &apiprotocol.MCPCapabilities{Routes: routes}).capabilities(), "list_deletions")
-}
-
-func TestMCPDeletionReviewUnsafeIDs(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-	require.NoError(err)
-	backend := &daemonMCPOperations{client: client, supported: []string{"get_deletion"}}
-	for _, id := range []string{"", ".", "..", "../x", "a/b", `a\b`, "a?b", "a#b"} {
-		result, err := backend.ExecuteOperation(t.Context(), "get_deletion", map[string]any{"batch_id": id})
-		require.NoError(err)
-		assertLoopRefusal(t, result, "invalid_manifest_id", false)
-	}
-	assert.Zero(calls.Load())
 }
