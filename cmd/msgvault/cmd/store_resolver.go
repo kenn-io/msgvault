@@ -12,13 +12,14 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
+
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -926,11 +927,7 @@ func truncateDaemonLogLine(line string) string {
 	if len(line) <= maxDaemonLogLineLen {
 		return line
 	}
-	cut := maxDaemonLogLineLen
-	for cut > 0 && !utf8.RuneStart(line[cut]) {
-		cut--
-	}
-	return line[:cut] + "…"
+	return textutil.PrefixBytes(line, maxDaemonLogLineLen) + "…"
 }
 
 // parseLogfmt is a tolerant parser for slog's text output: space
