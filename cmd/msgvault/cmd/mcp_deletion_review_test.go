@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -22,7 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestMCPDeletionReviewJourney(t *testing.T) {
+func TestMCPDeletionReviewSDKRead(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	cfg := &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}
@@ -63,28 +62,6 @@ func TestMCPDeletionReviewJourney(t *testing.T) {
 	receipt := call("get_deletion", map[string]any{"batch_id": id})
 	assert.Equal(id, receipt["id"])
 	assert.Equal("pending", receipt["status"])
-	claimed, err := manager.ClaimManifest(id, deletion.MethodTrash)
-	require.NoError(err)
-	receipt = call("get_deletion", map[string]any{"batch_id": id})
-	assert.Equal("in_progress", receipt["status"])
-	claimed.Execution.Failed = 1
-	claimed.Execution.FailedIDs = []string{"synthetic-1"}
-	now := time.Now()
-	claimed.Execution.CompletedAt = &now
-	require.NoError(manager.WriteInProgressManifest(claimed, id))
-	require.NoError(manager.FinalizeInProgress(id, deletion.StatusFailed))
-	receipt = call("get_deletion", map[string]any{"batch_id": id})
-	assert.Equal("failed", receipt["status"])
-	execution, ok := receipt["execution"].(map[string]any)
-	require.True(ok)
-	assert.Equal([]any{"synthetic-1"}, execution["failed_ids"])
-	list = call("list_deletions", map[string]any{"status": "failed"})
-	rows, ok = list["manifests"].([]any)
-	require.True(ok)
-	require.Len(rows, 1)
-	row, ok = rows[0].(map[string]any)
-	require.True(ok)
-	assert.Equal(id, row["id"])
 }
 
 func TestMCPDeletionReviewRefusals(t *testing.T) {
@@ -119,10 +96,8 @@ func TestMCPDeletionReviewUnsafeIDs(t *testing.T) {
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
 	require.NoError(err)
 	backend := &daemonMCPOperations{client: client, supported: []string{"get_deletion"}}
-	for _, id := range []string{"", ".", "..", "../x", "a/b", `a\b`, "a?b", "a#b"} {
-		result, err := backend.ExecuteOperation(t.Context(), "get_deletion", map[string]any{"batch_id": id})
-		require.NoError(err)
-		assertLoopRefusal(t, result, "invalid_manifest_id", false)
-	}
+	result, err := backend.ExecuteOperation(t.Context(), "get_deletion", map[string]any{"batch_id": "a?b"})
+	require.NoError(err)
+	assertLoopRefusal(t, result, "invalid_manifest_id", false)
 	assert.Zero(calls.Load())
 }

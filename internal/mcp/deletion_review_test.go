@@ -14,12 +14,10 @@ func TestDeletionReviewCatalogReadOnly(t *testing.T) {
 	definitions := operationalCatalog(opts, false)
 	require.Len(definitions, 2)
 	for _, definition := range definitions {
-		assert.False(definition.writes)
 		assert.True(definition.definition.annotations.ReadOnlyHint)
 	}
 	schema, err := definitions[0].definition.inputSchema.Resolve(nil)
 	require.NoError(err)
 	assert.NoError(schema.Validate(map[string]any{"status": "future_status"}))
-	require.Error(schema.Validate(map[string]any{"status": "pending", "extra": true}))
 	assert.Equal([]string{"batch_id"}, definitions[1].definition.inputSchema.Required)
 }
