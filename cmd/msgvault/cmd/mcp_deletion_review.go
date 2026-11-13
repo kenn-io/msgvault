@@ -22,7 +22,7 @@ func deletionReviewMCPCapabilities(hasRoute mcpRouteCheck) []string {
 
 func (b *daemonMCPOperations) executeDeletionReviewOperation(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	classify := func(code string) bool {
-		return code == "invalid_status" || code == "invalid_manifest_id" || code == "cli_store_unavailable"
+		return code == "invalid_status" || code == "cli_store_unavailable"
 	}
 	switch name {
 	case "list_deletions":
