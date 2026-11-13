@@ -633,6 +633,7 @@ type Config struct {
 	Matrix             MatrixConfig              `toml:"matrix"`
 	Slack              SlackConfig               `toml:"slack"`
 	Inline             InlineConfig              `toml:"inline"`
+	Feeds              FeedsConfig               `toml:"feeds"`
 	Omi                []OmiSource               `toml:"omi"`
 	Granola            []GranolaSource           `toml:"granola"`
 	Plaud              []PlaudSource             `toml:"plaud"`
@@ -1147,6 +1148,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	// the pre-filled section so changing endpoint cannot silently carry the
 	// default Voyage key environment name to another origin.
 	cfg.Vector.Multimodal = vector.MultimodalConfig{}
+	// Embedding transport defaults depend on the decoded endpoint selection.
+	cfg.Vector.Embeddings.BatchSize = 0
+	cfg.Vector.Embeddings.Timeout = 0
 	// People-sweep provider defaults include a generated profile. Decode into
 	// an empty section so ApplyDefaults only fills it when the file defines
 	// no profiles of its own.

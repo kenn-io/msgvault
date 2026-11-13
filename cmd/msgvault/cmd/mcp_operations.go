@@ -49,6 +49,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	if hasRoute("triggerSync", http.MethodPost, "/api/v1/sync/{account}", "source_type") && hasRoute("listSourceStatus", http.MethodGet, "/api/v1/sources/status", "source_type") {
 		backend.supported = append(backend.supported, "sync_source")
 	}
+	backend.supported = append(backend.supported, deletionReviewMCPCapabilities(hasRoute)...)
 	backend.supported = append(backend.supported, loopMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, personFactMCPCapabilities(hasRoute, capabilities)...)
@@ -72,6 +73,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		return readMCPOperationJSON[generated.TriggerSyncResponse](ctx, b.client, http.MethodPost, "/api/v1/sync/{account}", &generated.TriggerSyncRequestOptions{PathParams: &generated.TriggerSyncPath{Account: account}, Query: &generated.TriggerSyncQuery{SourceType: &sourceType}}, http.StatusAccepted)
 	default:
 		if result, handled, err := b.executePersonFactOperation(ctx, name, args); handled {
+			return result, err
+		}
+		if result, handled, err := b.executeDeletionReviewOperation(ctx, name, args); handled {
 			return result, err
 		}
 		if result, handled, err := b.executeLoopOperation(ctx, name, args); handled {

@@ -197,7 +197,7 @@
     {#if controller.bookError}<p class="notice notice--error" role="alert">{controller.bookError}</p>{/if}
     {#if controller.bookStatus}<p class="notice notice--success" role="status">{controller.bookStatus}</p>{/if}
     {#if controller.booksUnknown}<p class="notice notice--error" role="alert">
-        Current address-book roles are unknown. Retry book state before editing.
+        Couldn't load address book settings. Retry before editing.
       </p>{/if}
     {#if !controller.booksLoading && controller.books.length === 0}<p>No discovered address books.</p>{/if}
     <div class="book-list">
@@ -206,7 +206,7 @@
         {@const draft = controller.bookDraft(book.id)}
         <Card level="default" padding="sm" class="book-card" ariaLabel={`Address book ${book.name}`} title={book.name}>
           {#snippet actions()}{#if book.needs_full_reconcile}<Chip size="sm" tone="warning" uppercase={false}
-                >Next sync reconciles this book</Chip
+                >Address book will be rechecked on next sync</Chip
               >{/if}{/snippet}
           {#if book.connection}<p>Connection: {book.connection}</p>{/if}
           <div class="role-controls">

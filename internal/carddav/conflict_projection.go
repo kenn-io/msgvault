@@ -4,9 +4,9 @@ import (
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
 
@@ -156,12 +156,6 @@ func normalizePublicCardDAVText(value string) string {
 }
 
 func capPublicCardDAVText(value string) (string, bool) {
-	if len(value) <= maxPublicCardDAVValueBytes {
-		return value, false
-	}
-	end := maxPublicCardDAVValueBytes
-	for end > 0 && !utf8.RuneStart(value[end]) {
-		end--
-	}
-	return value[:end], true
+	prefix := textutil.PrefixBytes(value, maxPublicCardDAVValueBytes)
+	return prefix, len(prefix) < len(value)
 }

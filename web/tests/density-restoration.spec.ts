@@ -4,6 +4,7 @@ import { setTemporaryDensity } from './kit-ui';
 const total = 300;
 
 test.beforeEach(async ({ page }) => {
+  await page.route('**/api/v1/sources/status', (route) => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/session', (route) => route.fulfill({
     json: { auth_mode: 'loopback', https: false, plain_http_warning: false }
   }));
@@ -141,7 +142,7 @@ test.describe('phone width', () => {
           await expect(grid.getByRole('gridcell', { name: '12 items', exact: true })).toBeVisible();
           await expect(grid.getByRole('row').filter({ hasText: 'Source 1' }).getByRole('gridcell', { name: '1 item', exact: true })).toBeVisible();
           await expect(grid.getByRole('row').filter({ hasText: 'Source 2' }).getByRole('gridcell', { name: '2 items', exact: true })).toBeVisible();
-          await expect(grid.getByRole('button', { name: 'Drill into Synthetic source with a very long descriptive name' })).toBeVisible();
+          await expect(grid.getByRole('button', { name: 'Show items in Synthetic source with a very long descriptive name' })).toBeVisible();
         }
         if (workspace === 'files') {
           const row = grid.locator('[aria-rowindex="2"]');

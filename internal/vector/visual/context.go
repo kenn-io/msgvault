@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 	"go.kenn.io/msgvault/internal/vector/preprocess"
 )
 
@@ -73,22 +74,10 @@ func normalizedMessageContext(context MessageContext, maxChars int) (string, boo
 		}
 		text += label
 	}
-	bounded, capTruncated := truncateRunes(text, maxChars)
-	return bounded, preprocessingTruncated || capTruncated
-}
-
-func truncateRunes(value string, maxRunes int) (string, bool) {
-	if maxRunes <= 0 || utf8.RuneCountInString(value) <= maxRunes {
-		return value, false
+	if maxChars > 0 && utf8.RuneCountInString(text) > maxChars {
+		return textutil.PrefixRunes(text, maxChars), true
 	}
-	seen := 0
-	for offset := range value {
-		if seen == maxRunes {
-			return value[:offset], true
-		}
-		seen++
-	}
-	return value, false
+	return text, preprocessingTruncated
 }
 
 func messageTypeLabel(messageType string) string {

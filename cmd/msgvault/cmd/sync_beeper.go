@@ -484,6 +484,8 @@ type beeperAccountRotation struct {
 	mu      sync.Mutex
 	next    string
 	visited map[string]bool
+	// passOpen reports that a pass has started and not yet completed.
+	passOpen bool
 }
 
 func (r *beeperAccountRotation) order(accountIDs []string) []string {
@@ -506,14 +508,19 @@ func (r *beeperAccountRotation) resumeAt(accountID string) {
 // remaining returns the accounts in rotation order that the current pass has
 // not visited. A run that is not a continuation, such as a scheduled tick or a
 // manual sync, starts a new pass over every account, as does a pass with none
-// left.
+// left. A continuation gets no accounts once its pass has completed: the run
+// it resumes may finish the pass just as the scheduler asks it to yield.
 func (r *beeperAccountRotation) remaining(accountIDs []string, continuation bool) []string {
 	ordered := r.order(accountIDs)
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if continuation && !r.passOpen {
+		return nil
+	}
 	if !continuation {
 		r.visited = nil
 	}
+	r.passOpen = true
 	left := slices.DeleteFunc(slices.Clone(ordered), func(id string) bool { return r.visited[id] })
 	if len(left) == 0 {
 		r.visited = nil
@@ -540,6 +547,7 @@ func (r *beeperAccountRotation) completePass(accountIDs []string) bool {
 		return false
 	}
 	r.visited = nil
+	r.passOpen = false
 	return true
 }
 
@@ -569,6 +577,9 @@ func runScheduledBeeperAttempts(
 	attempted := 0
 	resumeAt := ""
 	ordered := rotation.remaining(accountIDs, jobctx.Continuation(ctx))
+	if len(ordered) == 0 {
+		return scheduler.ErrDeferUntilNextTrigger
+	}
 	for idx, accountID := range ordered {
 		if ctx.Err() != nil {
 			// Cancelled between accounts (a yield or shutdown): start here next.
