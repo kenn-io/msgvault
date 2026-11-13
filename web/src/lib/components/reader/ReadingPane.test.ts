@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -72,6 +72,39 @@ describe('ReadingPane header', () => {
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Open person' }));
     expect(onOpenPerson).toHaveBeenCalledWith(22);
+  });
+});
+
+describe('ReadingPane conversation title', () => {
+  it('shows a matching call summary once and updates the collapse control when the title changes', async () => {
+    const summary = 'Incoming call with Example';
+    const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json({
+      id: 7, anchor_id: 42, messages: [{
+        id: 42, conversation_id: 7, subject: summary, message_type: 'call_record',
+        from: 'example@example.com', to: [], sent_at: '2026-07-18T12:00:00Z',
+        snippet: 'Call preview', labels: [], has_attachments: false, size_bytes: 0,
+        body: '', body_html: '', attachments: []
+      }], has_before: false, has_after: false, total: 1
+    })));
+    const selection = { kind: 'entry' as const, row: entryRow({
+      title: summary, message_type: 'call_record', conversation_id: 7
+    }) };
+    const view = render(ReadingPane, { client, selection, predicate: {} });
+    const card = await screen.findByRole('article', { name: 'Message 42' });
+    const collapse = within(card).getByRole('button', { name: 'Collapse message 42 from example@example.com' });
+    expect(screen.getAllByText(summary)).toHaveLength(1);
+    expect(collapse.textContent).toBe('');
+    expect(collapse.querySelector('svg')).not.toBeNull();
+    expect(collapse.getAttribute('aria-expanded')).toBe('true');
+
+    await view.rerender({ selection: { ...selection, row: { ...selection.row, title: 'Different title' } } });
+    expect(collapse.textContent).toBe(summary);
+    await view.rerender({ selection });
+    expect(collapse.textContent).toBe('');
+    await fireEvent.click(collapse);
+    const collapsed = screen.getByRole('button', { name: 'Expand message 42 from example@example.com' });
+    expect(collapsed.textContent).toContain('Call preview');
+    expect(collapsed.getAttribute('aria-expanded')).toBe('false');
   });
 });
 

@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
@@ -743,13 +744,14 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 	require.NoError(err, "create email conversation")
 	calendarConv, err := s.EnsureConversationWithType(src.ID, "calendar-thread", "calendar_event", "")
 	require.NoError(err, "create calendar conversation")
-	_, err = s.UpsertMessage(&store.Message{
+	emailID, err := s.UpsertMessage(&store.Message{
 		SourceID: src.ID, ConversationID: emailConv,
 		SourceMessageID: "email-1", MessageType: "email",
-		Subject: sql.NullString{String: "Email hello", Valid: true},
+		Subject: sql.NullString{String: "Call email hello", Valid: true},
 		SentAt:  sql.NullTime{Time: time.Date(2024, 5, 1, 12, 0, 0, 0, time.UTC), Valid: true},
 	})
 	require.NoError(err, "insert email")
+	require.NoError(s.UpsertFTS(emailID, "Call email hello", "", "", "", ""), "index email")
 	_, err = s.UpsertMessage(&store.Message{
 		SourceID: src.ID, ConversationID: calendarConv,
 		SourceMessageID: "calendar-1", MessageType: "calendar_event",
@@ -757,6 +759,16 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 		SentAt:  sql.NullTime{Time: time.Date(2024, 5, 2, 12, 0, 0, 0, time.UTC), Valid: true},
 	})
 	require.NoError(err, "insert calendar event")
+	evidence := callhistory.Evidence{Version: 1, Provider: "zoom_phone", Account: "example/account", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
+		OccurredAt: time.Date(2024, 5, 3, 12, 0, 0, 0, time.UTC)}
+	call := callhistory.Observation{
+		Evidence: evidence,
+		RecordID: "call-record-1", Raw: []byte(`{"call_id":"call-1"}`),
+	}
+	callSource, err := s.GetOrCreateSource(callhistory.SourceType, call.SourceIdentifier())
+	require.NoError(err, "create call source")
+	_, err = s.PutCallObservationContext(t.Context(), callSource.ID, call)
+	require.NoError(err, "import call record")
 	startStoreQueryAPIDaemon(t, tmpDir, s)
 
 	savedCfg := cfg
@@ -788,7 +800,44 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 	out := done()
 	require.NoError(err, "message-type search failed")
 	assert.Contains(out, "Calendar planning", "expected calendar event in output")
-	assert.NotContains(out, "Email hello", "email message must be filtered out")
+	assert.NotContains(out, "Call email hello", "email message must be filtered out")
+
+	resetSearchFlags()
+	done = captureStdout(t)
+	root = newTestRootCmd()
+	root.SetContext(testCtx)
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "--message-type", callhistory.MessageType, "--json"})
+	err = root.Execute()
+	out = done()
+	require.NoError(err, "call-record message-type search failed")
+	assert.Contains(out, "Call incoming", "expected imported call record in output")
+	assert.NotContains(out, "Calendar planning", "calendar event must be filtered out")
+	assert.NotContains(out, "Call email hello", "email message must be filtered out")
+
+	resetSearchFlags()
+	done = captureStdout(t)
+	root = newTestRootCmd()
+	root.SetContext(testCtx)
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "Call", "--json"})
+	err = root.Execute()
+	out = done()
+	require.NoError(err, "unfiltered text search failed")
+	assert.Contains(out, "Call incoming", "unfiltered text search should find the imported call record")
+	assert.Contains(out, "Call email hello", "unfiltered text search should find the competing email")
+
+	resetSearchFlags()
+	done = captureStdout(t)
+	root = newTestRootCmd()
+	root.SetContext(testCtx)
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "Call", "--message-type", callhistory.MessageType, "--json"})
+	err = root.Execute()
+	out = done()
+	require.NoError(err, "text search for call record failed")
+	assert.Contains(out, "Call incoming", "text search should find the imported call record")
+	assert.NotContains(out, "Call email hello", "text search should retain the call-record filter")
 }
 
 func TestSearchCmd_InvalidQueryFailsFastWithoutDB(t *testing.T) {
