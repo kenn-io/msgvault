@@ -31,13 +31,17 @@ func resolveInstagramCommentsProfiles(args []string, cfg *config.Config) ([]conf
 }
 
 func configuredInstagramCommentsClient(source config.InstagramCommentsSource) (*meta.Client, error) {
-	token := os.Getenv(source.TokenEnv)
+	return instagramProfileClient(source.TokenEnv)
+}
+
+func instagramProfileClient(env string) (*meta.Client, error) {
+	token := os.Getenv(env)
 	if strings.TrimSpace(token) == "" {
-		return nil, &sourceCommandError{err: fmt.Errorf("instagram profile %q needs %s in the daemon environment", source.Identifier, source.TokenEnv), code: 7, hint: "set the named credential in the daemon environment and restart the daemon"}
+		return nil, &sourceCommandError{err: fmt.Errorf("needs %s in the daemon environment", env), code: 7, hint: "set the named credential in the daemon environment and restart the daemon"}
 	}
 	client, err := meta.NewClient(token)
 	if err != nil {
-		return nil, &sourceCommandError{err: err, code: 7, hint: "check the named credential in the daemon environment and restart the daemon"}
+		return nil, &sourceCommandError{err: fmt.Errorf("has an invalid token in %s", env), code: 7, hint: "check the named credential in the daemon environment and restart the daemon"}
 	}
 	return client, nil
 }
@@ -59,12 +63,24 @@ func importInstagramCommentsProfile(ctx context.Context, st *store.Store, source
 	if err != nil {
 		return nil, err
 	}
-	sum, err = meta.NewImporter(st, client).ImportInstagram(ctx, source.AppID, source.PageID, source.InstagramAccountID, options)
+	importer := meta.NewImporter(st, client)
+	if source.AdAccountID == "" {
+		sum, err = importer.ImportInstagram(ctx, source.AppID, source.PageID, source.InstagramAccountID, options)
+		return sum, metaSourceStateError(err, "instagram-comments")
+	}
+	ads, err := instagramProfileClient(source.AdTokenEnv)
+	if err != nil {
+		return nil, err
+	}
+	sum, err = importer.ImportInstagramAds(ctx, source.AppID, source.PageID, source.InstagramAccountID, source.AdAccountID, ads, options)
 	return sum, metaSourceStateError(err, "instagram-comments")
 }
 
 func runConfiguredInstagramCommentsSync(ctx context.Context, st *store.Store, source config.InstagramCommentsSource) error {
 	sum, err := importInstagramCommentsProfile(ctx, st, source, meta.ImportOptions{})
+	if err != nil {
+		err = fmt.Errorf("instagram profile %s: %w", source.Identifier, err)
+	}
 	if sum == nil {
 		return err
 	}
@@ -118,7 +134,7 @@ func newSyncInstagramCommentsCmd() *cobra.Command {
 	options := meta.ImportOptions{MaxRequests: meta.DefaultMaxRequests}
 	cmd := &cobra.Command{
 		Use: "sync [identifier]", Short: "Archive Instagram comments and replies",
-		Long: "Sync Instagram professional account comments for registered [[instagram_comments]] profiles. Read available media, comments and replies with resumable progress; ordinary media discovery does not promise ad-only coverage. Tokens come from the daemon environment. Partial writes stay searchable; missing or inaccessible objects never delete archived history.",
+		Long: "Sync Instagram professional account comments for registered [[instagram_comments]] profiles. Read available media, comments and replies with resumable progress; profiles with ad_account_id also archive ad media that their Instagram account owns. Tokens come from the daemon environment. Partial writes stay searchable; missing or inaccessible objects never delete archived history.",
 		Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			if options.MaxRequests <= 0 {
 				return opserr.Invalid(errors.New("--max-requests must be positive"))
@@ -149,7 +165,11 @@ func newSyncInstagramCommentsCmd() *cobra.Command {
 				}
 				sum, err := importInstagramCommentsProfile(ctx, st, profile, options)
 				if sum != nil {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Instagram %s: %d messages processed (%d added, %d updated), %d requests\n", profile.Identifier, sum.MessagesProcessed, sum.MessagesAdded, sum.MessagesUpdated, sum.Requests)
+					skipped := ""
+					if sum.AdMediaSkipped > 0 {
+						skipped = fmt.Sprintf(", %d ad media skipped", sum.AdMediaSkipped)
+					}
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Instagram %s: %d messages processed (%d added, %d updated), %d requests%s\n", profile.Identifier, sum.MessagesProcessed, sum.MessagesAdded, sum.MessagesUpdated, sum.Requests, skipped)
 					if sum.Partial {
 						_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Some comments weren't synced. The next sync will continue.")
 					}

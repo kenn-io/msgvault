@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-12"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -22,7 +22,10 @@ All notable changes to msgvault, grouped by release.
   Each profile opts in with `actions`, and delete needs `--yes`.
 - [Instagram comment sync](usage/instagram-comments.md) archives linked professional
   account media comments and replies for search and existing person linking.
-  Sending and ad-only discovery are not included.
+  Sending messages is not included.
+- Instagram comment sync can also archive comments on the account's ads that
+  its media list leaves out. Set `ad_account_id` and `ad_token_env` on the
+  profile; see [Include ad media](usage/instagram-comments.md#include-ad-media).
 - [Facebook Page comment sync](usage/facebook-comments.md) archives comments and
   nested replies on organic, visitor, and ad posts returned for a selected Page.
   Search the archive and link commenters through existing people tools. This

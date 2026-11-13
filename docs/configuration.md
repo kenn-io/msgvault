@@ -1679,7 +1679,9 @@ Select a professional Instagram account linked to an explicitly selected Page
 and coverage. Each profile requires `identifier`, `app_id`, `page_id`,
 `instagram_account_id`, and `token_env`; `enabled` defaults to `false`, and
 an empty `schedule` means manual sync only. `actions` works as in
-`[[facebook_comments]]`.
+`[[facebook_comments]]`. Set `ad_account_id` (decimal, without `act_`) and
+`ad_token_env` together to also archive comments on the account's ads; see
+[Include ad media](usage/instagram-comments.md#include-ad-media).
 
 The label is trimmed, nonempty, and unique ignoring case. All three IDs must
 be positive decimal IDs without leading zeros. Duplicate app/Page/Instagram
