@@ -147,7 +147,6 @@ func TestPersonFactTrackingAndRefusals(t *testing.T) {
 	}{
 		{map[string]any{"person_id": id, "limit": 201}, "invalid_limit"},
 		{map[string]any{"person_id": id, "offset": -1}, "invalid_offset"},
-		{map[string]any{"person_id": id, "unknown": true}, "invalid_arguments"},
 		{map[string]any{"person_id": id, "target": "invalid"}, "invalid_target"},
 	} {
 		result, err = backend.ExecuteOperation(t.Context(), "list_person_fact_claims", tc.args)

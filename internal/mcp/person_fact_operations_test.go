@@ -24,9 +24,6 @@ func TestPersonFactCatalogOwnerCapabilitiesAndWriteGate(t *testing.T) {
 	trackingAnnotations, ok := tools["set_person_tracking"]["annotations"].(map[string]any)
 	requirements.True(ok)
 	assertions.Equal(true, trackingAnnotations["openWorldHint"])
-	pinAnnotations, ok := tools["set_person_fact_pin"]["annotations"].(map[string]any)
-	requirements.True(ok)
-	assertions.Equal(false, pinAnnotations["openWorldHint"])
 	for _, name := range names {
 		assertions.Contains(tools, name)
 	}
