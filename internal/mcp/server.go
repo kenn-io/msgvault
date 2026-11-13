@@ -59,6 +59,8 @@ const (
 	ToolSearchPersonFiles         = "search_person_files"
 	ToolSearchPeople              = "search_people"
 	ToolListDirectoryPeople       = "list_directory_people"
+	ToolSearchSemanticPeople      = "search_semantic_people"
+	ToolListOrganizations         = "list_organizations"
 	ToolFindChat                  = "find_chat"
 	ToolGetPersonNotes            = "get_person_notes"
 	ToolGetPersonProfile          = "get_person_profile"
@@ -132,6 +134,8 @@ type ServeOptions struct {
 	PersonFileSearcher     PersonFileSearcher
 	PeopleBackend          peoplebrowser.Backend
 	DirectoryBackend       peoplebrowser.DirectoryLister
+	SemanticPeopleBackend  peoplebrowser.SemanticPeopleSearcher
+	OrganizationBackend    peoplebrowser.OrganizationLister
 	ChatDiscoveryBackend   ChatDiscoveryBackend
 	PersonAgendaBackend    PersonAgendaBackend
 	PersonTierBackend      PersonTierBackend
@@ -404,6 +408,8 @@ func newMCPServerWithPolicy(
 		personFileSearcher:   opts.PersonFileSearcher,
 		peopleBackend:        opts.PeopleBackend,
 		directoryBackend:     opts.DirectoryBackend,
+		semanticPeople:       opts.SemanticPeopleBackend,
+		organizationBackend:  opts.OrganizationBackend,
 		hybridEngine:         opts.HybridEngine,
 		vectorCfg:            opts.VectorCfg,
 		backend:              opts.Backend,

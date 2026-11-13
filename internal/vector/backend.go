@@ -345,7 +345,7 @@ type PersonBackend interface {
 	UpsertPersons(ctx context.Context, gen GenerationID, persons []PersonEmbedding) error
 	ListPersonRevisions(ctx context.Context, gen GenerationID) (map[int64]string, error)
 	DeletePersonsNotIn(ctx context.Context, gen GenerationID, currentPersonIDs []int64) error
-	SearchPeople(ctx context.Context, gen GenerationID, queryVec []float32, k int) ([]PersonHit, error)
+	SearchPeople(ctx context.Context, gen GenerationID, queryVec []float32, k int, personIDs []int64) ([]PersonHit, error)
 }
 
 // PersonCoverageCounter reports terminal person publications that have no

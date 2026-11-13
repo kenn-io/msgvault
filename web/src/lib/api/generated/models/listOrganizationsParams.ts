@@ -16,7 +16,7 @@ export type ListOrganizationsParams = {
    */
   include_retired?: boolean;
   /**
-   * Normalized-name search
+   * Canonical name or current saved name alias prefix; wildcard characters are literal
    */
   q?: string;
 };

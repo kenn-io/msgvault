@@ -5,6 +5,7 @@ package sqlitevec
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -113,7 +114,7 @@ func TestPersonBackend_CreateGenerationCreatesNonDefaultDimensionANN(t *testing.
 	require.NoError(t, b.UpsertPersons(ctx, gen, []vector.PersonEmbedding{{
 		PersonID: 70, Revision: "rev-7", Vector: unitVec(7, 6),
 	}}))
-	hits, err := b.SearchPeople(ctx, gen, unitVec(7, 6), 1)
+	hits, err := b.SearchPeople(ctx, gen, unitVec(7, 6), 1, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	assert.Equal(t, int64(70), hits[0].PersonID)
@@ -136,7 +137,7 @@ func TestPersonBackend_PublishSearchReplaceReconcile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[int64]string{10: "rev-a", 20: "rev-b"}, revisions)
 
-	hits, err := b.SearchPeople(ctx, gen, unitVec(4, 0), 2)
+	hits, err := b.SearchPeople(ctx, gen, unitVec(4, 0), 2, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 2)
 	assert.Equal(t, int64(10), hits[0].PersonID)
@@ -148,7 +149,7 @@ func TestPersonBackend_PublishSearchReplaceReconcile(t *testing.T) {
 	require.NoError(t, b.UpsertPersons(ctx, gen, []vector.PersonEmbedding{
 		{PersonID: 10, Revision: "rev-c", Vector: unitVec(4, 2)},
 	}))
-	hits, err = b.SearchPeople(ctx, gen, unitVec(4, 2), 2)
+	hits, err = b.SearchPeople(ctx, gen, unitVec(4, 2), 2, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 2)
 	assert.Equal(t, int64(10), hits[0].PersonID)
@@ -158,7 +159,7 @@ func TestPersonBackend_PublishSearchReplaceReconcile(t *testing.T) {
 	revisions, err = b.ListPersonRevisions(ctx, gen)
 	require.NoError(t, err)
 	assert.Equal(t, map[int64]string{20: "rev-b"}, revisions)
-	hits, err = b.SearchPeople(ctx, gen, unitVec(4, 2), 10)
+	hits, err = b.SearchPeople(ctx, gen, unitVec(4, 2), 10, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	assert.Equal(t, int64(20), hits[0].PersonID)
@@ -178,7 +179,7 @@ func TestPersonBackend_SearchUsesCosineScores(t *testing.T) {
 		{PersonID: 10, Revision: "scaled", Vector: []float32{2, 0, 0, 0}},
 		{PersonID: 20, Revision: "orthogonal", Vector: []float32{0, 1, 0, 0}},
 	}))
-	hits, err := b.SearchPeople(ctx, gen, []float32{1, 0, 0, 0}, 2)
+	hits, err := b.SearchPeople(ctx, gen, []float32{1, 0, 0, 0}, 2, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 2)
 	assert.Equal(t, int64(10), hits[0].PersonID)
@@ -201,7 +202,7 @@ func TestPersonBackend_TerminalRevisionIsCoveredButNotSearchable(t *testing.T) {
 	rejected, err := b.CountRejectedPersons(ctx, gen)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), rejected)
-	hits, err := b.SearchPeople(ctx, gen, unitVec(4, 0), 10)
+	hits, err := b.SearchPeople(ctx, gen, unitVec(4, 0), 10, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	assert.Equal(t, int64(1), hits[0].PersonID)
@@ -214,7 +215,7 @@ func TestPersonBackend_TerminalRevisionIsCoveredButNotSearchable(t *testing.T) {
 	rejected, err = b.CountRejectedPersons(ctx, gen)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), rejected)
-	hits, err = b.SearchPeople(ctx, gen, unitVec(4, 0), 10)
+	hits, err = b.SearchPeople(ctx, gen, unitVec(4, 0), 10, nil)
 	require.NoError(t, err)
 	assert.Empty(t, hits, "terminal replacement must remove the old searchable vector")
 }
@@ -272,7 +273,7 @@ func TestPersonBackend_SearchCompletenessIsGenerationBounded(t *testing.T) {
 	}
 	require.NoError(t, b.UpsertPersons(ctx, building, buildingPeople))
 
-	hits, err := b.SearchPeople(ctx, serving, unitVec(4, 0), 5)
+	hits, err := b.SearchPeople(ctx, serving, unitVec(4, 0), 5, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 5)
 	assert.Equal(t, []int64{101, 102, 103, 104, 105}, []int64{
@@ -296,7 +297,7 @@ func TestPersonBackend_ErrorsAndRetirement(t *testing.T) {
 		PersonID: 1, Revision: "rev", Vector: unitVec(3, 0),
 	}})
 	require.ErrorIs(t, err, vector.ErrDimensionMismatch)
-	_, err = b.SearchPeople(ctx, gen, unitVec(3, 0), 1)
+	_, err = b.SearchPeople(ctx, gen, unitVec(3, 0), 1, nil)
 	require.ErrorIs(t, err, vector.ErrDimensionMismatch)
 
 	require.NoError(t, b.UpsertPersons(ctx, gen, []vector.PersonEmbedding{{
@@ -311,7 +312,7 @@ func TestPersonBackend_ErrorsAndRetirement(t *testing.T) {
 		PersonID: 2, Revision: "rev", Vector: unitVec(4, 0),
 	}})
 	require.ErrorIs(t, err, vector.ErrGenerationRetired)
-	_, err = b.SearchPeople(ctx, gen, unitVec(4, 0), 1)
+	_, err = b.SearchPeople(ctx, gen, unitVec(4, 0), 1, nil)
 	require.ErrorIs(t, err, vector.ErrGenerationRetired)
 	_, err = b.ListPersonRevisions(ctx, gen)
 	require.ErrorIs(t, err, vector.ErrGenerationRetired)
@@ -331,7 +332,7 @@ func TestPersonBackend_MessageIDCollisionIsIsolated(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, messageHits, 1)
 	assert.Equal(t, int64(1), messageHits[0].MessageID)
-	personHits, err := b.SearchPeople(ctx, gen, unitVec(4, 1), 1)
+	personHits, err := b.SearchPeople(ctx, gen, unitVec(4, 1), 1, nil)
 	require.NoError(t, err)
 	require.Len(t, personHits, 1)
 	assert.Equal(t, int64(1), personHits[0].PersonID)
@@ -346,7 +347,7 @@ func TestPersonBackend_MessageIDCollisionIsIsolated(t *testing.T) {
 		PersonID: 1, Revision: "person-rev-2", Vector: unitVec(4, 2),
 	}}))
 	require.NoError(t, b.Delete(ctx, gen, []int64{1}))
-	personHits, err = b.SearchPeople(ctx, gen, unitVec(4, 2), 1)
+	personHits, err = b.SearchPeople(ctx, gen, unitVec(4, 2), 1, nil)
 	require.NoError(t, err)
 	require.Len(t, personHits, 1)
 	assert.Equal(t, "person-rev-2", personHits[0].Revision)
@@ -364,4 +365,34 @@ func newPersonBackendForTest(t *testing.T) (*Backend, context.Context) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	return b, ctx
+}
+
+// Scoped search ranks selected members directly even when distant from the query.
+func TestPersonBackend_SearchScopedExactRanking(t *testing.T) {
+	must := require.New(t)
+
+	b, ctx := newPersonBackendForTest(t)
+	gen, err := b.CreateGeneration(ctx, "m", 4, "serving-large-person-corpus")
+	must.NoError(err)
+	const count = 5000
+	persons := make([]vector.PersonEmbedding, 0, count)
+	// Unscoped nearer people must not displace the distant scoped member.
+	for id := int64(count); id > 0; id-- {
+		vec := []float32{2, 0, 0, 0}
+		if id == 1 {
+			vec = []float32{0, 1, 0, 0}
+		}
+		if id == count {
+			vec = []float32{-1, 0, 0, 0}
+		}
+		persons = append(persons, vector.PersonEmbedding{PersonID: id, Revision: fmt.Sprintf("serving-%d", id), Vector: vec})
+	}
+	must.NoError(b.UpsertPersons(ctx, gen, persons))
+	must.NoError(b.ActivateGeneration(ctx, gen, true))
+	hits, err := b.SearchPeople(ctx, gen, unitVec(4, 0), 1, []int64{count})
+	must.NoError(err)
+	must.Len(hits, 1)
+	must.Equal(int64(count), hits[0].PersonID)
+	must.Equal("serving-5000", hits[0].Revision)
+	must.InDelta(-1, hits[0].Score, 0)
 }

@@ -62,7 +62,7 @@ func TestMCPListDirectoryPeopleForwardsQueryAndReturnsRows(t *testing.T) {
 		"address": `ÉCOLE+%_\@example.test`,
 		"sort":    "last_contact_asc", "last_contact_after": after.Format(time.RFC3339Nano),
 		"last_contact_before": before.Format(time.RFC3339Nano), "contact_state": "active",
-		"category": "friend", "organization": "Example Org", "primary_channel": "chat",
+		"category": "friend", "organization": "Example Org", "organization_id": 13, "primary_channel": "chat",
 	})
 	assert.NotEqual(true, result["isError"], "result: %#v", result)
 	assert.Equal(store.DirectoryPeopleQuery{
@@ -70,7 +70,7 @@ func TestMCPListDirectoryPeopleForwardsQueryAndReturnsRows(t *testing.T) {
 		Address: `ÉCOLE+%_\@example.test`,
 		Sort:    store.DirectoryPeopleSortLastContactAsc, LastContactAfter: &after,
 		LastContactBefore: &before, ContactState: "active", Category: "friend",
-		Organization: "Example Org", PrimaryChannel: "chat",
+		Organization: "Example Org", OrganizationID: 13, PrimaryChannel: "chat",
 	}, backend.query)
 	structured := toolStructuredContent(t, result)
 	assert.Equal("opaque/cursor+bytes", structured["next_cursor"])
@@ -125,6 +125,7 @@ func TestMCPListDirectoryPeopleMapsKnownErrors(t *testing.T) {
 		code string
 		want string
 	}{
+		{code: "person_discovery_scope_unsupported", want: "person_discovery_scope_unsupported: exact organization scope requires daemon API schema 5.2.0"},
 		{code: "invalid_cursor", want: "invalid_cursor: directory cursor is invalid"},
 		{code: "invalid_query", want: "invalid_query: directory query is invalid"},
 		{code: "directory_projection_stale", want: "directory_projection_stale: directory data is refreshing"},

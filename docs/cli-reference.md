@@ -3366,10 +3366,10 @@ how Notes interact with search, MCP, and CardDAV.
 
 | Command | Purpose |
 |---|---|
-| `person search <free-text> [--limit 20] [--json]` | Search curated profiles semantically; requires person embeddings and consent |
+| `person search <free-text> [--organization-id ID] [--limit 20] [--json]` | Search curated profiles semantically; requires person embeddings and consent |
 | `person files <person-id> [flags]` | Find archived attachments related to the person's linked identities |
 
-Person search accepts `--limit` from 1–100. File lookup defaults to the
+Person search accepts `--limit` from 1–100. `--organization-id` narrows to current employment at an active organization and requires daemon API schema 5.2.0; older daemons reject the request. JSON includes canonical vCard UIDs. The query reaches the configured embedding provider under separate people consent. File lookup defaults to the
 `metadata` lane and 100 results. Its main filters are `--direction`,
 `--filename`, `--mime-family`, `--after`, and `--before`.
 `--lane visual` or `all` requires `--query`; a `--cursor` belongs
@@ -3635,6 +3635,12 @@ msgvault person directory --query "Alex Example"
 msgvault person directory --address alex@example.test
 ```
 
+Directory filters include `--organization-id`, `--organization` (canonical
+name), `--category`, `--contact-state active|inactive`, `--sort`, and `--cursor`. All filters intersect. Exact numeric
+organization scope requires daemon API schema 5.2.0. Follow each cursor with
+the same filters; only saved people with current curated employment qualify.
+See [company-scoped discovery](/docs/usage/people/#find-someone-within-a-company).
+
 Find an observed contact by address without creating a person:
 
 ```bash
@@ -3843,6 +3849,7 @@ msgvault person directory --last-contact-after 2026-06-01 --cursor "<next_cursor
 | `--last-contact-before <date>` | absent | Inclusive upper bound, `YYYY-MM-DD` or RFC3339 |
 | `--sort <order>` | `last_contact_desc` | `name`, `last_contact_desc`, or `last_contact_asc` |
 | `--cursor <cursor>` | absent | Opaque `next_cursor` from the previous page |
+| `--limit <count>` | `50` | Maximum rows per page; the daemon caps it at 100 |
 | `--json` | `false` | Output the full Directory page envelope |
 
 Date-only bounds mean midnight UTC on that date. RFC3339 bounds accept offsets and fractional seconds. Both bounds include the specified instant, so `--last-contact-before 2026-07-01` includes midnight at the start of July 1. Use a timestamp when you need a different cutoff.

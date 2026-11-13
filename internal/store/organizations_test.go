@@ -531,3 +531,69 @@ func TestOrganizationReplacementRetriesEmploymentDeadlock(t *testing.T) {
 		})
 	}
 }
+
+func TestOrganizationAliasLookupSharesCurrentPrefixAndCount(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	first := mustOrganization(t, st, "Canonical First")
+	second := mustOrganization(t, st, "Canonical Second")
+	mustOrganization(t, st, `Literal XY\ alias`)
+	future := time.Now().Add(time.Hour).In(time.FixedZone("behind", -12*60*60))
+	current := time.Now().Add(-time.Hour).In(time.FixedZone("ahead", 14*60*60))
+	for _, org := range []*store.Organization{first, second} {
+		_, err := st.ReplaceOrganizationProfileContext(ctx, org.ID, org.Revision, store.OrganizationProfileInput{Names: []store.OrganizationNameInput{
+			{Name: "  Shared Alias  ", NameKind: store.OrganizationNameKindAlias, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
+			{Name: "Shared Alternative", NameKind: store.OrganizationNameKindAlias, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
+			{Name: `Literal %_\ alias`, NameKind: store.OrganizationNameKindAlias, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
+			{Name: "Future Alias", NameKind: store.OrganizationNameKindAlias, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser, ActiveFrom: &future}},
+			{Name: "Current Alias", NameKind: store.OrganizationNameKindAlias, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser, ActiveFrom: &current}},
+		}})
+		must.NoError(err)
+	}
+	for _, query := range []string{"SHARED", `literal %_\`, "canonical", "current", "alias", "future"} {
+		filter := store.OrganizationFilter{Query: query, Limit: 1}
+		want := int64(2)
+		if query == "alias" || query == "future" {
+			want = 0
+		} // Prefix, not substring.
+		total, err := st.CountOrganizationsContext(ctx, filter)
+		must.NoError(err)
+		check.Equal(want, total, query)
+		if want == 0 {
+			page, err := st.ListOrganizationsContext(ctx, filter)
+			must.NoError(err)
+			check.Empty(page, query)
+		}
+		var ids []int64
+		for offset := range int(total) {
+			filter.Offset = offset
+			page, err := st.ListOrganizationsContext(ctx, filter)
+			must.NoError(err)
+			must.Len(page, 1)
+			ids = append(ids, page[0].ID)
+		}
+		if want > 0 {
+			check.Equal([]int64{first.ID, second.ID}, ids)
+		}
+	}
+	first, err := st.GetOrganizationContext(ctx, first.ID)
+	must.NoError(err)
+	_, err = st.ReplaceOrganizationProfileContext(ctx, first.ID, first.Revision, store.OrganizationProfileInput{})
+	must.NoError(err)
+	second, err = st.GetOrganizationContext(ctx, second.ID)
+	must.NoError(err)
+	_, err = st.ReplaceOrganizationContext(ctx, second.ID, second.Revision, store.OrganizationInput{Name: second.Name, Kind: second.Kind}, true)
+	must.NoError(err)
+	for _, query := range []string{"shared", "canonical second"} {
+		filter := store.OrganizationFilter{Query: query}
+		page, err := st.ListOrganizationsContext(ctx, filter)
+		must.NoError(err)
+		check.Empty(page)
+		total, err := st.CountOrganizationsContext(ctx, filter)
+		must.NoError(err)
+		check.Zero(total)
+	}
+}

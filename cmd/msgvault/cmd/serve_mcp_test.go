@@ -438,6 +438,8 @@ func TestNativeMCPStartup(t *testing.T) {
 			require.Equal(http.StatusOK, response.Code, response.Body.String())
 			assert.Contains(response.Body.String(), `"find_similar_messages"`)
 			assert.Contains(response.Body.String(), `"search_visual_attachments"`)
+			assert.Contains(response.Body.String(), `"search_semantic_people"`)
+			assert.Contains(response.Body.String(), `"list_organizations"`)
 			status, _ := server.VectorStatus()
 			assert.Equal(api.VectorStatusInitializing, status)
 		})

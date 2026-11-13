@@ -19,6 +19,8 @@ import (
 func newPersonDirectoryCommand() *cobra.Command {
 	var after, before, sort, cursor, queryText, address string
 	var jsonOutput bool
+	var organization, category, contactState string
+	var organizationID, limit int64
 	command := &cobra.Command{
 		Use:   "directory",
 		Short: "Find saved people by name, address, or last contact",
@@ -36,11 +38,29 @@ Filters combine to narrow the existing Directory page.`,
 			if err != nil {
 				return err
 			}
+			if cmd.Flags().Changed("limit") {
+				query.Limit = &limit
+			}
+			if organizationID != 0 {
+				query.OrganizationID = &organizationID
+			}
+			if organization != "" {
+				query.Organization = &organization
+			}
+			if category != "" {
+				query.Category = &category
+			}
+			if contactState != "" {
+				query.ContactState = &contactState
+			}
 			client, _, err := OpenHTTPStore(cmd.Context())
 			if err != nil {
 				return err
 			}
 			defer func() { _ = client.Close() }()
+			if err := client.RequirePersonDiscoveryScope(cmd.Context(), organizationID); err != nil {
+				return err
+			}
 			if err := client.RequireDirectoryAddress(cmd.Context(), address); err != nil {
 				return err
 			}
@@ -54,6 +74,11 @@ Filters combine to narrow the existing Directory page.`,
 			return writePersonDirectoryPage(cmd, response.JSON200, jsonOutput)
 		},
 	}
+	command.Flags().Int64Var(&limit, "limit", 50, "Rows per page, maximum 100")
+	command.Flags().Int64Var(&organizationID, "organization-id", 0, "Exact canonical organization ID; current employment only")
+	command.Flags().StringVar(&organization, "organization", "", "Current canonical organization name")
+	command.Flags().StringVar(&category, "category", "", "Current person category")
+	command.Flags().StringVar(&contactState, "contact-state", "", "Archived contact state: active or inactive")
 	command.Flags().StringVar(&queryText, "query", "", "Lexical query over current curated names, contact points, and organizations")
 	command.Flags().StringVar(&address, "address", "", "Literal case-insensitive address or identifier substring (saved people only)")
 	command.Flags().StringVar(&after, "last-contact-after", "", "Contacted at or after this inclusive date (YYYY-MM-DD or RFC3339)")

@@ -297,7 +297,7 @@ func (b *Backend) DeletePersonsNotIn(ctx context.Context, gen vector.GenerationI
 
 // SearchPeople searches only person-owned vectors and returns their published
 // revisions for read-time source revalidation.
-func (b *Backend) SearchPeople(ctx context.Context, gen vector.GenerationID, queryVec []float32, k int) ([]vector.PersonHit, error) {
+func (b *Backend) SearchPeople(ctx context.Context, gen vector.GenerationID, queryVec []float32, k int, personIDs []int64) ([]vector.PersonHit, error) {
 	if len(queryVec) == 0 {
 		return nil, errors.New("person search: empty query vector")
 	}
@@ -328,12 +328,33 @@ func (b *Backend) SearchPeople(ctx context.Context, gen vector.GenerationID, que
 		   AND v.embedding MATCH ?
 		   AND k = ?
 		 ORDER BY v.distance, p.person_id`, PersonVectorTableName(dim))
-	rows, err := b.db.QueryContext(ctx, q, int64(gen), float32SliceBlob(queryVec), min(k, count))
+	searchLimit := min(k, count)
+	queryBlob := float32SliceBlob(queryVec)
+	args := []any{int64(gen), queryBlob, searchLimit}
+	if personIDs != nil {
+		// Rank scoped members directly.
+		encoded, err := json.Marshal(personIDs)
+		if err != nil {
+			return nil, fmt.Errorf("encode person ids: %w", err)
+		}
+		scope := "AND p.person_id IN (SELECT value FROM json_each(?))"
+		args = []any{queryBlob, int64(gen), int64(gen), string(encoded)}
+		q = fmt.Sprintf(`
+			SELECT p.person_id, p.published_revision,
+			       vec_distance_cosine(v.embedding, ?) AS distance
+			  FROM %s v
+			  JOIN person_embeddings p ON p.embedding_id = v.embedding_id
+			 WHERE v.generation_id = ? AND p.generation_id = ? %s
+			 ORDER BY distance, p.person_id
+			 LIMIT ?`, PersonVectorTableName(dim), scope)
+		args = append(args, searchLimit)
+	}
+	rows, err := b.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search person vectors: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	hits := make([]vector.PersonHit, 0, min(k, count))
+	hits := make([]vector.PersonHit, 0, searchLimit)
 	for rows.Next() {
 		var hit vector.PersonHit
 		var distance float64

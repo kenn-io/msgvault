@@ -38,8 +38,9 @@ func TestPersonSearchCommandUsesGeneratedRouteWithoutOpeningLocalStore(t *testin
 		assertions.Equal("application/json", r.Header.Get("Content-Type"))
 		assertions.Equal("synthetic-daemon-key", r.Header.Get("X-Api-Key"))
 		var body struct {
-			Query string `json:"query"`
-			Limit int64  `json:"limit"`
+			Query          string `json:"query"`
+			Limit          int64  `json:"limit"`
+			OrganizationID int64  `json:"organization_id"`
 		}
 		if !assertions.NoError(json.NewDecoder(r.Body).Decode(&body)) {
 			w.WriteHeader(http.StatusBadRequest)
@@ -47,6 +48,7 @@ func TestPersonSearchCommandUsesGeneratedRouteWithoutOpeningLocalStore(t *testin
 		}
 		assertions.Equal("synthetic systems architect", body.Query)
 		assertions.Equal(int64(2), body.Limit)
+		assertions.Equal(int64(13), body.OrganizationID)
 		writePersonSearchCommandResponse(t, w)
 	}))
 	t.Cleanup(server.Close)
@@ -61,7 +63,7 @@ func TestPersonSearchCommandUsesGeneratedRouteWithoutOpeningLocalStore(t *testin
 		},
 	})
 	command, stdout, stderr := newPersonSearchTestCommand(testCtx, t)
-	command.SetArgs([]string{"--limit", "2", "synthetic", "systems", "architect"})
+	command.SetArgs([]string{"--limit", "2", "--organization-id", "13", "synthetic", "systems", "architect"})
 	requirements.NoError(command.Execute())
 
 	assertions.Equal(int32(1), requests.Load())
@@ -89,8 +91,8 @@ func TestPersonSearchCommandJSONHasStableExplicitOrderedShape(t *testing.T) {
 
 	assert.JSONEq(t, `{
 		"results": [
-			{"id": 9, "display_name": "Synthetic Architect", "score": 0.91},
-			{"id": 3, "display_name": "Test Researcher", "score": 0.73}
+			{"id": 9, "display_name": "Synthetic Architect", "score": 0.91, "vcard_uid":"00000000-0000-0000-0000-000000000009"},
+			{"id": 3, "display_name": "Test Researcher", "score": 0.73, "vcard_uid":"00000000-0000-0000-0000-000000000003"}
 		]
 	}`, stdout.String())
 	assert.Empty(t, stderr.String(), "JSON mode emits no progress noise")
@@ -149,8 +151,8 @@ func TestPersonSearchCommandPreservesNilDisplayNameAcrossOutputModes(t *testing.
 		requirements.NoError(command.Execute())
 
 		checks.JSONEq(`{"results":[
-			{"id":11,"display_name":null,"score":0.82},
-			{"id":4,"display_name":"Synthetic Named Person","score":0.61}
+			{"id":11,"display_name":null,"score":0.82,"vcard_uid":"00000000-0000-0000-0000-000000000011"},
+			{"id":4,"display_name":"Synthetic Named Person","score":0.61,"vcard_uid":"00000000-0000-0000-0000-000000000004"}
 		]}`, stdout.String())
 		checks.Empty(stderr.String(), "nil display-name JSON emits no progress noise")
 	})
@@ -340,7 +342,7 @@ func TestDefaultVectorConfigBlocksCuratedPeopleButKeepsMessageEmbedding(t *testi
 		"default vector config must not send curated person data")
 
 	requirements.NoError(features.Backend.ActivateGeneration(testCtx, generation, false))
-	_, err = features.PersonSearchEngine.Search(testCtx, "synthetic person", 5)
+	_, err = features.PersonSearchEngine.Search(testCtx, "synthetic person", 5, 0)
 	requirements.ErrorContains(err, "[vector.people] enabled = true")
 	providerMu.Lock()
 	assertions.Equal(inputsAfterWorker, providerInputs,
@@ -354,7 +356,7 @@ func TestDefaultVectorConfigBlocksCuratedPeopleButKeepsMessageEmbedding(t *testi
 	result, err = features.Runner.RunOnce(testCtx, generation, testCLIEmbeddingPassScope())
 	requirements.NoError(err)
 	assertions.Zero(result.Succeeded, "unconsented people must be skipped without blocking messages")
-	_, err = features.PersonSearchEngine.Search(testCtx, "synthetic person", 5)
+	_, err = features.PersonSearchEngine.Search(testCtx, "synthetic person", 5, 0)
 	requirements.ErrorIs(err, vector.ErrSemanticPersonEmbeddingConsentRequired)
 	providerMu.Lock()
 	assertions.Equal(inputsAfterWorker, providerInputs,
@@ -372,7 +374,7 @@ func TestDefaultVectorConfigBlocksCuratedPeopleButKeepsMessageEmbedding(t *testi
 	result, err = features.Runner.RunOnce(testCtx, generation, testCLIEmbeddingPassScope())
 	requirements.NoError(err)
 	assertions.Equal(1, result.Succeeded, "consented exact policy must run the person worker")
-	results, err := features.PersonSearchEngine.Search(testCtx, "synthetic person", 5)
+	results, err := features.PersonSearchEngine.Search(testCtx, "synthetic person", 5, 0)
 	requirements.NoError(err)
 	requirements.Len(results, 1)
 	assertions.Equal(person.ID, results[0].Person.ID)
@@ -391,7 +393,7 @@ func TestDefaultVectorConfigBlocksCuratedPeopleButKeepsMessageEmbedding(t *testi
 	requirements.NoError(err)
 	_, err = features.Runner.RunOnce(testCtx, generation, testCLIEmbeddingPassScope())
 	requirements.NoError(err)
-	_, err = features.PersonSearchEngine.Search(testCtx, "updated person", 5)
+	_, err = features.PersonSearchEngine.Search(testCtx, "updated person", 5, 0)
 	requirements.ErrorIs(err, vector.ErrSemanticPersonEmbeddingConsentRequired)
 	providerMu.Lock()
 	assertions.Len(providerInputs, providerCallsAfterConsent,
@@ -726,7 +728,7 @@ func TestPersonSearchProductionCompositionDoesNotPublishReadyWithoutThePersonEng
 	command.SetArgs([]string{"--json", "architect"})
 	requirements.NoError(command.Execute())
 	assertions.JSONEq(`{"results":[{"id":`+
-		jsonInt(person.ID)+`,"display_name":"Synthetic Architect","score":1}]}`, stdout.String())
+		jsonInt(person.ID)+`,"display_name":"Synthetic Architect","score":1,"vcard_uid":"`+person.VCardUID+`"}]}`, stdout.String())
 	assertions.Empty(stderr.String())
 
 	providerMu.Lock()
@@ -738,14 +740,16 @@ func TestPersonSearchProductionCompositionDoesNotPublishReadyWithoutThePersonEng
 
 func newPersonSearchTestCommand(ctx context.Context, t *testing.T) (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	savedLimit, savedJSON := personSearchLimit, personSearchJSON
+	savedLimit, savedJSON, savedOrganization := personSearchLimit, personSearchJSON, personSearchOrganizationID
+	personSearchOrganizationID = 0
 	personSearchLimit, personSearchJSON = defaultPersonSearchLimit, false
 	t.Cleanup(func() {
-		personSearchLimit, personSearchJSON = savedLimit, savedJSON
+		personSearchLimit, personSearchJSON, personSearchOrganizationID = savedLimit, savedJSON, savedOrganization
 	})
 	command := &cobra.Command{
 		Use: personSearchCmd.Use, Args: personSearchCmd.Args, RunE: personSearchCmd.RunE,
 	}
+	command.Flags().Int64Var(&personSearchOrganizationID, "organization-id", 0, "")
 	command.Flags().IntVar(&personSearchLimit, "limit", defaultPersonSearchLimit, "")
 	command.Flags().BoolVar(&personSearchJSON, flagJSON, false, "")
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}

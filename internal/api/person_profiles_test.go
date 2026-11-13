@@ -22,17 +22,19 @@ import (
 )
 
 type fakePersonSearchEngine struct {
-	results []personsearch.Result
-	err     error
-	queries []string
-	limits  []int
+	results         []personsearch.Result
+	err             error
+	queries         []string
+	limits          []int
+	organizationIDs []int64
 }
 
 func (e *fakePersonSearchEngine) Search(
-	_ context.Context, query string, limit int,
+	_ context.Context, query string, limit int, organizationID int64,
 ) ([]personsearch.Result, error) {
 	e.queries = append(e.queries, query)
 	e.limits = append(e.limits, limit)
+	e.organizationIDs = append(e.organizationIDs, organizationID)
 	return e.results, e.err
 }
 
@@ -618,9 +620,10 @@ func TestSemanticPersonSearchReturnsEmptyArrayAndPassesExplicitLimit(t *testing.
 	srv := newSemanticPersonSearchServer(t, engine, VectorStatusReady, "")
 
 	response := semanticPersonSearchRequest(t, srv,
-		[]byte(`{"query":"no matching person","limit":3}`), "")
+		[]byte(`{"query":"no matching person","limit":3,"organization_id":13}`), "")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.Equal(t, []int{3}, engine.limits)
+	assert.Equal(t, []int64{13}, engine.organizationIDs)
 	assert.JSONEq(t, `{"results":[]}`, response.Body.String())
 }
 

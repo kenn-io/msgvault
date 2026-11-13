@@ -383,7 +383,7 @@ func TestResolvePersonSemanticCandidatesReturnsOnlyCurrentRootsInCandidateOrder(
 		{PersonID: firstID, Revision: firstDocument.Revision},
 		{PersonID: deletedID, Revision: deletedDocument.Revision},
 		{PersonID: 999999, Revision: "missing"},
-	})
+	}, 0)
 	require.NoError(err)
 	require.Len(people, 2)
 	assert.Equal([]int64{lastID, secondID}, []int64{people[0].ID, people[1].ID})
@@ -424,7 +424,7 @@ func TestPersonSemanticScanFailsButResolverSkipsOneUnrenderablePerson(t *testing
 	people, err := f.Store.ResolvePersonSemanticCandidatesContext(ctx, []store.PersonSemanticCandidate{
 		{PersonID: badID, Revision: "unrenderable"},
 		{PersonID: goodID, Revision: goodDocument.Revision},
-	})
+	}, 0)
 	require.NoError(err)
 	require.Len(people, 1)
 	assert.Equal(goodID, people[0].ID)
@@ -485,4 +485,84 @@ func setSemanticTextAttribute(
 func semanticDigest(text string) string {
 	digest := sha256.Sum256([]byte(store.PersonSemanticRendererPolicy + "\x00" + text))
 	return hex.EncodeToString(digest[:])
+}
+
+func TestResolvePersonSemanticCandidatesInOrganizationRevalidatesMembershipAndRevision(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+
+	f := storetest.New(t)
+	st, ctx := f.Store, t.Context()
+	org := mustOrganization(t, st, "Scoped Semantic Company")
+	var candidates []store.PersonSemanticCandidate
+	var want []int64
+	for i, state := range []string{"current", "outsider", "stale", "current"} {
+		id := mustPerson(t, f, fmt.Sprintf("semantic-scope-%d@example.invalid", i), "Same Name")
+		if state != "outsider" {
+			_, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: id, OrganizationID: org.ID, Source: store.ProvenanceUser})
+			must.NoError(err)
+		}
+		doc, err := st.LoadPersonSemanticDocumentContext(ctx, id)
+		must.NoError(err)
+		candidates = append(candidates, store.PersonSemanticCandidate{PersonID: id, Revision: doc.Revision})
+		person, err := st.GetPersonContext(ctx, id)
+		must.NoError(err)
+		switch state {
+		case "stale":
+			_, err = st.UpdatePersonDisplayNameContext(ctx, id, person.Revision, new("Changed Name"))
+		case "current":
+			want = append(want, id)
+		}
+		must.NoError(err)
+	}
+	people, err := st.ResolvePersonSemanticCandidatesContext(ctx, candidates, org.ID)
+	must.NoError(err)
+	var got []int64
+	for _, person := range people {
+		got = append(got, person.ID)
+		check.NotEmpty(person.VCardUID)
+	}
+	check.Equal(want, got)
+	// Identically rendered companies can exchange membership without changing revision.
+	{
+		f := storetest.New(t)
+		ctx, st := t.Context(), f.Store
+		id := mustPerson(t, f, "semantic-identical@example.invalid", "Same Name")
+		first := mustOrganization(t, st, "Same Company")
+		second := mustOrganization(t, st, "Same Company")
+		employment, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: id, OrganizationID: first.ID, Source: store.ProvenanceUser})
+		must.NoError(err)
+		doc, err := st.LoadPersonSemanticDocumentContext(ctx, id)
+		must.NoError(err)
+		must.NoError(st.DeleteEmploymentContext(ctx, employment.ID, employment.Revision))
+		_, err = st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: id, OrganizationID: second.ID, Source: store.ProvenanceUser})
+		must.NoError(err)
+		current, err := st.LoadPersonSemanticDocumentContext(ctx, id)
+		must.NoError(err)
+		must.Equal(doc.Revision, current.Revision, "membership changed without a text change")
+		candidates := []store.PersonSemanticCandidate{{PersonID: id, Revision: doc.Revision}}
+		people, err := st.ResolvePersonSemanticCandidatesContext(ctx, candidates, first.ID)
+		must.NoError(err)
+		check.Empty(people)
+		people, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, second.ID)
+		must.NoError(err)
+		must.Len(people, 1)
+		check.Equal(id, people[0].ID)
+		first, err = st.GetOrganizationContext(ctx, first.ID)
+		must.NoError(err)
+		second, err = st.GetOrganizationContext(ctx, second.ID)
+		must.NoError(err)
+		_, err = st.MergeOrganizationsContext(ctx, first.ID, first.Revision, second.ID, second.Revision)
+		must.NoError(err)
+		current, err = st.LoadPersonSemanticDocumentContext(ctx, id)
+		must.NoError(err)
+		candidates[0].Revision = current.Revision
+		people, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, second.ID)
+		must.NoError(err)
+		check.Empty(people, "a merged numeric scope must never redirect")
+		people, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, first.ID)
+		must.NoError(err)
+		must.Len(people, 1)
+		check.Equal(id, people[0].ID)
+	}
 }

@@ -67,8 +67,9 @@ type Backend interface {
 // revalidate and hydrate ANN hits.
 type Store interface {
 	ResolvePersonSemanticCandidatesContext(
-		ctx context.Context, candidates []store.PersonSemanticCandidate,
+		ctx context.Context, candidates []store.PersonSemanticCandidate, organizationID int64,
 	) ([]store.Person, error)
+	CurrentOrganizationMemberIDsContext(ctx context.Context, organizationID int64) ([]int64, error)
 }
 
 // QueryEmbedder embeds one free-text query.
@@ -112,7 +113,7 @@ func NewEngine(backend Backend, data Store, embedder QueryEmbedder, config Confi
 
 // Search embeds query once, searches only the person corpus, drops stale or
 // deleted hits, and returns durable person roots in ANN rank order.
-func (e *Engine) Search(ctx context.Context, query string, limit int) ([]Result, error) {
+func (e *Engine) Search(ctx context.Context, query string, limit int, organizationID int64) ([]Result, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, errors.New("empty person search query")
@@ -146,6 +147,16 @@ func (e *Engine) Search(ctx context.Context, query string, limit int) ([]Result,
 			}
 		}
 	}
+	var personIDs []int64
+	if organizationID > 0 {
+		personIDs, err = e.store.CurrentOrganizationMemberIDsContext(ctx, organizationID)
+		if err != nil {
+			return nil, fmt.Errorf("list organization members: %w", err)
+		}
+		if len(personIDs) == 0 {
+			return nil, nil
+		}
+	}
 	queryVector, err := e.embedder.EmbedQuery(ctx, query)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -157,7 +168,7 @@ func (e *Engine) Search(ctx context.Context, query string, limit int) ([]Result,
 	seen := make(map[store.PersonSemanticCandidate]struct{})
 	valid := make(map[store.PersonSemanticCandidate]struct{})
 	for {
-		hits, err := e.backend.SearchPeople(ctx, active.ID, queryVector, searchLimit)
+		hits, err := e.backend.SearchPeople(ctx, active.ID, queryVector, searchLimit, personIDs)
 		if err != nil {
 			return nil, fmt.Errorf("search person corpus: %w", err)
 		}
@@ -189,7 +200,7 @@ func (e *Engine) Search(ctx context.Context, query string, limit int) ([]Result,
 					finalCandidates = append(finalCandidates, candidate)
 				}
 			}
-			people, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, finalCandidates)
+			people, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, finalCandidates, organizationID)
 			if err != nil {
 				return nil, fmt.Errorf("resolve final person search hits: %w", err)
 			}
@@ -198,7 +209,7 @@ func (e *Engine) Search(ctx context.Context, query string, limit int) ([]Result,
 		hadValidCandidates := len(valid) > 0
 		var newlyResolved []store.Person
 		if len(newCandidates) > 0 {
-			people, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, newCandidates)
+			people, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, newCandidates, organizationID)
 			if err != nil {
 				return nil, fmt.Errorf("resolve current person search hits: %w", err)
 			}
@@ -225,7 +236,7 @@ func (e *Engine) Search(ctx context.Context, query string, limit int) ([]Result,
 			if !hadValidCandidates {
 				return personResultsInHitOrder(hits, newlyResolved, limit), nil
 			}
-			people, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, currentCandidates)
+			people, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, currentCandidates, organizationID)
 			if err != nil {
 				return nil, fmt.Errorf("revalidate final person search hits: %w", err)
 			}

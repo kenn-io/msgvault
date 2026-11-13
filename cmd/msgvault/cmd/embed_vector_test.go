@@ -530,7 +530,7 @@ func assertConfiguredPersonSearchEngine(t *testing.T, vf *vectorFeatures) {
 	t.Helper()
 	require.NotNil(t, vf.PersonSearchEngine,
 		"every embedding API format must install semantic person search")
-	_, err := vf.PersonSearchEngine.Search(t.Context(), "synthetic person", 1)
+	_, err := vf.PersonSearchEngine.Search(t.Context(), "synthetic person", 1, 0)
 	require.ErrorIs(t, err, vector.ErrSemanticPersonEmbeddingsDisabled,
 		"the person engine must enforce the default-off curated-person policy")
 }

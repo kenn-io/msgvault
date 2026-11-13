@@ -149,8 +149,9 @@ func (s *Store) ListPersonSemanticDocumentsContext(
 // Revisions intentionally include rendered organization and relationship
 // counterpart text. Editing either linked record therefore suppresses stale
 // hits for affected people until the scheduled person worker republishes them.
+// Organization membership and revision validation share the same snapshot.
 func (s *Store) ResolvePersonSemanticCandidatesContext(
-	ctx context.Context, candidates []PersonSemanticCandidate,
+	ctx context.Context, candidates []PersonSemanticCandidate, organizationID int64,
 ) ([]Person, error) {
 	people := make([]Person, 0, len(candidates))
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
@@ -159,6 +160,15 @@ func (s *Store) ResolvePersonSemanticCandidatesContext(
 			return err
 		}
 		for _, candidate := range candidates {
+			if organizationID > 0 {
+				var member bool
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 `+s.currentOrganizationMembershipSQL()+` AND employment.person_id = ?)`, organizationID, candidate.PersonID).Scan(&member); err != nil {
+					return fmt.Errorf("check organization membership: %w", err)
+				}
+				if !member {
+					continue
+				}
+			}
 			snapshot, err := s.loadPersonSemanticSnapshotTx(ctx, tx, candidate.PersonID, allowed)
 			if errors.Is(err, ErrPersonNotFound) {
 				continue
@@ -180,6 +190,28 @@ func (s *Store) ResolvePersonSemanticCandidatesContext(
 		return nil
 	})
 	return people, err
+}
+
+// CurrentOrganizationMemberIDsContext returns the saved people with current
+// employment at the active canonical organization.
+func (s *Store) CurrentOrganizationMemberIDsContext(ctx context.Context, organizationID int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT person.id FROM persons person WHERE EXISTS (SELECT 1 `+s.currentOrganizationMembershipSQL()+` AND employment.person_id = person.id) ORDER BY person.id`, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("list organization members: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan organization member: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate organization members: %w", err)
+	}
+	return ids, nil
 }
 
 func (s *Store) loadPersonSemanticSnapshotTx(

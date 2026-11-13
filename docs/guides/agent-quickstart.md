@@ -271,6 +271,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_meeting_action_items` | read | — | owner-only |
 | `list_messages` | read | — | search.read |
 | `list_open_loops` | read | — | owner-only |
+| `list_organizations` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |
@@ -287,6 +288,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `search_metadata` | read | — | search.read |
 | `search_people` | read | — | owner-only |
 | `search_person_files` | read | — | owner-only |
+| `search_semantic_people` | read | — | owner-only |
 | `search_visual_attachments` | read | — | owner-only |
 | `semantic_search_messages` | read | — | owner-only |
 | `sync_source` | source_write | `--allow-source-writes` | owner-only |
