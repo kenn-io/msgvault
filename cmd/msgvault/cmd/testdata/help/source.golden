@@ -5,6 +5,7 @@ Usage:
 
 Available Commands:
   facebook-comments  Archive comments from a configured Facebook Page
+  feeds              Follow RSS, Atom and JSON feeds
   instagram-comments Archive comments from a linked Instagram account
   instagram-mentions Archive Instagram media that tags a linked account
 
