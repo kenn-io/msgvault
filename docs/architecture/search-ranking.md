@@ -120,7 +120,7 @@ rebuilding existing vector tables. That migration is not implemented today.
 
 ## Filename suggestions
 
-Newer than the latest release, explicit filename suggestions use one bounded
+Explicit filename suggestions use one bounded
 Store snapshot on SQLite and PostgreSQL. They preserve ordinary filename
 substring search, message search, Directory ranking and identity behavior.
 The [API reference](../api-server.md#filename-suggestions) owns request and
