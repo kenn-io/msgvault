@@ -83,7 +83,6 @@ func TestMeetingParticipationFirstAppearance(t *testing.T) {
 				assert.Equal(t, store.FirstContactEmailIntro, state.FirstContactKind)
 				assert.Equal(t, fmt.Sprintf("message:%d", later), state.FirstSeenRef)
 			}
-
 		})
 	}
 }

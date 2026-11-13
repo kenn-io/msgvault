@@ -30,7 +30,7 @@ type FirstContactIntroducer struct {
 // ClassifyFirstContact describes a person's earliest linked event using current identities.
 func ClassifyFirstContact(candidate ActivityCandidate, personID int64, maxDirectCounterparts int) (FirstContactKind, *FirstContactIntroducer) {
 	if IsMeetingMessageType(candidate.MessageType) {
-		if candidate.MessageType == "meeting_transcript" {
+		if candidate.MessageType == messageTypeMeetingTranscript {
 			people := candidate.MeetingParticipants
 			ownerLinked := activityOwnerLinked(people)
 			owner, target := false, false
@@ -140,7 +140,7 @@ func (s *Store) populateFirstContactTx(ctx context.Context, tx *loggedTx, state 
 		return fmt.Errorf("load first-contact candidate: %w", err)
 	}
 	candidate := candidates[0]
-	if candidate.MessageType == "meeting_transcript" {
+	if candidate.MessageType == messageTypeMeetingTranscript {
 		people, err := s.loadMeetingParticipationWith(ctx, tx, messageID, nil)
 		if err != nil && !errors.Is(err, ErrMeetingNotFound) {
 			return err

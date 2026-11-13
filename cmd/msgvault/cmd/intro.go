@@ -18,7 +18,7 @@ func newIntroCommand(execute func(*cobra.Command, []string) error) *cobra.Comman
 	for _, name := range []string{"source-id", "person", "title", "body"} {
 		_ = prepare.MarkFlagRequired(name)
 	}
-	list := &cobra.Command{Use: "list", Short: "List introductions", Args: cobra.NoArgs, RunE: execute}
+	list := &cobra.Command{Use: cmdUseList, Short: "List introductions", Args: cobra.NoArgs, RunE: execute}
 	list.Flags().Int64("source-id", 0, "filter by source ID")
 	list.Flags().Int("limit", 20, "maximum records (1–100)")
 	list.Flags().String("after-id", "", "value printed after next: for the next page")

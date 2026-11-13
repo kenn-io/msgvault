@@ -25,6 +25,7 @@ func TestGrantBodyAndEdit(t *testing.T) {
 }
 
 func checkGrantBodyAndEdit(t *testing.T, sourceType string) {
+	t.Helper()
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
@@ -98,6 +99,7 @@ func TestDelegatedListFiltersBeforeLimit(t *testing.T) {
 }
 
 func checkDelegatedListFiltersBeforeLimit(t *testing.T, sourceType string) {
+	t.Helper()
 	req := require.New(t)
 	check := assert.New(t)
 	f := storetest.New(t)

@@ -10,15 +10,10 @@ import (
 	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
-type meetingParticipationReader interface {
-	contextRowQuerier
-	contextRowsQuerier
-}
-
 // loadMeetingParticipationWith reads only the selected event. Raw roles must
 // match its explicit recipients unambiguously; the conversation roster and
 // display decoder's owner/invitee fallbacks cannot supply positive evidence.
-func (s *Store) loadMeetingParticipationWith(ctx context.Context, q meetingParticipationReader, id int64, authorize ChatDraftAuthorizer) ([]ActivityCounterpart, error) {
+func (s *Store) loadMeetingParticipationWith(ctx context.Context, q identityMatchReviewQuerier, id int64, authorize ChatDraftAuthorizer) ([]ActivityCounterpart, error) {
 	var typ, sourceType, identifier string
 	var retired sql.NullInt64
 	var deleted, upstream, sent, received, internal nullableTimestamp
@@ -36,7 +31,7 @@ func (s *Store) loadMeetingParticipationWith(ctx context.Context, q meetingParti
 			return nil, err
 		}
 	}
-	if typ != "meeting_transcript" || retired.Int64 != 0 || deleted.Valid || upstream.Valid || (!sent.Valid && !received.Valid && !internal.Valid) {
+	if typ != messageTypeMeetingTranscript || retired.Int64 != 0 || deleted.Valid || upstream.Valid || (!sent.Valid && !received.Valid && !internal.Valid) {
 		return nil, nil
 	}
 	var stored []byte
@@ -50,10 +45,10 @@ func (s *Store) loadMeetingParticipationWith(ctx context.Context, q meetingParti
 		return nil, fmt.Errorf("load meeting participation raw: %w", err)
 	}
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
-	if err != nil {
-		return nil, nil
+	var explicit []meetingcontent.Participant
+	if err == nil {
+		explicit = meetingcontent.ExplicitParticipants(format, raw)
 	}
-	explicit := meetingcontent.ExplicitParticipants(format, raw)
 	if len(explicit) == 0 {
 		return nil, nil
 	}

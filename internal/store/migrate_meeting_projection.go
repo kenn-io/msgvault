@@ -11,7 +11,7 @@ import (
 // up to 100 locked messages. A cancelled upgrade retains completed pages and
 // runOnceMigration leaves its ledger unfinished so the next open resumes.
 func (s *Store) backfillMeetingProjectionsContext(ctx context.Context) error {
-	return s.backfillMessageProjectionsContext(ctx, "meeting_transcript", "meeting_details", meetingProjectionVersion, s.refreshMeetingProjectionWith)
+	return s.backfillMessageProjectionsContext(ctx, messageTypeMeetingTranscript, "meeting_details", meetingProjectionVersion, s.refreshMeetingProjectionWith)
 }
 
 // backfillMessageProjectionsContext pages through stale rows and rechecks each

@@ -137,9 +137,9 @@ func (s *Store) PreparePersonIntroductionAuthorizedContext(ctx context.Context, 
 		if err := requireSourceWritableWith(tx, in.SourceID); err != nil {
 			return err
 		}
-		ctx = withWritableSnapshot(ctx, s.db.DB, tx)
+		snapshotCtx := withWritableSnapshot(ctx, s.db.DB, tx)
 		if in.MeetingMessageID != nil {
-			people, err := s.loadMeetingParticipationWith(ctx, tx, *in.MeetingMessageID, meeting)
+			people, err := s.loadMeetingParticipationWith(snapshotCtx, tx, *in.MeetingMessageID, meeting)
 			if err != nil {
 				return err
 			}
@@ -148,7 +148,7 @@ func (s *Store) PreparePersonIntroductionAuthorizedContext(ctx context.Context, 
 			}
 		}
 		var err error
-		preflight, err = s.GetPersonIntroductionPreflightContext(ctx, in.SourceID, in.PersonAID, in.PersonBID)
+		preflight, err = s.GetPersonIntroductionPreflightContext(snapshotCtx, in.SourceID, in.PersonAID, in.PersonBID)
 		if err != nil {
 			return err
 		}
@@ -157,13 +157,13 @@ func (s *Store) PreparePersonIntroductionAuthorizedContext(ctx context.Context, 
 				return err
 			}
 		}
-		if err := s.requirePersonsExistTx(ctx, tx, in.PersonAID, in.PersonBID); err != nil {
+		if err := s.requirePersonsExistTx(snapshotCtx, tx, in.PersonAID, in.PersonBID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO person_introductions (intro_id, revision, status, source_id, person_a_id, person_b_id, title, body, created_by, meeting_message_id) VALUES (?, 1, 'prepared', ?, ?, ?, ?, ?, ?, ?)`, id, in.SourceID, in.PersonAID, in.PersonBID, in.Title, in.Body, actor, in.MeetingMessageID); err != nil {
+		if _, err := tx.ExecContext(snapshotCtx, `INSERT INTO person_introductions (intro_id, revision, status, source_id, person_a_id, person_b_id, title, body, created_by, meeting_message_id) VALUES (?, 1, 'prepared', ?, ?, ?, ?, ?, ?, ?)`, id, in.SourceID, in.PersonAID, in.PersonBID, in.Title, in.Body, actor, in.MeetingMessageID); err != nil {
 			return err
 		}
-		result, err = scanIntroduction(tx.QueryRowContext(ctx, `SELECT `+introductionColumns+` FROM person_introductions i JOIN sources s ON s.id = i.source_id WHERE i.intro_id = ?`, id))
+		result, err = scanIntroduction(tx.QueryRowContext(snapshotCtx, `SELECT `+introductionColumns+` FROM person_introductions i JOIN sources s ON s.id = i.source_id WHERE i.intro_id = ?`, id))
 		return err
 	})
 	return result, preflight, err
