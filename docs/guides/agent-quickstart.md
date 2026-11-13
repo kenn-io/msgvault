@@ -309,4 +309,4 @@ backend checks for action permissions, source scope, and sender identity;
 | `update_saved_view` | write | — | owner-only |
 <!-- END GENERATED tools -->
 
-On unreleased `main`, assistants can read person fact claims with optional evidence and decisions, and pins. Claims and included evidence can contain sensitive content. The pin and tracking writes require `--allow-person-fact-writes` and confirmation for each call; tracking has no revision guard. HTTP writes also need the general write opt-in and protocol `2026-07-28` or newer.
+On unreleased `main`, assistants can read person fact claims with optional evidence and decisions, and pins. Claims and included evidence can contain sensitive content. Use `msgvault person facts catalog` to find target keys when there are no claims, and `msgvault person facts evidence-status <person-id>` for evidence support history. The pin and tracking writes require `--allow-person-fact-writes` and confirmation for each call; tracking has no revision guard. HTTP writes also need the general write opt-in and protocol `2026-07-28` or newer.

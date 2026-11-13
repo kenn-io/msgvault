@@ -902,7 +902,8 @@ when the daemon offers its route.
 | `set_person_fact_pin` | Set or clear an attribute or employment pin. | `person_id`, `kind`, `key`, `pinned` |
 | `set_person_tracking` | Change tracking state. | `person_id`, `tracked` |
 
-- Build `target` as `kind:key:revision` from a claim's `target`.
+- Build `target` as `kind:key:revision` from a claim's `target`. If there are no claims, use `msgvault person facts catalog` to find target keys and revisions.
+- Use `msgvault person facts evidence-status <person-id>` to inspect evidence support history.
 - If a read that accepts `limit` returns `operation_response_limit_exceeded`, retry with a smaller `limit`.
 - Claims and included evidence can contain rows for sensitive targets. Each included list is a separate page with the same filters and may not cover every claim reference.
 - Writes require `--allow-person-fact-writes` and explicit client confirmation for each call; the client is responsible for user approval. The person must be tracked to set a pin. If a write reports `operation_may_have_completed: true`, call `list_person_fact_pins` or `get_person_profile` before retrying.
