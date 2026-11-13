@@ -16,6 +16,7 @@
   interface Props {
     message: ArchiveMessageDetail;
     expanded: boolean;
+    paneTitle?: string;
     showTaskSetup?: boolean;
     /** The thread's current anchor — announced via aria-current and used by
      * the thread to scroll the card into view. */
@@ -37,6 +38,7 @@
   let {
     message,
     expanded,
+    paneTitle = undefined,
     showTaskSetup = true,
     anchor = false,
     viewMode = 'html',
@@ -84,7 +86,7 @@
         {#if message.recipients.length > 0}
           <span class="recipients">to {#if message.recipientParticipants}{#each message.recipientParticipants as recipient, index}{#if index > 0}, {/if}<PersonLink name={recipient.display} participantID={recipient.participantID} {onOpenPerson} />{/each}{:else}{message.recipients.join(', ')}{/if}</span>
         {/if}
-        <button type="button" class="collapse-target" aria-label={`Collapse message ${message.id} from ${message.sender || 'unknown sender'}`} aria-expanded="true" onclick={() => onToggle?.(message.id)}>{#if message.subject}{message.subject}{:else}<ChevronUp size={16} aria-hidden="true" />{/if}</button>
+        <button type="button" class="collapse-target" aria-label={`Collapse message ${message.id} from ${message.sender || 'unknown sender'}`} aria-expanded="true" onclick={() => onToggle?.(message.id)}>{#if message.subject && message.subject !== paneTitle}{message.subject}{:else}<ChevronUp size={16} aria-hidden="true" />{/if}</button>
       </div>
       <MessageMenu {client} {message} {hasRenderableHTML} {viewMode} {onViewModeChange} {onOpenSettings} onTaskDialogClose={() => tasksRefresh++} onError={(error) => menuError = error} />
     </div>

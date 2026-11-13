@@ -47,6 +47,7 @@ nav = [
     {"Meeting Notes and Transcripts" = "usage/meetings.md"},
     {"RSS, Atom and JSON Feeds" = "usage/feeds.md"},
     {"Messages from Any Source" = "usage/message-import.md"},
+    {"Call History" = "usage/call-history.md"},
   ]},
   {"People and Accounts" = [
     {"People and Profiles" = "usage/people.md"},

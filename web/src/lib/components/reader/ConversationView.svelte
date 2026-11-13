@@ -22,6 +22,7 @@
     client,
     conversationId,
     anchorId,
+    paneTitle = undefined,
     onAnchorChange = undefined,
     start = undefined,
     end = undefined,
@@ -35,6 +36,7 @@
     onOpenMeeting?: (meeting: import('../../api/generated/models').MeetingRef) => void;
     conversationId: number;
     anchorId: number;
+    paneTitle?: string;
     onAnchorChange?: (anchorId: number) => void;
     /** Lower UTC bound (RFC3339, inclusive) restricting the window — e.g. a
      * chat burst's local day. Omit for the default unbounded window. */
@@ -327,6 +329,7 @@
           {onOpenMeeting}
           client={apiClient}
           message={archiveDetail(message)}
+          {paneTitle}
           expanded={expanded.has(message.id)}
           showTaskSetup={message.id === taskSetupMessageID}
           anchor={message.id === activeAnchor}
