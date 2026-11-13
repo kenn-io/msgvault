@@ -53,9 +53,9 @@ const NOT_USED_REASONS: Record<string, string> = {
   'stale-target-revision': "the field definition doesn't match the claim", 'unaligned-evidence': "the source doesn't mention it",
   'identity-mismatch': 'may be about someone else', 'sensitive-policy': 'this field is sensitive',
   'pin-retained': 'this field is pinned', 'below-threshold': 'score below threshold',
-  'insufficient-margin': 'competing claims were too close to choose', 'competing-tie': 'tied with another value',
+  'competing-tie': 'tied with another value',
   'explicit-contradiction': 'a source contradicts it', 'explicit-supersession': 'a newer statement replaced it',
-  'organization-ambiguous': 'the organization is unclear', 'applied-projection': 'already saved',
+  'organization-ambiguous': 'the organization is unclear', 'applied-projection': 'another claim was saved',
   'evidence-unsupported': 'its source was removed', 'outside-validity': 'outside its valid dates',
 };
 export function decisionSentence(outcome: string | null, reason: string, value?: string): string {
