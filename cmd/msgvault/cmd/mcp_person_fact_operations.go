@@ -62,7 +62,7 @@ func (b *daemonMCPOperations) executePersonFactOperation(ctx context.Context, na
 	switch name {
 	case "list_person_fact_claims":
 		a, e := decodeMCPOperationArguments[factArgs](args)
-		if e != nil || !validLoopID(a.PersonID) {
+		if e != nil {
 			return invalid()
 		}
 		r, e := readMCPOperationJSONWithClassifier[generated.PersonFactClaimsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-claims", &generated.ListPersonFactClaimsRequestOptions{PathParams: &generated.ListPersonFactClaimsPath{ID: a.PersonID}, Query: &generated.ListPersonFactClaimsQuery{Target: a.Target, Limit: a.Limit, Offset: a.Offset}}, factClassify, http.StatusOK)
@@ -87,7 +87,7 @@ func (b *daemonMCPOperations) executePersonFactOperation(ctx context.Context, na
 		return &mcpserver.OperationResult{Output: out}, true, nil
 	case "list_person_fact_pins":
 		a, e := decodeMCPOperationArguments[factArgs](args)
-		if e != nil || !validLoopID(a.PersonID) {
+		if e != nil {
 			return invalid()
 		}
 		r, e := readMCPOperationJSONWithClassifier[generated.PersonFactPinsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-pins", &generated.ListPersonFactPinsRequestOptions{PathParams: &generated.ListPersonFactPinsPath{ID: a.PersonID}}, factClassify, http.StatusOK)
