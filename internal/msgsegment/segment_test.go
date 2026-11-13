@@ -112,7 +112,9 @@ func TestSplitThunderbirdReplyHeaders(t *testing.T) {
 				assert.Equal(t, []Segment{{Authored, 0, len(body), 0}}, Split(body).Segments)
 			})
 			t.Run("requires time", func(t *testing.T) {
-				header := strings.NewReplacer("10:00", "noon", "10.00", "noon").Replace(tc.header) + "\n"
+				header := strings.NewReplacer("10:00", "noon", "10.00", "noon").Replace(tc.header)
+				require.NotEqual(t, tc.header, header)
+				header += "\n"
 				body := header + "> old"
 				assert.Equal(t, []Segment{{Authored, 0, len(header), 0}, {Quoted, len(header), len(body), 1}}, Split(body).Segments)
 			})
