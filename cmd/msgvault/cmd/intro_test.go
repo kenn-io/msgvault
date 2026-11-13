@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +29,8 @@ import (
 	"go.kenn.io/msgvault/internal/introops"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	apiclient "go.kenn.io/msgvault/pkg/client"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 func TestIntroThroughDaemonCLI(t *testing.T) {
@@ -47,9 +51,17 @@ func TestIntroThroughDaemonCLI(t *testing.T) {
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
 	cfg.Data.DataDir = t.TempDir()
-	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st, config: cfg}, Logger: slog.New(slog.DiscardHandler)}).Router())
+	cfg.Server.APIKey = "owner-test-key"
+	cfg.Server.AgentAccess = true
+	cfg.Remote.APIKey = cfg.Server.APIKey
+	srv := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st, config: cfg}, Logger: slog.New(slog.DiscardHandler)})
+	t.Cleanup(func() {
+		// Registry cleanup must finish after the test context is canceled.
+		require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context())))
+	})
+	server := httptest.NewServer(srv.Router())
 	t.Cleanup(server.Close)
-	remote := configureRemoteDaemonForTest(t, server.URL)
+	remote := configureRemoteDaemonForTest(t, server.URL, cfg)
 	run := func(args ...string) (string, error) {
 		root := &cobra.Command{Use: "msgvault"}
 		clirun.AddLoggingFlags(root.PersistentFlags())
@@ -108,6 +120,108 @@ func TestIntroThroughDaemonCLI(t *testing.T) {
 	var shown introops.Record
 	req.NoError(json.Unmarshal([]byte(data), &shown))
 	check.Equal(emailRow, shown)
+	// The typed HTTP clients and daemon CLI must share this exact projection.
+	typed, err := apiclient.New(server.URL)
+	req.NoError(err)
+	headers := func(secret string) apiclient.RequestEditorFn {
+		return func(_ context.Context, request *http.Request) error {
+			if secret == "" {
+				request.Header.Set("X-Api-Key", cfg.Server.APIKey)
+			} else {
+				request.Header.Set("X-Msgvault-Agent-Token", secret)
+			}
+			return nil
+		}
+	}
+	detailOptions := &generated.GetIntroductionRequestOptions{PathParams: &generated.GetIntroductionPath{ID: emailRow.IntroID}}
+	listOptions := &generated.ListIntroductionsRequestOptions{Query: &generated.ListIntroductionsQuery{SourceID: &emailSource.ID}}
+	detail, err := typed.GetIntroductionWithResponse(ctx, detailOptions, headers(""))
+	req.NoError(err)
+	req.Equal(http.StatusOK, detail.StatusCode)
+	req.NotNil(detail.JSON200)
+	req.NoError(detail.JSON200.Validate())
+	check.JSONEq(data, string(detail.Body))
+	check.Equal(&meeting, detail.JSON200.MeetingMessageID)
+	listed, err := typed.ListIntroductionsWithResponse(ctx, listOptions, headers(""))
+	req.NoError(err)
+	req.NotNil(listed.JSON200)
+	req.Len(listed.JSON200.Items, 1)
+	check.Equal(*detail.JSON200, listed.JSON200.Items[0])
+	withoutMeeting, err := typed.GetIntroductionWithResponse(ctx, &generated.GetIntroductionRequestOptions{PathParams: &generated.GetIntroductionPath{ID: row.IntroID}}, headers(""))
+	req.NoError(err)
+	req.NotNil(withoutMeeting.JSON200)
+	check.Nil(withoutMeeting.JSON200.MeetingMessageID)
+	check.NotContains(string(withoutMeeting.Body), "meeting_message_id")
+
+	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: cfg.Server.APIKey, AllowInsecure: true})
+	req.NoError(err)
+	t.Cleanup(func() { _ = owner.Close() })
+	for _, tc := range []struct {
+		name             string
+		permissions      []string
+		sources          []int64
+		body, meetingRef bool
+	}{
+		{"delivery only", []string{"draft.create"}, []int64{emailSource.ID}, false, false},
+		{"meeting source without read permission", []string{"draft.create", "draft.edit"}, []int64{emailSource.ID, meetingSource.ID}, true, false},
+		{"read permission on delivery only", []string{"draft.create", "message.read"}, []int64{emailSource.ID}, false, false},
+		{"independent meeting grant", []string{"draft.create", "draft.edit", "message.read"}, []int64{emailSource.ID, meetingSource.ID}, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			grant, err := owner.IssueAgentToken(t.Context(), "intro reader", tc.permissions, tc.sources, nil, time.Time{})
+			require.NoError(t, err)
+			agent, err := daemonclient.New(daemonclient.Config{URL: server.URL, AgentToken: grant.Secret, AllowInsecure: true})
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = agent.Close() })
+			cli := func(args ...string) string {
+				t.Helper()
+				var out strings.Builder
+				err := agent.RunCLICommand(t.Context(), daemonclient.CLIRunRequest{Args: args}, func(stream, text string) error {
+					assert.Equal(t, "stdout", stream)
+					out.WriteString(text)
+					return nil
+				})
+				require.NoError(t, err)
+				return out.String()
+			}
+			detail, err := typed.GetIntroductionWithResponse(t.Context(), detailOptions, headers(grant.Secret))
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, detail.StatusCode)
+			require.NotNil(t, detail.JSON200)
+			require.NoError(t, detail.JSON200.Validate())
+			assert.JSONEq(t, cli("intro", "show", emailRow.IntroID, "--json"), string(detail.Body))
+			wantBody := ""
+			if tc.body {
+				wantBody = "Local email introduction"
+			}
+			assert.Equal(t, wantBody, detail.JSON200.Body)
+			if tc.meetingRef {
+				assert.Equal(t, &meeting, detail.JSON200.MeetingMessageID)
+			} else {
+				assert.Nil(t, detail.JSON200.MeetingMessageID)
+				assert.NotContains(t, string(detail.Body), "meeting_message_id")
+			}
+			for _, member := range detail.JSON200.Members {
+				assert.Empty(t, member.UserID)
+			}
+			listed, err := typed.ListIntroductionsWithResponse(t.Context(), listOptions, headers(grant.Secret))
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, listed.StatusCode)
+			require.NotNil(t, listed.JSON200)
+			require.NoError(t, listed.JSON200.Validate())
+			require.Len(t, listed.JSON200.Items, 1)
+			assert.Equal(t, *detail.JSON200, listed.JSON200.Items[0])
+			assert.False(t, listed.JSON200.HasMore)
+			assert.Empty(t, listed.JSON200.NextAfterID)
+			assert.JSONEq(t, cli("intro", "list", "--source-id", strconv.FormatInt(emailSource.ID, 10), "--json"), string(listed.Body))
+			for _, body := range []string{string(detail.Body), string(listed.Body)} {
+				assert.NotContains(t, body, "a@example.com")
+				assert.NotContains(t, body, "b@example.com")
+				assert.NotContains(t, body, `"organizer"`)
+				assert.NotContains(t, body, `"attendees"`)
+			}
+		})
+	}
 	data, err = run("intro", "show", emailRow.IntroID)
 	req.NoError(err)
 	check.Contains(data, fmt.Sprintf("meeting_message_id=%d", meeting))

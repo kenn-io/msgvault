@@ -7117,6 +7117,10 @@ components:
           type: string
         intro_id:
           type: string
+        meeting_message_id:
+          format: int64
+          minimum: 1
+          type: integer
         members:
           items:
             $ref: "#/components/schemas/IntroductionMember"
@@ -17040,7 +17044,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.3.0
+  version: 5.4.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:

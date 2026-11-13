@@ -417,7 +417,8 @@ import (
 // 5.1.0 adds keyed group overviews, time-group item totals, saved view schema 3, and saved view run timezones.
 // 5.2.0 adds open Kata issue search and optional task search queries.
 // 5.3.0 adds first archived appearance and explicit recorded meeting introductions.
-const APISchemaVersion = "5.3.0"
+// 5.4.0 adds typed introduction list and detail reads.
+const APISchemaVersion = "5.4.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

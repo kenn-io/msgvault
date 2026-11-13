@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -147,4 +148,18 @@ type introductionBoundaryRecorder struct {
 func (w *introductionBoundaryRecorder) WriteHeader(status int) {
 	w.firstSlotCount = len(w.slots)
 	w.ResponseRecorder.WriteHeader(status)
+}
+
+func TestIntroductionMeetingContextSchema(t *testing.T) {
+	for _, doc := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		record := doc.Components.Schemas.Map()["IntroductionRecord"]
+		require.NotNil(t, record)
+		field := record.Properties["meeting_message_id"]
+		require.NotNil(t, field)
+		assert.Equal(t, huma.TypeInteger, field.Type)
+		assert.False(t, field.Nullable)
+		require.NotNil(t, field.Minimum)
+		assert.Equal(t, float64(1), *field.Minimum)
+		assert.NotContains(t, record.Required, "meeting_message_id")
+	}
 }

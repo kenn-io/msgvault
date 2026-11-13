@@ -6912,20 +6912,21 @@ func (i IntroductionPage) Validate() error {
 }
 
 type IntroductionRecord struct {
-	Blockers    []IntroductionBlocker `json:"blockers" validate:"required"`
-	Body        string                `json:"body" validate:"omitempty"`
-	CancelledAt *time.Time            `json:"cancelled_at" validate:"required"`
-	CreatedAt   time.Time             `json:"created_at" validate:"required"`
-	CreatedBy   string                `json:"created_by" validate:"required"`
-	IntroID     string                `json:"intro_id" validate:"required"`
-	Members     []IntroductionMember  `json:"members" validate:"required"`
-	PersonAId   int64                 `json:"person_a_id"`
-	PersonBId   int64                 `json:"person_b_id"`
-	Revision    int64                 `json:"revision"`
-	SourceID    int64                 `json:"source_id"`
-	Status      string                `json:"status" validate:"required"`
-	Title       string                `json:"title" validate:"omitempty"`
-	UpdatedAt   time.Time             `json:"updated_at" validate:"required"`
+	Blockers         []IntroductionBlocker `json:"blockers" validate:"required"`
+	Body             string                `json:"body" validate:"omitempty"`
+	CancelledAt      *time.Time            `json:"cancelled_at" validate:"required"`
+	CreatedAt        time.Time             `json:"created_at" validate:"required"`
+	CreatedBy        string                `json:"created_by" validate:"required"`
+	IntroID          string                `json:"intro_id" validate:"required"`
+	MeetingMessageID *int64                `json:"meeting_message_id,omitempty" validate:"omitempty,gte=1"`
+	Members          []IntroductionMember  `json:"members" validate:"required"`
+	PersonAId        int64                 `json:"person_a_id"`
+	PersonBId        int64                 `json:"person_b_id"`
+	Revision         int64                 `json:"revision"`
+	SourceID         int64                 `json:"source_id"`
+	Status           string                `json:"status" validate:"required"`
+	Title            string                `json:"title" validate:"omitempty"`
+	UpdatedAt        time.Time             `json:"updated_at" validate:"required"`
 }
 
 func (i IntroductionRecord) Validate() error {
@@ -6953,6 +6954,11 @@ func (i IntroductionRecord) Validate() error {
 	}
 	if err := typesValidator.Var(i.IntroID, "required"); err != nil {
 		errors = errors.Append("IntroID", err)
+	}
+	if i.MeetingMessageID != nil {
+		if err := typesValidator.Var(i.MeetingMessageID, "omitempty,gte=1"); err != nil {
+			errors = errors.Append("MeetingMessageID", err)
+		}
 	}
 	if err := typesValidator.Var(i.Members, "required"); err != nil {
 		errors = errors.Append("Members", err)

@@ -12,6 +12,8 @@ export interface IntroductionRecord {
   created_at: string;
   created_by: string;
   intro_id: string;
+  /** @minimum 1 */
+  meeting_message_id?: number;
   members: IntroductionMember[];
   person_a_id: number;
   person_b_id: number;

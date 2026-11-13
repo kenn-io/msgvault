@@ -1,6 +1,8 @@
 package client
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,7 +15,22 @@ import (
 )
 
 func TestGeneratedIntroductionClientDecodesListAndDetail(t *testing.T) {
-	const record = `{"intro_id":"intro-0123456789abcdef0123456789abcdef","source_id":7,"person_a_id":11,"person_b_id":12,"status":"prepared","revision":2,"title":"","body":"","created_by":"owner","created_at":"2026-11-12T10:00:00Z","updated_at":"2026-11-12T11:00:00Z","cancelled_at":null,"members":[{"person_id":11,"participant_id":21,"user_id":""}],"blockers":[{"person_id":12,"code":"no_identity_on_account"}]}`
+	for _, tc := range []struct {
+		name             string
+		meetingMessageID *int64
+	}{{"omitted context", nil}, {"present context", new(int64(42))}} {
+		t.Run(tc.name, func(t *testing.T) {
+			checkGeneratedIntroductionClient(t, tc.meetingMessageID)
+		})
+	}
+}
+
+func checkGeneratedIntroductionClient(t *testing.T, meetingMessageID *int64) {
+	t.Helper()
+	record := `{"intro_id":"intro-0123456789abcdef0123456789abcdef","source_id":7,"person_a_id":11,"person_b_id":12,"status":"prepared","revision":2,"title":"","body":"","created_by":"owner","created_at":"2026-11-12T10:00:00Z","updated_at":"2026-11-12T11:00:00Z","cancelled_at":null,"members":[{"person_id":11,"participant_id":21,"user_id":""}],"blockers":[{"person_id":12,"code":"no_identity_on_account"}]}`
+	if meetingMessageID != nil {
+		record = strings.Replace(record, `"source_id":7`, fmt.Sprintf(`"source_id":7,"meeting_message_id":%d`, *meetingMessageID), 1)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		w.Header().Set("Content-Type", "application/json")
@@ -47,6 +64,15 @@ func TestGeneratedIntroductionClientDecodesListAndDetail(t *testing.T) {
 	assert.Empty(t, list.JSON200.NextAfterID)
 	require.NoError(t, list.JSON200.Validate())
 	assertIntroductionRecord(t, list.JSON200.Items[0])
+	assert.Equal(t, meetingMessageID, list.JSON200.Items[0].MeetingMessageID)
+	encoded, err := json.Marshal(list.JSON200.Items[0])
+	require.NoError(t, err)
+	assert.JSONEq(t, record, string(encoded))
+	invalid := list.JSON200.Items[0]
+	for _, id := range []int64{0, -1} {
+		invalid.MeetingMessageID = &id
+		assert.Error(t, invalid.Validate(), "context IDs must be positive")
+	}
 
 	detail, err := client.GetIntroductionWithResponse(t.Context(), &generated.GetIntroductionRequestOptions{
 		PathParams: &generated.GetIntroductionPath{ID: "intro-0123456789abcdef0123456789abcdef"},
@@ -54,6 +80,7 @@ func TestGeneratedIntroductionClientDecodesListAndDetail(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, detail.JSON200)
 	assert.Equal(t, "cancelled", detail.JSON200.Status)
+	assert.Equal(t, meetingMessageID, detail.JSON200.MeetingMessageID)
 	require.NoError(t, detail.JSON200.Validate())
 }
 
