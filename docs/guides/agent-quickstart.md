@@ -265,6 +265,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_source_identities` | read | — | owner-only |
 | `get_source_scheduler_status` | read | — | owner-only |
 | `get_stats` | read | — | stats.read |
+| `get_visual_attachment_status` | read | — | owner-only |
 | `list_directory_people` | read | — | owner-only |
 | `list_identity_judgments` | read | — | owner-only |
 | `list_identity_matches` | read | — | owner-only |
@@ -291,6 +292,10 @@ backend checks for action permissions, source scope, and sender identity;
 | `semantic_search_messages` | read | — | owner-only |
 | `sync_source` | source_write | `--allow-source-writes` | owner-only |
 | `update_slack_sync_policy` | source_write | `--allow-source-writes` | owner-only |
+| `resume_visual_attachment_build` | visual_write | `--allow-visual-writes` | owner-only |
+| `retire_visual_attachment_generation` | visual_write | `--allow-visual-writes` | owner-only |
+| `retry_visual_attachment_owner` | visual_write | `--allow-visual-writes` | owner-only |
+| `start_visual_attachment_build` | visual_write | `--allow-visual-writes` | owner-only |
 | `create_saved_view` | write | — | owner-only |
 | `delete_saved_view` | write | — | owner-only |
 | `draft_compose` | write | — | backend-dependent |

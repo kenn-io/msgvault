@@ -128,29 +128,70 @@ func TestOperationalWriteConfirmsCurrentDisclosureBeforeExecution(t *testing.T) 
 }
 
 func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	names := []string{"list_open_loops", "close_open_loop", "snooze_open_loop", "reopen_open_loop"}
-	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: append(names, "sync_source")}
-	requirements.Len(operationalCatalog(opts, true), 1)
-	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyLoops}
-	first := operationalCatalog(opts, true)
-	requirements.Len(first, 4)
-	second := operationalCatalog(opts, true)
-	for i, definition := range first {
-		assertions.Equal(names[i], definition.definition.name)
-		assertions.Same(definition.definition.inputSchema, second[i].definition.inputSchema)
-		assertions.Same(definition.definition.outputSchema, second[i].definition.outputSchema)
-		requirements.NotNil(definition.definition.annotations.OpenWorldHint)
-		assertions.False(*definition.definition.annotations.OpenWorldHint)
+	for _, tc := range []struct {
+		name      string
+		names     []string
+		family    OperationFamily
+		openWorld bool
+	}{
+		{"loops", []string{"list_open_loops", "close_open_loop", "snooze_open_loop", "reopen_open_loop"}, OperationFamilyLoops, false},
+		{"visual", []string{"get_visual_attachment_status", "start_visual_attachment_build", "resume_visual_attachment_build", "retry_visual_attachment_owner", "retire_visual_attachment_generation"}, OperationFamilyVisual, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: tc.names, OperationWriteFamilies: []OperationFamily{tc.family}}
+			catalog := operationalCatalog(opts, true)
+			again := operationalCatalog(opts, true)
+			require.Len(t, catalog, len(tc.names))
+			assert.Len(t, operationalCatalog(opts, false), 1)
+			other := OperationFamilyLoops
+			if tc.family == OperationFamilyLoops {
+				other = OperationFamilyVisual
+			}
+			opts.OperationWriteFamilies = []OperationFamily{other}
+			assert.Len(t, operationalCatalog(opts, true), 1)
+			opts.OperationWriteFamilies = []OperationFamily{tc.family}
+			tools := toolsByName(t, rawListTools(t, opts, true))
+			for i, definition := range catalog {
+				assert.Equal(t, tc.names[i], definition.definition.name)
+				assert.Same(t, definition.definition.inputSchema, again[i].definition.inputSchema)
+				assert.Same(t, definition.definition.outputSchema, again[i].definition.outputSchema)
+				require.NotNil(t, definition.definition.annotations.OpenWorldHint)
+				if i > 0 {
+					wantOpen := tc.openWorld && definition.definition.name != "retire_visual_attachment_generation"
+					assert.Equal(t, wantOpen, *definition.definition.annotations.OpenWorldHint)
+				}
+				if definition.definition.name == "retire_visual_attachment_generation" {
+					require.NotNil(t, definition.definition.annotations.DestructiveHint)
+					assert.True(t, *definition.definition.annotations.DestructiveHint)
+				}
+				tool, ok := tools[tc.names[i]]
+				require.True(t, ok)
+				schema, ok := tool["inputSchema"].(map[string]any)
+				require.True(t, ok)
+				assert.Equal(t, false, schema["additionalProperties"])
+			}
+			opts.DelegatedOnly = true
+			assert.Empty(t, operationalCatalog(opts, true))
+		})
 	}
-	requirements.Len(operationalCatalog(opts, false), 1)
-	opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, OperationFamilySources)
-	for _, definition := range operationalCatalog(opts, true) {
-		if definition.definition.name == "sync_source" {
-			assertions.True(*definition.definition.annotations.OpenWorldHint)
-		}
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"sync_source"}, OperationWriteFamilies: []OperationFamily{OperationFamilySources}}
+	catalog := operationalCatalog(opts, true)
+	require.Len(t, catalog, 1)
+	require.NotNil(t, catalog[0].definition.annotations.OpenWorldHint)
+	assert.True(t, *catalog[0].definition.annotations.OpenWorldHint)
+	opts.OperationCapabilities = []string{"sync_source", "close_open_loop", "start_visual_attachment_build"}
+	for _, tc := range []struct {
+		family                    OperationFamily
+		present, absent1, absent2 string
+	}{
+		{OperationFamilySources, "sync_source", "close_open_loop", "start_visual_attachment_build"},
+		{OperationFamilyLoops, "close_open_loop", "sync_source", "start_visual_attachment_build"},
+		{OperationFamilyVisual, "start_visual_attachment_build", "sync_source", "close_open_loop"},
+	} {
+		opts.OperationWriteFamilies = []OperationFamily{tc.family}
+		tools := toolsByName(t, rawListTools(t, opts, true))
+		assert.Contains(t, tools, tc.present)
+		assert.NotContains(t, tools, tc.absent1)
+		assert.NotContains(t, tools, tc.absent2)
 	}
-	opts.DelegatedOnly = true
-	assertions.Empty(operationalCatalog(opts, true))
 }
