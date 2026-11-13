@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
@@ -3244,6 +3245,11 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
+	filter, err := parseChangesFilter(r)
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	limit, ok, err := queryInt(r, "limit")
 	if err != nil {
 		s.rejectBadParam(w, err)
@@ -3283,6 +3289,11 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
+	digest := filter.digest()
+	if position.filter != "" && position.filter != digest {
+		s.rejectBadParam(w, changesCursorError("was issued for a different filter; restart from an unfiltered cursor or the original filter"))
+		return
+	}
 	since := position.cursor
 
 	lister, ok := s.store.(ChangedMessageLister)
@@ -3293,7 +3304,11 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// One extra row decides has_more without a count == limit false positive.
-	page, err := lister.ListChangedMessages(r.Context(), since, limit+1)
+	readLimit := limit + 1
+	if digest != "" {
+		readLimit = changesScanBudget + 1
+	}
+	page, err := lister.ListChangedMessages(r.Context(), since, readLimit)
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -3302,10 +3317,22 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Message change query failed")
 		return
 	}
+	if filter.PersonID != 0 {
+		reference := resolver.Reference{Kind: resolver.ReferencePerson, ID: filter.PersonID}
+		resolution, resolveErr := resolver.Resolve(r.Context(), s.store, reference, nil)
+		if resolveErr != nil {
+			s.writePersonScopeError(w, reference, resolveErr, "change feed")
+			return
+		}
+		filter.participants = resolution.Scope.ParticipantIDs
+	}
 
 	rows := page.Messages
 	hasMore := len(rows) > limit
-	if hasMore {
+	var filteredNext store.ChangedMessagesCursor
+	if digest != "" {
+		rows, filteredNext, hasMore = scanChanges(page, since, filter, limit)
+	} else if hasMore {
 		rows = rows[:limit]
 	}
 
@@ -3316,6 +3343,8 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 
 	next := since
 	switch {
+	case digest != "":
+		next = filteredNext
 	case len(rows) > 0:
 		last := rows[len(rows)-1]
 		next = store.ChangedMessagesAfter(last.ContentChangedAt, last.ID)
@@ -3342,6 +3371,9 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		next = store.ChangedMessagesFrom(page.CompleteThrough)
 	}
 
+	if s.writeIfContextError(w, r.Context().Err()) {
+		return
+	}
 	s.logIfChangeFeedStalled(page.ServerTime, page.CompleteThrough)
 	var completeThrough *string
 	if !page.CompleteThrough.IsZero() {
@@ -3353,7 +3385,7 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		Messages:        messages,
 		Count:           len(messages),
 		HasMore:         hasMore,
-		NextCursor:      encodeChangesCursor(archiveUID, next),
+		NextCursor:      encodeChangesCursor(archiveUID, next, digest),
 		ServerTime:      page.ServerTime.UTC().Format(changesTimeLayout),
 		CompleteThrough: completeThrough,
 	})

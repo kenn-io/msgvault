@@ -166,7 +166,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.1.0**.
+it is separate from the binary release version. The current schema is **5.2.0**.
+
+Schema 5.2.0 adds optional filters to the message change feed.
 
 Schema 5.1.0 adds time-zone-aware Month and Year grouping, group overviews, and item totals for time groups.
 
@@ -1232,6 +1234,32 @@ Poll it, re-read the rows it returns, and store the cursor it hands back. Unlike
 `/messages/filter` it is ordered by when a message *changed*, not by when it was
 sent, so a mailbox imported today with ten-year-old mail shows up in the very
 next page.
+
+Use `person_id` to select messages sent by the person's currently linked
+identities, repeated `source_id` or `conversation_id` values to select those
+sources or conversations, and `incoming_only=true` to exclude owner-sent
+messages on a best-effort basis. Direction corrections do not move the change
+watermark, so they can leave a missed or stale result. Different filters combine
+with AND; values within a list combine with OR. Each list accepts up to 50
+positive IDs. The owner can also call the MCP `list_changes` tool. Linking a
+new identity keeps the cursor valid and applies to later changes; use a fresh
+walk to reconcile its older history.
+
+A filtered request examines at most 2,000 changes and can return an empty page
+with `has_more=true`; keep following `next_cursor`. A first walk over 400,000
+non-matching changes therefore needs about 200 requests. Once the available
+range is exhausted, the cursor can advance through the empty tail to the commit
+bound. A filtered cursor is bound to its selectors: changing or removing them
+returns `invalid_cursor`. Start again with an unfiltered cursor or the original
+filter. Older servers reject filtered cursors because they do not understand
+their format.
+
+A filtered feed reports arrivals and in-scope edits. A row that leaves a
+filter's scope, for example through a conversation move, sender re-attribution,
+or source consolidation, is not reported to that filter. Consumers caching
+rows must reconcile them with a periodic unfiltered or wider-scope re-read.
+When a message has no sender ID, the person filter uses its first From recipient;
+changes to recipients alone do not move the watermark.
 
 **What it is.** An invalidation feed over one projection of a message: the
 columns this endpoint returns, plus a body edit and two columns it does not

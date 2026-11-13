@@ -1482,14 +1482,19 @@ func (s *Store) GetMessageRecipientsContext(
 
 // ChangedMessage is one row of the content-change feed. Every field is a column
 // of `messages`, but the feed's fields and the watermark's columns are not the
-// same set: sender_id and metadata move the watermark without appearing here,
-// and id and content_changed_at appear here without moving it — the first is
+// same set: sender_id and metadata move the watermark without appearing in the
+// public feed, and id and content_changed_at appear without moving it — the first is
 // immutable identity and the second is the watermark itself. source_id moves
 // the watermark when archive ownership changes during consolidation. See
 // MessagesContentColumns. Labels and recipients live in child tables the
 // watermark does not cover and are deliberately absent: a consumer handed them
 // here would cache them stale forever.
+// SenderID (with From-recipient fallback) and IsFromMe are internal filter
+// inputs, not public feed fields.
+// Direction is not tracked and may change without moving the watermark.
 type ChangedMessage struct {
+	SenderID            int64
+	IsFromMe            bool
 	ID                  int64
 	SourceID            int64
 	SourceMessageID     string
@@ -1615,7 +1620,8 @@ func (c ChangedMessagesCursor) AfterID() (int64, bool) { return c.afterID, c.aft
 // because the clock says which instants have been REACHED and nothing about
 // which are still open for COMMITS. See ListChangedMessages.
 //
-// Single-table by design: no joins, no hydration. See ChangedMessage.
+// One ordered messages scan; a scalar lookup resolves a missing sender from
+// the first From recipient, as in the message list. No body hydration.
 //
 // No visibility filter (no LiveMessagesWhere): dedup-hidden and source-deleted
 // rows are returned with their timestamps set, because a consumer mirroring the
@@ -1626,7 +1632,10 @@ const changedMessagesSelect = `
 	       COALESCE(message_type,''), list_id, COALESCE(subject,''), COALESCE(snippet,''),
 	       sent_at, received_at, internal_date, COALESCE(size_estimate,0),
 	       COALESCE(has_attachments,FALSE), COALESCE(attachment_count,0),
-	       deleted_at, deleted_from_source_at, content_changed_at
+	       deleted_at, deleted_from_source_at, content_changed_at,
+	       COALESCE(sender_id, (SELECT mr.participant_id FROM message_recipients mr
+	           WHERE mr.message_id = messages.id AND mr.recipient_type = 'from'
+	           ORDER BY mr.id LIMIT 1), 0), COALESCE(is_from_me,FALSE)
 	FROM messages
 	WHERE content_changed_at >= ?`
 
@@ -1773,6 +1782,8 @@ func (s *Store) ListChangedMessages(
 			&deletedAt,
 			&deletedFromSourceAt,
 			&contentChangedAt,
+			&m.SenderID,
+			&m.IsFromMe,
 		); err != nil {
 			return ChangedMessagePage{}, fmt.Errorf("scan changed message: %w", err)
 		}

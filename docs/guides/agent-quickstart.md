@@ -53,6 +53,8 @@ mean the grant is too narrow or a write class is disabled; ask the owner to
 review access instead of attempting to bypass it. A grant without `stats.read`
 cannot use `get_stats` as a universal connection check.
 
+Use owner tool `list_changes` to follow filtered message changes with a cursor.
+
 ## Find people and read conversations
 
 Use `search_people` with a `query` to find observed contacts and saved profiles.
@@ -265,6 +267,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_source_identities` | read | — | owner-only |
 | `get_source_scheduler_status` | read | — | owner-only |
 | `get_stats` | read | — | stats.read |
+| `list_changes` | read | — | owner-only |
 | `list_directory_people` | read | — | owner-only |
 | `list_identity_judgments` | read | — | owner-only |
 | `list_identity_matches` | read | — | owner-only |
