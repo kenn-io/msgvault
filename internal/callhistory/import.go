@@ -1,0 +1,77 @@
+package callhistory
+
+import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"io"
+	"time"
+)
+
+var ErrImportTooLarge = errors.New("call import exceeds size limit")
+var ErrMalformedImport = errors.New("malformed call import JSON")
+
+// ImportRequest accepts one supplied record, never credentials or database
+// paths. Account is the stable source namespace. Bindings explicitly map
+// Signal peer IDs to existing archive participant IDs.
+type ImportRequest struct {
+	Format   string           `json:"format"`
+	Account  string           `json:"account"`
+	Record   jsontext.Value   `json:"record"`
+	Bindings map[string]int64 `json:"bindings,omitempty"`
+}
+
+func DecodeImport(r io.Reader) (Observation, error) {
+	data, err := io.ReadAll(io.LimitReader(r, MaxRequestBytes+1))
+	if err != nil {
+		return Observation{}, fmt.Errorf("read call import: %w", err)
+	}
+	if len(data) > MaxRequestBytes {
+		return Observation{}, ErrImportTooLarge
+	}
+	var req ImportRequest
+	if err := json.Unmarshal(data, &req, json.RejectUnknownMembers(true)); err != nil {
+		return Observation{}, fmt.Errorf("%w: %w: %w", ErrInvalid, ErrMalformedImport, err)
+	}
+	return req.Observation()
+}
+
+func (r ImportRequest) Observation() (Observation, error) {
+	if len(r.Record) == 0 || len(r.Record) > MaxRawBytes {
+		return Observation{}, invalid("record")
+	}
+	var o Observation
+	var err error
+	switch r.Format {
+	case "normalized":
+		if len(r.Bindings) != 0 {
+			return o, invalid("normalized records contain their own participants")
+		}
+		if err = json.Unmarshal(r.Record, &o, json.RejectUnknownMembers(true)); err != nil {
+			return o, invalid("normalized record")
+		}
+		if o.Account != r.Account {
+			return o, invalid("account mismatch")
+		}
+	case "signal_desktop":
+		o, err = r.signalObservation()
+	default:
+		err = invalid("unsupported format")
+	}
+	if err != nil {
+		return Observation{}, err
+	}
+	o.OccurredAt = o.OccurredAt.UTC()
+	if o.EndedAt != nil {
+		*o.EndedAt = o.EndedAt.UTC()
+	}
+	if err := o.Validate(); err != nil {
+		return Observation{}, err
+	}
+	o.OccurredAt = o.OccurredAt.Truncate(time.Microsecond)
+	if o.EndedAt != nil {
+		*o.EndedAt = o.EndedAt.Truncate(time.Microsecond)
+	}
+	return o, nil
+}
