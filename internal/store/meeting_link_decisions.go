@@ -124,25 +124,20 @@ func (s *Store) validateMeetingInput(ctx context.Context, endpoint meetingDecisi
 	if endpoint.Kind != meetingRefEvent || endpoint.Key == "" {
 		return nil
 	}
-	id, ok, err := s.resolveMeetingMessage(ctx, endpoint.ID)
+	if *budget <= 0 {
+		return calendarRecurrenceBudgetError()
+	}
+	scope, args := sourceScopeClause(ctx, "m.source_id")
+	var kind, date string
+	var allDay bool
+	var start nullableTimestamp
+	err := s.meetingSQLReader(ctx).QueryRowContext(ctx, `SELECT e.kind,e.all_day,e.start_at,e.start_date FROM calendar_events e JOIN messages m ON m.id=e.message_id WHERE e.message_id=?`+scope, append([]any{endpoint.ID}, args...)...).Scan(&kind, &allDay, &start, &date)
 	if err != nil {
 		return err
 	}
-	if !ok {
+	*budget--
+	if kind == "single" && (!start.Valid || (calrecur.Identity{Instant: start.Time, Date: date, AllDay: allDay}).Key() != endpoint.Key) {
 		return sql.ErrNoRows
-	}
-	rows, err := s.meetingEventRows(ctx, `e.message_id = ?`, []any{id}, budget)
-	if err != nil {
-		return err
-	}
-	if len(rows) == 0 {
-		return sql.ErrNoRows
-	}
-	event := rows[0].Event
-	if event.Kind == "single" {
-		if event.Start == nil || (calrecur.Identity{Instant: *event.Start, Date: event.StartDate, AllDay: event.AllDay}).Key() != endpoint.Key {
-			return sql.ErrNoRows
-		}
 	}
 	return nil
 }

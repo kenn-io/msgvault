@@ -1740,6 +1740,35 @@ func TestMeetingDecisionRescheduledSingleReset(t *testing.T) {
 	}
 }
 
+func TestMeetingDecisionRescheduledHiddenCopyReset(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"id":"single","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+	data, survivor := calendarFixture(t, st, "rescheduled-hidden-survivor", raw)
+	_, duplicate := calendarFixture(t, st, "rescheduled-hidden-duplicate", raw)
+	_, note := projectionFixture(t, st, "rescheduled-hidden-note", "meeting_json", `{}`)
+	hiddenRef := MeetingLinkRef{Kind: "evt", MessageID: duplicate, Identity: occurrenceIdentity(t, "20270314T100000Z")}
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err := st.DecideMeetingLinkContext(t.Context(), hiddenRef, noteRef, "link")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "rescheduled-hidden")
+	r.NoError(err)
+	data.RawMIME = []byte(`{"id":"single","start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`)
+	_, err = st.PersistMessage(data)
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), hiddenRef)
+	r.NoError(err)
+	r.Contains(record.MessageIDs, note)
+	wrong := MeetingLinkRef{Kind: "evt", MessageID: duplicate, Identity: occurrenceIdentity(t, "20270321T100000Z")}
+	_, err = st.MeetingRecordContext(t.Context(), wrong)
+	r.ErrorIs(err, sql.ErrNoRows)
+	_, err = st.DecideMeetingLinkContext(t.Context(), hiddenRef, noteRef, "clear")
+	r.NoError(err)
+	record, err = st.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Empty(record.Links)
+}
+
 func TestMeetingDecisionClearOrphanAfterSeriesArrives(t *testing.T) {
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
