@@ -88,8 +88,8 @@ archived yet must be owned by the configured account.
   is harmless. Later deliveries wait behind it.
 - Each delivery has one hour. After that, the daemon drops the delivery,
   including the changes after the failing one.
-- A change msgvault cannot decode, and a change for a Page with no enabled
-  profile, are skipped at once.
+- A change msgvault cannot decode, and a change for a Page or Instagram
+  account with no enabled profile, are skipped at once.
 - Every other failure is retried. This includes a comment or post that is
   already gone on Meta and a token that may not read it.
 
@@ -109,5 +109,5 @@ can find caption or comment mentions, so a skipped mention is lost.
 - A hide or unhide for a comment that is not archived yet is ignored. Polling
   sync does not read hidden state, so that comment is not marked hidden.
 - Deliveries larger than 8 MiB are refused.
-- If a resumed comment sync fails on a comment that was deleted and then
-  purged by `msgvault gc`, run the sync once with `--full`.
+- If a resumed comment sync fails on a comment or post that was deleted, for
+  example one purged by `msgvault gc`, run the sync once with `--full`.
