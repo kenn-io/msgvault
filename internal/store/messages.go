@@ -3635,15 +3635,13 @@ func (s *Store) MarkMessageDeletedContext(ctx context.Context, sourceID int64, s
 }
 
 // MarkMessageThreadDeletedContext marks a source message and every archived
-// reply below it in the same source as deleted from source. It returns the
-// source message IDs of the rows it marked.
-func (s *Store) MarkMessageThreadDeletedContext(ctx context.Context, sourceID int64, sourceMessageID string) ([]string, error) {
+// reply below it in the same source as deleted from source.
+func (s *Store) MarkMessageThreadDeletedContext(ctx context.Context, sourceID int64, sourceMessageID string) error {
 	if err := s.requireSyncSource(sourceID); err != nil {
-		return nil, err
+		return err
 	}
-	var marked []string
-	write := func(q contextRowsQuerier) error {
-		rows, err := q.QueryContext(ctx, fmt.Sprintf(`
+	write := func(q querier) error {
+		_, err := q.Exec(fmt.Sprintf(`
 			WITH RECURSIVE thread(id) AS (
 				SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
 				UNION
@@ -3653,31 +3651,13 @@ func (s *Store) MarkMessageThreadDeletedContext(ctx context.Context, sourceID in
 			UPDATE messages
 			SET deleted_from_source_at = %s
 			WHERE id IN (SELECT id FROM thread) AND deleted_from_source_at IS NULL
-			RETURNING source_message_id
 		`, s.dialect.Now()), sourceID, sourceMessageID, sourceID)
-		if err != nil {
-			return fmt.Errorf("mark message thread deleted: %w", err)
-		}
-		defer func() { _ = rows.Close() }()
-		marked = nil
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				return fmt.Errorf("scan marked message: %w", err)
-			}
-			marked = append(marked, id)
-		}
-		if err := rows.Err(); err != nil {
-			return fmt.Errorf("read marked messages: %w", err)
-		}
-		return rows.Close()
+		return err
 	}
-	// Always a transaction: outside one, a row-returning statement can be
-	// routed to a read snapshot carried by the context.
-	if err := s.withTxContext(ctx, func(tx *loggedTx) error { return write(tx) }); err != nil {
-		return nil, err
+	if s.syncGeneration == nil {
+		return write(boundQuerier{ctx: ctx, q: s.db})
 	}
-	return marked, nil
+	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
 }
 
 // MessageDeletedFromSourceContext reports whether a source message is archived
