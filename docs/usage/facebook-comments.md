@@ -141,7 +141,8 @@ The token needs Meta's `pages_manage_engagement` permission for Facebook
 comments, or `instagram_manage_comments` for Instagram comments. When Meta
 refuses a change, msgvault shows Meta's error code and leaves the archive as it
 was. If the comment's source is syncing, the command fails; run it again when
-the sync finishes.
+the sync finishes. If a resumed comment sync fails on a comment that was
+deleted and then purged by `msgvault gc`, run the sync once with `--full`.
 
 See [`comment moderate`](../cli-reference.md#comment-moderate) for all flags.
 

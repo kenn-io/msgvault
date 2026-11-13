@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"slices"
 	"strconv"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -99,7 +98,7 @@ func ModerateComment(ctx context.Context, st *store.Store, client *Client, targe
 	if !ok || !safeObjectID(target.CommentID) {
 		return errors.New("invalid comment target")
 	}
-	execution, source, err := lockActiveSource(ctx, st, target.SourceID)
+	execution, _, err := lockActiveSource(ctx, st, target.SourceID)
 	if err != nil {
 		return err
 	}
@@ -126,11 +125,7 @@ func ModerateComment(ctx context.Context, st *store.Store, client *Client, targe
 	// so the archive does not disagree with Meta.
 	local := context.WithoutCancel(ctx)
 	if action == ActionDelete {
-		var marked []string
-		marked, err = st.MarkMessageThreadDeletedContext(local, target.SourceID, target.CommentID)
-		if err == nil {
-			err = dropDeletedTraversal(local, st, execution, source, append(marked, target.CommentID))
-		}
+		err = st.MarkMessageThreadDeletedContext(local, target.SourceID, target.CommentID)
 	} else {
 		err = setCommentHidden(local, st, target.MessageID, action == ActionHide)
 	}
@@ -139,31 +134,6 @@ func ModerateComment(ctx context.Context, st *store.Store, client *Client, targe
 		return fmt.Errorf("%s %s comment %s, but msgvault could not record it: %w", platform.name, done, target.CommentID, err)
 	}
 	return nil
-}
-
-// dropDeletedTraversal republishes a paused sync's saved traversal without the
-// deleted comment and its replies. It prunes now, so a later `msgvault gc`
-// cannot matter, and by the Meta IDs of the deleted comment and the archived
-// replies marked with it, so it does not depend on the archive rows.
-func dropDeletedTraversal(ctx context.Context, st *store.Store, execution *store.SyncExecution, source *store.Source, commentIDs []string) error {
-	state, err := loadSavedState(ctx, st, source, false)
-	if err != nil {
-		return err
-	}
-	run := &importRun{state: state, sum: &ImportSummary{}}
-	changed, err := run.dropDeletedFrames(func(id string) (bool, error) { return slices.Contains(commentIDs, id), nil })
-	if err != nil || !changed {
-		return err
-	}
-	checkpoint, err := run.checkpoint()
-	if err != nil {
-		return err
-	}
-	syncID, err := execution.StartSyncContext(ctx, source.SourceType, "")
-	if err != nil {
-		return err
-	}
-	return st.PauseSyncWithCheckpoint(ctx, syncID, checkpoint)
 }
 
 // lockActiveSource takes the source's sync lock so a running sync cannot
