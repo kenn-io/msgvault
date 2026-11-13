@@ -210,6 +210,17 @@ func TestPersonFactCapabilitiesRequireExactContracts(t *testing.T) {
 	}
 }
 
+func TestPersonFactClaimsRejectEmptyTarget(t *testing.T) {
+	backend, _, id, _ := factFixture(t)
+	session := operationMCPSession(t, backend, nil, nil)
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "target": ""}})
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id}})
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+}
+
 func TestPersonFactSDKConfirmsEachTrackingWrite(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

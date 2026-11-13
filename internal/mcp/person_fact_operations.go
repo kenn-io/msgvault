@@ -17,7 +17,7 @@ func personFactOperationalDefinitions() []operationalDefinition {
 	return []operationalDefinition{
 		newOperationalDefinition("list_person_fact_claims", "Read fact claims, optionally including evidence and decisions. Claims and evidence can contain sensitive content.", OperationFamilyPersonFacts, closedObject(map[string]*jsonschema.Schema{
 			"person_id":         safeIDSchema("Durable person ID"),
-			"target":            stringSchema("Exact target as kind:key:revision, assembled from a claim's target; keys may contain colons"),
+			"target":            {Type: "string", Description: "Exact target as kind:key:revision, assembled from a claim's target; keys may contain colons", MinLength: new(1)},
 			"limit":             boundedIntegerSchema("Maximum rows per list (default 50)", 1, 200),
 			"offset":            nonNegativeIntegerSchema("Zero-based row offset per list", 0),
 			"include_evidence":  booleanSchema("Include a page of evidence"),
