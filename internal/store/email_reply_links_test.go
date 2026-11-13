@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -237,4 +238,60 @@ func TestResolveEmailRepliesSkipsDamagedParentFacts(t *testing.T) {
 	metadata, got := replyLinkState(t, st, damaged)
 	assert.False(got.Valid)
 	assert.JSONEq(`{"email_in_reply_to":42}`, metadata.String)
+}
+
+// TestArchiveGCLinksReplyWhenDuplicateParentIsPurged covers GC removing one of
+// two archived copies of a parent. The reply was ambiguous before, and no
+// remaining row changes, so only GC can see that it now has one parent.
+func TestArchiveGCLinksReplyWhenDuplicateParentIsPurged(t *testing.T) {
+	testutil.SkipIfPostgres(t, "archive GC is SQLite-only")
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	reply := createThreadEmail(t, f, "reply", "thread", "reply@example.test")
+	require.NoError(st.RecordEmailHeadersContext(t.Context(), f.Source.ID, reply, "", "parent@example.test"))
+	parent := createThreadEmail(t, f, "parent", "thread", "parent@example.test")
+	createThreadEmail(t, f, "parent-copy", "thread-elsewhere", "parent@example.test")
+	require.NoError(st.ResolveEmailReplyParentsContext(t.Context(), f.Source.ID, 0, nil))
+	_, got := replyLinkState(t, st, reply)
+	require.False(got.Valid, "two copies of the parent leave the reply unlinked")
+
+	require.NoError(st.MarkMessageDeletedContext(t.Context(), f.Source.ID, "parent-copy"))
+	plan, err := st.PlanGCContext(t.Context())
+	require.NoError(err)
+	purged, err := st.ExecuteGCContext(t.Context(), plan)
+	require.NoError(err)
+	require.Equal(int64(1), purged)
+
+	_, got = replyLinkState(t, st, reply)
+	assert.Equal(sql.NullInt64{Int64: parent, Valid: true}, got)
+}
+
+// TestRFC822IDBackfillLinksWaitingReplies covers dedup deriving the Message-ID
+// of a parent archived without one. The write leaves content_changed_at alone,
+// so the backfill itself must link the replies that were waiting for it.
+func TestRFC822IDBackfillLinksWaitingReplies(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	parent := createThreadEmail(t, f, "parent", "thread", "")
+	require.NoError(st.UpsertMessageRaw(parent, []byte(
+		"From: alice@example.test\r\nMessage-ID: <parent@example.test>\r\n\r\nBody")))
+	reply := createThreadEmail(t, f, "reply", "thread", "reply@example.test")
+	require.NoError(st.RecordEmailHeadersContext(t.Context(), f.Source.ID, reply, "", "parent@example.test"))
+	require.NoError(st.ResolveEmailReplyParentsContext(t.Context(), f.Source.ID, 0, nil))
+	_, got := replyLinkState(t, st, reply)
+	require.False(got.Valid, "the parent has no Message-ID yet")
+
+	plan, err := st.PlanRFC822IDBackfill(t.Context(), []int64{f.Source.ID})
+	require.NoError(err)
+	require.Equal(int64(1), plan.Ready)
+	updated, err := st.ApplyRFC822IDBackfill(t.Context(), []int64{f.Source.ID}, plan, nil)
+	require.NoError(err)
+	require.Equal(int64(1), updated)
+
+	_, got = replyLinkState(t, st, reply)
+	assert.Equal(sql.NullInt64{Int64: parent, Valid: true}, got)
 }

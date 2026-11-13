@@ -167,3 +167,29 @@ func TestLinkEmailRepliesLinksReplyThatReusesDeletedID(t *testing.T) {
 	got, _ := replyOf(t, st, reply)
 	assert.Equal(sql.NullInt64{Int64: parent, Valid: true}, got)
 }
+
+// TestLinkEmailRepliesLinksReplyRestoredByUndoDedup covers a reply that dedup
+// hid while the header backfill ran. The backfill runs once, so it must record
+// the hidden reply's parent for the restore to link it.
+func TestLinkEmailRepliesLinksReplyRestoredByUndoDedup(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("gmail", "archive@example.net")
+	require.NoError(err)
+	parent := archiveThreadMessage(t, st, src, "parent", store.MessageTypeEmail, "parent@example.net", "")
+	reply := archiveThreadMessage(t, st, src, "reply", store.MessageTypeEmail, "reply@example.net", "parent@example.net")
+	survivor := archiveThreadMessage(t, st, src, "reply-copy", store.MessageTypeEmail, "reply@example.net", "parent@example.net")
+	_, err = st.MergeDuplicates(t.Context(), survivor, []int64{reply}, "hide-reply")
+	require.NoError(err)
+	LinkEmailReplies(t.Context(), slog.New(slog.DiscardHandler), st, src)
+	require.Regexp(`^#w[0-9a-f]{16}$`, emailRepliesState(t, st, src))
+
+	restored, err := st.UndoDedup(t.Context(), "hide-reply")
+	require.NoError(err)
+	require.Equal(int64(1), restored)
+	LinkEmailReplies(t.Context(), slog.New(slog.DiscardHandler), st, src)
+
+	got, _ := replyOf(t, st, reply)
+	assert.Equal(sql.NullInt64{Int64: parent, Valid: true}, got)
+}

@@ -193,7 +193,9 @@ type EmailReplyBackfillPage struct {
 // BackfillEmailReplyHeadersContext reads the In-Reply-To header of up to one
 // page of a source's archived emails with id > afterID whose metadata names no
 // parent, and records the parents it finds in one transaction. It reads only a
-// bounded prefix of each stored payload, never bodies or attachments.
+// bounded prefix of each stored payload, never bodies or attachments. Emails
+// that dedup hid are read too: the backfill runs once, and UndoDedup can
+// restore them later.
 func (s *Store) BackfillEmailReplyHeadersContext(ctx context.Context, sourceID, afterID int64) (EmailReplyBackfillPage, error) {
 	var page EmailReplyBackfillPage
 	if err := s.requireSyncSource(sourceID); err != nil {
@@ -208,7 +210,7 @@ func (s *Store) BackfillEmailReplyHeadersContext(ctx context.Context, sourceID, 
 		rows, err := s.db.QueryContext(ctx, `SELECT m.id, `+s.dialect.BlobPrefixSQL("r.raw_data")+`, r.compression
   FROM messages m JOIN message_raw r ON r.message_id = m.id
   WHERE m.source_id = ? AND m.id > ? AND m.message_type = 'email'
-   AND m.deleted_at IS NULL AND r.raw_format = 'mime'
+   AND r.raw_format = 'mime'
    AND (m.metadata IS NULL OR CAST(m.metadata AS TEXT) NOT LIKE '%"email_in_reply_to"%')
   ORDER BY m.id LIMIT ?`, accountHeaderRawPrefix, sourceID, afterID, emailReplyBatchSize)
 		if err != nil {
@@ -450,11 +452,42 @@ func (s *Store) unresolvedEmailRepliesIn(ctx context.Context, q storeQuerier, so
 	return ids, rows.Err()
 }
 
+// emailReplyLinkTx is a transaction that can link email replies.
+type emailReplyLinkTx interface {
+	storeQuerier
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// connTx runs statements on a connection whose transaction began with
+// explicit SQL, so helpers written for loggedTx can join that transaction.
+type connTx struct {
+	conn   *sql.Conn
+	rebind func(string) string
+}
+
+func (c connTx) QueryContext(ctx context.Context, query string, args ...any) (*loggedRows, error) {
+	query = c.rebind(query)
+	start := time.Now()
+	rows, err := c.conn.QueryContext(ctx, query, args...) //nolint:rowserrcheck // caller owns rows.Err
+	if err != nil {
+		return nil, err
+	}
+	return &loggedRows{Rows: rows, query: query, args: args, reqID: RequestIDFromContext(ctx), start: start}, nil
+}
+
+func (c connTx) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return c.conn.QueryRowContext(ctx, c.rebind(query), args...)
+}
+
+func (c connTx) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	return c.conn.ExecContext(ctx, c.rebind(query), args...)
+}
+
 // linkEmailRepliesToParentTx links the unresolved replies in an email's
 // conversation after the email gains a Message-ID. A rfc822_message_id write
 // leaves content_changed_at alone, so LinkChangedEmailRepliesContext would not
 // see the new parent.
-func (s *Store) linkEmailRepliesToParentTx(ctx context.Context, tx *loggedTx, sourceID, parentID int64) error {
+func (s *Store) linkEmailRepliesToParentTx(ctx context.Context, tx emailReplyLinkTx, sourceID, parentID int64) error {
 	var conversation sql.NullInt64
 	err := tx.QueryRowContext(ctx, `SELECT conversation_id FROM messages
    WHERE id = ? AND source_id = ? AND message_type = 'email'`, parentID, sourceID).Scan(&conversation)
@@ -482,6 +515,78 @@ func (s *Store) linkEmailRepliesToParentTx(ctx context.Context, tx *loggedTx, so
 		if _, err := tx.ExecContext(ctx, `UPDATE messages SET reply_to_message_id = ?
    WHERE id = ? AND source_id = ? AND reply_to_message_id IS NULL`, parent, child, sourceID); err != nil {
 			return fmt.Errorf("link email reply %d: %w", child, err)
+		}
+	}
+	return nil
+}
+
+// emailMessageIDKey names a Message-ID within one source, in the canonical
+// form the parent lookup compares.
+type emailMessageIDKey struct {
+	sourceID  int64
+	canonical string
+}
+
+// emailMessageIDKeysTx lists the distinct Message-IDs of the emails that match
+// where, an SQL condition on the unaliased messages table.
+func (s *Store) emailMessageIDKeysTx(ctx context.Context, tx emailReplyLinkTx, where string) ([]emailMessageIDKey, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT source_id, `+s.dialect.RFC822CanonicalIDExpr("rfc822_message_id")+`
+   FROM messages WHERE message_type = 'email' AND COALESCE(rfc822_message_id, '') <> '' AND (`+where+`)`)
+	if err != nil {
+		return nil, fmt.Errorf("list email Message-IDs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	seen := make(map[emailMessageIDKey]struct{})
+	var keys []emailMessageIDKey
+	for rows.Next() {
+		var key emailMessageIDKey
+		var canonical []byte
+		if err := rows.Scan(&key.sourceID, &canonical); err != nil {
+			return nil, err
+		}
+		key.canonical = string(canonical)
+		if _, ok := seen[key]; !ok {
+			seen[key] = struct{}{}
+			keys = append(keys, key)
+		}
+	}
+	return keys, rows.Err()
+}
+
+// linkEmailRepliesToMessageIDsTx links the waiting replies of every live email
+// that carries one of keys. A write that removes one of two copies of a
+// parent calls it after the removal, when the other copy can be unique.
+func (s *Store) linkEmailRepliesToMessageIDsTx(ctx context.Context, tx emailReplyLinkTx, keys []emailMessageIDKey) error {
+	for _, key := range keys {
+		var canonical any = key.canonical
+		if !s.IsPostgreSQL() {
+			canonical = []byte(key.canonical)
+		}
+		ids, err := func() ([]int64, error) {
+			rows, err := tx.QueryContext(ctx, fmt.Sprintf(`SELECT id FROM messages
+   WHERE %s = ? AND source_id = ? AND message_type = 'email' AND deleted_at IS NULL
+   ORDER BY id`, s.dialect.RFC822CanonicalIDExpr("rfc822_message_id")), canonical, key.sourceID)
+			if err != nil {
+				return nil, fmt.Errorf("find emails with Message-ID: %w", err)
+			}
+			defer func() { _ = rows.Close() }()
+			var ids []int64
+			for rows.Next() {
+				var id int64
+				if err := rows.Scan(&id); err != nil {
+					return nil, err
+				}
+				ids = append(ids, id)
+			}
+			return ids, rows.Err()
+		}()
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := s.linkEmailRepliesToParentTx(ctx, tx, key.sourceID, id); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

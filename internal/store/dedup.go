@@ -1227,6 +1227,10 @@ func (s *Store) updateRFC822IDBackfillItem(
 			ErrRFC822IDBackfillPlanChanged, item.MessageID,
 		)
 	}
+	tx := connTx{conn: conn, rebind: s.dialect.Rebind}
+	if err := s.linkEmailRepliesToParentTx(ctx, tx, item.SourceID, item.MessageID); err != nil {
+		return fmt.Errorf("link email replies to RFC822 ID backfill message %d: %w", item.MessageID, err)
+	}
 	return nil
 }
 

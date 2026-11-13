@@ -80,12 +80,14 @@ replaces an existing link. After each sync or import, msgvault checks the
 emails whose `content_changed_at` moved since the previous pass: changed replies
 look up their parent, and older replies in the conversations of those emails are
 checked too. So a parent that arrives after its reply is linked, and so is a
-parent that a repair records on an older message. A repair that gives an email
-its Message-ID links the waiting replies in its conversation. A late parent
+parent that a repair records on an older message. A repair or dedup's
+Message-ID backfill that gives an email its Message-ID links the waiting replies
+in its conversation. When archive GC removes one copy of a parent, the replies
+waiting in the conversation of the remaining copy are linked. A late parent
 filed in a different conversation from its reply stays unlinked. The first sync
-or import of a source after upgrading reads `In-Reply-To` from each email's
-stored MIME headers and links the whole source once; a source merge repeats
-that pass.
+or import of a source after upgrading reads `In-Reply-To` from the stored MIME
+headers of each email, including emails dedup hid, and links the whole source
+once; a source merge repeats that pass.
 
 The Store derives `account_address` and `account_path` in the same transaction
 as every message write that changes their inputs: raw MIME, recipients, and
