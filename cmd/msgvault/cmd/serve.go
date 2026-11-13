@@ -4741,3 +4741,11 @@ func scheduledTeamsImportOptions(email string, cfg *config.Config) teams.ImportO
 func (a *storeAPIAdapter) GetSearchMetadata(ctx context.Context, ids []int64, q *search.Query, includeSnippet bool) (map[int64]store.SearchMetadata, error) {
 	return a.store.GetSearchMetadata(ctx, ids, q, includeSnippet)
 }
+
+func (a *storeAPIAdapter) BeginChangedMessagesReadSnapshotContext(ctx context.Context) (context.Context, func(), error) {
+	return a.store.BeginChangedMessagesReadSnapshotContext(ctx)
+}
+
+func (a *storeAPIAdapter) PersonInSources(ctx context.Context, participants, sources []int64) (bool, error) {
+	return a.store.PersonInSources(ctx, participants, sources)
+}

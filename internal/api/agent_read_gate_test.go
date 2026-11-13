@@ -77,7 +77,7 @@ func (s *agentReadGateStore) NeedsFTSBackfillQuickContext(ctx context.Context) b
 }
 
 func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
-	for _, route := range []string{"list", "search", "aggregate", "message", "store message", "thread", "domain", "stats", "subaggregate", "cached search"} {
+	for _, route := range []string{"list", "changes", "search", "aggregate", "message", "store message", "thread", "domain", "stats", "subaggregate", "cached search"} {
 		t.Run(route, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -102,7 +102,7 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 			t.Cleanup(srv.agentGrants.Close)
 			_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
 			requirements.NoError(err)
-			path := map[string]string{"cached search": "/api/v1/search/fast?q=glacier", "domain": "/api/v1/search/domains?domains=example.com", "stats": "/api/v1/stats/total", "subaggregate": "/api/v1/aggregates/sub?view_type=labels&sender=reader%40example.com", "list": "/api/v1/messages", "search": "/api/v1/search/fast?q=glacier", "aggregate": "/api/v1/aggregates", "message": fmt.Sprintf("/api/v1/messages/%d", id), "store message": fmt.Sprintf("/api/v1/messages/%d", id), "thread": fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id)}[route]
+			path := map[string]string{"cached search": "/api/v1/search/fast?q=glacier", "domain": "/api/v1/search/domains?domains=example.com", "stats": "/api/v1/stats/total", "subaggregate": "/api/v1/aggregates/sub?view_type=labels&sender=reader%40example.com", "list": "/api/v1/messages", "changes": "/api/v1/messages/changes", "search": "/api/v1/search/fast?q=glacier", "aggregate": "/api/v1/aggregates", "message": fmt.Sprintf("/api/v1/messages/%d", id), "store message": fmt.Sprintf("/api/v1/messages/%d", id), "thread": fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id)}[route]
 			get := func() *httptest.ResponseRecorder {
 				r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 				r.Header.Set(apiprotocol.AgentTokenHeader, secret)
@@ -1121,4 +1121,52 @@ func TestAgentReadAtCapacityFailsWhenRequestEnds(t *testing.T) {
 	assertions.Contains(w.Body.String(), "agent_read_busy")
 	assertions.Zero(st.DB().Stats().InUse)
 	assertions.Len(srv.readSnapshotSlots, readSnapshotConcurrency)
+}
+
+type changeFeedProbeStore struct {
+	*store.Store
+
+	probes    atomic.Int32
+	readLimit atomic.Int32
+	beginErr  error
+}
+
+func (s *changeFeedProbeStore) BeginChangedMessagesReadSnapshotContext(ctx context.Context) (context.Context, func(), error) {
+	s.probes.Add(1)
+	if s.beginErr != nil {
+		return ctx, nil, s.beginErr
+	}
+	return s.Store.BeginChangedMessagesReadSnapshotContext(ctx)
+}
+
+func (s *changeFeedProbeStore) ListChangedMessages(ctx context.Context, since store.ChangedMessagesCursor, limit int) (store.ChangedMessagePage, error) {
+	s.readLimit.Store(int32(limit))
+	return s.Store.ListChangedMessages(ctx, since, limit)
+}
+
+func TestAgentChangeFeedRateLimitBeforeSnapshot(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "feed-rate@example.test", "message", "rate test", "")
+	requirements.NoError(err)
+	wrapped := &changeFeedProbeStore{Store: st}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: wrapped, Logger: testLogger()})
+	t.Cleanup(srv.agentGrants.Close)
+	srv.changesRateLimiter.Close()
+	srv.changesRateLimiter = NewRateLimiter(0, 1)
+	t.Cleanup(func() { srv.changesRateLimiter.Close(); srv.rateLimiter.Close(); srv.mediaSearchRateLimiter.Close() })
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	requirements.NoError(err)
+	get := func(secret string) *httptest.ResponseRecorder {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages/changes?limit=1", nil)
+		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		return w
+	}
+	requirements.Equal(http.StatusOK, get(token).Code)
+	assertions.Equal(int32(2), wrapped.readLimit.Load())
+	assertions.Equal(http.StatusTooManyRequests, get(token).Code)
+	assertions.Equal(int32(1), wrapped.probes.Load())
 }

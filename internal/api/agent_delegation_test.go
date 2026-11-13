@@ -286,6 +286,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 		"getSubAggregates":        {"/api/v1/aggregates/sub?view_type=senders", src.Identifier},
 		"filterMessages":          {"/api/v1/messages/filter", src.Identifier},
 		"listMessages":            {"/api/v1/messages", src.Identifier},
+		"listChangedMessages":     {"/api/v1/messages/changes", "glacier"},
 		"searchMessagesByDomains": {"/api/v1/search/domains?domains=example.test", src.Identifier},
 		"getStats":                {"/api/v1/stats", `"total_messages":1`},
 		"getCLIStats":             {"/api/v1/cli/stats", `"total_messages":1`},
@@ -359,7 +360,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	for op := range allowed {
 		assertions.True(seen[op], "missing preexisting delegated operation: "+op)
 	}
-	assertions.Len(reads, 20)
+	assertions.Len(reads, 21)
 	assertions.Equal(len(reads), testedReads)
 	assertions.Greater(denied, 10)
 }

@@ -610,6 +610,18 @@ type ListMessagesQuery struct {
 }
 
 type ListChangedMessagesQuery struct {
+	// PersonID Only messages sent by a linked identity of this person
+	PersonID *int64 `json:"person_id,omitempty"`
+
+	// SourceID Source IDs; repeat for multiple sources (maximum 50)
+	SourceID []int64 `json:"source_id,omitempty"`
+
+	// ConversationID Conversation IDs; repeat for multiple conversations (maximum 50)
+	ConversationID []int64 `json:"conversation_id,omitempty"`
+
+	// IncomingOnly Best-effort incoming filter; direction corrections alone do not redeliver changes
+	IncomingOnly *bool `json:"incoming_only,omitempty"`
+
 	// Cursor Opaque cursor from the next_cursor of the previous response, sent back verbatim. Do not parse, construct, compare, or order it; its contents may change without notice. Omit, or send it empty, to start from the beginning of the archive. The token is not authenticated: the server does not sign it and cannot tell one it issued from a well-formed one you built, so a fabricated cursor naming this archive is accepted and simply moves your own position. Rejected with 400 invalid_cursor, rather than read as the beginning: a token the server cannot read, one carrying a cursor format this build does not speak, and one issued against a different archive
 	Cursor *string `json:"cursor,omitempty"`
 

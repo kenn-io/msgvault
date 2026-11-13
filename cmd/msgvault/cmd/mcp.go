@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
@@ -200,6 +201,10 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommands(true), DelegatedOnly: true,
 		Engine: daemonclient.NewEngineAdapter(st), AttachmentReader: st,
 		Calendar: st, GrantPermissions: grant.Permissions, Families: families,
+	}
+	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentChangeFeedMinAPISchemaVersion) {
+		opts.OperationCapabilities = []string{mcpserver.ToolListChanges}
+		opts.Operations = &daemonMCPOperations{client: st, now: time.Now, supported: opts.OperationCapabilities, delegated: true}
 	}
 	return opts, nil
 }

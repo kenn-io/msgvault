@@ -166,7 +166,11 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.1.0**.
+it is separate from the binary release version. The current schema is **5.3.0**.
+
+Schema 5.3.0 adds delegated message change feed reads.
+
+Schema 5.2.0 adds optional filters to the message change feed.
 
 Schema 5.1.0 adds time-zone-aware Month and Year grouping, group overviews, and item totals for time groups.
 
@@ -1232,6 +1236,45 @@ Poll it, re-read the rows it returns, and store the cursor it hands back. Unlike
 `/messages/filter` it is ordered by when a message *changed*, not by when it was
 sent, so a mailbox imported today with ten-year-old mail shows up in the very
 next page.
+
+Use `person_id` to select messages sent by the person's currently linked
+identities, repeated `source_id` or `conversation_id` values to select those
+sources or conversations, and `incoming_only=true` to exclude owner-sent
+messages on a best-effort basis. Direction corrections do not move the change
+watermark, so they can leave a missed or stale result. Different filters combine
+with AND; values within a list combine with OR. Each list accepts up to 50
+positive IDs. Owners and agents with `search.read` can call the MCP
+`list_changes` tool. Linking a new identity keeps the cursor valid and applies
+to later changes; use a fresh walk to reconcile its older history.
+
+Agents see only granted sources; an ungranted `source_id` or a person with no
+sender, recipient, or conversation roster appearance in a granted source returns
+`403 permission_denied`. Verification message subjects and snippets are masked
+unless the grant includes `verification.read`. An unfiltered request returns an
+empty `200` page when all of a grant's sources are gone.
+
+An agent cursor is bound to the grant's source references. A token with a
+different source set, or the owner, receives `400 invalid_cursor` and must
+restart the walk. A replacement token with the same references can resume,
+including after a source is removed and re-added. A legacy or unfiltered owner
+cursor without a filter binding can start an agent walk in the same archive;
+subsequent cursors carry the grant binding.
+
+A filtered request examines at most 2,000 changes in the authorized sources and
+can return an empty page with `has_more=true`; keep following `next_cursor`. A
+first walk over 400,000 non-matching changes therefore needs about 200 requests.
+Once the available range is exhausted, the cursor can advance through the empty
+tail to the commit bound. A filtered cursor is bound to its selectors: changing
+or removing them returns `invalid_cursor`. Start again with an unfiltered cursor
+or the original filter. Older servers reject filtered cursors because they do not understand
+their format.
+
+A filtered feed reports arrivals and in-scope edits. A row that leaves a
+filter's scope, for example through a conversation move, sender re-attribution,
+or source consolidation, is not reported to that filter. Consumers caching
+rows must reconcile them with a periodic unfiltered or wider-scope re-read.
+When a message has no sender ID, the person filter uses its first From recipient;
+changes to recipients alone do not move the watermark.
 
 **What it is.** An invalidation feed over one projection of a message: the
 columns this endpoint returns, plus a body edit and two columns it does not
@@ -3332,8 +3375,9 @@ Agent requests use `X-Msgvault-Agent-Token` instead of the owner key. The
 daemon checks `search.read`, `message.read`, `attachment.read`, or `stats.read`
 and the live source identity before serving supported archive reads. Unscoped
 reads select only granted sources. Explicit accounts, collections, and source ID
-sets must fit entirely inside the grant. A missing permission or an account
-selector outside the grant returns `403 permission_denied` and names the
+sets must fit entirely inside the grant. The message change feed requires
+`search.read` and applies the same source scope. A missing permission or an
+account selector outside the grant returns `403 permission_denied` and names the
 permission. A message, thread, or attachment outside the grant returns the same
 `404` as a missing one. At most two agent reads run at once; others wait, and a
 request that ends while waiting returns `503 agent_read_busy`. Unsupported routes remain
