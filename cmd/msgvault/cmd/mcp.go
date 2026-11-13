@@ -85,6 +85,13 @@ Add to Claude Desktop config:
 		}
 		defer func() { _ = st.Close() }()
 		if !isAgentMode(state) && !mcpRevealVerification {
+			version, err := st.APISchemaVersion(cmd.Context())
+			if err != nil {
+				return fmt.Errorf("check daemon verification support: %w", err)
+			}
+			if !daemonclient.APISchemaVersionAtLeast(version, daemonclient.VerificationMinAPISchemaVersion) {
+				return fmt.Errorf("verification withholding requires daemon API schema %s or newer (daemon reports %q); upgrade the daemon", daemonclient.VerificationMinAPISchemaVersion, version)
+			}
 			st, err = st.WithVerificationWithheld()
 			if err != nil {
 				return err
@@ -115,10 +122,7 @@ Add to Claude Desktop config:
 				return err
 			}
 		} else {
-			opts, err = daemonMCPServeOptions(ctx, st, state)
-			if !mcpRevealVerification && err != nil {
-				return fmt.Errorf("verify daemon withholding support: %w", err)
-			}
+			opts = daemonMCPServeOptions(ctx, st, state)
 		}
 		applyMCPWriteFlags(cmd, "", &opts)
 
@@ -245,7 +249,7 @@ const vectorLaneHealthMinAPISchemaVersion = "2.28.0"
 // Schema 2.4.0 added the visual attachment search route.
 const visualSearchMinAPISchemaVersion = "2.4.0"
 
-func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *invocation) (mcpserver.ServeOptions, error) {
+func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *invocation) mcpserver.ServeOptions {
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
@@ -363,7 +367,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.DraftCommands = mcpDraftCommands(false)
 	}
 
-	return opts, capabilityErr
+	return opts
 }
 
 // probeKataDocbank reports whether the daemon can cite Docbank transcripts.

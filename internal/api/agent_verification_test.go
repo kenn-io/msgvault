@@ -72,7 +72,7 @@ func TestAgentVerificationReads(t *testing.T) {
 			ownerResponse := httptest.NewRecorder()
 			srv.Router().ServeHTTP(ownerResponse, ownerReq)
 			assertions.Equal(http.StatusOK, ownerResponse.Code, ownerResponse.Body.String())
-			assertions.Equal(apiprotocol.VerificationWithhold, ownerResponse.Header().Get(apiprotocol.VerificationHeader))
+			assertions.Empty(ownerResponse.Header().Get(apiprotocol.VerificationHeader))
 			assertions.NotContains(ownerResponse.Body.String(), "4829")
 			assertions.Contains(ownerResponse.Body.String(), verification.Masked)
 			var masked map[string]json.RawMessage

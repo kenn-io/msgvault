@@ -1027,10 +1027,10 @@ func (r *boundaryErrorReader) Read(p []byte) (int, error) {
 
 func (r *boundaryErrorReader) Close() error { return nil }
 
-func TestVerificationWithholdingAcknowledgement(t *testing.T) {
+func TestVerificationWithholdingRequests(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	var acknowledge, writeMarked, archiveMarked atomic.Bool
+	var writeMarked, archiveMarked atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		marked := r.Header.Get(apiprotocol.VerificationHeader) == apiprotocol.VerificationWithhold
 		if r.URL.Path == "/prefix/api/v1/saved-views" {
@@ -1038,9 +1038,6 @@ func TestVerificationWithholdingAcknowledgement(t *testing.T) {
 		}
 		if r.URL.Path == "/prefix/api/v1/query/archive" {
 			archiveMarked.Store(marked)
-		}
-		if acknowledge.Load() && r.Header.Get(apiprotocol.VerificationHeader) == apiprotocol.VerificationWithhold {
-			w.Header().Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/prefix/api/v1/saved-views/42/run" {
@@ -1065,13 +1062,10 @@ func TestVerificationWithholdingAcknowledgement(t *testing.T) {
 	protected, err := ordinary.WithVerificationWithheld()
 	require.NoError(err)
 	_, err = protected.Health(t.Context())
-	require.ErrorContains(err, "upgrade the daemon")
+	require.NoError(err)
 	response, err := protected.DoGeneratedRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
-	if response != nil {
-		_ = response.Body.Close()
-	}
-	require.Nil(response)
-	require.ErrorContains(err, "upgrade the daemon")
+	require.NoError(err)
+	require.NoError(response.Body.Close())
 	_, err = ordinary.Health(t.Context())
 	require.NoError(err)
 	_, err = protected.RunSavedView(t.Context(), 42, 10, "", "")
@@ -1081,17 +1075,6 @@ func TestVerificationWithholdingAcknowledgement(t *testing.T) {
 	assert.Equal("verification_masked", apiErr.APIErrorCode())
 	assert.True(writeMarked.Load())
 	_, _, err = protected.RunArchiveSQLQueryWithFresh(t.Context(), "SELECT 1", false)
-	require.ErrorContains(err, "upgrade the daemon")
+	require.NoError(err)
 	assert.True(archiveMarked.Load())
-	acknowledge.Store(true)
-	_, err = protected.Health(t.Context())
-	require.NoError(err)
-	_, _, err = protected.RunArchiveSQLQueryWithFresh(t.Context(), "SELECT 1", false)
-	require.NoError(err)
-	response, err = protected.DoGeneratedRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
-	require.NoError(err)
-	require.NoError(response.Body.Close())
-	acknowledge.Store(false)
-	_, err = protected.Health(t.Context())
-	require.ErrorContains(err, "upgrade the daemon")
 }

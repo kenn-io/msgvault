@@ -1404,6 +1404,10 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auth := s.requestAuthentication(r)
+	if auth.Grant == nil && s.withholdsVerification(r) && !IsCLIRunDraftReply(req.Args) && !IsCLIRunDraftCompose(req.Args) && !IsCLIRunDraftSendAs(req.Args) {
+		writeAPIHTTPError(w, newAPIHTTPError(http.StatusForbidden, "verification_masked", "Command is unavailable while verification content is withheld"))
+		return
+	}
 	if auth.Mode == AuthModeDelegated {
 		if !delegatedCLIRunAdmitted(req.Args, auth.Grant) {
 			writeError(w, http.StatusBadRequest, "command_not_allowed", "command is not allowed through the daemon CLI runner")

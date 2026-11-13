@@ -251,7 +251,7 @@ func withAPIKeySecurity(op huma.Operation) huma.Operation {
 	return op
 }
 
-// ownerVerificationPolicy acknowledges admitted operations and snapshots classified owner reads.
+// ownerVerificationPolicy admits operations and snapshots classified owner reads.
 func (s *Server) ownerVerificationPolicy(ctx huma.Context, req *http.Request, hasSnapshot bool) (func(), *apiHTTPError) {
 	noRelease := func() {}
 	if value := req.Header.Get(apiprotocol.VerificationHeader); value != "" && value != apiprotocol.VerificationWithhold {
@@ -262,7 +262,6 @@ func (s *Server) ownerVerificationPolicy(ctx huma.Context, req *http.Request, ha
 		return noRelease, nil
 	}
 	if auth.Grant != nil {
-		ctx.SetHeader(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
 		return noRelease, nil
 	}
 	op := ctx.Operation()
@@ -274,7 +273,6 @@ func (s *Server) ownerVerificationPolicy(ctx huma.Context, req *http.Request, ha
 	if !admitted {
 		return nil, newAPIHTTPError(http.StatusForbidden, "verification_masked", operation+" is unavailable while verification content is withheld; start MCP with --reveal-verification")
 	}
-	ctx.SetHeader(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
 	if !snapshot || hasSnapshot {
 		return noRelease, nil
 	}

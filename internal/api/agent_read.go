@@ -35,7 +35,7 @@ var agentReadPermissions = map[string]agentgrant.Permission{
 var ownerVerificationOperations = map[string]bool{
 	"searchCLI": true, "searchMessages": true, "fastSearch": true, "deepSearch": true,
 	"filterMessages": true, "listMessages": true, "searchMessagesByDomains": true,
-	"getCLIMessageThread": true, "getMessage": true, "getCLIMessage": true,
+	"getCLIMessageThread": true, "getMessage": false, "getCLIMessage": false,
 	"getAttachment": true, "getAttachmentContent": true, "getCLIAttachment": true,
 	"findSimilarMessages": false,
 	"health":              false, "headHealth": false, "getHealth": false, "getMCPCapabilities": false, "getMediaSearchStatus": false,
@@ -57,6 +57,10 @@ var ownerVerificationOperations = map[string]bool{
 	"previewPersonTiers": false, "explainPersonTier": false, "mergePersons": false,
 	"approveCardDAVPublication": false, "syncCardDAV": false,
 	"getPersonByUID": false, "getPersonTracking": false, "getPersonContactState": false, "getOrganization": false,
+	"listPersonRelationships": false, "getPersonStructuredProfile": false,
+	"findContactCandidates": false, "getPersonMessagingRoutes": false,
+	"personMatchScoringConsent": false, "personMatchScoringRevoke": false,
+	"runCLI": false, "controlCalendar": false,
 }
 
 // Ranking runs before the owner snapshot, but hydration and classification share it.

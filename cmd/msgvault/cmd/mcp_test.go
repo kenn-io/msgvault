@@ -23,12 +23,6 @@ import (
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 )
 
-func acknowledgeMCPVerification(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("X-Msgvault-Verification") == "withhold" {
-		w.Header().Set("X-Msgvault-Verification", "withhold")
-	}
-}
-
 func TestMCPToolSummaryFlagsExist(t *testing.T) {
 	for _, summary := range mcpserver.ToolSummaries() {
 		if summary.Flag != "" {
@@ -84,7 +78,6 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 			if r.Header.Get("X-Msgvault-Verification") == "withhold" {
 				markedHealth.Add(1)
 			}
-			acknowledgeMCPVerification(w, r)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status": "ok", "api_schema_version": api.APISchemaVersion,
@@ -251,7 +244,6 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
-			require := require.New(t)
 			var healthRequests atomic.Int32
 			var discoveryRequests atomic.Int32
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -274,12 +266,7 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 				_, _ = w.Write([]byte(tt.health))
 			})
 
-			opts, err := daemonMCPServeOptions(t.Context(), client, invocationFromContext(t.Context()))
-			if tt.health == "" {
-				require.Error(err)
-			} else {
-				require.NoError(err)
-			}
+			opts := daemonMCPServeOptions(t.Context(), client, invocationFromContext(t.Context()))
 			assert.Equal(tt.wantText, opts.HybridSearcher != nil, "semantic search")
 			assert.Equal(tt.wantText, opts.SimilarSearcher != nil, "similar messages")
 			assert.Equal(tt.wantVisual, opts.VisualSearcher != nil, "visual search")
@@ -292,7 +279,6 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 
 func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 	assert := assert.New(t)
-	require := require.New(t)
 	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
@@ -318,13 +304,13 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 		http.Error(w, `{"error":"vector_initializing","message":"Vector search is initializing"}`, http.StatusServiceUnavailable)
 	})
 
-	opts, _ := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
+	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
 	_, err := opts.HybridSearcher.SearchHybrid(testCtx, mcpserver.HybridSearchRequest{
 		Query: "term",
 		Mode:  "hybrid",
 	})
 	var coded interface{ APIErrorCode() string }
-	require.ErrorAs(err, &coded)
+	require.ErrorAs(t, err, &coded)
 	assert.Equal("vector_initializing", coded.APIErrorCode())
 	path := <-requests
 	assert.Equal("/api/v1/mcp/capabilities", path, "startup probes optional operations")
@@ -399,7 +385,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 				}
 			})
 
-			opts, _ := daemonMCPServeOptions(t.Context(), client, invocationFromContext(t.Context()))
+			opts := daemonMCPServeOptions(t.Context(), client, invocationFromContext(t.Context()))
 			if tt.wantPeople {
 				assert.NotNil(opts.PeopleBackend)
 			} else {
@@ -448,7 +434,7 @@ func TestDaemonMCPServeOptionsWarnsWhenPeopleCapabilityProbeFails(t *testing.T) 
 		http.NotFound(w, r)
 	})
 
-	opts, _ := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
+	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
 	assert.Nil(opts.PeopleBackend)
 	assert.Nil(opts.DirectoryBackend)
 	assert.Nil(opts.ChatDiscoveryBackend)
@@ -460,7 +446,6 @@ func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 	logger := testLoggerValue()
 
 	assert := assert.New(t)
-	require := require.New(t)
 	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
@@ -490,8 +475,7 @@ func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 		}
 	})
 
-	opts, err := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
-	require.NoError(err)
+	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
 	assert.NotNil(opts.PeopleBackend)
 	assert.NotNil(opts.DirectoryBackend)
 	assert.NotNil(opts.SavedViews)
@@ -526,7 +510,7 @@ func TestDaemonMCPServeOptionsSavesDeletionManifestsThroughDaemon(t *testing.T) 
 		}
 	})
 
-	opts, _ := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
+	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
 	require.NotNil(opts.ManifestSaver, "manifest saver")
 
 	manifest := deletion.NewManifest("mcp test", []string{"gmail-001"})
@@ -637,7 +621,7 @@ func TestDaemonMCPDocbankCapability(t *testing.T) {
 					http.NotFound(w, r)
 				}
 			})
-			opts, _ := daemonMCPServeOptions(ctx, client, invocationFromContext(ctx))
+			opts := daemonMCPServeOptions(ctx, client, invocationFromContext(ctx))
 			assert.True(opts.KataLookup)
 			assert.Equal(tc.want, opts.KataDocbank)
 			if tc.version == "3.12.0" {
@@ -665,7 +649,7 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 	var logs bytes.Buffer
 	state := *invocationFromContext(ctx)
 	state.logger = slog.New(slog.NewTextHandler(&logs, nil))
-	opts, _ := daemonMCPServeOptions(ctx, client, &state)
+	opts := daemonMCPServeOptions(ctx, client, &state)
 	assert.False(opts.KataDocbank)
 	assert.Contains(logs.String(), "Kata transcript citations hidden because the Docbank status probe failed")
 	assert.Contains(logs.String(), "503")
@@ -721,14 +705,14 @@ func TestMCPStandaloneVerificationHandshake(t *testing.T) {
 			if tc.wantServe {
 				require.ErrorIs(err, stopped)
 			} else {
-				require.ErrorContains(err, "daemon did not acknowledge verification withholding")
+				require.ErrorContains(err, "requires daemon API schema 5.3.0")
 			}
 			assert.Equal(tc.wantServe, served)
 			if tc.reveal {
 				assert.Zero(marked.Load())
 				assert.Positive(unmarked.Load())
 			} else {
-				assert.Positive(marked.Load())
+				assert.Zero(marked.Load())
 			}
 		})
 	}

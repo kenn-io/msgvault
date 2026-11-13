@@ -245,15 +245,11 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 				return
 			}
 			if strings.Contains(tc.path, "/search/similar") {
-				assert.Equal(apiprotocol.VerificationWithhold, w.Header().Get(apiprotocol.VerificationHeader))
+				assert.Empty(w.Header().Get(apiprotocol.VerificationHeader))
 				return
 			}
 			require.Equal(http.StatusOK, w.Code, w.Body.String())
-			if tc.marked {
-				assert.Equal(apiprotocol.VerificationWithhold, w.Header().Get(apiprotocol.VerificationHeader))
-			} else {
-				assert.Empty(w.Header().Get(apiprotocol.VerificationHeader))
-			}
+			assert.Empty(w.Header().Get(apiprotocol.VerificationHeader))
 			if tc.path == "/api/v1/messages" {
 				assert.Contains(w.Body.String(), verification.Masked)
 				assert.NotContains(w.Body.String(), "482913")
@@ -292,7 +288,6 @@ func TestLibraryHandlerVerificationRefusesUnclassifiedReads(t *testing.T) {
 		{http.MethodPost, fmt.Sprintf("/api/v1/saved-views/%d/run", view.ID)},
 		{http.MethodGet, fmt.Sprintf("/api/v1/conversations/%d", id)},
 		{http.MethodGet, "/api/v1/loops"},
-		{http.MethodPost, "/api/v1/calendar/control"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			request := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, strings.NewReader(`{}`))

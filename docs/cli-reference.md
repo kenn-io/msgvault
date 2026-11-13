@@ -4655,7 +4655,7 @@ be verified, including when another process reuses the PID. Stdio sessions are
 not listening endpoints and do not appear. An empty JSON list means no HTTP
 listeners were found in this application's configured data directory.
 
-Start the Model Context Protocol server for AI assistant integration. Owner MCP withholds detected verification content by default in message detail, thread, list, and keyword and vector search reads. Saved View runs, text conversations, Explore, original MIME, and archive SQL are refused while withholding. This requires daemon API 5.3.0 or newer; use `--reveal-verification` to allow the original content. See [verification content](api-server.md#verification-content) for detection and limits.
+Start the Model Context Protocol server for AI assistant integration. Owner MCP withholds detected verification content by default in message detail, thread, list, and keyword and vector search reads. Draft reads and edits, Saved View runs, text conversations, person files and agenda, media and meeting reads, Explore, original MIME, and archive SQL are refused while withholding. Draft creation and calendar availability remain available. This requires daemon API 5.3.0 or newer; use `--reveal-verification` to allow the original content. See [verification content](api-server.md#verification-content) for detection and limits.
 
 Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Msgvault never sends. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
 

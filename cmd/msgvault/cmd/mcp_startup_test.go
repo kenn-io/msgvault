@@ -47,7 +47,6 @@ func testMCPStartupCatalog(t *testing.T, analyticsEngine string) {
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/health":
-			acknowledgeMCPVerification(w, r)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q,"analytics_engine":%q}`, api.APISchemaVersion, analyticsEngine)
 		case "/api/v1/stats":

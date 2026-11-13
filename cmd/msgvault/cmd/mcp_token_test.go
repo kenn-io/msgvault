@@ -291,7 +291,6 @@ func TestMCPIndependentInboundTokenWithEnvironmentOnlyBackend(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/v1/health" {
-			acknowledgeMCPVerification(w, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": api.APISchemaVersion})
 			return
 		}

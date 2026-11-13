@@ -66,6 +66,10 @@ func (s *Server) handleCalendarControl(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_calendar_request", err.Error())
 		return
 	}
+	if s.requestAuthentication(r).Grant == nil && s.withholdsVerification(r) && !calcontrol.IsRead(request.Action) {
+		writeAPIHTTPError(w, newAPIHTTPError(http.StatusForbidden, "verification_masked", "Calendar event content is unavailable while verification content is withheld"))
+		return
+	}
 	controller, ok := s.store.(CalendarController)
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "calendar_unavailable", "Calendar control is unavailable")

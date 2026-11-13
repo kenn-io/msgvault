@@ -300,7 +300,7 @@ func querySQLDefinition() toolDefinition {
 	accepted.Schema = ""
 	definition := readDefinition(
 		ToolQuerySQL,
-		"Run read-only SQL against the analytics cache. Protected owner sessions refuse this read. Files outside the cache and network access are unavailable. Set fresh to request a coalesced background refresh; an accepted build returns a job ID instead of rows.",
+		"Run read-only SQL against the analytics cache. Files outside the cache and network access are unavailable. Set fresh to request a coalesced background refresh; an accepted build returns a job ID instead of rows.",
 		closedObject(map[string]*jsonschema.Schema{
 			"sql":   stringSchema("One read-only SQL statement"),
 			"fresh": booleanSchema("Request a background cache check including writes committed before this request"),
@@ -705,7 +705,7 @@ func exportEMLDefinition() toolDefinition {
 	offset, length := chunkInputSchemas("message")
 	return readDefinition(
 		ToolExportEML,
-		"Export one archived email as its original .eml bytes, exactly as the provider delivered them, in base64 chunks. Protected owner sessions refuse this read. "+
+		"Export one archived email as its original .eml bytes, exactly as the provider delivered them, in base64 chunks. "+
 			"Pass exactly one of id (msgvault message ID) or source_message_id (provider ID, such as a Gmail message ID); "+
 			"add account when a provider ID exists in more than one account. "+
 			"Call from offset 0, then offset += length until complete is true; concatenate the decoded chunks and verify them against size and sha256 (of the whole message). "+
@@ -736,7 +736,7 @@ func listThreadDefinition() toolDefinition {
 			"Pass exactly one of id or source_message_id (any message in the thread) or thread_id (provider conversation ID, such as a Gmail threadId); "+
 			"add account when a provider ID exists in more than one account. "+
 			"Page with offset until has_more is false; total counts the whole conversation. "+
-			"has_raw marks messages whose original .eml is stored. Verification policy can refuse export_eml. "+
+			"has_raw marks messages whose original .eml can be fetched with export_eml. "+
 			"Messages deleted from the provider stay listed with deleted_from_source_at. "+
 			"last_sync_at is the account's latest sync activity: newer replies may not be archived yet. "+
 			"Hidden duplicates are excluded; last_sync_at does not establish conversation completeness.",

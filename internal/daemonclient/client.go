@@ -352,7 +352,7 @@ func doRequestWithRootContext(
 			stopRootCancellation: stopRootCancellation,
 			cancel:               cancel,
 		}
-		return checkVerificationResponse(req, boundErrorBody(resp, errorBodyLimit))
+		return boundErrorBody(resp, errorBodyLimit), nil
 	}
 
 	// #nosec G704 -- daemonclient intentionally sends requests to the
@@ -361,22 +361,7 @@ func doRequestWithRootContext(
 	if err != nil {
 		return nil, err
 	}
-	return checkVerificationResponse(req, boundErrorBody(resp, errorBodyLimit))
-}
-
-type VerificationAcknowledgementError struct{}
-
-func (*VerificationAcknowledgementError) Error() string {
-	return "daemon did not acknowledge verification withholding; upgrade the daemon or start MCP with --reveal-verification"
-}
-func (*VerificationAcknowledgementError) APIErrorCode() string { return "verification_unavailable" }
-
-func checkVerificationResponse(req *http.Request, resp *http.Response) (*http.Response, error) {
-	if req.Header.Get(apiprotocol.VerificationHeader) == apiprotocol.VerificationWithhold && resp.StatusCode >= 200 && resp.StatusCode < 300 && resp.Header.Get(apiprotocol.VerificationHeader) != apiprotocol.VerificationWithhold {
-		_ = resp.Body.Close()
-		return nil, &VerificationAcknowledgementError{}
-	}
-	return resp, nil
+	return boundErrorBody(resp, errorBodyLimit), nil
 }
 
 const maxErrorBodyBytes = 64 << 10

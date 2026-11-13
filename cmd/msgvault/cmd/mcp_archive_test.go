@@ -82,7 +82,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 					http.NotFound(w, r)
 				}
 			})
-			opts, _ := daemonMCPServeOptions(t.Context(), client, nil)
+			opts := daemonMCPServeOptions(t.Context(), client, nil)
 			// Route availability is independent of source inventory.
 			opts.Operations = newDaemonMCPOperations(client, nil)
 			opts.OperationCapabilities = []string{"get_slack_sync_policy"}
@@ -176,7 +176,7 @@ func TestMCPArchiveRefresh(t *testing.T) {
 	client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, APIKey: "key", AllowInsecure: true})
 	require.NoError(err)
 	defer func() { require.NoError(client.Close()) }()
-	opts, _ := daemonMCPServeOptions(t.Context(), client, &invocation{cfg: cfg})
+	opts := daemonMCPServeOptions(t.Context(), client, &invocation{cfg: cfg})
 	cmd := &cobra.Command{Use: "serve"}
 	addServeConfigFlags(cmd)
 	require.NoError(installServeMCP(t.Context(), cmd, server, &invocation{cfg: cfg}))
@@ -271,7 +271,7 @@ func TestMCPArchiveCatalogBudgets(t *testing.T) {
 					routes.Router().ServeHTTP(w, r)
 				}
 			})
-			opts, _ := daemonMCPServeOptions(t.Context(), client, nil)
+			opts := daemonMCPServeOptions(t.Context(), client, nil)
 			listed := archiveMCPCatalog(t, opts)
 			encoded, err := json.Marshal(listed)
 			require.NoError(err)

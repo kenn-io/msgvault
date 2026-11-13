@@ -189,7 +189,7 @@ func TestRemoteClientVerificationAdmission(t *testing.T) {
 	w = httptest.NewRecorder()
 	f.srv.Router().ServeHTTP(w, req)
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
-	assert.Equal(apiprotocol.VerificationWithhold, w.Header().Get(apiprotocol.VerificationHeader))
+	assert.Empty(w.Header().Get(apiprotocol.VerificationHeader))
 	assert.Empty(f.srv.readSnapshotSlots)
 
 	for _, target := range []struct{ method, path string }{

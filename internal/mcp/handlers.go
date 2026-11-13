@@ -528,8 +528,6 @@ func translateDaemonRequestError(err error) *toolResult {
 
 	var message string
 	switch coded.APIErrorCode() {
-	case "verification_unavailable":
-		message = "verification_unavailable: daemon did not acknowledge withholding. Ask the archive owner to upgrade the daemon."
 	case "verification_masked":
 		message = verificationMaskedMessage
 	case "permission_denied", "unsupported_agent_scope":
