@@ -2064,10 +2064,9 @@ func TestCLISyncSubprocessArgs(t *testing.T) {
 	assert.Equal([]string{"sync-full", "--", "-reader@example.org"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{Full: true, Email: "-reader@example.org"}))
 	assert.Equal(
-		[]string{"sync-full", "--source-id", "42", "--sync-operation-id", "operation-1", "--query", "label:example", "--noresume", "--before", "2024-03-01", "--after", "2024-01-01", "--limit", "2"},
+		[]string{"sync-full", "--query", "label:example", "--noresume", "--before", "2024-03-01", "--after", "2024-01-01", "--limit", "2"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{
-			Full: true, SourceID: 42, SourceIDSet: true, OperationID: "operation-1",
-			Query: "label:example", NoResume: true, Before: "2024-03-01", After: "2024-01-01", Limit: 2,
+			Full: true, Query: "label:example", NoResume: true, Before: "2024-03-01", After: "2024-01-01", Limit: 2,
 		}),
 	)
 }
