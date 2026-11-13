@@ -54,8 +54,8 @@ Each Page must have an enabled [`[[facebook_comments]]` profile](../configuratio
 for the same app and Page, registered with `msgvault source facebook-comments add`.
 
 For Instagram, subscribe the app's Instagram object to the `comments` and
-`live_comments` fields with the same callback URL. Each account must have
-exactly one enabled [`[[instagram_comments]]` profile](../configuration.md#instagram-comments)
+`live_comments` fields with the same callback URL. Each account must have an
+enabled [`[[instagram_comments]]` profile](../configuration.md#instagram-comments)
 for the same app and account, registered with
 `msgvault source instagram-comments add`.
 
