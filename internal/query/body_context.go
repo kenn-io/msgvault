@@ -314,11 +314,26 @@ func (e *SQLiteEngine) attachMessageBodySearchContexts(
 		if !ok {
 			return fmt.Errorf("message %d body context references an unknown chunk", item.messageID)
 		}
+		searchChunk := chunk
+		var offsets []int
+		if e.dialect.messageBodyContextBackend() == messageBodyContextPostgreSQL {
+			searchChunk.body, offsets = sqldialect.FoldFTSText(chunk.body)
+		}
 		fragmentStart := bodyContextFragmentStart(
-			chunk, plain, spans, states[item.messageID],
+			searchChunk, plain, spans, states[item.messageID],
 		)
 		if fragmentStart < 0 {
 			return fmt.Errorf("message %d backend-native body context does not align with its source chunk", item.messageID)
+		}
+		if e.dialect.messageBodyContextBackend() == messageBodyContextPostgreSQL {
+			start := offsets[fragmentStart]
+			end := offsets[fragmentStart+len(plain)]
+			for i := range spans {
+				spans[i].start = offsets[fragmentStart+spans[i].start] - start
+				spans[i].end = offsets[fragmentStart+spans[i].end] - start
+			}
+			fragmentStart = start
+			plain = chunk.body[start:end]
 		}
 		parsed = append(parsed, parsedBodyContext{
 			messageID:     item.messageID,
@@ -620,13 +635,12 @@ func (e *SQLiteEngine) canonicalBodyContextMatches(
 	args := make([]any, 0, 2*len(ids)+len(terms))
 	for i, messageID := range ids {
 		sourceValues[i] = "(?::bigint, ?::text)"
-		args = append(args, messageID, bodies[messageID])
+		args = append(args, messageID, sqldialect.CanonicalFTSText(bodies[messageID]))
 	}
 	queryValues := make([]string, len(terms))
 	for group, term := range terms {
-		_, weightedArg := e.dialect.BuildFTSBodyTerm([]string{term})
-		queryValues[group] = fmt.Sprintf("(%d, to_tsquery('simple', ?))", group)
-		args = append(args, postgresContextTSQuery(weightedArg))
+		queryValues[group] = fmt.Sprintf("(%d, ?::text)", group)
+		args = append(args, sqldialect.CanonicalFTSText(term))
 	}
 	rows, err := e.queryContext(ctx, fmt.Sprintf(`
 		WITH
@@ -635,7 +649,7 @@ func (e *SQLiteEngine) canonicalBodyContextMatches(
 		SELECT b.message_id, q.group_id
 		FROM canonical_bodies b
 		CROSS JOIN query_groups q
-		WHERE to_tsvector('simple', b.body) @@ q.query
+		WHERE strpos(' ' || b.body, ' ' || q.query) > 0
 	`, strings.Join(sourceValues, ", "), strings.Join(queryValues, ", ")), args...)
 	if err != nil {
 		return nil, fmt.Errorf("query PostgreSQL canonical body-context probe: %w", err)
@@ -843,18 +857,18 @@ func (e *SQLiteEngine) postgresBodyContexts(
 	chunkValues := make([]string, len(chunks))
 	args := make([]any, 0, 3*len(chunks)+len(terms)+1)
 	for i, chunk := range chunks {
-		chunkValues[i] = "(?::integer, ?::bigint, ?::text)"
-		args = append(args, chunk.id, chunk.messageID, chunk.body)
+		chunkValues[i] = "(?::integer, ?::bigint, ?::text, ?::text)"
+		folded, _ := sqldialect.FoldFTSText(chunk.body)
+		args = append(args, chunk.id, chunk.messageID, folded, sqldialect.CanonicalFTSText(chunk.body))
 	}
 	queryValues := make([]string, 0, len(terms))
 	for group, term := range terms {
-		_, weightedArg := e.dialect.BuildFTSBodyTerm([]string{term})
-		arg := postgresContextTSQuery(weightedArg)
+		arg := sqldialect.TSQuery([]string{term}, "", " <-> ")
 		if arg == "" {
 			continue
 		}
-		queryValues = append(queryValues, fmt.Sprintf("(%d, to_tsquery('simple', ?))", group))
-		args = append(args, arg)
+		queryValues = append(queryValues, fmt.Sprintf("(%d, to_tsquery('simple', ?), ?::text)", group))
+		args = append(args, arg, sqldialect.CanonicalFTSText(term))
 	}
 	if len(queryValues) == 0 {
 		return nil, errors.New("message body context query has no searchable terms")
@@ -866,13 +880,13 @@ func (e *SQLiteEngine) postgresBodyContexts(
 	args = append(args, options)
 	rows, err := e.queryContext(ctx, fmt.Sprintf(`
 		WITH
-		chunks(chunk_id, message_id, body) AS (VALUES %s),
-		query_groups(group_id, query) AS (VALUES %s)
+		chunks(chunk_id, message_id, body, canonical) AS (VALUES %s),
+		query_groups(group_id, query, pattern) AS (VALUES %s)
 		SELECT c.message_id, q.group_id, c.chunk_id,
 			ts_headline('simple', c.body, q.query, ?) AS marked
 		FROM chunks c
 		CROSS JOIN query_groups q
-		WHERE to_tsvector('simple', c.body) @@ q.query
+		WHERE strpos(' ' || c.canonical, ' ' || q.pattern) > 0
 		ORDER BY c.message_id, q.group_id, c.chunk_id
 	`, strings.Join(chunkValues, ", "), strings.Join(queryValues, ", ")), args...)
 	if err != nil {
@@ -920,8 +934,11 @@ func (e *SQLiteEngine) validatePostgresBodyContextCandidates(
 		if lexemeCount <= 1 {
 			for _, span := range item.spans {
 				if bodyContextSpanIsSafe(chunk, item.spanInChunk(span), state) {
-					accepted[parsedIndex] = []bodyContextSpan{span}
-					break
+					if len(accepted[parsedIndex]) == 0 {
+						accepted[parsedIndex] = []bodyContextSpan{span}
+					} else if !bodyContextSpanInSnippet(item.plain, accepted[parsedIndex], span) {
+						parsed[parsedIndex].truncated = true
+					}
 				}
 			}
 			if len(accepted[parsedIndex]) == 0 {
@@ -929,13 +946,13 @@ func (e *SQLiteEngine) validatePostgresBodyContextCandidates(
 			}
 			continue
 		}
-		_, weightedArg := e.dialect.BuildFTSBodyTerm([]string{terms[item.group]})
-		queryArg := postgresContextTSQuery(weightedArg)
+		queryArg := sqldialect.CanonicalFTSText(terms[item.group])
 		foundBudget := false
 		for start := range item.spans {
 			for width := 1; width <= lexemeCount && start+width <= len(item.spans); width++ {
 				if len(candidates) >= messageBodyContextMaxCandidates {
 					uncertain[key] = struct{}{}
+					parsed[parsedIndex].truncated = true
 					foundBudget = true
 					break
 				}
@@ -952,6 +969,7 @@ func (e *SQLiteEngine) validatePostgresBodyContextCandidates(
 				fragment := item.plain[fragmentStart:fragmentEnd]
 				if totalCandidateBytes+len(fragment) > messageBodyContextMaxCandidateBytes {
 					uncertain[key] = struct{}{}
+					parsed[parsedIndex].truncated = true
 					foundBudget = true
 					break
 				}
@@ -977,13 +995,13 @@ func (e *SQLiteEngine) validatePostgresBodyContextCandidates(
 	args := make([]any, 0, 3*len(candidates))
 	for i, candidate := range candidates {
 		values[i] = "(?::integer, ?::text, ?::text)"
-		args = append(args, i, candidate.fragment, candidate.query)
+		args = append(args, i, sqldialect.CanonicalFTSText(candidate.fragment), candidate.query)
 	}
 	rows, err := e.queryContext(ctx, fmt.Sprintf(`
 		WITH candidates(candidate_id, fragment, query_text) AS (VALUES %s)
 		SELECT candidate_id
 		FROM candidates
-		WHERE to_tsvector('simple', fragment) @@ to_tsquery('simple', query_text)
+		WHERE strpos(' ' || fragment, ' ' || query_text) > 0
 		ORDER BY candidate_id
 	`, strings.Join(values, ", ")), args...)
 	if err != nil {
@@ -996,7 +1014,12 @@ func (e *SQLiteEngine) validatePostgresBodyContextCandidates(
 			return nil, nil, fmt.Errorf("scan PostgreSQL body-context validation: %w", err)
 		}
 		candidate := candidates[candidateID]
-		if _, alreadyAccepted := accepted[candidate.parsedIndex]; alreadyAccepted {
+		if first := accepted[candidate.parsedIndex]; len(first) > 0 {
+			for _, span := range candidate.spans {
+				if !bodyContextSpanInSnippet(parsed[candidate.parsedIndex].plain, first, span) {
+					parsed[candidate.parsedIndex].truncated = true
+				}
+			}
 			continue
 		}
 		accepted[candidate.parsedIndex] = candidate.spans
@@ -1015,8 +1038,9 @@ func (e *SQLiteEngine) validatePostgresBodyContextCandidates(
 	return accepted, uncertain, nil
 }
 
-func postgresContextTSQuery(weightedArg string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(weightedArg, ":*D", ":*"), ":D", "")
+func bodyContextSpanInSnippet(body string, first []bodyContextSpan, span bodyContextSpan) bool {
+	start, end := bodyContextWindow(len(body), first[0].start, min(first[0].end-first[0].start, MessageBodyContextSnippetBytes), MessageBodyContextSnippetBytes)
+	return span.start >= start && span.end <= end
 }
 
 func parseMarkedBodyContext(
