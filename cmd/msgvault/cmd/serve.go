@@ -2656,6 +2656,13 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
 ) (runErr error) {
+	if len(req.Args) > 0 && req.Args[0] == "verify-attachments" {
+		command := a.newDaemonVerifyAttachmentsCmd(req.Args[1:], emit)
+		if err := command.ExecuteContext(ctx); err != nil {
+			return fmt.Errorf("verify attachments: %w", err)
+		}
+		return nil
+	}
 	if api.IsCLIRunEmbeddingsBuild(req.Args) {
 		return a.runCLIEmbeddingsBuild(ctx, req, emit)
 	}

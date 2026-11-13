@@ -3231,6 +3231,95 @@ cause a nonzero exit status.
 
 ---
 
+## verify-attachments
+
+Not in the latest release yet.
+
+Check a bounded page of retained attachment content and thumbnails:
+
+```bash
+msgvault verify-attachments --limit 100 --json
+msgvault verify-attachments --after-id 123 --limit 100 --max-bytes 1073741824 --timeout 2m
+```
+
+This owner-only command runs in the selected daemon and uses its shared
+loose/packed readers. It does not contact Gmail. Unlike `verify`, it reads
+attachment files. Unlike `backup verify`, it checks references in the live
+archive. Daemons older than API schema 5.3.0 reject the command; upgrade the
+daemon before using it. Delegated agents and read-only remote-client keys cannot
+run this archive-wide diagnostic.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--after-id` | `0` | Select attachment rows with a greater internal ID. |
+| `--limit` | `100` | Select at most this many rows; allowed range 1–1000. |
+| `--max-bytes` | `1073741824` | Total decoded bytes read across distinct contents; allowed range 1–1099511627776. One extra byte may establish exhaustion. |
+| `--timeout` | `2m` | Bound selection and reads; allowed range 1s–1h. Cancellation is observed between I/O calls, so a blocked filesystem call can exceed the deadline. |
+| `--json` | `false` | Emit the report as JSON instead of human-readable output. |
+
+Selection includes all retained attachment rows, even on hidden messages,
+messages marked deleted locally or at the source, and preserved source-merge
+occurrences. Each row contributes a content slot and, when present, a thumbnail
+slot. The command reads no message text or RAW MIME. It does not discover
+attachments whose SQL rows are absent.
+
+Valid local hashes are deduplicated within the page, including case aliases and
+hashes shared by content and thumbnails. The reader follows the current pack
+index when present, otherwise canonical loose storage, including compressed
+loose files. It tries selected recorded local paths for legacy loose files only
+when no pack is authoritative. A valid loose copy does not hide an absent or
+corrupt authoritative pack. It checks one readable representation of a hash,
+not every redundant copy or every recorded path outside the page.
+
+| Reference status | Established observation |
+|---|---|
+| `verified` | The stream reached verified EOF, closed successfully, and matched the occurrence size when recorded. Thumbnails have no recorded size to compare. |
+| `missing_loose` | Canonical loose storage and selected recorded local candidates were absent. Other occurrences outside the page may retain another legacy path. |
+| `pack_unavailable` | The unchanged authoritative pack mapping could not be opened because the pack was absent. |
+| `corrupt` | The existing reader rejected the content hash, decoded length, checksum or container integrity. |
+| `metadata_mismatch` | Bytes passed physical verification but their length differed from the selected occurrence's recorded size. |
+| `intentionally_omitted` | A hashless occurrence with no local locator explicitly records a scope, participant, account or size policy skip. No physical verification is claimed. |
+| `not_materialized` | There is no retained hash or the locator is external. Pending, failed and unavailable provider outcomes do not prove intentional omission or lost local bytes. |
+| `inconclusive` | Invalid metadata, unavailable catalogue, permissions, I/O/close errors, reader limits or an observed authority change prevented a conclusion. |
+| `not_checked` | A byte limit, timeout or cancellation prevented complete verification. |
+
+JSON includes the requested `scope` (with a duration string in `timeout`), start
+and finish times, selected row/reference counts, distinct local content count,
+`contents_opened`, `contents_verified`, `references_verified`,
+`references_affected`, total `bytes_read`, per-status `counts`, and every selected
+reference's internal IDs, kind, hash, expected size, result and bounded reason.
+A shared content's byte count also appears on each reference; use the top-level
+`bytes_read` for physical I/O totals. Details are bounded by the selected rows:
+at most 2,000 slots. No detail truncation conceals failures.
+
+`state=complete` means the traversal finished; consult the result counts for
+faults. `partial` means more rows remain after the selection, or a resource limit
+interrupted checking. `inconclusive` means selected slots could not be verified.
+The command prints its report, then exits nonzero on faults, partial traversal or
+inconclusive checks. SQL selection failures produce an error without a report.
+Transport/output errors also fail; an absent report is never proof of success.
+
+Use `next_after_id` as `--after-id` to continue. It advances only past rows without
+unfinished slots; increase the byte budget if one large object prevents progress.
+`more` describes rows beyond the selected page. Each page is a new observation.
+The SQL cursor closes before file reading; there is no global transaction across
+SQL and files. New rows after selection are not covered. Removal, replacement,
+packing, repacking or unpacking can change the result; an observed authority
+change is inconclusive. Undetected changes between observations remain possible.
+
+The diagnostic makes no business writes and starts no repair or maintenance job.
+Normal configuration/logging and daemon startup may create auxiliary files or
+perform ordinary daemon initialization and scheduled work independently.
+
+For missing MIME files, investigate the existing [targeted local repair](#repair-derived)
+only if valid retained RAW can supply them. That repair preserves existing
+corrupt evidence and does not repair a missing authoritative pack. Restore lost
+loose files or packs from a known good backup under its recovery procedure;
+[backup restore](#backup-restore) publishes a snapshot into a target directory,
+not an automatic in-place repair. Investigate catalogue or inconclusive results
+before choosing a repair. No result certifies all archive content, RAW validity,
+missing occurrences, historical completeness or future durability.
+
 ## stats
 
 Print archive totals: messages, threads, attachments, labels, accounts, and
