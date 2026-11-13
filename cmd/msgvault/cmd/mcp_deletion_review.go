@@ -41,6 +41,7 @@ func (b *daemonMCPOperations) executeDeletionReviewOperation(ctx context.Context
 		if err != nil {
 			return operationFailure("invalid_arguments", false), true, nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
 		}
+		// The generated client substitutes path parameters verbatim into the URL.
 		if deletion.ValidateManifestID(input.BatchID) != nil {
 			return operationFailure("invalid_manifest_id", false), true, nil //nolint:nilerr // Invalid IDs become a fixed structured tool refusal.
 		}
