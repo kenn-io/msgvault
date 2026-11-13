@@ -355,6 +355,14 @@ func (l LinkKataEvidencePath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
+type GetIntroductionPath struct {
+	ID string `json:"id" validate:"required"`
+}
+
+func (g GetIntroductionPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type MarkLoopDonePath struct {
 	// MessageID ID of the message that anchors the loop
 	MessageID int64 `json:"message_id" validate:"gte=1"`

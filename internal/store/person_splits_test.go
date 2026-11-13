@@ -3,6 +3,7 @@ package store_test
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -2627,10 +2628,11 @@ func TestSplitPersonMerge_RecomputesActivityAndContactState(t *testing.T) {
 	require.NoError(err)
 
 	messageIDs := make([]int64, 0, 2)
-	for label, senderID := range map[string]int64{
-		"survivor": survivorParticipant,
-		"absorbed": absorbedParticipant,
-	} {
+	for _, entry := range []struct {
+		label    string
+		senderID int64
+	}{{"survivor", survivorParticipant}, {"absorbed", absorbedParticipant}} {
+		label, senderID := entry.label, entry.senderID
 		message := f.NewMessage().
 			WithSourceMessageID("split-activity-" + label).
 			WithSentAt(time.Date(2026, 8, 19, 8, 0, 0, 0, time.UTC)).
@@ -2697,14 +2699,18 @@ func TestSplitPersonMerge_RecomputesActivityAndContactState(t *testing.T) {
 	require.NoError(rows.Err())
 	assert.ElementsMatch(t,
 		[]int64{result.SourcePerson.ID, result.NewPerson.ID, result.NewPerson.ID}, linkedPeople)
-	for personID, want := range map[int64]int64{
-		result.SourcePerson.ID: 1,
-		result.NewPerson.ID:    2,
+	for personID, expected := range map[int64]struct{ count, first int64 }{
+		result.SourcePerson.ID: {1, messageIDs[0]},
+		result.NewPerson.ID:    {2, messageIDs[1]},
 	} {
 		var count int64
 		require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT interaction_count
 			FROM person_contact_state WHERE person_id = ?`), personID).Scan(&count))
-		assert.Equal(t, want, count)
+		assert.Equal(t, expected.count, count)
+		state, err := f.Store.ContactStateContext(ctx, personID, time.Now())
+		require.NoError(err)
+		require.NotNil(state.FirstSeenAt)
+		assert.Equal(t, fmt.Sprintf("message:%d", expected.first), state.FirstSeenRef)
 	}
 }
 

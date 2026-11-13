@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-12"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -26,6 +26,23 @@ browser login, secure remote deployment, search states, and keyboard controls.
 | Integrate an AI assistant | [MCP server](usage/chat.md) |
 
 Connect AI assistants through the [native MCP endpoints](usage/chat.md#native-daemon-endpoints).
+
+### Local introductions
+
+On unreleased `main`, `GET /api/v1/intros` lists local introductions and
+`GET /api/v1/intros/{id}` returns one record. They return the same JSON as the
+[introduction CLI](usage/people.md#prepare-an-introduction). The list accepts
+`source_id`, `limit` (1–100, default 20), and the opaque `after_id` cursor
+returned as `next_after_id`. Responses use `Cache-Control: no-store`.
+Source-scoped agent grants need `draft.create` to read eligible records;
+`draft.edit` also reveals the body. Network user IDs and email mailboxes are hidden
+from agents. A valid shared transcript appears as optional `meeting_message_id`
+only with independent `message.read` access to the meeting's source. Otherwise,
+reads omit that field and retain the introduction.
+A delegated detail read returns 403 `not_permitted` when the grant lacks access
+or the record is missing or ineligible. Invalid list filters or cursor return
+400 `invalid_args`. A store without introduction reads returns 503
+`feature_unavailable`; an actual storage failure returns 503 `local_store_failed`.
 
 ### Filename suggestions
 
@@ -166,7 +183,13 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.2.0**.
+it is separate from the binary release version. The current schema is **5.4.0**.
+
+Schema 5.4.0 adds typed introduction list and detail reads.
+
+Schema 5.3.0 adds first-appearance evidence and `meeting_intro` to first-contact
+classification when the archived
+transcript explicitly records the owner, target and a distinct organizer.
 
 Schema 5.2.0 adds open Kata issue search and optional task search queries.
 

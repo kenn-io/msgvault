@@ -2656,6 +2656,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
 ) (runErr error) {
+	if api.IsCLIRunIntro(req.Args) {
+		return a.runCLIIntro(ctx, req, emit)
+	}
 	if api.IsCLIRunEmbeddingsBuild(req.Args) {
 		return a.runCLIEmbeddingsBuild(ctx, req, emit)
 	}

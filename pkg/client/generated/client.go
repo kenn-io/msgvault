@@ -631,6 +631,14 @@ type ClientInterface interface {
 	TestTaskIntegration(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*TestTaskIntegrationResponse, error)
 	TestTaskIntegrationWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*TestTaskIntegrationResp, error)
 
+	// ListIntroductions List local introductions
+	ListIntroductions(ctx context.Context, options *ListIntroductionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListIntroductionsResponse, error)
+	ListIntroductionsWithResponse(ctx context.Context, options *ListIntroductionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListIntroductionsResp, error)
+
+	// GetIntroduction Get a local introduction
+	GetIntroduction(ctx context.Context, options *GetIntroductionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetIntroductionResponse, error)
+	GetIntroductionWithResponse(ctx context.Context, options *GetIntroductionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetIntroductionResp, error)
+
 	// ListLoops List conversations waiting on a reply
 	ListLoops(ctx context.Context, options *ListLoopsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListLoopsResponse, error)
 	ListLoopsWithResponse(ctx context.Context, options *ListLoopsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListLoopsResp, error)
@@ -10466,6 +10474,132 @@ func (c *Client) TestTaskIntegration(ctx context.Context, reqEditors ...runtime.
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/integrations/tasks/test")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListIntroductions List local introductions
+func (c *Client) ListIntroductions(ctx context.Context, options *ListIntroductionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListIntroductionsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/intros",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListIntroductionsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListIntroductionsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListIntroductionsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListIntroductionsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListIntroductionsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/intros")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetIntroduction Get a local introduction
+func (c *Client) GetIntroduction(ctx context.Context, options *GetIntroductionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetIntroductionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/intros/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetIntroductionResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetIntroductionErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetIntroductionErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetIntroductionResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetIntroductionResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/intros/{id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

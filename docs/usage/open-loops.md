@@ -51,8 +51,9 @@ statement such as "See you Saturday!" starts nothing.
 
 Each person has their own loop. All addresses saved on one person count as
 that person. Every address of your accounts counts as you, and so does every
-address linked to your own person. Mail between your own accounts never
-starts a loop.
+address linked to your own person. Senders of Beeper messages marked as sent
+by you also count as you throughout the archive, including for introductions.
+Mail between your own accounts never starts a loop.
 
 A loop keeps the age of its oldest unanswered question. If Alex asks "Can you
 send the contract?" on Aug 20 and sends "Thanks!" on Oct 18, the loop still

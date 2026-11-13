@@ -9,7 +9,7 @@ import (
 
 // RelatedMessageCandidate decodes an alternate representation of an archived call.
 func RelatedMessageCandidate(id int64, messageType, metadata string) *int64 {
-	if messageType != "chatwoot" && messageType != "meeting_transcript" {
+	if messageType != "chatwoot" && messageType != messageTypeMeetingTranscript {
 		return nil
 	}
 	var fields struct {
@@ -24,7 +24,7 @@ func RelatedMessageCandidate(id int64, messageType, metadata string) *int64 {
 	switch messageType {
 	case "chatwoot":
 		candidate = fields.MeetingID
-	case "meeting_transcript":
+	case messageTypeMeetingTranscript:
 		if fields.Provider == "chatwoot" {
 			candidate = fields.ChatID
 		}
@@ -37,8 +37,8 @@ func RelatedMessageCandidate(id int64, messageType, metadata string) *int64 {
 
 // RelatedMessageTargetMatches keeps alternate representations within their source.
 func RelatedMessageTargetMatches(sourceID int64, messageType string, targetSourceID int64, targetType string) bool {
-	return sourceID == targetSourceID && ((messageType == "chatwoot" && targetType == "meeting_transcript") ||
-		(messageType == "meeting_transcript" && targetType == "chatwoot"))
+	return sourceID == targetSourceID && ((messageType == "chatwoot" && targetType == messageTypeMeetingTranscript) ||
+		(messageType == messageTypeMeetingTranscript && targetType == "chatwoot"))
 }
 
 func (s *Store) populateRelatedMessages(ctx context.Context, messages []APIMessage) error {

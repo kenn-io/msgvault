@@ -28,6 +28,9 @@ func TestRewriteGeneratedValidatorsRepairsKnownGeneratorGaps(t *testing.T) {
 	assertions.Contains(string(got), `typesValidator.Var(f.Grouping, "required,min=1,max=1")`)
 	assertions.NotContains(string(got), exploreCacheRecoveryActionRequiredValidatorBlock())
 	assertions.NotContains(string(got), "typesValidator.Var(e.Excerpt")
+	assert.NotContains(t, string(got), `typesValidator.Var(i.NextAfterID, "required")`)
+	assert.NotContains(t, string(got), `typesValidator.Var(i.Body, "required")`)
+	assert.NotContains(t, string(got), `typesValidator.Var(i.Title, "required")`)
 	assertions.Contains(string(got), "JSON jsontext.Value")
 	assertions.Contains(string(got), dailyNoteDecoyValidatorBlock())
 	assertions.Contains(string(got), dailyNotePersonIDsValidatorBlock("gte=1"))
@@ -192,6 +195,30 @@ func (e Evidence) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(e.Excerpt, "required"); err != nil {
 		errors = errors.Append("Excerpt", err)
+	}
+	return errors
+}
+type IntroductionPage struct {
+	NextAfterID string
+}
+func (i IntroductionPage) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.NextAfterID, "required"); err != nil {
+		errors = errors.Append("NextAfterID", err)
+	}
+	return errors
+}
+type IntroductionRecord struct {
+	Body string
+	Title string
+}
+func (i IntroductionRecord) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.Body, "required"); err != nil {
+		errors = errors.Append("Body", err)
+	}
+	if err := typesValidator.Var(i.Title, "required"); err != nil {
+		errors = errors.Append("Title", err)
 	}
 	return errors
 }

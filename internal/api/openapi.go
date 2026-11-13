@@ -416,7 +416,9 @@ import (
 // 5.0.0 makes file list and suggestion content availability nullable when storage has not been checked.
 // 5.1.0 adds keyed group overviews, time-group item totals, saved view schema 3, and saved view run timezones.
 // 5.2.0 adds open Kata issue search and optional task search queries.
-const APISchemaVersion = "5.2.0"
+// 5.3.0 adds first archived appearance and explicit recorded meeting introductions.
+// 5.4.0 adds typed introduction list and detail reads.
+const APISchemaVersion = "5.4.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1035,6 +1037,10 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		{"CalendarOccurrence", "end_date"},
 		{"CalendarOccurrence", "subject"},
 		{"ContactCandidate", "display_name"},
+		{"IntroductionPage", "next_after_id"},
+		{"IntroductionRecord", "title"},
+		{"IntroductionRecord", "body"},
+		{"IntroductionMember", "user_id"},
 		{"MediaAttachmentResult", "filename"},
 		{"MediaAttachmentResult", "containing_title"},
 		{"MediaAttachmentResult", "excerpt"},

@@ -4390,3 +4390,23 @@ CREATE TABLE IF NOT EXISTS docbank_attachment_processing (
 CREATE INDEX IF NOT EXISTS idx_docbank_processing_due
  ON docbank_attachment_processing(destination_key, fingerprint, next_action_at, content_hash)
  WHERE next_action_at IS NOT NULL;
+
+-- Locally prepared introductions; provider actions are a separate lifecycle.
+CREATE TABLE IF NOT EXISTS person_introductions (
+    intro_id TEXT PRIMARY KEY,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    status TEXT NOT NULL CHECK (status IN ('prepared', 'cancelled')),
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    person_a_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    person_b_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    meeting_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+    title TEXT NOT NULL,
+    body TEXT,
+    created_by TEXT NOT NULL,
+    cancelled_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_person_introductions_a ON person_introductions(person_a_id);
+CREATE INDEX IF NOT EXISTS idx_person_introductions_b ON person_introductions(person_b_id);
+CREATE INDEX IF NOT EXISTS idx_person_introductions_source_created ON person_introductions(source_id, created_at, intro_id);

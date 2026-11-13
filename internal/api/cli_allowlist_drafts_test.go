@@ -323,7 +323,7 @@ func TestDelegatedDraftLifecycleCommandsSkipBusyOperationGate(t *testing.T) { //
 	}
 }
 
-func TestDelegatedDraftGetSkipsBusyOperationGate(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
+func TestDelegatedReadsSkipBusyOperationGate(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	gate := NewSerialOperationGate()
@@ -344,27 +344,27 @@ func TestDelegatedDraftGetSkipsBusyOperationGate(t *testing.T) { //nolint:parall
 	requirements.True(ok, "hold operation gate for delegated request")
 	defer release()
 
-	body, err := json.Marshal(CLIRunRequest{Args: []string{"draft-get", "draft-abc"}})
-	requirements.NoError(err)
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(apiprotocol.AgentTokenHeader, secret)
-	response := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() {
-		srv.Router().ServeHTTP(response, req)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		requirements.FailNow("delegated draft-get must not wait on a held operation gate")
+	for _, args := range [][]string{{"draft-get", "draft-abc"}, {"intro", "list"}, {"intro", "show", "intro-id"}} {
+		body, err := json.Marshal(CLIRunRequest{Args: args})
+		requirements.NoError(err)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
+		response := httptest.NewRecorder()
+		done := make(chan struct{})
+		go func() {
+			srv.Router().ServeHTTP(response, req)
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			requirements.FailNow("delegated read must not wait on a held operation gate")
+		}
+		assertions.Equal(http.StatusOK, response.Code)
+		assertions.False(gate.HasRequestWaiters())
 	}
-
-	assertions.Equal(http.StatusOK, response.Code)
-	assertions.Equal(1, runnerCalls)
-	assertions.False(gate.HasRequestWaiters())
+	assertions.Equal(3, runnerCalls)
 }
 
 func TestOwnerDraftLifecycleCommandsUseOperationGateAndRunner(t *testing.T) {

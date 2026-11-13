@@ -117,7 +117,7 @@ func (value ActivityRefKind) Valid() bool {
 // they independently derive RefKind/Channel from the same inputs, and any
 // disagreement makes the authoritative write reject the projection as stale.
 func IsMeetingMessageType(messageType string) bool {
-	return messageType == "calendar_event" || messageType == "meeting_transcript"
+	return messageType == "calendar_event" || messageType == messageTypeMeetingTranscript
 }
 
 type ActivityEventPerson struct {
@@ -836,6 +836,11 @@ type ContactState struct {
 	CadenceStatus       string          `json:"cadence_status"`
 	Stale               bool            `json:"stale"`
 	ComputedAt          time.Time       `json:"computed_at"`
+
+	FirstSeenAt      *time.Time              `json:"first_seen_at,omitempty"`
+	FirstSeenRef     string                  `json:"first_seen_ref,omitempty"`
+	FirstContactKind FirstContactKind        `json:"first_contact_kind,omitempty"`
+	Introducer       *FirstContactIntroducer `json:"introducer,omitzero" nullable:"false"`
 }
 
 func (s *Store) ContactRevisionsContext(
@@ -2523,7 +2528,10 @@ func (s *Store) ContactStateContext(
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var err error
 		state, err = s.contactStateTxContext(ctx, tx, personID, now)
-		return err
+		if err != nil {
+			return err
+		}
+		return s.populateFirstContactTx(ctx, tx, &state)
 	})
 	if err != nil {
 		return ContactState{}, err

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-12"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -18,7 +18,7 @@ appear in full under Inherited Flags.
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full), [source feeds add](#source-feeds-add) |
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-discord-package](#import-discord-package), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
-| Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
+| Maintain people and contacts | [loops](#loops), [intro](#intro), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
 | Find a partial address | [address](#address) |
 | Inspect staged room policy | [policy](#policy) |
@@ -29,6 +29,33 @@ appear in full under Inherited Flags.
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
 | Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-attachment-roles](#repair-attachment-roles), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
 | Operate or integrate | [setup](#setup), [credentials](#credentials), [daemon](#daemon), [serve](#serve), [activity](#activity), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
+
+## intro
+
+On unreleased `main`, prepare and manage local introduction records through the
+daemon. See [Prepare an introduction](usage/people.md#prepare-an-introduction)
+for preflight blockers and agent permissions.
+
+```text
+msgvault intro prepare --source-id N --person A --person B --title T --body B [--meeting-message-id N] [--json]
+msgvault intro list [--source-id N] [--limit N] [--after-id CURSOR] [--json]
+msgvault intro show ID [--json]
+msgvault intro edit ID --revision N [--title T] [--body B] [--json]
+msgvault intro cancel ID --revision N [--json]
+```
+
+Prepare accepts an archived Beeper or email delivery source. The optional
+`--meeting-message-id` is prepare-only and must identify a transcript with
+explicit recorded participation by both people. It creates only a local record;
+see [context and permission limits](usage/people.md#prepare-an-introduction).
+Permitted context is returned as `meeting_message_id`; unavailable or inaccessible
+context is omitted on later reads.
+
+List defaults to 20 records and accepts a limit from 1 to 100. Results are
+ordered by creation timestamp descending, then introduction ID descending for
+ties. Pass `next_after_id` as `--after-id` for the next JSON page.
+Edit needs at least one replacement field. A stale revision or a record that
+is no longer prepared is refused. Cancel removes the stored body.
 
 ## loops
 
@@ -3182,7 +3209,9 @@ confirmed addresses each account's included messages use, including addresses
 in the stored headers of mail not yet attributed, so each message keeps its
 account. The optional identity, attribute, profile, and vCard flags can copy
 personal records that have no message in the subset; read the command's
-warning before sharing its output.
+warning before sharing its output. Introduction drafts remain in the source
+archive. The subset omits and counts merge packets that depend on them, even
+when all profile options are enabled.
 
 ---
 
@@ -3671,6 +3700,11 @@ msgvault person attributes list <person-id> [--slug <slug>] [--history] [--json]
 msgvault person attributes set <person-id> <slug> (--value <scalar> | --value-json <json|@path|->) [flags]
 msgvault person attributes clear <person-id> <slug> [flags]
 ```
+
+`person get --json` includes first archived appearance and the first direct contact
+when the daemon supports them. JSON includes the appearance reference, kind and introducer when known. See
+[first archived appearance](usage/people.md#see-a-persons-first-archived-appearance)
+for evidence rules and limitations.
 
 `promote` seeds a new profile with the first nonblank observed name in its
 linked cluster, ordered by participant ID. It leaves the name empty when no
@@ -5740,7 +5774,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read`, and the `verification.read` reveal modifier (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read`, and the `verification.read` reveal modifier (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, `draft-get`, and `intro prepare/list/show/cancel`; `draft.edit` for `draft-get`, `draft-edit`, `draft-recover`, and introduction body access; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--expires <expiry>` | Optional future RFC3339 timestamp or positive duration such as `24h`; the CLI clock converts a duration to absolute expiry |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |

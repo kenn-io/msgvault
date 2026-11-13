@@ -621,6 +621,8 @@ var cliRunReadOnlyCommands = map[string]bool{
 	"list-folders":      true,
 	"policy list":       true,
 	"draft-get":         true,
+	"intro list":        true,
+	"intro show":        true,
 	"draft-send-as":     true,
 	"logs":              true,
 	"list-deletions":    true,
@@ -705,6 +707,7 @@ func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label stri
 // cliRunCommandGroups are proxied parent commands whose second arg is a
 // subcommand name rather than a positional value.
 var cliRunCommandGroups = map[string]bool{
+	"intro":      true,
 	"policy":     true,
 	"embeddings": true,
 	"backup":     true,
@@ -712,6 +715,9 @@ var cliRunCommandGroups = map[string]bool{
 
 // cliRunCommandWords extracts the command path while consuming supported flags and their values.
 func cliRunCommandWords(args []string) string {
+	if IsCLIRunIntro(args) && !introActionAllowed(args) {
+		return "intro"
+	}
 	first := args[0]
 	if strings.HasPrefix(first, "-") {
 		return ""

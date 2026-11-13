@@ -556,6 +556,18 @@ type SearchIntegrationTasksQuery struct {
 	Q *string `json:"q,omitempty"`
 }
 
+type ListIntroductionsQuery struct {
+	SourceID *int64 `json:"source_id,omitempty" validate:"omitempty,gte=1"`
+	Limit    *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
+
+	// AfterID Opaque continuation cursor
+	AfterID *string `json:"after_id,omitempty"`
+}
+
+func (l ListIntroductionsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
 type ListLoopsQuery struct {
 	// PersonID Only loops with this person
 	PersonID *int64 `json:"person_id,omitempty"`
