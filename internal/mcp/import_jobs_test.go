@@ -21,5 +21,7 @@ func TestImportJobCatalogGatesAndSchemas(t *testing.T) {
 	assertions.True(*create.definition.annotations.OpenWorldHint)
 	assertions.Contains(create.definition.inputSchema.Required, "limit")
 	assertions.Equal(new(float64(1)), create.definition.inputSchema.Properties["limit"].Minimum)
+	assertions.Equal("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", create.definition.inputSchema.Properties["after"].Pattern)
+	assertions.Equal("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", create.definition.inputSchema.Properties["before"].Pattern)
 	assertions.Contains(read.definition.inputSchema.Required, "job_id")
 }

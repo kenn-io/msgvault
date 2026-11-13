@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -26,8 +27,17 @@ func importJobMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol.
 
 func decodeImportJobArguments(args map[string]any) (generated.ImportJobRequest, bool) {
 	input, err := decodeMCPOperationArguments[generated.ImportJobRequest](args)
-	return input, err == nil && strings.TrimSpace(input.Account) != "" && input.Limit != nil && *input.Limit > 0
+	input.Account = strings.TrimSpace(input.Account)
+	var after, before string
+	if input.After != nil {
+		after = *input.After
+	}
+	if input.Before != nil {
+		before = *input.Before
+	}
+	return input, err == nil && input.Account != "" && api.ValidateImportJobDates(after, before) == ""
 }
+
 func importJobRefusal(code string) bool {
 	switch code {
 	case "validation_failed", "ambiguous_account", "account_not_syncable", "sync_already_active", "server_busy", "service_unavailable", "request_too_large", "unsupported_media_type":
@@ -35,6 +45,7 @@ func importJobRefusal(code string) bool {
 	}
 	return false
 }
+
 func (b *daemonMCPOperations) executeImportJob(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	switch name {
 	case "create_import_job":
@@ -56,6 +67,7 @@ func (b *daemonMCPOperations) executeImportJob(ctx context.Context, name string,
 	}
 	return nil, false, nil
 }
+
 func importJobDisclosure(name string, args map[string]any) (string, bool, error) {
 	if name != "create_import_job" {
 		return "", false, nil

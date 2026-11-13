@@ -10,8 +10,8 @@ func importJobDefinitions() []operationalDefinition {
 		newOperationalDefinition("create_import_job", "Start an explicitly bounded historical Gmail or IMAP import. Acceptance is not completion; poll the returned job ID. Requires approval.", OperationFamilyImports, closedObject(map[string]*jsonschema.Schema{
 			"account":  stringSchema("Exact configured Gmail or IMAP account"),
 			"limit":    {Type: "integer", Minimum: new(float64(1)), Description: "Maximum messages to import; required and positive"},
-			"after":    stringSchema("Optional lower date bound in YYYY-MM-DD"),
-			"before":   stringSchema("Optional upper date bound in YYYY-MM-DD"),
+			"after":    {Type: "string", Pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", Description: "Optional lower date bound, YYYY-MM-DD; must be earlier than before"},
+			"before":   {Type: "string", Pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", Description: "Optional upper date bound, YYYY-MM-DD"},
 			"query":    stringSchema("Optional Gmail search query"),
 			"noresume": booleanSchema("Start without resuming prior progress"),
 		}, "account", "limit"), outputSchemaFor[generated.ImportJobResponse](), true),

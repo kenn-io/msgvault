@@ -872,7 +872,7 @@ source, cache, or person-edit tools.
 | `get_participant_identity` | Read observed identifiers, service and scope context, cluster members, and link evidence. | Required `participant_id` |
 | `get_cache_build_status` | Follow an accepted analytics refresh job. | Required `job_id` from a fresh query response |
 
-`create_import_job` returns acceptance, not completion. Use `get_import_job` to follow it. Dates use `YYYY-MM-DD`, and `query` is Gmail-only. An interrupted or uncertain creation may have started a job; do not retry automatically.
+`create_import_job` returns acceptance, not completion. Use `get_import_job` to follow it. Dates use `YYYY-MM-DD`, `after` must be earlier than `before`, and `query` is Gmail-only. An interrupted or uncertain creation may have started a job; do not retry automatically.
 
 `sync_source` returns acceptance, not completion. A generic source uses its
 configured shared scheduler job. The response preserves `disposition` when the
