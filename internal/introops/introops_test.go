@@ -499,4 +499,55 @@ func TestEmailIntroductionMeetingContext(t *testing.T) {
 	stored, err := f.Store.GetPersonIntroductionContext(ctx, row.IntroID)
 	require.NoError(t, err)
 	assert.Nil(t, stored.MeetingMessageID)
+
+	for _, operation := range []string{"edit", "cancel"} {
+		t.Run(operation+" during meeting deletion", func(t *testing.T) {
+			if f.Store.IsPostgreSQL() {
+				t.Skip("uses a SQLite trigger to delete context during the mutation")
+			}
+			ctx := t.Context()
+			meeting, err := f.Store.UpsertMessage(&store.Message{SourceID: meetingSource.ID, ConversationID: conv, SourceMessageID: operation, MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}})
+			require.NoError(t, err)
+			_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO message_recipients (message_id,participant_id,recipient_type,email_address) VALUES (?,?,'from','a@example.test'),(?,?,'to','b@example.test')`), meeting, pa, meeting, pb)
+			require.NoError(t, err)
+			require.NoError(t, f.Store.UpsertMessageRawWithFormatContext(ctx, meeting, raw, "meeting_json"))
+			in := in
+			in.MeetingMessageID = &meeting
+			prepared, err := svc.Prepare(ctx, nil, in)
+			require.NoError(t, err)
+			require.Equal(t, &meeting, prepared.MeetingMessageID)
+			// Source removal deletes messages and this same FK clears the context.
+			// AFTER avoids changing the row through that FK before its update runs.
+			_, err = f.Store.DB().ExecContext(ctx, `CREATE TRIGGER delete_introduction_meeting
+				AFTER UPDATE OF revision ON person_introductions
+				BEGIN
+					DELETE FROM messages WHERE id = OLD.meeting_message_id;
+				END`)
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				// Cleanup runs after the subtest context is cancelled.
+				_, err := f.Store.DB().ExecContext(context.WithoutCancel(t.Context()), `DROP TRIGGER delete_introduction_meeting`)
+				assert.NoError(t, err)
+			})
+			var got introops.Record
+			wantBody, wantStatus := "edited", "prepared"
+			if operation == "edit" {
+				got, err = svc.Edit(ctx, nil, prepared.IntroID, store.PersonIntroductionEdit{Revision: prepared.Revision, Body: &wantBody})
+			} else {
+				wantBody, wantStatus = "", "cancelled"
+				got, err = svc.Cancel(ctx, nil, prepared.IntroID, prepared.Revision)
+			}
+			require.NoError(t, err)
+			stored, err := f.Store.GetPersonIntroductionContext(ctx, prepared.IntroID)
+			require.NoError(t, err)
+			require.Nil(t, stored.MeetingMessageID, "deletion must exercise the real nullable FK")
+			assert.Equal(t, prepared.Revision+1, stored.Revision)
+			assert.Equal(t, wantBody, stored.Body)
+			assert.Equal(t, wantStatus, stored.Status)
+			shown, err := svc.Get(ctx, nil, prepared.IntroID)
+			require.NoError(t, err)
+			assert.Equal(t, stored, shown.PersonIntroduction)
+			assert.Equal(t, stored, got.PersonIntroduction, "mutation reply must reflect saved context, revision and body")
+		})
+	}
 }

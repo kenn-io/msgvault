@@ -2,10 +2,15 @@ package circleback
 
 import (
 	"encoding/json/v2"
+	"strings"
 	"testing"
+	"time"
+	_ "time/tzdata"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/activity"
+	"go.kenn.io/msgvault/internal/introops"
 	"go.kenn.io/msgvault/internal/meetingidentity"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -26,7 +31,10 @@ func TestIngestMeetingNameOnlyGuestPreservesMeetingParticipation(t *testing.T) {
 	require.NoError(t, err)
 	guestPerson, _, err := f.Store.CreatePersonFromParticipantContext(ctx, guest)
 	require.NoError(t, err)
-	const raw = `{"id":"synthetic-meeting","startTime":"2026-01-01T00:00:00Z","organizer":{"email":"host@example.test"},"attendees":[{"email":"owner@example.test"},{"email":"target@example.test"},{"name":"Guest"}]}`
+	peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
+	peerPerson, _, err := f.Store.CreatePersonFromParticipantContext(ctx, peer)
+	require.NoError(t, err)
+	const raw = `{"id":"synthetic-meeting","startTime":"2026-01-01T00:00:00Z","organizer":{"email":"host@example.test"},"attendees":[{"email":"owner@example.test"},{"email":"target@example.test"},{"email":"peer@example.test"},{"name":"Guest"}]}`
 	var meeting Meeting
 	require.NoError(t, json.Unmarshal([]byte(raw), &meeting))
 	meeting.Raw = []byte(raw)
@@ -42,4 +50,30 @@ func TestIngestMeetingNameOnlyGuestPreservesMeetingParticipation(t *testing.T) {
 	valid, err := f.Store.PersonIntroductionMeetingValidContext(ctx, result.MessageID, hostPerson.ID, guestPerson.ID, nil)
 	require.NoError(t, err)
 	assert.False(t, valid, "a matching display name must not infer participation")
+
+	// Reimport the same meeting with an addressless organizer matching a saved name.
+	meeting.Organizer = &Attendee{Name: "Host"}
+	meeting.Raw = []byte(strings.Replace(raw, `{"email":"host@example.test"}`, `{"name":"Host"}`, 1))
+	result, err = imp.ingestMeeting(ctx, source.ID, ImportOptions{Identifier: source.Identifier, AccountEmail: "owner@example.test"}, meetingidentity.Set{"owner@example.test": {}}, &meeting, nil, transcriptStateUnavailable)
+	require.NoError(t, err)
+	valid, err = f.Store.PersonIntroductionMeetingValidContext(ctx, result.MessageID, hostPerson.ID, targetPerson.ID, nil)
+	require.NoError(t, err)
+	assert.False(t, valid, "a matching organizer name must not infer participation")
+	projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
+	require.NoError(t, err)
+	_, err = projector.RunOnce(ctx)
+	require.NoError(t, err)
+	state, err := f.Store.ContactStateContext(ctx, targetPerson.ID, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	assert.Equal(t, store.FirstContactMeeting, state.FirstContactKind)
+	assert.Nil(t, state.Introducer)
+	svc := introops.Service{Store: f.Store}
+	prepared, err := svc.Prepare(ctx, nil, store.PersonIntroductionPrepare{
+		SourceID: f.Source.ID, PersonAID: peerPerson.ID, PersonBID: targetPerson.ID, MeetingMessageID: &result.MessageID,
+	})
+	require.NoError(t, err, "a name-only organizer must preserve addressed attendees' context")
+	assert.Equal(t, &result.MessageID, prepared.MeetingMessageID)
+	shown, err := svc.Get(ctx, nil, prepared.IntroID)
+	require.NoError(t, err)
+	assert.Equal(t, &result.MessageID, shown.MeetingMessageID)
 }
