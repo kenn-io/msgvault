@@ -100,7 +100,7 @@ describe('RelatedCopies', () => {
           member(3, { account_address: 'work@example.test', account_path: 'inbound', evidence: 'copy', subject: 'Quote', sent_at: '2026-03-01T10:00:00Z' }),
           member(4, { account_address: 'home@example.test', source_type: 'gmail', account_path: 'sent', draft: true, evidence: 'forwarded_original', subject: '' }),
           member(5, { source_identifier: 'archive-5', evidence: 'indirect', subject: 'Later' }),
-          member(6, { account_address: 'home@example.test', source_type: 'imap', subject: 'Via IMAP' })
+          member(6, { account_address: 'home@example.test', source_type: 'msmail', subject: 'Via Microsoft' })
         ])
       )
     );
@@ -127,10 +127,11 @@ describe('RelatedCopies', () => {
     expect(home.getByRole('link', { name: '(no subject)' }).getAttribute('href')).toBe('/messages/4');
     expect(groups[1].textContent).toContain('Draft');
     expect(groups[1].textContent).toContain('Forwarded original');
-    expect(groups[1].textContent).toContain('gmail');
-    expect(groups[1].textContent).not.toContain('imap');
-    expect(groups[2].textContent).toContain('imap');
-    expect(groups[2].textContent).not.toContain('gmail');
+    // Badges use the source names shown elsewhere in the app, not stored codes.
+    expect(groups[1].textContent).toContain('Gmail');
+    expect(groups[1].textContent).not.toContain('Microsoft mail');
+    expect(groups[2].textContent).toContain('Microsoft mail');
+    expect(groups[2].textContent).not.toContain('msmail');
     expect(groups[0].textContent).toContain('Related through another copy');
   });
 

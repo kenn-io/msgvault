@@ -4,6 +4,7 @@
   import { getEmailFamily } from '../../api/generated/api/api';
   import type { EmailFamily, EmailFamilyMember } from '../../api/generated/models';
   import { createStaleRequestGuard } from '../../archive/stale-request';
+  import { sourceTypeLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
 
   // loadedIDs are the messages the conversation view already shows; those have no row here.
@@ -175,7 +176,9 @@
         <section class="group" aria-label={group.label}>
           <h4 class="group-heading">
             <span class="account">{group.label}</span>
-            <Chip size="xs" tone="neutral" uppercase={false}>{group.sourceType}</Chip>
+            {#if sourceTypeLabel(group.sourceType)}
+              <Chip size="xs" tone="neutral" uppercase={false}>{sourceTypeLabel(group.sourceType)}</Chip>
+            {/if}
           </h4>
           <ul>
             {#each group.members as member (member.message_id)}
