@@ -391,7 +391,10 @@ func SetPersonTierRowPage(n int) func() {
 }
 
 // LastSuccessfulSyncQueryForTest is the newest-completed-run lookup each
-// incremental sync runs. typeOp is "", "=" or "<>".
-func LastSuccessfulSyncQueryForTest(typeOp string) string {
-	return lastSuccessfulSyncQuery(typeOp)
+// incremental sync runs.
+func LastSuccessfulSyncQueryForTest(filterByType bool) string {
+	if filterByType {
+		return lastSuccessfulSyncQuery("=")
+	}
+	return lastSuccessfulSyncQuery("")
 }
