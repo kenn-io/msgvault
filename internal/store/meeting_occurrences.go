@@ -403,7 +403,7 @@ func (s *Store) loadMeetingEvidence(ctx context.Context, through time.Time) (*Me
 	}
 
 	var suppressed []int64
-	rows, err = s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT e.message_id FROM calendar_events e JOIN messages m ON m.id=e.message_id WHERE (e.status='cancelled' OR e.start_at > ? OR e.kind='series') AND m.deleted_at IS NULL`+sourceScope, append([]any{through}, sourceArgs...)...)
+	rows, err = s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT e.message_id FROM calendar_events e JOIN messages m ON m.id=e.message_id WHERE (m.deleted_at IS NOT NULL OR NOT (`+calendarEventVisibility("e", "m")+`) OR e.status='cancelled' OR e.start_at > ? OR e.kind='series')`+sourceScope, append([]any{through}, sourceArgs...)...)
 	if err != nil {
 		return nil, fmt.Errorf("read cancelled or future meetings: %w", err)
 	}
@@ -621,6 +621,10 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 				declined[email] = true
 			}
 		}
+		available := false
+		for _, note := range unit.notes {
+			available = available || note.state == "available"
+		}
 		if len(unit.events) > 0 && (!unit.events[0].DeletedFromSource || len(unit.notes) == 0) {
 			anchorID = unit.events[0].MessageID
 			at = unit.events[0].Start
@@ -629,7 +633,18 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 			}
 		} else if len(unit.notes) > 0 {
 			anchorID = unit.notes[0].id
+			if len(unit.events) > 0 && available {
+				for _, note := range unit.notes {
+					if note.state == "available" {
+						anchorID = note.id
+						break
+					}
+				}
+			}
 			for _, note := range unit.notes {
+				if len(unit.events) > 0 && available && note.state != "available" {
+					continue
+				}
 				if at.IsZero() && !note.at.IsZero() {
 					at = note.at
 					anchorID = note.id
@@ -641,16 +656,12 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 			}
 		}
 		declinedEmails := sortedDeclines(declined)
-		available := false
-		for _, note := range unit.notes {
-			available = available || note.state == "available"
-		}
 		ownerDeclined := false
 		for email := range declined {
 			ownerDeclined = ownerDeclined || owners[email]
 		}
 		deleted := len(unit.events) > 0 && unit.events[0].DeletedFromSource
-		counted := !at.After(through) && !cancelled && !deleted && (!ownerDeclined || available) && (len(unit.events) > 0 || available)
+		counted := !at.After(through) && !cancelled && (!deleted || available) && (!ownerDeclined || available) && (len(unit.events) > 0 || available)
 		for _, event := range unit.events {
 			for _, id := range []int64{event.MessageID, event.SeriesMessageID} {
 				if id != 0 {
@@ -659,7 +670,7 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 						seconds := event.End.Sub(event.Start).Seconds()
 						duration = &seconds
 					}
-					result = append(result, MeetingOccurrence{MessageID: id, AnchorMessageID: anchorID, OccurrenceKey: key, OccurredAt: at, StartDate: startDate, Counted: counted, DeclinedEmails: declinedEmails, ScheduledSeconds: duration})
+					result = append(result, MeetingOccurrence{MessageID: id, AnchorMessageID: anchorID, OccurrenceKey: key, OccurredAt: at, StartDate: startDate, Counted: counted && !deleted, DeclinedEmails: declinedEmails, ScheduledSeconds: duration})
 				}
 			}
 		}
@@ -671,7 +682,7 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 			if note.state == "available" {
 				ids = nil
 			}
-			result = append(result, MeetingOccurrence{MessageID: note.id, AnchorMessageID: anchorID, OccurrenceKey: key, OccurredAt: at, StartDate: startDate, Counted: counted, DeclinedEmails: ids})
+			result = append(result, MeetingOccurrence{MessageID: note.id, AnchorMessageID: anchorID, OccurrenceKey: key, OccurredAt: at, StartDate: startDate, Counted: counted && note.state == "available", DeclinedEmails: ids})
 		}
 	}
 	seenMessages := map[int64]bool{}

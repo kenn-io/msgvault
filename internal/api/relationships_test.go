@@ -145,7 +145,7 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 			columns: "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month",
 			values:  strings.Join(messageRows, ",\n"),
 		},
-		{dir: "meeting_occurrences", file: "meeting_occurrences.parquet", columns: "message_id, occurrence_key, occurred_at, start_date, counted, declined_emails, occurrence_id", values: fmt.Sprintf("(4::BIGINT, 'evt:4', TIMESTAMP '%s', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0))", now.AddDate(0, 0, -2).Format("2006-01-02 15:04:05"))},
+		{dir: "meeting_occurrences", file: "meeting_occurrences.parquet", columns: identityindex.MeetingOccurrenceColumns, values: fmt.Sprintf("(4::BIGINT, 4::BIGINT, 'evt:4', TIMESTAMP '%s', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0))", now.AddDate(0, 0, -2).Format("2006-01-02 15:04:05"))},
 		{dir: "sources", file: "sources.parquet", columns: "id, account_email, source_type", values: `(1::BIGINT, 'owner@example.com', 'gmail')`},
 		{
 			dir: "participants", file: "participants.parquet", columns: "id, email_address, domain, display_name, phone_number",

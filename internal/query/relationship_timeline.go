@@ -124,7 +124,7 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 	args := make([]any, 0, len(owners)+len(factArgs)+5)
 	args = append(args, request.CanonicalID)
 	args = append(args, factArgs...)
-	args = append(args, request.CanonicalID, request.CanonicalID, request.CanonicalID)
+	args = append(args, request.CanonicalID, request.CanonicalID)
 	for _, owner := range owners {
 		args = append(args, owner)
 	}
@@ -300,7 +300,7 @@ WITH subject_facts AS (
     JOIN (
         SELECT f.entry_key, any_value(f.anchor_message_id) AS message_id
         FROM relationship_counting_activity f
-        WHERE NOT f.unsent AND f.entry_key IN (SELECT entry_key FROM relationship_counting_activity WHERE canonical_id = ?) AND (` + conditions + `) AND (f.entry_kind IN ('event','meeting') OR f.canonical_id = ?) AND f.canonical_id = ?
+        WHERE NOT f.unsent AND f.entry_key IN (SELECT entry_key FROM relationship_counting_activity WHERE canonical_id = ?) AND (` + conditions + `) AND (f.entry_kind IN ('event','meeting') OR f.canonical_id = ?)
         GROUP BY f.entry_key
     ) selected ON selected.entry_key=a.entry_key
     JOIN relationship_activity_sparse anchor ON anchor.message_id=selected.message_id

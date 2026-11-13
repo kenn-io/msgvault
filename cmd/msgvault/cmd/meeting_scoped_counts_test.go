@@ -57,7 +57,7 @@ func TestMeetingCountsPendingSourceScope(t *testing.T) {
 	}{
 		{"calendar", []int64{calendar.ID}, nil, 1},
 		{"notes", []int64{notes.ID}, nil, 0},
-		{"notes_type", nil, []string{"meeting_transcript"}, 1},
+		{"notes_type", nil, []string{"meeting_transcript"}, 0},
 		{"both", []int64{calendar.ID, notes.ID}, nil, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

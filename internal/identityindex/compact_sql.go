@@ -15,8 +15,9 @@ const (
 func buildRelationshipPeopleSQL(effectiveAt time.Time, activity string) string {
 	return `
 WITH file_messages AS (
-	SELECT DISTINCT message_id, canonical_id, source_id, source_type, attachment_count
+	SELECT message_id, canonical_id, source_id, source_type, attachment_count
 	FROM ` + activity + ` WHERE canonical_id IS NOT NULL AND attachment_count > 0 AND NOT unsent AND entry_kind IN ('event', 'meeting') AND (is_direct OR is_conversation_member)
+	QUALIFY row_number() OVER (PARTITION BY message_id, canonical_id ORDER BY source_id, source_type) = 1
 ), file_totals AS (
 	SELECT canonical_id, sum(attachment_count)::BIGINT AS file_count FROM file_messages GROUP BY canonical_id
 ), source_file_totals AS (

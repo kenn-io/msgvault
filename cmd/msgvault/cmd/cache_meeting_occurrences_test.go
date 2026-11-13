@@ -830,3 +830,72 @@ func TestMeetingCountsLinkedCopyParity(t *testing.T) {
 		})
 	}
 }
+
+func TestMeetingCountsUseAvailableAttendeesWithCalendarFilter(t *testing.T) {
+	dir := t.TempDir()
+	dbPath, analytics := filepath.Join(dir, "archive.db"), filepath.Join(dir, "analytics")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	source, err := st.GetOrCreateSource("gcal", "owner@example.com")
+	require.NoError(t, err)
+	require.NoError(t, st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
+	owner, err := st.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	require.NoError(t, err)
+	availablePerson, err := st.EnsureParticipant("available@example.com", "Available", "example.com")
+	require.NoError(t, err)
+	pendingPerson, err := st.EnsureParticipant("pending@example.com", "Pending", "example.com")
+	require.NoError(t, err)
+	at := time.Date(2024, 1, 2, 10, 0, 0, 0, time.UTC)
+	makeMessage := func(key, typ, format, raw string, recipient int64) int64 {
+		t.Helper()
+		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: key, MessageType: typ, SentAt: sql.NullTime{Time: at, Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"}, RawMIME: []byte(raw), RawFormat: format})
+		require.NoError(t, err)
+		require.NoError(t, st.ReplaceMessageRecipients(id, "from", []int64{owner}, []string{""}))
+		if recipient != 0 {
+			require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{recipient}, []string{""}))
+		}
+		return id
+	}
+	event := makeMessage("event", "calendar_event", "gcal_json", `{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"}}`, 0)
+	available := makeMessage("available", "meeting_transcript", "meeting_json", `{"transcript":"Notes"}`, availablePerson)
+	pending := makeMessage("pending", "meeting_transcript", "meeting_json", `{}`, pendingPerson)
+	for _, note := range []int64{available, pending} {
+		_, err = st.DecideMeetingLinkContext(t.Context(), store.MeetingLinkRef{Kind: "evt", MessageID: event}, store.MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+		require.NoError(t, err)
+	}
+	_, err = buildCache(t.Context(), dbPath, analytics, true)
+	require.NoError(t, err)
+	engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	scope := query.Context{MessageTypes: []string{"calendar_event"}}
+	person, err := engine.GetPerson(t.Context(), availablePerson, scope, nil)
+	require.NoError(t, err)
+	require.NotNil(t, person)
+	assert.EqualValues(t, 1, person.MeetingCount)
+	timeline, err := engine.RelationshipTimeline(t.Context(), query.RelationshipTimelineRequest{CanonicalID: availablePerson, Context: scope})
+	require.NoError(t, err)
+	assert.Len(t, timeline.Rows, 1)
+	pendingDetail, err := engine.GetPerson(t.Context(), pendingPerson, query.Context{}, nil)
+	require.NoError(t, err)
+	if pendingDetail != nil {
+		assert.Zero(t, pendingDetail.MeetingCount)
+	}
+	pendingTimeline, err := engine.RelationshipTimeline(t.Context(), query.RelationshipTimelineRequest{CanonicalID: pendingPerson})
+	require.NoError(t, err)
+	assert.Empty(t, pendingTimeline.Rows)
+
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`, event)
+	require.NoError(t, err)
+	_, err = buildCache(t.Context(), dbPath, analytics, true)
+	require.NoError(t, err)
+	updated, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, updated.Close()) })
+	person, err = updated.GetPerson(t.Context(), availablePerson, query.Context{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, person)
+	assert.EqualValues(t, 1, person.MeetingCount)
+	timeline, err = updated.RelationshipTimeline(t.Context(), query.RelationshipTimelineRequest{CanonicalID: availablePerson})
+	require.NoError(t, err)
+	assert.Len(t, timeline.Rows, 1)
+}

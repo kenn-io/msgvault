@@ -242,7 +242,7 @@ func buildBenchData(tb testing.TB) *DuckDBEngine {
 		// No confirmed identities or linked participants in the benchmark
 		// fixture; write empty, schema-bearing files so RequiredParquetDirs
 		// stays complete.
-		{"SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS anchor_message_id, NULL::VARCHAR AS occurrence_key, NULL::TIMESTAMP AS occurred_at, NULL::DATE AS start_date, NULL::BOOLEAN AS counted, []::VARCHAR[] AS declined_emails, 0::DECIMAL(38,0) AS occurrence_id WHERE false",
+		{identityindex.EmptyMeetingOccurrencesSQL,
 			identityindex.DatasetMeetingOccurrences, identityindex.DatasetMeetingOccurrences + ".parquet"},
 		{"SELECT 0::BIGINT AS source_id, 0::BIGINT AS participant_id WHERE false",
 			datasetOwnerParticipants, datasetOwnerParticipants + ".parquet"},

@@ -358,3 +358,38 @@ func TestMeetingOccurrencesShareDateAnchorAndDeclines(t *testing.T) {
 		})
 	}
 }
+
+func TestMeetingOccurrencesDeletedCalendarUsesAvailableTranscript(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "deleted-event", `{"id":"deleted-event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"}}`)
+	_, note := projectionFixture(t, st, "available-note", "meeting_json", `{"transcript":"Notes"}`)
+	_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+	require.NoError(t, err)
+	_, err = st.db.ExecContext(t.Context(), `UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`, event)
+	require.NoError(t, err)
+	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), nil)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	for _, row := range rows {
+		assert.Equal(t, note, row.AnchorMessageID)
+		assert.Equal(t, row.MessageID == note, row.Counted)
+	}
+}
+
+func TestMeetingOccurrencesExcludePendingAndHiddenCopies(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "live-event", `{"id":"live-event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"}}`)
+	_, hidden := calendarFixture(t, st, "hidden-event", `{"id":"hidden-event","start":{"dateTime":"2024-01-03T10:00:00Z"},"end":{"dateTime":"2024-01-03T11:00:00Z"}}`)
+	_, note := projectionFixture(t, st, "pending-note", "meeting_json", `{}`)
+	_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+	require.NoError(t, err)
+	_, err = st.db.ExecContext(t.Context(), `UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`, hidden)
+	require.NoError(t, err)
+	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), nil)
+	require.NoError(t, err)
+	counted := map[int64]bool{}
+	for _, row := range rows {
+		counted[row.MessageID] = row.Counted
+	}
+	assert.Equal(t, map[int64]bool{event: true, hidden: false, note: false}, counted)
+}

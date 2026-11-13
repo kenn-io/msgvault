@@ -25,7 +25,31 @@ const (
 	RelationshipDecayRate    = math.Ln2 / RelationshipHalfLifeDays
 )
 
+// MeetingOccurrenceStageSchema defines the stored fields before the occurrence ID is assigned.
+const MeetingOccurrenceStageSchema = "message_id BIGINT, anchor_message_id BIGINT, occurrence_key VARCHAR, occurred_at TIMESTAMP, start_date DATE, counted BOOLEAN, declined_emails VARCHAR[]"
+
 var (
+	// MeetingOccurrenceColumns defines the cache row order, including its derived ID.
+	MeetingOccurrenceColumns = func() string {
+		fields := strings.Split(MeetingOccurrenceStageSchema, ",")
+		names := make([]string, 0, len(fields)+1)
+		for _, field := range fields {
+			names = append(names, strings.Fields(field)[0])
+		}
+		return strings.Join(append(names, "occurrence_id"), ", ")
+	}()
+	// MeetingOccurrenceFixtureRow is a typed row for empty cache fixtures.
+	MeetingOccurrenceFixtureRow = func() string {
+		fields := strings.Split(MeetingOccurrenceStageSchema, ",")
+		values := make([]string, 0, len(fields)+1)
+		for _, field := range fields {
+			values = append(values, "NULL::"+strings.Fields(field)[1])
+		}
+		return "(" + strings.Join(append(values, "NULL::DECIMAL(38,0)"), ", ") + ")"
+	}()
+	// EmptyMeetingOccurrencesSQL produces the same columns as a published cache.
+	EmptyMeetingOccurrencesSQL = "SELECT * FROM (VALUES " + MeetingOccurrenceFixtureRow + ") AS t(" + MeetingOccurrenceColumns + ") WHERE false"
+
 	TextMessageTypes = []string{
 		"google_chat", "whatsapp", "imessage", "sms", "mms", "rcs",
 		"google_voice_text", "teams", "discord", "beeper", "slack", "inline", "fbmessenger", "matrix", "chatwoot", "telegram", "x_dm", "facebook_comments", "instagram_comments",

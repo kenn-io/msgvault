@@ -50,7 +50,7 @@ SELECT DISTINCT lower(trim(e.email)) FROM emails e JOIN canon c ON c.participant
 	if err != nil {
 		return time.Time{}, fmt.Errorf("read meeting occurrences: %w", err)
 	}
-	if _, err := db.ExecContext(ctx, `CREATE TEMP TABLE tmp_meeting_occurrences (message_id BIGINT, anchor_message_id BIGINT, occurrence_key VARCHAR, occurred_at TIMESTAMP, start_date DATE, counted BOOLEAN, declined_emails VARCHAR[])`); err != nil {
+	if _, err := db.ExecContext(ctx, `CREATE TEMP TABLE tmp_meeting_occurrences (`+identityindex.MeetingOccurrenceStageSchema+`)`); err != nil {
 		return time.Time{}, fmt.Errorf("create meeting occurrence table: %w", err)
 	}
 	defer func() { _, _ = db.ExecContext(context.WithoutCancel(ctx), `DROP TABLE tmp_meeting_occurrences`) }()

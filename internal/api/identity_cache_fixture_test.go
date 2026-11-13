@@ -46,7 +46,7 @@ func ensureIdentityCacheFixtureDatasets(
 	occurrencesDir := filepath.Join(analyticsDir, identityindex.DatasetMeetingOccurrences)
 	require.NoError(tb, os.MkdirAll(occurrencesDir, 0o755))
 	occurrencesPath := filepath.ToSlash(filepath.Join(occurrencesDir, "meeting_occurrences.parquet"))
-	_, err = db.ExecContext(tb.Context(), fmt.Sprintf(`COPY (SELECT NULL::BIGINT AS message_id, NULL::VARCHAR AS occurrence_key, NULL::TIMESTAMP AS occurred_at, NULL::DATE AS start_date, NULL::BOOLEAN AS counted, []::VARCHAR[] AS declined_emails, 0::DECIMAL(38,0) AS occurrence_id WHERE false) TO '%s' (FORMAT PARQUET)`, occurrencesPath))
+	_, err = db.ExecContext(tb.Context(), fmt.Sprintf(`COPY (%s) TO '%s' (FORMAT PARQUET)`, identityindex.EmptyMeetingOccurrencesSQL, occurrencesPath))
 	require.NoError(tb, err, "write empty meeting occurrences fixture dataset")
 	buildOptions := identityindex.BuildOptions{
 		Mode:           identityindex.ModeFull,

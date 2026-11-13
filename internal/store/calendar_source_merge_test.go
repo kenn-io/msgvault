@@ -202,3 +202,22 @@ func TestCalendarSourceMergeArchiveOnlyMasterLookup(t *testing.T) {
 		})
 	}
 }
+
+func TestMeetingOccurrencesSuppressSourceMergeArchivedCopy(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("gcal", "history@example.test")
+	require.NoError(t, err)
+	into, err := st.GetOrCreateSource("gcal", "live@example.test")
+	require.NoError(t, err)
+	historical := calendarMergeEvent(t, st, from.ID, "event", `{"id":"event","description":"old","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"}}`)
+	live := calendarMergeEvent(t, st, into.ID, "event", `{"id":"event","description":"new","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"}}`)
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	require.NoError(t, err)
+	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), nil)
+	require.NoError(t, err)
+	counted := map[int64]bool{}
+	for _, row := range rows {
+		counted[row.MessageID] = row.Counted
+	}
+	assert.Equal(t, map[int64]bool{historical: false, live: true}, counted)
+}
