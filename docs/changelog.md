@@ -75,6 +75,7 @@ All notable changes to msgvault, grouped by release.
 - MCP draft creation and edit receipts now include advisory `sensitive_content` findings for likely card numbers, IBANs, US Social Security numbers, API keys, and passwords in the submitted subject or body. Findings in recognized quoted or forwarded history carry `quoted: true`. Drafts are still written unchanged.
 - See a saved person's open loops on their **Details** tab in People. When
   more history remains, **Check more** continues the scan.
+- Let an MCP assistant read existing enrichment provider policy. With `--allow-enrichment-settings-writes`, it can request approved changes to enabled state and numeric limits. See [write controls](usage/chat.md#write-controls) for HTTP requirements and provider limitations.
 - Let an MCP assistant list open loops. With `--allow-loop-writes`, it can
   also mark loops done, snooze them, or reopen them, with your approval for
   each call. Over HTTP, decisions also need `--http-allow-writes` and protocol

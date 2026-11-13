@@ -24,7 +24,8 @@ By default, stdio clients can also edit native email tags, manage Saved Views,
 export attachments, and stage deletion manifests. Actual message deletion still
 requires the CLI [deletion workflow](/docs/usage/deletion/). Person promotion,
 display-name edits, and Notes writes need `--allow-profile-writes`. Source sync
-and Slack selection changes need `--allow-source-writes`. HTTP clients get read
+and Slack selection changes need `--allow-source-writes`. Enrichment policy edits need
+`--allow-enrichment-settings-writes`. HTTP clients get read
 tools by default and need
 `--http-allow-writes` for general write tools. Calendar event mutations also
 require `--allow-calendar-writes`; HTTP needs both flags. Each non-dry-run
@@ -865,6 +866,8 @@ source, cache, or person-edit tools.
 | `sync_source` | Request a configured source sync; requires confirmation. | Required `account`, `source_type` from `list_source_status` |
 | `get_slack_sync_policy` | Read channel and direct-message selection, the settings ETag, and restart state. | — |
 | `update_slack_sync_policy` | Change Slack selection; requires confirmation. | Required `etag`; at least one of `dms`, `group_dms`, `channels`, `exclude_channels` |
+| `get_enrichment_policy` | Read provider policy, settings ETag, and restart state. | — |
+| `update_enrichment_policy` | Edit an existing provider policy; requires confirmation. | Required `name`, `etag`; at least one of `enabled`, `max_retries`, `max_requests_per_run`, `max_requests_per_day` |
 | `get_participant_identity` | Read observed identifiers, service and scope context, cluster members, and link evidence. | Required `participant_id` |
 | `get_cache_build_status` | Follow an accepted analytics refresh job. | Required `job_id` from a fresh query response |
 
@@ -872,6 +875,14 @@ source, cache, or person-edit tools.
 configured shared scheduler job. The response preserves `disposition` when the
 daemon supplies it, such as `started`, `pending`, or `coalesced`; check source and
 scheduler status for progress.
+
+Enrichment numeric inputs must be integers from 0 through 9007199254740991.
+`max_retries: 0` reloads as 5. Request caps must be positive for an enabled
+provider; zero may be saved while it is disabled, subject to native validation,
+but does not mean an unlimited budget. Omitted fields are preserved and
+`enabled: false` is explicit. Enabling requires valid provider configuration;
+native validation refuses to disable the last provider while global enrichment
+is enabled. Restart the daemon to apply provider policy changes.
 
 For Slack changes, read `get_slack_sync_policy` first and pass its exact `etag`.
 Omitted fields are preserved; `false` and empty arrays are explicit changes.
@@ -939,7 +950,12 @@ Enable only the writes intended for the assistant's session:
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
+| Existing enrichment policy | `--allow-enrichment-settings-writes` | `--http-allow-writes --allow-enrichment-settings-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
+
+On unreleased `main`, `get_enrichment_policy` reads existing provider enabled states, numeric limits, the settings ETag, and restart state. `update_enrichment_policy` accepts that exact ETag and changes only enabled state or numeric limits after approval. Provider setup remains operator-managed. After editing, restart the daemon. For an enabled provider under globally enabled enrichment, inspect `msgvault person enrichment profiles --json`, review the resulting policy, and use `msgvault person enrichment consent <fingerprint>` if that exact fingerprint lacks active consent. Enabling a provider does not enable global enrichment. Request caps affect the fingerprint, but changing a disabled provider's caps does not register a new profile. Retry and enabled-state changes alone do not change the fingerprint.
+
+An edit proceeds only when the daemon response lets msgvault reconstruct the existing provider policy; otherwise it is refused. Exa reconstruction requires credential metadata from successful native credential-endpoint validation, which proves its omitted poll endpoint is empty. Missing metadata or a contradictory nonempty poll endpoint causes refusal; other required policy fields must also be reconstructable. SixtyFour edits require both endpoints to be available. A native update can remove a previously stored credential bound to a different origin. If a write reports `operation_may_have_completed: true`, read the policy again before retrying.
 
 `draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available. On unreleased `main`, `--confirm-sensitive-drafts` also requires confirmation for flagged draft creation and edits; it grants no write access.
 
@@ -1026,6 +1042,7 @@ msgvault mcp --http 8080
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-loop-writes` | `false` | On unreleased `main`, expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
+| `--allow-enrichment-settings-writes` | `false` | On unreleased `main`, expose approved edits to existing enrichment provider enabled state and numeric limits. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |
