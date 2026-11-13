@@ -136,7 +136,7 @@ func metaFeedHandler(cfg *config.Config, st *store.Store, work scheduler.WorkTra
 		}
 		client, err := configuredFacebookCommentsClient(cfg.FacebookComments[i])
 		if err != nil {
-			return fmt.Errorf("%w: %w", metawebhook.ErrUnrecoverable, err)
+			return err
 		}
 		done, ok := work.BeginWorkContext(ctx)
 		if !ok {
