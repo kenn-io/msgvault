@@ -20,153 +20,157 @@ import (
 
 func TestGrantBodyAndEdit(t *testing.T) {
 	for _, sourceType := range []string{"beeper", "gmail"} {
-		t.Run(sourceType, func(t *testing.T) {
-			check := assert.New(t)
-			req := require.New(t)
-			f := storetest.New(t)
-			ctx := t.Context()
-			src, err := f.Store.GetOrCreateSource(sourceType, "test-account")
-			req.NoError(err)
-			pa := f.EnsureParticipant("a@example.com", "A", "example.com")
-			pb := f.EnsureParticipant("b@example.com", "B", "example.com")
-			a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pa)
-			req.NoError(err)
-			b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pb)
-			req.NoError(err)
-			if sourceType == "beeper" {
-				_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("test-account", "a"), pb, beeperidentity.Fallback("test-account", "b"))
-				req.NoError(err)
-			} else {
-				f.Source = src
-				f.PersistEmail(storetest.EmailSpec{From: "a@example.com", To: []string{"b@example.com"}, SentAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
-			}
-
-			svc := introops.Service{Store: f.Store}
-			grant := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{Type: sourceType, Identifier: "test-account"}}}
-			row, err := svc.Prepare(ctx, grant, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID, Body: "private"})
-			req.NoError(err)
-			check.Empty(row.Body)
-			check.Equal("agent", row.CreatedBy)
-			page, err := svc.List(ctx, grant, store.PersonIntroductionQuery{})
-			req.NoError(err)
-			req.Len(page.Items, 1)
-			check.Empty(page.Items[0].Body)
-			req.Len(page.Items[0].Members, 2)
-			for _, member := range page.Items[0].Members {
-				check.Empty(member.UserID)
-			}
-			req.Len(row.Members, 2)
-			for _, member := range row.Members {
-				check.Empty(member.UserID)
-			}
-			title := "changed"
-			_, err = svc.Edit(ctx, grant, row.IntroID, store.PersonIntroductionEdit{Revision: 1, Title: &title})
-			req.ErrorIs(err, introops.ErrForbidden)
-			grant.Permissions = append(grant.Permissions, agentgrant.PermissionDraftEdit)
-			_, err = svc.Edit(ctx, grant, row.IntroID, store.PersonIntroductionEdit{Revision: 1, Title: &title})
-			req.ErrorIs(err, introops.ErrForbidden)
-			row, err = svc.Get(ctx, grant, row.IntroID)
-			req.NoError(err)
-			check.Equal("private", row.Body)
-			req.Len(row.Members, 2)
-			for _, member := range row.Members {
-				check.Empty(member.UserID)
-			}
-			ownerRow, err := svc.Get(ctx, nil, row.IntroID)
-			req.NoError(err)
-			req.Len(ownerRow.Members, 2)
-			for _, member := range ownerRow.Members {
-				check.NotEmpty(member.UserID)
-			}
-			other, err := f.Store.GetOrCreateSource(sourceType, "other-account")
-			req.NoError(err)
-			grant.Sources = []agentgrant.SourceRef{{ID: other.ID, Type: sourceType, Identifier: "other-account"}}
-			_, err = svc.Get(ctx, grant, row.IntroID)
-			req.ErrorIs(err, introops.ErrForbidden)
-			_, err = svc.Get(ctx, grant, "missing")
-			req.ErrorIs(err, introops.ErrForbidden)
-		})
+		t.Run(sourceType, func(t *testing.T) { checkGrantBodyAndEdit(t, sourceType) })
 	}
+}
+
+func checkGrantBodyAndEdit(t *testing.T, sourceType string) {
+	check := assert.New(t)
+	req := require.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+	src, err := f.Store.GetOrCreateSource(sourceType, "test-account")
+	req.NoError(err)
+	pa := f.EnsureParticipant("a@example.com", "A", "example.com")
+	pb := f.EnsureParticipant("b@example.com", "B", "example.com")
+	a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pa)
+	req.NoError(err)
+	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pb)
+	req.NoError(err)
+	if sourceType == "beeper" {
+		_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("test-account", "a"), pb, beeperidentity.Fallback("test-account", "b"))
+		req.NoError(err)
+	} else {
+		f.Source = src
+		f.PersistEmail(storetest.EmailSpec{From: "a@example.com", To: []string{"b@example.com"}, SentAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
+	}
+
+	svc := introops.Service{Store: f.Store}
+	grant := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{Type: sourceType, Identifier: "test-account"}}}
+	row, err := svc.Prepare(ctx, grant, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID, Body: "private"})
+	req.NoError(err)
+	check.Empty(row.Body)
+	check.Equal("agent", row.CreatedBy)
+	page, err := svc.List(ctx, grant, store.PersonIntroductionQuery{})
+	req.NoError(err)
+	req.Len(page.Items, 1)
+	check.Empty(page.Items[0].Body)
+	req.Len(page.Items[0].Members, 2)
+	for _, member := range page.Items[0].Members {
+		check.Empty(member.UserID)
+	}
+	req.Len(row.Members, 2)
+	for _, member := range row.Members {
+		check.Empty(member.UserID)
+	}
+	title := "changed"
+	_, err = svc.Edit(ctx, grant, row.IntroID, store.PersonIntroductionEdit{Revision: 1, Title: &title})
+	req.ErrorIs(err, introops.ErrForbidden)
+	grant.Permissions = append(grant.Permissions, agentgrant.PermissionDraftEdit)
+	_, err = svc.Edit(ctx, grant, row.IntroID, store.PersonIntroductionEdit{Revision: 1, Title: &title})
+	req.ErrorIs(err, introops.ErrForbidden)
+	row, err = svc.Get(ctx, grant, row.IntroID)
+	req.NoError(err)
+	check.Equal("private", row.Body)
+	req.Len(row.Members, 2)
+	for _, member := range row.Members {
+		check.Empty(member.UserID)
+	}
+	ownerRow, err := svc.Get(ctx, nil, row.IntroID)
+	req.NoError(err)
+	req.Len(ownerRow.Members, 2)
+	for _, member := range ownerRow.Members {
+		check.NotEmpty(member.UserID)
+	}
+	other, err := f.Store.GetOrCreateSource(sourceType, "other-account")
+	req.NoError(err)
+	grant.Sources = []agentgrant.SourceRef{{ID: other.ID, Type: sourceType, Identifier: "other-account"}}
+	_, err = svc.Get(ctx, grant, row.IntroID)
+	req.ErrorIs(err, introops.ErrForbidden)
+	_, err = svc.Get(ctx, grant, "missing")
+	req.ErrorIs(err, introops.ErrForbidden)
 }
 
 func TestDelegatedListFiltersBeforeLimit(t *testing.T) {
 	for _, sourceType := range []string{"beeper", "gmail"} {
-		t.Run(sourceType, func(t *testing.T) {
-			req := require.New(t)
-			check := assert.New(t)
-			f := storetest.New(t)
-			ctx := t.Context()
-			src, err := f.Store.GetOrCreateSource(sourceType, "account")
-			req.NoError(err)
-			other, err := f.Store.GetOrCreateSource(sourceType, "other")
-			req.NoError(err)
-			pa := f.EnsureParticipant("scan-a@example.test", "A", "example.test")
-			pb := f.EnsureParticipant("scan-b@example.test", "B", "example.test")
-			pc := f.EnsureParticipant("scan-hidden@example.test", "C", "example.test")
-			a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pa)
-			req.NoError(err)
-			b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pb)
-			req.NoError(err)
-			c, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pc)
-			req.NoError(err)
-			var evidence int64
-			if sourceType == "beeper" {
-				_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("account", "a"), pb, beeperidentity.Fallback("account", "b"))
-				req.NoError(err)
-				_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("other", "a"), pb, beeperidentity.Fallback("other", "b"))
-				req.NoError(err)
-			} else {
-				f.Source = src
-				evidence = f.PersistEmail(storetest.EmailSpec{From: "scan-a@example.test", To: []string{"scan-b@example.test"}, SentAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
-				_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO message_recipients (message_id,participant_id,recipient_type,email_address) VALUES (?,?,'cc','alias@example.test')`), evidence, pb)
-				req.NoError(err)
-				f.Source = other
-				f.PersistEmail(storetest.EmailSpec{From: "scan-a@example.test", To: []string{"scan-b@example.test"}, SentAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
-				f.Source = src
-			}
+		t.Run(sourceType, func(t *testing.T) { checkDelegatedListFiltersBeforeLimit(t, sourceType) })
+	}
+}
 
-			svc := introops.Service{Store: f.Store}
-			in := store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID}
-			g := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{Type: sourceType, Identifier: "account"}}}
-			empty, err := svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
-			req.NoError(err)
-			check.Empty(empty.Items)
-			check.False(empty.HasMore)
-			_, err = svc.Prepare(ctx, nil, store.PersonIntroductionPrepare{SourceID: other.ID, PersonAID: a.ID, PersonBID: b.ID})
-			req.NoError(err)
-			in.PersonBID = c.ID
-			for range 101 {
-				_, err = svc.Prepare(ctx, nil, in)
-				req.NoError(err)
-			}
-			page, err := svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
-			req.NoError(err)
-			check.Equal(empty, page)
-			in.PersonBID = b.ID
-			visible, err := svc.Prepare(ctx, nil, in)
-			req.NoError(err)
-			_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_introductions SET created_at = ? WHERE intro_id = ?`), time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), visible.IntroID)
-			req.NoError(err)
-			page, err = svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
-			req.NoError(err)
-			req.Len(page.Items, 1)
-			check.Equal(visible.IntroID, page.Items[0].IntroID)
-			check.False(page.HasMore)
-			got, err := svc.Get(ctx, g, visible.IntroID)
-			req.NoError(err)
-			check.Equal(page.Items[0], got)
-			if sourceType == "gmail" {
-				check.Contains(got.Blockers, store.IntroductionBlocker{Code: "ambiguous_identity", PersonID: b.ID})
-				_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), evidence)
-				req.NoError(err)
-				page, err = svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
-				req.NoError(err)
-				check.Empty(page.Items)
-				check.False(page.HasMore)
-				_, err = svc.Get(ctx, g, visible.IntroID)
-				req.ErrorIs(err, introops.ErrForbidden)
-			}
-		})
+func checkDelegatedListFiltersBeforeLimit(t *testing.T, sourceType string) {
+	req := require.New(t)
+	check := assert.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+	src, err := f.Store.GetOrCreateSource(sourceType, "account")
+	req.NoError(err)
+	other, err := f.Store.GetOrCreateSource(sourceType, "other")
+	req.NoError(err)
+	pa := f.EnsureParticipant("scan-a@example.test", "A", "example.test")
+	pb := f.EnsureParticipant("scan-b@example.test", "B", "example.test")
+	pc := f.EnsureParticipant("scan-hidden@example.test", "C", "example.test")
+	a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pa)
+	req.NoError(err)
+	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pb)
+	req.NoError(err)
+	c, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pc)
+	req.NoError(err)
+	var evidence int64
+	if sourceType == "beeper" {
+		_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("account", "a"), pb, beeperidentity.Fallback("account", "b"))
+		req.NoError(err)
+		_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("other", "a"), pb, beeperidentity.Fallback("other", "b"))
+		req.NoError(err)
+	} else {
+		f.Source = src
+		evidence = f.PersistEmail(storetest.EmailSpec{From: "scan-a@example.test", To: []string{"scan-b@example.test"}, SentAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
+		_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO message_recipients (message_id,participant_id,recipient_type,email_address) VALUES (?,?,'cc','alias@example.test')`), evidence, pb)
+		req.NoError(err)
+		f.Source = other
+		f.PersistEmail(storetest.EmailSpec{From: "scan-a@example.test", To: []string{"scan-b@example.test"}, SentAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
+		f.Source = src
+	}
+
+	svc := introops.Service{Store: f.Store}
+	in := store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID}
+	g := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{Type: sourceType, Identifier: "account"}}}
+	empty, err := svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
+	req.NoError(err)
+	check.Empty(empty.Items)
+	check.False(empty.HasMore)
+	_, err = svc.Prepare(ctx, nil, store.PersonIntroductionPrepare{SourceID: other.ID, PersonAID: a.ID, PersonBID: b.ID})
+	req.NoError(err)
+	in.PersonBID = c.ID
+	for range 101 {
+		_, err = svc.Prepare(ctx, nil, in)
+		req.NoError(err)
+	}
+	page, err := svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
+	req.NoError(err)
+	check.Equal(empty, page)
+	in.PersonBID = b.ID
+	visible, err := svc.Prepare(ctx, nil, in)
+	req.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_introductions SET created_at = ? WHERE intro_id = ?`), time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), visible.IntroID)
+	req.NoError(err)
+	page, err = svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
+	req.NoError(err)
+	req.Len(page.Items, 1)
+	check.Equal(visible.IntroID, page.Items[0].IntroID)
+	check.False(page.HasMore)
+	got, err := svc.Get(ctx, g, visible.IntroID)
+	req.NoError(err)
+	check.Equal(page.Items[0], got)
+	if sourceType == "gmail" {
+		check.Contains(got.Blockers, store.IntroductionBlocker{Code: "ambiguous_identity", PersonID: b.ID})
+		_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), evidence)
+		req.NoError(err)
+		page, err = svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
+		req.NoError(err)
+		check.Empty(page.Items)
+		check.False(page.HasMore)
+		_, err = svc.Get(ctx, g, visible.IntroID)
+		req.ErrorIs(err, introops.ErrForbidden)
 	}
 }
 
