@@ -69,14 +69,7 @@ func importJobDisclosure(name string, args map[string]any) (string, bool, error)
 	if !ok {
 		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 	}
-	var after, before string
-	if input.After != nil {
-		after = *input.After
-	}
-	if input.Before != nil {
-		before = *input.Before
-	}
-	if api.ValidateImportJobDates(after, before) != "" {
+	if api.ValidateImportJobDates(stringOrEmpty(input.After), stringOrEmpty(input.Before)) != "" {
 		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 	}
 	data, err := json.Marshal(struct {
