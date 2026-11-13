@@ -370,7 +370,7 @@ func (imp *chatImporter) persistMessage(ctx context.Context, chat *Chat, convTyp
 			SentAt: sql.NullTime{Time: m.SentAt, Valid: !m.SentAt.IsZero()}, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0},
 			IsFromMe: fromMe, Snippet: sql.NullString{String: snippet, Valid: snippet != ""}, SizeEstimate: int64(len(body))},
 		Conversation: &store.ConversationPersistData{SourceConversationID: chat.MID, ConversationType: convType, Title: title, Participants: members, PreserveExistingParticipants: true},
-		BodyText:     sql.NullString{String: body, Valid: true}, Metadata: metadata, Recipients: recipients, FTS: &store.FTSDoc{Body: body},
+		BodyText:     sql.NullString{String: body, Valid: true}, Metadata: metadata, Recipients: recipients,
 	})
 	return imp.finishMessage(ctx, key, id, err)
 }

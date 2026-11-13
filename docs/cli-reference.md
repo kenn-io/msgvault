@@ -2553,7 +2553,7 @@ Re-imports add new messages and fill missing media. Archived text and edit flags
 
 ## import-line
 
-Import LINE chats from the message store in an unencrypted iPhone backup.
+Available on `main`, unreleased. Import LINE chats from the message store in an unencrypted iPhone backup.
 
 ```bash
 msgvault import-line <path>

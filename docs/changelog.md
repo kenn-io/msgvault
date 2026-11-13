@@ -14,6 +14,8 @@ All notable changes to msgvault, grouped by release.
   messages, senders, replies, groups, and rooms are archived; photos, files,
   stickers, calls, and system notices are counted and skipped because the
   phone's store holds no media bytes. Re-imports add only new messages.
+- `import-telegram --no-resume` now saves its progress, so the next run can
+  resume an import that `--limit` or an interruption stopped.
 
 ## 0.24.0
 <small>2026-11-13</small>

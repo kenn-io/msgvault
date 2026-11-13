@@ -41,6 +41,14 @@ func TestDecodeMetadata(t *testing.T) {
 			assert.Error(t, err)
 		})
 	}
+	mutable := archive(map[string]any{"root": plist.UID(1)}, []any{"$null",
+		map[string]any{"NS.keys": []any{"replyOriginalMessageId"}, "NS.objects": []any{plist.UID(2)}},
+		map[string]any{"NS.string": "123", "$class": plist.UID(3)},
+		map[string]any{"$classname": "NSMutableString", "$classes": []any{"NSMutableString", "NSString", "NSObject"}},
+	})
+	md, err = decodeMetadata(mutable)
+	require.NoError(err)
+	require.Equal(metadata{ReplyTo: "123"}, md)
 	blob := archive(map[string]any{"root": plist.UID(1)}, []any{"$null", map[string]any{"NS.keys": []any{"unknown"}, "NS.objects": []any{plist.UID(9)}}})
 	md, err = decodeMetadata(blob)
 	require.NoError(err)

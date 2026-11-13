@@ -62,6 +62,11 @@ func decodeMetadata(blob []byte) (metadata, error) {
 			continue
 		}
 		value, ok := resolve(values[i])
+		// NSKeyedArchiver writes an NSMutableString as an object that
+		// holds its text under NS.string.
+		if object, isObject := value.(map[string]any); isObject {
+			value = object["NS.string"]
+		}
 		str, isString := value.(string)
 		if !ok || !isString {
 			return md, fmt.Errorf("metadata field %s is not a readable string", key)

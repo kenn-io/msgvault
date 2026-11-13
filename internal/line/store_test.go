@@ -351,3 +351,56 @@ func TestOpenRejectsMissingListedWAL(t *testing.T) {
 	_, err = Open(t.Context(), backup)
 	require.ErrorContains(err, "names a write-ahead log that is missing")
 }
+
+// Core Data numbers its join tables by entity, and an app update can change
+// the numbers, so members must be found whatever the numbers are.
+func TestChatsFindRenumberedOrMissingMemberTables(t *testing.T) {
+	for name, statements := range map[string]struct{ store, groups []string }{
+		"renumbered": {
+			store: []string{
+				`ALTER TABLE Z_1MEMBERS RENAME TO Z_3MEMBERS`,
+				`ALTER TABLE Z_3MEMBERS RENAME COLUMN Z_1CHATS TO Z_3CHATS`,
+				`ALTER TABLE Z_3MEMBERS RENAME COLUMN Z_12MEMBERS TO Z_14MEMBERS`,
+			},
+			groups: []string{
+				`ALTER TABLE Z_1MEMBERCHATUSERS RENAME TO Z_4MEMBERCHATUSERS`,
+				`ALTER TABLE Z_4MEMBERCHATUSERS RENAME COLUMN Z_1GROUPS TO Z_4GROUPS`,
+				`ALTER TABLE Z_4MEMBERCHATUSERS RENAME COLUMN Z_2MEMBERCHATUSERS TO Z_5MEMBERCHATUSERS`,
+			},
+		},
+		"missing": {
+			store:  []string{`DROP TABLE Z_1MEMBERS`},
+			groups: []string{`DROP TABLE Z_1MEMBERCHATUSERS`},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			dir := linetest.Write(t, t.TempDir(), sampleFixture())
+			for file, list := range map[string][]string{"Line.sqlite": statements.store, "UnifiedGroup.sqlite": statements.groups} {
+				db, err := sql.Open("sqlite3", filepath.Join(dir, file))
+				require.NoError(err)
+				for _, statement := range list {
+					_, err := db.ExecContext(t.Context(), statement)
+					require.NoError(err)
+				}
+				require.NoError(db.Close())
+			}
+			reader, err := Open(t.Context(), dir)
+			require.NoError(err)
+			defer func() { require.NoError(reader.Close()) }()
+			users, err := reader.Users(t.Context())
+			require.NoError(err)
+			chats, err := reader.Chats(t.Context(), users)
+			require.NoError(err)
+			require.Len(chats, 4)
+			assert.Equal("Book club", chats[2].Title)
+			if name == "renumbered" {
+				assert.Equal([]string{ownerMID, aliceMID, bobMID}, chats[2].Members)
+				assert.Equal([]string{aliceMID, bobMID}, chats[3].Members)
+			} else {
+				assert.Empty(chats[2].Members)
+				assert.Empty(chats[3].Members)
+			}
+		})
+	}
+}

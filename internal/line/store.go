@@ -14,6 +14,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mattn/go-sqlite3"
+	"go.kenn.io/msgvault/internal/config"
 )
 
 const (
@@ -111,7 +114,7 @@ func (s *Store) open(ctx context.Context, files storeFiles) (*sql.DB, string, st
 		return db, hash, "", err
 	}
 	if s.scratch == "" {
-		dir, err := os.MkdirTemp("", "msgvault-line-")
+		dir, err := config.MkTempDir("msgvault-line-")
 		if err != nil {
 			return nil, "", "", err
 		}
@@ -219,7 +222,7 @@ func withWAL(db string) (storeFiles, error) {
 func resolveBackup(ctx context.Context, root string) (main, groups storeFiles, err error) {
 	manifest, err := openImmutable(ctx, filepath.Join(root, manifestFile))
 	if err != nil {
-		if strings.Contains(err.Error(), "not a database") {
+		if sqliteErr, ok := errors.AsType[sqlite3.Error](err); ok && sqliteErr.Code == sqlite3.ErrNotADB {
 			return main, groups, errors.New("line: the backup manifest is not readable; encrypted backups are not supported")
 		}
 		return main, groups, fmt.Errorf("line: open backup manifest: %w", err)
@@ -445,12 +448,16 @@ func (s *Store) Chats(ctx context.Context, users map[int64]*User) ([]*Chat, erro
 }
 
 func (s *Store) chatMembers(ctx context.Context, users map[int64]*User) (map[int64][]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT Z_1CHATS, Z_12MEMBERS FROM Z_1MEMBERS ORDER BY Z_1CHATS, Z_12MEMBERS`)
+	members := map[int64][]string{}
+	link, err := findJoinTable(ctx, s.db, "MEMBERS", "CHATS", "MEMBERS")
+	if err != nil || link.table == "" {
+		return members, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+link.left+`, `+link.right+` FROM `+link.table+` ORDER BY 1, 2`)
 	if err != nil {
 		return nil, fmt.Errorf("line: read chat members: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	members := map[int64][]string{}
 	for rows.Next() {
 		var chat, user int64
 		if err := rows.Scan(&chat, &user); err != nil {
@@ -473,10 +480,18 @@ func (s *Store) unifiedGroups(ctx context.Context) (map[string]*unifiedGroup, er
 	if s.groups == nil {
 		return groups, nil
 	}
-	rows, err := s.groups.QueryContext(ctx, `SELECT g.ZID, g.ZNAME, u.ZMID FROM ZUNIFIEDGROUP g
-		LEFT JOIN Z_1MEMBERCHATUSERS l ON l.Z_1GROUPS = g.Z_PK
-		LEFT JOIN ZUNIFIEDGROUPUSER u ON u.Z_PK = l.Z_2MEMBERCHATUSERS
-		WHERE g.ZID IS NOT NULL ORDER BY g.Z_PK, u.Z_PK`)
+	link, err := findJoinTable(ctx, s.groups, "MEMBERCHATUSERS", "GROUPS", "MEMBERCHATUSERS")
+	if err != nil {
+		return nil, err
+	}
+	query := `SELECT ZID, ZNAME, NULL FROM ZUNIFIEDGROUP WHERE ZID IS NOT NULL ORDER BY Z_PK`
+	if link.table != "" {
+		query = `SELECT g.ZID, g.ZNAME, u.ZMID FROM ZUNIFIEDGROUP g
+		LEFT JOIN ` + link.table + ` l ON l.` + link.left + ` = g.Z_PK
+		LEFT JOIN ZUNIFIEDGROUPUSER u ON u.Z_PK = l.` + link.right + `
+		WHERE g.ZID IS NOT NULL ORDER BY g.Z_PK, u.Z_PK`
+	}
+	rows, err := s.groups.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("line: read groups: %w", err)
 	}
@@ -497,6 +512,69 @@ func (s *Store) unifiedGroups(ctx context.Context) (map[string]*unifiedGroup, er
 		}
 	}
 	return groups, rows.Err()
+}
+
+// joinTable names a Core Data many-to-many table and its two key columns.
+type joinTable struct{ table, left, right string }
+
+// findJoinTable finds the many-to-many table Core Data creates for a
+// relationship. Core Data names the table and its columns Z_<entity
+// number><relationship name>, and the entity numbers change when an app
+// update adds or removes an entity, so only the names after the number are
+// fixed. It returns a zero joinTable when the store has no such table.
+func findJoinTable(ctx context.Context, db *sql.DB, table, left, right string) (joinTable, error) {
+	rows, err := db.QueryContext(ctx, `SELECT m.name, c.name FROM sqlite_master m, pragma_table_info(m.name) c
+		WHERE m.type = 'table' AND m.name GLOB 'Z_[0-9]*' ORDER BY m.name, c.cid`)
+	if err != nil {
+		return joinTable{}, fmt.Errorf("line: read store tables: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	found := map[string]*joinTable{}
+	var names []string
+	for rows.Next() {
+		var name, column string
+		if err := rows.Scan(&name, &column); err != nil {
+			return joinTable{}, err
+		}
+		if !coreDataName(name, table) {
+			continue
+		}
+		jt := found[name]
+		if jt == nil {
+			jt = &joinTable{table: name}
+			found[name] = jt
+			names = append(names, name)
+		}
+		switch {
+		case coreDataName(column, left):
+			jt.left = column
+		case coreDataName(column, right):
+			jt.right = column
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return joinTable{}, err
+	}
+	var match joinTable
+	for _, name := range names {
+		if jt := found[name]; jt.left != "" && jt.right != "" {
+			if match.table != "" {
+				return joinTable{}, fmt.Errorf("line: the store has more than one %s table", table)
+			}
+			match = *jt
+		}
+	}
+	return match, nil
+}
+
+// coreDataName reports whether name is Z_, an entity number, then suffix.
+func coreDataName(name, suffix string) bool {
+	number, ok := strings.CutPrefix(name, "Z_")
+	if !ok {
+		return false
+	}
+	number, ok = strings.CutSuffix(number, suffix)
+	return ok && number != "" && strings.Trim(number, "0123456789") == ""
 }
 
 // Messages visits a chat's messages in time order.
