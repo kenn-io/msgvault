@@ -24,7 +24,7 @@ func personFactOperationalDefinitions() []operationalDefinition {
 			"include_decisions": booleanSchema("Include a page of decisions"),
 		}, "person_id"), outputSchemaFor[PersonFactClaimsOutput](), false),
 		newOperationalDefinition("list_person_fact_pins", "Read effective person fact pins.", OperationFamilyPersonFacts, closedObject(map[string]*jsonschema.Schema{"person_id": safeIDSchema("Durable person ID")}, "person_id"), outputSchemaFor[generated.PersonFactPinsResponse](), false),
-		newOperationalDefinition("set_person_fact_pin", "Set or clear an attribute or employment fact pin against the current native target. Requires the person to be tracked and confirmation.", OperationFamilyPersonFacts, closedObject(map[string]*jsonschema.Schema{"person_id": safeIDSchema("Durable person ID"), "kind": {Type: "string", Enum: []any{"attribute", "employment"}}, "key": stringSchema("Exact active target key"), "pinned": booleanSchema("Desired pin state")}, "person_id", "kind", "key", "pinned"), outputSchemaFor[generated.PersonFactPinWrite](), true),
+		newOperationalDefinition("set_person_fact_pin", "Set or clear an attribute or employment fact pin against the current native target. Requires the person to be tracked and confirmation.", OperationFamilyPersonFacts, closedObject(map[string]*jsonschema.Schema{"person_id": safeIDSchema("Durable person ID"), "kind": {Type: "string", Enum: []any{"attribute", "employment"}}, "key": stringSchema("Active target key from a claim target or `msgvault person facts catalog`"), "pinned": booleanSchema("Desired pin state")}, "person_id", "kind", "key", "pinned"), outputSchemaFor[generated.PersonFactPinWrite](), true),
 		tracking,
 	}
 }
