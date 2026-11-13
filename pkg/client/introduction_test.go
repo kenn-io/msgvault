@@ -71,7 +71,7 @@ func checkGeneratedIntroductionClient(t *testing.T, meetingMessageID *int64) {
 	invalid := list.JSON200.Items[0]
 	for _, id := range []int64{0, -1} {
 		invalid.MeetingMessageID = &id
-		assert.Error(t, invalid.Validate(), "context IDs must be positive")
+		require.Error(t, invalid.Validate(), "context IDs must be positive")
 	}
 
 	detail, err := client.GetIntroductionWithResponse(t.Context(), &generated.GetIntroductionRequestOptions{

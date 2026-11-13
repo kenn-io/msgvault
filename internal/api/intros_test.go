@@ -159,7 +159,7 @@ func TestIntroductionMeetingContextSchema(t *testing.T) {
 		assert.Equal(t, huma.TypeInteger, field.Type)
 		assert.False(t, field.Nullable)
 		require.NotNil(t, field.Minimum)
-		assert.Equal(t, float64(1), *field.Minimum)
+		assert.InDelta(t, float64(1), *field.Minimum, 0)
 		assert.NotContains(t, record.Required, "meeting_message_id")
 	}
 }
