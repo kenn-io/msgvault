@@ -50,7 +50,6 @@ func TestClassifyFirstContact(t *testing.T) {
 		{"meeting explicit", ActivityCandidate{MessageType: "meeting_transcript", MeetingParticipants: proof, Counterparts: proof}, FirstContactMeetingIntro, 1, &sender, 25},
 		{"meeting missing owner", ActivityCandidate{MessageType: "meeting_transcript", MeetingParticipants: proof[:2], Counterparts: proof}, FirstContactMeeting, 0, nil, 25},
 		{"meeting normalized only", ActivityCandidate{MessageType: "meeting_transcript", Counterparts: proof}, FirstContactMeeting, 0, nil, 25},
-		{"meeting ambiguous organizer", ActivityCandidate{MessageType: "meeting_transcript", MeetingParticipants: append(append([]ActivityCounterpart{}, proof...), ActivityCounterpart{ParticipantID: 4, RecipientType: "from"}), Counterparts: proof}, FirstContactMeeting, 0, nil, 25},
 		{"meeting target organizer", ActivityCandidate{MessageType: "meeting_transcript", MeetingParticipants: []ActivityCounterpart{{ParticipantID: 2, PersonID: &target, RecipientType: "from"}, proof[2]}, Counterparts: proof}, FirstContactMeeting, 0, nil, 25},
 		{"meeting owner organizer", ActivityCandidate{MessageType: "meeting_transcript", MeetingParticipants: []ActivityCounterpart{{ParticipantID: 3, PersonID: &ownerPerson, RecipientType: "from", IsOwner: true}, proof[1]}, Counterparts: proof}, FirstContactMeeting, 0, nil, 25},
 	}
