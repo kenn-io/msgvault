@@ -76,9 +76,6 @@ func (b *daemonMCPOperations) executePersonFactOperation(ctx context.Context, na
 				return r, true, e
 			}
 			out.Evidence = r.Output.(generated.PersonFactEvidenceResponse).Evidence
-			if out.Evidence == nil {
-				out.Evidence = []generated.PersonFactEvidence{}
-			}
 		}
 		if a.IncludeDecisions {
 			r, e = readMCPOperationJSONWithClassifier[generated.PersonFactDecisionsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-decisions", &generated.ListPersonFactDecisionsRequestOptions{PathParams: &generated.ListPersonFactDecisionsPath{ID: a.PersonID}, Query: &generated.ListPersonFactDecisionsQuery{Target: a.Target, Limit: a.Limit, Offset: a.Offset}}, factClassify, http.StatusOK)
@@ -86,9 +83,6 @@ func (b *daemonMCPOperations) executePersonFactOperation(ctx context.Context, na
 				return r, true, e
 			}
 			out.Decisions = r.Output.(generated.PersonFactDecisionsResponse).Decisions
-			if out.Decisions == nil {
-				out.Decisions = []generated.PersonFactDecision{}
-			}
 		}
 		return &mcpserver.OperationResult{Output: out}, true, nil
 	case "list_person_fact_pins":

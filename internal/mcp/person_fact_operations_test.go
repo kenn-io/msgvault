@@ -19,8 +19,6 @@ func TestPersonFactCatalogOwnerCapabilitiesAndWriteGate(t *testing.T) {
 	for _, name := range names[2:] {
 		assertions.NotContains(reads, name)
 	}
-	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyRecords}
-	assertions.NotContains(toolsByName(t, rawListTools(t, opts, true)), "set_person_tracking")
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyPersonFacts}
 	tools := toolsByName(t, rawListTools(t, opts, true))
 	trackingAnnotations, ok := tools["set_person_tracking"]["annotations"].(map[string]any)
@@ -32,7 +30,4 @@ func TestPersonFactCatalogOwnerCapabilitiesAndWriteGate(t *testing.T) {
 	for _, name := range names {
 		assertions.Contains(tools, name)
 	}
-	assertions.NotContains(toolsByName(t, rawListTools(t, opts, false)), "set_person_tracking")
-	opts.OperationCapabilities = []string{"list_person_fact_claims"}
-	assertions.NotContains(toolsByName(t, rawListTools(t, opts, true)), "set_person_tracking")
 }

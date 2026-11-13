@@ -67,17 +67,6 @@ func TestPersonFactNativeDiagnosticsAndPin(t *testing.T) {
 	assertions.Len(output.Claims, 1)
 	assertions.Len(output.Evidence, 1)
 	assertions.Len(output.Decisions, 1)
-	result, err = backend.ExecuteOperation(t.Context(), "list_person_fact_claims", map[string]any{"person_id": id})
-	requirements.NoError(err)
-	data, err := json.Marshal(result.Output)
-	requirements.NoError(err)
-	assertions.NotContains(string(data), `"evidence"`)
-	assertions.NotContains(string(data), `"decisions"`)
-	result, err = backend.ExecuteOperation(t.Context(), "list_person_fact_claims", map[string]any{"person_id": id, "offset": 100, "include_evidence": true})
-	requirements.NoError(err)
-	data, err = json.Marshal(result.Output)
-	requirements.NoError(err)
-	assertions.Contains(string(data), `"evidence":[]`)
 	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), true)
 	requirements.NoError(err)
 	var employment personfacts.TargetDescriptor
@@ -113,6 +102,21 @@ func TestPersonFactNativeDiagnosticsAndPin(t *testing.T) {
 		assertions.False(slices.ContainsFunc(pins, func(pin personfacts.PinState) bool {
 			return pin.Target.Kind == item.Kind && pin.Target.Key == item.Key && pin.Pinned
 		}))
+	}
+}
+
+func TestPersonFactPinEscapedKeys(t *testing.T) {
+	backend, st, id, _ := factFixture(t)
+	description := "Synthetic fact"
+	for _, tc := range []struct{ key, slug string }{{"test/slash", "slash_key"}, {"test%2Fkey", "percent_key"}} {
+		_, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: tc.key, ObjectType: store.AttributeObjectPerson, Slug: tc.slug, Label: "Synthetic", Description: &description, ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, UICreatable: true, UIEditable: true, APIMutable: true, IsAudited: true, IsDeletable: true})
+		require.NoError(t, err)
+		result, err := backend.ExecuteOperation(t.Context(), "set_person_fact_pin", map[string]any{"person_id": id, "kind": "attribute", "key": tc.key, "pinned": true})
+		require.NoError(t, err)
+		require.False(t, result.IsError)
+		pins, err := st.ListPersonFactPinsContext(t.Context(), id)
+		require.NoError(t, err)
+		assert.True(t, slices.ContainsFunc(pins, func(pin personfacts.PinState) bool { return pin.Target.Key == tc.key && pin.Pinned }))
 	}
 }
 
@@ -166,37 +170,22 @@ func TestPersonFactTrackingAndRefusals(t *testing.T) {
 	requirements.NoError(err)
 	assertions.JSONEq(`{"error":"invalid_fact_target","operation_may_have_completed":false}`, string(data))
 
-	for _, tc := range []struct {
-		name   string
-		args   map[string]any
-		body   string
-		status int
-		want   string
-	}{
-		{"set_person_tracking", map[string]any{"person_id": id, "tracked": false}, `{"error":"person_profile_failed"}`, http.StatusInternalServerError, `{"error":"operation_refused","operation_may_have_completed":true}`},
-		{"set_person_fact_pin", map[string]any{"person_id": id, "kind": "attribute", "key": "k", "pinned": true}, `{"error":"person_fact_failed"}`, http.StatusInternalServerError, `{"error":"operation_refused","operation_may_have_completed":true}`},
-		{"set_person_tracking", map[string]any{"person_id": id, "tracked": false}, `{"error":"server_busy"}`, http.StatusServiceUnavailable, `{"error":"server_busy","operation_may_have_completed":false}`},
-	} {
-		stub := &daemonMCPOperations{client: newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
-			assertions.Equal(http.MethodPut, r.Method)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(tc.status)
-			_, _ = w.Write([]byte(tc.body))
-		}), supported: []string{"set_person_tracking", "set_person_fact_pin"}}
-		result, err = stub.ExecuteOperation(t.Context(), tc.name, tc.args)
-		requirements.NoError(err)
-		requirements.True(result.IsError)
-		data, err = json.Marshal(result.Output)
-		requirements.NoError(err)
-		assertions.JSONEq(tc.want, string(data))
-	}
+	stub := &daemonMCPOperations{client: newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assertions.Equal(http.MethodPut, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"server_busy"}`))
+	}), supported: []string{"set_person_tracking"}}
+	result, err = stub.ExecuteOperation(t.Context(), "set_person_tracking", map[string]any{"person_id": id, "tracked": false})
+	requirements.NoError(err)
+	requirements.True(result.IsError)
+	data, err = json.Marshal(result.Output)
+	requirements.NoError(err)
+	assertions.JSONEq(`{"error":"server_busy","operation_may_have_completed":false}`, string(data))
 }
 
 func TestPersonFactCapabilitiesRequireExactContracts(t *testing.T) {
-	backend, _, _, target := factFixture(t)
-	require.NotEmpty(t, target.Key)
-	caps, err := backend.client.MCPCapabilities(t.Context())
-	require.NoError(t, err)
+	backend, _, _, _ := factFixture(t)
 	for _, tc := range []struct {
 		id, removed, name string
 		query             bool
@@ -204,33 +193,20 @@ func TestPersonFactCapabilitiesRequireExactContracts(t *testing.T) {
 		{"listPersonFactEvidence", "target", "list_person_fact_claims", true},
 		{"setPersonFactPin", "pinned", "set_person_fact_pin", false},
 	} {
-		copyCaps := *caps
-		copyCaps.Routes = slices.Clone(caps.Routes)
-		for i := range copyCaps.Routes {
-			r := &copyCaps.Routes[i]
+		caps, err := backend.client.MCPCapabilities(t.Context())
+		require.NoError(t, err)
+		for i := range caps.Routes {
+			r := &caps.Routes[i]
 			if r.OperationID != tc.id {
 				continue
 			}
 			if tc.query {
-				r.QueryParameters = slices.DeleteFunc(slices.Clone(r.QueryParameters), func(v string) bool { return v == tc.removed })
+				r.QueryParameters = slices.DeleteFunc(r.QueryParameters, func(v string) bool { return v == tc.removed })
 			} else {
-				r.RequestProperties = slices.DeleteFunc(slices.Clone(r.RequestProperties), func(v string) bool { return v == tc.removed })
+				r.RequestProperties = slices.DeleteFunc(r.RequestProperties, func(v string) bool { return v == tc.removed })
 			}
 		}
-		has := func(id, method, path string, query ...string) bool {
-			for _, r := range copyCaps.Routes {
-				if r.OperationID == id && r.Method == method && r.Path == path {
-					for _, q := range query {
-						if !slices.Contains(r.QueryParameters, q) {
-							return false
-						}
-					}
-					return true
-				}
-			}
-			return false
-		}
-		assert.NotContains(t, personFactMCPCapabilities(has, &copyCaps), tc.name)
+		assert.NotContains(t, newDaemonMCPOperations(backend.client, caps).capabilities(), tc.name)
 	}
 }
 

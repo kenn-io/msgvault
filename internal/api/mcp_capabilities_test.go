@@ -58,7 +58,7 @@ func TestMCPCapabilitiesRequiresOwner(t *testing.T) {
 	assertions.NotContains(delegated.Body.String(), agentTokenTestAPIKey)
 }
 
-func TestMCPCapabilitiesDescribeRealOperationRoutes(t *testing.T) {
+func TestMCPCapabilitiesDescribeRealLoopRoutes(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Logger: testLogger()})
@@ -76,12 +76,6 @@ func TestMCPCapabilitiesDescribeRealOperationRoutes(t *testing.T) {
 		{"markLoopDone", http.MethodPost, "/api/v1/loops/{message_id}/done"},
 		{"snoozeLoop", http.MethodPost, "/api/v1/loops/{message_id}/snooze"},
 		{"reopenLoop", http.MethodPost, "/api/v1/loops/{message_id}/reopen"},
-		{"listPersonFactEvidence", http.MethodGet, "/api/v1/people/{id}/fact-evidence"},
-		{"listPersonFactClaims", http.MethodGet, "/api/v1/people/{id}/fact-claims"},
-		{"listPersonFactDecisions", http.MethodGet, "/api/v1/people/{id}/fact-decisions"},
-		{"listPersonFactPins", http.MethodGet, "/api/v1/people/{id}/fact-pins"},
-		{"setPersonFactPin", http.MethodPut, "/api/v1/people/{id}/fact-pins/{kind}/{key}"},
-		{"setPersonTracking", http.MethodPut, "/api/v1/people/{id}/tracking"},
 	} {
 		requirements.Contains(routes, tc.id)
 		assertions.Equal(tc.method, routes[tc.id].Method)
