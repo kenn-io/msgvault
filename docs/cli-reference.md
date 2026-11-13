@@ -3226,6 +3226,11 @@ existing Gmail convention. The authenticated profile email must match the
 stored source identifier; aliases or an outdated identifier require an explicit
 account configuration correction before comparing.
 
+The diagnostic opens the archive read-only. Connecting can start the local
+daemon, which retains its normal startup and scheduled work. Authentication
+can invoke configured credential commands and refresh stored tokens. The
+`--timeout` budget starts in the diagnostic subprocess after daemon connection.
+
 The provider scope is every ID returned by Gmail, including Spam and Trash,
 without a search query or label filter. Earlier filtered or limited syncs may
 explain differences; the diagnostic does not reconstruct their exclusions.
