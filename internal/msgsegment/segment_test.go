@@ -91,6 +91,8 @@ func TestSplitThunderbirdReplyHeaders(t *testing.T) {
 		{"French sender first", "Max <m@x.fr> a écrit le 5 novembre 2026 à 10:00\u00a0:"},
 		{"Spanish date first", "El 11/5/2026 a las 10:00\u00a0AM, Alex <alex@example.com> escribió:"},
 		{"Spanish sender first", "Alex <alex@example.com> escribió el 5 de noviembre de 2026 a las 10:00\u202fa.\u00a0m.:"},
+		{"Spanish PM", "El 5.11.2026 a las 10:00 PM, Alex escribió:"},
+		{"Spanish p.m.", "El 5.11.2026 a las 10:00 p.m., Alex escribió:"},
 		{"Italian date first", "Il 5 novembre 2026 10:00, Alex <alex@example.com> ha scritto:"},
 		{"Italian sender first", "Alex <alex@example.com> ha scritto il 5 novembre 2026 alle 10:00:"},
 		{"Brazilian Portuguese date first", "Em 5 de novembro de 2026 10:00, Alex <alex@example.com> escreveu:"},
@@ -115,6 +117,13 @@ func TestSplitThunderbirdReplyHeaders(t *testing.T) {
 			})
 		})
 	}
+	t.Run("dotted time", func(t *testing.T) {
+		header := "El 5.11.2026 a las 10.00, Alex escribió:\n"
+		body := header + "\n> old"
+		assert.Equal(t, []Segment{{Quoted, 0, len(body), 1}}, Split(body).Segments)
+		body = header + "New text"
+		assert.Equal(t, []Segment{{Authored, 0, len(body), 0}}, Split(body).Segments)
+	})
 	t.Run("no numeric date", func(t *testing.T) {
 		header := "El informe a las 10:00, Alex escribió:\n"
 		body := header + "> old"

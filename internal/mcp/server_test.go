@@ -1932,6 +1932,7 @@ func TestGetMessage(t *testing.T) {
 		}{
 			{"first page", "New\n> Old\n", "email", "", map[string]any{"max_chars": float64(6)}, []msgsegment.Segment{{Kind: msgsegment.Authored, Start: 0, End: 4}, {Kind: msgsegment.Quoted, Start: 4, End: 10, Depth: 1}}, false},
 			{"second page", "New\n> Old\n", "email", "", map[string]any{"offset": float64(6)}, []msgsegment.Segment{{Kind: msgsegment.Quoted, Start: 4, End: 10, Depth: 1}}, false},
+			{"Spanish dotted time", "New\nEl 5.11.2026 a las 10.00, Alex escribió:\n> Old\n", "email", "", nil, []msgsegment.Segment{{Kind: msgsegment.Authored, Start: 0, End: 4}, {Kind: msgsegment.Quoted, Start: 4, End: 52, Depth: 1}}, false},
 			{"chat", "> my markdown\n", "beeper", "", nil, []msgsegment.Segment{{Kind: msgsegment.Authored, Start: 0, End: 14}}, false},
 			{"HTML only", "", "email", "<p>Hello</p>", nil, nil, false},
 			{"explicit HTML", "Hello", "email", "<p>Hello</p>", map[string]any{"body_format": "html"}, nil, false},
