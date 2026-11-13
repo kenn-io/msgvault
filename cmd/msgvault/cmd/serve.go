@@ -713,6 +713,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("failed to schedule Instagram mentions", "profile", source.Identifier, "error", err)
 		}
 	}
+	for _, provider := range []inboxProvider{facebookInbox, instagramInbox} {
+		for _, err := range provider.scheduleJobs(sched, cfg, s, attachmentMaint, state) {
+			logger.Error("failed to schedule Meta inbox sync", "error", err)
+		}
+	}
 
 	if cfg.Feeds.Enabled && cfg.Feeds.Schedule == "" {
 		logger.Warn("feeds are enabled but have no schedule; set [feeds].schedule to fetch them automatically")

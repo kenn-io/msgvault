@@ -26,7 +26,10 @@ type ImportSummary struct {
 	MessagesAdded     int
 	MessagesUpdated   int
 	Requests          int
-	Partial           bool
+	// ConversationsSkipped counts inbox conversations that were not archived
+	// because they are not one-to-one chats with the inbox owner.
+	ConversationsSkipped int
+	Partial              bool
 }
 
 type Importer struct {
@@ -109,6 +112,63 @@ func acquireSource(ctx context.Context, st *store.Store, sourceType, identifier 
 		return nil, nil, errors.Join(err, execution.Release())
 	}
 	return source, execution, nil
+}
+
+// pollPages runs a polling sync of one cursor-paged edge, as tag and inbox
+// sync do. page archives the page at after and returns the next cursor; an
+// empty cursor ends the scan. The checkpoint holds that cursor, so a run that
+// stops early resumes where it stopped, and a complete scan starts over.
+func pollPages(ctx context.Context, st *store.Store, sourceType, identifier string, opts ImportOptions, page func(st *store.Store, source *store.Source, sum *ImportSummary, after string) (string, error)) (sum *ImportSummary, retErr error) {
+	if opts.MaxRequests < 0 {
+		return nil, errors.New("invalid import options")
+	}
+	source, execution, err := acquireSource(ctx, st, sourceType, identifier)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
+	after := ""
+	if !opts.Full {
+		if after, err = savedCheckpoint(ctx, st, source); err != nil {
+			return nil, err
+		}
+	}
+	syncID, err := execution.StartSyncContext(ctx, sourceType, "")
+	if err != nil {
+		return nil, err
+	}
+	scoped := st.ScopedToSync(source.ID, syncID)
+	sum = &ImportSummary{}
+	done := false
+	checkpoint := func() *store.Checkpoint {
+		return &store.Checkpoint{PageToken: after, MessagesAdded: int64(sum.MessagesAdded), MessagesUpdated: int64(sum.MessagesUpdated), MessagesProcessed: int64(sum.MessagesProcessed)}
+	}
+	defer func() {
+		sum.Partial = retErr != nil || !done
+		retErr = finishSync(ctx, st, source.ID, syncID, checkpoint(), sum.Partial, retErr)
+	}()
+	maximum := opts.MaxRequests
+	if maximum == 0 {
+		maximum = DefaultMaxRequests
+	}
+	for !done && sum.Requests < maximum {
+		if err := ctx.Err(); err != nil {
+			return sum, err
+		}
+		sum.Requests++
+		next, err := page(scoped, source, sum, after)
+		if apiErr, ok := errors.AsType[*APIError](err); ok && after != "" && apiErr.Status == 400 {
+			// A 400 can also mean a missing permission, so say both.
+			return sum, fmt.Errorf("continuation request failed; if the token and its permissions are valid, the saved position has expired: run this sync again with --full: %w", err)
+		} else if err != nil {
+			return sum, err
+		}
+		after, done = next, next == ""
+		if err := scoped.UpdateSyncCheckpointContext(ctx, syncID, checkpoint()); err != nil {
+			return sum, err
+		}
+	}
+	return sum, nil
 }
 
 // finishSync records how a polling run ended. Only a complete run advances the
