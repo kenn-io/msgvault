@@ -27,6 +27,12 @@ browser login, secure remote deployment, search states, and keyboard controls.
 
 Connect AI assistants through the [native MCP endpoints](usage/chat.md#native-daemon-endpoints).
 
+### Person fact decisions
+
+`GET /api/v1/people/{id}/fact-decisions` returns decisions in newest-first order. Use `claim_key` to select one claim before applying `limit` and `offset`. Each decision includes its target, resolver version, score, and score maxima for that version. The outcome is `saved`, `value-retired`, `current-value-kept`, `pinned-value-kept`, `too-close-to-choose`, or `not-used`; the reason explains the decision. Older decisions have a null outcome when their history cannot establish the result. An unknown resolver version has no score maxima.
+
+`GET /api/v1/people/{id}/fact-summary` returns `claimed_fields`, `latest_claim_at`, and `has_stored_facts`. The count groups claims by target kind and key. The last claim time is null when there are no claims. Stored facts include claims, evidence, and pin events.
+
 ### Filename suggestions
 
 Newer than the latest release, API schema 3.15 adds

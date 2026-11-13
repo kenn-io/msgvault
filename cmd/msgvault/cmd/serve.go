@@ -3358,6 +3358,10 @@ func (a *storeAPIAdapter) ListPersonFactDecisionsContext(
 	return a.store.ListPersonFactDecisionsContext(ctx, personID, filter)
 }
 
+func (a *storeAPIAdapter) PersonFactSummaryContext(ctx context.Context, personID int64) (personfacts.FactSummary, error) {
+	return a.store.PersonFactSummaryContext(ctx, personID)
+}
+
 func (a *storeAPIAdapter) ListPersonFactPinsContext(
 	ctx context.Context, personID int64,
 ) ([]personfacts.PinState, error) {

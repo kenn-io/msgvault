@@ -1266,3 +1266,29 @@ func resolverTestDecision(
 	require.FailNow(t, "decision not found", "claim=%s action=%s decisions=%+v", claimKey, action, resolution.Decisions)
 	return Decision{}
 }
+
+func TestResolverScoreMaximaMatchesMaximumClaim(t *testing.T) {
+	input := resolverTestInput(resolverTestSingleTarget())
+	var evidence []Evidence
+	for _, key := range []string{"one", "two", "three", "four"} {
+		evidence = append(evidence, resolverTestEvidence(key, EvidenceSystem, DirectSelf, AuthorityAuthoritative, 0))
+	}
+	input.Claims = []ResolvedClaim{resolverTestClaim("max", "value", 1000, evidence...)}
+	resolution := resolverTestResolve(t, input)
+	decision := resolverTestDecision(t, resolution, "max", DecisionApplied)
+	maxima := ScoreMaxima(ResolverVersionV1)
+	require.NotNil(t, maxima)
+	assert.Equal(t, *maxima, decision.Score)
+	assert.Equal(t, 1550, decision.Score.Total)
+}
+
+func TestDecisionOutcomeWhenSavedValueDidNotBlockClaim(t *testing.T) {
+	for _, decision := range []Decision{
+		{Action: DecisionRetained, Reason: ReasonBelowThreshold},
+		{Action: DecisionConflictRejected, Reason: ReasonInsufficientMargin, CompetingClaimKey: "leader"},
+	} {
+		outcome, known := DecisionOutcomeFor(OutcomeFacts{Decision: decision, Relation: RelationSupport, HasCurrent: true})
+		require.True(t, known)
+		assert.Equal(t, OutcomeNotUsed, outcome)
+	}
+}

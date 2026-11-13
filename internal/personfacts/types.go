@@ -104,9 +104,10 @@ type ClaimFilter struct {
 }
 
 type DecisionFilter struct {
-	Target *TargetRef
-	Limit  int
-	Offset int
+	ClaimKey string
+	Target   *TargetRef
+	Limit    int
+	Offset   int
 }
 
 type ProjectionRef struct {
@@ -123,6 +124,7 @@ type ClaimRelation string
 type ClaimOrigin string
 type DecisionAction string
 type DecisionReason string
+type DecisionOutcome string
 type EvidenceStatusReason string
 
 const (
@@ -145,6 +147,12 @@ const (
 	OriginBrief                      ClaimOrigin          = "brief"
 	OriginSystem                     ClaimOrigin          = "system"
 	OriginInvalid                    ClaimOrigin          = "invalid"
+	OutcomeSaved                     DecisionOutcome      = "saved"
+	OutcomeValueRetired              DecisionOutcome      = "value-retired"
+	OutcomeCurrentValueKept          DecisionOutcome      = "current-value-kept"
+	OutcomePinnedValueKept           DecisionOutcome      = "pinned-value-kept"
+	OutcomeTooCloseToChoose          DecisionOutcome      = "too-close-to-choose"
+	OutcomeNotUsed                   DecisionOutcome      = "not-used"
 	DecisionApplied                  DecisionAction       = "applied"
 	DecisionRetained                 DecisionAction       = "retained"
 	DecisionSuperseded               DecisionAction       = "superseded"
@@ -427,6 +435,12 @@ type ScoreBreakdown struct {
 	Total         int `json:"total"`
 }
 
+type FactSummary struct {
+	ClaimedFields  int        `json:"claimed_fields"`
+	LatestClaimAt  *time.Time `json:"latest_claim_at" nullable:"true"`
+	HasStoredFacts bool       `json:"has_stored_facts"`
+}
+
 type ProjectionOperation string
 
 const (
@@ -443,17 +457,68 @@ type ProjectionPlan struct {
 }
 
 type Decision struct {
-	ID                int64          `json:"id,omitzero"`
-	PersonID          int64          `json:"person_id,omitzero"`
-	ResolutionID      int64          `json:"resolution_id,omitzero"`
-	DecisionKey       string         `json:"decision_key,omitempty"`
-	ClaimKey          string         `json:"claim_key"`
-	Action            DecisionAction `json:"action"`
-	Reason            DecisionReason `json:"reason"`
-	Score             ScoreBreakdown `json:"score"`
-	CompetingClaimKey string         `json:"competing_claim_key,omitempty"`
-	Projection        *ProjectionRef `json:"projection,omitzero" nullable:"false"`
-	CreatedAt         time.Time      `json:"created_at"`
+	ID                int64            `json:"id,omitzero"`
+	PersonID          int64            `json:"person_id,omitzero"`
+	ResolutionID      int64            `json:"resolution_id,omitzero"`
+	DecisionKey       string           `json:"decision_key,omitempty"`
+	ClaimKey          string           `json:"claim_key"`
+	Outcome           *DecisionOutcome `json:"outcome" nullable:"true"`
+	Target            TargetRef        `json:"target"`
+	ResolverVersion   string           `json:"resolver_version"`
+	ScoreMaxima       *ScoreBreakdown  `json:"score_maxima,omitzero" nullable:"false"`
+	Action            DecisionAction   `json:"action"`
+	Reason            DecisionReason   `json:"reason"`
+	Score             ScoreBreakdown   `json:"score"`
+	CompetingClaimKey string           `json:"competing_claim_key,omitempty"`
+	Projection        *ProjectionRef   `json:"projection,omitzero" nullable:"false"`
+	CreatedAt         time.Time        `json:"created_at"`
+}
+
+// OutcomeFacts supplies the projection state available to classify a decision.
+// Historical rows omit state that the ledger did not record.
+type OutcomeFacts struct {
+	Decision         Decision
+	Relation         ClaimRelation
+	Historical       bool
+	HasCurrent       bool
+	MatchesCurrent   bool
+	Retired          bool
+	CloseCompetition bool
+	Duplicate        bool
+	BlockedRemoval   bool
+}
+
+// DecisionOutcomeFor returns false when an old row lacks the state needed to classify it.
+func DecisionOutcomeFor(f OutcomeFacts) (DecisionOutcome, bool) {
+	d := f.Decision
+	if f.Retired {
+		return OutcomeValueRetired, true
+	}
+	if d.Action == DecisionInvalid || d.Action == DecisionIdentityRejected || d.Action == DecisionPolicyRejected {
+		return OutcomeNotUsed, true
+	}
+	if d.Reason == ReasonOrganizationAmbiguous || d.Reason == ReasonOutsideValidity || d.Reason == ReasonEvidenceUnsupported {
+		return OutcomeNotUsed, true
+	}
+	if d.Action == DecisionApplied && f.Relation == RelationSupport {
+		return OutcomeSaved, true
+	}
+	if f.Historical {
+		return "", false
+	}
+	if d.Reason == ReasonPinRetained {
+		if f.HasCurrent {
+			return OutcomePinnedValueKept, true
+		}
+		return OutcomeNotUsed, true
+	}
+	if f.CloseCompetition {
+		return OutcomeTooCloseToChoose, true
+	}
+	if f.HasCurrent && !f.Duplicate && d.CompetingClaimKey == "" && (d.Action == DecisionRetained || d.Action == DecisionConflictRejected) && ((!f.MatchesCurrent && d.Reason == ReasonInsufficientMargin) || f.BlockedRemoval) {
+		return OutcomeCurrentValueKept, true
+	}
+	return OutcomeNotUsed, true
 }
 
 type Resolution struct {

@@ -5258,6 +5258,16 @@ func (e ExploreUnavailableAction) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(e))
 }
 
+type FactSummary struct {
+	ClaimedFields  int64      `json:"claimed_fields"`
+	HasStoredFacts bool       `json:"has_stored_facts"`
+	LatestClaimAt  *time.Time `json:"latest_claim_at" validate:"omitempty"`
+}
+
+func (f FactSummary) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
+}
+
 type FieldDescriptor struct {
 	Cardinality string `json:"cardinality" validate:"required"`
 	Name        string `json:"name" validate:"required"`
@@ -11718,16 +11728,20 @@ func (p PersonFactClaimsResponse) Validate() error {
 }
 
 type PersonFactDecision struct {
-	Action            string                   `json:"action" validate:"required"`
-	ClaimKey          string                   `json:"claim_key" validate:"required"`
-	CompetingClaimKey *string                  `json:"competing_claim_key,omitzero"`
-	CreatedAt         time.Time                `json:"created_at" validate:"required"`
-	DecisionKey       string                   `json:"decision_key" validate:"required"`
-	ID                int64                    `json:"id"`
-	Projection        *ProjectionRef           `json:"projection,omitempty"`
-	Reason            string                   `json:"reason" validate:"required"`
-	ResolutionID      int64                    `json:"resolution_id"`
-	Score             PersonFactScoreBreakdown `json:"score"`
+	Action            string                     `json:"action" validate:"required"`
+	ClaimKey          string                     `json:"claim_key" validate:"required"`
+	CompetingClaimKey *string                    `json:"competing_claim_key,omitzero"`
+	CreatedAt         time.Time                  `json:"created_at" validate:"required"`
+	DecisionKey       string                     `json:"decision_key" validate:"required"`
+	ID                int64                      `json:"id"`
+	Outcome           *PersonFactDecisionOutcome `json:"outcome" validate:"required"`
+	Projection        *ProjectionRef             `json:"projection,omitempty"`
+	Reason            string                     `json:"reason" validate:"required"`
+	ResolutionID      int64                      `json:"resolution_id"`
+	ResolverVersion   string                     `json:"resolver_version" validate:"required"`
+	Score             PersonFactScoreBreakdown   `json:"score"`
+	ScoreMaxima       *PersonFactScoreBreakdown  `json:"score_maxima,omitempty"`
+	Target            TargetRef                  `json:"target"`
 }
 
 func (p PersonFactDecision) Validate() error {
@@ -11744,6 +11758,13 @@ func (p PersonFactDecision) Validate() error {
 	if err := typesValidator.Var(p.DecisionKey, "required"); err != nil {
 		errors = errors.Append("DecisionKey", err)
 	}
+	if p.Outcome != nil {
+		if v, ok := any(p.Outcome).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Outcome", err)
+			}
+		}
+	}
 	if p.Projection != nil {
 		if v, ok := any(p.Projection).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -11754,9 +11775,24 @@ func (p PersonFactDecision) Validate() error {
 	if err := typesValidator.Var(p.Reason, "required"); err != nil {
 		errors = errors.Append("Reason", err)
 	}
+	if err := typesValidator.Var(p.ResolverVersion, "required"); err != nil {
+		errors = errors.Append("ResolverVersion", err)
+	}
 	if v, ok := any(p.Score).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Score", err)
+		}
+	}
+	if p.ScoreMaxima != nil {
+		if v, ok := any(p.ScoreMaxima).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ScoreMaxima", err)
+			}
+		}
+	}
+	if v, ok := any(p.Target).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Target", err)
 		}
 	}
 	if len(errors) == 0 {
