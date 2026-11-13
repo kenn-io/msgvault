@@ -423,6 +423,8 @@ func TestImportJobRequestValidation(t *testing.T) {
 		{`{`, applicationJSONMediaType, http.StatusBadRequest},
 		{`{}`, applicationJSONMediaType, http.StatusUnprocessableEntity},
 		{`{"account":"archive@example.com","after":"yesterday"}`, applicationJSONMediaType, http.StatusUnprocessableEntity},
+		{`{"account":"archive@example.com","before":"2024-02-30"}`, applicationJSONMediaType, http.StatusUnprocessableEntity},
+		{`{"account":"archive@example.com","after":"2024-01-01","before":"2024-01-01"}`, applicationJSONMediaType, http.StatusUnprocessableEntity},
 		{`{"account":"archive@example.com","after":"2024-02-01","before":"2024-01-01"}`, applicationJSONMediaType, http.StatusUnprocessableEntity},
 		{`{"account":"missing@example.com"}`, applicationJSONMediaType, http.StatusNotFound},
 	}

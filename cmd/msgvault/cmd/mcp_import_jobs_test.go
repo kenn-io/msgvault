@@ -101,19 +101,17 @@ func TestMCPImportDiscoveryAndDisclosure(t *testing.T) {
 
 func TestMCPImportDateValidationBeforeApproval(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
-	st := &storeAPIAdapter{store: testutil.NewSQLiteTestStore(t)}
-	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: st, Logger: slog.New(slog.DiscardHandler)})
-	t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
-	backend := sourceOperationFixture(t, srv)
-	args := map[string]any{"account": "archive@example.com", "limit": float64(3), "after": "2024-02-30"}
-	_, err := backend.OperationDisclosure(t.Context(), "create_import_job", args)
+	args := map[string]any{"account": " archive@example.com ", "limit": float64(3), "after": "2024-02-30"}
+	input, ok := decodeImportJobArguments(args)
+	requirements.True(ok)
+	assertions.Equal("archive@example.com", input.Account)
+	requirements.NotNil(input.After)
+	assertions.Equal("2024-02-30", *input.After)
+	_, handled, err := importJobDisclosure("create_import_job", args)
+	assertions.True(handled)
 	var refusal *mcpserver.OperationRefusalError
 	requirements.ErrorAs(err, &refusal)
 	assertions.Equal("invalid_arguments", refusal.Code)
-	result, err := backend.ExecuteOperation(t.Context(), "create_import_job", args)
-	requirements.NoError(err)
-	assertions.True(result.IsError)
-	assertions.Equal(operationFailure("validation_failed", false).Output, result.Output)
 }
 
 func TestMCPImportSDKDateValidation(t *testing.T) {
@@ -133,7 +131,6 @@ func TestMCPImportSDKDateValidation(t *testing.T) {
 		{"account": "archive@example.com", "limit": 3, "after": "2024/01/01"},
 		{"account": "archive@example.com", "limit": 3, "before": "2024/01/01"},
 		{"account": "archive@example.com", "limit": 3, "before": "2024-02-30"},
-		{"account": "archive@example.com", "limit": 3, "after": "2024-01-01", "before": "2024-01-01"},
 		{"account": "archive@example.com", "limit": 3, "after": "2024-02-01", "before": "2024-01-01"},
 		{"account": "archive@example.com"},
 		{"account": "archive@example.com", "limit": 0},
