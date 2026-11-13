@@ -446,7 +446,7 @@ type HybridSearchRequest struct {
 	Mode           string
 	Account        string
 	AccountScopes  []search.AccountScope
-	SourceID       *int64
+	Collection     string
 	Limit          int
 	Offset         int
 	IncludeMatches bool
@@ -984,9 +984,6 @@ func (h *handlers) searchMessageBodiesHybrid(
 			return dependencyError("resolve semantic-search collection", err)
 		}
 	}
-	if err := selection.singleSourceCollection(); err != nil {
-		return dependencyError("resolve semantic-search collection", err)
-	}
 	if selection.sourceIDs != nil && len(selection.sourceIDs) == 0 {
 		return jsonResult(searchMessageBodiesResponse{paginatedResponse: newPaginatedResponseNoTotal([]searchMessageItem{}, intArg(args, toolArgOffset, 0), false), Mode: mode})
 	}
@@ -1147,7 +1144,7 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 
 	var account string
 	var accountScopes []search.AccountScope
-	var sourceID *int64
+	var collection string
 	if selection.sourceIDs == nil {
 		var err error
 		account, accountScopes, err = h.resolveForwardedAccount(ctx, stringArgument(args, toolArgAccount))
@@ -1155,14 +1152,14 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 			return dependencyError("resolve semantic-search account", err)
 		}
 	} else {
-		sourceID = &selection.sourceIDs[0]
+		collection = stringArgument(args, "collection")
 	}
 	result, err := h.hybridSearcher.SearchHybrid(ctx, HybridSearchRequest{
 		Query:          queryStr,
 		Mode:           mode,
 		Account:        account,
 		AccountScopes:  accountScopes,
-		SourceID:       sourceID,
+		Collection:     collection,
 		Limit:          limit,
 		Offset:         offset,
 		IncludeMatches: true,

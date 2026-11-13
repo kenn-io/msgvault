@@ -176,10 +176,9 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 
 func TestDaemonMCPHybridSearcherPreservesPhaseTimings(t *testing.T) {
 	assert := assert.New(t)
-	sourceID := int64(42)
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/search", r.URL.Path)
-		assert.Equal("42", r.URL.Query().Get("source_id"))
+		assert.Equal("work", r.URL.Query().Get("collection"))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"query":"semantic terms",
@@ -196,7 +195,7 @@ func TestDaemonMCPHybridSearcherPreservesPhaseTimings(t *testing.T) {
 	})
 
 	result, err := (daemonMCPHybridSearcher{client: client}).SearchHybrid(t.Context(), mcpserver.HybridSearchRequest{
-		Query: "semantic terms", Mode: "hybrid", Limit: 10, SourceID: &sourceID,
+		Query: "semantic terms", Mode: "hybrid", Limit: 10, Collection: "work",
 	})
 	require.NoError(t, err)
 	assert.Equal(int64(12), result.TookMS)

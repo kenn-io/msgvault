@@ -68,6 +68,7 @@ func (e *Engine) QueryArchiveSQL(ctx context.Context, sql string, fresh bool) (*
 var _ query.Engine = (*Engine)(nil)
 var _ query.TextEngine = (*Engine)(nil)
 var _ query.CollectionScopeLister = (*Engine)(nil)
+var _ query.CollectionScopeGetter = (*Engine)(nil)
 var _ query.MessageBodySearcher = (*Engine)(nil)
 var _ query.SemanticMessageSearcher = (*Engine)(nil)
 var _ query.DeletionTargetSearchResolver = (*Engine)(nil)
@@ -1543,6 +1544,14 @@ func (e *Engine) ListCollectionScopes(ctx context.Context) ([]query.CollectionSc
 		})
 	}
 	return scopes, nil
+}
+
+func (e *Engine) GetCollectionScope(ctx context.Context, name string) (query.CollectionScope, error) {
+	collection, err := e.store.GetCLICollection(ctx, name)
+	if err != nil {
+		return query.CollectionScope{}, err
+	}
+	return query.CollectionScope{Name: collection.Name, SourceIDs: append([]int64{}, collection.SourceIDs...)}, nil
 }
 
 func (e *Engine) ListConversations(ctx context.Context, filter query.TextFilter) ([]query.ConversationRow, error) {

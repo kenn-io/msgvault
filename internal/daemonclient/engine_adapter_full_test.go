@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -2501,6 +2502,32 @@ func TestEngineListCollectionScopesProjectsUserCollections(t *testing.T) {
 	assertions.Equal("Empty", got[1].Name)
 	assertions.NotNil(got[1].SourceIDs)
 	assertions.Empty(got[1].SourceIDs)
+}
+
+func TestEngineGetCollectionScope(t *testing.T) {
+	client := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/cli/collection", r.URL.Path)
+		name := r.URL.Query().Get("name")
+		if name == "missing" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		ids := []int64{}
+		if name == "work" {
+			ids = []int64{2, 1}
+		}
+		writeJSONResponse(t, w, map[string]any{"collection": map[string]any{"name": name, "created_at": "2026-01-01T00:00:00Z", "source_ids": ids}})
+	})
+	engine := NewEngineAdapter(client)
+	found, err := engine.GetCollectionScope(t.Context(), "work")
+	require.NoError(t, err)
+	assert.Equal(t, []int64{2, 1}, found.SourceIDs)
+	empty, err := engine.GetCollectionScope(t.Context(), "empty")
+	require.NoError(t, err)
+	assert.NotNil(t, empty.SourceIDs)
+	assert.Empty(t, empty.SourceIDs)
+	_, err = engine.GetCollectionScope(t.Context(), "missing")
+	require.ErrorIs(t, err, store.ErrCollectionNotFound)
 }
 
 func TestEngineAggregateForwardsAndConfirmsCollectionSourceIDs(t *testing.T) {

@@ -2,9 +2,11 @@ package mcp
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 const ToolListMessageCollections = "list_message_collections"
@@ -54,20 +56,18 @@ func (h *handlers) resolveReadSelection(ctx context.Context, account string, arg
 	if collection == "" {
 		return accountSelection{}, &expectedHandlerError{message: "collection name is required"}
 	}
-	lister, ok := h.engine.(query.CollectionScopeLister)
+	getter, ok := h.engine.(query.CollectionScopeGetter)
 	if !ok {
 		return accountSelection{}, &expectedHandlerError{message: "message collections are unavailable"}
 	}
-	scopes, err := lister.ListCollectionScopes(ctx)
+	scope, err := getter.GetCollectionScope(ctx, collection)
+	if errors.Is(err, store.ErrCollectionNotFound) {
+		return accountSelection{}, &expectedHandlerError{message: "collection not found: " + collection}
+	}
 	if err != nil {
-		return accountSelection{}, newInternalError("list message collections", err)
+		return accountSelection{}, newInternalError("get message collection", err)
 	}
-	for _, scope := range scopes {
-		if scope.Name == collection {
-			return accountSelection{sourceIDs: append([]int64{}, scope.SourceIDs...)}, nil
-		}
-	}
-	return accountSelection{}, &expectedHandlerError{message: "collection not found: " + collection}
+	return accountSelection{sourceIDs: append([]int64{}, scope.SourceIDs...)}, nil
 }
 
 // singleSourceCollection limits native paths whose wire contract has one source.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -18,7 +19,7 @@ import (
 
 func TestCollectionsThroughDaemonAndSDK(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	first, firstID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "first@example.test", "first", "alpine fixture", "alpine body")
+	first, firstID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "first@example.test", "first", "first alpine fixture", "alpine body")
 	require.NoError(t, err)
 	second, secondID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "second@example.test", "second", "other alpine fixture", "alpine body")
 	require.NoError(t, err)
@@ -104,6 +105,28 @@ func TestCollectionsThroughDaemonAndSDK(t *testing.T) {
 			assert.InDelta(t, tc.count, count, 0)
 		}
 	}
+	for _, tool := range []string{ToolSearchMetadata, ToolListMessages} {
+		for _, tc := range []struct {
+			collection            string
+			wantFirst, wantSecond bool
+		}{{"empty", false, false}, {"both", true, true}, {"selected", true, false}} {
+			args := map[string]any{"collection": tc.collection}
+			if tool == ToolSearchMetadata {
+				args["query"] = "alpine"
+			}
+			got, callErr := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: tool, Arguments: args})
+			require.NoError(t, callErr)
+			require.False(t, got.IsError)
+			content := fmt.Sprint(got.StructuredContent)
+			assert.Equal(t, tc.wantFirst, strings.Contains(content, "first alpine fixture"))
+			assert.Equal(t, tc.wantSecond, strings.Contains(content, "other alpine fixture"))
+		}
+	}
+	require.NoError(t, st.AddSourcesToCollection("selected", []int64{second.ID}))
+	updated, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolListMessages, Arguments: map[string]any{"collection": "selected"}})
+	require.NoError(t, err)
+	require.False(t, updated.IsError)
+	assert.Contains(t, fmt.Sprint(updated.StructuredContent), "other alpine fixture")
 	bad, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolListMessageCollections, Arguments: map[string]any{"unexpected": true}})
 	require.NoError(t, err)
 	require.True(t, bad.IsError)

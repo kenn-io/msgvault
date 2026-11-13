@@ -9,6 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -16,10 +17,21 @@ type collectionTestEngine struct {
 	query.Engine
 
 	collections []query.CollectionScope
+	listCalls   int
 }
 
 func (e *collectionTestEngine) ListCollectionScopes(context.Context) ([]query.CollectionScope, error) {
+	e.listCalls++
 	return e.collections, nil
+}
+
+func (e *collectionTestEngine) GetCollectionScope(_ context.Context, name string) (query.CollectionScope, error) {
+	for _, scope := range e.collections {
+		if scope.Name == name {
+			return scope, nil
+		}
+	}
+	return query.CollectionScope{}, store.ErrCollectionNotFound
 }
 
 func TestCollectionScopesFilterRealMessageReads(t *testing.T) {
@@ -57,6 +69,7 @@ func TestCollectionScopesFilterRealMessageReads(t *testing.T) {
 	require.ErrorContains(t, err, "collection name is required")
 	_, err = h.resolveReadSelection(t.Context(), "", map[string]any{"collection": "missing"})
 	require.ErrorContains(t, err, "collection not found")
+	assert.Zero(t, e.listCalls)
 }
 
 func TestCollectionCatalogAvailability(t *testing.T) {
@@ -98,24 +111,19 @@ func TestCollectionCatalogAvailability(t *testing.T) {
 	}
 }
 
-func TestSemanticCollectionUsesOneResolvedSource(t *testing.T) {
+func TestSemanticCollectionUsesAllSources(t *testing.T) {
 	e := &collectionTestEngine{Engine: &querytest.MockEngine{}, collections: []query.CollectionScope{{Name: "one", SourceIDs: []int64{42}}, {Name: "empty", SourceIDs: []int64{}}, {Name: "many", SourceIDs: []int64{42, 43}}}}
 	h := newTestHandlers(e)
 	calls := 0
 	h.hybridSearcher = hybridSearcherFunc(func(_ context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
 		calls++
-		require.NotNil(t, req.SourceID)
-		assert.Equal(t, int64(42), *req.SourceID)
+		assert.Equal(t, "many", req.Collection)
 		return &HybridSearchResult{}, nil
 	})
-	runTool[searchMessageBodiesResponse](t, ToolSemanticSearchMessages, h.semanticSearchMessages, map[string]any{"query": "fixture", "collection": "one"})
+	runTool[searchMessageBodiesResponse](t, ToolSemanticSearchMessages, h.semanticSearchMessages, map[string]any{"query": "fixture", "collection": "many"})
 	runTool[searchMessageBodiesResponse](t, ToolSemanticSearchMessages, h.semanticSearchMessages, map[string]any{"query": "fixture", "collection": "empty"})
 	assert.Equal(t, 1, calls)
-	result, err := h.semanticSearchMessages(t.Context(), toolRequest{arguments: map[string]any{"query": "fixture", "collection": "many"}})
-	require.NoError(t, err)
-	assert.True(t, result.isError)
-	assert.Equal(t, 1, calls)
-	result, err = h.semanticSearchMessages(t.Context(), toolRequest{arguments: map[string]any{"query": "subject:fixture", "collection": "empty"}})
+	result, err := h.semanticSearchMessages(t.Context(), toolRequest{arguments: map[string]any{"query": "subject:fixture", "collection": "empty"}})
 	require.NoError(t, err)
 	assert.True(t, result.isError)
 	assert.Contains(t, resultText(t, result), "missing_free_text")

@@ -16,3 +16,8 @@ type CollectionScope struct {
 type CollectionScopeLister interface {
 	ListCollectionScopes(ctx context.Context) ([]CollectionScope, error)
 }
+
+// CollectionScopeGetter looks up one named collection.
+type CollectionScopeGetter interface {
+	GetCollectionScope(ctx context.Context, name string) (CollectionScope, error)
+}
