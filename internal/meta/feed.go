@@ -14,10 +14,6 @@ import (
 // WebhookSyncType names the sync runs that apply webhook deliveries.
 const WebhookSyncType = store.SyncTypeWebhook
 
-// maxAncestorReads bounds the Graph reads one feed change may make to archive
-// a missing post and parent comments.
-const maxAncestorReads = 8
-
 // ErrInvalidChange marks a webhook change that can never be applied, such as
 // one that does not decode or names an invalid object.
 var ErrInvalidChange = errors.New("invalid webhook change")
@@ -183,9 +179,6 @@ func (r *importRun) archiveAncestors(ctx context.Context, reader ancestorReader,
 		}
 		if archived {
 			break
-		}
-		if len(chain) == maxAncestorReads {
-			return errors.New("comment ancestors exceed the read limit")
 		}
 		obj, err := reader.comment(ctx, id)
 		if err != nil {

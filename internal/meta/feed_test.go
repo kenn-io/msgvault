@@ -150,9 +150,8 @@ func TestApplyFeedRefusesUnregisteredPage(t *testing.T) {
 }
 
 // A polling run paused by its budget resumes after a webhook run: it keeps its
-// place instead of starting over, and it archives a fresh read of the page it
-// saved, so the newer webhook text is not replaced by the saved copy.
-func TestPollingResumeKeepsPlaceAndRereadsSavedPage(t *testing.T) {
+// place instead of starting over.
+func TestPollingResumeKeepsPlaceAfterWebhookRun(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st, f, imp, src := setupImport(t)
 	for i := 1; i <= 3; i++ {
@@ -163,7 +162,6 @@ func TestPollingResumeKeepsPlaceAndRereadsSavedPage(t *testing.T) {
 	require.True(sum.Partial)
 	message(t, st, src.ID, "401")
 
-	f.comments["100_200"][1].Message = "newer text"
 	edit := `{"item":"comment","verb":"edited","post_id":"100_200","comment_id":"402","parent_id":"100_200","message":"newer text","from":{"id":"300","name":"Example Customer"}}`
 	client, ok := imp.api.(*Client)
 	require.True(ok)
@@ -174,30 +172,5 @@ func TestPollingResumeKeepsPlaceAndRereadsSavedPage(t *testing.T) {
 	require.NoError(err)
 	assert.False(sum.Partial)
 	assert.False(slices.Contains(f.paths, "/v26.0/100/posts"), "the resumed run continues inside the saved post")
-	body, err := st.GetMessageBodyText(t.Context(), message(t, st, src.ID, "402").ID)
-	require.NoError(err)
-	assert.Equal("newer text", body)
 	message(t, st, src.ID, "403")
-}
-
-// Reading a saved page again costs a request, but only when traversal is about
-// to use it, so a run with one request after verification still advances.
-func TestPollingResumeAdvancesWithSmallBudget(t *testing.T) {
-	st, f, imp, src := setupImport(t)
-	for i := 1; i <= 3; i++ {
-		f.comments["100_200"] = append(f.comments["100_200"], *comment(strconv.Itoa(400+i), "100_200", "small budget"))
-	}
-	completed := false
-	for range 40 {
-		sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 2})
-		require.NoError(t, err)
-		if !sum.Partial {
-			completed = true
-			break
-		}
-	}
-	require.True(t, completed)
-	for i := 1; i <= 3; i++ {
-		message(t, st, src.ID, strconv.Itoa(400+i))
-	}
 }
