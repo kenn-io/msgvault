@@ -100,6 +100,49 @@ func TestApplyFeedArchivesCommentsAndState(t *testing.T) {
 	assert.Equal(4, webhookRuns)
 }
 
+// A webhook edit of a reply msgvault posted keeps it the owner's even when
+// Graph's read of it omits the author.
+func TestApplyFeedEditKeepsOutboundReply(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	replyText := "Thanks"
+	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v26.0/me":
+			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
+		case "/v26.0/100_200":
+			_, _ = fmt.Fprint(w, `{"id":"100_200","message":"Example post","from":{"id":"100","name":"Example Page"}}`)
+		case "/v26.0/100_201":
+			_, _ = fmt.Fprint(w, `{"id":"100_201","message":"first","created_time":"2026-10-01T12:00:00+0000","from":{"id":"300","name":"Example Customer"}}`)
+		case "/v26.0/100_201/comments":
+			_, _ = fmt.Fprint(w, `{"id":"100_202"}`)
+		case "/v26.0/100_202":
+			_, _ = fmt.Fprintf(w, `{"id":"100_202","message":%q,"created_time":"2026-10-02T12:00:00+0000","parent":{"id":"100_201"}}`, replyText)
+		default:
+			assert.Fail("unexpected Graph read", r.URL.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	src, err := NewImporter(st, c).Register(t.Context(), "9", "100")
+	require.NoError(err)
+	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(`{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_201"}`)))
+	target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "100_201").ID)
+	require.NoError(err)
+	_, err = ReplyToComment(t.Context(), st, c, target, "Thanks")
+	require.NoError(err)
+
+	replyText = "Thanks, edited"
+	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(`{"item":"comment","verb":"edited","post_id":"100_200","comment_id":"100_202"}`)))
+	reply := message(t, st, src.ID, "100_202")
+	body, err := st.GetMessageBodyText(t.Context(), reply.ID)
+	require.NoError(err)
+	assert.Equal("Thanks, edited", body)
+	assert.True(reply.IsFromMe)
+	metadata, err := st.GetMessageMetadataContext(t.Context(), reply.ID)
+	require.NoError(err)
+	assert.Contains(metadata.String, `"outbound":true`)
+}
+
 func TestApplyFeedRefusesUnregisteredPage(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	reply := `{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_202","parent_id":"100_200","message":"x"}`
