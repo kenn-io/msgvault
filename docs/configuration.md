@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-12"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -973,7 +973,7 @@ Each `[[server.remote_clients]]` entry gives one remote CLI its own read-only ke
 
 `msgvault serve` reads these files after it settles the server key, whether that key comes from `api_key`, a file, an environment variable, or is created at startup. It fails to start if a file is missing or empty or a key repeats another. CLI commands that start a local daemon also trigger these checks. Restart to add, remove, or rotate a key.
 
-`daemon_idle_timeout` applies to automatically started daemons. `msgvault daemon start` and `msgvault daemon restart` launch daemons that stay running until stopped; foreground `msgvault serve` runs until interrupted. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured timeout for automatic starts.
+`daemon_idle_timeout` applies to automatically started daemons. `msgvault daemon start` and `msgvault daemon restart` launch daemons that stay running until stopped; foreground `msgvault serve` runs until interrupted. An automatically started daemon does not idle out while a [Meta webhook receiver](#meta-webhooks) is listening. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured timeout for automatic starts.
 
 Flags and environment variables can configure the server
 without `config.toml`. `serve --bind` and `serve --port` take priority over
@@ -1671,6 +1671,16 @@ Duplicate app/Page pairs, invalid environment variable names, unknown profile
 keys, unknown actions, and invalid schedules are rejected. The source identifier is
 `app:<app_id>:page:<page_id>`; scheduled jobs use
 `facebook_comments:<source-identifier>`, independently of email account dispatch.
+
+### `[meta_webhooks]` {#meta-webhooks}
+
+Start a listener for signed Meta webhook deliveries (unreleased). See
+[Meta webhooks](usage/meta-webhooks.md) for setup. `listen_addr` is a
+`host:port` address; leave it empty to keep the receiver off. Each
+`[[meta_webhooks.apps]]` entry needs a decimal `app_id` and the names of the
+daemon environment variables that hold the app secret (`app_secret_env`) and
+the verify token (`verify_token_env`). App IDs must be unique, and a
+`listen_addr` needs at least one app. Unknown keys are rejected.
 
 ### `[[instagram_comments]]` {#instagram-comments}
 

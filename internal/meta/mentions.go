@@ -77,7 +77,7 @@ func (imp *MentionImporter) ImportTags(ctx context.Context, app, page, account s
 	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
 	after := ""
 	if !opts.Full {
-		if after, err = savedCheckpoint(ctx, imp.store, source.ID); err != nil {
+		if after, err = savedCheckpoint(ctx, imp.store, source); err != nil {
 			return nil, err
 		}
 	}

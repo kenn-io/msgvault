@@ -53,6 +53,18 @@ func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
 			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
 			return
 		}
+		if !strings.Contains(path, "/") {
+			for _, comments := range f.comments {
+				for _, object := range comments {
+					if object.ID == path {
+						blob, err := json.Marshal(object)
+						assert.NoError(t, err)
+						_, _ = w.Write(blob)
+						return
+					}
+				}
+			}
+		}
 		var data []Object
 		switch path {
 		case "100/posts":

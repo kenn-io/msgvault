@@ -70,7 +70,7 @@ validation and nested reply reads. `--max-requests` must be positive. A budget
 of 1 permits identity validation only; collection needs at least 2. After a
 complete scan, each surface uses fresh cursors to find new comments on old posts.
 Large histories can therefore require many runs and repeated reads. This is
-bounded polling, not a webhook service or a guarantee of immediate capture.
+bounded polling. For changes as they happen, add [Meta webhooks](meta-webhooks.md).
 
 If a saved cursor expires or the checkpoint is incompatible or invalid,
 restart that selected source explicitly. Checkpoints from the earlier private
@@ -189,7 +189,8 @@ Replies need the same permissions as hiding and deleting. See
 
 This integration archives returned text and identity/context metadata. It does
 not download post/comment media, manage Facebook personal-profile comments,
-or promise complete coverage of every ad variant. Use [Instagram comments](instagram-comments.md)
+or promise complete coverage of every ad variant. To archive comment changes
+between syncs, set up [Meta webhooks](meta-webhooks.md). Use [Instagram comments](instagram-comments.md)
 for linked professional accounts. Ad-creative discovery and private replies
 remain separate work. Threads uses its own authorization and source; a Page
 token does not authorize Threads.
