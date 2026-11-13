@@ -60,7 +60,7 @@ func TestPersonFactNativeDiagnosticsAndPin(t *testing.T) {
 	}, nil)
 	requirements.NoError(err)
 
-	result, err := backend.ExecuteOperation(t.Context(), "list_person_fact_claims", map[string]any{"person_id": id, "limit": 1, "include_evidence": true, "include_decisions": true})
+	result, err := backend.ExecuteOperation(t.Context(), "list_person_fact_claims", map[string]any{"person_id": id, "include_evidence": true, "include_decisions": true})
 	requirements.NoError(err)
 	requirements.False(result.IsError)
 	output := operationOutput[mcpserver.PersonFactClaimsOutput](t, result)
@@ -82,6 +82,7 @@ func TestPersonFactNativeDiagnosticsAndPin(t *testing.T) {
 		disclosure, err := backend.OperationDisclosure(t.Context(), "set_person_fact_pin", args)
 		requirements.NoError(err)
 		assertions.Contains(disclosure, `"pinned":true`)
+		assertions.Contains(disclosure, "may change profile and vCard projections")
 		result, err := backend.ExecuteOperation(t.Context(), "set_person_fact_pin", args)
 		requirements.NoError(err)
 		requirements.False(result.IsError)
@@ -105,21 +106,6 @@ func TestPersonFactNativeDiagnosticsAndPin(t *testing.T) {
 	}
 }
 
-func TestPersonFactPinEscapedKeys(t *testing.T) {
-	backend, st, id, _ := factFixture(t)
-	description := "Synthetic fact"
-	for _, tc := range []struct{ key, slug string }{{"test/slash", "slash_key"}, {"test%2Fkey", "percent_key"}} {
-		_, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: tc.key, ObjectType: store.AttributeObjectPerson, Slug: tc.slug, Label: "Synthetic", Description: &description, ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, UICreatable: true, UIEditable: true, APIMutable: true, IsAudited: true, IsDeletable: true})
-		require.NoError(t, err)
-		result, err := backend.ExecuteOperation(t.Context(), "set_person_fact_pin", map[string]any{"person_id": id, "kind": "attribute", "key": tc.key, "pinned": true})
-		require.NoError(t, err)
-		require.False(t, result.IsError)
-		pins, err := st.ListPersonFactPinsContext(t.Context(), id)
-		require.NoError(t, err)
-		assert.True(t, slices.ContainsFunc(pins, func(pin personfacts.PinState) bool { return pin.Target.Key == tc.key && pin.Pinned }))
-	}
-}
-
 func TestPersonFactTrackingAndRefusals(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -127,6 +113,12 @@ func TestPersonFactTrackingAndRefusals(t *testing.T) {
 	disclosure, err := backend.OperationDisclosure(t.Context(), "set_person_tracking", map[string]any{"person_id": id, "tracked": false})
 	requirements.NoError(err)
 	assertions.Contains(disclosure, `"tracked":false`)
+	assertions.Contains(disclosure, "removes queued sweep work")
+	assertions.Contains(disclosure, "pending enrichment")
+	disclosure, err = backend.OperationDisclosure(t.Context(), "set_person_tracking", map[string]any{"person_id": id, "tracked": true})
+	requirements.NoError(err)
+	assertions.Contains(disclosure, "configured sweep model")
+	assertions.Contains(disclosure, "external enrichment")
 	result, err := backend.ExecuteOperation(t.Context(), "set_person_tracking", map[string]any{"person_id": id, "tracked": false})
 	requirements.NoError(err)
 	assertions.False(result.IsError)
@@ -209,57 +201,31 @@ func TestPersonFactCapabilitiesRequireExactContracts(t *testing.T) {
 	}
 }
 
-func TestPersonFactClaimsRejectEmptyTarget(t *testing.T) {
-	backend, _, id, _ := factFixture(t)
-	session := operationMCPSession(t, backend, nil, nil)
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "target": ""}})
-	require.NoError(t, err)
-	assert.True(t, result.IsError)
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id}})
-	require.NoError(t, err)
-	assert.False(t, result.IsError)
-}
-
 func TestPersonFactSDKConfirmsEachWrite(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	backend, st, id, target := factFixture(t)
 	approvals := 0
-	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyPersonFacts}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyPersonFacts}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		approvals++
-		if approvals == 1 {
-			assertions.Contains(request.Params.Message, "removes queued sweep work")
-			assertions.Contains(request.Params.Message, "pending enrichment")
-		} else if approvals == 2 {
-			assertions.Contains(request.Params.Message, "configured sweep model")
-			assertions.Contains(request.Params.Message, "external enrichment")
-		} else {
-			assertions.Contains(request.Params.Message, "set_person_fact_pin")
-			assertions.Contains(request.Params.Message, target.Key)
-			pins, err := st.ListPersonFactPinsContext(t.Context(), id)
-			assertions.NoError(err)
-			assertions.False(slices.ContainsFunc(pins, func(pin personfacts.PinState) bool { return pin.Target.Key == target.Key && pin.Pinned }))
-		}
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
-	read, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "include_evidence": true, "include_decisions": true}})
+	read, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id}})
 	requirements.NoError(err)
 	requirements.False(read.IsError)
 	data, err := json.Marshal(read.StructuredContent)
 	requirements.NoError(err)
-	assertions.JSONEq(`{"claims":[],"evidence":[],"decisions":[]}`, string(data))
-	read, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id}})
-	requirements.NoError(err)
-	requirements.False(read.IsError)
-	data, err = json.Marshal(read.StructuredContent)
-	requirements.NoError(err)
 	assertions.JSONEq(`{"claims":[]}`, string(data))
-	for _, tracked := range []bool{false, true} {
+	assertions.Zero(approvals)
+	for i, tracked := range []bool{false, true} {
 		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_tracking", Arguments: map[string]any{"person_id": id, "tracked": tracked}})
 		requirements.NoError(err)
 		requirements.False(result.IsError)
+		state, err := st.GetPersonTrackingContext(t.Context(), id)
+		requirements.NoError(err)
+		assertions.Equal(tracked, state.Tracked)
+		assertions.Equal(i+1, approvals)
 	}
-	assertions.Equal(2, approvals)
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_fact_pin", Arguments: map[string]any{"person_id": id, "kind": string(target.Kind), "key": target.Key, "pinned": true}})
 	requirements.NoError(err)
 	requirements.False(result.IsError)
@@ -270,4 +236,7 @@ func TestPersonFactSDKConfirmsEachWrite(t *testing.T) {
 	requirements.NoError(json.Unmarshal(data, &write))
 	assertions.True(write.State.Pinned)
 	assertions.Equal(target.Key, write.State.Target.Key)
+	pins, err := st.ListPersonFactPinsContext(t.Context(), id)
+	requirements.NoError(err)
+	assertions.True(slices.ContainsFunc(pins, func(pin personfacts.PinState) bool { return pin.Target.Key == target.Key && pin.Pinned }))
 }

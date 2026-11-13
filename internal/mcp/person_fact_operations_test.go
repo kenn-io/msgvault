@@ -16,6 +16,8 @@ func TestPersonFactCatalogOwnerCapabilitiesAndWriteGate(t *testing.T) {
 	for _, name := range names[:2] {
 		assertions.Contains(reads, name)
 	}
+	result := rawCallTool(t, opts, "list_person_fact_claims", map[string]any{"person_id": 1, "target": ""})
+	assertions.Equal(true, result["isError"])
 	for _, name := range names[2:] {
 		assertions.NotContains(reads, name)
 	}
