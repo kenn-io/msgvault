@@ -54,10 +54,14 @@ Each Page must have an enabled [`[[facebook_comments]]` profile](../configuratio
 for the same app and Page, registered with `msgvault source facebook-comments add`.
 
 For Instagram, subscribe the app's Instagram object to the `comments` and
-`live_comments` fields with the same callback URL. Each account must have an
+`live_comments` fields with the same callback URL, and to `mentions` for
+[mentions of the account](instagram-comments.md#archive-media-that-tags-the-account)
+on a profile that sets `mentions = true`. Each account must have an
 enabled [`[[instagram_comments]]` profile](../configuration.md#instagram-comments)
 for the same app and account, registered with
-`msgvault source instagram-comments add`.
+`msgvault source instagram-comments add`. Mentions also need
+`msgvault source instagram-mentions add`, which registers the separate
+mentions source.
 
 ## How deliveries are applied
 
@@ -90,13 +94,15 @@ archived yet must be owned by the configured account.
   already gone on Meta and a token that may not read it.
 
 Polling does not recover a skipped hide, unhide or removal. A later sync
-archives a skipped new or edited comment when it reads that comment.
+archives a skipped new or edited comment when it reads that comment. No sync
+can find caption or comment mentions, so a skipped mention is lost.
 
 ## Limits
 
 - msgvault applies comment changes and post removals from the Page `feed`
-  field, and new comments from the Instagram `comments` and `live_comments`
-  fields. A change for a field msgvault does not handle is logged and
+  field, new comments from the Instagram `comments` and `live_comments`
+  fields, and caption and comment mentions from the Instagram `mentions`
+  field. A change for a field msgvault does not handle is logged and
   dropped. Other changes inside a handled field, such as reactions, are
   dropped without a log line.
 - Instagram does not send edits, hides or removals of comments.
