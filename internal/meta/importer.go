@@ -114,11 +114,6 @@ func acquireSource(ctx context.Context, st *store.Store, sourceType, identifier 
 	return source, execution, nil
 }
 
-// pageCursor is the pollPages checkpoint: the cursor of the next page.
-type pageCursor struct {
-	After string `json:"after"`
-}
-
 // pollPages runs a polling sync of one cursor-paged edge, as tag and inbox
 // sync do. page archives the page at after and returns the next cursor; an
 // empty cursor ends the scan. The checkpoint holds that cursor, so a run that
@@ -132,17 +127,12 @@ func pollPages(ctx context.Context, st *store.Store, sourceType, identifier stri
 		return nil, err
 	}
 	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
-	var cursor pageCursor
+	after := ""
 	if !opts.Full {
-		blob, err := savedCheckpoint(ctx, st, source)
-		if err != nil {
+		if after, err = savedCheckpoint(ctx, st, source); err != nil {
 			return nil, err
 		}
-		if blob != "" && json.Unmarshal([]byte(blob), &cursor) != nil {
-			return nil, errors.New("invalid checkpoint; restart this source with --full")
-		}
 	}
-	after := cursor.After
 	syncID, err := execution.StartSyncContext(ctx, sourceType, "")
 	if err != nil {
 		return nil, err
@@ -151,21 +141,12 @@ func pollPages(ctx context.Context, st *store.Store, sourceType, identifier stri
 	sum = &ImportSummary{}
 	done := false
 	checkpoint := func() *store.Checkpoint {
-		// Never empty: the next sync ignores a run with an empty checkpoint
-		// and falls back to an older, possibly expired cursor. After the last
-		// page, after is "" and the next sync starts from the top.
-		blob, _ := json.Marshal(pageCursor{After: after})
-		return &store.Checkpoint{PageToken: string(blob), MessagesAdded: int64(sum.MessagesAdded), MessagesUpdated: int64(sum.MessagesUpdated), MessagesProcessed: int64(sum.MessagesProcessed)}
+		return &store.Checkpoint{PageToken: after, MessagesAdded: int64(sum.MessagesAdded), MessagesUpdated: int64(sum.MessagesUpdated), MessagesProcessed: int64(sum.MessagesProcessed)}
 	}
 	defer func() {
 		sum.Partial = retErr != nil || !done
 		retErr = finishSync(ctx, st, source.ID, syncID, checkpoint(), sum.Partial, retErr)
 	}()
-	// Publish the starting position before any request, so a crash before
-	// the first page cannot leave the next sync on an older cursor.
-	if err := scoped.UpdateSyncCheckpointContext(ctx, syncID, checkpoint()); err != nil {
-		return sum, err
-	}
 	maximum := opts.MaxRequests
 	if maximum == 0 {
 		maximum = DefaultMaxRequests
@@ -401,14 +382,6 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 			if err := r.comments(ctx, p, edge); err != nil {
 				return err
 			}
-		} else if len(p.Posts) > 0 && !p.postsRead {
-			// Posts saved by an earlier run may be older than a webhook
-			// change since; read their page again before archiving them.
-			page, err := r.request(ctx, edge, p.PostsAfter, func() (ObjectPage, error) { return r.readPosts(ctx, edge, p.PostsAfter) })
-			if err != nil {
-				return err
-			}
-			p.Posts, p.postsRead = keepSaved(p.Posts, page.Data), true
 		} else if len(p.Posts) > 0 {
 			post := p.Posts[0]
 			if err := r.persist(ctx, post, post.ID, "", edge); err != nil {
@@ -423,8 +396,8 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 			if err != nil {
 				return err
 			}
-			p.Posts, p.postsRead = page.Data, true
-			p.PostsAfter, p.After = p.After, page.After
+			p.Posts = page.Data
+			p.After = page.After
 			p.Exhausted = page.After == ""
 		}
 		if err := r.save(ctx); err != nil {
@@ -437,18 +410,12 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) error {
 	index := len(p.Stack) - 1
 	f := &p.Stack[index]
-	if !f.Loaded || (len(f.Pending) > 0 && !f.read) {
+	if !f.Loaded {
 		page, err := r.request(ctx, edge, f.After, func() (ObjectPage, error) { return r.readComments(ctx, *f) })
 		if err != nil {
 			return fmt.Errorf("%s comments for %q: %w", r.providerName(), f.Parent, err)
 		}
-		if f.Loaded {
-			// Comments saved by an earlier run may be older than a webhook
-			// change since; keep only the ones not archived yet, as read now.
-			f.Pending, f.read = keepSaved(f.Pending, page.Data), true
-			return nil
-		}
-		f.Pending, f.Next, f.Loaded, f.read = page.Data, page.After, true, true
+		f.Pending, f.Next, f.Loaded = page.Data, page.After, true
 		return nil
 	}
 	if len(f.Pending) > 0 {
@@ -472,14 +439,4 @@ func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) 
 		p.Stack = p.Stack[:index]
 	}
 	return nil
-}
-
-// keepSaved returns the fresh objects whose IDs are in saved, in fresh order.
-// An object no longer on the page is left for the next complete scan.
-func keepSaved(saved, fresh []Object) []Object {
-	ids := make(map[string]bool, len(saved))
-	for _, object := range saved {
-		ids[object.ID] = true
-	}
-	return slices.DeleteFunc(fresh, func(object Object) bool { return !ids[object.ID] })
 }

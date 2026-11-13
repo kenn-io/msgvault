@@ -107,15 +107,15 @@ as its own conversation, with the post it belongs to.
 
 ### When a change fails
 
-- A change that fails is retried with increasing waits. Later changes and
-  deliveries wait behind it.
-- Each delivery has one hour. After that, the daemon skips the failing change
-  and tries each remaining change of the delivery once.
-- A change that can never be applied, such as one for a comment or post that
-  is gone, that the token may not read, or for a Page with no enabled profile,
-  is skipped at once.
-- An expired token, throttling and Meta error codes msgvault does not know are
-  retried.
+- A change that fails is retried with increasing waits, together with the
+  rest of its delivery. Changes that already applied are applied again, which
+  is harmless. Later deliveries wait behind it.
+- Each delivery has one hour. After that, the daemon drops the delivery,
+  including the changes after the failing one.
+- A change msgvault cannot decode, and a change for a Page with no enabled
+  profile, are skipped at once.
+- Every other failure is retried. This includes a comment or post that is
+  already gone on Meta and a token that may not read it.
 
 Polling does not recover a skipped hide, unhide or removal. A later sync
 archives a skipped new or edited comment when it reads that comment. No sync
