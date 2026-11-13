@@ -287,6 +287,9 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("restoring snapshot: %w", err)
 	}
+	if err := secureRestoredTokens(cmd.Context(), r, res.SnapshotID, backupRestoreTarget, res.ExtrasFiles); err != nil {
+		return fmt.Errorf("snapshot %s was restored to %s, but securing restored credentials failed: %w", res.SnapshotID, backupRestoreTarget, err)
+	}
 	return printBackupRestoreSummary(cmd.OutOrStdout(), backupRestoreTarget, res, looseAttachments)
 }
 

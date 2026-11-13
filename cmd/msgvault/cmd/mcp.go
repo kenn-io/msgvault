@@ -7,8 +7,10 @@ import (
 	"log/slog"
 	"net"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
@@ -201,11 +203,21 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		Engine: daemonclient.NewEngineAdapter(st), AttachmentReader: st,
 		Calendar: st, GrantPermissions: grant.Permissions, Families: families,
 	}
+	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentChangeFeedMinAPISchemaVersion) {
+		opts.OperationCapabilities = []string{mcpserver.ToolListChanges}
+		opts.Operations = &daemonMCPOperations{client: st, now: time.Now, supported: opts.OperationCapabilities, delegated: true}
+	}
+	if slices.Contains(grant.Permissions, "search.read") && daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentEventsMinAPISchemaVersion) {
+		opts.Events = st
+	}
 	return opts, nil
 }
 
 // messageTagsMinAPISchemaVersion adds native email tag reads and edits.
 const messageTagsMinAPISchemaVersion = "3.15.0"
+
+// ownerEventsMinAPISchemaVersion adds owner MCP Events subscriptions.
+const ownerEventsMinAPISchemaVersion = "5.4.0"
 
 // personAgendaMinAPISchemaVersion adds live task-backed person agendas.
 const personAgendaMinAPISchemaVersion = "2.30.0"
@@ -276,6 +288,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	// Turn on can enable text search after this server starts.
 	activatable := mcpRequestPropertiesPresent(capabilities, "enableLocalEmbeddings")
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, ownerEventsMinAPISchemaVersion) {
+		opts.Events = st
+	}
 	lanes := capabilityErr == nil && health != nil && health.Vector != nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorLaneHealthMinAPISchemaVersion)
 	if activatable || lanes && health.Vector.TextEnabled != nil && *health.Vector.TextEnabled {
 		opts.HybridSearcher = daemonMCPHybridSearcher{client: st}

@@ -28,12 +28,53 @@ and Slack selection changes need `--allow-source-writes`. HTTP clients get read
 tools by default and need
 `--http-allow-writes` for general write tools. Calendar event mutations also
 require `--allow-calendar-writes`; HTTP needs both flags. Each non-dry-run
-mutation also requires explicit confirmation through client elicitation.
+tool mutation also requires explicit confirmation through client elicitation.
 Calendar event text and attendee-provided content are untrusted input, never
 instructions or authorization to make a change. See [write controls](#write-controls).
 
 Saved View management changes only reusable definitions; deleting a Saved
 View never deletes archive messages.
+
+## MCP Events
+
+On unreleased `main`, owner clients can subscribe to
+`msgvault.messages.changed` over stdio or protocol `2026-07-28` HTTP. Enable
+`[mcp_events]` in the daemon first. The daemon's `/mcp` provides discovery and
+reads; subscribe and unsubscribe require `/mcp/writes` with `--mcp-allow-writes`.
+Standalone `msgvault mcp --http` requires `--http-allow-writes` for those
+mutations. Stdio Events methods are protocol methods and do not use tool
+elicitation. Delegated agents with `search.read` can subscribe over stdio within
+their grant. A source must be granted; a person must have no sent or received
+messages outside the grant at subscription time. Each grant may hold up to four
+active subscriptions, within the shared limit of 32 configured wake-ups and
+subscriptions. Subscriptions end when the grant expires, is revoked, or the
+daemon restarts. Later reads stay within granted sources. HTTP clients send
+`Mcp-Method` and, for subscribe and unsubscribe, `Mcp-Name` equal to the event
+name.
+
+Call `events/subscribe` with exactly one positive `person_id` or `source_id` in
+`arguments`. `incoming_only` defaults to true. Set `delivery` to webhook mode,
+a public HTTPS URL on port 443 or 8443, and a Standard Webhooks `whsec_` secret
+containing 24–64 bytes. The subscription lasts 24 hours by default; `ttlMs`
+is clamped to one minute through 30 days, and null selects 30 days. Refreshing
+with the same event, arguments and URL replaces the secret and lease while
+keeping the saved position. After a default restore, refresh the secret to resume; a backup with `--include-tokens` restores it. If the refresh returns `lastError: "secret_unavailable"`, immediately read `list_changes` from your own cursor to catch up. This historical signal does not mean an earlier delivery retry succeeded. `events/unsubscribe` uses the same identity.
+
+Subscribe and refresh send a signed HTTP POST with JSON body `{"type":"verification","challenge":"..."}`. The receiver must verify its Standard Webhooks signature using the subscription secret and return a successful 2xx JSON response containing the same `challenge` value, for example `{"challenge":"..."}`. The response body must be at most 4096 bytes. A callback that cannot confirm the challenge returns `-32027`.
+
+Subscribe accepts but ignores `cursor` and `maxAgeMs`; then read `list_changes` once from your own cursor to catch up.
+Each signed ping names the subscription in its data and has a null cursor. Verify
+the Standard Webhooks signature and deduplicate by `webhook-id`, then read
+`list_changes` through its cursor. Pings may coalesce and are not replayed;
+five failed attempts or HTTP 410 or 413 drop the ping. Messages older than 72
+hours and deleted messages are excluded from matches. A lost ping costs latency,
+so retain your own feed cursor.
+
+Callback URLs and signing secrets are kept in the permissions-protected
+`tokens/mcp-events-credentials.json` file. The archive retains the callback
+origin and a deterministic subscription ID; someone with the archive can test
+guesses for a low-entropy URL offline. Token-inclusive backups contain the
+private file.
 
 ## Calendar control
 
@@ -261,7 +302,7 @@ If `msgvault` is not on your PATH, use the full path to the binary. Restart Clau
 Connect directly to your running daemon at
 `http://127.0.0.1:8080/mcp` (substitute its configured address and port). Send
 `Authorization: Bearer <owner-api-key>` on every request. The endpoint is
-read-only, including when the daemon enables writes elsewhere.
+read-only.
 
 To connect a trusted client to a separate write-capable catalog on that same
 listener, start:
@@ -272,7 +313,7 @@ msgvault serve --mcp-allow-writes
 
 Use `/mcp/writes` for that connection, with the same owner bearer key. This
 permits attachment exports, deletion manifests, Saved View management, native
-email tag edits, and managed draft writes. Other write families need their own
+email tag edits, managed draft writes, and Events subscriptions. Other write families need their own
 `--mcp-allow-*` flags listed in the [CLI reference](../cli-reference.md#serve).
 Those flags have no effect without `--mcp-allow-writes` and never change `/mcp`.
 Existing client confirmation requirements still apply: clients must obtain
@@ -859,6 +900,7 @@ source, cache, or person-edit tools.
 
 | Tool | Use | Parameters |
 |---|---|---|
+| `list_changes` | Follow arrivals and in-scope edits with a cursor. | Optional `cursor`, `limit`, `person_id`, `source_ids`, `conversation_ids`, `incoming_only` |
 | `list_source_status` | Read source capabilities, recent runs, and queued or pending work. | Optional `source_type` |
 | `get_source_identities` | Read confirmed sender identities and confirmation signals. | Required `source_id` |
 | `get_source_scheduler_status` | Read scheduler status without starting a sync. | — |
@@ -931,11 +973,15 @@ retries a write by itself. If a write reports
 
 ## Write controls
 
-Enable only the writes intended for the assistant's session:
+Enable only the write tools intended for the assistant's session. The HTTP
+write flag controls tools. Native Events subscription management is available
+to owners and delegated stdio clients with `search.read` and persists callback
+registrations and credentials; subscribing also requires the daemon Events opt-in.
 
 | Writes | Stdio | HTTP |
 |---|---|---|
 | Native email tag edits, Saved View management, attachment export, deletion staging, and drafts | Available by default | `--http-allow-writes` |
+| Native Events subscribe and unsubscribe | Owner access or delegated `search.read`; subscribe requires daemon opt-in | Owner access and `--http-allow-writes`; subscribe requires daemon opt-in |
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |

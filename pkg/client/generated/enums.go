@@ -633,15 +633,15 @@ func (d DecidePersonMergeCandidateRequestDecision) Validate() error {
 type DiscoverEventType string
 
 const (
+	DiscoverEventTypeError    DiscoverEventType = "error"
 	DiscoverEventTypeProgress DiscoverEventType = "progress"
 	DiscoverEventTypeResult   DiscoverEventType = "result"
-	Error                     DiscoverEventType = "error"
 )
 
 // Validate checks if the DiscoverEventType value is valid
 func (d DiscoverEventType) Validate() error {
 	switch d {
-	case DiscoverEventTypeProgress, DiscoverEventTypeResult, Error:
+	case DiscoverEventTypeError, DiscoverEventTypeProgress, DiscoverEventTypeResult:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid DiscoverEventType value, got: %v", d))

@@ -407,3 +407,46 @@ func runMCPCapabilityGate(t *testing.T, delegated bool) {
 		})
 	}
 }
+
+func TestMCPDelegatedChangeFeedDiscovery(t *testing.T) {
+	for _, tc := range []struct {
+		name, version, permission string
+		want                      bool
+	}{
+		{"current search grant", "5.3.0", "search.read", true},
+		{"older daemon", "5.2.0", "search.read", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			fixture := newDraftReplyFixture(t)
+			server := mcpDraftTestDaemon(t, fixture.grantedAdapter(), func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/api/v1/health" {
+						w.Header().Set("Content-Type", "application/json")
+						_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": tc.version})
+						return
+					}
+					next.ServeHTTP(w, r)
+				})
+			})
+			session := mcpDraftTestSession(mcpDraftAgentContext(t, server, fixture.source.ID, []string{tc.permission}), t)
+			names := mcpDraftToolNames(t, session)
+			if !tc.want {
+				assertions.NotContains(names, "list_changes")
+				return
+			}
+			requirements.Contains(names, "list_changes")
+			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_changes", Arguments: map[string]any{}})
+			requirements.NoError(err)
+			assertions.False(result.IsError)
+			assertions.NotNil(result.StructuredContent)
+			denied, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_changes", Arguments: map[string]any{"source_ids": []int64{fixture.source.ID + 1000000}}})
+			requirements.NoError(err)
+			assertions.True(denied.IsError)
+			body, ok := denied.StructuredContent.(map[string]any)
+			requirements.True(ok)
+			assertions.Equal("permission_denied", body["error"])
+		})
+	}
+}

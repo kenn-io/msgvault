@@ -49,6 +49,7 @@ const (
 	ToolExportEML                 = "export_eml"
 	ToolListThread                = "list_thread"
 	ToolListMessages              = "list_messages"
+	ToolListChanges               = "list_changes"
 	ToolGetStats                  = "get_stats"
 	ToolAggregate                 = "aggregate"
 	ToolStageDeletion             = "stage_deletion"
@@ -110,6 +111,7 @@ const ToolGetEmbeddingStatus = "get_embeddings_status"
 // the search_message_bodies tool, and Backend additionally enables the
 // find_similar_messages tool.
 type ServeOptions struct {
+	Events EventsBackend
 	// DiscoverFamilies reads current archive inventory when a catalog is requested.
 	DiscoverFamilies func(context.Context) *ArchiveFamilies
 	Families         *ArchiveFamilies
@@ -437,6 +439,9 @@ func newMCPServerWithPolicy(
 		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations), confirmation))
 	}
 
+	if opts.Events != nil && !opts.legacyHTTP {
+		registerNativeEvents(s, opts.Events, allowWrites)
+	}
 	return s
 }
 
@@ -536,6 +541,9 @@ func NewHTTPHandler(opts ServeOptions, httpOpts HTTPOptions) (http.Handler, func
 }
 
 func newHTTPHandlerWithPolicy(opts ServeOptions, httpOpts HTTPOptions, policy *invocationPolicy, daemonAuthenticated bool) (http.Handler, func()) {
+	if opts.DelegatedOnly || (!daemonAuthenticated && httpOpts.APIKey == "") {
+		opts.Events = nil
+	}
 	if opts.downloads == nil {
 		opts.downloads = &downloadCache{}
 	}
@@ -578,7 +586,11 @@ func newHTTPHandlerWithPolicy(opts ServeOptions, httpOpts HTTPOptions, policy *i
 			MaxRequestBodyBytes: (visual.MaxQueryImageBytes*4)/3 + 2<<20,
 		},
 	)
-	protected := http.NewCrossOriginProtection().Handler(bearerAuthHandler(httpOpts.APIKey, httpServer))
+	var transport http.Handler = httpServer
+	if opts.Events != nil && !opts.DelegatedOnly {
+		transport = eventsNameHeaderHandler(transport)
+	}
+	protected := http.NewCrossOriginProtection().Handler(bearerAuthHandler(httpOpts.APIKey, transport))
 	return noStoreHandler(protected), closeHandler
 }
 
@@ -633,7 +645,7 @@ func bearerAuthHandler(apiKey string, next http.Handler) http.Handler {
 // agentReadToolPermission names the grant permission the daemon requires for a read tool.
 func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
 	switch name {
-	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
+	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains, ToolListChanges:
 		return agentgrant.PermissionSearchRead, true
 	case ToolGetMessage, ToolListThread, ToolSearchInMessage:
 		return agentgrant.PermissionMessageRead, true

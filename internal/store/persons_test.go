@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"sync"
@@ -525,4 +526,57 @@ func TestGetPersonUsesReadSnapshot(t *testing.T) {
 	after, err := f.Store.GetPerson(person.ID)
 	require.NoError(err)
 	assert.Equal([]int64{newID}, after.ParticipantIDs)
+}
+
+func TestPersonInSourcesEvidence(t *testing.T) {
+	req := require.New(t)
+	f := storetest.New(t)
+	sender := f.EnsureParticipant("sender@example.com", "Sender", "example.com")
+	recipient := f.EnsureParticipant("recipient@example.com", "Recipient", "example.com")
+	roster := f.EnsureParticipant("roster@example.com", "Roster", "example.com")
+	absent := f.EnsureParticipant("absent@example.com", "Absent", "example.com")
+	id, err := f.Store.UpsertMessage(&store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "person-evidence", MessageType: "email", SenderID: sql.NullInt64{Int64: sender, Valid: true}})
+	req.NoError(err)
+	req.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{recipient}, nil))
+	req.NoError(f.Store.EnsureConversationParticipant(f.ConvID, roster, "member"))
+	outside, err := f.Store.GetOrCreateSource("gmail", "outside@example.com")
+	req.NoError(err)
+	conversation, err := f.Store.EnsureConversationWithType(outside.ID, "outside", "email_thread", "Outside")
+	req.NoError(err)
+	outsideID, err := f.Store.UpsertMessage(&store.Message{SourceID: outside.ID, ConversationID: conversation, SourceMessageID: "outside-evidence", MessageType: "email", SenderID: sql.NullInt64{Int64: sender, Valid: true}})
+	req.NoError(err)
+	outsideRecipient := f.EnsureParticipant("outside-recipient@example.com", "Outside Recipient", "example.com")
+	req.NoError(f.Store.ReplaceMessageRecipients(outsideID, "to", []int64{outsideRecipient}, nil))
+	req.NoError(f.Store.EnsureConversationParticipant(conversation, roster, "member"))
+	for _, tc := range []struct {
+		name          string
+		participant   int64
+		source        int64
+		want, outside bool
+	}{
+		{"sender inside and outside", sender, f.Source.ID, true, true}, {"recipient", recipient, f.Source.ID, true, false}, {"roster", roster, f.Source.ID, true, false}, {"absent", absent, f.Source.ID, false, false}, {"sender outside", sender, -1, false, true}, {"recipient outside", recipient, -1, false, true}, {"outside recipient", outsideRecipient, f.Source.ID, false, true}, {"roster outside", roster, -1, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			got, err := f.Store.PersonInSources(t.Context(), []int64{tc.participant}, []int64{tc.source})
+			require.NoError(err)
+			assert.Equal(tc.want, got)
+			inside, outside, err := f.Store.PersonSourceEvidence(t.Context(), []int64{tc.participant}, []int64{tc.source})
+			require.NoError(err)
+			assert.Equal(tc.want, inside)
+			assert.Equal(tc.outside, outside)
+		})
+	}
+}
+
+// A plain caller-owned snapshot cannot be safely paired with a later pool bound:
+// changes committed between them could be skipped. The API must fail closed.
+func TestChangedMessagesRejectsUnboundedSnapshot(t *testing.T) {
+	f := storetest.New(t)
+	ctx, release, err := f.Store.BeginReadSnapshotContext(t.Context())
+	require.NoError(t, err)
+	defer release()
+	_, err = f.Store.ListChangedMessages(ctx, store.ChangedMessagesFrom(time.Time{}), 10)
+	require.ErrorContains(t, err, "no captured bounds")
 }
