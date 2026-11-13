@@ -24,6 +24,7 @@ var (
 
 type downloadKey struct {
 	operation  string
+	digest     string
 	personID   int64
 	mediaID    int64
 	message    query.MessageRef
@@ -62,10 +63,12 @@ func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkReque
 	if c.closed {
 		return nil, errDownloadExpired
 	}
-	if key.operation == "get_person_record" && req.offset == 0 && req.digest == "" && c.entries[key] != nil {
-		c.remove(key)
+	// A fresh profile read must reload while digest-pinned reads keep their snapshot.
+	freshProfile := key.operation == "get_person_record" && req.offset == 0 && req.digest == ""
+	if key.operation == "get_person_record" {
+		key.digest = req.digest
 	}
-	if entry := c.entries[key]; entry != nil {
+	if entry := c.entries[key]; entry != nil && !freshProfile {
 		if time.Now().Before(entry.expires) {
 			if entry.validate != nil {
 				if err := entry.validate(ctx); err != nil {
@@ -100,6 +103,15 @@ func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkReque
 	entry.digest = hex.EncodeToString(sum[:])
 	if req.digest != "" && req.digest != entry.digest {
 		return nil, errDownloadExpired
+	}
+	if key.operation == "get_person_record" {
+		key.digest = entry.digest
+		if existing := c.entries[key]; existing != nil {
+			if time.Now().Before(existing.expires) && existing.etag == entry.etag {
+				return existing, nil
+			}
+			c.remove(key)
+		}
 	}
 	for len(c.entries) >= maxDownloads || c.bytes+len(entry.data) > MaxDownloadBytes {
 		var oldest downloadKey

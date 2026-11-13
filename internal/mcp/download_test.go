@@ -227,3 +227,42 @@ func TestDownloadSnapshotByteBudget(t *testing.T) {
 	must.ErrorIs(err, errDownloadExpired, "byte budget evicts before the entry limit")
 	checks.Equal(len(data), cache.bytes)
 }
+
+func TestPersonDownloadSnapshotsSurviveRefresh(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		checks, must := assert.New(t), require.New(t)
+		var cache downloadCache
+		defer cache.close()
+		key := downloadKey{operation: "get_person_record", personID: 1}
+		value := "first"
+		load := func() (*downloadSnapshot, error) { return &downloadSnapshot{data: []byte(value), etag: value}, nil }
+		first, err := cache.get(t.Context(), key, chunkRequest{}, load)
+		must.NoError(err)
+		time.Sleep(time.Second)
+		value = "second"
+		second, err := cache.get(t.Context(), key, chunkRequest{}, load)
+		must.NoError(err)
+		old, err := cache.get(t.Context(), key, chunkRequest{offset: 1, digest: first.digest}, load)
+		must.NoError(err)
+		checks.Equal([]byte("first"), old.data)
+		checks.Equal("first", old.etag)
+		current, err := cache.get(t.Context(), key, chunkRequest{offset: 1, digest: second.digest}, load)
+		must.NoError(err)
+		checks.Equal([]byte("second"), current.data)
+		checks.Equal("second", current.etag)
+		repeated, err := cache.get(t.Context(), key, chunkRequest{}, load)
+		must.NoError(err)
+		checks.Same(second, repeated)
+		checks.Equal(len("first")+len("second"), cache.bytes)
+		for i := 0; i < maxDownloads-1; i++ {
+			time.Sleep(time.Second)
+			value = fmt.Sprintf("next-%d", i)
+			_, err = cache.get(t.Context(), key, chunkRequest{}, load)
+			must.NoError(err)
+		}
+		_, err = cache.get(t.Context(), key, chunkRequest{offset: 1, digest: first.digest}, load)
+		must.ErrorIs(err, errDownloadExpired)
+		cache.close()
+		checks.Zero(cache.bytes)
+	})
+}

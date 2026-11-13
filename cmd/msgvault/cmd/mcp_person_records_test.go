@@ -306,11 +306,16 @@ func TestPersonRecordLargeProfileRecoveryAndDisclosure(t *testing.T) {
 	assertions.NotEqual(etag, updated.ETag)
 	assertions.Contains(disclosure, *superseded.FreeText)
 	assertions.NotContains(disclosure, *profile.Addresses[1].FreeText)
-	old := loopToolOutput[mcpserver.StructuredPersonRecord](t, call("get_person_record", map[string]any{"person_id": id, "offset": *first.Length, "sha256": *first.SHA256}))
-	assertions.Equal(etag, old.ETag)
 	fresh := loopToolOutput[mcpserver.StructuredPersonRecord](t, call("get_person_record", map[string]any{"person_id": id, "offset": 0}))
 	assertions.Equal(updated.ETag, fresh.ETag)
 	assertions.NotEqual(first.ETag, fresh.ETag)
+	old := loopToolOutput[mcpserver.StructuredPersonRecord](t, call("get_person_record", map[string]any{"person_id": id, "offset": *first.Length, "sha256": *first.SHA256}))
+	assertions.Equal(etag, old.ETag)
+	oldBytes, err := base64.StdEncoding.DecodeString(*old.DataBase64)
+	requirements.NoError(err)
+	assertions.Equal(assembled.Bytes()[*old.Offset:*old.Offset+*old.Length], oldBytes)
+	newChunk := loopToolOutput[mcpserver.StructuredPersonRecord](t, call("get_person_record", map[string]any{"person_id": id, "offset": *fresh.Length, "sha256": *fresh.SHA256}))
+	assertions.Equal(updated.ETag, newChunk.ETag)
 	assertions.Equal(int64(3), patches.Load())
 }
 
