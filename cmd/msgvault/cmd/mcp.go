@@ -39,6 +39,7 @@ var mcpAllowCalendarWrites bool
 var serveMCPStdioWithOptions = mcpserver.ServeWithOptions
 var mcpAllowSourceWrites bool
 var mcpAllowLoopWrites bool
+var mcpAllowSweepWrites bool
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
 var mcpCmd = &cobra.Command{
@@ -535,7 +536,7 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpHTTPAllowWrites, "http-allow-writes", false,
 		"Expose write-class MCP tools over HTTP. This permits attachment exports, "+
 			"deletion manifests, Saved View management, managed draft writes, and profile writes separately enabled with "+
-			"--allow-profile-writes, identity decisions, identity scoring, person merges, CardDAV writes, calendar writes, source writes, and Kata issue writes enabled "+
+			"--allow-profile-writes, identity decisions, identity scoring, person merges, CardDAV writes, calendar writes, source writes, people sweep runs, and Kata issue writes enabled "+
 			"with their separate opt-ins; enable it only for trusted, authenticated clients.")
 	addMCPWriteFlags(mcpCmd, "")
 	_ = mcpCmd.Flags().MarkDeprecated("force-sql", "deprecated in 0.17.0; set [analytics].engine = \"sql\" in config.toml")
@@ -636,6 +637,7 @@ func addMCPWriteFlags(cmd *cobra.Command, prefix string) {
 		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	flags.BoolVar(bind(&mcpAllowCalendarWrites), prefix+"allow-calendar-writes", false,
 		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
+	flags.BoolVar(bind(&mcpAllowSweepWrites), prefix+"allow-sweep-writes", false, "Allow approved people sweep runs")
 	flags.BoolVar(bind(&mcpAllowLoopWrites), prefix+"allow-loop-writes", false,
 		"Allow approved open-loop done, snooze, and reopen decisions")
 	flags.BoolVar(bind(&mcpAllowSourceWrites), prefix+"allow-source-writes", false,
@@ -653,6 +655,9 @@ func applyMCPWriteFlags(cmd *cobra.Command, prefix string, opts *mcpserver.Serve
 	opts.AllowCalendarWrites, _ = cmd.Flags().GetBool(prefix + "allow-calendar-writes")
 	if opts.AllowProfileWrites {
 		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
+	}
+	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-sweep-writes"); enabled {
+		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilySweep)
 	}
 	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-loop-writes"); enabled {
 		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyLoops)

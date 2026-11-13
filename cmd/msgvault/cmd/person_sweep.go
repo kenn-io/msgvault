@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
+	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
@@ -42,64 +43,12 @@ type personSweepCommandDeps struct {
 	proxy              func(*cobra.Command, []string, map[string]string) error
 }
 
-type personSweepRunOutput struct {
-	RunID           string                 `json:"run_id"`
-	PeopleAttempted int                    `json:"people_attempted"`
-	PeopleSucceeded int                    `json:"people_succeeded"`
-	ProjectedWrites int                    `json:"projected_writes"`
-	Usage           personSweepUsageOutput `json:"usage"`
-}
-
-type personSweepUsageOutput struct {
-	Requests              int   `json:"requests"`
-	InputTokens           int64 `json:"input_tokens"`
-	OutputTokens          int64 `json:"output_tokens"`
-	EstimatedCostMicroUSD int64 `json:"estimated_cost_microusd"`
-}
-
-type personSweepStatusOutput struct {
-	Enabled             bool                     `json:"enabled"`
-	Schedule            string                   `json:"schedule"`
-	DirtyCount          int                      `json:"dirty_count"`
-	LeasedCount         int                      `json:"leased_count"`
-	RetryCount          int                      `json:"retry_count"`
-	OldestDirtyAt       *time.Time               `json:"oldest_dirty_at,omitempty"`
-	JournalHighWater    int64                    `json:"journal_high_water"`
-	CursorHighWater     int64                    `json:"cursor_high_water"`
-	ProgramFingerprint  string                   `json:"program_fingerprint,omitempty"`
-	CatalogFingerprint  string                   `json:"catalog_fingerprint,omitempty"`
-	ProviderFingerprint string                   `json:"provider_fingerprint,omitempty"`
-	LastFailure         peoplesweep.FailureClass `json:"last_failure,omitempty"`
-}
-
-type personSweepHistoryRunOutput struct {
-	Kind            peoplesweep.RunKind    `json:"kind"`
-	Mode            peoplesweep.RunMode    `json:"mode"`
-	Status          peoplesweep.RunStatus  `json:"status"`
-	Attempts        int                    `json:"attempts"`
-	Successes       int                    `json:"successes"`
-	Failures        int                    `json:"failures"`
-	ProjectedWrites int                    `json:"projected_writes"`
-	Usage           personSweepUsageOutput `json:"usage"`
-}
-
-type personSweepHistoryAttemptOutput struct {
-	PersonID        int64                     `json:"person_id"`
-	Status          peoplesweep.AttemptStatus `json:"status"`
-	FailureClass    peoplesweep.FailureClass  `json:"failure_class,omitempty"`
-	SeedCount       int                       `json:"seed_count"`
-	ContextCount    int                       `json:"context_count"`
-	ClaimCount      int                       `json:"claim_count"`
-	DecisionCount   int                       `json:"decision_count"`
-	ProjectedWrites int                       `json:"projected_writes"`
-	Usage           personSweepUsageOutput    `json:"usage"`
-	LatencyMS       int64                     `json:"latency_ms"`
-}
-
-type personSweepHistoryOutput struct {
-	Runs     []personSweepHistoryRunOutput     `json:"runs"`
-	Attempts []personSweepHistoryAttemptOutput `json:"attempts"`
-}
+type personSweepRunOutput = mcpserver.SweepRun
+type personSweepUsageOutput = mcpserver.SweepUsage
+type personSweepStatusOutput = mcpserver.SweepStatus
+type personSweepHistoryRunOutput = mcpserver.SweepHistoryRun
+type personSweepHistoryAttemptOutput = mcpserver.SweepHistoryAttempt
+type personSweepHistoryOutput = mcpserver.SweepHistory
 
 func defaultPersonSweepCommandDeps() personSweepCommandDeps {
 	return personSweepCommandDeps{
@@ -252,7 +201,7 @@ func newPersonSweepStatusCommand(deps personSweepCommandDeps) *cobra.Command {
 				Enabled: config.Enabled, Schedule: config.Schedule, DirtyCount: state.DirtyCount,
 				LeasedCount: state.LeasedCount, RetryCount: state.RetryCount,
 				OldestDirtyAt: state.OldestDirtyAt, JournalHighWater: state.JournalHighWater,
-				CursorHighWater: state.CursorHighWater, LastFailure: state.LastFailure,
+				CursorHighWater: state.CursorHighWater, LastFailure: string(state.LastFailure),
 			}
 			if config.Enabled {
 				profile, profileErr := config.Profile()
@@ -370,15 +319,15 @@ func safePersonSweepHistory(
 	}
 	for _, run := range runs {
 		output.Runs = append(output.Runs, personSweepHistoryRunOutput{
-			Kind: run.Kind, Mode: run.Mode, Status: run.Status, Attempts: run.Attempts,
+			Kind: string(run.Kind), Mode: string(run.Mode), Status: string(run.Status), Attempts: run.Attempts,
 			Successes: run.Successes, Failures: run.Failures, ProjectedWrites: run.ProjectedWrites,
 			Usage: personSweepUsage(run.Usage),
 		})
 	}
 	for _, attempt := range attempts {
 		output.Attempts = append(output.Attempts, personSweepHistoryAttemptOutput{
-			PersonID: attempt.PersonID, Status: attempt.Status,
-			FailureClass: attempt.FailureClass, SeedCount: attempt.SeedCount,
+			PersonID: attempt.PersonID, Status: string(attempt.Status),
+			FailureClass: string(attempt.FailureClass), SeedCount: attempt.SeedCount,
 			ContextCount: attempt.ContextCount, ClaimCount: attempt.ClaimCount,
 			DecisionCount: attempt.DecisionCount, ProjectedWrites: attempt.ProjectedWrites,
 			Usage: personSweepUsage(attempt.Usage), LatencyMS: attempt.Latency.Milliseconds(),
