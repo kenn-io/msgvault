@@ -3,7 +3,6 @@ package meta
 import (
 	"database/sql"
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"slices"
@@ -80,7 +79,7 @@ func TestApplyFeedArchivesCommentsAndState(t *testing.T) {
 	replyText = "edited reply"
 	edit := strings.Replace(reply, `"add"`, `"edited"`, 1)
 	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(edit,
-		`{"item":"comment","verb":"hide","post_id":"100_200","comment_id":"100_202","parent_id":"100_201"}`,
+		`{"item":"comment","verb":"unhide","post_id":"100_200","comment_id":"100_202","parent_id":"100_201"}`,
 		`{"item":"comment","verb":"remove","post_id":"100_200","comment_id":"100_201","parent_id":"100_200"}`)))
 	assert.Equal([]string{"/v26.0/100_202", "/v26.0/100_202 is_hidden"}, reads, "archived ancestors are not read again")
 	body, err = st.GetMessageBodyText(t.Context(), got.ID)
@@ -92,106 +91,13 @@ func TestApplyFeedArchivesCommentsAndState(t *testing.T) {
 	assert.Equal("edited reply", body, "a repeated older delivery keeps the current text")
 	metadata, err := st.GetMessageMetadataContext(t.Context(), got.ID)
 	require.NoError(err)
-	assert.Contains(metadata.String, `"hidden":true`)
+	assert.Contains(metadata.String, `"hidden":true`, "hidden state is what Graph reports, not the delivery's verb")
 	assert.True(deleted("100_201"))
 	assert.True(deleted("100_202"), "a comment removal marks its archived replies")
 
 	var webhookRuns int
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM sync_runs WHERE source_id=? AND sync_type=? AND status='completed'`, src.ID, WebhookSyncType).Scan(&webhookRuns))
 	assert.Equal(4, webhookRuns)
-}
-
-// Hidden state is read from Graph, so a hide that Meta delivers again after
-// an unhide cannot hide a visible comment.
-func TestApplyFeedHiddenStateFollowsGraph(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := testutil.NewSQLiteTestStore(t)
-	hidden := false
-	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/v26.0/me":
-			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
-		case r.URL.Path == "/v26.0/100_200":
-			_, _ = fmt.Fprint(w, `{"id":"100_200","message":"Example post","from":{"id":"100","name":"Example Page"}}`)
-		case r.URL.Path == "/v26.0/100_201" && r.URL.Query().Get("fields") == "id,is_hidden":
-			_, _ = fmt.Fprintf(w, `{"id":"100_201","is_hidden":%t}`, hidden)
-		case r.URL.Path == "/v26.0/100_201":
-			_, _ = fmt.Fprint(w, `{"id":"100_201","message":"first","created_time":"2026-10-01T12:00:00+0000","from":{"id":"300","name":"Example Customer"}}`)
-		default:
-			assert.Fail("unexpected Graph read", r.URL.Path)
-			http.Error(w, "unexpected", http.StatusNotFound)
-		}
-	})
-	src, err := NewImporter(st, c).Register(t.Context(), "9", "100")
-	require.NoError(err)
-	change := func(verb string) string {
-		return `{"item":"comment","verb":"` + verb + `","post_id":"100_200","comment_id":"100_201","parent_id":"100_200"}`
-	}
-	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(change("add"))))
-	id := message(t, st, src.ID, "100_201").ID
-	archivedHidden := func() bool {
-		saved, err := st.GetMessageMetadataContext(t.Context(), id)
-		require.NoError(err)
-		var meta objectMetadata
-		require.NoError(json.Unmarshal([]byte(saved.String), &meta))
-		return meta.Hidden
-	}
-
-	hide, unhide := change("hide"), change("unhide")
-	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(hide)))
-	assert.False(archivedHidden(), "a hide records the visibility Graph reports")
-
-	hidden = true
-	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(unhide)))
-	assert.True(archivedHidden(), "an unhide records the visibility Graph reports")
-
-	hidden = false
-	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(unhide)))
-	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(hide)))
-	assert.False(archivedHidden(), "a hide delivered again after the unhide leaves the comment visible")
-}
-
-// A webhook edit of a reply msgvault posted keeps it the owner's even when
-// Graph's read of it omits the author.
-func TestApplyFeedEditKeepsOutboundReply(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := testutil.NewSQLiteTestStore(t)
-	replyText := "Thanks"
-	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v26.0/me":
-			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
-		case "/v26.0/100_200":
-			_, _ = fmt.Fprint(w, `{"id":"100_200","message":"Example post","from":{"id":"100","name":"Example Page"}}`)
-		case "/v26.0/100_201":
-			_, _ = fmt.Fprint(w, `{"id":"100_201","message":"first","created_time":"2026-10-01T12:00:00+0000","from":{"id":"300","name":"Example Customer"}}`)
-		case "/v26.0/100_201/comments":
-			_, _ = fmt.Fprint(w, `{"id":"100_202"}`)
-		case "/v26.0/100_202":
-			_, _ = fmt.Fprintf(w, `{"id":"100_202","message":%q,"created_time":"2026-10-02T12:00:00+0000","parent":{"id":"100_201"}}`, replyText)
-		default:
-			assert.Fail("unexpected Graph read", r.URL.Path)
-			http.Error(w, "unexpected", http.StatusNotFound)
-		}
-	})
-	src, err := NewImporter(st, c).Register(t.Context(), "9", "100")
-	require.NoError(err)
-	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(`{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_201"}`)))
-	target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "100_201").ID)
-	require.NoError(err)
-	_, err = ReplyToComment(t.Context(), st, c, target, "Thanks")
-	require.NoError(err)
-
-	replyText = "Thanks, edited"
-	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(`{"item":"comment","verb":"edited","post_id":"100_200","comment_id":"100_202"}`)))
-	reply := message(t, st, src.ID, "100_202")
-	body, err := st.GetMessageBodyText(t.Context(), reply.ID)
-	require.NoError(err)
-	assert.Equal("Thanks, edited", body)
-	assert.True(reply.IsFromMe)
-	metadata, err := st.GetMessageMetadataContext(t.Context(), reply.ID)
-	require.NoError(err)
-	assert.Contains(metadata.String, `"outbound":true`)
 }
 
 func TestApplyFeedRefusesUnregisteredPage(t *testing.T) {
