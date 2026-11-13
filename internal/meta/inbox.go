@@ -42,8 +42,8 @@ func (b Inbox) Identifier() string {
 	return SourceIdentifier(b.App, b.Page)
 }
 
-// owner is the Page or Instagram account ID that the inbox belongs to.
-func (b Inbox) owner() string {
+// Owner is the Page or Instagram account ID that the inbox belongs to.
+func (b Inbox) Owner() string {
 	if b.instagram() {
 		return b.Account
 	}
@@ -60,7 +60,7 @@ func (b Inbox) platform() string {
 // actorIdentifier scopes an inbox participant by app and inbox owner. Page-
 // and Instagram-scoped IDs are not comparable with comment author IDs.
 func (b Inbox) actorIdentifier(actor string) string {
-	return b.SourceType() + ":" + beeperidentity.EncodePart(b.App) + ":" + beeperidentity.EncodePart(b.owner()) + ":" + beeperidentity.EncodePart(actor)
+	return b.SourceType() + ":" + beeperidentity.EncodePart(b.App) + ":" + beeperidentity.EncodePart(b.Owner()) + ":" + beeperidentity.EncodePart(actor)
 }
 
 // InboxParticipant is a Graph conversation participant or message sender.
@@ -133,7 +133,7 @@ type inboxMetadata struct {
 // scoped ID is the conversation key because webhooks name the customer but
 // not Meta's conversation ID.
 func (b Inbox) persistMessage(ctx context.Context, st *store.Store, sourceID int64, sum *ImportSummary, owner, customer InboxParticipant, msg InboxMessage) error {
-	if owner.ID != b.owner() || !safeObjectID(customer.ID) || customer.ID == owner.ID || !safeObjectID(msg.ID) {
+	if owner.ID != b.Owner() || !safeObjectID(customer.ID) || customer.ID == owner.ID || !safeObjectID(msg.ID) {
 		return errors.New("invalid inbox message identity")
 	}
 	existing, err := st.StoredMessagesContext(ctx, sourceID, inboxRawFormat, []string{msg.ID})
@@ -165,6 +165,15 @@ func (b Inbox) persistMessage(ctx context.Context, st *store.Store, sourceID int
 		sender, fromName = ownerID, owner.label()
 	case customer.ID:
 		sender, fromName = customerID, customer.label()
+	}
+	if sender != 0 && fromName == "" && (prior == nil || !prior.SenderID.Valid || prior.SenderID.Int64 != sender) {
+		// Webhook events carry IDs only; search by the name polling stored.
+		// An archived message from the same sender keeps its own name instead.
+		names, err := st.ParticipantDisplayNamesContext(ctx, []int64{sender})
+		if err != nil {
+			return err
+		}
+		fromName = names[sender]
 	}
 	metadata, err := json.Marshal(inboxMetadata{AppID: b.App, PageID: b.Page, InstagramAccountID: b.Account, CustomerID: customer.ID})
 	if err != nil {
@@ -231,11 +240,11 @@ func (imp *InboxImporter) Register(ctx context.Context, b Inbox) (*store.Source,
 		}
 		name, provenance = account.Username, "instagram_page_token"
 	}
-	return registerSource(ctx, imp.store, b.SourceType(), b.Identifier(), b.actorIdentifier(b.owner()), provenance, name)
+	return registerSource(ctx, imp.store, b.SourceType(), b.Identifier(), b.actorIdentifier(b.Owner()), provenance, name)
 }
 
 func (b Inbox) includesOwner(c InboxConversation) bool {
-	return slices.ContainsFunc(c.Participants, func(p InboxParticipant) bool { return p.ID == b.owner() })
+	return slices.ContainsFunc(c.Participants, func(p InboxParticipant) bool { return p.ID == b.Owner() })
 }
 
 // oneToOne returns the owner and customer of a conversation between exactly
@@ -246,10 +255,10 @@ func (b Inbox) oneToOne(c InboxConversation) (owner, customer InboxParticipant, 
 		return owner, customer, false
 	}
 	owner, customer = c.Participants[0], c.Participants[1]
-	if customer.ID == b.owner() {
+	if customer.ID == b.Owner() {
 		owner, customer = customer, owner
 	}
-	return owner, customer, owner.ID == b.owner()
+	return owner, customer, owner.ID == b.Owner()
 }
 
 // Import archives inbox conversations one page of up to 25 at a time, each
@@ -265,7 +274,7 @@ func (imp *InboxImporter) Import(ctx context.Context, b Inbox, opts ImportOption
 		// include the configured one; refuse the page instead of archiving
 		// another account's messages in this source.
 		if len(page.Data) > 0 && !slices.ContainsFunc(page.Data, b.includesOwner) {
-			return "", fmt.Errorf("conversation %q does not include inbox owner %s; check which account the Page is linked to", page.Data[0].ID, b.owner())
+			return "", fmt.Errorf("conversation %q does not include inbox owner %s; check which account the Page is linked to", page.Data[0].ID, b.Owner())
 		}
 		for _, conversation := range page.Data {
 			owner, customer, ok := b.oneToOne(conversation)

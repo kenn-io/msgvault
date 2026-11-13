@@ -15,6 +15,10 @@ All notable changes to msgvault, grouped by release.
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
+- New Messenger and Instagram inbox messages, including the ones the Page or
+  account sends, are archived as they arrive when the
+  [Meta webhook receiver](usage/meta-webhooks.md#inbox-messages) gets the
+  `messages` and `message_echoes` fields.
 - [Facebook and Instagram messages](usage/meta-messages.md) archive a Page's
   Messenger inbox or a linked Instagram account's direct messages as searchable
   chats. Configure `[[facebook_messages]]` or `[[instagram_messages]]`, then run

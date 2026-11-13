@@ -1,7 +1,7 @@
 ---
 last_edited: "2026-11-13"
 title: Meta Webhooks
-description: Archive Facebook Page and Instagram comment changes as Meta reports them, between polling syncs.
+description: Archive Facebook Page and Instagram comments, mentions and inbox messages as Meta reports them, between polling syncs.
 ---
 
 Polling sync finds new comments only when it runs. With webhooks, Meta sends
@@ -64,6 +64,27 @@ for the same app and account, registered with
 `msgvault source instagram-mentions add`, which registers the separate
 mentions source.
 
+## Inbox messages
+
+To archive new Messenger and Instagram direct messages as they arrive,
+subscribe the Page object to the `messages` and `message_echoes` fields, and
+the Instagram object to `messages`. Echoes are the messages the Page or
+account sends. Each inbox needs an enabled
+[`[[facebook_messages]]` or `[[instagram_messages]]` profile](meta-messages.md),
+registered with `source facebook-messages add` or `source instagram-messages add`.
+Add the two Page fields to the Page subscription too, for example
+`subscribed_fields=feed,mention,messages,message_echoes` in the `curl` call
+above.
+
+A message lands in the same chat that inbox sync uses; a chat that first
+appears through a webhook gets the customer's name on the next sync. A
+webhook only adds messages that are not archived yet, so a late event never
+replaces text that a sync updated. Messages without text are skipped. A
+message is missed if the daemon skips its change after an hour of failures,
+or if the receiver stays unreachable for longer than Meta keeps retrying. The
+next sync archives a missed message only if it is still among the 20 most
+recent of its chat.
+
 ## How deliveries are applied
 
 The daemon checks each delivery's `X-Hub-Signature-256` signature with the app
@@ -105,10 +126,11 @@ a Page, so a skipped mention is lost.
 
 - msgvault applies comment changes and post removals from the Page `feed`
   field, new mentions from the Page `mention` field, new comments from the
-  Instagram `comments` and `live_comments` fields, and caption and comment
-  mentions from the Instagram `mentions` field. A change for a field
-  msgvault does not handle is logged and dropped. Other changes inside a
-  handled field, such as reactions, are dropped without a log line.
+  Instagram `comments` and `live_comments` fields, caption and comment
+  mentions from the Instagram `mentions` field, and new inbox messages and
+  echoes. A change for a field msgvault does not handle is logged and
+  dropped. Other changes inside a handled field, such as reactions, message
+  edits and deletions and read receipts, are dropped without a log line.
 - Instagram does not send edits, hides or removals of comments.
 - A hide or unhide for a comment that is not archived yet is ignored. Polling
   sync does not read hidden state, so that comment is not marked hidden.
