@@ -28,9 +28,9 @@ export type PersonBriefEnrollmentState = {
   enabled_at: string | null;
 };
 
-/** One rendered sentence with the structured item it came from. `detail` is
- * null when this renderer's map cannot reach an item, which keeps the
- * paragraph readable without inventing an expansion. `evidence` is the archive
+/** One rendered sentence with the structured item it came from. `itemPresent`
+ * distinguishes a known item with no extra detail from a missing item, keeping
+ * the paragraph readable without inventing an expansion. `evidence` is the archive
  * items this sentence itself cites, resolved from the response's
  * `evidence_ordinals`; it is empty when the daemon could not supply the join,
  * and the card falls back to the whole brief's citations. */
@@ -40,6 +40,7 @@ export type PersonBriefSentenceView = {
   index: number;
   text: string;
   detail: string | null;
+  itemPresent: boolean;
   meta: string[];
   evidence: PersonBriefEvidenceView[];
 };
@@ -319,11 +320,12 @@ export class PersonBriefController {
         return failed;
       }
       if (run.brief_version <= 0) {
-        this.runOutcome = `No new brief version. Reason: ${briefFailureClassLabel(run.brief_failure_class)}.`;
-        this.announcement = this.runOutcome;
-        return confirmed;
+        this.runOutcome = run.brief_failure_class
+          ? `No new brief version. Reason: ${briefFailureClassLabel(run.brief_failure_class)}.`
+          : 'No new brief version.';
+      } else {
+        this.runOutcome = `Brief version ${run.brief_version} generated.`;
       }
-      this.runOutcome = `Brief version ${run.brief_version} generated.`;
       this.announcement = this.runOutcome;
       this.endMutation(context, mutation, personID, abort);
       await Promise.all([this.loadBrief(personID), this.refreshVersions(personID)]);
@@ -712,6 +714,7 @@ function safeSentences(
       index: value.index,
       text: value.text,
       detail: item?.detail ?? null,
+      itemPresent: item !== undefined,
       meta: item?.meta ?? [],
       evidence: cited,
     });
@@ -764,7 +767,7 @@ function structuredItem(
   structured: unknown,
   kind: string,
   index: number,
-): { detail: string; meta: string[] } | undefined {
+): { detail: string | null; meta: string[] } | undefined {
   const document = record(structured);
   if (!document) return undefined;
   if (kind === 'last_interaction') {
@@ -774,8 +777,12 @@ function structuredItem(
   }
   if (kind === 'highlight') {
     const item = itemAt(document, 'highlights', index);
-    const detail = text(item?.text);
-    if (!item || !detail) return undefined;
+    const event = record(item?.life_event);
+    const state = event?.state;
+    const eventState = (state === 'upcoming' || state === 'follow_up' || state === 'resolved') &&
+      text(event?.anchor_id) && text(event?.quote) && text(event?.question);
+    const detail = eventState ? null : (text(item?.text) ?? null);
+    if (!item || (!eventState && !detail)) return undefined;
     const meta: string[] = [];
     const speaker = speakerLabels[String(item.speaker)];
     if (speaker) meta.push(speaker);

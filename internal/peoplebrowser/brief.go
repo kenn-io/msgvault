@@ -29,11 +29,12 @@ type PersonBriefWriter interface {
 type PersonBriefItemKind string
 
 const (
-	PersonBriefLastInteraction PersonBriefItemKind = "last_interaction"
-	PersonBriefHighlight       PersonBriefItemKind = "highlight"
-	PersonBriefFollowUp        PersonBriefItemKind = "follow_up"
-	PersonBriefAppreciation    PersonBriefItemKind = "appreciation"
-	PersonBriefUncertainty     PersonBriefItemKind = "uncertainty"
+	PersonBriefLastInteraction  PersonBriefItemKind = "last_interaction"
+	PersonBriefHighlight        PersonBriefItemKind = "highlight"
+	PersonBriefFollowUp         PersonBriefItemKind = "follow_up"
+	PersonBriefAppreciation     PersonBriefItemKind = "appreciation"
+	PersonBriefThanksSuggestion PersonBriefItemKind = "thanks_suggestion"
+	PersonBriefUncertainty      PersonBriefItemKind = "uncertainty"
 )
 
 // PersonBrief is one immutable brief version as a reader consumes it: the

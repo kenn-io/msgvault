@@ -14,6 +14,8 @@ import (
 // It is stored on every brief row, so a later wording change becomes a new
 // policy rather than a silent rewrite of what the owner already read.
 const BriefRendererPolicyV1 = "person-brief-render-v1"
+const BriefRendererPolicyV2 = "person-brief-render-v2"
+const BriefRendererPolicyV3 = "person-brief-render-v3"
 
 // briefDateFormat matches the design's rendered form ("Aug 29"). The structured
 // record keeps full timestamps; the paragraph stays short.
@@ -44,11 +46,12 @@ var ErrEmptyBrief = errors.New("person brief has no renderable content")
 type BriefSentenceKind string
 
 const (
-	BriefSentenceLastInteraction BriefSentenceKind = "last_interaction"
-	BriefSentenceHighlight       BriefSentenceKind = "highlight"
-	BriefSentenceFollowUp        BriefSentenceKind = "follow_up"
-	BriefSentenceAppreciation    BriefSentenceKind = "appreciation"
-	BriefSentenceUncertainty     BriefSentenceKind = "uncertainty"
+	BriefSentenceLastInteraction  BriefSentenceKind = "last_interaction"
+	BriefSentenceHighlight        BriefSentenceKind = "highlight"
+	BriefSentenceFollowUp         BriefSentenceKind = "follow_up"
+	BriefSentenceAppreciation     BriefSentenceKind = "appreciation"
+	BriefSentenceThanksSuggestion BriefSentenceKind = "thanks_suggestion"
+	BriefSentenceUncertainty      BriefSentenceKind = "uncertainty"
 )
 
 // RenderedSentence is one sentence and the structured item that produced it.
@@ -76,7 +79,7 @@ type RenderedBrief struct {
 // usable message the header falls back to the cited item's event time and
 // omits the excluded contact's channel.
 func RenderBrief(parsed ParsedBrief, window BriefWindow) (RenderedBrief, error) {
-	rendered := RenderedBrief{Policy: BriefRendererPolicyV1}
+	rendered := RenderedBrief{Policy: BriefRendererPolicyV3}
 
 	if interaction := parsed.Output.LastMeaningfulInteraction; interaction != nil {
 		header := "Last time you talked (" + briefHeaderDate(window, interaction.EvidenceID)
@@ -91,7 +94,7 @@ func RenderBrief(parsed ParsedBrief, window BriefWindow) (RenderedBrief, error) 
 	for index, highlight := range parsed.Output.Highlights {
 		rendered.Sentences = append(rendered.Sentences, RenderedSentence{
 			Kind: BriefSentenceHighlight, Index: index,
-			Text: briefSentence(briefSpeakerPrefix(highlight.Speaker) + highlight.Text),
+			Text: briefHighlightSentence(highlight),
 		})
 	}
 	for index, followUp := range parsed.Output.FollowUps {
@@ -104,6 +107,15 @@ func RenderBrief(parsed ParsedBrief, window BriefWindow) (RenderedBrief, error) 
 		rendered.Sentences = append(rendered.Sentences, RenderedSentence{
 			Kind: BriefSentenceAppreciation, Index: index,
 			Text: briefSentence("You said you appreciated " + appreciation.Text),
+		})
+	}
+	for index, suggestion := range parsed.Output.ThanksSuggestions {
+		prefix := "If you haven't already, you could thank them for "
+		if suggestion.State == "already_thanked" {
+			prefix = "You already thanked them for "
+		}
+		rendered.Sentences = append(rendered.Sentences, RenderedSentence{
+			Kind: BriefSentenceThanksSuggestion, Index: index, Text: briefSentence(prefix + suggestion.Text),
 		})
 	}
 	for index, uncertainty := range parsed.Output.Uncertainties {
@@ -122,6 +134,20 @@ func RenderBrief(parsed ParsedBrief, window BriefWindow) (RenderedBrief, error) 
 	}
 	rendered.Text = strings.Join(texts, " ")
 	return rendered, nil
+}
+
+func briefHighlightSentence(highlight BriefHighlight) string {
+	if event := highlight.LifeEvent; event != nil {
+		switch event.State {
+		case BriefEventFollowUp:
+			return briefSentence("You may want to ask: " + event.Question)
+		case BriefEventUpcoming:
+			return briefSentence("Upcoming: " + highlight.Text)
+		case BriefEventResolved:
+			return briefSentence("Resolved: " + highlight.Text)
+		}
+	}
+	return briefSentence(briefSpeakerPrefix(highlight.Speaker) + highlight.Text)
 }
 
 func briefSpeakerPrefix(speaker BriefSpeaker) string {
@@ -236,6 +262,9 @@ func briefWalkCitations(output BriefOutput, visit func(key *BriefSentenceKey, id
 	for index, followUp := range output.FollowUps {
 		visit(&BriefSentenceKey{Kind: BriefSentenceFollowUp, Index: index}, followUp.EvidenceIDs)
 	}
+	for index, suggestion := range output.ThanksSuggestions {
+		visit(&BriefSentenceKey{Kind: BriefSentenceThanksSuggestion, Index: index}, []string{suggestion.AnchorID})
+	}
 	for index, uncertainty := range output.Uncertainties {
 		visit(&BriefSentenceKey{Kind: BriefSentenceUncertainty, Index: index}, uncertainty.EvidenceIDs)
 	}
@@ -262,11 +291,15 @@ func briefCitationOrder(output BriefOutput) []string {
 	return order
 }
 
+// BriefCitationOrder returns the distinct evidence identifiers in pointer
+// order, for projecting a filtered immutable brief without misattribution.
+func BriefCitationOrder(output BriefOutput) []string { return briefCitationOrder(output) }
+
 // briefSentenceCount is how many sentences a structure renders to. The trimmer
 // uses it to refuse a drop that would leave no paragraph at all.
 func briefSentenceCount(output BriefOutput) int {
 	count := len(output.Highlights) + len(output.FollowUps) +
-		len(output.Appreciations) + len(output.Uncertainties)
+		len(output.Appreciations) + len(output.ThanksSuggestions) + len(output.Uncertainties)
 	if output.LastMeaningfulInteraction != nil {
 		count++
 	}
@@ -362,15 +395,24 @@ func briefDropTrailingItem(output BriefOutput) (BriefOutput, int, bool) {
 	case len(output.FollowUps) > 0:
 		output.FollowUps = slices.Clone(output.FollowUps[:len(output.FollowUps)-1])
 		return output, 1, true
+	case len(output.ThanksSuggestions) > 0:
+		output.ThanksSuggestions = slices.Clone(output.ThanksSuggestions[:len(output.ThanksSuggestions)-1])
+		return output, 1, true
 	case len(output.Highlights) > 0:
-		trimmed, dropped := briefDropLastHighlight(output)
-		return trimmed, dropped, true
+		for index := range slices.Backward(output.Highlights) {
+			if output.Highlights[index].LifeEvent != nil {
+				continue
+			}
+			trimmed, dropped := briefDropHighlight(output, index)
+			return trimmed, dropped, true
+		}
+		return output, 0, false
 	default:
 		return output, 0, false
 	}
 }
 
-// briefDropLastHighlight removes the final highlight together with every
+// briefDropHighlight removes the chosen highlight together with every
 // follow-up that explains it, and reindexes the follow-ups that survive.
 //
 // A follow-up's highlight_index is a position in the highlight list, so a
@@ -378,12 +420,11 @@ func briefDropTrailingItem(output BriefOutput) (BriefOutput, int, bool) {
 // follow-up after the dropped one would name the wrong highlight entirely. The
 // trimmer reaches highlights only once the follow-ups are gone, so the cascade
 // is the invariant that keeps that ordering from being load-bearing.
-func briefDropLastHighlight(output BriefOutput) (BriefOutput, int) {
-	last := len(output.Highlights) - 1
+func briefDropHighlight(output BriefOutput, last int) (BriefOutput, int) {
 	if last < 0 {
 		return output, 0
 	}
-	output.Highlights = slices.Clone(output.Highlights[:last])
+	output.Highlights = append(slices.Clone(output.Highlights[:last]), output.Highlights[last+1:]...)
 	kept := make([]BriefFollowUp, 0, len(output.FollowUps))
 	dropped := 1
 	for _, followUp := range output.FollowUps {

@@ -7901,6 +7901,50 @@ func (o *CreatePersonRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ListPersonBriefEnrollmentsRequestOptions is the options needed to make a request to ListPersonBriefEnrollments.
+type ListPersonBriefEnrollmentsRequestOptions struct {
+	Query *ListPersonBriefEnrollmentsQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ListPersonBriefEnrollmentsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPersonBriefEnrollmentsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPersonBriefEnrollmentsRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPersonBriefEnrollmentsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPersonBriefEnrollmentsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetPersonByUIDRequestOptions is the options needed to make a request to GetPersonByUID.
 type GetPersonByUIDRequestOptions struct {
 	Query *GetPersonByUIDQuery
@@ -8533,6 +8577,94 @@ func (o *UpdatePersonAgendaItemRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *UpdatePersonAgendaItemRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListPersonAppreciationsRequestOptions is the options needed to make a request to ListPersonAppreciations.
+type ListPersonAppreciationsRequestOptions struct {
+	PathParams *ListPersonAppreciationsPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ListPersonAppreciationsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPersonAppreciationsRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPersonAppreciationsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPersonAppreciationsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPersonAppreciationsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// DismissPersonAppreciationRequestOptions is the options needed to make a request to DismissPersonAppreciation.
+type DismissPersonAppreciationRequestOptions struct {
+	PathParams *DismissPersonAppreciationPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *DismissPersonAppreciationRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DismissPersonAppreciationRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *DismissPersonAppreciationRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DismissPersonAppreciationRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *DismissPersonAppreciationRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 

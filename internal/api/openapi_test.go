@@ -49,10 +49,11 @@ func TestNullableObjectReferenceSchemas(t *testing.T) {
 	public := OpenAPIDocument().Components.Schemas.Map()
 	client := openAPIClientDocument().Components.Schemas.Map()
 	for schemaName, refs := range map[string]map[string]string{
-		"EmbeddingStatus":      {"active_generation": "EmbeddingGenerationStatus", "diagnostics": "EmbeddingDiagnostics"},
-		"EmbeddingDiagnostics": {"current_batch": "EmbeddingBatch", "last_error": "OperationPublicError"},
-		"EmbeddingBatch":       {"error": "OperationPublicError"},
-		"SourceStatus":         {"active_sync": "SyncRunStatus", "latest_sync": "SyncRunStatus", "last_successful_sync": "SyncRunStatus"},
+		"EmbeddingStatus":       {"active_generation": "EmbeddingGenerationStatus", "diagnostics": "EmbeddingDiagnostics"},
+		"EmbeddingDiagnostics":  {"current_batch": "EmbeddingBatch", "last_error": "OperationPublicError"},
+		"EmbeddingBatch":        {"error": "OperationPublicError"},
+		"SourceStatus":          {"active_sync": "SyncRunStatus", "latest_sync": "SyncRunStatus", "last_successful_sync": "SyncRunStatus"},
+		"BriefThanksSuggestion": {"thanked": "BriefThanksEvidence"},
 	} {
 		requirements.NotNil(public[schemaName], schemaName)
 		for name, ref := range refs {
@@ -66,6 +67,10 @@ func TestNullableObjectReferenceSchemas(t *testing.T) {
 			assertions.NotContains(client[schemaName].Required, name)
 		}
 	}
+	thanked := client["BriefThanksSuggestion"].Properties["thanked"]
+	requirements.Len(thanked.AllOf, 1)
+	assertions.Equal("#/components/schemas/BriefThanksEvidence", thanked.AllOf[0].Ref)
+	assertions.Equal(false, thanked.Extensions["x-omitempty"])
 }
 
 func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {

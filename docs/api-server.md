@@ -166,7 +166,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.1.0**.
+it is separate from the binary release version. The current schema is **5.2.0**.
+
+Schema 5.2.0 adds owner-only brief enrollment listing and appreciation suggestions and dismissal.
 
 Schema 5.1.0 adds time-zone-aware Month and Year grouping, group overviews, and item totals for time groups.
 
@@ -813,6 +815,37 @@ including people in tier 3. The body has the preview row's fields plus
 
 ---
 
+### Person brief enrollments {#get-apiv1peoplebrief-enrollments}
+
+**Endpoint:** `GET /api/v1/people/brief-enrollments`
+
+List enrolled people in ascending person ID order. Optional `after_id` and
+`limit` select the next page; the limit defaults to 20 and cannot exceed 1000.
+This owner-only route returns an `enrollments` array.
+
+---
+
+### Person appreciation suggestions {#person-appreciation-suggestions}
+
+**Endpoint:** `GET /api/v1/people/{id}/appreciations`
+
+List supported, undismissed suggestions from the current brief. Each item has
+the suggestion, its stable contribution key and exact peer quote, plus the
+peer source reference. When a later specific thank-you is supported, it also
+has the owner source reference and exact quote; otherwise `prior_thanks` is
+`unknown`. A missing current brief returns `404`. The current profile's source
+and date limits apply to both citations.
+
+**Endpoint:** `POST /api/v1/people/{id}/appreciations/{key}/dismiss`
+
+Dismiss a currently supported suggestion. A supported retry returns the first
+dismissal's actor and time. A key that is no longer eligible returns `404`;
+the saved dismissal remains in effect. Both endpoints require owner access.
+The current v3 brief filters the same suggestions and citations. History keeps
+the saved snapshot and reports current `appreciation_dismissal_keys` separately.
+
+---
+
 ### Person brief enrollment {#get-apiv1peopleidbrief-enrollment}
 
 **Endpoint:** `GET /api/v1/people/{id}/brief-enrollment`
@@ -860,21 +893,19 @@ returns `404` / `person_brief_not_found`.
   "version": 2,
   "status": "current",
   "generated_at": "2026-08-29T18:44:02Z",
-  "rendered_text": "Last time you talked (Aug 29, chat): they were preparing for a role change. They said they were learning to cook on weekends. You may want to ask how the transition went.",
-  "renderer_policy": "person-brief-render-v1",
+  "rendered_text": "Last time you talked (Aug 29, chat): they were preparing for a role change. Upcoming: their interview.",
+  "renderer_policy": "person-brief-render-v2",
   "sentences": [
     {"kind": "last_interaction", "index": 0, "text": "Last time you talked (Aug 29, chat): they were preparing for a role change.", "evidence_ordinals": [0]},
-    {"kind": "highlight", "index": 0, "text": "They said they were learning to cook on weekends.", "evidence_ordinals": [0]},
-    {"kind": "follow_up", "index": 0, "text": "You may want to ask how the transition went.", "evidence_ordinals": [0]}
+    {"kind": "highlight", "index": 0, "text": "Upcoming: their interview.", "evidence_ordinals": [0]}
   ],
   "structured": {
     "last_meaningful_interaction": {"evidence_id": "evidence:...", "summary": "they were preparing for a role change"},
     "highlights": [
-      {"text": "they were learning to cook on weekends", "speaker": "person", "evidence_ids": ["evidence:..."], "observed_at": "2026-08-29", "confidence_basis_points": 700}
+      {"text": "their interview", "speaker": "person", "evidence_ids": ["evidence:..."], "observed_at": "2026-08-29", "confidence_basis_points": 700,
+       "life_event": {"date": "2026-09-02", "anchor_id": "evidence:...", "quote": "I have an interview on September 2.", "question": "How did the interview go?", "resolution": null, "state": "upcoming"}}
     ],
-    "follow_ups": [
-      {"question": "how the transition went", "why": "the change was still pending", "highlight_index": 0, "evidence_ids": ["evidence:..."]}
-    ],
+    "follow_ups": [],
     "appreciations": [],
     "uncertainties": [],
     "possible_attributes": []
@@ -892,6 +923,14 @@ returns `404` / `person_brief_not_found`.
     }
   ],
   "boundary": {
+    "event_memory_version": 1,
+    "event_memory": [
+      {"highlight": {"text": "their interview", "speaker": "person", "evidence_ids": ["evidence:..."], "observed_at": "2026-08-29", "confidence_basis_points": 700,
+        "life_event": {"date": "2026-09-02", "anchor_id": "evidence:...", "quote": "I have an interview on September 2.", "question": "How did the interview go?", "resolution": null, "state": "upcoming"}},
+       "sources": [{"source_lane": "conversation_text", "source_id": 21, "message_id": 4411, "attachment_id": 0, "source_message_id": "example-message", "occurrence_key": "", "chunk_key": "", "span_start": 0, "span_end": 0}]}
+    ],
+    "admission_through_event_time": "2026-08-29T18:41:55Z",
+    "next_event_at": "2026-09-03T00:00:00Z",
     "lanes": ["conversation_text"],
     "from_event_time": "2026-07-01T00:00:00Z",
     "through_event_time": "2026-08-29T18:41:55Z",
@@ -902,7 +941,7 @@ returns `404` / `person_brief_not_found`.
   },
   "dropped_item_count": 1,
   "program_id": "msgvault-person-brief",
-  "program_version": "v1",
+  "program_version": "v2",
   "provider": "glm",
   "model": "glm-5.3",
   "rejected_at": null,
@@ -923,7 +962,10 @@ rather than attributing a citation it is not sure of. `evidence` cites the
 archive items the brief as a whole used, with `evidence_supported: false` once a
 later status event invalidated an item's source. `dropped_item_count` counts
 structured items msgvault refused. Responses are `Cache-Control: no-store`. The
-brief never contains an excerpt of the archive text it was derived from.
+brief can include short evidence-backed event and outcome quotes. The boundary
+contains retained event memory, its source references, the admission watermark,
+and the next scheduled event transition when present. See [People briefs](usage/people-briefs.md)
+for event states and retention limits.
 
 ---
 
@@ -994,10 +1036,12 @@ Generation reports these conditions before running:
 | `409` | `person_brief_busy` | Another worker holds the person's sweep lease; retry after it finishes |
 | `503` | `brief_generation_unavailable` | The daemon started without the people sweep worker, for example with `[people.sweep] enabled = false` |
 
-Briefs use only supported chat and text-message sources within
-`conversation_text`; email, meeting transcripts, documents, and owner-authored
-messages are excluded. A scheduled sweep skips brief generation when the
-profile does not permit its sources or sensitive content.
+Briefs use supported chat and text-message sources within `conversation_text`;
+email, meeting transcripts, and documents are excluded. Your own messages may
+be sent to the selected provider as bounded context to check for a specific
+earlier thank-you in a direct conversation with a complete provider roster. They
+do not become facts about the other person. A scheduled sweep skips brief
+generation when the profile does not permit its sources or sensitive content.
 
 Restart the daemon after enabling sweeps or changing the selected provider.
 Manual brief generation uses the configuration loaded at daemon startup.

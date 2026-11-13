@@ -2227,11 +2227,11 @@ func writePersonSemanticProviderStatuses(
 }
 
 // personBriefProviderDisclosureLine names the second thing this consent covers:
-// the "last time we talked" brief sends recent archive text the person wrote to
-// the same provider, under the same profile and the same consent.
+// the brief sends peer text and bounded owner-authored direct-chat context
+// to the same provider, under the same profile and the same consent.
 const personBriefProviderDisclosureLine = "Person brief: recent verbatim messages the " +
-	"person wrote, from the conversation lane only, are sent to the same " +
-	"provider under this consent"
+	"person wrote and bounded owner-authored direct-chat context used to check prior thanks " +
+	"are sent to the same provider under this consent"
 
 func printPersonProviderDisclosure(w io.Writer, profile peoplesweep.ProviderProfile) {
 	dateRange := profile.SourceSince + " through " + profile.SourceUntil

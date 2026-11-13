@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
-	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -50,11 +49,9 @@ func TestDirectChatImportPersistsKnownPeerPersonScope(t *testing.T) {
 				requires := require.New(t)
 				peerID := int64(2)
 				participantCount := 2
-				wantDirection, wantRole := personscope.ToPerson, personscope.RoleTo
 				if selfChat {
 					peerID = 1
 					participantCount = 1
-					wantDirection, wantRole = personscope.FromPerson, personscope.RoleFrom
 				}
 				st := testutil.NewTestStore(t)
 				// A person already known from earlier archive activity must acquire
@@ -98,11 +95,7 @@ func TestDirectChatImportPersistsKnownPeerPersonScope(t *testing.T) {
 						SourceClasses: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}, Limit: 10,
 					})
 					requires.NoError(err)
-					requires.Len(results, 1)
-					assertions.Equal(messageID, results[0].Ref.MessageID)
-					assertions.Equal([]int64{peerParticipantID}, results[0].Provenance.ParticipantIDs)
-					assertions.Equal([]personscope.Direction{wantDirection}, results[0].Provenance.Directions)
-					assertions.Equal([]personscope.Role{wantRole}, results[0].Provenance.Roles)
+					assertions.Empty(results, "owner-authored text is excluded from inference")
 					var archivedCount, rosterCount int
 					err = st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT participant_count,
 						(SELECT COUNT(*) FROM conversation_participants cp WHERE cp.conversation_id = c.id)

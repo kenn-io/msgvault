@@ -264,7 +264,7 @@
                 <div id={expansionID} class="expansion">
                   {#if sentence.detail}
                     <p class="detail">{sentence.detail}</p>
-                  {:else}
+                  {:else if !sentence.itemPresent}
                     <p class="muted">This brief version carries no structured item for that sentence.</p>
                   {/if}
                   {#if sentence.meta.length > 0}
@@ -348,7 +348,7 @@
             />
           </div>
         {:else if controller.briefMissing}
-          <p>No brief yet.</p>
+          <p>No current brief.</p>
           <div class="actions">
             <Button
               size="sm"

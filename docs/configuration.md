@@ -327,9 +327,11 @@ share its budgets. The profile must permit sensitive content and include
 `conversation_text` in `allowed_sources`.
 
 Only supported chat and text-message sources supply brief evidence; email,
-meeting transcripts, documents, and your own replies are excluded. See the
-[brief guide](usage/people-briefs.md) for
-supported sources and enrollment instructions.
+meeting transcripts, and documents are excluded. Your own messages may be sent
+to the selected provider as bounded context to check for a specific earlier
+thank-you in a direct conversation with a complete provider roster. They do not
+become facts about the other person. See the [brief guide](usage/people-briefs.md)
+for supported sources and enrollment instructions.
 
 Generation is enabled here by default, but each person must be enrolled
 separately. These settings apply to everyone; there are no per-person overrides.
@@ -356,7 +358,7 @@ max_rendered_runes = 560
 | `max_bytes` | `65536` | Maximum packet size for one brief window. Must be positive. |
 | `overlap_items` | `8` | Items already covered by the previous brief's window that may be re-admitted so a continued thread is recognizable. Must not be negative or exceed `max_items`. |
 | `max_output_tokens` | `2048` | Output cap for the brief call. Must be positive and must not exceed `[people.sweep.budgets] max_output_tokens_per_person`, because a brief is one more call against the same per-person ceiling. |
-| `max_rendered_runes` | `560` | Maximum length of the rendered paragraph, in Unicode runes. Msgvault enforces it after the model answers by dropping structured items from the tail: uncertainties first, then follow-ups, then highlights, never the last-interaction sentence and never mid-sentence. Every dropped item is counted in the version's `dropped_item_count`, and the stored structure and evidence pointers are the trimmed ones. Must be at least 240, which is the interaction summary's own maximum length. |
+| `max_rendered_runes` | `560` | Target length of the rendered paragraph, in Unicode runes. After the model answers, msgvault drops structured items from the tail: uncertainties first, then follow-ups, then ordinary highlights. It keeps event highlights and the last-interaction sentence, and never trims mid-sentence, so the paragraph can exceed this target. Every dropped item is counted in the version's `dropped_item_count`, and the stored structure and evidence pointers are the trimmed ones. Must be at least 240, which is the interaction summary's own maximum length. |
 
 An invalid value fails configuration validation with the offending key named,
 rather than being clamped.

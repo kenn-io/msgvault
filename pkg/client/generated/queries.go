@@ -889,6 +889,15 @@ type ListOrganizationEmploymentsQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type ListPersonBriefEnrollmentsQuery struct {
+	AfterID *int64 `json:"after_id,omitempty" validate:"omitempty,gte=0"`
+	Limit   *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=1000"`
+}
+
+func (l ListPersonBriefEnrollmentsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
 type GetPersonByUIDQuery struct {
 	// UID Exact vCard UID or CardDAV resource UID
 	UID string `json:"uid" validate:"required,min=1"`

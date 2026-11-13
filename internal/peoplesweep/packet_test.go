@@ -315,3 +315,21 @@ func packetJSONFromInput(t *testing.T, input string) []byte {
 	assert.Equal(t, prefix, input[:len(prefix)])
 	return []byte(input[len(prefix):])
 }
+
+func TestCanonicalPacketBriefContextContract(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	packet := packetTestPacket()
+	raw, err := CanonicalPacketJSON(packet)
+	require.NoError(err)
+	var wire map[string]any
+	require.NoError(json.Unmarshal(raw, &wire))
+	assert.NotContains(wire, "brief_context", "extraction wire does not inherit brief state")
+	packet.BriefContext = &BriefEventContext{AsOf: time.Now()}
+	_, err = CanonicalPacketJSON(packet)
+	require.Error(err)
+	packet = packetTestPacket()
+	packet.ProgramID, packet.ProgramVersion = BriefProgramID, BriefProgramVersion
+	_, err = CanonicalPacketJSON(packet)
+	require.Error(err, "v2 brief clock must be present in the canonical paid input")
+}

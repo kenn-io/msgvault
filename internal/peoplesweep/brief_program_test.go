@@ -12,10 +12,10 @@ import (
 func TestBriefProgramFingerprintStable(t *testing.T) {
 	checks := assert.New(t)
 	checks.Equal("msgvault-person-brief", BriefProgramID)
-	checks.Equal("v1", BriefProgramVersion)
-	checks.Equal("msgvault_person_brief_v1", BriefSchemaName)
+	checks.Equal("v3", BriefProgramVersion)
+	checks.Equal("msgvault_person_brief_v3", BriefSchemaName)
 	checks.Equal(2048, briefMaxOutputTokens)
-	checks.Equal("6beb307435ba3ad1f068aa32c2e8a530ee98dae2cb97b7a58c716b3add1806f5", BriefProgramFingerprint())
+	checks.Equal("07d5dbc6424b6a48d53ab36da2e6082a54d61e1c8fe57102a5dc0c96ffe969d0", BriefProgramFingerprint())
 	checks.NotEqual(ProgramFingerprint(), BriefProgramFingerprint())
 }
 
@@ -32,16 +32,16 @@ func TestBriefJSONSchemaIsClosedAndCapped(t *testing.T) {
 	properties, ok := schema["properties"].(map[string]any)
 	require.True(ok)
 	require.ElementsMatch(
-		[]string{"last_meaningful_interaction", "highlights", "follow_ups", "appreciations",
+		[]string{"last_meaningful_interaction", "highlights", "follow_ups", "appreciations", "thanks_suggestions",
 			"uncertainties", "possible_attributes"},
 		mapKeys(properties))
 	require.ElementsMatch(
-		[]string{"last_meaningful_interaction", "highlights", "follow_ups", "appreciations",
+		[]string{"last_meaningful_interaction", "highlights", "follow_ups", "appreciations", "thanks_suggestions",
 			"uncertainties", "possible_attributes"},
 		anySliceToStrings(t, schema["required"]))
 
 	for property, wantMax := range map[string]int{
-		"highlights": 8, "follow_ups": 5, "appreciations": 3, "uncertainties": 5,
+		"highlights": 8, "follow_ups": 5, "appreciations": 3, "thanks_suggestions": 3, "uncertainties": 5,
 		"possible_attributes": 32,
 	} {
 		array, arrayOK := properties[property].(map[string]any)
@@ -83,10 +83,10 @@ func TestBriefJSONSchemaValidatesFrozenShapes(t *testing.T) {
 
 		valid := `{"last_meaningful_interaction":{"evidence_id":"evidence:one","summary":"caught up on the move"},
 			"highlights":[{"text":"they start a new role in September","speaker":"person",
-				"evidence_ids":["evidence:one"],"observed_at":"2026-08-29","confidence_basis_points":900}],
+				"evidence_ids":["evidence:one"],"observed_at":"2026-08-29","confidence_basis_points":900,"life_event":null}],
 			"follow_ups":[{"question":"how did the transition go","why":"they were mid-move",
 				"highlight_index":0,"evidence_ids":["evidence:one"]}],
-			"appreciations":[{"text":"how candid they were","evidence_ids":["evidence:one"]}],
+			"appreciations":[{"text":"how candid they were","evidence_ids":["evidence:one"]}],"thanks_suggestions":[],
 			"uncertainties":[{"text":"the move may have changed","kind":"stale",
 				"evidence_ids":["evidence:one"]}],
 			"possible_attributes":[]}`
@@ -97,23 +97,23 @@ func TestBriefJSONSchemaValidatesFrozenShapes(t *testing.T) {
 
 	for name, invalid := range map[string]string{
 		"unknown speaker": `{"last_meaningful_interaction":null,"highlights":[{"text":"x","speaker":"vendor",
-			"evidence_ids":["evidence:one"],"observed_at":null,"confidence_basis_points":0}],
-			"follow_ups":[],"appreciations":[],"uncertainties":[],"possible_attributes":[]}`,
+			"evidence_ids":["evidence:one"],"observed_at":null,"confidence_basis_points":0,"life_event":null}],
+			"follow_ups":[],"appreciations":[],"thanks_suggestions":[],"uncertainties":[],"possible_attributes":[]}`,
 		"unknown uncertainty kind": `{"last_meaningful_interaction":null,"highlights":[],"follow_ups":[],
-			"appreciations":[],"uncertainties":[{"text":"x","kind":"vibes","evidence_ids":["evidence:one"]}],
+			"appreciations":[],"thanks_suggestions":[],"uncertainties":[{"text":"x","kind":"vibes","evidence_ids":["evidence:one"]}],
 			"possible_attributes":[]}`,
 		"extra property": `{"last_meaningful_interaction":null,"highlights":[],"follow_ups":[],
-			"appreciations":[],"uncertainties":[],"possible_attributes":[],"notes":"x"}`,
-		"missing key": `{"highlights":[],"follow_ups":[],"appreciations":[],"uncertainties":[],
+			"appreciations":[],"thanks_suggestions":[],"uncertainties":[],"possible_attributes":[],"notes":"x"}`,
+		"missing key": `{"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[],"uncertainties":[],
 			"possible_attributes":[]}`,
 		"confidence out of range": `{"last_meaningful_interaction":null,
 			"highlights":[{"text":"x","speaker":"person","evidence_ids":["evidence:one"],
-				"observed_at":null,"confidence_basis_points":1001}],
-			"follow_ups":[],"appreciations":[],"uncertainties":[],"possible_attributes":[]}`,
+				"observed_at":null,"confidence_basis_points":1001,"life_event":null}],
+			"follow_ups":[],"appreciations":[],"thanks_suggestions":[],"uncertainties":[],"possible_attributes":[]}`,
 		"empty evidence": `{"last_meaningful_interaction":null,
 			"highlights":[{"text":"x","speaker":"person","evidence_ids":[],
-				"observed_at":null,"confidence_basis_points":10}],
-			"follow_ups":[],"appreciations":[],"uncertainties":[],"possible_attributes":[]}`,
+				"observed_at":null,"confidence_basis_points":10,"life_event":null}],
+			"follow_ups":[],"appreciations":[],"thanks_suggestions":[],"uncertainties":[],"possible_attributes":[]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			require := require.New(t)
@@ -138,7 +138,7 @@ func TestBriefOutputSerializesEmptyKindsAsArrays(t *testing.T) {
 	require.NoError(err)
 	assert.JSONEq(t,
 		`{"last_meaningful_interaction":null,"highlights":[],"follow_ups":[],`+
-			`"appreciations":[],"uncertainties":[],"possible_attributes":[]}`,
+			`"appreciations":[],"thanks_suggestions":[],"uncertainties":[],"possible_attributes":[]}`,
 		string(encoded))
 
 	var schema jsonschema.Schema
@@ -170,7 +170,7 @@ func TestBriefStructuredRequestBindsFrozenProgram(t *testing.T) {
 		briefStructuredRequest(packet, packetJSON, briefMaxOutputTokens+1).MaxOutputTokens)
 	assert.True(request.ContainsSensitive)
 	assert.JSONEq(string(BriefJSONSchema()), string(request.JSONSchema))
-	assert.Equal(briefProgramText+"\n\nEvidence packet JSON:\n"+string(packetJSON), request.InputText)
+	assert.Equal(briefProgramText+briefReplayText+"\n\nEvidence packet JSON:\n"+string(packetJSON), request.InputText)
 	assert.NotEmpty(request.Sources)
 
 	_, err = validateStructuredRequest(request, false)
@@ -182,6 +182,7 @@ func briefTestPacket(t *testing.T) EvidencePacket {
 	packet := packetTestPacket()
 	packet.ProgramID = BriefProgramID
 	packet.ProgramVersion = BriefProgramVersion
+	packet.BriefContext = &BriefEventContext{AsOf: packet.Seeds[0].EventTime.UTC(), Bootstrap: true}
 	packet.Seeds = append(packet.Seeds, packet.Context...)
 	packet.Context = nil
 	canonical, err := canonicalPacket(packet)

@@ -149,10 +149,10 @@ func (f *personBriefAPIFixture) seedBrief(t *testing.T, seed personBriefAPISeed)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+bind+`, `+bind+`, ?, ?, ?, ?)
 		RETURNING id`),
 		f.personID, version, f.generationID(t), store.PersonBriefStatusCurrent,
-		peoplesweep.BriefProgramID, peoplesweep.BriefProgramVersion,
-		peoplesweep.BriefProgramFingerprint(), "openai_chat", "provider-v1",
+		peoplesweep.BriefProgramID, "v2",
+		"5793d30ee16ebf84c88bed72238bdc32911608598e0d6d3afc6b4961b5132f13", "openai_chat", "provider-v1",
 		"gpt-test", "model-v1", "policy-fingerprint", seed.boundary, seed.structured,
-		seed.rendered, peoplesweep.BriefRendererPolicyV1, seed.dropped,
+		seed.rendered, peoplesweep.BriefRendererPolicyV2, seed.dropped,
 		seed.generatedAt.UTC()).Scan(&briefID))
 	for ordinal, evidenceID := range seed.evidenceIDs {
 		_, err := f.store.DB().ExecContext(ctx, f.store.Rebind(
@@ -303,7 +303,7 @@ func TestPersonBriefHTTPReturnsCurrentVersionWithSentencesAndEvidence(t *testing
 	assertions.Equal(seed.rendered, brief.RenderedText)
 	assertions.Equal(2, brief.DroppedItemCount)
 	assertions.Equal(peoplesweep.BriefProgramID, brief.ProgramID)
-	assertions.Equal(peoplesweep.BriefProgramVersion, brief.ProgramVersion)
+	assertions.Equal("v2", brief.ProgramVersion)
 	assertions.Equal("openai_chat", brief.Provider)
 	assertions.Equal("gpt-test", brief.Model)
 	assertions.Nil(brief.RejectedAt)
@@ -325,7 +325,7 @@ func TestPersonBriefHTTPReturnsCurrentVersionWithSentencesAndEvidence(t *testing
 
 	// The join key: every item here cites the fixture's one evidence item, so
 	// every sentence names ordinal 0 of the response's own evidence list.
-	assertions.Equal(peoplesweep.BriefRendererPolicyV1, brief.RendererPolicy)
+	assertions.Equal(peoplesweep.BriefRendererPolicyV2, brief.RendererPolicy)
 	for _, sentence := range brief.Sentences {
 		assertions.Equal([]int{0}, sentence.EvidenceOrdinals, "sentence %s", sentence.Kind)
 	}
@@ -367,12 +367,38 @@ func TestPersonBriefHTTPOmitsSentenceOrdinalsWhenTheCitationOrderCannotBeRebuilt
 
 	var brief PersonBrief
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &brief))
-	assertions.Equal(peoplesweep.BriefRendererPolicyV1, brief.RendererPolicy)
+	assertions.Equal(peoplesweep.BriefRendererPolicyV2, brief.RendererPolicy)
 	requirements.Len(brief.Evidence, 1, "the whole-brief citation list is still served")
 	requirements.Len(brief.Sentences, 4, "the paragraph the owner read is still mapped")
 	for _, sentence := range brief.Sentences {
 		assertions.Empty(sentence.EvidenceOrdinals, "sentence %s", sentence.Kind)
 	}
+
+	output.ThanksSuggestions = []peoplesweep.BriefThanksSuggestion{{
+		Text: "carrying boxes", AnchorID: "evidence-3", Quote: "carried boxes", Key: strings.Repeat("a", 64), State: "suggested", PriorThanks: "unknown",
+	}}
+	seed := personBriefAPISeedFor(t, output, personBriefAPINow, []int64{f.evidence[0].ID})
+	rendered, err := peoplesweep.RenderBrief(peoplesweep.ParsedBrief{Output: output}, peoplesweep.BriefWindow{})
+	requirements.NoError(err)
+	seed.rendered = rendered.Text
+	requirements.Contains(seed.rendered, "carrying boxes")
+	requirements.Len(rendered.Sentences, 5)
+	f.seedBrief(t, seed)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE person_briefs SET program_version = 'v3' WHERE person_id = ? AND status = 'current'`), f.personID)
+	requirements.NoError(err)
+	response = doRequest(t, f.server.Router(), http.MethodGet, personBriefPath(f.personID, ""), nil, nil)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &brief))
+	assertions.NotContains(brief.RenderedText, "carrying boxes")
+	assertions.Contains(brief.RenderedText, "role change")
+	requirements.Len(brief.Evidence, 1)
+	requirements.Len(brief.Sentences, 4)
+	wantTexts := []string{rendered.Sentences[0].Text, rendered.Sentences[1].Text, rendered.Sentences[2].Text, rendered.Sentences[4].Text}
+	for i, sentence := range brief.Sentences {
+		assertions.Equal(wantTexts[i], sentence.Text)
+		assertions.Empty(sentence.EvidenceOrdinals)
+	}
+	assertions.Equal(strings.Join(wantTexts, " "), brief.RenderedText)
 }
 
 func TestPersonBriefHTTPWithoutLastInteraction(t *testing.T) {
@@ -576,6 +602,28 @@ func TestPersonBriefEnrollmentHTTPGetsAndReplacesState(t *testing.T) {
 	assertions.Nil(state.EnabledAt)
 }
 
+func TestPersonBriefEnrollmentCollectionHTTP(t *testing.T) {
+	t.Parallel()
+	f := newPersonBriefAPIFixture(t)
+	path := "/api/v1/people/brief-enrollments"
+	response := doRequest(t, f.server.Router(), http.MethodGet, path+"?limit=1", nil, nil)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+	var page PersonBriefEnrollmentsResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
+	require.Len(t, page.Enrollments, 1)
+	assert.Equal(t, f.personID, page.Enrollments[0].PersonID)
+	response = doRequest(t, f.server.Router(), http.MethodGet,
+		fmt.Sprintf("%s?after_id=%d", path, f.personID), nil, nil)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
+	assert.Empty(t, page.Enrollments)
+	for _, query := range []string{"?limit=0", "?limit=1001", "?after_id=-1", "?after_id=1&after_id=2"} {
+		response = doRequest(t, f.server.Router(), http.MethodGet, path+query, nil, nil)
+		assert.Equal(t, http.StatusBadRequest, response.Code, query)
+	}
+}
+
 func TestPersonBriefEnrollmentHTTPValidatesRequests(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
@@ -754,6 +802,15 @@ func TestPersonBriefOpenAPIContract(t *testing.T) {
 	assertions.Equal("getPersonBriefEnrollment", enrollment.Get.OperationID)
 	assertions.Equal("setPersonBriefEnrollment", enrollment.Put.OperationID)
 
+	appreciations := document.Paths["/api/v1/people/{id}/appreciations"]
+	requirements.NotNil(appreciations)
+	requirements.NotNil(appreciations.Get)
+	assertions.Equal("listPersonAppreciations", appreciations.Get.OperationID)
+	dismiss := document.Paths["/api/v1/people/{id}/appreciations/{key}/dismiss"]
+	requirements.NotNil(dismiss)
+	requirements.NotNil(dismiss.Post)
+	assertions.Equal("dismissPersonAppreciation", dismiss.Post.OperationID)
+
 	// The handlers accept an absent reason and an absent track, so the schema
 	// generated clients are built from must not demand either.
 	schemas := document.Components.Schemas.Map()
@@ -810,4 +867,14 @@ func TestPersonBriefIsReachableOnlyThroughItsOwnRoutes(t *testing.T) {
 	for path := range allowed {
 		assert.Contains(paths, path)
 	}
+}
+
+func TestPersonBriefBoundaryMalformedLegacyFallback(t *testing.T) {
+	raw := []byte(`{"event_memory":"not an array"}`)
+	for _, version := range []string{"v1", "v2"} {
+		t.Run(version, func(t *testing.T) {
+			assert.JSONEq(t, string(raw), string(sanitizedPersonBriefBoundary(raw, version)))
+		})
+	}
+	assert.JSONEq(t, `{}`, string(sanitizedPersonBriefBoundary(raw, "v3")))
 }

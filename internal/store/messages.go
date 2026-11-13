@@ -1223,7 +1223,22 @@ func (s *Store) MigrateSourceMessageID(ctx context.Context, sourceID, conversati
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
+		var legacyID int64
+		legacyErr := tx.QueryRowContext(ctx, `SELECT id FROM messages
+		 WHERE source_id = ? AND conversation_id = ? AND source_message_id = ?`,
+			sourceID, conversationID, legacySourceMessageID).Scan(&legacyID)
+		if legacyErr != nil && !errors.Is(legacyErr, sql.ErrNoRows) {
+			return fmt.Errorf("find legacy message id: %w", legacyErr)
+		}
+		var oldKey string
+		if legacyErr == nil {
+			var err error
+			oldKey, err = appreciationMessageKeyTx(ctx, tx, legacyID)
+			if err != nil {
+				return err
+			}
+		}
 		var newID int64
 		err := tx.QueryRowContext(
 			ctx,
@@ -1242,16 +1257,6 @@ func (s *Store) MigrateSourceMessageID(ctx context.Context, sourceID, conversati
 				return fmt.Errorf("clear migrated message deletion marker: %w", err)
 			}
 
-			var legacyID int64
-			legacyErr := tx.QueryRowContext(
-				ctx,
-				`SELECT id FROM messages
-				 WHERE source_id = ? AND conversation_id = ? AND source_message_id = ?`,
-				sourceID, conversationID, legacySourceMessageID,
-			).Scan(&legacyID)
-			if legacyErr != nil && !errors.Is(legacyErr, sql.ErrNoRows) {
-				return fmt.Errorf("find legacy message id: %w", legacyErr)
-			}
 			if legacyErr == nil {
 				if _, err = tx.ExecContext(
 					ctx,
@@ -1263,6 +1268,13 @@ func (s *Store) MigrateSourceMessageID(ctx context.Context, sourceID, conversati
 				}
 				if err := s.copyLoopDecisionTx(ctx, tx, legacyID, newID); err != nil {
 					return fmt.Errorf("transfer legacy loop decision: %w", err)
+				}
+				newKey, err := appreciationMessageKeyTx(ctx, tx, newID)
+				if err != nil {
+					return err
+				}
+				if err := copyAppreciationDismissalTx(ctx, tx, oldKey, newKey); err != nil {
+					return err
 				}
 			}
 
@@ -1287,6 +1299,15 @@ func (s *Store) MigrateSourceMessageID(ctx context.Context, sourceID, conversati
 		)
 		if err != nil {
 			return fmt.Errorf("migrate source_message_id: %w", err)
+		}
+		if legacyErr == nil {
+			newKey, err := appreciationMessageKeyTx(ctx, tx, legacyID)
+			if err != nil {
+				return err
+			}
+			if err := copyAppreciationDismissalTx(ctx, tx, oldKey, newKey); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
