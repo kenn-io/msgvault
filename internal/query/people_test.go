@@ -609,7 +609,7 @@ func TestGetPersonAndDomainAreExactAndBounded(t *testing.T) {
 	assertions.Nil(missingDomain)
 }
 
-func TestPersonSummaryCountsMeetingTranscriptsWithoutLoadingMeetingRows(t *testing.T) {
+func TestPersonSummaryCountsMeetingNotesWithoutLoadingMeetingRows(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
@@ -621,10 +621,11 @@ func TestPersonSummaryCountsMeetingTranscriptsWithoutLoadingMeetingRows(t *testi
 	when := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
 	meeting := b.AddMessage(MessageOpt{
 		SourceID: source, ConversationID: 701, Subject: "Weekly sync", SentAt: when,
-		MessageType: "meeting_transcript", ConversationType: "meeting",
+		MessageType: "meeting_note", ConversationType: "meeting",
 	})
 	b.AddFrom(meeting, person, "Alice Example")
 	b.AddTo(meeting, owner, "Owner")
+	b.AddAttachment(meeting, 10, "notes.txt")
 	chat := b.AddMessage(MessageOpt{
 		SourceID: source, ConversationID: 702, SentAt: when.Add(time.Hour),
 		MessageType: "whatsapp", ConversationType: "direct_chat",
@@ -649,6 +650,25 @@ func TestPersonSummaryCountsMeetingTranscriptsWithoutLoadingMeetingRows(t *testi
 	require.NotNil(result)
 	assert.Equal(int64(2), result.ActivityCount)
 	assert.Equal(int64(1), result.MeetingCount)
+
+	scope := Context{MessageTypes: []string{"meeting_note"}}
+	filtered, err := engine.GetPerson(t.Context(), person, scope, nil)
+	require.NoError(err)
+	require.NotNil(filtered)
+	people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Explore: ExploreRequest{Context: scope}, Query: "alice"})
+	require.NoError(err)
+	require.Len(people.Rows, 1)
+	for _, summary := range []*PersonSummary{filtered, &people.Rows[0]} {
+		assert.Equal(struct {
+			Activity int64
+			Sources  []SourceCount
+			Files    int64
+		}{1, []SourceCount{{SourceType: "granola", Count: 1}}, 1}, struct {
+			Activity int64
+			Sources  []SourceCount
+			Files    int64
+		}{summary.ActivityCount, summary.SourceCounts, summary.FileCount})
+	}
 }
 
 func TestGetPersonWithClusterMemberIDsSpansIdentifiersAndMetricsAcrossCluster(t *testing.T) {

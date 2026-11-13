@@ -392,9 +392,13 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		SELECT DISTINCT ` + meetingPerson + ` AS person_id, a.message_id, a.attachment_count
 		FROM meeting_activity a WHERE a.attachment_count > 0` + meetingMembership + `
 	) GROUP BY person_id
+), person_nonmeeting_entries AS (
+	SELECT raw.* FROM person_entries_raw raw
+	WHERE raw.message_type NOT IN ('calendar_event','meeting_transcript')
+	  AND NOT EXISTS (SELECT 1 FROM meeting_activity a WHERE a.message_id = raw.message_id)
 ), person_entries AS (
 	SELECT entry_key, person_id, occurred_at::TIMESTAMP AS occurred_at, message_type, attachment_count, source_type
-	FROM person_entries_raw WHERE message_type NOT IN ('calendar_event','meeting_transcript')
+	FROM person_nonmeeting_entries
 	UNION ALL
 	SELECT a.entry_key, ` + meetingPerson + ` AS person_id, min(a.occurred_at) AS occurred_at,
 	       arg_min(a.message_type, a.message_id) AS message_type, 0::BIGINT AS attachment_count, a.source_type
@@ -515,7 +519,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		` + sqlPersonIdentifierFallbackExpr("p") + ` AS fallback_label,
 		COUNT(DISTINCT pe.entry_key)::BIGINT AS activity_count,
 		COALESCE((SELECT meeting_count FROM meeting_counts mc WHERE mc.person_id=p.id), 0)::BIGINT AS meeting_count,
-		(COALESCE((SELECT SUM(raw.attachment_count) FROM person_entries_raw raw WHERE raw.person_id=p.id AND raw.message_type NOT IN ('calendar_event','meeting_transcript')), 0) + COALESCE((SELECT mf.file_count FROM meeting_files mf WHERE mf.person_id=p.id), 0))::BIGINT AS file_count,
+		(COALESCE((SELECT SUM(raw.attachment_count) FROM person_nonmeeting_entries raw WHERE raw.person_id=p.id), 0) + COALESCE((SELECT mf.file_count FROM meeting_files mf WHERE mf.person_id=p.id), 0))::BIGINT AS file_count,
 		MIN(pe.occurred_at) AS first_at, MAX(pe.occurred_at) AS last_at
 	` + populationFrom + `
 	GROUP BY p.id, p.display_name, p.email_address, p.phone_number
@@ -604,7 +608,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (s
 	FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
 ), person_entries_raw AS (`, quoteIdentitySQLPath(clustersGlob)) +
 			sqlActivityEntryEdges(
-				"a.canonical_id AS person_id, le.occurred_at, le.message_type, le.attachment_count, le.source_type",
+				"a.canonical_id AS person_id, le.anchor_message_id AS message_id, le.occurred_at, le.message_type, le.attachment_count, le.source_type",
 				"a.is_direct", "(a.is_direct OR a.is_conversation_member)"), nil
 	}
 	memberList := "(" + strings.TrimSuffix(strings.Repeat("?,", len(memberIDs)), ",") + ")"
@@ -626,7 +630,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (s
 	SELECT f.conversation_id FROM classified f
 	WHERE f.is_chat AND f.message_id IN (SELECT message_id FROM person_message_ids)
 ), person_entries_raw AS (
-	SELECT le.entry_key, ?::BIGINT AS person_id, occurred_at, message_type, attachment_count, source_type
+	SELECT le.entry_key, ?::BIGINT AS person_id, le.anchor_message_id AS message_id, occurred_at, message_type, attachment_count, source_type
 	FROM logical_entries le
 	WHERE (le.entry_kind <> 'conversation'
 	       AND le.anchor_message_id IN (SELECT message_id FROM person_message_ids))
