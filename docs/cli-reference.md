@@ -3210,8 +3210,8 @@ msgvault export-token <email> [flags]
 
 ## diagnose-gmail-inventory
 
-Not in the latest release yet. Compare Gmail message identities with one
-explicit local source through the selected daemon:
+Not in the latest release yet. Compare Gmail message IDs with one archived
+account through the selected daemon:
 
 ```bash
 msgvault diagnose-gmail-inventory --source-id 1
@@ -3219,76 +3219,82 @@ msgvault diagnose-gmail-inventory --source-id 1 --json --limit 1000
 ```
 
 This command observes IDs only. It does not sync, refetch, repair, delete,
-or write archive data or the acquisition ledger. It uses the source's existing
-Gmail credentials. Other source types, missing sources, merged sources and
-history-only sources are refused. Legacy sources with an empty type use the
-existing Gmail convention. The authenticated profile email must match the
-stored source identifier; aliases or an outdated identifier require an explicit
-account configuration correction before comparing.
+or change archive data or recorded sync results. It uses the source's existing
+Gmail credentials. The selected source must be an existing Gmail account that
+is neither merged into another account nor kept only as history. Legacy sources
+with an empty type use the existing Gmail convention. The authenticated Gmail
+address must match the account address saved for that source; aliases or an
+outdated address require an explicit account configuration correction before
+comparing.
 
 The diagnostic opens the archive read-only. Connecting can start the local
 daemon, which retains its normal startup and scheduled work. Authentication
 can invoke configured credential commands and refresh stored tokens. The
-`--timeout` budget starts in the diagnostic subprocess after daemon connection.
+`--timeout` budget covers diagnostic collection after the daemon connection
+is ready; it does not include daemon startup.
 
-The provider scope is every ID returned by Gmail, including Spam and Trash,
+The comparison includes every ID returned by Gmail, including Spam and Trash,
 without a search query or label filter. Earlier filtered or limited syncs may
 explain differences; the diagnostic does not reconstruct their exclusions.
-The local set contains canonical `source_message_id` values for that source,
-including hidden rows and rows marked deleted at the provider. Hidden rows
-still count as local presence. Merge-only historical rows carry identities
-from a different mailbox and are excluded, with their count reported. Message
-content and attachment download exclusions do not remove an identity.
+Archived IDs come from the `source_message_id` field for that source, including
+hidden messages and messages marked deleted from Gmail. Hidden messages still
+count as archived. History retained only from merged accounts may contain IDs
+from a different mailbox and is excluded, with the message count reported.
+Message content and attachment download exclusions do not remove a message ID.
 
 | Flag | Default | Contract |
 |---|---|---|
 | `--source-id` | Required | One positive Gmail source ID, listed by `list-accounts`. |
 | `--json` | `false` | Emit one JSON object; errors go to stderr. |
 | `--limit` | `100` | Maximum IDs in each difference, sorted lexically; `0` shows counts only. |
-| `--max-messages` | `1000000` | Bound local rows and remote observations separately, including duplicates and excluded rows. Range 1–10000000. |
-| `--max-pages` | `10000` | Maximum provider pages, including empty pages. Range 1–1000000. |
-| `--timeout` | `30m` | Positive duration for the diagnostic, including local reads and provider retries. |
+| `--max-messages` | `1000000` | Bound archived messages examined and Gmail ID observations separately, including excluded historical messages and repeated IDs. Range 1–10000000. |
+| `--max-pages` | `10000` | Maximum Gmail response pages, including empty pages. Range 1–1000000. |
+| `--timeout` | `30m` | Positive duration for the diagnostic, including archive reads and Gmail retries. |
 
 Each difference has `count`, `ids`, and `omitted`. The display limit never
 changes the counts or hides the number of omitted IDs. Increase `--limit` to
 retrieve more IDs. `remote_count` is the number of unique IDs actually observed;
-`remote_observations` also counts repetitions. `shared_count` counts identities
-seen in both sets. No RAW, MIME, bodies, attachment files or ledger history are
-loaded for this comparison.
+`remote_observations` also counts repetitions. `shared_count` counts IDs observed
+in both places. No message bodies, original email data, attachment files or
+recorded sync outcomes are read for this comparison.
 
 | `status` | Meaning |
 |---|---|
-| `complete` | The local set was read, Gmail pagination ended without a next token, and nonzero before/after Gmail History IDs matched. Differences remain observations at different times. |
-| `partial` | Provider collection stopped on an error, cancellation, deadline, invalid response, repeated page token or resource limit. `remote_only` contains observed candidates only. |
-| `inconclusive` | A comparison could not be established, or the provider traversal ended but the profile check failed or Gmail History changed/was unknown. |
+| `complete` | All archived IDs were read, Gmail returned its last page, and its nonzero History IDs (mailbox change markers) matched before and after listing. Differences remain observations at different times. |
+| `partial` | Gmail listing stopped on an error, cancellation, deadline, invalid response, repeated next-page marker or resource limit. `remote_only` contains observed candidates only. |
+| `inconclusive` | A comparison could not be established, or Gmail listing ended but the authenticated account could not be verified or its History ID changed or was unknown. |
 
 `local_complete` and `remote_complete` describe the two collections separately.
-`reason` explains the status. A local row limit or SQL error prevents comparison
-rather than turning a prefix into a complete local set. Local failures can
+`reason` gives a machine-readable explanation; text output describes that reason
+in words. An archive message limit or database error prevents comparison rather
+than treating an incomplete read as the full archive. Archive read failures can
 leave counts unset at zero; consult `local_complete` before interpreting them.
 On partial or inconclusive results, `local_not_observed` is `null` and
-`local_unassessed` counts local IDs whose provider absence was not assessed.
-`remote_only` is `null` when no provider set could be compared. Non-complete
+`local_unassessed` counts archived IDs whose Gmail presence remains unknown.
+`remote_only` is `null` when no Gmail observations could be compared. Non-complete
 results return an error exit status after writing the available report. Errors
 opening or validating the archive, or invalid arguments, produce no report.
 
-The command copies local identities from one SQL read snapshot and releases
-it before network I/O. Gmail pages are **not** a transactional mailbox snapshot.
+The command reads archived IDs from one consistent database view (a SQL read
+snapshot), then releases that view before contacting Gmail. Gmail's listing
+does **not** promise that all pages describe the mailbox at one instant.
 The [Gmail listing API](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list)
-provides a next-page token and an estimate, not an atomic snapshot contract.
-The command follows tokens even through empty pages and ignores the estimate
-when deciding completion. It checks the mailbox History ID before and after
-collection to flag observed changes; matching IDs do not establish global
-atomicity with SQL. A sync, merge or source change after the local read may
-make differences transient. Repeat the observation after activity has settled
-when investigating a candidate.
+provides a next-page token to retrieve the following page and an estimated
+count. The command follows tokens even through empty pages and ignores the
+estimate when deciding completion. History IDs are Gmail's markers of mailbox
+changes. The command compares them before and after listing to detect observed
+changes. Matching markers do not make Gmail and the archive a single consistent
+view. A sync, merge or account change after archived IDs were read may make
+differences temporary. Repeat the observation after activity has settled when
+investigating a candidate.
 
-Gmail-present/local-absent IDs are investigation candidates, which may still
-be acquiring or intentionally outside a previous sync's query. Local IDs not
-observed in a completed Gmail traversal may be legitimate retained deletions.
-Neither differences nor equality establish RAW validity, attachment publication,
-projection or FTS correctness, or physical integrity. Use `verify` and the
-existing targeted audits for those separate questions.
+Messages found in Gmail but absent from the archive are investigation candidates.
+A sync may still be copying them, or earlier filters may have intentionally
+excluded them. Archived IDs not observed in a completed Gmail listing may be
+legitimate retained deletions.
+Neither differences nor equal ID sets verify saved original emails (RAW),
+attachments, extracted message data, full-text search (FTS), or stored files.
+Use `verify` and the existing targeted audits for those separate questions.
 
 ## verify
 

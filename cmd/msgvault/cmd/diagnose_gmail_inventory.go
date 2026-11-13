@@ -86,15 +86,17 @@ func newDiagnoseGmailInventoryCmd(deps gmailInventoryDeps) *cobra.Command {
 		Use:          "diagnose-gmail-inventory --source-id <id>",
 		SilenceUsage: true,
 		Short:        "Compare Gmail message IDs with one archived source",
-		Long: `Compare message identities without syncing or repairing the archive.
+		Long: `Compare Gmail message IDs without syncing or repairing the archive.
 Gmail is listed without search or label filters, including Spam and Trash.
-Local presence includes hidden and remotely deleted rows. Merge-only history
-is excluded. Presence does not verify RAW, attachments, projections or files.
+The archive includes hidden messages and messages deleted from Gmail.
+History retained only from merged accounts is excluded. Matching IDs do not
+verify saved original emails, attachments, extracted data or stored files.
 
-A complete result means pagination ended and the local set was read. Gmail
-and SQL are not one atomic snapshot; differences may be transient. A changed
-Gmail history ID makes the completed traversal inconclusive. An interrupted
-listing never establishes that an unobserved local ID is absent from Gmail.
+A complete result means all Gmail pages and archived IDs were read, and
+Gmail's history IDs (mailbox change markers) were nonzero and unchanged.
+The archive and Gmail are read at different times; differences may be temporary.
+A changed or unavailable history ID makes the result inconclusive. Interrupted
+listing never establishes that an archived ID is absent from Gmail.
 
 --limit bounds each list of IDs, not collection. Counts and omitted totals
 remain visible. Resource limits stop collection with a non-success result.`,
@@ -124,7 +126,7 @@ remain visible. Resource limits stop collection with a non-success result.`,
 	}
 	command.Flags().Int64Var(&opts.SourceID, "source-id", 0, "one Gmail source ID (required)")
 	command.Flags().IntVar(&opts.Limit, "limit", 100, "maximum IDs per difference; 0 prints counts only")
-	command.Flags().IntVar(&opts.MaxMessages, "max-messages", 1000000, "maximum local rows and remote observations collected per side")
+	command.Flags().IntVar(&opts.MaxMessages, "max-messages", 1000000, "maximum archived messages examined and Gmail ID observations per side")
 	command.Flags().IntVar(&opts.MaxPages, "max-pages", 10000, "maximum Gmail pages collected")
 	command.Flags().DurationVar(&opts.Timeout, "timeout", 30*time.Minute, "maximum diagnostic duration")
 	command.Flags().BoolVar(&opts.JSON, "json", false, "output one JSON object")
@@ -136,13 +138,13 @@ remain visible. Resource limits stop collection with a non-success result.`,
 func collectGmailInventory(ctx context.Context, st *store.Store, newClient func(context.Context, *store.Source) (gmail.API, error), opts gmailInventoryOptions) (gmailInventoryResult, error) {
 	result := gmailInventoryResult{
 		SourceID: opts.SourceID, Status: "inconclusive", Reason: "local_read_failed",
-		Scope:  "all Gmail IDs including Spam/Trash; local canonical identities including hidden and remotely deleted rows; merge-only history excluded",
+		Scope:  "all Gmail messages, including Spam and Trash; archived messages, including hidden messages and those deleted from Gmail; history retained only from merged accounts is excluded",
 		Limits: gmailInventoryLimits{Messages: opts.MaxMessages, Pages: opts.MaxPages, Details: opts.Limit},
 		Caveats: []string{
-			"Gmail pagination and the local snapshot are not atomic; concurrent acquisition, deletion or source changes can make differences transient.",
-			"Unchanged Gmail history IDs are an observation, not a transactional snapshot guarantee.",
-			"Prior filtered or limited syncs may explain remote-only IDs; no historical query exclusions are inferred.",
-			"Local-only IDs may be legitimate retained history. Presence and equal sets do not verify RAW, attachments, projections, FTS or physical files.",
+			"Gmail pages and the archive are read at different times; syncing, deleting messages or changing accounts during the comparison can make differences temporary.",
+			"Matching Gmail history IDs (mailbox change markers) do not guarantee that all listed pages describe the mailbox at one instant.",
+			"Messages found only in Gmail may have been excluded by earlier sync filters or limits. This report does not infer which messages were intentionally excluded.",
+			"Matching message IDs do not verify saved original emails, attachments, extracted message data, search indexes or stored files.",
 		},
 	}
 	local, source, err := readGmailInventoryLocal(ctx, st, opts, &result)
@@ -152,7 +154,7 @@ func collectGmailInventory(ctx context.Context, st *store.Store, newClient func(
 	client, err := newClient(ctx, source)
 	if err != nil {
 		result.Reason = "provider_unavailable"
-		return result, fmt.Errorf("create Gmail inventory client: %w", err)
+		return result, fmt.Errorf("prepare Gmail access: %w", err)
 	}
 	defer func() { _ = client.Close() }()
 	lister, ok := client.(gmail.CompleteMessageSnapshotReader)
@@ -165,12 +167,12 @@ func collectGmailInventory(ctx context.Context, st *store.Store, newClient func(
 	if err != nil {
 		result.Reason = "profile_failed"
 		result.RemoteFinishedAt = time.Now().UTC()
-		return result, fmt.Errorf("read Gmail profile before inventory: %w", err)
+		return result, fmt.Errorf("verify Gmail account before listing messages: %w", err)
 	}
 	if before == nil || !strings.EqualFold(before.EmailAddress, source.Identifier) {
 		result.Reason = "account_mismatch"
 		result.RemoteFinishedAt = time.Now().UTC()
-		return result, errors.New("gmail profile does not match selected source identifier")
+		return result, errors.New("authenticated Gmail account does not match the selected source")
 	}
 	result.HistoryBefore = before.HistoryID
 	remote := make(map[string]struct{})
@@ -187,24 +189,24 @@ func collectGmailInventory(ctx context.Context, st *store.Store, newClient func(
 		}
 		if result.Pages == opts.MaxPages {
 			result.Reason = "page_limit"
-			collectionErr = errors.New("gmail inventory reached --max-pages")
+			collectionErr = errors.New("message listing from Gmail reached --max-pages")
 			break
 		}
 		if _, seen := tokens[token]; seen {
 			result.Reason = "repeated_page_token"
-			collectionErr = errors.New("gmail inventory page token repeated")
+			collectionErr = errors.New("next-page marker from Gmail repeated; listing stopped to avoid a loop")
 			break
 		}
 		tokens[token] = struct{}{}
 		page, err := lister.ListCompleteMessageSnapshot(ctx, token)
 		if err != nil {
 			result.Reason = "page_failed"
-			collectionErr = fmt.Errorf("list Gmail inventory page: %w", err)
+			collectionErr = fmt.Errorf("read a page of Gmail message IDs: %w", err)
 			break
 		}
 		if page == nil {
 			result.Reason = "invalid_page"
-			collectionErr = errors.New("gmail inventory returned a nil page")
+			collectionErr = errors.New("invalid message-list page returned by Gmail")
 			break
 		}
 		result.Pages++
@@ -216,12 +218,12 @@ func collectGmailInventory(ctx context.Context, st *store.Store, newClient func(
 			}
 			if result.RemoteObservations == opts.MaxMessages {
 				result.Reason = "message_limit"
-				collectionErr = errors.New("gmail inventory reached --max-messages")
+				collectionErr = errors.New("message listing from Gmail reached --max-messages")
 				break
 			}
 			if message.ID == "" {
 				result.Reason = "invalid_message_id"
-				collectionErr = errors.New("gmail inventory returned an empty message ID")
+				collectionErr = errors.New("empty message ID returned by Gmail")
 				break
 			}
 			result.RemoteObservations++
@@ -255,11 +257,11 @@ func collectGmailInventory(ctx context.Context, st *store.Store, newClient func(
 		case err != nil:
 			result.Status = "inconclusive"
 			result.Reason = "profile_failed"
-			collectionErr = fmt.Errorf("read Gmail profile after inventory: %w", err)
+			collectionErr = fmt.Errorf("verify Gmail account after listing messages: %w", err)
 		case after == nil || !strings.EqualFold(after.EmailAddress, source.Identifier):
 			result.Status = "inconclusive"
 			result.Reason = "account_mismatch"
-			collectionErr = errors.New("gmail profile changed account during inventory")
+			collectionErr = errors.New("authenticated Gmail account changed during comparison")
 		default:
 			result.HistoryAfter = after.HistoryID
 			result.Status = "complete"
@@ -267,7 +269,7 @@ func collectGmailInventory(ctx context.Context, st *store.Store, newClient func(
 			if before.HistoryID == 0 || after.HistoryID == 0 || before.HistoryID != after.HistoryID {
 				result.Status = "inconclusive"
 				result.Reason = "mailbox_changed_or_history_unknown"
-				collectionErr = errors.New("gmail inventory traversed all pages but mailbox history changed or is unknown")
+				collectionErr = errors.New("all Gmail pages were read, but Gmail changed during listing or its change marker is unavailable")
 			}
 		}
 	}
@@ -302,7 +304,7 @@ func readGmailInventoryLocal(ctx context.Context, st *store.Store, opts gmailInv
 	}
 	if source.MergedIntoSourceID != 0 || source.HistoryOnly {
 		result.Reason = "retired_source"
-		return nil, nil, errors.New("select a current Gmail source; merged and history-only sources cannot be compared with a live mailbox")
+		return nil, nil, errors.New("select a current Gmail source; merged accounts and accounts kept only as history cannot be compared with a live mailbox")
 	}
 	identities, err := st.ListGmailInventoryIdentitiesContext(ctx, source.ID, opts.MaxMessages+1)
 	if err != nil {
@@ -310,7 +312,7 @@ func readGmailInventoryLocal(ctx context.Context, st *store.Store, opts gmailInv
 	}
 	if len(identities) > opts.MaxMessages {
 		result.Reason = "local_message_limit"
-		return nil, nil, errors.New("local inventory exceeds --max-messages; no comparison performed")
+		return nil, nil, errors.New("archived message count exceeds --max-messages; no comparison performed")
 	}
 	local := make(map[string]bool, len(identities))
 	for _, identity := range identities {
@@ -323,7 +325,7 @@ func readGmailInventoryLocal(ctx context.Context, st *store.Store, opts gmailInv
 		}
 		if identity.ID == "" {
 			result.Reason = "invalid_local_id"
-			return nil, nil, errors.New("local Gmail identity is empty")
+			return nil, nil, errors.New("an archived message has an empty Gmail message ID")
 		}
 		if identity.Hidden {
 			result.IncludedHidden++
@@ -345,6 +347,49 @@ func inventoryDifference(ids []string, limit int) *gmailInventoryDifference {
 	return &gmailInventoryDifference{Count: count, IDs: ids, Omitted: count - len(ids)}
 }
 
+func gmailInventoryReasonDescription(reason string) string {
+	switch reason {
+	case "pagination_finished":
+		return "all Gmail pages read"
+	case "local_read_failed":
+		return "could not read the local archive"
+	case "provider_unavailable":
+		return "Gmail access is unavailable"
+	case "listing_unavailable":
+		return "Gmail message listing is unavailable"
+	case "profile_failed":
+		return "could not verify the Gmail account"
+	case "account_mismatch":
+		return "the authenticated Gmail account does not match the selected source"
+	case "interrupted":
+		return "collection was canceled or timed out"
+	case "page_limit":
+		return "reached --max-pages"
+	case "message_limit":
+		return "reached --max-messages"
+	case "local_message_limit":
+		return "archived message count exceeds --max-messages"
+	case "repeated_page_token":
+		return "Gmail repeated its next-page marker; listing stopped to avoid a loop"
+	case "page_failed":
+		return "could not read a Gmail page"
+	case "invalid_page":
+		return "Gmail returned an invalid page"
+	case "invalid_message_id":
+		return "Gmail returned an empty message ID"
+	case "invalid_local_id":
+		return "an archived message has an empty Gmail message ID"
+	case "mailbox_changed_or_history_unknown":
+		return "Gmail changed during listing or its mailbox change marker is unavailable"
+	case "not_gmail":
+		return "the selected source is not a Gmail account"
+	case "retired_source":
+		return "the selected account was merged or is kept only as history"
+	default:
+		return strings.ReplaceAll(reason, "_", " ")
+	}
+}
+
 func writeGmailInventory(out io.Writer, result gmailInventoryResult, jsonOut bool) error {
 	if jsonOut {
 		data, err := json.Marshal(result, jsontext.WithIndent("  "))
@@ -357,10 +402,10 @@ func writeGmailInventory(out io.Writer, result gmailInventoryResult, jsonOut boo
 		return nil
 	}
 	var text strings.Builder
-	fmt.Fprintf(&text, "Gmail inventory for source %d: %s (%s)\n", result.SourceID, result.Status, result.Reason)
+	fmt.Fprintf(&text, "Gmail inventory for source %d: %s (%s)\n", result.SourceID, result.Status, gmailInventoryReasonDescription(result.Reason))
 	fmt.Fprintf(&text, "Scope: %s\n", result.Scope)
-	fmt.Fprintf(&text, "Local identities: %d (complete: %t); Gmail observed: %d (pagination complete: %t); shared: %d\n", result.LocalCount, result.LocalComplete, result.RemoteCount, result.RemoteComplete, result.SharedCount)
-	fmt.Fprintf(&text, "Gmail pages: %d; repeated IDs: %d; excluded merge-only rows: %d; included hidden rows: %d\n", result.Pages, result.DuplicateObservations, result.ExcludedArchiveOnly, result.IncludedHidden)
+	fmt.Fprintf(&text, "Archived message IDs: %d (collection complete: %t); Gmail IDs observed: %d (listing complete: %t); found in both: %d\n", result.LocalCount, result.LocalComplete, result.RemoteCount, result.RemoteComplete, result.SharedCount)
+	fmt.Fprintf(&text, "Gmail pages: %d; repeated message IDs: %d; excluded historical messages from merged accounts: %d; included hidden messages: %d\n", result.Pages, result.DuplicateObservations, result.ExcludedArchiveOnly, result.IncludedHidden)
 	for _, item := range []struct {
 		label string
 		diff  *gmailInventoryDifference
@@ -381,7 +426,7 @@ func writeGmailInventory(out io.Writer, result gmailInventoryResult, jsonOut boo
 		}
 	}
 	if result.LocalNotObserved == nil {
-		fmt.Fprintf(&text, "Local IDs unassessed for remote absence: %d\n", result.LocalUnassessed)
+		fmt.Fprintf(&text, "Archived message IDs with unknown Gmail presence: %d\n", result.LocalUnassessed)
 	}
 	for _, caveat := range result.Caveats {
 		fmt.Fprintln(&text, caveat)

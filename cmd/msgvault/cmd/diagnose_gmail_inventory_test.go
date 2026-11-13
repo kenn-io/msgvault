@@ -305,7 +305,10 @@ func TestGmailInventoryScopeAndConcurrentAcquisition(t *testing.T) {
 	assert.Equal(1, result.ExcludedArchiveOnly)
 	assert.Equal([]string{"arriving", "spam", "trash"}, result.RemoteOnly.IDs)
 	assert.Equal([]string{"retained"}, result.LocalNotObserved.IDs)
-	assert.Contains(result.Caveats[0], "concurrent acquisition")
+	assert.Contains(result.Caveats[0], "syncing, deleting messages or changing accounts")
+	var human bytes.Buffer
+	require.NoError(writeGmailInventory(&human, result, false))
+	assert.Contains(human.String(), "excluded historical messages from merged accounts: 1; included hidden messages: 1")
 	exists, err := st.MessageExistsBatchContext(t.Context(), source.ID, []string{"arriving"})
 	require.NoError(err)
 	assert.Len(exists, 1)
@@ -430,13 +433,130 @@ func TestDiagnoseGmailInventoryCommand(t *testing.T) {
 	assert.Equal("partial", incompleteResult.Status)
 	assert.Nil(incompleteResult.LocalNotObserved)
 	assert.Equal(1, incompleteResult.LocalUnassessed)
-	for _, args := range [][]string{{}, {"--source-id", "0"}, {"--source-id", "1", "--limit", "-1"}, {"--source-id", "1", "--timeout", "0s"}, {"--source-id", "1", "--max-messages", "0"}} {
-		cmd := newDiagnoseGmailInventoryCmd(deps)
-		cmd.SetContext(t.Context())
-		cmd.SetOut(io.Discard)
-		cmd.SetErr(io.Discard)
-		cmd.SetArgs(args)
-		require.Error(cmd.Execute())
+}
+
+// serial: the daemon subprocess marker is global.
+func TestDiagnoseGmailInventoryRejectsInvalidArguments(t *testing.T) {
+	markDaemonCLISubprocessForTest(t)
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"missing_source", nil},
+		{"zero_source", []string{"--source-id", "0"}},
+		{"negative_source", []string{"--source-id", "-1"}},
+		{"negative_limit", []string{"--source-id", "1", "--limit", "-1"}},
+		{"zero_timeout", []string{"--source-id", "1", "--timeout", "0s"}},
+		{"negative_timeout", []string{"--source-id", "1", "--timeout", "-1s"}},
+		{"zero_messages", []string{"--source-id", "1", "--max-messages", "0"}},
+		{"negative_messages", []string{"--source-id", "1", "--max-messages", "-1"}},
+		{"too_many_messages", []string{"--source-id", "1", "--max-messages", "10000001"}},
+		{"zero_pages", []string{"--source-id", "1", "--max-pages", "0"}},
+		{"negative_pages", []string{"--source-id", "1", "--max-pages", "-1"}},
+		{"too_many_pages", []string{"--source-id", "1", "--max-pages", "1000001"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			var opened, clients int
+			deps := gmailInventoryDeps{
+				openStore: func(context.Context) (*store.Store, func(), error) {
+					opened++
+					return nil, nil, errors.New("unexpected archive open")
+				},
+				newClient: func(context.Context, *store.Source) (gmail.API, error) {
+					clients++
+					return nil, errors.New("unexpected Gmail client creation")
+				},
+			}
+			command := newDiagnoseGmailInventoryCmd(deps)
+			var output bytes.Buffer
+			command.SetOut(&output)
+			command.SetErr(io.Discard)
+			command.SetArgs(append(tc.args, "--json"))
+			err := command.ExecuteContext(t.Context())
+			require.Error(err)
+			assert.Zero(opened, "invalid arguments must be rejected before archive access")
+			assert.Zero(clients, "invalid arguments must be rejected before Gmail access")
+			assert.NotContains(output.String(), "Gmail inventory for source", "usage help is allowed, an inventory report is not")
+			assert.NotContains(output.String(), `"source_id":`, "invalid arguments must not emit a JSON inventory report")
+			assert.NotContains(output.String(), `"status":`)
+			assert.ErrorContains(err, "require a positive --source-id")
+		})
+	}
+}
+
+// serial: production Gmail clients use the synthetic DefaultTransport.
+func TestGmailInventoryHumanOutputPreservesJSON(t *testing.T) {
+	for _, tc := range []struct {
+		name, status, reason, explanation string
+		maxPages                          int
+	}{
+		{"complete", "complete", "pagination_finished", "all Gmail pages read", 10},
+		{"partial", "partial", "page_limit", "reached --max-pages", 1},
+		{"inconclusive", "inconclusive", "mailbox_changed_or_history_unknown", "Gmail changed during listing or its mailbox change marker is unavailable", 10},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource(sourceTypeGmail, "inventory@example.test")
+			require.NoError(err)
+			inventoryMessage(t, st, source.ID, "retained")
+			profiles := 0
+			factory := inventoryProvider(t, func(req *http.Request) (string, error) {
+				if strings.HasSuffix(req.URL.Path, "/profile") {
+					profiles++
+					if tc.name == "inconclusive" && profiles == 2 {
+						return inventoryProfile("101"), nil
+					}
+					return inventoryProfile("100"), nil
+				}
+				if tc.name == "partial" {
+					return inventoryPage([]string{"remote"}, "next"), nil
+				}
+				return inventoryPage([]string{"remote"}, ""), nil
+			})
+			opts := inventoryOptions(source.ID)
+			opts.MaxPages = tc.maxPages
+			result, err := collectGmailInventory(t.Context(), st, factory, opts)
+			if tc.status == "complete" {
+				require.NoError(err)
+			} else {
+				require.Error(err)
+			}
+			assert.Equal(tc.status, result.Status)
+			assert.Equal(tc.reason, result.Reason)
+			before, err := json.Marshal(result)
+			require.NoError(err)
+			var human bytes.Buffer
+			require.NoError(writeGmailInventory(&human, result, false))
+			assert.Contains(human.String(), fmt.Sprintf("Gmail inventory for source %d: %s (%s)\n", source.ID, tc.status, tc.explanation))
+			assert.NotContains(human.String(), tc.reason)
+			assert.Contains(human.String(), "Local present, not observed in Gmail (may be retained history)")
+			assert.NotContains(human.String(), "Local-only IDs may be legitimate retained history.")
+			assert.Contains(human.String(), "Matching message IDs do not verify saved original emails, attachments, extracted message data, search indexes or stored files.")
+			assert.Contains(human.String(), "Archived message IDs: 1 (collection complete: true); Gmail IDs observed: 1")
+			assert.NotContains(human.String(), "rows")
+			assert.NotContains(human.String(), "identities")
+			assert.NotContains(human.String(), "projections")
+			assert.NotContains(human.String(), "FTS")
+			if tc.status != "complete" {
+				assert.Contains(human.String(), "Archived message IDs with unknown Gmail presence: 1")
+			}
+			assert.Contains(result.Scope, "Gmail messages, including Spam and Trash")
+			assert.Contains(result.Scope, "hidden messages and those deleted from Gmail")
+			assert.Contains(result.Scope, "history retained only from merged accounts is excluded")
+			assert.NotContains(result.Scope, "canonical identities")
+			assert.NotContains(result.Scope, "rows")
+			var machine bytes.Buffer
+			require.NoError(writeGmailInventory(&machine, result, true))
+			var decoded gmailInventoryResult
+			require.NoError(json.Unmarshal(machine.Bytes(), &decoded))
+			assert.Equal(result, decoded)
+			assert.Equal(tc.reason, decoded.Reason, "JSON keeps the machine-readable reason")
+			after, err := json.Marshal(result)
+			require.NoError(err)
+			assert.Equal(string(before), string(after), "human rendering must not mutate the JSON result")
+		})
 	}
 }
 
