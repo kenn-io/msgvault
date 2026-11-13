@@ -46,7 +46,7 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 	if err != nil {
 		return fmt.Errorf("read meeting projection message: %w", err)
 	}
-	if messageType.String != "meeting_transcript" {
+	if messageType.String != messageTypeMeetingTranscript {
 		// The common non-meeting path does no derived writes unless a prior meeting
 		// was reclassified. Check both tables through the details primary key.
 		var exists int

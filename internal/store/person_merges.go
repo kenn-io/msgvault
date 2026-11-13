@@ -389,6 +389,9 @@ func (s *Store) mergePersonsOnce(
 		); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE person_introductions SET person_a_id = CASE WHEN person_a_id = ? THEN ? ELSE person_a_id END, person_b_id = CASE WHEN person_b_id = ? THEN ? ELSE person_b_id END, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE person_a_id = ? OR person_b_id = ?`, absorbed.ID, survivor.ID, absorbed.ID, survivor.ID, absorbed.ID, absorbed.ID); err != nil {
+			return fmt.Errorf("repoint introductions: %w", err)
+		}
 		projectionIDs := []int64{}
 		if err := s.reconcilePersonRelationshipsTx(
 			ctx, tx, mergeID, survivor.ID, absorbed.ID, &projectionIDs,

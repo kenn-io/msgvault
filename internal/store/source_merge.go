@@ -154,13 +154,14 @@ func (s *Store) MergeSourcesContext(ctx context.Context, req MergeSourcesRequest
 			{table: "imap_drafts", active: "discarded_at IS NULL OR pending_operation IS NOT NULL"},
 			{table: "beeper_drafts", active: "discarded_at IS NULL OR pending_operation IS NOT NULL"},
 			{table: "chat_drafts", active: "1 = 1"},
+			{table: personIntroductionsTableName, active: "status <> 'cancelled'"},
 		} {
 			var count int
 			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+draftTable.table+` WHERE source_id = ? AND (`+draftTable.active+`)`, req.FromSourceID).Scan(&count); err != nil {
 				return fmt.Errorf("check %s before merge: %w", draftTable.table, err)
 			}
 			if count > 0 {
-				return invalidSourceMerge("sources with active drafts or unresolved provider operations cannot be merged")
+				return invalidSourceMerge("sources with active drafts, introductions, or unresolved provider operations cannot be merged")
 			}
 		}
 		plan, err := buildSourceMergePlan(ctx, tx, req.FromSourceID, req.IntoSourceID, &result)

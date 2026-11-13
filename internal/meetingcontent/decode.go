@@ -22,8 +22,8 @@ func Decode(rawFormat string, raw, _ []byte) Content {
 	if len(raw) > maxRawBytes {
 		return unavailableContent("raw_too_large")
 	}
-	var fields map[string]jsontext.Value
-	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+	fields, ok := decodeFields(raw)
+	if !ok {
 		return unavailableContent("invalid_raw")
 	}
 	switch rawFormat {
@@ -323,4 +323,90 @@ func participantFromPerson(person personWire, role string) (Participant, bool) {
 		Phone: strings.TrimSpace(person.Phone), Role: role,
 	}
 	return participant, participant.Name != "" || participant.Email != "" || participant.Phone != ""
+}
+
+// ExplicitParticipants returns only structured organizer/attendee identities
+// whose raw contract records participation. Display fallbacks are excluded.
+// Unusable or ambiguous source data yields no positive evidence.
+func ExplicitParticipants(rawFormat string, raw []byte) []Participant {
+	fields, ok := decodeFields(raw)
+	if !ok {
+		return nil
+	}
+	var organizer *personWire
+	var attendees []personWire
+	switch rawFormat {
+	case "circleback_json":
+		var valid bool
+		fields, valid = decodeFields(fields["meeting"])
+		if !valid {
+			return nil
+		}
+		fallthrough
+	case "meeting_json":
+		var valid bool
+		organizer, attendees, valid = explicitPeople(fields["organizer"], fields["attendees"])
+		if !valid {
+			return nil
+		}
+	case "granola_json":
+		var calendar struct {
+			Organiser string `json:"organiser"`
+		}
+		if value := fields["calendar_event"]; len(value) > 0 && !isNull(value) {
+			if json.Unmarshal(value, &calendar) != nil {
+				return nil
+			}
+		}
+		if strings.TrimSpace(calendar.Organiser) != "" {
+			organizer = &personWire{Email: calendar.Organiser}
+		}
+		_, people, valid := explicitPeople(nil, fields["attendees"])
+		if !valid {
+			return nil
+		}
+		attendees = people
+	default:
+		return nil
+	}
+	return participantsFromPeople(organizer, attendees)
+}
+
+func decodeFields(raw []byte) (map[string]jsontext.Value, bool) {
+	if len(bytes.TrimSpace(raw)) == 0 || len(raw) > maxRawBytes {
+		return nil, false
+	}
+	var fields map[string]jsontext.Value
+	err := json.Unmarshal(raw, &fields)
+	return fields, err == nil && fields != nil
+}
+
+func explicitPeople(organizerRaw, attendeesRaw jsontext.Value) (*personWire, []personWire, bool) {
+	var organizer *personWire
+	if len(organizerRaw) > 0 && !isNull(organizerRaw) {
+		if json.Unmarshal(organizerRaw, &organizer) != nil {
+			return nil, nil, false
+		}
+		if !hasPersonIdentity(*organizer) {
+			organizer = nil
+		}
+	}
+	var attendees []personWire
+	var people []*personWire
+	if len(attendeesRaw) > 0 && !isNull(attendeesRaw) && json.Unmarshal(attendeesRaw, &people) != nil {
+		return nil, nil, false
+	}
+	for _, person := range people {
+		if person == nil {
+			return nil, nil, false
+		}
+		// Producers omit addressless guests from archived recipients.
+		if hasPersonIdentity(*person) {
+			attendees = append(attendees, *person)
+		}
+	}
+	return organizer, attendees, true
+}
+func hasPersonIdentity(person personWire) bool {
+	return strings.TrimSpace(person.Email) != "" || strings.TrimSpace(person.Phone) != ""
 }

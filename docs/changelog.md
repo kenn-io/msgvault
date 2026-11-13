@@ -8,7 +8,9 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Prepare local introductions for archived Beeper or email accounts with `msgvault intro`, optionally referencing an explicitly recorded shared transcript. First appearance can identify its distinct recorded organizer as `meeting_intro`.
 - Message exports through the daemon no longer turn accented, CJK, or emoji characters into replacement characters.
+- Saved people show their first archived appearance, including copied recipients, and the introducing sender when the evidence identifies one. See [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance).
 
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 
@@ -58,6 +60,8 @@ All notable changes to msgvault, grouped by release.
   `done`, `snooze`, and `reopen` clear them; the HTTP API has matching routes.
   A large archive is checked over several requests, up to 1,000 new messages
   each. Needs HTTP API schema 3.44.0.
+- Open loops and introductions recognize senders of Beeper messages marked as
+  sent by you as your identities across the archive.
 - Keep Apple WhatsApp and iMessage archives current with daemon schedules,
   run history, and **Sync now** on Sources. See [configuration](https://msgvault.io/docs/configuration/#apple-whatsapp-sources).
 - Resumed Gmail full syncs preserve their starting History point so the next
