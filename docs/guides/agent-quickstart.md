@@ -244,6 +244,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_cache_build_status` | read | — | owner-only |
 | `get_carddav_publication` | read | — | owner-only |
 | `get_carddav_sync_status` | read | — | owner-only |
+| `get_deletion` | read | — | owner-only |
 | `get_embeddings_status` | read | — | owner-only |
 | `get_identity_match` | read | — | owner-only |
 | `get_identity_scoring_status` | read | — | owner-only |
@@ -265,6 +266,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_source_identities` | read | — | owner-only |
 | `get_source_scheduler_status` | read | — | owner-only |
 | `get_stats` | read | — | stats.read |
+| `list_deletions` | read | — | owner-only |
 | `list_directory_people` | read | — | owner-only |
 | `list_identity_judgments` | read | — | owner-only |
 | `list_identity_matches` | read | — | owner-only |
