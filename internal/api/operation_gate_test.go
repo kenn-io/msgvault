@@ -643,6 +643,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 		body string
 	}{
 		{"export-messages", `{"args":["export-messages","--start","2026-07-20T00:00:00Z","--end","2026-07-21T00:00:00Z"]}`},
+		{"diagnose-gmail-inventory", `{"args":["diagnose-gmail-inventory","--source-id","1","--json"]}`},
 		{"export-discord", `{"args":["export-discord"]}`},
 		{"list-folders", `{"args":["list-folders"]}`},
 		{"policy list", `{"args":["policy","list"]}`},
