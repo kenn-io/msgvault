@@ -604,31 +604,42 @@ func inventoryFixtureDSN(t *testing.T, st *store.Store) string {
 
 // serial: production Gmail clients use the synthetic DefaultTransport.
 func TestGmailInventoryProfileFailures(t *testing.T) {
-	for _, mode := range []string{"before_error", "before_mismatch", "after_error", "after_mismatch", "unknown_history", "client_error"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, tc := range []struct {
+		mode, reason       string
+		profiles, listings int
+	}{
+		{"before_error", "profile_failed", 1, 0},
+		{"before_mismatch", "account_mismatch", 1, 0},
+		{"after_error", "profile_failed", 2, 1},
+		{"after_mismatch", "account_mismatch", 2, 1},
+		{"unknown_history", "mailbox_changed_or_history_unknown", 2, 1},
+		{"client_error", "provider_unavailable", 0, 0},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			st := testutil.NewTestStore(t)
 			source, err := st.GetOrCreateSource(sourceTypeGmail, "inventory@example.test")
 			require.NoError(err)
 			inventoryMessage(t, st, source.ID, "local")
-			profiles := 0
+			var profiles, listings int
 			factory := inventoryProvider(t, func(req *http.Request) (string, error) {
 				if !strings.HasSuffix(req.URL.Path, "/profile") {
+					listings++
 					return inventoryPage([]string{"remote"}, ""), nil
 				}
 				profiles++
-				if mode == "before_error" || mode == "after_error" && profiles == 2 {
+				if tc.mode == "before_error" || tc.mode == "after_error" && profiles == 2 {
 					return "{", nil
 				}
-				if mode == "before_mismatch" || mode == "after_mismatch" && profiles == 2 {
+				if tc.mode == "before_mismatch" && profiles == 1 || tc.mode == "after_mismatch" && profiles == 2 {
 					return strings.ReplaceAll(inventoryProfile("100"), "inventory@example.test", "different@example.test"), nil
 				}
-				if mode == "unknown_history" {
+				if tc.mode == "unknown_history" {
 					return inventoryProfile("0"), nil
 				}
 				return inventoryProfile("100"), nil
 			})
-			if mode == "client_error" {
+			if tc.mode == "client_error" {
 				factory = func(context.Context, *store.Source) (gmail.API, error) {
 					return nil, errors.New("synthetic credential failure")
 				}
@@ -636,9 +647,20 @@ func TestGmailInventoryProfileFailures(t *testing.T) {
 			result, err := collectGmailInventory(t.Context(), st, factory, inventoryOptions(source.ID))
 			require.Error(err)
 			assert.Equal("inconclusive", result.Status)
+			assert.Equal(tc.reason, result.Reason)
 			assert.True(result.LocalComplete)
 			assert.Nil(result.LocalNotObserved)
 			assert.Equal(1, result.LocalUnassessed)
+			assert.Equal(tc.profiles, profiles)
+			assert.Equal(tc.listings, listings)
+			assert.Equal(tc.listings, result.RemoteCount)
+			assert.Equal(tc.listings > 0, result.RemoteComplete)
+			if tc.listings == 0 {
+				assert.Nil(result.RemoteOnly)
+			} else {
+				require.NotNil(result.RemoteOnly)
+				assert.Equal([]string{"remote"}, result.RemoteOnly.IDs)
+			}
 		})
 	}
 }
