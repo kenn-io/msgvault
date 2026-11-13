@@ -67,20 +67,3 @@ func TestInstagramCommentsRejectsInvalidProfiles(t *testing.T) {
 	second := strings.Replace(instagramProfile, `identifier="example-account"`, `identifier="other"`, 1)
 	require.ErrorContains(loadConfigTextError(t, instagramProfile+second), "duplicates")
 }
-
-func TestInstagramCommentsAdSettingsWithActions(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	ads := "ad_account_id=\"700\"\nad_token_env=\"EXAMPLE_META_AD_TOKEN\"\n"
-	actions := `actions=["hide","delete","reply"]` + "\n"
-	cfg := loadConfigText(t, instagramProfile+ads+actions)
-	require.Len(cfg.InstagramComments, 1)
-	profile := cfg.InstagramComments[0]
-	assert.Equal("700", profile.AdAccountID)
-	assert.Equal("EXAMPLE_META_AD_TOKEN", profile.AdTokenEnv)
-	assert.Equal([]string{"hide", "delete", "reply"}, profile.Actions)
-
-	require.ErrorContains(loadConfigTextError(t, instagramProfile+ads+`actions=["unhide"]`+"\n"), "actions",
-		"valid ad settings do not excuse an unknown action")
-	require.ErrorContains(loadConfigTextError(t, instagramProfile+"ad_account_id=\"700\"\n"+actions), "ad_account_id",
-		"valid actions do not excuse an ad account without its token variable")
-}

@@ -41,8 +41,6 @@ func instagramProfileClient(env string) (*meta.Client, error) {
 	}
 	client, err := meta.NewClient(token)
 	if err != nil {
-		// A profile can hold two credentials and the client's error names
-		// neither, so name the variable that was read. Never its value.
 		return nil, &sourceCommandError{err: fmt.Errorf("has an invalid token in %s", env), code: 7, hint: "check the named credential in the daemon environment and restart the daemon"}
 	}
 	return client, nil
@@ -81,8 +79,6 @@ func importInstagramCommentsProfile(ctx context.Context, st *store.Store, source
 func runConfiguredInstagramCommentsSync(ctx context.Context, st *store.Store, source config.InstagramCommentsSource) error {
 	sum, err := importInstagramCommentsProfile(ctx, st, source, meta.ImportOptions{})
 	if err != nil {
-		// The scheduler reports this error as is; the add and sync commands
-		// add the same profile prefix themselves.
 		err = fmt.Errorf("instagram profile %s: %w", source.Identifier, err)
 	}
 	if sum == nil {

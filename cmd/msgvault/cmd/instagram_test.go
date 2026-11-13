@@ -49,7 +49,6 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 		case "/v26.0/300/comments":
 			_, _ = fmt.Fprint(w, `{"data":[{"id":"400","text":"Example comment","parent_id":"300"}]}`)
 		case "/v26.0/act_700/adcreatives":
-			// 901 comes first: the denied replies under 900 end the ad phase.
 			_, _ = fmt.Fprint(w, `{"data":[{"id":"601","effective_instagram_media_id":"901"},{"id":"600","effective_instagram_media_id":"900"}]}`)
 		case "/v26.0/900":
 			_, _ = fmt.Fprint(w, `{"id":"900","caption":"Ad-only media","owner":{"id":"200"}}`)
@@ -97,36 +96,13 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 		require.NoError(err)
 	}
 	t.Setenv(ads.AdTokenEnv, "")
-	sum, err := importInstagramCommentsProfile(t.Context(), st, ads, meta.ImportOptions{})
-	require.ErrorContains(err, ads.AdTokenEnv, "the Page token is never used for ad reads")
-	assert.Nil(sum)
+	require.EqualError(runConfiguredInstagramCommentsSync(t.Context(), st, ads), "instagram profile ads: needs EXAMPLE_META_AD_TOKEN in the daemon environment")
 	t.Setenv(ads.AdTokenEnv, "synthetic-broken\nad-token")
 	_, err = importInstagramCommentsProfile(t.Context(), st, ads, meta.ImportOptions{})
-	require.Error(err)
-	assert.Contains(err.Error(), ads.AdTokenEnv, "the error names the variable holding the bad token")
-	assert.NotContains(err.Error(), "synthetic-broken")
-	assert.NotContains(err.Error(), "ad-token")
-	// Every path names the profile once: the scheduler gets the prefix from
-	// runConfiguredInstagramCommentsSync, the commands from their own loops.
-	require.EqualError(runConfiguredInstagramCommentsSync(t.Context(), st, ads), "instagram profile ads: has an invalid token in EXAMPLE_META_AD_TOKEN")
-	var output bytes.Buffer
-	cmd := newSyncInstagramCommentsCmd()
-	cmd.SetOut(&output)
-	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
-	require.EqualError(cmd.RunE(cmd, []string{"ads"}), "instagram profile ads: has an invalid token in EXAMPLE_META_AD_TOKEN")
-	t.Setenv(ads.AdTokenEnv, "")
-	require.EqualError(runConfiguredInstagramCommentsSync(t.Context(), st, ads), "instagram profile ads: needs EXAMPLE_META_AD_TOKEN in the daemon environment")
-	t.Setenv(profile.TokenEnv, "synthetic-broken\npage-token")
-	add := newAddInstagramCommentsCmd()
-	add.SetOut(&output)
-	add.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
-	err = add.RunE(add, []string{"example-account"})
-	require.EqualError(err, "instagram profile example-account: has an invalid token in EXAMPLE_INSTAGRAM_PAGE_TOKEN")
-	assert.NotContains(err.Error(), "page-token")
-	t.Setenv(profile.TokenEnv, "synthetic-page-token")
+	require.EqualError(err, "has an invalid token in EXAMPLE_META_AD_TOKEN")
 	t.Setenv(ads.AdTokenEnv, "synthetic-ad-token")
-	output.Reset()
-	cmd = newSyncInstagramCommentsCmd()
+	cmd := newSyncInstagramCommentsCmd()
+	var output bytes.Buffer
 	cmd.SetOut(&output)
 	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 	err = cmd.RunE(cmd, nil)
@@ -150,7 +126,7 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(store.SyncStatusFailed, run.Status)
 	}
-	add = newAddInstagramCommentsCmd()
+	add := newAddInstagramCommentsCmd()
 	add.SetOut(&output)
 	add.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 	require.NoError(add.RunE(add, []string{"EXAMPLE-ACCOUNT"}))

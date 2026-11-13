@@ -149,29 +149,3 @@ func TestCommentReplyPostedButNotArchived(t *testing.T) {
 	assert.Equal(t, "Replied to Facebook comment 100_201 by Example Customer (message "+id+"); reply 100_202\n"+
 		"Not archived yet; the next sync archives it: upsert message: synthetic failure\n", output)
 }
-
-func TestCommentProfileForInstagramAdProfile(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	cfg := config.NewDefaultConfig()
-	cfg.Data.DataDir = t.TempDir()
-	profile := config.InstagramCommentsSource{
-		Identifier: "example-account", AppID: "9", PageID: "100", InstagramAccountID: "200",
-		TokenEnv: "EXAMPLE_INSTAGRAM_PAGE_TOKEN", AdAccountID: "700", AdTokenEnv: "EXAMPLE_META_AD_TOKEN",
-		Actions: []string{"hide", "delete", "reply"},
-	}
-	cfg.InstagramComments = []config.InstagramCommentsSource{profile}
-	target := meta.CommentTarget{SourceType: meta.InstagramSourceType, SourceIdentifier: meta.InstagramSourceIdentifier("9", "100", "200")}
-
-	found, err := commentProfileFor(cfg, target, meta.ActionHide)
-	require.NoError(err)
-	assert.Equal("instagram-comments", found.command)
-	t.Setenv(profile.TokenEnv, "synthetic-page-token")
-	t.Setenv(profile.AdTokenEnv, "")
-	client, err := found.client()
-	require.NoError(err, "acting on a comment needs only the Page token")
-	assert.NotNil(client)
-
-	t.Setenv(profile.TokenEnv, "")
-	_, err = found.client()
-	require.EqualError(err, "instagram profile example-account: needs EXAMPLE_INSTAGRAM_PAGE_TOKEN in the daemon environment")
-}

@@ -76,13 +76,7 @@ func (imp *Importer) ImportInstagramAds(ctx context.Context, app, page, account,
 		return nil, err
 	}
 	selected.adAccount, selected.ads = adAccount, ads
-	sum, err := selected.Import(ctx, app, page, opts)
-	// Scheduled syncs discard the summary, so the daemon log is where the
-	// skipped count reaches the user.
-	if sum != nil && sum.AdMediaSkipped > 0 {
-		slog.InfoContext(ctx, "Instagram ad media skipped", "source", InstagramSourceIdentifier(app, page, account), "count", sum.AdMediaSkipped)
-	}
-	return sum, err
+	return selected.Import(ctx, app, page, opts)
 }
 
 // readAdCreatives returns one unresolved post per distinct media ID on the
@@ -113,43 +107,30 @@ func (r *importRun) adMedia(ctx context.Context, id string) (Object, bool, error
 		media, err = r.imp.igAPI.InstagramMediaByID(ctx, id)
 		return ObjectPage{}, err
 	})
-	// Retrying cannot make media readable once Graph says it does not exist
-	// or the Page token lacks access, and failing would stop every later
-	// creative. Graph also reports rate limits and malformed requests as
-	// HTTP 400, so every other error still fails the run.
+	// Retrying cannot make media readable once Graph says it is missing or the
+	// Page token lacks access, and failing would stop every later creative.
+	// Graph also reports rate limits as HTTP 400, so other errors still fail.
+	reason := ""
 	if apiErr, ok := errors.AsType[*APIError](err); ok && mediaUnreadable(apiErr) {
-		slog.WarnContext(ctx, "skipping Instagram ad media the Page token cannot read", "media_id", id, "status", apiErr.Status, "code", apiErr.Code, "subcode", apiErr.Subcode)
-		r.sum.AdMediaSkipped++
-		return Object{}, false, nil
-	}
-	if err != nil {
+		reason = apiErr.Error()
+	} else if err != nil {
 		return Object{}, false, err
+	} else if media.Owner == nil || media.Owner.ID != r.imp.instagram {
+		reason = "the configured account does not own it"
 	}
-	if media.Owner == nil || media.Owner.ID == "" {
-		slog.WarnContext(ctx, "skipping Instagram ad media because Graph returned no owner for it", "media_id", id)
-		r.sum.AdMediaSkipped++
-		return Object{}, false, nil
-	}
-	if media.Owner.ID != r.imp.instagram {
-		// Expected on an ad account shared with other Instagram accounts.
-		slog.DebugContext(ctx, "skipping Instagram ad media owned by another account", "media_id", id)
+	if reason != "" {
+		slog.WarnContext(ctx, "skipping Instagram ad media", "media_id", id, "reason", reason)
 		r.sum.AdMediaSkipped++
 		return Object{}, false, nil
 	}
 	return Object{ID: media.ID, Message: media.Caption, CreatedTime: media.Timestamp, InstagramMedia: &media}, true, nil
 }
 
-// mediaUnreadable reports errors that mean the media cannot be read by this
-// token: code 100 with subcode 33, which Meta documents as an object that does
-// not exist, cannot be loaded due to missing permissions, or does not support
-// the operation; the permission codes 10 and 200-299; or a bare 403/404 with
-// no code. Code 100 alone is Meta's general invalid-parameter error, so any
-// other subcode means a rejected request and is not skipped.
+// mediaUnreadable reports Graph's "object missing" (100 with subcode 33, per
+// Meta's error reference) and permission (10, 200-299) codes, or a bare 403/404.
 func mediaUnreadable(e *APIError) bool {
 	switch {
-	case e.Code == 100:
-		return e.Subcode == 33
-	case e.Code == 10 || (e.Code >= 200 && e.Code <= 299):
+	case e.Code == 100 && e.Subcode == 33, e.Code == 10, e.Code >= 200 && e.Code <= 299:
 		return true
 	case e.Code == 0:
 		return e.Status == http.StatusForbidden || e.Status == http.StatusNotFound
