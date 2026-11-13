@@ -247,17 +247,8 @@ func TestMCPImportRealWorker(t *testing.T) {
 			} else {
 				assertions.EqualValues(2, polled.Added)
 			}
-			rows, err := st.store.DB().QueryContext(t.Context(), "SELECT id FROM messages")
+			ids, err := st.store.GetRandomMessageIDs(source.ID, 3)
 			requirements.NoError(err)
-			defer func() { _ = rows.Close() }()
-			var ids []int64
-			for rows.Next() {
-				var id int64
-				requirements.NoError(rows.Scan(&id))
-				ids = append(ids, id)
-			}
-			requirements.NoError(rows.Err())
-			requirements.NoError(rows.Close())
 			if fail {
 				assertions.Empty(ids)
 			} else {
