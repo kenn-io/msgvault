@@ -13,6 +13,10 @@ type PersonMatchPairSummaries struct {
 	Left      personmatch.PairEndpoint
 	Right     personmatch.PairEndpoint
 	Truncated bool
+	// LeftGuardIdentifiers and RightGuardIdentifiers hold stable IDs that
+	// only the local conflict guard reads. Packets never copy them.
+	LeftGuardIdentifiers  []personmatch.PairIdentifier
+	RightGuardIdentifiers []personmatch.PairIdentifier
 }
 
 // PersonMatchPairSummariesContext reads only the two participant identity
@@ -78,24 +82,7 @@ func personMatchPairSummariesContext(ctx context.Context, q identityMatchReviewQ
 				_ = rows.Close()
 				return result, err
 			}
-			if !scorableIdentifierType(kind) {
-				continue
-			}
-			var endpoint *personmatch.PairEndpoint
-			if id == leftID {
-				endpoint = &result.Left
-			} else {
-				endpoint = &result.Right
-			}
-			if len(endpoint.Identifiers) >= 8 {
-				result.Truncated = true
-				continue
-			}
-			endpoint.Identifiers = append(endpoint.Identifiers, personmatch.PairIdentifier{
-				Type: kind, Value: boundedIdentityField(value, 256, &result.Truncated),
-				ServiceSlug: boundedIdentityField(serviceSlug, 128, &result.Truncated),
-				ScopeKind:   scopeKind, ScopeValue: boundedIdentityField(scopeValue, 128, &result.Truncated),
-			})
+			result.addIdentifier(id == leftID, kind, value, serviceSlug, scopeKind, scopeValue)
 		}
 		err = rows.Err()
 		_ = rows.Close()
@@ -107,6 +94,27 @@ func personMatchPairSummariesContext(ctx context.Context, q identityMatchReviewQ
 		}
 	}
 	return result, err
+}
+
+func (s *PersonMatchPairSummaries) addIdentifier(left bool, kind, value, serviceSlug, scopeKind, scopeValue string) {
+	endpoint, guard := &s.Right, &s.RightGuardIdentifiers
+	if left {
+		endpoint, guard = &s.Left, &s.LeftGuardIdentifiers
+	}
+	identifiers := &endpoint.Identifiers
+	if guardOnlyIdentifierType(kind) {
+		identifiers = guard
+	} else if !scorableIdentifierType(kind) {
+		return
+	} else if len(*identifiers) >= 8 {
+		s.Truncated = true
+		return
+	}
+	*identifiers = append(*identifiers, personmatch.PairIdentifier{
+		Type: kind, Value: boundedIdentityField(value, 256, &s.Truncated),
+		ServiceSlug: boundedIdentityField(serviceSlug, 128, &s.Truncated),
+		ScopeKind:   scopeKind, ScopeValue: boundedIdentityField(scopeValue, 128, &s.Truncated),
+	})
 }
 
 func boundedIdentityField(value string, maxRunes int, truncated *bool) string {
@@ -125,4 +133,10 @@ func scorableIdentifierType(kind string) bool {
 	default:
 		return false
 	}
+}
+
+// guardOnlyIdentifierType reports stable IDs that may block a match locally
+// but must never be disclosed to the scorer.
+func guardOnlyIdentifierType(kind string) bool {
+	return kind == "signal_aci"
 }

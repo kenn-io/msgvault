@@ -94,6 +94,7 @@ All notable changes to msgvault, grouped by release.
 - Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate.
 
 - Set `document_profile` in the [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank) to request text extraction in Docbank. Attachment status reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors in `last_error`.
+- `msgvault import-signal` archives direct and group chats from Signal Android backups decrypted by signalbackup-tools, including edits, replies, reactions, and attachments. See [Text Messages](usage/text-messages.md#import-signal).
 
 ## 0.23.0
 <small>2026-11-04</small>

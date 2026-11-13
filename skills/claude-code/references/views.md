@@ -23,7 +23,7 @@ Hive-partitioned by year. Use `WHERE year = YYYY` for partition pruning.
 | has_attachments | BOOLEAN | True if message has attachments |
 | attachment_count | INTEGER | Number of attachments (0 if none) |
 | sender_id | BIGINT | Participant ID for chat messages (NULL for email) |
-| message_type | VARCHAR | Source type (e.g. email, whatsapp, imessage) |
+| message_type | VARCHAR | Source type (e.g. email, whatsapp, signal, imessage) |
 | year | INTEGER | Year of sent_at (partition key) |
 | month | INTEGER | Month of sent_at (1–12) |
 | deleted_from_source_at | TIMESTAMP | When deleted from Gmail (NULL if still present) |
@@ -111,7 +111,7 @@ Messages with sender fully resolved and labels as a JSON array. Use this instead
 | size_estimate | BIGINT | Estimated size in bytes |
 | has_attachments | BOOLEAN | True if message has attachments |
 | attachment_count | INTEGER | Number of attachments |
-| message_type | VARCHAR | Source type (e.g. email, whatsapp, imessage) |
+| message_type | VARCHAR | Source type (e.g. email, whatsapp, signal, imessage) |
 | year | INTEGER | Year (partition key) |
 | month | INTEGER | Month (1–12) |
 | from_email | VARCHAR | Sender email address |

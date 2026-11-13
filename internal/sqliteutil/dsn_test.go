@@ -2,7 +2,9 @@ package sqliteutil
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -62,4 +64,39 @@ func TestQueryOnlyDSNRejectsWritesAndKeepsCallerBusyTimeout(t *testing.T) {
 			assert.ErrorContains(err, "readonly")
 		})
 	}
+}
+
+func TestOpenReadOnlyDatabase(t *testing.T) {
+	require := require.New(t)
+
+	missingPath := filepath.Join(t.TempDir(), "missing.sqlite")
+	_, err := OpenReadOnlyDatabase(t.Context(), missingPath)
+	require.Error(err)
+	_, err = os.Stat(missingPath)
+	require.ErrorIs(err, os.ErrNotExist)
+
+	path := filepath.Join(t.TempDir(), "source # data.sqlite")
+	createDSN, err := DatabaseDSN(path, "")
+	require.NoError(err)
+	db, err := sql.Open("sqlite3", createDSN)
+	require.NoError(err)
+	defer func() { require.NoError(db.Close()) }()
+	var journalMode string
+	require.NoError(db.QueryRowContext(t.Context(), `PRAGMA journal_mode=WAL`).Scan(&journalMode))
+	require.Equal("wal", strings.ToLower(journalMode))
+	_, err = db.ExecContext(t.Context(), `
+		CREATE TABLE source_rows (id INTEGER PRIMARY KEY);
+		INSERT INTO source_rows (id) VALUES (1);
+	`)
+	require.NoError(err)
+
+	readOnly, err := OpenReadOnlyDatabase(t.Context(), path)
+	require.NoError(err)
+	defer func() { require.NoError(readOnly.Close()) }()
+	var count int
+	require.NoError(readOnly.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM source_rows`).Scan(&count))
+	assert.Equal(t, 1, count)
+
+	_, err = readOnly.ExecContext(t.Context(), `INSERT INTO source_rows (id) VALUES (2)`)
+	require.Error(err)
 }

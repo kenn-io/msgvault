@@ -309,6 +309,7 @@ type archivedMessagingRoute struct {
 var nativeRouteNetworks = map[string]string{
 	"telegram":          "telegram",
 	"whatsapp":          "whatsapp",
+	"signal":            "signal",
 	sourceTypeSlack:     sourceTypeSlack,
 	sourceTypeSlackdump: sourceTypeSlack,
 	sourceTypeDiscord:   sourceTypeDiscord,

@@ -49,7 +49,7 @@ attachments alongside the records you browse.
 - **Mail** — Gmail, IMAP, and Microsoft 365 sync; MBOX, Maildir, Apple Mail, PST, and
   EML imports.
 - **Chat** — Matrix, Slack, Teams, Discord, Inline, Chatwoot, and chats
-  available through Beeper Desktop; WhatsApp, iMessage, Telegram, Google Voice,
+  available through Beeper Desktop; WhatsApp, Signal (builds from `main`), iMessage, Telegram, Google Voice,
   Messenger, and SMS imports.
 - **Meetings** — Granola, Plaud, Pocket, Circleback, Omi, Twenty, Twilio, Notion
   AI Meeting Notes, and Muesli in the same searchable record.
