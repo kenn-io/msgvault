@@ -165,7 +165,9 @@ func Split(body string) Result {
 				kind, depth, relay = Quoted, 1, true
 			case strings.HasPrefix(trimmed, ">"):
 				kind = Quoted
-			case (IsDatedAttribution(trimmed) || strings.HasSuffix(trimmed, ":") && thunderbirdDatedAttribution.MatchString(trimmed)) && QuotedHistoryFollows(lines[i+1:]):
+			case (IsDatedAttribution(trimmed) ||
+				strings.HasSuffix(trimmed, ":") && thunderbirdDatedAttribution.MatchString(trimmed)) &&
+				QuotedHistoryFollows(lines[i+1:]):
 				kind, depth = Quoted, 1
 			case line == "-- ":
 				kind = Signature
