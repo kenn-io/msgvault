@@ -6,7 +6,7 @@
   import type { SourceStatus, Setting } from '../../api/generated/models';
   import { persistedValue, readOnlyValue } from '../../settings/catalog';
   import { scheduleSummary } from '../../settings/cron';
-  import { isOnDemandSourceType, sourceDetails, sourceFailure, sourceRunState, sourceTypeLabel, syncRunning, syncCommand, syncUnavailableLabel, SOURCE_SETTING_PREFIX } from '../../sources/labels';
+  import { isOnDemandSourceType, sourceDetails, sourceFailure, sourceRunState, sourceLabel, sourceTypeLabel, syncRunning, syncCommand, syncUnavailableLabel, SOURCE_SETTING_PREFIX } from '../../sources/labels';
   import { operationStateChip } from '../../operations/labels';
   import { formatDateTime } from '../../util/format';
   import SidePanel from '../common/SidePanel.svelte';
@@ -31,8 +31,8 @@
   let error = $state('');
   let controller: AbortController | undefined;
   const prefix = $derived(SOURCE_SETTING_PREFIX[source.source_type]);
-  const title = $derived(source.display_name || source.identifier);
-  const details = $derived(sourceDetails(title, sourceTypeLabel(source.source_type), source.identifier));
+  const title = $derived(sourceLabel(source));
+  const details = $derived(sourceDetails(title, sourceTypeLabel(source.source_type), source.source_type === 'call_history' ? undefined : source.identifier));
   const failure = $derived(sourceFailure(source));
   const chip = $derived(operationStateChip(sourceRunState(source) ?? 'Never synced'));
   const lastGood = $derived(source.last_successful_sync?.completed_at);

@@ -1,0 +1,101 @@
+package callhistory
+
+import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"io"
+	"time"
+)
+
+var ErrImportTooLarge = errors.New("call import exceeds size limit")
+var ErrMalformedImport = errors.New("malformed call import JSON")
+
+// ImportRequest accepts one supplied record or an archived Discord message ID,
+// never credentials or database paths. Account is the stable source namespace.
+// Bindings explicitly map native peer IDs to existing archive participant IDs.
+type ImportRequest struct {
+	Format   string           `json:"format"`
+	Account  string           `json:"account"`
+	Record   jsontext.Value   `json:"record"`
+	Bindings map[string]int64 `json:"bindings,omitempty"`
+}
+
+// DecodeImportRequest reads one bounded import envelope.
+func DecodeImportRequest(r io.Reader) (ImportRequest, error) {
+	data, err := io.ReadAll(io.LimitReader(r, MaxRequestBytes+1))
+	if err != nil {
+		return ImportRequest{}, fmt.Errorf("read call import: %w", err)
+	}
+	if len(data) > MaxRequestBytes {
+		return ImportRequest{}, ErrImportTooLarge
+	}
+	var req ImportRequest
+	if err := json.Unmarshal(data, &req, json.RejectUnknownMembers(true)); err != nil {
+		return ImportRequest{}, fmt.Errorf("%w: %w: %w", ErrInvalid, ErrMalformedImport, err)
+	}
+	return req, nil
+}
+
+// DiscordArchiveID accepts an exact archive primary key, never a provider ID
+// or path. Only the daemon may turn this reference into a native observation.
+func (r ImportRequest) DiscordArchiveID() (int64, error) {
+	var ref struct {
+		MessageID int64 `json:"message_id"`
+	}
+	if len(r.Record) > MaxRawBytes {
+		return 0, ErrImportTooLarge
+	}
+	if r.Format != "discord_archived" {
+		return 0, invalid("Discord archive format")
+	}
+	if json.Unmarshal(r.Record, &ref, json.RejectUnknownMembers(true)) != nil || ref.MessageID <= 0 {
+		return 0, invalid("Discord archive requires a positive integer message_id")
+	}
+	return ref.MessageID, nil
+}
+
+func (r ImportRequest) Observation() (Observation, error) {
+	if len(r.Record) > MaxRawBytes {
+		return Observation{}, ErrImportTooLarge
+	}
+	if len(r.Record) == 0 {
+		return Observation{}, invalid("record")
+	}
+	var o Observation
+	var err error
+	switch r.Format {
+	case "normalized":
+		if len(r.Bindings) != 0 {
+			return o, invalid("normalized records contain their own participants")
+		}
+		if err = json.Unmarshal(r.Record, &o, json.RejectUnknownMembers(true)); err != nil {
+			return o, invalid("normalized record")
+		}
+		if o.Account != r.Account {
+			return o, invalid("account mismatch")
+		}
+	case "signal_desktop":
+		o, err = r.signalObservation()
+	case "discord", "discord_chat_exporter":
+		o, err = r.discordObservation()
+	default:
+		err = invalid("unsupported format")
+	}
+	if err != nil {
+		return Observation{}, err
+	}
+	o.OccurredAt = o.OccurredAt.UTC()
+	if o.EndedAt != nil {
+		*o.EndedAt = o.EndedAt.UTC()
+	}
+	if err := o.Validate(); err != nil {
+		return Observation{}, err
+	}
+	o.OccurredAt = o.OccurredAt.Truncate(time.Microsecond)
+	if o.EndedAt != nil {
+		*o.EndedAt = o.EndedAt.Truncate(time.Microsecond)
+	}
+	return o, nil
+}

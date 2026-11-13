@@ -227,6 +227,7 @@
         {onOpenMeeting}
         {client}
         conversationId={conversationID}
+        paneTitle={title}
         anchorId={threadAnchorId}
         start={conversationStart}
         end={conversationEnd}
