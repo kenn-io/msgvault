@@ -551,7 +551,7 @@ func TestListChangedMessages_NullWatermarkReturnsAnError(t *testing.T) {
 
 	_, err := st.ListChangedMessages(
 		t.Context(), store.ChangedMessagesCursor{}, 10)
-	require.Error(err)
+	require.ErrorIs(err, store.ErrNullChangeWatermark)
 	assert.Contains(err.Error(), "content_changed_at")
 }
 

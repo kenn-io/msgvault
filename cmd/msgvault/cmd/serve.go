@@ -590,6 +590,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := configureRecordingReferenceJob(ctx, mediaSched, operationGate, s, cfg.Integrations.Docbank, logger); err != nil {
 		logger.Warn("Recording reference submission unavailable", "error", err)
 	}
+	if err := configureWakeupJob(ctx, mediaSched, operationGate, s, cfg, logger); err != nil {
+		logger.Warn("Wakeup scheduling unavailable", "category", "scheduler_error")
+	}
 	if err := registerActivityProjectionJob(
 		sched, s, cfg.Activity, logger); err != nil {
 		return fmt.Errorf("schedule activity projection: %w", err)
@@ -4740,4 +4743,12 @@ func scheduledTeamsImportOptions(email string, cfg *config.Config) teams.ImportO
 
 func (a *storeAPIAdapter) GetSearchMetadata(ctx context.Context, ids []int64, q *search.Query, includeSnippet bool) (map[int64]store.SearchMetadata, error) {
 	return a.store.GetSearchMetadata(ctx, ids, q, includeSnippet)
+}
+
+func (a *storeAPIAdapter) BeginChangedMessagesReadSnapshotContext(ctx context.Context) (context.Context, func(), error) {
+	return a.store.BeginChangedMessagesReadSnapshotContext(ctx)
+}
+
+func (a *storeAPIAdapter) PersonInSources(ctx context.Context, participants, sources []int64) (bool, error) {
+	return a.store.PersonInSources(ctx, participants, sources)
 }

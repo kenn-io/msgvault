@@ -2807,3 +2807,38 @@ identifier_type = "example"
 ```
 
 Each rule requires one mailbox address, a header name, and an identifier type. A missing, repeated, or empty header leaves the message attributed to its From address. Rules apply to new Gmail, IMAP, and Microsoft mail, and mbox, eml, emlx, and PST imports. GitHub bot handles are supported. The recorded From address stays visible on messages. Attribution for already archived messages will be handled separately.
+
+### Wake-up webhooks
+
+Wake-up configuration changes take effect after restarting the daemon.
+
+Add a `[[wakeups]]` entry to notify an agent when matching incoming messages
+are archived. The daemon checks every 15 seconds while it is running. Each
+entry needs a unique lowercase name, an HTTPS URL and one secret source:
+
+```toml
+[[wakeups]]
+name = "inbox"
+url = "https://hooks.example.com/msgvault"
+secret_env = "MSGVAULT_WAKEUP_SECRET"
+# secret_file = "/run/secrets/msgvault-wakeup" # use instead of secret_env
+# person_id = 12
+# source_ids = [1, 2]
+# conversation_ids = [3]
+# incoming_only = true
+# timeout = "10s"
+# max_message_age = "72h"
+```
+
+The secret is a Standard Webhooks `whsec_` value containing 24–64 bytes in
+canonical base64. HTTPS callbacks use port 443 or 8443. For an approved private
+endpoint, `trusted_addresses` lists private IP addresses pinned to the URL's
+origin; DNS is not used for that origin. At most 32 entries are allowed.
+Names contain 1–48 lowercase letters, digits or hyphens. Selectors combine as
+AND conditions; each ID list accepts at most 50 positive IDs. Without selectors,
+all incoming messages qualify. Set `incoming_only = false` to include outgoing
+messages. The timeout defaults to 10 seconds and cannot exceed 60 seconds.
+The message age defaults to 72 hours.
+
+See [Wake-up webhooks](api-server.md#wake-up-webhooks) for delivery and retry
+behavior.

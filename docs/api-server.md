@@ -166,7 +166,11 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.1.0**.
+it is separate from the binary release version. The current schema is **5.3.0**.
+
+Schema 5.3.0 adds delegated message change feed reads.
+
+Schema 5.2.0 adds optional filters to the message change feed.
 
 Schema 5.1.0 adds time-zone-aware Month and Year grouping, group overviews, and item totals for time groups.
 
@@ -1232,6 +1236,45 @@ Poll it, re-read the rows it returns, and store the cursor it hands back. Unlike
 `/messages/filter` it is ordered by when a message *changed*, not by when it was
 sent, so a mailbox imported today with ten-year-old mail shows up in the very
 next page.
+
+Use `person_id` to select messages sent by the person's currently linked
+identities, repeated `source_id` or `conversation_id` values to select those
+sources or conversations, and `incoming_only=true` to exclude owner-sent
+messages on a best-effort basis. Direction corrections do not move the change
+watermark, so they can leave a missed or stale result. Different filters combine
+with AND; values within a list combine with OR. Each list accepts up to 50
+positive IDs. Owners and agents with `search.read` can call the MCP
+`list_changes` tool. Linking a new identity keeps the cursor valid and applies
+to later changes; use a fresh walk to reconcile its older history.
+
+Agents see only granted sources; an ungranted `source_id` or a person with no
+sender, recipient, or conversation roster appearance in a granted source returns
+`403 permission_denied`. Verification message subjects and snippets are masked
+unless the grant includes `verification.read`. An unfiltered request returns an
+empty `200` page when all of a grant's sources are gone.
+
+An agent cursor is bound to the grant's source references. A token with a
+different source set, or the owner, receives `400 invalid_cursor` and must
+restart the walk. A replacement token with the same references can resume,
+including after a source is removed and re-added. A legacy or unfiltered owner
+cursor without a filter binding can start an agent walk in the same archive;
+subsequent cursors carry the grant binding.
+
+A filtered request examines at most 2,000 changes in the authorized sources and
+can return an empty page with `has_more=true`; keep following `next_cursor`. A
+first walk over 400,000 non-matching changes therefore needs about 200 requests.
+Once the available range is exhausted, the cursor can advance through the empty
+tail to the commit bound. A filtered cursor is bound to its selectors: changing
+or removing them returns `invalid_cursor`. Start again with an unfiltered cursor
+or the original filter. Older servers reject filtered cursors because they do not understand
+their format.
+
+A filtered feed reports arrivals and in-scope edits. A row that leaves a
+filter's scope, for example through a conversation move, sender re-attribution,
+or source consolidation, is not reported to that filter. Consumers caching
+rows must reconcile them with a periodic unfiltered or wider-scope re-read.
+When a message has no sender ID, the person filter uses its first From recipient;
+changes to recipients alone do not move the watermark.
 
 **What it is.** An invalidation feed over one projection of a message: the
 columns this endpoint returns, plus a body edit and two columns it does not
@@ -3332,8 +3375,9 @@ Agent requests use `X-Msgvault-Agent-Token` instead of the owner key. The
 daemon checks `search.read`, `message.read`, `attachment.read`, or `stats.read`
 and the live source identity before serving supported archive reads. Unscoped
 reads select only granted sources. Explicit accounts, collections, and source ID
-sets must fit entirely inside the grant. A missing permission or an account
-selector outside the grant returns `403 permission_denied` and names the
+sets must fit entirely inside the grant. The message change feed requires
+`search.read` and applies the same source scope. A missing permission or an
+account selector outside the grant returns `403 permission_denied` and names the
 permission. A message, thread, or attachment outside the grant returns the same
 `404` as a missing one. At most two agent reads run at once; others wait, and a
 request that ends while waiting returns `503 agent_read_busy`. Unsupported routes remain
@@ -3455,3 +3499,52 @@ These heuristics can miss unfamiliar wording and layouts, lowercase letter-only 
 Search rows are masked in place, with membership and counts unchanged.
 
 Search can confirm a withheld value through exact or prefix queries, and draft output can include verification content. These known limits are covered by later slices for search confirmation and draft quotes. Add `verification.read` only when the delegated reader should receive verification content.
+
+## Wake-up webhooks
+
+Configured wake-ups POST a Standard Webhooks signed JSON notification when a
+matching recent message changes. Configure them in [the configuration
+reference](configuration.md#wake-up-webhooks). A new entry starts at the
+archive's current completion bound when it first loads successfully, so existing
+history does not trigger a notification. An entry whose secret cannot be resolved
+is not started until a later restart. Editing a filter applies it from the
+entry's current position. Removing an entry discards its position.
+
+A notification contains `schema_version`, `type` (`msgvault.wakeup`),
+`delivery_id`, `name`, `filter`, `cursor_from`, `cursor_to`, `matched` and
+`server_time`. `matched.count` counts matches in the scanned range;
+`matched.message_ids` contains at most the newest 50 IDs in feed order and
+`matched.truncated` indicates additional matches. It contains no message
+content or addresses. The message date is the first available of `sent_at`,
+`received_at` and `internal_date`; undated, old and deleted messages do not
+trigger a ping, but the cursor advances past them. After a failed delivery,
+the retry is sent even if its messages no longer qualify (`matched.count` 0).
+
+Read the feed with the same selectors from `cursor_from` to replay the range.
+A delegated client uses its own authorized feed cursor: its cursor is bound to
+its grant as well as the selectors. A 2xx response acknowledges delivery;
+failures keep the cursor and retry after 30 seconds, doubling to at most one
+hour with no attempt limit. Redirects are not followed and log `http_3xx`.
+Delivery is at least once. A retry of the same range has the same delivery ID;
+a retry whose range end moved has a new ID. Logs report the wake-up name,
+error category and failure count. DNS lookup failures use `dns_error`.
+
+To verify a signature, base64-decode the value after `whsec_` in the configured
+secret. Compute HMAC-SHA256 over `webhook-id + "." + webhook-timestamp + "." +
+raw_body`, base64-encode the digest, and compare it in constant time with the
+`v1,` value in `webhook-signature`. Reject stale timestamps according to your
+receiver's policy.
+
+For example, after enforcing a timestamp tolerance and parsing the signature
+header, a Go receiver can verify a `v1` signature as follows:
+
+```go
+key, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(secret, "whsec_"))
+if err != nil { return err }
+mac := hmac.New(sha256.New, key)
+fmt.Fprintf(mac, "%s.%s.%s", webhookID, timestamp, rawBody)
+expected := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+if !hmac.Equal([]byte(expected), []byte(signatureV1)) {
+    return errors.New("invalid webhook signature")
+}
+```

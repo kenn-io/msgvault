@@ -17,6 +17,9 @@ const agentTokenSenderMinAPISchemaVersion = "2.32.0"
 // AgentReadMinAPISchemaVersion adds source-scoped reads and token expiry.
 const AgentReadMinAPISchemaVersion = "3.9.0"
 
+// AgentChangeFeedMinAPISchemaVersion admits delegated change feed reads.
+const AgentChangeFeedMinAPISchemaVersion = "5.3.0"
+
 // IssueAgentToken creates a restricted agent grant and returns its one-time secret.
 func (c *Client) IssueAgentToken(
 	ctx context.Context,

@@ -1,0 +1,129 @@
+package wakeups
+
+import (
+	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/tls"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/netip"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"go.kenn.io/msgvault/internal/netguard"
+)
+
+func DecodeSecret(secret string) ([]byte, error) {
+	encoded, ok := strings.CutPrefix(secret, "whsec_")
+	if !ok {
+		return nil, errors.New("invalid secret")
+	}
+	decoded, err := base64.StdEncoding.Strict().DecodeString(encoded)
+	if err != nil || len(decoded) < 24 || len(decoded) > 64 || base64.StdEncoding.EncodeToString(decoded) != encoded {
+		return nil, errors.New("invalid secret")
+	}
+	return decoded, nil
+}
+
+type webhookClient struct {
+	timeout       time.Duration
+	resolver      netguard.Resolver
+	dial          netguard.DialContext
+	roots         *tls.Config
+	trustedOrigin *url.URL
+	trusted       []netip.Addr
+}
+
+func (c webhookClient) send(ctx context.Context, endpoint, id string, secret, body []byte) string {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	target, err := url.Parse(endpoint)
+	if err != nil {
+		return "invalid_callback"
+	}
+	resolver := c.resolver
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+	dial := c.dial
+	if dial == nil {
+		dial = (&net.Dialer{}).DialContext
+	}
+	pinned, err := netguard.PinnedAddresses(ctx, resolver, target, c.trustedOrigin, c.trusted, false)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "timeout"
+		}
+		if _, ok := errors.AsType[*net.DNSError](err); ok {
+			return "dns_error"
+		}
+		if errors.Is(err, netguard.ErrUnsafeTarget) {
+			return "invalid_callback"
+		}
+		return "connection_refused"
+	}
+	tlsConfig := c.roots
+	if tlsConfig == nil {
+		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	} else {
+		tlsConfig = tlsConfig.Clone()
+		if tlsConfig.MinVersion < tls.VersionTLS12 {
+			tlsConfig.MinVersion = tls.VersionTLS12
+		}
+	}
+	pinnedDial := netguard.PinnedDialer(pinned, dial)
+	transport := &http.Transport{DialContext: func(_ context.Context, network, address string) (net.Conn, error) {
+		return pinnedDial(ctx, network, address)
+	}, TLSClientConfig: tlsConfig, DisableKeepAlives: true}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "invalid_callback"
+	}
+	stamp := strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, secret)
+	_, _ = fmt.Fprintf(mac, "%s.%s.%s", id, stamp, body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Webhook-Id", id)
+	req.Header.Set("Webhook-Timestamp", stamp)
+	req.Header.Set("Webhook-Signature", "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+	req.Header.Set("User-Agent", "msgvault")
+	resp, err := client.Do(req)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "timeout"
+		}
+		var op *net.OpError
+		if errors.As(err, &op) && op.Timeout() {
+			return "timeout"
+		}
+		if _, ok := errors.AsType[tls.RecordHeaderError](err); ok {
+			return "tls_error"
+		}
+		if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
+			return "tls_error"
+		}
+		return "connection_refused"
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	_ = resp.Body.Close()
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return ""
+	case resp.StatusCode >= 300 && resp.StatusCode < 400:
+		return "http_3xx"
+	case resp.StatusCode >= 400 && resp.StatusCode < 500:
+		return "http_4xx"
+	default:
+		return "http_5xx"
+	}
+}

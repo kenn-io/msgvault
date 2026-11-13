@@ -55,13 +55,19 @@ var fixedOperationalDefinitions = sync.OnceValue(func() []operationalDefinition 
 })
 
 func operationalCatalog(opts ServeOptions, allowWrites bool) []operationalDefinition {
-	if opts.Operations == nil || opts.DelegatedOnly {
+	if opts.Operations == nil {
 		return nil
 	}
 	definitions := make([]operationalDefinition, 0)
 	for _, definition := range fixedOperationalDefinitions() {
 		if !opts.Families.allows(definition.definition.name) || !slices.Contains(opts.OperationCapabilities, definition.definition.name) {
 			continue
+		}
+		if opts.DelegatedOnly {
+			permission, ok := agentReadToolPermission(definition.definition.name)
+			if definition.writes || !ok || !slices.Contains(opts.GrantPermissions, string(permission)) {
+				continue
+			}
 		}
 		if definition.writes && (!allowWrites || !slices.Contains(opts.OperationWriteFamilies, definition.family)) {
 			continue
