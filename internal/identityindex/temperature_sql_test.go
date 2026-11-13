@@ -15,7 +15,7 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 	_, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.ExecContext(t.Context(), `
 		CREATE TEMP TABLE synthetic_temperature_activity AS
-		SELECT *, false AS unsent FROM (VALUES
+		SELECT *, 'message:' || message_id AS entry_key, false AS unsent FROM (VALUES
 			-- Direct chat written by the owner: the explicit edge identifies
 			-- person 2 even when the importer has no conversation roster.
 			(1::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 12:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, false, true, false, true),
@@ -35,6 +35,7 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 			(5::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 16:00:00', true, 'item'::VARCHAR, 'group_chat'::VARCHAR, true, true, true, false, false),
 			-- Owner-present and owner-absent meetings.
 			(6::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 17:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, true, false, false, true),
+			(6::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 17:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, true, false, false, false),
 			(6::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 17:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, true, false, false, false),
 			(7::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 18:00:00', false, 'meeting'::VARCHAR, 'meeting'::VARCHAR, false, true, false, false, false),
 			-- A duplicate linked-alias edge for canonical person 2.
@@ -65,6 +66,9 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 	assert.Equal(int64(3), chat)
 	assert.Equal(int64(4), total)
 	assert.Equal(ModalityChat|ModalityMeeting, modality)
+	var owners int
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM (`+query+`) WHERE canonical_id = 1`).Scan(&owners))
+	assert.Zero(owners)
 }
 
 func TestRelationshipTemperatureDailyExcludesUnsent(t *testing.T) {
@@ -72,7 +76,7 @@ func TestRelationshipTemperatureDailyExcludesUnsent(t *testing.T) {
 	_, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.ExecContext(t.Context(), `
 		CREATE TEMP TABLE synthetic_unsent_activity AS
-		SELECT * FROM (VALUES
+		SELECT *, 'message:' || message_id AS entry_key FROM (VALUES
 			(8::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 19:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, false, true, true, true, true),
 			(8::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 19:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, true, true, false, false, true)
 		) AS t(message_id, canonical_id, occurred_at, is_chat, entry_kind,

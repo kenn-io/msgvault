@@ -79,7 +79,7 @@ func Validate(
 			DatasetLogicalContributions,
 			"duplicate logical contribution keys",
 			`SELECT count(*) FROM (
-				SELECT relation_kind, entry_key, canonical_id, domain
+				SELECT relation_kind, entry_key, source_id, canonical_id, domain
 				FROM ` + logicalContributions + `
 				GROUP BY ALL HAVING count(*) > 1
 			)`,
@@ -134,22 +134,24 @@ func Validate(
 			 WHERE len(p.source_rollups) = 0
 			    OR (SELECT sum(item.activity_count)::BIGINT
 			        FROM unnest(p.source_rollups) AS source(item))
-			       IS DISTINCT FROM p.activity_count
+			       < p.activity_count
+			    OR (SELECT max(item.activity_count)::BIGINT
+			        FROM unnest(p.source_rollups) AS source(item)) > p.activity_count
 			    OR (SELECT sum(item.file_count)::BIGINT
 			        FROM unnest(p.source_rollups) AS source(item))
 			       IS DISTINCT FROM p.file_count
 			    OR (SELECT sum(item.meeting_count)::BIGINT
 			        FROM unnest(p.source_rollups) AS source(item))
-			       IS DISTINCT FROM p.meeting_count
-			    OR (SELECT min(item.first_at)::TIMESTAMP
-			        FROM unnest(p.source_rollups) AS source(item))
-			       IS DISTINCT FROM p.first_at
+			       < p.meeting_count
+			    OR (SELECT max(item.meeting_count)::BIGINT
+			        FROM unnest(p.source_rollups) AS source(item)) > p.meeting_count
+			    OR coalesce((SELECT min(item.first_at)::TIMESTAMP FROM unnest(p.source_rollups) AS source(item)) < p.first_at, (SELECT min(item.first_at)::TIMESTAMP FROM unnest(p.source_rollups) AS source(item)) IS DISTINCT FROM p.first_at)
 			    OR (SELECT max(item.last_at)::TIMESTAMP
 			        FROM unnest(p.source_rollups) AS source(item))
-			       IS DISTINCT FROM p.last_at
+			       < p.last_at
 			    OR (SELECT sum(item.count)::BIGINT
 			        FROM unnest(p.source_counts) AS source(item))
-			       IS DISTINCT FROM p.activity_count`,
+			       < p.activity_count`,
 		},
 		{
 			DatasetPeople,

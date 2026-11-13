@@ -48,7 +48,7 @@ func newMeetingCommandClient(t *testing.T) (*daemonclient.Client, []meetingimpor
 			Source: meetingimport.Source{Identifier: "meeting-command-unrelated", AccountEmail: "owner@other.example"},
 			Meeting: meetingimport.Meeting{
 				ExternalID: "two", Title: "Status review", StartedAt: "2026-04-11T10:00:00Z",
-				SummaryText: "Reviewed progress.",
+				SummaryText: "Reviewed progress.", Transcript: "Reviewed progress.",
 				Organizer:   &meetingimport.MeetingPerson{Name: "Other Owner", Email: "owner@other.example"},
 				Attendees:   []meetingimport.MeetingPerson{{Name: "Bob", Email: "bob@other.example"}},
 				ActionItems: &unrelatedActions,

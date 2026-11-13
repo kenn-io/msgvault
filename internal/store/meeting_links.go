@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strconv"
@@ -43,7 +44,7 @@ func ParseMeetingLinkRef(value string) (MeetingLinkRef, error) {
 }
 
 func (s *Store) meetingEventRows(ctx context.Context, predicate string, args []any, budget *int) ([]CalendarEventRow, error) {
-	rows, err := queryCalendarEventRowsWithinBudget(ctx, s.db, predicate, args, *budget)
+	rows, err := queryCalendarEventRowsWithinBudget(ctx, s.meetingSQLReader(ctx), predicate, args, *budget)
 	if err != nil {
 		return nil, err
 	}
@@ -52,11 +53,11 @@ func (s *Store) meetingEventRows(ctx context.Context, predicate string, args []a
 	for i := range rows {
 		owner, ok := owners[rows[i].SourceID]
 		if !ok {
-			source, err := s.GetSourceByIDContext(ctx, rows[i].SourceID)
-			if err != nil {
+			var config sql.NullString
+			if err := s.meetingSQLReader(ctx).QueryRowContext(ctx, `SELECT sync_config FROM sources WHERE id=?`, rows[i].SourceID).Scan(&config); err != nil {
 				return nil, err
 			}
-			owner = calendarMailbox(source.SyncConfig)
+			owner = calendarMailbox(config)
 			owners[rows[i].SourceID] = owner
 		}
 		rows[i].CalendarID = owner

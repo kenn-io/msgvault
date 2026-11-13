@@ -48,7 +48,7 @@ func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.R
 			Source: meetingimport.Source{Identifier: "meeting-mcp-unrelated", AccountEmail: "owner@other.example"},
 			Meeting: meetingimport.Meeting{
 				ExternalID: "second", Title: "MCP follow-up", StartedAt: "2026-06-01T10:00:00Z",
-				SummaryText: "Checked the MCP launch.",
+				SummaryText: "Checked the MCP launch.", Transcript: "Checked the MCP launch.",
 				Organizer:   &meetingimport.MeetingPerson{Name: "Other Owner", Email: "owner@other.example"},
 				Attendees:   []meetingimport.MeetingPerson{{Name: "Bob", Email: "bob@other.example"}},
 				ActionItems: &unrelatedActions,

@@ -5826,6 +5826,7 @@ func (g GCalCalendarError) Validate() error {
 
 type GCalEvent struct {
 	Attendees         []GCalAttendee     `json:"attendees,omitempty"`
+	AttendeesOmitted  *bool              `json:"attendeesOmitted,omitempty"`
 	Created           *time.Time         `json:"created,omitempty"`
 	Creator           *GCalPerson        `json:"creator,omitempty"`
 	Description       *string            `json:"description,omitzero"`

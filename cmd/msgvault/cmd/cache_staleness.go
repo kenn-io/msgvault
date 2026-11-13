@@ -14,7 +14,8 @@ import (
 
 // cacheStaleness describes why the analytics cache needs a rebuild.
 type cacheStaleness struct {
-	NeedsBuild bool
+	NeedsBuild          bool
+	HasMeetingTimeDrift bool
 	// HasUsablePublication distinguishes ordinary data drift, which may be
 	// throttled after a scheduled sync, from cache recovery conditions that
 	// must rebuild immediately. PublishedAt is valid only when this is true.
@@ -300,6 +301,10 @@ func cacheNeedsBuildLockedWithOptions(ctx context.Context, dbPath, analyticsDir 
 		HasUsablePublication: true,
 		PublishedAt:          state.PublishedAt,
 		Generation:           state.DatasetFingerprint,
+	}
+	if !state.NextMeetingAt.IsZero() && !derivedRefreshNow().Before(state.NextMeetingAt) {
+		result.HasMeetingTimeDrift = true
+		reasons = append(reasons, "meeting occurrence started")
 	}
 
 	if state.FullRebuildRequired {

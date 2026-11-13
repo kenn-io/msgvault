@@ -8,6 +8,7 @@ import type { GCalReminders } from "./gCalReminders";
 
 export interface GCalEvent {
   attendees?: GCalAttendee[];
+  attendeesOmitted?: boolean;
   created?: string;
   creator?: GCalPerson;
   description?: string;

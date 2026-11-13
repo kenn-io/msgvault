@@ -20,6 +20,10 @@ func TestMeetingLinkProjectionBackfill(t *testing.T) {
 	assert := assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, note := projectionFixture(t, st, "link-backfill", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	if !IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		_, err := st.db.Exec(`DROP TRIGGER trg_cache_meeting_details_update`)
+		require.NoError(err)
+	}
 	for _, query := range []string{
 		`DROP INDEX idx_meeting_details_link_key`,
 		`ALTER TABLE meeting_details DROP COLUMN link_key`,

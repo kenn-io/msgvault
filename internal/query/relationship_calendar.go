@@ -234,7 +234,14 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 	endLocal := startLocal.AddDate(1, 0, 0)
 	startUTC := startLocal.UTC()
 	endUTC := endLocal.UTC()
-	years := make([]string, 0, 2)
+	// An all-day start can fall on either side of its UTC civil date.
+	if civilStart := time.Date(request.Year, 1, 1, 0, 0, 0, 0, time.UTC).Add(-24 * time.Hour); civilStart.Before(startUTC) {
+		startUTC = civilStart
+	}
+	if civilEnd := time.Date(request.Year+1, 1, 1, 0, 0, 0, 0, time.UTC).Add(24 * time.Hour); civilEnd.After(endUTC) {
+		endUTC = civilEnd
+	}
+	var years []string
 	for year := startUTC.Year(); year <= endUTC.Add(-time.Nanosecond).Year(); year++ {
 		years = append(years, strconv.Itoa(year))
 	}
@@ -247,29 +254,39 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 		canonicalIDs = append(canonicalIDs, strconv.FormatInt(owner, 10))
 	}
 	cutoff := effectiveAt.UTC()
+	countingActivity := "relationship_counting_activity"
 	activity := fmt.Sprintf(`(
-		SELECT * FROM relationship_activity_expanded
-		WHERE occurred_year IN (%s)
-		  AND occurred_at >= TIMESTAMP '%s'
-		  AND occurred_at < TIMESTAMP '%s'
-		  AND canonical_id IN (%s)
-		  AND message_id IN (
-		    SELECT message_id FROM relationship_activity_expanded
-		    WHERE canonical_id = %d AND occurred_year IN (%s)
+		SELECT * FROM %[1]s
+		WHERE ((occurred_at >= TIMESTAMP '%[2]s'
+		  AND occurred_at < TIMESTAMP '%[3]s') OR entry_kind IN ('event', 'meeting'))
+		  AND (occurred_year IN (%[6]s) OR entry_kind IN ('event', 'meeting'))
+		  AND (canonical_id IN (%[4]s) OR entry_kind IN ('event', 'meeting'))
+		  AND entry_key IN (
+		    SELECT entry_key FROM %[1]s
+		    WHERE canonical_id = %[5]d
 		  )
 	)`,
-		strings.Join(years, ","),
+		countingActivity,
 		startUTC.Format("2006-01-02 15:04:05.999999999"),
 		endUTC.Format("2006-01-02 15:04:05.999999999"),
 		strings.Join(canonicalIDs, ","),
-		request.CanonicalID, strings.Join(years, ","),
+		request.CanonicalID,
+		strings.Join(years, ","),
 	)
 	facts := identityindex.RelationshipTemperatureFactsSQL(activity, cutoff)
 	rows, err := e.db.QueryContext(ctx, `
 		WITH relationship_facts AS (
 		`+facts+`
+		), dated_facts AS (
+		  SELECT f.*, CASE WHEN o.start_date IS NOT NULL THEN strftime(o.start_date, '%Y-%m-%d')
+		    ELSE strftime(timezone(?, timezone('UTC', f.occurred_at)), '%Y-%m-%d') END AS local_date
+		  FROM relationship_facts f
+		  LEFT JOIN (
+		    SELECT DISTINCT 'meeting:' || occurrence_key AS entry_key, occurred_at, start_date
+		    FROM read_parquet('`+quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingOccurrences))+`') WHERE start_date IS NOT NULL AND counted
+		  ) o ON o.entry_key=f.entry_key AND o.occurred_at=f.occurred_at
 		)
-		SELECT strftime(timezone(?, timezone('UTC', occurred_at)), '%Y-%m-%d') AS local_date,
+		SELECT local_date,
 		       count(*) FILTER (WHERE sent)::BIGINT AS sent_count,
 		       count(*) FILTER (WHERE received)::BIGINT AS received_count,
 		       count(*) FILTER (WHERE email)::BIGINT AS email_count,
@@ -277,11 +294,11 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 		       count(*) FILTER (WHERE meeting)::BIGINT AS meeting_count,
 		       count(*)::BIGINT AS total_count,
 		       bit_or(modality_mask)::UTINYINT AS modality_mask
-		FROM relationship_facts
-		WHERE canonical_id = ?
+		FROM dated_facts
+		WHERE canonical_id = ? AND local_date >= ? AND local_date < ?
 		GROUP BY local_date
 		ORDER BY local_date
-	`, request.TimezoneOrUTC(), request.CanonicalID)
+	`, request.TimezoneOrUTC(), request.CanonicalID, fmt.Sprintf("%04d-01-01", request.Year), fmt.Sprintf("%04d-01-01", request.Year+1))
 	if err != nil {
 		return nil, fmt.Errorf("query relationship calendar: %w", err)
 	}
@@ -310,6 +327,15 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 	case localEffectiveAt.Before(endLocal):
 		elapsedEnd = time.Date(localEffectiveAt.Year(), localEffectiveAt.Month(), localEffectiveAt.Day(),
 			0, 0, 0, 0, location).AddDate(0, 0, 1)
+	}
+	for day := range active {
+		date, err := time.ParseInLocation(time.DateOnly, day, location)
+		if err != nil {
+			return nil, fmt.Errorf("parse relationship calendar date: %w", err)
+		}
+		if dateEnd := date.AddDate(0, 0, 1); dateEnd.After(elapsedEnd) {
+			elapsedEnd = dateEnd
+		}
 	}
 	days := make([]RelationshipCalendarDay, 0, int(elapsedEnd.Sub(startLocal).Hours()/24)+1)
 	signals := make([]identityindex.DailyTemperatureSignals, 0, cap(days))

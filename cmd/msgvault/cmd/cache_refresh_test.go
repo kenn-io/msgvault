@@ -704,6 +704,15 @@ func TestScheduledCacheBuildDelay(t *testing.T) {
 		wantThrottle bool
 	}{
 		{
+			name: "meeting time drift",
+			staleness: cacheStaleness{
+				HasUsablePublication: true,
+				PublishedAt:          now.Add(-time.Minute),
+				HasMeetingTimeDrift:  true,
+			},
+			interval: 6 * time.Hour,
+		},
+		{
 			name: "disabled interval",
 			staleness: cacheStaleness{
 				HasUsablePublication: true,

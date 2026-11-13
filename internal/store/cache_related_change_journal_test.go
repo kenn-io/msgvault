@@ -184,3 +184,62 @@ func TestCacheRelatedChangeJournalTracksHiddenTextFlag(t *testing.T) {
 		WHERE seq > ? AND dataset = 'message_facts' AND message_id = ?`, baseline, messageID).Scan(&count))
 	assert.Equal(t, 1, count)
 }
+
+func TestMeetingOccurrenceJournalTriggersAfterSchema42Upgrade(t *testing.T) {
+	testutil.SkipIfPostgres(t, "analytics cache journal is SQLite-only")
+	f := storetest.New(t)
+	s := f.Store
+	ctx := t.Context()
+	event := f.NewMessage().WithSourceMessageID("event").Build()
+	event.MessageType = "calendar_event"
+	first, err := s.UpsertMessage(event)
+	require.NoError(t, err)
+	note := f.NewMessage().WithSourceMessageID("note").Build()
+	note.MessageType = "meeting_transcript"
+	second, err := s.UpsertMessage(note)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `DROP TRIGGER trg_cache_meeting_events_insert;
+		DROP TRIGGER trg_cache_meeting_sources_update;
+		DROP TRIGGER trg_cache_meeting_source_deletion_update;
+		DROP TRIGGER trg_cache_meeting_events_update;
+		DROP TRIGGER trg_cache_meeting_events_delete;
+		DROP TRIGGER trg_cache_meeting_details_update;
+		DROP TABLE meeting_link_decisions;
+		UPDATE archive_metadata SET value = '44' WHERE key = 'schema_version'`)
+	require.NoError(t, err)
+	require.NoError(t, s.InitSchemaUnlessCurrentContext(ctx))
+	version, err := s.SchemaVersionContext(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, store.SchemaVersion, version)
+	_, err = s.DB().ExecContext(ctx, `DELETE FROM meeting_details WHERE message_id=?`, second)
+	require.NoError(t, err)
+	var baseline int64
+	require.NoError(t, s.DB().QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&baseline))
+	_, err = s.DB().ExecContext(ctx, `UPDATE sources SET sync_config='{"calendar_id":"owner@example.com"}' WHERE id=?`, f.Source.ID)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `INSERT INTO calendar_events (message_id, projection_version, content_hash) VALUES (?, 1, 'first')`, first)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `UPDATE calendar_events SET content_hash='second' WHERE message_id=?`, first)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `DELETE FROM calendar_events WHERE message_id=?`, first)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `INSERT INTO meeting_details (message_id, projection_version, content_hash, content_json, action_coverage, transcript_state) VALUES (?, 1, 'first', '{"transcript":{"state":"empty"}}', '', 'empty')`, second)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `UPDATE meeting_details SET content_json='{"transcript":{"state":"available","text":"Notes"}}', transcript_state='available' WHERE message_id=?`, second)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `INSERT INTO meeting_link_decisions (left_message_id, left_kind, left_key, right_message_id, right_kind, right_key, decision) VALUES (?, 'evt', '', ?, 'msg', '', 'link')`, first, second)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `UPDATE meeting_link_decisions SET decision='split' WHERE left_message_id=? AND right_message_id=?`, first, second)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE left_message_id=? AND right_message_id=?`, first, second)
+	require.NoError(t, err)
+	var changes int
+	require.NoError(t, s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset='meeting_occurrences' AND message_id=0`, baseline).Scan(&changes))
+	assert.Equal(t, 8, changes)
+	_, err = s.DB().ExecContext(ctx, `UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`, first)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `UPDATE messages SET deleted_from_source_at=NULL WHERE id=?`, first)
+	require.NoError(t, err)
+	require.NoError(t, s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset='message_facts' AND message_id=?`, baseline, first).Scan(&changes))
+	assert.Equal(t, 2, changes)
+}

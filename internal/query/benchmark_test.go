@@ -242,6 +242,8 @@ func buildBenchData(tb testing.TB) *DuckDBEngine {
 		// No confirmed identities or linked participants in the benchmark
 		// fixture; write empty, schema-bearing files so RequiredParquetDirs
 		// stays complete.
+		{identityindex.EmptyMeetingOccurrencesSQL,
+			identityindex.DatasetMeetingOccurrences, identityindex.DatasetMeetingOccurrences + ".parquet"},
 		{"SELECT 0::BIGINT AS source_id, 0::BIGINT AS participant_id WHERE false",
 			datasetOwnerParticipants, datasetOwnerParticipants + ".parquet"},
 		{"SELECT 0::BIGINT AS participant_id, 0::BIGINT AS canonical_id WHERE false",

@@ -12,6 +12,52 @@ type candidateBudget struct {
 	limit, used int
 }
 
+type ruleSource struct {
+	next   rrule.Next
+	values []time.Time
+	done   bool
+	pulls  *int
+	wall   map[time.Time]wallResult
+}
+
+type wallResult struct {
+	instant time.Time
+	exists  bool
+}
+
+func (s *ruleSource) wallTime(anchor time.Time, zone *time.Location) (time.Time, bool) {
+	if result, ok := s.wall[anchor]; ok {
+		return result.instant, result.exists
+	}
+	instant, exists := firstLocalWallTime(anchor, zone)
+	if s.wall == nil {
+		s.wall = map[time.Time]wallResult{}
+	}
+	s.wall[anchor] = wallResult{instant: instant, exists: exists}
+	return instant, exists
+}
+
+func (s *ruleSource) cursor(until time.Time) rrule.Next {
+	i := 0
+	return func() (time.Time, bool) {
+		if i == len(s.values) && !s.done {
+			value, ok := s.next()
+			if ok {
+				s.values = append(s.values, value)
+				(*s.pulls)++
+			} else {
+				s.done = true
+			}
+		}
+		if i == len(s.values) || s.values[i].After(until) {
+			return time.Time{}, false
+		}
+		value := s.values[i]
+		i++
+		return value, true
+	}
+}
+
 func (b *candidateBudget) charge() error {
 	b.used++
 	if err := b.ctx.Err(); err != nil {
@@ -113,9 +159,10 @@ type ruleIterator struct {
 	count        int
 	generated    int
 	first        bool
+	shared       *ruleSource
 }
 
-func (s Set) ruleIterator(opt rrule.ROption, until time.Time, budget *candidateBudget) (*ruleIterator, error) {
+func (s Set) ruleIterator(opt rrule.ROption, until time.Time, budget *candidateBudget, shared *ruleSource) (*ruleIterator, error) {
 	if !until.IsZero() && (opt.Until.IsZero() || until.Before(opt.Until)) {
 		opt.Until = until
 	}
@@ -127,6 +174,11 @@ func (s Set) ruleIterator(opt rrule.ROption, until time.Time, budget *candidateB
 	if !s.AllDay {
 		opt.Dtstart = civilTime(opt.Dtstart.In(s.location()))
 		opt.Until = civilHorizon(opt.Until, s.location())
+	}
+	if shared != nil {
+		iterator.nextRaw = shared.cursor(opt.Until)
+		iterator.shared = shared
+		return iterator, nil
 	}
 	// COUNT applies to existing civil dates and wall times.
 	opt.Count = 0
@@ -150,7 +202,11 @@ func (i *ruleIterator) next() (time.Time, bool, error) {
 		value := anchor
 		if !i.set.AllDay {
 			var exists bool
-			value, exists = firstLocalWallTime(anchor, i.set.location())
+			if i.shared == nil {
+				value, exists = firstLocalWallTime(anchor, i.set.location())
+			} else {
+				value, exists = i.shared.wallTime(anchor, i.set.location())
+			}
 			if !exists {
 				continue // A nonexistent wall time must not consume COUNT.
 			}

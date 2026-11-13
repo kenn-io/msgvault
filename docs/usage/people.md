@@ -29,6 +29,14 @@ Ordinary profile editing and identity discovery use your archive. Briefs,
 automatic fact extraction, semantic person search, and external enrichment
 need separate provider configuration and consent. You can edit saved profiles without enabling them.
 
+People and relationship counts include each attended calendar occurrence once,
+even when it has several linked notes. A calendar event counts without notes;
+an available transcript can count when someone declined the calendar event.
+Cancelled occurrences and transcripts that aren't available do not count on
+their own. Changes appear after the next cache refresh, and a future meeting
+counts at the first cache check after it starts. An all-day meeting starts at
+midnight in its own time zone and keeps its date on the heat calendar.
+
 ## Understand the records
 
 - A **source identity** is an address or handle that belongs to you in one
@@ -168,6 +176,8 @@ person and UID.
 ### Browse people by last contact
 
 Drafts and unsent messages don't set last contact, cadence, or relationship temperature. They stay out of the relationship calendar, relationship list, person and domain timelines, and chat inbox summaries. Explore, search, and the Files view still include them for lookup. A person's or domain's Files tab, `person files`, and MCP `search_person_files` list only files on sent or received mail. A contact you've only drafted to reads as existing with no sent or received messages and no relationship calendar. A person ID that doesn't exist reads as not found.
+
+A derived cache refresh uses the current date to recalculate relationship temperature, including when meeting changes trigger the refresh.
 
 Cached views update after a cache refresh. Full checks at startup and during explicit cache builds detect sent-state changes. Scheduled post-sync refresh checks indexed changes first. If those already require a build, `min_rebuild_interval` can delay both the full sent-state check and the visible update. If indexed state is clean, sent state is checked before that interval is applied. Ordinary requests use a cache marker check; they don't scan the archive for sent-state changes.
 

@@ -9,7 +9,7 @@ import (
 // analytical cache. Bump it when signal attribution or score composition
 // changes independently of the Parquet schema version.
 const (
-	RelationshipScoreVersion  = 1
+	RelationshipScoreVersion  = 2
 	temperatureWeightSent     = 2.0
 	temperatureWeightReceived = 1.0
 	temperatureWeightMeetings = 3.0

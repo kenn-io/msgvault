@@ -44,19 +44,19 @@ func newMeetingQueryFixture(t *testing.T) *meetingQueryFixture {
 	fixture.meetingIDs = []int64{
 		fixture.persistMeeting(t, sourceOne.ID, "same-external-id", "Provider duration",
 			new(time.Date(2026, time.January, 10, 10, 0, 0, 0, time.UTC)),
-			`{"summary_text":"Provider summary","started_at":"2026-01-05T09:00:00Z","ended_at":"2026-01-05T09:30:00Z","recording_url":"https://signed.example.test/token","organizer":{"name":"Organizer","email":"Archived-Organizer@Example.test"},"attendees":[{"name":"Organizer","email":"Archived-Organizer@Example.test"},{"name":"Unresolved guest"}],"action_items":[{"source_id":"provider-0","title":"Send 100% plan","description":"Literal percent","assignee_name":"Archived Attendee","assignee_email":"ALIAS@Example.test","status":"open","due_date":"next week"},{"source_id":"provider-1","title":"Review_under_score","description":"Literal underscore","assignee_name":"Name only","status":"done"}]}`),
+			`{"transcript":"Notes","summary_text":"Provider summary","started_at":"2026-01-05T09:00:00Z","ended_at":"2026-01-05T09:30:00Z","recording_url":"https://signed.example.test/token","organizer":{"name":"Organizer","email":"Archived-Organizer@Example.test"},"attendees":[{"name":"Organizer","email":"Archived-Organizer@Example.test"},{"name":"Unresolved guest"}],"action_items":[{"source_id":"provider-0","title":"Send 100% plan","description":"Literal percent","assignee_name":"Archived Attendee","assignee_email":"ALIAS@Example.test","status":"open","due_date":"next week"},{"source_id":"provider-1","title":"Review_under_score","description":"Literal underscore","assignee_name":"Name only","status":"done"}]}`),
 		fixture.persistMeeting(t, sourceTwo.ID, "same-external-id", "Scheduled duration",
 			new(time.Date(2026, time.January, 5, 9, 0, 0, 0, time.UTC)),
-			`{"summary_markdown":"Scheduled summary","calendar_event":{"scheduled_start_time":"2026-01-10T10:00:00Z","scheduled_end_time":"2026-01-10T11:00:00Z","organiser":"organizer@example.test"},"attendees":[{"name":"Organizer","email":"organizer@example.test"}],"transcript":[]}`),
+			`{"summary_markdown":"Scheduled summary","calendar_event":{"scheduled_start_time":"2026-01-10T10:00:00Z","scheduled_end_time":"2026-01-10T11:00:00Z","organiser":"organizer@example.test"},"attendees":[{"name":"Organizer","email":"organizer@example.test"}],"transcript":[{"text":"Notes"}]}`),
 		fixture.persistMeeting(t, sourceOne.ID, "transcript-span", "Transcript duration",
 			new(time.Date(2026, time.January, 10, 10, 0, 0, 0, time.UTC)),
 			`{"summary_text":"Transcript summary","transcript_segments":[{"speaker":"One","text":"Start","offset_seconds":0},{"speaker":"Two","text":"Finish","offset_seconds":600}],"action_items":[{"source_id":"span-0","title":"Wildcard %_ literal","assignee_email":"alias@example.test","status":"in_progress"},{}]}`),
 		fixture.persistMeeting(t, sourceOne.ID, "unknown-duration", "Unknown duration",
 			new(time.Date(2026, time.February, 2, 8, 0, 0, 0, time.UTC)),
-			`{"summary_text":"Unknown summary","action_items":null}`),
+			`{"transcript":"Notes","summary_text":"Unknown summary","action_items":null}`),
 	}
 	fixture.undatedID = fixture.persistMeeting(t, sourceOne.ID, "undated", "Undated meeting", nil,
-		`{"summary_text":"Undated summary","action_items":[{"source_id":"undated-0","title":"Undated follow-up","status":"pending"}]}`)
+		`{"transcript":"Notes","summary_text":"Undated summary","action_items":[{"source_id":"undated-0","title":"Undated follow-up","status":"pending"}]}`)
 	fixture.localDelete = fixture.persistMeeting(t, sourceOne.ID, "local-delete", "Locally deleted", nil,
 		`{"started_at":"2026-01-01T00:00:00Z","ended_at":"2026-01-01T00:01:00Z","action_items":[]}`)
 	fixture.missingProj = fixture.persistMeeting(t, sourceOne.ID, "missing-projection", "Missing projection", nil,

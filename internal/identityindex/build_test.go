@@ -306,6 +306,7 @@ func assertIncrementalDatasetsMatchFullBuild(
 ) {
 	t.Helper()
 	fullRoot := t.TempDir()
+	writeRelationshipParquet(t, db, fullRoot, DatasetMeetingOccurrences, `SELECT * FROM read_parquet('`+quoteSQLString(relationshipParquetGlob(stagedRoot, DatasetMeetingOccurrences))+`')`)
 	appendDatasets := map[string]string{
 		"messages": "UNION ALL", "message_recipients": "UNION ALL",
 		"attachments": "UNION ALL", "conversations": "UNION",
@@ -387,9 +388,10 @@ func testExpandedActivity(baseRoot string, activityRoots ...string) string {
 	base := func(dataset string) string {
 		return readParquetRelation([]string{parquetDatasetGlob(baseRoot, dataset)}, false)
 	}
-	return ExpandedActivityRelation(readParquetRelation(paths, true),
+	expanded := ExpandedActivityRelation(readParquetRelation(paths, true),
 		base("conversation_participants"), base("participants"),
 		base("participant_clusters"), base("owner_participants"))
+	return MeetingOccurrenceActivitySQL(expanded, expanded, base(DatasetMeetingOccurrences), base("participants"), base("participant_identifiers"), base("participant_clusters"), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
 }
 
 func TestBuildIncrementalChatContributionsMatchFullReductionAcrossYears(t *testing.T) {
@@ -768,6 +770,19 @@ func TestValidateRejectsDuplicateActivityGrain(t *testing.T) {
 	require.ErrorContains(t, err, "duplicate message/canonical/domain keys")
 }
 
+func TestValidateRejectsSourceMeetingCountAboveTotal(t *testing.T) {
+	root, db := writeRelationshipBaseFixture(t, false)
+	_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
+	require.NoError(t, err)
+	oldRoot := moveRelationshipDatasetAside(t, root, DatasetPeople)
+	source := quoteSQLString(relationshipParquetGlob(oldRoot, DatasetPeople))
+	writeRelationshipParquet(t, db, root, DatasetPeople, `
+		SELECT * REPLACE (list_transform(source_rollups, lambda x: struct_update(x, meeting_count := meeting_count + 1)) AS source_rollups)
+		FROM read_parquet('`+source+`')`)
+	err = Validate(t.Context(), db, ValidationOptions{OutputRoot: root, RequiredOutputDatasets: RequiredDatasets})
+	require.ErrorContains(t, err, "source rollups do not decompose identity totals")
+}
+
 func TestValidateRejectsInvalidRelationshipTemperatureSummary(t *testing.T) {
 	root, db := writeRelationshipBaseFixture(t, false)
 	_, err := Build(t.Context(), db, BuildOptions{
@@ -838,6 +853,7 @@ func writeRelationshipBaseFixture(tb testing.TB, empty bool) (string, *sql.DB) {
 	)
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, db.Close()) })
+	writeRelationshipParquet(tb, db, root, DatasetMeetingOccurrences, EmptyMeetingOccurrencesSQL)
 
 	where := ""
 	if empty {
@@ -1070,4 +1086,81 @@ func TestCollectCacheStatsRelayedSenderEnvelope(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, stats.UniqueSenders)
 	assert.EqualValues(t, 3, stats.UniqueDomains)
+}
+
+func TestMeetingOccurrenceCountsInRelationshipIndex(t *testing.T) {
+	root, db := writeRelationshipBaseFixture(t, false)
+	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE meeting_messages AS
+		SELECT * REPLACE ('calendar_event' AS message_type, 0 AS attachment_count) FROM read_parquet(?)
+		UNION ALL SELECT * REPLACE (101::BIGINT AS id, 'meeting_transcript' AS message_type, 0 AS attachment_count) FROM read_parquet(?)`,
+		parquetDatasetGlob(root, "messages"), parquetDatasetGlob(root, "messages"))
+	require.NoError(t, err)
+	replaceRelationshipParquet(t, db, root, "messages", `SELECT * FROM meeting_messages`)
+	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type, '' AS display_name UNION ALL SELECT 100, 2, 'to', '' UNION ALL SELECT 101, 1, 'from', '' UNION ALL SELECT 101, 2, 'to', ''`)
+	replaceRelationshipParquet(t, db, root, DatasetMeetingOccurrences, `SELECT * FROM (VALUES
+		(100::BIGINT, 100::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0)),
+		(101::BIGINT, 100::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0)),
+		(100::BIGINT, 100::BIGINT, 'second'::VARCHAR, TIMESTAMP '2026-07-27', NULL::DATE, true, []::VARCHAR[], -9223372036854775810::DECIMAL(38,0))
+	) AS t(`+MeetingOccurrenceColumns+`)`)
+	_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root, EffectiveAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)})
+	require.NoError(t, err)
+	var meetings, dailyMeetings int64
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT meeting_count FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetPeople)).Scan(&meetings))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sum(meeting_units) FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetRelationshipDaily)).Scan(&dailyMeetings))
+	assert.EqualValues(t, 2, meetings)
+	assert.EqualValues(t, 2, dailyMeetings)
+}
+
+func TestMeetingAttachmentUsesOneSourceAcrossOccurrences(t *testing.T) {
+	root, db := writeRelationshipBaseFixture(t, false)
+	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE meeting_messages AS
+		SELECT * REPLACE ('calendar_event' AS message_type, 0 AS attachment_count) FROM read_parquet(?)
+		UNION ALL SELECT * REPLACE (101::BIGINT AS id, 2::BIGINT AS source_id, 'meeting_transcript' AS message_type, 1 AS attachment_count) FROM read_parquet(?)
+		UNION ALL SELECT * REPLACE (102::BIGINT AS id, 2::BIGINT AS source_id, 'calendar_event' AS message_type, 0 AS attachment_count) FROM read_parquet(?)`,
+		parquetDatasetGlob(root, "messages"), parquetDatasetGlob(root, "messages"), parquetDatasetGlob(root, "messages"))
+	require.NoError(t, err)
+	replaceRelationshipParquet(t, db, root, "messages", `SELECT * FROM meeting_messages`)
+	replaceRelationshipParquet(t, db, root, "sources", `SELECT * FROM (VALUES (1::BIGINT, 'owner@example.com', 'gmail'), (2::BIGINT, 'owner@example.com', 'other')) AS t(id, account_email, source_type)`)
+	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type, '' AS display_name UNION ALL SELECT 100, 2, 'to', '' UNION ALL SELECT 101, 1, 'from', '' UNION ALL SELECT 101, 2, 'to', '' UNION ALL SELECT 102, 1, 'from', '' UNION ALL SELECT 102, 2, 'to', ''`)
+	replaceRelationshipParquet(t, db, root, "attachments", `SELECT 1::BIGINT AS attachment_id, 101::BIGINT AS message_id, 12::BIGINT AS size, 'file.txt' AS filename, 'text/plain' AS mime_type`)
+	replaceRelationshipParquet(t, db, root, DatasetMeetingOccurrences, `SELECT t.* FROM (VALUES
+		(100::BIGINT, 100::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0)),
+		(101::BIGINT, 100::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0)),
+		(102::BIGINT, 102::BIGINT, 'second', TIMESTAMP '2026-07-21', NULL::DATE, true, []::VARCHAR[], -9223372036854775810::DECIMAL(38,0)),
+		(101::BIGINT, 102::BIGINT, 'second', TIMESTAMP '2026-07-21', NULL::DATE, true, []::VARCHAR[], -9223372036854775810::DECIMAL(38,0))
+	) AS t(`+MeetingOccurrenceColumns+`)`)
+	_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root, EffectiveAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)})
+	require.NoError(t, err)
+	require.NoError(t, Validate(t.Context(), db, ValidationOptions{OutputRoot: root, RequiredOutputDatasets: RequiredDatasets}))
+	var activities, meetings, files int64
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT rollup.activity_count, rollup.meeting_count, rollup.file_count FROM (SELECT unnest(source_rollups) AS rollup FROM read_parquet(?) WHERE canonical_id=2) WHERE rollup.source_id=1`, relationshipParquetGlob(root, DatasetPeople)).Scan(&activities, &meetings, &files))
+	assert.EqualValues(t, 1, activities)
+	assert.EqualValues(t, 1, meetings)
+	assert.EqualValues(t, 1, files)
+	var totalFiles int64
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT file_count FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetPeople)).Scan(&totalFiles))
+	assert.EqualValues(t, 1, totalFiles)
+}
+
+func TestMeetingDomainStaysWithItsSource(t *testing.T) {
+	root, db := writeRelationshipBaseFixture(t, false)
+	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE meeting_messages AS
+		SELECT * REPLACE ('calendar_event' AS message_type, 0 AS attachment_count) FROM read_parquet(?)
+		UNION ALL SELECT * REPLACE (101::BIGINT AS id, 2::BIGINT AS source_id, 'meeting_transcript' AS message_type, 0 AS attachment_count) FROM read_parquet(?)`,
+		parquetDatasetGlob(root, "messages"), parquetDatasetGlob(root, "messages"))
+	require.NoError(t, err)
+	replaceRelationshipParquet(t, db, root, "messages", `SELECT * FROM meeting_messages`)
+	replaceRelationshipParquet(t, db, root, "sources", `SELECT * FROM (VALUES (1::BIGINT, 'owner@example.com', 'gmail'), (2::BIGINT, 'owner@example.com', 'other')) AS t(id, account_email, source_type)`)
+	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type, '' AS display_name UNION ALL SELECT 100, 2, 'to', '' UNION ALL SELECT 101, 1, 'from', ''`)
+	replaceRelationshipParquet(t, db, root, DatasetMeetingOccurrences, `SELECT * FROM (VALUES
+		(100::BIGINT, 100::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0)),
+		(101::BIGINT, 100::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0))
+	) AS t(`+MeetingOccurrenceColumns+`)`)
+	_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root, EffectiveAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)})
+	require.NoError(t, err)
+	var sources int
+	var first, last time.Time
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT len(source_counts), first_at, last_at FROM read_parquet(?) WHERE domain='example.net'`, relationshipParquetGlob(root, DatasetDomains)).Scan(&sources, &first, &last))
+	assert.Equal(t, 1, sources)
+	assert.Equal(t, first, last)
 }

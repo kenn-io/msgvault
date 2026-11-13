@@ -2,6 +2,7 @@ package identityindex
 
 import (
 	"fmt"
+	"time"
 
 	"go.kenn.io/msgvault/internal/calevent"
 )
@@ -243,4 +244,34 @@ func RelayAddressSubquery(messageID, recipients string) string {
 // RelayAbsentExpr prevents a linked author from replacing the relay sender.
 func RelayAbsentExpr(messageID, recipients string) string {
 	return "NOT EXISTS (SELECT 1 FROM " + recipients + " mr_guard WHERE mr_guard.message_id = " + messageID + " AND mr_guard.recipient_type = 'from' AND mr_guard.is_relayed)"
+}
+
+// MeetingOccurrenceActivitySQL projects meeting activity onto counted occurrences.
+// All arguments are trusted SQL relations or an effective cutoff from the cache.
+func MeetingOccurrenceActivitySQL(activity, anchors, occurrences, participants, identifiers, clusters string, cutoff time.Time) string {
+	return MeetingOccurrenceActivityAtSQL(activity, anchors, occurrences, participants, identifiers, clusters, "TIMESTAMP '"+cutoff.UTC().Format("2006-01-02 15:04:05.999999999")+"'")
+}
+
+func MeetingOccurrenceActivityAtSQL(activity, anchors, occurrences, participants, identifiers, clusters, cutoff string) string {
+	return fmt.Sprintf(`(
+SELECT f.*, 'message:' || f.message_id AS entry_key, f.message_id::DECIMAL(38,0) AS entry_num, f.message_id AS anchor_message_id
+FROM %s f WHERE f.entry_kind NOT IN ('event', 'meeting')
+UNION ALL
+SELECT f.* REPLACE (coalesce(o.occurred_at, f.occurred_at) AS occurred_at, coalesce(anchor.source_id, f.source_id) AS source_id, coalesce(anchor.source_type, f.source_type) AS source_type),
+       CASE WHEN o.message_id IS NULL THEN 'message:' || f.message_id ELSE 'meeting:' || o.occurrence_key END AS entry_key,
+       coalesce(o.occurrence_id, f.message_id::DECIMAL(38,0)) AS entry_num, coalesce(o.anchor_message_id, f.message_id) AS anchor_message_id
+FROM %s f
+LEFT JOIN %s o ON o.message_id = f.message_id
+LEFT JOIN (SELECT message_id, any_value(source_id) AS source_id, any_value(source_type) AS source_type FROM %s GROUP BY message_id) anchor ON anchor.message_id = o.anchor_message_id
+LEFT JOIN (
+    SELECT mo.message_id, mo.occurrence_key, list(DISTINCT coalesce(c.canonical_id, p.participant_id)) AS declined_ids
+    FROM %s mo, unnest(mo.declined_emails) d(email)
+    JOIN (SELECT id AS participant_id, lower(trim(email_address)) AS email FROM %s WHERE email_address IS NOT NULL
+          UNION ALL SELECT participant_id, lower(trim(identifier_value)) FROM %s WHERE identifier_type='email') p ON p.email=d.email
+    LEFT JOIN %s c ON c.participant_id = p.participant_id
+    GROUP BY mo.message_id, mo.occurrence_key
+) declined ON declined.message_id=o.message_id AND declined.occurrence_key=o.occurrence_key
+WHERE f.entry_kind IN ('event', 'meeting') AND (o.message_id IS NULL OR (o.counted AND NOT coalesce(list_contains(declined.declined_ids, f.canonical_id), false)))
+  AND coalesce(o.occurred_at, f.occurred_at) <= %s
+)`, activity, activity, occurrences, anchors, occurrences, participants, identifiers, clusters, cutoff)
 }

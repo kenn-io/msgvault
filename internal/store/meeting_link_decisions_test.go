@@ -34,11 +34,29 @@ func TestMeetingDecisionLargeGroupMemory(t *testing.T) {
 	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	root, _ := g.reduce()
+	root, _, _ := g.reduce()
 	runtime.ReadMemStats(&after)
 	r.Equal(root(group[0].ref()), root(extra.ref()))
 	r.Equal(root(group[0].ref()), root(group[1199].ref()))
 	r.Less(after.TotalAlloc-before.TotalAlloc, uint64(100<<20), "joining a large group must not retain every pair")
+}
+
+func TestMeetingDecisionCopyRootsKeepOccurrencesSeparate(t *testing.T) {
+	r := require.New(t)
+	first := meetingDecisionEndpoint{ID: 1, Kind: meetingRefEvent, Key: "20270314"}
+	copyEvent := meetingDecisionEndpoint{ID: 2, Kind: meetingRefEvent, Key: "20270314"}
+	second := meetingDecisionEndpoint{ID: 1, Kind: meetingRefEvent, Key: "20270321"}
+	note := meetingDecisionEndpoint{ID: 3, Kind: meetingRefMessage}
+	g := meetingDecisionGraph{nodes: map[string]meetingDecisionNode{}}
+	for _, endpoint := range []meetingDecisionEndpoint{first, copyEvent, second, note} {
+		g.nodes[endpoint.ref()] = meetingDecisionNode{endpoint: endpoint}
+	}
+	g.groups = [][]meetingDecisionEndpoint{{first, copyEvent}}
+	g.candidates = []meetingDecisionEdge{{a: first, b: note, decision: "link"}, {a: second, b: note, decision: "link"}}
+	root, _, copies := g.reduce()
+	r.Equal(root(first.ref()), root(second.ref()))
+	r.Equal(copies[first.ref()], copies[copyEvent.ref()])
+	r.NotEqual(copies[first.ref()], copies[second.ref()])
 }
 
 func TestMeetingLinkDecisionReadsOnlyRequestedOccurrence(t *testing.T) {

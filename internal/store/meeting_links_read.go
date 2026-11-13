@@ -84,6 +84,38 @@ func meetingUIDKeys(uid string, at time.Time) []meetingLinkKey {
 	return []meetingLinkKey{canonicalMeetingKey("ical_uid", "", uid, &at)}
 }
 
+func meetingKeyMatch(key meetingLinkKey, matches []CalendarOccurrence) (ambiguous, allowNotes bool) {
+	identities := map[string]bool{}
+	for _, o := range matches {
+		if o.original.AllDay {
+			identities["date:"+o.original.Date] = true
+		} else if o.original != (calrecur.Identity{}) {
+			identities["time:"+o.original.Instant.UTC().Format(time.RFC3339Nano)] = true
+		} else if o.AllDay && !o.Start.IsZero() {
+			identities["date:"+o.StartDate] = true
+		} else if !o.Start.IsZero() {
+			identities["time:"+o.Start.UTC().Format(time.RFC3339Nano)] = true
+		}
+	}
+	_, _, instance := calrecur.ParseInstanceID(key[2])
+	return len(identities) > 1, key[0] != "google_event_id" || instance || len(identities) == 1 || len(identities) == 0 && len(matches) > 0
+}
+
+// meetingMatchGroup selects the copies and notes proved by one matching key.
+func meetingMatchGroup(key meetingLinkKey, matches []CalendarOccurrence, notes []int64, ambiguousNotes bool) ([]CalendarOccurrence, []int64) {
+	ambiguous, allowNotes := meetingKeyMatch(key, matches)
+	if ambiguous {
+		if allowNotes && ambiguousNotes {
+			return nil, notes
+		}
+		return nil, nil
+	}
+	if !allowNotes {
+		notes = nil
+	}
+	return matches, notes
+}
+
 // meetingBound reports an unavailable time as nil.
 func meetingBound(at time.Time) *time.Time {
 	if at.IsZero() {
@@ -163,7 +195,7 @@ func (s *Store) meetingExpand(ctx context.Context, rows []CalendarEventRow, at t
 	if err != nil {
 		return CalendarOccurrencePage{}, err
 	}
-	return s.expandCalendarRows(ctx, rows, at, at.Add(time.Second), false, budget)
+	return s.expandCalendarRows(ctx, rows, at, at.Add(time.Second), false, budget, nil)
 }
 
 func (s *Store) meetingOccurrencesForKeys(ctx context.Context, keys []meetingLinkKey, budget *int, unexpandable *[]CalendarUnexpandable) (map[meetingLinkKey][]CalendarOccurrence, error) {
@@ -382,7 +414,7 @@ func (s *Store) meetingAutomaticRecordContext(ctx context.Context, ref MeetingLi
 				if edit.Event.Original == nil || edit.Event.Original.Key() != ref.Identity.Key() {
 					continue
 				}
-				page, err := s.expandCalendarRows(ctx, []CalendarEventRow{edit}, at, at.Add(time.Second), false, budget)
+				page, err := s.expandCalendarRows(ctx, []CalendarEventRow{edit}, at, at.Add(time.Second), false, budget, nil)
 				if err != nil {
 					return record, err
 				}
@@ -429,38 +461,8 @@ func (s *Store) meetingAutomaticRecordContext(ctx context.Context, ref MeetingLi
 			return record, err
 		}
 		for _, key := range pending {
-			matched := matches[key]
-			identities := map[string]bool{}
-			for _, o := range matched {
-				if o.original == (calrecur.Identity{}) && o.Start.IsZero() {
-					continue
-				}
-				if o.original.AllDay {
-					identities["date:"+o.original.Date] = true
-					continue
-				}
-				if o.original == (calrecur.Identity{}) && o.AllDay {
-					identities["date:"+o.StartDate] = true
-					continue
-				}
-				original := o.Start
-				if o.original != (calrecur.Identity{}) {
-					original = o.original.Instant
-				}
-				identities["time:"+original.UTC().Format(time.RFC3339Nano)] = true
-			}
-			_, _, instance := calrecur.ParseInstanceID(key[2])
-			allowNotes := key[0] != "google_event_id" || instance || len(identities) == 1 || len(identities) == 0 && len(matched) > 0
-			if len(identities) > 1 {
-				// Notes with exact keys remain peers even if calendar matches are ambiguous.
-				if allowNotes && ref.Kind == meetingRefMessage && len(copies) == 0 {
-					record.MessageIDs = append(record.MessageIDs, notes[key.text()]...)
-				}
-				continue
-			}
-			if allowNotes {
-				record.MessageIDs = append(record.MessageIDs, notes[key.text()]...)
-			}
+			matched, members := meetingMatchGroup(key, matches[key], notes[key.text()], ref.Kind == meetingRefMessage && len(copies) == 0)
+			record.MessageIDs = append(record.MessageIDs, members...)
 			copies = append(copies, matched...)
 			for _, occurrence := range matched {
 				keys = append(keys, occurrenceKeys(occurrence)...)

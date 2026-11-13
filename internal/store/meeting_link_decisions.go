@@ -79,7 +79,7 @@ func (s *Store) resolveMeetingMessage(ctx context.Context, id int64) (int64, boo
 		var hidden bool
 		var next sql.NullInt64
 		scope, args := sourceScopeClause(ctx, "m.source_id")
-		err := s.db.QueryRowContext(ctx, `SELECT m.deleted_at IS NOT NULL, COALESCE((SELECT survivor_message_id FROM meeting_copy_survivors WHERE message_id=m.id AND m.delete_batch_id IS NOT NULL), (SELECT survivor_message_id FROM source_merge_messages WHERE message_id=m.id)) FROM messages m WHERE m.id=?`+scope, append([]any{id}, args...)...).Scan(&hidden, &next)
+		err := s.meetingSQLReader(ctx).QueryRowContext(ctx, `SELECT m.deleted_at IS NOT NULL, COALESCE((SELECT survivor_message_id FROM meeting_copy_survivors WHERE message_id=m.id AND m.delete_batch_id IS NOT NULL), (SELECT survivor_message_id FROM source_merge_messages WHERE message_id=m.id)) FROM messages m WHERE m.id=?`+scope, append([]any{id}, args...)...).Scan(&hidden, &next)
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, false, nil
 		}
@@ -131,7 +131,7 @@ func (s *Store) meetingOccurrenceKey(ctx context.Context, endpoint meetingDecisi
 	endpoint.ID = id
 	if endpoint.Kind == meetingRefMessage {
 		var exists bool
-		err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM messages WHERE id=? AND message_type='meeting_transcript')`, id).Scan(&exists)
+		err := s.meetingSQLReader(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM messages WHERE id=? AND message_type='meeting_transcript')`, id).Scan(&exists)
 		if err != nil {
 			return endpoint, err
 		}
@@ -240,7 +240,7 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			if err != nil {
 				return err
 			}
-			root, links := graph.reduce()
+			root, links, _ := graph.reduce()
 			for _, link := range links {
 				if root(link.a.ref()) == root(link.b.ref()) {
 					active = append(active, link)
@@ -397,7 +397,7 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			if err != nil {
 				return err
 			}
-			root, _ := graph.reduce()
+			root, _, _ := graph.reduce()
 			if (root(ca.ref()) == root(cb.ref())) != (state == "link") {
 				for _, edge := range graph.candidates {
 					if edge.id != insertedID && edge.decision == "split" && ((root(edge.a.ref()) == root(ca.ref()) && root(edge.b.ref()) == root(cb.ref())) || (root(edge.b.ref()) == root(ca.ref()) && root(edge.a.ref()) == root(cb.ref()))) {

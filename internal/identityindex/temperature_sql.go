@@ -21,11 +21,11 @@ func RelationshipTemperatureFactsSQL(activity string, effectiveAt time.Time) str
 	cutoff := effectiveAt.UTC().Format("2006-01-02 15:04:05.999999999")
 	return fmt.Sprintf(`
 WITH message_owner AS (
-	SELECT message_id, bool_or(is_owner) AS owner_present
+	SELECT entry_key, bool_or(is_owner) AS owner_present
 	FROM %[1]s
-	GROUP BY message_id
+	GROUP BY entry_key
 ), person_messages AS (
-	SELECT f.message_id, f.canonical_id,
+	SELECT f.entry_key, min(f.message_id) AS message_id, f.canonical_id,
 	       min(f.occurred_at)::TIMESTAMP AS occurred_at,
 	       bool_or(f.is_chat) AS is_chat,
 	       arg_min(f.entry_kind, f.occurred_at)::VARCHAR AS entry_kind,
@@ -37,9 +37,9 @@ WITH message_owner AS (
 	       bool_or(f.is_owner) AS person_is_owner,
 	       bool_or(o.owner_present) AS owner_present
 	FROM %[1]s f
-	JOIN message_owner o USING (message_id)
+	JOIN message_owner o USING (entry_key)
 	WHERE f.canonical_id IS NOT NULL
-	  AND NOT f.is_owner
+	  AND (NOT f.is_owner OR f.entry_kind IN ('event', 'meeting'))
 	  AND NOT f.unsent
 	  AND f.occurred_at <= TIMESTAMP '%[2]s'
 	  AND (
@@ -53,7 +53,7 @@ WITH message_owner AS (
 	      OR (NOT f.is_chat AND f.entry_kind = 'email'
 	          AND f.is_direct AND (f.is_from_me OR f.is_author))
 	  )
-	GROUP BY f.message_id, f.canonical_id
+	GROUP BY f.entry_key, f.canonical_id
 ), classified AS (
 	SELECT *,
 	       entry_kind IN ('event', 'meeting') AS is_meeting,
@@ -85,7 +85,7 @@ WITH message_owner AS (
 	FROM classified
 	WHERE qualifies
 )
-SELECT message_id, canonical_id, occurred_at,
+SELECT entry_key, message_id, canonical_id, occurred_at,
 	   sent, received,
 	   (NOT is_meeting AND NOT is_chat) AS email,
 	   (NOT is_meeting AND is_chat) AS chat,

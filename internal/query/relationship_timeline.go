@@ -22,7 +22,7 @@ const (
 // FirstAt is only meaningful for chat_burst rows (the earliest message in
 // the burst); for single-message rows it equals OccurredAt.
 type TimelineRow struct {
-	Key        string    `json:"key"`  // message:<id> | burst:<source>:<conversation>:<yyyy-mm-dd>
+	Key        string    `json:"key"`  // message:<id> | meeting:<ref> | burst:<source>:<conversation>:<yyyy-mm-dd>
 	Kind       string    `json:"kind"` // email | event | meeting | item | chat_burst
 	Title      string    `json:"title"`
 	Preview    string    `json:"preview"`
@@ -60,7 +60,7 @@ type RelationshipTimelineResponse struct {
 
 // RelationshipTimeline returns a canonical identity cluster's interactions
 // as a modality-neutral timeline. Email, calendar, and meeting entries are
-// one row per message; chat messages are grouped into "bursts" — one row
+// one row per email or attended meeting occurrence; chat messages are grouped into "bursts" — one row
 // per (source, conversation, local calendar day) — because a chat
 // conversation can contain thousands of short back-and-forth messages that
 // would otherwise drown out the rarer email/meeting entries.
@@ -123,17 +123,26 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 	}
 	args := make([]any, 0, len(owners)+len(factArgs)+5)
 	args = append(args, request.CanonicalID)
+	args = append(args, factArgs...)
+	args = append(args, request.CanonicalID, request.CanonicalID)
 	for _, owner := range owners {
 		args = append(args, owner)
 	}
-	args = append(args, request.CanonicalID)
-	args = append(args, factArgs...)
-
 	timezone := request.Timezone
 	if timezone == "" {
 		timezone = relationshipScoringTimezone
 	}
 	args = append(args, timezone)
+	meetingDates := ""
+	if request.Context.After != nil {
+		meetingDates += " AND (s.entry_kind NOT IN ('event','meeting') OR s.occurred_at >= CAST(? AS TIMESTAMP))"
+		args = append(args, request.Context.After.UTC())
+	}
+	if request.Context.Before != nil {
+		meetingDates += " AND (s.entry_kind NOT IN ('event','meeting') OR s.occurred_at < CAST(? AS TIMESTAMP))"
+		args = append(args, request.Context.Before.UTC())
+	}
+
 	limit := request.Limit
 	if limit == 0 {
 		limit = defaultRelationshipTimelineLimit
@@ -141,7 +150,7 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 	args = append(args, limit, request.Offset)
 
 	queryText := buildRelationshipTimelineSQL(
-		conditions,
+		conditions, meetingDates,
 		len(owners)+1,
 		quoteIdentitySQLPath(e.parquetGlob()),
 		quoteIdentitySQLPath(e.parquetPath(datasetConversations)),
@@ -269,7 +278,7 @@ func validateRelationshipTimelineRequest(request RelationshipTimelineRequest) er
 // (MIME structure at sync time), not attachment_count: extraction can lag
 // or fail, leaving the flag true with a zero count, and the indicator must
 // match what the message list shows for the same message.
-func buildRelationshipTimelineSQL(conditions string, canonicalCount int, messagesGlob, conversationsGlob string) string {
+func buildRelationshipTimelineSQL(conditions, meetingDates string, canonicalCount int, messagesGlob, conversationsGlob string) string {
 	// The membership IN-subquery is a semi-join whose build side is the
 	// subject's bare message IDs (compact even for archive-scale clusters);
 	// the outer scan then folds per-message facts and owner presence into
@@ -279,30 +288,31 @@ func buildRelationshipTimelineSQL(conditions string, canonicalCount int, message
 	// whole interactive memory budget regardless of subject size.
 	return `
 WITH subject_facts AS (
-    SELECT a.message_id,
-        any_value(a.conversation_id) AS conversation_id,
+    SELECT a.entry_key, min(selected.message_id) AS message_id,
+        any_value(anchor.conversation_id) AS conversation_id,
         any_value(a.source_id) AS source_id,
-        any_value(a.occurred_at) AS occurred_at,
-        any_value(a.entry_kind) AS entry_kind,
-        any_value(a.is_chat) AS is_chat,
-        any_value(a.has_attachments) AS has_attachments,
+        min(a.occurred_at) AS occurred_at,
+        any_value(anchor.entry_kind) AS entry_kind,
+        any_value(anchor.is_chat) AS is_chat,
+        any_value(anchor.has_attachments) AS has_attachments,
         bool_or(a.is_owner AND a.is_direct) AS with_owner
-    FROM relationship_activity_expanded a
-    -- Outer rows only need the subject's message facts and owner rows for with_owner.
+    FROM relationship_counting_activity a
+    JOIN (
+        SELECT f.entry_key, any_value(f.anchor_message_id) AS message_id
+        FROM relationship_counting_activity f
+        WHERE NOT f.unsent AND f.entry_key IN (SELECT entry_key FROM relationship_counting_activity WHERE canonical_id = ?) AND (` + conditions + `) AND (f.entry_kind IN ('event','meeting') OR f.canonical_id = ?)
+        GROUP BY f.entry_key
+    ) selected ON selected.entry_key=a.entry_key
+    JOIN relationship_activity_sparse anchor ON anchor.message_id=selected.message_id
     WHERE a.canonical_id IN (` + strings.TrimSuffix(strings.Repeat("?,", canonicalCount), ",") + `)
-      AND a.message_id IN (
-        SELECT f.message_id
-        FROM relationship_activity_expanded f
-        WHERE NOT f.unsent AND f.canonical_id = ? AND (` + conditions + `)
-    )
-    GROUP BY a.message_id
+    GROUP BY a.entry_key
 ), day_bucketed AS (
     SELECT s.*,
         strftime(timezone(?, timezone('UTC', s.occurred_at)), '%Y-%m-%d') AS local_day
-    FROM subject_facts s
+    FROM subject_facts s WHERE true` + meetingDates + `
 ), timeline_entries AS (
     SELECT
-        'message:' || CAST(message_id AS VARCHAR) AS entry_key,
+        entry_key,
         entry_kind,
         message_id AS anchor_message_id,
         conversation_id,

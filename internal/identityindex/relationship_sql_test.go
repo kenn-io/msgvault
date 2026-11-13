@@ -272,6 +272,7 @@ func writeIncrementalAppendFixture(tb testing.TB, committed, appended, members i
 	require.NoError(tb, err)
 
 	stagedRoot := tb.TempDir()
+	writeRelationshipParquet(tb, db, stagedRoot, DatasetMeetingOccurrences, EmptyMeetingOccurrencesSQL)
 	writeRelationshipParquet(tb, db, stagedRoot, "person_display_names", `SELECT 0::BIGINT AS participant_id, 0::BIGINT AS person_id, NULL::VARCHAR AS display_name WHERE false`)
 	opts.firstMessageID = committed + 1
 	opts.messageCount = appended

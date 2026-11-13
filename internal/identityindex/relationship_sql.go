@@ -16,25 +16,26 @@ func logicalActivitySQL(activityPath, filterSQL string) string {
 	activity := activityRelation(activityPath, true)
 	return fmt.Sprintf(`
 WITH filtered_facts AS (
-	SELECT f.message_id, f.conversation_id, f.source_id, f.source_type,
+	SELECT f.entry_key, f.message_id, f.conversation_id, f.source_id, f.source_type,
 	       f.occurred_at, f.message_type, f.conversation_type, f.entry_kind,
 	       f.is_chat, f.is_from_me, f.attachment_count, f.deleted_from_source
 	FROM %[1]s f
 	WHERE (%[2]s) AND NOT f.unsent
 	GROUP BY ALL
 ), nonchat_units AS (
-	SELECT ('message:' || f.message_id)::VARCHAR AS entry_key,
-	       f.message_id::BIGINT AS anchor_message_id,
-	       f.conversation_id::BIGINT AS conversation_id,
-	       f.source_id::BIGINT AS source_id,
-	       f.source_type::VARCHAR AS source_type,
-	       f.occurred_at::TIMESTAMP AS occurred_at,
-	       f.message_type::VARCHAR AS message_type,
-	       f.entry_kind::VARCHAR AS entry_kind,
-	       f.is_from_me::BOOLEAN AS is_from_me,
-	       f.attachment_count::BIGINT AS attachment_count
+	SELECT f.entry_key::VARCHAR AS entry_key,
+	       min(f.message_id)::BIGINT AS anchor_message_id,
+	       arg_min(f.conversation_id, f.message_id)::BIGINT AS conversation_id,
+	       any_value(f.source_id)::BIGINT AS source_id,
+	       any_value(f.source_type)::VARCHAR AS source_type,
+	       min(f.occurred_at)::TIMESTAMP AS occurred_at,
+	       arg_min(f.message_type, f.message_id)::VARCHAR AS message_type,
+	       arg_min(f.entry_kind, f.message_id)::VARCHAR AS entry_kind,
+	       bool_or(f.is_from_me)::BOOLEAN AS is_from_me,
+	       max(f.attachment_count)::BIGINT AS attachment_count
 	FROM filtered_facts f
 	WHERE NOT f.is_chat
+	GROUP BY f.entry_key
 ), chat_units AS (
 	SELECT ('conversation:' || f.source_id || ':' || f.conversation_id)::VARCHAR AS entry_key,
 	       arg_max(f.message_id,
@@ -73,15 +74,15 @@ WITH filtered_facts AS (
 	 AND selected.is_chat
 	WHERE selected.message_id <> u.anchor_message_id
 ), logical_people_candidates AS (
-	SELECT u.entry_key, f.canonical_id, f.is_author, f.is_owner
+	SELECT u.entry_key, u.source_id, f.canonical_id, f.is_author, f.is_owner
 	FROM nonchat_units u
-	JOIN %[1]s f ON f.message_id = u.anchor_message_id
+	JOIN %[1]s f ON f.entry_key = u.entry_key
 	WHERE f.canonical_id IS NOT NULL
 	  AND f.is_direct
 
 	UNION ALL
 
-	SELECT u.entry_key, f.canonical_id,
+	SELECT u.entry_key, u.source_id, f.canonical_id,
 	       (f.message_id = u.anchor_message_id AND f.is_author) AS is_author,
 	       f.is_owner
 	FROM chat_units u
@@ -90,17 +91,18 @@ WITH filtered_facts AS (
 
 	UNION ALL
 
-	SELECT c.entry_key, f.canonical_id, false AS is_author, f.is_owner
+	SELECT c.entry_key, u.source_id, f.canonical_id, false AS is_author, f.is_owner
 	FROM chat_unit_fragments c
+	JOIN chat_units u ON u.entry_key = c.entry_key
 	JOIN %[1]s f ON f.message_id = c.message_id
 	WHERE f.canonical_id IS NOT NULL
 	  AND f.is_direct
 ), logical_people_grouped AS (
-	SELECT entry_key, canonical_id,
+	SELECT entry_key, source_id, canonical_id,
 	       bool_or(is_author) AS is_author,
 	       bool_or(is_owner) AS is_owner
 	FROM logical_people_candidates
-	GROUP BY entry_key, canonical_id
+	GROUP BY entry_key, source_id, canonical_id
 ), logical_owner_presence AS (
 	SELECT DISTINCT entry_key
 	FROM logical_people_grouped
@@ -109,12 +111,12 @@ WITH filtered_facts AS (
 	SELECT u.*, p.canonical_id, p.is_author, p.is_owner,
 	       (op.entry_key IS NOT NULL) AS with_owner
 	FROM logical_people_grouped p
-	JOIN logical_units u USING (entry_key)
+	JOIN logical_units u USING (entry_key, source_id)
 	LEFT JOIN logical_owner_presence op USING (entry_key)
 ), logical_person_domain_candidates AS (
 	SELECT u.entry_key, f.canonical_id, f.participant_domain AS domain
 	FROM nonchat_units u
-	JOIN %[1]s f ON f.message_id = u.anchor_message_id
+	JOIN %[1]s f ON f.entry_key = u.entry_key
 	WHERE f.canonical_id IS NOT NULL
 	  AND f.is_direct
 
@@ -136,27 +138,27 @@ WITH filtered_facts AS (
 	SELECT DISTINCT entry_key, canonical_id, domain
 	FROM logical_person_domain_candidates
 ), logical_domain_candidates AS (
-	SELECT u.entry_key, f.participant_domain AS domain
+	SELECT u.entry_key, u.source_id, f.participant_domain AS domain
 	FROM nonchat_units u
-	JOIN %[1]s f ON f.message_id = u.anchor_message_id
+	JOIN %[1]s f ON f.entry_key = u.entry_key
 	WHERE f.canonical_id IS NOT NULL
 
 	UNION ALL
 
-	SELECT u.entry_key, f.participant_domain AS domain
+	SELECT u.entry_key, u.source_id, f.participant_domain AS domain
 	FROM chat_units u
 	JOIN %[1]s f ON f.message_id = u.anchor_message_id
 	WHERE f.canonical_id IS NOT NULL
 
 	UNION ALL
 
-	SELECT c.entry_key, f.participant_domain AS domain
-	FROM chat_unit_fragments c
+	SELECT c.entry_key, u.source_id, f.participant_domain AS domain
+	FROM chat_unit_fragments c JOIN chat_units u ON u.entry_key = c.entry_key
 	JOIN %[1]s f ON f.message_id = c.message_id
 	WHERE f.canonical_id IS NOT NULL
 	  AND f.is_direct
 ), logical_domain_keys AS (
-	SELECT DISTINCT entry_key, domain
+	SELECT DISTINCT entry_key, source_id, domain
 	FROM logical_domain_candidates
 ), logical_domains AS (
 	SELECT u.*, k.domain,
@@ -166,7 +168,7 @@ WITH filtered_facts AS (
 	           []::BIGINT[]
 	       ) AS canonical_ids
 	FROM logical_domain_keys k
-	JOIN logical_units u USING (entry_key)
+	JOIN logical_units u USING (entry_key, source_id)
 	LEFT JOIN logical_person_domains pd
 	  ON pd.entry_key = k.entry_key AND pd.domain = k.domain
 	GROUP BY ALL
@@ -194,7 +196,7 @@ SELECT 2::UTINYINT AS relation_kind,
        NULL::BOOLEAN AS is_author, NULL::BOOLEAN AS is_owner,
        NULL::BOOLEAN AS with_owner, k.domain
 FROM logical_domain_keys k
-JOIN logical_units u USING (entry_key)
+JOIN logical_units u USING (entry_key, source_id)
 WHERE k.domain <> ''
 
 UNION ALL

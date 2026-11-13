@@ -414,13 +414,6 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	for _, participant := range entry.Participants {
 		require.NotNil(participant.ParticipantID)
 	}
-	after := time.Unix(1767225500, 0)
-	metrics, err := st.GetMeetingMetricsContext(t.Context(), store.MeetingQueryScope{SourceIDs: []int64{source.ID}, After: &after})
-	require.NoError(err)
-	assert.Equal(int64(1), metrics.Totals.MeetingCount)
-	assert.Equal(int64(1), metrics.Totals.KnownDurationCount, "explicit zero differs from unknown duration")
-	assert.Zero(metrics.Totals.TotalKnownSeconds)
-
 	api.Mu.Lock()
 	message["attachments"] = []any{
 		map[string]any{"id": 401, "message_id": 201, "file_type": "audio", "transcribed_text": "firstquartz recording words"},
@@ -431,6 +424,11 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	require.NoError(err)
 	body, err := st.GetMessageBodyText(t.Context(), meetingID)
 	require.NoError(err)
+	metrics, err := st.GetMeetingMetricsContext(t.Context(), store.MeetingQueryScope{SourceIDs: []int64{source.ID}})
+	require.NoError(err)
+	assert.Equal(int64(1), metrics.Totals.MeetingCount)
+	assert.Equal(int64(1), metrics.Totals.KnownDurationCount)
+	assert.Zero(metrics.Totals.TotalKnownSeconds)
 	assert.Contains(body, "firstquartz recording words\n\nsecondquartz recording words")
 	assert.NotContains(body, "Voice call")
 	chatBody, err := st.GetMessageBodyText(t.Context(), chatID)

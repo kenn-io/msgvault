@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -105,7 +106,7 @@ func addCacheExportParityMessage(t *testing.T, st *store.Store, sourceID, sender
 	return conv, id
 }
 
-func assertCacheExportParity(t *testing.T, tmp, actualDir, fullDir string, datasets []string) {
+func assertCacheExportParity(t *testing.T, tmp, actualDir, fullDir string, datasets []string, allowEmpty ...string) {
 	t.Helper()
 	assert, require := assert.New(t), require.New(t)
 	duckDB, err := duckdbutil.Open(t.Context(), duckdbutil.BuilderPolicy(filepath.Join(tmp, "parity-duckdb-tmp")))
@@ -139,7 +140,9 @@ func assertCacheExportParity(t *testing.T, tmp, actualDir, fullDir string, datas
 			(SELECT count(*) FROM (SELECT %[1]s FROM read_parquet(?, hive_partitioning=true) EXCEPT ALL SELECT %[1]s FROM read_parquet(?, hive_partitioning=true))),
 			(SELECT count(*) FROM (SELECT %[1]s FROM read_parquet(?, hive_partitioning=true) EXCEPT ALL SELECT %[1]s FROM read_parquet(?, hive_partitioning=true)))`, columns),
 			full, full, actual, actual, full).Scan(&rows, &missing, &extra), dataset)
-		require.Positive(rows, "%s must hold rows for the comparison to mean anything", dataset)
+		if !slices.Contains(allowEmpty, dataset) {
+			require.Positive(rows, "%s must hold rows for the comparison to mean anything", dataset)
+		}
 		assert.Zero(missing, "%s: rows the derived refresh did not write", dataset)
 		assert.Zero(extra, "%s: rows only the derived refresh wrote", dataset)
 	}

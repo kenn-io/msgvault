@@ -18,6 +18,29 @@ type SQLReader interface {
 
 type readSnapshotKey struct{}
 
+type meetingSQLReaderKey struct{}
+
+type reboundSQLReader struct {
+	SQLReader
+
+	rebind func(string) string
+}
+
+func (r reboundSQLReader) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return r.SQLReader.QueryContext(ctx, r.rebind(query), args...)
+}
+
+func (r reboundSQLReader) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return r.SQLReader.QueryRowContext(ctx, r.rebind(query), args...)
+}
+
+func (s *Store) meetingSQLReader(ctx context.Context) SQLReader {
+	if reader, ok := ctx.Value(meetingSQLReaderKey{}).(SQLReader); ok {
+		return reader
+	}
+	return reboundSQLReader{SQLReader: ReadDBContext(ctx, s.db.DB), rebind: s.dialect.Rebind}
+}
+
 type readSnapshot struct {
 	db       *sql.DB
 	tx       *loggedTx

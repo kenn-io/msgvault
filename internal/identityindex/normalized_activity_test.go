@@ -84,6 +84,8 @@ func TestBuildActivityPreservesFullExpansionContributions(t *testing.T) {
 				base("participants"), base("participant_clusters"), base("owner_participants"))
 			bounded := buildActivityRelation("sparse", base("conversation_participants"),
 				base("participants"), base("participant_clusters"), base("owner_participants"))
+			full = MeetingOccurrenceActivitySQL(full, full, base(DatasetMeetingOccurrences), base("participants"), base("participant_identifiers"), base("participant_clusters"), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
+			bounded = MeetingOccurrenceActivitySQL(bounded, full, base(DatasetMeetingOccurrences), base("participants"), base("participant_identifiers"), base("participant_clusters"), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
 			if tc.mixed {
 				var meetingFacts, earlierRosterAttendeeFacts int64
 				facts := RelationshipTemperatureFactsSQL(bounded, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
@@ -280,7 +282,7 @@ func TestBuildUnsentTailKeepsSentAnchor(t *testing.T) {
 			var messageID int64
 			var occurredAt time.Time
 			var fromMe bool
-			require.NoError(db.QueryRowContext(t.Context(), logicalActivitySQL(relationshipParquetGlob(root, DatasetActivity), "true")+
+			require.NoError(db.QueryRowContext(t.Context(), logicalActivitySQL(testExpandedActivity(root, root), "true")+
 				" SELECT anchor_message_id, occurred_at, is_from_me FROM logical_units").Scan(&messageID, &occurredAt, &fromMe))
 			assert.Equal(int64(1), messageID)
 			assert.Equal(time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), occurredAt.UTC())

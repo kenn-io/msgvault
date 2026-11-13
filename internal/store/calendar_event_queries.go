@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -29,6 +30,8 @@ type CalendarEventRow struct {
 const maxCalendarSeries = 2000
 const maxCalendarExceptions = 20000
 const calendarCandidateMargin = 28 * time.Hour
+const calendarSeriesWindow = `e.kind = 'series' AND e.status <> 'cancelled' AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`
+const calendarSingleWindow = `e.kind = 'single' AND ((e.start_at < ? AND e.end_at >= ?) OR (e.status <> 'cancelled' AND (e.start_at IS NULL OR e.end_at IS NULL)))`
 
 var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''),
  m.deleted_from_source_at IS NOT NULL,
@@ -55,7 +58,7 @@ func calendarEventVisibility(event, message string) string {
    OR other.message_id < %[1]s.message_id)))`, event, message)
 }
 
-func queryCalendarEventRowsWithinBudget(ctx context.Context, r *loggedDB, predicate string, args []any, budget int) ([]CalendarEventRow, error) {
+func queryCalendarEventRowsWithinBudget(ctx context.Context, r SQLReader, predicate string, args []any, budget int) ([]CalendarEventRow, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -77,7 +80,7 @@ func queryCalendarEventRowsWithinBudget(ctx context.Context, r *loggedDB, predic
 	return queryCalendarEventRows(ctx, r, predicate, args, budget+1)
 }
 
-func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, args []any, limit int) ([]CalendarEventRow, error) {
+func queryCalendarEventRows(ctx context.Context, r SQLReader, predicate string, args []any, limit int) ([]CalendarEventRow, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -95,7 +98,7 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 	for result.Next() {
 		var row CalendarEventRow
 		e := &row.Event
-		var original, start, end sql.NullTime
+		var original, start, end nullableTimestamp
 		var originalDate, recurrence string
 		var uid sql.NullString
 		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.DeletedFromSource,
@@ -138,7 +141,8 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 	return out, nil
 }
 
-func loadCalendarAttendees(ctx context.Context, r *loggedDB, events []CalendarEventRow) error {
+//nolint:sqlclosecheck // Rows close before the snapshot is reused.
+func loadCalendarAttendees(ctx context.Context, r SQLReader, events []CalendarEventRow) error {
 	byID := make(map[int64]int, len(events))
 	for i, event := range events {
 		byID[event.MessageID] = i
@@ -174,19 +178,19 @@ func loadCalendarAttendees(ctx context.Context, r *loggedDB, events []CalendarEv
 	return nil
 }
 
-func calendarEventRowsInWindow(ctx context.Context, r *loggedDB, dialect Dialect, from, to time.Time) ([]CalendarEventRow, error) {
+func calendarEventRowsInWindow(ctx context.Context, r SQLReader, dialect Dialect, from, to time.Time) ([]CalendarEventRow, error) {
 	lower, upper := from.UTC().Add(-calendarCandidateMargin), to.UTC().Add(calendarCandidateMargin)
 	// RDATE can precede DTSTART by any amount. Retain those masters for exact
 	// expansion rather than treating their stored start as the earliest instance.
 	// A cancelled master generates nothing; its archived exceptions load it below.
-	masters, err := queryCalendarSeriesWithinBudget(ctx, r, `e.kind = 'series' AND e.status <> 'cancelled' AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`, []any{upper, lower})
+	masters, err := queryCalendarSeriesWithinBudget(ctx, r, calendarSeriesWindow, []any{upper, lower})
 	if err != nil {
 		return nil, err
 	}
 	// Standalones count toward the request budget; cap them before materializing
 	// more candidates than any occurrence reader could consider. Unknown bounds
 	// remain candidates so the reader can report them.
-	singles, err := queryCalendarEventRowsWithinBudget(ctx, r, `e.kind = 'single' AND ((e.start_at < ? AND e.end_at >= ?) OR (e.status <> 'cancelled' AND (e.start_at IS NULL OR e.end_at IS NULL)))`, []any{upper, lower}, calrecur.RequestReadBudget)
+	singles, err := queryCalendarEventRowsWithinBudget(ctx, r, calendarSingleWindow, []any{upper, lower}, calrecur.RequestReadBudget)
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +254,7 @@ func calendarSeriesLimitError() error {
 	return fmt.Errorf("%w: more than %d recurring series overlap the window; a narrower window will not reduce open-ended series", ErrQueryTooBroad, maxCalendarSeries)
 }
 
-func queryCalendarSeriesWithinBudget(ctx context.Context, r *loggedDB, predicate string, args []any) ([]CalendarEventRow, error) {
+func queryCalendarSeriesWithinBudget(ctx context.Context, r SQLReader, predicate string, args []any) ([]CalendarEventRow, error) {
 	rows, err := queryCalendarEventRowsWithinBudget(ctx, r, predicate, args, maxCalendarSeries)
 	if errors.Is(err, ErrQueryTooBroad) {
 		return nil, calendarSeriesLimitError()
@@ -258,7 +262,7 @@ func queryCalendarSeriesWithinBudget(ctx context.Context, r *loggedDB, predicate
 	return rows, err
 }
 
-func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect Dialect, lower, upper time.Time) ([]CalendarEventRow, error) {
+func queryCalendarExceptionsInWindow(ctx context.Context, r SQLReader, dialect Dialect, lower, upper time.Time) ([]CalendarEventRow, error) {
 	predicate, args := calendarExceptionWindow(dialect, lower, upper)
 	return queryCalendarEventRowsWithinBudget(ctx, r, predicate, args, maxCalendarExceptions)
 }
@@ -294,27 +298,32 @@ func calendarExceptionWindow(dialect Dialect, lower, upper time.Time) (string, [
 	}
 }
 
-// Only sparse cancellations inherit omitted details from the master.
-func inheritCalendarCancellation(ctx context.Context, r *loggedDB, row, master CalendarEventRow) (CalendarEventRow, error) {
-	var stored []byte
+func calendarEventRawFields(ctx context.Context, r SQLReader, dialect Dialect, id int64) (map[string]any, error) {
+	var encoded string
 	var compression sql.NullString
-	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression FROM message_raw WHERE message_id = ?`, row.MessageID).Scan(&stored, &compression); err != nil {
-		return row, fmt.Errorf("read cancellation evidence: %w", err)
+	blob := `hex(raw_data)`
+	if dialect.DriverName() == postgresDriverName {
+		blob = `encode(raw_data, 'hex')`
+	}
+	if err := r.QueryRowContext(ctx, `SELECT `+blob+`, compression FROM message_raw WHERE message_id = ?`, id).Scan(&encoded, &compression); err != nil {
+		return nil, fmt.Errorf("read calendar evidence: %w", err)
+	}
+	stored, err := hex.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("decode calendar bytes: %w", err)
 	}
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
 	if err != nil {
-		return row, err
+		return nil, err
 	}
 	var fields map[string]any
 	if err := json.Unmarshal(raw, &fields); err != nil {
-		return row, fmt.Errorf("decode cancellation evidence: %w", err)
+		return nil, fmt.Errorf("decode calendar evidence: %w", err)
 	}
-	if fields["start"] != nil || fields["end"] != nil {
-		return row, nil
-	}
-	return inheritSparseCalendarCancellation(row, master, fields), nil
+	return fields, nil
 }
 
+// Only sparse cancellations inherit omitted details from the master.
 func inheritSparseCalendarCancellation(row, master CalendarEventRow, fields map[string]any) CalendarEventRow {
 	if _, supplied := fields["summary"]; !supplied {
 		row.Subject = master.Subject

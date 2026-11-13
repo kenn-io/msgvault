@@ -87,6 +87,7 @@ type Event struct {
 	ICalUID           string        `json:"iCalUID,omitempty"`
 	Sequence          int           `json:"sequence,omitzero"`
 	Attendees         []Attendee    `json:"attendees,omitempty"`
+	AttendeesOmitted  bool          `json:"attendeesOmitted,omitempty"`
 	Transparency      string        `json:"transparency,omitempty"`
 	Visibility        string        `json:"visibility,omitempty"`
 	EventType         string        `json:"eventType,omitempty"`

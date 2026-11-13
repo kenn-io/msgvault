@@ -21,7 +21,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gofrs/flock"
-	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
+	"github.com/mattn/go-sqlite3"
 	"github.com/spf13/cobra"
 	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/consolewindow"
@@ -974,7 +974,7 @@ func (s *cacheSourceSnapshot) personDisplayNamesExportSelectSQL() string {
 // not re-derive. Account-identity drift must always take the full-rebuild
 // path.
 func derivedDriftOnly(staleness cacheStaleness) bool {
-	return (staleness.HasIdentityDrift || staleness.HasConversationParticipantDrift ||
+	return (staleness.HasMeetingTimeDrift || staleness.HasIdentityDrift || staleness.HasConversationParticipantDrift ||
 		staleness.HasConversationTypeDrift || staleness.HasUnsentDrift || staleness.HasParticipantIdentifierDrift ||
 		staleness.HasParticipantDisplayNameDrift || staleness.HasPersonDisplayNameDrift) &&
 		!staleness.HasNew && !staleness.HasDeleted &&
@@ -1294,7 +1294,7 @@ func buildCacheLockedAttempt(
 		// Export their complete population alongside the new message shards.
 		relatedKinds.recipients = true
 	}
-	repairRelated := relatedKinds.recipients || relatedKinds.labels || relatedKinds.attachments
+	repairRelated := relatedKinds.recipients || relatedKinds.labels || relatedKinds.attachments || relatedKinds.meetings
 	if hasPreviousState && !fullRebuild && hasSyncRunsTable > 0 &&
 		syncCounters.additions != previousState.LastCacheAdditionCount &&
 		maxID <= previousState.LastMessageID && !repairRelated {
@@ -1395,6 +1395,10 @@ func buildCacheLockedAttempt(
 		} else {
 			afterMessageIDs[dataset] = 0
 		}
+	}
+	meetingEvidence, err := store.LoadMeetingEvidenceContext(ctx, sourceSnapshot, cacheWatermark)
+	if err != nil {
+		return nil, fmt.Errorf("load meeting evidence: %w", err)
 	}
 	if err := sourceSnapshot.Prepare(ctx, maxID, afterMessageIDs); err != nil {
 		return nil, err
@@ -1592,6 +1596,10 @@ func buildCacheLockedAttempt(
 		delete(publicationPlan.Append, identityindex.DatasetActivity)
 		publicationPlan.Replace[identityindex.DatasetActivity] = true
 	}
+	nextMeetingAt, err := stageMeetingOccurrences(ctx, exportDB, meetingEvidence, staging.root, analyticsDir)
+	if err != nil {
+		return nil, err
+	}
 	derived, err := identityindex.Build(ctx, exportDB, identityindex.BuildOptions{
 		UnsentMessages:       "tmp_unsent_messages",
 		Mode:                 buildMode,
@@ -1675,6 +1683,7 @@ func buildCacheLockedAttempt(
 	// Save sync state using the pre-export watermark so any deletion
 	// that occurs during or after the build is detected as stale.
 	state := syncState{
+		NextMeetingAt:                       nextMeetingAt,
 		LastMessageID:                       maxID,
 		LastSyncAt:                          cacheWatermark,
 		SchemaVersion:                       cacheSchemaVersion,
@@ -2011,7 +2020,31 @@ func (s *cacheSourceSnapshot) QueryRowContext(ctx context.Context, query string,
 		duckQuery += ", params=row(" + placeholders + ")"
 	}
 	duckQuery += ")"
-	return s.duckTx.QueryRowContext(ctx, duckQuery, args...)
+	return s.duckTx.QueryRowContext(ctx, duckQuery, sqliteSnapshotArgs(args)...)
+}
+
+func (s *cacheSourceSnapshot) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if s.sqliteTx != nil {
+		return s.sqliteTx.QueryContext(ctx, query, args...)
+	}
+	escapedQuery := strings.ReplaceAll(query, "'", "''")
+	duckQuery := fmt.Sprintf("SELECT * FROM sqlite_query('sqlite_db', '%s'", escapedQuery)
+	if len(args) > 0 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")
+		duckQuery += ", params=row(" + placeholders + ")"
+	}
+	duckQuery += ")"
+	return s.duckTx.QueryContext(ctx, duckQuery, sqliteSnapshotArgs(args)...)
+}
+
+func sqliteSnapshotArgs(args []any) []any {
+	converted := append([]any(nil), args...)
+	for i, arg := range converted {
+		if at, ok := arg.(time.Time); ok {
+			converted[i] = at.Format(sqlite3.SQLiteTimestampFormats[0])
+		}
+	}
+	return converted
 }
 
 func (s *cacheSourceSnapshot) DuckDB() sqlRunner {
@@ -2794,7 +2827,7 @@ func scheduledCacheBuildDelay(
 	interval time.Duration,
 	now time.Time,
 ) (time.Duration, bool) {
-	if interval <= 0 || !staleness.HasUsablePublication || staleness.PublishedAt.IsZero() {
+	if staleness.HasMeetingTimeDrift || interval <= 0 || !staleness.HasUsablePublication || staleness.PublishedAt.IsZero() {
 		return 0, false
 	}
 	if staleness.PublishedAt.After(now.Add(interval)) {

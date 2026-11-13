@@ -218,7 +218,7 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 	return &meetingDecisionGraph{nodes: nodes, groups: groups, warnings: warnings, candidates: candidates, automatic: automatic}, nil
 }
 
-func (g *meetingDecisionGraph) reduce() (func(string) string, []meetingDecisionEdge) {
+func (g *meetingDecisionGraph) reduce() (func(string) string, []meetingDecisionEdge, map[string]string) {
 	var explicit, splits []meetingDecisionEdge
 	// Choose one effective contribution per pair.
 	effective := map[string]meetingDecisionEdge{}
@@ -285,6 +285,7 @@ func (g *meetingDecisionGraph) reduce() (func(string) string, []meetingDecisionE
 	slices.SortFunc(vertices, compareMeetingEndpoints)
 	// Join copies first so a note split applies to every copy still joined.
 	var others []meetingDecisionEndpoint
+	copyRoots := map[string]string{}
 	for _, events := range []bool{true, false} {
 		for _, pair := range explicit {
 			if (pair.a.Kind == meetingRefEvent && pair.b.Kind == meetingRefEvent) == events {
@@ -307,13 +308,20 @@ func (g *meetingDecisionGraph) reduce() (func(string) string, []meetingDecisionE
 				}
 			}
 		}
+		if events {
+			for key, node := range g.nodes {
+				if node.endpoint.Kind == meetingRefEvent {
+					copyRoots[key] = root(key)
+				}
+			}
+		}
 	}
-	return root, explicit
+	return root, explicit, copyRoots
 }
 
 func (g *meetingDecisionGraph) record(seed meetingDecisionEndpoint) MeetingRecord {
 	result := MeetingRecord{Links: []MeetingLink{}, MessageIDs: []int64{}, Unexpandable: []CalendarUnexpandable{}}
-	root, _ := g.reduce()
+	root, _, _ := g.reduce()
 	seedRoot := root(seed.ref())
 	visibleEvents := map[int64]bool{}
 	for key, n := range g.nodes {

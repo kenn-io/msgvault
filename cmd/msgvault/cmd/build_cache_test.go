@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestDaemonBuildCacheChildUsesQuietConsolePolicy(t *testing.T) {
@@ -71,6 +72,17 @@ func TestBuildCacheLockedAcceptsSQLiteFileURI(t *testing.T) {
 	assert.NotNil(t, result)
 }
 
+func addMeetingSchema(t *testing.T, db *sql.DB) {
+	t.Helper()
+	template := testutil.NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "meeting-schema.db"))
+	for _, table := range []string{"calendar_events", "calendar_event_attendees", "meeting_details", "meeting_link_decisions"} {
+		var statement string
+		require.NoError(t, template.DB().QueryRowContext(t.Context(), `SELECT sql FROM sqlite_schema WHERE type='table' AND name=?`, table).Scan(&statement))
+		_, err := db.ExecContext(t.Context(), statement)
+		require.NoError(t, err)
+	}
+}
+
 // setupTestSQLite creates a test SQLite database with realistic email data.
 func setupTestSQLite(t *testing.T) string {
 	t.Helper()
@@ -105,6 +117,7 @@ func setupTestSQLite(t *testing.T) string {
 			snippet TEXT,
 			sent_at TIMESTAMP,
 			received_at TIMESTAMP,
+			internal_date TIMESTAMP,
 			size_estimate INTEGER,
 			has_attachments BOOLEAN DEFAULT FALSE,
 			hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE,
@@ -229,6 +242,8 @@ func setupTestSQLite(t *testing.T) string {
 		_ = os.RemoveAll(tmpDir)
 		require.NoError(t, err, "create schema")
 	}
+
+	addMeetingSchema(t, db)
 
 	// Insert test data
 	testData := `
@@ -3058,7 +3073,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 		CREATE TABLE imap_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
 		CREATE TABLE gmail_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
 		CREATE TABLE sources (id INTEGER PRIMARY KEY, source_type TEXT NOT NULL DEFAULT 'gmail', identifier TEXT);
-		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', is_from_me BOOLEAN DEFAULT FALSE, is_sent BOOLEAN DEFAULT TRUE, metadata TEXT, deleted_at DATETIME);
+		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, received_at TIMESTAMP, internal_date TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', is_from_me BOOLEAN DEFAULT FALSE, is_sent BOOLEAN DEFAULT TRUE, metadata TEXT, deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT, domain TEXT, display_name TEXT, phone_number TEXT);
 		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
 		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT, email_address TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE);
@@ -3086,6 +3101,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 			UNIQUE(participant_id)
 		);
 	`)
+	addMeetingSchema(t, db)
 	_ = db.Close()
 
 	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
@@ -3346,6 +3362,7 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 			snippet TEXT,
 			sent_at TIMESTAMP,
 			received_at TIMESTAMP,
+			internal_date TIMESTAMP,
 			size_estimate INTEGER,
 			has_attachments BOOLEAN DEFAULT FALSE,
 			hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE,
@@ -3453,6 +3470,7 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 	`
 	_, err = db.ExecContext(t.Context(), schema)
 	require.NoError(t, err, "create schema")
+	addMeetingSchema(t, db)
 
 	// Insert metadata but NO messages
 	metadata := `

@@ -15,6 +15,7 @@ type relatedChangeKinds struct {
 	recipients  bool
 	labels      bool
 	attachments bool
+	meetings    bool
 	other       bool
 }
 
@@ -24,10 +25,11 @@ func inspectRelatedChangeKinds(ctx context.Context, snapshot *cacheSourceSnapsho
 		count(*) FILTER (WHERE dataset = 'message_recipients') > 0,
 		count(*) FILTER (WHERE dataset IN ('message_labels', 'labels')) > 0,
 		count(*) FILTER (WHERE dataset = 'attachments') > 0,
+		count(*) FILTER (WHERE dataset = 'meeting_occurrences') > 0,
 		count(*) FILTER (WHERE dataset NOT IN
-			('message_recipients', 'message_labels', 'labels', 'attachments')) > 0
+			('message_recipients', 'message_labels', 'labels', 'attachments', 'meeting_occurrences')) > 0
 		FROM cache_related_change_journal WHERE seq > ? AND seq <= ? AND message_id <= ?`,
-		after, through, lastMessageID).Scan(&kinds.recipients, &kinds.labels, &kinds.attachments, &kinds.other)
+		after, through, lastMessageID).Scan(&kinds.recipients, &kinds.labels, &kinds.attachments, &kinds.meetings, &kinds.other)
 	if err != nil {
 		return relatedChangeKinds{}, fmt.Errorf("inspect related change kinds: %w", err)
 	}

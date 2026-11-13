@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/identityindex"
@@ -22,6 +23,7 @@ var ErrDerivedRefreshRequiresFullBuild = errors.New(
 )
 
 var derivedPublishBeforeMarkerHook func() error
+var derivedRefreshNow = time.Now
 
 // derivedRefreshBeforeSnapshotHook is a deterministic test seam for writes
 // that commit after a staleness check selects a refresh but before the refresh
@@ -211,6 +213,11 @@ func refreshDerivedDatasetsOnly(
 			relatedReplacements[dataset] = true
 		}
 	}
+	effectiveAt := derivedRefreshNow().UTC().Truncate(time.Second)
+	meetingEvidence, err := store.LoadMeetingEvidenceContext(ctx, sourceSnapshot, effectiveAt)
+	if err != nil {
+		return nil, fmt.Errorf("load meeting evidence: %w", err)
+	}
 	if err := sourceSnapshot.PrepareDatasets(ctx, state.LastMessageID, datasets...); err != nil {
 		return nil, err
 	}
@@ -238,7 +245,8 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 
-	if !repairRelated && identityRevision == state.IdentityRevision &&
+	meetingTimeDrift := !state.NextMeetingAt.IsZero() && !derivedRefreshNow().Before(state.NextMeetingAt)
+	if !repairRelated && !meetingTimeDrift && identityRevision == state.IdentityRevision &&
 		participantIdentifierRevision == state.ParticipantIdentifierRevision &&
 		participantDisplayNameRevision == state.ParticipantDisplayNameRevision &&
 		personDisplayNameRevision == state.PersonDisplayNameRevision &&
@@ -251,7 +259,7 @@ func refreshDerivedDatasetsOnly(
 		// it active pagination cursors — for no analytical difference.
 		return &buildResult{OutputDir: analyticsDir, IdentityOnly: true, Skipped: true}, nil
 	}
-	if repairRelated && !relatedKinds.recipients &&
+	if repairRelated && !meetingTimeDrift && !relatedKinds.recipients && !relatedKinds.meetings &&
 		identityRevision == state.IdentityRevision &&
 		participantIdentifierRevision == state.ParticipantIdentifierRevision &&
 		participantDisplayNameRevision == state.ParticipantDisplayNameRevision &&
@@ -353,13 +361,17 @@ func refreshDerivedDatasetsOnly(
 		}
 	}
 
+	nextMeetingAt, err := stageMeetingOccurrences(ctx, exportDB, meetingEvidence, staging.root, analyticsDir)
+	if err != nil {
+		return nil, err
+	}
 	derived, err := identityindex.Build(ctx, exportDB, identityindex.BuildOptions{
 		Mode:           identityindex.ModeIndexOnly,
 		UnsentMessages: "tmp_unsent_messages",
 		CommittedRoot:  analyticsDir,
 		StagedBaseRoot: staging.root,
 		OutputRoot:     staging.root,
-		EffectiveAt:    state.LastSyncAt,
+		EffectiveAt:    effectiveAt,
 		Progress:       reportIdentityBuildProgress,
 	})
 	if err != nil {
@@ -374,6 +386,7 @@ func refreshDerivedDatasetsOnly(
 	}
 
 	state.IdentityRevision = identityRevision
+	state.NextMeetingAt = nextMeetingAt
 	if repairRelated {
 		state.DerivedDataRevision = derivedDataRevision
 	}
@@ -547,6 +560,7 @@ func derivedCachePublishPlan(
 	for _, dataset := range []string{
 		tableOwnerParticipants,
 		tableParticipantClusters,
+		identityindex.DatasetMeetingOccurrences,
 		identityindex.DatasetActivity,
 		identityindex.DatasetPeople,
 		identityindex.DatasetDomains,

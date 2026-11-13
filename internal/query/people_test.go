@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 func newPeopleRankingFixture(t *testing.T) (engine *DuckDBEngine, exact, prefix, substring int64, when time.Time) {
@@ -607,32 +609,66 @@ func TestGetPersonAndDomainAreExactAndBounded(t *testing.T) {
 	assertions.Nil(missingDomain)
 }
 
-func TestPersonSummaryCountsMeetingTranscriptsWithoutLoadingMeetingRows(t *testing.T) {
+func TestPersonSummaryCountsMeetingNotesWithoutLoadingMeetingRows(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("archive@example.test", "granola")
 	person := b.AddParticipant("alice@example.test", "example.test", "Alice Example")
+	owner := b.AddParticipant("archive@example.test", "example.test", "Owner")
+	b.AddOwnerParticipant(source, owner)
 	when := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
 	meeting := b.AddMessage(MessageOpt{
 		SourceID: source, ConversationID: 701, Subject: "Weekly sync", SentAt: when,
-		MessageType: "meeting_transcript", ConversationType: "meeting",
+		MessageType: "meeting_note", ConversationType: "meeting",
 	})
 	b.AddFrom(meeting, person, "Alice Example")
+	b.AddTo(meeting, owner, "Owner")
+	b.AddAttachment(meeting, 10, "notes.txt")
 	chat := b.AddMessage(MessageOpt{
 		SourceID: source, ConversationID: 702, SentAt: when.Add(time.Hour),
 		MessageType: "whatsapp", ConversationType: "direct_chat",
 	})
 	b.AddFrom(chat, person, "Alice Example")
 	b.AddConversationParticipant(702, person)
-	engine := b.BuildEngine()
+	pb := newParquetBuilder(t)
+	b.addMessageTables(pb)
+	b.addAuxiliaryTables(pb)
+	b.addAttachmentsTable(pb)
+	pb.addTable(identityindex.DatasetMeetingOccurrences, identityindex.DatasetMeetingOccurrences, "meeting_occurrences.parquet",
+		identityindex.MeetingOccurrenceColumns,
+		fmt.Sprintf("(%d::BIGINT, %d::BIGINT, 'msg:%d', TIMESTAMP '2026-08-20 09:00:00', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0))", meeting, meeting, meeting))
+	dir, cleanup := pb.build()
+	t.Cleanup(cleanup)
+	engine, err := NewDuckDBEngine(t.Context(), dir, "", nil)
+	require.NoError(err)
+	t.Cleanup(func() { _ = engine.Close() })
 
 	result, err := engine.GetPerson(t.Context(), person, Context{}, nil)
 	require.NoError(err)
 	require.NotNil(result)
 	assert.Equal(int64(2), result.ActivityCount)
 	assert.Equal(int64(1), result.MeetingCount)
+
+	scope := Context{MessageTypes: []string{"meeting_note"}}
+	filtered, err := engine.GetPerson(t.Context(), person, scope, nil)
+	require.NoError(err)
+	require.NotNil(filtered)
+	people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Explore: ExploreRequest{Context: scope}, Query: "alice"})
+	require.NoError(err)
+	require.Len(people.Rows, 1)
+	for _, summary := range []*PersonSummary{filtered, &people.Rows[0]} {
+		assert.Equal(struct {
+			Activity int64
+			Sources  []SourceCount
+			Files    int64
+		}{1, []SourceCount{{SourceType: "granola", Count: 1}}, 1}, struct {
+			Activity int64
+			Sources  []SourceCount
+			Files    int64
+		}{summary.ActivityCount, summary.SourceCounts, summary.FileCount})
+	}
 }
 
 func TestGetPersonWithClusterMemberIDsSpansIdentifiersAndMetricsAcrossCluster(t *testing.T) {

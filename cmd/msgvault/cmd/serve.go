@@ -1123,11 +1123,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 			apiServer, sched, blobStore,
 		)
 		mcpInitDone = startServeMCP(ctx, cmd, apiServer, state)
-		apiServer.SetLocalEmbeddings(&localEmbeddingsController{
+		localController := &localEmbeddingsController{
 			state: state, store: s, dbPath: dbPath, handle: vectorInit, server: apiServer, scheduler: sched,
 			gate: operationGate, runner: storeAdapter, openers: []visual.StreamOpener{blobStore},
-			inspect: embedlocal.Inspect, install: embedlocal.Install,
-		})
+			inspect: embedlocal.Inspect, install: embedlocal.Install, choice: embedlocal.ChoiceRecorded,
+		}
+		apiServer.SetLocalEmbeddings(localController)
+		apiServer.StartLocalEmbeddings(localController.Start)
 		telemetryHeartbeatDone := make(chan struct{})
 		go func() {
 			defer close(telemetryHeartbeatDone)
