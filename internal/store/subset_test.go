@@ -226,12 +226,12 @@ func TestIntroductionNestedSplitAfterDeliverySourceRemoval(t *testing.T) {
 		_, err = destination.GetPersonIntroductionContext(ctx, intro.IntroID)
 		req.ErrorIs(err, ErrIntroductionNotFound)
 		snapshot, err := destination.GetPersonMergeSnapshotContext(ctx, first.Merge.ID)
-		check.ErrorIs(err, ErrPersonMergeNotFound)
 		if err == nil {
 			check.NotContains(string(snapshot.JSON), intro.Title)
 			check.NotContains(string(snapshot.JSON), intro.IntroID)
 			check.NotContains(string(snapshot.JSON), intro.CreatedBy)
 		}
+		req.ErrorIs(err, ErrPersonMergeNotFound)
 	})
 	t.Run("earlier merge can still be undone", func(t *testing.T) {
 		req := require.New(t)

@@ -18,6 +18,8 @@ import (
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
+const personIntroductionsTableName = "person_introductions"
+
 var (
 	ErrIntroductionNotFound   = errors.New("introduction not found")
 	ErrIntroductionInvalid    = errors.New("invalid introduction")
