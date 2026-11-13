@@ -35,12 +35,14 @@ func (e *collectionTestEngine) GetCollectionScope(_ context.Context, name string
 }
 
 func TestCollectionScopesFilterRealMessageReads(t *testing.T) {
+	assertions := assert.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	other, err := f.Store.GetOrCreateSource("imap", "other@example.test")
-	require.NoError(t, err)
+	require.NoError(err)
 	first := f.NewMessage().WithSubject("collection fixture").Create(t, f.Store)
 	convID, err := f.Store.EnsureConversation(t.Context(), other.ID, "other-thread", "Other Thread")
-	require.NoError(t, err)
+	require.NoError(err)
 	storetest.NewMessage(other.ID, convID).WithSourceMessageID("other").WithSubject("collection fixture").Create(t, f.Store)
 	e := &collectionTestEngine{Engine: query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()), collections: []query.CollectionScope{{Name: "one", SourceIDs: []int64{f.Source.ID}}, {Name: "empty", SourceIDs: []int64{}}}}
 	h := newTestHandlers(e)
@@ -49,27 +51,28 @@ func TestCollectionScopesFilterRealMessageReads(t *testing.T) {
 		want []int64
 	}{{"one", []int64{first}}, {"empty", nil}} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
 			got := runTool[listMessagesResponse](t, ToolListMessages, h.listMessages, map[string]any{"collection": tc.name})
 			ids := make([]int64, 0, len(got.Data))
 			for _, m := range got.Data {
 				ids = append(ids, m.ID)
 			}
-			assert.ElementsMatch(t, tc.want, ids)
+			assert.ElementsMatch(tc.want, ids)
 			found := runTool[paginatedSearchMessages](t, ToolSearchMetadata, h.searchMetadata, map[string]any{"query": "subject:collection", "collection": tc.name})
 			ids = ids[:0]
 			for _, m := range found.Data {
 				ids = append(ids, m.ID)
 			}
-			assert.ElementsMatch(t, tc.want, ids)
+			assert.ElementsMatch(tc.want, ids)
 		})
 	}
 	_, err = h.resolveReadSelection(t.Context(), "account", map[string]any{"collection": "one"})
-	require.ErrorContains(t, err, "mutually exclusive")
+	require.ErrorContains(err, "mutually exclusive")
 	_, err = h.resolveReadSelection(t.Context(), "", map[string]any{"collection": ""})
-	require.ErrorContains(t, err, "collection name is required")
+	require.ErrorContains(err, "collection name is required")
 	_, err = h.resolveReadSelection(t.Context(), "", map[string]any{"collection": "missing"})
-	require.ErrorContains(t, err, "collection not found")
-	assert.Zero(t, e.listCalls)
+	require.ErrorContains(err, "collection not found")
+	assertions.Zero(e.listCalls)
 }
 
 func TestCollectionCatalogAvailability(t *testing.T) {
@@ -89,22 +92,24 @@ func TestCollectionCatalogAvailability(t *testing.T) {
 		{"delegated", ServeOptions{Engine: e, CollectionScopesAvailable: true, HybridSearcher: searcher, DelegatedOnly: true, GrantPermissions: []string{string(agentgrant.PermissionSearchRead), string(agentgrant.PermissionMessageRead)}}, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			tools := toolsByName(t, rawListTools(t, tc.opts, false))
 			if tc.available {
-				assert.Contains(t, tools, ToolListMessageCollections)
+				assert.Contains(tools, ToolListMessageCollections)
 			} else {
-				assert.NotContains(t, tools, ToolListMessageCollections)
+				assert.NotContains(tools, ToolListMessageCollections)
 			}
 			names := []string{ToolAggregate, ToolGetMessage, ToolListMessages, ToolSearchMessageBodies, ToolSearchMessages, ToolSearchMetadata}
 			if !tc.delegated {
 				names = append(names, ToolSemanticSearchMessages)
 			}
 			for _, name := range names {
-				require.Contains(t, tools, name)
+				require.Contains(tools, name)
 				if tc.available {
-					assert.Contains(t, toolPropertyNames(t, tools[name]), "collection", name)
+					assert.Contains(toolPropertyNames(t, tools[name]), "collection", name)
 				} else {
-					assert.NotContains(t, toolPropertyNames(t, tools[name]), "collection", name)
+					assert.NotContains(toolPropertyNames(t, tools[name]), "collection", name)
 				}
 			}
 		})
@@ -112,21 +117,23 @@ func TestCollectionCatalogAvailability(t *testing.T) {
 }
 
 func TestSemanticCollectionUsesAllSources(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	e := &collectionTestEngine{Engine: &querytest.MockEngine{}, collections: []query.CollectionScope{{Name: "one", SourceIDs: []int64{42}}, {Name: "empty", SourceIDs: []int64{}}, {Name: "many", SourceIDs: []int64{42, 43}}}}
 	h := newTestHandlers(e)
 	calls := 0
 	h.hybridSearcher = hybridSearcherFunc(func(_ context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
 		calls++
-		assert.Equal(t, "many", req.Collection)
+		assert.Equal("many", req.Collection)
 		return &HybridSearchResult{}, nil
 	})
 	runTool[searchMessageBodiesResponse](t, ToolSemanticSearchMessages, h.semanticSearchMessages, map[string]any{"query": "fixture", "collection": "many"})
 	runTool[searchMessageBodiesResponse](t, ToolSearchMessages, h.searchMessages, map[string]any{"query": "fixture", "mode": "hybrid", "collection": "many"})
 	runTool[searchMessageBodiesResponse](t, ToolSemanticSearchMessages, h.semanticSearchMessages, map[string]any{"query": "fixture", "collection": "empty"})
-	assert.Equal(t, 2, calls)
+	assert.Equal(2, calls)
 	result, err := h.semanticSearchMessages(t.Context(), toolRequest{arguments: map[string]any{"query": "subject:fixture", "collection": "empty"}})
-	require.NoError(t, err)
-	assert.True(t, result.isError)
-	assert.Contains(t, resultText(t, result), "missing_free_text")
-	assert.Equal(t, 2, calls)
+	require.NoError(err)
+	assert.True(result.isError)
+	assert.Contains(resultText(t, result), "missing_free_text")
+	assert.Equal(2, calls)
 }
