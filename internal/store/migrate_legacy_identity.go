@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -317,10 +318,8 @@ func (s *Store) legacyIdentityMigrationAppliedTx(ctx context.Context, tx *logged
 	}
 }
 
+var emailIdentitySourceTypes = []string{"gmail", "imap", "o365", "msmail", "mbox", "hey", "apple-mail", "pst", "eml", "maildir"}
+
 func SourceTypeUsesEmailIdentity(sourceType string) bool {
-	switch sourceType {
-	case "gmail", "imap", "o365", "msmail", "mbox", "hey", "apple-mail", "pst", "eml", "maildir":
-		return true
-	}
-	return false
+	return slices.Contains(emailIdentitySourceTypes, sourceType)
 }

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-12"
+last_edited: "2026-11-13"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -33,8 +33,8 @@ need separate provider configuration and consent. You can edit saved profiles wi
 ## Prepare an introduction
 
 On unreleased `main`, save an introduction locally for two distinct saved
-people and a Beeper source. Find their person IDs and the source ID first,
-then provide your own title and text:
+people and an archived Beeper or email source. Find their person IDs and the
+source ID first, then provide your own title and text:
 
 ```bash
 msgvault intro prepare --source-id 4 --person 12 --person 18 --title "Introduction" --body "Hello both"
@@ -44,9 +44,9 @@ msgvault intro edit <intro-id> --revision 1 --body "Updated text"
 msgvault intro cancel <intro-id> --revision 2
 ```
 
-The record stays on your hardware. Preparing it does not contact Beeper,
-create a group, or send a message. Cancellation clears its stored body. Edit
-and cancel require the current revision and a prepared record; inspect it
+The record stays on your hardware. Preparing it does not contact a provider,
+create a group or compose draft, or send a message. Cancellation clears its
+stored body. Edit and cancel require the current revision and a prepared record; inspect it
 again if another change has advanced the revision. A source with an active
 introduction cannot be merged into another source. If its source is retired,
 the record reports `source_retired`; you can cancel it to clear the body.
@@ -56,19 +56,38 @@ If a person merge combines both people, the record remains visible with a
 Cancellation retains the title in live metadata and merge snapshots. Merge
 snapshots do not retain introduction body text.
 
-Preflight reports `no_identity_on_account` when a person has no saved Beeper
+Preflight reports `no_identity_on_account` when a person has no archived
 identity on that account, `ambiguous_identity` when there is more than one,
 and `owner_selected` when a selected person is you. The same person cannot be
 selected twice. These checks use archived identities, not a live lookup. Group
-creation and confirmation are future work.
+creation and confirmation are future work. Email candidates come from nonempty,
+trimmed, lowercased envelope addresses on undeleted, sent email-thread messages
+from that exact account. Global contact addresses and messages from other
+accounts cannot qualify. Repeated evidence for the same participant and mailbox
+counts once; different mailboxes or participants remain ambiguous.
+
+Optionally add `--meeting-message-id <id>` when preparing a record. It must
+reference a dated, undeleted transcript on an active source that explicitly
+records both people's participation through their current saved identities.
+Calendar invitations, names, conversation rosters and transcript prose do not
+qualify. Supported positive role evidence is generic `meeting_json`
+organizer/attendees, Circleback's explicit meeting organizer/attendees, and
+Granola's explicit calendar organizer plus note attendees. Granola note owners
+and calendar invitees are excluded. These are source-reported roles, not
+independently verified attendance. Invalid context refuses preparation; later
+loss of participation evidence hides the reference on reads. Hard deletion
+clears the reference without removing the introduction.
 
 An agent with source-scoped `draft.create` can prepare, list, show, and cancel.
 The selected people must each have an identity on that account, and neither
 may be an owner, including through any linked participant across accounts.
 Account-present people with ambiguous identities remain visible with a blocker.
 Agent list pages count only eligible records, so hidden records do not create continuation pages.
-Responses omit network user IDs and include the body only with `draft.edit` on
-that source. Editing an introduction is owner-only. See the [CLI reference](../cli-reference.md#intro)
+Responses redact network user IDs and email mailboxes and include the body only
+with `draft.edit` on that source. Meeting context independently requires
+`message.read` on the meeting's own source. Without it, prepare refuses supplied
+context, while reads omit `meeting_message_id` and retain the introduction.
+Editing an introduction is owner-only. See the [CLI reference](../cli-reference.md#intro)
 for flags and pagination.
 
 ## Understand the records
@@ -116,11 +135,17 @@ from a third party with you among the recipients, the person in To or Cc, and
 at most four other non-owner recipients (counting linked aliases once per saved
 person); `owner_outreach` is your addressed, non-broadcast email or direct
 chat; `inbound_outreach` is a non-broadcast direct email or chat sent by the person;
-`group_shared` is a group or channel message involving you; `meeting` is a meeting; and
+`group_shared` is a group or channel message involving you; `meeting_intro` is an
+explicitly recorded transcript shared by you and the person, with exactly one
+organizer distinct from both; `meeting` covers other meetings; and
 `observed` covers other evidence, including messages without your identity and
 legacy conversations of type `chat`, whose direct or group context is unknown.
 When known, `introducer` identifies the sender of an introduction email or
-your sending identity. Group inviter evidence is not yet used. These fields
+your sending identity, or the explicit meeting organizer. Meeting introductions
+use the same recorded-role limits as [introduction context](#prepare-an-introduction).
+The earliest event wins, with the lowest message ID breaking timestamp ties;
+a later introduction or a prepared introduction record cannot replace it.
+Group inviter evidence is not yet used. These fields
 reflect archived evidence and currently linked identities, not a claim about
 when you met offline.
 

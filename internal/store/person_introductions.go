@@ -28,6 +28,7 @@ var (
 )
 
 type PersonIntroduction struct {
+	MeetingMessageID *int64     `json:"meeting_message_id,omitempty" minimum:"1" nullable:"false"`
 	IntroID          string     `json:"intro_id"`
 	Revision         int64      `json:"revision"`
 	Status           string     `json:"status"`
@@ -44,11 +45,12 @@ type PersonIntroduction struct {
 	SourceIdentifier string     `json:"-"`
 }
 type PersonIntroductionPrepare struct {
-	SourceID  int64  `json:"source_id"`
-	PersonAID int64  `json:"person_a_id"`
-	PersonBID int64  `json:"person_b_id"`
-	Title     string `json:"title"`
-	Body      string `json:"body"`
+	MeetingMessageID *int64 `json:"meeting_message_id,omitempty" minimum:"1" nullable:"false"`
+	SourceID         int64  `json:"source_id"`
+	PersonAID        int64  `json:"person_a_id"`
+	PersonBID        int64  `json:"person_b_id"`
+	Title            string `json:"title"`
+	Body             string `json:"body"`
 }
 type PersonIntroductionEdit struct {
 	Revision int64   `json:"revision"`
@@ -74,12 +76,12 @@ type introductionCursor struct {
 	ID        string    `json:"i"`
 }
 
-const introductionColumns = `i.intro_id, i.revision, i.status, i.source_id, i.person_a_id, i.person_b_id, i.title, i.body, i.created_by, i.cancelled_at, i.created_at, i.updated_at, s.source_type, s.identifier`
+const introductionColumns = `i.meeting_message_id, i.intro_id, i.revision, i.status, i.source_id, i.person_a_id, i.person_b_id, i.title, i.body, i.created_by, i.cancelled_at, i.created_at, i.updated_at, s.source_type, s.identifier`
 
 func scanIntroduction(row interface{ Scan(dest ...any) error }) (PersonIntroduction, error) {
 	var v PersonIntroduction
 	var body sql.NullString
-	err := row.Scan(&v.IntroID, &v.Revision, &v.Status, &v.SourceID, &v.PersonAID, &v.PersonBID, &v.Title, &body, &v.CreatedBy, &v.CancelledAt, &v.CreatedAt, &v.UpdatedAt, &v.SourceType, &v.SourceIdentifier)
+	err := row.Scan(&v.MeetingMessageID, &v.IntroID, &v.Revision, &v.Status, &v.SourceID, &v.PersonAID, &v.PersonBID, &v.Title, &body, &v.CreatedBy, &v.CancelledAt, &v.CreatedAt, &v.UpdatedAt, &v.SourceType, &v.SourceIdentifier)
 	v.Body = body.String
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, ErrIntroductionNotFound
@@ -88,45 +90,83 @@ func scanIntroduction(row interface{ Scan(dest ...any) error }) (PersonIntroduct
 }
 func validIntroText(s string) bool { return utf8.ValidString(s) && !strings.ContainsRune(s, 0) }
 func (s *Store) PreparePersonIntroductionContext(ctx context.Context, in PersonIntroductionPrepare, actor string) (PersonIntroduction, error) {
+	row, _, err := s.PreparePersonIntroductionAuthorizedContext(ctx, in, actor, nil, nil, nil)
+	if errors.Is(err, ErrMeetingNotFound) {
+		err = ErrIntroductionInvalid
+	}
+	return row, err
+}
+
+// PreparePersonIntroductionAuthorizedContext authorizes stable source references,
+// validates context and computes the response preflight in the insertion view.
+func (s *Store) PreparePersonIntroductionAuthorizedContext(ctx context.Context, in PersonIntroductionPrepare, actor string, delivery, meeting ChatDraftAuthorizer, validate func(PersonIntroductionPreflight) error) (PersonIntroduction, PersonIntroductionPreflight, error) {
 	var result PersonIntroduction
+	var preflight PersonIntroductionPreflight
+	if in.MeetingMessageID != nil && *in.MeetingMessageID <= 0 {
+		return result, preflight, ErrIntroductionInvalid
+	}
 	if in.SourceID <= 0 || in.PersonAID <= 0 || in.PersonBID <= 0 || !validIntroText(in.Title) || !validIntroText(in.Body) || actor == "" {
-		return result, ErrIntroductionInvalid
+		return result, preflight, ErrIntroductionInvalid
 	}
 	if in.PersonAID == in.PersonBID {
-		return result, ErrIntroductionSamePerson
+		return result, preflight, ErrIntroductionSamePerson
 	}
 	var random [16]byte
 	if _, err := rand.Read(random[:]); err != nil {
-		return result, fmt.Errorf("generate introduction id: %w", err)
+		return result, preflight, fmt.Errorf("generate introduction id: %w", err)
 	}
 	id := "intro-" + hex.EncodeToString(random[:])
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		var typ string
-		if err := tx.QueryRowContext(ctx, `SELECT source_type FROM sources WHERE id = ?`, in.SourceID).Scan(&typ); errors.Is(err, sql.ErrNoRows) {
+		var typ, identifier string
+		if err := tx.QueryRowContext(ctx, `SELECT source_type, identifier FROM sources WHERE id = ?`, in.SourceID).Scan(&typ, &identifier); errors.Is(err, sql.ErrNoRows) {
 			return ErrIntroductionSource
 		} else if err != nil {
 			return err
 		}
-		if typ != sourceTypeBeeper {
+		if delivery != nil {
+			if err := delivery(typ, identifier); err != nil {
+				return err
+			}
+		}
+		if typ != sourceTypeBeeper && !SourceTypeUsesEmailIdentity(typ) {
 			return ErrIntroductionSource
 		}
 		if err := requireSourceWritableWith(tx, in.SourceID); err != nil {
 			return err
 		}
+		ctx = withWritableSnapshot(ctx, s.db.DB, tx)
+		if in.MeetingMessageID != nil {
+			people, err := s.loadMeetingParticipationWith(ctx, tx, *in.MeetingMessageID, meeting)
+			if err != nil {
+				return err
+			}
+			if !meetingIncludesPersons(people, in.PersonAID, in.PersonBID) {
+				return ErrIntroductionInvalid
+			}
+		}
+		var err error
+		preflight, err = s.GetPersonIntroductionPreflightContext(ctx, in.SourceID, in.PersonAID, in.PersonBID)
+		if err != nil {
+			return err
+		}
+		if validate != nil {
+			if err := validate(preflight); err != nil {
+				return err
+			}
+		}
 		if err := s.requirePersonsExistTx(ctx, tx, in.PersonAID, in.PersonBID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO person_introductions (intro_id, revision, status, source_id, person_a_id, person_b_id, title, body, created_by) VALUES (?, 1, 'prepared', ?, ?, ?, ?, ?, ?)`, id, in.SourceID, in.PersonAID, in.PersonBID, in.Title, in.Body, actor); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO person_introductions (intro_id, revision, status, source_id, person_a_id, person_b_id, title, body, created_by, meeting_message_id) VALUES (?, 1, 'prepared', ?, ?, ?, ?, ?, ?, ?)`, id, in.SourceID, in.PersonAID, in.PersonBID, in.Title, in.Body, actor, in.MeetingMessageID); err != nil {
 			return err
 		}
-		var err error
 		result, err = scanIntroduction(tx.QueryRowContext(ctx, `SELECT `+introductionColumns+` FROM person_introductions i JOIN sources s ON s.id = i.source_id WHERE i.intro_id = ?`, id))
 		return err
 	})
-	return result, err
+	return result, preflight, err
 }
 func (s *Store) GetPersonIntroductionContext(ctx context.Context, id string) (PersonIntroduction, error) {
 	return scanIntroduction(s.db.QueryRowContext(ctx, `SELECT `+introductionColumns+` FROM person_introductions i JOIN sources s ON s.id = i.source_id WHERE i.intro_id = ?`, id))
@@ -173,7 +213,7 @@ func (s *Store) ListPersonIntroductionsContext(ctx context.Context, q PersonIntr
 
 		var predicates strings.Builder
 		for _, person := range []string{"i.person_a_id", "i.person_b_id"} {
-			predicates.WriteString(` AND EXISTS (` + s.introductionIdentitySQL(person, "s.identifier") + `)`)
+			predicates.WriteString(` AND EXISTS (` + s.introductionIdentitySQL(person, "s.source_type", "i.source_id", "s.identifier") + `)`)
 			predicates.WriteString(` AND NOT EXISTS (SELECT 1 FROM person_participants owner_pp WHERE owner_pp.person_id = ` + person + ` AND owner_pp.participant_id IN (` + s.loopOwnerParticipantsSQL() + `))`)
 		}
 		query += predicates.String()

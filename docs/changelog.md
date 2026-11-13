@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Prepare and manage local introduction records for two people with `msgvault intro`.
+- Prepare local introductions for archived Beeper or email accounts with `msgvault intro`, optionally referencing an explicitly recorded shared transcript. First appearance can identify its distinct recorded organizer as `meeting_intro`.
 - Message exports through the daemon no longer turn accented, CJK, or emoji characters into replacement characters.
 - Saved people show their first archived appearance, including copied recipients, and the introducing sender when the evidence identifies one. See [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance).
 

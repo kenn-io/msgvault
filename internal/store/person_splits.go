@@ -1149,6 +1149,7 @@ var personSplitSnapshotDependencies = map[string][]personSplitSnapshotDependency
 }
 
 var personSplitSnapshotColumnDependencies = map[string]map[string]personSplitSnapshotDependency{
+	"person_introductions": {"meeting_message_id": {column: "meeting_message_id", table: "messages", key: "id"}},
 	personRelationshipReviewsTableName: {
 		"accepted_relationship_id": {
 			column: "accepted_relationship_id", table: personRelationshipsTableName, key: "id",

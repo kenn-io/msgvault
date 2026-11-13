@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"compress/zlib"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"path/filepath"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -294,7 +296,15 @@ func checkIntroductionMergeSnapshotsOmitBody(t *testing.T, st *Store) {
 	require.NoError(t, err)
 	b, _, err := st.CreatePersonFromParticipantContext(ctx, pb)
 	require.NoError(t, err)
-	_, err = st.PreparePersonIntroductionContext(ctx, PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID, Body: "sensitive synthetic text"}, "owner")
+
+	conv, err := st.EnsureConversation(ctx, src.ID, "snapshot-meeting", "Meeting")
+	require.NoError(t, err)
+	meeting, err := st.UpsertMessage(&Message{ConversationID: conv, SourceID: src.ID, SourceMessageID: "snapshot-context", MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}})
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO message_recipients (message_id,participant_id,recipient_type,email_address) VALUES (?,?,'from','intro-a@example.com'),(?,?,'to','intro-b@example.com')`), meeting, pa, meeting, pb)
+	require.NoError(t, err)
+	require.NoError(t, st.UpsertMessageRawWithFormatContext(ctx, meeting, []byte(`{"organizer":{"email":"intro-a@example.com"},"attendees":[{"email":"intro-b@example.com"}]}`), "meeting_json"))
+	_, err = st.PreparePersonIntroductionContext(ctx, PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID, Body: "sensitive synthetic text", MeetingMessageID: &meeting}, "owner")
 	require.NoError(t, err)
 	merged, err := st.MergePersonsContext(ctx, PersonMergeRequest{SurvivorID: a.ID, AbsorbedID: b.ID, ExpectedSurvivorRevision: a.Revision, ExpectedAbsorbedRevision: b.Revision, IdempotencyKey: "intro-snapshot", Actor: "test"})
 	require.NoError(t, err)
@@ -320,6 +330,23 @@ func checkIntroductionMergeSnapshotsOmitBody(t *testing.T, st *Store) {
 	for _, column := range post.Columns {
 		assert.NotEqual(t, "body", column.Name)
 	}
+	// Exercise the insertion restoration owner directly with a real body-free
+	// merge snapshot. Introduction rows normally remain live after repointing;
+	// split preserves later user deletions rather than resurrecting those rows.
+	pc, err := st.EnsureParticipant("restored@example.test", "Restored", "example.test")
+	require.NoError(t, err)
+	restored, _, err := st.CreatePersonFromParticipantContext(ctx, pc)
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`DELETE FROM messages WHERE id=?`), meeting)
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(ctx, `DELETE FROM person_introductions`)
+	require.NoError(t, err)
+	require.NoError(t, st.withTxContext(ctx, func(tx *loggedTx) error {
+		return st.insertPersonSplitSnapshotRowTx(ctx, tx, introRows[0], a.ID, restored.ID, a.ID, b.ID, "", "")
+	}))
+	var meetingID sql.NullInt64
+	require.NoError(t, st.DB().QueryRowContext(ctx, `SELECT meeting_message_id FROM person_introductions`).Scan(&meetingID))
+	assert.False(t, meetingID.Valid)
 }
 
 func TestIntroductionProtectsUserOwnedPerson(t *testing.T) {

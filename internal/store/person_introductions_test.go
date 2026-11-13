@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"database/sql"
 	"encoding/base64"
 	"sort"
 	"strings"
@@ -74,9 +75,15 @@ func TestIntroductionMergeAndSplit(t *testing.T) {
 	req.NoError(err)
 	c, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pc)
 	req.NoError(err)
+
+	meeting, err := f.Store.UpsertMessage(&store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "merge-context", MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}})
+	req.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO message_recipients (message_id,participant_id,recipient_type,email_address) VALUES (?,?,'from','survivor@example.com'),(?,?,'to','absorbed@example.com'),(?,?,'to','third@example.com')`), meeting, pa, meeting, pb, meeting, pc)
+	req.NoError(err)
+	req.NoError(f.Store.UpsertMessageRawWithFormatContext(ctx, meeting, []byte(`{"organizer":{"email":"survivor@example.com"},"attendees":[{"email":"absorbed@example.com"},{"email":"third@example.com"}]}`), "meeting_json"))
 	prepare := func(x, y int64) store.PersonIntroduction {
 		t.Helper()
-		v, err := f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: source.ID, PersonAID: x, PersonBID: y, Title: "hello", Body: "body"}, "owner")
+		v, err := f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: source.ID, PersonAID: x, PersonBID: y, Title: "hello", Body: "body", MeetingMessageID: &meeting}, "owner")
 		req.NoError(err)
 		return v
 	}
@@ -87,6 +94,7 @@ func TestIntroductionMergeAndSplit(t *testing.T) {
 	req.NoError(err)
 	got, err := f.Store.GetPersonIntroductionContext(ctx, left.IntroID)
 	req.NoError(err)
+	check.Equal(&meeting, got.MeetingMessageID)
 	check.Equal(a.ID, got.PersonAID)
 	check.Equal(int64(2), got.Revision)
 	got, err = f.Store.GetPersonIntroductionContext(ctx, right.IntroID)
@@ -108,6 +116,10 @@ func TestIntroductionMergeAndSplit(t *testing.T) {
 	req.NoError(err)
 	_, err = f.Store.CancelPersonIntroductionContext(ctx, right.IntroID, 2)
 	req.NoError(err)
+
+	// The existing-row path must skip a deleted optional message dependency.
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`DELETE FROM messages WHERE id=?`), meeting)
+	req.NoError(err)
 	split, err := f.Store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{SourcePersonID: a.ID, MergeID: merged.Merge.ID, ParticipantIDs: []int64{pb}, ExpectedSourceRevision: merged.Person.Revision, IdempotencyKey: "intro-split", Actor: "test"})
 	req.NoError(err)
 	got, err = f.Store.GetPersonIntroductionContext(ctx, left.IntroID)
@@ -126,6 +138,8 @@ func TestIntroductionMergeAndSplit(t *testing.T) {
 	check.Equal(split.NewPerson.ID, got.PersonBID)
 	check.Equal(body, got.Body)
 	check.Greater(got.Revision, int64(3))
+
+	check.Nil(got.MeetingMessageID)
 	t.Run("multi-stage merge", func(t *testing.T) {
 		check := assert.New(t)
 		req := require.New(t)

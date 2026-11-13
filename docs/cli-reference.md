@@ -37,12 +37,19 @@ daemon. See [Prepare an introduction](usage/people.md#prepare-an-introduction)
 for preflight blockers and agent permissions.
 
 ```text
-msgvault intro prepare --source-id N --person A --person B --title T --body B [--json]
+msgvault intro prepare --source-id N --person A --person B --title T --body B [--meeting-message-id N] [--json]
 msgvault intro list [--source-id N] [--limit N] [--after-id CURSOR] [--json]
 msgvault intro show ID [--json]
 msgvault intro edit ID --revision N [--title T] [--body B] [--json]
 msgvault intro cancel ID --revision N [--json]
 ```
+
+Prepare accepts an archived Beeper or email delivery source. The optional
+`--meeting-message-id` is prepare-only and must identify a transcript with
+explicit recorded participation by both people. It creates only a local record;
+see [context and permission limits](usage/people.md#prepare-an-introduction).
+Permitted context is returned as `meeting_message_id`; unavailable or inaccessible
+context is omitted on later reads.
 
 List defaults to 20 records and accepts a limit from 1 to 100. Results are
 ordered by creation timestamp descending, then introduction ID descending for

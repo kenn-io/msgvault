@@ -57,7 +57,9 @@ type ActivityCandidate struct {
 	DirectLimitTransition   ActivityDirectLimitTransition
 	IdentityRevision        int64
 	AccountIdentityRevision int64
-	Counterparts            []ActivityCounterpart
+	// MeetingParticipants is positive raw-role evidence for the selected first event only.
+	MeetingParticipants []ActivityCounterpart
+	Counterparts        []ActivityCounterpart
 }
 
 type activityMessageMetadata struct {

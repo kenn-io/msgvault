@@ -16,6 +16,7 @@ const (
 	FirstContactOwnerOutreach   FirstContactKind = "owner_outreach"
 	FirstContactInboundOutreach FirstContactKind = "inbound_outreach"
 	FirstContactGroupShared     FirstContactKind = "group_shared"
+	FirstContactMeetingIntro    FirstContactKind = "meeting_intro"
 	FirstContactMeeting         FirstContactKind = "meeting"
 	FirstContactObserved        FirstContactKind = "observed"
 )
@@ -29,6 +30,25 @@ type FirstContactIntroducer struct {
 // ClassifyFirstContact describes a person's earliest linked event using current identities.
 func ClassifyFirstContact(candidate ActivityCandidate, personID int64, maxDirectCounterparts int) (FirstContactKind, *FirstContactIntroducer) {
 	if IsMeetingMessageType(candidate.MessageType) {
+		if candidate.MessageType == "meeting_transcript" {
+			people := candidate.MeetingParticipants
+			ownerLinked := activityOwnerLinked(people)
+			owner, target := false, false
+			var organizer *ActivityCounterpart
+			organizers := 0
+			for i := range people {
+				p := &people[i]
+				owner = owner || ownerLinked(*p)
+				target = target || (p.PersonID != nil && *p.PersonID == personID)
+				if p.RecipientType == "from" {
+					organizers++
+					organizer = p
+				}
+			}
+			if owner && target && organizers == 1 && !ownerLinked(*organizer) && (organizer.PersonID == nil || *organizer.PersonID != personID) {
+				return FirstContactMeetingIntro, &FirstContactIntroducer{ParticipantID: organizer.ParticipantID, PersonID: organizer.PersonID}
+			}
+		}
 		return FirstContactMeeting, nil
 	}
 	counterparts := collapseActivityCounterparts(candidate.Counterparts)
@@ -120,6 +140,25 @@ func (s *Store) populateFirstContactTx(ctx context.Context, tx *loggedTx, state 
 		return fmt.Errorf("load first-contact candidate: %w", err)
 	}
 	candidate := candidates[0]
+	if candidate.MessageType == "meeting_transcript" {
+		people, err := s.loadMeetingParticipationWith(ctx, tx, messageID, nil)
+		if err != nil && !errors.Is(err, ErrMeetingNotFound) {
+			return err
+		}
+		owners, err := s.loopOwnerIdentities(WithReadSnapshotContext(ctx, s.db.DB, tx.Tx))
+		if err != nil {
+			return err
+		}
+		for i := range people {
+			_, people[i].IsOwner = owners.participants[people[i].ParticipantID]
+			if people[i].PersonID != nil {
+				if _, ok := owners.persons[*people[i].PersonID]; ok {
+					people[i].IsOwner = true
+				}
+			}
+		}
+		candidate.MeetingParticipants = people
+	}
 	state.FirstContactKind, state.Introducer = ClassifyFirstContact(candidate, state.PersonID, candidate.DirectLimitTransition.Target)
 	if state.Introducer != nil {
 		err = tx.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(TRIM(person.display_name), ''), NULLIF(TRIM(`+participantSenderNameSQL+`), ''), NULLIF(TRIM(p.email_address), ''), NULLIF(TRIM(p.phone_number), ''), '') FROM participants p

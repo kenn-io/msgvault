@@ -81,3 +81,31 @@ func TestClassifyFirstContact(t *testing.T) {
 		})
 	}
 }
+
+func TestClassifyFirstContactMeetingIntro(t *testing.T) {
+	target, host, owner := int64(10), int64(11), int64(12)
+	proof := []ActivityCounterpart{{ParticipantID: 1, PersonID: &host, RecipientType: "from"}, {ParticipantID: 2, PersonID: &target, RecipientType: "to"}, {ParticipantID: 3, PersonID: &owner, RecipientType: "to", IsOwner: true}}
+	for _, tc := range []struct {
+		name  string
+		proof []ActivityCounterpart
+		want  FirstContactKind
+	}{
+		{"explicit", proof, FirstContactMeetingIntro},
+		{"missing owner", proof[:2], FirstContactMeeting},
+		{"normalized only", nil, FirstContactMeeting},
+		{"ambiguous organizer", append(append([]ActivityCounterpart{}, proof...), ActivityCounterpart{ParticipantID: 4, RecipientType: "from"}), FirstContactMeeting},
+		{"target organizer", []ActivityCounterpart{{ParticipantID: 2, PersonID: &target, RecipientType: "from"}, proof[2]}, FirstContactMeeting},
+		{"owner organizer", []ActivityCounterpart{{ParticipantID: 3, PersonID: &owner, RecipientType: "from", IsOwner: true}, proof[1]}, FirstContactMeeting},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kind, intro := ClassifyFirstContact(ActivityCandidate{MessageType: "meeting_transcript", MeetingParticipants: tc.proof, Counterparts: proof}, target, 25)
+			assert.Equal(t, tc.want, kind)
+			if tc.want == FirstContactMeetingIntro {
+				require.NotNil(t, intro)
+				assert.Equal(t, int64(1), intro.ParticipantID)
+			} else {
+				assert.Nil(t, intro)
+			}
+		})
+	}
+}

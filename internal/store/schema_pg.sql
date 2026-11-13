@@ -4005,6 +4005,7 @@ CREATE TABLE IF NOT EXISTS person_introductions (
     source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
     person_a_id BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
     person_b_id BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    meeting_message_id BIGINT REFERENCES messages(id) ON DELETE SET NULL,
     title TEXT NOT NULL,
     body TEXT,
     created_by TEXT NOT NULL,
