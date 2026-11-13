@@ -25,6 +25,12 @@ type objectMetadata struct {
 	Organic            bool   `json:"organic,omitempty"`
 	Visitor            bool   `json:"visitor,omitempty"`
 	Ad                 bool   `json:"ad,omitempty"`
+	// Hidden records a hide made through msgvault. Sync keeps it because it
+	// starts from the stored metadata and Graph reads do not return it.
+	Hidden bool `json:"hidden,omitempty"`
+	// Outbound marks a reply msgvault posted. Meta may omit or not identify
+	// its author, so sync keeps this instead.
+	Outbound bool `json:"outbound,omitempty"`
 }
 
 func (m objectMetadata) matches(app, page, account, root string) bool {
@@ -149,6 +155,16 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 			fromName = previous[0].FromName
 		}
 	}
+	if !self {
+		if !meta.Outbound && !exists {
+			sent, err := r.imp.store.SentMetaCommentReplyContext(ctx, r.source.ID, obj.ID)
+			if err != nil {
+				return err
+			}
+			meta.Outbound = sent
+		}
+		self = meta.Outbound
+	}
 	if sender != 0 {
 		recipients = append(recipients, store.RecipientSet{Type: "from", ParticipantIDs: []int64{sender}, DisplayNames: []string{fromName}})
 		participants = append(participants, store.ConversationParticipantRef{ParticipantID: sender, Role: "member"})
@@ -227,8 +243,11 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 		}
 	}
 	r.sum.MessagesProcessed++
-	if !exists {
+	switch {
+	case !exists:
 		r.sum.MessagesAdded++
+	case !unchanged:
+		r.sum.MessagesUpdated++
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -105,6 +106,59 @@ func TestGraphTokenRedaction(t *testing.T) {
 			_, err := c.VerifyPage(t.Context(), "100")
 			require.Error(t, err)
 			assert.NotContains(t, err.Error(), "synthetic-page-secret")
+		})
+	}
+}
+
+func TestGraphErrorKeepsOnlyCodes(t *testing.T) {
+	for _, tt := range []struct {
+		name, body, want string
+		code, subcode    int
+	}{
+		{"code and subcode", `{"error":{"message":"synthetic-page-secret","code":190,"error_subcode":463}}`, "graph request failed (HTTP 400, code 190, subcode 463)", 190, 463},
+		{"code only", `{"error":{"message":"synthetic-page-secret","code":10}}`, "graph request failed (HTTP 400, code 10)", 10, 0},
+		{"not JSON", `synthetic-page-secret`, "graph request failed (HTTP 400)", 0, 0},
+		{"oversized", `{"error":{"code":4,"message":"` + strings.Repeat("x", 64<<10) + `"}}`, "graph request failed (HTTP 400)", 0, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = fmt.Fprint(w, tt.body)
+			})
+			_, err := c.VerifyPage(t.Context(), "100")
+			var apiErr *APIError
+			require.ErrorAs(t, err, &apiErr)
+			assert.Equal(tt.code, apiErr.Code)
+			assert.Equal(tt.subcode, apiErr.Subcode)
+			assert.EqualError(err, tt.want)
+		})
+	}
+}
+
+func TestGraphRefusalWithHTTP200(t *testing.T) {
+	for _, tt := range []struct {
+		name, body string
+		code       int
+	}{
+		{"coded refusal", `{"error":{"message":"synthetic-page-secret","code":10,"error_subcode":2018}}`, 10},
+		{"unreadable error", `{"error":"synthetic-page-secret"}`, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+				_, _ = fmt.Fprint(w, tt.body)
+			})
+			_, err := c.VerifyPage(t.Context(), "100")
+			require.Error(err)
+			assert.NotContains(err.Error(), "synthetic-page-secret")
+			apiErr, ok := errors.AsType[*APIError](err)
+			if tt.code == 0 {
+				assert.False(ok, "an error envelope without a code is not a provider refusal")
+				return
+			}
+			require.True(ok)
+			assert.Equal(APIError{Status: http.StatusOK, Code: 10, Subcode: 2018}, *apiErr)
 		})
 	}
 }

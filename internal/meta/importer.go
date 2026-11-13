@@ -24,6 +24,7 @@ type ImportOptions struct {
 type ImportSummary struct {
 	MessagesProcessed int
 	MessagesAdded     int
+	MessagesUpdated   int
 	Requests          int
 	Partial           bool
 }
@@ -157,6 +158,9 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 			retErr = scoped.store.CompleteSyncAndUpdateSourceCursorContext(ctx, syncID, source.ID, checkpoint.PageToken)
 		}
 	}()
+	if err = run.dropDeletedFrames(ctx); err != nil {
+		return sum, err
+	}
 	// Publish the inherited state before any new request, so a crash cannot
 	// conceal a newer failed/paused checkpoint behind this run.
 	if err = run.save(ctx); err != nil {
@@ -194,6 +198,47 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 	return sum, phaseErr
 }
 
+// dropDeletedFrames removes saved traversal of comments deleted through
+// msgvault since the checkpoint was saved: frames reading their replies and
+// saved copies still waiting to be archived. Meta has no replies left to read
+// there, so asking would fail on every run. The run holds the source lock, so
+// no comment is deleted while it traverses.
+func (r *importRun) dropDeletedFrames(ctx context.Context) error {
+	deleted := func(id string) (bool, error) {
+		return r.imp.store.MessageDeletedFromSourceContext(ctx, r.source.ID, id)
+	}
+	for _, p := range r.state.Phases {
+		for i := range p.Stack {
+			f := &p.Stack[i]
+			if f.Parent != f.Root {
+				gone, err := deleted(f.Parent)
+				if err != nil {
+					return err
+				}
+				if gone {
+					// Each frame's comment was already taken from the frame
+					// below, so cutting here loses only its own subtree.
+					p.Stack = p.Stack[:i]
+					break
+				}
+			}
+			// A new slice keeps the saved list intact if a lookup fails.
+			pending := make([]Object, 0, len(f.Pending))
+			for _, child := range f.Pending {
+				gone, err := deleted(child.ID)
+				if err != nil {
+					return err
+				}
+				if !gone {
+					pending = append(pending, child)
+				}
+			}
+			f.Pending = pending
+		}
+	}
+	return nil
+}
+
 func (r *importRun) verify(ctx context.Context) error {
 	reads := []func() error{func() error {
 		_, err := r.imp.api.VerifyPage(ctx, r.page)
@@ -225,7 +270,7 @@ func (r *importRun) checkpoint() (*store.Checkpoint, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &store.Checkpoint{PageToken: string(data), MessagesAdded: int64(r.sum.MessagesAdded), MessagesProcessed: int64(r.sum.MessagesProcessed)}, nil
+	return &store.Checkpoint{PageToken: string(data), MessagesAdded: int64(r.sum.MessagesAdded), MessagesUpdated: int64(r.sum.MessagesUpdated), MessagesProcessed: int64(r.sum.MessagesProcessed)}, nil
 }
 
 func (r *importRun) save(ctx context.Context) error {
