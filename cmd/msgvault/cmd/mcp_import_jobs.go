@@ -28,14 +28,7 @@ func importJobMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol.
 func decodeImportJobArguments(args map[string]any) (generated.ImportJobRequest, bool) {
 	input, err := decodeMCPOperationArguments[generated.ImportJobRequest](args)
 	input.Account = strings.TrimSpace(input.Account)
-	var after, before string
-	if input.After != nil {
-		after = *input.After
-	}
-	if input.Before != nil {
-		before = *input.Before
-	}
-	return input, err == nil && input.Account != "" && api.ValidateImportJobDates(after, before) == ""
+	return input, err == nil && input.Account != ""
 }
 
 func importJobRefusal(code string) bool {
@@ -74,6 +67,16 @@ func importJobDisclosure(name string, args map[string]any) (string, bool, error)
 	}
 	input, ok := decodeImportJobArguments(args)
 	if !ok {
+		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+	}
+	var after, before string
+	if input.After != nil {
+		after = *input.After
+	}
+	if input.Before != nil {
+		before = *input.Before
+	}
+	if api.ValidateImportJobDates(after, before) != "" {
 		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 	}
 	data, err := json.Marshal(struct {
