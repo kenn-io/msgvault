@@ -55,6 +55,8 @@ builds the message index, and enables semantic search in the running daemon.
 The row shows download and indexing progress. You can close the page while it
 runs and keep using keyword search.
 
+If you turned on built-in search in another app, MsgVault starts indexing a SQLite archive at launch when the shared model files are installed and no provider is configured. It does not download missing files at startup. A configured provider takes precedence. PostgreSQL archives require an explicit setup.
+
 If Ollama already serves `nomic-embed-text`, Turn on uses it. An existing
 Ollama configuration stays on Ollama.
 When the browser uses a remote address, the download line names the daemon host.

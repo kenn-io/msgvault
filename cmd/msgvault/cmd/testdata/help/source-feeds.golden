@@ -1,0 +1,17 @@
+Follow RSS, Atom and JSON feeds
+
+Usage:
+  msgvault source feeds [command]
+
+Available Commands:
+  add         Follow RSS, Atom or JSON feeds
+  list        List followed feeds and their status
+  remove      Stop following feeds; keep their items
+  sync        Archive new items from followed feeds
+
+Flags:
+  -h, --help   help for feeds
+
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')
+
+Use "msgvault source feeds [command] --help" for more information about a command.
