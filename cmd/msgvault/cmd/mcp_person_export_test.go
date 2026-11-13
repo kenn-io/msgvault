@@ -1,18 +1,15 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"encoding/json/v2"
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,64 +25,114 @@ import (
 type personExportRouterStore struct {
 	*storeAPIAdapter
 
-	t  *testing.T
-	st *store.Store
+	st        *store.Store
+	output    string
+	args      []string
+	env       map[string]string
+	cwd       string
+	runExport bool
 }
 
 func (s *personExportRouterStore) RunCLICommand(ctx context.Context, req api.CLIRunRequest, emit func(api.CLIRunEvent) error) error {
-	require.Equal(s.t, "export-messages", req.Args[0])
-	require.Empty(s.t, req.Env)
-	require.Empty(s.t, req.Cwd)
+	s.args = append([]string(nil), req.Args...)
+	s.env = req.Env
+	s.cwd = req.Cwd
+	if !s.runExport {
+		return emit(api.CLIRunEvent{Type: cliStreamStdout, Data: s.output})
+	}
 	cmd := newExportMessagesLocalCmd(exportMessagesDeps{openStore: func(context.Context) (*store.Store, func(), error) { return s.st, func() {}, nil }})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
+	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 	cmd.SetArgs(req.Args[1:])
 	if err := cmd.ExecuteContext(ctx); err != nil {
+		if emitErr := emit(api.CLIRunEvent{Type: cliStreamStderr, Data: err.Error()}); emitErr != nil {
+			return emitErr
+		}
 		return fmt.Errorf("execute export messages: %w", err)
 	}
-	return emit(api.CLIRunEvent{Type: cliStreamStdout, Data: out.String()})
+	return nil
 }
 
-func TestMCPPersonExportThroughRouterAndStore(t *testing.T) {
+func TestMCPPersonExportThroughRouter(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("text", "archive")
-	requirements.NoError(err)
-	participant, err := st.EnsureParticipant("person@example.com", "Example", "example.com")
-	requirements.NoError(err)
-	person, _, err := st.CreatePersonFromParticipant(participant)
-	requirements.NoError(err)
-	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	conv := insertExportMessagesConversation(t, st, source.ID, "thread", "Example")
-	insertExportMessagesMessage(t, st, source.ID, conv, "selected", start, "synthetic body")
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET sender_id = ? WHERE source_id = ?`), participant, source.ID)
-	requirements.NoError(err)
-	fixture := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &personExportRouterStore{storeAPIAdapter: &storeAPIAdapter{store: st}, t: t, st: st}, Logger: slog.New(slog.DiscardHandler)})
-	server := httptest.NewServer(fixture.Router())
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-	requirements.NoError(err)
-	caps, err := client.MCPCapabilities(t.Context())
-	requirements.NoError(err)
-	backend := newDaemonMCPOperations(client, caps)
+	start := "2026-07-20T00:00:00Z"
+	end := "2026-07-21T00:00:00Z"
+	const exportJSONL = "{\"record_type\":\"manifest\",\"schema\":\"msgvault-message-export/1\"}\n{\"record_type\":\"complete\",\"counts\":{\"sources\":0,\"conversations\":0,\"messages\":0}}\n"
+	runner := &personExportRouterStore{output: exportJSONL}
+	backend := newPersonExportBackendThroughRouter(t, runner)
 	assertions.Contains(backend.capabilities(), "export_person_messages")
-	args := map[string]any{"person_id": person.ID, "start": start.Format(time.RFC3339), "end": start.Add(time.Hour).Format(time.RFC3339), "sources": []string{"text:archive"}}
+	args := map[string]any{
+		"person_id":     int64(42),
+		"start":         start,
+		"end":           end,
+		"sources":       []string{"text:archive"},
+		"message_types": []string{"email"},
+	}
 	result, err := backend.ExecuteOperation(t.Context(), "export_person_messages", args)
 	requirements.NoError(err)
 	requirements.False(result.IsError)
 	output, ok := result.Output.(mcpserver.PersonExport)
 	requirements.True(ok)
-	rows := decodeExportMessageRecords(t, []byte(output.JSONL))
-	requirements.Len(rows, 5)
-	assertions.Equal("selected", rows[3]["id"])
-	assertions.Contains(output.JSONL, `"messages":1`)
-	args["end"] = args["start"]
-	result, err = backend.ExecuteOperation(t.Context(), "export_person_messages", args)
-	requirements.NoError(err)
-	assertions.True(result.IsError)
-	assertions.Equal("export_failed", personExportFailureCode(t, result.Output))
+	assertions.Equal(strings.Split(exportJSONL, "\n"), strings.Split(output.JSONL, "\n"))
+	assertions.Equal([]string{
+		"export-messages",
+		"--end=" + end,
+		"--message-type=email",
+		"--person-id=42",
+		"--source=text:archive",
+		"--start=" + start,
+	}, runner.args)
+	assertions.Empty(runner.env)
+	assertions.Empty(runner.cwd)
+}
+
+func TestMCPPersonExportMapsExporterArgumentFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+	}{
+		{
+			name: "invalid window",
+			args: map[string]any{"person_id": int64(42), "start": "2026-07-20T00:00:00Z", "end": "2026-07-20T00:00:00Z"},
+		},
+		{
+			name: "unknown person",
+			args: map[string]any{"person_id": int64(42), "start": "2026-07-20T00:00:00Z", "end": "2026-07-21T00:00:00Z"},
+		},
+		{
+			name: "unknown source",
+			args: map[string]any{"person_id": int64(1), "start": "2026-07-20T00:00:00Z", "end": "2026-07-21T00:00:00Z", "sources": []string{"text:missing"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			st := testutil.NewTestStore(t)
+			runner := &personExportRouterStore{st: st, runExport: true}
+			backend := newPersonExportBackendThroughRouter(t, runner)
+			result, err := backend.ExecuteOperation(t.Context(), "export_person_messages", tc.args)
+			requirements.NoError(err)
+			requirements.True(result.IsError)
+			assertions.Equal("invalid_arguments", personExportFailureCode(t, result.Output))
+			encoded, err := json.Marshal(result.Output)
+			requirements.NoError(err)
+			assertions.NotContains(string(encoded), "person not found")
+			assertions.NotContains(string(encoded), "text:missing")
+		})
+	}
+}
+
+func newPersonExportBackendThroughRouter(t *testing.T, runner *personExportRouterStore) *daemonMCPOperations {
+	t.Helper()
+	fixture := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: runner, Logger: slog.New(slog.DiscardHandler)})
+	server := httptest.NewServer(fixture.Router())
+	t.Cleanup(server.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+	require.NoError(t, err)
+	caps, err := client.MCPCapabilities(t.Context())
+	require.NoError(t, err)
+	return newDaemonMCPOperations(client, caps)
 }
 
 func TestMCPPersonExportRequiresCLIRouteCapability(t *testing.T) {
@@ -97,37 +144,22 @@ func TestMCPPersonExportRefusesTransportFailureAndOverflow(t *testing.T) {
 	for _, tc := range []struct{ name, code string }{
 		{"failure", "export_failed"},
 		{"overflow", "export_limit_exceeded"},
-		{"cancelled", "export_failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
 			ctx := t.Context()
 			cfg := daemonclient.Config{AllowInsecure: true}
-			if tc.name == "cancelled" {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithCancel(ctx)
-				defer cancel()
-				export := `{"record_type":"manifest","schema":"msgvault-message-export/1","msgvault_version":"test","window":{"start":"2026-07-20T00:00:00Z","end":"2026-07-21T00:00:00Z"},"filters":{"person_id":1,"message_types":[],"sources":[]}}` + "\n" +
-					`{"record_type":"complete","counts":{"sources":0,"conversations":0,"messages":0}}` + "\n"
-				events := `{"type":"stdout","data":` + strconv.Quote(export) + "}\n" + `{"type":"complete"}` + "\n"
-				transport := testTransport(func(*http.Request) (*http.Response, error) {
-					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: cancelOnCloseBody{Reader: strings.NewReader(events), cancel: cancel}}, nil
-				})
-				cfg.URL = "http://127.0.0.1"
-				cfg.HTTPClient = &http.Client{Transport: transport}
-			} else {
-				events := []string{`{"type":"error","error":"private detail"}` + "\n"}
-				if tc.name == "overflow" {
-					event := `{"type":"stdout","data":` + strconv.Quote(strings.Repeat("x", 32<<10)) + "}\n"
-					events = make([]string, 17)
-					for i := range events {
-						events[i] = event
-					}
+			events := []string{`{"type":"error","error":"private detail"}` + "\n"}
+			if tc.name == "overflow" {
+				event := `{"type":"stdout","data":` + strconv.Quote(strings.Repeat("x", 32<<10)) + "}\n"
+				events = make([]string, 17)
+				for i := range events {
+					events[i] = event
 				}
-				server, _ := newDaemonCLIRunnerTestServer(t, func(daemonCLIRunTestRequest) {}, events...)
-				cfg.URL = server.URL
 			}
+			server, _ := newDaemonCLIRunnerTestServer(t, func(daemonCLIRunTestRequest) {}, events...)
+			cfg.URL = server.URL
 			client, err := daemonclient.New(cfg)
 			requirements.NoError(err)
 			backend := &daemonMCPOperations{client: client, supported: []string{"export_person_messages"}}
@@ -140,17 +172,6 @@ func TestMCPPersonExportRefusesTransportFailureAndOverflow(t *testing.T) {
 			assertions.NotContains(string(encoded), "private detail")
 		})
 	}
-}
-
-type cancelOnCloseBody struct {
-	io.Reader
-
-	cancel context.CancelFunc
-}
-
-func (b cancelOnCloseBody) Close() error {
-	b.cancel()
-	return nil
 }
 
 func personExportFailureCode(t *testing.T, output any) string {

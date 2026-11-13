@@ -2,13 +2,9 @@ package mcp
 
 import (
 	"context"
-	"net/http/httptest"
 	"testing"
 
-	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
-
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 type personExportTestBackend struct{}
@@ -20,18 +16,18 @@ func (personExportTestBackend) OperationDisclosure(context.Context, string, map[
 	return "", nil
 }
 
-func TestPersonExportSDKReadWithoutWriteOptIn(t *testing.T) {
+func TestPersonExportReadWithoutWriteOptIn(t *testing.T) {
 	assertions := assert.New(t)
-	requirements := require.New(t)
 	opts := ServeOptions{Operations: personExportTestBackend{}, OperationCapabilities: []string{"export_person_messages"}}
-	server := httptest.NewServer(newMCPHTTPServer(opts, HTTPOptions{}).Handler)
-	t.Cleanup(server.Close)
-	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "synthetic", Version: "1"}, nil)
-	session, err := client.Connect(t.Context(), &sdkmcp.StreamableClientTransport{Endpoint: server.URL + "/mcp"}, nil)
-	requirements.NoError(err)
-	t.Cleanup(func() { _ = session.Close() })
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "export_person_messages", Arguments: map[string]any{"person_id": 1, "start": "2026-07-20T00:00:00Z", "end": "2026-07-21T00:00:00Z"}})
-	requirements.NoError(err)
-	assertions.False(result.IsError)
-	assertions.Equal(map[string]any{"jsonl": "synthetic\n"}, result.StructuredContent)
+	tools := toolsByName(t, rawListTools(t, opts, false))
+	assertions.Contains(tools, "export_person_messages")
+	response := rawModernCall(t, opts, HTTPOptions{}, "tools/call", map[string]any{
+		"name": "export_person_messages",
+		"arguments": map[string]any{
+			"person_id": 1,
+			"start":     "2026-07-20T00:00:00Z",
+			"end":       "2026-07-21T00:00:00Z",
+		},
+	})
+	assertions.Equal(map[string]any{"jsonl": "synthetic\n"}, response.Result["structuredContent"])
 }

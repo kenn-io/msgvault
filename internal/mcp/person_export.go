@@ -13,6 +13,6 @@ func personExportDefinitions() []operationalDefinition {
 		"start":         stringSchema("Inclusive RFC3339 timestamp"),
 		"end":           stringSchema("Exclusive RFC3339 timestamp"),
 		"sources":       {Type: schemaTypeArray, Items: stringSchema("Exact source selector type:identifier")},
-		"message_types": {Type: schemaTypeArray, Items: stringSchema("Exact message type")},
+		"message_types": {Type: schemaTypeArray, Items: stringSchema("Exact message type, such as email, sms, whatsapp, or meeting_transcript")},
 	}, "person_id", "start", "end"), outputSchemaFor[PersonExport](), false)}
 }

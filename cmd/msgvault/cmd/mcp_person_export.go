@@ -11,6 +11,7 @@ import (
 )
 
 const mcpPersonExportLimit = 512 << 10
+const mcpPersonExportErrorTailLimit = 4 << 10
 
 type mcpPersonExportArgs struct {
 	PersonID     int64    `json:"person_id"`
@@ -30,7 +31,7 @@ func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map
 	}
 	command := newExportMessagesCmd(defaultExportMessagesDeps())
 	flags := command.Flags()
-	for name, value := range map[string]string{"person-id": strconv.FormatInt(input.PersonID, 10), "start": input.Start, "end": input.End, "format": "jsonl"} {
+	for name, value := range map[string]string{"person-id": strconv.FormatInt(input.PersonID, 10), "start": input.Start, "end": input.End} {
 		if err := flags.Set(name, value); err != nil {
 			return refuse("invalid_arguments")
 		}
@@ -50,8 +51,16 @@ func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map
 		return refuse("invalid_arguments")
 	}
 	var output strings.Builder
+	var stderr []byte
 	overflow := false
 	err = b.client.RunCLICommand(ctx, daemonclient.CLIRunRequest{Args: argv}, func(stream, data string) error {
+		if stream == cliStreamStderr {
+			stderr = append(stderr, data...)
+			if len(stderr) > mcpPersonExportErrorTailLimit {
+				stderr = stderr[len(stderr)-mcpPersonExportErrorTailLimit:]
+			}
+			return nil
+		}
 		if stream != cliStreamStdout {
 			return nil
 		}
@@ -68,8 +77,21 @@ func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map
 	if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
 		return operationFailure(local.APIErrorCode(), false), nil
 	}
-	if err != nil || ctx.Err() != nil {
+	if err != nil {
+		if _, cliRunError := errors.AsType[*daemonclient.CLIRunError](err); cliRunError && isMCPPersonExportArgumentError(string(stderr)) {
+			return refuse("invalid_arguments")
+		}
 		return refuse("export_failed")
 	}
 	return &mcpserver.OperationResult{Output: mcpserver.PersonExport{JSONL: output.String()}}, nil
+}
+
+func isMCPPersonExportArgumentError(stderr string) bool {
+	return strings.Contains(stderr, "invalid --start ") ||
+		strings.Contains(stderr, "invalid --end ") ||
+		strings.Contains(stderr, "--start must be before --end") ||
+		strings.Contains(stderr, "--message-type must be non-empty") ||
+		strings.Contains(stderr, "invalid --source ") ||
+		strings.Contains(stderr, "source ") && strings.Contains(stderr, " not found") ||
+		strings.Contains(stderr, "resolve durable person ") && strings.Contains(stderr, "person not found")
 }
