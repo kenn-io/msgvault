@@ -119,20 +119,21 @@ func TestInboxPollingKeepsWebhookMilliseconds(t *testing.T) {
 // An event must be between the inbox owner and one other account, at a known
 // time; otherwise it does not belong in this inbox.
 func TestApplyInboxMessagesRefusesEventsOutsideTheInbox(t *testing.T) {
+	require := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
 	})
 	inbox := Inbox{App: "9", Page: "100"}
 	src, err := NewInboxImporter(st, c).Register(t.Context(), inbox)
-	require.NoError(t, err)
+	require.NoError(err)
 	for _, event := range []string{
 		`{"sender":{"id":"800"},"recipient":{"id":"900"},"timestamp":1790000000000,"message":{"mid":"m_1","text":"not ours"}}`,
 		`{"sender":{"id":"700"},"recipient":{"id":"100"},"timestamp":0,"message":{"mid":"m_2","text":"when"}}`,
 	} {
-		require.ErrorIs(t, ApplyInboxMessages(t.Context(), st, inbox, feedValues(event)), ErrInvalidChange)
+		require.ErrorIs(ApplyInboxMessages(t.Context(), st, inbox, feedValues(event)), ErrInvalidChange)
 	}
 	ids, err := st.MessageExistsBatch(src.ID, []string{"m_1", "m_2"})
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Empty(t, ids)
 }
