@@ -1,13 +1,16 @@
 package cmd
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
@@ -15,9 +18,73 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
+	mcpserver "go.kenn.io/msgvault/internal/mcp"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
+
+func TestMCPDeletionReviewJourney(t *testing.T) {
+	cfg := &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}
+	store := testutil.NewSQLiteTestStore(t)
+	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: store, config: cfg}, Logger: slog.New(slog.DiscardHandler)}))
+	opts := daemonMCPServeOptions(t.Context(), backend.client, nil)
+	opts.Engine = &querytest.MockEngine{DeletionTargets: []query.DeletionTarget{{MessageID: 1, SourceID: 1, SourceType: "gmail", SourceIdentifier: "owner@example.test", SourceMessageID: "synthetic-1"}}}
+	handler, closeHandler := mcpserver.NewHTTPHandler(opts, mcpserver.HTTPOptions{AllowWrites: true})
+	t.Cleanup(closeHandler)
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "deletion-journey", Version: "1"}, nil)
+	session, err := client.Connect(t.Context(), &sdkmcp.StreamableClientTransport{Endpoint: server.URL}, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+	call := func(name string, args map[string]any) map[string]any {
+		t.Helper()
+		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: name, Arguments: args})
+		require.NoError(t, err)
+		require.False(t, result.IsError, "%s: %+v", name, result)
+		data, err := json.Marshal(result.StructuredContent)
+		require.NoError(t, err)
+		var output map[string]any
+		require.NoError(t, json.Unmarshal(data, &output))
+		return output
+	}
+	stage := call("stage_deletion", map[string]any{"from": "synthetic@example.test"})
+	id, ok := stage["batch_id"].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, id)
+	list := call("list_deletions", map[string]any{"status": "pending"})
+	rows, ok := list["manifests"].([]any)
+	require.True(t, ok)
+	require.Len(t, rows, 1)
+	assert.Equal(t, id, rows[0].(map[string]any)["id"])
+	receipt := call("get_deletion", map[string]any{"batch_id": id})
+	assert.Equal(t, id, receipt["id"])
+	assert.Equal(t, "pending", receipt["status"])
+	manager, err := deletion.NewManager(filepath.Join(cfg.Data.DataDir, "deletions"))
+	require.NoError(t, err)
+	claimed, err := manager.ClaimManifest(id, deletion.MethodTrash)
+	require.NoError(t, err)
+	receipt = call("get_deletion", map[string]any{"batch_id": id})
+	assert.Equal(t, "in_progress", receipt["status"])
+	claimed.Execution.Failed = 1
+	claimed.Execution.FailedIDs = []string{"synthetic-1"}
+	now := time.Now()
+	claimed.Execution.CompletedAt = &now
+	require.NoError(t, manager.WriteInProgressManifest(claimed, id))
+	require.NoError(t, manager.FinalizeInProgress(id, deletion.StatusFailed))
+	receipt = call("get_deletion", map[string]any{"batch_id": id})
+	assert.Equal(t, "failed", receipt["status"])
+	execution, ok := receipt["execution"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, []any{"synthetic-1"}, execution["failed_ids"])
+	list = call("list_deletions", map[string]any{"status": "failed"})
+	rows, ok = list["manifests"].([]any)
+	require.True(t, ok)
+	require.Len(t, rows, 1)
+	assert.Equal(t, id, rows[0].(map[string]any)["id"])
+}
 
 func TestMCPDeletionReviewRealRouter(t *testing.T) {
 	assert := assert.New(t)
