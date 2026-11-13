@@ -58,7 +58,9 @@ func TestMCPDeletionReviewJourney(t *testing.T) {
 	rows, ok := list["manifests"].([]any)
 	require.True(t, ok)
 	require.Len(t, rows, 1)
-	assert.Equal(t, id, rows[0].(map[string]any)["id"])
+	row, ok := rows[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, id, row["id"])
 	receipt := call("get_deletion", map[string]any{"batch_id": id})
 	assert.Equal(t, id, receipt["id"])
 	assert.Equal(t, "pending", receipt["status"])
@@ -83,7 +85,9 @@ func TestMCPDeletionReviewJourney(t *testing.T) {
 	rows, ok = list["manifests"].([]any)
 	require.True(t, ok)
 	require.Len(t, rows, 1)
-	assert.Equal(t, id, rows[0].(map[string]any)["id"])
+	row, ok = rows[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, id, row["id"])
 }
 
 func TestMCPDeletionReviewRealRouter(t *testing.T) {
