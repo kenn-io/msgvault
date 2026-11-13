@@ -1959,7 +1959,7 @@ func (s *Store) rebasePriorPersonMergeRowsAfterSplitTx(
 		if err != nil {
 			return err
 		}
-		if (recreated && !lineageMatch) || (!recreated && !locatorMatch) {
+		if (recreated && !lineageMatch) || (!recreated && (!locatorMatch || !exists)) {
 			continue
 		}
 		action := "deleted_snapshot"
