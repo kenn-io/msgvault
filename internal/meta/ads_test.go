@@ -19,9 +19,6 @@ type adFixture struct {
 	mediaBody   string
 }
 
-// newAdFixture serves one organic media item (300) and an ad account whose
-// creatives use ad-only owned media 900, the organic media 300, another
-// account's media 901, and no Instagram media at all.
 func newAdFixture(t *testing.T) (*adFixture, *Client, *Client) {
 	t.Helper()
 	f := &adFixture{}
@@ -81,16 +78,11 @@ func TestInstagramAdMediaArchivesOnlyOwnedMedia(t *testing.T) {
 	sum, err := imp.ImportInstagram(t.Context(), "9", "100", "200", ImportOptions{MaxRequests: 3})
 	require.NoError(err)
 	require.True(sum.Partial)
-	runs := 0
-	for ; runs < 20; runs++ {
-		sum, err := imp.ImportInstagramAds(t.Context(), "9", "100", "200", "700", ads, ImportOptions{MaxRequests: 4})
+	for runs := 0; sum.Partial; runs++ {
+		require.Less(runs, 20)
+		sum, err = imp.ImportInstagramAds(t.Context(), "9", "100", "200", "700", ads, ImportOptions{MaxRequests: 4})
 		require.NoError(err)
-		if !sum.Partial {
-			break
-		}
 	}
-	require.Less(runs, 20)
-	assert.Positive(runs)
 
 	stored, err := st.StoredMessagesContext(t.Context(), src.ID, "instagram-comment-json", []string{"300", "400", "900", "901", "1000"})
 	require.NoError(err)
@@ -114,14 +106,13 @@ func TestInstagramAdMediaArchivesOnlyOwnedMedia(t *testing.T) {
 
 func TestInstagramAdMediaSkipOrFail(t *testing.T) {
 	for _, tt := range []struct {
-		name   string
-		status int
-		body   string
-		skip   bool
+		name, body string
+		status     int
+		skip       bool
 	}{
-		{"no owner", http.StatusOK, `{"id":"900","caption":"Ad-only media"}`, true},
-		{"missing object", http.StatusBadRequest, `{"error":{"code":100,"error_subcode":33}}`, true},
-		{"rate limit", http.StatusBadRequest, `{"error":{"code":4}}`, false},
+		{"no owner", `{"id":"900","caption":"Ad-only media"}`, http.StatusOK, true},
+		{"missing object", `{"error":{"code":100,"error_subcode":33}}`, http.StatusBadRequest, true},
+		{"rate limit", `{"error":{"code":4}}`, http.StatusBadRequest, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)

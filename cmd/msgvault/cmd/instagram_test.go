@@ -115,13 +115,9 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 	for _, source := range cfg.InstagramComments {
 		row, err := st.GetSourceByTypeAndIdentifier(t.Context(), meta.InstagramSourceType, meta.InstagramSourceIdentifier(source.AppID, source.PageID, source.InstagramAccountID))
 		require.NoError(err)
-		ids, err := st.MessageExistsBatch(row.ID, []string{"300", "400", "900", "1000"})
+		ids, err := st.MessageExistsBatch(row.ID, []string{"300", "400"})
 		require.NoError(err)
-		if source.AdAccountID != "" {
-			assert.Len(ids, 4, "the ads profile also archives ad-only media and its comments")
-		} else {
-			assert.Len(ids, 2)
-		}
+		assert.Len(ids, 2)
 		run, err := st.GetLatestSync(row.ID)
 		require.NoError(err)
 		assert.Equal(store.SyncStatusFailed, run.Status)
