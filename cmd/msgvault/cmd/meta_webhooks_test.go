@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -11,55 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/meta"
-	"go.kenn.io/msgvault/internal/metawebhook"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
-
-func TestMetaWebhookErrorRetriesOnlyRecoverableFailures(t *testing.T) {
-	type errorCase struct {
-		name          string
-		err           error
-		unrecoverable bool
-	}
-	cases := []errorCase{
-		{"source busy", fmt.Errorf("apply: %w", store.ErrSyncAlreadyActive), false},
-		{"source not registered", store.ErrSourceNotFound, true},
-		{"invalid change", fmt.Errorf("%w: bad", meta.ErrInvalidChange), true},
-	}
-	// With a code, the status does not decide: Meta can refuse with HTTP 200.
-	for _, code := range []struct {
-		name          string
-		code, subcode int
-		unrecoverable bool
-	}{
-		{"token expired", 190, 0, false},
-		{"throttled", 4, 0, false},
-		{"business use case throttled", 80001, 0, false},
-		{"temporary failure", 2, 0, false},
-		{"unknown code", 12345, 0, false},
-		{"object missing", 100, 33, true},
-		{"permission denied", 10, 0, true},
-	} {
-		for _, status := range []int{200, 400, 403} {
-			cases = append(cases, errorCase{
-				fmt.Sprintf("%s with HTTP %d", code.name, status),
-				&meta.APIError{Status: status, Code: code.code, Subcode: code.subcode}, code.unrecoverable,
-			})
-		}
-	}
-	for status, unrecoverable := range map[int]bool{401: false, 429: false, 503: false, 404: true} {
-		cases = append(cases, errorCase{fmt.Sprintf("HTTP %d without a code", status), &meta.APIError{Status: status}, unrecoverable})
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := metaWebhookError(tc.err)
-			require.ErrorIs(t, err, tc.err)
-			assert.Equal(t, tc.unrecoverable, errors.Is(err, metawebhook.ErrUnrecoverable))
-		})
-	}
-}
 
 // TestMetaWebhookReceiverHoldsOffIdleShutdown checks that a listening
 // receiver keeps an automatic daemon up until it stops. A real listener

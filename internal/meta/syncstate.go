@@ -20,18 +20,12 @@ type syncState struct {
 }
 
 type phaseState struct {
-	// PostsAfter is the cursor that read Posts, so a later run can read the
-	// same page again. After is the cursor for the page after it.
-	PostsAfter string         `json:"posts_after,omitempty"`
-	After      string         `json:"after,omitempty"`
-	Exhausted  bool           `json:"exhausted,omitempty"`
-	Done       bool           `json:"done,omitempty"`
-	Rescan     bool           `json:"rescan,omitempty"`
-	Posts      []Object       `json:"posts,omitempty"`
-	Stack      []commentFrame `json:"stack,omitempty"`
-	// postsRead is set once this run has read the Posts page. Posts saved
-	// by an earlier run are read again before use.
-	postsRead bool
+	After     string         `json:"after,omitempty"`
+	Exhausted bool           `json:"exhausted,omitempty"`
+	Done      bool           `json:"done,omitempty"`
+	Rescan    bool           `json:"rescan,omitempty"`
+	Posts     []Object       `json:"posts,omitempty"`
+	Stack     []commentFrame `json:"stack,omitempty"`
 }
 
 type commentFrame struct {
@@ -41,8 +35,6 @@ type commentFrame struct {
 	Loaded  bool     `json:"loaded,omitempty"`
 	Next    string   `json:"next,omitempty"`
 	Pending []Object `json:"pending,omitempty"`
-	// read is set once this run has read the Pending page.
-	read bool
 }
 
 func freshState(source string) *syncState {

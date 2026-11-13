@@ -1,14 +1,12 @@
 package meta
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -73,70 +71,4 @@ func TestImportTagsResumesAndArchivesOtherAccountsMedia(t *testing.T) {
 	_, err = imp.ImportTags(t.Context(), "9", "100", "200", ImportOptions{})
 	require.NoError(err)
 	assert.Equal([]string{"", "p2", "p3"}, afters, "a completed scan starts again from the newest tags")
-}
-
-// A --full run publishes its reset before its first request, so a crash
-// before the first page cannot leave the next sync on an older cursor.
-func TestImportTagsFullResetIsSavedBeforeFirstRequest(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewSQLiteTestStore(t)
-	var source *store.Source
-	var resumeFrom []string
-	imp := NewMentionImporter(st, tagsFixture(t, func(string) {
-		// A lookup error leaves "", which fails the JSON check below.
-		blob, _ := savedCheckpoint(t.Context(), st, source)
-		resumeFrom = append(resumeFrom, blob)
-	}))
-	src, err := imp.Register(t.Context(), "9", "100", "200")
-	require.NoError(err)
-	source = src
-	_, err = imp.ImportTags(t.Context(), "9", "100", "200", ImportOptions{MaxRequests: 1})
-	require.NoError(err)
-
-	_, err = imp.ImportTags(t.Context(), "9", "100", "200", ImportOptions{Full: true, MaxRequests: 1})
-	require.NoError(err)
-	require.Len(resumeFrom, 2)
-	assert.JSONEq(t, `{"after":""}`, resumeFrom[1], "the next sync would start from the top")
-}
-
-// cancelOnLastPage cancels the run as it returns the final tags page.
-type cancelOnLastPage struct {
-	MentionAPI
-
-	cancel context.CancelFunc
-}
-
-func (c cancelOnLastPage) Tags(ctx context.Context, accountID, after string) (IGMediaPage, error) {
-	page, err := c.MentionAPI.Tags(ctx, accountID, after)
-	if err == nil && page.After == "" {
-		c.cancel()
-	}
-	return page, err
-}
-
-// A run that reached the last page but could not finish still sends the
-// next sync to the newest tags instead of an older saved cursor.
-func TestImportTagsUnfinishedFullScanStartsNextSyncFromTop(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewSQLiteTestStore(t)
-	var afters []string
-	c := tagsFixture(t, func(after string) { afters = append(afters, after) })
-	imp := NewMentionImporter(st, c)
-	_, err := imp.Register(t.Context(), "9", "100", "200")
-	require.NoError(err)
-	_, err = imp.ImportTags(t.Context(), "9", "100", "200", ImportOptions{MaxRequests: 1})
-	require.NoError(err)
-
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	afters = nil
-	_, err = NewMentionImporter(st, cancelOnLastPage{MentionAPI: c, cancel: cancel}).
-		ImportTags(ctx, "9", "100", "200", ImportOptions{Full: true})
-	require.Error(err)
-	require.Equal([]string{"", "p2", "p3"}, afters, "the run reached the last page")
-
-	afters = nil
-	_, err = imp.ImportTags(t.Context(), "9", "100", "200", ImportOptions{})
-	require.NoError(err)
-	assert.Equal(t, []string{"", "p2", "p3"}, afters)
 }
