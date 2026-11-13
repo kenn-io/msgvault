@@ -143,7 +143,7 @@ func pageCommentsHandler(cfg *config.Config, st *store.Store, work scheduler.Wor
 		}
 		client, err := configuredFacebookCommentsClient(cfg.FacebookComments[i])
 		if err != nil {
-			return fmt.Errorf("%w: %w", metawebhook.ErrUnrecoverable, err)
+			return err
 		}
 		return applyMetaWebhook(ctx, work, func() error {
 			return apply(ctx, st, client, change.App, change.EntryID, change.Values)
@@ -165,7 +165,7 @@ func instagramCommentsHandler(cfg *config.Config, st *store.Store, work schedule
 		profile := cfg.InstagramComments[i]
 		client, err := configuredInstagramCommentsClient(profile)
 		if err != nil {
-			return fmt.Errorf("%w: %w", metawebhook.ErrUnrecoverable, err)
+			return err
 		}
 		return applyMetaWebhook(ctx, work, func() error {
 			return meta.ApplyInstagramComments(ctx, st, client, profile.AppID, profile.PageID, profile.InstagramAccountID, change.Values)
@@ -187,7 +187,7 @@ func instagramMentionsHandler(cfg *config.Config, st *store.Store, work schedule
 		profile := cfg.InstagramComments[i]
 		client, err := configuredInstagramCommentsClient(profile)
 		if err != nil {
-			return fmt.Errorf("%w: %w", metawebhook.ErrUnrecoverable, err)
+			return err
 		}
 		return applyMetaWebhook(ctx, work, func() error {
 			return meta.ApplyMentions(ctx, st, client, profile.AppID, profile.PageID, profile.InstagramAccountID, change.Values)
