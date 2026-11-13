@@ -17,6 +17,7 @@ import (
 
 const meetingResultSchemaVersion = 1
 const meetingSenderRole = "from"
+const messageTypeMeetingTranscript = "meeting_transcript"
 
 var (
 	ErrMeetingNotFound              = errors.New("meeting not found")
@@ -160,7 +161,7 @@ func (s *Store) validateMeetingContextIDs(ctx context.Context, tx *loggedTx, ids
 		switch {
 		case !ok || item.deleted:
 			missing = append(missing, id)
-		case item.messageType != "meeting_transcript":
+		case item.messageType != messageTypeMeetingTranscript:
 			notMeeting = append(notMeeting, id)
 		case deletion == "active" && item.sourceDeleted, deletion == "deleted" && !item.sourceDeleted:
 			changed = append(changed, id)
@@ -215,7 +216,7 @@ func (s *Store) validateMeetingScopePopulation(
 			_ = rows.Close()
 			return fmt.Errorf("scan meeting scope population: %w", scanErr)
 		}
-		valid[id] = messageType == "meeting_transcript" && !deletedAt.Valid
+		valid[id] = messageType == messageTypeMeetingTranscript && !deletedAt.Valid
 	}
 	if iterationErr := rows.Err(); iterationErr != nil {
 		_ = rows.Close()

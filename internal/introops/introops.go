@@ -30,6 +30,14 @@ func allowed(g *agentgrant.Grant, row store.PersonIntroduction) bool {
 	return g == nil || g.Allows(agentgrant.PermissionDraftCreate, ref(row))
 }
 func (s Service) project(ctx context.Context, g *agentgrant.Grant, row store.PersonIntroduction) (Record, error) {
+	ctx, release, err := s.Store.BeginReadSnapshotContext(ctx)
+	if err != nil {
+		return Record{}, err
+	}
+	defer release()
+	return s.projectInSnapshot(ctx, g, row)
+}
+func (s Service) projectInSnapshot(ctx context.Context, g *agentgrant.Grant, row store.PersonIntroduction) (Record, error) {
 	if !allowed(g, row) {
 		return Record{}, ErrForbidden
 	}
@@ -39,6 +47,10 @@ func (s Service) project(ctx context.Context, g *agentgrant.Grant, row store.Per
 	}
 	if g != nil && !visible(p) {
 		return Record{}, ErrForbidden
+	}
+	row, err = s.projectMeeting(ctx, g, row)
+	if err != nil {
+		return Record{}, err
 	}
 	return projectedRecord(g, row, p), nil
 }
@@ -55,6 +67,7 @@ func projectedRecord(g *agentgrant.Grant, row store.PersonIntroduction, p store.
 		if !g.Allows(agentgrant.PermissionDraftEdit, ref(row)) {
 			row.Body = ""
 		}
+		row.SourceIdentifier = ""
 		p.Members = append([]store.IntroductionMember(nil), p.Members...)
 		for i := range p.Members {
 			p.Members[i].UserID = ""
@@ -76,36 +89,37 @@ func (s Service) Prepare(ctx context.Context, g *agentgrant.Grant, in store.Pers
 	if g != nil && !g.Allows(agentgrant.PermissionDraftCreate, agentgrant.SourceRef{Type: src.SourceType, Identifier: src.Identifier}) {
 		return Record{}, ErrForbidden
 	}
-	p, err := s.Store.GetPersonIntroductionPreflightContext(ctx, in.SourceID, in.PersonAID, in.PersonBID)
-	if err != nil {
-		if g != nil && (errors.Is(err, store.ErrSourceNotFound) || errors.Is(err, store.ErrIntroductionSource)) {
-			return Record{}, ErrForbidden
-		}
-		return Record{}, err
-	}
-	if g != nil && !visible(p) {
-		return Record{}, ErrForbidden
-	}
 	actor := "owner"
 	if g != nil {
 		actor = g.ID
 	}
-	row, err := s.Store.PreparePersonIntroductionContext(ctx, in, actor)
+	validate := func(p store.PersonIntroductionPreflight) error {
+		if g != nil && !visible(p) {
+			return ErrForbidden
+		}
+		return nil
+	}
+	row, p, err := s.Store.PreparePersonIntroductionAuthorizedContext(ctx, in, actor, sourceAuthorizer(g, agentgrant.PermissionDraftCreate), sourceAuthorizer(g, agentgrant.PermissionMessageRead), validate)
 	if err != nil {
+		if errors.Is(err, store.ErrMeetingNotFound) {
+			if g != nil {
+				return Record{}, ErrForbidden
+			}
+			return Record{}, store.ErrIntroductionInvalid
+		}
+		if g != nil && errors.Is(err, store.ErrIntroductionSource) {
+			return Record{}, ErrForbidden
+		}
 		return Record{}, err
 	}
 	return projectedRecord(g, row, p), nil
 }
 func (s Service) Get(ctx context.Context, g *agentgrant.Grant, id string) (Record, error) {
-	if g != nil {
-		var release func()
-		var err error
-		ctx, release, err = s.Store.BeginReadSnapshotContext(ctx)
-		if err != nil {
-			return Record{}, err
-		}
-		defer release()
+	ctx, release, err := s.Store.BeginReadSnapshotContext(ctx)
+	if err != nil {
+		return Record{}, err
 	}
+	defer release()
 	row, err := s.Store.GetPersonIntroductionContext(ctx, id)
 	if err != nil {
 		if g != nil && errors.Is(err, store.ErrIntroductionNotFound) {
@@ -116,18 +130,16 @@ func (s Service) Get(ctx context.Context, g *agentgrant.Grant, id string) (Recor
 	return s.project(ctx, g, row)
 }
 func (s Service) List(ctx context.Context, g *agentgrant.Grant, q store.PersonIntroductionQuery) (Page, error) {
+	if g != nil && !g.HasPermission(agentgrant.PermissionDraftCreate) {
+		return Page{}, ErrForbidden
+	}
+	ctx, release, err := s.Store.BeginReadSnapshotContext(ctx)
+	if err != nil {
+		return Page{}, err
+	}
+	defer release()
 	var ids []int64
 	if g != nil {
-		if !g.HasPermission(agentgrant.PermissionDraftCreate) {
-			return Page{}, ErrForbidden
-		}
-		var release func()
-		var err error
-		ctx, release, err = s.Store.BeginReadSnapshotContext(ctx)
-		if err != nil {
-			return Page{}, err
-		}
-		defer release()
 		ids = []int64{}
 		sources, err := s.Store.ListSourcesContext(ctx, "")
 		if err != nil {
@@ -153,6 +165,10 @@ func (s Service) List(ctx context.Context, g *agentgrant.Grant, q store.PersonIn
 	}
 	out := Page{Items: []Record{}, HasMore: rows.HasMore, NextAfterID: rows.NextAfterID}
 	for i, row := range rows.Items {
+		row, err = s.projectMeeting(ctx, g, row)
+		if err != nil {
+			return Page{}, err
+		}
 		out.Items = append(out.Items, projectedRecord(g, row, preflights[i]))
 	}
 	return out, nil
@@ -162,26 +178,24 @@ func (s Service) Edit(ctx context.Context, g *agentgrant.Grant, id string, in st
 	if g != nil {
 		return Record{}, ErrForbidden
 	}
-	pre, err := s.Get(ctx, g, id)
-	if err != nil {
+	if _, err := s.Get(ctx, g, id); err != nil {
 		return Record{}, err
 	}
 	row, err := s.Store.EditPersonIntroductionContext(ctx, id, in)
 	if err != nil {
 		return Record{}, err
 	}
-	return Record{row, pre.Members, pre.Blockers}, nil
+	return s.project(ctx, g, row)
 }
 func (s Service) Cancel(ctx context.Context, g *agentgrant.Grant, id string, revision int64) (Record, error) {
-	pre, err := s.Get(ctx, g, id)
-	if err != nil {
+	if _, err := s.Get(ctx, g, id); err != nil {
 		return Record{}, err
 	}
 	row, err := s.Store.CancelPersonIntroductionContext(ctx, id, revision)
 	if err != nil {
 		return Record{}, err
 	}
-	return projectedRecord(g, row, store.PersonIntroductionPreflight{Members: pre.Members, Blockers: pre.Blockers}), nil
+	return s.project(ctx, g, row)
 }
 
 // ErrorCode maps failures to stable, content-free codes shared by transports.
@@ -206,4 +220,30 @@ func ErrorCode(err error) string {
 	default:
 		return "local_store_failed"
 	}
+}
+
+func sourceAuthorizer(g *agentgrant.Grant, permission agentgrant.Permission) store.ChatDraftAuthorizer {
+	return func(typ, identifier string) error {
+		if g != nil && !g.Allows(permission, agentgrant.SourceRef{Type: typ, Identifier: identifier}) {
+			return ErrForbidden
+		}
+		return nil
+	}
+}
+func (s Service) projectMeeting(ctx context.Context, g *agentgrant.Grant, row store.PersonIntroduction) (store.PersonIntroduction, error) {
+	if row.MeetingMessageID == nil {
+		return row, nil
+	}
+	valid, err := s.Store.PersonIntroductionMeetingValidContext(ctx, *row.MeetingMessageID, row.PersonAID, row.PersonBID, sourceAuthorizer(g, agentgrant.PermissionMessageRead))
+	if errors.Is(err, ErrForbidden) || errors.Is(err, store.ErrMeetingNotFound) {
+		valid = false
+		err = nil
+	}
+	if err != nil {
+		return row, err
+	}
+	if !valid {
+		row.MeetingMessageID = nil
+	}
+	return row, nil
 }

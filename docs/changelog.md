@@ -8,7 +8,9 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Prepare and manage local introduction records for two people with `msgvault intro`, and read them over HTTP.
+- Prepare local introductions for archived Beeper or email accounts with `msgvault intro`, optionally referencing an explicitly recorded shared transcript. Read the same records over HTTP. First appearance can identify its distinct recorded organizer as `meeting_intro`.
+- Message exports through the daemon no longer turn accented, CJK, or emoji characters into replacement characters.
+- Saved people show their first archived appearance, including copied recipients, and the introducing sender when the evidence identifies one. See [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance).
 
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 
@@ -29,6 +31,13 @@ All notable changes to msgvault, grouped by release.
 - A source build replaces a local daemon from its release or an earlier one, and prints the restart command when another source build of that release is running.
 
 - Messages can show live archive rows while auto mode rebuilds its analytical cache after an upgrade, and keeps them available if the rebuild fails.
+- Follow RSS, Atom, and JSON feeds with `msgvault source feeds add <url>` or
+  `source feeds add --opml <file>`, and keep every item searchable as a
+  `feed_item` message, archived once even after the feed drops it.
+  `source feeds sync` and the `[feeds]` schedule fetch them, `source feeds list`
+  shows each feed's last check, and `source feeds remove` stops fetching while
+  keeping the items. See
+  [Feeds](usage/feeds.md).
 - Archive messages from sources msgvault has no connector for, such as the
   items of the feeds you follow, with `POST /api/v1/import/message`. Each
   message keeps the type its sender chose, such as `feed_item`, for search

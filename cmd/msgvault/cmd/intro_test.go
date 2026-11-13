@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -78,6 +79,40 @@ func TestIntroThroughDaemonCLI(t *testing.T) {
 	req.NoError(json.Unmarshal([]byte(data), &page))
 	req.Len(page.Items, 1)
 	check.Equal(row.IntroID, page.Items[0].IntroID)
+
+	emailSource, err := st.GetOrCreateSource("imap", "owner@example.test")
+	req.NoError(err)
+	emailConv, err := st.EnsureConversationWithType(emailSource.ID, "email-thread", "email_thread", "Email")
+	req.NoError(err)
+	email, err := st.UpsertMessage(&store.Message{SourceID: emailSource.ID, ConversationID: emailConv, SourceMessageID: "email", MessageType: "email"})
+	req.NoError(err)
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO message_recipients (message_id,participant_id,recipient_type,email_address) VALUES (?,?,'from','a@example.com'),(?,?,'to','b@example.com')`), email, pa, email, pb)
+	req.NoError(err)
+	meetingSource, err := st.GetOrCreateSource("meeting", "synthetic-meetings")
+	req.NoError(err)
+	meetingConv, err := st.EnsureConversation(ctx, meetingSource.ID, "meeting-thread", "Meeting")
+	req.NoError(err)
+	meeting, err := st.UpsertMessage(&store.Message{ConversationID: meetingConv, SourceID: meetingSource.ID, SourceMessageID: "meeting", MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}})
+	req.NoError(err)
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO message_recipients (message_id,participant_id,recipient_type,email_address) VALUES (?,?,'from','a@example.com'),(?,?,'to','b@example.com')`), meeting, pa, meeting, pb)
+	req.NoError(err)
+	req.NoError(st.UpsertMessageRawWithFormatContext(ctx, meeting, []byte(`{"organizer":{"email":"a@example.com"},"attendees":[{"email":"b@example.com"}]}`), "meeting_json"))
+	data, err = run("intro", "prepare", "--source-id", strconv.FormatInt(emailSource.ID, 10), "--person", strconv.FormatInt(a.ID, 10), "--person", strconv.FormatInt(b.ID, 10), "--title", "Email hello", "--body", "Local email introduction", "--meeting-message-id", strconv.FormatInt(meeting, 10), "--json")
+	req.NoError(err)
+	var emailRow introops.Record
+	req.NoError(json.Unmarshal([]byte(data), &emailRow))
+	check.Equal(&meeting, emailRow.MeetingMessageID)
+	check.Empty(emailRow.Blockers)
+	data, err = run("intro", "show", emailRow.IntroID, "--json")
+	req.NoError(err)
+	var shown introops.Record
+	req.NoError(json.Unmarshal([]byte(data), &shown))
+	check.Equal(emailRow, shown)
+	data, err = run("intro", "show", emailRow.IntroID)
+	req.NoError(err)
+	check.Contains(data, fmt.Sprintf("meeting_message_id=%d", meeting))
+	_, err = run("intro", "prepare", "--source-id", strconv.FormatInt(emailSource.ID, 10), "--person", strconv.FormatInt(a.ID, 10), "--person", strconv.FormatInt(b.ID, 10), "--title", "Invalid", "--body", "Local", "--meeting-message-id", "0")
+	req.ErrorContains(err, "invalid_args")
 	_, err = run("intro", "list", "--json", "--verbose")
 	req.NoError(err)
 	_, err = run("intro", "cancel", row.IntroID, "--revision", "99")

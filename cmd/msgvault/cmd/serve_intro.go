@@ -48,7 +48,12 @@ func (a *storeAPIAdapter) runCLIIntro(ctx context.Context, req api.CLIRunRequest
 			if len(people) != 2 {
 				return introError(store.ErrIntroductionInvalid)
 			}
-			result, err = svc.Prepare(ctx, req.Grant, store.PersonIntroductionPrepare{SourceID: source, PersonAID: people[0], PersonBID: people[1], Title: title, Body: body})
+			in := store.PersonIntroductionPrepare{SourceID: source, PersonAID: people[0], PersonBID: people[1], Title: title, Body: body}
+			if cmd.Flags().Changed("meeting-message-id") {
+				id, _ := cmd.Flags().GetInt64("meeting-message-id")
+				in.MeetingMessageID = &id
+			}
+			result, err = svc.Prepare(ctx, req.Grant, in)
 		case "list":
 			source, _ := cmd.Flags().GetInt64("source-id")
 			limit, _ := cmd.Flags().GetInt("limit")
@@ -92,6 +97,9 @@ func (a *storeAPIAdapter) runCLIIntro(ctx context.Context, req api.CLIRunRequest
 			var b strings.Builder
 			render := func(row introops.Record, detail bool) {
 				fmt.Fprintf(&b, "%s revision=%d status=%s source=%d account=%s people=%d,%d title=%s\n", textutil.SanitizeTerminal(row.IntroID), row.Revision, textutil.SanitizeTerminal(row.Status), row.SourceID, textutil.SanitizeTerminal(row.SourceIdentifier), row.PersonAID, row.PersonBID, textutil.SanitizeTerminal(row.Title))
+				if row.MeetingMessageID != nil {
+					fmt.Fprintf(&b, "  meeting_message_id=%d\n", *row.MeetingMessageID)
+				}
 				for _, blocker := range row.Blockers {
 					fmt.Fprintf(&b, "  blocker=%s person=%d\n", textutil.SanitizeTerminal(blocker.Code), blocker.PersonID)
 				}

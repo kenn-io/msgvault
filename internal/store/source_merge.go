@@ -154,7 +154,7 @@ func (s *Store) MergeSourcesContext(ctx context.Context, req MergeSourcesRequest
 			{table: "imap_drafts", active: "discarded_at IS NULL OR pending_operation IS NOT NULL"},
 			{table: "beeper_drafts", active: "discarded_at IS NULL OR pending_operation IS NOT NULL"},
 			{table: "chat_drafts", active: "1 = 1"},
-			{table: "person_introductions", active: "status <> 'cancelled'"},
+			{table: personIntroductionsTableName, active: "status <> 'cancelled'"},
 		} {
 			var count int
 			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+draftTable.table+` WHERE source_id = ? AND (`+draftTable.active+`)`, req.FromSourceID).Scan(&count); err != nil {

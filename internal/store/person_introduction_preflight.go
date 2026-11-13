@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/beeperidentity"
 )
@@ -51,9 +52,23 @@ func (s *Store) GetPersonIntroductionPreflightContext(ctx context.Context, sourc
 }
 
 // introductionIdentitySQL is shared by preflight and delegated list eligibility.
-func (s *Store) introductionIdentitySQL(personExpr, accountExpr string) string {
+func (s *Store) introductionIdentitySQL(personExpr, typeExpr, sourceExpr, accountExpr string) string {
 	user := beeperidentity.ScopedUserSQL(s.dialect.DriverName(), accountExpr, "pi.identifier_value")
-	return `SELECT pp.participant_id, ` + user + ` AS user_id FROM person_participants pp JOIN participant_identifiers pi ON pi.participant_id = pp.participant_id AND pi.identifier_type = 'beeper' WHERE pp.person_id = ` + personExpr + ` AND ` + user + ` IS NOT NULL`
+	types := []string{}
+	// Keep the source-type contract with SourceTypeUsesEmailIdentity.
+	for _, typ := range emailIdentitySourceTypes {
+		types = append(types, "'"+typ+"'")
+	}
+	return `SELECT pp.participant_id, ` + user + ` AS user_id FROM person_participants pp JOIN participant_identifiers pi ON pi.participant_id = pp.participant_id AND pi.identifier_type = 'beeper' WHERE pp.person_id = ` + personExpr + ` AND ` + typeExpr + ` = 'beeper' AND ` + user + ` IS NOT NULL
+ UNION
+ SELECT pp.participant_id, LOWER(TRIM(mr.email_address)) AS user_id
+ FROM person_participants pp JOIN message_recipients mr ON mr.participant_id = pp.participant_id
+ JOIN messages m ON m.id = mr.message_id JOIN sources src ON src.id = m.source_id
+ JOIN conversations c ON c.id = m.conversation_id
+ WHERE pp.person_id = ` + personExpr + ` AND ` + typeExpr + ` IN (` + strings.Join(types, ",") + `)
+ AND m.source_id = ` + sourceExpr + ` AND c.conversation_type = 'email_thread'
+ AND mr.recipient_type IN ('from','to','cc','bcc') AND COALESCE(TRIM(mr.email_address), '') <> ''
+ AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL AND NOT ` + s.activityUnsentSQL()
 }
 
 func (s *Store) introductionPreflightContext(ctx context.Context, sourceID, personAID, personBID int64, owners loopOwners) (PersonIntroductionPreflight, error) {
@@ -62,7 +77,7 @@ func (s *Store) introductionPreflightContext(ctx context.Context, sourceID, pers
 	if err != nil {
 		return out, err
 	}
-	if source.SourceType != sourceTypeBeeper {
+	if source.SourceType != sourceTypeBeeper && !SourceTypeUsesEmailIdentity(source.SourceType) {
 		return out, ErrIntroductionSource
 	}
 	if source.MergedIntoSourceID != 0 {
@@ -76,11 +91,11 @@ func (s *Store) introductionPreflightContext(ctx context.Context, sourceID, pers
 			out.Blockers = append(out.Blockers, IntroductionBlocker{"same_person", personID})
 		}
 		_, owner := owners.persons[personID]
-		rows, err := s.db.QueryContext(ctx, `WITH input AS (SELECT CAST(? AS BIGINT) AS person_id, CAST(? AS TEXT) AS account) `+s.introductionIdentitySQL("(SELECT person_id FROM input)", "(SELECT account FROM input)"), personID, source.Identifier)
+		rows, err := s.db.QueryContext(ctx, `WITH input AS (SELECT CAST(? AS BIGINT) AS person_id, CAST(? AS TEXT) AS account, CAST(? AS TEXT) AS source_type, CAST(? AS BIGINT) AS source_id) `+s.introductionIdentitySQL("(SELECT person_id FROM input)", "(SELECT source_type FROM input)", "(SELECT source_id FROM input)", "(SELECT account FROM input)"), personID, source.Identifier, source.SourceType, source.ID)
 		if err != nil {
 			return out, err
 		}
-		candidates := map[IntroductionMember]struct{}{}
+		var candidates []IntroductionMember
 		for rows.Next() {
 			var participant int64
 			var user string
@@ -88,7 +103,7 @@ func (s *Store) introductionPreflightContext(ctx context.Context, sourceID, pers
 				_ = rows.Close()
 				return out, err
 			}
-			candidates[IntroductionMember{personID, participant, user}] = struct{}{}
+			candidates = append(candidates, IntroductionMember{personID, participant, user})
 		}
 		err = rows.Err()
 		_ = rows.Close()
@@ -102,9 +117,7 @@ func (s *Store) introductionPreflightContext(ctx context.Context, sourceID, pers
 		case 0:
 			out.Blockers = append(out.Blockers, IntroductionBlocker{"no_identity_on_account", personID})
 		case 1:
-			for member := range candidates {
-				out.Members = append(out.Members, member)
-			}
+			out.Members = append(out.Members, candidates[0])
 		default:
 			out.Blockers = append(out.Blockers, IntroductionBlocker{"ambiguous_identity", personID})
 		}

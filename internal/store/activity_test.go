@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -3472,4 +3473,256 @@ func TestClaimActivityTimezoneTransitionRejectsHostDependentZone(t *testing.T) {
 	f := storetest.New(t)
 	_, err := f.Store.ClaimActivityTimezoneTransitionContext(t.Context(), "Local")
 	require.ErrorIs(t, err, store.ErrInvalidActivity)
+}
+
+func TestFirstSeenProjectionAndCascadeDeletion(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, personID := activityProjectionFixture(t)
+	at := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	first := f.NewMessage().WithSourceMessageID("first-seen-first").WithSentAt(at).Create(t, f.Store)
+	second := f.NewMessage().WithSourceMessageID("first-seen-second").WithSentAt(at).Create(t, f.Store)
+	low, high := min(first, second), max(first, second)
+	a := activityProjectionForMessage(t, f, high, personID, at)
+	b := activityProjectionForMessage(t, f, low, personID, at)
+	a.Event.Persons[0].Evidence = store.EvidenceCoPresence
+	b.Event.Persons[0].Evidence = store.EvidenceCoPresence
+	_, err := f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{a, b})
+	require.NoError(err)
+	state, err := f.Store.ContactStateContext(t.Context(), personID, at)
+	require.NoError(err)
+	assert.Equal(fmt.Sprintf("message:%d", low), state.FirstSeenRef)
+	assert.Nil(state.FirstContactAt)
+	assert.Zero(state.InteractionCount)
+	_, err = activityExec(t.Context(), f.Store, `DELETE FROM messages WHERE id = ?`, low)
+	require.NoError(err)
+	state, err = f.Store.ContactStateContext(t.Context(), personID, at)
+	require.NoError(err)
+	assert.Equal(fmt.Sprintf("message:%d", high), state.FirstSeenRef)
+}
+
+func TestFirstSeenReplacementAndRetraction(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	t.Run("date changes", firstSeenDateChangesRecomputeWinner)
+
+	f, oldID := activityProjectionFixture(t)
+	participant := f.EnsureParticipant("new-first@example.test", "New First", "example.test")
+	person, created, err := f.Store.CreatePersonFromParticipant(participant)
+	require.NoError(err)
+	require.True(created)
+	at := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	id := f.NewMessage().WithSourceMessageID("first-seen-move").WithSentAt(at).Create(t, f.Store)
+	initial := activityProjectionForMessage(t, f, id, oldID, at)
+	initial.Event.Persons[0].Evidence = store.EvidenceCoPresence
+	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{initial})
+	require.NoError(err)
+	_, err = activityExec(t.Context(), f.Store, `UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("move-first"), id)
+	require.NoError(err)
+	moved := activityProjectionForMessage(t, f, id, person.ID, at)
+	moved.Event.Persons[0].Evidence = store.EvidenceCoPresence
+	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{moved})
+	require.NoError(err)
+	oldState, err := f.Store.ContactStateContext(t.Context(), oldID, at)
+	require.NoError(err)
+	assert.Nil(oldState.FirstSeenAt)
+	state, err := f.Store.ContactStateContext(t.Context(), person.ID, at)
+	require.NoError(err)
+	assert.Equal(fmt.Sprintf("message:%d", id), state.FirstSeenRef)
+	assert.Nil(state.FirstContactAt)
+	_, err = activityExec(t.Context(), f.Store, `UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("retract-first"), id)
+	require.NoError(err)
+	retract := activityProjectionForMessage(t, f, id, person.ID, at)
+	retract.Event = nil
+	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{retract})
+	require.NoError(err)
+	state, err = f.Store.ContactStateContext(t.Context(), person.ID, at)
+	require.NoError(err)
+	assert.Nil(state.FirstSeenAt)
+}
+
+func firstSeenDateChangesRecomputeWinner(t *testing.T) {
+	t.Helper()
+	f, personID := activityProjectionFixture(t)
+	earlier := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	later := earlier.Add(24 * time.Hour)
+	first := f.NewMessage().WithSourceMessageID("first-date-a").WithSentAt(earlier).Create(t, f.Store)
+	second := f.NewMessage().WithSourceMessageID("first-date-b").WithSentAt(later).Create(t, f.Store)
+	a := activityProjectionForMessage(t, f, first, personID, earlier)
+	b := activityProjectionForMessage(t, f, second, personID, later)
+	a.Event.Persons[0].Evidence = store.EvidenceCoPresence
+	b.Event.Persons[0].Evidence = store.EvidenceCoPresence
+	_, err := f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{a, b})
+	require.NoError(t, err)
+	moved := later.Add(24 * time.Hour)
+	_, err = activityExec(t.Context(), f.Store, `UPDATE messages SET sent_at = ? WHERE id = ?`, moved, first)
+	require.NoError(t, err)
+	changed := activityProjectionForMessage(t, f, first, personID, moved)
+	changed.Event.Persons[0].Evidence = store.EvidenceCoPresence
+	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{changed})
+	require.NoError(t, err)
+	state, err := f.Store.ContactStateContext(t.Context(), personID, moved)
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("message:%d", second), state.FirstSeenRef)
+	_, err = activityExec(t.Context(), f.Store, `UPDATE messages SET sent_at = ? WHERE id = ?`, earlier, first)
+	require.NoError(t, err)
+	changed = activityProjectionForMessage(t, f, first, personID, earlier)
+	changed.Event.Persons[0].Evidence = store.EvidenceCoPresence
+	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{changed})
+	require.NoError(t, err)
+	state, err = f.Store.ContactStateContext(t.Context(), personID, moved)
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("message:%d", first), state.FirstSeenRef)
+	assert.Zero(t, state.InteractionCount)
+}
+
+func TestFirstSeenIntroductionContactState(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	otherSender := f.EnsureParticipant("other-sender@example.test", "Other Sender", "example.test")
+	sender := f.EnsureParticipant("sender@example.test", "Sender", "example.test")
+	require.Greater(sender, otherSender)
+	senderPerson, _, err := f.Store.CreatePersonFromParticipant(sender)
+	require.NoError(err)
+	_, err = f.Store.UpdatePersonDisplayNameContext(t.Context(), senderPerson.ID, senderPerson.Revision, new("Saved Sender"))
+	require.NoError(err)
+	target := f.EnsureParticipant("target@example.test", "Target", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(target)
+	require.NoError(err)
+	at := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	message := f.NewMessage().WithSourceMessageID("intro-store").WithSentAt(at).Build()
+	message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
+	id, err := f.Store.PersistMessage(&store.MessagePersistData{Message: message})
+	require.NoError(err)
+	require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{otherSender, sender}, []string{"Other Sender", "Sender"}))
+	candidates, err := f.Store.LoadActivityCandidatesByIDContext(t.Context(), []int64{id})
+	require.NoError(err)
+	require.Len(candidates, 1)
+	require.NotNil(candidates[0].SenderID)
+	assert.Equal(sender, *candidates[0].SenderID)
+	require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{owner, target}, []string{"Owner", "Target"}))
+	projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
+	require.NoError(err)
+	_, err = projector.RunOnce(t.Context())
+	require.NoError(err)
+	state, err := f.Store.ContactStateContext(t.Context(), person.ID, at)
+	require.NoError(err)
+	assert.Equal(store.FirstContactEmailIntro, state.FirstContactKind)
+	assert.Equal(fmt.Sprintf("message:%d", id), state.FirstSeenRef)
+	assert.Nil(state.FirstContactAt)
+	require.NotNil(state.Introducer)
+	assert.Equal(sender, state.Introducer.ParticipantID)
+	assert.Equal("Saved Sender", state.Introducer.DisplayName)
+	require.NotNil(state.Introducer.PersonID)
+	assert.Equal(senderPerson.ID, *state.Introducer.PersonID)
+}
+
+func TestFirstAppearanceSkipsUntimedGroupMembers(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	alpha := f.EnsureParticipant("alpha@example.test", "Alpha", "example.test")
+	bravo := f.EnsureParticipant("bravo@example.test", "Bravo", "example.test")
+	rosterOnly := f.EnsureParticipant("roster@example.test", "Roster", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(bravo)
+	require.NoError(err)
+	rosterPerson, _, err := f.Store.CreatePersonFromParticipant(rosterOnly)
+	require.NoError(err)
+	group, err := f.Store.EnsureConversationWithType(f.Source.ID, "synthetic-group", "group_chat", "Group")
+	require.NoError(err)
+	for _, participant := range []int64{owner, alpha, bravo, rosterOnly} {
+		require.NoError(f.Store.EnsureConversationParticipant(group, participant, "member"))
+	}
+	january := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	introAt := january.AddDate(0, 0, 15)
+	february := january.AddDate(0, 1, 0)
+	groupMessage := func(id string, sender int64, at time.Time) int64 {
+		t.Helper()
+		message := f.NewMessage().WithSourceMessageID(id).WithSentAt(at).Build()
+		message.ConversationID = group
+		message.MessageType = "telegram"
+		message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
+		messageID, err := f.Store.PersistMessage(&store.MessagePersistData{Message: message})
+		require.NoError(err)
+		return messageID
+	}
+	groupMessage("january-alpha", alpha, january)
+	groupMessage("february-bravo", bravo, february)
+	intro := f.NewMessage().WithSourceMessageID("intervening-intro").WithSentAt(introAt).Build()
+	intro.SenderID = sql.NullInt64{Int64: alpha, Valid: true}
+	introID, err := f.Store.PersistMessage(&store.MessagePersistData{Message: intro})
+	require.NoError(err)
+	require.NoError(f.Store.ReplaceMessageRecipients(introID, "from", []int64{alpha}, []string{"Alpha"}))
+	require.NoError(f.Store.ReplaceMessageRecipients(introID, "to", []int64{owner, bravo}, []string{"Owner", "Bravo"}))
+	projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
+	require.NoError(err)
+	_, err = projector.RunOnce(t.Context())
+	require.NoError(err)
+	state, err := f.Store.ContactStateContext(t.Context(), person.ID, february)
+	require.NoError(err)
+	assert.Equal(fmt.Sprintf("message:%d", introID), state.FirstSeenRef)
+	require.NotNil(state.FirstSeenAt)
+	assert.Equal(introAt, state.FirstSeenAt.UTC())
+	assert.Equal(store.FirstContactEmailIntro, state.FirstContactKind)
+	rosterState, err := f.Store.ContactStateContext(t.Context(), rosterPerson.ID, february)
+	require.NoError(err)
+	assert.Nil(rosterState.FirstSeenAt)
+}
+
+func TestFirstAppearanceRealLoaderKinds(t *testing.T) {
+	for _, tc := range []struct {
+		name, conversation, messageType string
+		fromOwner                       bool
+		want                            store.FirstContactKind
+	}{
+		{"owner direct chat", "direct_chat", "telegram", true, store.FirstContactOwnerOutreach},
+		{"inbound direct chat", "direct_chat", "telegram", false, store.FirstContactInboundOutreach},
+		{"group sender", "group_chat", "telegram", false, store.FirstContactGroupShared},
+		{"meeting", "email_thread", "calendar_event", false, store.FirstContactMeeting},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+			owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+			target := f.EnsureParticipant("target@example.test", "Target", "example.test")
+			person, _, err := f.Store.CreatePersonFromParticipant(target)
+			require.NoError(err)
+			conversation, err := f.Store.EnsureConversationWithType(f.Source.ID, "case-conversation", tc.conversation, "Case")
+			require.NoError(err)
+			at := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+			message := f.NewMessage().WithSourceMessageID("case-message").WithSentAt(at).Build()
+			message.ConversationID, message.MessageType, message.IsFromMe = conversation, tc.messageType, tc.fromOwner
+			sender := target
+			if tc.fromOwner {
+				sender = owner
+			}
+			message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
+			id, err := f.Store.PersistMessage(&store.MessagePersistData{Message: message})
+			require.NoError(err)
+			if tc.messageType == "calendar_event" {
+				require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{target}, []string{"Target"}))
+				require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{owner}, []string{"Owner"}))
+			} else {
+				for _, participant := range []int64{owner, target} {
+					require.NoError(f.Store.EnsureConversationParticipant(conversation, participant, "member"))
+				}
+			}
+			projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
+			require.NoError(err)
+			_, err = projector.RunOnce(t.Context())
+			require.NoError(err)
+			state, err := f.Store.ContactStateContext(t.Context(), person.ID, at)
+			require.NoError(err)
+			assert.Equal(tc.want, state.FirstContactKind)
+			require.NotNil(state.FirstSeenAt)
+			assert.Equal(at, state.FirstSeenAt.UTC())
+		})
+	}
 }

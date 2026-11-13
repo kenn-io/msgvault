@@ -10,7 +10,8 @@ func init() { rootCmd.AddCommand(newIntroCommand(runDaemonCLICommandHTTPFromCobr
 func newIntroCommand(execute func(*cobra.Command, []string) error) *cobra.Command {
 	root := &cobra.Command{Use: "intro", Short: "Prepare local introductions"}
 	prepare := &cobra.Command{Use: "prepare", Short: "Prepare an introduction locally", Args: cobra.NoArgs, RunE: execute}
-	prepare.Flags().Int64("source-id", 0, "Beeper source ID")
+	prepare.Flags().Int64("source-id", 0, "archived Beeper or email source ID")
+	prepare.Flags().Int64("meeting-message-id", 0, "archived transcript recording both people")
 	prepare.Flags().Int64Slice("person", nil, "person ID (repeat twice)")
 	prepare.Flags().String("title", "", "group title")
 	prepare.Flags().String("body", "", "introduction text")

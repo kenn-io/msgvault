@@ -4399,6 +4399,7 @@ CREATE TABLE IF NOT EXISTS person_introductions (
     source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
     person_a_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
     person_b_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    meeting_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
     title TEXT NOT NULL,
     body TEXT,
     created_by TEXT NOT NULL,

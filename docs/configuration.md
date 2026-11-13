@@ -1688,6 +1688,22 @@ The canonical source identifier is
 `app:<app_id>:page:<page_id>:instagram:<instagram_account_id>`; its generic
 scheduler job is `instagram_comments:<source-identifier>`.
 
+### `[feeds]` {#feeds}
+
+Fetch the RSS, Atom, and JSON feeds followed with `msgvault source feeds add`. The
+feeds themselves are kept in the archive, not here; see [Feeds](usage/feeds.md).
+
+```toml
+[feeds]
+enabled = true                    # gate for the daemon schedule
+schedule = "*/30 * * * *"         # 5-field cron; empty = manual sync only
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Whether the daemon schedules feed sync |
+| `schedule` | — | Cron expression used by `msgvault serve` |
+
 ### `[[chatwoot]]` {#chatwoot}
 
 Configure one account per Chatwoot instance. Each registered inbox becomes a

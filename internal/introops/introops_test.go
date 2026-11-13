@@ -2,6 +2,7 @@ package introops_test
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"strings"
 	"sync"
@@ -18,11 +19,18 @@ import (
 )
 
 func TestGrantBodyAndEdit(t *testing.T) {
+	for _, sourceType := range []string{"beeper", "gmail"} {
+		t.Run(sourceType, func(t *testing.T) { checkGrantBodyAndEdit(t, sourceType) })
+	}
+}
+
+func checkGrantBodyAndEdit(t *testing.T, sourceType string) {
+	t.Helper()
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
 	ctx := t.Context()
-	src, err := f.Store.GetOrCreateSource("beeper", "test-account")
+	src, err := f.Store.GetOrCreateSource(sourceType, "test-account")
 	req.NoError(err)
 	pa := f.EnsureParticipant("a@example.com", "A", "example.com")
 	pb := f.EnsureParticipant("b@example.com", "B", "example.com")
@@ -30,10 +38,16 @@ func TestGrantBodyAndEdit(t *testing.T) {
 	req.NoError(err)
 	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pb)
 	req.NoError(err)
-	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("test-account", "a"), pb, beeperidentity.Fallback("test-account", "b"))
-	req.NoError(err)
+	if sourceType == "beeper" {
+		_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("test-account", "a"), pb, beeperidentity.Fallback("test-account", "b"))
+		req.NoError(err)
+	} else {
+		f.Source = src
+		f.PersistEmail(storetest.EmailSpec{From: "a@example.com", To: []string{"b@example.com"}, SentAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
+	}
+
 	svc := introops.Service{Store: f.Store}
-	grant := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{Type: "beeper", Identifier: "test-account"}}}
+	grant := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{Type: sourceType, Identifier: "test-account"}}}
 	row, err := svc.Prepare(ctx, grant, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID, Body: "private"})
 	req.NoError(err)
 	check.Empty(row.Body)
@@ -42,6 +56,7 @@ func TestGrantBodyAndEdit(t *testing.T) {
 	req.NoError(err)
 	req.Len(page.Items, 1)
 	check.Empty(page.Items[0].Body)
+	req.Len(page.Items[0].Members, 2)
 	for _, member := range page.Items[0].Members {
 		check.Empty(member.UserID)
 	}
@@ -58,15 +73,19 @@ func TestGrantBodyAndEdit(t *testing.T) {
 	row, err = svc.Get(ctx, grant, row.IntroID)
 	req.NoError(err)
 	check.Equal("private", row.Body)
+	req.Len(row.Members, 2)
 	for _, member := range row.Members {
 		check.Empty(member.UserID)
 	}
 	ownerRow, err := svc.Get(ctx, nil, row.IntroID)
 	req.NoError(err)
-	check.NotEmpty(ownerRow.Members[0].UserID)
-	other, err := f.Store.GetOrCreateSource("beeper", "other-account")
+	req.Len(ownerRow.Members, 2)
+	for _, member := range ownerRow.Members {
+		check.NotEmpty(member.UserID)
+	}
+	other, err := f.Store.GetOrCreateSource(sourceType, "other-account")
 	req.NoError(err)
-	grant.Sources = []agentgrant.SourceRef{{ID: other.ID, Type: "beeper", Identifier: "other-account"}}
+	grant.Sources = []agentgrant.SourceRef{{ID: other.ID, Type: sourceType, Identifier: "other-account"}}
 	_, err = svc.Get(ctx, grant, row.IntroID)
 	req.ErrorIs(err, introops.ErrForbidden)
 	_, err = svc.Get(ctx, grant, "missing")
@@ -74,13 +93,20 @@ func TestGrantBodyAndEdit(t *testing.T) {
 }
 
 func TestDelegatedListFiltersBeforeLimit(t *testing.T) {
+	for _, sourceType := range []string{"beeper", "gmail"} {
+		t.Run(sourceType, func(t *testing.T) { checkDelegatedListFiltersBeforeLimit(t, sourceType) })
+	}
+}
+
+func checkDelegatedListFiltersBeforeLimit(t *testing.T, sourceType string) {
+	t.Helper()
 	req := require.New(t)
 	check := assert.New(t)
 	f := storetest.New(t)
 	ctx := t.Context()
-	src, err := f.Store.GetOrCreateSource("beeper", "account")
+	src, err := f.Store.GetOrCreateSource(sourceType, "account")
 	req.NoError(err)
-	other, err := f.Store.GetOrCreateSource("beeper", "other")
+	other, err := f.Store.GetOrCreateSource(sourceType, "other")
 	req.NoError(err)
 	pa := f.EnsureParticipant("scan-a@example.test", "A", "example.test")
 	pb := f.EnsureParticipant("scan-b@example.test", "B", "example.test")
@@ -91,15 +117,29 @@ func TestDelegatedListFiltersBeforeLimit(t *testing.T) {
 	req.NoError(err)
 	c, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pc)
 	req.NoError(err)
-	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("account", "a"), pb, beeperidentity.Fallback("account", "b"))
-	req.NoError(err)
-	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("other", "a"), pb, beeperidentity.Fallback("other", "b"))
-	req.NoError(err)
+	var evidence int64
+	if sourceType == "beeper" {
+		_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("account", "a"), pb, beeperidentity.Fallback("account", "b"))
+		req.NoError(err)
+		_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("other", "a"), pb, beeperidentity.Fallback("other", "b"))
+		req.NoError(err)
+	} else {
+		f.Source = src
+		evidence = f.PersistEmail(storetest.EmailSpec{From: "scan-a@example.test", To: []string{"scan-b@example.test"}, SentAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
+		_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO message_recipients (message_id,participant_id,recipient_type,email_address) VALUES (?,?,'cc','alias@example.test')`), evidence, pb)
+		req.NoError(err)
+		f.Source = other
+		f.PersistEmail(storetest.EmailSpec{From: "scan-a@example.test", To: []string{"scan-b@example.test"}, SentAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
+		f.Source = src
+	}
+
 	svc := introops.Service{Store: f.Store}
 	in := store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID}
-	g := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{Type: "beeper", Identifier: "account"}}}
+	g := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{Type: sourceType, Identifier: "account"}}}
 	empty, err := svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
 	req.NoError(err)
+	check.Empty(empty.Items)
+	check.False(empty.HasMore)
 	otherRow, err := svc.Prepare(ctx, nil, store.PersonIntroductionPrepare{SourceID: other.ID, PersonAID: a.ID, PersonBID: b.ID})
 	req.NoError(err)
 	filtered, err := svc.List(ctx, g, store.PersonIntroductionQuery{SourceID: other.ID})
@@ -114,7 +154,7 @@ func TestDelegatedListFiltersBeforeLimit(t *testing.T) {
 	}
 	page, err := svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
 	req.NoError(err)
-	assert.Equal(t, empty, page)
+	check.Equal(empty, page)
 	in.PersonBID = b.ID
 	visible, err := svc.Prepare(ctx, nil, in)
 	req.NoError(err)
@@ -125,6 +165,20 @@ func TestDelegatedListFiltersBeforeLimit(t *testing.T) {
 	req.Len(page.Items, 1)
 	check.Equal(visible.IntroID, page.Items[0].IntroID)
 	check.False(page.HasMore)
+	got, err := svc.Get(ctx, g, visible.IntroID)
+	req.NoError(err)
+	check.Equal(page.Items[0], got)
+	if sourceType == "gmail" {
+		check.Contains(got.Blockers, store.IntroductionBlocker{Code: "ambiguous_identity", PersonID: b.ID})
+		_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), evidence)
+		req.NoError(err)
+		page, err = svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
+		req.NoError(err)
+		check.Empty(page.Items)
+		check.False(page.HasMore)
+		_, err = svc.Get(ctx, g, visible.IntroID)
+		req.ErrorIs(err, introops.ErrForbidden)
+	}
 }
 
 func TestPrepareRejectsNonpositiveSourceID(t *testing.T) {
@@ -349,4 +403,162 @@ func TestDelegatedListSameReferenceReimport(t *testing.T) {
 	req.NoError(err)
 	req.Len(page.Items, 1)
 	check.Equal(row.IntroID, page.Items[0].IntroID)
+}
+
+func TestEmailIntroductionMeetingContext(t *testing.T) {
+	f := storetest.New(t)
+	ctx := t.Context()
+	pa := f.EnsureParticipant("a@example.test", "A", "example.test")
+	pb := f.EnsureParticipant("b@example.test", "B", "example.test")
+	a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pa)
+	require.NoError(t, err)
+	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pb)
+	require.NoError(t, err)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE conversations SET conversation_type='email_thread' WHERE id=?`), f.ConvID)
+	require.NoError(t, err)
+	email := f.CreateMessage("email-context")
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO message_recipients (message_id,participant_id,recipient_type,email_address) VALUES (?,?,'from','a@example.test'),(?,?,'to','b@example.test')`), email, pa, email, pb)
+	require.NoError(t, err)
+	meetingSource, err := f.Store.GetOrCreateSource("meeting", "explicit-meetings")
+	require.NoError(t, err)
+	conv, err := f.Store.EnsureConversation(ctx, meetingSource.ID, "meeting", "Meeting")
+	require.NoError(t, err)
+	meeting, err := f.Store.UpsertMessage(&store.Message{SourceID: meetingSource.ID, ConversationID: conv, SourceMessageID: "context", MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}})
+	require.NoError(t, err)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO message_recipients (message_id,participant_id,recipient_type,email_address) VALUES (?,?,'from','a@example.test'),(?,?,'to','b@example.test')`), meeting, pa, meeting, pb)
+	require.NoError(t, err)
+	raw := []byte(`{"organizer":{"email":"a@example.test"},"attendees":[{"email":"b@example.test"}]}`)
+	require.NoError(t, f.Store.UpsertMessageRawWithFormatContext(ctx, meeting, raw, "meeting_json"))
+	svc := introops.Service{Store: f.Store}
+	in := store.PersonIntroductionPrepare{SourceID: f.Source.ID, PersonAID: a.ID, PersonBID: b.ID, MeetingMessageID: &meeting, Body: "private"}
+	row, err := svc.Prepare(ctx, nil, in)
+	require.NoError(t, err)
+	assert.Equal(t, &meeting, row.MeetingMessageID)
+
+	for _, tc := range []struct{ name, change, restore string }{
+		{"calendar invitation", `UPDATE messages SET message_type='calendar_event' WHERE id=?`, `UPDATE messages SET message_type='meeting_transcript' WHERE id=?`},
+		{"undated", `UPDATE messages SET sent_at=NULL WHERE id=?`, `UPDATE messages SET sent_at='2026-01-01T00:00:00Z' WHERE id=?`},
+		{"locally deleted", `UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`, `UPDATE messages SET deleted_at=NULL WHERE id=?`},
+		{"upstream deleted", `UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`, `UPDATE messages SET deleted_from_source_at=NULL WHERE id=?`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(tc.change), meeting)
+			require.NoError(t, err)
+			_, err = svc.Prepare(t.Context(), nil, in)
+			require.ErrorIs(t, err, store.ErrIntroductionInvalid)
+			got, err := svc.Get(t.Context(), nil, row.IntroID)
+			require.NoError(t, err)
+			assert.Nil(t, got.MeetingMessageID)
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(tc.restore), meeting)
+			require.NoError(t, err)
+		})
+	}
+
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO source_settings (source_id,merged_into_source_id) VALUES (?,?) ON CONFLICT (source_id) DO UPDATE SET merged_into_source_id=excluded.merged_into_source_id`), meetingSource.ID, f.Source.ID)
+	require.NoError(t, err)
+	_, err = svc.Prepare(ctx, nil, in)
+	require.ErrorIs(t, err, store.ErrIntroductionInvalid)
+	suppressed, err := svc.Get(ctx, nil, row.IntroID)
+	require.NoError(t, err)
+	assert.Nil(t, suppressed.MeetingMessageID)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE source_settings SET merged_into_source_id=NULL WHERE source_id=?`), meetingSource.ID)
+	require.NoError(t, err)
+	grant := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionDraftEdit}, Sources: []agentgrant.SourceRef{{Type: f.Source.SourceType, Identifier: f.Source.Identifier}}}
+	_, err = svc.Prepare(ctx, grant, in)
+	require.ErrorIs(t, err, introops.ErrForbidden)
+	missing := int64(99999999)
+	in.MeetingMessageID = &missing
+	_, err = svc.Prepare(ctx, grant, in)
+	require.ErrorIs(t, err, introops.ErrForbidden)
+	in.MeetingMessageID = &meeting
+	got, err := svc.Get(ctx, grant, row.IntroID)
+	require.NoError(t, err)
+	assert.Nil(t, got.MeetingMessageID)
+	grant.Sources = append(grant.Sources, agentgrant.SourceRef{Type: meetingSource.SourceType, Identifier: meetingSource.Identifier})
+	_, err = svc.Prepare(ctx, grant, in)
+	require.ErrorIs(t, err, introops.ErrForbidden) // meeting source alone lacks message.read
+	grant.Permissions = append(grant.Permissions, agentgrant.PermissionMessageRead)
+	got, err = svc.Prepare(ctx, grant, in)
+	require.NoError(t, err)
+	assert.Equal(t, &meeting, got.MeetingMessageID)
+	assert.Empty(t, got.SourceIdentifier)
+	require.Len(t, got.Members, 2)
+	for _, m := range got.Members {
+		assert.Empty(t, m.UserID)
+	}
+	page, err := svc.List(ctx, grant, store.PersonIntroductionQuery{Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, &meeting, page.Items[0].MeetingMessageID)
+	// A raw participant mismatch invalidates context even though normalized roles remain.
+	require.NoError(t, f.Store.UpsertMessageRawWithFormatContext(ctx, meeting, []byte(`{"organizer":{"email":"a@example.test"},"attendees":[{"email":"other@example.test"}]}`), "meeting_json"))
+	got, err = svc.Get(ctx, nil, row.IntroID)
+	require.NoError(t, err)
+	assert.Nil(t, got.MeetingMessageID)
+	_, err = svc.Prepare(ctx, nil, in)
+	require.ErrorIs(t, err, store.ErrIntroductionInvalid)
+	title := "changed"
+	got, err = svc.Edit(ctx, nil, row.IntroID, store.PersonIntroductionEdit{Revision: 1, Title: &title})
+	require.NoError(t, err)
+	assert.Nil(t, got.MeetingMessageID)
+	got, err = svc.Cancel(ctx, grant, row.IntroID, 2)
+	require.NoError(t, err)
+	assert.Nil(t, got.MeetingMessageID)
+	assert.Empty(t, got.Body)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`DELETE FROM messages WHERE id=?`), meeting)
+	require.NoError(t, err)
+	stored, err := f.Store.GetPersonIntroductionContext(ctx, row.IntroID)
+	require.NoError(t, err)
+	assert.Nil(t, stored.MeetingMessageID)
+
+	for _, operation := range []string{"edit", "cancel"} {
+		t.Run(operation+" during meeting deletion", func(t *testing.T) {
+			if f.Store.IsPostgreSQL() {
+				t.Skip("uses a SQLite trigger to delete context during the mutation")
+			}
+			ctx := t.Context()
+			meeting, err := f.Store.UpsertMessage(&store.Message{SourceID: meetingSource.ID, ConversationID: conv, SourceMessageID: operation, MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}})
+			require.NoError(t, err)
+			_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO message_recipients (message_id,participant_id,recipient_type,email_address) VALUES (?,?,'from','a@example.test'),(?,?,'to','b@example.test')`), meeting, pa, meeting, pb)
+			require.NoError(t, err)
+			require.NoError(t, f.Store.UpsertMessageRawWithFormatContext(ctx, meeting, raw, "meeting_json"))
+			in := in
+			in.MeetingMessageID = &meeting
+			prepared, err := svc.Prepare(ctx, nil, in)
+			require.NoError(t, err)
+			require.Equal(t, &meeting, prepared.MeetingMessageID)
+			// Source removal deletes messages and this same FK clears the context.
+			// AFTER avoids changing the row through that FK before its update runs.
+			_, err = f.Store.DB().ExecContext(ctx, `CREATE TRIGGER delete_introduction_meeting
+				AFTER UPDATE OF revision ON person_introductions
+				BEGIN
+					DELETE FROM messages WHERE id = OLD.meeting_message_id;
+				END`)
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				// Cleanup runs after the subtest context is cancelled.
+				_, err := f.Store.DB().ExecContext(context.WithoutCancel(t.Context()), `DROP TRIGGER delete_introduction_meeting`)
+				assert.NoError(t, err)
+			})
+			var got introops.Record
+			wantBody, wantStatus := "edited", "prepared"
+			if operation == "edit" {
+				got, err = svc.Edit(ctx, nil, prepared.IntroID, store.PersonIntroductionEdit{Revision: prepared.Revision, Body: &wantBody})
+			} else {
+				wantBody, wantStatus = "", "cancelled"
+				got, err = svc.Cancel(ctx, nil, prepared.IntroID, prepared.Revision)
+			}
+			require.NoError(t, err)
+			stored, err := f.Store.GetPersonIntroductionContext(ctx, prepared.IntroID)
+			require.NoError(t, err)
+			require.Nil(t, stored.MeetingMessageID, "deletion must exercise the real nullable FK")
+			assert.Equal(t, prepared.Revision+1, stored.Revision)
+			assert.Equal(t, wantBody, stored.Body)
+			assert.Equal(t, wantStatus, stored.Status)
+			shown, err := svc.Get(ctx, nil, prepared.IntroID)
+			require.NoError(t, err)
+			assert.Equal(t, stored, shown.PersonIntroduction)
+			assert.Equal(t, stored, got.PersonIntroduction, "mutation reply must reflect saved context, revision and body")
+		})
+	}
 }

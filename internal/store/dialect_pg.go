@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver for database/sql
@@ -385,18 +384,6 @@ const maxFTSBodyBytes = 700000
 // truncateBytesRuneSafe returns s truncated to at most maxFTSBodyBytes bytes
 // without splitting a multibyte UTF-8 rune. If s already fits it is returned
 // unchanged.
-func truncateBytesRuneSafe(s string) string {
-	if len(s) <= maxFTSBodyBytes {
-		return s
-	}
-	// Walk back from maxFTSBodyBytes to the start of the rune that straddles
-	// the boundary so we never emit a partial rune.
-	cut := maxFTSBodyBytes
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut]
-}
 
 // FTSUpsert updates the tsvector column on messages for a single message.
 // PostgreSQL stores the FTS index inline on `messages.search_fts`, so there
@@ -444,10 +431,10 @@ func pgFTSVector(doc FTSDoc) (string, []any) {
 
 func preparePostgresFTSDoc(doc FTSDoc) (FTSDoc, []string) {
 	prepare := func(s string) string {
-		s = truncateBytesRuneSafe(s)
+		s = textutil.PrefixBytes(s, maxFTSBodyBytes)
 		s = textutil.PrefixRunes(s, maxFTSBodyChars)
 		s = sqldialect.CanonicalFTSText(s)
-		return truncateBytesRuneSafe(s)
+		return textutil.PrefixBytes(s, maxFTSBodyBytes)
 	}
 	doc.Subject = prepare(doc.Subject)
 	doc.Body = prepare(doc.Body)
@@ -2286,7 +2273,7 @@ var exclusiveLockTables = []string{
 	// persons and person_participants: MergeParticipants (reached from the
 	// Beeper import path) repoints bindings and bumps person revisions, so
 	// both belong to the sync/import write set this lock mirrors.
-	"persons", "person_participants", "person_introductions",
+	"persons", "person_participants", personIntroductionsTableName,
 	"person_sweep_changes", "person_sweep_sync_publications",
 	// Activity projection rows are written from and cascade with the sync
 	// archive. The queue is trigger-written by every message/participant

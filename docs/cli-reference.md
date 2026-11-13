@@ -15,7 +15,7 @@ appear in full under Inherited Flags.
 
 | Task | Commands and guides |
 |---|---|
-| Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
+| Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full), [source feeds add](#source-feeds-add) |
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-discord-package](#import-discord-package), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [intro](#intro), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
@@ -37,12 +37,19 @@ daemon. See [Prepare an introduction](usage/people.md#prepare-an-introduction)
 for preflight blockers and agent permissions.
 
 ```text
-msgvault intro prepare --source-id N --person A --person B --title T --body B [--json]
+msgvault intro prepare --source-id N --person A --person B --title T --body B [--meeting-message-id N] [--json]
 msgvault intro list [--source-id N] [--limit N] [--after-id CURSOR] [--json]
 msgvault intro show ID [--json]
 msgvault intro edit ID --revision N [--title T] [--body B] [--json]
 msgvault intro cancel ID --revision N [--json]
 ```
+
+Prepare accepts an archived Beeper or email delivery source. The optional
+`--meeting-message-id` is prepare-only and must identify a transcript with
+explicit recorded participation by both people. It creates only a local record;
+see [context and permission limits](usage/people.md#prepare-an-introduction).
+Permitted context is returned as `meeting_message_id`; unavailable or inaccessible
+context is omitted on later reads.
 
 List defaults to 20 records and accepts a limit from 1 to 100. Results are
 ordered by creation timestamp descending, then introduction ID descending for
@@ -1674,6 +1681,72 @@ msgvault add-chatwoot [identifier]
 With no identifier, register all configured profiles. Include/exclude inbox
 filters apply; no selected inboxes is an error. Re-run after adding inboxes.
 See [Chatwoot setup](guides/chatwoot.md).
+
+---
+
+## source feeds add
+
+Follow RSS 2.0, Atom, or JSON feeds and archive their items. See
+[Feeds](usage/feeds.md).
+
+```bash
+msgvault source feeds add https://example.com/releases.atom
+msgvault source feeds add --opml ~/Downloads/subscriptions.opml
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--opml` | — | Follow every feed in this OPML file without fetching them; mutually exclusive with URL arguments |
+
+Each URL is fetched first; a URL that is not a reachable feed is reported, not
+followed, and makes the command exit non-zero. The items a feed lists now are
+archived right away. Adding a removed feed follows it again.
+
+---
+
+## source feeds list
+
+List followed feeds with their title, URL, last check, and last error.
+
+```bash
+msgvault source feeds list
+msgvault source feeds list --all --json
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--all` | `false` | Include removed feeds |
+| `--json` | `false` | Output JSON |
+
+---
+
+## source feeds remove
+
+Stop fetching feeds. Their archived items stay searchable.
+
+```bash
+msgvault source feeds remove https://example.com/releases.atom
+```
+
+---
+
+## source feeds sync
+
+Fetch every followed feed, or the given ones, and archive each item the
+archive does not hold yet. A feed that fails is reported and the others still
+sync; the command then exits non-zero.
+
+```bash
+msgvault source feeds sync
+msgvault source feeds sync https://example.com/releases.atom
+msgvault source feeds sync --full
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--full` | `false` | Download every feed again, even when unchanged |
+
+Scheduled fetching is controlled by [`[feeds]`](configuration.md#feeds).
 
 ---
 
@@ -3627,6 +3700,11 @@ msgvault person attributes list <person-id> [--slug <slug>] [--history] [--json]
 msgvault person attributes set <person-id> <slug> (--value <scalar> | --value-json <json|@path|->) [flags]
 msgvault person attributes clear <person-id> <slug> [flags]
 ```
+
+`person get --json` includes first archived appearance and the first direct contact
+when the daemon supports them. JSON includes the appearance reference, kind and introducer when known. See
+[first archived appearance](usage/people.md#see-a-persons-first-archived-appearance)
+for evidence rules and limitations.
 
 `promote` seeds a new profile with the first nonblank observed name in its
 linked cluster, ordered by participant ID. It leaves the name empty when no

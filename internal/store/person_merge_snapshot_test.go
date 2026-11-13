@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"compress/zlib"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"path/filepath"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -294,7 +296,15 @@ func checkIntroductionMergeSnapshotsOmitBody(t *testing.T, st *Store) {
 	require.NoError(t, err)
 	b, _, err := st.CreatePersonFromParticipantContext(ctx, pb)
 	require.NoError(t, err)
-	_, err = st.PreparePersonIntroductionContext(ctx, PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID, Body: "sensitive synthetic text"}, "owner")
+
+	conv, err := st.EnsureConversation(ctx, src.ID, "snapshot-meeting", "Meeting")
+	require.NoError(t, err)
+	meeting, err := st.UpsertMessage(&Message{ConversationID: conv, SourceID: src.ID, SourceMessageID: "snapshot-context", MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}})
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO message_recipients (message_id,participant_id,recipient_type,email_address) VALUES (?,?,'from','intro-a@example.com'),(?,?,'to','intro-b@example.com')`), meeting, pa, meeting, pb)
+	require.NoError(t, err)
+	require.NoError(t, st.UpsertMessageRawWithFormatContext(ctx, meeting, []byte(`{"organizer":{"email":"intro-a@example.com"},"attendees":[{"email":"intro-b@example.com"}]}`), "meeting_json"))
+	_, err = st.PreparePersonIntroductionContext(ctx, PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID, Body: "sensitive synthetic text", MeetingMessageID: &meeting}, "owner")
 	require.NoError(t, err)
 	merged, err := st.MergePersonsContext(ctx, PersonMergeRequest{SurvivorID: a.ID, AbsorbedID: b.ID, ExpectedSurvivorRevision: a.Revision, ExpectedAbsorbedRevision: b.Revision, IdempotencyKey: "intro-snapshot", Actor: "test"})
 	require.NoError(t, err)
