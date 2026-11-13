@@ -105,8 +105,8 @@ func TestPersonRecordSDKAtomicPatchAndHistory(t *testing.T) {
 	assertions.Equal("image/png", media.MediaType)
 	assertions.Equal(base64.StdEncoding.EncodeToString([]byte("synthetic")), media.DataBase64)
 	assertions.True(media.Complete)
-	history := loopToolOutput[generated.PersonProfileHistory](t, call("get_person_record_history", map[string]any{"person_id": id}))
-	assertions.Len(history.Categories, 1)
+	history := loopToolOutput[mcpserver.PersonHistoryRecord](t, call("get_person_record_history", map[string]any{"person_id": id}))
+	assertions.Len(history.History.Categories, 1)
 	assertions.Equal("person_revision_conflict", loopToolFailure(t, call("patch_person_record", args))["error"])
 	closeArgs := map[string]any{"person_id": id, "etag": updated.ETag, "patch": map[string]any{"categories": map[string]any{"supersede": []int64{updated.Profile.Categories[0].Envelope.ID}}}}
 	closed := loopToolOutput[mcpserver.StructuredPersonRecord](t, call("patch_person_record", closeArgs))
@@ -247,7 +247,9 @@ func TestPersonRecordLargeProfileRecoveryAndDisclosure(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	backend, id, _, patches := personRecordFixture(t)
 	var disclosure string
+	approvals := 0
 	session := loopOperationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCurated}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		approvals++
 		disclosure = request.Params.Message
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
@@ -272,9 +274,8 @@ func TestPersonRecordLargeProfileRecoveryAndDisclosure(t *testing.T) {
 			assertions.NotContains(result.StructuredContent, "operation_may_have_completed")
 		}
 	}
-	assertions.Equal("operation_response_limit_exceeded", loopToolFailure(t, call("get_person_record", map[string]any{"person_id": id}))["error"])
 	var assembled bytes.Buffer
-	args := map[string]any{"person_id": id, "offset": 0, "length": 1 << 20}
+	args := map[string]any{"person_id": id}
 	var first mcpserver.StructuredPersonRecord
 	for {
 		chunk := loopToolOutput[mcpserver.StructuredPersonRecord](t, call("get_person_record", args))
@@ -300,6 +301,32 @@ func TestPersonRecordLargeProfileRecoveryAndDisclosure(t *testing.T) {
 	var profile generated.StructuredPersonProfile
 	requirements.NoError(json.Unmarshal(assembled.Bytes(), &profile))
 	requirements.Len(profile.Addresses, 400)
+	var historyBytes bytes.Buffer
+	historyArgs := map[string]any{"person_id": id}
+	for {
+		history := loopToolOutput[mcpserver.PersonHistoryRecord](t, call("get_person_record_history", historyArgs))
+		requirements.NotNil(history.DataBase64)
+		part, err := base64.StdEncoding.DecodeString(*history.DataBase64)
+		requirements.NoError(err)
+		_, err = historyBytes.Write(part)
+		requirements.NoError(err)
+		if *history.Complete {
+			break
+		}
+		historyArgs = map[string]any{"person_id": id, "offset": *history.Offset + *history.Length, "sha256": *history.SHA256}
+	}
+	rawHistory, err := backend.ExecuteOperation(t.Context(), "get_person_record_history", map[string]any{"person_id": id})
+	requirements.NoError(err)
+	assertions.JSONEq(string(rawHistory.Data), historyBytes.String())
+	ids := make([]int64, 200)
+	for i := range ids {
+		ids[i] = profile.Addresses[i].Envelope.ID
+	}
+	before := approvals
+	refusal := call("patch_person_record", map[string]any{"person_id": id, "etag": etag, "patch": map[string]any{"addresses": map[string]any{"supersede": ids}}})
+	assertions.Equal("operation_response_limit_exceeded", loopToolFailure(t, refusal)["error"])
+	assertions.Equal(before, approvals)
+	assertions.Equal(int64(2), patches.Load())
 	superseded := profile.Addresses[0]
 	patch := map[string]any{"addresses": map[string]any{"supersede": []int64{superseded.Envelope.ID}}}
 	updated := loopToolOutput[mcpserver.StructuredPersonRecord](t, call("patch_person_record", map[string]any{"person_id": id, "etag": etag, "patch": patch}))
@@ -327,10 +354,15 @@ func TestPersonRecordOversizeRefusedBeforeApproval(t *testing.T) {
 		approvals++
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
+	adds := make([]any, 201)
+	for i := range adds {
+		adds[i] = map[string]any{"name_kind": "formatted", "formatted": "Example", "envelope": map[string]any{"source": "user"}}
+	}
 	for _, tc := range []struct {
 		patch map[string]any
 		code  string
 	}{
+		{map[string]any{"names": map[string]any{"add": adds}}, "profile_patch_too_large"},
 		{map[string]any{"names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": strings.Repeat("x", 12<<20), "envelope": map[string]any{"source": "user"}}}}}, "profile_patch_too_large"},
 		{map[string]any{"media": map[string]any{"add": []any{map[string]any{"media_kind": "photo", "data": base64.StdEncoding.EncodeToString(make([]byte, (8<<20)+1)), "envelope": map[string]any{"source": "user"}}}}}, "invalid_profile_value"},
 		{map[string]any{"media": map[string]any{"add": []any{map[string]any{"media_kind": "photo", "data": base64.StdEncoding.EncodeToString(make([]byte, 9<<20)), "envelope": map[string]any{"source": "user"}}}}}, "profile_patch_too_large"},
@@ -341,4 +373,20 @@ func TestPersonRecordOversizeRefusedBeforeApproval(t *testing.T) {
 	}
 	assertions.Zero(approvals)
 	assertions.Zero(patches.Load())
+}
+
+func TestPersonRecordLargePatchResponseOmitsProfile(t *testing.T) {
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPatch, r.Method)
+		w.Header().Set("ETag", `"person-1-r2"`)
+		_, err := w.Write([]byte(strings.Repeat("x", (1<<20)+1)))
+		assert.NoError(t, err)
+	})
+	backend := &daemonMCPOperations{client: client}
+	result, handled, err := backend.executePersonRecord(t.Context(), "patch_person_record", map[string]any{"person_id": 1, "etag": `"person-1-r1"`, "patch": map[string]any{"names": map[string]any{}}})
+	require.NoError(t, err)
+	require.True(t, handled)
+	record := operationOutput[mcpserver.StructuredPersonRecord](t, result)
+	assert.Equal(t, `"person-1-r2"`, record.ETag)
+	assert.Nil(t, record.Profile)
 }

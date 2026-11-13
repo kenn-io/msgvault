@@ -70,8 +70,11 @@ func (b *daemonMCPOperations) executePersonRecord(ctx context.Context, name stri
 			}
 			return &mcpserver.OperationResult{Data: data, ETag: headers.Get("ETag")}, true, nil
 		}
-		result, err := readMCPOperationJSONWithClassifier[generated.PersonProfileHistory](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/history", &generated.GetPersonProfileHistoryRequestOptions{PathParams: &generated.GetPersonProfileHistoryPath{ID: input.PersonID}}, personRecordRefusal, http.StatusOK)
-		return result, true, err
+		data, _, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/history", &generated.GetPersonProfileHistoryRequestOptions{PathParams: &generated.GetPersonProfileHistoryPath{ID: input.PersonID}}, mcpserver.MaxDownloadBytes, personRecordRefusal, http.StatusOK)
+		if failure != nil {
+			return failure, true, err
+		}
+		return &mcpserver.OperationResult{Data: data}, true, nil
 	case "patch_person_record":
 		input, err := decodeMCPOperationArguments[personPatchArgs](args)
 		if err != nil || !validLoopID(input.PersonID) || input.ETag == "" || input.Patch == nil {
@@ -84,12 +87,12 @@ func (b *daemonMCPOperations) executePersonRecord(ctx context.Context, name stri
 		if headers.Get("ETag") == "" {
 			return operationFailure("invalid_operation_response", true), true, nil
 		}
-		var profile generated.StructuredPersonProfile
-		if err := json.Unmarshal(data, &profile); err != nil {
-			return operationFailure("invalid_operation_response", true), true, err
-		}
 		record := mcpserver.StructuredPersonRecord{ETag: headers.Get("ETag")}
 		if len(data) <= 1<<20 {
+			var profile generated.StructuredPersonProfile
+			if err := json.Unmarshal(data, &profile); err != nil {
+				return operationFailure("invalid_operation_response", true), true, err
+			}
 			record.Profile = &profile
 		}
 		return &mcpserver.OperationResult{Output: record, ETag: record.ETag}, true, nil
@@ -114,6 +117,28 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	input, err := decodeMCPOperationArguments[personPatchArgs](args)
 	if err != nil || !validLoopID(input.PersonID) || input.ETag == "" || input.Patch == nil {
 		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+	}
+	count := 0
+	if p := input.Patch.Names; p != nil {
+		count += len(p.Add) + len(p.Supersede)
+	}
+	if p := input.Patch.ContactPoints; p != nil {
+		count += len(p.Add) + len(p.Supersede)
+	}
+	if p := input.Patch.Addresses; p != nil {
+		count += len(p.Add) + len(p.Supersede)
+	}
+	if p := input.Patch.Dates; p != nil {
+		count += len(p.Add) + len(p.Supersede)
+	}
+	if p := input.Patch.Categories; p != nil {
+		count += len(p.Add) + len(p.Supersede)
+	}
+	if p := input.Patch.Media; p != nil {
+		count += len(p.Add) + len(p.Supersede)
+	}
+	if count > store.MaxPersonProfilePatchOperations {
+		return "", true, &mcpserver.OperationRefusalError{Code: "profile_patch_too_large"}
 	}
 	encodedPatch, err := json.Marshal(input.Patch)
 	if err != nil {
@@ -208,6 +233,9 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 		Changes   any    `json:"changes"`
 		Effect    string `json:"effect"`
 	}{name, selected, changes, "Atomically apply all requested adds and supersedes to this person."}, json.Deterministic(true))
+	if err == nil && len(data) > 1<<20 {
+		return "", true, &mcpserver.OperationRefusalError{Code: "operation_response_limit_exceeded"}
+	}
 	return string(data), true, err
 }
 

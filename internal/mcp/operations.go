@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"go.kenn.io/msgvault/internal/daemonclient"
-	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 // OperationBackend executes only the registered operation name. Each owning
@@ -52,6 +51,11 @@ type operationalDefinition struct {
 	definition toolDefinition
 	family     OperationFamily
 	writes     bool
+	chunked    *chunkedOperation
+}
+type chunkedOperation struct {
+	inline func(*downloadSnapshot) (any, error)
+	chunk  func(*downloadSnapshot, byteChunk) any
 }
 
 // Roots are built once, independent of capability combinations. Selecting any
@@ -107,34 +111,26 @@ func operationalOutputSchema(output *jsonschema.Schema) *jsonschema.Schema {
 
 func (d operationalDefinition) bind(backend OperationBackend, downloads *downloadCache) func(context.Context, toolRequest) (*toolResult, error) {
 	return func(ctx context.Context, request toolRequest) (*toolResult, error) {
-		if d.definition.name == "get_person_record" || d.definition.name == "get_person_record_media" {
+		if d.chunked != nil {
 			req, present, err := chunkArgs(request.arguments)
 			if err != nil {
 				return operationalToolResponse(d.definition.name, &OperationResult{Output: map[string]any{"error": "invalid_arguments"}, IsError: true}, nil)
 			}
-			person, ok := request.arguments["person_id"].(float64)
-			if !ok || person < 1 || person != float64(int64(person)) || person > maxJSONSafeInteger {
-				return operationalToolResponse(d.definition.name, &OperationResult{Output: map[string]any{"error": "invalid_arguments"}, IsError: true}, nil)
+			args := maps.Clone(request.arguments)
+			delete(args, "offset")
+			delete(args, "length")
+			delete(args, "sha256")
+			identity, err := json.Marshal(args, json.Deterministic(true))
+			if err != nil {
+				return nil, newInternalError("encode operation arguments", err)
 			}
-			key := downloadKey{operation: d.definition.name, personID: int64(person)}
-			if d.definition.name == "get_person_record_media" {
-				media, ok := request.arguments["media_id"].(float64)
-				if !ok || media < 1 || media != float64(int64(media)) || media > maxJSONSafeInteger {
-					return operationalToolResponse(d.definition.name, &OperationResult{Output: map[string]any{"error": "invalid_arguments"}, IsError: true}, nil)
-				}
-				key.mediaID = int64(media)
-			}
+			key := downloadKey{operation: d.definition.name, identity: string(identity)}
 			var failed *OperationResult
 			var backendErr error
 			snapshot, err := downloads.get(ctx, key, req, func() (*downloadSnapshot, error) {
-				args := maps.Clone(request.arguments)
-				delete(args, "offset")
-				delete(args, "length")
-				delete(args, "sha256")
 				result, err := backend.ExecuteOperation(ctx, d.definition.name, args)
 				if err != nil || result == nil || result.IsError {
-					failed = result
-					backendErr = err
+					failed, backendErr = result, err
 					if err == nil {
 						err = errors.New("operation refused")
 					}
@@ -154,25 +150,20 @@ func (d operationalDefinition) bind(backend OperationBackend, downloads *downloa
 				}
 				return nil, newInternalError(d.definition.name, err)
 			}
-			if d.definition.name == "get_person_record" && !present {
-				if len(snapshot.data) > defaultChunkBytes {
-					return operationalToolResponse(d.definition.name, &OperationResult{Output: map[string]any{"error": "operation_response_limit_exceeded"}, IsError: true}, nil)
+			if !present && d.chunked.inline != nil && len(snapshot.data) <= defaultChunkBytes {
+				output, err := d.chunked.inline(snapshot)
+				if err != nil {
+					return nil, newInternalError("decode operation response", err)
 				}
-				var profile generated.StructuredPersonProfile
-				if err := json.Unmarshal(snapshot.data, &profile); err != nil {
-					return nil, newInternalError("decode profile", err)
-				}
-				return operationalToolResponse(d.definition.name, &OperationResult{Output: StructuredPersonRecord{ETag: snapshot.etag, Profile: &profile}}, nil)
+				return operationalToolResponse(d.definition.name, &OperationResult{Output: output}, nil)
 			}
 			chunk, err := sliceChunk(snapshot.data, snapshot.digest, req)
 			if err != nil {
 				return operationalToolResponse(d.definition.name, &OperationResult{Output: map[string]any{"error": "invalid_arguments"}, IsError: true}, nil)
 			}
-			if d.definition.name == "get_person_record" {
-				return operationalToolResponse(d.definition.name, &OperationResult{Output: StructuredPersonRecord{ETag: snapshot.etag, Offset: &chunk.Offset, Length: &chunk.Length, Size: &chunk.Size, SHA256: &chunk.SHA256, Complete: &chunk.Complete, DataBase64: &chunk.DataBase64}}, nil)
-			}
-			return operationalToolResponse(d.definition.name, &OperationResult{Output: PersonMediaContent{byteChunk: chunk, MediaType: snapshot.mediaType}}, nil)
+			return operationalToolResponse(d.definition.name, &OperationResult{Output: d.chunked.chunk(snapshot, chunk)}, nil)
 		}
+
 		if d.writes {
 			disclosure, err := backend.OperationDisclosure(ctx, d.definition.name, request.arguments)
 			if err != nil {
