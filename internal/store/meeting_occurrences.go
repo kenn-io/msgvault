@@ -670,7 +670,7 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 						seconds := event.End.Sub(event.Start).Seconds()
 						duration = &seconds
 					}
-					result = append(result, MeetingOccurrence{MessageID: id, AnchorMessageID: anchorID, OccurrenceKey: key, OccurredAt: at, StartDate: startDate, Counted: counted && !deleted, DeclinedEmails: declinedEmails, ScheduledSeconds: duration})
+					result = append(result, MeetingOccurrence{MessageID: id, AnchorMessageID: anchorID, OccurrenceKey: key, OccurredAt: at, StartDate: startDate, Counted: counted && !event.DeletedFromSource, DeclinedEmails: declinedEmails, ScheduledSeconds: duration})
 				}
 			}
 		}
