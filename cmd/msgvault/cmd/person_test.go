@@ -59,7 +59,7 @@ func TestPersonGetLooksUpVCardUIDAndJSONIncludesCardDAVBindings(t *testing.T) {
 		assert.Equal(http.MethodGet, r.Method)
 		if r.URL.Path == "/api/v1/health" {
 			w.Header().Set("Content-Type", "application/json")
-			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"5.2.0"}`))
+			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"5.3.0"}`))
 			assert.NoError(err)
 			return
 		}

@@ -122,7 +122,7 @@ appearance; a sender or explicitly addressed person does. If only roster
 evidence exists, no first appearance is shown. `first_seen_at` and
 `first_seen_ref` describe that appearance;
 `first_contact_at` and interaction counts still describe direct contact.
-The HTTP contact-state route, assembled profiles, MCP `get_person_profile`, and `person get --json` carry the same fields. `person get` includes them when daemon API schema 5.2.0 or newer is available; older daemons still return the person. The Web UI and TUI do not yet show first appearance.
+The HTTP contact-state route, assembled profiles, MCP `get_person_profile`, and `person get --json` carry the same fields. `person get` includes them when daemon API schema 5.3.0 or newer is available; older daemons still return the person. The Web UI and TUI do not yet show first appearance.
 
 After an import, the activity projection must catch up before first appearance
 reflects the new messages; results marked `stale` are provisional. Projection
