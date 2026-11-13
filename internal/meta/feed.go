@@ -114,19 +114,16 @@ func (r *importRun) applyFeedChange(ctx context.Context, reader ObjectReader, ch
 	}
 	switch change.Verb {
 	case "remove", "delete":
-		if !change.isPost() {
-			marked, err := r.imp.store.MarkMessageThreadDeletedContext(ctx, r.source.ID, id)
-			r.sum.MessagesProcessed += len(marked)
-			r.sum.MessagesUpdated += len(marked)
-			return err
-		}
-		// Only the post is marked; its comments stay archived.
 		if !archived {
 			return nil
 		}
 		r.sum.MessagesProcessed++
 		r.sum.MessagesUpdated++
-		return r.imp.store.MarkMessageDeletedContext(ctx, r.source.ID, id)
+		if change.isPost() {
+			// Only the post is marked; its comments stay archived.
+			return r.imp.store.MarkMessageDeletedContext(ctx, r.source.ID, id)
+		}
+		return r.imp.store.MarkMessageThreadDeletedContext(ctx, r.source.ID, id)
 	case "hide", "unhide":
 		// Polling does not read hidden state, so the state of a comment that
 		// is not archived yet is not recorded.

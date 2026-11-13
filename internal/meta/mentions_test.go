@@ -129,9 +129,11 @@ func TestImportTagsUnfinishedFullScanStartsNextSyncFromTop(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	afters = nil
 	_, err = NewMentionImporter(st, cancelOnLastPage{MentionAPI: c, cancel: cancel}).
 		ImportTags(ctx, "9", "100", "200", ImportOptions{Full: true})
 	require.Error(err)
+	require.Equal([]string{"", "p2", "p3"}, afters, "the run reached the last page")
 
 	afters = nil
 	_, err = imp.ImportTags(t.Context(), "9", "100", "200", ImportOptions{})
