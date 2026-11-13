@@ -271,6 +271,7 @@ type Server struct {
 	cfg                    *config.Config
 	store                  MessageStore
 	analyticsState         atomic.Pointer[analyticsEngineState]
+	federationStore        FederationStore
 	savedViewStore         SavedViewStore
 	sqlQueryRunner         SQLQueryRunner
 	archiveSQLQueryRunner  SQLQueryRunner
@@ -543,6 +544,7 @@ type ServerOptions struct {
 	// from the minimal MessageStore so API consumers do not need to implement
 	// unrelated persistence methods.
 	SavedViewStore         SavedViewStore
+	FederationStore        FederationStore
 	Engine                 query.Engine // Optional: query engine for aggregates and TUI support
 	SQLQueryRunner         SQLQueryRunner
 	ArchiveSQLQueryRunner  SQLQueryRunner
@@ -630,6 +632,13 @@ func NewServer(cfg *config.Config, store MessageStore, sched SyncScheduler, logg
 
 // NewServerWithOptions creates a new API server with full options including query engine.
 func NewServerWithOptions(opts ServerOptions) *Server {
+	if opts.Config != nil && opts.Config.Federation.Role == "hub" {
+		for _, candidate := range []any{opts.Store, opts.FederationStore} {
+			if guard, ok := candidate.(interface{ FederationHubArmed() bool }); ok && !guard.FederationHubArmed() {
+				panic("api: federation hub role needs its archive Store armed with Store.ConfigureFederationHubContext first")
+			}
+		}
+	}
 	// Before vector initialization, configuration still describes which lanes
 	// are enabled. A supplied runtime keeps its resolved configuration.
 	if opts.Backend == nil && !opts.VectorCfg.AnyLaneEnabled() {
@@ -652,6 +661,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		cfg:                    opts.Config,
 		senderAuthPins:         opts.Config.SenderAuth.Pins(),
 		store:                  opts.Store,
+		federationStore:        opts.FederationStore,
 		savedViewStore:         opts.SavedViewStore,
 		sqlQueryRunner:         opts.SQLQueryRunner,
 		archiveSQLQueryRunner:  opts.ArchiveSQLQueryRunner,
@@ -1206,6 +1216,14 @@ func serveWithProtectiveRequestDeadline(
 
 func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Federation credentials are authenticated after rate limiting, under
+		// the ordinary deadline, even on otherwise long-running routes.
+		if s.federationClaim(r) {
+			ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
+			defer cancel()
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		if r.Method == http.MethodPost &&
 			(isNativeMCPPath(r.URL.Path) || r.URL.Path == meetingImportEndpointPath || r.URL.Path == messageImportEndpointPath || r.URL.Path == muesliImportEndpointPath || r.URL.Path == muesliRecordingEndpointPath) &&
 			s.apiRequestAuthorized(r) {
@@ -1537,6 +1555,9 @@ func (w *trackingResponseWriter) WroteHeader() bool {
 // returns true in exactly those two cases, so it is reused here to avoid the
 // auth logic drifting. A valid remote client key is trusted the same way.
 func (s *Server) loopbackRateLimitExempt(r *http.Request) bool {
+	if s.federationClaim(r) {
+		return false
+	}
 	if r.Method == http.MethodPost && r.URL.Path == sessionLoginPath {
 		return false
 	}

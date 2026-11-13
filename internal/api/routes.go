@@ -201,6 +201,17 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 			In:   headerParamLocation,
 			Name: "X-Api-Key",
 		},
+		federationTokenSecurityScheme: {
+			Type:        "http",
+			Scheme:      "bearer",
+			Description: "Federation enrollment token (mvf1_ prefix).",
+		},
+		federationSpokeSecurityScheme: {
+			Type:        "apiKey",
+			In:          headerParamLocation,
+			Name:        "X-Msgvault-Spoke-Instance",
+			Description: "Archive UID pinned to the federation enrollment.",
+		},
 	}
 
 	api := humago.New(mux, config)
@@ -303,6 +314,7 @@ func writeHumaError(ctx huma.Context, status int, code string, message string) {
 }
 
 func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
+	s.registerFederationRoutes(apiV1)
 	s.registerMCPCapabilitiesRoute(api, apiV1)
 	s.registerSessionRoutes(api)
 	s.registerDocbankAttachmentRoutes(apiV1)

@@ -166,8 +166,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.1.0**.
+it is separate from the binary release version. The current schema is **5.2.0**.
 
+Schema 5.2.0 adds federation identity, enrollment and handshake routes.
 Schema 5.1.0 adds time-zone-aware Month and Year grouping, group overviews, and item totals for time groups.
 
 Schema 5.0.0 changes `content_available` in file lists and suggestions from a
@@ -3455,3 +3456,17 @@ These heuristics can miss unfamiliar wording and layouts, lowercase letter-only 
 Search rows are masked in place, with membership and counts unchanged.
 
 Search can confirm a withheld value through exact or prefix queries, and draft output can include verification content. These known limits are covered by later slices for search confirmation and draft quotes. Add `verification.read` only when the delegated reader should receive verification content.
+
+## Federation enrollment
+
+A hub owner can create, list and revoke enrollments under
+`/api/v1/federation/enrollments`. The create response contains a token once;
+the hub stores only its hash. A spoke owner can read its archive UID at
+`GET /api/v1/federation/identity`. Federation routes are registered for every
+role; authenticated callers receive 404 when the required role is disabled.
+
+An enrolled spoke presents `Authorization: Bearer mvf1_…` and its pinned
+archive UID in `X-Msgvault-Spoke-Instance` to
+`GET /api/v1/federation/handshake`. This credential cannot access other routes
+or be combined with another credential. Enrollment and handshake do not share
+messages or sources.

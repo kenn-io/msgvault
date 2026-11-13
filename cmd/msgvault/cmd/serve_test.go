@@ -301,6 +301,30 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 	}
 }
 
+func TestRunServeHubRefusesPopulatedArchiveBeforeUpgrade(t *testing.T) {
+	c := lifecycleTestConfig(t.TempDir())
+	c.Federation.Role = "hub"
+	c.Server.APIKey = "owner-fixture"
+
+	st := testutil.NewSQLiteTestStoreAt(t, c.DatabaseDSN())
+	_, err := st.GetOrCreateSourceContext(t.Context(), "gmail", "fixture@example.com")
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE archive_metadata SET value = '41' WHERE key = 'schema_version'`)
+	require.NoError(t, err)
+	require.NoError(t, st.Close())
+
+	cmd := &cobra.Command{Use: serveCmd.Use}
+	cmd.SetContext(testInvocationContext(t.Context(), c, invocationOptions{}))
+	require.ErrorContains(t, runServe(cmd, nil), "dedicated archive")
+
+	observer, err := store.OpenContext(t.Context(), c.DatabaseDSN())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, observer.Close()) })
+	version, err := observer.SchemaVersionContext(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, 41, version)
+}
+
 func TestRunServeFailsPendingImportFromPreviousDaemon(t *testing.T) {
 	cfg := testConfigValue()
 

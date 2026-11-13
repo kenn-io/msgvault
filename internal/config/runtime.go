@@ -321,11 +321,19 @@ func (c *Config) ValidateServerKey() error {
 	if err := c.ResolveServerKey(); err != nil {
 		return err
 	}
+	if c.Federation.Role == "hub" && len(c.Server.RemoteClients) != 0 {
+		return errors.New("federation hub role refuses [[server.remote_clients]] keys, which read the whole archive")
+	}
 	if c.Server.shouldAutoMintKey() {
 		return nil
 	}
 	if c.Server.AgentAccess && c.Server.AuthenticationKey() == "" {
 		return errors.New("server agent_access requires an effective API key")
+	}
+	if c.Federation.Role == "hub" {
+		if c.Server.AuthenticationKey() == "" {
+			return errors.New("federation hub role requires an effective API key")
+		}
 	}
 	return c.Server.ValidateSecure()
 }

@@ -187,6 +187,7 @@ Setup, daemon, and integrations:
   daemon       Manage the background daemon
   docbank      Manage the Docbank attachment mirror
   export-token Export OAuth token to a remote msgvault instance
+  federation   Manage hub enrollment
   help         Help about any command
   logs         View and tail msgvault's structured log files
   mcp          Run MCP server for Claude Desktop integration

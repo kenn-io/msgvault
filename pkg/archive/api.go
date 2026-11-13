@@ -46,6 +46,9 @@ func WithSourceScope(ctx context.Context, sourceIDs []int64) context.Context {
 // same operations as the daemon; configured services determine availability.
 // Use Handler for caller-owned HTTP policy or Router for daemon middleware.
 // Call Shutdown and drain requests before closing the underlying archive.
+// For hub role, first call Store.ConfigureFederationHubContext on the archive's
+// store: it refuses a populated archive and blocks new sources; NewServer
+// panics if the store is not armed.
 func NewServer(options ServerOptions) *Server {
 	if options.Config == nil {
 		options.Config = &Config{}

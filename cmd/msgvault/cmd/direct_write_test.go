@@ -594,3 +594,31 @@ func TestOpenReadOnlyStoreRejectsUnsupportedSchema(t *testing.T) {
 	require.ErrorContains(err, "run setup with the matching release")
 	assert.Nil(reader)
 }
+
+func TestFederationHubDirectWriteSourceGuard(t *testing.T) {
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Federation.Role = "hub"
+	st, err := openStoreAndInitWithInvocation(t.Context(), testInvocationWithConfig(cfg), func(*store.Store) error { return nil })
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	_, err = st.GetOrCreateSourceContext(t.Context(), "gmail", "fixture@example.test")
+	require.ErrorIs(t, err, store.ErrFederationHubSource)
+
+	personal := lifecycleTestConfig(t.TempDir())
+	prior, err := openStoreAndInitWithInvocation(t.Context(), testInvocationWithConfig(personal), func(*store.Store) error { return nil })
+	require.NoError(t, err)
+	_, err = prior.GetOrCreateSourceContext(t.Context(), "gmail", "fixture@example.test")
+	require.NoError(t, err)
+	_, err = prior.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value = '41' WHERE key = 'schema_version'")
+	require.NoError(t, err)
+	require.NoError(t, prior.Close())
+	personal.Federation.Role = "hub"
+	_, err = openStoreAndInitWithInvocation(t.Context(), testInvocationWithConfig(personal), func(*store.Store) error { return nil })
+	require.ErrorContains(t, err, "dedicated archive")
+	prior, err = store.OpenContext(t.Context(), personal.DatabaseDSN())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, prior.Close()) })
+	version, err := prior.SchemaVersionContext(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, 41, version)
+}

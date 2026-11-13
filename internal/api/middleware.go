@@ -243,15 +243,34 @@ func (s *Server) requestAuthentication(r *http.Request) requestAuthentication {
 	return s.classifyAPIRequestDirect(r)
 }
 
+func (s *Server) federationClaim(r *http.Request) bool {
+	if s.cfg.Federation.Role != "hub" {
+		return false
+	}
+	return len(r.Header.Values(apiprotocol.SpokeInstanceHeader)) > 0
+}
+
 func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication {
 	// Agent token takes priority: if the header is present, the request must
 	// authenticate as a delegated caller; we never fall through to other modes.
 	if agentVal, agentPresent := agentTokenHeaderValue(r); agentPresent {
-		if s.agentGrants == nil || agentVal == "" || ownerCredentialPresented(r) {
+		if s.agentGrants == nil || agentVal == "" || ownerCredentialPresented(r) || s.federationClaim(r) {
 			return requestAuthentication{Mode: AuthModeRequired}
 		}
 		if grant, ok := s.agentGrants.Lookup(agentVal); ok {
 			return requestAuthentication{Mode: AuthModeDelegated, Grant: &grant}
+		}
+		return requestAuthentication{Mode: AuthModeRequired}
+	}
+
+	if s.federationClaim(r) {
+		token, bearer := apiprotocol.BearerAuthorization(r)
+		instances := r.Header.Values(apiprotocol.SpokeInstanceHeader)
+		_, cookieErr := r.Cookie(sessionCookieName)
+		if bearer && strings.HasPrefix(token, "mvf1_") && len(instances) == 1 && instances[0] != "" && len(r.Header.Values("X-Api-Key")) == 0 && len(r.Header.Values(apiprotocol.DaemonRuntimeTokenHeader)) == 0 && cookieErr != nil && s.federationStore != nil {
+			if _, err := s.federationStore.AuthenticateFederationEnrollmentContext(r.Context(), token, instances[0]); err == nil {
+				return requestAuthentication{Mode: AuthModeFederation}
+			}
 		}
 		return requestAuthentication{Mode: AuthModeRequired}
 	}
@@ -357,6 +376,9 @@ func (s *Server) apiRequestAuthorized(r *http.Request) bool {
 // reach the API auth layer without touching gate state.
 func (s *Server) requestGateEligible(r *http.Request) bool {
 	auth := s.requestAuthentication(r)
+	if s.cfg.Federation.Role != "hub" && (r.Method == http.MethodPost && r.URL.Path == "/api/v1/federation/enrollments" || r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/federation/enrollments/")) {
+		return false
+	}
 	if auth.Mode == AuthModeDelegated {
 		return r.URL.Path == "/api/v1/cli/run" || r.URL.Path == "/api/v1/calendar/control"
 	}

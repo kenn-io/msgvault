@@ -317,6 +317,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}()
 	logger.Info("daemon startup step complete", "step", "open_archive_database")
 
+	if cfg.Federation.Role == "hub" {
+		if err := s.ConfigureFederationHubContext(cmd.Context()); err != nil {
+			return err
+		}
+	}
+
 	setStartupPhase("migrating archive schema")
 	logger.Info("daemon startup step", "step", "init_archive_schema")
 	// Under the signal-cancelled root context, not a background one: on an
@@ -1051,6 +1057,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		IdleTracker:                   idleTracker,
 		OperationGate:                 operationGate,
 		OperationHistoryReader:        storeAdapter,
+		FederationStore:               s,
 		BlobStore:                     blobStore,
 		TelemetryCapture:              telemetry.CaptureHandler(telemetryReporter, cfg.Data.DataDir),
 		MessageRecordings:             messageRecordings,

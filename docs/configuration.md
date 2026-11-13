@@ -2807,3 +2807,19 @@ identifier_type = "example"
 ```
 
 Each rule requires one mailbox address, a header name, and an identifier type. A missing, repeated, or empty header leaves the message attributed to its From address. Rules apply to new Gmail, IMAP, and Microsoft mail, and mbox, eml, emlx, and PST imports. GitHub bot handles are supported. The recorded From address stays visible on messages. Attribution for already archived messages will be handled separately.
+
+## Federation role
+
+Set the role in `config.toml`:
+
+```toml
+[federation]
+role = "off" # or "spoke" or "hub"
+```
+
+The default is `off`.
+A hub requires an effective owner API key and cannot use
+`[[server.remote_clients]]` keys. It needs a dedicated
+archive with an empty source catalog and refuses new local sources. A spoke can
+report its archive identity without an API key on a keyless loopback daemon.
+Enrollment shares no archive data.
