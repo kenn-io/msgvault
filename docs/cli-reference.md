@@ -27,6 +27,7 @@ appear in full under Inherited Flags.
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
 | Review and remove mail | [stage-delete](#stage-delete), [delete-staged](#delete-staged), [deduplicate](#deduplicate), [gc](#gc) |
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
+| Compare Gmail presence | [diagnose-gmail-inventory](#diagnose-gmail-inventory), [verify](#verify) |
 | Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-attachment-roles](#repair-attachment-roles), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
 | Operate or integrate | [setup](#setup), [credentials](#credentials), [daemon](#daemon), [serve](#serve), [activity](#activity), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
 
@@ -3206,6 +3207,83 @@ msgvault export-token <email> [flags]
 `export-token` reads the configured local token backend, uploads the token to `/api/v1/auth/token/<email>`, and saves it through the daemon's configured token backend. Each end uses credential commands when configured, or `~/.msgvault/tokens/<email>.json` otherwise. By default, it also posts account metadata to `/api/v1/accounts`, enabling a daily Gmail sync. Use `--upload-only` when you only need to store a token, such as for Calendar-only access.
 
 ---
+
+## diagnose-gmail-inventory
+
+Not in the latest release yet. Compare Gmail message identities with one
+explicit local source through the selected daemon:
+
+```bash
+msgvault diagnose-gmail-inventory --source-id 1
+msgvault diagnose-gmail-inventory --source-id 1 --json --limit 1000
+```
+
+This command observes IDs only. It does not sync, refetch, repair, delete,
+or write archive data or the acquisition ledger. It uses the source's existing
+Gmail credentials. Other source types, missing sources, merged sources and
+history-only sources are refused. Legacy sources with an empty type use the
+existing Gmail convention. The authenticated profile email must match the
+stored source identifier; aliases or an outdated identifier require an explicit
+account configuration correction before comparing.
+
+The provider scope is every ID returned by Gmail, including Spam and Trash,
+without a search query or label filter. Earlier filtered or limited syncs may
+explain differences; the diagnostic does not reconstruct their exclusions.
+The local set contains canonical `source_message_id` values for that source,
+including hidden rows and rows marked deleted at the provider. Hidden rows
+still count as local presence. Merge-only historical rows carry identities
+from a different mailbox and are excluded, with their count reported. Message
+content and attachment download exclusions do not remove an identity.
+
+| Flag | Default | Contract |
+|---|---|---|
+| `--source-id` | Required | One positive Gmail source ID, listed by `list-accounts`. |
+| `--json` | `false` | Emit one JSON object; errors go to stderr. |
+| `--limit` | `100` | Maximum IDs in each difference, sorted lexically; `0` shows counts only. |
+| `--max-messages` | `1000000` | Bound local rows and remote observations separately, including duplicates and excluded rows. Range 1–10000000. |
+| `--max-pages` | `10000` | Maximum provider pages, including empty pages. Range 1–1000000. |
+| `--timeout` | `30m` | Positive duration for the diagnostic, including local reads and provider retries. |
+
+Each difference has `count`, `ids`, and `omitted`. The display limit never
+changes the counts or hides the number of omitted IDs. Increase `--limit` to
+retrieve more IDs. `remote_count` is the number of unique IDs actually observed;
+`remote_observations` also counts repetitions. `shared_count` counts identities
+seen in both sets. No RAW, MIME, bodies, attachment files or ledger history are
+loaded for this comparison.
+
+| `status` | Meaning |
+|---|---|
+| `complete` | The local set was read, Gmail pagination ended without a next token, and nonzero before/after Gmail History IDs matched. Differences remain observations at different times. |
+| `partial` | Provider collection stopped on an error, cancellation, deadline, invalid response, repeated page token or resource limit. `remote_only` contains observed candidates only. |
+| `inconclusive` | A comparison could not be established, or the provider traversal ended but the profile check failed or Gmail History changed/was unknown. |
+
+`local_complete` and `remote_complete` describe the two collections separately.
+`reason` explains the status. A local row limit or SQL error prevents comparison
+rather than turning a prefix into a complete local set. Local failures can
+leave counts unset at zero; consult `local_complete` before interpreting them.
+On partial or inconclusive results, `local_not_observed` is `null` and
+`local_unassessed` counts local IDs whose provider absence was not assessed.
+`remote_only` is `null` when no provider set could be compared. Non-complete
+results return an error exit status after writing the available report. Errors
+opening or validating the archive, or invalid arguments, produce no report.
+
+The command copies local identities from one SQL read snapshot and releases
+it before network I/O. Gmail pages are **not** a transactional mailbox snapshot.
+The [Gmail listing API](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list)
+provides a next-page token and an estimate, not an atomic snapshot contract.
+The command follows tokens even through empty pages and ignores the estimate
+when deciding completion. It checks the mailbox History ID before and after
+collection to flag observed changes; matching IDs do not establish global
+atomicity with SQL. A sync, merge or source change after the local read may
+make differences transient. Repeat the observation after activity has settled
+when investigating a candidate.
+
+Gmail-present/local-absent IDs are investigation candidates, which may still
+be acquiring or intentionally outside a previous sync's query. Local IDs not
+observed in a completed Gmail traversal may be legitimate retained deletions.
+Neither differences nor equality establish RAW validity, attachment publication,
+projection or FTS correctness, or physical integrity. Use `verify` and the
+existing targeted audits for those separate questions.
 
 ## verify
 
