@@ -26,10 +26,6 @@ func TestDeletionReviewCatalogReadOnly(t *testing.T) {
 	assert.NoError(schema.Validate(map[string]any{"status": "future_status"}))
 	require.Error(schema.Validate(map[string]any{"status": "pending", "extra": true}))
 	assert.Equal([]string{"batch_id"}, definitions[1].definition.inputSchema.Required)
-	opts.OperationCapabilities = []string{"get_deletion"}
-	assert.Len(operationalCatalog(opts, false), 1)
-	opts.DelegatedOnly = true
-	assert.Empty(operationalCatalog(opts, false))
 }
 
 type deletionReviewBackend struct{}

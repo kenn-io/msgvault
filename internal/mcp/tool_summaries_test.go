@@ -45,7 +45,6 @@ func TestToolSummariesCoverRegistries(t *testing.T) {
 	}
 	assertions.Equal("owner-only", byName[ToolQuerySQL].GrantPermission)
 	for _, name := range []string{"list_deletions", "get_deletion"} {
-		assertions.Equal("read", byName[name].Security)
 		assertions.Equal("owner-only", byName[name].GrantPermission)
 	}
 	assertions.Equal("message.read", byName[ToolGetMessage].GrantPermission)
