@@ -16,7 +16,10 @@ import (
 
 type operationalTestBackend struct{}
 
-func (operationalTestBackend) ExecuteOperation(context.Context, string, map[string]any) (*OperationResult, error) {
+func (operationalTestBackend) ExecuteOperation(_ context.Context, name string, _ map[string]any) (*OperationResult, error) {
+	if name == "list_person_fact_claims" {
+		return &OperationResult{Output: map[string]any{"claims": []any{}}}, nil
+	}
 	return &OperationResult{Output: map[string]any{"running": false, "accounts": []any{}}}, nil
 }
 func (operationalTestBackend) OperationDisclosure(context.Context, string, map[string]any) (string, error) {

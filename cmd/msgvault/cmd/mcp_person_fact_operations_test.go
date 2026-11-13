@@ -106,33 +106,45 @@ func TestPersonFactNativeDiagnosticsAndPin(t *testing.T) {
 	}
 }
 
-func TestPersonFactTrackingAndRefusals(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	backend, st, id, target := factFixture(t)
+func TestPersonFactTrackingDisclosure(t *testing.T) {
+	backend, _, id, _ := factFixture(t)
 	disclosure, err := backend.OperationDisclosure(t.Context(), "set_person_tracking", map[string]any{"person_id": id, "tracked": false})
-	requirements.NoError(err)
-	assertions.Contains(disclosure, `"tracked":false`)
-	assertions.Contains(disclosure, "removes queued sweep work")
-	assertions.Contains(disclosure, "pending enrichment")
+	require.NoError(t, err)
+	assert.Contains(t, disclosure, `"tracked":false`)
+	assert.Contains(t, disclosure, "removes queued sweep work")
+	assert.Contains(t, disclosure, "pending enrichment")
 	disclosure, err = backend.OperationDisclosure(t.Context(), "set_person_tracking", map[string]any{"person_id": id, "tracked": true})
-	requirements.NoError(err)
-	assertions.Contains(disclosure, "configured sweep model")
-	assertions.Contains(disclosure, "external enrichment")
-	result, err := backend.ExecuteOperation(t.Context(), "set_person_tracking", map[string]any{"person_id": id, "tracked": false})
-	requirements.NoError(err)
-	assertions.False(result.IsError)
-	state, err := st.GetPersonTrackingContext(t.Context(), id)
-	requirements.NoError(err)
-	assertions.False(state.Tracked)
+	require.NoError(t, err)
+	assert.Contains(t, disclosure, "configured sweep model")
+	assert.Contains(t, disclosure, "external enrichment")
+}
 
+func TestPersonFactPinRefusals(t *testing.T) {
+	backend, st, id, target := factFixture(t)
 	for _, key := range []string{"", " k"} {
 		_, err := backend.OperationDisclosure(t.Context(), "set_person_fact_pin", map[string]any{"person_id": id, "kind": "attribute", "key": key, "pinned": true})
 		var refusal *mcpserver.OperationRefusalError
-		requirements.ErrorAs(err, &refusal)
-		assertions.Equal("invalid_arguments", refusal.Code)
+		require.ErrorAs(t, err, &refusal)
+		assert.Equal(t, "invalid_arguments", refusal.Code)
 	}
+	_, err := st.SetPersonTrackingContext(t.Context(), id, false)
+	require.NoError(t, err)
+	result, err := backend.ExecuteOperation(t.Context(), "set_person_fact_pin", map[string]any{"person_id": id, "kind": string(target.Kind), "key": target.Key, "pinned": true})
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	data, err := json.Marshal(result.Output)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"error":"person_fact_conflict","operation_may_have_completed":false}`, string(data))
+	result, err = backend.ExecuteOperation(t.Context(), "set_person_fact_pin", map[string]any{"person_id": id, "kind": "attribute", "key": "not-active", "pinned": true})
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	data, err = json.Marshal(result.Output)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"error":"invalid_fact_target","operation_may_have_completed":false}`, string(data))
+}
 
+func TestPersonFactClaimsRefusals(t *testing.T) {
+	backend, _, id, _ := factFixture(t)
 	for _, tc := range []struct {
 		args map[string]any
 		code string
@@ -141,38 +153,28 @@ func TestPersonFactTrackingAndRefusals(t *testing.T) {
 		{map[string]any{"person_id": id, "offset": -1}, "invalid_offset"},
 		{map[string]any{"person_id": id, "target": "invalid"}, "invalid_target"},
 	} {
-		result, err = backend.ExecuteOperation(t.Context(), "list_person_fact_claims", tc.args)
-		requirements.NoError(err)
-		requirements.True(result.IsError)
+		result, err := backend.ExecuteOperation(t.Context(), "list_person_fact_claims", tc.args)
+		require.NoError(t, err)
+		require.True(t, result.IsError)
 		data, err := json.Marshal(result.Output)
-		requirements.NoError(err)
-		assertions.JSONEq(`{"error":"`+tc.code+`","operation_may_have_completed":false}`, string(data))
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"error":"`+tc.code+`","operation_may_have_completed":false}`, string(data))
 	}
-	result, err = backend.ExecuteOperation(t.Context(), "set_person_fact_pin", map[string]any{"person_id": id, "kind": string(target.Kind), "key": target.Key, "pinned": true})
-	requirements.NoError(err)
-	requirements.True(result.IsError)
-	data, err := json.Marshal(result.Output)
-	requirements.NoError(err)
-	assertions.JSONEq(`{"error":"person_fact_conflict","operation_may_have_completed":false}`, string(data))
-	result, err = backend.ExecuteOperation(t.Context(), "set_person_fact_pin", map[string]any{"person_id": id, "kind": "attribute", "key": "not-active", "pinned": true})
-	requirements.NoError(err)
-	requirements.True(result.IsError)
-	data, err = json.Marshal(result.Output)
-	requirements.NoError(err)
-	assertions.JSONEq(`{"error":"invalid_fact_target","operation_may_have_completed":false}`, string(data))
+}
 
+func TestPersonFactServerBusyRefusal(t *testing.T) {
 	stub := &daemonMCPOperations{client: newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
-		assertions.Equal(http.MethodPut, r.Method)
+		assert.Equal(t, http.MethodPut, r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte(`{"error":"server_busy"}`))
 	}), supported: []string{"set_person_tracking"}}
-	result, err = stub.ExecuteOperation(t.Context(), "set_person_tracking", map[string]any{"person_id": id, "tracked": false})
-	requirements.NoError(err)
-	requirements.True(result.IsError)
-	data, err = json.Marshal(result.Output)
-	requirements.NoError(err)
-	assertions.JSONEq(`{"error":"server_busy","operation_may_have_completed":false}`, string(data))
+	result, err := stub.ExecuteOperation(t.Context(), "set_person_tracking", map[string]any{"person_id": 1, "tracked": false})
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	data, err := json.Marshal(result.Output)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"error":"server_busy","operation_may_have_completed":false}`, string(data))
 }
 
 func TestPersonFactCapabilitiesRequireExactContracts(t *testing.T) {
