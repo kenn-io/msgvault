@@ -239,6 +239,7 @@ import type {
   ListMessageRecordingsPathParameters,
   ListMessageTasksPathParameters,
   ListMessagesParams,
+  ListOpenKataIssuesParams,
   ListOperationRunsParams,
   ListOrganizationAttributesParams,
   ListOrganizationAttributesPathParameters,
@@ -2165,6 +2166,18 @@ export const linkKataEvidence = (
   );
 };
 /**
+ * @summary List or search Kata issues in the configured project
+ */
+export const listOpenKataIssues = (
+  params?: ListOpenKataIssuesParams,
+  options?: SecondParameter<typeof orvalFetch<KataIssueListResponse>>,
+) => {
+  return orvalFetch<KataIssueListResponse>(
+    { url: `/api/v1/integrations/kata/open-issues`, method: "GET", params },
+    options,
+  );
+};
+/**
  * @summary Get Kata person agenda availability
  */
 export const getKataIntegrationStatus = (
@@ -2179,7 +2192,7 @@ export const getKataIntegrationStatus = (
  * @summary Search tasks in the configured project
  */
 export const searchIntegrationTasks = (
-  params: SearchIntegrationTasksParams,
+  params?: SearchIntegrationTasksParams,
   options?: SecondParameter<typeof orvalFetch<TaskSearchResponse>>,
 ) => {
   return orvalFetch<TaskSearchResponse>(

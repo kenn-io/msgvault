@@ -415,8 +415,8 @@ import (
 // 4.2.0 adds attachment retrieval modes, coverage, and degradations to media search.
 // 5.0.0 makes file list and suggestion content availability nullable when storage has not been checked.
 // 5.1.0 adds keyed group overviews, time-group item totals, saved view schema 3, and saved view run timezones.
-// 5.2.0 adds first archived appearance to person contact state.
-// 5.3.0 adds explicit recorded meeting introductions to first-contact classification.
+// 5.2.0 adds open Kata issue search and optional task search queries.
+// 5.3.0 adds first archived appearance and explicit recorded meeting introductions.
 const APISchemaVersion = "5.3.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
