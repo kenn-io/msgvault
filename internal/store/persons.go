@@ -670,31 +670,72 @@ func (s *Store) updatePersonDisplayNameOnce(
 		if err != nil {
 			return fmt.Errorf("read person %d display name: %w", id, err)
 		}
-		var updatedID int64
-		err = tx.QueryRowContext(ctx, fmt.Sprintf(`
-			UPDATE persons
-			SET display_name = ?, revision = revision + 1,
-			    vcard_projection_revision = vcard_projection_revision + 1,
-			    updated_at = %s
-			WHERE id = ? AND revision = ?
-			RETURNING id
-		`, s.dialect.Now()), displayName, id, expectedRevision).Scan(&updatedID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return s.personCASMissTx(ctx, tx, id)
-		}
-		if err != nil {
-			return fmt.Errorf("update person %d: %w", id, err)
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET owns_display_name = FALSE WHERE person_id = ?`, updatedID); err != nil {
-			return fmt.Errorf("retain local display-name ownership: %w", err)
-		}
-
-		// Preserve the person revision contract, but invalidate analytics only
-		// when the normalized display name actually changed.
 		nameChanged := previousName.Valid
 		if displayName != nil {
 			nameChanged = !previousName.Valid || previousName.String != *displayName
 		}
+		var formattedNamesToSupersede []PersonName
+		if nameChanged {
+			names, err := s.listPersonNamesTx(ctx, tx, id, true)
+			if err != nil {
+				return fmt.Errorf("list current names for person %d rename: %w", id, err)
+			}
+			for index := range names {
+				name := &names[index]
+				if name.NameKind != PersonNameFormatted {
+					continue
+				}
+				canSupersedeDisplayName := name.Envelope.Source == ProvenanceUser ||
+					provenanceIsInferred(name.Envelope.Source)
+				isPreviousDisplayName := canSupersedeDisplayName && previousName.Valid && name.Formatted != nil &&
+					strings.TrimSpace(*name.Formatted) == previousName.String
+				if isPreviousDisplayName {
+					formattedNamesToSupersede = append(formattedNamesToSupersede, *name)
+				}
+			}
+		}
+
+		var updatedID int64
+		if err := s.reviewInferenceExportChangesTx(ctx, tx, id, func() error {
+			err := tx.QueryRowContext(ctx, fmt.Sprintf(`
+				UPDATE persons
+				SET display_name = ?, display_name_source_name_id = NULL,
+				    revision = revision + 1,
+				    vcard_projection_revision = vcard_projection_revision + 1,
+				    updated_at = %s
+				WHERE id = ? AND revision = ?
+				RETURNING id
+			`, s.dialect.Now()), displayName, id, expectedRevision).Scan(&updatedID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return s.personCASMissTx(ctx, tx, id)
+			}
+			if err != nil {
+				return fmt.Errorf("update person %d: %w", id, err)
+			}
+			for _, formattedName := range formattedNamesToSupersede {
+				if err := s.supersedePersonNameTx(ctx, tx, id, formattedName.Envelope.ID, nil); err != nil {
+					return fmt.Errorf("supersede formatted name for person %d: %w", id, err)
+				}
+			}
+			if displayName != nil {
+				for _, formattedName := range formattedNamesToSupersede {
+					if _, err := s.addPersonNameTx(
+						ctx, tx, id, renamedPersonNameInput(formattedName, displayName),
+					); err != nil {
+						return fmt.Errorf("record user formatted name for person %d: %w", id, err)
+					}
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET owns_display_name = FALSE WHERE person_id = ?`, updatedID); err != nil {
+				return fmt.Errorf("retain local display-name ownership: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		// Preserve the person revision contract, but invalidate analytics only
+		// when the normalized display name actually changed.
 		if nameChanged {
 			if err := s.bumpPersonDisplayNameRevisionContext(ctx, tx); err != nil {
 				return err
@@ -715,6 +756,35 @@ func (s *Store) updatePersonDisplayNameOnce(
 		return nil, err
 	}
 	return person, nil
+}
+
+func renamedPersonNameInput(name PersonName, formatted *string) PersonNameInput {
+	identity := name.Envelope.VCard
+	identity.PID = slices.Clone(identity.PID)
+	return PersonNameInput{
+		NameKind:          name.NameKind,
+		Formatted:         formatted,
+		FamilyName:        name.FamilyName,
+		GivenName:         name.GivenName,
+		AdditionalNames:   name.AdditionalNames,
+		HonorificPrefixes: name.HonorificPrefixes,
+		HonorificSuffixes: name.HonorificSuffixes,
+		SecondarySurname:  name.SecondarySurname,
+		Generation:        name.Generation,
+		Language:          name.Language,
+		Script:            name.Script,
+		PhoneticSystem:    name.PhoneticSystem,
+		PhoneticScript:    name.PhoneticScript,
+		SortAs:            name.SortAs,
+		IsDerived:         name.IsDerived,
+		OriginalValue:     *formatted,
+		Envelope: ValueEnvelopeInput{
+			Pref: name.Envelope.Pref, Ordinal: new(name.Envelope.Ordinal),
+			TypeLabel: name.Envelope.TypeLabel, TypeTokens: slices.Clone(name.Envelope.TypeTokens),
+			VCard: identity, Source: ProvenanceUser,
+			SourceRef: name.Envelope.SourceRef, SourceResourceUID: name.Envelope.SourceResourceUID,
+		},
+	}
 }
 
 func (s *Store) personCASMissTx(ctx context.Context, tx *loggedTx, id int64) error {
