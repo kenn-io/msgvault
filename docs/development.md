@@ -560,6 +560,23 @@ unknown extensions, and raw values. Keep new registry elements covered by an
 explicit handling declaration so an upstream addition cannot be silently
 ignored.
 
+## API schema version maintenance
+
+When the HTTP API contract changes, bump `APISchemaVersion` in `internal/api/openapi.go`.
+Handler changes absent from the generated documents also need a bump.
+Add the marker path the test prints under `internal/api/testdata/api-version-contracts/`, with a
+one-line summary. Replace `<summary-sha256>` with `printf '%s' 'Your summary' | sha256sum | cut -d ' ' -f 1`.
+The suffix identifies the marker; the test does not check it against the summary.
+Keep every base marker. Replace a branch-only marker after changing its contract; if the version
+is used on the base, take the next minor and move feature minimums introduced by your change.
+The contract test skips locally when the base is unavailable and fails in CI.
+If the main branch is on `upstream`, fetch it and set the base before testing:
+
+```bash
+git fetch upstream main
+export MSGVAULT_API_CONTRACT_BASE="$(git merge-base HEAD upstream/main)"
+```
+
 ## Archive schema version maintenance
 
 `internal/store/schema_version.go` owns `store.SchemaVersion`, the monotonic

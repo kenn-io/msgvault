@@ -634,6 +634,7 @@ type Config struct {
 	Matrix             MatrixConfig              `toml:"matrix"`
 	Slack              SlackConfig               `toml:"slack"`
 	Inline             InlineConfig              `toml:"inline"`
+	Feeds              FeedsConfig               `toml:"feeds"`
 	Omi                []OmiSource               `toml:"omi"`
 	Granola            []GranolaSource           `toml:"granola"`
 	Plaud              []PlaudSource             `toml:"plaud"`
