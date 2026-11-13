@@ -19,6 +19,8 @@ func TestInstagramSourceHelpGoldens(t *testing.T) {
 	for _, path := range [][]string{
 		{"source", "instagram-comments"},
 		{"source", "instagram-comments", "add"}, {"source", "instagram-comments", "sync"},
+		{"source", "instagram-mentions"},
+		{"source", "instagram-mentions", "add"}, {"source", "instagram-mentions", "sync"},
 	} {
 		t.Run(strings.Join(path, " "), func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)

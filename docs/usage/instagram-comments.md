@@ -75,3 +75,23 @@ replies to top-level comments only.
 Only media returned by the verified account's media edge is discovered here.
 Missing media owners remain unknown; explicit foreign owners are refused.
 Ad-only discovery and media downloads are separate work.
+
+## Archive media that tags the account
+
+To archive media in which other accounts tag the linked account, set
+`mentions = true` on the profile, restart the daemon, then register and sync
+the separate mentions source:
+
+```bash
+msgvault source instagram-mentions add example-account
+msgvault source instagram-mentions sync example-account
+```
+
+The source is `instagram_mentions`, so this media stays apart from the
+account's own comments. The author's `@username` is the subject, so you can
+search for it; Meta returns no author ID for this media, so the author is not
+linked to a person. Media the account owns is skipped here.
+
+An unfinished run resumes from its saved position; a finished run starts again
+from the newest tagged media. The profile's `schedule` also schedules this
+source.

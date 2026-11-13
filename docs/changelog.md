@@ -15,6 +15,10 @@ All notable changes to msgvault, grouped by release.
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
+- [Instagram mentions sync](usage/instagram-comments.md#archive-media-that-tags-the-account)
+  archives media in which other accounts tag a linked professional account, in a
+  separate opt-in source. Set `mentions = true` on the profile, then run
+  `msgvault source instagram-mentions add` and `sync`.
 - [Reply publicly](usage/facebook-comments.md#reply-to-comments) to an archived
   Facebook Page or Instagram comment with `msgvault comment reply`. The reply
   is archived straight away, and msgvault refuses to send the same text to a

@@ -1707,7 +1707,7 @@ func cliRunCommandAllowed(args []string) bool {
 			return false
 		}
 		switch args[1] {
-		case "facebook-comments", "instagram-comments":
+		case "facebook-comments", "instagram-comments", "instagram-mentions":
 			return args[2] == "add" || args[2] == "sync"
 		case "feeds":
 			switch args[2] {

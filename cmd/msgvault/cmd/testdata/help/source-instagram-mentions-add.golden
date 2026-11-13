@@ -1,0 +1,9 @@
+Verify the Page and linked professional account, then register [[instagram_comments]] profiles that set mentions = true. With no identifier, register every such profile. The Page token is read only from the named daemon environment variable.
+
+Usage:
+  msgvault source instagram-mentions add [identifier] [flags]
+
+Flags:
+  -h, --help   help for add
+
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')
