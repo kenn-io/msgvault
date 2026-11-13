@@ -24,15 +24,31 @@ func (operationalTestBackend) OperationDisclosure(context.Context, string, map[s
 }
 
 func TestOperationalCatalogUsesFixedNamesAndWriteGates(t *testing.T) {
-	assertions := assert.New(t)
-	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"get_source_scheduler_status", "sync_source", "arbitrary_command"}}
+	assertions, requirements := assert.New(t), require.New(t)
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"get_source_scheduler_status", "sync_source", "get_docbank_attachment_status", "retry_docbank_attachment_mirror", "arbitrary_command"}}
 	tools := toolsByName(t, rawListTools(t, opts, true))
 	assertions.Contains(tools, "get_source_scheduler_status")
+	assertions.Contains(tools, "get_docbank_attachment_status")
+	assertions.NotContains(tools, "retry_docbank_attachment_mirror")
 	assertions.NotContains(tools, "sync_source")
 	assertions.NotContains(tools, "arbitrary_command")
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilySources}
 	assertions.Contains(toolsByName(t, rawListTools(t, opts, true)), "sync_source")
 	assertions.NotContains(toolsByName(t, rawListTools(t, opts, false)), "sync_source")
+	opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, OperationFamilyDocuments)
+	assertions.Contains(toolsByName(t, rawListTools(t, opts, true)), "retry_docbank_attachment_mirror")
+	var retry *operationalDefinition
+	for _, definition := range operationalCatalog(opts, true) {
+		if definition.definition.name == "retry_docbank_attachment_mirror" {
+			retry = &definition
+			break
+		}
+	}
+	requirements.NotNil(retry)
+	requirements.NotNil(retry.definition.annotations.OpenWorldHint)
+	assertions.True(*retry.definition.annotations.OpenWorldHint)
+	assertions.Contains(toolsByName(t, rawListTools(t, opts, false)), "get_docbank_attachment_status")
+	assertions.NotContains(toolsByName(t, rawListTools(t, opts, false)), "retry_docbank_attachment_mirror")
 	opts.DelegatedOnly = true
 	assertions.Empty(rawListTools(t, opts, true))
 }

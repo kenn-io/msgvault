@@ -46,6 +46,8 @@ func TestToolSummariesCoverRegistries(t *testing.T) {
 	assertions.Equal("owner-only", byName[ToolQuerySQL].GrantPermission)
 	assertions.Equal("message.read", byName[ToolGetMessage].GrantPermission)
 	assertions.Equal("--allow-profile-writes", byName[ToolPromotePerson].Flag)
+	assertions.Equal("--allow-document-writes", byName["retry_docbank_attachment_mirror"].Flag)
+	assertions.Equal("owner-only", byName["get_docbank_attachment_status"].GrantPermission)
 	tools := rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}}, false)
 	requirements.NotEmpty(tools)
 	for _, tool := range tools {
