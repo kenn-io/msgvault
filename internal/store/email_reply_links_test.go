@@ -38,6 +38,7 @@ func TestPersistMessageRecordsEmailReplyParent(t *testing.T) {
 	for _, tc := range []struct {
 		name, messageType, stored string
 		replace                   *sql.NullString
+		noParent                  bool
 		want                      string
 	}{
 		{name: "new email", messageType: store.MessageTypeEmail,
@@ -48,6 +49,14 @@ func TestPersistMessageRecordsEmailReplyParent(t *testing.T) {
 		{name: "keeps stored parent", messageType: store.MessageTypeEmail,
 			stored: `{"email_in_reply_to":"original@example.test"}`,
 			want:   `{"email_in_reply_to":"original@example.test"}`},
+		{name: "replacement keeps stored parent over a changed one", messageType: store.MessageTypeEmail,
+			stored:  `{"email_in_reply_to":"original@example.test"}`,
+			replace: &sql.NullString{String: `{"imap_content_origin":"sent","email_in_reply_to":"parent@example.test"}`, Valid: true},
+			want:    `{"imap_content_origin":"sent","email_in_reply_to":"original@example.test"}`},
+		{name: "replacement keeps stored parent the snapshot omits", messageType: store.MessageTypeEmail,
+			stored:  `{"email_in_reply_to":"original@example.test"}`,
+			replace: &sql.NullString{String: `{"imap_content_origin":"sent"}`, Valid: true}, noParent: true,
+			want: `{"imap_content_origin":"sent","email_in_reply_to":"original@example.test"}`},
 		{name: "keeps unreadable metadata", messageType: store.MessageTypeEmail,
 			stored: `[1,2]`, want: `[1,2]`},
 		{name: "chat message", messageType: store.MessageTypeGoogleChat},
@@ -64,8 +73,12 @@ func TestPersistMessageRecordsEmailReplyParent(t *testing.T) {
 				id := f.CreateMessage("child")
 				require.NoError(f.Store.SetMessageMetadata(id, sql.NullString{String: tc.stored, Valid: true}))
 			}
+			parent := "<parent@example.test>"
+			if tc.noParent {
+				parent = ""
+			}
 			id, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
-				Message: message, Metadata: tc.replace, EmailInReplyTo: "<parent@example.test>",
+				Message: message, Metadata: tc.replace, EmailInReplyTo: parent,
 			})
 			require.NoError(err)
 			metadata, _ := replyLinkState(t, f.Store, id)

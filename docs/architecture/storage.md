@@ -74,7 +74,8 @@ separately. SQLite is the default and stores the archive at `~/.msgvault/msgvaul
 
 An email's parent is the message whose `rfc822_message_id` equals the first
 Message-ID in its `In-Reply-To` header. Every email ingest path records that ID
-in `metadata` as `email_in_reply_to`. Linking sets `reply_to_message_id` only
+in `metadata` as `email_in_reply_to`, and a stored ID is kept even when a later
+sync replaces the email's metadata. Linking sets `reply_to_message_id` only
 when exactly one visible email in the same source has that ID, and never
 replaces an existing link. After each sync or import, msgvault checks the
 emails whose `content_changed_at` moved since the previous pass: changed replies

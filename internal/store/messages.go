@@ -2510,7 +2510,13 @@ func (s *Store) persistMessageWith(
 		}
 	}
 	if data.Metadata != nil {
-		if err := setMessageMetadataWith(q, s.dialect, messageID, *data.Metadata); err != nil {
+		metadata := *data.Metadata
+		if message.MessageType == MessageTypeEmail {
+			if metadata, err = s.keepEmailReplyParentTx(ctx, tx, messageID, metadata); err != nil {
+				return 0, err
+			}
+		}
+		if err := setMessageMetadataWith(q, s.dialect, messageID, metadata); err != nil {
 			return 0, fmt.Errorf("set metadata: %w", err)
 		}
 	}
