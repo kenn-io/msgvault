@@ -10,6 +10,7 @@ All notable changes to msgvault, grouped by release.
 
 - Prepare and manage local introduction records for two people with `msgvault intro`.
 - Message exports through the daemon no longer turn accented, CJK, or emoji characters into replacement characters.
+- Saved people show their first archived appearance, including copied recipients, and the introducing sender when the evidence identifies one. See [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance).
 
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 

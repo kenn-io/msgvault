@@ -296,3 +296,29 @@ func TestPeopleBrowserGetPersonProfileByUIDRequiresCurrentDaemonSchema(t *testin
 	assert.Contains(err.Error(), "daemon API schema 3.10.0 or newer")
 	assert.Zero(uidLookups.Load(), "the unsupported route must not be sent to an older daemon")
 }
+
+func TestPeopleBrowserPreservesFirstSeenWithoutDirectContact(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/people/51":
+			writePeopleBrowserJSON(t, w, http.StatusOK, `{"id":51,"participant_ids":[],"vcard_uid":"person-51","revision":1,"created_at":"2026-08-20T12:30:00Z","updated_at":"2026-08-20T12:30:00Z"}`)
+		case "/api/v1/people/51/contact-state":
+			writePeopleBrowserJSON(t, w, http.StatusOK, `{"person_id":51,"interaction_count":0,"cadence_status":"unknown","stale":false,"computed_at":"0001-01-01T00:00:00Z","first_seen_at":"2026-08-01T12:00:00Z","first_seen_ref":"message:7","first_contact_kind":"email_intro","introducer":{"participant_id":8,"display_name":"Sender Example","person_id":9}}`)
+		default:
+			writePeopleBrowserJSON(t, w, http.StatusNotFound, `{"error":"not_found","message":"resource not found"}`)
+		}
+	}))
+	profile, err := engine.GetPersonProfile(t.Context(), 51)
+	require.NoError(err)
+	require.NotNil(profile.ContactState)
+	assert.Equal("message:7", profile.ContactState.FirstSeenRef)
+	assert.Equal(store.FirstContactEmailIntro, profile.ContactState.FirstContactKind)
+	require.NotNil(profile.ContactState.Introducer)
+	assert.Equal(int64(8), profile.ContactState.Introducer.ParticipantID)
+	assert.Equal("Sender Example", profile.ContactState.Introducer.DisplayName)
+	require.NotNil(profile.ContactState.Introducer.PersonID)
+	assert.Equal(int64(9), *profile.ContactState.Introducer.PersonID)
+	assert.Zero(profile.ContactState.ComputedAt)
+}

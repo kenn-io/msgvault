@@ -104,7 +104,12 @@ func (s *Store) PersonSweepCadenceDueAt(
 		return time.Time{}, false, errors.New(
 			"person sweep cadence lookup requires a positive person id")
 	}
-	state, err := s.ContactStateContext(ctx, personID, now)
+	var state ContactState
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		var err error
+		state, err = s.contactStateTxContext(ctx, tx, personID, now)
+		return err
+	})
 	if err != nil {
 		return time.Time{}, false, fmt.Errorf("read person %d contact cadence: %w", personID, err)
 	}
