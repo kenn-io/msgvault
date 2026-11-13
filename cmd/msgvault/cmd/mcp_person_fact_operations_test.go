@@ -220,19 +220,25 @@ func TestPersonFactClaimsRejectEmptyTarget(t *testing.T) {
 	assert.False(t, result.IsError)
 }
 
-func TestPersonFactSDKConfirmsEachTrackingWrite(t *testing.T) {
+func TestPersonFactSDKConfirmsEachWrite(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	backend, _, id, _ := factFixture(t)
+	backend, st, id, target := factFixture(t)
 	approvals := 0
 	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyPersonFacts}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		approvals++
 		if approvals == 1 {
 			assertions.Contains(request.Params.Message, "removes queued sweep work")
 			assertions.Contains(request.Params.Message, "pending enrichment")
-		} else {
+		} else if approvals == 2 {
 			assertions.Contains(request.Params.Message, "configured sweep model")
 			assertions.Contains(request.Params.Message, "external enrichment")
+		} else {
+			assertions.Contains(request.Params.Message, "set_person_fact_pin")
+			assertions.Contains(request.Params.Message, target.Key)
+			pins, err := st.ListPersonFactPinsContext(t.Context(), id)
+			assertions.NoError(err)
+			assertions.False(slices.ContainsFunc(pins, func(pin personfacts.PinState) bool { return pin.Target.Key == target.Key && pin.Pinned }))
 		}
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
@@ -254,4 +260,14 @@ func TestPersonFactSDKConfirmsEachTrackingWrite(t *testing.T) {
 		requirements.False(result.IsError)
 	}
 	assertions.Equal(2, approvals)
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_fact_pin", Arguments: map[string]any{"person_id": id, "kind": string(target.Kind), "key": target.Key, "pinned": true}})
+	requirements.NoError(err)
+	requirements.False(result.IsError)
+	assertions.Equal(3, approvals)
+	data, err = json.Marshal(result.StructuredContent)
+	requirements.NoError(err)
+	var write generated.PersonFactPinWrite
+	requirements.NoError(json.Unmarshal(data, &write))
+	assertions.True(write.State.Pinned)
+	assertions.Equal(target.Key, write.State.Target.Key)
 }
