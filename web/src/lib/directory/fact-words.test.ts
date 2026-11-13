@@ -35,6 +35,8 @@ describe('fact words', () => {
     expect(decisionSentence('pinned-value-kept', '')).toBe('Kept your pinned value');
     expect(decisionSentence('too-close-to-choose', '')).toBe('The evidence was too close to choose');
     expect(decisionSentence('not-used', 'sensitive-policy')).toBe('Not used: this field is sensitive');
+    expect(decisionSentence('not-used', 'applied-projection')).toBe('Not used: another claim was saved');
+    expect(decisionSentence('not-used', 'insufficient-margin')).toBe('Not used');
     expect(decisionSentence('not-used', 'identity-mismatch')).toBe('Not used: may be about someone else');
     expect(decisionSentence(null, '')).toBe('Result unavailable');
   });
