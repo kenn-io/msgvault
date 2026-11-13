@@ -120,7 +120,7 @@ func TestMeetingOccurrenceCountsYearBoundaryAndUnexpandable(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 	_, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
-	assert.Empty(t, logs.String())
+	assert.Empty(t, occurrenceWarningLine(logs.Bytes()))
 	_, unsupported := calendarFixture(t, st, "unsupported", `{"id":"unsupported","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`)
 	_, future := calendarFixture(t, st, "future", `{"id":"future","start":{"dateTime":"2028-01-01T10:00:00Z"},"end":{"dateTime":"2028-01-01T11:00:00Z"}}`)
 	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
@@ -132,7 +132,7 @@ func TestMeetingOccurrenceCountsYearBoundaryAndUnexpandable(t *testing.T) {
 		TooBroadYears  []int   `json:"too_broad_years"`
 		SkippedChoices int     `json:"skipped_choices"`
 	}
-	require.NoError(t, json.Unmarshal(logs.Bytes(), &warning))
+	require.NoError(t, json.Unmarshal(occurrenceWarningLine(logs.Bytes()), &warning))
 	assert.Equal(t, "WARN", warning.Level)
 	assert.Equal(t, 1, warning.Messages)
 	assert.Equal(t, []int64{unsupported}, warning.MessageIDs)
@@ -313,7 +313,7 @@ func TestMeetingOccurrenceCountsReportsBusyYear(t *testing.T) {
 		TooBroadYears  []int   `json:"too_broad_years"`
 		SkippedChoices int     `json:"skipped_choices"`
 	}
-	require.NoError(t, json.Unmarshal(logs.Bytes(), &warning))
+	require.NoError(t, json.Unmarshal(occurrenceWarningLine(logs.Bytes()), &warning))
 	assert.Equal(t, "WARN", warning.Level)
 	assert.Equal(t, 2002, warning.Messages)
 	assert.Equal(t, []int64{event, 100000, 100001, 100002, 100003, 100004, 100005, 100006, 100007, 100008}, warning.MessageIDs)
@@ -392,4 +392,15 @@ func TestMeetingOccurrencesExcludePendingAndHiddenCopies(t *testing.T) {
 		counted[row.MessageID] = row.Counted
 	}
 	assert.Equal(t, map[int64]bool{event: true, hidden: false, note: false}, counted)
+}
+
+// occurrenceWarningLine picks the occurrence warning out of the default logger's
+// output, which other goroutines in the package may also write to.
+func occurrenceWarningLine(logs []byte) []byte {
+	for line := range bytes.Lines(logs) {
+		if bytes.Contains(line, []byte(`"message_ids"`)) {
+			return line
+		}
+	}
+	return nil
 }
