@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestImportJobCatalogGatesAndSchemas(t *testing.T) {
+func TestImportJobSchemasAndAnnotations(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"create_import_job", "get_import_job"}, OperationWriteFamilies: []OperationFamily{OperationFamilyImports}}
 	defs := make(map[string]operationalDefinition)
