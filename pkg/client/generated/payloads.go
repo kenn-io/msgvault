@@ -142,6 +142,8 @@ type LinkKataEvidenceBody = KataEvidenceLinkRequest
 
 type SnoozeLoopBody = SnoozeLoopRequest
 
+type McpEventsSubscribeBody = MCPEventsSubscribeRequest
+
 type ListMeetingActionItemsBody = MeetingActionsRequest
 
 type GetMeetingContextBody = MeetingContextRequest

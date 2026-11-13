@@ -37,6 +37,7 @@ import (
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/kataevidence"
+	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/messageimport"
 	"go.kenn.io/msgvault/internal/msmail"
@@ -590,6 +591,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := configureRecordingReferenceJob(ctx, mediaSched, operationGate, s, cfg.Integrations.Docbank, logger); err != nil {
 		logger.Warn("Recording reference submission unavailable", "error", err)
 	}
+	eventsService := &mcpevents.Service{Store: s, TokensDir: cfg.TokensDir(), Enabled: cfg.MCPEvents.Enabled, ConfigTargets: len(cfg.Wakeups), Logger: logger}
+	if err := configureWakeupJob(ctx, mediaSched, operationGate, s, cfg, logger, eventsService); err != nil {
+		logger.Warn("Wakeup scheduling unavailable", "category", "scheduler_error")
+	}
 	if err := registerActivityProjectionJob(
 		sched, s, cfg.Activity, logger); err != nil {
 		return fmt.Errorf("schedule activity projection: %w", err)
@@ -1028,6 +1033,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	apiOpts := api.ServerOptions{
 		Config:         cfg,
 		Store:          storeAdapter,
+		MCPEvents:      eventsService,
 		SavedViewStore: s,
 		Engine:         engine,
 		SQLQueryRunner: func(requestCtx context.Context, sql string, fresh bool) (*query.QueryResult, *api.CacheBuildAccepted, error) {
@@ -4740,4 +4746,12 @@ func scheduledTeamsImportOptions(email string, cfg *config.Config) teams.ImportO
 
 func (a *storeAPIAdapter) GetSearchMetadata(ctx context.Context, ids []int64, q *search.Query, includeSnippet bool) (map[int64]store.SearchMetadata, error) {
 	return a.store.GetSearchMetadata(ctx, ids, q, includeSnippet)
+}
+
+func (a *storeAPIAdapter) BeginChangedMessagesReadSnapshotContext(ctx context.Context) (context.Context, func(), error) {
+	return a.store.BeginChangedMessagesReadSnapshotContext(ctx)
+}
+
+func (a *storeAPIAdapter) PersonInSources(ctx context.Context, participants, sources []int64) (bool, error) {
+	return a.store.PersonInSources(ctx, participants, sources)
 }

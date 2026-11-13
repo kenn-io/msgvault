@@ -277,9 +277,14 @@ import type {
   LoopDecisionResponse,
   LoopListResponse,
   MCPCapabilities,
+  MCPEventsListResult,
+  MCPEventsSubscribeRequest,
+  MCPEventsSubscribeResult,
+  MCPEventsUnsubscribeResult,
   Manifest,
   MarkLoopDoneParams,
   MarkLoopDonePathParameters,
+  McpEventsUnsubscribeBody,
   MediaSearchResponse,
   MediaSearchStatusResponse,
   MeetingImportRequest,
@@ -2265,6 +2270,51 @@ export const snoozeLoop = (
       headers: { "Content-Type": "application/json" },
       data: snoozeLoopRequest,
       params,
+    },
+    options,
+  );
+};
+/**
+ * @summary List owner MCP Events
+ */
+export const mcpEventsList = (
+  options?: SecondParameter<typeof orvalFetch<MCPEventsListResult>>,
+) => {
+  return orvalFetch<MCPEventsListResult>(
+    { url: `/api/v1/mcp-events/list`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary Subscribe to owner MCP Events
+ */
+export const mcpEventsSubscribe = (
+  mCPEventsSubscribeRequest: MCPEventsSubscribeRequest,
+  options?: SecondParameter<typeof orvalFetch<MCPEventsSubscribeResult>>,
+) => {
+  return orvalFetch<MCPEventsSubscribeResult>(
+    {
+      url: `/api/v1/mcp-events/subscribe`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: mCPEventsSubscribeRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Unsubscribe from owner MCP Events
+ */
+export const mcpEventsUnsubscribe = (
+  mcpEventsUnsubscribeBody: McpEventsUnsubscribeBody,
+  options?: SecondParameter<typeof orvalFetch<MCPEventsUnsubscribeResult>>,
+) => {
+  return orvalFetch<MCPEventsUnsubscribeResult>(
+    {
+      url: `/api/v1/mcp-events/unsubscribe`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: mcpEventsUnsubscribeBody,
     },
     options,
   );

@@ -11,6 +11,12 @@ All notable changes to msgvault, grouped by release.
 - Message exports through the daemon no longer turn accented, CJK, or emoji characters into replacement characters.
 
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
+- Let owner MCP clients subscribe to signed message-change Events for a person or source over stdio or modern HTTP. Subscribe and refresh verify the callback with a signed challenge; failures return `-32027`. Enable `[mcp_events]` and read `list_changes` after each ping. Restored subscriptions resume when clients refresh their secrets; `--include-tokens` backups include those credentials. Callback URLs and secrets are stored separately in `tokens/mcp-events-credentials.json`.
+
+- Configure signed HTTPS wake-up notifications for matching recent messages,
+  so agents can read the change feed without frequent polling.
+
+- Filter the message change feed by person, source, conversation, or incoming direction, and read it from an MCP agent with `list_changes`. Delegated agents with `search.read` see only their granted sources.
 
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 

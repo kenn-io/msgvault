@@ -22,6 +22,7 @@ type daemonMCPOperations struct {
 	now       func() time.Time
 	client    *daemonclient.Client
 	supported []string
+	delegated bool
 }
 
 func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotocol.MCPCapabilities) *daemonMCPOperations {
@@ -155,10 +156,10 @@ func operationFailure(code string, uncertain bool) *mcpserver.OperationResult {
 // cancellation without the daemon client's busy retry loop. Mutations with an
 // unclassified/interrupted response retain uncertain completion explicitly.
 func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, success ...int) (*mcpserver.OperationResult, error) {
-	return readMCPOperationJSONWithClassifier[T](ctx, client, method, path, options, nil, success...)
+	return readMCPOperationJSONWithClassifier[T](ctx, client, method, path, options, nil, false, success...)
 }
 
-func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, success ...int) (*mcpserver.OperationResult, error) {
+func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, uncappedSuccess bool, success ...int) (*mcpserver.OperationResult, error) {
 	writes := method != http.MethodGet
 	response, err := client.DoGeneratedRequestWithContext(ctx, method, path, options)
 	if err != nil {
@@ -168,11 +169,18 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 		return operationFailure("operation_failed", writes), err
 	}
 	defer func() { _ = response.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	// Archive pages may contain unbounded stored text; operational responses
+	// and every error response retain the existing bound.
+	limited := !uncappedSuccess || !slices.Contains(success, response.StatusCode)
+	var body io.Reader = response.Body
+	if limited {
+		body = io.LimitReader(body, (1<<20)+1)
+	}
+	data, err := io.ReadAll(body)
 	if err != nil {
 		return operationFailure("operation_response_failed", writes), err
 	}
-	if len(data) > 1<<20 {
+	if limited && len(data) > 1<<20 {
 		return operationFailure("operation_response_limit_exceeded", writes), nil
 	}
 	if !slices.Contains(success, response.StatusCode) {

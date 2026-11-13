@@ -260,7 +260,7 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 				writeHumaError(ctx, err.status, err.ErrorResponse.Error, err.Message)
 				return
 			}
-			if permission != "" {
+			if permission != "" && op.OperationID != "listChangedMessages" {
 				release, err := s.beginAgentRead(req, op.OperationID, auth.Grant, permission)
 				if err != nil {
 					writeHumaError(ctx, err.status, err.ErrorResponse.Error, err.Message)
@@ -304,6 +304,7 @@ func writeHumaError(ctx huma.Context, status int, code string, message string) {
 
 func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerMCPCapabilitiesRoute(api, apiV1)
+	s.registerMCPEventsRoutes(apiV1)
 	s.registerSessionRoutes(api)
 	s.registerDocbankAttachmentRoutes(apiV1)
 	registerRawHumaJSONRoute[HealthResponse](api, huma.Operation{
@@ -600,8 +601,9 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[AggregateResponse](apiV1, "getSubAggregates", http.MethodGet, "/aggregates/sub", "Get nested aggregate rows", s.handleSubAggregates)
 	registerAPIV1RawHumaJSONRoute[FilteredMessagesResponse](apiV1, "filterMessages", http.MethodGet, "/messages/filter", "List filtered messages", s.handleFilteredMessages)
 	// The change feed's error statuses are contract, not incident: a 400 means
-	// a cursor the consumer must abandon, while 401, 429, 500 and 503 are
-	// conditions to retry from the same cursor. Declaring them keeps that
+	// invalid input or an incompatible cursor; 404 and 422 describe a person
+	// scope that cannot be used. Other failures can be retried from the same
+	// cursor. Declaring them keeps that
 	// distinction in the generated client rather than in every consumer's
 	// hand-written decode.
 	//
@@ -616,6 +618,10 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		"List messages whose content changed since a cursor", s.changeFeedGuard(s.handleMessageChanges),
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
+		http.StatusForbidden,
+		http.StatusNotFound,
+		http.StatusConflict,
+		http.StatusUnprocessableEntity,
 		http.StatusTooManyRequests,
 		http.StatusInternalServerError,
 		http.StatusServiceUnavailable,
@@ -1245,6 +1251,10 @@ func semanticMessageFilterParams() []*huma.Param {
 // outside this server is allowed to depend on its contents.
 func changesParams() []*huma.Param {
 	return []*huma.Param{
+		queryIntegerParam("person_id", "Only messages sent by a linked identity of this person"),
+		queryIntegerArrayParam("source_id", "Source IDs; repeat for multiple sources (maximum 50)"),
+		queryIntegerArrayParam("conversation_id", "Conversation IDs; repeat for multiple conversations (maximum 50)"),
+		queryBooleanParam("incoming_only", "Best-effort incoming filter; direction corrections alone do not redeliver changes"),
 		queryStringParam("cursor",
 			"Opaque cursor from the next_cursor of the previous response, sent back "+
 				"verbatim. Do not parse, construct, compare, or order it; its contents may "+

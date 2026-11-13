@@ -381,6 +381,9 @@ var operationGateExemptPaths = map[string]bool{
 	// MCP envelopes delegate gate acquisition to their nested API requests.
 	"/mcp":        true,
 	"/mcp/writes": true,
+	// Events handlers acquire the gate after parsing.
+	"/api/v1/mcp-events/subscribe":   true,
+	"/api/v1/mcp-events/unsubscribe": true,
 	// Calendar control acquires the gate after parsing, authorization, and preview.
 	"/api/v1/calendar/control": true,
 	// Scoring coordinates the gate around local mutations, never provider I/O.

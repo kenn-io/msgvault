@@ -1053,3 +1053,28 @@ func scanPersonBinding(row scanner) (*Person, sql.NullInt64, error) {
 	}
 	return &person, participantID, nil
 }
+
+// PersonInSources reports whether any participant appears in a granted source.
+func (s *Store) PersonInSources(ctx context.Context, participantIDs, sourceIDs []int64) (bool, error) {
+	if len(participantIDs) == 0 || len(sourceIDs) == 0 {
+		return false, nil
+	}
+	ps, ss := placeholders(len(participantIDs)), placeholders(len(sourceIDs))
+	query := fmt.Sprintf(`SELECT EXISTS (SELECT 1 FROM messages m WHERE m.sender_id IN (%s) AND m.source_id IN (%s)) OR
+ EXISTS (SELECT 1 FROM message_recipients r JOIN messages m ON m.id = r.message_id WHERE r.participant_id IN (%s) AND m.source_id IN (%s)) OR
+ EXISTS (SELECT 1 FROM conversation_participants cp JOIN conversations c ON c.id = cp.conversation_id WHERE cp.participant_id IN (%s) AND c.source_id IN (%s))`, ps, ss, ps, ss, ps, ss)
+	args := make([]any, 0, 3*(len(participantIDs)+len(sourceIDs)))
+	for range 3 {
+		for _, id := range participantIDs {
+			args = append(args, id)
+		}
+		for _, id := range sourceIDs {
+			args = append(args, id)
+		}
+	}
+	var found bool
+	if err := s.db.QueryRowContext(ctx, s.Rebind(query), args...).Scan(&found); err != nil {
+		return false, fmt.Errorf("check person in sources: %w", err)
+	}
+	return found, nil
+}

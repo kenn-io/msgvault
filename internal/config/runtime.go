@@ -247,6 +247,11 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 	return nil
 }
 
+// ResolveWakeupSecret resolves a configured secret without changing its saved path.
+func (c *Config) ResolveWakeupSecret(entry WakeupConfig) (string, error) {
+	return providercredentials.ResolveSecret("", c.credentialPath(entry.SecretFile), entry.SecretEnv)
+}
+
 func (c *Config) credentialPath(path string) string {
 	if path == "" {
 		return ""

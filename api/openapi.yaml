@@ -4787,6 +4787,18 @@ components:
         - attachment_size
         - deleted_from_source
       type: object
+    Error:
+      additionalProperties: true
+      properties:
+        code:
+          format: int64
+          type: integer
+        reason:
+          type: string
+      required:
+        - code
+        - reason
+      type: object
     ErrorResponse:
       additionalProperties: true
       properties:
@@ -7365,6 +7377,161 @@ components:
         - version
         - routes
       type: object
+    MCPEventsArguments:
+      additionalProperties: false
+      not:
+        anyOf:
+          - properties:
+              person_id:
+                type: integer
+              source_id:
+                type: integer
+            required:
+              - person_id
+              - source_id
+            type: object
+          - not:
+              anyOf:
+                - properties:
+                    person_id:
+                      type: integer
+                  required:
+                    - person_id
+                  type: object
+                - properties:
+                    source_id:
+                      type: integer
+                  required:
+                    - source_id
+                  type: object
+      properties:
+        incoming_only:
+          type: boolean
+        person_id:
+          format: int64
+          minimum: 1
+          type: integer
+        source_id:
+          format: int64
+          minimum: 1
+          type: integer
+      type: object
+    MCPEventsDefinition:
+      additionalProperties: true
+      properties:
+        delivery:
+          items:
+            type: string
+          type: array
+        description:
+          type: string
+        inputSchema:
+          additionalProperties: {}
+          type: object
+        name:
+          type: string
+        payloadSchema:
+          additionalProperties: {}
+          type: object
+      required:
+        - name
+        - description
+        - delivery
+        - inputSchema
+        - payloadSchema
+      type: object
+    MCPEventsDelivery:
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+        secret:
+          type: string
+        url:
+          type: string
+      required:
+        - mode
+        - url
+        - secret
+      type: object
+    MCPEventsDeliveryStatus:
+      additionalProperties: true
+      properties:
+        active:
+          type: boolean
+        failedSince:
+          format: date-time
+          type: string
+        lastDeliveryAt:
+          format: date-time
+          type: string
+        lastError:
+          type: string
+      required:
+        - active
+      type: object
+    MCPEventsListResult:
+      additionalProperties: true
+      properties:
+        enabled:
+          type: boolean
+        events:
+          items:
+            $ref: "#/components/schemas/MCPEventsDefinition"
+          type: array
+      required:
+        - enabled
+        - events
+      type: object
+    MCPEventsSubscribeRequest:
+      additionalProperties: false
+      properties:
+        arguments:
+          $ref: "#/components/schemas/MCPEventsArguments"
+        cursor:
+          type: string
+        delivery:
+          $ref: "#/components/schemas/MCPEventsDelivery"
+        maxAgeMs:
+          format: int64
+          type: integer
+        name:
+          type: string
+        ttlMs:
+          type:
+            - integer
+            - "null"
+      required:
+        - name
+        - arguments
+        - delivery
+      type: object
+    MCPEventsSubscribeResult:
+      additionalProperties: true
+      properties:
+        cursor:
+          type:
+            - string
+            - "null"
+        deliveryStatus:
+          $ref: "#/components/schemas/MCPEventsDeliveryStatus"
+        id:
+          type: string
+        refreshBefore:
+          format: date-time
+          type: string
+        truncated:
+          type: boolean
+      required:
+        - id
+        - refreshBefore
+        - cursor
+        - truncated
+        - deliveryStatus
+      type: object
+    MCPEventsUnsubscribeResult:
+      additionalProperties: true
+      type: object
     MCPRouteDescriptor:
       additionalProperties: true
       properties:
@@ -7440,6 +7607,32 @@ components:
           type: number
         strongest_excerpt:
           type: string
+      type: object
+    McpEventsUnsubscribeBody:
+      additionalProperties: false
+      properties:
+        arguments:
+          $ref: "#/components/schemas/MCPEventsArguments"
+        delivery:
+          $ref: "#/components/schemas/McpEventsUnsubscribeBodyDeliveryStruct"
+        name:
+          type: string
+      required:
+        - name
+        - arguments
+        - delivery
+      type: object
+    McpEventsUnsubscribeBodyDeliveryStruct:
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+        secret:
+          type: string
+        url:
+          type: string
+      required:
+        - url
       type: object
     MediaAttachmentResult:
       additionalProperties: true
@@ -17193,7 +17386,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.1.0
+  version: 5.4.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -24603,6 +24796,85 @@ paths:
       summary: Hide a loop until a later time
       tags:
         - API
+  /api/v1/mcp-events/list:
+    get:
+      operationId: mcpEventsList
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPEventsListResult"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List owner MCP Events
+      tags:
+        - API
+  /api/v1/mcp-events/subscribe:
+    post:
+      operationId: mcpEventsSubscribe
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MCPEventsSubscribeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPEventsSubscribeResult"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/Error"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Subscribe to owner MCP Events
+      tags:
+        - API
+  /api/v1/mcp-events/unsubscribe:
+    post:
+      operationId: mcpEventsUnsubscribe
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/McpEventsUnsubscribeBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPEventsUnsubscribeResult"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/Error"
+                  - $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Unsubscribe from owner MCP Events
+      tags:
+        - API
   /api/v1/mcp/capabilities:
     get:
       operationId: getMCPCapabilities
@@ -25014,6 +25286,33 @@ paths:
     get:
       operationId: listChangedMessages
       parameters:
+        - description: Only messages sent by a linked identity of this person
+          in: query
+          name: person_id
+          schema:
+            format: int64
+            type: integer
+        - description: Source IDs; repeat for multiple sources (maximum 50)
+          in: query
+          name: source_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
+        - description: Conversation IDs; repeat for multiple conversations (maximum 50)
+          in: query
+          name: conversation_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
+        - description: Best-effort incoming filter; direction corrections alone do not redeliver changes
+          in: query
+          name: incoming_only
+          schema:
+            type: boolean
         - description: "Opaque cursor from the next_cursor of the previous response, sent back verbatim. Do not parse, construct, compare, or order it; its contents may change without notice. Omit, or send it empty, to start from the beginning of the archive. The token is not authenticated: the server does not sign it and cannot tell one it issued from a well-formed one you built, so a fabricated cursor naming this archive is accepted and simply moves your own position. Rejected with 400 invalid_cursor, rather than read as the beginning: a token the server cannot read, one carrying a cursor format this build does not speak, and one issued against a different archive"
           in: query
           name: cursor
@@ -25039,6 +25338,30 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
           content:
             application/json:
               schema:

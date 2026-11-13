@@ -417,7 +417,7 @@ func TestImportIfAbsentHoldsStoreLockUntilRetired(t *testing.T) {
 	deleted := make(chan error, 1)
 	load := func() (string, bool, error) {
 		go func() {
-			_, deleteErr := mutate(dir, func(current Snapshot) error {
+			_, deleteErr := mutate(dir, Filename, func(current Snapshot) error {
 				sawRetired <- retired.Load()
 				if !current.Stored(id) {
 					return ErrConflict
@@ -442,3 +442,33 @@ func TestImportIfAbsentHoldsStoreLockUntilRetired(t *testing.T) {
 }
 
 func noRetire() error { return nil }
+
+func TestEventsCredentialsSeparated(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	dir := filepath.Join(t.TempDir(), "tokens")
+	id := EventsID("0123456789abcdef0123456789abcdef")
+	requirements.Error(ValidateID(id))
+	empty, err := Read(dir)
+	requirements.NoError(err)
+	_, err = Put(dir, empty.ETag, VectorEmbeddingsID, "https://example.test", "vector")
+	requirements.NoError(err)
+	events, err := ReadEvents(dir)
+	requirements.NoError(err)
+	revision, err := events.Revision(id)
+	requirements.NoError(err)
+	_, err = PutIfRevision(dir, revision, id, "https://example.test", "event")
+	requirements.NoError(err)
+	_, err = PutIfRevision(dir, revision, id, "https://example.test", "stale")
+	requirements.ErrorIs(err, ErrConflict)
+	shared, err := Read(dir)
+	requirements.NoError(err)
+	for _, metadata := range shared.Metadata() {
+		requirements.NoError(ValidateID(metadata.ID))
+	}
+	events, err = ReadEvents(dir)
+	requirements.NoError(err)
+	value, _, err := events.Resolve(id, "https://example.test", "", nil)
+	requirements.NoError(err)
+	assertions.Equal("event", value)
+}
