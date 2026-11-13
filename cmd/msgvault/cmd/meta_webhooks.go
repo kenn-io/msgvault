@@ -207,15 +207,12 @@ func graphRetryable(e *meta.APIError) bool {
 	}
 }
 
-// metaWebhookError marks errors that retrying a delivery cannot fix, and a
-// source that a polling sync holds as busy.
+// metaWebhookError marks errors that retrying a delivery cannot fix.
 func metaWebhookError(err error) error {
 	apiErr, isAPI := errors.AsType[*meta.APIError](err)
 	switch {
 	case err == nil:
 		return nil
-	case errors.Is(err, store.ErrSyncAlreadyActive):
-		return fmt.Errorf("%w: %w", metawebhook.ErrBusy, err)
 	case errors.Is(err, meta.ErrInvalidChange), errors.Is(err, store.ErrSourceNotFound), errors.Is(err, store.ErrSourceRetired),
 		isAPI && !graphRetryable(apiErr):
 		return fmt.Errorf("%w: %w", metawebhook.ErrUnrecoverable, err)

@@ -44,19 +44,6 @@ func (c feedChange) isPost() bool {
 	return slices.Contains([]string{"status", "post", "photo", "video", "share", "link"}, c.Item)
 }
 
-// objectIDs returns the object the change names and the post it belongs to.
-// Both must be valid Graph IDs, or the change is invalid.
-func (c feedChange) objectIDs() (id, root string, err error) {
-	id, root = c.CommentID, c.PostID
-	if c.isPost() {
-		id = c.PostID
-	}
-	if !safeObjectID(id) || !safeObjectID(root) {
-		return "", "", fmt.Errorf("%w: invalid object identity", ErrInvalidChange)
-	}
-	return id, root, nil
-}
-
 // ApplyFeed applies Page feed changes for one Page's comment source. New and
 // edited comments are archived through the polling write path, reading a
 // missing post or parent comment first. A hide or unhide reads the comment's
@@ -72,24 +59,13 @@ func ApplyFeed(ctx context.Context, st *store.Store, reader ObjectReader, app, p
 		}
 		comment := change.Item == "comment" && slices.Contains([]string{"add", "edited", "edit", "hide", "unhide", "remove", "delete"}, change.Verb)
 		if comment || (change.isPost() && (change.Verb == "remove" || change.Verb == "delete")) {
-			// Reject before anything runs: a removal prunes a paused sync's
-			// saved traversal before the changes apply.
-			if _, _, err := change.objectIDs(); err != nil {
-				return fmt.Errorf("feed %s %s: %w", change.Item, change.Verb, err)
-			}
 			changes = append(changes, change)
 		}
 	}
 	if len(changes) == 0 {
 		return nil
 	}
-	var removed []feedChange
-	for _, change := range changes {
-		if change.Verb == "remove" || change.Verb == "delete" {
-			removed = append(removed, change)
-		}
-	}
-	apply := func(run *importRun) error {
+	return applyWebhook(ctx, st, SourceType, SourceIdentifier(app, page), func(run *importRun) error {
 		run.app, run.page = app, page
 		for _, change := range changes {
 			if err := run.applyFeedChange(ctx, reader, change); err != nil {
@@ -97,65 +73,23 @@ func ApplyFeed(ctx context.Context, st *store.Store, reader ObjectReader, app, p
 			}
 		}
 		return nil
-	}
-	if len(removed) == 0 {
-		return applyWebhook(ctx, st, SourceType, SourceIdentifier(app, page), apply)
-	}
-	return applyWebhookRemoving(ctx, st, SourceType, SourceIdentifier(app, page), removed, apply)
+	})
 }
 
 // applyWebhook runs apply under the source's execution lock in a webhook
 // sync run, and records the run's outcome and counts.
-func applyWebhook(ctx context.Context, st *store.Store, sourceType, identifier string, apply func(*importRun) error) error {
-	return applyWebhookRemoving(ctx, st, sourceType, identifier, nil, apply)
-}
-
-// applyWebhookRemoving is applyWebhook for a delivery that removes comments
-// or posts. Before the webhook run starts, it prunes the removed objects and
-// the archived replies below a removed comment from the saved traversal of an
-// unfinished polling sync, in that polling run's own checkpoint. Pruning
-// before anything is marked means `msgvault gc` can never purge the archive
-// rows that link a saved reply frame to a removed comment while the prune
-// still needs them: a failure after the prune leaves the marks to the retry,
-// and a failure before it leaves nothing marked. Pruning only drops saved
-// traversal, so it is safe even when the same delivery adds the comment
-// before removing it.
-func applyWebhookRemoving(ctx context.Context, st *store.Store, sourceType, identifier string, removed []feedChange, apply func(*importRun) error) (retErr error) {
+func applyWebhook(ctx context.Context, st *store.Store, sourceType, identifier string, apply func(*importRun) error) (retErr error) {
 	source, execution, err := acquireSource(ctx, st, sourceType, identifier)
 	if err != nil {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
-	if len(removed) > 0 {
-		var ids []string
-		for _, change := range removed {
-			if change.isPost() {
-				ids = append(ids, change.PostID)
-				continue
-			}
-			// A paused sync can hold a saved copy the archive never got, so
-			// the removed ID is pruned whether or not it is archived.
-			thread, err := st.MessageThreadSourceIDsContext(ctx, source.ID, change.CommentID)
-			if err != nil {
-				return err
-			}
-			ids = append(ids, change.CommentID)
-			ids = append(ids, thread...)
-		}
-		if err := dropDeletedTraversal(ctx, st, source, ids); err != nil {
-			return err
-		}
-	}
 	syncID, err := execution.StartSyncContext(ctx, WebhookSyncType, "")
 	if err != nil {
 		return err
 	}
 	run := &importRun{imp: &Importer{store: st.ScopedToSync(source.ID, syncID)}, source: source, sum: &ImportSummary{}, syncID: syncID}
 	err = apply(run)
-	// Retrying cannot get past an archive invariant, so the change is invalid.
-	if _, ok := errors.AsType[invariantError](err); ok {
-		err = fmt.Errorf("%w: %w", ErrInvalidChange, err)
-	}
 	// Record the outcome even when ctx was cancelled during apply.
 	finish := context.WithoutCancel(ctx)
 	cp := &store.Checkpoint{MessagesAdded: int64(run.sum.MessagesAdded), MessagesUpdated: int64(run.sum.MessagesUpdated), MessagesProcessed: int64(run.sum.MessagesProcessed)}
@@ -166,9 +100,12 @@ func applyWebhookRemoving(ctx context.Context, st *store.Store, sourceType, iden
 }
 
 func (r *importRun) applyFeedChange(ctx context.Context, reader ObjectReader, change feedChange) error {
-	id, root, err := change.objectIDs()
-	if err != nil {
-		return err
+	id, root := change.CommentID, change.PostID
+	if change.isPost() {
+		id = change.PostID
+	}
+	if !safeObjectID(id) || !safeObjectID(root) {
+		return fmt.Errorf("%w: invalid object identity", ErrInvalidChange)
 	}
 	archived, err := r.archived(ctx, id)
 	if err != nil {
@@ -176,7 +113,6 @@ func (r *importRun) applyFeedChange(ctx context.Context, reader ObjectReader, ch
 	}
 	switch change.Verb {
 	case "remove", "delete":
-		// applyWebhookRemoving pruned the paused sync's traversal already.
 		if !change.isPost() {
 			marked, err := r.imp.store.MarkMessageThreadDeletedContext(ctx, r.source.ID, id)
 			r.sum.MessagesProcessed += len(marked)
@@ -248,7 +184,7 @@ func (r *importRun) archiveAncestors(ctx context.Context, reader ancestorReader,
 			break
 		}
 		if len(chain) == maxAncestorReads {
-			return invariantError("comment ancestors exceed the read limit")
+			return errors.New("comment ancestors exceed the read limit")
 		}
 		obj, err := reader.comment(ctx, id)
 		if err != nil {
@@ -295,7 +231,7 @@ func (r *importRun) setHidden(ctx context.Context, id string, hidden bool) error
 	}
 	var meta objectMetadata
 	if err := json.Unmarshal([]byte(saved.String), &meta); err != nil {
-		return fmt.Errorf("%w: %w", invariantError("decode comment metadata"), err)
+		return fmt.Errorf("decode comment metadata: %w", err)
 	}
 	if meta.Hidden == hidden {
 		return nil

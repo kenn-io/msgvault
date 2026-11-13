@@ -79,22 +79,20 @@ To archive new comments as they arrive, set up [Meta webhooks](meta-webhooks.md)
 
 ## Archive media that tags the account
 
-Media in which other accounts tag the linked account is not on its media
-edge. To archive it, set `mentions = true` on the profile, restart the daemon,
-then register and sync the separate mentions source:
+To archive media in which other accounts tag the linked account, set
+`mentions = true` on the profile, restart the daemon, then register and sync
+the separate mentions source:
 
 ```bash
 msgvault source instagram-mentions add example-account
 msgvault source instagram-mentions sync example-account
 ```
 
-The source and message type are `instagram_mentions`, so this media stays apart
-from the account's own comments. Each tagged media item forms one
-Conversation. The author's `@username` is the subject, so you can search for
-it; Meta returns no author ID for media the account does not own, so the
-author is not linked to a person. Media the account owns is skipped here.
+The source is `instagram_mentions`, so this media stays apart from the
+account's own comments. The author's `@username` is the subject, so you can
+search for it; Meta returns no author ID for this media, so the author is not
+linked to a person. Media the account owns is skipped here.
 
-Each request reads up to 100 tagged media items, and `--max-requests` limits a
-run. An unfinished run resumes from its saved position. A finished run starts
-again from the newest tagged media on the next sync, and `--full` does the same
-for an unfinished one. The profile's `schedule` also schedules this source.
+An unfinished run resumes from its saved position; a finished run starts again
+from the newest tagged media. The profile's `schedule` also schedules this
+source.
