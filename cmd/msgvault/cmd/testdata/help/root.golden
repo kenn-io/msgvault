@@ -2,10 +2,10 @@ Archive email, chats, and meetings offline.
 
 Start here:
   msgvault list-accounts --json
-  msgvault search 'from:alice@example.com newer_than:30d' --json
+  msgvault search 'from:alice@example.com' --json
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
+  msgvault export-messages --help
   msgvault person --help
   msgvault daemon status
   msgvault setup status --json
@@ -118,6 +118,7 @@ Import local exports:
   import-gvoice          Import Google Voice history from Takeout export
   import-imazing-csv     Import Messages CSV exports created by iMazing
   import-imessage        Import iMessages from local database
+  import-line            Import LINE messages from an iPhone backup
   import-maildir         Import a Maildir or Maildir++ archive
   import-mbox            Import an MBOX export into msgvault
   import-messenger       Import Facebook Messenger from a Meta data export

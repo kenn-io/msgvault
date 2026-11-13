@@ -244,3 +244,8 @@ func RelayAddressSubquery(messageID, recipients string) string {
 func RelayAbsentExpr(messageID, recipients string) string {
 	return "NOT EXISTS (SELECT 1 FROM " + recipients + " mr_guard WHERE mr_guard.message_id = " + messageID + " AND mr_guard.recipient_type = 'from' AND mr_guard.is_relayed)"
 }
+
+// ParticipantIdentifierExpr selects a service ID for display when no name is known.
+func ParticipantIdentifierExpr(alias, prefix string) string {
+	return "(SELECT pi.identifier_value FROM " + prefix + "participant_identifiers pi WHERE pi.participant_id = " + alias + ".id AND pi.identifier_type IN ('x_user', 'line') ORDER BY CASE WHEN pi.identifier_type = 'x_user' THEN 0 ELSE 1 END, pi.identifier_value LIMIT 1)"
+}

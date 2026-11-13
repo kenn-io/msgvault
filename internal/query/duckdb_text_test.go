@@ -326,54 +326,99 @@ func TestDuckDBListConversationsParticipantMembership(t *testing.T) {
 	assert.Equal(int64(2), byID[recipientFallbackConversation].MessageCount)
 }
 
-func TestDuckDBUnnamedXParticipantsAcrossViews(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+func TestDuckDBUnnamedParticipantsAcrossViews(t *testing.T) {
+	for _, tc := range []struct {
+		name, source, messageType, identifier, value string
+		additionalLINE                               bool
+	}{
+		{"x", "x_archive", "x_dm", "x_user", "2", true},
+		{"line", "line", "line", "line", "line-id", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			b := NewTestDataBuilder(t)
+			source := b.AddSourceWithType("1", tc.source)
+			participant := b.AddParticipant("", "", "")
+			b.AddParticipantIdentifier(participant, tc.identifier, tc.value, tc.value, true)
+			if tc.additionalLINE {
+				b.AddParticipantIdentifier(participant, "line", "line-id", "line-id", false)
+			}
+			b.AddMessage(MessageOpt{MessageType: tc.messageType, SourceID: source, SenderID: &participant, ConversationID: 701, ConversationType: "direct_chat"})
+			explicit := b.AddMessage(MessageOpt{MessageType: tc.messageType, SourceID: source, SenderID: &participant, ConversationID: 701, ConversationType: "direct_chat"})
+			b.AddFrom(explicit, participant, "")
+			b.AddConversationParticipant(701, participant)
+			engine := b.BuildEngine()
+			messages, err := engine.ListConversationMessages(t.Context(), 701, TextFilter{})
+			require.NoError(err)
+			require.Len(messages, 2)
+			for _, message := range messages {
+				assert.Equal(tc.value, message.FromName)
+			}
+			groups, err := engine.TextAggregate(t.Context(), TextViewContactNames, TextAggregateOptions{})
+			require.NoError(err)
+			require.Len(groups, 1)
+			assert.Equal(tc.value, groups[0].Key)
+			conversations, err := engine.ListConversations(t.Context(), TextFilter{ContactName: groups[0].Key})
+			require.NoError(err)
+			require.Len(conversations, 1)
+			assert.EqualValues(701, conversations[0].ConversationID)
+			listed, err := engine.ListMessages(t.Context(), MessageFilter{})
+			require.NoError(err)
+			require.Len(listed, 2)
+			for _, message := range listed {
+				assert.Equal(tc.value, message.FromName)
+			}
+			q := search.Parse("")
+			hits, err := engine.SearchFast(t.Context(), q, MessageFilter{}, 10, 0)
+			require.NoError(err)
+			require.Len(hits, 2)
+			for _, hit := range hits {
+				assert.Equal(tc.value, hit.FromName)
+			}
+			cached, err := engine.SearchFastWithStats(t.Context(), q, "", MessageFilter{}, ViewNoStats, 10, 0)
+			require.NoError(err)
+			require.Len(cached.Messages, 2)
+			for _, hit := range cached.Messages {
+				assert.Equal(tc.value, hit.FromName)
+			}
+			fast, legacy := runExploreBothPaths(t, engine, ExploreRequest{})
+			for _, result := range []*ExploreResponse{fast, legacy} {
+				require.Len(result.Rows, 1)
+				assert.Contains(result.Rows[0].ParticipantLabels, tc.value)
+			}
+		})
+	}
+}
+
+func TestDuckDBHybridUnnamedLINEParticipants(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	b := NewTestDataBuilder(t)
-	source := b.AddSourceWithType("1", "x_archive")
+	source := b.AddSourceWithType("owner", "line")
 	participant := b.AddParticipant("", "", "")
-	b.AddParticipantIdentifier(participant, "x_user", "2", "2", true)
-	b.AddMessage(MessageOpt{MessageType: "x_dm", SourceID: source, SenderID: &participant, ConversationID: 701, ConversationType: "direct_chat"})
-	explicit := b.AddMessage(MessageOpt{MessageType: "x_dm", SourceID: source, SenderID: &participant, ConversationID: 701, ConversationType: "direct_chat"})
-	b.AddFrom(explicit, participant, "")
-	b.AddConversationParticipant(701, participant)
-	engine := b.BuildEngine()
+	b.AddParticipantIdentifier(participant, "line", "line-id", "line-id", true)
+	b.AddMessage(MessageOpt{MessageType: "line", SourceID: source, SenderID: &participant, ConversationID: 701, ConversationType: "direct_chat"})
+	analyticsDir, cleanup := b.Build()
+	t.Cleanup(cleanup)
+	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
+	_, err := tdb.DB.ExecContext(t.Context(), `
+ INSERT INTO sources (id, source_type, identifier) VALUES (7, 'line', 'owner');
+ INSERT INTO participants (id) VALUES (11);
+ INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (11, 'line', 'line-id');
+ INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES (701, 7, 'chat', 'direct_chat');
+ INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id) VALUES (801, 701, 7, 'message', 'line', '2026-08-20 10:00:00', 'hello', 11);
+ INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (801, 11, 'from'), (801, 11, 'to');
+ `)
+	require.NoError(err)
+	engine, err := NewDuckDBEngine(t.Context(), analyticsDir, "", tdb.DB)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(engine.Close()) })
 	messages, err := engine.ListConversationMessages(t.Context(), 701, TextFilter{})
 	require.NoError(err)
-	require.Len(messages, 2)
-	for _, message := range messages {
-		assert.Equal("2", message.FromName)
-	}
-	groups, err := engine.TextAggregate(t.Context(), TextViewContactNames, TextAggregateOptions{})
+	require.Len(messages, 1)
+	assert.Equal("line-id", messages[0].FromName)
+	detail, err := engine.GetMessage(t.Context(), 801)
 	require.NoError(err)
-	require.Len(groups, 1)
-	assert.Equal("2", groups[0].Key)
-	conversations, err := engine.ListConversations(t.Context(), TextFilter{ContactName: groups[0].Key})
-	require.NoError(err)
-	require.Len(conversations, 1)
-	assert.EqualValues(701, conversations[0].ConversationID)
-	listed, err := engine.ListMessages(t.Context(), MessageFilter{})
-	require.NoError(err)
-	require.Len(listed, 2)
-	for _, message := range listed {
-		assert.Equal("2", message.FromName)
-	}
-	q := search.Parse("")
-	hits, err := engine.SearchFast(t.Context(), q, MessageFilter{}, 10, 0)
-	require.NoError(err)
-	require.Len(hits, 2)
-	for _, hit := range hits {
-		assert.Equal("2", hit.FromName)
-	}
-	cached, err := engine.SearchFastWithStats(t.Context(), q, "", MessageFilter{}, ViewNoStats, 10, 0)
-	require.NoError(err)
-	require.Len(cached.Messages, 2)
-	for _, hit := range cached.Messages {
-		assert.Equal("2", hit.FromName)
-	}
-	fast, legacy := runExploreBothPaths(t, engine, ExploreRequest{})
-	for _, result := range []*ExploreResponse{fast, legacy} {
-		require.Len(result.Rows, 1)
-		assert.Contains(result.Rows[0].ParticipantLabels, "2")
-	}
+	require.Len(detail.To, 1)
+	assert.Equal("line-id", detail.To[0].Name)
 }

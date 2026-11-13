@@ -117,14 +117,8 @@ func effectiveStatsFilter(opts StatsOptions) *MessageFilter {
 	return &filter
 }
 
-// xUserIDExpr supplies an opaque label without inventing an observed name.
-// prefix is empty for SQLite/cached views and sqlite_db. for hybrid readers.
-func xUserIDExpr(alias, prefix string) string {
-	return "(SELECT pi.identifier_value FROM " + prefix + "participant_identifiers pi WHERE pi.participant_id = " + alias + ".id AND pi.identifier_type = 'x_user' ORDER BY pi.identifier_value LIMIT 1)"
-}
-
 func directSenderNameExpr(alias, prefix string) string {
-	return "COALESCE(NULLIF(" + alias + ".display_name, ''), " + xUserIDExpr(alias, prefix) + ", '')"
+	return "COALESCE(NULLIF(" + alias + ".display_name, ''), " + identityindex.ParticipantIdentifierExpr(alias, prefix) + ", '')"
 }
 
 // participantNameExpr returns the SQL expression for a participant's display
@@ -142,7 +136,7 @@ func participantNameExpr(alias string) string {
 func participantNameExprInSchema(alias, prefix string) string {
 	return fmt.Sprintf(
 		"COALESCE(NULLIF(TRIM(%s.display_name), ''), NULLIF(%s.phone_number, ''), NULLIF(%s.email_address, ''), %s)",
-		alias, alias, alias, xUserIDExpr(alias, prefix),
+		alias, alias, alias, identityindex.ParticipantIdentifierExpr(alias, prefix),
 	)
 }
 
@@ -161,7 +155,7 @@ func recipientNameExpr(mrAlias, pAlias string) string {
 func recipientNameExprInSchema(mrAlias, pAlias, prefix string) string {
 	return fmt.Sprintf(
 		"COALESCE(NULLIF(TRIM(%s.display_name), ''), NULLIF(TRIM(%s.display_name), ''), NULLIF(%s.phone_number, ''), NULLIF(%s, ''), %s, '')",
-		mrAlias, pAlias, pAlias, identityindex.SenderAddressExpr(mrAlias, pAlias), xUserIDExpr(pAlias, prefix),
+		mrAlias, pAlias, pAlias, identityindex.SenderAddressExpr(mrAlias, pAlias), identityindex.ParticipantIdentifierExpr(pAlias, prefix),
 	)
 }
 
