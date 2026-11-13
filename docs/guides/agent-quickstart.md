@@ -262,7 +262,6 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_person_notes` | read | — | owner-only |
 | `get_person_profile` | read | — | owner-only |
 | `get_person_relationship` | read | — | owner-only |
-| `get_person_tracking` | read | — | owner-only |
 | `get_saved_view` | read | — | owner-only |
 | `get_slack_sync_policy` | read | — | owner-only |
 | `get_source_identities` | read | — | owner-only |
@@ -275,11 +274,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_messages` | read | — | search.read |
 | `list_open_loops` | read | — | owner-only |
 | `list_person_fact_claims` | read | — | owner-only |
-| `list_person_fact_decisions` | read | — | owner-only |
-| `list_person_fact_evidence` | read | — | owner-only |
 | `list_person_fact_pins` | read | — | owner-only |
-| `list_person_fact_status_events` | read | — | owner-only |
-| `list_person_fact_targets` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |
@@ -314,4 +309,4 @@ backend checks for action permissions, source scope, and sender identity;
 | `update_saved_view` | write | — | owner-only |
 <!-- END GENERATED tools -->
 
-On unreleased `main`, person fact diagnostics expose native evidence, claims, decisions, pins and tracking. Target catalog reads include sensitive targets only when the include-sensitive option is true. Evidence and claims can contain sensitive content. The pin and tracking writes require `--allow-person-fact-writes` and confirmation for each call; tracking has no revision guard. HTTP writes also need the general write opt-in and protocol `2026-07-28` or newer.
+On unreleased `main`, assistants can read person fact claims with optional evidence and decisions, and pins. Claims and included evidence can contain sensitive content. The pin and tracking writes require `--allow-person-fact-writes` and confirmation for each call; tracking has no revision guard. HTTP writes also need the general write opt-in and protocol `2026-07-28` or newer.

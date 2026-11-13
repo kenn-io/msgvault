@@ -60,33 +60,24 @@ func TestPersonFactNativeDiagnosticsAndPin(t *testing.T) {
 	}, nil)
 	requirements.NoError(err)
 
-	rows, err := st.ListPersonFactEvidenceContext(t.Context(), id, personfacts.EvidenceFilter{})
+	result, err := backend.ExecuteOperation(t.Context(), "list_person_fact_claims", map[string]any{"person_id": id, "limit": 1, "include_evidence": true, "include_decisions": true})
 	requirements.NoError(err)
-	requirements.Len(rows, 1)
-	_, err = st.ApplyPersonFactGenerationContext(t.Context(), personfacts.GenerationInput{
-		PersonID: id, SourceCursors: []personfacts.SourceCursor{{Lane: "fixture-status", Start: "off", End: "off-end"}},
-		ProgramID: "fixture", ProgramVersion: "v1", ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "fixture", Provider: "fixture", ProviderVersion: "v1", ResolvedAt: now.Add(time.Minute),
-		Policy:                personfacts.PolicyContext{ProviderPolicyFingerprint: "fixture"},
-		EvidenceStatusChanges: []personfacts.EvidenceStatusChange{{EvidenceKey: rows[0].Key, SourceVersion: "v1", Supported: false, Reason: personfacts.EvidenceStatusSourceDeleted}},
-	}, nil)
+	requirements.False(result.IsError)
+	output := operationOutput[mcpserver.PersonFactClaimsOutput](t, result)
+	assertions.Len(output.Claims, 1)
+	assertions.Len(output.Evidence, 1)
+	assertions.Len(output.Decisions, 1)
+	result, err = backend.ExecuteOperation(t.Context(), "list_person_fact_claims", map[string]any{"person_id": id})
 	requirements.NoError(err)
-	for _, name := range []string{"list_person_fact_evidence", "list_person_fact_status_events", "list_person_fact_claims", "list_person_fact_decisions"} {
-		result, err := backend.ExecuteOperation(t.Context(), name, map[string]any{"person_id": id, "limit": 1, "offset": 0})
-		requirements.NoError(err)
-		requirements.False(result.IsError, name)
-		switch name {
-		case "list_person_fact_evidence":
-			assertions.Len(operationOutput[generated.PersonFactEvidenceResponse](t, result).Evidence, 1)
-		case "list_person_fact_status_events":
-			events := operationOutput[generated.PersonFactEvidenceStatusEventsResponse](t, result).Events
-			requirements.Len(events, 1)
-			assertions.Equal(rows[0].Key, events[0].EvidenceKey)
-		case "list_person_fact_claims":
-			assertions.Len(operationOutput[generated.PersonFactClaimsResponse](t, result).Claims, 1)
-		case "list_person_fact_decisions":
-			assertions.Len(operationOutput[generated.PersonFactDecisionsResponse](t, result).Decisions, 1)
-		}
-	}
+	data, err := json.Marshal(result.Output)
+	requirements.NoError(err)
+	assertions.NotContains(string(data), `"evidence"`)
+	assertions.NotContains(string(data), `"decisions"`)
+	result, err = backend.ExecuteOperation(t.Context(), "list_person_fact_claims", map[string]any{"person_id": id, "offset": 100, "include_evidence": true})
+	requirements.NoError(err)
+	data, err = json.Marshal(result.Output)
+	requirements.NoError(err)
+	assertions.Contains(string(data), `"evidence":[]`)
 	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), true)
 	requirements.NoError(err)
 	var employment personfacts.TargetDescriptor
@@ -138,9 +129,6 @@ func TestPersonFactTrackingAndRefusals(t *testing.T) {
 	state, err := st.GetPersonTrackingContext(t.Context(), id)
 	requirements.NoError(err)
 	assertions.False(state.Tracked)
-	result, err = backend.ExecuteOperation(t.Context(), "get_person_tracking", map[string]any{"person_id": id})
-	requirements.NoError(err)
-	assertions.False(operationOutput[generated.PersonTracking](t, result).Tracked)
 
 	for _, key := range []string{"", " k"} {
 		_, err := backend.OperationDisclosure(t.Context(), "set_person_fact_pin", map[string]any{"person_id": id, "kind": "attribute", "key": key, "pinned": true})
@@ -177,12 +165,6 @@ func TestPersonFactTrackingAndRefusals(t *testing.T) {
 	data, err = json.Marshal(result.Output)
 	requirements.NoError(err)
 	assertions.JSONEq(`{"error":"invalid_fact_target","operation_may_have_completed":false}`, string(data))
-	result, err = backend.ExecuteOperation(t.Context(), "get_person_tracking", map[string]any{"person_id": 999999})
-	requirements.NoError(err)
-	requirements.True(result.IsError)
-	data, err = json.Marshal(result.Output)
-	requirements.NoError(err)
-	assertions.JSONEq(`{"error":"person_profile_not_found","operation_may_have_completed":false}`, string(data))
 
 	for _, tc := range []struct {
 		name   string
@@ -219,7 +201,7 @@ func TestPersonFactCapabilitiesRequireExactContracts(t *testing.T) {
 		id, removed, name string
 		query             bool
 	}{
-		{"listPersonFactEvidence", "target", "list_person_fact_evidence", true},
+		{"listPersonFactEvidence", "target", "list_person_fact_claims", true},
 		{"setPersonFactPin", "pinned", "set_person_fact_pin", false},
 	} {
 		copyCaps := *caps
@@ -252,27 +234,6 @@ func TestPersonFactCapabilitiesRequireExactContracts(t *testing.T) {
 	}
 }
 
-func TestPersonFactEmploymentPinAndSensitiveTargets(t *testing.T) {
-	requirements := require.New(t)
-	backend, st, _, _ := factFixture(t)
-	description := "Synthetic sensitive fact"
-	definition, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: "test-sensitive", ObjectType: store.AttributeObjectPerson, Slug: "test_sensitive", Label: "Synthetic sensitive", Description: &description, ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, UICreatable: true, UIEditable: true, APIMutable: true, IsAudited: true, IsDeletable: true})
-	requirements.NoError(err)
-	sensitive := true
-	_, err = st.UpdateAttributeDefinitionContext(t.Context(), definition.ID, definition.Revision, store.AttributeDefinitionUpdate{IsSensitive: &sensitive})
-	requirements.NoError(err)
-	for _, tc := range []struct {
-		args map[string]any
-		want bool
-	}{{nil, false}, {map[string]any{"include_sensitive": false}, false}, {map[string]any{"include_sensitive": true}, true}} {
-		result, err := backend.ExecuteOperation(t.Context(), "list_person_fact_targets", tc.args)
-		requirements.NoError(err)
-		requirements.False(result.IsError)
-		got := operationOutput[generated.Catalog](t, result)
-		assert.Equal(t, tc.want, slices.ContainsFunc(got.Targets, func(target generated.TargetDescriptor) bool { return target.Sensitive }))
-	}
-}
-
 func TestPersonFactSDKConfirmsEachTrackingWrite(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -289,10 +250,18 @@ func TestPersonFactSDKConfirmsEachTrackingWrite(t *testing.T) {
 		}
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
-	read, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_person_tracking", Arguments: map[string]any{"person_id": id}})
+	read, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "include_evidence": true, "include_decisions": true}})
 	requirements.NoError(err)
 	requirements.False(read.IsError)
-	assertions.NotNil(read.StructuredContent)
+	data, err := json.Marshal(read.StructuredContent)
+	requirements.NoError(err)
+	assertions.JSONEq(`{"claims":[],"evidence":[],"decisions":[]}`, string(data))
+	read, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id}})
+	requirements.NoError(err)
+	requirements.False(read.IsError)
+	data, err = json.Marshal(read.StructuredContent)
+	requirements.NoError(err)
+	assertions.JSONEq(`{"claims":[]}`, string(data))
 	for _, tracked := range []bool{false, true} {
 		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_tracking", Arguments: map[string]any{"person_id": id, "tracked": tracked}})
 		requirements.NoError(err)

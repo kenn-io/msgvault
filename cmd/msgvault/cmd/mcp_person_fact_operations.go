@@ -19,17 +19,15 @@ func personFactMCPCapabilities(has mcpRouteCheck, caps *apiprotocol.MCPCapabilit
 		query                  []string
 		body                   string
 	}{
-		{"list_person_fact_targets", "listPersonFactTargets", "GET", "/api/v1/person-fact-targets", []string{"include_sensitive"}, ""},
-		{"list_person_fact_evidence", "listPersonFactEvidence", "GET", "/api/v1/people/{id}/fact-evidence", []string{"target", "limit", "offset"}, ""},
-		{"list_person_fact_status_events", "listPersonFactEvidenceStatusEvents", "GET", "/api/v1/people/{id}/fact-evidence-status-events", []string{"evidence_key", "supported", "limit", "offset"}, ""},
 		{"list_person_fact_claims", "listPersonFactClaims", "GET", "/api/v1/people/{id}/fact-claims", []string{"target", "limit", "offset"}, ""},
-		{"list_person_fact_decisions", "listPersonFactDecisions", "GET", "/api/v1/people/{id}/fact-decisions", []string{"target", "limit", "offset"}, ""},
 		{"list_person_fact_pins", "listPersonFactPins", "GET", "/api/v1/people/{id}/fact-pins", nil, ""},
-		{"get_person_tracking", "getPersonTracking", "GET", "/api/v1/people/{id}/tracking", nil, ""},
 		{"set_person_fact_pin", "setPersonFactPin", "PUT", "/api/v1/people/{id}/fact-pins/{kind}/{key}", nil, "pinned"},
 		{"set_person_tracking", "setPersonTracking", "PUT", "/api/v1/people/{id}/tracking", nil, "tracked"},
 	} {
-		if has(r.id, r.method, r.path, r.query...) && (r.body == "" || mcpRequestPropertiesPresent(caps, r.id, r.body)) {
+		if has(r.id, r.method, r.path, r.query...) &&
+			(r.body == "" || mcpRequestPropertiesPresent(caps, r.id, r.body)) &&
+			(r.name != "list_person_fact_claims" || (has("listPersonFactEvidence", "GET", "/api/v1/people/{id}/fact-evidence", "target", "limit", "offset") &&
+				has("listPersonFactDecisions", "GET", "/api/v1/people/{id}/fact-decisions", "target", "limit", "offset"))) {
 			names = append(names, r.name)
 		}
 	}
@@ -41,9 +39,8 @@ type factArgs struct {
 	Limit            *int64  `json:"limit,omitempty"`
 	Offset           *int64  `json:"offset,omitempty"`
 	Target           *string `json:"target,omitempty"`
-	EvidenceKey      *string `json:"evidence_key,omitempty"`
-	Supported        *bool   `json:"supported,omitempty"`
-	IncludeSensitive *bool   `json:"include_sensitive,omitempty"`
+	IncludeEvidence  bool    `json:"include_evidence,omitempty"`
+	IncludeDecisions bool    `json:"include_decisions,omitempty"`
 	Kind             string  `json:"kind"`
 	Key              string  `json:"key"`
 	Pinned           *bool   `json:"pinned"`
@@ -63,46 +60,43 @@ func (b *daemonMCPOperations) executePersonFactOperation(ctx context.Context, na
 		return operationFailure("invalid_arguments", false), true, nil
 	}
 	switch name {
-	case "list_person_fact_targets":
-		a, e := decodeMCPOperationArguments[factArgs](args)
-		if e != nil {
-			return invalid()
-		}
-		r, e := readMCPOperationJSONWithClassifier[generated.Catalog](ctx, b.client, http.MethodGet, "/api/v1/person-fact-targets", &generated.ListPersonFactTargetsRequestOptions{Query: &generated.ListPersonFactTargetsQuery{IncludeSensitive: a.IncludeSensitive}}, factClassify, http.StatusOK)
-		return r, true, e
-	case "list_person_fact_evidence", "list_person_fact_claims", "list_person_fact_decisions":
+	case "list_person_fact_claims":
 		a, e := decodeMCPOperationArguments[factArgs](args)
 		if e != nil || !validLoopID(a.PersonID) {
 			return invalid()
 		}
-		switch name {
-		case "list_person_fact_evidence":
-			r, e := readMCPOperationJSONWithClassifier[generated.PersonFactEvidenceResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-evidence", &generated.ListPersonFactEvidenceRequestOptions{PathParams: &generated.ListPersonFactEvidencePath{ID: a.PersonID}, Query: &generated.ListPersonFactEvidenceQuery{Target: a.Target, Limit: a.Limit, Offset: a.Offset}}, factClassify, http.StatusOK)
-			return r, true, e
-		case "list_person_fact_claims":
-			r, e := readMCPOperationJSONWithClassifier[generated.PersonFactClaimsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-claims", &generated.ListPersonFactClaimsRequestOptions{PathParams: &generated.ListPersonFactClaimsPath{ID: a.PersonID}, Query: &generated.ListPersonFactClaimsQuery{Target: a.Target, Limit: a.Limit, Offset: a.Offset}}, factClassify, http.StatusOK)
-			return r, true, e
-		default:
-			r, e := readMCPOperationJSONWithClassifier[generated.PersonFactDecisionsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-decisions", &generated.ListPersonFactDecisionsRequestOptions{PathParams: &generated.ListPersonFactDecisionsPath{ID: a.PersonID}, Query: &generated.ListPersonFactDecisionsQuery{Target: a.Target, Limit: a.Limit, Offset: a.Offset}}, factClassify, http.StatusOK)
+		r, e := readMCPOperationJSONWithClassifier[generated.PersonFactClaimsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-claims", &generated.ListPersonFactClaimsRequestOptions{PathParams: &generated.ListPersonFactClaimsPath{ID: a.PersonID}, Query: &generated.ListPersonFactClaimsQuery{Target: a.Target, Limit: a.Limit, Offset: a.Offset}}, factClassify, http.StatusOK)
+		if e != nil || r.IsError {
 			return r, true, e
 		}
-	case "list_person_fact_status_events":
+		out := mcpserver.PersonFactClaimsOutput{Claims: r.Output.(generated.PersonFactClaimsResponse).Claims}
+		if a.IncludeEvidence {
+			r, e = readMCPOperationJSONWithClassifier[generated.PersonFactEvidenceResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-evidence", &generated.ListPersonFactEvidenceRequestOptions{PathParams: &generated.ListPersonFactEvidencePath{ID: a.PersonID}, Query: &generated.ListPersonFactEvidenceQuery{Target: a.Target, Limit: a.Limit, Offset: a.Offset}}, factClassify, http.StatusOK)
+			if e != nil || r.IsError {
+				return r, true, e
+			}
+			out.Evidence = r.Output.(generated.PersonFactEvidenceResponse).Evidence
+			if out.Evidence == nil {
+				out.Evidence = []generated.PersonFactEvidence{}
+			}
+		}
+		if a.IncludeDecisions {
+			r, e = readMCPOperationJSONWithClassifier[generated.PersonFactDecisionsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-decisions", &generated.ListPersonFactDecisionsRequestOptions{PathParams: &generated.ListPersonFactDecisionsPath{ID: a.PersonID}, Query: &generated.ListPersonFactDecisionsQuery{Target: a.Target, Limit: a.Limit, Offset: a.Offset}}, factClassify, http.StatusOK)
+			if e != nil || r.IsError {
+				return r, true, e
+			}
+			out.Decisions = r.Output.(generated.PersonFactDecisionsResponse).Decisions
+			if out.Decisions == nil {
+				out.Decisions = []generated.PersonFactDecision{}
+			}
+		}
+		return &mcpserver.OperationResult{Output: out}, true, nil
+	case "list_person_fact_pins":
 		a, e := decodeMCPOperationArguments[factArgs](args)
 		if e != nil || !validLoopID(a.PersonID) {
 			return invalid()
 		}
-		r, e := readMCPOperationJSONWithClassifier[generated.PersonFactEvidenceStatusEventsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-evidence-status-events", &generated.ListPersonFactEvidenceStatusEventsRequestOptions{PathParams: &generated.ListPersonFactEvidenceStatusEventsPath{ID: a.PersonID}, Query: &generated.ListPersonFactEvidenceStatusEventsQuery{EvidenceKey: a.EvidenceKey, Supported: a.Supported, Limit: a.Limit, Offset: a.Offset}}, factClassify, http.StatusOK)
-		return r, true, e
-	case "list_person_fact_pins", "get_person_tracking":
-		a, e := decodeMCPOperationArguments[factArgs](args)
-		if e != nil || !validLoopID(a.PersonID) {
-			return invalid()
-		}
-		if name == "list_person_fact_pins" {
-			r, e := readMCPOperationJSONWithClassifier[generated.PersonFactPinsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-pins", &generated.ListPersonFactPinsRequestOptions{PathParams: &generated.ListPersonFactPinsPath{ID: a.PersonID}}, factClassify, http.StatusOK)
-			return r, true, e
-		}
-		r, e := readMCPOperationJSONWithClassifier[generated.PersonTracking](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/tracking", &generated.GetPersonTrackingRequestOptions{PathParams: &generated.GetPersonTrackingPath{ID: a.PersonID}}, factClassify, http.StatusOK)
+		r, e := readMCPOperationJSONWithClassifier[generated.PersonFactPinsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-pins", &generated.ListPersonFactPinsRequestOptions{PathParams: &generated.ListPersonFactPinsPath{ID: a.PersonID}}, factClassify, http.StatusOK)
 		return r, true, e
 	case "set_person_fact_pin":
 		a, e := decodeMCPOperationArguments[factArgs](args)

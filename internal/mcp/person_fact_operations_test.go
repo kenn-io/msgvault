@@ -10,13 +10,13 @@ import (
 func TestPersonFactCatalogOwnerCapabilitiesAndWriteGate(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	names := []string{"list_person_fact_targets", "list_person_fact_evidence", "list_person_fact_status_events", "list_person_fact_claims", "list_person_fact_decisions", "list_person_fact_pins", "get_person_tracking", "set_person_fact_pin", "set_person_tracking"}
+	names := []string{"list_person_fact_claims", "list_person_fact_pins", "set_person_fact_pin", "set_person_tracking"}
 	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: names}
 	reads := toolsByName(t, rawListTools(t, opts, true))
-	for _, name := range names[:7] {
+	for _, name := range names[:2] {
 		assertions.Contains(reads, name)
 	}
-	for _, name := range names[7:] {
+	for _, name := range names[2:] {
 		assertions.NotContains(reads, name)
 	}
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyRecords}
@@ -33,6 +33,6 @@ func TestPersonFactCatalogOwnerCapabilitiesAndWriteGate(t *testing.T) {
 		assertions.Contains(tools, name)
 	}
 	assertions.NotContains(toolsByName(t, rawListTools(t, opts, false)), "set_person_tracking")
-	opts.OperationCapabilities = []string{"get_person_tracking"}
+	opts.OperationCapabilities = []string{"list_person_fact_claims"}
 	assertions.NotContains(toolsByName(t, rawListTools(t, opts, true)), "set_person_tracking")
 }

@@ -5,30 +5,25 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+type PersonFactClaimsOutput struct {
+	Claims    []generated.PersonFactClaim    `json:"claims"`
+	Evidence  []generated.PersonFactEvidence `json:"evidence,omitzero"`
+	Decisions []generated.PersonFactDecision `json:"decisions,omitzero"`
+}
+
 func personFactOperationalDefinitions() []operationalDefinition {
-	page := func(status bool, maximum float64) *jsonschema.Schema {
-		p := map[string]*jsonschema.Schema{"person_id": safeIDSchema("Durable person ID"), "limit": boundedIntegerSchema("Maximum rows (default 50)", 1, maximum), "offset": nonNegativeIntegerSchema("Zero-based row offset", 0)}
-		if status {
-			p["evidence_key"] = stringSchema("Exact evidence key")
-			p["supported"] = booleanSchema("Filter by support state")
-		} else {
-			p["target"] = stringSchema("Exact target as kind:key:sha256:<64 lowercase hex characters>, assembled from kind:key:revision in list_person_fact_targets; keys may contain colons")
-		}
-		return closedObject(p, "person_id")
-	}
-	person := func() *jsonschema.Schema {
-		return closedObject(map[string]*jsonschema.Schema{"person_id": safeIDSchema("Durable person ID")}, "person_id")
-	}
 	tracking := newOperationalDefinition("set_person_tracking", "Replace the person's tracking state. This native operation has no revision guard. Requires confirmation.", OperationFamilyPersonFacts, closedObject(map[string]*jsonschema.Schema{"person_id": safeIDSchema("Durable person ID"), "tracked": booleanSchema("Desired tracking state")}, "person_id", "tracked"), outputSchemaFor[generated.PersonTracking](), true)
 	tracking.definition.annotations.OpenWorldHint = new(true)
 	return []operationalDefinition{
-		newOperationalDefinition("list_person_fact_targets", "List automatic fact targets. Set include_sensitive explicitly to include sensitive targets.", OperationFamilyPersonFacts, closedObject(map[string]*jsonschema.Schema{"include_sensitive": booleanSchema("Include sensitive targets")}), outputSchemaFor[generated.Catalog](), false),
-		newOperationalDefinition("list_person_fact_evidence", "Read up to 50 rows of person fact evidence, including excerpts and rows for sensitive targets.", OperationFamilyPersonFacts, page(false, 50), outputSchemaFor[generated.PersonFactEvidenceResponse](), false),
-		newOperationalDefinition("list_person_fact_status_events", "Read a bounded page of evidence status events.", OperationFamilyPersonFacts, page(true, 200), outputSchemaFor[generated.PersonFactEvidenceStatusEventsResponse](), false),
-		newOperationalDefinition("list_person_fact_claims", "Read a bounded page of fact claims and values, including rows for sensitive targets.", OperationFamilyPersonFacts, page(false, 200), outputSchemaFor[generated.PersonFactClaimsResponse](), false),
-		newOperationalDefinition("list_person_fact_decisions", "Read a bounded page of fact resolution decisions.", OperationFamilyPersonFacts, page(false, 200), outputSchemaFor[generated.PersonFactDecisionsResponse](), false),
-		newOperationalDefinition("list_person_fact_pins", "Read effective person fact pins.", OperationFamilyPersonFacts, person(), outputSchemaFor[generated.PersonFactPinsResponse](), false),
-		newOperationalDefinition("get_person_tracking", "Read the person's explicit tracking state.", OperationFamilyPersonFacts, person(), outputSchemaFor[generated.PersonTracking](), false),
+		newOperationalDefinition("list_person_fact_claims", "Read fact claims, optionally including evidence and decisions. Claims and evidence can contain sensitive content.", OperationFamilyPersonFacts, closedObject(map[string]*jsonschema.Schema{
+			"person_id":         safeIDSchema("Durable person ID"),
+			"target":            stringSchema("Exact target as kind:key:revision, assembled from a claim's target; keys may contain colons"),
+			"limit":             boundedIntegerSchema("Maximum rows per list (default 50)", 1, 200),
+			"offset":            nonNegativeIntegerSchema("Zero-based row offset per list", 0),
+			"include_evidence":  booleanSchema("Include a page of evidence"),
+			"include_decisions": booleanSchema("Include a page of decisions"),
+		}, "person_id"), outputSchemaFor[PersonFactClaimsOutput](), false),
+		newOperationalDefinition("list_person_fact_pins", "Read effective person fact pins.", OperationFamilyPersonFacts, closedObject(map[string]*jsonschema.Schema{"person_id": safeIDSchema("Durable person ID")}, "person_id"), outputSchemaFor[generated.PersonFactPinsResponse](), false),
 		newOperationalDefinition("set_person_fact_pin", "Set or clear an attribute or employment fact pin against the current native target. Requires the person to be tracked and confirmation.", OperationFamilyPersonFacts, closedObject(map[string]*jsonschema.Schema{"person_id": safeIDSchema("Durable person ID"), "kind": {Type: "string", Enum: []any{"attribute", "employment"}}, "key": stringSchema("Exact active target key"), "pinned": booleanSchema("Desired pin state")}, "person_id", "kind", "key", "pinned"), outputSchemaFor[generated.PersonFactPinWrite](), true),
 		tracking,
 	}
