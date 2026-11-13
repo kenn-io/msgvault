@@ -1653,8 +1653,8 @@ msgvault source facebook-messages add [identifier]
 ## source facebook-messages sync
 
 Archive the Page's Messenger conversations as chats, with up to the 20 most
-recent messages of each (unreleased). An unfinished run resumes next time;
-`--full` restarts from the most recent conversations without deleting rows.
+recent messages of each (unreleased). `--full` restarts from the most recent
+conversations.
 
 ```bash
 msgvault source facebook-messages sync [identifier] [--max-requests 1000] [--full]

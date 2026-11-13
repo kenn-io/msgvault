@@ -68,7 +68,6 @@ type InboxParticipant struct {
 	ID       string `json:"id"`
 	Name     string `json:"name,omitempty"`
 	Username string `json:"username,omitempty"`
-	Email    string `json:"email,omitempty"`
 }
 
 // InboxMessage is one message as polling reads it.
@@ -116,11 +115,6 @@ func (c *Client) InboxConversations(ctx context.Context, page, platform, after s
 	}
 	out := InboxConversationPage{After: got.After}
 	for _, v := range got.Data {
-		for _, m := range v.Messages.Data {
-			if !safeObjectID(m.ID) {
-				return InboxConversationPage{}, errors.New("invalid Graph message identity")
-			}
-		}
 		out.Data = append(out.Data, InboxConversation{ID: v.ID, Participants: v.Participants.Data, Messages: v.Messages.Data})
 	}
 	return out, nil
@@ -255,7 +249,7 @@ func (b Inbox) oneToOne(c InboxConversation) (owner, customer InboxParticipant, 
 	if customer.ID == b.owner() {
 		owner, customer = customer, owner
 	}
-	return owner, customer, owner.ID == b.owner() && customer.ID != owner.ID && safeObjectID(customer.ID)
+	return owner, customer, owner.ID == b.owner()
 }
 
 // Import archives inbox conversations one page of up to 25 at a time, each
@@ -284,9 +278,7 @@ func (imp *InboxImporter) Import(ctx context.Context, b Inbox, opts ImportOption
 				continue
 			}
 			for _, msg := range conversation.Messages {
-				// A message without text is an attachment, sticker or like.
-				// Only text is archived, and an archived message that comes
-				// back without text keeps the text it had.
+				// An attachment, sticker or like; only text is archived.
 				if msg.Message == "" {
 					continue
 				}

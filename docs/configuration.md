@@ -1678,11 +1678,8 @@ Select a Page's Messenger inbox or a linked Instagram account's inbox
 (unreleased). See [Facebook and Instagram messages](usage/meta-messages.md).
 `[[facebook_messages]]` takes the keys and rules of
 [`[[facebook_comments]]`](#facebook-comments), and `[[instagram_messages]]`
-those of [`[[instagram_comments]]`](#instagram-comments). Neither accepts
-`actions`, and `[[instagram_messages]]` does not accept `mentions`; both keys
-apply to comments only.
-Each section is checked separately, so the same Page can have a comments
-profile and a messages profile. Scheduled jobs are
+those of [`[[instagram_comments]]`](#instagram-comments), except `actions`
+and `mentions`. Scheduled jobs are
 `facebook_messages:<source-identifier>` and
 `instagram_messages:<source-identifier>`.
 
