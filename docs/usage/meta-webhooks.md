@@ -103,5 +103,5 @@ archives a skipped new or edited comment when it reads that comment.
 - A hide or unhide for a comment that is not archived yet is ignored. Polling
   sync does not read hidden state, so that comment is not marked hidden.
 - Deliveries larger than 8 MiB are refused.
-- If a resumed comment sync fails on a comment that was deleted and then
-  purged by `msgvault gc`, run the sync once with `--full`.
+- If a resumed comment sync fails on a comment or post that was deleted, for
+  example one purged by `msgvault gc`, run the sync once with `--full`.
