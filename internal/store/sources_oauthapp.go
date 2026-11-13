@@ -35,7 +35,7 @@ func (s *Store) RegisterMicrosoftMail(ctx context.Context, source *Source, sourc
 			}
 		}
 		if syncConfig != "" {
-			if err := s.updateSourceIdentifierTx(ctx, tx, source.ID, identifier, &pending); err != nil {
+			if _, err := s.updateSourceIdentifierTx(ctx, tx, source.ID, identifier, &pending); err != nil {
 				return err
 			}
 			_, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE sources SET sync_config = %s, oauth_app = ?, updated_at = %s WHERE id = ?`, s.dialect.JSONBindExpr(), s.dialect.Now()), syncConfig, oauthApp, source.ID)

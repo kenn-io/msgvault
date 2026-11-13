@@ -104,7 +104,7 @@ func (s *Store) MergeSourcesContext(ctx context.Context, req MergeSourcesRequest
 	if previous, recorded, err := s.sourceMergeRecorded(ctx, req); recorded || err != nil {
 		return previous, err
 	}
-	retErr = s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+	retErr = s.runConversationPolicyMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		// Serialized source removal takes the identity lock before its table
 		// locks. Keep the same order before locking either source row here.
 		if s.sourceMergeBeforeIdentityLockHook != nil {
@@ -170,6 +170,10 @@ func (s *Store) MergeSourcesContext(ctx context.Context, req MergeSourcesRequest
 		if req.DryRun {
 			return nil
 		}
+		policyState, err := s.captureSourceConversationPolicyTx(ctx, tx, req.FromSourceID, req.IntoSourceID)
+		if err != nil {
+			return err
+		}
 		if err := s.applySourceMergePlan(ctx, tx, req.FromSourceID, req.IntoSourceID, plan); err != nil {
 			return fmt.Errorf("transfer source archive: %w", err)
 		}
@@ -204,6 +208,26 @@ func (s *Store) MergeSourcesContext(ctx context.Context, req MergeSourcesRequest
    VALUES (?, TRUE, ?, `+s.dialect.Now()+`) ON CONFLICT (source_id) DO UPDATE SET
    history_only = TRUE, merged_into_source_id = excluded.merged_into_source_id, retired_at = excluded.retired_at`, req.FromSourceID, req.IntoSourceID); err != nil {
 			return fmt.Errorf("retire merged source: %w", err)
+		}
+		for _, sourceID := range []int64{req.FromSourceID, req.IntoSourceID} {
+			if err := s.markSourceConversationPolicyActivityDirtyTx(ctx, tx, sourceID); err != nil {
+				return err
+			}
+		}
+		if err := s.finishConversationPolicyLifecycleTx(ctx, tx, policyState); err != nil {
+			return err
+		}
+		bindingsCleared, err := s.clearIneligibleProviderBindingsForSourceMergeTx(ctx, tx, req.IntoSourceID)
+		if err != nil {
+			return err
+		}
+		if bindingsCleared {
+			if err := s.reconcileCurrentObservationIdentityMatchesTxContext(ctx, tx); err != nil {
+				return fmt.Errorf("reconcile observations after source merge provider binding cleanup: %w", err)
+			}
+			if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
+				return err
+			}
 		}
 		encoded, err := json.Marshal(result)
 		if err != nil {

@@ -494,7 +494,7 @@ func (e *DuckDBEngine) listConversationMessages(
 		direct_sender AS (
 			SELECT msg.id AS message_id,
 				COALESCE(p.email_address, '') AS from_email,
-				`+directSenderNameExpr("p", "")+` AS from_name,
+				`+directSenderNameExpr()+` AS from_name,
 				COALESCE(p.phone_number, '') AS from_phone
 			FROM msg
 			JOIN filtered_msgs fm ON fm.id = msg.id
@@ -526,7 +526,7 @@ func (e *DuckDBEngine) listConversationMessages(
 		LEFT JOIN direct_sender ds ON ds.message_id = msg.id
 		LEFT JOIN conv c ON c.id = msg.conversation_id
 		ORDER BY msg.sent_at %s, msg.id %s
-	`, e.parquetCTEs(), where, direction, direction, direction, direction)
+	`, e.archivalParquetCTEs(), where, direction, direction, direction, direction)
 
 	args = append(args, limit, filter.Pagination.Offset)
 

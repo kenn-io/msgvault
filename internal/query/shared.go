@@ -123,8 +123,9 @@ func xUserIDExpr(alias, prefix string) string {
 	return "(SELECT pi.identifier_value FROM " + prefix + "participant_identifiers pi WHERE pi.participant_id = " + alias + ".id AND pi.identifier_type = 'x_user' ORDER BY pi.identifier_value LIMIT 1)"
 }
 
-func directSenderNameExpr(alias, prefix string) string {
-	return "COALESCE(NULLIF(" + alias + ".display_name, ''), " + xUserIDExpr(alias, prefix) + ", '')"
+// directSenderNameExpr labels the direct sender participant p of a cache view.
+func directSenderNameExpr() string {
+	return "COALESCE(NULLIF(p.display_name, ''), " + xUserIDExpr("p", "") + ", '')"
 }
 
 // participantNameExpr returns the SQL expression for a participant's display
@@ -164,13 +165,6 @@ func recipientNameExprInSchema(mrAlias, pAlias, prefix string) string {
 		mrAlias, pAlias, pAlias, identityindex.SenderAddressExpr(mrAlias, pAlias), xUserIDExpr(pAlias, prefix),
 	)
 }
-
-// sqliteSenderNameExpr hydrates a message summary's FromName with the same
-// per-message display-name preference sender-name aggregation uses: the
-// message's own "from" recipient display_name (mr_from) wins over the
-// participant's sticky name, so drilling into a per-message sender-name bucket
-// shows the same name the bucket was keyed by. Pairs with sqliteSenderJoin.
-var sqliteSenderNameExpr = recipientNameExpr("mr_from", "p_sender")
 
 // sqliteSenderJoin binds a message's first "from" recipient row (mr_from) and
 // the resolved sender participant (p_sender), falling back to the direct
@@ -264,18 +258,24 @@ func fetchParticipantsForMessageList(ctx context.Context, db store.SQLReader, re
 		placeholders[i] = "?"
 		idToIndex[msg.ID] = i
 	}
+	addressExpr := `COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), '')`
+	nameExpr := recipientNameExprInSchema("mr", "p", tablePrefix)
+	if tablePrefix == "" {
+		addressExpr = `COALESCE(NULLIF(` + eligibleParticipantEmailExpr("p") + `, ''), NULLIF(` + eligibleParticipantPhoneExpr("p") + `, ''), '')`
+		nameExpr = eligibleRecipientNameExpr("mr", "p")
+	}
 
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
 		SELECT mr.message_id,
 		       mr.recipient_type,
-		       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
+		       %s,
 		       %s
 		FROM %smessage_recipients mr
 		JOIN %sparticipants p ON p.id = mr.participant_id
 		WHERE mr.message_id IN (%s)
 		  AND mr.recipient_type IN ('to', 'cc', 'bcc')
 		ORDER BY mr.message_id, mr.id
-	`, recipientNameExprInSchema("mr", "p", tablePrefix), tablePrefix, tablePrefix, strings.Join(placeholders, ","))), ids...)
+	`, addressExpr, nameExpr, tablePrefix, tablePrefix, strings.Join(placeholders, ","))), ids...)
 	if err != nil {
 		return err
 	}

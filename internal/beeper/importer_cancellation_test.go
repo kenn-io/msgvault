@@ -25,6 +25,7 @@ type cancelOnLogHandler struct {
 	mu          sync.Mutex
 	cancel      context.CancelFunc
 	cancelWhen  func(slog.Record) bool
+	cancelIf    func() bool
 	cancelAt    int
 	events      int
 	canceled    bool
@@ -45,7 +46,7 @@ func (h *cancelOnLogHandler) Handle(_ context.Context, record slog.Record) error
 	}
 	if h.cancelWhen(record) {
 		h.events++
-		if h.events == h.cancelAt {
+		if (h.cancelIf != nil && h.cancelIf()) || (h.cancelIf == nil && h.events == h.cancelAt) {
 			h.cancel()
 			h.canceled = true
 		}
@@ -75,6 +76,15 @@ func installCancelOnLog(
 	previous := slog.Default()
 	slog.SetDefault(slog.New(handler))
 	t.Cleanup(func() { slog.SetDefault(previous) })
+	return handler
+}
+
+func installCancelWhenState(
+	t *testing.T, cancel context.CancelFunc, when func(slog.Record) bool, condition func() bool,
+) *cancelOnLogHandler {
+	t.Helper()
+	handler := installCancelOnLog(t, cancel, 0, when)
+	handler.cancelIf = condition
 	return handler
 }
 
@@ -115,8 +125,9 @@ func TestEnsureConversationCancellation(t *testing.T) {
 			participants := make([]map[string]any, 0, count)
 			for i := range count {
 				participants = append(participants, map[string]any{
-					"id":       fmt.Sprintf("@telegram_member%d:beeper.local", i),
-					"fullName": fmt.Sprintf("Member %d", i),
+					"id":          fmt.Sprintf("@telegram_member%d:beeper.local", i),
+					"fullName":    fmt.Sprintf("Member %d", i),
+					"phoneNumber": fmt.Sprintf("+1202555%04d", i),
 				})
 			}
 			chat := observationChat(
@@ -169,7 +180,8 @@ func TestEnsureConversationCancellation(t *testing.T) {
 				pid := participantForBeeperUser(t, st, participant.ID)
 				observations, err := st.ListParticipantObservationsContext(t.Context(), pid, true)
 				require.NoError(err)
-				if len(observations) > 0 {
+				if len(observationsOfKinds(observations,
+					store.ContactAddressEmail, store.ContactAddressPhone, store.ContactAddressUsername)) > 0 {
 					observed++
 				}
 			}
@@ -186,7 +198,10 @@ func TestEnsureConversationCancellation(t *testing.T) {
 				pid := participantForBeeperUser(t, st, participant.ID)
 				observations, err := st.ListParticipantObservationsContext(t.Context(), pid, true)
 				require.NoError(err)
-				assert.NotEmpty(observations, "a resumed import must enrich every member")
+				// Display names are observed before cancellation, so only the
+				// phone observation proves the resumed import enriched the member.
+				assert.NotEmpty(observationsOfKinds(observations, store.ContactAddressPhone),
+					"a resumed import must enrich every member")
 			}
 		})
 	}
@@ -194,9 +209,8 @@ func TestEnsureConversationCancellation(t *testing.T) {
 
 // serial: changes slog.Default and SQL logging.
 func TestEnsureConversationCancellationDuringMembership(t *testing.T) {
-	// Each member's resolution and membership commit are separate transactions.
-	for _, at := range []int{1, 2, 3, 4, 5} {
-		t.Run(fmt.Sprintf("begin %d", at), func(t *testing.T) {
+	for _, afterFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("after first member=%t", afterFirst), func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			st := testutil.NewTestStore(t)
 			sourceID := newBeeperTestSource(t, st, "telegram")
@@ -220,7 +234,14 @@ func TestEnsureConversationCancellationDuringMembership(t *testing.T) {
 			require.NoError(st.EnsureConversationParticipant(convID, oldID, "member"))
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			handler := installCancelOnLog(t, cancel, at, logMessage("sql tx begin"))
+			var handler *cancelOnLogHandler
+			if afterFirst {
+				handler = installCancelWhenState(t, cancel, logMessage("sql tx commit"), func() bool {
+					return len(rosterMembers(t, st, sourceID, "!cancel:example.com")) == 2
+				})
+			} else {
+				handler = installCancelOnLog(t, cancel, 1, logMessage("sql tx begin"))
+			}
 			_, complete, _, err := imp.ensureConversation(ctx, 0, sourceID, &Chat{
 				ID: "!cancel:example.com", Type: "group", Title: "Members", Network: "Telegram",
 				Participants: ChatParticipants{Items: participants},
@@ -230,7 +251,7 @@ func TestEnsureConversationCancellationDuringMembership(t *testing.T) {
 			assert.Zero(handler.afterCancel, "no later member or roster write may attempt BeginTx")
 			assert.Empty(handler.warnings)
 			want := []int64{oldID}
-			if at >= 5 {
+			if afterFirst {
 				want = append(want, firstID)
 			}
 			assert.Equal(want, rosterMembers(t, st, sourceID, "!cancel:example.com"))
@@ -259,8 +280,9 @@ func TestEnsureConversationCancellationDuringPartialRoster(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	// The fifth commit atomically writes the first member and its receipt.
-	handler := installCancelOnLog(t, cancel, 5, logMessage("sql tx commit"))
+	handler := installCancelWhenState(t, cancel, logMessage("sql tx commit"), func() bool {
+		return len(rosterMembers(t, st, sourceID, chatID)) == 1
+	})
 	sum := &ImportSummary{}
 	_, complete, _, err := imp.ensureConversation(ctx, syncID, sourceID, &Chat{
 		ID: chatID, Type: "group", Title: "Partial", Network: "Telegram",

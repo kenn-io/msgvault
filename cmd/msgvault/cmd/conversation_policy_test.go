@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestPolicyCommandsStageOverrides(t *testing.T) {
+func TestPolicyListReportsEnforcedState(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("beeper", "policy-cli-account")
@@ -22,6 +22,8 @@ func TestPolicyCommandsStageOverrides(t *testing.T) {
 	_, err = st.EnsureConversation(t.Context(), source.ID, "room", "Synthetic room")
 	requirements.NoError(err)
 	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.Data.DataDir = cfg.HomeDir
 	cfg.ConversationPolicy.Overrides = []conversationpolicy.Override{{SourceType: "beeper", SourceIdentifier: "policy-cli-account", ConversationID: "room", Tier: conversationpolicy.Full}}
 	var readOpens, writeOpens int
 	deps := conversationPolicyDeps{
@@ -42,7 +44,7 @@ func TestPolicyCommandsStageOverrides(t *testing.T) {
 		cmd.SetOut(&out)
 		cmd.SetErr(&out)
 		cmd.SetArgs(args)
-		err := cmd.ExecuteContext(t.Context())
+		err := cmd.ExecuteContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 		if err == nil {
 			if args[0] == "list" {
 				assertions.Equal(1, readOpens)
@@ -56,10 +58,11 @@ func TestPolicyCommandsStageOverrides(t *testing.T) {
 	}
 	out, err := run("set", "1", "room", "cold")
 	requirements.NoError(err)
-	assertions.Contains(out, "staged")
+	assertions.Contains(out, "enforced")
 	out, err = run("list")
 	requirements.NoError(err)
-	assertions.Contains(out, `"effective_tier":"full"`)
+	assertions.Contains(out, `"effective_tier":"cold"`)
+	assertions.Contains(out, `"staged":false`)
 	assertions.Contains(out, `"selected_override":"cold"`)
 	assertions.Contains(out, `"override_origin":"cli"`)
 	_, err = run("set", "1", "room", "stub")

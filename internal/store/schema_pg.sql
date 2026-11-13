@@ -1007,7 +1007,7 @@ CREATE TABLE IF NOT EXISTS person_fact_evidence_status_events (
     supported      BOOLEAN NOT NULL,
     reason         TEXT NOT NULL CHECK (reason IN (
                        'source-deleted', 'source-edited', 'scope-unlinked',
-                       'identity-reassigned', 'source-reimported', 'scope-relinked')),
+                       'identity-reassigned', 'source-reimported', 'scope-relinked', 'conversation-cold', 'conversation-full')),
     created_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(person_id, generation_id, evidence_key, source_version)
 );
@@ -1383,6 +1383,10 @@ CREATE TABLE IF NOT EXISTS messages (
     -- embeddings were last written for. NULL means "needs embedding"
     -- (new rows default to NULL). See schema.sql for the full contract.
     embed_gen BIGINT,
+
+    -- Per-message input revision stored independently from embed_gen so a
+    -- rebuild in another generation does not hide a current active vector.
+    embedding_revision BIGINT NOT NULL DEFAULT 0,
 
     -- Content-change watermark; see content_columns.go and schema.sql for the
     -- rationale. Stamped by the triggers EnsureTriggers creates, never by
@@ -3201,7 +3205,7 @@ CREATE INDEX IF NOT EXISTS idx_participant_observations_provider_user
 CREATE UNIQUE INDEX IF NOT EXISTS idx_participant_observations_identity
     ON participant_contact_observations(
         participant_id, source_id, address_kind, service_id, scope_kind, scope_value,
-        normalized_value
+        normalized_value, COALESCE(provider_user_id, ''), COALESCE(source_ref, '')
     ) WHERE active_until IS NULL AND superseded_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS identity_match_candidates (
@@ -3918,7 +3922,7 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
 
--- Staged chat policy. Missing rows remain full for backwards compatibility.
+-- Chat policy. Supported chat sources need a policy row for default search.
 CREATE TABLE IF NOT EXISTS conversation_policy (
  conversation_id BIGINT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
  effective_tier TEXT NOT NULL DEFAULT 'full' CHECK (effective_tier IN ('full','cold','stub','skip')),
@@ -4049,3 +4053,11 @@ CREATE TABLE IF NOT EXISTS meeting_copy_survivors (
     survivor_message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_meeting_copy_survivors_survivor ON meeting_copy_survivors(survivor_message_id);
+
+CREATE TABLE IF NOT EXISTS participant_contact_observation_conversations (
+ observation_id BIGINT NOT NULL REFERENCES participant_contact_observations(id) ON DELETE CASCADE,
+ conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+ PRIMARY KEY (observation_id, conversation_id)
+);
+CREATE INDEX IF NOT EXISTS idx_participant_observation_conversations_conversation
+ ON participant_contact_observation_conversations(conversation_id, observation_id);

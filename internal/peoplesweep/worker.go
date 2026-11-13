@@ -584,6 +584,11 @@ func (w *Worker) runPerson(
 	catalog personfacts.Catalog,
 	resolvedAt time.Time,
 ) (PersonRunResult, error) {
+	workCtx, err := w.capturePolicyWork(ctx, lease.PersonID)
+	if err != nil {
+		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
+	}
+	ctx = workCtx
 	plan, err := w.planPersonBrief(ctx, lease.PersonID, briefMode, profile, resolvedAt)
 	if err != nil {
 		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
@@ -681,18 +686,20 @@ func (w *Worker) runPerson(
 		return nil
 	}
 	// applyStatusOnly commits support changes under a renewed lease without
-	// advancing cursors, so the next packet reads the updated projection.
-	applyStatusOnly := func(envelope []GenerationCursor, changes []personfacts.EvidenceStatusChange) error {
+	// advancing cursors, so the next packet reads the updated projection. The
+	// returned context binds the person revision after this attempt's own write,
+	// because the packet built next reads that state.
+	applyStatusOnly := func(envelope []GenerationCursor, changes []personfacts.EvidenceStatusChange) (context.Context, error) {
 		sourceCursors, _, err := PersonFactSourceCursors(envelope)
 		if err != nil {
-			return w.finalizeFailure(ctx, lease, attemptID, nil, nil, err, resolvedAt)
+			return nil, w.finalizeFailure(ctx, lease, attemptID, nil, nil, err, resolvedAt)
 		}
 		renewed, err := w.Store.RenewPersonSweep(ctx, lease, w.Config.LeaseDuration)
 		if err != nil {
-			return w.finalizeFailure(ctx, lease, attemptID, nil, nil, err, resolvedAt)
+			return nil, w.finalizeFailure(ctx, lease, attemptID, nil, nil, err, resolvedAt)
 		}
 		if renewed == nil {
-			return w.finalizeFailure(ctx, lease, attemptID, nil, nil, ErrLeaseLost, resolvedAt)
+			return nil, w.finalizeFailure(ctx, lease, attemptID, nil, nil, ErrLeaseLost, resolvedAt)
 		}
 		applied, err := w.Sink.ApplyPersonSweepStatusOnly(ctx, StatusOnlyApplyRequest{
 			AttemptID: attemptID, Lease: *renewed, CompletedAt: w.now(), Generation: personfacts.GenerationInput{
@@ -707,10 +714,14 @@ func (w *Worker) runPerson(
 			},
 		})
 		if err != nil {
-			return w.finalizeFailure(ctx, *renewed, attemptID, nil, nil, err, resolvedAt)
+			return nil, w.finalizeFailure(ctx, *renewed, attemptID, nil, nil, err, resolvedAt)
 		}
 		lease = applied
-		return nil
+		refreshed, err := w.refreshPolicyWork(ctx, lease.PersonID)
+		if err != nil {
+			return nil, w.finalizeFailure(ctx, lease, attemptID, nil, nil, err, resolvedAt)
+		}
+		return refreshed, nil
 	}
 	if hasEvidenceRetraction(progress.EvidenceStatusChanges) && len(progress.Seeds) > 0 &&
 		len(catalog.Targets) > 0 {
@@ -723,9 +734,11 @@ func (w *Worker) runPerson(
 			if err := startAttempt(progress.CursorEnvelope); err != nil {
 				return PersonRunResult{}, err
 			}
-			if err := applyStatusOnly(progress.CursorEnvelope, progress.EvidenceStatusChanges); err != nil {
+			statusCtx, err := applyStatusOnly(progress.CursorEnvelope, progress.EvidenceStatusChanges)
+			if err != nil {
 				return PersonRunResult{}, err
 			}
+			ctx = statusCtx
 			refreshed, refreshErr := discoverAssembly(cursors, discoveryLimit, forcedBackstop)
 			if refreshErr != nil {
 				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, nil, nil, refreshErr, resolvedAt)
@@ -814,6 +827,10 @@ func (w *Worker) runPerson(
 			attemptEnvelopeHash = selectedHash
 		}
 	}
+	ctx, err = w.bindPolicyInputs(ctx, assembly.Batches)
+	if err != nil {
+		return PersonRunResult{}, failAttemptOrClaim(err)
+	}
 	if len(assembly.CursorEnvelope) == 0 {
 		if !plan.run {
 			// A queued brief can become ineligible while waiting to retry. With
@@ -852,9 +869,11 @@ func (w *Worker) runPerson(
 	// even when the evidence backs no current value. Brief packets read archive
 	// messages, so work without extraction keeps its single completion phase.
 	if len(assembly.Batches) > 0 && hasEvidenceRetraction(assembly.EvidenceStatusChanges) {
-		if err := applyStatusOnly(assembly.CursorEnvelope, assembly.EvidenceStatusChanges); err != nil {
+		statusCtx, err := applyStatusOnly(assembly.CursorEnvelope, assembly.EvidenceStatusChanges)
+		if err != nil {
 			return PersonRunResult{}, err
 		}
+		ctx = statusCtx
 		rebuilt, buildErr := buildAssembly(selectedCursors, progressLimit, forcedBackstop)
 		if buildErr != nil {
 			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, nil, nil, buildErr, resolvedAt)
@@ -958,6 +977,9 @@ func (w *Worker) runPerson(
 			marked := false
 			lease, response, runErr = w.runPreparedWithLeaseHeartbeat(ctx, lease,
 				func(markCtx context.Context) error {
+					if err := w.checkPolicyWork(markCtx); err != nil {
+						return err
+					}
 					if markErr := w.Store.MarkPersonSweepBudgetStarted(markCtx, call.reservation, lease); markErr != nil {
 						return markErr
 					}
@@ -1052,7 +1074,7 @@ func (w *Worker) runPerson(
 	var briefFailure FailureClass
 	if plan.run {
 		var fatal error
-		brief, briefFailure, lease, fatal = w.runBriefCall(ctx, briefCall{
+		ctx, brief, briefFailure, lease, fatal = w.runBriefCall(ctx, briefCall{
 			runID: runID, attemptID: attemptID, lease: lease, profile: profile,
 			catalog: catalog, resolvedAt: resolvedAt, plan: plan,
 			batchOrdinal: len(assembly.Batches),

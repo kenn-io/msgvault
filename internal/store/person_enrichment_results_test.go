@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/personfacts"
 )
@@ -1172,6 +1173,35 @@ func TestPersonEnrichmentResultRevokedConsentAfterPreparationIsPolicyTerminal(t 
 	checks.Equal(string(personenrichment.FailurePolicy), *attempt.FailureClass)
 	checks.Equal(int64(600), requireAttemptActualCost(t, attempt))
 	assertNoRefreshWork(t, f)
+}
+
+func TestPersonEnrichmentResultAfterUnrelatedPolicyChangeRecordsCharge(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	f := newEnrichmentResultFixture(t)
+	source, err := f.store.GetOrCreateSource("beeper", "unrelated-policy-account")
+	requirements.NoError(err)
+	_, err = f.store.EnsureConversation(t.Context(), source.ID, "unrelated-room", "Unrelated")
+	requirements.NoError(err)
+	// The worker captures the policy revision before the provider call.
+	work, err := f.store.CaptureConversationPolicyWork(t.Context())
+	requirements.NoError(err)
+	prepared, err := f.store.preparePersonEnrichmentCommit(work, f.commit)
+	requirements.NoError(err)
+	requirements.NoError(f.store.SetConversationPolicyOverride(
+		t.Context(), source.ID, "unrelated-room", conversationpolicy.Cold))
+
+	outcome, err := f.store.commitPreparedPersonEnrichmentResult(work, prepared)
+	requirements.NoError(err)
+	checks.Equal(personenrichment.ClaimPolicyRejected, outcome.Status)
+	checks.Nil(outcome.Generation)
+	assertNoEnrichmentResultSideEffects(t, f, false)
+	attempt, err := f.store.GetPersonEnrichmentAttemptContext(t.Context(), f.attempt.ID)
+	requirements.NoError(err)
+	checks.Equal("terminal", attempt.State)
+	requirements.NotNil(attempt.FailureClass)
+	checks.Equal(string(personenrichment.FailurePolicy), *attempt.FailureClass)
+	checks.Equal(int64(600), requireAttemptActualCost(t, attempt))
 }
 
 func assertNoEnrichmentResultSideEffects(t *testing.T, f *enrichmentResultFixture, workMustRemain bool) {

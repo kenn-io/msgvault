@@ -2139,62 +2139,100 @@ func (s *Store) UpdateSourceSyncConfig(ctx context.Context, sourceID int64, conf
 // those rows return to pending in the same transaction and re-derive after it.
 func (s *Store) UpdateSourceIdentifier(ctx context.Context, sourceID int64, identifier string) error {
 	var pending []int64
+	var renamed bool
 	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
 		pending = nil
-		return s.updateSourceIdentifierTx(ctx, tx, sourceID, identifier, &pending)
+		var err error
+		renamed, err = s.updateSourceIdentifierTx(ctx, tx, sourceID, identifier, &pending)
+		return err
 	})
 	if err != nil {
 		return err
 	}
 	s.deriveAccountAttributionAfterCommit(ctx, sourceID, pending)
+	if renamed {
+		return s.refreshSourceConversationPolicies(ctx, sourceID)
+	}
 	return nil
 }
 
-func (s *Store) updateSourceIdentifierTx(ctx context.Context, tx *loggedTx, sourceID int64, identifier string, pending *[]int64) error {
+// refreshSourceConversationPolicies re-evaluates a source's managed rooms
+// after its identifier changes. Config overrides match by identifier, so a
+// room may gain or lose an override. The refresh takes the policy fence in its
+// own transaction; the periodic check repairs a refresh that never ran.
+func (s *Store) refreshSourceConversationPolicies(ctx context.Context, sourceID int64) error {
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT c.id FROM conversations c
+		JOIN conversation_policy p ON p.conversation_id = c.id
+		WHERE c.source_id = ? ORDER BY c.id`), sourceID)
+	if err != nil {
+		return fmt.Errorf("list managed conversations for renamed source: %w", err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return fmt.Errorf("list managed conversations for renamed source: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	if _, err := s.RefreshConversationPolicy(ctx, ids, time.Now()); err != nil {
+		return fmt.Errorf("refresh conversation policy after source rename: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) updateSourceIdentifierTx(ctx context.Context, tx *loggedTx, sourceID int64, identifier string, pending *[]int64) (bool, error) {
 	if reset := s.dialect.MaintenanceTimeoutResetSQL(); reset != "" {
 		if _, err := tx.ExecContext(ctx, reset); err != nil {
-			return fmt.Errorf("disable maintenance statement timeout: %w", err)
+			return false, fmt.Errorf("disable maintenance statement timeout: %w", err)
 		}
 	}
 	if err := lockSourceMaintenance(ctx, tx); err != nil {
-		return err
+		return false, err
 	}
 	if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, sourceID); err != nil {
-		return err
+		return false, err
 	}
 	var shadowed bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source_settings WHERE alias_key = ? AND source_id <> ?)`, strings.ToLower(identifier), sourceID).Scan(&shadowed); err != nil {
-		return fmt.Errorf("check identifier alias conflict: %w", err)
+		return false, fmt.Errorf("check identifier alias conflict: %w", err)
 	}
 	if shadowed {
-		return fmt.Errorf("%w: provider identifier conflicts with an archive alias", ErrSourceSettingsInvalid)
+		return false, fmt.Errorf("%w: provider identifier conflicts with an archive alias", ErrSourceSettingsInvalid)
 	}
 	var sourceType, oldIdentifier string
 	err := tx.QueryRowContext(ctx,
 		`SELECT source_type, COALESCE(identifier, '') FROM sources WHERE id = ?`, sourceID,
 	).Scan(&sourceType, &oldIdentifier)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return fmt.Errorf("read source %d identifier: %w", sourceID, err)
+		return false, fmt.Errorf("read source %d identifier: %w", sourceID, err)
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE sources
 		SET identifier = ?, updated_at = %s
 		WHERE id = ?
 	`, s.dialect.Now()), identifier, sourceID); err != nil {
-		return err
+		return false, err
 	}
 	oldSink, newSink := accountSink(sourceType, oldIdentifier), accountSink(sourceType, identifier)
 	if oldSink == newSink {
-		return nil
+		return oldIdentifier != identifier, nil
 	}
 	*pending, err = s.markAccountAttributionPendingForAddressesTx(ctx, tx, sourceID, []string{oldSink, newSink})
 	if err != nil {
-		return err
+		return false, err
 	}
-	return s.bumpAccountIdentityRevisionContext(ctx, tx)
+	return oldIdentifier != identifier, s.bumpAccountIdentityRevisionContext(ctx, tx)
 }
 
 // GetSourceByIdentifier returns a source by its identifier (email address).

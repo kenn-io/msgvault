@@ -50,3 +50,35 @@ func TestImporterCancelAfterFirstMessageRecomputesConversationStats(t *testing.T
 	assert.Equal(sql.NullString{String: "first message", Valid: true}, lastMessagePreview,
 		"last_message_preview must describe the committed message")
 }
+
+// A cancel while email evidence is recorded comes after every message has
+// committed, so conversation statistics must already describe them.
+// Not parallel: it replaces the process-wide slog default and SQL log options.
+func TestImporterCancelDuringEmailEvidenceKeepsConversationStats(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	exportDir := newTestExport(t, [][]string{
+		{"Group", "2024-06-01 12:00:00", "", "", "iMessage", "Incoming", "first@example.test", "First", "", "", "", "first message", "", ""},
+		{"Group", "2024-06-01 12:01:00", "", "", "iMessage", "Incoming", "second@example.test", "Second", "", "", "", "second message", "", ""},
+	})
+
+	queryCtx := context.WithoutCancel(t.Context())
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
+		var count int
+		require.NoError(st.DB().QueryRowContext(queryCtx, `SELECT COUNT(*) FROM participant_contact_observations`).Scan(&count))
+		return count > 0
+	})
+
+	_, err := NewImporter(st, Options{Owner: "+15550000001", Timezone: "UTC"}).ImportPath(ctx, exportDir)
+	require.ErrorIs(err, context.Canceled)
+	require.True(canceled(), "the cancel must land after the first email evidence commits")
+
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
+	require.NoError(err)
+	var messageCount int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT message_count FROM conversations WHERE source_id = ?`), source.ID).Scan(&messageCount))
+	assert.Equal(2, messageCount, "conversation message_count must count both committed messages")
+}

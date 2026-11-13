@@ -181,6 +181,11 @@ func importDiscordSource(
 	after time.Time,
 	progress func(string),
 ) (*discord.ImportSummary, error) {
+	if deps.conversationPolicySettings != nil {
+		if err := refreshConversationPolicyForSync(ctx, st, deps.conversationPolicySettings, time.Now()); err != nil {
+			return nil, err
+		}
+	}
 	importer, err := newDiscordImporterForSource(st, source, deps)
 	if err != nil {
 		return nil, err

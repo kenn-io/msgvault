@@ -47,6 +47,9 @@ func Format(q *Query) string {
 	}
 
 	var parts []string
+	if q.IncludeCold {
+		parts = append(parts, "include:cold")
+	}
 	for _, term := range q.TextTerms {
 		parts = append(parts, formatSearchValue(term, true))
 	}

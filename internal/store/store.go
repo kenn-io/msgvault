@@ -74,7 +74,9 @@ type Store struct {
 
 	// The daemon owns one Store. Consent changes wait for in-flight provider
 	// requests, without holding an archive transaction during network I/O.
-	personMatchConsentMu sync.RWMutex
+	personMatchConsentMu       sync.RWMutex
+	conversationPolicyMu       sync.RWMutex
+	conversationPolicyLockPath string
 
 	sqliteOptimizeMu sync.Mutex
 	// syncOptimizeMu guards lastSyncOptimize, which throttles the planner
@@ -125,6 +127,7 @@ type Store struct {
 	personEnrichmentBudgetBarrier         func()
 	personEnrichmentRunBarrier            func(phase string)
 	personEnrichmentTxBarrier             func(phase string)
+	ensureConversationFastPathHook        func()
 	personEnrichmentOwnershipBarrier      func(phase string, tx *loggedTx)
 	personNetworkSourceReadHook           func(limit, count int)
 	operationHistoryAfterAdapterReadHook  func(kind string)
@@ -270,6 +273,11 @@ func openSQLiteContext(ctx context.Context, dbPath, params string) (*Store, erro
 		sqliteFilesystemPath: filesystemPath,
 		dialect:              dialect,
 		syncExecutionLocks:   newSyncExecutionLockState(),
+	}
+
+	if err := s.initializeConversationPolicyFence(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 
 	// Probe like the read-only opens do: a Store must know whether full-text
@@ -440,6 +448,10 @@ func OpenReadOnlyContext(ctx context.Context, dbPath string) (*Store, error) {
 		dialect:              dialect,
 		readOnly:             true,
 		syncExecutionLocks:   newSyncExecutionLockState(),
+	}
+	if err := s.initializeConversationPolicyFence(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 
 	available, err := dialect.FTSAvailable(ctx, db)
@@ -969,6 +981,18 @@ func (s *Store) withTxContext(ctx context.Context, fn func(tx *loggedTx) error) 
 // needs no extra lock; its ordinary transaction already serializes writers.
 func (s *Store) withSourceMaintenanceGateContext(ctx context.Context, fn func(tx *loggedTx) error) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockSyncMaintenanceGate(ctx, tx); err != nil {
+			return err
+		}
+		return fn(tx)
+	})
+}
+
+// withConversationPolicySourceMaintenanceGate publishes policy-checked work
+// that writes source cascade children. It takes the shared policy lock before
+// the maintenance gate, the order source removal and channel purge use.
+func (s *Store) withConversationPolicySourceMaintenanceGate(ctx context.Context, fn func(tx *loggedTx) error) error {
+	return s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		if err := s.lockSyncMaintenanceGate(ctx, tx); err != nil {
 			return err
 		}
@@ -1709,6 +1733,9 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("register Matrix placeholders: %w", err)
 	}
+	if err := s.runOnceMigration(ctx, migrationPersonFactConversationPolicyStatus, 1, false, s.migratePersonFactConversationPolicyStatus); err != nil {
+		return fmt.Errorf("migrate fact policy statuses: %w", err)
+	}
 	if err := s.ensureDirectoryProjectionInfrastructure(ctx); err != nil {
 		return err
 	}
@@ -1825,6 +1852,12 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	}
 	if err := s.runOnceMigration(ctx, migrationPersonFactOutcomes, 1, false, s.backfillPersonFactOutcomes); err != nil {
 		return fmt.Errorf("backfill person fact outcomes: %w", err)
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationParticipantObservationIdentity, 1, false,
+		s.ensureParticipantObservationIdentityIndex,
+	); err != nil {
+		return fmt.Errorf("upgrade participant observation identity index: %w", err)
 	}
 	// account: and received: filter on the account columns, and each sync
 	// looks up pending rows; created here because the columns arrive through
@@ -2446,6 +2479,29 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 		return err
 	}
 
+	// Pre-revision workers cleared embed_gen when source or contextual inputs
+	// changed. Their vectors and the new embedding_revision column both start
+	// at zero, so baseline unstamped messages once before a later rebuild can
+	// publish a new-generation vector and accidentally make an old-generation
+	// vector look current again.
+	if err := s.runOnceMigration(
+		ctx, migrationMessageEmbeddingRevisionBaseline, 1, false,
+		func(ctx context.Context) error {
+			return s.backfillMessageEmbeddingRevisionBaseline(ctx)
+		},
+	); err != nil {
+		return fmt.Errorf("backfill message embedding revisions: %w", err)
+	}
+
+	// Archives that classified rooms before derived cleanup existed have cold
+	// rooms whose vectors were never pruned, and no cleanup target to say so.
+	if err := s.runOnceMigration(
+		ctx, migrationConversationPolicyCleanupSeed, 1, false,
+		s.seedConversationPolicyCleanup,
+	); err != nil {
+		return fmt.Errorf("seed conversation policy cleanup: %w", err)
+	}
+
 	// Backfill content_changed_at for rows that predate the column, in
 	// committed batches (backfillContentChangedAt). Gated on the ledger
 	// because the scan never finds work after the first completed run; no
@@ -2593,6 +2649,16 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("backfill CardDAV inference export state: %w", err)
 	}
 
+	if err := s.runOnceMigration(ctx, migrationAppleWhatsAppNameProvenance, 1, false, s.backfillAppleParticipantNamesContext); err != nil {
+		return fmt.Errorf("backfill Apple WhatsApp name provenance: %w", err)
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationNativeEmailObservationProvenance, 1, false,
+		s.backfillNativeEmailObservationProvenanceContext,
+	); err != nil {
+		return fmt.Errorf("backfill native email observation provenance: %w", err)
+	}
+
 	// Reconcile the system relationship type catalog on every open: insert
 	// missing seeds, repair structural drift, and leave user-owned labels,
 	// vCard mappings, colours, icons, and descriptions alone. See
@@ -2608,6 +2674,13 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 
 	if err := s.ensureFilenameDiscoveryInfrastructure(ctx); err != nil {
 		return err
+	}
+
+	// Search requires policy rows for existing chats. Complete the bootstrap
+	// before publishing readiness, including for callers that initialize the
+	// store directly rather than through pkg/archive.
+	if err := s.runOnceMigration(ctx, migrationConversationPolicyBootstrap, 1, false, s.bootstrapConversationPolicy); err != nil {
+		return fmt.Errorf("initialize conversation policy: %w", err)
 	}
 
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO archive_metadata (key, value)

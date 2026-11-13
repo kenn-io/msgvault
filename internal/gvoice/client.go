@@ -154,14 +154,14 @@ func (c *Client) Import(
 
 	// Caches
 	phoneCache := map[string]int64{} // phone → participantID
-	convCache := map[string]int64{}  // threadID → conversationID
+	nameEvidenceCache := map[string]struct{}{}
+	convCache := map[string]int64{} // threadID → conversationID
 	imported := 0
 
 	// Resolve owner participant once for all messages
 	ownerID, err := c.resolveParticipant(
-		ctx,
-		s, c.owner.GoogleVoice, "",
-		phoneCache, summary,
+		ctx, s, sourceID, c.owner.GoogleVoice, "", false,
+		phoneCache, nameEvidenceCache, summary,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("resolve owner: %w", err)
@@ -179,7 +179,7 @@ func (c *Client) Import(
 		case fileTypeText, fileTypeGroup:
 			n, err := c.importTextEntry(
 				ctx, s, sourceID, &entry, ownerID,
-				labelIDs, phoneCache, convCache, summary,
+				labelIDs, phoneCache, nameEvidenceCache, convCache, summary,
 			)
 			if err != nil {
 				c.logger.Warn(
@@ -195,7 +195,7 @@ func (c *Client) Import(
 		default:
 			if err := c.importCallEntry(
 				ctx, s, sourceID, &entry, ownerID,
-				labelIDs, phoneCache, convCache, summary,
+				labelIDs, phoneCache, nameEvidenceCache, convCache, summary,
 				maxMessageID,
 			); err != nil {
 				c.logger.Warn(
@@ -243,6 +243,7 @@ func (c *Client) importTextEntry(
 	ownerID int64,
 	labelIDs map[string]int64,
 	phoneCache map[string]int64,
+	nameEvidenceCache map[string]struct{},
 	convCache map[string]int64,
 	summary *ImportSummary,
 ) (int, error) {
@@ -281,9 +282,8 @@ func (c *Client) importTextEntry(
 
 	// Resolve sender
 	senderID, err := c.resolveParticipant(
-		ctx,
-		s, msg.SenderPhone, msg.SenderName,
-		phoneCache, summary,
+		ctx, s, sourceID, msg.SenderPhone, msg.SenderName, !msg.IsMe,
+		phoneCache, nameEvidenceCache, summary,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("resolve sender: %w", err)
@@ -294,10 +294,12 @@ func (c *Client) importTextEntry(
 	// senderID == ownerID and cannot be used as the "to" recipient.
 	contactID := senderID
 	if entry.FileType == fileTypeText && msg.IsMe {
-		contactID = c.resolveContactID(
-			ctx,
-			s, messages, phoneCache, summary,
+		contactID, err = c.resolveContactID(
+			ctx, s, sourceID, messages, phoneCache, nameEvidenceCache, summary,
 		)
+		if err != nil {
+			return 0, fmt.Errorf("resolve contact: %w", err)
+		}
 	}
 
 	// Ensure conversation participant
@@ -318,8 +320,8 @@ func (c *Client) importTextEntry(
 	// Ensure group participants
 	for _, phone := range groupParticipants {
 		pid, pErr := c.resolveParticipant(
-			ctx,
-			s, phone, "", phoneCache, summary,
+			ctx, s, sourceID, phone, "", false,
+			phoneCache, nameEvidenceCache, summary,
 		)
 		if pErr == nil && pid > 0 {
 			_ = s.EnsureConversationParticipantContext(
@@ -382,9 +384,8 @@ func (c *Client) importTextEntry(
 
 	// Write message_recipients
 	if err := c.writeTextRecipients(
-		ctx,
-		s, msgID, msg, ownerID, senderID, contactID, entry.FileType,
-		groupParticipants, phoneCache, summary,
+		ctx, s, sourceID, msgID, msg, ownerID, senderID, contactID, entry.FileType,
+		groupParticipants, phoneCache, nameEvidenceCache, summary,
 	); err != nil {
 		return 0, fmt.Errorf("write message recipients: %w", err)
 	}
@@ -417,6 +418,7 @@ func (c *Client) importCallEntry(
 	ownerID int64,
 	labelIDs map[string]int64,
 	phoneCache map[string]int64,
+	nameEvidenceCache map[string]struct{},
 	convCache map[string]int64,
 	summary *ImportSummary,
 	maxMessageID int64,
@@ -444,9 +446,8 @@ func (c *Client) importCallEntry(
 
 	// Resolve contact
 	contactID, err := c.resolveParticipant(
-		ctx,
-		s, record.Phone, record.Name,
-		phoneCache, summary,
+		ctx, s, sourceID, record.Phone, record.Name, true,
+		phoneCache, nameEvidenceCache, summary,
 	)
 	if err != nil {
 		return fmt.Errorf("resolve contact: %w", err)
@@ -681,12 +682,14 @@ func (c *Client) storeVoicemailAudio(
 func (c *Client) writeTextRecipients(
 	ctx context.Context,
 	s *store.Store,
+	sourceID int64,
 	msgID int64,
 	msg textMessage,
 	ownerID, senderID, contactID int64,
 	ft fileType,
 	groupParticipants []string,
 	phoneCache map[string]int64,
+	nameEvidenceCache map[string]struct{},
 	summary *ImportSummary,
 ) error {
 	if msg.IsMe {
@@ -703,9 +706,8 @@ func (c *Client) writeTextRecipients(
 		// the owner for outbound messages).
 		// Always call Replace even with an empty slice to clear stale rows.
 		toIDs := c.collectRecipientIDs(
-			ctx,
-			s, ft, contactID, groupParticipants,
-			phoneCache, summary,
+			ctx, s, sourceID, ft, contactID, groupParticipants,
+			phoneCache, nameEvidenceCache, summary,
 		)
 		if err := s.ReplaceMessageRecipientsContext(
 			ctx,
@@ -744,18 +746,20 @@ func (c *Client) writeTextRecipients(
 func (c *Client) collectRecipientIDs(
 	ctx context.Context,
 	s *store.Store,
+	sourceID int64,
 	ft fileType,
 	contactID int64,
 	groupParticipants []string,
 	phoneCache map[string]int64,
+	nameEvidenceCache map[string]struct{},
 	summary *ImportSummary,
 ) []int64 {
 	if ft == fileTypeGroup && len(groupParticipants) > 0 {
 		var ids []int64
 		for _, phone := range groupParticipants {
 			pid, err := c.resolveParticipant(
-				ctx,
-				s, phone, "", phoneCache, summary,
+				ctx, s, sourceID, phone, "", false,
+				phoneCache, nameEvidenceCache, summary,
 			)
 			if err == nil && pid > 0 {
 				ids = append(ids, pid)
@@ -775,23 +779,27 @@ func (c *Client) collectRecipientIDs(
 func (c *Client) resolveContactID(
 	ctx context.Context,
 	s *store.Store,
+	sourceID int64,
 	messages []textMessage,
 	phoneCache map[string]int64,
+	nameEvidenceCache map[string]struct{},
 	summary *ImportSummary,
-) int64 {
+) (int64, error) {
 	for _, m := range messages {
 		if !m.IsMe && m.SenderPhone != "" {
 			pid, err := c.resolveParticipant(
-				ctx,
-				s, m.SenderPhone, m.SenderName,
-				phoneCache, summary,
+				ctx, s, sourceID, m.SenderPhone, m.SenderName, true,
+				phoneCache, nameEvidenceCache, summary,
 			)
-			if err == nil && pid > 0 {
-				return pid
+			if err != nil {
+				return 0, err
+			}
+			if pid > 0 {
+				return pid, nil
 			}
 		}
 	}
-	return 0
+	return 0, nil
 }
 
 // writeCallRecipients writes from/to rows for a call record.
@@ -857,8 +865,11 @@ func (c *Client) ensureConv(
 func (c *Client) resolveParticipant(
 	ctx context.Context,
 	s *store.Store,
+	sourceID int64,
 	phone, displayName string,
+	recordNativeName bool,
 	cache map[string]int64,
+	nameEvidenceCache map[string]struct{},
 	summary *ImportSummary,
 ) (int64, error) {
 	if phone == "" {
@@ -868,18 +879,33 @@ func (c *Client) resolveParticipant(
 	if err != nil {
 		return 0, nil //nolint:nilerr // non-normalizable phones are skipped silently
 	}
-	if id, ok := cache[normalized]; ok {
-		return id, nil
+	id, ok := cache[normalized]
+	if !ok {
+		id, err = s.EnsureParticipantByPhone(
+			ctx,
+			normalized, displayName, "google_voice",
+		)
+		if err != nil {
+			return 0, err
+		}
+		cache[normalized] = id
+		summary.ParticipantsResolved++
 	}
-	id, err := s.EnsureParticipantByPhone(
-		ctx,
-		normalized, displayName, "google_voice",
-	)
-	if err != nil {
-		return 0, err
+	name := strings.TrimSpace(displayName)
+	if recordNativeName && id > 0 && name != "" {
+		key := fmt.Sprintf("%d\x00%s", id, name)
+		if _, recorded := nameEvidenceCache[key]; !recorded {
+			_, err := s.RecordContactObservationContext(ctx, id, store.ParticipantContactObservationInput{
+				SourceID: &sourceID, AddressKind: store.ContactAddressDisplayName,
+				OriginalValue: name,
+				Envelope:      store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation, SourceRef: new("google_voice_takeout")},
+			})
+			if err != nil {
+				return 0, fmt.Errorf("record Google Voice participant name: %w", err)
+			}
+			nameEvidenceCache[key] = struct{}{}
+		}
 	}
-	cache[normalized] = id
-	summary.ParticipantsResolved++
 	return id, nil
 }
 

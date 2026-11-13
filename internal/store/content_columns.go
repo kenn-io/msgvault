@@ -97,6 +97,7 @@ var MessagesNonContentColumns = []string{
 	"last_modified",       // the other watermark
 	"content_changed_at",  // itself
 	"embed_gen",           // embedding watermark -- the whole reason this list exists
+	"embedding_revision",  // vector freshness token, not message content
 	"search_fts",          // PostgreSQL-only tsvector, maintained by the FTS path
 	"search_fts_fields",   // PostgreSQL-only derived search data
 }

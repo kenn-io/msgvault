@@ -11,8 +11,9 @@ const contextualChatMessageType = "beeper"
 
 // SourceVersion identifies the source state used to assemble a document.
 type SourceVersion struct {
-	MessageID    int64
-	LastModified any
+	MessageID         int64
+	LastModified      any
+	EmbeddingRevision int64
 }
 
 // MetadataVersion identifies the conversation metadata used to assemble a

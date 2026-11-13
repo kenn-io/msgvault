@@ -284,6 +284,12 @@ func (s *Store) applyIMAPMailboxDeltas(
 		return errors.New("apply IMAP mailbox deltas: nil authoritative topology")
 	}
 	return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
+		// Restoring or tombstoning mail updates message rows and invalidates
+		// shared participant context. Recipient replacement takes this lock
+		// before those rows, so take it first to keep one lock order.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		if syncRunID > 0 {
 			if err := s.validateCurrentSyncGeneration(
 				ctx, tx, sourceID, syncRunID, SyncStatusCompleted,
@@ -483,10 +489,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 				return fmt.Errorf("replace labels for IMAP message %d: %w", messageID, err)
 			}
 			if len(mailboxes) == 0 {
-				if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
-					UPDATE messages SET deleted_from_source_at = %s
-					WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NULL
-				`, s.dialect.Now()), messageID, sourceID); err != nil {
+				if err := tombstoneEnvelopeMessagesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), "support.id=? AND support.source_id=? AND support.deleted_from_source_at IS NULL", messageID, sourceID); err != nil {
 					return fmt.Errorf("tombstone IMAP message %d: %w", messageID, err)
 				}
 			} else if err := s.clearMessageDeletedFromSourceTx(ctx, tx, `

@@ -51,6 +51,7 @@ type participantResolver struct {
 	fallback     map[string]int64     // bare-ID fallbacks; upgraded when metadata appears
 	mergedAway   map[int64]bool       // participants merged away this run; made on first merge
 	messageUsers map[string]User
+	messageRoom  int64
 	roomOwners   map[string]bool
 }
 
@@ -78,6 +79,46 @@ func (r *participantResolver) identifierForUser(userID string) string {
 		return userID
 	}
 	return beeperidentity.Fallback(r.accountID, userID)
+}
+
+func (r *participantResolver) resolveUserForPolicy(ctx context.Context, u *User, room int64) (int64, error) {
+	if u == nil || u.ID == "" {
+		return 0, nil
+	}
+	hasPhone := strings.HasPrefix(u.PhoneNumber, "+")
+	hasEmail := strings.Contains(u.Email, "@")
+	if !hasPhone && !hasEmail && u.FullName == "" {
+		return r.resolveIDFallback(ctx, u.ID, "")
+	}
+	// Legacy namespace adoption remains archival normalization. Do not create a
+	// bare participant first: rich resolution binds the identifier itself, and
+	// a premature bare row would only be merged away, with archive-wide work
+	// under the policy and identity locks. The fallback below still creates a
+	// bare participant when admission fails.
+	identifier := r.identifierForUser(u.ID)
+	if _, err := r.adoptLegacyIdentifier(ctx, u.ID, identifier); err != nil {
+		return 0, err
+	}
+	identity := store.ConversationParticipantIdentity{IdentifierType: participantIdentifierType, IdentifierValue: identifier, DisplayName: u.FullName}
+	if hasPhone {
+		identity.Phone = u.PhoneNumber
+	} else if hasEmail {
+		identity.Email = u.Email
+	}
+	result, err := r.store.ResolveConversationParticipantContext(ctx, room, identity)
+	if errors.Is(err, store.ErrConversationPolicyStale) || errors.Is(err, store.ErrPersonBindingConflict) {
+		return r.store.EnsureParticipantByIdentifierContext(ctx, participantIdentifierType, identity.IdentifierValue, "")
+	}
+	if err != nil {
+		return 0, err
+	}
+	if identity.Phone != "" || identity.Email != "" {
+		r.rich[identity.IdentifierValue] = richEntry{pid: result.ParticipantID, byPhone: result.ByPhone}
+		delete(r.fallback, identity.IdentifierValue)
+	} else {
+		r.fallback[identity.IdentifierValue] = result.ParticipantID
+	}
+	return result.ParticipantID, nil
 }
 
 func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, error) {
@@ -164,7 +205,7 @@ func (r *participantResolver) resolveID(ctx context.Context, userID, displayName
 	if user, ok := r.messageUsers[userID]; ok {
 		delete(r.messageUsers, userID)
 		r.forgetUser(userID)
-		return r.resolveUser(ctx, &user)
+		return r.resolveUserForPolicy(ctx, &user, r.messageRoom)
 	}
 	return r.resolveIDFallback(ctx, userID, displayName)
 }
@@ -224,6 +265,9 @@ func (r *participantResolver) resolveIDFallback(ctx context.Context, userID, dis
 	if pid, ok := r.fallback[identifier]; ok {
 		return pid, nil
 	}
+	if r.messageRoom != 0 && displayName != "" {
+		return r.resolveUserForPolicy(ctx, &User{ID: userID, FullName: displayName}, r.messageRoom)
+	}
 	if pid, err := r.adoptLegacyIdentifier(ctx, userID, identifier); err != nil {
 		return 0, err
 	} else if pid != 0 {
@@ -238,8 +282,9 @@ func (r *participantResolver) resolveIDFallback(ctx context.Context, userID, dis
 	return pid, nil
 }
 
-func (r *participantResolver) useMessageRoster(ctx context.Context, sourceID int64, ch *Chat, enabled bool) error {
+func (r *participantResolver) useMessageRoster(ctx context.Context, sourceID, room int64, ch *Chat, enabled bool) error {
 	r.messageUsers = nil
+	r.messageRoom = room
 	for key := range r.roomOwners {
 		delete(r.fallback, key)
 	}
@@ -270,7 +315,7 @@ func (r *participantResolver) useMessageRoster(ctx context.Context, sourceID int
 			key := r.identifierForUser(item.ID)
 			receipt := receipts[key]
 			owner := r.fallback[key]
-			if owner != 0 && receipt.Checksum == store.BeeperRosterReceiptChecksum(rosterMemberInputs(&item, ch, r.accountID, bridgePrefix), owner) {
+			if owner != 0 && receipt.Checksum == store.BeeperRosterReceiptChecksum(rosterMemberInputs(&item, ch, r.accountID, bridgePrefix, true), owner) {
 				continue
 			}
 		}
