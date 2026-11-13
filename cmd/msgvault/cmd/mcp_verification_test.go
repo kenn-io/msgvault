@@ -17,9 +17,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestOwnerMCPVerificationReads(t *testing.T) {
@@ -57,6 +59,32 @@ func TestOwnerMCPVerificationReads(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOwnerMCPVerificationStageDeletion(t *testing.T) {
+	f := storetest.New(t)
+	f.PersistEmail(storetest.EmailSpec{From: "sender@example.test", To: []string{storetest.OwnerAddress}, Subject: "Ordinary message", Body: "Hello"})
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner"}}
+	adapter := &storeAPIAdapter{store: f.Store, config: cfg}
+	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: adapter, Engine: query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()), Logger: slog.New(slog.DiscardHandler)})
+	t.Cleanup(func() { require.NoError(t, server.Shutdown(context.WithoutCancel(t.Context()))) })
+	daemon := httptest.NewServer(server.Router())
+	t.Cleanup(daemon.Close)
+	cfg.Remote = config.RemoteConfig{URL: daemon.URL, APIKey: "owner", AllowInsecure: true}
+	setMCPTokenTestFlags(t, nil)
+	old := mcpRevealVerification
+	mcpRevealVerification = false
+	t.Cleanup(func() { mcpRevealVerification = old })
+	session := mcpDraftTestSession(withStoreResolverConfig(t, cfg), t)
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "stage_deletion", Arguments: map[string]any{"from": "sender@example.test"}})
+	require.NoError(t, err)
+	require.False(t, result.IsError, "%+v", result.Content)
+	manager, err := deletion.NewManager(filepath.Join(cfg.Data.DataDir, "deletions"))
+	require.NoError(t, err)
+	manifests, err := manager.ListPending()
+	require.NoError(t, err)
+	require.Len(t, manifests, 1)
+	assert.Equal(t, []string{"email-1"}, manifests[0].GmailIDs)
 }
 
 func TestOwnerMCPVerificationSavedView(t *testing.T) {

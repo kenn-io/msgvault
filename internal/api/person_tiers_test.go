@@ -2,16 +2,43 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestPersonTiersWithVerificationWithheld(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	participant, err := st.EnsureParticipant("person@example.test", "Example Person", "example.test")
+	require.NoError(t, err)
+	person, _, err := st.CreatePersonFromParticipant(participant)
+	require.NoError(t, err)
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	srv := NewServer(cfg, st, nil, testLogger())
+	for _, path := range []string{"/api/v1/people/tiers", fmt.Sprintf("/api/v1/people/%d/tier", person.ID)} {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
+		req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, req)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		if path != "/api/v1/people/tiers" {
+			var body store.PersonTierExplanation
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+			assert.Equal(t, person.ID, body.PersonID)
+		}
+	}
+}
 
 // The routes read the config file on each request, so an owner's edit to the
 // running daemon's config takes effect, and a bad edit is refused rather than

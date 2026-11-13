@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/operations"
@@ -1400,7 +1401,7 @@ func TestCardDAVPublicationPreviewAndApprovalRoutes(t *testing.T) {
 	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
 	assert.JSONEq(`{"person_id":7,"address_book":{"id":2,"name":"Personal"},"kind":"conflict","vcard":"BEGIN:VCARD\r\nEND:VCARD\r\n","approval_token":"token-1","review_required":true,"conflict_id":3}`, resp.Body.String())
 
-	resp = cardDAVRouteResponse(t, service, http.MethodPost, "/api/v1/carddav/publications/7/approve", `{"approval_token":"token-1"}`)
+	resp = cardDAVRouteResponse(t, service, http.MethodPost, "/api/v1/carddav/publications/7/approve", `{"approval_token":"token-1"}`, true)
 	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
 	assert.Equal("token-1", approved)
 	assert.JSONEq(`{"person_id":7,"state":"conflict","desired":true,"conflict_id":3}`, resp.Body.String())
@@ -1469,13 +1470,16 @@ func (f cardDAVErrorFixture) ResolveConflict(context.Context, int64, carddav.Res
 	return f.resolveErr
 }
 
-func cardDAVRouteResponse(t *testing.T, service CardDAVOperations, method, path, body string) *httptest.ResponseRecorder {
+func cardDAVRouteResponse(t *testing.T, service CardDAVOperations, method, path, body string, withhold ...bool) *httptest.ResponseRecorder {
 	t.Helper()
 	controller := &CardDAVController{service: service}
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger(), CardDAV: controller})
 	req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if len(withhold) > 0 && withhold[0] {
+		req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
 	}
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)
@@ -1657,7 +1661,7 @@ func (f *cardDAVSyncOptionsFixture) Sync(_ context.Context, options carddav.Sync
 func TestCardDAVSyncRouteMarksRunManual(t *testing.T) {
 	t.Parallel()
 	service := &cardDAVSyncOptionsFixture{}
-	resp := cardDAVRouteResponse(t, service, http.MethodPost, "/api/v1/carddav/sync", `{"full":true}`)
+	resp := cardDAVRouteResponse(t, service, http.MethodPost, "/api/v1/carddav/sync", `{"full":true}`, true)
 	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
 	assert.True(t, service.options.Full)
 	assert.Equal(t, store.CardDAVSyncTriggerManual, service.options.Trigger)

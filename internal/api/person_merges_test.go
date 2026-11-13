@@ -14,6 +14,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -86,8 +87,9 @@ func TestPersonMergeHTTPMergeInspectDecideAndSplit(t *testing.T) {
 		fmt.Sprintf("/api/v1/people/%d/merge", survivor.ID),
 		fmt.Appendf(nil, `{"absorbed_person_id":%d}`, absorbed.ID),
 		map[string]string{
-			"If-Match":        fmt.Sprintf(`%s, %s`, personETag(*survivor), personETag(*absorbed)),
-			"Idempotency-Key": "merge-api-operation",
+			"If-Match":                     fmt.Sprintf(`%s, %s`, personETag(*survivor), personETag(*absorbed)),
+			"Idempotency-Key":              "merge-api-operation",
+			apiprotocol.VerificationHeader: apiprotocol.VerificationWithhold,
 		})
 	require.Equal(http.StatusOK, mergedResponse.Code, mergedResponse.Body.String())
 	var merged struct {
