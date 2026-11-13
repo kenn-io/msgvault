@@ -375,17 +375,40 @@ describe('FactLedger', () => {
   });
 
   it('names a sensitive claim in its decision only while it is revealed', async () => {
-    const value = controller();
-    vi.spyOn(value, 'selectSection').mockImplementation(async (section) => { value.selectedSection = section; });
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(requestOf(input).url).pathname;
+      if (path.endsWith('/person-fact-targets')) return Response.json({ fingerprint: 'catalog', version: '1', targets: [{
+        description: 'Private note', kind: 'attribute', key: 'note', revision,
+        value_type: 'string', cardinality: 'single', sensitive: true, choices: null, fields: null,
+        slug: 'note', universal_id: 'note'
+      }] });
+      if (path.endsWith('/fact-claims')) return Response.json({ claims: [{
+        id: 1, claim_key: 'claim', generation_id: 2, evidence_ids: [], target: { kind: 'attribute', key: 'note', revision },
+        submitted_value: JSON.stringify('allowed sensitive value'), normalized_value: JSON.stringify('allowed sensitive value'),
+        relation: 'support', origin: 'extraction', confidence: { reported_score: 88 }, created_at: '2026-08-03T00:00:00Z'
+      }] });
+      if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [{
+        id: 1, decision_key: 'decision', claim_key: 'claim', resolution_id: 1, target: { kind: 'attribute', key: 'note', revision },
+        outcome: 'saved', resolver_version: 'v1', action: 'applied', reason: 'applied-projection',
+        projection: { kind: 'person_attribute', row_id: 1 },
+        score: { authority: 100, confidence: 8, corroboration: 0, directness: 400, freshness: 100, source_class: 300, total: 908 },
+        created_at: '2026-08-03T00:00:00Z'
+      }] });
+      return ledgerResponse(path);
+    });
+    const value = new FactLedgerController(createAPIClient(fetchFn));
+    value.applyContext(true, 42, false);
+    await vi.waitFor(() => expect(value.initialLoading).toBe(false));
     render(FactLedger, { controller: value });
     const sentence = () => screen.getByLabelText('Historical fact decision').querySelector('.value > span')?.textContent;
     await fireEvent.click(screen.getByRole('button', { name: 'Reveal sensitive fact value' }));
     await fireEvent.click(screen.getByRole('radio', { name: 'Decisions' }));
-    expect(sentence()).toBe('Saved: allowed sensitive value');
+    await vi.waitFor(() => expect(sentence()).toBe('Saved: allowed sensitive value'));
     await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Hide sensitive fact value' }));
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Reveal sensitive fact value' })).toBeDefined());
     await fireEvent.click(screen.getByRole('radio', { name: 'Decisions' }));
-    expect(sentence()).toBe('Saved');
+    await vi.waitFor(() => expect(sentence()).toBe('Saved'));
+    value.destroy();
   });
 
   it.each([
