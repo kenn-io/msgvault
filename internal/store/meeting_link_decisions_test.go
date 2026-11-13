@@ -1526,6 +1526,7 @@ func TestMeetingDecisionResetUntimedDedupAfterSeriesUpdate(t *testing.T) {
 	data, survivor := calendarFixture(t, st, "reset-series-survivor", `{"id":"event","status":"cancelled"}`)
 	_, duplicate := calendarFixture(t, st, "reset-series-duplicate", `{"id":"event","status":"cancelled"}`)
 	_, note := projectionFixture(t, st, "reset-series-note", "meeting_json", `{}`)
+	_, otherNote := projectionFixture(t, st, "reset-series-other", "meeting_json", `{}`)
 	event := MeetingLinkRef{Kind: "evt", MessageID: survivor}
 	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
 	_, err := st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "reset-series")
@@ -1535,6 +1536,13 @@ func TestMeetingDecisionResetUntimedDedupAfterSeriesUpdate(t *testing.T) {
 	data.RawMIME = []byte(`{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
 	_, err = st.PersistMessage(data)
 	r.NoError(err)
+	otherRef := MeetingLinkRef{Kind: "msg", MessageID: otherNote}
+	occurrence := MeetingLinkRef{Kind: "evt", MessageID: survivor, Identity: occurrenceIdentity(t, "20270321T100000Z")}
+	_, err = st.DecideMeetingLinkContext(t.Context(), occurrence, otherRef, "link")
+	r.NoError(err)
+	scoped := sourcescope.WithSourceIDs(t.Context(), []int64{data.Message.SourceID})
+	_, err = st.DecideMeetingLinkContext(scoped, event, noteRef, "clear")
+	r.Error(err)
 	_, err = st.DecideMeetingLinkContext(t.Context(), event, noteRef, "clear")
 	r.NoError(err)
 	_, err = st.UndoDedup(t.Context(), "reset-series")
@@ -1542,6 +1550,10 @@ func TestMeetingDecisionResetUntimedDedupAfterSeriesUpdate(t *testing.T) {
 	record, err := st.MeetingRecordContext(t.Context(), noteRef)
 	r.NoError(err)
 	r.Empty(record.Links)
+	record, err = st.MeetingRecordContext(t.Context(), otherRef)
+	r.NoError(err)
+	r.Len(record.Links, 1)
+	r.Equal(endpointFromRef(occurrence).ref(), record.Links[0].Ref)
 }
 
 func TestMeetingDecisionWrongKindResetDoesNotClearChoice(t *testing.T) {
@@ -1611,6 +1623,69 @@ func TestMeetingDecisionDedupCollisionPriority(t *testing.T) {
 				r.Contains(record.MessageIDs, survivor)
 			} else {
 				r.NotContains(record.MessageIDs, survivor)
+			}
+		})
+	}
+}
+
+func TestMeetingDecisionSplitAndJoinKeepAutomaticMembers(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"group_20270314T100000Z"}}`
+	_, first := projectionFixture(t, st, "group-first", "granola_json", raw)
+	_, automatic := projectionFixture(t, st, "group-automatic", "granola_json", raw)
+	_, incoming := projectionFixture(t, st, "group-incoming", "meeting_json", `{}`)
+	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+	_, err := st.DecideMeetingLinkContext(t.Context(), ref(first), ref(incoming), "link")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), ref(incoming))
+	r.NoError(err)
+	r.ElementsMatch([]int64{first, automatic, incoming}, record.MessageIDs)
+	_, err = st.DecideMeetingLinkContext(t.Context(), ref(first), ref(automatic), "unlink")
+	r.NoError(err)
+	record, err = st.MeetingRecordContext(t.Context(), ref(automatic))
+	r.NoError(err)
+	r.Equal([]int64{automatic}, record.MessageIDs)
+	_, err = st.DecideMeetingLinkContext(t.Context(), ref(automatic), ref(incoming), "link")
+	r.ErrorIs(err, ErrMeetingLinkConflict)
+	record, err = st.MeetingRecordContext(t.Context(), ref(first))
+	r.NoError(err)
+	r.ElementsMatch([]int64{first, incoming}, record.MessageIDs)
+}
+
+func TestMeetingDecisionSourceMergeCollisionPriority(t *testing.T) {
+	for _, survivorChoice := range []bool{false, true} {
+		t.Run(fmt.Sprintf("survivor-choice-%t", survivorChoice), func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			raw := `{"id":"shared","summary":%q,"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+			into, survivor := calendarFixture(t, st, "visible", fmt.Sprintf(raw, "visible"), "visible@example.com")
+			from, first := calendarFixture(t, st, "first", fmt.Sprintf(raw, "first"), "archived@example.com")
+			_, second := calendarFixture(t, st, "second", fmt.Sprintf(raw, "second"), "archived@example.com")
+			_, note := projectionFixture(t, st, "source-collision-note", "meeting_json", `{}`)
+			// Conflicting archived choices can arise before sources are combined.
+			insert := func(event int64, choice string) {
+				a := meetingDecisionEndpoint{ID: event, Kind: "evt", Key: "20270314T100000Z"}
+				b := meetingDecisionEndpoint{ID: note, Kind: "msg"}
+				if compareMeetingEndpoints(a, b) > 0 {
+					a, b = b, a
+				}
+				_, err := st.db.ExecContext(t.Context(), `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES (?,?,?,?,?,?,?)`, a.ID, a.Kind, a.Key, b.ID, b.Kind, b.Key, choice)
+				r.NoError(err)
+			}
+			if survivorChoice {
+				insert(survivor, "link")
+			}
+			insert(first, "link")
+			insert(second, "split")
+			_, err := st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: from.Message.SourceID, IntoSourceID: into.Message.SourceID})
+			r.NoError(err)
+			record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+			r.NoError(err)
+			if survivorChoice {
+				r.Len(record.Links, 1)
+			} else {
+				r.Empty(record.Links)
 			}
 		})
 	}
