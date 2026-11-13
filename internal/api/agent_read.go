@@ -30,12 +30,23 @@ var agentReadPermissions = map[string]agentgrant.Permission{
 	"listCLIAccounts":  agentgrant.PermissionSearchRead, "listCLICollections": agentgrant.PermissionSearchRead,
 }
 
-// Owner snapshots are needed only where message content is classified.
-var ownerVerificationSnapshotOperations = map[string]bool{
+// Owner reads are admitted when they mask message content or contain no message text.
+// True values require a snapshot while classifying content.
+var ownerVerificationOperations = map[string]bool{
 	"searchCLI": true, "searchMessages": true, "fastSearch": true, "deepSearch": true,
 	"filterMessages": true, "listMessages": true, "searchMessagesByDomains": true,
 	"getCLIMessageThread": true, "getMessage": true, "getCLIMessage": true,
 	"getAttachment": true, "getAttachmentContent": true, "getCLIAttachment": true,
+	"findSimilarMessages": false,
+	"health":              false, "headHealth": false, "getHealth": false, "getMCPCapabilities": false, "getMediaSearchStatus": false,
+	"getStats": false, "getTotalStats": false, "getCLIStats": false, "getTextStats": false,
+	"getAggregates": false, "getSubAggregates": false, "getTextAggregates": false,
+	"listAccounts": false, "listCLIAccounts": false, "listCLICollections": false, "listSourceStatus": false,
+	"getEmbeddingStatus": false, "getPersonMatchScoringStatus": false,
+	"listCardDAVConnections": false, "getCardDAVStatus": false, "getCardDAVPublication": false, "getSettings": false,
+	"listSavedViews": false, "getSavedView": false, "searchPeople": false, "listDirectoryPeople": false,
+	"listPeople": false, "getPersonProfile": false, "listPersonAttributes": false, "listPersonIdentities": false,
+	"listPersonEmployments": false, "getParticipant": false, "searchParticipants": false,
 }
 
 // Ranking runs before the owner snapshot, but hydration and classification share it.

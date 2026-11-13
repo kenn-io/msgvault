@@ -258,12 +258,21 @@ func (s *Server) ownerVerificationPolicy(ctx huma.Context, req *http.Request, ha
 	if auth.Mode == AuthModeRequired || !s.withholdsVerification(req) {
 		return noRelease, nil
 	}
-	ctx.SetHeader(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
-	if auth.Grant != nil || hasSnapshot {
+	if auth.Grant != nil {
+		ctx.SetHeader(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
 		return noRelease, nil
 	}
 	op := ctx.Operation()
-	if op == nil || !ownerVerificationSnapshotOperations[op.OperationID] {
+	operation := "unknown operation"
+	if op != nil {
+		operation = op.OperationID
+	}
+	snapshot, admitted := ownerVerificationOperations[operation]
+	if !admitted {
+		return nil, newAPIHTTPError(http.StatusForbidden, "verification_masked", operation+" is unavailable while verification content is withheld; start MCP with --reveal-verification")
+	}
+	ctx.SetHeader(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+	if !snapshot || hasSnapshot {
 		return noRelease, nil
 	}
 	if op.OperationID == "searchMessages" && (req.URL.Query().Get("mode") == "vector" || req.URL.Query().Get("mode") == exploreSearchModeHybrid) {

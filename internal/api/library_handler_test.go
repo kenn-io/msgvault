@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/sourcescope"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/verification"
 )
@@ -205,6 +208,8 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 	}{
 		{name: "normal health", path: "/api/v1/health", allow: true},
 		{name: "marked health", path: "/api/v1/health", marked: true, allow: true},
+		{name: "marked stats", path: "/api/v1/stats", marked: true, allow: true},
+		{name: "marked similar search", path: "/api/v1/search/similar?message_id=1", marked: true, allow: true},
 		{name: "authorization refusal", path: "/api/v1/health", marked: true},
 		{name: "protected messages", path: "/api/v1/messages", marked: true, allow: true},
 		{name: "protected source scoped messages", path: "/api/v1/messages", marked: true, allow: true, scoped: true},
@@ -239,6 +244,10 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 				assert.Empty(w.Header().Get(apiprotocol.VerificationHeader))
 				return
 			}
+			if strings.Contains(tc.path, "/search/similar") {
+				assert.Equal(apiprotocol.VerificationWithhold, w.Header().Get(apiprotocol.VerificationHeader))
+				return
+			}
 			require.Equal(http.StatusOK, w.Code, w.Body.String())
 			if tc.marked {
 				assert.Equal(apiprotocol.VerificationWithhold, w.Header().Get(apiprotocol.VerificationHeader))
@@ -254,6 +263,31 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 					assert.Empty(srv.readSnapshotSlots)
 				}
 			}
+		})
+	}
+}
+
+func TestLibraryHandlerVerificationRefusesUnclassifiedReads(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	_, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "code", "Your verification code is 482913", "Your verification code is 482913")
+	require.NoError(t, err)
+	view, err := st.CreateSavedView(t.Context(), store.SavedViewInput{Name: "all", CanonicalState: []byte(`{}`), SchemaVersion: 1})
+	require.NoError(t, err)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, SavedViewStore: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, fmt.Sprintf("/api/v1/saved-views/%d/run", view.ID)},
+		{http.MethodGet, fmt.Sprintf("/api/v1/conversations/%d", id)},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			request := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, strings.NewReader(`{}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+			w := httptest.NewRecorder()
+			srv.Handler(nil).ServeHTTP(w, request)
+			assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+			assert.Contains(t, w.Body.String(), `"verification_masked"`)
+			assert.Empty(t, w.Header().Get(apiprotocol.VerificationHeader))
 		})
 	}
 }

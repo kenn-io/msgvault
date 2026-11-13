@@ -191,6 +191,22 @@ func TestRemoteClientVerificationAdmission(t *testing.T) {
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
 	assert.Equal(apiprotocol.VerificationWithhold, w.Header().Get(apiprotocol.VerificationHeader))
 	assert.Empty(f.srv.readSnapshotSlots)
+
+	for _, target := range []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/saved-views/1/run"},
+		{http.MethodGet, "/api/v1/conversations/1"},
+	} {
+		req = httptest.NewRequestWithContext(t.Context(), target.method, target.path, strings.NewReader(`{}`))
+		req.RemoteAddr = "127.0.0.1:4242"
+		req.Header.Set("X-Api-Key", remoteClientTestOwnerKey)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+		w = httptest.NewRecorder()
+		f.srv.Router().ServeHTTP(w, req)
+		assert.Equal(http.StatusForbidden, w.Code, w.Body.String())
+		assert.Contains(w.Body.String(), `"verification_masked"`)
+		assert.Empty(w.Header().Get(apiprotocol.VerificationHeader))
+	}
 }
 
 type sizedAttachmentStore struct{ size int64 }

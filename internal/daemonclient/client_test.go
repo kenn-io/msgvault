@@ -1043,6 +1043,12 @@ func TestVerificationWithholdingAcknowledgement(t *testing.T) {
 			w.Header().Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/prefix/api/v1/saved-views/42/run" {
+			writeMarked.Store(marked)
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"error":"verification_masked","message":"verification content is withheld"}`)
+			return
+		}
 		if r.URL.Path == "/prefix/api/v1/query/archive" {
 			_, _ = io.WriteString(w, `{"columns":[],"rows":[],"row_count":0}`)
 			return
@@ -1068,14 +1074,12 @@ func TestVerificationWithholdingAcknowledgement(t *testing.T) {
 	require.ErrorContains(err, "upgrade the daemon")
 	_, err = ordinary.Health(t.Context())
 	require.NoError(err)
-	response, err = protected.DoGeneratedRequestWithContext(t.Context(), http.MethodPost, "/api/v1/saved-views", nil)
-	require.NoError(err)
-	body, err := io.ReadAll(response.Body)
-	closeErr := response.Body.Close()
-	require.NoError(err)
-	require.NoError(closeErr)
-	assert.JSONEq(`{"id":42}`, string(body))
-	assert.False(writeMarked.Load())
+	_, err = protected.RunSavedView(t.Context(), 42, 10, "", "")
+	require.Error(err)
+	var apiErr *APIError
+	require.ErrorAs(err, &apiErr)
+	assert.Equal("verification_masked", apiErr.APIErrorCode())
+	assert.True(writeMarked.Load())
 	_, _, err = protected.RunArchiveSQLQueryWithFresh(t.Context(), "SELECT 1", false)
 	require.ErrorContains(err, "upgrade the daemon")
 	assert.True(archiveMarked.Load())
