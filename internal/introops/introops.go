@@ -30,6 +30,14 @@ func allowed(g *agentgrant.Grant, row store.PersonIntroduction) bool {
 	return g == nil || g.Allows(agentgrant.PermissionDraftCreate, ref(row))
 }
 func (s Service) project(ctx context.Context, g *agentgrant.Grant, row store.PersonIntroduction) (Record, error) {
+	ctx, release, err := s.Store.BeginReadSnapshotContext(ctx)
+	if err != nil {
+		return Record{}, err
+	}
+	defer release()
+	return s.projectInSnapshot(ctx, g, row)
+}
+func (s Service) projectInSnapshot(ctx context.Context, g *agentgrant.Grant, row store.PersonIntroduction) (Record, error) {
 	if !allowed(g, row) {
 		return Record{}, ErrForbidden
 	}
@@ -170,28 +178,24 @@ func (s Service) Edit(ctx context.Context, g *agentgrant.Grant, id string, in st
 	if g != nil {
 		return Record{}, ErrForbidden
 	}
-	pre, err := s.Get(ctx, g, id)
-	if err != nil {
+	if _, err := s.Get(ctx, g, id); err != nil {
 		return Record{}, err
 	}
 	row, err := s.Store.EditPersonIntroductionContext(ctx, id, in)
 	if err != nil {
 		return Record{}, err
 	}
-	row.MeetingMessageID = pre.MeetingMessageID
-	return Record{row, pre.Members, pre.Blockers}, nil
+	return s.project(ctx, g, row)
 }
 func (s Service) Cancel(ctx context.Context, g *agentgrant.Grant, id string, revision int64) (Record, error) {
-	pre, err := s.Get(ctx, g, id)
-	if err != nil {
+	if _, err := s.Get(ctx, g, id); err != nil {
 		return Record{}, err
 	}
 	row, err := s.Store.CancelPersonIntroductionContext(ctx, id, revision)
 	if err != nil {
 		return Record{}, err
 	}
-	row.MeetingMessageID = pre.MeetingMessageID
-	return projectedRecord(g, row, store.PersonIntroductionPreflight{Members: pre.Members, Blockers: pre.Blockers}), nil
+	return s.project(ctx, g, row)
 }
 
 // ErrorCode maps failures to stable, content-free codes shared by transports.

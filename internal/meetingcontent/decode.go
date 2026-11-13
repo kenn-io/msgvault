@@ -384,25 +384,25 @@ func decodeFields(raw []byte) (map[string]jsontext.Value, bool) {
 func explicitPeople(organizerRaw, attendeesRaw jsontext.Value) (*personWire, []personWire, bool) {
 	var organizer *personWire
 	if len(organizerRaw) > 0 && !isNull(organizerRaw) {
-		organizer = &personWire{}
-		if json.Unmarshal(organizerRaw, organizer) != nil || !hasPersonIdentity(*organizer) {
+		if json.Unmarshal(organizerRaw, &organizer) != nil {
 			return nil, nil, false
+		}
+		if !hasPersonIdentity(*organizer) {
+			organizer = nil
 		}
 	}
 	var attendees []personWire
-	if len(attendeesRaw) > 0 && !isNull(attendeesRaw) {
-		var people []*personWire
-		if json.Unmarshal(attendeesRaw, &people) != nil {
+	var people []*personWire
+	if len(attendeesRaw) > 0 && !isNull(attendeesRaw) && json.Unmarshal(attendeesRaw, &people) != nil {
+		return nil, nil, false
+	}
+	for _, person := range people {
+		if person == nil {
 			return nil, nil, false
 		}
-		for _, person := range people {
-			if person == nil {
-				return nil, nil, false
-			}
-			// Producers omit addressless guests from archived recipients.
-			if hasPersonIdentity(*person) {
-				attendees = append(attendees, *person)
-			}
+		// Producers omit addressless guests from archived recipients.
+		if hasPersonIdentity(*person) {
+			attendees = append(attendees, *person)
 		}
 	}
 	return organizer, attendees, true
