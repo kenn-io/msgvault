@@ -84,8 +84,8 @@ archived yet must be owned by the configured account.
   is harmless. Later deliveries wait behind it.
 - Each delivery has one hour. After that, the daemon drops the delivery,
   including the changes after the failing one.
-- A change msgvault cannot decode, and a change for a Page with no enabled
-  profile, are skipped at once.
+- A change msgvault cannot decode, and a change for a Page or Instagram
+  account with no enabled profile, are skipped at once.
 - Every other failure is retried. This includes a comment or post that is
   already gone on Meta and a token that may not read it.
 
