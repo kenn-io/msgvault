@@ -1713,6 +1713,30 @@ func TestMeetingDecisionRejectsWrongSingleOccurrence(t *testing.T) {
 	}
 }
 
+func TestMeetingDecisionRejectsWrongExceptionOccurrence(t *testing.T) {
+	for _, tc := range []struct{ name, raw, valid, wrong string }{
+		{"timed", `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled"}`, "20270314T100000Z", "20270321T100000Z"},
+		{"all-day", `{"id":"edit","recurringEventId":"series","originalStartTime":{"date":"2027-03-14"},"status":"cancelled"}`, "20270314", "20270321"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, exception := calendarFixture(t, st, "wrong-exception-ref", tc.raw)
+			_, note := projectionFixture(t, st, "wrong-exception-note", "meeting_json", `{}`)
+			wrong := MeetingLinkRef{Kind: "evt", MessageID: exception, Identity: occurrenceIdentity(t, tc.wrong)}
+			_, err := st.MeetingRecordContext(t.Context(), wrong)
+			r.ErrorIs(err, sql.ErrNoRows)
+			_, err = st.DecideMeetingLinkContext(t.Context(), wrong, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+			r.ErrorIs(err, sql.ErrNoRows)
+			valid := MeetingLinkRef{Kind: "evt", MessageID: exception, Identity: occurrenceIdentity(t, tc.valid)}
+			_, err = st.MeetingRecordContext(t.Context(), valid)
+			r.NoError(err)
+			_, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: exception})
+			r.NoError(err)
+		})
+	}
+}
+
 func TestMeetingDecisionRescheduledSingleReset(t *testing.T) {
 	for _, replace := range []bool{false, true} {
 		t.Run(fmt.Sprintf("replace-%t", replace), func(t *testing.T) {

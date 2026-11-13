@@ -119,7 +119,7 @@ func (s *Store) meetingCopies(ctx context.Context, id int64) ([]int64, error) {
 	return ids, errors.Join(rows.Err(), rows.Close())
 }
 
-// validateMeetingInput checks a dated single-event reference before normalizing it.
+// validateMeetingInput checks a dated event reference before normalizing it.
 func (s *Store) validateMeetingInput(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) error {
 	if endpoint.Kind != meetingRefEvent || endpoint.Key == "" {
 		return nil
@@ -128,16 +128,22 @@ func (s *Store) validateMeetingInput(ctx context.Context, endpoint meetingDecisi
 		return calendarRecurrenceBudgetError()
 	}
 	scope, args := sourceScopeClause(ctx, "m.source_id")
-	var kind, date string
+	var kind, date, originalDate string
 	var allDay bool
-	var start nullableTimestamp
-	err := s.meetingSQLReader(ctx).QueryRowContext(ctx, `SELECT e.kind,e.all_day,e.start_at,e.start_date FROM calendar_events e JOIN messages m ON m.id=e.message_id WHERE e.message_id=?`+scope, append([]any{endpoint.ID}, args...)...).Scan(&kind, &allDay, &start, &date)
+	var start, original nullableTimestamp
+	err := s.meetingSQLReader(ctx).QueryRowContext(ctx, `SELECT e.kind,e.all_day,e.start_at,e.start_date,e.original_start_at,e.original_start_date FROM calendar_events e JOIN messages m ON m.id=e.message_id WHERE e.message_id=?`+scope, append([]any{endpoint.ID}, args...)...).Scan(&kind, &allDay, &start, &date, &original, &originalDate)
 	if err != nil {
 		return err
 	}
 	*budget--
 	if kind == "single" && (!start.Valid || (calrecur.Identity{Instant: start.Time, Date: date, AllDay: allDay}).Key() != endpoint.Key) {
 		return sql.ErrNoRows
+	}
+	if kind == calendarExceptionKind {
+		identity := calrecur.Identity{Instant: original.Time, Date: originalDate, AllDay: originalDate != ""}
+		if originalDate == "" && !original.Valid || identity.Key() != endpoint.Key {
+			return sql.ErrNoRows
+		}
 	}
 	return nil
 }
