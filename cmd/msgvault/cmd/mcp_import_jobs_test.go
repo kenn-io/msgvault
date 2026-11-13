@@ -144,11 +144,12 @@ func TestMCPImportSDKRequiresApproval(t *testing.T) {
 }
 
 func TestMCPImportSDKDateValidation(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	st := &importMCPStore{storeAPIAdapter: &storeAPIAdapter{store: testutil.NewSQLiteTestStore(t)}, requests: make(chan api.CLISyncRequest, 1), release: make(chan struct{})}
 	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: st, Logger: slog.New(slog.DiscardHandler)})
-	t.Cleanup(func() { close(st.release); assert.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	t.Cleanup(func() { close(st.release); assertions.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	_, err := st.store.GetOrCreateSource("gmail", "archive@example.com")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	approvals := 0
 	session := operationMCPSession(t, sourceOperationFixture(t, srv), []mcpserver.OperationFamily{mcpserver.OperationFamilyImports}, &sdkmcp.ClientOptions{ElicitationHandler: func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		approvals++
@@ -165,18 +166,18 @@ func TestMCPImportSDKDateValidation(t *testing.T) {
 		{"account": "archive@example.com", "limit": 0},
 	} {
 		result, callErr := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "create_import_job", Arguments: args})
-		require.NoError(t, callErr)
-		assert.True(t, result.IsError, "%v", args)
-		assert.Zero(t, approvals)
-		assert.Empty(t, st.requests)
+		requirements.NoError(callErr)
+		assertions.True(result.IsError, "%v", args)
+		assertions.Zero(approvals)
+		assertions.Empty(st.requests)
 	}
 	var operations int
-	require.NoError(t, st.store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM sync_operations").Scan(&operations))
-	assert.Zero(t, operations)
+	requirements.NoError(st.store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM sync_operations").Scan(&operations))
+	assertions.Zero(operations)
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "create_import_job", Arguments: map[string]any{"account": "archive@example.com", "limit": 3, "after": "2024-02-29"}})
-	require.NoError(t, err)
-	assert.False(t, result.IsError)
-	assert.Equal(t, 1, approvals)
+	requirements.NoError(err)
+	assertions.False(result.IsError)
+	assertions.Equal(1, approvals)
 	<-st.requests
 }
 
@@ -187,6 +188,7 @@ func TestMCPImportRealWorker(t *testing.T) {
 			name = "failure"
 		}
 		t.Run(name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
 			cfg := config.NewDefaultConfig()
 			cfg.Data.DataDir = t.TempDir()
 			cfg.Analytics.AutoBuildCache = true
@@ -194,7 +196,7 @@ func TestMCPImportRealWorker(t *testing.T) {
 			jobs := newCacheBuildJobs(t.Context(), nil, func(context.Context, buildCacheMode) error { refreshes <- struct{}{}; return nil })
 			st := &importMCPStore{storeAPIAdapter: &storeAPIAdapter{store: testutil.NewSQLiteTestStore(t), config: cfg, cacheJobs: jobs}}
 			source, err := st.store.GetOrCreateSource("gmail", "archive@example.com")
-			require.NoError(t, err)
+			requirements.NoError(err)
 			client := gmail.NewMockAPI()
 			client.MessagePages = [][]string{{"one", "two", "three"}}
 			for _, id := range client.MessagePages[0] {
@@ -212,10 +214,10 @@ func TestMCPImportRealWorker(t *testing.T) {
 			}
 			srv := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: st, Logger: slog.New(slog.DiscardHandler)})
 			t.Cleanup(func() {
-				assert.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context())))
+				assertions.NoError(srv.Shutdown(context.WithoutCancel(t.Context())))
 				ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), serveLifecycleTestTimeout)
 				defer cancel()
-				assert.True(t, jobs.waitContext(ctx))
+				assertions.True(jobs.waitContext(ctx))
 			})
 			approvals := 0
 			session := operationMCPSession(t, sourceOperationFixture(t, srv), []mcpserver.OperationFamily{mcpserver.OperationFamilyImports}, &sdkmcp.ClientOptions{ElicitationHandler: func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
@@ -223,15 +225,15 @@ func TestMCPImportRealWorker(t *testing.T) {
 				return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 			}})
 			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "create_import_job", Arguments: map[string]any{"account": "archive@example.com", "limit": 2}})
-			require.NoError(t, err)
+			requirements.NoError(err)
 			created := loopToolOutput[generated.ImportJobResponse](t, result)
-			assert.Equal(t, 1, approvals)
+			assertions.Equal(1, approvals)
 			want := generated.ImportJobResponseStatusDone
 			if fail {
 				want = generated.ImportJobResponseStatusFailed
 			}
 			var polled generated.ImportJobResponse
-			require.Eventually(t, func() bool {
+			requirements.Eventually(func() bool {
 				result, callErr := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_import_job", Arguments: map[string]any{"job_id": created.JobID}})
 				if callErr != nil || result.IsError {
 					return false
@@ -240,40 +242,40 @@ func TestMCPImportRealWorker(t *testing.T) {
 				return polled.Status == want
 			}, 10*time.Second, 20*time.Millisecond)
 			if fail {
-				require.NotNil(t, polled.ErrorData)
-				assert.Equal(t, "import failed", *polled.ErrorData)
+				requirements.NotNil(polled.ErrorData)
+				assertions.Equal("import failed", *polled.ErrorData)
 			} else {
-				assert.EqualValues(t, 2, polled.Added)
+				assertions.EqualValues(2, polled.Added)
 			}
 			rows, err := st.store.DB().QueryContext(t.Context(), "SELECT id FROM messages")
-			require.NoError(t, err)
+			requirements.NoError(err)
 			defer func() { _ = rows.Close() }()
 			var ids []int64
 			for rows.Next() {
 				var id int64
-				require.NoError(t, rows.Scan(&id))
+				requirements.NoError(rows.Scan(&id))
 				ids = append(ids, id)
 			}
-			require.NoError(t, rows.Err())
-			require.NoError(t, rows.Close())
+			requirements.NoError(rows.Err())
+			requirements.NoError(rows.Close())
 			if fail {
-				assert.Empty(t, ids)
+				assertions.Empty(ids)
 			} else {
-				require.Len(t, ids, 2)
+				requirements.Len(ids, 2)
 				for _, id := range ids {
 					body, bodyErr := st.store.GetMessageBodyText(t.Context(), id)
-					require.NoError(t, bodyErr)
-					assert.Contains(t, body, "Example body")
+					requirements.NoError(bodyErr)
+					assertions.Contains(body, "Example body")
 				}
 				select {
 				case <-refreshes:
 				case <-time.After(10 * time.Second):
-					require.FailNow(t, "cache refresh was not queued")
+					requirements.FailNow("cache refresh was not queued")
 				}
 				ctx, cancel := context.WithTimeout(t.Context(), serveLifecycleTestTimeout)
 				defer cancel()
-				require.True(t, jobs.waitContext(ctx))
-				assert.Empty(t, refreshes)
+				requirements.True(jobs.waitContext(ctx))
+				assertions.Empty(refreshes)
 			}
 		})
 	}
