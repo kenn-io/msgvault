@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
 type toolRequest struct {
@@ -22,6 +23,14 @@ type toolRequest struct {
 
 func (r toolRequest) GetArguments() map[string]any {
 	return r.arguments
+}
+
+func decodeToolArguments(req toolRequest, dst any, options ...json.Options) error {
+	data, err := json.Marshal(req.GetArguments())
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, dst, options...)
 }
 
 type embeddedResource struct {
@@ -57,6 +66,16 @@ func newInternalError(operation string, err error) error {
 		return err
 	}
 	return &internalError{operation: operation, cause: err}
+}
+
+func mcpDaemonResult(value any, err error) (*toolResult, error) {
+	if err != nil {
+		return toolErrorResult(daemonclient.SafeMCPError(err).Error()), nil
+	}
+	if value == nil {
+		return nil, newInternalError("daemon response", errors.New("empty response"))
+	}
+	return jsonResult(value)
 }
 
 func jsonResult(v any) (*toolResult, error) {

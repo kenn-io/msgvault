@@ -1185,10 +1185,8 @@ func TestCardDAVApplyMissingOwnerConflictCaptureRollsBackWholePlan(t *testing.T)
 	assert.Empty(conflicts)
 }
 
-func TestCardDAVTombstoneDeletesOnlyUntouchedRemoteGovernedPerson(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
+func TestCardDAVRemoteChangesIgnoreDeliveryPolicyOwnership(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	st, account, book := newCardDAVResourceStore(t)
 	input := remoteResource(book.CanonicalURL+"alice.vcf", "remote-alice", "Alice", "alice@example.test", `"one"`)
 	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
@@ -1199,7 +1197,46 @@ func TestCardDAVTombstoneDeletesOnlyUntouchedRemoteGovernedPerson(t *testing.T) 
 	resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
 	require.NoError(err)
 	require.NotNil(resource.PersonID)
+	person, err := st.GetPersonContext(t.Context(), *resource.PersonID)
+	require.NoError(err)
+	setDelivery(t, st, person.VCardUID, "alice@example.test", store.DeliverySendAllowed)
+
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+	require.NoError(err)
+	changed := remoteResource(input.Href, "remote-alice", "Alice", "alice-new@example.test", `"two"`)
+	changed.SemanticHash = "semantic-remote-alice-changed"
+	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: books[0].SyncRevision, ReplaceAll: true, Upserts: []store.CardDAVRemoteResource{changed},
+	})
+	require.NoError(err)
+	points, err := st.ListPersonContactPointsContext(t.Context(), person.ID, true)
+	require.NoError(err)
+	assert.Equal([]string{"alice-new@example.test"}, contactPointValues(points), "the old address is replaced, not left active")
+}
+
+func TestCardDAVTombstoneDeletesOnlyUntouchedRemoteGovernedPerson(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st, account, book := newCardDAVResourceStore(t)
+	input := remoteResource(book.CanonicalURL+"alice.vcf", "remote-alice", "Alice", "alice@example.test", `"one"`)
+	protected := remoteResource(book.CanonicalURL+"protected.vcf", "remote-protected", "Protected", "protected@example.test", `"one"`)
+	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: book.SyncRevision, ReplaceAll: true, Upserts: []store.CardDAVRemoteResource{input, protected},
+	})
+	require.NoError(err)
+	resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
+	require.NoError(err)
+	require.NotNil(resource.PersonID)
 	personID := *resource.PersonID
+	protectedResource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, protected.Href)
+	require.NoError(err)
+	require.NotNil(protectedResource.PersonID)
+	protectedPerson, err := st.GetPersonContext(t.Context(), *protectedResource.PersonID)
+	require.NoError(err)
+	setDelivery(t, st, protectedPerson.VCardUID, "", store.DeliverySendAllowed)
 
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
@@ -1208,6 +1245,8 @@ func TestCardDAVTombstoneDeletesOnlyUntouchedRemoteGovernedPerson(t *testing.T) 
 	require.NoError(err)
 	_, err = st.GetPersonContext(t.Context(), personID)
 	require.ErrorIs(err, store.ErrPersonNotFound)
+	_, err = st.GetPersonContext(t.Context(), protectedPerson.ID)
+	require.NoError(err, "a delivery policy is user-owned state")
 
 	// A canonical UID match is locally governed and is only unmapped.
 	var curatedID int64

@@ -75,12 +75,8 @@ var stableCalendarTools = sync.OnceValue(func() []toolDefinition {
 			}
 		}
 		handler := func(h *handlers, ctx context.Context, req toolRequest) (*toolResult, error) {
-			data, err := json.Marshal(req.GetArguments())
-			if err != nil {
-				return toolErrorResult("Invalid calendar arguments"), nil
-			}
 			var request calcontrol.Request
-			if err := json.Unmarshal(data, &request, json.RejectUnknownMembers(true)); err != nil {
+			if err := decodeToolArguments(req, &request, json.RejectUnknownMembers(true)); err != nil {
 				return toolErrorResult("Invalid calendar arguments"), nil
 			}
 			if request.Action != "" {

@@ -45,6 +45,8 @@ func TestSafeMCPErrorPreservesServedRouteCodesWithoutProse(t *testing.T) {
 		"identity_matches_unavailable", "invalid_identity_match_state", "review_token_required",
 		"invalid_candidate_id", "invalid_participant_id", "invalid_before_id",
 		"invalid_offset", "invalid_ref",
+		"revision_conflict", "unknown_person", "invalid_policy",
+		"delivery_policy_unavailable", "detached_endpoint", "ambiguous_endpoint", "scope_acknowledgement_missing",
 	} {
 		t.Run(code, func(t *testing.T) {
 			err := SafeMCPError(&APIError{Status: 400, Code: code, Message: "Synthetic private failure detail"})

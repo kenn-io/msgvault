@@ -752,6 +752,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyAnalyticalPosts(t *testing.T) {
 		"/api/v1/meetings/context",
 		"/api/v1/meetings/metrics",
 		"/api/v1/search/coverage",
+		"/api/v1/people/delivery-policy/read",
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
@@ -852,6 +853,9 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	completion := doc.Paths[completionPath]
 	require.NotNil(completion, "participant completion route must exist")
 	require.NotNil(completion.Post, "participant completion must be registered as POST")
+	deliveryRead := doc.Paths["/api/v1/people/delivery-policy/read"]
+	require.NotNil(deliveryRead, "delivery-policy read route must exist")
+	require.NotNil(deliveryRead.Post, "delivery-policy read must be registered as POST")
 
 	messageTagsPath := "/api/v1/messages/{id}/tags"
 	messageTags := doc.Paths[messageTagsPath]
@@ -862,7 +866,7 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	meetingContextPath := "/api/v1/meetings/context"
 	meetingMetricsPath := "/api/v1/meetings/metrics"
 
-	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", messageTagsPath, meetingActionsPath, meetingContextPath, meetingMetricsPath}
+	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", messageTagsPath, "/api/v1/people/delivery-policy/read", meetingActionsPath, meetingContextPath, meetingMetricsPath}
 	for path, item := range doc.Paths {
 		if item.Post != nil && slices.Contains(item.Post.Tags, "Exploration") {
 			expected = append(expected, path)

@@ -21,6 +21,8 @@ func securityPolicyFor(class toolSecurityClass, opts ServeOptions) securityPolic
 		return securityPolicy{"write", "", true}
 	case toolSecurityProfileWrite:
 		return securityPolicy{"profile_write", "--allow-profile-writes", opts.AllowProfileWrites}
+	case toolSecurityDeliveryPolicyWrite:
+		return securityPolicy{"delivery_policy_write", "--allow-delivery-policy-writes", opts.AllowDeliveryPolicyWrites}
 	case toolSecurityIdentityDecision:
 		return securityPolicy{"identity_decision", "--allow-identity-decisions", opts.AllowIdentityDecisions}
 	case toolSecurityIdentityScoring:
@@ -74,6 +76,7 @@ func summarizeTool(definition toolDefinition) ToolSummary {
 // tools available to a particular connection and credential.
 func ToolSummaries() []ToolSummary {
 	definitions := operationDefinitions(catalogCapabilities{kataDocbank: true})
+	definitions = append(definitions, stableDeliveryPolicyDefinitions...)
 	definitions = append(definitions, stableIdentityScoringDefinitions...)
 	summaries := make([]ToolSummary, 0, len(definitions))
 	for _, definition := range definitions {
