@@ -72,6 +72,10 @@ func TestMCPCapabilitiesDescribeRealLoopRoutes(t *testing.T) {
 		routes[route.OperationID] = route
 	}
 	for _, tc := range []struct{ id, method, path string }{
+		{"getPersonStructuredProfile", http.MethodGet, "/api/v1/people/{id}/profile"},
+		{"patchPersonStructuredProfile", http.MethodPatch, "/api/v1/people/{id}/profile"},
+		{"getPersonProfileHistory", http.MethodGet, "/api/v1/people/{id}/profile/history"},
+		{"getPersonProfileMediaContent", http.MethodGet, "/api/v1/people/{id}/profile/media/{media_id}/content"},
 		{"listLoops", http.MethodGet, "/api/v1/loops"},
 		{"markLoopDone", http.MethodPost, "/api/v1/loops/{message_id}/done"},
 		{"snoozeLoop", http.MethodPost, "/api/v1/loops/{message_id}/snooze"},

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/store"
@@ -33,11 +34,8 @@ func personRecordCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCapab
 }
 
 type personMediaArgs struct {
-	PersonID int64   `json:"person_id"`
-	MediaID  int64   `json:"media_id"`
-	Offset   *int64  `json:"offset,omitempty"`
-	Length   *int64  `json:"length,omitempty"`
-	SHA256   *string `json:"sha256,omitempty"`
+	PersonID int64 `json:"person_id"`
+	MediaID  int64 `json:"media_id"`
 }
 type personPatchArgs struct {
 	PersonID int64                                `json:"person_id"`
@@ -52,17 +50,6 @@ func personRecordRefusal(code string) bool {
 	}
 	return false
 }
-func recordProjection(result *mcpserver.OperationResult, writes bool) *mcpserver.OperationResult {
-	if result == nil || result.IsError {
-		return result
-	}
-	profile, ok := result.Output.(generated.StructuredPersonProfile)
-	if !ok || result.ETag == "" {
-		return operationFailure("invalid_operation_response", writes)
-	}
-	result.Output = mcpserver.StructuredPersonRecord{ETag: result.ETag, Profile: profile}
-	return result
-}
 func (b *daemonMCPOperations) executePersonRecord(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	invalid := func() (*mcpserver.OperationResult, bool, error) {
 		return operationFailure("invalid_arguments", false), true, nil
@@ -74,8 +61,14 @@ func (b *daemonMCPOperations) executePersonRecord(ctx context.Context, name stri
 			return invalid()
 		}
 		if name == "get_person_record" {
-			result, err := readMCPOperationJSONWithClassifier[generated.StructuredPersonProfile](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile", &generated.GetPersonStructuredProfileRequestOptions{PathParams: &generated.GetPersonStructuredProfilePath{ID: input.PersonID}}, personRecordRefusal, http.StatusOK)
-			return recordProjection(result, false), true, err
+			data, headers, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile", &generated.GetPersonStructuredProfileRequestOptions{PathParams: &generated.GetPersonStructuredProfilePath{ID: input.PersonID}}, mcpserver.MaxDownloadBytes, personRecordRefusal, http.StatusOK)
+			if failure != nil {
+				return failure, true, err
+			}
+			if headers.Get("ETag") == "" {
+				return operationFailure("invalid_operation_response", false), true, nil
+			}
+			return &mcpserver.OperationResult{Data: data, ETag: headers.Get("ETag")}, true, nil
 		}
 		result, err := readMCPOperationJSONWithClassifier[generated.PersonProfileHistory](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/history", &generated.GetPersonProfileHistoryRequestOptions{PathParams: &generated.GetPersonProfileHistoryPath{ID: input.PersonID}}, personRecordRefusal, http.StatusOK)
 		return result, true, err
@@ -84,22 +77,32 @@ func (b *daemonMCPOperations) executePersonRecord(ctx context.Context, name stri
 		if err != nil || !validLoopID(input.PersonID) || input.ETag == "" || input.Patch == nil {
 			return invalid()
 		}
-		result, err := readMCPOperationJSONWithClassifier[generated.StructuredPersonProfile](ctx, b.client, http.MethodPatch, "/api/v1/people/{id}/profile", &generated.PatchPersonStructuredProfileRequestOptions{PathParams: &generated.PatchPersonStructuredProfilePath{ID: input.PersonID}, Header: &generated.PatchPersonStructuredProfileHeaders{IfMatch: input.ETag}, Body: input.Patch}, personRecordRefusal, http.StatusOK)
-		return recordProjection(result, true), true, err
+		data, headers, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodPatch, "/api/v1/people/{id}/profile", &generated.PatchPersonStructuredProfileRequestOptions{PathParams: &generated.PatchPersonStructuredProfilePath{ID: input.PersonID}, Header: &generated.PatchPersonStructuredProfileHeaders{IfMatch: input.ETag}, Body: input.Patch}, mcpserver.MaxDownloadBytes, personRecordRefusal, http.StatusOK)
+		if failure != nil {
+			return failure, true, err
+		}
+		if headers.Get("ETag") == "" {
+			return operationFailure("invalid_operation_response", true), true, nil
+		}
+		var profile generated.StructuredPersonProfile
+		if err := json.Unmarshal(data, &profile); err != nil {
+			return operationFailure("invalid_operation_response", true), true, err
+		}
+		record := mcpserver.StructuredPersonRecord{ETag: headers.Get("ETag")}
+		if len(data) <= 1<<20 {
+			record.Profile = &profile
+		}
+		return &mcpserver.OperationResult{Output: record, ETag: record.ETag}, true, nil
 	case "get_person_record_media":
 		input, err := decodeMCPOperationArguments[personMediaArgs](args)
 		if err != nil || !validLoopID(input.PersonID) || !validLoopID(input.MediaID) {
 			return invalid()
 		}
-		data, headers, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/media/{media_id}/content", &generated.GetPersonProfileMediaContentRequestOptions{PathParams: &generated.GetPersonProfileMediaContentPath{ID: input.PersonID, MediaID: input.MediaID}}, store.MaxPersonMediaBytes, personRecordRefusal, http.StatusOK)
+		data, headers, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/media/{media_id}/content", &generated.GetPersonProfileMediaContentRequestOptions{PathParams: &generated.GetPersonProfileMediaContentPath{ID: input.PersonID, MediaID: input.MediaID}}, mcpserver.MaxDownloadBytes, personRecordRefusal, http.StatusOK)
 		if failure != nil {
 			return failure, true, err
 		}
-		chunk, err := mcpserver.PersonMediaChunk(data, headers.Get("Content-Type"), args)
-		if err != nil {
-			return invalid()
-		}
-		return &mcpserver.OperationResult{Output: chunk}, true, nil
+		return &mcpserver.OperationResult{Data: data, MediaType: headers.Get("Content-Type")}, true, nil
 	default:
 		return nil, false, nil
 	}
@@ -112,15 +115,12 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	if err != nil || !validLoopID(input.PersonID) || input.ETag == "" || input.Patch == nil {
 		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 	}
-	current, _, err := b.executePersonRecord(ctx, "get_person_record", map[string]any{"person_id": input.PersonID})
+	encodedPatch, err := json.Marshal(input.Patch)
 	if err != nil {
-		return "", true, err
+		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 	}
-	if current == nil || current.IsError {
-		return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
-	}
-	if current.ETag != input.ETag {
-		return "", true, &mcpserver.OperationRefusalError{Code: "person_revision_conflict"}
+	if len(encodedPatch) > api.MaxPersonProfilePatchBytes {
+		return "", true, &mcpserver.OperationRefusalError{Code: "profile_patch_too_large"}
 	}
 	type mediaAdd struct {
 		generated.PersonMediaInputRequest
@@ -146,12 +146,56 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 				if err != nil {
 					return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 				}
+				if len(data) > store.MaxPersonMediaBytes {
+					return "", true, &mcpserver.OperationRefusalError{Code: "invalid_profile_value"}
+				}
 				sum := sha256.Sum256(data)
 				size, digest := len(data), hex.EncodeToString(sum[:])
 				add.Data, add.DataSize, add.DataSHA256 = nil, &size, &digest
 			}
 			patch.Media.Add = append(patch.Media.Add, add)
 		}
+	}
+	current, _, err := b.executePersonRecord(ctx, "get_person_record", map[string]any{"person_id": input.PersonID})
+	if err != nil {
+		return "", true, err
+	}
+	if current == nil || current.IsError {
+		return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+	}
+	if current.ETag != input.ETag {
+		return "", true, &mcpserver.OperationRefusalError{Code: "person_revision_conflict"}
+	}
+	var profile generated.StructuredPersonProfile
+	if err := json.Unmarshal(current.Data, &profile); err != nil {
+		return "", true, err
+	}
+	selected := struct {
+		Person        generated.Person               `json:"person"`
+		Names         []generated.PersonName         `json:"names,omitempty"`
+		ContactPoints []generated.PersonContactPoint `json:"contact_points,omitempty"`
+		Addresses     []generated.PersonAddress      `json:"addresses,omitempty"`
+		Dates         []generated.PersonDate         `json:"dates,omitempty"`
+		Categories    []generated.PersonCategory     `json:"categories,omitempty"`
+		Media         []generated.PersonMedia        `json:"media,omitempty"`
+	}{Person: profile.Person}
+	if p := input.Patch.Names; p != nil {
+		selected.Names = superseded(profile.Names, p.Supersede, func(v generated.PersonName) int64 { return v.Envelope.ID })
+	}
+	if p := input.Patch.ContactPoints; p != nil {
+		selected.ContactPoints = superseded(profile.ContactPoints, p.Supersede, func(v generated.PersonContactPoint) int64 { return v.Envelope.ID })
+	}
+	if p := input.Patch.Addresses; p != nil {
+		selected.Addresses = superseded(profile.Addresses, p.Supersede, func(v generated.PersonAddress) int64 { return v.Envelope.ID })
+	}
+	if p := input.Patch.Dates; p != nil {
+		selected.Dates = superseded(profile.Dates, p.Supersede, func(v generated.PersonDate) int64 { return v.Envelope.ID })
+	}
+	if p := input.Patch.Categories; p != nil {
+		selected.Categories = superseded(profile.Categories, p.Supersede, func(v generated.PersonCategory) int64 { return v.Envelope.ID })
+	}
+	if p := input.Patch.Media; p != nil {
+		selected.Media = superseded(profile.Media, p.Supersede, func(v generated.PersonMedia) int64 { return v.Envelope.ID })
 	}
 	changes := struct {
 		PersonID int64  `json:"person_id"`
@@ -163,6 +207,16 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 		Current   any    `json:"current"`
 		Changes   any    `json:"changes"`
 		Effect    string `json:"effect"`
-	}{name, current.Output, changes, "Atomically apply all requested adds and supersedes to this person."}, json.Deterministic(true))
+	}{name, selected, changes, "Atomically apply all requested adds and supersedes to this person."}, json.Deterministic(true))
 	return string(data), true, err
+}
+
+func superseded[T any](values []T, ids []int64, id func(T) int64) []T {
+	var selected []T
+	for _, value := range values {
+		if slices.Contains(ids, id(value)) {
+			selected = append(selected, value)
+		}
+	}
+	return selected
 }

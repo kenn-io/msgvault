@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	maxDownloadBytes = 256 << 20
+	MaxDownloadBytes = 256 << 20
 	maxDownloads     = 8
 	downloadLifetime = 5 * time.Minute
 )
@@ -23,11 +23,16 @@ var (
 )
 
 type downloadKey struct {
+	operation  string
+	personID   int64
+	mediaID    int64
 	message    query.MessageRef
 	attachment int64
 }
 
 type downloadSnapshot struct {
+	etag       string
+	mediaType  string
 	validate   func(context.Context) error
 	data       []byte
 	digest     string
@@ -57,6 +62,9 @@ func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkReque
 	if c.closed {
 		return nil, errDownloadExpired
 	}
+	if key.operation == "get_person_record" && req.offset == 0 && req.digest == "" && c.entries[key] != nil {
+		c.remove(key)
+	}
 	if entry := c.entries[key]; entry != nil {
 		if time.Now().Before(entry.expires) {
 			if entry.validate != nil {
@@ -85,7 +93,7 @@ func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkReque
 	if err != nil {
 		return nil, err
 	}
-	if len(entry.data) > maxDownloadBytes {
+	if len(entry.data) > MaxDownloadBytes {
 		return nil, errDownloadTooLarge
 	}
 	sum := sha256.Sum256(entry.data)
@@ -93,7 +101,7 @@ func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkReque
 	if req.digest != "" && req.digest != entry.digest {
 		return nil, errDownloadExpired
 	}
-	for len(c.entries) >= maxDownloads || c.bytes+len(entry.data) > maxDownloadBytes {
+	for len(c.entries) >= maxDownloads || c.bytes+len(entry.data) > MaxDownloadBytes {
 		var oldest downloadKey
 		var expires time.Time
 		for key, cached := range c.entries {

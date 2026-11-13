@@ -470,6 +470,10 @@ The MCP server exposes the following tools to connected AI clients:
 | `preview_person_tiers` | List saved people in tier 1 or 2 from archived two-way messages and meetings, with the matching rule, tracking state, and the latest day that counted. Read-only; it never tracks anyone. See [profile automation](/docs/usage/people-automation/). | — |
 | `explain_person_tier` | Show every count behind one saved person's tier against its threshold, including tier 3 and any exclusion. Read-only. | `person_id` (int, required) |
 | `search_person_files` | Find archived attachment occurrences related to a saved person. | `person_id` (int, required), `directions` (array: `from_person`/`to_person`/`group`), `filename` (substring), `mime_families` (array), `after`, `before`, `limit` (1–100, default 100), `cursor` |
+| `get_person_record` | Read the structured person profile and ETag. | `person_id` (required), `offset`, `length`, `sha256` |
+| `get_person_record_history` | Read current and superseded profile values. | `person_id` (required) |
+| `get_person_record_media` | Read stored profile media in chunks. | `person_id`, `media_id` (required), `offset`, `length`, `sha256` |
+| `patch_person_record` | Atomically add and supersede profile values with approval. | `person_id`, `etag`, `patch` (required) |
 | `get_person_profile` | Read a saved person profile: contact history, current brief and its sources, contact details, non-sensitive attributes, employment, relationships, and categories. Includes the vCard UID and mapped CardDAV bindings when the daemon provides them; older daemons return no CardDAV binding entries. Excludes sensitive attributes, private Notes, and media; makes no provider calls. See [Brief text is data](#brief-text-is-data). | Exactly one of `person_id` (int) or `vcard_uid` (string; current or retired person UID, or mapped CardDAV UID) |
 | `list_directory_people` | List durable Directory people with filtering and last-contact ordering when the daemon supports API schema 2.13.0 or newer. `address` requires API schema 3.29.0 or newer and matches a literal, case-insensitive substring of current bound participant addresses and identifiers or curated contact points on saved people. Sparse or absent address matches can scan all saved people; combine a known `query` to narrow candidates. `last_contact_after` and `last_contact_before` accept inclusive RFC3339 timestamps or `YYYY-MM-DD` dates (midnight UTC). Pages default to 50 rows and are capped at 100. Sort defaults to `last_contact_desc`; allowed values are `last_contact_desc`, `last_contact_asc`, and `name`. Rows include identity, revision, contact state, last contact time, primary channel, categories, and organizations; API schema 3.10.0 or newer also provides the vCard UID and CardDAV bindings. Older daemons return empty values for those fields. `next_cursor` is opaque and belongs to the same filter set. `search_people` remains the separate observed-contact and profile search on older compatible daemons. | `query`, `address`, `cursor`, `limit`, `sort`, `last_contact_after`, `last_contact_before`, `contact_state`, `category`, `organization`, `primary_channel` |
 
@@ -933,19 +937,20 @@ retries a write by itself. If a write reports
 
 On unreleased `main`, owner sessions can read a structured person record with
 `get_person_record`, including its exact ETag, and inspect its history with
-`get_person_record_history`. The adapter refuses profile or history JSON
-responses over 1 MiB. `get_person_record_media` returns stored inline
-media in base64 chunks with its content type and whole-object SHA-256. Start
-at offset zero and pass the hash with each subsequent offset; URI-only values
-have no stored content. These tools require native daemon support. With curated
-writes enabled, `patch_person_record` applies the requested adds and supersedes
-as one atomic patch using that exact ETag. Each call requires explicit client
-confirmation; the client is responsible for obtaining user approval. The
-disclosure supplies media byte size and SHA-256 in place of the submitted base64
-data. The returned patch profile is also subject to the 1 MiB JSON limit; if
-the patch committed but its response exceeds the limit, completion is uncertain.
-If its result says the operation may have completed, read the record again
-before retrying.
+`get_person_record_history`. For a profile over 1 MiB, call
+`get_person_record` with offset 0, then pass the returned `sha256` and each
+next offset until complete. Decode and join the base64 chunks to recover the
+profile JSON; each chunk carries its ETag. History responses are limited to
+1 MiB. `get_person_record_media` returns stored inline media in base64 chunks
+with its content type and whole-object SHA-256. Start at offset zero and pass
+the hash with each subsequent offset; URI-only values have no stored content.
+These tools require native daemon support. With curated writes enabled,
+`patch_person_record` applies adds and supersedes atomically using the exact
+ETag. Each call requires explicit client confirmation; the client is responsible
+for obtaining user approval. The disclosure supplies media byte size and SHA-256
+in place of base64 data. A successful patch returns its new ETag and omits the
+profile when it exceeds 1 MiB. If the result says the operation may have
+completed, read the record again before retrying.
 
 Enable only the writes intended for the assistant's session:
 

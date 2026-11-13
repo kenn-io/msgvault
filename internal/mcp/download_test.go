@@ -215,7 +215,7 @@ func TestDownloadSnapshotByteBudget(t *testing.T) {
 	must := require.New(t)
 	var cache downloadCache
 	defer cache.close()
-	data := make([]byte, maxDownloadBytes/2+1)
+	data := make([]byte, MaxDownloadBytes/2+1)
 	load := func() (*downloadSnapshot, error) {
 		return &downloadSnapshot{data: data}, nil
 	}
