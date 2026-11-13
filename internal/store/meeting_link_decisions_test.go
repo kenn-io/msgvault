@@ -320,7 +320,7 @@ func TestMeetingLinkDecisionConflictIdempotenceAndClear(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal("automatic", result.State)
 	_, err = st.DecideMeetingLinkContext(t.Context(), refs[2], refs[1], "clear")
-	requirements.ErrorIs(err, sql.ErrNoRows)
+	requirements.NoError(err)
 	result, err = st.DecideMeetingLinkContext(t.Context(), refs[0], refs[2], "unlink")
 	requirements.NoError(err)
 	assertions.Equal("split", result.State)
@@ -1689,4 +1689,80 @@ func TestMeetingDecisionSourceMergeCollisionPriority(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMeetingDecisionRejectsWrongSingleOccurrence(t *testing.T) {
+	for _, tc := range []struct{ name, raw, valid, wrong string }{
+		{"timed", `{"id":"single","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, "20270314T100000Z", "20270321T100000Z"},
+		{"all-day", `{"id":"single","start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"}}`, "20270314", "20270321"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, event := calendarFixture(t, st, "single-ref", tc.raw)
+			_, note := projectionFixture(t, st, "single-ref-note", "meeting_json", `{}`)
+			wrong := MeetingLinkRef{Kind: "evt", MessageID: event, Identity: occurrenceIdentity(t, tc.wrong)}
+			_, err := st.MeetingRecordContext(t.Context(), wrong)
+			r.ErrorIs(err, sql.ErrNoRows)
+			_, err = st.DecideMeetingLinkContext(t.Context(), wrong, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+			r.ErrorIs(err, sql.ErrNoRows)
+			valid := MeetingLinkRef{Kind: "evt", MessageID: event, Identity: occurrenceIdentity(t, tc.valid)}
+			_, err = st.MeetingRecordContext(t.Context(), valid)
+			r.NoError(err)
+		})
+	}
+}
+
+func TestMeetingDecisionRescheduledSingleReset(t *testing.T) {
+	for _, replace := range []bool{false, true} {
+		t.Run(fmt.Sprintf("replace-%t", replace), func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			data, event := calendarFixture(t, st, "rescheduled", `{"id":"single","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+			_, note := projectionFixture(t, st, "rescheduled-note", "meeting_json", `{}`)
+			eventRef := MeetingLinkRef{Kind: "evt", MessageID: event}
+			noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+			_, err := st.DecideMeetingLinkContext(t.Context(), eventRef, noteRef, "link")
+			r.NoError(err)
+			data.RawMIME = []byte(`{"id":"single","start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`)
+			_, err = st.PersistMessage(data)
+			r.NoError(err)
+			if replace {
+				_, err = st.DecideMeetingLinkContext(t.Context(), eventRef, noteRef, "unlink")
+				r.NoError(err)
+			}
+			_, err = st.DecideMeetingLinkContext(t.Context(), eventRef, noteRef, "clear")
+			r.NoError(err)
+			record, err := st.MeetingRecordContext(t.Context(), noteRef)
+			r.NoError(err)
+			r.Empty(record.Links)
+		})
+	}
+}
+
+func TestMeetingDecisionClearOrphanAfterSeriesArrives(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, exception := calendarFixture(t, st, "orphan-reset", `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled"}`)
+	_, note := projectionFixture(t, st, "orphan-reset-note", "meeting_json", `{}`)
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err := st.DecideMeetingLinkContext(t.Context(), noteRef, MeetingLinkRef{Kind: "evt", MessageID: exception}, "link")
+	r.NoError(err)
+	_, series := calendarFixture(t, st, "orphan-reset-series", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+	current := MeetingLinkRef{Kind: "evt", MessageID: series, Identity: occurrenceIdentity(t, "20270314T100000Z")}
+	_, err = st.DecideMeetingLinkContext(t.Context(), noteRef, current, "clear")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Empty(record.Links)
+}
+
+func TestMeetingDecisionClearWithoutSavedChoice(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, first := projectionFixture(t, st, "clear-empty-first", "meeting_json", `{}`)
+	_, second := projectionFixture(t, st, "clear-empty-second", "meeting_json", `{}`)
+	result, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: first}, MeetingLinkRef{Kind: "msg", MessageID: second}, "clear")
+	r.NoError(err)
+	r.Equal("automatic", result.State)
 }

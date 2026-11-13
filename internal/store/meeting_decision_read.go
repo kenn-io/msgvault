@@ -97,6 +97,9 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 	}
 	defer release()
 	budget := calrecur.RequestReadBudget
+	if err := s.validateMeetingInput(ctx, endpointFromRef(ref), &budget); err != nil {
+		return result, err
+	}
 	seed, err := s.meetingOccurrenceKey(ctx, endpointFromRef(ref), &budget)
 	if err != nil {
 		return result, err

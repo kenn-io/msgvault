@@ -119,6 +119,34 @@ func (s *Store) meetingCopies(ctx context.Context, id int64) ([]int64, error) {
 	return ids, errors.Join(rows.Err(), rows.Close())
 }
 
+// validateMeetingInput checks a dated single-event reference before normalizing it.
+func (s *Store) validateMeetingInput(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) error {
+	if endpoint.Kind != meetingRefEvent || endpoint.Key == "" {
+		return nil
+	}
+	id, ok, err := s.resolveMeetingMessage(ctx, endpoint.ID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return sql.ErrNoRows
+	}
+	rows, err := s.meetingEventRows(ctx, `e.message_id = ?`, []any{id}, budget)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return sql.ErrNoRows
+	}
+	event := rows[0].Event
+	if event.Kind == "single" {
+		if event.Start == nil || (calrecur.Identity{Instant: *event.Start, Date: event.StartDate, AllDay: event.AllDay}).Key() != endpoint.Key {
+			return sql.ErrNoRows
+		}
+	}
+	return nil
+}
+
 // meetingOccurrenceKey identifies an occurrence from its own calendar row.
 func (s *Store) meetingOccurrenceKey(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) (meetingDecisionEndpoint, error) {
 	id, ok, err := s.resolveMeetingMessage(ctx, endpoint.ID)
@@ -208,6 +236,11 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		if err != nil {
 			return s.clearStoredMeetingDecision(ctx, tx, a, b, decision, err, &result)
 		}
+		for _, endpoint := range []meetingDecisionEndpoint{a, b} {
+			if err := s.validateMeetingInput(ctx, endpoint, &budget); err != nil {
+				return err
+			}
+		}
 		if compareMeetingEndpoints(ca, cb) == 0 {
 			return ErrMeetingLinkSameCopy
 		}
@@ -267,12 +300,31 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 				}
 			}
 		}
-		if decision == "clear" {
-			err := s.clearStoredMeetingDecision(ctx, tx, a, b, decision, sql.ErrNoRows, &result)
-			if err == nil {
-				result.Left, result.Right = ca.ref(), cb.ref()
-			}
+		equivalent, err := s.equivalentMeetingDecisions(ctx, ca, cb, &budget)
+		if err != nil {
 			return err
+		}
+		if decision == "clear" {
+			for _, edge := range equivalent {
+				var ignored MeetingLinkDecisionResult
+				if err := s.clearStoredMeetingDecision(ctx, tx, edge.a, edge.b, decision, sql.ErrNoRows, &ignored); err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return err
+				}
+			}
+			if len(equivalent) == 0 {
+				var ignored MeetingLinkDecisionResult
+				err := s.clearStoredMeetingDecision(ctx, tx, a, b, decision, sql.ErrNoRows, &ignored)
+				if err != nil && (!errors.Is(err, sql.ErrNoRows) || missing) {
+					return err
+				}
+			}
+			result = MeetingLinkDecisionResult{Left: ca.ref(), Right: cb.ref(), State: "automatic"}
+			return nil
+		}
+		for _, edge := range equivalent {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id=?`, edge.id); err != nil {
+				return err
+			}
 		}
 		for i, edge := range slices.Backward(active) {
 			x, y := edge.a, edge.b
@@ -321,6 +373,45 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		return nil
 	})
 	return result, err
+}
+
+// equivalentMeetingDecisions finds saved pairs that resolve to the requested pair.
+func (s *Store) equivalentMeetingDecisions(ctx context.Context, a, b meetingDecisionEndpoint, budget *int) ([]meetingDecisionEdge, error) {
+	seen := map[int64]bool{}
+	var matches []meetingDecisionEdge
+	for _, endpoint := range []meetingDecisionEndpoint{a, b} {
+		edges, err := s.meetingDecisionEdges(ctx, endpoint, budget)
+		if err != nil {
+			return nil, err
+		}
+		for _, edge := range edges {
+			if seen[edge.id] {
+				continue
+			}
+			seen[edge.id] = true
+			x, err := s.meetingOccurrenceKey(ctx, edge.a, budget)
+			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrMeetingOccurrenceRequired) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			y, err := s.meetingOccurrenceKey(ctx, edge.b, budget)
+			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrMeetingOccurrenceRequired) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if compareMeetingEndpoints(x, y) > 0 {
+				x, y = y, x
+			}
+			if x == a && y == b {
+				matches = append(matches, edge)
+			}
+		}
+	}
+	return matches, nil
 }
 
 func (s *Store) clearStoredMeetingDecision(ctx context.Context, tx *loggedTx, a, b meetingDecisionEndpoint, decision string, cause error, result *MeetingLinkDecisionResult) error {
