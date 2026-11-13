@@ -482,6 +482,7 @@ export * from "./listLoopsParams";
 export * from "./listMessageRecordingsPathParameters";
 export * from "./listMessagesParams";
 export * from "./listMessageTasksPathParameters";
+export * from "./listOpenKataIssuesParams";
 export * from "./listOperationRunsKind";
 export * from "./listOperationRunsLane";
 export * from "./listOperationRunsParams";

@@ -176,10 +176,11 @@ The API publishes its generated OpenAPI contract at `/openapi.json`.
 opening an archive. OpenAPI `info.version` is the **API schema version**;
 it is separate from the binary release version. The current schema is **5.3.0**.
 
-Schema 5.3.0 adds `meeting_intro` to first-contact classification when the archived
+Schema 5.3.0 adds first-appearance evidence and `meeting_intro` to first-contact
+classification when the archived
 transcript explicitly records the owner, target and a distinct organizer.
 
-Schema 5.2.0 adds first-appearance evidence to person contact state.
+Schema 5.2.0 adds open Kata issue search and optional task search queries.
 
 Schema 5.1.0 adds time-zone-aware Month and Year grouping, group overviews, and item totals for time groups.
 
