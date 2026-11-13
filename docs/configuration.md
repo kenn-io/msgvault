@@ -1678,11 +1678,8 @@ Select a Page's Messenger inbox or a linked Instagram account's inbox
 (unreleased). See [Facebook and Instagram messages](usage/meta-messages.md).
 `[[facebook_messages]]` takes the keys and rules of
 [`[[facebook_comments]]`](#facebook-comments), and `[[instagram_messages]]`
-those of [`[[instagram_comments]]`](#instagram-comments). Neither accepts
-`actions`, and `[[instagram_messages]]` does not accept `mentions`; both keys
-apply to comments only.
-Each section is checked separately, so the same Page can have a comments
-profile and a messages profile. Scheduled jobs are
+those of [`[[instagram_comments]]`](#instagram-comments), except `actions`
+and `mentions`. Scheduled jobs are
 `facebook_messages:<source-identifier>` and
 `instagram_messages:<source-identifier>`.
 
@@ -1695,11 +1692,6 @@ Start a listener for signed Meta webhook deliveries (unreleased). See
 daemon environment variables that hold the app secret (`app_secret_env`) and
 the verify token (`verify_token_env`). App IDs must be unique, and a
 `listen_addr` needs at least one app. Unknown keys are rejected.
-
-With the receiver on, an app listed here may have only one enabled
-`[[instagram_comments]]` profile and one enabled `[[instagram_messages]]`
-profile per Instagram account. msgvault refuses the
-configuration otherwise, because it could not tell which profile a delivery is for.
 
 ### `[[instagram_comments]]` {#instagram-comments}
 

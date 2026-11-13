@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-12"
+last_edited: "2026-11-13"
 title: Facebook and Instagram Messages
 description: Archive a Facebook Page's Messenger inbox or a linked Instagram account's direct messages as searchable chats.
 ---
@@ -9,12 +9,8 @@ or with your professional Instagram account in Instagram direct messages,
 beside your other chats. msgvault reads these inboxes with the Page token; it
 does not send messages.
 
-This archives a **Page's** or business account's inbox. To archive your
-personal Messenger history, import a Facebook export with
-[`import-messenger`](text-messages.md#import-messenger). The two never share
-conversations or people: a personal export and a Page inbox use different
-identities, so a chat between your own account and your Page appears once in
-each source.
+This archives a business inbox. For your personal Messenger history, use
+[`import-messenger`](text-messages.md#import-messenger).
 
 ## Connect an inbox
 
@@ -56,45 +52,29 @@ configured account.
 
 ## What is archived
 
-Each conversation becomes a chat with the customer, titled with the customer's
-name or Instagram username. Messages the Page or account sent are marked as
-yours. Only messages with text are archived; a message without text, such as
-an attachment, sticker or like, is skipped. The source and message types are
-`facebook_messages` and `instagram_messages`. Customer identities are scoped to the app and inbox, so
-they never merge with commenters or with people in other sources; use the
-[people tools](people.md) to link them.
+Each one-to-one conversation becomes a chat with the customer, titled with the
+customer's name or Instagram username. Messages the Page or account sent are
+marked as yours. The source and message types are `facebook_messages` and
+`instagram_messages`. Customer identities are scoped to the app and inbox; use
+the [people tools](people.md) to link them to other people.
 
-Only one-to-one conversations are archived: the Page or account and one other
-person. A sync skips any other conversation, such as a group chat, and its
-output counts them, for example `2 conversations skipped (not a one-to-one
-chat)`. A sync fails if none of the conversations on a page include the
-configured Page or account. That means the Page is now linked to another
-account; check which account the Page is linked to.
+To archive new messages as they arrive, set up
+[Meta webhooks](meta-webhooks.md#inbox-messages). Each new message with text
+is then archived, including the ones the Page or account sends. A message
+whose webhook change was skipped or never delivered is archived only if it is
+still among the 20 most recent when the next sync runs.
 
-Meta returns only the **20 most recent messages** of each conversation, so a
-sync cannot reach older history. To archive new messages as they arrive, set
-up [Meta webhooks](meta-webhooks.md#inbox-messages). Each new message with
-text is then archived, including the ones the Page or account sends. A
-message without text is skipped. A message is missed if the daemon skips its
-webhook change after an hour of failures, or if it arrives while the receiver
-is unreachable for longer than Meta keeps retrying. A missed message is
-archived only if it is still among the 20 most recent when the next sync runs.
-
-Each sync reads every conversation again and updates messages already
-archived in place. Each request reads up to 25
-conversations, and `--max-requests` limits a run; an unfinished run resumes
-from its saved position, and `--full` starts again from the most recent
-conversations. A saved position can stop working. If a sync fails with
-`continuation request failed` and the token and its permissions are valid,
-run the sync again with `--full`.
+Each sync reads every conversation again and updates archived messages in
+place. Each request reads up to 25 conversations, and `--max-requests` limits
+a run; an unfinished run resumes from its saved position. If a sync fails with
+`continuation request failed` and the token is valid, run it again with
+`--full`.
 
 ## Limits
 
+- Meta returns only the **20 most recent messages** of each conversation.
 - Message text only: attachments, stickers and reactions are not archived.
-  A message without text is never archived. If an archived message later
-  comes back without text, its archived text stays.
-- Group conversations are not archived.
-- A later sync updates the text of a message that is still among the 20 most
-  recent, so an edit replaces the archived text. Earlier versions and
-  deletions are not kept, and webhooks ignore edit and deletion events.
-- No sending or replying.
+- Only conversations between the Page or account and one other person are
+  archived. A sync skips group chats and counts them in its output.
+- Edits replace the archived text; earlier versions and deletions are not
+  kept, and webhooks ignore edit and deletion events.

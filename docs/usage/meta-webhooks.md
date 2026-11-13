@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-12"
+last_edited: "2026-11-13"
 title: Meta Webhooks
 description: Archive Facebook Page and Instagram comments, mentions and inbox messages as Meta reports them, between polling syncs.
 ---
@@ -57,7 +57,7 @@ for the same app and Page, registered with `msgvault source facebook-comments ad
 For Instagram, subscribe the app's Instagram object to the `comments` and
 `live_comments` fields with the same callback URL, and to `mentions` for
 [mentions of the account](instagram-comments.md#archive-media-that-tags-the-account)
-on a profile that sets `mentions = true`. Each account must have exactly one
+on a profile that sets `mentions = true`. Each account must have an
 enabled [`[[instagram_comments]]` profile](../configuration.md#instagram-comments)
 for the same app and account, registered with
 `msgvault source instagram-comments add`. Mentions also need
@@ -94,53 +94,34 @@ well-formed signature header before reading its body, and it reads at most 8
 delivery bodies at once; above that it answers 503 and Meta retries.
 
 The daemon saves each accepted delivery under `meta-webhooks/pending` in the
-data directory before it answers Meta, so a delivery survives a daemon
-restart. Deliveries are applied in the order they arrived and deleted once
-applied. At most 10,000 deliveries or 1 GiB wait in that directory. Past
-either limit the daemon answers 503 until it catches up, and Meta retries.
-The daemon tries to rename a delivery file it cannot read or delete to
-`.<name>.set-aside` in the same directory, for you to inspect. If the rename
-fails too, it logs that, leaves the file where it is and skips it until the
-daemon restarts.
+data directory before it answers Meta. Deliveries are applied in the order
+they arrived and deleted once applied.
 
-A post or comment that mentions the Page is read from Meta and archived in the
-Page's comment source as its own conversation, with the post it belongs to.
-A new or edited comment is read from Meta with the Page token rather than
-taken from the delivery, so a late or repeated delivery cannot bring back older
-text. A post or parent comment that is not archived yet is read too. For a hide
-or unhide, the daemon reads whether Meta hides the comment now and records
-that, so a repeated hide cannot hide a visible comment. A removed comment is
-marked deleted together with its archived replies. A removed post is marked
-deleted; its comments stay archived. An Instagram comment is also read from
-Meta, and media that is not archived yet must be owned by the configured
-account; otherwise the change is logged and skipped.
+New and edited comments, and the hidden state of a comment, are read from Meta
+rather than taken from the delivery, so a late or repeated delivery cannot
+bring back an older state. A removed comment is marked deleted together with
+its archived replies. A removed post is marked deleted; its comments stay
+archived. An Instagram comment is read from Meta too, and media that is not
+archived yet must be owned by the configured account. A post or comment that
+mentions the Page is read from Meta and archived in the Page's comment source
+as its own conversation, with the post it belongs to.
 
 ### When a change fails
 
-The daemon applies a delivery one change at a time. When a change fails, later
-changes and deliveries, for every app and Page, wait until it succeeds or is
-skipped. Changes that already succeeded are not applied again, unless the
-daemon restarts during the delivery. It then applies the whole delivery again,
-which is safe to repeat.
+- A change that fails is retried with increasing waits. Later changes and
+  deliveries wait behind it.
+- Each delivery has one hour. After that, the daemon skips the failing change
+  and tries each remaining change of the delivery once.
+- A change that can never be applied, such as one for a comment or post that
+  is gone, that the token may not read, or for a Page with no enabled profile,
+  is skipped at once.
+- An expired token, throttling and Meta error codes msgvault does not know are
+  retried.
 
-What the daemon does depends on why the change failed:
-
-| Cause | What the daemon does |
-|---|---|
-| A polling sync of the same Page or account is running | Waits for the sync, checking again at least once a minute. This wait has no limit and does not count against the hour below. |
-| Meta is unavailable or throttling, the Page token is expired or invalid, Meta returns an error code msgvault does not know, or the archive cannot be written | Retries with waits that grow to 5 minutes. Each delivery has one hour of these waits in total. |
-| The change can never be applied: the comment or post is gone or cannot be read with this token, Meta rejects the request, the Page has no enabled profile or registered source, the profile's token variable is not set, or the comment is already archived under another post | Logs the change and skips it at once. |
-
-When a delivery has used its hour, the daemon logs the failing change and
-skips it, then tries each remaining change of the delivery once.
-
-A skipped change is not always recovered. A later polling sync archives the
-current text of a skipped new or edited comment when it reads that comment
-again and Meta still returns it. That can take several runs; see
-[coverage and resuming](facebook-comments.md#understand-coverage-and-resuming).
-Polling does not recover a skipped hide, unhide or removal, because it does
-not read those. No sync can find Instagram caption or comment mentions or
-posts by others that mention a Page, so a skipped mention is lost.
+Polling does not recover a skipped hide, unhide or removal. A later sync
+archives a skipped new or edited comment when it reads that comment. No sync
+can find Instagram caption or comment mentions or posts by others that mention
+a Page, so a skipped mention is lost.
 
 ## Limits
 
@@ -155,3 +136,5 @@ posts by others that mention a Page, so a skipped mention is lost.
 - A hide or unhide for a comment that is not archived yet is ignored. Polling
   sync does not read hidden state, so that comment is not marked hidden.
 - Deliveries larger than 8 MiB are refused.
+- If a resumed comment sync fails on a comment that was deleted and then
+  purged by `msgvault gc`, run the sync once with `--full`.

@@ -292,12 +292,12 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 	return sum, phaseErr
 }
 
-// dropDeletedFrames removes saved traversal of comments and posts deleted
-// since the checkpoint was saved: frames reading their comments or replies and
+// dropDeletedFrames removes saved traversal of comments deleted through
+// msgvault since the checkpoint was saved: frames reading their replies and
 // saved copies still waiting to be archived, including those that declare a
 // deleted or dropped parent. Meta has no replies left to read
 // there, so asking would fail on every run. The run holds the source lock, so
-// nothing is deleted while it traverses. It reports whether it dropped
+// no comment is deleted while it traverses. It reports whether it dropped
 // anything.
 func (r *importRun) dropDeletedFrames(deleted func(id string) (bool, error)) (bool, error) {
 	changed := false
@@ -305,40 +305,25 @@ func (r *importRun) dropDeletedFrames(deleted func(id string) (bool, error)) (bo
 	for more := true; more; {
 		more = false
 		for _, p := range r.state.Phases {
-			// A new slice keeps the saved page intact if a lookup fails.
-			posts := make([]Object, 0, len(p.Posts))
-			for _, post := range p.Posts {
-				gone, err := deleted(post.ID)
-				if err != nil {
-					return changed, err
-				}
-				if !gone {
-					posts = append(posts, post)
-				}
-			}
-			if len(posts) != len(p.Posts) {
-				changed = true
-				p.Posts = posts
-			}
 			for i := range p.Stack {
 				f := &p.Stack[i]
-				// A post's own frame is the bottom of its stack, so a deleted
-				// post drops the whole stack.
-				gone, err := deleted(f.Parent)
-				if err != nil {
-					return changed, err
-				}
-				if gone {
-					for _, cut := range p.Stack[i:] {
-						for _, child := range cut.Pending {
-							dropped[child.ID] = true
-						}
+				if f.Parent != f.Root {
+					gone, err := deleted(f.Parent)
+					if err != nil {
+						return changed, err
 					}
-					// Each frame's comment was already taken from the frame
-					// below, so cutting here loses only its own subtree.
-					p.Stack = p.Stack[:i]
-					changed, more = true, true
-					break
+					if gone {
+						for _, cut := range p.Stack[i:] {
+							for _, child := range cut.Pending {
+								dropped[child.ID] = true
+							}
+						}
+						// Each frame's comment was already taken from the frame
+						// below, so cutting here loses only its own subtree.
+						p.Stack = p.Stack[:i]
+						changed, more = true, true
+						break
+					}
 				}
 				// A new slice keeps the saved list intact if a lookup fails.
 				pending := make([]Object, 0, len(f.Pending))
@@ -447,24 +432,7 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 			if err != nil {
 				return err
 			}
-			kept := keepSaved(p.Posts, page.Data)
-			unlisted := slices.ContainsFunc(p.Posts, func(saved Object) bool {
-				return !slices.ContainsFunc(kept, func(object Object) bool { return object.ID == saved.ID })
-			})
-			if p.PostsAfter == "" && unlisted {
-				// A checkpoint saved by an earlier build from `main`, before
-				// posts_after existed, has saved posts but no cursor, so the
-				// read above landed on the first page. Continuing at After
-				// would skip saved posts that are not there and still report
-				// complete coverage, so the phase starts over from the first
-				// page. A saved first page also has no cursor; restarting it
-				// costs one request and reads the same page.
-				*p = phaseState{}
-			} else {
-				// With a cursor the read found the saved page, so a saved post
-				// it no longer lists was deleted on Meta and is dropped.
-				p.Posts, p.postsRead = kept, true
-			}
+			p.Posts, p.postsRead = keepSaved(p.Posts, page.Data), true
 		} else if len(p.Posts) > 0 {
 			post := p.Posts[0]
 			if err := r.persist(ctx, post, post.ID, "", edge); err != nil {
@@ -530,18 +498,12 @@ func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) 
 	return nil
 }
 
-// keepSaved returns the fresh objects whose IDs are in saved, in fresh order,
-// each at most once. An object no longer on the page is left for the next
-// complete scan.
+// keepSaved returns the fresh objects whose IDs are in saved, in fresh order.
+// An object no longer on the page is left for the next complete scan.
 func keepSaved(saved, fresh []Object) []Object {
 	ids := make(map[string]bool, len(saved))
 	for _, object := range saved {
 		ids[object.ID] = true
 	}
-	return slices.DeleteFunc(fresh, func(object Object) bool {
-		keep := ids[object.ID]
-		// A later listing of the same ID is dropped.
-		delete(ids, object.ID)
-		return !keep
-	})
+	return slices.DeleteFunc(fresh, func(object Object) bool { return !ids[object.ID] })
 }

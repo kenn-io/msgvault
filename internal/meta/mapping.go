@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"slices"
 	"time"
 
@@ -12,14 +13,6 @@ import (
 )
 
 const rawFormat = "facebook-comment-json"
-
-// invariantError is an archive error the same input always repeats, such as
-// a comment that Graph places under a different post than the archive does.
-// Its text is the error message.
-type invariantError string
-
-func (e invariantError) Error() string { return string(e) }
-
 const objectMetadataVersion = 1
 
 type objectMetadata struct {
@@ -70,17 +63,17 @@ func (r *importRun) objectFormat() string {
 func (r *importRun) persist(ctx context.Context, obj Object, root, parent string, edge PostEdge) error {
 	if r.imp.instagram != "" && obj.InstagramMedia != nil && obj.InstagramMedia.Owner != nil {
 		if owner := obj.InstagramMedia.Owner.ID; owner != "" && owner != r.imp.instagram {
-			return invariantError("instagram media owner mismatch")
+			return errors.New("instagram media owner mismatch")
 		}
 	}
 	if obj.Parent != nil && obj.Parent.ID != "" {
 		parent = obj.Parent.ID
 	}
 	if parent != "" && !safeObjectID(parent) {
-		return invariantError("invalid comment parent identity")
+		return errors.New("invalid comment parent identity")
 	}
 	if parent == obj.ID {
-		return invariantError("comment cannot parent itself")
+		return errors.New("comment cannot parent itself")
 	}
 	existing, err := r.imp.store.StoredMessagesContext(ctx, r.source.ID, r.objectFormat(), []string{obj.ID, parent, root})
 	if err != nil {
@@ -99,10 +92,10 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 		}
 		var storedMeta objectMetadata
 		if !previousMetadata.Valid || json.Unmarshal([]byte(previousMetadata.String), &storedMeta) != nil || !storedMeta.matches(r.app, r.page, r.imp.instagram, root) || storedMeta.ParentID != parent {
-			return invariantError("comment object already belongs to a different root or parent")
+			return errors.New("comment object already belongs to a different root or parent")
 		}
 		if storedMeta.Version != objectMetadataVersion {
-			return invariantError("unsupported comment object metadata version")
+			return errors.New("unsupported comment object metadata version")
 		}
 		meta = storedMeta
 	}
@@ -118,14 +111,14 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 	if parent != "" {
 		rootRow, ok := existing[root]
 		if !ok {
-			return invariantError("comment root is not archived")
+			return errors.New("comment root is not archived")
 		}
 		parentRow, ok := existing[parent]
 		if !ok {
-			return invariantError("comment parent is not archived")
+			return errors.New("comment parent is not archived")
 		}
 		if rootRow.ConversationID != parentRow.ConversationID || (exists && prior.ConversationID != parentRow.ConversationID) {
-			return invariantError("comment parent belongs to a different conversation")
+			return errors.New("comment parent belongs to a different conversation")
 		}
 		savedRoot, err := r.imp.store.GetMessageMetadataContext(ctx, rootRow.ID)
 		if err != nil {
@@ -133,10 +126,10 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 		}
 		var rootMeta objectMetadata
 		if !savedRoot.Valid || json.Unmarshal([]byte(savedRoot.String), &rootMeta) != nil || !rootMeta.matches(r.app, r.page, r.imp.instagram, root) || rootMeta.ParentID != "" {
-			return invariantError("comment root belongs to a different context or has a parent")
+			return errors.New("comment root belongs to a different context or has a parent")
 		}
 		if rootMeta.Version != objectMetadataVersion {
-			return invariantError("unsupported comment root metadata version")
+			return errors.New("unsupported comment root metadata version")
 		}
 		if parent != root {
 			saved, err := r.imp.store.GetMessageMetadataContext(ctx, parentRow.ID)
@@ -145,10 +138,10 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 			}
 			var parentMeta objectMetadata
 			if !saved.Valid || json.Unmarshal([]byte(saved.String), &parentMeta) != nil || !parentMeta.matches(r.app, r.page, r.imp.instagram, root) {
-				return invariantError("comment parent belongs to a different conversation")
+				return errors.New("comment parent belongs to a different conversation")
 			}
 			if parentMeta.Version != objectMetadataVersion {
-				return invariantError("unsupported comment parent metadata version")
+				return errors.New("unsupported comment parent metadata version")
 			}
 		}
 		reply = sql.NullInt64{Int64: parentRow.ID, Valid: true}
@@ -262,7 +255,7 @@ func archiveObject(ctx context.Context, st *store.Store, sum *ImportSummary, o a
 			parsed, err = time.Parse(time.RFC3339, o.obj.CreatedTime)
 		}
 		if err != nil {
-			return invariantError("invalid comment creation time")
+			return errors.New("invalid comment creation time")
 		}
 		sent = sql.NullTime{Time: parsed, Valid: true}
 		// Graph reads give whole seconds; keep a finer time a webhook stored
