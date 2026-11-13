@@ -1638,9 +1638,7 @@ restarts cursors without deleting rows. No identifier selects all profiles.
 msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--full]
 ```
 
-Profiles with `ad_account_id` also archive comments on media used by that ad
-account's ads when the configured account owns it. See
-[Instagram comments](usage/instagram-comments.md) for setup, identity,
+See [Instagram comments](usage/instagram-comments.md) for setup, identity,
 resuming, and coverage limits. These commands do not send replies.
 
 ## comment moderate
