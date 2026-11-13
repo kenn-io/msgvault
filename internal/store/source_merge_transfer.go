@@ -31,11 +31,18 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			}
 		}
 	}
+	meetingGroups := map[int64][]int64{}
 	for _, m := range plan.messages {
 		if m.survivor != 0 {
+			meetingGroups[m.survivor] = append(meetingGroups[m.survivor], m.id)
 			if err := s.copyLoopDecisionTx(ctx, tx, m.id, m.survivor); err != nil {
 				return err
 			}
+		}
+	}
+	for survivor, ids := range meetingGroups {
+		if err := copyMeetingDecisionsTx(ctx, tx, ids, survivor); err != nil {
+			return err
 		}
 	}
 	// Batch the ordinary row transfer and provenance writes. The values table
@@ -81,6 +88,33 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			return err
 		}
 	}
+	// Map incoming calendar copies hidden by provider identity to the visible copy.
+	rows, err := tx.QueryContext(ctx, `SELECT e.message_id, v.message_id FROM calendar_events e JOIN messages m ON m.id=e.message_id JOIN source_merge_messages sm ON sm.message_id=m.id AND sm.survivor_message_id IS NULL JOIN calendar_events v ON v.provider_event_id=e.provider_event_id JOIN messages vm ON vm.id=v.message_id AND vm.source_id=m.source_id WHERE sm.original_source_id=? AND m.source_id=? AND m.deleted_at IS NULL AND vm.deleted_at IS NULL AND e.message_id<>v.message_id AND NOT `+calendarEventVisibility("e", "m")+` AND `+calendarEventVisibility("v", "vm"), from, into)
+	if err != nil {
+		return err
+	}
+	visibleGroups := map[int64][]int64{}
+	for rows.Next() {
+		var hidden, visible int64
+		if err := rows.Scan(&hidden, &visible); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		visibleGroups[visible] = append(visibleGroups[visible], hidden)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	for visible, ids := range visibleGroups {
+		if err := copyMeetingDecisionsTx(ctx, tx, ids, visible); err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if _, err := tx.ExecContext(ctx, `UPDATE source_merge_messages SET survivor_message_id=? WHERE message_id=?`, visible, id); err != nil {
+				return err
+			}
+		}
+	}
 	// Gmail's canonical IDs also carry trusted roles. Preserve that evidence
 	// before archive labels lose provider IDs; Drafts takes precedence.
 	if _, err := tx.ExecContext(ctx, `UPDATE labels SET system_role = CASE
@@ -91,7 +125,7 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 		return err
 	}
 	// Incoming labels are archive organization, not destination provider label IDs.
-	rows, err := tx.QueryContext(ctx, `SELECT l.id, l.name, COALESCE(l.system_role, ''), EXISTS(SELECT 1 FROM source_merge_preserved_labels p WHERE p.label_id = l.id) FROM labels l WHERE l.source_id = ? ORDER BY l.id`, from)
+	rows, err = tx.QueryContext(ctx, `SELECT l.id, l.name, COALESCE(l.system_role, ''), EXISTS(SELECT 1 FROM source_merge_preserved_labels p WHERE p.label_id = l.id) FROM labels l WHERE l.source_id = ? ORDER BY l.id`, from)
 	if err != nil {
 		return err
 	}

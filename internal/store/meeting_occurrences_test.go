@@ -404,3 +404,22 @@ func occurrenceWarningLine(logs []byte) []byte {
 	}
 	return nil
 }
+
+func TestMeetingOccurrencesUseAvailableNoteAsAnchor(t *testing.T) {
+	early := time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)
+	late := early.Add(24 * time.Hour)
+	evidence := &MeetingEvidence{
+		through: late.Add(time.Hour),
+		notes: []occurrenceNote{
+			{id: 1, state: "unavailable", at: early},
+			{id: 2, state: "available", at: late},
+		},
+		choices: []meetingDecisionEdge{{a: meetingDecisionEndpoint{ID: 1, Kind: "msg"}, b: meetingDecisionEndpoint{ID: 2, Kind: "msg"}, decision: "link"}},
+	}
+	rows, _, err := evidence.Reduce(t.Context(), nil)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, int64(2), rows[1].AnchorMessageID)
+	assert.Equal(t, late, rows[1].OccurredAt)
+	assert.True(t, rows[1].Counted)
+}

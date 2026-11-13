@@ -570,11 +570,14 @@ func (s *Store) MergeDuplicates(
 				return fmt.Errorf("soft-delete duplicate %d: %w", dupID, err)
 			}
 		}
+		if err := copyMeetingDecisionsTx(ctx, tx, duplicateIDs, survivorID); err != nil {
+			return err
+		}
 		for _, dupID := range duplicateIDs {
 			if err := s.copyLoopDecisionTx(ctx, tx, dupID, survivorID); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_copy_survivors(message_id, survivor_message_id) VALUES (?, ?) ON CONFLICT (message_id) DO UPDATE SET survivor_message_id=excluded.survivor_message_id`, dupID, survivorID); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_copy_survivors(message_id, survivor_message_id) SELECT id, ? FROM messages WHERE id=? AND message_type IN ('calendar_event', 'meeting_transcript') ON CONFLICT (message_id) DO UPDATE SET survivor_message_id=excluded.survivor_message_id`, survivorID, dupID); err != nil {
 				return err
 			}
 		}
@@ -1272,7 +1275,7 @@ func deriveRFC822MessageID(rawData []byte, compression sql.NullString) (string, 
 	return normalizedID, normalizedID != ""
 }
 
-// repointDeletedMeetingCopies preserves saved choices before hidden messages are purged.
+// repointDeletedMeetingCopies preserves survivor chains before hidden messages are purged.
 func (s *Store) repointDeletedMeetingCopies(ctx context.Context, tx *loggedTx, predicate string, args ...any) error {
 	rows, err := tx.QueryContext(ctx, `SELECT m.id, COALESCE(c.survivor_message_id,sm.survivor_message_id) FROM messages m LEFT JOIN meeting_copy_survivors c ON c.message_id=m.id LEFT JOIN source_merge_messages sm ON sm.message_id=m.id WHERE `+predicate, args...)
 	if err != nil {
@@ -1316,52 +1319,6 @@ func (s *Store) repointDeletedMeetingCopies(ctx context.Context, tx *loggedTx, p
 		}
 		if !target.Valid {
 			continue
-		}
-		decisions, err := tx.QueryContext(ctx, `SELECT id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key FROM meeting_link_decisions WHERE left_message_id=? OR right_message_id=?`, m.id, m.id)
-		if err != nil {
-			return err
-		}
-		var entries []meetingDecisionEdge
-		for decisions.Next() {
-			var d meetingDecisionEdge
-			if err := decisions.Scan(&d.id, &d.a.ID, &d.a.Kind, &d.a.Key, &d.b.ID, &d.b.Kind, &d.b.Key); err != nil {
-				_ = decisions.Close()
-				return err
-			}
-			entries = append(entries, d)
-		}
-		if err := errors.Join(decisions.Err(), decisions.Close()); err != nil {
-			return err
-		}
-		for _, d := range entries {
-			if d.a.ID == m.id {
-				d.a.ID = target.Int64
-			}
-			if d.b.ID == m.id {
-				d.b.ID = target.Int64
-			}
-			if compareMeetingEndpoints(d.a, d.b) > 0 {
-				d.a, d.b = d.b, d.a
-			}
-			var existingID int64
-			err := tx.QueryRowContext(ctx, `SELECT id FROM meeting_link_decisions WHERE id<>? AND left_message_id=? AND left_kind=? AND left_key=? AND right_message_id=? AND right_kind=? AND right_key=?`, d.id, d.a.ID, d.a.Kind, d.a.Key, d.b.ID, d.b.Kind, d.b.Key).Scan(&existingID)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return err
-			}
-			if existingID != 0 && newerMeetingDecision(d, meetingDecisionEdge{id: existingID}) {
-				if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id=?`, existingID); err != nil {
-					return err
-				}
-				existingID = 0
-			}
-			if existingID != 0 || compareMeetingEndpoints(d.a, d.b) == 0 {
-				_, err = tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id=?`, d.id)
-			} else {
-				_, err = tx.ExecContext(ctx, `UPDATE meeting_link_decisions SET left_message_id=?,left_kind=?,left_key=?,right_message_id=?,right_kind=?,right_key=? WHERE id=?`, d.a.ID, d.a.Kind, d.a.Key, d.b.ID, d.b.Kind, d.b.Key, d.id)
-			}
-			if err != nil {
-				return err
-			}
 		}
 		if _, err = tx.ExecContext(ctx, `DELETE FROM meeting_copy_survivors WHERE survivor_message_id=? AND message_id=?`, m.id, target.Int64); err != nil {
 			return err

@@ -159,7 +159,7 @@ func (s *Store) loadMeetingEvidence(ctx context.Context, through time.Time) (*Me
 	leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
 	rightScope, rightArgs := sourceScopeClause(ctx, "r.source_id")
 	decisionArgs := append(append([]any(nil), leftArgs...), rightArgs...)
-	rows, err = s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE 1=1`+leftScope+rightScope, decisionArgs...)
+	rows, err = s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE l.deleted_at IS NULL AND r.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM calendar_events e WHERE e.message_id=l.id AND NOT `+calendarEventVisibility("e", "l")+`) AND NOT EXISTS (SELECT 1 FROM calendar_events e WHERE e.message_id=r.id AND NOT `+calendarEventVisibility("e", "r")+`)`+leftScope+rightScope, decisionArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("read meeting decisions: %w", err)
 	}
@@ -633,7 +633,7 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 			}
 		} else if len(unit.notes) > 0 {
 			anchorID = unit.notes[0].id
-			if len(unit.events) > 0 && available {
+			if available {
 				for _, note := range unit.notes {
 					if note.state == "available" {
 						anchorID = note.id
@@ -642,7 +642,7 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 				}
 			}
 			for _, note := range unit.notes {
-				if len(unit.events) > 0 && available && note.state != "available" {
+				if available && note.state != "available" {
 					continue
 				}
 				if at.IsZero() && !note.at.IsZero() {
