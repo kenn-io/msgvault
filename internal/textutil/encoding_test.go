@@ -492,6 +492,32 @@ func TestSanitizeTerminalMultiline(t *testing.T) {
 	}
 }
 
+func TestPrefixBytes(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		max   int
+		want  string
+	}{
+		{name: "fits", input: "héllo", max: 6, want: "héllo"},
+		{name: "ascii cut", input: "hello", max: 3, want: "hel"},
+		{name: "cut inside two-byte rune", input: "hé", max: 2, want: "h"},
+		{name: "cut inside four-byte rune", input: "a😀b", max: 4, want: "a"},
+		{name: "cut at rune boundary", input: "a😀b", max: 5, want: "a😀"},
+		{name: "all multi-byte", input: strings.Repeat("界", 4), max: 8, want: "界界"},
+		{name: "keeps text after invalid byte", input: "a\xffbcdef", max: 5, want: "a\xffbcd"},
+		{name: "invalid byte then split rune", input: "a\xffb界", max: 5, want: "a\xffb"},
+		{name: "zero", input: "hello", max: 0, want: ""},
+		{name: "negative", input: "hello", max: -1, want: ""},
+		{name: "empty", input: "", max: 0, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, textutil.PrefixBytes(tt.input, tt.max))
+		})
+	}
+}
+
 func TestPrefixRunes(t *testing.T) {
 	tests := []struct {
 		name  string

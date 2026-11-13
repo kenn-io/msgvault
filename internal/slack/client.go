@@ -13,8 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/msgvault/internal/httpretry"
 	"golang.org/x/time/rate"
+
+	"go.kenn.io/msgvault/internal/httpretry"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 const (
@@ -236,7 +238,7 @@ func truncate(b []byte, n int) string {
 	if len(b) <= n {
 		return string(b)
 	}
-	return string(b[:n]) + "…"
+	return textutil.PrefixBytes(string(b), n) + "…"
 }
 
 // AuthTest validates the token and identifies its workspace and user.

@@ -40,6 +40,11 @@ func (a *storeAPIAdapter) runCLIEmbeddingsBuild(ctx context.Context, req api.CLI
 						saved.Vector.DBPath = running.Vector.DBPath
 						saved.Vector.Backend = running.Vector.Backend
 						saved.Vector.SkipExtensionCreate = running.Vector.SkipExtensionCreate
+						published, ok := api.PublishedVectorConfig(cmd.Context())
+						if ok && published.Enabled && published.Embeddings.LocalOnly && !textProviderConfigured(saved.Vector) {
+							saved.Vector.Enabled = published.Enabled
+							saved.Vector.Embeddings = published.Embeddings
+						}
 						running.Vector = saved.Vector
 						state.cfg = &running
 					}
