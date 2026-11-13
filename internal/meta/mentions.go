@@ -75,17 +75,12 @@ func (imp *MentionImporter) ImportTags(ctx context.Context, app, page, account s
 		return nil, err
 	}
 	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
-	var cursor tagCursor
+	after := ""
 	if !opts.Full {
-		blob, err := savedCheckpoint(ctx, imp.store, source.ID)
-		if err != nil {
+		if after, err = savedCheckpoint(ctx, imp.store, source.ID); err != nil {
 			return nil, err
 		}
-		if blob != "" && json.Unmarshal([]byte(blob), &cursor) != nil {
-			return nil, errors.New("invalid Instagram tags checkpoint; restart this source with --full")
-		}
 	}
-	after := cursor.After
 	syncID, err := execution.StartSyncContext(ctx, MentionsSourceType, "")
 	if err != nil {
 		return nil, err
@@ -94,21 +89,12 @@ func (imp *MentionImporter) ImportTags(ctx context.Context, app, page, account s
 	sum = run.sum
 	done := false
 	checkpoint := func() *store.Checkpoint {
-		// Never empty: the next sync ignores a run with an empty checkpoint
-		// and falls back to an older, possibly expired cursor. After the last
-		// page, after is "" and the next sync starts from the newest tags.
-		blob, _ := json.Marshal(tagCursor{After: after})
-		return &store.Checkpoint{PageToken: string(blob), MessagesAdded: int64(sum.MessagesAdded), MessagesUpdated: int64(sum.MessagesUpdated), MessagesProcessed: int64(sum.MessagesProcessed)}
+		return &store.Checkpoint{PageToken: after, MessagesAdded: int64(sum.MessagesAdded), MessagesUpdated: int64(sum.MessagesUpdated), MessagesProcessed: int64(sum.MessagesProcessed)}
 	}
 	defer func() {
 		sum.Partial = retErr != nil || !done
 		retErr = finishSync(ctx, imp.store, source.ID, syncID, checkpoint(), sum.Partial, retErr)
 	}()
-	// Publish the starting position before any request, so a crash before
-	// the first page cannot leave the next sync on an older cursor.
-	if err := run.store.UpdateSyncCheckpointContext(ctx, syncID, checkpoint()); err != nil {
-		return sum, err
-	}
 	maximum := opts.MaxRequests
 	if maximum == 0 {
 		maximum = DefaultMaxRequests
@@ -140,11 +126,6 @@ func (imp *MentionImporter) ImportTags(ctx context.Context, app, page, account s
 		}
 	}
 	return sum, nil
-}
-
-// tagCursor is the tag sync checkpoint: the cursor of the next page to read.
-type tagCursor struct {
-	After string `json:"after"`
 }
 
 type mentionRun struct {
