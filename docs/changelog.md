@@ -12,6 +12,7 @@ All notable changes to msgvault, grouped by release.
 
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 
+- [Call history](usage/call-history.md) shows how often you call each person. Use `msgvault calls import`, `msgvault calls list`, and `msgvault calls summary` to import, browse, and count calls. Summaries count only calls where you and that person attended; invitations never count as calls. These commands require HTTP API schema 5.1.0.
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
