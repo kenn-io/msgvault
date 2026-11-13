@@ -267,16 +267,16 @@ func TestMCPImportRealWorker(t *testing.T) {
 					requirements.NoError(bodyErr)
 					assertions.Contains(body, "Example body")
 				}
-				select {
-				case <-refreshes:
-				case <-time.After(10 * time.Second):
-					requirements.FailNow("cache refresh was not queued")
-				}
-				ctx, cancel := context.WithTimeout(t.Context(), serveLifecycleTestTimeout)
-				defer cancel()
-				requirements.True(jobs.waitContext(ctx))
-				assertions.Empty(refreshes)
 			}
+			select {
+			case <-refreshes:
+			case <-time.After(10 * time.Second):
+				requirements.FailNow("cache refresh was not queued")
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), serveLifecycleTestTimeout)
+			defer cancel()
+			requirements.True(jobs.waitContext(ctx))
+			assertions.Empty(refreshes)
 		})
 	}
 }
