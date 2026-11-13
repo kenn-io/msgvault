@@ -121,11 +121,12 @@ func TestSemanticCollectionUsesAllSources(t *testing.T) {
 		return &HybridSearchResult{}, nil
 	})
 	runTool[searchMessageBodiesResponse](t, ToolSemanticSearchMessages, h.semanticSearchMessages, map[string]any{"query": "fixture", "collection": "many"})
+	runTool[searchMessageBodiesResponse](t, ToolSearchMessages, h.searchMessages, map[string]any{"query": "fixture", "mode": "hybrid", "collection": "many"})
 	runTool[searchMessageBodiesResponse](t, ToolSemanticSearchMessages, h.semanticSearchMessages, map[string]any{"query": "fixture", "collection": "empty"})
-	assert.Equal(t, 1, calls)
+	assert.Equal(t, 2, calls)
 	result, err := h.semanticSearchMessages(t.Context(), toolRequest{arguments: map[string]any{"query": "subject:fixture", "collection": "empty"}})
 	require.NoError(t, err)
 	assert.True(t, result.isError)
 	assert.Contains(t, resultText(t, result), "missing_free_text")
-	assert.Equal(t, 1, calls)
+	assert.Equal(t, 2, calls)
 }

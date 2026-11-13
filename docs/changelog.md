@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Owner MCP clients can list message collections with `list_message_collections` and pass `collection` to message searches, `list_messages`, `get_message` and `aggregate` to read only that collection's sources, when the daemon advertises collection discovery.
+- Owner MCP clients can list message collections with `list_message_collections` and pass `collection` to message searches, `list_messages`, `get_message` and `aggregate` to read only that collection's sources, when the daemon advertises collection discovery. Semantic search spans all sources in a collection; keyword body search requires at most one source.
 
 - Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
 
