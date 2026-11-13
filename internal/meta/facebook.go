@@ -70,13 +70,13 @@ func (c *Client) Comment(ctx context.Context, id string) (Object, error) {
 func readNode[T any](ctx context.Context, c *Client, id, fields string, nodeID func(T) string) (T, error) {
 	var node T
 	if !safeObjectID(id) {
-		return node, invariantError("invalid Graph object ID")
+		return node, errors.New("invalid Graph object ID")
 	}
 	if err := c.get(ctx, url.PathEscape(id), url.Values{fieldsParam: {fields}}, &node); err != nil {
 		return node, err
 	}
 	if nodeID(node) != id {
-		return node, invariantError("graph object identity mismatch")
+		return node, errors.New("graph object identity mismatch")
 	}
 	return node, nil
 }
