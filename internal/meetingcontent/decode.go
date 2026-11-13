@@ -391,12 +391,17 @@ func explicitPeople(organizerRaw, attendeesRaw jsontext.Value) (*personWire, []p
 	}
 	var attendees []personWire
 	if len(attendeesRaw) > 0 && !isNull(attendeesRaw) {
-		if json.Unmarshal(attendeesRaw, &attendees) != nil {
+		var people []*personWire
+		if json.Unmarshal(attendeesRaw, &people) != nil {
 			return nil, nil, false
 		}
-		for _, person := range attendees {
-			if !hasPersonIdentity(person) {
+		for _, person := range people {
+			if person == nil {
 				return nil, nil, false
+			}
+			// Producers omit addressless guests from archived recipients.
+			if hasPersonIdentity(*person) {
+				attendees = append(attendees, *person)
 			}
 		}
 	}

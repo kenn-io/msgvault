@@ -18,6 +18,8 @@ func TestExplicitParticipants(t *testing.T) {
 		{"owner and invitees", "granola_json", `{"owner":{"email":"owner@example.test"},"calendar_event":{"invitees":[{"email":"a@example.test"}]}}`, 0},
 		{"explicit organizer only", "granola_json", `{"calendar_event":{"organiser":"host@example.test","invitees":[{"email":"a@example.test"}]}}`, 1},
 		{"malformed", "meeting_json", `{"organizer":{"email":"host@example.test"},"attendees":[7]}`, 0},
+		{"malformed alongside usable", "meeting_json", `{"organizer":{"email":"host@example.test"},"attendees":[{"email":"a@example.test"},7]}`, 0},
+		{"null alongside usable", "meeting_json", `{"organizer":{"email":"host@example.test"},"attendees":[{"email":"a@example.test"},null]}`, 0},
 		{"duplicate keys", "meeting_json", `{"organizer":{"email":"a@example.test"},"organizer":{"email":"b@example.test"}}`, 0},
 		{"name only", "meeting_json", `{"attendees":[{"name":"A"}]}`, 0},
 		{"unsupported", "omi_json", `{"organizer":{"email":"host@example.test"}}`, 0},
