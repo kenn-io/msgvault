@@ -183,7 +183,7 @@ func instagramMentionsHandler(cfg *config.Config, st *store.Store, work schedule
 		profile := cfg.InstagramComments[i]
 		client, err := configuredInstagramCommentsClient(profile)
 		if err != nil {
-			return fmt.Errorf("%w: %w", metawebhook.ErrUnrecoverable, err)
+			return err
 		}
 		return applyMetaWebhook(ctx, work, func() error {
 			return meta.ApplyMentions(ctx, st, client, profile.AppID, profile.PageID, profile.InstagramAccountID, change.Values)
