@@ -77,25 +77,9 @@ func freshSourceState(src *store.Source, adAccount string) *syncState {
 	return s
 }
 
-// loadState returns the saved progress for a sync with the profile's
-// configured ad account.
 func loadState(ctx context.Context, st *store.Store, src *store.Source, full bool, adAccount string) (*syncState, error) {
-	state, err := loadSavedState(ctx, st, src, full)
-	if err != nil {
-		return nil, err
-	}
-	// A changed ad account setting restarts the cycle with the new edges.
-	if state.AdAccountID != adAccount {
-		return freshSourceState(src, adAccount), nil
-	}
-	return state, nil
-}
-
-// loadSavedState returns the saved progress as it is, whatever ad account it
-// was saved with.
-func loadSavedState(ctx context.Context, st *store.Store, src *store.Source, full bool) (*syncState, error) {
 	if full {
-		return freshSourceState(src, ""), nil
+		return freshSourceState(src, adAccount), nil
 	}
 	var blob string
 	var priorID int64
@@ -115,14 +99,18 @@ func loadSavedState(ctx context.Context, st *store.Store, src *store.Source, ful
 		blob = checkpoint.CursorBefore.String
 	}
 	if blob == "" {
-		return freshSourceState(src, ""), nil
+		return freshSourceState(src, adAccount), nil
 	}
 	var state syncState
 	if json.Unmarshal([]byte(blob), &state) != nil || !state.valid(src.Identifier) {
 		return nil, errors.New("invalid comment checkpoint; restart this source with --full")
 	}
+	// A changed ad account setting restarts the cycle with the new edges.
+	if state.AdAccountID != adAccount {
+		return freshSourceState(src, adAccount), nil
+	}
 	if state.complete() {
-		fresh := freshSourceState(src, state.AdAccountID)
+		fresh := freshSourceState(src, adAccount)
 		fresh.NextSurface = state.NextSurface
 		return fresh, nil
 	}
