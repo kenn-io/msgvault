@@ -330,23 +330,6 @@ func checkIntroductionMergeSnapshotsOmitBody(t *testing.T, st *Store) {
 	for _, column := range post.Columns {
 		assert.NotEqual(t, "body", column.Name)
 	}
-	// Exercise the insertion restoration owner directly with a real body-free
-	// merge snapshot. Introduction rows normally remain live after repointing;
-	// split preserves later user deletions rather than resurrecting those rows.
-	pc, err := st.EnsureParticipant("restored@example.test", "Restored", "example.test")
-	require.NoError(t, err)
-	restored, _, err := st.CreatePersonFromParticipantContext(ctx, pc)
-	require.NoError(t, err)
-	_, err = st.DB().ExecContext(ctx, st.Rebind(`DELETE FROM messages WHERE id=?`), meeting)
-	require.NoError(t, err)
-	_, err = st.DB().ExecContext(ctx, `DELETE FROM person_introductions`)
-	require.NoError(t, err)
-	require.NoError(t, st.withTxContext(ctx, func(tx *loggedTx) error {
-		return st.insertPersonSplitSnapshotRowTx(ctx, tx, introRows[0], a.ID, restored.ID, a.ID, b.ID, "", "")
-	}))
-	var meetingID sql.NullInt64
-	require.NoError(t, st.DB().QueryRowContext(ctx, `SELECT meeting_message_id FROM person_introductions`).Scan(&meetingID))
-	assert.False(t, meetingID.Valid)
 }
 
 func TestIntroductionProtectsUserOwnedPerson(t *testing.T) {

@@ -313,6 +313,8 @@ func TestPeopleBrowserPreservesFirstSeenWithoutDirectContact(t *testing.T) {
 	profile, err := engine.GetPersonProfile(t.Context(), 51)
 	require.NoError(err)
 	require.NotNil(profile.ContactState)
+	require.NotNil(profile.ContactState.FirstSeenAt)
+	assert.Equal(time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC), *profile.ContactState.FirstSeenAt)
 	assert.Equal("message:7", profile.ContactState.FirstSeenRef)
 	assert.Equal(store.FirstContactEmailIntro, profile.ContactState.FirstContactKind)
 	require.NotNil(profile.ContactState.Introducer)

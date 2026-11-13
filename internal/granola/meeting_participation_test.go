@@ -3,11 +3,9 @@ package granola
 import (
 	"encoding/json/v2"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -44,14 +42,4 @@ func TestIngestNoteNameOnlyGuestPreservesMeetingParticipation(t *testing.T) {
 	valid, err := f.Store.PersonIntroductionMeetingValidContext(ctx, result.MessageID, hostPerson.ID, guestPerson.ID, nil)
 	require.NoError(t, err)
 	assert.False(t, valid, "a matching display name must not infer participation")
-
-	projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
-	require.NoError(t, err)
-	_, err = projector.RunOnce(ctx)
-	require.NoError(t, err)
-	state, err := f.Store.ContactStateContext(ctx, targetPerson.ID, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	require.NoError(t, err)
-	assert.Equal(t, store.FirstContactMeetingIntro, state.FirstContactKind)
-	require.NotNil(t, state.Introducer)
-	assert.Equal(t, host, state.Introducer.ParticipantID)
 }

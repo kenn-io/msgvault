@@ -18,6 +18,7 @@ func TestClassifyFirstContact(t *testing.T) {
 	targetRecipient := ActivityCounterpart{ParticipantID: 10, PersonID: &target, RecipientType: "cc"}
 	ownerRecipient := ActivityCounterpart{ParticipantID: 11, PersonID: &ownerID, RecipientType: "to", IsOwner: true}
 	unsavedSender := ActivityCounterpart{ParticipantID: 12, RecipientType: "from"}
+	proof := []ActivityCounterpart{{ParticipantID: 1, PersonID: &sender, RecipientType: "from"}, {ParticipantID: 2, PersonID: &target, RecipientType: "to"}, {ParticipantID: 3, PersonID: &ownerPerson, RecipientType: "to", IsOwner: true}}
 	type testCase struct {
 		name       string
 		candidate  ActivityCandidate
@@ -46,6 +47,12 @@ func TestClassifyFirstContact(t *testing.T) {
 		{"broadcast outbound", ActivityCandidate{ConversationType: "email_thread", SourceIsFromMe: true, Counterparts: []ActivityCounterpart{targetRecipient, {ParticipantID: 14, PersonID: &alias, RecipientType: "to"}}}, FirstContactObserved, 0, nil, 1},
 		{"direct chat member", ActivityCandidate{ConversationType: "direct_chat", SourceIsFromMe: true, Counterparts: []ActivityCounterpart{{ParticipantID: 10, PersonID: &target, RecipientType: "member"}}}, FirstContactOwnerOutreach, 0, nil, 25},
 		{"channel inbound", ActivityCandidate{ConversationType: "channel", Counterparts: []ActivityCounterpart{unsavedSender, ownerRecipient, targetRecipient}}, FirstContactGroupShared, 0, nil, 25},
+		{"meeting explicit", ActivityCandidate{MessageType: "meeting_transcript", MeetingParticipants: proof, Counterparts: proof}, FirstContactMeetingIntro, 1, &sender, 25},
+		{"meeting missing owner", ActivityCandidate{MessageType: "meeting_transcript", MeetingParticipants: proof[:2], Counterparts: proof}, FirstContactMeeting, 0, nil, 25},
+		{"meeting normalized only", ActivityCandidate{MessageType: "meeting_transcript", Counterparts: proof}, FirstContactMeeting, 0, nil, 25},
+		{"meeting ambiguous organizer", ActivityCandidate{MessageType: "meeting_transcript", MeetingParticipants: append(append([]ActivityCounterpart{}, proof...), ActivityCounterpart{ParticipantID: 4, RecipientType: "from"}), Counterparts: proof}, FirstContactMeeting, 0, nil, 25},
+		{"meeting target organizer", ActivityCandidate{MessageType: "meeting_transcript", MeetingParticipants: []ActivityCounterpart{{ParticipantID: 2, PersonID: &target, RecipientType: "from"}, proof[2]}, Counterparts: proof}, FirstContactMeeting, 0, nil, 25},
+		{"meeting owner organizer", ActivityCandidate{MessageType: "meeting_transcript", MeetingParticipants: []ActivityCounterpart{{ParticipantID: 3, PersonID: &ownerPerson, RecipientType: "from", IsOwner: true}, proof[1]}, Counterparts: proof}, FirstContactMeeting, 0, nil, 25},
 	}
 	for _, n := range []int{maxIntroCounterparts, maxIntroCounterparts + 1} {
 		c := email
@@ -77,34 +84,6 @@ func TestClassifyFirstContact(t *testing.T) {
 					require.NotNil(t, intro.PersonID)
 					assert.Equal(*tc.person, *intro.PersonID)
 				}
-			}
-		})
-	}
-}
-
-func TestClassifyFirstContactMeetingIntro(t *testing.T) {
-	target, host, owner := int64(10), int64(11), int64(12)
-	proof := []ActivityCounterpart{{ParticipantID: 1, PersonID: &host, RecipientType: "from"}, {ParticipantID: 2, PersonID: &target, RecipientType: "to"}, {ParticipantID: 3, PersonID: &owner, RecipientType: "to", IsOwner: true}}
-	for _, tc := range []struct {
-		name  string
-		proof []ActivityCounterpart
-		want  FirstContactKind
-	}{
-		{"explicit", proof, FirstContactMeetingIntro},
-		{"missing owner", proof[:2], FirstContactMeeting},
-		{"normalized only", nil, FirstContactMeeting},
-		{"ambiguous organizer", append(append([]ActivityCounterpart{}, proof...), ActivityCounterpart{ParticipantID: 4, RecipientType: "from"}), FirstContactMeeting},
-		{"target organizer", []ActivityCounterpart{{ParticipantID: 2, PersonID: &target, RecipientType: "from"}, proof[2]}, FirstContactMeeting},
-		{"owner organizer", []ActivityCounterpart{{ParticipantID: 3, PersonID: &owner, RecipientType: "from", IsOwner: true}, proof[1]}, FirstContactMeeting},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			kind, intro := ClassifyFirstContact(ActivityCandidate{MessageType: "meeting_transcript", MeetingParticipants: tc.proof, Counterparts: proof}, target, 25)
-			assert.Equal(t, tc.want, kind)
-			if tc.want == FirstContactMeetingIntro {
-				require.NotNil(t, intro)
-				assert.Equal(t, int64(1), intro.ParticipantID)
-			} else {
-				assert.Nil(t, intro)
 			}
 		})
 	}

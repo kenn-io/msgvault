@@ -95,7 +95,7 @@ func (s *Store) introductionPreflightContext(ctx context.Context, sourceID, pers
 		if err != nil {
 			return out, err
 		}
-		candidates := map[IntroductionMember]struct{}{}
+		var candidates []IntroductionMember
 		for rows.Next() {
 			var participant int64
 			var user string
@@ -103,7 +103,7 @@ func (s *Store) introductionPreflightContext(ctx context.Context, sourceID, pers
 				_ = rows.Close()
 				return out, err
 			}
-			candidates[IntroductionMember{personID, participant, user}] = struct{}{}
+			candidates = append(candidates, IntroductionMember{personID, participant, user})
 		}
 		err = rows.Err()
 		_ = rows.Close()
@@ -117,9 +117,7 @@ func (s *Store) introductionPreflightContext(ctx context.Context, sourceID, pers
 		case 0:
 			out.Blockers = append(out.Blockers, IntroductionBlocker{"no_identity_on_account", personID})
 		case 1:
-			for member := range candidates {
-				out.Members = append(out.Members, member)
-			}
+			out.Members = append(out.Members, candidates[0])
 		default:
 			out.Blockers = append(out.Blockers, IntroductionBlocker{"ambiguous_identity", personID})
 		}
