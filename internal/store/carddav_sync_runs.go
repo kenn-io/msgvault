@@ -8,7 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode/utf8"
+
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 const (
@@ -286,7 +287,7 @@ func validateCardDAVSyncRunFinish(input CardDAVSyncRunFinish) (string, string, e
 	if cardDAVSyncRunMessageUnsafe(code) || cardDAVSyncRunMessageUnsafe(message) {
 		return cardDAVSyncRunRedactedErrorCode, cardDAVSyncRunRedactedError, nil
 	}
-	return code, truncateCardDAVSyncRunMessage(message), nil
+	return code, textutil.PrefixBytes(message, cardDAVSyncRunErrorMessageMax), nil
 }
 
 func cardDAVSyncRunMessageUnsafe(message string) bool {
@@ -303,17 +304,6 @@ func cardDAVSyncRunMessageUnsafe(message string) bool {
 		}
 	}
 	return false
-}
-
-func truncateCardDAVSyncRunMessage(message string) string {
-	if len(message) <= cardDAVSyncRunErrorMessageMax {
-		return message
-	}
-	end := cardDAVSyncRunErrorMessageMax
-	for end > 0 && !utf8.ValidString(message[:end]) {
-		end--
-	}
-	return message[:end]
 }
 
 func getCardDAVSyncRun(

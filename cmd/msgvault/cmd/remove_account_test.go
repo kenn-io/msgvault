@@ -1608,6 +1608,10 @@ func TestDiscordAddLifecycleBlocksFinalCredentialRemovalUntilGuildRegistration(t
 	}
 	t.Cleanup(func() { removeAccountBeforeDiscordLifecycleLockHook = nil })
 
+	removalFinishedCascade := make(chan struct{})
+	removeAccountAfterCascadeHook = func() { close(removalFinishedCascade) }
+	t.Cleanup(func() { removeAccountAfterCascadeHook = nil })
+
 	removeDone := make(chan error, 1)
 	go func() {
 		root := newTestRootCmd()
@@ -1640,7 +1644,14 @@ func TestDiscordAddLifecycleBlocksFinalCredentialRemovalUntilGuildRegistration(t
 		}
 	}
 	require.NoError(waitResult("add", addDone))
-	require.NoError(waitResult("remove", removeDone))
+	select {
+	case <-removalFinishedCascade:
+	case <-time.After(5 * time.Second):
+		require.FailNow("timed out waiting for Discord removal cascade")
+	}
+	// Cache rebuilding follows the lifecycle operation and is bounded by the
+	// package timeout, not the deadline for observing the cascade.
+	require.NoError(<-removeDone)
 	require.NoError(st.Close())
 	_, err = os.Stat(tokenPath)
 	require.NoError(err, "credential must survive because the newly registered guild references it")

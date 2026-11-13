@@ -16,17 +16,28 @@ import (
 // A returned denial is a valid exchange. Errors never imply remote rollback:
 // retain the request for exact recovery instead of allocating another operation.
 func Exchange(parent context.Context, argv []string, request Request) (Response, error) {
-	if !validRequest(request) || len(argv) == 0 || strings.TrimSpace(argv[0]) == "" {
+	if !validRequest(request) {
 		return Response{}, ErrInvalidRequest
+	}
+	data, err := json.Marshal(request)
+	if err != nil {
+		return Response{}, ErrInvalidRequest
+	}
+	out, err := exchange(parent, argv, data)
+	if err != nil {
+		return Response{}, err
+	}
+	return decodeResponse(out, request)
+}
+
+func exchange(parent context.Context, argv []string, data []byte) ([]byte, error) {
+	if len(argv) == 0 || strings.TrimSpace(argv[0]) == "" || len(data) > MaxDocumentBytes {
+		return nil, ErrInvalidRequest
 	}
 	for _, arg := range argv {
 		if strings.ContainsRune(arg, '\x00') {
-			return Response{}, ErrInvalidRequest
+			return nil, ErrInvalidRequest
 		}
-	}
-	data, err := json.Marshal(request)
-	if err != nil || len(data) > MaxDocumentBytes {
-		return Response{}, ErrInvalidRequest
 	}
 	ctx, cancel := context.WithTimeout(parent, AttemptTimeout)
 	defer cancel()
@@ -37,20 +48,20 @@ func Exchange(parent context.Context, argv []string, request Request) (Response,
 	cmd.WaitDelay = time.Second
 	out := &boundedOutput{cancel: cancel}
 	cmd.Stdout = out
-	err = runHelper(cmd)
+	err := runHelper(cmd)
 	if out.overflow {
-		return Response{}, ErrInvalidResponse
+		return nil, ErrInvalidResponse
 	}
 	if ctx.Err() != nil {
-		return Response{}, errors.Join(ErrProviderFailed, ctx.Err())
+		return nil, errors.Join(ErrProviderFailed, ctx.Err())
 	}
 	if err != nil {
 		if exit, ok := errors.AsType[*exec.ExitError](err); ok && exit.ExitCode() == 2 {
-			return Response{}, ErrInvalidRequest
+			return nil, ErrInvalidRequest
 		}
-		return Response{}, ErrProviderFailed
+		return nil, ErrProviderFailed
 	}
-	return decodeResponse(out.buffer.Bytes(), request)
+	return out.buffer.Bytes(), nil
 }
 
 // Do not embed bytes.Buffer: its ReadFrom would bypass the limit in io.Copy.

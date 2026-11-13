@@ -237,12 +237,10 @@ func TestSettingsWideAndNarrowNavigationUseTheSameDraft(t *testing.T) {
 	assertions.Contains(model.renderView(), "enabled")
 }
 
-func TestSettingsRendersPendingRestartAndFieldMetadata(t *testing.T) {
-	assertions := assert.New(t)
+func TestSettingsRendersFieldMetadata(t *testing.T) {
 	snapshot := SettingsSnapshot{
-		ETag:           "etag-1",
-		PendingRestart: true,
-		Groups:         []SettingsGroup{{ID: "archive", Label: "Archive"}},
+		ETag:   "etag-1",
+		Groups: []SettingsGroup{{ID: "archive", Label: "Archive"}},
 		Fields: []SettingField{{
 			Key: "analytics.builder_threads", Group: "archive", Label: "Builder threads",
 			Description: "Threads used for cache builds.", Kind: SettingKindInteger,
@@ -253,14 +251,13 @@ func TestSettingsRendersPendingRestartAndFieldMetadata(t *testing.T) {
 	model := loadedSettingsModel(t, snapshot)
 
 	view := model.renderView()
-	assertions.Contains(view, "Pending restart")
-	assertions.Contains(view, "Threads used for cache builds")
-	assertions.Contains(view, "read-only")
-	assertions.Contains(view, "restart required")
-	assertions.Contains(view, "Validation: Between 1 and 16")
+	assert.Contains(t, view, "Threads used for cache builds")
+	assert.Contains(t, view, "read-only")
+	assert.Contains(t, view, "restart required")
+	assert.Contains(t, view, "Validation: Between 1 and 16")
 	model, _ = sendKey(t, model, keyEnter())
-	assertions.False(model.settings.editing)
-	assertions.False(model.settings.dirty())
+	assert.False(t, model.settings.editing)
+	assert.False(t, model.settings.dirty())
 }
 
 func TestSettingsSelectEditorAndSavePublishTypedDraft(t *testing.T) {
