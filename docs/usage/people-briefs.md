@@ -10,7 +10,7 @@ message to remember what was going on and what you might ask about next.
 
 Briefs currently use the person's own messages from supported chat and text
 sources: Apple Messages/iMessage, Beeper, Discord, Facebook Messenger, Google
-Messages, Slack/Slackdump, SyncTech SMS, Teams, and WhatsApp. Email, meeting
+Messages, Signal, Slack/Slackdump, SyncTech SMS, Teams, and WhatsApp. Email, meeting
 transcripts, documents, and your own replies are excluded. An email-only
 contact cannot receive a brief yet.
 

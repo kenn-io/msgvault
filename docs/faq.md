@@ -71,7 +71,7 @@ By default, everything stays on your local machine. msgvault stores messages in 
 Yes. You can sync any standard IMAP server, Microsoft 365 mail and Teams,
 Discord guilds, Slack workspaces, Beeper Desktop chats, Google Calendar, and supported meeting
 note services. You can also import email from PST, MBOX, MailMate-style EML directories, or Apple Mail and
-chats/texts from WhatsApp, iMessage, Google Voice, Facebook Messenger, and SMS
+chats/texts from WhatsApp, Signal, iMessage, Google Voice, Facebook Messenger, and SMS
 Backup & Restore. All messages use the same Web UI, search, TUI, MCP, REST API,
 and export surfaces. See [Setup Guide](/docs/setup/#add-an-imap-account),
 [Importing Local Email](/docs/usage/importing/), [Text Messages](/docs/usage/text-messages/),

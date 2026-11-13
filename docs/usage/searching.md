@@ -302,7 +302,7 @@ HTTP clients can pass the same values as `deletion_scope` on
 ## Filtering by Message Type
 
 Archives can hold more than email — Google Calendar events, Microsoft Teams
-and Discord messages, text messages, calls, voicemails, and Messenger imports
+and Discord messages, text messages, calls, voicemails, Messenger imports, and Signal imports
 all live in the same database. Restrict a search to one or more kinds with the
 `message_type:` operator or the repeatable/comma-separated `--message-type`
 flag:
@@ -322,7 +322,7 @@ msgvault search "dinner" --message-type sms --message-type mms
 ```
 
 Valid values are `email`, `google_chat`, `calendar_event`, `meeting_transcript`,
-`beeper`, `chatwoot`, `sms`, `mms`, `rcs`, `whatsapp`, `imessage`, `teams`, `discord`, `slack`, `fbmessenger`, `telegram`, `feed_item`,
+`beeper`, `chatwoot`, `sms`, `mms`, `rcs`, `whatsapp`, `signal`, `imessage`, `teams`, `discord`, `slack`, `fbmessenger`, `telegram`, `feed_item`,
 `synctech_sms_call`, `google_voice_text`, `google_voice_call`, and
 `google_voice_voicemail`. `message_type:email` also includes legacy rows whose
 type is empty because older msgvault versions created them before the column

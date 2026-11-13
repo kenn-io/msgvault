@@ -292,7 +292,7 @@ operation gate; the coordinator does not acquire it recursively. Successful
 manual and scheduled attachment-producing sync/import commands run bounded
 packing as best-effort follow-up. The generic command allowlist is
 `backfill-teams-media`; `import`, `import-emlx`, `import-gvoice`,
-`import-imessage`, `import-mbox`, `import-messenger`, `import-pst`,
+`import-imessage`, `import-mbox`, `import-messenger`, `import-pst`, `import-signal`,
 `import-synctech-sms`, and `import-whatsapp`; plus `sync-synctech-sms` and
 `sync-teams`. The dedicated sync path covers `sync` and `sync-full`. Setup and
 calendar-only commands are excluded because they do not currently ingest

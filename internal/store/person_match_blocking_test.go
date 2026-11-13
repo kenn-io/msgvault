@@ -123,7 +123,7 @@ func TestPersonMatchBlockingSkipsParticipantsAlreadyConnected(t *testing.T) {
 	require.NoError(err)
 	middle, err := st.EnsureParticipantByIdentifier("apple_id", "connected-middle", "Connected Middle")
 	require.NoError(err)
-	right, err := st.EnsureParticipantByIdentifier("signal", "connected-right", "Connected Right")
+	right, err := st.EnsureParticipantByIdentifier("signal_aci", "00000000-0000-4000-8000-000000000001", "Connected Right")
 	require.NoError(err)
 	unlinked, err := st.EnsureParticipantByIdentifier("telegram", "unlinked-peer", "Unlinked Peer")
 	require.NoError(err)

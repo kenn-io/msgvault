@@ -98,7 +98,7 @@ an action; you still review the candidate's evidence and token before deciding.
 
 The provider receives raw identity data for two participants: display names,
 email addresses, phone numbers, and up to eight identifiers each. Identifiers
-include email, phone, Beeper, Apple ID, WhatsApp, or iMessage values, with service
+include email, phone, Beeper, Apple ID, WhatsApp, Signal, or iMessage values, with service
 and scope fields. Evidence includes identity classes, matching values, and
 source counts. `status` shows the exact field limits. Message bodies and
 freeform notes are outside this packet.

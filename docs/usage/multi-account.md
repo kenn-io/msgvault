@@ -159,7 +159,7 @@ used by relationship exploration. See [People, Profiles, and Source
 Identities](/docs/usage/people/) for evidence discovery, bulk import, optional
 Fastmail alias inventory, person promotion, and typed attributes.
 
-New Gmail, IMAP, Microsoft 365, MBOX, EML, EMLX, WhatsApp, and Google Voice sources auto-confirm the source identifier by default. Use `--no-default-identity` on supported add/import commands when that is not correct. (iMessage imports are exempt, because iMessage contacts are not self-identifying.)
+New Gmail, IMAP, Microsoft 365, MBOX, EML, EMLX, WhatsApp, Signal, and Google Voice sources auto-confirm the source identifier by default. Use `--no-default-identity` on supported add/import commands when that is not correct. (iMessage imports are exempt, because iMessage contacts are not self-identifying.)
 
 For older accounts, run the add command with `--no-default-identity` to save
 the choice. Removing the last confirmed identity also saves this choice, so
