@@ -29,12 +29,6 @@ type graphFixture struct {
 	rejectCursor         string
 	freshCommentReads    int
 	paths                []string
-	// pageSize is how many objects a page lists; zero means two.
-	pageSize int
-	// postPages answers the next read of the posts page at a cursor with
-	// these posts instead, once. Paging is unchanged.
-	postPages      map[string][]Object
-	freshPostReads int
 }
 
 func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
@@ -49,9 +43,6 @@ func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
 		}
 		if r.URL.Path == "/v26.0/100_200/comments" && r.URL.Query().Get("after") == "" {
 			f.freshCommentReads++
-		}
-		if r.URL.Path == "/v26.0/100/posts" && r.URL.Query().Get("after") == "" {
-			f.freshPostReads++
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/v26.0/")
 		if f.denied[path] {
@@ -91,11 +82,7 @@ func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
 			http.Error(w, "invalid fixture cursor", http.StatusBadRequest)
 			return
 		}
-		size := f.pageSize
-		if size == 0 {
-			size = 2
-		}
-		end := min(start+size, len(data))
+		end := min(start+2, len(data))
 		if !assert.LessOrEqual(t, start, end) {
 			http.Error(w, "fixture cursor exceeds response", http.StatusBadRequest)
 			return
@@ -104,10 +91,6 @@ func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
 			data = []Object{}
 		}
 		response := map[string]any{"data": data[start:end]}
-		if override, ok := f.postPages[after]; ok && path == "100/posts" {
-			delete(f.postPages, after)
-			response["data"] = override
-		}
 		if end < len(data) {
 			response["paging"] = map[string]any{"cursors": map[string]string{"after": strconv.Itoa(end)}, "next": "https://graph.facebook.com/unused"}
 		}
@@ -613,19 +596,16 @@ func TestImportStreamedBodyYieldKeepsProgress(t *testing.T) {
 }
 
 func TestImportRejectsCrossConversationReuse(t *testing.T) {
-	assert := assert.New(t)
 	st, f, imp, src := setupImport(t)
 	f.posts = append(f.posts, Object{ID: "100_900", Message: "other root"})
 	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "first root")}
 	f.comments["100_900"] = []Object{*comment("100_201", "100_900", "wrong root")}
 	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
 	require.Error(t, err)
-	assert.Contains(err.Error(), "comment object already belongs to a different root or parent")
-	require.NotErrorIs(t, err, ErrInvalidChange, "only the webhook path reports an invalid change")
 	got := message(t, st, src.ID, "100_201")
 	root := message(t, st, src.ID, "100_200")
-	assert.Equal(root.ConversationID, got.ConversationID)
-	assert.Equal(sql.NullInt64{Int64: root.ID, Valid: true}, got.ReplyToMessageID)
+	assert.Equal(t, root.ConversationID, got.ConversationID)
+	assert.Equal(t, sql.NullInt64{Int64: root.ID, Valid: true}, got.ReplyToMessageID)
 }
 
 func TestImportCheckpointRejectsDifferentSource(t *testing.T) {

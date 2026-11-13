@@ -49,24 +49,5 @@ func (c *Config) validateMetaWebhooks() error {
 			return fmt.Errorf("meta_webhooks.apps[%d] needs app_secret_env and verify_token_env naming environment variables", i)
 		}
 	}
-	return uniqueInstagramWebhookProfiles("instagram_comments", seen, c.InstagramComments)
-}
-
-// uniqueInstagramWebhookProfiles refuses two enabled profiles that would
-// receive the same deliveries, because routing picks the first that matches.
-// It runs before the section's own validation, so it skips invalid account IDs
-// and repeated Pages, which that validation reports.
-func uniqueInstagramWebhookProfiles(section string, apps map[string]bool, profiles []InstagramCommentsSource) error {
-	for i, source := range profiles {
-		if !source.Enabled || !apps[source.AppID] || !meta.ValidAccountID(source.InstagramAccountID) {
-			continue
-		}
-		for j, prior := range profiles[:i] {
-			if prior.Enabled && prior.AppID == source.AppID && prior.InstagramAccountID == source.InstagramAccountID && prior.PageID != source.PageID {
-				return fmt.Errorf("%s[%d] and %s[%d] both receive webhooks for app %s and Instagram account %s; disable one of them",
-					section, i, section, j, source.AppID, source.InstagramAccountID)
-			}
-		}
-	}
 	return nil
 }
