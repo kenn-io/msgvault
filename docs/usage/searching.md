@@ -263,6 +263,10 @@ msgvault search --collection Work
 
 The two flags are mutually exclusive. Collection filters work in full-text, vector, and hybrid local search modes.
 
+PostgreSQL full-text search splits punctuation into ordered word pieces within a single field. For example, `both@exam` finds `both@example.com` in a subject, sender, recipient, or body, including late matches in long fields. The final piece can match a prefix. After an upgrade, the daemon starts a resumable rebuild of older PostgreSQL search entries. Searches for email addresses, hosts, versions, and phone numbers can miss results until it finishes. The rebuild retains importer-provided search terms stored in the archive.
+
+Body search keeps punctuation pieces in order within its bounded scan.
+
 SQLite FTS ranking is weighted to better match PostgreSQL-backed search behavior, so subject/body weighting should feel more consistent across local tools. The rankers are still different; see [Search Ranking Across Backends](/docs/architecture/search-ranking/).
 
 ## Source-Deleted Messages
@@ -318,13 +322,13 @@ msgvault search "dinner" --message-type sms --message-type mms
 ```
 
 Valid values are `email`, `google_chat`, `calendar_event`, `meeting_transcript`,
-`beeper`, `chatwoot`, `sms`, `mms`, `rcs`, `whatsapp`, `imessage`, `teams`, `discord`, `slack`, `fbmessenger`, `telegram`,
+`beeper`, `chatwoot`, `sms`, `mms`, `rcs`, `whatsapp`, `imessage`, `teams`, `discord`, `slack`, `fbmessenger`, `telegram`, `feed_item`,
 `synctech_sms_call`, `google_voice_text`, `google_voice_call`, and
 `google_voice_voicemail`. `message_type:email` also includes legacy rows whose
 type is empty because older msgvault versions created them before the column
 existed.
 Messages from the [message import API](/docs/usage/message-import/) carry the
-type their sender chose, such as `feed_item`, so `--message-type` accepts any
+type their sender chose, such as `bookmark`, so `--message-type` accepts any
 type of lowercase letters, digits, and underscores and rejects other values.
 
 The same message-type scoping is available in HTTP search via the
