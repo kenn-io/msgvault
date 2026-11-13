@@ -99,6 +99,9 @@ func TestOwnerMCPVerificationSavedView(t *testing.T) {
 			stats, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_stats", Arguments: map[string]any{}})
 			require.NoError(t, err)
 			assert.False(t, stats.IsError)
+			created, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "create_saved_view", Arguments: map[string]any{"name": "new view", "canonical_state": map[string]any{"presentation": "table"}, "schema_version": 1}})
+			require.NoError(t, err)
+			assert.False(t, created.IsError, "%+v", created.Content)
 		})
 	}
 }

@@ -30,7 +30,7 @@ var agentReadPermissions = map[string]agentgrant.Permission{
 	"listCLIAccounts":  agentgrant.PermissionSearchRead, "listCLICollections": agentgrant.PermissionSearchRead,
 }
 
-// Owner reads are admitted when they mask message content or contain no message text.
+// Owner operations are admitted when they mask message content or contain no message text.
 // True values require a snapshot while classifying content.
 var ownerVerificationOperations = map[string]bool{
 	"searchCLI": true, "searchMessages": true, "fastSearch": true, "deepSearch": true,
@@ -47,6 +47,15 @@ var ownerVerificationOperations = map[string]bool{
 	"listSavedViews": false, "getSavedView": false, "searchPeople": false, "listDirectoryPeople": false,
 	"listPeople": false, "getPersonProfile": false, "listPersonAttributes": false, "listPersonIdentities": false,
 	"listPersonEmployments": false, "getParticipant": false, "searchParticipants": false,
+	"createSavedView": false, "patchSavedView": false, "deleteSavedView": false,
+	"getSchedulerStatus": false, "triggerSync": false, "listSourceIdentities": false,
+	"getCacheBuildStatus": false, "createPerson": false, "patchPerson": false, "patchSettings": false,
+	"createAttributeDefinition": false, "completeParticipants": false,
+	"markLoopDone": false, "snoozeLoop": false, "reopenLoop": false, "importMeeting": false,
+	"getMessageTags": false, "updateMessageTags": false, "stageDeletion": false,
+	"previewPersonTiers": false, "explainPersonTier": false, "mergePersons": false,
+	"approveCardDAVPublication": false, "syncCardDAV": false,
+	"getPersonByUID": false, "getPersonTracking": false, "getPersonContactState": false, "getOrganization": false,
 }
 
 // Ranking runs before the owner snapshot, but hydration and classification share it.

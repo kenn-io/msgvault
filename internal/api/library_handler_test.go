@@ -267,6 +267,19 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 	}
 }
 
+func TestLibraryHandlerRejectsInvalidVerificationHeader(t *testing.T) {
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: testutil.NewTestStore(t), Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	for _, handler := range []http.Handler{srv.Handler(nil), srv.Router()} {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages", nil)
+		req.Header.Set(apiprotocol.VerificationHeader, "withheld")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), `"bad_request"`)
+	}
+}
+
 func TestLibraryHandlerVerificationRefusesUnclassifiedReads(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	_, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "code", "Your verification code is 482913", "Your verification code is 482913")
@@ -278,6 +291,8 @@ func TestLibraryHandlerVerificationRefusesUnclassifiedReads(t *testing.T) {
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodPost, fmt.Sprintf("/api/v1/saved-views/%d/run", view.ID)},
 		{http.MethodGet, fmt.Sprintf("/api/v1/conversations/%d", id)},
+		{http.MethodGet, "/api/v1/loops"},
+		{http.MethodPost, "/api/v1/calendar/control"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			request := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, strings.NewReader(`{}`))

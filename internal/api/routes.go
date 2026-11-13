@@ -254,6 +254,9 @@ func withAPIKeySecurity(op huma.Operation) huma.Operation {
 // ownerVerificationPolicy acknowledges admitted requests and snapshots classified owner reads.
 func (s *Server) ownerVerificationPolicy(ctx huma.Context, req *http.Request, hasSnapshot bool) (func(), *apiHTTPError) {
 	noRelease := func() {}
+	if value := req.Header.Get(apiprotocol.VerificationHeader); value != "" && value != apiprotocol.VerificationWithhold {
+		return nil, newAPIHTTPError(http.StatusBadRequest, "bad_request", "Unsupported verification header value")
+	}
 	auth := s.requestAuthentication(req)
 	if auth.Mode == AuthModeRequired || !s.withholdsVerification(req) {
 		return noRelease, nil
