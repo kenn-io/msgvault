@@ -95,10 +95,13 @@ func TestSplitThunderbirdReplyHeaders(t *testing.T) {
 		{"Spanish p.m.", "El 5.11.2026 a las 10:00 p.m., Alex escribió:"},
 		{"Italian date first", "Il 5 novembre 2026 10:00, Alex <alex@example.com> ha scritto:"},
 		{"Italian sender first", "Alex <alex@example.com> ha scritto il 5 novembre 2026 alle 10:00:"},
+		{"Italian dotted time", "Il 5.11.2026 10.00, Alex ha scritto:"},
 		{"Brazilian Portuguese date first", "Em 5 de novembro de 2026 10:00, Alex <alex@example.com> escreveu:"},
 		{"Brazilian Portuguese sender first", "Alex <alex@example.com> escreveu em 5 de novembro de 2026 10:00:"},
+		{"Brazilian Portuguese dotted time", "Em 5.11.2026 10.00, Alex escreveu:"},
 		{"European Portuguese date first", "Às 10:00 de 5 de novembro de 2026, Alex <alex@example.com> escreveu:"},
 		{"European Portuguese sender first", "Alex <alex@example.com> escreveu às 10:00 de 5 de novembro de 2026:"},
+		{"European Portuguese dotted time", "Às 10.00 de 5.11.2026, Alex escreveu:"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Run("quoted history", func(t *testing.T) {
@@ -111,7 +114,7 @@ func TestSplitThunderbirdReplyHeaders(t *testing.T) {
 				assert.Equal(t, []Segment{{Authored, 0, len(body), 0}}, Split(body).Segments)
 			})
 			t.Run("requires time", func(t *testing.T) {
-				header := strings.Replace(tc.header, "10:00", "noon", 1) + "\n"
+				header := strings.NewReplacer("10:00", "noon", "10.00", "noon").Replace(tc.header) + "\n"
 				body := header + "> old"
 				assert.Equal(t, []Segment{{Authored, 0, len(header), 0}, {Quoted, len(header), len(body), 1}}, Split(body).Segments)
 			})
