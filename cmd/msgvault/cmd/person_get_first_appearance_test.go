@@ -80,7 +80,7 @@ func TestPersonGetFirstAppearanceRealProjection(t *testing.T) {
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if oldDaemon.Load() && r.URL.Path == "/api/v1/health" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"5.0.0"}`))
+			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"5.2.0"}`))
 			return
 		}
 		if failState.Load() && r.URL.Path == fmt.Sprintf("/api/v1/people/%d/contact-state", person.ID) {
