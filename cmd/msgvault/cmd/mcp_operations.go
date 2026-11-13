@@ -50,7 +50,9 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 		backend.supported = append(backend.supported, "sync_source")
 	}
 	backend.supported = append(backend.supported, deletionReviewMCPCapabilities(hasRoute)...)
-	backend.supported = append(backend.supported, "export_person_messages")
+	if hasRoute("runCLI", http.MethodPost, "/api/v1/cli/run") {
+		backend.supported = append(backend.supported, "export_person_messages")
+	}
 	backend.supported = append(backend.supported, loopMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
 	return backend
