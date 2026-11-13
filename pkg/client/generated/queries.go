@@ -1110,6 +1110,9 @@ type ListPersonFactEvidenceQuery struct {
 
 	// Offset Zero-based row offset
 	Offset *int64 `json:"offset,omitempty"`
+
+	// EvidenceID Restrict to one evidence row
+	EvidenceID *int64 `json:"evidence_id,omitempty"`
 }
 
 type ListPersonFactEvidenceStatusEventsQuery struct {

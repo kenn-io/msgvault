@@ -85,9 +85,10 @@ type TargetRef struct {
 }
 
 type EvidenceFilter struct {
-	Target *TargetRef
-	Limit  int
-	Offset int
+	EvidenceID int64
+	Target     *TargetRef
+	Limit      int
+	Offset     int
 }
 
 type EvidenceStatusFilter struct {

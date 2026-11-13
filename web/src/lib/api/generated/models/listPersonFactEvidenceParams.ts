@@ -15,4 +15,8 @@ export type ListPersonFactEvidenceParams = {
    * Zero-based row offset
    */
   offset?: number;
+  /**
+   * Restrict to one evidence row
+   */
+  evidence_id?: number;
 };

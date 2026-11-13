@@ -71,6 +71,10 @@ export function provenance(source: string, at: string, validFrom?: string, optio
   return { text: `${who} · ${earlier ? `since ${formatShortDate(validFrom)}` : formatShortDate(at)}`, title };
 }
 
+function referenceWords(reference: string | undefined): string | undefined {
+  return reference?.startsWith('person-fact-decision:') ? 'Fact decision' : reference;
+}
+
 /** The provenance line for a stored value, from its envelope. */
 export function valueProvenance(value: HistoryValue, times: [label: string, at: string | undefined][] = []): ProvenanceLine {
   const line = provenance(value.source, value.updated_at ?? value.created_at, value.active_from, {
@@ -82,11 +86,26 @@ export function valueProvenance(value: HistoryValue, times: [label: string, at: 
       ...times,
     ],
   });
-  line.title = [line.title, value.actor ? `Actor: ${actorName(value.actor)}` : '', value.source_ref ? `Reference: ${value.source_ref}` : '', value.confidence !== undefined ? `Confidence: ${value.confidence}` : ''].filter(Boolean).join('\n');
+  line.title = [line.title, value.actor ? `Actor: ${actorName(value.actor)}` : '', value.source_ref ? `Reference: ${referenceWords(value.source_ref)}` : '', value.confidence !== undefined ? `Confidence: ${Math.round(value.confidence * 100)}%` : ''].filter(Boolean).join('\n');
   return line;
 }
 
 /** Who wrote a value: "You" for edits made here, otherwise the importer. */
 export function historySource(source: string): string {
   return source === 'user' ? 'You' : source === 'carddav_import' ? 'Address book' : sentenceCase(source);
+}
+
+/** Everything a stored value's record says about where it came from, as label and text pairs for its Details. */
+export function provenanceDetails(value: HistoryValue): [label: string, text: string][] {
+  const rows: [string, string | undefined][] = [
+    ['Actor', value.actor ? actorName(value.actor) : undefined],
+    ['Reference', referenceWords(value.source_ref)],
+    ['Confidence', value.confidence !== undefined ? `${Math.round(value.confidence * 100)}%` : undefined],
+    ['Recorded', formatDateTime(value.created_at)],
+    ['Updated', value.updated_at && value.updated_at !== value.created_at ? formatDateTime(value.updated_at) : undefined],
+    ['Valid from', value.active_from ? formatDateTime(value.active_from) : undefined],
+    ['Valid until', value.active_until ? formatDateTime(value.active_until) : undefined],
+    ['Replaced', value.superseded_at ? formatDateTime(value.superseded_at) : undefined],
+  ];
+  return rows.filter((row): row is [string, string] => row[1] !== undefined);
 }

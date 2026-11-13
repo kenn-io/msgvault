@@ -578,7 +578,23 @@ func TestPersonFactLedgerPaginationValidationAndOrdering(t *testing.T) {
 	targetEvidence, err := st.ListPersonFactEvidenceContext(t.Context(), personID,
 		personfacts.EvidenceFilter{Target: &target})
 	requirements.NoError(err)
-	assertions.Len(targetEvidence, 1)
+	requirements.Len(targetEvidence, 1)
+	exact, err := st.ListPersonFactEvidenceContext(t.Context(), personID,
+		personfacts.EvidenceFilter{EvidenceID: targetEvidence[0].ID, Target: &target})
+	requirements.NoError(err)
+	assertions.Equal(targetEvidence, exact)
+	otherID := evidence[0].ID
+	if otherID == targetEvidence[0].ID {
+		otherID = evidence[1].ID
+	}
+	exact, err = st.ListPersonFactEvidenceContext(t.Context(), personID,
+		personfacts.EvidenceFilter{EvidenceID: otherID, Target: &target})
+	requirements.NoError(err)
+	assertions.Empty(exact)
+	exact, err = st.ListPersonFactEvidenceContext(t.Context(), personID+999,
+		personfacts.EvidenceFilter{EvidenceID: targetEvidence[0].ID})
+	requirements.NoError(err)
+	assertions.Empty(exact)
 	targetClaims, err := st.ListPersonFactClaimsContext(t.Context(), personID,
 		personfacts.ClaimFilter{Target: &target})
 	requirements.NoError(err)

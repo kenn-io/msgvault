@@ -496,13 +496,13 @@ func (s *Store) PersonFactSummaryContext(ctx context.Context, personID int64) (p
 			(SELECT MAX(created_at) FROM person_fact_claims WHERE person_id = ?),
 			(EXISTS(SELECT 1 FROM person_fact_claims WHERE person_id = ?)
 			 OR EXISTS(SELECT 1 FROM person_fact_evidence WHERE person_id = ?)
-			 OR EXISTS(SELECT 1 FROM person_fact_pin_events WHERE person_id = ?))`, personID, personID, personID, personID, personID).Scan(&summary.ClaimedFields, &latest, &summary.HasStoredFacts)
+			 OR EXISTS(SELECT 1 FROM person_fact_pin_events WHERE person_id = ?) OR EXISTS (`+personFactPinAttributeTargetCandidatesSQL+`) OR (`+personFactPinEmploymentTargetCandidateSQL+`))`,
+			personID, personID, personID, personID, personID, personID, ProvenanceUser, ProvenanceCardDAVImport, ProvenanceVCardImport, "person_attribute", personID, ProvenanceUser, ProvenanceCardDAVImport, ProvenanceVCardImport, personID, "employment", personFactDecisionSourceRefPrefix).Scan(&summary.ClaimedFields, &latest, &summary.HasStoredFacts)
 		if err != nil {
 			return fmt.Errorf("load person fact summary: %w", err)
 		}
 		if latest.Valid {
-			value := latest.Time.UTC()
-			summary.LatestClaimAt = &value
+			summary.LatestClaimAt = new(latest.Time.UTC())
 		}
 		return nil
 	})
@@ -523,7 +523,7 @@ func (s *Store) ListPersonFactEvidenceContext(
 	evidence := make([]personfacts.Evidence, 0)
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		evidence, err = s.queryPersonFactEvidenceTx(ctx, tx, personID,
-			personfacts.EvidenceFilter{Target: filter.Target, Limit: limit, Offset: offset})
+			personfacts.EvidenceFilter{EvidenceID: filter.EvidenceID, Target: filter.Target, Limit: limit, Offset: offset})
 		if err != nil {
 			return err
 		}
@@ -608,6 +608,10 @@ func (s *Store) queryPersonFactEvidenceTx(
 	query := `SELECT ` + personFactEvidenceColumns + `
 		FROM person_fact_evidence e WHERE e.person_id = ?`
 	args := []any{personID}
+	if filter.EvidenceID != 0 {
+		query += ` AND e.id = ?`
+		args = append(args, filter.EvidenceID)
+	}
 	if filter.Target != nil {
 		query += ` AND EXISTS (
 			SELECT 1 FROM person_fact_claim_evidence ce

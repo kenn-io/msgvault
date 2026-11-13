@@ -101,12 +101,12 @@ it('reloads open loops after an identity split', async () => {
   expect(screen.queryByRole('link', { name: 'Revision 1 question?' })).toBeNull();
 });
 
-it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute %s without changing the ledger section', async operation => {
+it.each([{ operation: 'save', expected: 'Example City' }, { operation: 'clear', expected: 'No saved value' }] as const)('refreshes open fact pins after an attribute $operation without changing the ledger section', async ({ operation, expected }) => {
   await renderDetails([], { pins: operation });
   const facts = within(screen.getByRole('heading', { name: 'Facts' }).closest('section')!);
-  await fireEvent.click(facts.getByRole('button', { name: 'Show' }));
+  await fireEvent.click(facts.getByRole('heading', { name: 'Facts' }));
   await fireEvent.click(await screen.findByRole('radio', { name: 'Pins' }));
-  await screen.findByText('No fact pins.');
+  await screen.findByText('No pins yet');
   if (operation === 'save') {
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     await fireEvent.click(await screen.findByRole('menuitem', { name: 'Location' }));
@@ -117,7 +117,7 @@ it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute
     await fireEvent.click(screen.getByRole('button', { name: 'Remove Location: Example City' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
   }
-  expect(await screen.findByText('attribute · Pinned')).toBeDefined();
+  await waitFor(() => expect(screen.getByRole('region', { name: 'Saved pinned values' }).textContent).toContain(expected));
   expect(screen.getByRole('radio', { name: 'Pins' }).getAttribute('aria-checked')).toBe('true');
 });
 

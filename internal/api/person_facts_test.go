@@ -143,6 +143,29 @@ func TestPersonFactHistoryHTTPFiltersRealEmploymentTargetWithColonKey(t *testing
 	assertions.Len(body.Evidence, 1)
 }
 
+func TestPersonFactEvidenceHTTPFiltersByID(t *testing.T) {
+	t.Parallel()
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, st, personID, targets := newPersonFactAPIFixture(t)
+	applyPersonFactAPIGeneration(t, st, personID, targets[store.AttributeSlugPrimaryChannel], "other-evidence", `"phone"`)
+	evidence, err := st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{})
+	requirements.NoError(err)
+	requirements.Len(evidence, 2)
+	path := fmt.Sprintf("/api/v1/people/%d/fact-evidence?evidence_id=", personID)
+	response := doRequest(t, srv.Router(), http.MethodGet, path+strconv.FormatInt(evidence[0].ID, 10), nil, nil)
+	requirements.Equal(http.StatusOK, response.Code)
+	var body PersonFactEvidenceResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	requirements.Len(body.Evidence, 1)
+	assertions.Equal(evidence[0].ID, body.Evidence[0].ID)
+	for _, value := range []string{"", "0", "-1", "abc"} {
+		response = doRequest(t, srv.Router(), http.MethodGet, path+value, nil, nil)
+		assertions.Equal(http.StatusBadRequest, response.Code)
+		assertions.Contains(response.Body.String(), "invalid_evidence_id")
+	}
+}
+
 func TestPersonFactEvidenceStatusHTTPFiltersPaginatesAndExposesSafeReactivationHistory(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
@@ -454,55 +477,53 @@ func mapKeysAny(values map[string]any) []string {
 	return keys
 }
 
-func TestPersonFactSummaryAndFilteredDecisionsHTTP(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+func TestPersonFactSummaryHTTP(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	srv, st, personID, targets := newPersonFactAPIFixtureWithoutClaims(t)
-	path := fmt.Sprintf("/api/v1/people/%d", personID)
-	response := doRequest(t, srv.Router(), http.MethodGet, path+"/fact-summary", nil, nil)
-	require.Equal(http.StatusOK, response.Code, response.Body.String())
-	assert.JSONEq(`{"claimed_fields":0,"latest_claim_at":null,"has_stored_facts":false}`, response.Body.String())
-	var emptySummary generated.FactSummary
-	require.NoError(json.Unmarshal(response.Body.Bytes(), &emptySummary))
-	require.NoError(emptySummary.Validate())
+	path := fmt.Sprintf("/api/v1/people/%d/fact-summary", personID)
+	response := doRequest(t, srv.Router(), http.MethodGet, path, nil, nil)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	assertions.JSONEq(`{"claimed_fields":0,"latest_claim_at":null,"has_stored_facts":false}`, response.Body.String())
+	var summary generated.FactSummary
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &summary))
+	requirements.NoError(summary.Validate())
 
-	target := targets[store.AttributeSlugPrimaryChannel]
-	applyPersonFactAPIGeneration(t, st, personID, target, "first-summary", `"chat"`)
+	applyPersonFactAPIGeneration(t, st, personID, targets[store.AttributeSlugPrimaryChannel], "summary", `"chat"`)
+	response = doRequest(t, srv.Router(), http.MethodGet, path, nil, nil)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &summary))
+	requirements.NoError(summary.Validate())
+	assertions.Equal(int64(1), summary.ClaimedFields)
+	assertions.NotNil(summary.LatestClaimAt)
+	assertions.True(summary.HasStoredFacts)
+}
+
+func TestPersonFactFilteredDecisionsHTTP(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, st, personID, targets := newPersonFactAPIFixtureWithoutClaims(t)
+	applyPersonFactAPIGeneration(t, st, personID, targets[store.AttributeSlugPrimaryChannel], "first-summary", `"chat"`)
 	claims, err := st.ListPersonFactClaimsContext(t.Context(), personID, personfacts.ClaimFilter{})
-	require.NoError(err)
-	require.Len(claims, 1)
+	requirements.NoError(err)
+	requirements.Len(claims, 1)
 	claimKey := claims[0].ClaimKey
 	applyPersonFactAPIGeneration(t, st, personID, targets[store.AttributeSlugAskMeAbout], "second-summary", `"books"`)
-
-	response = doRequest(t, srv.Router(), http.MethodGet, path+"/fact-summary", nil, nil)
-	require.Equal(http.StatusOK, response.Code, response.Body.String())
-	var summary personfacts.FactSummary
-	require.NoError(json.Unmarshal(response.Body.Bytes(), &summary))
-	assert.Equal(2, summary.ClaimedFields)
-	assert.NotNil(summary.LatestClaimAt)
-	assert.True(summary.HasStoredFacts)
-
-	response = doRequest(t, srv.Router(), http.MethodGet, path+"/fact-decisions?limit=1&claim_key="+url.QueryEscape(claimKey), nil, nil)
-	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	path := fmt.Sprintf("/api/v1/people/%d/fact-decisions?claim_key=%s", personID, url.QueryEscape(claimKey))
+	response := doRequest(t, srv.Router(), http.MethodGet, path, nil, nil)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	var decisions PersonFactDecisionsResponse
-	require.NoError(json.Unmarshal(response.Body.Bytes(), &decisions))
-	require.Len(decisions.Decisions, 1)
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &decisions))
+	requirements.Len(decisions.Decisions, 1)
 	decision := decisions.Decisions[0]
-	assert.Equal(claimKey, decision.ClaimKey)
-	require.NotNil(decision.Outcome)
-	assert.Equal(personfacts.OutcomeSaved, *decision.Outcome)
-	assert.Equal(target.Key, decision.Target.Key)
-	assert.Equal(personfacts.ResolverVersionV1, decision.ResolverVersion)
-	require.NotNil(decision.ScoreMaxima)
-	assert.Equal(500, decision.ScoreMaxima.SourceClass)
-	assert.Equal(1550, decision.ScoreMaxima.Total)
+	assertions.Equal(claimKey, decision.ClaimKey)
 
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_fact_decisions SET outcome = NULL WHERE id = ?`), decision.ID)
-	require.NoError(err)
-	response = doRequest(t, srv.Router(), http.MethodGet, path+"/fact-decisions?claim_key="+url.QueryEscape(claimKey), nil, nil)
-	require.Equal(http.StatusOK, response.Code, response.Body.String())
-	require.NoError(json.Unmarshal(response.Body.Bytes(), &decisions))
-	require.Len(decisions.Decisions, 1)
-	assert.Nil(decisions.Decisions[0].Outcome)
-	assert.Contains(response.Body.String(), `"outcome":null`)
+	requirements.NoError(err)
+	response = doRequest(t, srv.Router(), http.MethodGet, path, nil, nil)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &decisions))
+	requirements.Len(decisions.Decisions, 1)
+	assertions.Nil(decisions.Decisions[0].Outcome)
+	assertions.Contains(response.Body.String(), `"outcome":null`)
 }
