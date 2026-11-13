@@ -1,6 +1,7 @@
 package attachmentverify_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -483,4 +484,117 @@ func TestDiagnosticWorksWithReadOnlySQL(t *testing.T) {
 	after, err := os.ReadFile(full)
 	require.NoError(err)
 	assert.Equal(data, after)
+}
+
+// consumptionFault injects only after the production stream has opened.
+// Corruption cases still obtain their integrity error from changed real bytes.
+type consumptionFault struct {
+	io.ReadCloser
+
+	readErr      error
+	closeErr     error
+	terminalOnly bool
+	closed       *bool
+}
+
+func (r consumptionFault) Read(p []byte) (int, error) {
+	if r.readErr == nil {
+		return r.ReadCloser.Read(p)
+	}
+	if !r.terminalOnly {
+		p = p[:min(3, len(p))]
+	}
+	n, err := r.ReadCloser.Read(p)
+	if !r.terminalOnly || err != nil {
+		return n, errors.Join(err, r.readErr)
+	}
+	return n, err
+}
+
+func (r consumptionFault) Close() error {
+	*r.closed = true
+	return errors.Join(r.ReadCloser.Close(), r.closeErr)
+}
+
+func TestLateNotExistErrors(t *testing.T) {
+	for _, storage := range []string{"loose", "packed"} {
+		t.Run(storage, func(t *testing.T) {
+			for _, tc := range []struct {
+				name              string
+				readErr, closeErr error
+				corrupt           bool
+			}{
+				{name: "close missing", closeErr: fmt.Errorf("injected close: %w", os.ErrNotExist)},
+				{name: "read missing", readErr: fmt.Errorf("injected read: %w", os.ErrNotExist)},
+				{name: "read IO and close missing", readErr: errors.New("injected read IO"), closeErr: fmt.Errorf("injected close: %w", os.ErrNotExist)},
+				{name: "read missing and close IO", readErr: fmt.Errorf("injected read: %w", os.ErrNotExist), closeErr: errors.New("injected close IO")},
+				{name: "real corruption and close missing", corrupt: true, closeErr: fmt.Errorf("injected close: %w", os.ErrNotExist)},
+				{name: "real corruption and read missing", corrupt: true, readErr: fmt.Errorf("injected read: %w", os.ErrNotExist)},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					require := require.New(t)
+					assert := assert.New(t)
+					f := newFixture(t)
+					data := []byte("physical bytes for late error classification")
+					hash := pack.ComputeBlobID(data).String()
+					var path string
+					if storage == "packed" {
+						_, path = f.packed(data)
+					} else {
+						relative := hash[:2] + "/" + hash
+						f.row(hash, relative, len(data))
+						path = f.write(relative, data)
+					}
+					closed := false
+					reader := boundaryStore{real: f.blobs, wrap: func(r io.ReadCloser) io.ReadCloser {
+						return consumptionFault{ReadCloser: r, readErr: tc.readErr, closeErr: tc.closeErr, terminalOnly: tc.corrupt, closed: &closed}
+					}}
+					if tc.corrupt {
+						reader.opened = func() {
+							// Locate the tiny fixture's uncompressed payload after OpenStream has
+							// validated the pack metadata; retain the same file and length.
+							stored, err := os.ReadFile(path)
+							require.NoError(err)
+							offset := bytes.Index(stored, data)
+							require.GreaterOrEqual(offset, 0)
+							file, err := os.OpenFile(path, os.O_WRONLY, 0)
+							require.NoError(err)
+							_, writeErr := file.WriteAt([]byte{data[0] ^ 0xff}, int64(offset))
+							require.NoError(errors.Join(writeErr, file.Close()))
+						}
+					}
+					report, err := attachmentverify.Run(t.Context(), f.st, reader, f.root, options())
+					require.NoError(err)
+					require.Len(report.References, 1)
+					want := attachmentverify.Inconclusive
+					affected := 0
+					if tc.corrupt {
+						want = attachmentverify.Corrupt
+						affected = 1
+					}
+					assert.Equal(want, report.References[0].Status)
+					assert.NotEqual(attachmentverify.MissingLoose, report.References[0].Status)
+					assert.NotEqual(attachmentverify.PackUnavailable, report.References[0].Status)
+					assert.True(closed, "every successfully opened physical stream must close")
+					assert.Equal(1, report.ContentsOpened)
+					assert.Zero(report.ContentsVerified)
+					assert.Zero(report.ReferencesVerified)
+					assert.Equal(affected, report.ReferencesAffected)
+					assert.Equal(1, report.Counts[want])
+					if !tc.corrupt {
+						assert.Equal("inconclusive", report.State)
+						if tc.readErr != nil {
+							assert.Contains(report.References[0].Reason, tc.readErr.Error())
+						}
+						if tc.closeErr != nil {
+							assert.Contains(report.References[0].Reason, tc.closeErr.Error())
+						}
+					}
+					if storage == "packed" {
+						assert.NotEmpty(report.References[0].PackID)
+					}
+				})
+			}
+		})
+	}
 }

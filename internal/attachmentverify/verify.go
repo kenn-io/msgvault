@@ -281,12 +281,16 @@ func check(ctx context.Context, st *store.Store, blobs StreamStore, root string,
 			}
 		}
 	}
-	checked = err == nil
-	if err == nil {
+	// Only a failed Open establishes absence; Read and Close can also wrap ErrNotExist.
+	openErr := err
+	checked = openErr == nil
+	if checked {
 		// One extra byte distinguishes budget exhaustion from verified EOF. Close
 		// is checked even on cancellation, read failure and an incomplete stream.
-		n, err = io.CopyBuffer(io.Discard, io.LimitReader(contextReader{ctx, reader}, remaining+1), make([]byte, 64<<10))
-		err = errors.Join(err, reader.Close())
+		var readErr error
+		n, readErr = io.CopyBuffer(io.Discard, io.LimitReader(contextReader{ctx, reader}, remaining+1), make([]byte, 64<<10))
+		closeErr := reader.Close()
+		err = errors.Join(readErr, closeErr)
 		if n > remaining {
 			return NotChecked, "stream did not reach verified EOF within byte limit", packID, n, "byte limit", checked
 		}
@@ -302,13 +306,13 @@ func check(ctx context.Context, st *store.Store, blobs StreamStore, root string,
 		return Verified, "", packID, n, "", checked
 	}
 	switch {
-	case errors.Is(err, os.ErrNotExist):
+	case errors.Is(packstore.ClassifyIntegrityError(err), packstore.ErrPhysicalCorrupt), errors.Is(err, contentverify.ErrMismatch):
+		return Corrupt, "physical reader rejected content or container integrity", packID, n, "", checked
+	case errors.Is(openErr, os.ErrNotExist):
 		if before.Pack != nil {
 			return PackUnavailable, "authoritative pack could not be opened", packID, n, "", checked
 		}
 		return MissingLoose, "canonical and selected recorded loose paths are missing", "", n, "", checked
-	case errors.Is(packstore.ClassifyIntegrityError(err), packstore.ErrPhysicalCorrupt), errors.Is(err, contentverify.ErrMismatch):
-		return Corrupt, "physical reader rejected content or container integrity", packID, n, "", checked
 	default:
 		// Permissions, generic I/O, limits and close failures do not prove corruption.
 		return Inconclusive, boundedError(err), packID, n, "", checked
