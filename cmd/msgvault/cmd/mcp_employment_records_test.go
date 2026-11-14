@@ -148,16 +148,17 @@ func TestMCPEmploymentCapabilities(t *testing.T) {
 }
 
 func TestMCPEmploymentWriteFlag(t *testing.T) {
+	checks := assert.New(t)
 	cmd := &cobra.Command{Use: "test"}
 	addMCPWriteFlags(cmd, "mcp-")
 	var opts mcpserver.ServeOptions
 	applyMCPWriteFlags(cmd, "mcp-", &opts)
-	assert.NotContains(t, opts.OperationWriteFamilies, mcpserver.OperationFamilyEmployment)
+	checks.NotContains(opts.OperationWriteFamilies, mcpserver.OperationFamilyEmployment)
 	require.NoError(t, cmd.Flags().Set("mcp-allow-employment-writes", "true"))
 	opts = mcpserver.ServeOptions{}
 	applyMCPWriteFlags(cmd, "mcp-", &opts)
-	assert.Contains(t, opts.OperationWriteFamilies, mcpserver.OperationFamilyEmployment)
-	assert.NotContains(t, opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
+	checks.Contains(opts.OperationWriteFamilies, mcpserver.OperationFamilyEmployment)
+	checks.NotContains(opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
 }
 
 func TestMCPEmploymentApprovedPrimaryIsGuarded(t *testing.T) {

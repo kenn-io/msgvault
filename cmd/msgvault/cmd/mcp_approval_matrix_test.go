@@ -160,18 +160,19 @@ func TestApprovalMatrixCuratedPerson(t *testing.T) {
 func TestApprovalMatrixEmployment(t *testing.T) {
 	exerciseApprovalMatrix(t, func(t *testing.T) approvalCase {
 		t.Helper()
+		must := require.New(t)
 		b, st, person, org := employmentFixture(t)
 		_, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Source: store.ProvenanceUser})
-		require.NoError(t, err)
+		must.NoError(err)
 		target, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Title: new("Target"), IsPrimary: new(false), Source: store.ProvenanceUser})
-		require.NoError(t, err)
+		must.NoError(err)
 		other, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Title: new("Other"), IsPrimary: new(false), Source: store.ProvenanceUser})
-		require.NoError(t, err)
+		must.NoError(err)
 		initial, err := b.ExecuteOperation(t.Context(), "get_employment", map[string]any{"employment_id": target.ID})
-		require.NoError(t, err)
+		must.NoError(err)
 		return approvalCase{b, mcpserver.OperationFamilyEmployment, "replace_employment", map[string]any{"employment_id": target.ID, "etag": initial.ETag, "employment": map[string]any{"person_id": person, "organization_id": org, "title": "Target", "source": "user", "is_primary": true}}, func() {
 			_, err := st.SetPrimaryEmploymentContext(t.Context(), other.ID, other.Revision)
-			require.NoError(t, err)
+			must.NoError(err)
 		}}
 	})
 }
