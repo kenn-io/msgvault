@@ -139,9 +139,10 @@ func TestCommitmentDecisionSurvivesShiftedQuote(t *testing.T) {
 				start := int64(9 + len(quote))
 				promises = append(promises, peoplesweep.CommitmentPromise{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send another draft", Start: start, End: start + int64(len(quote))})
 			}
-			if tc.resweep == "split" {
+			switch tc.resweep {
+			case "split":
 				promises = []peoplesweep.CommitmentPromise{firstPart, secondPart, {SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: third, Summary: "Call", Start: int64(len(combined) + 1), End: int64(len(text))}}
-			} else if tc.resweep == "merged" {
+			case "merged":
 				promises = []peoplesweep.CommitmentPromise{combinedPromise}
 			}
 
@@ -237,7 +238,6 @@ func TestCommitmentListPages(t *testing.T) {
 			r.False(seen[item.ID], "a commitment must occur only once")
 			seen[item.ID] = true
 		}
-
 	})
 	t.Run("closed decisions", func(t *testing.T) {
 		r, ctx := require.New(t), t.Context()
@@ -274,7 +274,6 @@ func TestCommitmentListPages(t *testing.T) {
 		r.NoError(err)
 		r.Len(page, 1)
 		r.Equal(all[200].ID, page[0].ID)
-
 	})
 }
 

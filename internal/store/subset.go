@@ -618,6 +618,20 @@ func copyData(ctx context.Context, db *sql.DB, tx *sql.Tx, rowCount int, options
 				`person_id IN (SELECT id FROM persons)`); err != nil {
 				return nil, fmt.Errorf("copy person commitments: %w", err)
 			}
+			// Preserve the citations that tie copied decisions to retained messages.
+			claims := `person_id IN (SELECT id FROM persons) AND target_kind = 'commitment' AND origin = 'commitment'
+				AND EXISTS (SELECT 1 FROM src.person_fact_claim_evidence ce JOIN src.person_fact_evidence e ON e.id = ce.evidence_id
+				WHERE ce.claim_id = src.person_fact_claims.id AND e.source_ref IN (SELECT 'commitment-message:' || id FROM selected_messages))`
+			for _, record := range []struct{ table, where string }{
+				{"person_fact_generations", `id IN (SELECT generation_id FROM src.person_fact_claims WHERE ` + claims + `)`},
+				{"person_fact_claims", claims},
+				{"person_fact_evidence", `id IN (SELECT ce.evidence_id FROM src.person_fact_claim_evidence ce JOIN person_fact_claims c ON c.id = ce.claim_id JOIN src.person_fact_evidence e ON e.id = ce.evidence_id WHERE e.source_ref IN (SELECT 'commitment-message:' || id FROM selected_messages))`},
+				{"person_fact_claim_evidence", `claim_id IN (SELECT id FROM person_fact_claims) AND evidence_id IN (SELECT id FROM person_fact_evidence)`},
+			} {
+				if _, err := copyByName(ctx, tx, record.table, record.where); err != nil {
+					return nil, fmt.Errorf("copy commitment %s: %w", record.table, err)
+				}
+			}
 		}
 		if options.IncludeVCardResources {
 			if err := copyVCardResourceEnvelopes(ctx, tx); err != nil {

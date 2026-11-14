@@ -122,6 +122,7 @@ func TestLoopsDoneAndSnooze(t *testing.T) {
 }
 
 func TestLoopsListPagesPromises(t *testing.T) {
+	a := assert.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if req.URL.Path == "/api/v1/health" {
@@ -129,15 +130,19 @@ func TestLoopsListPagesPromises(t *testing.T) {
 			assert.NoError(t, err)
 			return
 		}
-		assert.Equal(t, "200", req.URL.Query().Get("commitment_offset"))
-		_, err := w.Write([]byte(`{"items":[{"kind":"reply_owed","anchor_message_id":1,"conversation_id":1,"source_id":1,"channel":"email","summary":"Reply","owed_since_at":"2026-01-01T00:00:00Z","last_activity_at":"2026-01-01T00:00:00Z","counterparty":{"display_name":"Example"}}],"truncated":true,"commitments_next_offset":400}`))
-		assert.NoError(t, err)
+		a.Equal("200", req.URL.Query().Get("commitment_offset"))
+		a.Equal("1", req.URL.Query().Get("limit"))
+		a.Equal("true", req.URL.Query().Get("include_closed"))
+		_, err := w.Write([]byte(`{"items":[],"commitments":[{"id":"c201","person_id":1,"claim_id":1,"direction":"owed_to","summary":"Call","promise":{"message_id":42,"text":"I will call.","start":0,"end":12},"promised_at":"2026-01-01T00:00:00Z","freshness":"fresh","state":"done"}],"truncated":true,"commitments_next_offset":201}`))
+		a.NoError(err)
 	}))
 	t.Cleanup(server.Close)
 	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	output, err := runLoops(ctx, t, "list", "--include-closed", "--commitment-offset", "200")
+	output, err := runLoops(ctx, t, "list", "--limit", "1", "--include-closed", "--commitment-offset", "200")
 	require.NoError(t, err)
-	assert.Contains(t, output, "--commitment-offset 400")
+	a.Contains(output, "c201")
+	a.Contains(output, "I will call.")
+	a.Contains(output, "--commitment-offset 201")
 }
 
 func TestLoopsDaemonVersions(t *testing.T) {

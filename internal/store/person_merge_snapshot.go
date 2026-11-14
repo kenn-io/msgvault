@@ -249,6 +249,7 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 	},
 	"person_commitment_oversized": {
 		TableName: "person_commitment_oversized", KeyColumn: personMergePersonIDColumn, Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_commitment_frontiers": {
 		TableName: "person_commitment_frontiers", KeyColumn: personMergePersonIDColumn, Snapshot: false,

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -26,6 +27,78 @@ type loopFixture struct {
 	f      *storetest.Fixture
 	router http.Handler
 	owed   int64
+}
+
+type deadlineLoopContext struct {
+	context.Context
+
+	done chan struct{}
+}
+
+func (c *deadlineLoopContext) Done() <-chan struct{} { return c.done }
+func (c *deadlineLoopContext) Err() error {
+	select {
+	case <-c.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+type deadlineLoopStore struct {
+	*store.Store
+
+	deadline *deadlineLoopContext
+	stage    string
+}
+
+func (s *deadlineLoopStore) HasActivePersonCommitmentConsent(context.Context, string) (bool, error) {
+	if s.stage == "error" {
+		return false, errors.New("consent read failed")
+	}
+	if s.stage == "consent" {
+		close(s.deadline.done)
+		return false, context.DeadlineExceeded
+	}
+	return true, nil
+}
+
+func (s *deadlineLoopStore) PersonCommitmentDiscoveryContext(context.Context, int64, string) (*time.Time, bool, error) {
+	close(s.deadline.done)
+	return nil, false, context.DeadlineExceeded
+}
+
+func TestListLoopsReturnsResultsWhenDiscoveryTimesOut(t *testing.T) {
+	for _, stage := range []string{"consent", "discovery", "error"} {
+		t.Run(stage, func(t *testing.T) {
+			a, r := assert.New(t), require.New(t)
+			fixture := newLoopFixture(t)
+			cfg := config.NewDefaultConfig()
+			cfg.HomeDir = t.TempDir()
+			cfg.People.Sweep.Enabled = true
+			cfg.People.Sweep.Commitments.Enabled = true
+			configureAPIProvider(cfg, completeAPIProvider("EXAMPLE_KEY", "example-model"))
+			cfg.People.Sweep.ApplyDefaults()
+			ctx := &deadlineLoopContext{Context: t.Context(), done: make(chan struct{})}
+			st := &deadlineLoopStore{Store: fixture.f.Store, deadline: ctx, stage: stage}
+			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+			w := httptest.NewRecorder()
+			server.Router().ServeHTTP(w, httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/loops", nil))
+			if stage == "error" {
+				a.Equal(http.StatusInternalServerError, w.Code)
+				return
+			}
+			r.Equal(http.StatusOK, w.Code, w.Body.String())
+			var response LoopListResponse
+			r.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+			a.True(response.CoverageIncomplete)
+			a.Len(response.Items, 2)
+			if stage == "discovery" {
+				r.NotNil(response.CommitmentsComplete)
+				a.False(*response.CommitmentsComplete)
+			}
+		})
+	}
 }
 
 func newLoopFixture(t *testing.T) *loopFixture {

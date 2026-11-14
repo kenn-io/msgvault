@@ -182,15 +182,22 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 		if profileErr == nil {
 			active, err = loopStore.HasActivePersonCommitmentConsent(r.Context(), profile.Fingerprint)
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment consent")
-				return
+				if !errors.Is(err, context.DeadlineExceeded) {
+					writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment consent")
+					return
+				}
+				response.CoverageIncomplete = true
 			}
 		}
 		if active {
 			since, complete, err := loopStore.PersonCommitmentDiscoveryContext(r.Context(), opts.PersonID, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment discovery")
-				return
+				if !errors.Is(err, context.DeadlineExceeded) {
+					writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment discovery")
+					return
+				}
+				response.CoverageIncomplete = true
+				complete = false
 			}
 			response.CommitmentsSince, response.CommitmentsComplete = since, &complete
 			if until, parseErr := time.Parse(time.DateOnly, profile.SourceUntil); parseErr == nil && until.Before(s.clockNow().UTC().Truncate(24*time.Hour)) {

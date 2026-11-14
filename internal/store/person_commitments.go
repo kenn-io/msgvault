@@ -521,9 +521,13 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 	if scope == window.ScopeFingerprint && window.BackfillMessageID != -1 && since.Valid && since.Time.Before(now.Add(-cfg.Window)) {
 		window.SelectionAt = since.Time.Add(cfg.Window)
 	}
+	baseConfig := cfg
+	baseConfig.MaxBytes = 0
+	baseConfig.MaxItems = 0
+	baseScope := peoplesweep.CommitmentScopeFingerprint(profile, baseConfig)
 	if scope != window.ScopeFingerprint {
 		previous, window.BackfillMessageID = 0, 0
-		if _, err := s.db.ExecContext(ctx, s.Rebind(`DELETE FROM person_commitment_oversized WHERE person_id = ?`), personID); err != nil {
+		if _, err := s.db.ExecContext(ctx, s.Rebind(`DELETE FROM person_commitment_oversized WHERE person_id = ? AND scope_fingerprint != ?`), personID, baseScope); err != nil {
 			return window, err
 		}
 	}
@@ -532,11 +536,11 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 		day := at.UTC().Format(time.DateOnly)
 		return day >= profile.SourceSince && (profile.SourceUntil == "" || day <= profile.SourceUntil)
 	}
-	err = s.loadCommitmentSources(ctx, &window, cfg, previous, inProfile)
+	err = s.loadCommitmentSources(ctx, &window, cfg, previous, baseScope, inProfile)
 	return window, err
 }
 
-func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, inProfile func(time.Time) bool) error {
+func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, baseScope string, inProfile func(time.Time) bool) error {
 	personID, through := window.PersonID, window.ThroughSequence
 	seen, used := map[int64]bool{}, 0
 	add := func(source peoplesweep.CommitmentSource) (bool, error) {
@@ -545,7 +549,7 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			return false, err
 		}
 		if sourceBytes > cfg.MaxBytes {
-			_, err = s.db.ExecContext(ctx, s.Rebind(`INSERT INTO person_commitment_oversized (person_id, message_id) VALUES (?, ?) ON CONFLICT DO NOTHING`), personID, source.MessageID)
+			_, err = s.db.ExecContext(ctx, s.Rebind(`INSERT INTO person_commitment_oversized (person_id, message_id, scope_fingerprint, max_bytes) VALUES (?, ?, ?, ?) ON CONFLICT (person_id, message_id) DO UPDATE SET scope_fingerprint = excluded.scope_fingerprint, max_bytes = excluded.max_bytes`), personID, source.MessageID, baseScope, cfg.MaxBytes)
 			return true, err
 		}
 		if len(window.Sources) >= cfg.MaxItems || used+sourceBytes > cfg.MaxBytes {
@@ -570,16 +574,47 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			single.Sources = []peoplesweep.CommitmentSource{source}
 			fitsAlone, err := peoplesweep.CommitmentInputFits(single)
 			if !fitsAlone && err == nil {
-				_, err = s.db.ExecContext(ctx, s.Rebind(`INSERT INTO person_commitment_oversized (person_id, message_id) VALUES (?, ?) ON CONFLICT DO NOTHING`), personID, source.MessageID)
+				_, err = s.db.ExecContext(ctx, s.Rebind(`INSERT INTO person_commitment_oversized (person_id, message_id, scope_fingerprint, max_bytes) VALUES (?, ?, ?, ?) ON CONFLICT (person_id, message_id) DO UPDATE SET scope_fingerprint = excluded.scope_fingerprint, max_bytes = excluded.max_bytes`), personID, source.MessageID, baseScope, cfg.MaxBytes)
 			}
 			return !fitsAlone, err
-		}
-		if _, err := s.db.ExecContext(ctx, s.Rebind(`DELETE FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`), personID, source.MessageID); err != nil {
-			return false, err
 		}
 		seen[source.MessageID] = true
 		used += sourceBytes
 		return true, nil
+	}
+	const retryPage = 256
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT message_id FROM person_commitment_oversized WHERE person_id = ? AND scope_fingerprint = ? AND max_bytes < ? ORDER BY message_id LIMIT ?`), personID, baseScope, cfg.MaxBytes, retryPage)
+	if err != nil {
+		return err
+	}
+	ids, err := scanInt64Rows(rows)
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		source, ok, err := s.currentCommitmentSource(ctx, personID, id)
+		if err != nil {
+			return err
+		}
+		if !ok || !inProfile(source.EventTime) {
+			if _, err := s.db.ExecContext(ctx, s.Rebind(`DELETE FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`), personID, id); err != nil {
+				return err
+			}
+			continue
+		}
+		added, err := add(source)
+		if err != nil {
+			return err
+		}
+		if !added {
+			window.ThroughSequence, window.BackfillMessageID = previous, 0
+			return nil
+		}
+	}
+	if len(ids) == retryPage {
+		window.ThroughSequence, window.BackfillMessageID = previous, 0
+		return nil
 	}
 	changes, err := s.ScanPersonSweepChanges(ctx, personID, previous, maxPersonSweepChangeScan)
 	if err != nil {
@@ -617,7 +652,7 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 		return nil
 	}
 	const backfillPage = 256
-	ids, err := s.commitmentBackfillMessages(ctx, personID, window.BackfillMessageID, cutoff, backfillPage)
+	ids, err = s.commitmentBackfillMessages(ctx, personID, window.BackfillMessageID, cutoff, backfillPage)
 	if err != nil {
 		return err
 	}

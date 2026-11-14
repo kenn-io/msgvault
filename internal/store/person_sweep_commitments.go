@@ -214,6 +214,11 @@ func (s *Store) matchCommitmentTarget(ctx context.Context, personID int64, sourc
 }
 
 func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {
+	for _, source := range request.Commitment.Window.Sources {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`, request.Lease.PersonID, source.MessageID); err != nil {
+			return err
+		}
+	}
 	if err := s.applyCommitmentStatusesTx(ctx, tx, request, prepared); err != nil {
 		return err
 	}

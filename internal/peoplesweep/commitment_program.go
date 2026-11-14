@@ -91,8 +91,8 @@ func (c *CommitmentConfig) Validate(budget BudgetConfig) error {
 	if !c.Enabled {
 		return nil
 	}
-	if c.MinInterval <= 0 || c.Window <= 0 || c.MaxItems <= 0 || c.MaxItems > 2000 || c.MaxBytes <= 0 || c.MaxBytes > 120<<10 || c.MaxOutputTokens <= 0 || c.MaxOutputTokens > budget.MaxOutputTokensPerPerson {
-		return errors.New("[people.sweep.commitments] limits must be positive and fit the per-person budget (max_items <= 2000, max_bytes <= 122880)")
+	if c.MinInterval <= 0 || c.Window <= 0 || c.MaxItems <= 0 || c.MaxItems > 2000 || c.MaxBytes <= 0 || c.MaxBytes > 120<<10 || c.MaxOutputTokens <= 0 || c.MaxOutputTokens > maxStructuredOutputTokens || c.MaxOutputTokens > budget.MaxOutputTokensPerPerson {
+		return errors.New("[people.sweep.commitments] limits must be positive and fit the per-person budget (max_items <= 2000, max_bytes <= 122880, max_output_tokens <= 32768)")
 	}
 	return nil
 }
