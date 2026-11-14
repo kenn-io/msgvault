@@ -133,13 +133,12 @@ func TestMCPRelationshipListAndNetworkReads(t *testing.T) {
 	network := loopToolOutput[generated.PersonNetwork](t, networkResult)
 	assertions.Equal(source, network.RootPersonID)
 	requirements.Len(network.Edges, 1)
-
 }
 
 func TestMCPRelationshipCapabilities(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	_, backend, _, _ := relationshipFixture(t)
+	backend, _ := personRecordFixture(t)
 	assertions.Contains(backend.capabilities(), "create_person_relationship")
 	assertions.Contains(backend.capabilities(), "update_person_relationship")
 	caps, err := backend.client.MCPCapabilities(t.Context())
