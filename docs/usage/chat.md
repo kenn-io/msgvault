@@ -945,8 +945,8 @@ These tools require native daemon support. With curated writes enabled,
 ETag. Each call requires explicit client confirmation; the client is responsible
 for obtaining user approval. The disclosure supplies media byte size and SHA-256
 in place of base64 data. A superseded value over 256 KiB is shown by ID,
-serialized size, and SHA-256. If the approval message exceeds 1 MiB, split the
-patch and retry. A successful patch returns its new ETag and omits the
+serialized size, and SHA-256. Disclosures are capped at 13 MiB; larger
+disclosures are refused. A successful patch returns its new ETag and omits the
 profile when it exceeds 1 MiB. If the result says the operation may have
 completed, read the record again before retrying.
 

@@ -19,6 +19,7 @@ import (
 )
 
 const invalidArguments = "invalid_arguments"
+const maxPersonRecordDisclosureBytes = api.MaxPersonProfilePatchBytes + (1 << 20)
 
 func personRecordCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCapabilities) []string {
 	var names []string
@@ -190,7 +191,7 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	if err != nil {
 		return "", true, err
 	}
-	if len(preview) > 1<<20 {
+	if len(preview) > maxPersonRecordDisclosureBytes {
 		return "", true, &mcpserver.OperationRefusalError{Code: "operation_response_limit_exceeded"}
 	}
 	current, _, err := b.executePersonRecord(ctx, "get_person_record", map[string]any{"person_id": input.PersonID})
@@ -293,7 +294,7 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 		Changes   any    `json:"changes"`
 		Effect    string `json:"effect"`
 	}{name, selected, changes, "Atomically apply all requested adds and supersedes to this person."}, json.Deterministic(true))
-	if err == nil && len(data) > 1<<20 {
+	if err == nil && len(data) > maxPersonRecordDisclosureBytes {
 		return "", true, &mcpserver.OperationRefusalError{Code: "operation_response_limit_exceeded"}
 	}
 	return string(data), true, err

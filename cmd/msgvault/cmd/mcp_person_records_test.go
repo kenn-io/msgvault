@@ -384,6 +384,33 @@ func TestPersonRecordLargeProfileRecoveryAndDisclosure(t *testing.T) {
 	assertions.Equal("download_expired", loopToolFailure(t, stale)["error"])
 }
 
+func TestPersonRecordLargeValueApproval(t *testing.T) {
+	backend, id, _, _ := personRecordFixture(t)
+	initial, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
+	require.NoError(t, err)
+	value := strings.Repeat("x", 2<<20)
+	var disclosure string
+	session := loopOperationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCurated}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		disclosure = request.Params.Message
+		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+	}})
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "patch_person_record", Arguments: map[string]any{"person_id": id, "etag": initial.ETag, "patch": map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "free_text": value, "envelope": map[string]any{"source": "user"}}}}}}})
+	require.NoError(t, err)
+	require.False(t, result.IsError, "patch refused: %v", result.Content)
+	if !strings.Contains(disclosure, value) {
+		t.Error("approval must disclose the full value")
+	}
+	current, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
+	require.NoError(t, err)
+	var profile generated.StructuredPersonProfile
+	require.NoError(t, json.Unmarshal(current.Data, &profile))
+	require.Len(t, profile.Addresses, 1)
+	require.NotNil(t, profile.Addresses[0].FreeText)
+	if *profile.Addresses[0].FreeText != value {
+		t.Error("saved value must match the approved value")
+	}
+}
+
 func TestPersonRecordSupersedeLargeValue(t *testing.T) {
 	backend, id, _, patches := personRecordFixture(t)
 	initial, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
