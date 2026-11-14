@@ -121,6 +121,9 @@ func restorePreflight(dir, changedDir string, selected, ancestors, changed []str
 		if inherited {
 			return fmt.Errorf("%w: tokens/%s", ErrRestorePermissionsConflict, rel)
 		}
+		if entry.IsDir() {
+			return fs.SkipDir
+		}
 		return nil
 	})
 }
