@@ -245,77 +245,25 @@ func TestDownloadSnapshotByteBudget(t *testing.T) {
 }
 
 func TestPersonDownloadSnapshotsSurviveRefresh(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		checks, must := assert.New(t), require.New(t)
-		var cache downloadCache
-		defer cache.close()
-		key := downloadKey{operation: "get_person_record", identity: "1"}
-		value := "first"
-		load := func() (*downloadSnapshot, error) { return &downloadSnapshot{data: []byte(value), etag: value}, nil }
-		first, err := cache.get(t.Context(), key, chunkRequest{length: 1}, load)
-		must.NoError(err)
-		time.Sleep(time.Second)
-		value = "second"
-		_, err = cache.get(t.Context(), key, chunkRequest{length: 1, digest: first.digest}, load)
-		must.ErrorIs(err, errDownloadExpired)
-		second, err := cache.get(t.Context(), key, chunkRequest{length: 1}, load)
-		must.NoError(err)
-		old, err := cache.get(t.Context(), key, chunkRequest{offset: 1, length: 1, digest: first.digest}, load)
-		must.NoError(err)
-		checks.Equal([]byte("first"), old.data)
-		checks.Equal("first", old.etag)
-		current, err := cache.get(t.Context(), key, chunkRequest{offset: 1, length: 1, digest: second.digest}, load)
-		must.NoError(err)
-		checks.Equal([]byte("second"), current.data)
-		checks.Equal("second", current.etag)
-		repeated, err := cache.get(t.Context(), key, chunkRequest{length: 1}, load)
-		must.NoError(err)
-		checks.Same(second, repeated)
-		checks.Equal(len("first")+len("second"), cache.bytes)
-		for i := 0; i < maxDownloads-1; i++ {
-			time.Sleep(time.Second)
-			value = fmt.Sprintf("next-%d", i)
-			_, err = cache.get(t.Context(), key, chunkRequest{length: 1}, load)
-			must.NoError(err)
-		}
-		_, err = cache.get(t.Context(), key, chunkRequest{offset: 1, length: 1, digest: first.digest}, load)
-		must.ErrorIs(err, errDownloadExpired)
-		cache.close()
-		checks.Zero(cache.bytes)
-	})
-}
-
-func TestDownloadLoadDoesNotBlockOtherDownloads(t *testing.T) {
 	var cache downloadCache
 	defer cache.close()
-	started, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
-	go func() {
-		_, err := cache.get(t.Context(), downloadKey{operation: "profile"}, chunkRequest{}, func() (*downloadSnapshot, error) {
-			close(started)
-			<-release
-			return &downloadSnapshot{data: []byte("profile")}, nil
-		})
-		done <- err
-	}()
-	<-started
-	finished := make(chan error, 1)
-	go func() {
-		_, err := cache.get(t.Context(), downloadKey{attachment: 1}, chunkRequest{}, func() (*downloadSnapshot, error) {
-			return &downloadSnapshot{data: []byte("attachment")}, nil
-		})
-		finished <- err
-	}()
-	completed := false
-	select {
-	case err := <-finished:
-		completed = true
-		assert.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		assert.Fail(t, "another download waited for the profile load")
+	key := downloadKey{operation: "get_person_record", identity: "1"}
+	value, reads := "first", 0
+	load := func() (*downloadSnapshot, error) {
+		reads++
+		return &downloadSnapshot{data: []byte(value), etag: value}, nil
 	}
-	close(release)
-	assert.NoError(t, <-done)
-	if !completed {
-		assert.NoError(t, <-finished)
-	}
+	first, err := cache.get(t.Context(), key, chunkRequest{length: 1}, load)
+	require.NoError(t, err)
+	continued, err := cache.get(t.Context(), key, chunkRequest{offset: 1, length: 1, digest: first.digest}, load)
+	require.NoError(t, err)
+	assert.Equal(t, first.etag, continued.etag)
+	assert.Equal(t, 1, reads)
+	value = "second"
+	second, err := cache.get(t.Context(), key, chunkRequest{length: 1}, load)
+	require.NoError(t, err)
+	assert.Equal(t, "second", second.etag)
+	assert.Equal(t, 2, reads)
+	_, err = cache.get(t.Context(), key, chunkRequest{offset: 1, length: 1, digest: first.digest}, load)
+	require.ErrorIs(t, err, errDownloadExpired)
 }

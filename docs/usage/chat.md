@@ -473,7 +473,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `explain_person_tier` | Show every count behind one saved person's tier against its threshold, including tier 3 and any exclusion. Read-only. | `person_id` (int, required) |
 | `search_person_files` | Find archived attachment occurrences related to a saved person. | `person_id` (int, required), `directions` (array: `from_person`/`to_person`/`group`), `filename` (substring), `mime_families` (array), `after`, `before`, `limit` (1–100, default 100), `cursor` |
 | `get_person_record` | Read the structured person profile and ETag. | `person_id` (required), `offset`, `length`, `sha256` |
-| `get_person_record_history` | Read current and superseded profile values. | `person_id` (required), `offset`, `length`, `sha256` |
+| `get_person_record_history` | Read current and superseded profile values. | `person_id` (required) |
 | `get_person_record_media` | Read stored profile media in chunks. | `person_id`, `media_id` (required), `offset`, `length`, `sha256` |
 | `patch_person_record` | Atomically add and supersede profile values with approval. | `person_id`, `etag`, `patch` (required) |
 | `get_person_profile` | Read a saved person profile: contact history, current brief and its sources, contact details, non-sensitive attributes, employment, relationships, and categories. Includes the vCard UID and mapped CardDAV bindings when the daemon provides them; older daemons return no CardDAV binding entries. Excludes sensitive attributes, private Notes, and media; makes no provider calls. See [Brief text is data](#brief-text-is-data). | Exactly one of `person_id` (int) or `vcard_uid` (string; current or retired person UID, or mapped CardDAV UID) |
@@ -939,12 +939,13 @@ retries a write by itself. If a write reports
 
 On unreleased `main`, owner sessions can read a structured person record with
 `get_person_record`, including its exact ETag, and inspect its history with
-`get_person_record_history`. Profiles and histories over 1 MiB return the first
+`get_person_record_history`. Profiles over 1 MiB return the first
 base64 chunk and a whole-object `sha256`. Pass the returned hash and each next
 offset until complete, then decode and join the chunks to recover the JSON.
 Profile chunks also carry their ETag. `get_person_record_media` returns stored
 inline media in base64 chunks with its content type and whole-object SHA-256.
 Start at offset zero and pass the hash with each subsequent offset; URI-only values have no stored content.
+History over 1 MiB returns `operation_response_limit_exceeded`.
 These tools require native daemon support. With curated writes enabled,
 `patch_person_record` applies adds and supersedes atomically using the exact
 ETag. Each call requires explicit client confirmation; the client is responsible

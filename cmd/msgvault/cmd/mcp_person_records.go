@@ -17,6 +17,8 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+const invalidArguments = "invalid_arguments"
+
 func personRecordCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCapabilities) []string {
 	var names []string
 	for _, route := range []struct{ name, id, method, path string }{
@@ -53,7 +55,7 @@ func personRecordRefusal(code string) bool {
 }
 func (b *daemonMCPOperations) executePersonRecord(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	invalid := func() (*mcpserver.OperationResult, bool, error) {
-		return operationFailure("invalid_arguments", false), true, nil
+		return operationFailure(invalidArguments, false), true, nil
 	}
 	switch name {
 	case "get_person_record", "get_person_record_history":
@@ -71,11 +73,8 @@ func (b *daemonMCPOperations) executePersonRecord(ctx context.Context, name stri
 			}
 			return &mcpserver.OperationResult{Data: data, ETag: headers.Get("ETag")}, true, nil
 		}
-		data, _, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/history", &generated.GetPersonProfileHistoryRequestOptions{PathParams: &generated.GetPersonProfileHistoryPath{ID: input.PersonID}}, mcpserver.MaxDownloadBytes, personRecordRefusal, http.StatusOK)
-		if failure != nil {
-			return failure, true, err
-		}
-		return &mcpserver.OperationResult{Data: data}, true, nil
+		result, err := readMCPOperationJSONWithClassifier[generated.PersonProfileHistory](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/history", &generated.GetPersonProfileHistoryRequestOptions{PathParams: &generated.GetPersonProfileHistoryPath{ID: input.PersonID}}, personRecordRefusal, http.StatusOK)
+		return result, true, err
 	case "patch_person_record":
 		input, err := decodeMCPOperationArguments[personPatchArgs](args)
 		if err != nil || !validLoopID(input.PersonID) || input.ETag == "" || input.Patch == nil {
@@ -117,26 +116,32 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	}
 	input, err := decodeMCPOperationArguments[personPatchArgs](args)
 	if err != nil || !validLoopID(input.PersonID) || input.ETag == "" || input.Patch == nil {
-		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+		return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 	}
-	count := 0
+	count, supersedeCount := 0, 0
 	if p := input.Patch.Names; p != nil {
 		count += len(p.Add) + len(p.Supersede)
+		supersedeCount += len(p.Supersede)
 	}
 	if p := input.Patch.ContactPoints; p != nil {
 		count += len(p.Add) + len(p.Supersede)
+		supersedeCount += len(p.Supersede)
 	}
 	if p := input.Patch.Addresses; p != nil {
 		count += len(p.Add) + len(p.Supersede)
+		supersedeCount += len(p.Supersede)
 	}
 	if p := input.Patch.Dates; p != nil {
 		count += len(p.Add) + len(p.Supersede)
+		supersedeCount += len(p.Supersede)
 	}
 	if p := input.Patch.Categories; p != nil {
 		count += len(p.Add) + len(p.Supersede)
+		supersedeCount += len(p.Supersede)
 	}
 	if p := input.Patch.Media; p != nil {
 		count += len(p.Add) + len(p.Supersede)
+		supersedeCount += len(p.Supersede)
 	}
 	if count > store.MaxPersonProfilePatchOperations {
 		return "", true, &mcpserver.OperationRefusalError{Code: "profile_patch_too_large"}
@@ -144,7 +149,7 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	// The generated client's runtime uses v1 JSON for request bodies.
 	encodedPatch, err := runtime.MarshalJSON(input.Patch)
 	if err != nil {
-		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+		return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 	}
 	if len(encodedPatch) > api.MaxPersonProfilePatchBytes {
 		return "", true, &mcpserver.OperationRefusalError{Code: "profile_patch_too_large"}
@@ -171,7 +176,7 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 			if item.Data != nil {
 				data, err := base64.StdEncoding.DecodeString(*item.Data)
 				if err != nil {
-					return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+					return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 				}
 				if len(data) > store.MaxPersonMediaBytes {
 					return "", true, &mcpserver.OperationRefusalError{Code: "invalid_profile_value"}
@@ -204,6 +209,19 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	if err := json.Unmarshal(current.Data, &profile); err != nil {
 		return "", true, err
 	}
+	history := generated.PersonProfileHistory{}
+	if supersedeCount > 0 {
+		data, _, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/history", &generated.GetPersonProfileHistoryRequestOptions{PathParams: &generated.GetPersonProfileHistoryPath{ID: input.PersonID}}, mcpserver.MaxDownloadBytes, personRecordRefusal, http.StatusOK)
+		if err != nil {
+			return "", true, err
+		}
+		if failure != nil {
+			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+		}
+		if err := json.Unmarshal(data, &history); err != nil {
+			return "", true, err
+		}
+	}
 	selected := struct {
 		Person        generated.Person `json:"person"`
 		Names         []any            `json:"names,omitempty"`
@@ -215,22 +233,22 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	}{Person: profile.Person}
 	missing := false
 	if p := input.Patch.Names; p != nil {
-		selected.Names, missing = superseded(profile.Names, p.Supersede, func(v generated.PersonName) int64 { return v.Envelope.ID }, missing)
+		selected.Names, missing = superseded(history.Names, p.Supersede, func(v generated.PersonName) generated.ValueEnvelope { return v.Envelope }, missing)
 	}
 	if p := input.Patch.ContactPoints; p != nil {
-		selected.ContactPoints, missing = superseded(profile.ContactPoints, p.Supersede, func(v generated.PersonContactPoint) int64 { return v.Envelope.ID }, missing)
+		selected.ContactPoints, missing = superseded(history.ContactPoints, p.Supersede, func(v generated.PersonContactPoint) generated.ValueEnvelope { return v.Envelope }, missing)
 	}
 	if p := input.Patch.Addresses; p != nil {
-		selected.Addresses, missing = superseded(profile.Addresses, p.Supersede, func(v generated.PersonAddress) int64 { return v.Envelope.ID }, missing)
+		selected.Addresses, missing = superseded(history.Addresses, p.Supersede, func(v generated.PersonAddress) generated.ValueEnvelope { return v.Envelope }, missing)
 	}
 	if p := input.Patch.Dates; p != nil {
-		selected.Dates, missing = superseded(profile.Dates, p.Supersede, func(v generated.PersonDate) int64 { return v.Envelope.ID }, missing)
+		selected.Dates, missing = superseded(history.Dates, p.Supersede, func(v generated.PersonDate) generated.ValueEnvelope { return v.Envelope }, missing)
 	}
 	if p := input.Patch.Categories; p != nil {
-		selected.Categories, missing = superseded(profile.Categories, p.Supersede, func(v generated.PersonCategory) int64 { return v.Envelope.ID }, missing)
+		selected.Categories, missing = superseded(history.Categories, p.Supersede, func(v generated.PersonCategory) generated.ValueEnvelope { return v.Envelope }, missing)
 	}
 	if p := input.Patch.Media; p != nil {
-		selected.Media, missing = superseded(profile.Media, p.Supersede, func(v generated.PersonMedia) int64 { return v.Envelope.ID }, missing)
+		selected.Media, missing = superseded(history.Media, p.Supersede, func(v generated.PersonMedia) generated.ValueEnvelope { return v.Envelope }, missing)
 	}
 	if missing {
 		return "", true, &mcpserver.OperationRefusalError{Code: "profile_value_not_found"}
@@ -252,16 +270,17 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	return string(data), true, err
 }
 
-func superseded[T any](values []T, ids []int64, id func(T) int64, missing bool) ([]any, bool) {
+func superseded[T any](values []T, ids []int64, envelope func(T) generated.ValueEnvelope, missing bool) ([]any, bool) {
 	var selected []any
 	found := make(map[int64]bool, len(ids))
 	for _, value := range values {
-		if slices.Contains(ids, id(value)) {
-			found[id(value)] = true
+		meta := envelope(value)
+		if meta.SupersededAt == nil && slices.Contains(ids, meta.ID) {
+			found[meta.ID] = true
 			data, err := json.Marshal(value, json.Deterministic(true))
 			if err == nil && len(data) > 256<<10 {
 				sum := sha256.Sum256(data)
-				selected = append(selected, map[string]any{"id": id(value), "size": len(data), "sha256": hex.EncodeToString(sum[:])})
+				selected = append(selected, map[string]any{"id": meta.ID, "size": len(data), "sha256": hex.EncodeToString(sum[:])})
 			} else {
 				selected = append(selected, value)
 			}

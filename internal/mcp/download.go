@@ -24,7 +24,6 @@ var (
 
 type downloadKey struct {
 	operation  string
-	digest     string
 	identity   string
 	message    query.MessageRef
 	attachment int64
@@ -43,7 +42,7 @@ type downloadSnapshot struct {
 }
 
 // downloadCache retains at most 256 MiB across eight downloads. A digest pins
-// continuations to their initial bytes even if the archive changes meanwhile.
+// continuations to their initial bytes until a fresh read replaces the snapshot.
 type downloadCache struct {
 	mu      sync.Mutex
 	entries map[downloadKey]*downloadSnapshot
@@ -52,6 +51,7 @@ type downloadCache struct {
 }
 
 func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkRequest, load func() (*downloadSnapshot, error)) (*downloadSnapshot, error) {
+	// Serialize snapshot loads so successive chunks reuse one fetch.
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -59,9 +59,6 @@ func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkReque
 	}
 	if c.closed {
 		return nil, errDownloadExpired
-	}
-	if key.operation != "" {
-		key.digest = req.digest
 	}
 	if entry := c.entries[key]; entry != nil && (key.operation == "" || req.offset != 0) {
 		if time.Now().Before(entry.expires) {
@@ -87,41 +84,28 @@ func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkReque
 	if req.offset != 0 {
 		return nil, errDownloadExpired
 	}
-	c.mu.Unlock()
 	entry, err := load()
-	if err == nil && len(entry.data) <= MaxDownloadBytes {
-		sum := sha256.Sum256(entry.data)
-		entry.digest = hex.EncodeToString(sum[:])
-	}
-	c.mu.Lock()
 	if err != nil {
 		return nil, err
-	}
-	if c.closed {
-		return nil, errDownloadExpired
 	}
 	if len(entry.data) > MaxDownloadBytes {
 		return nil, errDownloadTooLarge
 	}
+	sum := sha256.Sum256(entry.data)
+	entry.digest = hex.EncodeToString(sum[:])
 	if req.digest != "" && req.digest != entry.digest {
 		return nil, errDownloadExpired
 	}
 	if key.operation != "" {
-		if req.offset == 0 && int64(len(entry.data)) <= req.length {
-			return entry, nil
-		}
-		key.digest = entry.digest
 		if existing := c.entries[key]; existing != nil {
-			if time.Now().Before(existing.expires) {
+			if time.Now().Before(existing.expires) && existing.digest == entry.digest && existing.etag == entry.etag {
 				return existing, nil
 			}
 			c.remove(key)
 		}
-	} else if existing := c.entries[key]; existing != nil {
-		if time.Now().Before(existing.expires) && existing.digest == entry.digest {
-			return existing, nil
+		if req.offset == 0 && int64(len(entry.data)) <= req.length {
+			return entry, nil
 		}
-		c.remove(key)
 	}
 	for len(c.entries) >= maxDownloads || c.bytes+len(entry.data) > MaxDownloadBytes {
 		var oldest downloadKey
