@@ -212,11 +212,11 @@ func TestPersonSweepHistoryReportsFailuresWithoutEvidence(t *testing.T) {
 	must.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO person_sweep_attempts
-			(id, run_id, person_id, lease_fence, mode, status, failure_class, commitment_failure_class,
+			(id, run_id, person_id, lease_fence, mode, status, failure_class,
 			 cursor_envelope_json, envelope_hash, program_fingerprint,
 			 catalog_fingerprint, provider_fingerprint, generation_key,
 			 provider_request_id, started_at, completed_at)
-		VALUES (?, ?, ?, 1, 'incremental', 'failed', 'invalid_output', '',
+		VALUES (?, ?, ?, 1, 'incremental', 'failed', 'invalid_output',
 			 '[]', 'envelope-safe', 'program-safe', 'catalog-safe', 'provider-safe',
 			 'literal-secret-evidence', 'literal-secret-response-text', ?, ?)`),
 		"history-attempt", "history-run", personID, now, now.Add(time.Second))
@@ -226,15 +226,10 @@ func TestPersonSweepHistoryReportsFailuresWithoutEvidence(t *testing.T) {
 			failure_count = 1, completed_at = ? WHERE id = ?`), now.Add(time.Second), "history-run")
 	must.NoError(err)
 	deps := localPersonSweepCommandDeps(config, st)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO person_sweep_attempts
- (id,run_id,person_id,lease_fence,mode,status,failure_class,commitment_failure_class,cursor_envelope_json,envelope_hash,program_fingerprint,catalog_fingerprint,provider_fingerprint,started_at,completed_at)
- VALUES (?, ?, ?, 1, 'incremental', 'succeeded', '', 'provider_http', '[]', 'envelope-safe', 'program-safe', 'catalog-safe', 'provider-safe', ?, ?)`), "history-commitment", "history-run", personID, now, now.Add(2*time.Second))
-	must.NoError(err)
 	for _, args := range [][]string{{"history", "--person", strconv.FormatInt(personID, 10)}, {"history", "--person", strconv.FormatInt(personID, 10), "--json"}} {
 		output, runErr := executePersonSweepCommand(t, deps, args...)
 		must.NoError(runErr)
 		checks.Contains(output, "invalid_output")
-		checks.Contains(output, "provider_http")
 		checks.NotContains(output, "literal-secret-evidence")
 		checks.NotContains(output, "literal-secret-response-text")
 	}

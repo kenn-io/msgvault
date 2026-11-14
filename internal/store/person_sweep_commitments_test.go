@@ -192,6 +192,10 @@ func nextCommitmentTestAttempt(t *testing.T, f personSweepApplyFixture, suffix s
 func commitmentApplyRequest(t *testing.T, f personSweepApplyFixture, window peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, parsed peoplesweep.ParsedCommitments) peoplesweep.ApplyRequest {
 	t.Helper()
 	ctx, r := t.Context(), require.New(t)
+	encoded, err := json.Marshal(parsed)
+	r.NoError(err)
+	parsed, err = peoplesweep.ParseCommitments(encoded, window)
+	r.NoError(err)
 	st := f.store
 	profile := f.request.Generation.Policy.ProviderPolicyFingerprint
 	budget := personSweepApplyBudget()
@@ -278,10 +282,12 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 			r.NoError(err)
 			a.False(complete)
 			cfg.Commitments.MaxBytes = 2200
+			laterNow := personFactLedgerNow.Add(31 * 24 * time.Hour)
 			cfg.Commitments.MaxItems = 10
-			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, laterNow, "UTC")
 			r.NoError(err)
 			r.Len(window.Sources, 4)
+			a.Equal(personFactLedgerNow.Add(-cfg.Commitments.Window), window.SelectionAt.Add(-cfg.Commitments.Window))
 			var largeSource string
 			for _, source := range window.Sources {
 				if source.MessageID == large {
@@ -293,13 +299,17 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 			f = nextCommitmentTestAttempt(t, f, "-larger")
 			empty, err = peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":"I will call.","start":2101,"end":2113,"summary":"Call","due_on":null}]}`, largeSource)), window)
 			r.NoError(err)
-			_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, empty))
+			request = commitmentApplyRequest(t, f, window, cfg.Commitments, empty)
+			request.Generation.ResolvedAt = laterNow
+			_, err = f.store.ApplyPersonSweep(ctx, request)
 			r.NoError(err)
 			items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 5, false)
 			r.NoError(err)
 			r.Len(items, 2)
-			_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID)
+			since, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID)
 			r.NoError(err)
+			r.NotNil(since)
+			a.Equal(laterNow.Add(-cfg.Commitments.Window), *since)
 			a.True(complete)
 		})
 	}
@@ -391,9 +401,9 @@ func TestCommitmentApplyRevokedConsentRetainsPaidAccounting(t *testing.T) {
 	}, cfg.Commitments, personFactLedgerNow, "UTC")
 	r.NoError(err)
 	r.Len(window.Sources, 1)
-	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
-		Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send the draft", End: int64(len(quote))}},
-	})
+	parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":%q,"start":0,"end":%d,"summary":"Send the draft","due_on":null}]}`, window.Sources[0].ID, quote, len(quote))), window)
+	r.NoError(err)
+	request := commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
 	revoked, err := f.store.RevokePersonCommitmentConsent(ctx, request.Generation.Policy.ProviderPolicyFingerprint, "test")
 	r.NoError(err)
 	r.True(revoked)
@@ -401,13 +411,10 @@ func TestCommitmentApplyRevokedConsentRetainsPaidAccounting(t *testing.T) {
 	r.NoError(err)
 	a.Equal(1, result.Mutations.BatchRowsReconciled)
 	var commitments, frontiers, requests int
-	var failure string
 	r.NoError(f.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM person_commitments").Scan(&commitments))
 	r.NoError(f.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM person_commitment_frontiers").Scan(&frontiers))
 	r.NoError(f.store.db.QueryRowContext(ctx, "SELECT actual_requests FROM person_sweep_batches WHERE attempt_id = ?", f.attemptID).Scan(&requests))
-	r.NoError(f.store.db.QueryRowContext(ctx, "SELECT commitment_failure_class FROM person_sweep_attempts WHERE id = ?", f.attemptID).Scan(&failure))
 	a.Zero(commitments)
 	a.Zero(frontiers)
 	a.Equal(1, requests)
-	a.Equal(string(peoplesweep.FailurePolicy), failure)
 }

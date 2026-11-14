@@ -22,7 +22,6 @@ func TestCommitmentMigrationUpgradesVersion42(t *testing.T) {
 	for _, query := range []string{
 		`DROP TABLE person_commitment_frontiers`,
 		`DROP TABLE person_commitments`,
-		`ALTER TABLE person_sweep_attempts DROP COLUMN commitment_failure_class`,
 		`DELETE FROM applied_migrations WHERE name = 'person_commitments_v1'`,
 		`UPDATE archive_metadata SET value = '42' WHERE key = 'schema_version'`,
 	} {
@@ -40,7 +39,7 @@ func TestCommitmentMigrationUpgradesVersion42(t *testing.T) {
 		var claims, links, attempts int
 		r.NoError(st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM person_fact_claims`).Scan(&claims))
 		r.NoError(st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM person_fact_claim_evidence`).Scan(&links))
-		r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM person_sweep_attempts WHERE id = ? AND commitment_failure_class = ''`), f.attemptID).Scan(&attempts))
+		r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM person_sweep_attempts WHERE id = ?`), f.attemptID).Scan(&attempts))
 		a.Equal(1, claims)
 		a.Equal(1, links)
 		a.Equal(1, attempts)

@@ -3023,10 +3023,6 @@ components:
           format: date-time
           type: string
         state:
-          enum:
-            - open
-            - done
-            - snoozed
           type: string
       required:
         - id
@@ -7492,7 +7488,6 @@ components:
             - owed_to
           type: string
         due_on:
-          format: date
           type: string
         freshness:
           enum:

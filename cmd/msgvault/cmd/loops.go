@@ -170,7 +170,7 @@ currently open questions. Use the current message ID from loops list.`,
 				return loopActionError(id, err)
 			}
 			result := fmt.Sprintf("Snoozed %d until %s.\n", id, at.Local().Format("Mon Jan 2 3:04 PM MST"))
-			if string(decision.State) == "done" {
+			if decision.State == "done" {
 				result = fmt.Sprintf("%d is already done.\n", id)
 			}
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), result); err != nil {
@@ -346,7 +346,7 @@ func writeLoopCommitments(sb *strings.Builder, commitments []generated.LoopCommi
 				fmt.Fprintf(sb, " (%s)", state)
 			}
 			if item.DueOn != nil {
-				fmt.Fprintf(sb, "   due %s", item.DueOn.Format(time.DateOnly))
+				fmt.Fprintf(sb, "   due %s", *item.DueOn)
 			}
 			fmt.Fprintf(sb, "\n    message %d: %s\n", item.Promise.MessageID, textutil.SanitizeTerminal(item.Promise.Text))
 

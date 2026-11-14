@@ -436,11 +436,11 @@ func (s *Store) applyPersonSweepWithAligner(
 		}
 
 		attemptResult, err := tx.ExecContext(ctx, `UPDATE person_sweep_attempts SET
-			status = 'succeeded', failure_class = '', brief_failure_class = ?, commitment_failure_class = ?,
+			status = 'succeeded', failure_class = '', brief_failure_class = ?,
 			generation_id = ?, generation_key = ?,
 			claim_count = ?, decision_count = decision_count + ?,
 			projected_write_count = projected_write_count + ?, completed_at = ?
-			WHERE id = ? AND status = 'running'`, request.BriefFailureClass, request.CommitmentFailureClass,
+			WHERE id = ? AND status = 'running'`, request.BriefFailureClass,
 			generation.GenerationID,
 			generation.GenerationKey, len(request.Generation.Claims), len(generation.Decisions),
 			result.Mutations.ProjectionRowsWritten, s.dialect.TimestampParam(request.CompletedAt),

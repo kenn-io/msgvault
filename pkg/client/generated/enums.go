@@ -525,36 +525,18 @@ func (c CardDAVStatusResponseRepairReason) Validate() error {
 type CommitmentDecisionRequestState string
 
 const (
-	Done    CommitmentDecisionRequestState = "done"
-	Open    CommitmentDecisionRequestState = "open"
-	Snoozed CommitmentDecisionRequestState = "snoozed"
+	CommitmentDecisionRequestStateDone    CommitmentDecisionRequestState = "done"
+	CommitmentDecisionRequestStateOpen    CommitmentDecisionRequestState = "open"
+	CommitmentDecisionRequestStateSnoozed CommitmentDecisionRequestState = "snoozed"
 )
 
 // Validate checks if the CommitmentDecisionRequestState value is valid
 func (c CommitmentDecisionRequestState) Validate() error {
 	switch c {
-	case Done, Open, Snoozed:
+	case CommitmentDecisionRequestStateDone, CommitmentDecisionRequestStateOpen, CommitmentDecisionRequestStateSnoozed:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CommitmentDecisionRequestState value, got: %v", c))
-	}
-}
-
-type CommitmentDecisionResponseState string
-
-const (
-	CommitmentDecisionResponseStateDone    CommitmentDecisionResponseState = "done"
-	CommitmentDecisionResponseStateOpen    CommitmentDecisionResponseState = "open"
-	CommitmentDecisionResponseStateSnoozed CommitmentDecisionResponseState = "snoozed"
-)
-
-// Validate checks if the CommitmentDecisionResponseState value is valid
-func (c CommitmentDecisionResponseState) Validate() error {
-	switch c {
-	case CommitmentDecisionResponseStateDone, CommitmentDecisionResponseStateOpen, CommitmentDecisionResponseStateSnoozed:
-		return nil
-	default:
-		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CommitmentDecisionResponseState value, got: %v", c))
 	}
 }
 
@@ -1276,15 +1258,15 @@ func (l LoopCommitmentState) Validate() error {
 type LoopDecisionResponseState string
 
 const (
-	LoopDecisionResponseStateDone    LoopDecisionResponseState = "done"
-	LoopDecisionResponseStateOpen    LoopDecisionResponseState = "open"
-	LoopDecisionResponseStateSnoozed LoopDecisionResponseState = "snoozed"
+	Done    LoopDecisionResponseState = "done"
+	Open    LoopDecisionResponseState = "open"
+	Snoozed LoopDecisionResponseState = "snoozed"
 )
 
 // Validate checks if the LoopDecisionResponseState value is valid
 func (l LoopDecisionResponseState) Validate() error {
 	switch l {
-	case LoopDecisionResponseStateDone, LoopDecisionResponseStateOpen, LoopDecisionResponseStateSnoozed:
+	case Done, Open, Snoozed:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LoopDecisionResponseState value, got: %v", l))
