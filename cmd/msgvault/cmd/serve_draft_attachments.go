@@ -13,12 +13,8 @@ import (
 )
 
 // forwardDraftAttachmentWrites carries a generated forward's catalog rows onto
-// its replacement message. It returns nil for other drafts, which carry no
-// attachments.
+// its replacement message.
 func (a *storeAPIAdapter) forwardDraftAttachmentWrites(ctx context.Context, currentMessageID int64, replacement imaplib.ReplyDraft) ([]store.AttachmentWrite, error) {
-	if !imaplib.IsGeneratedForward(replacement.Raw) {
-		return nil, nil
-	}
 	refs, err := a.store.MessageMIMEAttachmentsContext(ctx, currentMessageID)
 	if err != nil {
 		return nil, err

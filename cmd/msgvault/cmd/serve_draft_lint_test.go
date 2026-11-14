@@ -570,6 +570,7 @@ func TestGmailDraftStrictPendingEditRecovery(t *testing.T) {
 				if tc.body == "FIRST_NAME" {
 					require.NoError(err)
 					assert.Equal(cliStreamStdout, events[0].Type)
+					assert.Contains(events[0].Data, `"code":"unresolved_placeholder"`)
 				} else {
 					require.EqualError(err, "revision_mismatch")
 					assert.Equal(cliStreamStderr, events[0].Type)

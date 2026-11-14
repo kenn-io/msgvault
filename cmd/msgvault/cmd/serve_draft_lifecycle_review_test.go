@@ -941,6 +941,7 @@ func TestDraftLifecycleCleanup(t *testing.T) {
 			} else {
 				assertions.Equal(latest.Revision, finished.Revision)
 				assertions.Contains(events[0].Data, `"status":"edited"`)
+				assertions.Contains(events[0].Data, `"code":"unresolved_placeholder"`)
 			}
 		})
 	}

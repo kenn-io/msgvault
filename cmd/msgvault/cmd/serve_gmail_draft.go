@@ -900,21 +900,24 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		if draft.Pending != nil && intent.ValidateOnly {
 			return draftReplyError("pending_operation", store.ErrGmailDraftPending)
 		}
-		currentRaw, readErr := a.store.GetMessageRawContext(ctx, draft.CurrentMessageID)
-		if readErr != nil {
-			return draftReplyError("draft_read_failed", readErr)
-		}
-		if grant != nil {
-			if _, err := a.authorizeDelegatedDraftContent(ctx, intent, grant, source.ID, currentRaw); err != nil {
-				return err
-			}
-		}
-		replacement, buildErr := imaplib.BuildDraftReplacement(currentRaw, intent.Body, time.Now(), "")
 		in := draftlint.Input{Kind: "edit", Channel: "email", Body: intent.Body}
-		if buildErr == nil {
-			in = emailDraftLintInput("edit", intent.Body, replacement)
-		} else if intent.ValidateOnly {
-			return draftReplyError("invalid_draft", buildErr)
+		if grant != nil || intent.ValidateOnly {
+			currentRaw, readErr := a.store.GetMessageRawContext(ctx, draft.CurrentMessageID)
+			if readErr != nil {
+				return draftReplyError("draft_read_failed", readErr)
+			}
+			if grant != nil {
+				if _, err := a.authorizeDelegatedDraftContent(ctx, intent, grant, source.ID, currentRaw); err != nil {
+					return err
+				}
+			}
+			if intent.ValidateOnly {
+				replacement, buildErr := imaplib.BuildDraftReplacement(currentRaw, intent.Body, time.Now(), "")
+				if buildErr != nil {
+					return draftReplyError("invalid_draft", buildErr)
+				}
+				in = emailDraftLintInput("edit", intent.Body, replacement)
+			}
 		}
 		lint, done, lintErr := a.gateDraftLint(ctx, in, intent.draftLintOptions, intent.JSON, emit)
 		if done || lintErr != nil {
@@ -1056,6 +1059,7 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		}
 		stream := cliStreamStderr
 		if matched {
+			intent.lint = draftlint.Check(draftlint.Input{Kind: "edit", Channel: "email", Body: intent.Body})
 			stream = cliStreamStdout
 		}
 		if err := emitGmailDraftLifecycleOutput(emit, stream, intent, output); err != nil {
