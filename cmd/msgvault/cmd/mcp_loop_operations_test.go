@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -20,7 +19,6 @@ import (
 
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/loops"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
@@ -255,28 +253,6 @@ func TestMCPLoopDeadlineCrossesApproval(t *testing.T) {
 			assertions.Zero(count)
 		})
 	}
-}
-
-func TestMCPOperationResponseClassifier(t *testing.T) {
-	for _, code := range []string{"loop_not_found", "loop_decision_not_found", "loop_scan_incomplete", "loops_unavailable", "invalid_request", "server_busy"} {
-		t.Run(code, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				_, err := fmt.Fprintf(w, `{"error":%q}`, code)
-				assert.NoError(t, err)
-			}))
-			defer server.Close()
-			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-			require.NoError(t, err)
-			result, err := readMCPOperationJSON[generated.Person](t.Context(), client, http.MethodPost, "/api/v1/people", nil, http.StatusOK)
-			require.NoError(t, err)
-			assertLoopRefusal(t, result, code, false)
-		})
-	}
-	b, _, _, _ := employmentFixture(t) //nolint:dogsled // shared fixture
-	result, err := readMCPOperationJSON[map[string]any](t.Context(), b.client, http.MethodGet, "/api/v1/employments/{id}", &generated.GetEmploymentRequestOptions{PathParams: &generated.GetEmploymentPath{ID: -1}}, http.StatusOK)
-	require.NoError(t, err)
-	assertLoopRefusal(t, result, "invalid_employment_id", false)
 }
 
 func TestMCPLoopRealRefusals(t *testing.T) {

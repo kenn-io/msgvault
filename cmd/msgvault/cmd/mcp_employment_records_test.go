@@ -51,7 +51,6 @@ func TestMCPEmploymentLifecycleNativeStore(t *testing.T) {
 	got := operationOutput[mcpserver.EmploymentRecord](t, call("get_employment", map[string]any{"employment_id": created.Employment.ID}))
 	assert.Equal(created.ETag, got.ETag)
 	body["title"] = "Engineer"
-	delete(body, "department")
 	replaced := operationOutput[mcpserver.EmploymentRecord](t, call("replace_employment", map[string]any{"employment_id": got.Employment.ID, "etag": got.ETag, "employment": body}))
 	require.NotEqual(got.ETag, replaced.ETag)
 	require.NotNil(replaced.Employment.Title)
