@@ -275,10 +275,7 @@ func (s *Store) currentCommitmentCitation(ctx context.Context, personID int64, d
 		!personFactPortableTime(source.RecordedTime).Equal(input.RecordedTime) {
 		return false, err
 	}
-	if !source.MatchesQuote(input.Excerpt, *input.SpanStart, *input.SpanEnd) {
-		return false, nil
-	}
-	return true, nil
+	return source.MatchesQuote(input.Excerpt, *input.SpanStart, *input.SpanEnd), nil
 }
 
 func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, state string, until *time.Time, now time.Time) (PersonCommitment, error) {
@@ -571,12 +568,6 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 	}()
 	seen, used := map[int64]bool{}, 0
 	add := func(source peoplesweep.CommitmentSource) (bool, error) {
-		if seen[source.MessageID] {
-			return true, nil
-		}
-		if !inProfile(source.EventTime) {
-			return true, nil
-		}
 		if len(source.Text) > cfg.MaxBytes {
 			gap = true
 			return true, nil

@@ -423,8 +423,7 @@ client_secrets = 'C:\Users\you\Downloads\client_secret.json'
 
 ### Commitment extraction
 
-Commitment extraction is available on unreleased main. Set these optional
-keys in `[people.sweep.commitments]`. It runs in the people sweep after
+Set these optional keys in `[people.sweep.commitments]`. It runs in the people sweep after
 extraction and the person brief. The commitment grant covers both sides of
 direct conversations within the active provider's source and date scope.
 

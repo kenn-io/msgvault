@@ -211,9 +211,6 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 	if err := s.applyCommitmentStatusesTx(ctx, tx, request, prepared); err != nil {
 		return err
 	}
-	if prepared.observedOnly {
-		return s.saveCommitmentFrontierTx(ctx, tx, request, prepared)
-	}
 	if len(prepared.promises) > 0 {
 		_, err := s.applyPreparedPersonFactGenerationTx(ctx, tx, prepared.generation)
 		if err != nil {
@@ -361,10 +358,7 @@ func validatePersonSweepApplyCommitment(request peoplesweep.ApplyRequest) error 
 		(!hasCall && (len(result.Output.Promises) != 0)) {
 		return errors.New("commitment result does not match its provider call")
 	}
-	if err := result.Config.Validate(request.Budget); err != nil {
-		return err
-	}
-	return nil
+	return result.Config.Validate(request.Budget)
 }
 
 // Window sources and person-level changes are watched in the conversation lane.

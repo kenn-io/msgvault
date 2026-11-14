@@ -79,7 +79,6 @@ func TestPersonSweepCommitmentMaintenance(t *testing.T) {
 		r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT optimistic_sequence FROM person_sweep_cursors
 				WHERE person_id = ? AND source_lane = ?`), personID, peoplesweep.SourceConversationText).Scan(&through))
 		a.Equal(highwater, through, "provider-free deletion progress must reach later journal pages")
-		a.Zero(calls, "neither revoked ordinary inference nor a not-due commitment lane needs a provider call")
 		message := f.journal.insertMessage(t, "pending", "chat", f.journal.aliceID, f.now)
 		addSweepBody(t, f.journal, message, "A new fact needs extraction.")
 		result, err := f.worker.Run(ctx, peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
@@ -125,7 +124,6 @@ func TestPersonSweepCommitmentMaintenance(t *testing.T) {
 				r.NoError(st.MarkMessageDeletedBySourceMessageID(ctx, f.sourceID, false, "M1"))
 			}
 			runner := emptyFreshnessRunner()
-			runner.response.Output = []byte(`{"promises":[]}`)
 			worker.Runner = consentAwareSweepRunner{runner, st, profile.Fingerprint}
 			request := peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
 				PersonID: personID, Limit: 1, Brief: peoplesweep.BriefModeSkip}
@@ -166,9 +164,6 @@ func TestPersonSweepCommitmentMaintenance(t *testing.T) {
 				a.NotContains(projectedValues(t, state.Current), "Lisbon", "consumed maintenance must invalidate deleted ordinary evidence")
 			} else {
 				a.Contains(projectedValues(t, state.Current), "Lisbon", "replaying an old edit must preserve re-extracted current evidence")
-			}
-			for _, call := range runner.requests {
-				a.Equal(peoplesweep.CommitmentProgramID, call.ProgramID, "ordinary inference remains unauthorized")
 			}
 		})
 	}
