@@ -130,7 +130,7 @@ func TestImportDirectionsGroupsAndOmissions(t *testing.T) {
 		`{"recipient":{"id":"3","group":{"masterKey":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=","snapshot":{"title":{"title":"Example group"}}}}}`,
 		`{"chat":{"id":"8","recipientId":"3"}}`,
 		`{"chat":{"id":"9","recipientId":"1"}}`,
-		`{"chatItem":{"chatId":"8","authorId":"1","dateSent":"1700000000001","outgoing":{},"revisions":[{"chatId":"8","authorId":"1","dateSent":"1700000000000","outgoing":{},"standardMessage":{"text":{"body":"Original group"}}}],"pinDetails":{"pinnedAtTimestamp":"1700000000500","pinNeverExpires":true},"standardMessage":{"text":{"body":"Group","bodyRanges":[{"start":0,"length":5,"style":"BOLD"}]},"quote":{},"reactions":[{}],"linkPreview":[{}],"attachments":[{"flag":"VOICE_MESSAGE"}]}}}`,
+		`{"chatItem":{"chatId":"8","authorId":"1","dateSent":"1700000000001","outgoing":{},"revisions":[{"chatId":"8","authorId":"1","dateSent":"1700000000000","outgoing":{},"standardMessage":{"text":{"body":"Original group"}}}],"pinDetails":{"pinnedAtTimestamp":"1700000000500","pinNeverExpires":true},"standardMessage":{"text":{"body":"Group","bodyRanges":[{"start":0,"length":5,"style":"BOLD"}]},"quote":{"targetSentTimestamp":"1700000000000","authorId":"2","text":{"body":"Original"}},"reactions":[{"emoji":"👍","authorId":"2","sentTimestamp":"1700000000001"}],"linkPreview":[{"url":"https://example.com","title":"Example"}],"attachments":[{"flag":"VOICE_MESSAGE"}]}}}`,
 		`{"chatItem":{"chatId":"9","authorId":"1","dateSent":"1700000000002","outgoing":{},"standardMessage":{"text":{"body":"Note"}}}}`,
 		`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000004","incoming":{},"remoteDeletedMessage":{}}}`,
 		// Unknown and empty frames exercise frame classification.
@@ -426,18 +426,18 @@ func TestProtoScalars(t *testing.T) {
 }
 
 func TestImportIdentityTimeAndDirectionSkips(t *testing.T) {
-	// Empty standard messages isolate identity, time, and direction checks.
+	// Standard text messages isolate identity, time, and direction checks.
 	cases := []struct{ frame, reason string }{
-		{`{"chatItem":{"chatId":"7","authorId":"2","incoming":{},"standardMessage":{}}}`, "sent_time"},
-		{`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000003","outgoing":{},"standardMessage":{}}}`, "direction_conflict"},
-		{`{"chatItem":{"chatId":"99","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{}}}`, "unresolved_chat"},
-		{`{"chatItem":{"chatId":"7","authorId":"99","dateSent":"1700000000000","incoming":{},"standardMessage":{}}}`, "author_identity"},
-		{`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"0","incoming":{},"standardMessage":{}}}`, "sent_time"},
-		{`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"18446744073709551615","incoming":{},"standardMessage":{}}}`, "sent_time"},
-		{`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","directionless":{},"standardMessage":{}}}`, "unknown_direction"},
+		{`{"chatItem":{"chatId":"7","authorId":"2","incoming":{},"standardMessage":{"text":{"body":"Example"}}}}`, "sent_time"},
+		{`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000003","outgoing":{},"standardMessage":{"text":{"body":"Example"}}}}`, "direction_conflict"},
+		{`{"chatItem":{"chatId":"99","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"Example"}}}}`, "unresolved_chat"},
+		{`{"chatItem":{"chatId":"7","authorId":"99","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"Example"}}}}`, "author_identity"},
+		{`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"0","incoming":{},"standardMessage":{"text":{"body":"Example"}}}}`, "sent_time"},
+		{`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"18446744073709551615","incoming":{},"standardMessage":{"text":{"body":"Example"}}}}`, "sent_time"},
+		{`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","directionless":{},"standardMessage":{"text":{"body":"Example"}}}}`, "unknown_direction"},
 	}
 	for _, revision := range []string{`"authorId":"1","dateSent":"1699999999999"`, `"authorId":"2","dateSent":"1700000000001"`, `"authorId":"2","dateSent":"0"`} {
-		cases = append(cases, struct{ frame, reason string }{`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"revisions":[{"chatId":"7",` + revision + `}],"standardMessage":{}}}`, "revision"})
+		cases = append(cases, struct{ frame, reason string }{`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"revisions":[{"chatId":"7",` + revision + `}],"standardMessage":{"text":{"body":"Example"}}}}`, "revision"})
 	}
 	for _, tc := range cases {
 		t.Run(tc.reason+tc.frame, func(t *testing.T) {
@@ -593,8 +593,8 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 		{"hashed long text ignores new hash", `"longText":` + pointer(a), `"longText":` + otherKeyB, `"longText":` + otherKeyB, b, a, map[string]string{"long_text": hashHex(a)}, 0, 1, 1, 0},
 		{"hashless uuid after reorder", attachments("AQ==", `{"locatorInfo":{"key":"Ag=="}}`), attachments("BA==", pointer(a)), `"attachments":[{"clientUuid":"Aw==","pointer":{}},{"clientUuid":"AQ==","pointer":` + pointer(a) + `}]`, a, a, map[string]string{"attachment:0": hashHex(a)}, 0, 1, 1, 0},
 		{"hashless long text by key", `"longText":{"locatorInfo":{"key":"AQ=="}}`, `"longText":` + otherKey, `"longText":` + pointer(a), a, a, map[string]string{"long_text": hashHex(a)}, 0, 1, 1, 0},
-		{"earlier album slot removed", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + otherKeyB + `}]`, attachments("Aw==", pointer(b)), attachments("Ag==", otherKeyB), b, b, map[string]string{"attachment:0": "", "attachment:1": hashHex(b)}, 1, 1, 0, 1},
-		{"equal bytes in separate slots", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, attachments("Aw==", pointer(b)), `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, b, a, map[string]string{"attachment:0": hashHex(a), "attachment:1": hashHex(a)}, 0, 2, 2, 0},
+		{"earlier album slot removed", `"attachments":[{"clientUuid":"AQ==","pointer":{"locatorInfo":{"key":"AQ=="}}},{"clientUuid":"Ag==","pointer":{"locatorInfo":{"key":"Ag=="}}}]`, attachments("Aw==", strings.Replace(pointer(b), `"key":"AQ=="`, `"key":"Aw=="`, 1)), attachments("Ag==", otherKeyB), b, b, map[string]string{"attachment:0": "", "attachment:1": hashHex(b)}, 0, 2, 1, 1},
+		{"equal bytes in separate slots", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, nil, a, map[string]string{"attachment:0": hashHex(a), "attachment:1": hashHex(a)}, 0, 2, 2, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -698,75 +698,66 @@ func TestMatchingPointerRequiresUniqueUnclaimedIdentity(t *testing.T) {
 
 func TestImportAmbiguousSameTimeReplay(t *testing.T) {
 	data := []byte("fictional attachment")
-	message := func(body, pointer string) string {
-		return `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"` + body + `"},"attachments":[{"clientUuid":"AQ==","pointer":` + pointer + `}]}}}`
-	}
-	missing := `{"locatorInfo":{"key":"AQ=="}}`
-	between := strings.Replace(incoming, "1700000000000", "1700000000001", 1)
-	st := testutil.NewTestStore(t)
-	root := fixture(t, message("A", missing), between, message("B", missing))
-	opts := options(t, root)
-	first, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.EqualValues(t, 3, first.MessagesAdded)
-	assert.Equal(t, 2, first.AttachmentsMissing)
-	var firstID, lastID int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT min(id), max(id) FROM messages").Scan(&firstID, &lastID))
-	ids := []int64{firstID, lastID}
-	putMedia(t, root, data)
-	writeFrames(t, root, message("B", pointer(data)), between, message("C", pointer(data)))
-	summary, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.EqualValues(t, 2, summary.Skipped["ambiguous_message"])
-	assert.Zero(t, summary.MessagesAdded)
-	assert.EqualValues(t, 1, summary.MessagesExisting)
-	assert.Zero(t, summary.MessagesChanged)
-	assert.Empty(t, summary.MediaMissing)
-	assert.Zero(t, summary.AttachmentsStored)
-	assert.Zero(t, summary.AttachmentsMissing)
-	assert.Equal(t, 3, messageCount(t, st))
-	for _, id := range ids {
-		assert.Equal(t, map[string]string{"attachment:0": ""}, slotHashes(t, st, id))
-	}
-	files, err := os.ReadDir(opts.AttachmentsDir)
-	require.NoError(t, err)
-	assert.Empty(t, files)
-
-	writeFrames(t, root, message("A", pointer(data)), between, message("B", pointer(data)))
-	summary, err = Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.EqualValues(t, 3, summary.MessagesExisting)
-	assert.Zero(t, summary.Skipped["ambiguous_message"])
-	assert.Equal(t, 2, summary.AttachmentsStored)
-	for _, id := range ids {
-		assert.Equal(t, map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, id))
-	}
-}
-
-func TestImportEarlierSameTimeMessageDoesNotDuplicate(t *testing.T) {
-	data := []byte("fictional attachment")
 	message := func(body, p string) string {
 		return `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"` + body + `"},"attachments":[{"clientUuid":"AQ==","pointer":` + p + `}]}}}`
 	}
-	st := testutil.NewTestStore(t)
-	root := fixture(t, message("B", `{"locatorInfo":{"key":"AQ=="}}`))
-	opts := options(t, root)
-	_, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	putMedia(t, root, data)
-	writeFrames(t, root, message("A", pointer(data)), message("B", pointer(data)))
-	summary, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.EqualValues(t, 2, summary.Skipped["ambiguous_message"])
-	assert.Zero(t, summary.MessagesAdded)
-	assert.Zero(t, summary.AttachmentsStored)
-	assert.Equal(t, 1, messageCount(t, st))
-	var id int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
-	body, err := st.GetMessageBodyText(t.Context(), id)
-	require.NoError(t, err)
-	assert.Equal(t, "B", body)
-	assert.Equal(t, map[string]string{"attachment:0": ""}, slotHashes(t, st, id))
+	missing := `{"locatorInfo":{"key":"AQ=="}}`
+	between := strings.Replace(incoming, "1700000000000", "1700000000001", 1)
+	for _, tc := range []struct {
+		name                     string
+		first, replay, corrected []string
+		existing                 int64
+	}{
+		{"existing pair reordered", []string{message("A", missing), between, message("B", missing)}, []string{message("B", pointer(data)), between, message("C", pointer(data))}, []string{message("A", pointer(data)), between, message("B", pointer(data))}, 1},
+		{"earlier message added", []string{message("B", missing)}, []string{message("A", pointer(data)), message("B", pointer(data))}, nil, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			root := fixture(t, tc.first...)
+			opts := options(t, root)
+			first, err := Import(t.Context(), st, opts)
+			require.NoError(t, err)
+			assert.EqualValues(t, len(tc.first), first.MessagesAdded)
+			assert.Equal(t, len(tc.first)-int(tc.existing), first.AttachmentsMissing)
+			var firstID, lastID int64
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT min(id), max(id) FROM messages").Scan(&firstID, &lastID))
+			ids := []int64{firstID}
+			if lastID != firstID {
+				ids = append(ids, lastID)
+			}
+			putMedia(t, root, data)
+			writeFrames(t, root, tc.replay...)
+			summary, err := Import(t.Context(), st, opts)
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, summary.Skipped["ambiguous_message"])
+			assert.Zero(t, summary.MessagesAdded)
+			assert.EqualValues(t, tc.existing, summary.MessagesExisting)
+			assert.Zero(t, summary.MessagesChanged)
+			assert.Empty(t, summary.MediaMissing)
+			assert.Zero(t, summary.AttachmentsStored)
+			assert.Zero(t, summary.AttachmentsMissing)
+			assert.Equal(t, len(tc.first), messageCount(t, st))
+			for _, id := range ids {
+				assert.Equal(t, map[string]string{"attachment:0": ""}, slotHashes(t, st, id))
+			}
+			files, err := os.ReadDir(opts.AttachmentsDir)
+			require.NoError(t, err)
+			assert.Empty(t, files)
+			if tc.corrected == nil {
+				assertBody(t, st, firstID, "B")
+				return
+			}
+			writeFrames(t, root, tc.corrected...)
+			summary, err = Import(t.Context(), st, opts)
+			require.NoError(t, err)
+			assert.EqualValues(t, len(tc.corrected), summary.MessagesExisting)
+			assert.Zero(t, summary.Skipped["ambiguous_message"])
+			assert.Equal(t, 2, summary.AttachmentsStored)
+			for _, id := range ids {
+				assert.Equal(t, map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, id))
+			}
+		})
+	}
 }
 
 func TestReviewOmissionsForExpiredMetadata(t *testing.T) {
