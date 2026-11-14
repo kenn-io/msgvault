@@ -8,9 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -325,6 +328,74 @@ func officialToolHandler(
 		return wireResult, result.structuredContent, nil
 	}
 }
+
+func exactAttributeToolHandler(definition operationalDefinition, backend OperationBackend, confirmation confirmationConfig) sdkmcp.ToolHandler {
+	handler := officialToolHandler(definition.bind(backend), confirmation)
+	schema, err := definition.definition.inputSchema.Resolve(nil)
+	if err != nil {
+		panic(err)
+	}
+	return func(ctx context.Context, request *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+		var args map[string]any
+		if err := json.Unmarshal(request.Params.Arguments, &args, jsonexact.PreserveNumbers); err != nil {
+			return nil, err
+		}
+		if err := schema.Validate(attributeValidationValue(args)); err != nil {
+			var result sdkmcp.CallToolResult
+			result.SetError(fmt.Errorf("invalid_arguments: %w", err))
+			return &result, nil
+		}
+		result, output, err := handler(ctx, request, args)
+		if err != nil || output == nil {
+			return result, err
+		}
+		raw, ok := output.(jsontext.Value)
+		if !ok {
+			return nil, fmt.Errorf("invalid attribute output")
+		}
+		result.StructuredContent = raw
+		if result.Content == nil {
+			result.Content = []sdkmcp.Content{&sdkmcp.TextContent{Text: string(raw)}}
+		}
+		return result, nil
+	}
+}
+
+func attributeValidationValue(value any) any {
+	switch value := value.(type) {
+	case jsontext.Value:
+		n, err := strconv.ParseFloat(string(value), 64)
+		if err != nil {
+			return math.Copysign(math.MaxFloat64, n)
+		}
+		if rational, ok := new(big.Rat).SetString(string(value)); ok && !rational.IsInt() && math.Trunc(n) == n {
+			direction := math.Inf(1)
+			if rational.Cmp(new(big.Rat).SetFloat64(n)) < 0 {
+				direction = math.Inf(-1)
+			}
+			n = math.Nextafter(n, direction)
+			if math.Trunc(n) == n {
+				return string(value)
+			}
+		}
+		return n
+	case map[string]any:
+		copy := make(map[string]any, len(value))
+		for key, item := range value {
+			copy[key] = attributeValidationValue(item)
+		}
+		return copy
+	case []any:
+		copy := make([]any, len(value))
+		for i, item := range value {
+			copy[i] = attributeValidationValue(item)
+		}
+		return copy
+	default:
+		return value
+	}
+}
+
 
 func mapInternalError(err error) error {
 	if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {

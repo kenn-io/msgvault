@@ -231,8 +231,9 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 	default:
 		return "", false, nil
 	}
-	if _, _, _, ok := attributeRequest(name, args); !ok {
-		return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
+	_, _, options, ok := attributeRequest(name, args)
+	if !ok {
+		return "", true, &mcpserver.OperationRefusalError{Code: mcpInvalidArguments}
 	}
 	var current any
 	if name == "set_person_attribute" || name == "clear_person_attribute" {
