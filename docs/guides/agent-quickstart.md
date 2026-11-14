@@ -248,6 +248,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `draft_send_as` | read | — | backend-dependent |
 | `explain_person_tier` | read | — | owner-only |
 | `export_eml` | read | — | owner-only |
+| `export_person_messages` | read | — | owner-only |
 | `find_chat` | read | — | owner-only |
 | `find_contact_candidates` | read | — | owner-only |
 | `find_kata_issues` | read | — | owner-only |

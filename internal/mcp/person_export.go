@@ -1,0 +1,29 @@
+package mcp
+
+import "github.com/google/jsonschema-go/jsonschema"
+
+// PersonExport is the complete native JSONL stream, including its manifest and receipt.
+type PersonExport struct {
+	JSONL string `json:"jsonl"`
+}
+
+func personExportDefinitions() []operationalDefinition {
+	return []operationalDefinition{newOperationalDefinition(
+		"export_person_messages",
+		"Return native JSONL for one person's messages in a time window. The encoded MCP response is limited to 512 KiB. "+
+			"An oversized export returns export_limit_exceeded. "+
+			"Dates must be RFC3339 and start must precede end. Sources use type:identifier. "+
+			"Blank message types are refused; unknown nonempty types match nothing. "+
+			"CLI failures return export_failed.",
+		OperationFamilyRecords,
+		closedObject(map[string]*jsonschema.Schema{
+			"person_id":     safeIDSchema("Durable person ID"),
+			"start":         stringSchema("Inclusive RFC3339 timestamp"),
+			"end":           stringSchema("Exclusive RFC3339 timestamp"),
+			"sources":       {Type: schemaTypeArray, Items: stringSchema("Exact source selector type:identifier")},
+			"message_types": {Type: schemaTypeArray, Items: stringSchema("Exact type, such as email, sms, whatsapp, or meeting_transcript. Unknown nonempty values match nothing.")},
+		}, "person_id", "start", "end"),
+		outputSchemaFor[PersonExport](),
+		false,
+	)}
+}
