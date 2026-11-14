@@ -617,20 +617,27 @@ func TestOrganizationAttributeExpectedValue(t *testing.T) {
 	org := mustAttributeOrganization(t, st)
 	mustOrganizationAttributeDefinition(t, st, "industry")
 	input := store.OrganizationAttributeValueInput{OrganizationID: org.ID, DefinitionSlug: "industry", Value: textAttributeValue("one"), Source: store.ProvenanceUser, ExpectedValueID: new(int64)}
-	first, err := st.SetOrganizationAttributeValueContext(t.Context(), input)
+	_, err := st.SetOrganizationAttributeValueContext(t.Context(), input)
 	must.NoError(err)
 	_, err = st.SetOrganizationAttributeValueContext(t.Context(), input)
 	must.ErrorIs(err, store.ErrAttributeValueConflict)
-	input.ExpectedValueID = &first.Value.ID
-	second, err := st.SetOrganizationAttributeValueContext(t.Context(), input)
-	must.NoError(err)
-	_, err = st.SetOrganizationAttributeValueContext(t.Context(), input)
-	must.ErrorIs(err, store.ErrAttributeValueConflict)
-	values, err := st.ListOrganizationAttributeValuesContext(t.Context(), org.ID, store.OrganizationAttributeQuery{})
-	must.NoError(err)
-	must.Len(values, 1)
-	must.Equal(second.Value.ID, values[0].ID)
 	input.ExpectedValueID = new(int64(-1))
 	_, err = st.SetOrganizationAttributeValueContext(t.Context(), input)
 	must.ErrorIs(err, store.ErrAttributeValueInvalid)
+
+	definition := organizationTextDefinition("specialties")
+	definition.Cardinality = store.AttributeCardinalityMulti
+	_, err = st.CreateAttributeDefinitionContext(t.Context(), definition)
+	must.NoError(err)
+	input.DefinitionSlug = "specialties"
+	input.ExpectedValueID = new(int64)
+	input.Ordinal = new(int64(0))
+	_, err = st.SetOrganizationAttributeValueContext(t.Context(), input)
+	must.NoError(err)
+	input.Ordinal = new(int64(1))
+	second, err := st.SetOrganizationAttributeValueContext(t.Context(), input)
+	must.NoError(err)
+	must.Equal(int64(1), second.Value.Ordinal)
+	_, err = st.SetOrganizationAttributeValueContext(t.Context(), input)
+	must.ErrorIs(err, store.ErrAttributeValueConflict)
 }

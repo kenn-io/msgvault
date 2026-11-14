@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -21,6 +22,14 @@ func TestOrganizationWritesNeedSeparateOptIn(t *testing.T) {
 		require.True(ok)
 		assert.Equal(destructive, annotations["destructiveHint"], name)
 	}
-	assert.Equal(&jsonschema.Schema{}, organizationSetAttributeSchema().Properties["body"].Properties["value"].Properties["json"])
-	assert.Equal(&jsonschema.Schema{}, organizationAttributesSchema().Properties["values"].Items.Properties["value"].Properties["json"])
+	input, ok := listed["create_organization"]["inputSchema"].(map[string]any)
+	require.True(ok)
+	data, err := json.Marshal(input)
+	require.NoError(err)
+	var schema jsonschema.Schema
+	require.NoError(json.Unmarshal(data, &schema))
+	resolved, err := schema.Resolve(nil)
+	require.NoError(err)
+	assert.NoError(resolved.Validate(map[string]any{"body": map[string]any{"name": "Example"}}))
+	require.Error(resolved.Validate(map[string]any{"body": map[string]any{"name": "Example", "unexpected": "value"}}))
 }
