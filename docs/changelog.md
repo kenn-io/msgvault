@@ -8,7 +8,11 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Message exports through the daemon no longer turn accented, CJK, or emoji characters into replacement characters.
+
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
+
+- Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
 
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
