@@ -509,14 +509,17 @@ func TestCalendarToolsDelegatedBridgeExcludesArchiveAccess(t *testing.T) {
 		"calendar_freebusy":  {true, false},
 		"calendar_conflicts": {true, false},
 	}
-	wantNames := make([]string, 0, len(wantHints))
+	wantNames := []string{ToolSearchTools}
 	for name := range wantHints {
 		wantNames = append(wantNames, name)
 	}
 	names := make([]string, 0, len(listed.Tools))
 	for _, tool := range listed.Tools {
 		names = append(names, tool.Name)
-		want := wantHints[tool.Name]
+		want, calendarTool := wantHints[tool.Name]
+		if !calendarTool {
+			continue
+		}
 		requirements.NotNil(tool.Annotations, tool.Name)
 		assertions.Equal(new(true), tool.Annotations.OpenWorldHint, tool.Name)
 		assertions.Equal(want.readOnly, tool.Annotations.ReadOnlyHint, tool.Name)

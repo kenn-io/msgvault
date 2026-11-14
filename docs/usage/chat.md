@@ -238,7 +238,7 @@ MCP lists calendar, meeting, chat, Slack, and draft tools when the archive has a
 
 Delegated sessions select tools from the grant's sources and permissions. They require daemon API schema 3.9.0 or newer; upgrade the daemon when the bridge requests it.
 
-The complete default stdio `tools/list` response, including output schemas, measures 173,598 bytes for an mbox-only archive and 226,314 bytes with every family available. Tests cap these at 191,000 and 249,000 bytes, respectively, rounded up from the measured sizes plus 10%. Optional write flags are off in both measurements.
+The complete default stdio `tools/list` response, including output schemas, measures 174,872 bytes for an mbox-only archive and 227,522 bytes with every family available. Tests cap these at 191,000 and 249,000 bytes, respectively, based on earlier measurements rounded up with 10% headroom. Optional write flags are off in both measurements.
 
 ### Claude Desktop Configuration
 
@@ -433,12 +433,37 @@ conventions.
 
 For an agent-oriented workflow, see the [agent quickstart](../guides/agent-quickstart.md).
 
+## Find tools for a task (unreleased)
+
+Call `search_tools` with a task description when you need to choose an MCP
+tool. For example, `{"query":"read one message","limit":3}` finds tools for
+reading a message and summarizes their real input names, types, and required
+fields. Use `tools/list` for the complete schemas before calling a result.
+Discovery searches tool metadata locally. It does not search messages, execute
+the matched tools, or call an embedding service.
+
+`query` must contain non-whitespace text and be at most 512 UTF-8 bytes.
+`limit` is an integer from 1 to 20, defaulting to 5. Results follow a stable
+relevance order with tool-name tie breaking. No match returns `results: []`.
+`truncated: true` means the result limit may have omitted matches. Each result
+includes the full description and all top-level inputs, sorted by name, with
+`types`, required status, and full descriptions. Use `tools/list` for nested
+constraints and alternatives.
+
+Discovery uses this server's capability, write, transport, delegated-grant,
+and archive-family filters. It is available even without archive read grants,
+but only describes the tools the session can list. Stdio keeps the catalog it
+advertised when the connection started. HTTP refreshes archive families on each
+request. Results grant no additional access or permission to act. Older servers
+may omit `search_tools`; use `tools/list` directly in that case.
+
 ## Available Tools
 
 The MCP server exposes the following tools to connected AI clients:
 
 | Tool | Description | Parameters |
 |---|---|---|
+| `search_tools` | Find available tools for a task; see [task discovery](#find-tools-for-a-task-unreleased). | `query` (string, required), `limit` (int, 1–20, default 5) |
 | `search_messages` | Deprecated compatibility wrapper. Omitted mode dispatches to `search_metadata`; `vector`/`hybrid` dispatch to `semantic_search_messages`. | `query` (string, required), `mode` (string: `vector`/`hybrid`), `explain` (bool), `min_score` (number), `limit` (int), `offset` (int), `account` (string) |
 | `search_metadata` | Search message metadata with a subset of Gmail query syntax (not full Gmail compatibility). Matches subject, snippet, and sender/recipient metadata, not message bodies. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
 | `search_message_bodies` | Keyword full-text search inside message bodies. Returns `matches` excerpts (up to 5 per message), ordered newest-first. Backend excerpts may omit `char_offset` and `line`; use `search_in_message` when exact locations are needed. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |

@@ -62,6 +62,9 @@ func summarizeTool(definition toolDefinition) ToolSummary {
 	if required, ok := agentReadToolPermission(definition.name); ok {
 		permission = string(required)
 	}
+	if definition.name == ToolSearchTools {
+		permission = "metadata-only"
+	}
 	return ToolSummary{
 		Name: definition.name, Description: definition.description,
 		Security: securityPolicyFor(definition.security, ServeOptions{}).name,
@@ -74,6 +77,7 @@ func summarizeTool(definition toolDefinition) ToolSummary {
 // tools available to a particular connection and credential.
 func ToolSummaries() []ToolSummary {
 	definitions := operationDefinitions(catalogCapabilities{kataDocbank: true})
+	definitions = append(definitions, stableToolDiscoveryDefinition)
 	definitions = append(definitions, stableIdentityScoringDefinitions...)
 	summaries := make([]ToolSummary, 0, len(definitions))
 	for _, definition := range definitions {
