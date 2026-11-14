@@ -40,6 +40,9 @@ func recipientPeer(r recipient) peer {
 		}
 		if c.E164 != "" && c.E164 != "0" {
 			p.phone = "e164:+" + string(c.E164)
+			if p.name == "" {
+				p.name = "+" + string(c.E164)
+			}
 		}
 		p.key = p.aci
 		if p.key == "" {

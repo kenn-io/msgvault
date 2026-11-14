@@ -562,6 +562,34 @@ func contactLines(contact, message string) []string {
 	return []string{header, account, self, `{"recipient":{"id":"2","contact":` + contact + `}}`, direct, group, groupChat, message, groupMessage}
 }
 
+func TestPhoneOnlyContactDisplayName(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := fixture(t)
+	writeLines(t, root, contactLines(`{"e164":"15555550100"}`, incoming))
+	opts := options(t, root)
+	_, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+
+	id, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(accountScope(opts.Account), "e164:+15555550100"))
+	require.NoError(t, err)
+	require.NotZero(t, id)
+	var name, title, sender string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT display_name FROM participants WHERE id = ?`), id).Scan(&name))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT title FROM conversations WHERE conversation_type = 'direct_chat'`).Scan(&title))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT display_name FROM message_recipients WHERE recipient_type = 'from' LIMIT 1`).Scan(&sender))
+	assert.Equal(t, "+15555550100", name)
+	assert.Equal(t, "+15555550100", title)
+	assert.Equal(t, "+15555550100", sender)
+
+	opts.Account = "another-fictional-account"
+	_, err = Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	otherID, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(accountScope(opts.Account), "e164:+15555550100"))
+	require.NoError(t, err)
+	require.NotZero(t, otherID)
+	assert.NotEqual(t, id, otherID)
+}
+
 func TestContactIdentifierAdded(t *testing.T) {
 	for _, tc := range []struct {
 		contact     string
