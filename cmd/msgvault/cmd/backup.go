@@ -313,7 +313,7 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("restoring snapshot: %w", err)
 	}
-	if _, err := securePostRestoreTokens(cmd.Context(), r, res.SnapshotID, backupRestoreTarget, backupRestoreForceUnlock); err != nil {
+	if _, err := securePostRestoreTokens(cmd.Context(), r, res.SnapshotID, backupRestoreTarget); err != nil {
 		renderer.finish()
 		summaryErr := printBackupRestoreSummary(cmd.OutOrStdout(), backupRestoreTarget, res, looseAttachments)
 		permissionErr := fmt.Errorf("securing restored credentials failed: %w; retry with: msgvault backup restore %s --repo %s --target %s --permissions-only", err, escapeRestoreArg(res.SnapshotID), escapeRestoreArg(repo), escapeRestoreArg(backupRestoreTarget))
@@ -325,8 +325,8 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	return printBackupRestoreSummary(cmd.OutOrStdout(), backupRestoreTarget, res, looseAttachments)
 }
 
-func securePostRestoreTokens(ctx context.Context, repo *backup.Repo, snapshotID, target string, forceUnlock bool) (int, error) {
-	return secureRestoredTokens(ctx, repo, snapshotID, target, forceUnlock)
+func securePostRestoreTokens(ctx context.Context, repo *backup.Repo, snapshotID, target string) (int, error) {
+	return secureRestoredTokens(ctx, repo, snapshotID, target, backupRestoreForceUnlock)
 }
 
 func removeSQLiteVectorBackendPath(path string) error {

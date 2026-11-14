@@ -62,9 +62,6 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 		}
 		selected = append(selected, filepath.FromSlash(name))
 	}
-	if len(selected) == 0 {
-		return 0, nil
-	}
 	err = providercredentials.SecureRestored(filepath.Join(target, "tokens"), selected)
 	if errors.Is(err, providercredentials.ErrRestorePermissionsConflict) {
 		return 0, fmt.Errorf("%w; selected token files were secured, but token directory permissions were not changed; resolve the conflict or move the omitted entry aside", err)

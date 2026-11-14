@@ -66,13 +66,16 @@ func TestBackupRestoreConflictNoTokensAndPermissionRetry(t *testing.T) {
 	assert.Contains(output, fmt.Sprintf("Restored snapshot %s to %s", manifest.SnapshotID, target))
 	_, hint, ok := strings.Cut(err.Error(), "retry with: ")
 	require.True(ok)
+	syntheticTarget := `C:\a&b`
+	require.Contains(hint, escapeRestoreArg(target))
+	hint = strings.Replace(hint, escapeRestoreArg(target), escapeRestoreArg(syntheticTarget), 1)
 	powershell := exec.CommandContext(t.Context(), "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", `$tokens = $null; $errors = $null; $ast = [System.Management.Automation.Language.Parser]::ParseInput($env:MSGVAULT_RETRY_HINT, [ref]$tokens, [ref]$errors); $commands = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true)); if ($errors.Count -ne 0 -or $commands.Count -ne 1) { exit 1 }; $values = @($commands[0].CommandElements | ForEach-Object { if ($_ -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $_.Value } else { $_.Extent.Text } }); ConvertTo-Json -InputObject $values -Compress`)
 	powershell.Env = append(os.Environ(), "MSGVAULT_RETRY_HINT="+hint)
 	parsed, parseErr := powershell.CombinedOutput()
 	assert.NoError(parseErr, "%s", parsed)
 	var args []string
 	if assert.NoError(json.Unmarshal(parsed, &args), "%s", parsed) {
-		assert.Equal([]string{"msgvault", "backup", "restore", manifest.SnapshotID, "--repo", repo.Root(), "--target", target, "--permissions-only"}, args)
+		assert.Equal([]string{"msgvault", "backup", "restore", manifest.SnapshotID, "--repo", repo.Root(), "--target", syntheticTarget, "--permissions-only"}, args)
 	}
 
 	configPath := filepath.Join(t.TempDir(), "config.toml")
@@ -82,14 +85,31 @@ func TestBackupRestoreConflictNoTokensAndPermissionRetry(t *testing.T) {
 		Extras: backup.ExtrasSpec{Files: []backup.ExtrasFileSpec{{Path: configPath, RecordAs: "config.toml"}}}, IncludeConfig: true,
 	})
 	require.NoError(err)
+	emptySnapshot, err := backup.Create(t.Context(), repo, backupapp.New("test"), backup.CreateOptions{
+		DBPath: dbPath, ContentDir: attachments, DataDir: cfg.Data.DataDir,
+	})
+	require.NoError(err)
+	deny, err := windows.SecurityDescriptorFromString("D:P")
+	require.NoError(err)
+	emptyACL, _, err := deny.DACL()
+	require.NoError(err)
+	require.NoError(windows.SetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, emptyACL, nil))
+	t.Cleanup(func() {
+		assert.NoError(windows.SetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
+	})
 	locked, err := windows.GetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	require.NoError(err)
-	output, err = runBackupTokenRestore(t, cfg, repo, configSnapshot.SnapshotID, "--target", target, "--permissions-only")
-	require.NoError(err)
-	assert.Contains(output, "secured token files: 0")
-	after, err := windows.GetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
-	require.NoError(err)
-	assert.Equal(locked.String(), after.String())
+	_, err = os.ReadDir(tokens)
+	require.Error(err)
+	for _, snapshot := range []string{configSnapshot.SnapshotID, emptySnapshot.SnapshotID} {
+		output, err = runBackupTokenRestore(t, cfg, repo, snapshot, "--target", target, "--permissions-only")
+		require.NoError(err)
+		assert.Contains(output, "secured token files: 0")
+		after, err := windows.GetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+		require.NoError(err)
+		assert.Equal(locked.String(), after.String())
+	}
+	require.NoError(windows.SetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
 
 	require.NoError(os.Rename(omitted, filepath.Join(t.TempDir(), "omitted")))
 	output, err = runBackupTokenRestore(t, cfg, repo, manifest.SnapshotID, "--target", target, "--permissions-only")
@@ -113,8 +133,10 @@ func TestPostRestoreRepairDoesNotForceUnlock(t *testing.T) {
 	prepareBackupTokenRestore(t)
 	lock, err := repo.AcquireExclusiveLock("create", false)
 	require.NoError(err)
-	_, err = securePostRestoreTokens(t.Context(), repo, manifest.SnapshotID, target, true)
+	backupRestoreForceUnlock = true
+	_, err = securePostRestoreTokens(t.Context(), repo, manifest.SnapshotID, target)
 	assert.ErrorIs(err, backup.ErrRepoLocked)
+	assert.FileExists(repo.Path("locks", "exclusive.json"))
 	require.NoError(lock.Release())
 	lock, err = repo.AcquireExclusiveLock("create", false)
 	require.NoError(err)
