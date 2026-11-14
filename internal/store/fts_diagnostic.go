@@ -231,9 +231,16 @@ func (s *Store) diagnoseFTSMessage(ctx context.Context, id int64) (FTSDiagnostic
 	// Cap recipient work before the shared aggregate rule. Count only a bounded
 	// indexed prefix, and inspect lengths rather than transferring private text.
 	var count, chars int64
+	lengths := []string{"mr.email_address", "mr.display_name", "p.email_address", "p.phone_number"}
+	for i, col := range lengths {
+		if !s.IsPostgreSQL() {
+			// SQLite length(TEXT) stops at NUL; count all retained bytes.
+			col = "CAST(" + col + " AS BLOB)"
+		}
+		lengths[i] = "COALESCE(length(" + col + "),0)"
+	}
 	err = q.QueryRow(`SELECT COUNT(*), COALESCE(SUM(n), 0) FROM (
-		SELECT COALESCE(length(mr.email_address),0) + COALESCE(length(mr.display_name),0) +
-		COALESCE(length(p.email_address),0) + COALESCE(length(p.phone_number),0) AS n
+		SELECT `+strings.Join(lengths, " + ")+` AS n
 		FROM message_recipients mr LEFT JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id = ? LIMIT ?) recipients`, id, ftsDiagnosticRecipients+1).Scan(&count, &chars)
 	if err != nil {
@@ -249,21 +256,29 @@ func (s *Store) diagnoseFTSMessage(ctx context.Context, id int64) (FTSDiagnostic
 	}
 	envelope := storedFTSEnvelopeSQL(aggregate)
 	doc := FTSDoc{MessageID: id}
+	// Slice SQLite bytes so embedded NUL cannot hide retained text. Reading one
+	// byte beyond the limit also rejects a UTF-8 rune cut at the boundary.
+	boundedText := func(expr string) string {
+		if !s.IsPostgreSQL() {
+			return fmt.Sprintf("COALESCE(CAST(substr(CAST((%s) AS BLOB), 1, %d) AS TEXT), '')", expr, ftsDiagnosticChars+1)
+		}
+		return fmt.Sprintf("substr((%s), 1, %d)", expr, ftsDiagnosticChars+1)
+	}
 	// No body scan or list join: one primary-key read, bounded before transfer.
-	err = q.QueryRow(`SELECT substr(COALESCE(body_text, ''), 1, ?) FROM message_bodies WHERE message_id = ?`, ftsDiagnosticChars+1, id).Scan(&doc.Body)
+	err = q.QueryRow(`SELECT `+boundedText("COALESCE(body_text, '')")+` FROM message_bodies WHERE message_id = ?`, id).Scan(&doc.Body)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return e, err
 	}
 	columns := []string{envelope.subject, envelope.fromAddr, envelope.toAddrs, envelope.ccAddrs}
 	for i, col := range columns {
-		columns[i] = fmt.Sprintf("substr((%s), 1, %d)", col, ftsDiagnosticChars+1)
+		columns[i] = boundedText(col)
 	}
 	query = "SELECT " + strings.Join(columns, ", ") + " FROM messages m WHERE m.id = ?"
 	if err := q.QueryRow(query, id).Scan(&doc.Subject, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs); err != nil {
 		return e, err
 	}
 	for _, value := range []string{doc.Body, doc.Subject, doc.FromAddr, doc.ToAddrs, doc.CcAddrs} {
-		// substr counts characters; a bounded byte check is conservative for UTF-8.
+		// PostgreSQL substr counts characters; this byte check is conservative for UTF-8.
 		if len(value) > ftsDiagnosticChars {
 			e.Reason = "input_limit"
 			return e, nil
