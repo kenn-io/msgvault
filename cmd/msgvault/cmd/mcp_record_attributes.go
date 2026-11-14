@@ -306,9 +306,6 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 		if !ok {
 			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 		}
-		if receipt.ETag != input.ETag {
-			return "", true, &mcpserver.OperationRefusalError{Code: "attribute_definition_revision_conflict"}
-		}
 		current = &receipt
 	}
 	effect := "Apply the exact native attribute operation. Native revision and value guards apply."

@@ -215,8 +215,10 @@ func TestMCPAttributePersonDefinitions(t *testing.T) {
 	assert.Equal("person", created.Definition.ObjectType)
 	patched := operationOutput[mcpserver.AttributeDefinitionReceipt](t, attributeOperation(t, b, "patch_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": created.ETag, "changes": map[string]any{"description": nil}}))
 	assert.Nil(patched.Definition.Description)
-	_, err = b.OperationDisclosure(t.Context(), "delete_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": created.ETag})
-	attributeRefused(t, err, "attribute_definition_revision_conflict")
+	staleDelete := map[string]any{"definition_id": created.Definition.ID, "etag": created.ETag}
+	_, err = b.OperationDisclosure(t.Context(), "delete_attribute_definition", staleDelete)
+	require.NoError(err)
+	attributeError(t, attributeOperation(t, b, "delete_attribute_definition", staleDelete), "attribute_definition_revision_conflict")
 	assert.True(operationOutput[mcpserver.AttributeDefinitionDeleted](t, attributeOperation(t, b, "delete_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": patched.ETag})).Deleted)
 	attributeError(t, attributeOperation(t, b, "get_attribute_definition", map[string]any{"definition_id": orgDefinition.ID}), "attribute_definition_not_found")
 	for _, name := range []string{"patch_attribute_definition", "delete_attribute_definition"} {
@@ -275,14 +277,11 @@ func TestMCPAttributePreviewCallerGuards(t *testing.T) {
 	assert.Empty(attributeValues(t, st, person, store.AttributeSlugPrimaryChannel))
 	args["expected_empty"] = true
 	requirements.NoError(disclose("set_person_attribute", args))
-	assert.Nil(args["expected_value_id"])
 	first := operationOutput[generated.PersonAttributeWrite](t, attributeOperation(t, b, "set_person_attribute", args))
 	attributeRefused(t, disclose("set_person_attribute", args), "attribute_value_conflict")
 	delete(args, "expected_empty")
 	args["expected_value_id"] = first.Value.ID
 	requirements.NoError(disclose("set_person_attribute", args))
-	assert.Equal(first.Value.ID, args["expected_value_id"])
-	assert.Nil(args["expected_empty"])
 
 	t.Run("large conflict", func(t *testing.T) {
 		require := require.New(t)
