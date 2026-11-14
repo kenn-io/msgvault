@@ -594,9 +594,8 @@ func TestGeneratedCLIResponseErrorReturnsBareServerMessage(t *testing.T) {
 		StatusCode: http.StatusForbidden,
 		Body:       []byte(`{"error":"verification_masked","message":"verification content is withheld"}`),
 	}, nil)
-	require.ErrorAs(err, &apiErr)
-	assert.Equal("verification_masked", apiErr.APIErrorCode())
 	assert.EqualError(err, "verification content is withheld")
+	assert.NotErrorAs(err, &apiErr)
 }
 
 func TestRunCLICommandTypesDaemonReportedFailures(t *testing.T) {
