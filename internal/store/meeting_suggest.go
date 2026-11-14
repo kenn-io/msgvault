@@ -16,6 +16,7 @@ type MeetingSuggestion struct {
 	TitleOriginID   int64 `json:"-"`
 	TitleWithheld   bool  `json:"-"`
 	eventEndpoint   meetingDecisionEndpoint
+	rankOverlap     int
 	Ref             string    `json:"ref" doc:"Calendar event reference; the suggestion when the seed is a note"`
 	MemberMessageID int64     `json:"member_message_id" doc:"Meeting note ID; the suggestion when the seed is an event"`
 	Title           string    `json:"title" doc:"Title of the suggested event or note"`
@@ -58,9 +59,9 @@ func rankMeetingSuggestion(member suggestMember, event CalendarOccurrence) (Meet
 	if !end.After(start) {
 		return MeetingSuggestion{}, false
 	}
-	result := MeetingSuggestion{Ref: event.Ref, MemberMessageID: member.ID}
+	result := MeetingSuggestion{Ref: event.Ref, MemberMessageID: member.ID, OverlapMinutes: int((end.Sub(start)-1)/time.Minute) + 1}
 	if member.DurationKnown {
-		result.OverlapMinutes = int((end.Sub(start)-1)/time.Minute) + 1
+		result.rankOverlap = result.OverlapMinutes
 	}
 	seen := map[string]bool{}
 	for _, attendee := range event.Attendees {
@@ -305,8 +306,8 @@ func (s *Store) suggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		if a.SharedAttendees != b.SharedAttendees {
 			return b.SharedAttendees - a.SharedAttendees
 		}
-		if a.OverlapMinutes != b.OverlapMinutes {
-			return b.OverlapMinutes - a.OverlapMinutes
+		if a.rankOverlap != b.rankOverlap {
+			return b.rankOverlap - a.rankOverlap
 		}
 		if a.TitleTokens != b.TitleTokens {
 			return b.TitleTokens - a.TitleTokens

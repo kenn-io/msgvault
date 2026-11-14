@@ -453,6 +453,37 @@ func TestMeetingSuggestionsUnknownDurationRanking(t *testing.T) {
 	r.NoError(err)
 	r.Len(page.Suggestions, 2)
 	r.Equal(fmt.Sprintf("evt:%d", standup), page.Suggestions[0].Ref)
+	r.Equal(15, page.Suggestions[0].OverlapMinutes)
+	r.Equal(30, page.Suggestions[1].OverlapMinutes)
+}
+
+func TestMeetingSuggestionsMixedDurationRanking(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	eventData, event := calendarFixture(t, st, "mixed-event", `{"id":"mixed","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T10:30:00Z"}}`)
+	eventData.Message.Subject = sql.NullString{String: "Standup", Valid: true}
+	_, err := st.UpsertMessage(eventData.Message)
+	r.NoError(err)
+	var notes []int64
+	for i, title := range []string{"Other", "Standup", "Other"} {
+		data, note := projectionFixture(t, st, fmt.Sprintf("mixed-note-%d", i), "meeting_json", `{}`)
+		data.Message.Subject = sql.NullString{String: title, Valid: true}
+		data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Valid: true}
+		_, err = st.UpsertMessage(data.Message)
+		r.NoError(err)
+		notes = append(notes, note)
+	}
+	_, err = st.db.ExecContext(t.Context(), `UPDATE meeting_details SET duration_seconds=60 WHERE message_id=?`, notes[0])
+	r.NoError(err)
+	page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, 10, nil)
+	r.NoError(err)
+	r.Len(page.Suggestions, 3)
+	r.Equal(notes[0], page.Suggestions[0].MemberMessageID)
+	r.Equal(1, page.Suggestions[0].OverlapMinutes)
+	r.Equal(notes[1], page.Suggestions[1].MemberMessageID)
+	r.Equal(30, page.Suggestions[1].OverlapMinutes)
+	r.Equal(notes[2], page.Suggestions[2].MemberMessageID)
+	r.Equal(30, page.Suggestions[2].OverlapMinutes)
 }
 
 func TestMeetingSuggestionsBudgetAfterFirstResult(t *testing.T) {
