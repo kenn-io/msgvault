@@ -1020,7 +1020,12 @@ before retrying.
 
 ## Write controls
 
-Person attributes and attribute definitions are available to owner sessions on unreleased `main`. Reads include typed values and optional history. History is returned only when the entire daemon response body fits the 1 MiB limit; an oversized listing is refused. Use `slug` to narrow the listing or `history: false` for current values. Setting a value refuses numbers inside `value.json` outside ±9007199254740991; send them as strings. JSON fractions with more precision than a double may be rounded before this check. Numbers outside that range already stored through other surfaces may be returned rounded. Set and clear preview the affected value with a native dry run; if that preview exceeds 1 MiB, the write is refused before confirmation. Over stdio, clients older than protocol `2026-07-28` confirm without re-checking the preview. On any protocol, a write between the final preview and execution is not detected unless the value is pinned; pass `ordinal` and `expected_value_id` to pin an existing value; an empty slot or auto-allocated ordinal cannot generally be pinned. If a write returns `operation_receipt_unavailable`, its receipt could not be read; read the current state before retrying because the operation may have completed. Writes require `--allow-attribute-writes` and client confirmation for each call; native value IDs, ordinals, dry runs, definition ETags and seeded-definition guards remain in effect. Native daemon endpoints use `--mcp-allow-attribute-writes` alongside `--mcp-allow-writes`.
+On unreleased `main`, owner sessions can read person attributes and definitions. Notes edits go
+through `update_person_notes`; attribute writes default to enrichment by `mcp`. Set and clear show
+the value being replaced, and the write fails if it changes or an empty slot is filled. JSON numbers
+keep their spelling, except values PostgreSQL stored before this change; HTTP protocol `2026-07-28`
+and newer rejects numbers outside the float64 range, such as `1e400`. Listings and previews over
+1 MiB are refused; use `slug` or `history: false` to narrow a listing.
 
 Enable only the writes intended for the assistant's session:
 
