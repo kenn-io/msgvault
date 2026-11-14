@@ -3971,7 +3971,11 @@ func (s *Store) UpsertFTS(messageID int64, subject, bodyText, fromAddr, toAddrs,
 	return s.UpsertFTSContext(context.Background(), messageID, subject, bodyText, fromAddr, toAddrs, ccAddrs)
 }
 
-// UpsertFTSContext honors cancellation during UpsertFTS.
+// UpsertFTSContext writes caller-supplied search fields, honoring cancellation.
+// It propagates dialect errors, including PostgreSQL overflow, without the
+// terminal policy used by PersistMessageContext. Earlier message commits are
+// outside this write; warning or retry decisions belong to the caller.
+// See docs/architecture/storage.md#full-text-index for the indexing contracts.
 func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, bodyText, fromAddr, toAddrs, ccAddrs string) error {
 	doc := FTSDoc{
 		MessageID: messageID,
@@ -3991,6 +3995,9 @@ func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, 
 
 // IndexStoredMessageContext fills or refreshes a message's search entry from stored
 // rows. Unchanged entries are left alone, and unavailable FTS is a no-op.
+// Load, comparison and upsert errors propagate, including PostgreSQL overflow
+// while FTSMatches builds the expected vector. This entry does not use the
+// savepoint/terminal policy of PersistMessageContext; callers own any warning.
 func (s *Store) IndexStoredMessageContext(ctx context.Context, messageID int64) error {
 	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
 		if !s.fts5Available {
@@ -6956,6 +6963,7 @@ func (s *Store) ScanArchivedRawMessagesForConversation(
 // UpdateMessageDerivedText atomically updates the text fields derived from one
 // provider payload. A body, snippet, or FTS failure rolls the whole update
 // back, so callers can safely retry every derived field together.
+// It uses the direct FTS writer: overflow is an error, unlike email repair.
 func (s *Store) UpdateMessageDerivedText(
 	ctx context.Context,
 	messageID int64, bodyText, bodyHTML, snippet sql.NullString, fts FTSDoc,
@@ -7209,9 +7217,11 @@ func (s *Store) updateMessageDerivedText(q querier, messageID int64, bodyText, b
 	return nil
 }
 
-// upsertFTSOrUnsearchable applies the backfill's terminal policy when
-// PostgreSQL rejects the bounded search vector, keeping the caller's other
-// writes. It reports false when the row was already terminal.
+// upsertFTSOrUnsearchable requires an existing transaction and isolates the FTS
+// attempt with derived_fts. Only IsFTSValueTooLargeError permits rolling back
+// that attempt and recording a terminal empty vector; other errors propagate
+// for the caller to roll back. It reports false if overflow finds an already
+// terminal row, but still attempts indexing on every call.
 func (s *Store) upsertFTSOrUnsearchable(q querier, doc FTSDoc) (bool, error) {
 	if _, err := q.Exec("SAVEPOINT derived_fts"); err != nil {
 		return false, err
