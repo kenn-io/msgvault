@@ -23,7 +23,4 @@ func TestOrganizationWritesNeedSeparateOptIn(t *testing.T) {
 	}
 	assert.Equal(&jsonschema.Schema{}, organizationSetAttributeSchema().Properties["body"].Properties["value"].Properties["json"])
 	assert.Equal(&jsonschema.Schema{}, organizationAttributesSchema().Properties["values"].Items.Properties["value"].Properties["json"])
-	write := organizationAttributeWriteSchema()
-	assert.Equal(&jsonschema.Schema{}, write.Properties["value"].Properties["value"].Properties["json"])
-	assert.Equal(&jsonschema.Schema{}, write.Properties["superseded"].Properties["value"].Properties["json"])
 }

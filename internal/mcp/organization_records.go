@@ -57,7 +57,8 @@ type OrganizationDeleted struct {
 	Deleted bool `json:"deleted"`
 }
 type OrganizationAttributeReceipt struct {
-	ValueID      int64  `json:"value_id"`
+	DryRun       bool   `json:"dry_run"`
+	ValueID      int64  `json:"value_id,omitzero"`
 	Ordinal      int64  `json:"ordinal"`
 	SupersededID *int64 `json:"superseded_id,omitzero"`
 }

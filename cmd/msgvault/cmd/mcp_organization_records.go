@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"net/http"
+	"strings"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
@@ -125,7 +126,7 @@ func organizationWriteRequest(name string, args map[string]any) (organizationReq
 		r = organizationRequest{http.MethodPut, "/api/v1/organizations/{id}/profile", &generated.PutOrganizationProfileRequestOptions{PathParams: &generated.PutOrganizationProfilePath{ID: a.OrganizationID}, Header: &generated.PutOrganizationProfileHeaders{IfMatch: a.ETag}, Body: &a.Body}, a.OrganizationID}
 	case "set_organization_attribute":
 		a, err := decodeMCPOperationArguments[mcpserver.OrganizationSetAttributeArgs](args)
-		valid = err == nil && args["body"] != nil && a.Body.Ordinal != nil && a.Body.ExpectedValueID != nil && *a.Body.ExpectedValueID >= 0
+		valid = err == nil && args["body"] != nil && a.Body.Ordinal != nil && a.Body.ExpectedValueID != nil
 		r = organizationRequest{http.MethodPost, "/api/v1/organizations/{id}/attributes", &generated.SetOrganizationAttributeRequestOptions{PathParams: &generated.SetOrganizationAttributePath{ID: a.OrganizationID}, Body: &a.Body}, a.OrganizationID}
 	default:
 		return r, false, false
@@ -159,9 +160,12 @@ func (b *daemonMCPOperations) executeOrganizationWriteOrMedia(ctx context.Contex
 		if write.Value == nil {
 			return operationFailure("invalid_operation_response", true), true, nil
 		}
-		receipt := mcpserver.OrganizationAttributeReceipt{ValueID: write.Value.ID, Ordinal: write.Value.Ordinal}
-		if write.Superseded != nil {
-			receipt.SupersededID = &write.Superseded.ID
+		receipt := mcpserver.OrganizationAttributeReceipt{DryRun: write.DryRun, Ordinal: write.Value.Ordinal}
+		if !write.DryRun {
+			receipt.ValueID = write.Value.ID
+			if write.Superseded != nil {
+				receipt.SupersededID = &write.Superseded.ID
+			}
 		}
 		return &mcpserver.OperationResult{Output: receipt}, true, nil
 	}
@@ -214,7 +218,15 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 		if err := json.Unmarshal(result.Data, &profile); err != nil {
 			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 		}
-		current = mcpserver.OrganizationRecord{ETag: result.ETag, Profile: &profile}
+		name := profile.Organization.Name
+		if len(name) > 256 {
+			name = strings.ToValidUTF8(name[:256], "") + "…"
+		}
+		current = struct {
+			ETag string `json:"etag"`
+			Name string `json:"name"`
+			Kind string `json:"kind"`
+		}{result.ETag, name, profile.Organization.Kind}
 	}
 	if name == "set_organization_attribute" {
 		switch options := r.options.(type) {
