@@ -14,6 +14,13 @@ import (
 	"go.kenn.io/msgvault/internal/personfacts"
 )
 
+func commitmentTestConfig() (peoplesweep.Config, peoplesweep.ProviderProfile) {
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	return cfg, peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+}
+
 func TestApplyCommitmentOnlySweepWritesClaims(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	ctx := t.Context()
@@ -23,13 +30,9 @@ func TestApplyCommitmentOnlySweepWritesClaims(t *testing.T) {
 	const first, second = "I will send the draft.", "I will check the venue."
 	text := first + " " + second
 	id := persist("two-promises", text, -time.Hour)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
+	cfg, profile := commitmentTestConfig()
 	cfg.Commitments.MaxItems = 1
-	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{
-		AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
-	}, cfg.Commitments, personFactLedgerNow, "UTC")
+	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 	r.NoError(err)
 	r.Len(window.Sources, 1)
 	start, end := int64(len(first)+1), int64(len(text))
@@ -76,10 +79,7 @@ func TestCommitmentDecisionSurvivesShiftedQuote(t *testing.T) {
 			_, persist := newCommitmentTestConversation(t, f)
 			const quote = "I will send the draft."
 			id := persist("promise", quote, -time.Hour)
-			cfg := peoplesweep.Config{}
-			cfg.ApplyDefaults()
-			cfg.Commitments.Enabled = true
-			profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+			cfg, profile := commitmentTestConfig()
 			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 			r.NoError(err)
 			r.Len(window.Sources, 1)
@@ -149,10 +149,7 @@ func TestCommitmentListPrioritizesFreshBeforeLimit(t *testing.T) {
 	f := newPersonSweepApplyFixture(t, "promise-order", false)
 	st := f.store
 	_, persist := newCommitmentTestConversation(t, f)
-	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
+	cfg, profile := commitmentTestConfig()
 	cfg.Commitments.Window = 200 * 24 * time.Hour
 	for i, message := range []struct {
 		quote string
@@ -191,9 +188,7 @@ func TestCommitmentListPagesSubmillisecondTimes(t *testing.T) {
 	r, ctx := require.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "promise-page-times", false)
 	_, persist := newCommitmentTestConversation(t, f)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
+	cfg, _ := commitmentTestConfig()
 	for i := range 40 {
 		persist(fmt.Sprintf("promise-%d", i), fmt.Sprintf("I will send report %d.", i), -time.Hour+time.Duration(i)*time.Microsecond)
 	}
@@ -316,12 +311,9 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 				_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`DELETE FROM person_sweep_changes WHERE person_id = ?`), f.personID)
 				r.NoError(err)
 			}
-			cfg := peoplesweep.Config{}
-			cfg.ApplyDefaults()
-			cfg.Commitments.Enabled = true
+			cfg, profile := commitmentTestConfig()
 			cfg.Commitments.MaxBytes = 20
 			cfg.Commitments.MaxItems = 1
-			profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
 			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 			r.NoError(err)
 			r.Len(window.Sources, 1)
@@ -421,11 +413,8 @@ func TestCommitmentDiscoverySkipsMessageOverMaximum(t *testing.T) {
 				_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`DELETE FROM person_sweep_changes WHERE person_id = ?`), f.personID)
 				r.NoError(err)
 			}
-			cfg := peoplesweep.Config{}
-			cfg.ApplyDefaults()
-			cfg.Commitments.Enabled = true
+			cfg, profile := commitmentTestConfig()
 			cfg.Commitments.MaxBytes = 120 << 10
-			profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
 			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 			r.NoError(err)
 			r.Len(window.Sources, 1)
@@ -455,12 +444,8 @@ func TestCommitmentApplyRevokedConsentRetainsPaidAccounting(t *testing.T) {
 	_, persist := newCommitmentTestConversation(t, f)
 	const quote = "I will send the draft."
 	persist("promise", quote, -time.Hour)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
-	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{
-		AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
-	}, cfg.Commitments, personFactLedgerNow, "UTC")
+	cfg, profile := commitmentTestConfig()
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 	r.NoError(err)
 	r.Len(window.Sources, 1)
 	parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":%q,"start":0,"end":%d,"summary":"Send the draft","due_on":null}]}`, window.Sources[0].ID, quote, len(quote))), window)
@@ -481,52 +466,68 @@ func TestCommitmentApplyRevokedConsentRetainsPaidAccounting(t *testing.T) {
 	a.Equal(1, requests)
 }
 
-func TestCommitmentResweepSplitPreservesDecision(t *testing.T) {
-	r, ctx := require.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "split-promise", false)
-	_, persist := newCommitmentTestConversation(t, f)
-	const first, second = "I will send the draft.", "I will check the venue."
-	combinedText := first + " " + second
-	const third = "I will call."
-	text := combinedText + " " + third
-	persist("combined", text, -time.Hour)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
-	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
-	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	combined := peoplesweep.CommitmentPromise{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: combinedText, Summary: "Send and check", End: int64(len(combinedText))}
-	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{combined}})
-	_, err = f.store.ApplyPersonSweep(ctx, request)
-	r.NoError(err)
-	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, true)
-	r.NoError(err)
-	r.Len(items, 1)
-	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
-	r.NoError(err)
-	cfg.Commitments.MaxBytes++
-	f = nextCommitmentTestAttempt(t, f, "-split")
-	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	promises := []peoplesweep.CommitmentPromise{
-		{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: first, Summary: "Send", End: int64(len(first))},
-		{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: second, Summary: "Check", Start: int64(len(first) + 1), End: int64(len(combinedText))},
-		{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: third, Summary: "Call", Start: int64(len(combinedText) + 1), End: int64(len(text))},
+func TestCommitmentResweepPreservesDecisions(t *testing.T) {
+	for _, split := range []bool{true, false} {
+		name := "merged"
+		if split {
+			name = "split"
+		}
+		t.Run(name, func(t *testing.T) {
+			r, ctx := require.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, name+"-promise", false)
+			_, persist := newCommitmentTestConversation(t, f)
+			const first, second, third = "I will send the draft.", "I will check the venue.", "I will call."
+			combinedText := first + " " + second
+			text := combinedText + " " + third
+			persist("promises", text, -time.Hour)
+			cfg, profile := commitmentTestConfig()
+			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+			r.NoError(err)
+			r.Len(window.Sources, 1)
+			combined := peoplesweep.CommitmentPromise{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: combinedText, Summary: "Send and check", End: int64(len(combinedText))}
+			parts := []peoplesweep.CommitmentPromise{
+				{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: first, Summary: "Send", End: int64(len(first))},
+				{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: second, Summary: "Check", Start: int64(len(first) + 1), End: int64(len(combinedText))},
+			}
+			initial := parts
+			if split {
+				initial = []peoplesweep.CommitmentPromise{combined}
+			}
+			request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: initial})
+			_, err = f.store.ApplyPersonSweep(ctx, request)
+			r.NoError(err)
+			items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, true)
+			r.NoError(err)
+			r.Len(items, len(initial))
+			_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
+			r.NoError(err)
+			cfg.Commitments.MaxBytes++
+			f = nextCommitmentTestAttempt(t, f, "-resweep")
+			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+			r.NoError(err)
+			r.Len(window.Sources, 1)
+			next := []peoplesweep.CommitmentPromise{combined}
+			if split {
+				next = append(parts, peoplesweep.CommitmentPromise{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: third, Summary: "Call", Start: int64(len(combinedText) + 1), End: int64(len(text))})
+			}
+			_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: next}))
+			r.NoError(err)
+			items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, true)
+			r.NoError(err)
+			r.Len(items, 2)
+			states := map[string]string{}
+			for _, item := range items {
+				states[item.Quote] = item.State
+			}
+			if split {
+				assert.Equal(t, LoopStateDone, states[combinedText])
+				assert.Equal(t, LoopStateOpen, states[third])
+			} else {
+				assert.Equal(t, LoopStateDone, states[first])
+				assert.Equal(t, LoopStateOpen, states[second])
+			}
+		})
 	}
-	_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: promises}))
-	r.NoError(err)
-	items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, true)
-	r.NoError(err)
-	r.Len(items, 2)
-	states := map[string]string{}
-	for _, item := range items {
-		states[item.Quote] = item.State
-	}
-	assert.Equal(t, LoopStateDone, states[combinedText])
-	assert.Equal(t, LoopStateOpen, states[third])
 }
 
 func TestCommitmentListRejectsUnknownValueFields(t *testing.T) {
@@ -535,10 +536,7 @@ func TestCommitmentListRejectsUnknownValueFields(t *testing.T) {
 	_, persist := newCommitmentTestConversation(t, f)
 	const quote = "I will call."
 	persist("future", quote, -time.Hour)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
-	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	cfg, profile := commitmentTestConfig()
 	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 	r.NoError(err)
 	r.Len(window.Sources, 1)
@@ -550,47 +548,6 @@ func TestCommitmentListRejectsUnknownValueFields(t *testing.T) {
 	r.NoError(err)
 	_, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, true)
 	r.Error(err)
-}
-
-func TestCommitmentResweepMergedPreservesDecisions(t *testing.T) {
-	r, ctx := require.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "merged-promise", false)
-	_, persist := newCommitmentTestConversation(t, f)
-	const first, second = "I will send the draft.", "I will check the venue."
-	text := first + " " + second
-	persist("separate", text, -time.Hour)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
-	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
-	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	promises := []peoplesweep.CommitmentPromise{
-		{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: first, Summary: "Send", End: int64(len(first))},
-		{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: second, Summary: "Check", Start: int64(len(first) + 1), End: int64(len(text))},
-	}
-	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: promises})
-	_, err = f.store.ApplyPersonSweep(ctx, request)
-	r.NoError(err)
-	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, true)
-	r.NoError(err)
-	r.Len(items, 2)
-	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
-	r.NoError(err)
-	cfg.Commitments.MaxBytes++
-	f = nextCommitmentTestAttempt(t, f, "-merged")
-	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	combined := peoplesweep.CommitmentPromise{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: text, Summary: "Send and check", End: int64(len(text))}
-	_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{combined}}))
-	r.NoError(err)
-	items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, true)
-	r.NoError(err)
-	r.Len(items, 2)
-	assert.Equal(t, LoopStateDone, items[0].State)
-	assert.Equal(t, LoopStateOpen, items[1].State)
 }
 
 func TestCommitmentListPagesClosedDecisions(t *testing.T) {
@@ -607,10 +564,7 @@ func TestCommitmentListPagesClosedDecisions(t *testing.T) {
 		promises = append(promises, peoplesweep.CommitmentPromise{Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: quote, Start: start, End: start + int64(len(quote))})
 	}
 	persist("many-promises", body.String(), -time.Hour)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
-	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	cfg, profile := commitmentTestConfig()
 	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 	r.NoError(err)
 	r.Len(window.Sources, 1)
@@ -645,10 +599,7 @@ func TestCommitmentDecisionReportsConcurrentChange(t *testing.T) {
 	_, persist := newCommitmentTestConversation(t, f)
 	const quote = "I will call."
 	persist("promise", quote, -time.Hour)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
-	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	cfg, profile := commitmentTestConfig()
 	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 	r.NoError(err)
 	r.Len(window.Sources, 1)

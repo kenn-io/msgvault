@@ -102,6 +102,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 	generation.ProgramFingerprint = peoplesweep.CommitmentProgramFingerprint()
 	generation.Claims, generation.EvidenceStatusChanges = nil, nil
 	aligner := make(commitmentEvidenceAligner)
+	evidence := make([]personfacts.EvidenceInput, len(result.Output.Promises))
 	targets := make([]map[string]bool, len(result.Output.Promises))
 	counts := make(map[string]int)
 	for i, promise := range result.Output.Promises {
@@ -109,8 +110,8 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		if err != nil {
 			return nil, err
 		}
-		evidence := commitmentEvidence(personID, source, "commitment-promise", promise.Quote, promise.Start, promise.End)
-		keys, err := s.matchCommitmentTarget(ctx, personID, source, evidence, promise)
+		evidence[i] = commitmentEvidence(personID, source, "commitment-promise", promise.Quote, promise.Start, promise.End)
+		keys, err := s.matchCommitmentTarget(ctx, personID, source, evidence[i], promise)
 		if err != nil {
 			return nil, err
 		}
@@ -130,31 +131,27 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		if counts[target] > 1 {
 			continue
 		}
-		source, err := verify(promise.SourceID)
-		if err != nil {
-			return nil, err
-		}
-		evidence := commitmentEvidence(personID, source, "commitment-promise", promise.Quote, promise.Start, promise.End)
 		promise.TargetKey = target
 		descriptor := personfacts.TargetDescriptor{Kind: personfacts.TargetCommitment,
 			Key: promise.TargetKey, Slug: "commitment", ValueType: personfacts.ValueCommitment,
 			Cardinality: personfacts.CardinalitySingle, Sensitive: true, MaxLength: 240}
-		descriptor.Revision, err = personfacts.DescriptorRevision(descriptor)
+		revision, err := personfacts.DescriptorRevision(descriptor)
 		if err != nil {
 			return nil, err
 		}
+		descriptor.Revision = revision
 		value, err := json.Marshal(personfacts.CommitmentValue{Direction: promise.Direction, Summary: promise.Summary, DueOn: promise.DueOn})
 		if err != nil {
 			return nil, err
 		}
-		key, err := personfacts.EvidenceKey(evidence)
+		key, err := personfacts.EvidenceKey(evidence[i])
 		if err != nil {
 			return nil, err
 		}
-		aligner[key] = evidence
+		aligner[key] = evidence[i]
 		generation.Claims = append(generation.Claims, personfacts.ProposedClaim{
 			Target: descriptor, Relation: personfacts.RelationSupport, Origin: personfacts.OriginCommitment,
-			SubmittedValue: value, Evidence: []personfacts.EvidenceInput{evidence},
+			SubmittedValue: value, Evidence: []personfacts.EvidenceInput{evidence[i]},
 		})
 		prepared.promises = append(prepared.promises, promise)
 	}

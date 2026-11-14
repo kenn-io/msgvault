@@ -23,10 +23,8 @@ func TestCommitmentScopeExpansionRevisitsJournaledHistory(t *testing.T) {
 			r.NoError(err)
 			_, err = st.db.ExecContext(ctx, st.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), st.dialect.TimestampParam(old), id)
 			r.NoError(err)
-			profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: personFactLedgerNow.Add(-24 * time.Hour).Format(time.DateOnly), AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
-			cfg := peoplesweep.Config{}
-			cfg.ApplyDefaults()
-			cfg.Commitments.Enabled = true
+			cfg, profile := commitmentTestConfig()
+			profile.SourceSince = personFactLedgerNow.Add(-24 * time.Hour).Format(time.DateOnly)
 			if expanded != "dates" {
 				profile.SourceSince = "2026-01-01"
 				cfg.Commitments.Window = 24 * time.Hour
@@ -92,11 +90,8 @@ func TestCommitmentDiscoveryCompletesAfterMessageShrinks(t *testing.T) {
 	f := newPersonSweepApplyFixture(t, "shrink-gap", false)
 	_, persist := newCommitmentTestConversation(t, f)
 	id := persist("large", strings.Repeat("x", 200), -time.Hour)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
+	cfg, profile := commitmentTestConfig()
 	cfg.Commitments.MaxBytes = 30
-	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
 	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 	r.NoError(err)
 	r.Empty(window.Sources)
@@ -132,11 +127,8 @@ func TestCommitmentScopeReductionUsesCurrentWindow(t *testing.T) {
 	r.NoError(err)
 	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-70*24*time.Hour)), oldID)
 	r.NoError(err)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
+	cfg, profile := commitmentTestConfig()
 	cfg.Commitments.Window = 90 * 24 * time.Hour
-	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
 	scope := peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments)
 	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, 0, ?, ?)`), f.personID, f.store.dialect.TimestampParam(personFactLedgerNow), scope, f.store.dialect.TimestampParam(personFactLedgerNow.Add(-90*24*time.Hour)))
 	r.NoError(err)

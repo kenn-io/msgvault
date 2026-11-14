@@ -17,9 +17,7 @@ func TestCommitmentSurvivesDelayedEditProcessing(t *testing.T) {
 	st := f.store
 	_, persist := newCommitmentTestConversation(t, f)
 	id := persist("promise", "I will send the draft.", -time.Hour)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
+	cfg, _ := commitmentTestConfig()
 	applyCommitmentTestSources(t, f, cfg.Commitments)
 	before, err := st.LatestPersonSweepChangeSequence(ctx)
 	r.NoError(err)
@@ -91,9 +89,7 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 						SELECT id FROM participants WHERE email_address = 'owner@example.test') WHERE id = ?`, id)
 					r.NoError(err)
 				}
-				cfg := peoplesweep.Config{}
-				cfg.ApplyDefaults()
-				cfg.Commitments.Enabled = true
+				cfg, _ := commitmentTestConfig()
 				applyCommitmentTestSources(t, f, cfg.Commitments)
 				tombstones, err := st.personSweepTombstones(ctx, f.personID, peoplesweep.ArchiveChange{PersonID: f.personID, SourceID: sourceID, MessageID: id, SourceLane: peoplesweep.SourceConversationText, EvidenceEffect: peoplesweep.EvidenceEffectSourceEdited})
 				r.NoError(err)
@@ -205,10 +201,7 @@ func TestCommitmentSourceDeletedBeforeExtraction(t *testing.T) {
 	r.NoError(err)
 	const quote = "I will send the draft."
 	id := persist("promise", quote, -time.Hour)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
-	commitmentProfile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	cfg, commitmentProfile := commitmentTestConfig()
 	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, commitmentProfile, cfg.Commitments, personFactLedgerNow, "UTC")
 	r.NoError(err)
 	r.Len(window.Sources, 1)
@@ -240,10 +233,7 @@ func TestCommitmentFrontierMaintenanceInvalidatesDeletedEvidence(t *testing.T) {
 	r.NoError(err)
 	const quote = "I will send the draft."
 	id := persist("promise", quote, -time.Hour)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
-	commitmentProfile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	cfg, commitmentProfile := commitmentTestConfig()
 	ids := []int64{id}
 	for n := range 2 {
 		ids = append(ids, persist(fmt.Sprintf("promise-%d", n), fmt.Sprintf("I will send report %d.", n), -time.Hour))
@@ -280,10 +270,8 @@ func TestCommitmentFrontierMaintenanceInvalidatesDeletedEvidence(t *testing.T) {
 func applyCommitmentTestSources(t *testing.T, f personSweepApplyFixture, cfg peoplesweep.CommitmentConfig) {
 	t.Helper()
 	r := require.New(t)
-	window, err := f.store.LoadPersonCommitmentWindow(t.Context(), f.personID, peoplesweep.ProviderProfile{
-		AllowSensitive: true, SourceSince: "2026-01-01",
-		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
-	}, cfg, personFactLedgerNow, "UTC")
+	_, profile := commitmentTestConfig()
+	window, err := f.store.LoadPersonCommitmentWindow(t.Context(), f.personID, profile, cfg, personFactLedgerNow, "UTC")
 	r.NoError(err)
 	r.NotEmpty(window.Sources)
 	output := peoplesweep.ParsedCommitments{}
