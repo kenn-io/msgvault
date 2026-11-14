@@ -20,7 +20,8 @@ func TestBackupRestorePermissionsOnlyValidatesInputsBeforeLiveDaemon(t *testing.
 	t.Cleanup(func() { require.NoError(owner.Close()) })
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(err)
-	prepareBackupTokenRestore(t)
+	resetBackupRestoreFlags()
+	t.Cleanup(resetBackupRestoreFlags)
 	cmd := &cobra.Command{Use: "restore"}
 	cmd.Flags().AddFlagSet(backupRestoreCmd.Flags())
 	cmd.SetContext(testInvocationContext(t.Context(), &config.Config{Data: config.DataConfig{DataDir: dataDir}}, invocationOptions{}))

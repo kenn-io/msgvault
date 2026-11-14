@@ -448,9 +448,10 @@ func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
 		path := filepath.Join(dir, "omitted")
 		require.NoError(t, os.WriteFile(path, []byte("fixture"), 0600))
 		before := restoredTestDescriptor(t, path, false)
-		shareRestoredTestDirectory(t, dir, windows.GENERIC_READ, windows.NO_INHERITANCE)
+		root := shareRestoredTestDirectory(t, dir, windows.GENERIC_READ, windows.NO_INHERITANCE)
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "selected"), []byte("selected"), 0600))
 		require.NoError(t, SecureRestored(dir, []string{"selected"}))
+		require.NoError(t, verifyOwnerOnlyHandle(root, false))
 		assert.Equal(t, before, restoredTestDescriptor(t, path, false))
 	})
 	t.Run("omitted with inherited access", func(t *testing.T) {
