@@ -168,6 +168,9 @@ func (s *Server) textAttachmentReader(w http.ResponseWriter, r *http.Request, co
 		return content, false, nil
 	}
 	denied := newAPIHTTPError(403, "verification_masked", "Attachment text requires verification.read")
+	if s.requestAuthentication(r).Grant == nil {
+		denied = newAPIHTTPError(403, "verification_masked", "Attachment text is unavailable while verification content is withheld")
+	}
 	text := false
 	html := false
 	names := make([]string, len(candidates))

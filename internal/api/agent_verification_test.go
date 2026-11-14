@@ -448,6 +448,9 @@ func TestAgentVerificationAttachments(t *testing.T) {
 							assertions.Equal(loads, counter.calls, "blob=%t endpoint=%s caller=%s", blob, endpoint, mode)
 						}
 						if (mode == "masked" || mode == "owner-masked") && tc.blocked {
+							if mode == "owner-masked" {
+								assertions.Contains(w.Body.String(), "Attachment text is unavailable while verification content is withheld")
+							}
 							requireErrorCode(t, w, http.StatusForbidden, "verification_masked")
 						} else {
 							assertions.Equal(http.StatusOK, w.Code, w.Body.String())
