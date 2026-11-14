@@ -171,8 +171,7 @@ it is separate from the binary release version. The current schema is **5.3.0**.
 Schema 5.3.0 advertises the existing structured person profile routes to MCP:
 `GET` and `PATCH /api/v1/people/{id}/profile`,
 `GET /api/v1/people/{id}/profile/history`, and
-`GET /api/v1/people/{id}/profile/media/{media_id}/content`. Profile writes
-require the current `ETag` in `If-Match`.
+`GET /api/v1/people/{id}/profile/media/{media_id}/content`.
 
 Schema 5.2.0 adds open Kata issue search and optional task search queries.
 
