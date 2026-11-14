@@ -1694,10 +1694,10 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("migrate person fact claim origins: %w", err)
 	}
 	if err := s.runOnceMigration(ctx, "person_commitments_v1", 1, false, func(ctx context.Context) error {
-		if err := s.migratePersonFactClaimOriginBrief(ctx); err != nil {
+		if err := s.migratePersonFactClaimOriginCommitment(ctx); err != nil {
 			return err
 		}
-		if err := s.migratePersonSweepBatchPurposeV2(ctx); err != nil {
+		if err := s.migratePersonSweepBatchPurposeCommitment(ctx); err != nil {
 			return err
 		}
 		return s.migratePersonCommitmentFailure(ctx)
