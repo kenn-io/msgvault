@@ -15,6 +15,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingcontent"
+	"go.kenn.io/msgvault/internal/meetingidentity"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -705,7 +706,7 @@ func preserveArchivedAttendees(meeting *HydratedMeeting, archived []resolvedUser
 	archivedByID := make(map[string]resolvedUser, len(archived))
 	for _, user := range archived {
 		id := strings.TrimSpace(user.ID)
-		email := normalizedUserEmail(user.Email)
+		email := meetingidentity.Normalize(user.Email)
 		if id == "" || email == "" || !user.EmailVerified {
 			continue
 		}
@@ -758,7 +759,7 @@ func preserveArchivedAttendees(meeting *HydratedMeeting, archived []resolvedUser
 
 		user.ID = strings.TrimSpace(user.ID)
 		user.Name = strings.TrimSpace(user.Name)
-		user.Email = normalizedUserEmail(user.Email)
+		user.Email = meetingidentity.Normalize(user.Email)
 		if user.Name != "" {
 			label = user.Name
 		}
@@ -806,7 +807,7 @@ func preserveArchivedAttendeeRelationships(
 	currentByID := make(map[string]int, len(meeting.ResolvedUsers))
 	emailUsers := make(map[string]map[int]struct{}, len(meeting.ResolvedUsers))
 	addEmailUser := func(email string, userIndex int) {
-		email = normalizedUserEmail(email)
+		email = meetingidentity.Normalize(email)
 		if email == "" {
 			return
 		}
@@ -818,9 +819,9 @@ func preserveArchivedAttendeeRelationships(
 		users[userIndex] = struct{}{}
 	}
 	addAlias := func(userIndex int, email string) {
-		email = normalizedUserEmail(email)
+		email = meetingidentity.Normalize(email)
 		user := &meeting.ResolvedUsers[userIndex]
-		if email == "" || email == normalizedUserEmail(user.Email) {
+		if email == "" || email == meetingidentity.Normalize(user.Email) {
 			return
 		}
 		for _, alias := range user.EmailAliases {
@@ -833,7 +834,7 @@ func preserveArchivedAttendeeRelationships(
 	for index := range meeting.ResolvedUsers {
 		user := &meeting.ResolvedUsers[index]
 		id := strings.TrimSpace(user.ID)
-		email := normalizedUserEmail(user.Email)
+		email := meetingidentity.Normalize(user.Email)
 		if id == "" || email == "" || !user.EmailVerified {
 			continue
 		}
@@ -860,7 +861,7 @@ func preserveArchivedAttendeeRelationships(
 	}
 	currentParticipants := make(map[int64]map[int]struct{}, len(emailUsers))
 	for _, recipient := range archived {
-		email := normalizedUserEmail(recipient.EmailAddress)
+		email := meetingidentity.Normalize(recipient.EmailAddress)
 		users := emailUsers[email]
 		if len(users) == 0 {
 			continue
@@ -876,7 +877,7 @@ func preserveArchivedAttendeeRelationships(
 	}
 	seen := make(map[string]struct{}, len(meeting.Attendees)+len(archived))
 	for _, attendee := range meeting.Attendees {
-		email := normalizedUserEmail(attendee.Email)
+		email := meetingidentity.Normalize(attendee.Email)
 		if email != "" {
 			seen[email] = struct{}{}
 		}
@@ -887,7 +888,7 @@ func preserveArchivedAttendeeRelationships(
 		if len(users) == 0 {
 			continue
 		}
-		email := normalizedUserEmail(recipient.EmailAddress)
+		email := meetingidentity.Normalize(recipient.EmailAddress)
 		if email == "" {
 			continue
 		}

@@ -225,7 +225,7 @@ func TestHydratorOptionalDeadlineAndParentCancellation(t *testing.T) {
 	})
 }
 
-func TestImporterIncompleteDirectoryRespectsFreshUnverifiedAttendee(t *testing.T) {
+func TestImporterIncompleteDirectoryPreservesArchivedAttendees(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -245,11 +245,10 @@ func TestImporterIncompleteDirectoryRespectsFreshUnverifiedAttendee(t *testing.T
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
 	recipients, err := st.GetMessageRecipientsContext(t.Context(), messageID, "to")
 	require.NoError(err)
-	require.Len(recipients, 1)
-	assert.Equal("second@example.com", recipients[0].EmailAddress, "only the absent user's previously verified email survives the failed directory tail")
+	require.Len(recipients, 2)
 	raw, err := st.GetMessageRaw(messageID)
 	require.NoError(err)
-	assert.NotContains(string(raw), "attendee@example.com")
+	assert.Contains(string(raw), "attendee@example.com")
 }
 
 type slowOptionalUserSource struct{}

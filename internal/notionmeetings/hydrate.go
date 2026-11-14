@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"net/mail"
 	"strings"
 	"time"
 
@@ -396,15 +395,11 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 		}
 	}
 
-	// Preserve archived identity only for an attendee whose lookup failed. A
-	// successfully fetched unverified user stays authoritative even when a later
-	// directory page fails for other attendees.
-	result.failedAttendeeIDs = map[string]bool{}
+	if h.userSource != nil {
+		result.failedAttendeeIDs = map[string]bool{}
+	}
 	for _, id := range result.Discovery.MeetingNotes.CalendarEvent.Attendees {
 		user := h.users[id]
-		if h.userSource == nil && h.usersUnavailable && user == nil {
-			result.failedAttendeeIDs[id] = true
-		}
 		if h.userSource != nil {
 			var err error
 			user, err = h.lookupUser(lookupCtx, id)
@@ -424,14 +419,11 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 			label = strings.TrimSpace(user.Name)
 		}
 		result.AttendeeLabels = append(result.AttendeeLabels, label)
-		email := ""
-		if user != nil && user.Person.EmailVerified {
-			email = normalizedUserEmail(user.Person.Email)
-		}
-		if email == "" {
+		if user == nil || !user.Person.EmailVerified || strings.TrimSpace(user.Person.Email) == "" {
 			result.UnresolvedAttendeeIDs = append(result.UnresolvedAttendeeIDs, id)
 			continue
 		}
+		email := meetingidentity.Normalize(user.Person.Email)
 		result.Attendees = append(result.Attendees, meetingarchive.Person{
 			Name: strings.TrimSpace(user.Name), Email: email, Anchor: userAnchor(id),
 		})
@@ -440,16 +432,6 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 		})
 	}
 	return nil
-}
-
-// A verified provider flag does not make a malformed address usable identity.
-func normalizedUserEmail(value string) string {
-	email := meetingidentity.Normalize(value)
-	address, err := mail.ParseAddress(email)
-	if err != nil || address.Address != email {
-		return ""
-	}
-	return email
 }
 
 // lookupUser shares successful responses and service failures across this import.

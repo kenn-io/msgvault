@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"net/mail"
 	"strings"
 )
 
@@ -40,7 +39,7 @@ func decodeNotion(fields map[string]jsontext.Value) Content {
 	}
 	discovery, discoveryOK := notionDiscovery(fields["discovery"])
 	content.Actions, content.ActionCoverage, content.ActionReason = decodeNotionActions(fields, discovery, discoveryOK, version)
-	content.SourceParticipants = notionParticipants(fields, discovery, version == 2)
+	content.SourceParticipants = notionParticipants(fields, discovery)
 	if discoveryOK {
 		if start, startOK := parseTimeString(discovery.Recording.Start); startOK {
 			if end, endOK := parseTimeString(discovery.Recording.End); endOK && end.After(start) {
@@ -534,25 +533,17 @@ type notionResolvedUser struct {
 	Email string
 }
 
-func notionResolvedUsers(fields map[string]jsontext.Value, requireVerified bool) map[string]notionResolvedUser {
+func notionResolvedUsers(fields map[string]jsontext.Value) map[string]notionResolvedUser {
 	var users []struct {
-		ID            string         `json:"id"`
-		Name          string         `json:"name"`
-		Email         string         `json:"email"`
-		EmailVerified jsontext.Value `json:"email_verified"`
+		ID    string `json:"id"`
+		Name  string `json:"name"`
+		Email string `json:"email"`
 	}
 	_ = json.Unmarshal(fields["resolved_users"], &users)
 	out := make(map[string]notionResolvedUser, len(users))
 	for _, user := range users {
 		if id := strings.TrimSpace(user.ID); id != "" {
-			email := normalizeExplicitEmail(user.Email)
-			if requireVerified {
-				address, err := mail.ParseAddress(email)
-				if !bytes.Equal(bytes.TrimSpace(user.EmailVerified), []byte("true")) || err != nil || address.Address != email {
-					email = ""
-				}
-			}
-			out[id] = notionResolvedUser{Name: strings.TrimSpace(user.Name), Email: email}
+			out[id] = notionResolvedUser{Name: strings.TrimSpace(user.Name), Email: normalizeExplicitEmail(user.Email)}
 		}
 	}
 	return out
@@ -607,10 +598,10 @@ func notionAction(raw jsontext.Value, ordinal int) (Action, bool) {
 	}, true
 }
 
-func notionParticipants(fields map[string]jsontext.Value, discovery notionDiscoveryWire, requireVerified bool) []Participant {
+func notionParticipants(fields map[string]jsontext.Value, discovery notionDiscoveryWire) []Participant {
 	var labels []string
 	_ = json.Unmarshal(fields["attendee_labels"], &labels)
-	resolved := notionResolvedUsers(fields, requireVerified)
+	resolved := notionResolvedUsers(fields)
 	count := max(len(labels), len(discovery.AttendeeIDs))
 	participants := make([]Participant, 0, count)
 	for index := range count {
