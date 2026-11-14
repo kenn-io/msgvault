@@ -26,17 +26,20 @@ Use the browser, terminal, CLI, HTTP API, or an AI assistant through MCP.
 
 > **Alpha software.** APIs, storage format, and CLI flags may change. Back up
 > your data. This README follows current `main`; see the
-> [0.23.0 changelog](docs/changelog.md#0230) for features and upgrade steps.
+> [0.24.0 changelog](docs/changelog.md#0240) for features and upgrade steps.
 
 ## What you can do
 
 - **Bring your history together.** Sync mail, chat, calendars, meeting notes,
-  and contacts, or import local exports. See the [source guide](docs/guides/sources.md).
+  contacts, social comments, and feeds, or import local exports. Send anything
+  else through the [import API](docs/usage/message-import.md). See the
+  [source guide](docs/guides/sources.md).
 - **Find the message or file you need.** Search by sender, date, mailing list,
-  or words. Optionally enable search by meaning, document text extraction,
-  and image search with a provider you choose.
+  or words. Optionally turn on search by meaning from Settings, and search
+  attached documents and images through Docbank.
 - **Keep track of people.** Connect identities, curate profiles and relationships,
-  browse contact activity, and sync contacts with CardDAV. Optional profile
+  browse contact activity, see [who is waiting on a reply](docs/usage/open-loops.md),
+  and sync contacts with CardDAV. Optional profile
   automation and conversation briefs require separate consent.
 - **Explore the archive.** Group messages by people, domains, time, source, and
   type in the [Web UI](docs/web-ui.md) or [TUI](docs/usage/tui.md). Save useful
@@ -131,7 +134,7 @@ first sync, and running on your own server.
 |---|---|
 | Understand the product | [Product overview](https://msgvault.io/) and [archive lifecycle](https://msgvault.io/guide/) |
 | Upgrade an existing archive | [Changelog and upgrade notes](https://github.com/kenn-io/msgvault/releases/latest) |
-| Find messages by words or meaning, read threads, and locate attachments | [Searching](docs/usage/searching.md) and [Docbank document search](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased) |
+| Find messages by words or meaning, read threads, and locate attachments | [Searching](docs/usage/searching.md) and [Docbank document search](https://msgvault.io/docs/configuration/#search-document-text-through-docbank) |
 | Maintain contacts and relationships | [People and profiles](docs/usage/people.md) |
 | Import local text-message history | [Text message imports](docs/usage/text-messages.md) |
 | Configure optional AI features | [Recommended configuration](docs/usage/recommended-configuration.md) |

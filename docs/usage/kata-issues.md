@@ -9,8 +9,6 @@ Kata issue. The issue quotes the exact passage you chose and records where it
 came from, so anyone reading it in Kata sees the original words. Kata owns the
 issue after that: its title, state, and history live there.
 
-This workflow is newer than the latest release.
-
 ## Connect Kata
 
 Kata issues use the same [`[integrations.kata]`](../configuration.md#integrationskata)
