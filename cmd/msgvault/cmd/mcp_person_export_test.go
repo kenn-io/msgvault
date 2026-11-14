@@ -43,7 +43,6 @@ func TestMCPPersonExportStreamsJSONLAndReportsFailures(t *testing.T) {
 	stdout := `{"record_type":"manifest","schema":"msgvault-message-export/1"}` + "\n"
 	message := `{"record_type":"message","text":"body"}` + "\n"
 	complete := `{"record_type":"complete","counts":{"messages":1}}` + "\n"
-	oversized := strings.Repeat("x", mcpPersonExportLimit+1)
 	stdoutEvent := func(data string) string {
 		return `{"type":"stdout","data":` + strconv.Quote(data) + `}`
 	}
@@ -51,6 +50,13 @@ func TestMCPPersonExportStreamsJSONLAndReportsFailures(t *testing.T) {
 		return `{"type":"stderr","data":` + strconv.Quote(data) + `}`
 	}
 	const subprocessFailureEvent = `{"type":"error","error":"msgvault: cli subprocess exited non-zero"}`
+	var oversizedEvents []string
+	for remaining := mcpPersonExportLimit + 1; remaining > 0; {
+		chunkSize := min(32<<10, remaining)
+		oversizedEvents = append(oversizedEvents, stdoutEvent(strings.Repeat("x", chunkSize)))
+		remaining -= chunkSize
+	}
+	oversizedEvents = append(oversizedEvents, subprocessFailureEvent)
 	for _, tc := range []struct {
 		name   string
 		code   string
@@ -73,7 +79,7 @@ func TestMCPPersonExportStreamsJSONLAndReportsFailures(t *testing.T) {
 		{
 			name:   "raw stdout over limit",
 			code:   "export_limit_exceeded",
-			events: []string{stdoutEvent(oversized), `{"type":"complete"}`},
+			events: oversizedEvents,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
