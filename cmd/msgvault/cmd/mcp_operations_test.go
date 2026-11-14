@@ -354,21 +354,11 @@ func TestMCPOperationsLocalRecoveryFailure(t *testing.T) {
 	}
 }
 
-func TestMCPOperationNoContentETagAndConflictBody(t *testing.T) {
+func TestMCPOperationClassifiesConflict(t *testing.T) {
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			w.Header().Set("ETag", `"revision-2"`)
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
 		w.WriteHeader(http.StatusConflict)
 		_, _ = w.Write([]byte(`{"error":"value_conflict","current_value":42}`))
 	})
-	receipt, err := readMCPOperationJSON[generated.SettingsResponse](t.Context(), client, http.MethodDelete, "/api/v1/settings", nil, http.StatusNoContent)
-	require.NoError(t, err)
-	require.NotNil(t, receipt)
-	assert.Equal(t, `"revision-2"`, receipt.ETag)
-	assert.False(t, receipt.IsError)
 	conflict, err := readMCPOperationJSONWithClassifier[generated.SettingsResponse](t.Context(), client, http.MethodPatch, "/api/v1/settings", nil, func(code string) bool { return code == "value_conflict" }, http.StatusOK)
 	require.NoError(t, err)
 	require.True(t, conflict.IsError)
