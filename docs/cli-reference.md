@@ -2660,7 +2660,7 @@ msgvault backup create [flags]
 |---|---|
 | `--repo <dir>` | Backup repository directory |
 | `--include-config` | Include `config.toml` verbatim; may contain API keys |
-| `--include-tokens` | Include OAuth token files |
+| `--include-tokens` | Include sensitive token files, provider credentials, and the server key |
 | `--allow-plaintext-secrets` | Allow config/tokens in an unencrypted repository |
 | `--tag <text>` | Optional label recorded on the snapshot manifest |
 | `--force-unlock` | Break a stale exclusive repository lock before creating |
@@ -2699,6 +2699,7 @@ msgvault backup restore [snapshot] --target <dir> [flags]
 | `--repo <dir>` | Backup repository directory |
 | `--target <dir>` | Directory to restore into (required) |
 | `--overwrite` | Allow restoring into a non-empty target directory |
+| `--permissions-only` | Retry token permissions for an explicit snapshot (Windows only); cannot be combined with `--overwrite`, `--jobs`, `--integrity-check`, or `--loose-attachments` |
 | `--integrity-check` | Run SQLite's full integrity check after restoring (slow for large databases) |
 | `--loose-attachments` | Restore attachments as individual loose files instead of installing compatible packs |
 | `--force-unlock` | Break a stale exclusive repository lock before restoring |

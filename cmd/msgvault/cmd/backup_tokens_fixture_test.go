@@ -57,7 +57,7 @@ func prepareBackupTokenRestore(t *testing.T) {
 	oldLoose, oldIntegrity, oldPermissions := backupRestoreLooseAttachments, backupRestoreIntegrityCheck, backupRestorePermissionsOnly
 	oldOut, oldErr, oldLogger := rootCmd.OutOrStdout(), rootCmd.ErrOrStderr(), slog.Default()
 	changed := make(map[string]bool)
-	for _, name := range []string{"repo", "target", "jobs", "overwrite", "force-unlock", "permissions-only"} {
+	for _, name := range []string{"repo", "target", "jobs", "overwrite", "force-unlock", "integrity-check", "loose-attachments", "permissions-only"} {
 		changed[name] = backupRestoreCmd.Flags().Lookup(name).Changed
 	}
 	t.Cleanup(func() {
