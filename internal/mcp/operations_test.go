@@ -136,6 +136,7 @@ func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyLoops}
 	first := operationalCatalog(opts, true)
 	requirements.Len(first, 4)
+	assertions.NotContains(first[0].definition.inputSchema.Properties, "include_closed")
 	listOutput := first[0].definition.outputSchema
 	requirements.Len(listOutput.AnyOf, 2)
 	commitments := listOutput.AnyOf[0].Properties["commitments"]
