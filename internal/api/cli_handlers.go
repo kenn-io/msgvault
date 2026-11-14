@@ -1792,6 +1792,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"import-telegram",
 		"import-discord-package",
 		"import-x",
+		"import-signal-export",
 		"import-synctech-sms",
 		"import-whatsapp",
 		"list-deletions",

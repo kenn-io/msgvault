@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-04"
+last_edited: "2026-11-14"
 title: Text Messages
 description: Import chats and texts from common exports, and browse synchronized Teams and Discord conversations in msgvault.
 ---
@@ -19,6 +19,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | [iMessage](#import-imessage) | macOS `chat.db` |
 | [iMazing Messages](#import-imazing-csv) | CSV export root or `csv/` directory |
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
+| [Signal readable export](#import-signal-export) | Native version-1 directory, stable account label required |
 | [Telegram](#import-telegram) | Telegram Desktop Machine-readable JSON export |
 | [X DMs](#import-x) | Extracted X account archive |
 | [Facebook Messenger](#import-messenger) | Download Your Information export |
@@ -561,3 +562,41 @@ The summary reports direct/group conversation entries, added and duplicate
 messages, skipped events, invalid records and media outcomes. Conversation
 entries can repeat across numbered parts. Use `--no-default-identity` to skip
 recording the source account as a default identity.
+
+## import-signal-export
+
+Import a Signal readable export directory containing `metadata.json`, `main.jsonl`,
+and optional `files/` media:
+
+```bash
+msgvault import-signal-export /path/to/signal-export --account personal
+```
+
+Use the same `--account` label for later exports of the same account. Copy the
+complete export directory to the machine running the msgvault daemon and keep
+media in its original `files/` layout.
+
+Signal Desktop's [export menu](https://github.com/signalapp/Signal-Desktop/blob/9173731aaaccec8444066aec0e0c78725d7e457b/ts/components/Preferences.dom.tsx) is under Settings → Chats → Export chat history. Signal Android also has an [export menu](https://github.com/signalapp/Signal-Android/issues/14754#issuecomment-4992437447). This importer has not been tested against an export from a released Signal app, and cross-platform compatibility has not been verified.
+
+The importer handles standard text and available local attachments in direct
+chats, groups, and notes to self. It counts unsupported records and omitted
+features, including reactions and formatting. Disappearing and view-once
+messages may be absent from the export.
+Contacts are identified by ACI. Phone-only and PNI-only contacts are skipped and counted; a later export that carries an ACI imports them.
+
+Run the command again to add history and retry missing media. Existing text
+and raw messages retain their first archived snapshot. Missing media can be
+repaired when a later export uniquely identifies the original attachment.
+Messages from one chat with the same author, send time, and receive time are told apart by export order. On replay, when a time tuple has multiple messages, differing inline text makes that message and the remaining messages with those details ambiguous, so they are skipped. Identical inline text cannot reveal a change in order, so a message can still be duplicated or left out.
+Committed messages remain after an interrupted or failed import.
+
+The importer accepts version 1 exports. Limits are 16 MiB per JSONL record,
+64 KiB for metadata, 100,000 recipient and chat entries, 64 MiB of lookup
+strings, 256 MiB per media file, and 16 MiB per long-text file. It scans up to
+262,144 media directory entries per run; remaining media is counted as missing
+while message import continues. Missing, unsafe, oversized, ambiguous, and
+hash-mismatched media is counted. A newer saved message format requires a
+msgvault upgrade before replay.
+
+The format is based on [fictional fixtures and pinned format sources](https://github.com/kenn-io/msgvault/blob/main/internal/signalexport/testdata/README.md).
+See [the CLI reference](../cli-reference.md#import-signal-export) for command syntax.

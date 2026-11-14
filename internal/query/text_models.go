@@ -181,5 +181,6 @@ var KnownMessageTypes = []string{
 	"matrix",
 	"telegram",
 	"x_dm",
+	"signal",
 	"feed_item",
 }

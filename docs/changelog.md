@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-13"
+last_edited: "2026-11-14"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -7,6 +7,8 @@ description: Release history for msgvault
 All notable changes to msgvault, grouped by release.
 
 ## Unreleased
+
+- Import Signal readable exports, including available media, with `msgvault import-signal-export`.
 
 - Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
 

@@ -11,7 +11,7 @@ import (
 )
 
 func TestAssembleDocumentOrdersBoundedContextThenMedia(t *testing.T) {
-	for _, messageType := range []string{"slack", "matrix"} {
+	for _, messageType := range []string{"slack", "matrix", "signal"} {
 		t.Run(messageType, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
