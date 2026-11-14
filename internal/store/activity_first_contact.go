@@ -96,17 +96,18 @@ func (s *Store) populateFirstContactTx(ctx context.Context, tx *loggedTx, state 
 		return fmt.Errorf("load first-contact candidate: %w", err)
 	}
 	candidate := candidates[0]
-	var count, participants int
+	var count, participants, relayed int
 	var senderID, recordedSenderID sql.NullInt64
 	err = tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT NULLIF(LOWER(TRIM(mr.email_address)), '')),
  COUNT(DISTINCT CASE WHEN NULLIF(TRIM(mr.email_address), '') IS NOT NULL THEN mr.participant_id END),
- MIN(CASE WHEN NULLIF(TRIM(mr.email_address), '') IS NOT NULL THEN mr.participant_id END), m.sender_id
+ MIN(CASE WHEN NULLIF(TRIM(mr.email_address), '') IS NOT NULL THEN mr.participant_id END), m.sender_id,
+ SUM(CASE WHEN mr.is_relayed THEN 1 ELSE 0 END)
  FROM messages m LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
- WHERE m.id = ? GROUP BY m.sender_id`, messageID).Scan(&count, &participants, &senderID, &recordedSenderID)
+ WHERE m.id = ? GROUP BY m.sender_id`, messageID).Scan(&count, &participants, &senderID, &recordedSenderID, &relayed)
 	if err != nil {
 		return fmt.Errorf("load first-contact sender evidence: %w", err)
 	}
-	if count != 1 || participants != 1 || (recordedSenderID.Valid && recordedSenderID.Int64 != senderID.Int64) {
+	if count != 1 || participants != 1 || relayed != 0 || (recordedSenderID.Valid && recordedSenderID.Int64 != senderID.Int64) {
 		senderID = sql.NullInt64{}
 	}
 	state.FirstContactKind, state.Introducer = ClassifyFirstContact(candidate, state.PersonID, senderID.Int64)
