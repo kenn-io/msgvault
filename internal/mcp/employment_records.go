@@ -9,6 +9,8 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+const MaxEmploymentDescriptionLength = 131072
+
 // EmploymentRecord exposes the native revision token alongside its record.
 type EmploymentRecord struct {
 	ETag       string               `json:"etag"`
@@ -32,6 +34,7 @@ func employmentOperationalDefinitions() []operationalDefinition {
 	body.Properties["confidence"] = &jsonschema.Schema{Type: "number", Description: "Confidence from 0 to 1, only for derived or suggested sources"}
 	body.Properties["start_date"] = stringSchema("Partial ISO date: YYYY, YYYY-MM, or YYYY-MM-DD")
 	body.Properties["end_date"] = stringSchema("Partial ISO date, not before start_date; omit while is_current is true")
+	body.Properties["description"].MaxLength = new(MaxEmploymentDescriptionLength)
 	// Native nullable fields use omission and null equivalently for replacement.
 	for key := range body.Properties {
 		if slices.Contains(body.Required, key) {

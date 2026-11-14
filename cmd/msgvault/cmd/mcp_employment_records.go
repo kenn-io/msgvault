@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"slices"
+	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
@@ -65,6 +66,10 @@ type employmentListArgs struct {
 	Offset         *int64 `json:"offset,omitempty"`
 }
 
+func validEmploymentDescription(body *generated.EmploymentBody) bool {
+	return body != nil && (body.Description == nil || utf8.RuneCountInString(*body.Description) <= mcpserver.MaxEmploymentDescriptionLength)
+}
+
 func (b *daemonMCPOperations) executeEmploymentOperation(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	invalid := func() (*mcpserver.OperationResult, bool, error) {
 		return operationFailure(invalidArguments, false), true, nil
@@ -89,13 +94,13 @@ func (b *daemonMCPOperations) executeEmploymentOperation(ctx context.Context, na
 		}
 	case "create_employment":
 		a, e := decodeMCPOperationArguments[employmentBodyArgs](args)
-		if e != nil || a.Employment == nil || a.Employment.IsPrimary == nil {
+		if e != nil || !validEmploymentDescription(a.Employment) || a.Employment.IsPrimary == nil {
 			return invalid()
 		}
 		result, err = readMCPOperationJSON[generated.Employment](ctx, b.client, http.MethodPost, "/api/v1/employments", &generated.CreateEmploymentRequestOptions{Body: a.Employment}, http.StatusCreated)
 	case "replace_employment":
 		a, e := decodeMCPOperationArguments[employmentBodyArgs](args)
-		if e != nil {
+		if e != nil || !validEmploymentDescription(a.Employment) {
 			return invalid()
 		}
 		result, err = readMCPOperationJSON[generated.Employment](ctx, b.client, http.MethodPatch, "/api/v1/employments/{id}", &generated.PatchEmploymentRequestOptions{PathParams: &generated.PatchEmploymentPath{ID: a.EmploymentID}, Header: &generated.PatchEmploymentHeaders{IfMatch: a.ETag}, Body: a.Employment}, http.StatusOK)
@@ -140,7 +145,7 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 	switch name {
 	case "create_employment", "replace_employment":
 		a, e := decodeMCPOperationArguments[employmentBodyArgs](args)
-		if e != nil || a.Employment == nil || (name == "create_employment" && a.Employment.IsPrimary == nil) {
+		if e != nil || !validEmploymentDescription(a.Employment) || (name == "create_employment" && a.Employment.IsPrimary == nil) {
 			return invalid()
 		}
 		id, input = a.EmploymentID, a.Employment
@@ -168,9 +173,6 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 	var primary *generated.Employment
 	if input != nil {
 		willBePrimary := input.IsPrimary != nil && *input.IsPrimary
-		if input.IsPrimary == nil && current != nil && current.Employment.IsPrimary && input.EndDate == nil && (input.IsCurrent == nil || *input.IsCurrent) {
-			willBePrimary = true
-		}
 		if willBePrimary {
 			listed, _, e := b.executeEmploymentOperation(ctx, "list_person_employments", map[string]any{"person_id": input.PersonID, "current_only": true, "limit": 1})
 			if e != nil {
@@ -196,7 +198,7 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 			if !ok {
 				return invalid()
 			}
-			if _, exists := body["expected_primary"]; !exists {
+			if _, exists := body["expected_primary"]; name != "create_employment" && !exists {
 				body["expected_primary"] = guard
 			}
 		}

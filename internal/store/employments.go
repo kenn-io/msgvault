@@ -52,7 +52,8 @@ type EmploymentInput struct {
 	Source                            Provenance
 	SourceRef                         *string
 	Confidence                        *float64
-	ExpectedPrimary                   *EmploymentRevision
+	// ExpectedPrimary is checked only when the replacement becomes primary.
+	ExpectedPrimary *EmploymentRevision
 }
 
 type EmploymentRevision struct {
@@ -254,8 +255,8 @@ func (s *Store) setPrimaryEmploymentOnce(ctx context.Context, id, expectedRevisi
 		if !current.IsCurrent {
 			return fmt.Errorf("%w: a historical employment cannot be primary", ErrEmploymentInvalid)
 		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE employments SET is_primary = ?, revision = revision + 1, updated_at = %s WHERE person_id = ? AND id <> ? AND %s`, s.dialect.Now(), s.dialect.BoolTrueExpr("is_primary")), false, current.PersonID, id); err != nil {
-			return fmt.Errorf("demote primary employment: %w", err)
+		if err := s.demotePrimaryTx(ctx, tx, current.PersonID, id); err != nil {
+			return err
 		}
 		employment, err = scanEmployment(tx.QueryRowContext(ctx, fmt.Sprintf(`UPDATE employments SET is_primary = ?, revision = revision + 1, updated_at = %s WHERE id = ? AND revision = ? RETURNING %s`, s.dialect.Now(), employmentColumns), true, id, expectedRevision))
 		if errors.Is(err, sql.ErrNoRows) {
@@ -476,11 +477,6 @@ func (s *Store) addEmploymentTx(
 		return nil, err
 	}
 	current := employmentCurrent(input)
-	if input.IsPrimary != nil && *input.IsPrimary {
-		if err := s.guardExpectedPrimaryTx(ctx, tx, input.PersonID, input.ExpectedPrimary, 0, false); err != nil {
-			return nil, err
-		}
-	}
 	primary, err := s.resolveEmploymentPrimaryTx(ctx, tx, input, current, 0)
 	if err != nil {
 		return nil, err
@@ -511,16 +507,15 @@ func (s *Store) reviseEmploymentTx(
 		// is_current nor an end date must not resurrect a historical row.
 		current = currentEmployment.IsCurrent
 	}
-	primary := currentEmployment.IsPrimary && current
-	if input.IsPrimary != nil {
-		primary = *input.IsPrimary
-	}
-	if primary {
-		if err := s.guardExpectedPrimaryTx(ctx, tx, input.PersonID, input.ExpectedPrimary, id, true); err != nil {
-			return nil, err
+	var primary bool
+	if input.IsPrimary == nil {
+		primary = currentEmployment.IsPrimary && current
+	} else {
+		if *input.IsPrimary {
+			if err := s.guardExpectedPrimaryTx(ctx, tx, input.PersonID, input.ExpectedPrimary, id); err != nil {
+				return nil, err
+			}
 		}
-	}
-	if input.IsPrimary != nil {
 		primary, err = s.resolveEmploymentPrimaryTx(ctx, tx, input, current, id)
 		if err != nil {
 			return nil, err
@@ -723,7 +718,7 @@ func personFactEmploymentTargetRef() (personfacts.TargetRef, error) {
 	return personfacts.TargetRef{}, errors.New("employment fact target is unavailable")
 }
 
-func (s *Store) guardExpectedPrimaryTx(ctx context.Context, tx *loggedTx, personID int64, expected *EmploymentRevision, id int64, demote bool) error {
+func (s *Store) guardExpectedPrimaryTx(ctx context.Context, tx *loggedTx, personID int64, expected *EmploymentRevision, id int64) error {
 	if expected == nil {
 		return nil
 	}
@@ -741,11 +736,16 @@ func (s *Store) guardExpectedPrimaryTx(ctx context.Context, tx *loggedTx, person
 	if primaryID != expected.ID || revision != expected.Revision {
 		return ErrEmploymentPrimaryConflict
 	}
-	if demote && primaryID != id {
-		_, err = tx.ExecContext(ctx, fmt.Sprintf(`UPDATE employments SET is_primary = ?, revision = revision + 1, updated_at = %s WHERE id = ? AND revision = ?`, s.dialect.Now()), false, primaryID, revision)
-		if err != nil {
-			return fmt.Errorf("demote primary employment: %w", err)
-		}
+	if primaryID != id {
+		return s.demotePrimaryTx(ctx, tx, personID, id)
+	}
+	return nil
+}
+
+func (s *Store) demotePrimaryTx(ctx context.Context, tx *loggedTx, personID, excludeID int64) error {
+	_, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE employments SET is_primary = ?, revision = revision + 1, updated_at = %s WHERE person_id = ? AND id <> ? AND %s`, s.dialect.Now(), s.dialect.BoolTrueExpr("is_primary")), false, personID, excludeID)
+	if err != nil {
+		return fmt.Errorf("demote primary employment: %w", err)
 	}
 	return nil
 }

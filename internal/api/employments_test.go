@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -298,4 +299,12 @@ func mustAPIOrganization(t *testing.T, st *store.Store, name string) *store.Orga
 		store.OrganizationInput{Name: name, Kind: store.OrganizationKindCompany})
 	require.NoError(t, err)
 	return organization
+}
+
+func TestEmploymentHTTPReportsEnrichmentDispatchConflict(t *testing.T) {
+	srv, _ := newIdentityLinkTestServer(t)
+	response := httptest.NewRecorder()
+	srv.writeEmploymentError(response, store.ErrPersonEnrichmentDispatchInProgress)
+	assert.Equal(t, http.StatusConflict, response.Code)
+	assert.Contains(t, response.Body.String(), `"person_enrichment_dispatch_in_progress"`)
 }

@@ -450,6 +450,8 @@ func (s *Server) writeEmploymentError(w http.ResponseWriter, err error) {
 		return
 	}
 	switch {
+	case errors.Is(err, store.ErrPersonEnrichmentDispatchInProgress):
+		writeError(w, http.StatusConflict, "person_enrichment_dispatch_in_progress", "Person enrichment dispatch is in progress")
 	case errors.Is(err, store.ErrEmploymentNotFound):
 		writeError(w, http.StatusNotFound, "employment_not_found", "Employment not found")
 	case errors.Is(err, store.ErrEmploymentRevisionConflict):

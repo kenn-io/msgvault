@@ -218,3 +218,28 @@ func TestMCPEmploymentCreatePrimaryRefusesBeforeApproval(t *testing.T) {
 	must.Equal("employment_primary_conflict", loopToolFailure(t, result)["error"])
 	must.Zero(approvals)
 }
+
+func TestMCPEmploymentRejectsOversizedDescription(t *testing.T) {
+	b, st, person, org := employmentFixture(t)
+	body := map[string]any{"person_id": person, "organization_id": org, "source": "user", "is_primary": false}
+	created, err := b.ExecuteOperation(t.Context(), "create_employment", map[string]any{"employment": body})
+	require.NoError(t, err)
+	record := operationOutput[mcpserver.EmploymentRecord](t, created)
+	body["description"] = strings.Repeat("x", 131073)
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"create_employment", map[string]any{"employment": body}},
+		{"replace_employment", map[string]any{"employment_id": record.Employment.ID, "etag": record.ETag, "employment": body}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := b.ExecuteOperation(t.Context(), tc.name, tc.args)
+			require.NoError(t, err)
+			assertDefiniteRefusal(t, result, "invalid_arguments")
+		})
+	}
+	got, err := st.GetEmploymentContext(t.Context(), record.Employment.ID)
+	require.NoError(t, err)
+	assert.Equal(t, record.Employment.Revision, got.Revision)
+}
