@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-11-11"
 title: Beeper
 description: Archive every chat network connected to Beeper Desktop via its local API.
 ---
@@ -449,6 +449,14 @@ participants still unify across archives via phone-number and email matching
 resolving to the same person).
 
 Telegram users also link to [Telegram Desktop imports](text-messages.md#import-telegram) by numeric user ID when a sync revisits their chat; `sync-beeper --full` covers quiet chats.
+
+Linking users does not deduplicate their messages. Beeper's documented Desktop
+API does not promise Telegram chat or message IDs, and whether a particular
+Desktop version returns additional bridge identity fields is unverified; native
+ID questions are tracked in [issue #2119](https://github.com/kenn-io/msgvault/issues/2119).
+Beeper IDs should not be treated as Telegram IDs. If both sources contain a chat, use
+the [conversation search recipe](searching.md#search-one-copy-of-overlapping-chats)
+to choose which archived copy to search.
 
 ## Caveats
 
