@@ -197,3 +197,34 @@ func TestUninstall_GlobRootDoesNotEscape(t *testing.T) {
 		filepath.Join(neighbor, "msgvault-search", "SKILL.md"),
 		"skills under a sibling directory must be untouched")
 }
+
+func TestCheckAndRoot(t *testing.T) {
+	home := t.TempDir()
+	root, ok := Root(home, "claude")
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(home, ".claude", "skills"), root)
+	codex, ok := Root(home, "codex")
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(home, ".codex", "skills"), codex)
+	_, ok = Root(home, "other")
+	assert.False(t, ok)
+
+	list := testSkills()
+	results, err := Check(root, list)
+	require.NoError(t, err)
+	assert.Equal(t, "missing", results[0].State)
+	_, err = Install(root, list, false)
+	require.NoError(t, err)
+	results, err = Check(root, list)
+	require.NoError(t, err)
+	assert.Equal(t, "current", results[0].State)
+	path := filepath.Join(root, list[0].Name, "SKILL.md")
+	require.NoError(t, os.WriteFile(path, []byte(Marker+" older"), 0o600))
+	results, err = Check(root, list)
+	require.NoError(t, err)
+	assert.Equal(t, "outdated", results[0].State)
+	require.NoError(t, os.WriteFile(path, []byte("custom"), 0o600))
+	results, err = Check(root, list)
+	require.NoError(t, err)
+	assert.Equal(t, "modified", results[0].State)
+}

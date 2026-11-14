@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/voyage"
 	"go.kenn.io/docbank/document/voyage/voyagetest"
+	"go.kenn.io/kit/agentsetup"
 	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -1447,5 +1448,38 @@ func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
 			assert.Equal(t, 1, probes)
 			assert.Equal(t, 1, discoveries)
 		})
+	}
+}
+
+func TestSetupStatusAgents(t *testing.T) {
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+	row := agentsetup.Row{Agent: "claude", AgentName: "Claude Code", Piece: "skills", Status: agentsetup.Status{State: agentsetup.StateOK}}
+	for _, jsonOutput := range []bool{false, true} {
+		command := newSetupStatusCommand(setupStatusDeps{
+			config: func() *config.Config { return fixture.load(t) },
+			environment: func(*cobra.Command, *config.Config) setupEnvironment {
+				return setupEnvironment{lookupEnv: fixture.lookupEnv, fileExists: defaultFileExists}
+			},
+			agents: func(context.Context) (agentsetup.Report, error) {
+				return agentsetup.Report{Rows: []agentsetup.Row{row}}, nil
+			},
+		})
+		var output bytes.Buffer
+		command.SetOut(&output)
+		command.SetArgs([]string{})
+		if jsonOutput {
+			command.SetArgs([]string{"--json"})
+		}
+		require.NoError(t, command.ExecuteContext(t.Context()))
+		if jsonOutput {
+			var report laneReport
+			require.NoError(t, json.Unmarshal(output.Bytes(), &report))
+			assert.Equal(t, []agentsetup.Row{row}, report.Agents)
+		} else {
+			text := output.String()
+			assert.Contains(t, text, "Claude Code")
+			assert.Less(t, strings.Index(text, "MCP tools live"), strings.Index(text, "Agents:"))
+			assert.Less(t, strings.Index(text, "Agents:"), strings.Index(text, "Config:"))
+		}
 	}
 }

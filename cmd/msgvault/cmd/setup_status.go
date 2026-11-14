@@ -3,9 +3,11 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/agentsetup"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/providercredentials"
 )
@@ -13,6 +15,7 @@ import (
 // setupStatusDeps isolates the report from the process so tests can drive it
 // from a temp config and a fixed environment.
 type setupStatusDeps struct {
+	agents      func(context.Context) (agentsetup.Report, error)
 	bind        func(context.Context) setupStatusDeps
 	config      func() *config.Config
 	environment func(*cobra.Command, *config.Config) setupEnvironment
@@ -27,6 +30,7 @@ func defaultSetupStatusDeps() setupStatusDeps {
 				currentCfg = state.cfg
 			}
 			return setupStatusDeps{
+				agents: checkAgentSetup,
 				config: func() *config.Config { return currentCfg },
 				environment: func(command *cobra.Command, loaded *config.Config) setupEnvironment {
 					credentials, _ := providercredentials.Read(loaded.TokensDir())
@@ -39,6 +43,7 @@ func defaultSetupStatusDeps() setupStatusDeps {
 				},
 			}
 		},
+		agents: checkAgentSetup,
 		config: func() *config.Config { return nil },
 		environment: func(command *cobra.Command, loaded *config.Config) setupEnvironment {
 			// Read retains any load error in the snapshot so each lane can report it.
@@ -65,7 +70,8 @@ names the provider and model, whether it is on, why it is off, whether its
 consent is recorded, and the exact command that turns it on.
 
 The report reads config.toml, the process environment, stored provider
-credentials, and the local archive's consent records. It never contacts a provider.`,
+credentials, and the local archive's consent records. It never contacts a provider.
+It checks Claude Code and Codex; Codex may start the msgvault daemon to check MCP.`,
 		Example: "  msgvault setup status --json",
 		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
@@ -81,6 +87,14 @@ credentials, and the local archive's consent records. It never contacts a provid
 				return errors.New("configuration is unavailable")
 			}
 			report := buildLaneReport(loaded, bound.environment(command, loaded))
+			if bound.agents != nil {
+				agents, err := bound.agents(command.Context())
+				if err != nil {
+					_, _ = fmt.Fprintf(command.ErrOrStderr(), "check agents: %v\n", err)
+				} else {
+					report.Agents = agents.Rows
+				}
+			}
 			return writeLaneReport(command.OutOrStdout(), report, jsonOutput)
 		},
 	}

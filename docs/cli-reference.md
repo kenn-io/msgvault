@@ -4693,6 +4693,10 @@ canonical UID as the scalar `msgvault.person` metadata value and
 
 ---
 
+## agent setup
+
+Run `msgvault agent setup` to install skills and connect the MCP server for Claude Code and Codex. Use `--agent claude,codex` to select agents, `--check` to inspect readiness, `--json` for structured output, or `--print` for manual MCP commands.
+
 ## skills
 
 Install or remove the bundled msgvault agent skills:

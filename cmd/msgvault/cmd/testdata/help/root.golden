@@ -5,7 +5,6 @@ Start here:
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
   msgvault person --help
   msgvault daemon status
   msgvault setup status --json
@@ -181,6 +180,7 @@ Maintenance and repair:
   unpack-attachments      Restore packed attachments to loose files
 
 Setup, daemon, and integrations:
+  agent        Set up coding agent integrations
   agent-token  Manage restricted agent grant tokens
   completion   Generate shell completion script
   credentials  Manage provider credentials on the daemon host

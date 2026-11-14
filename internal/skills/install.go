@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -20,6 +21,44 @@ type AgentDir struct {
 var knownAgents = []struct{ name, configDir string }{
 	{"claude", ".claude"},
 	{"codex", ".codex"},
+}
+
+// Root returns the skills root for a supported agent.
+func Root(home, agent string) (string, bool) {
+	for _, a := range knownAgents {
+		if a.name == agent {
+			return filepath.Join(home, a.configDir, "skills"), true
+		}
+	}
+	return "", false
+}
+
+// CheckResult describes the state of one skill.
+type CheckResult struct {
+	Skill string
+	State string
+}
+
+// Check compares installed skills with the rendered files.
+func Check(root string, list []Skill) ([]CheckResult, error) {
+	results := make([]CheckResult, 0, len(list))
+	for _, sk := range list {
+		path := filepath.Join(root, sk.Name, skillFileName)
+		content, err := os.ReadFile(path)
+		state := "current"
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			state = "missing"
+		case err != nil:
+			return results, fmt.Errorf("read skill %s: %w", path, err)
+		case !bytes.Contains(content, []byte(Marker)):
+			state = "modified"
+		case !bytes.Equal(content, []byte(sk.Content)):
+			state = "outdated"
+		}
+		results = append(results, CheckResult{Skill: sk.Name, State: state})
+	}
+	return results, nil
 }
 
 // DetectAgents returns the skills roots of agents whose config
