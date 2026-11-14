@@ -1534,6 +1534,11 @@ func TestMicrosoftGraphTokenUseByRemainingSource(t *testing.T) {
 	require.NoError(t, os.MkdirAll(tokenDir, 0o700))
 	mgr := microsoft.NewGraphMailManager("", "", "", tokenDir, nil)
 	require.NoError(t, os.WriteFile(mgr.TokenPath("user@example.com"), []byte(`{}`), 0o600))
+	if _, err := os.Stat(mgr.TokenPath("USER@example.com")); err == nil {
+		t.Skip("filesystem treats mailbox case variants as the same file")
+	} else {
+		require.ErrorIs(t, err, os.ErrNotExist)
+	}
 	require.NoError(t, os.WriteFile(mgr.TokenPath("USER@example.com"), []byte(`{}`), 0o600))
 	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
 	src, err := st.GetOrCreateSource(sourceTypeMSMail, "USER@example.com")
@@ -1544,15 +1549,7 @@ func TestMicrosoftGraphTokenUseByRemainingSource(t *testing.T) {
 	assert.True(t, used)
 	used, err = microsoftMailTokenInUse(st, cfg, "user@example.com", mgr.TokenPath("user@example.com"), true)
 	require.NoError(t, err)
-	lower, err := os.Stat(mgr.TokenPath("user@example.com"))
-	require.NoError(t, err)
-	upper, err := os.Stat(mgr.TokenPath("USER@example.com"))
-	require.NoError(t, err)
-	if os.SameFile(lower, upper) {
-		assert.True(t, used)
-	} else {
-		assert.False(t, used)
-	}
+	assert.False(t, used)
 	cfg.Microsoft.Apps["second"] = config.MicrosoftApp{ClientID: "client-b"}
 	used, err = microsoftMailTokenInUse(st, cfg, "USER@example.com", mgr.TokenPath("USER@example.com"), true)
 	require.NoError(t, err)

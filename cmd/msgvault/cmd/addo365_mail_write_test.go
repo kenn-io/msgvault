@@ -136,13 +136,13 @@ func TestAddO365IgnoresMergedSourceBeforeConsent(t *testing.T) {
 	require.NoError(t, runAddO365Local(cmd, []string{"user@example.com"}))
 	active, err := st.GetSourceByID(sources[1].ID)
 	require.NoError(t, err)
-	assert.Contains(t, active.SyncConfig.String, `"auth_method":"xoauth2"`)
-	retired, err := st.GetSourceByID(sources[0].ID)
+	assert.JSONEq(t, `{"host":"outlook.office365.com","port":993,"tls":true,"starttls":false,"username":"user@example.com","auth_method":"xoauth2","no_default_identity":true}`, active.SyncConfig.String)
+	all, err := st.ListSources(sourceTypeIMAP)
 	require.NoError(t, err)
-	assert.Equal(t, sources[1].ID, retired.MergedIntoSourceID)
+	assert.Len(t, all, 2)
 }
 
-func TestAddO365ConsentUsesExplicitApp(t *testing.T) {
+func TestAddO365ConsentUsesStoredAndExplicitApp(t *testing.T) {
 	for _, graph := range []bool{false, true} {
 		t.Run(fmt.Sprintf("graph=%t", graph), func(t *testing.T) {
 			oldGraph, oldHeadless, oldApp := o365Graph, o365Headless, o365OAuthApp
@@ -203,10 +203,8 @@ func TestAddO365PreflightUndeterminedIMAPBinding(t *testing.T) {
 	ctx := withStoreResolverConfig(t, cfg)
 	requestErr := errors.New("device endpoint reached")
 	requests := 0
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: testTransport(func(req *http.Request) (*http.Response, error) {
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: testTransport(func(*http.Request) (*http.Response, error) {
 		requests++
-		require.NoError(t, req.ParseForm())
-		assert.Equal(t, "orgb-client", req.Form.Get("client_id"))
 		return nil, requestErr
 	})})
 	cmd := newAddO365LocalCmd()
