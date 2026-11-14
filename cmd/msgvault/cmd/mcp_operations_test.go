@@ -28,8 +28,7 @@ import (
 func TestMCPOperationResponseFailures(t *testing.T) {
 	t.Parallel()
 	settings := func(ctx context.Context, client *daemonclient.Client, method, path string) (*mcpserver.OperationResult, error) {
-		result, err := readMCPOperationJSON[slackSettingsResponse](ctx, client, method, path, nil, http.StatusOK)
-		return slackPolicyProjection(result, true), err
+		return readMCPOperationJSON[slackSettingsResponse](ctx, client, method, path, nil, http.StatusOK)
 	}
 	person := func(ctx context.Context, client *daemonclient.Client, method, path string) (*mcpserver.OperationResult, error) {
 		return readMCPOperationJSON[generated.Person](ctx, client, method, path, nil, http.StatusOK)
