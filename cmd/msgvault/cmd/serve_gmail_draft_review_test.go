@@ -1077,26 +1077,11 @@ func TestGmailDraftExternalAdoptionPersistsAttachments(t *testing.T) {
 	require.Error(err)
 	assert.Equal("invalid_draft", err.Error())
 	assert.Equal(0, fixture.client.updateCalls)
-}
-
-func TestGmailDraftEditLintGateRunsBeforeLock(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	fixture := newGmailDraftTestFixture(t)
-	draft := fixture.seedDraft(t)
-	fixture.client.getDraft = &gmail.Draft{ID: "gmail-draft-managed", Message: gmail.RawMessage{
-		ID: "gmail-message-external-attachment", ThreadID: "gmail-thread-1",
-		Raw: gmailDraftTestRawWithAttachment("gmail-external-attachment@example.test"),
-	}}
-	_, err := fixture.lifecycle(t, api.CLIRunDraftEditCommand, draft, "candidate")
-	require.EqualError(err, "changed_externally")
-	adopted, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
-	require.NoError(err)
 
 	ownership, err := fixture.store.AcquireSyncExecutionContext(t.Context(), fixture.source.ID)
 	require.NoError(err)
 	t.Cleanup(func() { _ = ownership.Release() })
-	events, err := lintRun(t, fixture.adapter, nil, "draft-edit", adopted.DraftID, "--revision", strconv.FormatInt(adopted.Revision, 10), "--body", "candidate", "--validate-only", "--json")
+	events, err = lintRun(t, fixture.adapter, nil, "draft-edit", adopted.DraftID, "--revision", strconv.FormatInt(adopted.Revision, 10), "--body", "candidate", "--validate-only", "--json")
 	require.EqualError(err, "invalid_draft")
 	assert.Empty(events)
 	_, err = lintRun(t, fixture.adapter, nil, "draft-edit", adopted.DraftID, "--revision", strconv.FormatInt(adopted.Revision, 10), "--body", "FIRST_NAME", "--strict", "--json")

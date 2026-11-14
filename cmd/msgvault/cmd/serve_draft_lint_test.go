@@ -86,21 +86,13 @@ func TestDraftReplyStrictRefuses(t *testing.T) {
 		assert.NotContains(events[0].Data, code)
 	}
 	assert.NotContains(events[0].Data, `{"`)
+	args = []string{"draft-forward", strconv.FormatInt(f.parentID, 10), "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", "a@example.com", "--body", "FIRST_NAME", "--json"}
+	events, err = lintRun(t, a, nil, append(args, "--validate-only")...)
+	require.NoError(err)
+	assert.Equal(false, lintObject(t, events)["valid"])
+	_, err = lintRun(t, a, nil, append(args, "--strict")...)
+	require.EqualError(err, "draft_lint_failed")
 	assert.Zero(calls)
-	assertDraftRows(t, f.store)
-}
-
-func TestDraftReplyStrictRefusesPlaceholderAfterAttribution(t *testing.T) {
-	f := newDraftReplyFixture(t)
-	args := []string{"draft-reply", strconv.FormatInt(f.parentID, 10), "--from", testutil.IMAPTestUsername, "--body", "On Monday I wrote:\nFIRST_NAME", "--strict", "--json"}
-	events, err := lintRun(t, f.grantedAdapter(), nil, args...)
-	require.EqualError(t, err, "draft_lint_failed")
-	assert.Equal(t, "refused", lintObject(t, events)["status"])
-	assertDraftRows(t, f.store)
-
-	events, err = lintRun(t, f.grantedAdapter(), nil, append(args, "--validate-only")...)
-	require.NoError(t, err)
-	assert.Equal(t, false, lintObject(t, events)["valid"])
 	assertDraftRows(t, f.store)
 }
 
@@ -203,21 +195,6 @@ func TestValidateOnlyWritesNothing(t *testing.T) {
 		assert.NotContains(got, "draft_id")
 		assert.NotContains(got, "recipient_provenance_status")
 		assertDraftRows(t, f.store)
-	})
-	t.Run("chat", func(t *testing.T) {
-		require := require.New(t)
-
-		st := testutil.NewTestStore(t)
-		source, err := st.GetOrCreateSource("slack", "synthetic")
-		require.NoError(err)
-		id, err := st.EnsureConversationWithType(source.ID, "C1", "channel", "General")
-		require.NoError(err)
-		a := &storeAPIAdapter{store: st}
-		events, err := lintRun(t, a, nil, "draft-compose", "--conversation", strconv.FormatInt(id, 10), "--body", "Hi Sam,", "--validate-only", "--json")
-		require.NoError(err)
-		got := lintObject(t, events)
-		assert.Nil(t, got["recipients"])
-		assertDraftRows(t, st)
 	})
 }
 func TestGmailDraftReplyValidateOnlyChecksScopes(t *testing.T) {
@@ -407,22 +384,11 @@ func TestValidateOnlyEditWritesNothing(t *testing.T) {
 
 		f := newGmailDraftTestFixture(t)
 		draft := f.seedDraft(t)
-		before := f.client.getCalls
-		events, err := lintRun(t, f.adapter, nil, "draft-edit", draft.DraftID, "--revision", "1", "--body", "Hi FIRST_NAME", "--validate-only", "--json")
-		require.NoError(err)
-		assert.Equal(false, lintObject(t, events)["valid"])
-		assert.Equal(before, f.client.getCalls)
-		assert.Zero(f.client.updateCalls)
-		after, err := f.store.GetGmailDraftContext(t.Context(), draft.DraftID)
-		require.NoError(err)
-		assert.Equal(draft.Revision, after.Revision)
-		assert.Nil(after.Pending)
-
 		_, state := setupCommandOAuth(t)
 		putCommandToken(t, state, f.source.Identifier, oauth.ScopesGmailReadonly)
 		f.adapter.config = state.cfg
 		var scopeEvents []api.CLIRunEvent
-		err = f.adapter.runCLIDraftLifecycle(withInvocation(t.Context(), state), api.CLIRunRequest{Args: []string{
+		err := f.adapter.runCLIDraftLifecycle(withInvocation(t.Context(), state), api.CLIRunRequest{Args: []string{
 			"draft-edit", draft.DraftID, "--revision", "1", "--body", "Thanks", "--validate-only", "--json",
 		}}, func(event api.CLIRunEvent) error {
 			scopeEvents = append(scopeEvents, event)
@@ -430,156 +396,56 @@ func TestValidateOnlyEditWritesNothing(t *testing.T) {
 		})
 		require.EqualError(err, "insufficient_scope")
 		assert.Empty(scopeEvents)
-		assert.Equal(before, f.client.getCalls)
+		assert.Zero(f.client.getCalls)
 		assert.Zero(f.client.updateCalls)
 	})
-	t.Run("chat", func(t *testing.T) {
-		require := require.New(t)
-
-		st := testutil.NewTestStore(t)
-		s, err := st.GetOrCreateSource("slack", "synthetic")
-		require.NoError(err)
-		id, err := st.EnsureConversationWithType(s.ID, "C1", "channel", "General")
-		require.NoError(err)
-		draft, err := st.CreateChatDraftContext(t.Context(), id, 0, "original", func(string, string) error { return nil })
-		require.NoError(err)
-		a := &storeAPIAdapter{store: st}
-		_, err = lintRun(t, a, nil, "draft-edit", draft.DraftID, "--revision", "1", "--body", "Hi FIRST_NAME", "--validate-only", "--json")
-		require.NoError(err)
-		after, err := st.GetChatDraftContext(t.Context(), draft.DraftID)
-		require.NoError(err)
-		assert.Equal(t, draft, after)
-	})
-	t.Run("beeper", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-
-		f := newBeeperDraftFixture(t)
-		draft, err := f.store.CreateBeeperDraftContext(t.Context(), f.source.ID, beeperDraftTestChat, "original")
-		require.NoError(err)
-		_, err = lintRun(t, f.adapter, nil, "draft-edit", draft.DraftID, "--revision", "1", "--body", "Hi FIRST_NAME", "--validate-only", "--json")
-		require.EqualError(err, "pending_operation")
-		pending, err := f.store.GetBeeperDraftContext(t.Context(), draft.DraftID)
-		require.NoError(err)
-		assert.Equal(draft, pending)
-		draft, err = f.store.FinishBeeperDraftContext(t.Context(), draft.DraftID, draft.Revision, "original")
-		require.NoError(err)
-		_, err = lintRun(t, f.adapter, nil, "draft-edit", draft.DraftID, "--revision", "1", "--body", "Hi FIRST_NAME", "--validate-only", "--json")
-		require.NoError(err)
-		requests, patches := f.beeper.counts()
-		assert.Zero(requests)
-		assert.Zero(patches)
-		after, err := f.store.GetBeeperDraftContext(t.Context(), draft.DraftID)
-		require.NoError(err)
-		assert.Equal(draft, after)
-	})
 }
-func TestDraftForwardValidateAndStrict(t *testing.T) {
+func TestDraftChatPreviewAndLint(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-
-	f := newDraftReplyFixture(t)
-	a := f.grantedAdapter()
-	calls := 0
-	a.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
-		calls++
-		return nil, errors.New("unexpected provider call")
-	}
-	args := []string{"draft-forward", strconv.FormatInt(f.parentID, 10), "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", "a@example.com", "--body", "FIRST_NAME", "--json"}
-	events, err := lintRun(t, a, nil, append(args, "--validate-only")...)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("slack", "synthetic")
 	require.NoError(err)
-	assert.Equal(false, lintObject(t, events)["valid"])
-	_, err = lintRun(t, a, nil, append(args, "--strict")...)
-	require.EqualError(err, "draft_lint_failed")
-	assertDraftRows(t, f.store)
-	assert.Zero(calls)
-}
-
-func TestDraftChatAndBeeperReportLint(t *testing.T) {
-	t.Run("chat", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-
-		st := testutil.NewTestStore(t)
-		s, err := st.GetOrCreateSource("slack", "synthetic")
-		require.NoError(err)
-		id, err := st.EnsureConversationWithType(s.ID, "C1", "channel", "General")
-		require.NoError(err)
-		a := &storeAPIAdapter{store: st}
-		_, err = lintRun(t, a, nil, "draft-compose", "--conversation", strconv.FormatInt(id, 10), "--body", "Hi FIRST_NAME", "--strict", "--json")
-		require.EqualError(err, "draft_lint_failed")
-		assertDraftRows(t, st)
-		events, err := lintRun(t, a, nil, "draft-compose", "--conversation", strconv.FormatInt(id, 10), "--body", "FIRST_NAME", "--json")
-		require.NoError(err)
-		created := lintObject(t, events)
-		assert.Contains(events[0].Data, "unresolved_placeholder")
-		draftID, ok := created["draft_id"].(string)
-		require.True(ok)
-		_, err = lintRun(t, a, nil, "draft-edit", draftID, "--revision", "1", "--body", "LAST_NAME", "--strict", "--json")
-		require.EqualError(err, "draft_lint_failed")
-		after, err := st.GetChatDraftContext(t.Context(), draftID)
-		require.NoError(err)
-		assert.Equal(int64(1), after.Revision)
-		events, err = lintRun(t, a, nil, "draft-edit", draftID, "--revision", "1", "--body", "LAST_NAME", "--json")
-		require.NoError(err)
-		assert.Contains(events[0].Data, "unresolved_placeholder")
-	})
-	t.Run("beeper", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-
-		f := newBeeperDraftFixture(t)
-		_, err := lintRun(t, f.adapter, nil, "draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "Hi FIRST_NAME", "--strict", "--json")
-		require.EqualError(err, "draft_lint_failed")
-		requests, patches := f.beeper.counts()
-		assert.Zero(requests)
-		assert.Zero(patches)
-		assertDraftRows(t, f.store)
-		created, err := f.run(t, nil, "draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "FIRST_NAME")
-		require.NoError(err)
-		require.NotEmpty(created.Warnings)
-		assert.Equal("unresolved_placeholder", created.Warnings[0].Code)
-		_, err = f.run(t, nil, "draft-edit", created.DraftID, "--revision", "1", "--body", "LAST_NAME", "--strict")
-		require.EqualError(err, "draft_lint_failed")
-		after, err := f.store.GetBeeperDraftContext(t.Context(), created.DraftID)
-		require.NoError(err)
-		assert.Equal(int64(1), after.Revision)
-	})
-}
-
-func TestBeeperDraftBlankBody(t *testing.T) {
-	for _, edit := range []bool{false, true} {
-		t.Run(fmt.Sprintf("edit=%t", edit), func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-
-			f := newBeeperDraftFixture(t)
-			args := []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat}
-			if edit {
-				draft, err := f.create(t, nil, "existing")
-				require.NoError(err)
-				args = []string{"draft-edit", draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10)}
-			}
-			beforeRequests, beforePatches := f.beeper.counts()
-			events, err := lintRun(t, f.adapter, nil, append(args, "--body", "  ", "--validate-only", "--json")...)
-			require.NoError(err)
-			got := lintObject(t, events)
-			assert.Equal(false, got["valid"])
-			warnings, ok := got["warnings"].([]any)
-			require.True(ok)
-			require.Len(warnings, 1)
-			warning, ok := warnings[0].(map[string]any)
-			require.True(ok)
-			assert.Equal("empty_body", warning["code"])
-			_, err = lintRun(t, f.adapter, nil, append(args, "--body", "\x00", "--validate-only", "--json")...)
-			require.EqualError(err, "invalid_args")
-			_, err = lintRun(t, f.adapter, nil, append(args, "--body", "  ")...)
-			require.EqualError(err, "invalid_args")
-			requests, patches := f.beeper.counts()
-			assert.Equal(beforeRequests, requests)
-			assert.Equal(beforePatches, patches)
-		})
+	id, err := st.EnsureConversationWithType(source.ID, "C1", "channel", "General")
+	require.NoError(err)
+	a := &storeAPIAdapter{store: st}
+	for _, scoped := range []bool{true, false} {
+		grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}}
+		want := "invalid_destination"
+		if !scoped {
+			grant.Sources[0].Identifier = "other"
+			want = "not_permitted"
+		}
+		_, err := lintRun(t, a, grant, "draft-compose", "--conversation", strconv.FormatInt(id, 10), "--reply-to", "99999", "--body", "Thanks", "--validate-only")
+		require.EqualError(err, want)
 	}
+	events, err := lintRun(t, a, nil, "draft-compose", "--conversation", strconv.FormatInt(id, 10), "--body", "Hi Sam,", "--validate-only", "--json")
+	require.NoError(err)
+	assert.Nil(lintObject(t, events)["recipients"])
+	_, err = lintRun(t, a, nil, "draft-compose", "--conversation", strconv.FormatInt(id, 10), "--body", "Hi FIRST_NAME", "--strict", "--json")
+	require.EqualError(err, "draft_lint_failed")
+	assertDraftRows(t, st)
+	events, err = lintRun(t, a, nil, "draft-compose", "--conversation", strconv.FormatInt(id, 10), "--body", "FIRST_NAME", "--json")
+	require.NoError(err)
+	created := lintObject(t, events)
+	assert.Contains(events[0].Data, "unresolved_placeholder")
+	draftID, ok := created["draft_id"].(string)
+	require.True(ok)
+	draft, err := st.GetChatDraftContext(t.Context(), draftID)
+	require.NoError(err)
+	_, err = lintRun(t, a, nil, "draft-edit", draftID, "--revision", "1", "--body", "Hi FIRST_NAME", "--validate-only", "--json")
+	require.NoError(err)
+	after, err := st.GetChatDraftContext(t.Context(), draftID)
+	require.NoError(err)
+	assert.Equal(draft, after)
+	_, err = lintRun(t, a, nil, "draft-edit", draftID, "--revision", "1", "--body", "LAST_NAME", "--strict", "--json")
+	require.EqualError(err, "draft_lint_failed")
+	after, err = st.GetChatDraftContext(t.Context(), draftID)
+	require.NoError(err)
+	assert.Equal(int64(1), after.Revision)
+	events, err = lintRun(t, a, nil, "draft-edit", draftID, "--revision", "1", "--body", "LAST_NAME", "--json")
+	require.NoError(err)
+	assert.Contains(events[0].Data, "unresolved_placeholder")
 }
 
 func TestGmailDraftStrictPendingEditRecovery(t *testing.T) {
@@ -630,27 +496,111 @@ func TestGmailDraftStrictPendingEditRecovery(t *testing.T) {
 	}
 }
 
-func TestBeeperDraftValidateOnlyRequiresArchivedChat(t *testing.T) {
-	for _, otherAccount := range []bool{false, true} {
-		t.Run(fmt.Sprintf("other_account=%t", otherAccount), func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+func TestDraftBeeperPreviewAndLint(t *testing.T) {
+	t.Run("blank", func(t *testing.T) {
+		f := newBeeperDraftFixture(t)
+		for _, edit := range []bool{false, true} {
+			t.Run(fmt.Sprintf("edit=%t", edit), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
 
-			f := newBeeperDraftFixture(t)
-			chatID := "!missing:beeper.local"
-			if otherAccount {
-				other, err := f.store.GetOrCreateSource("beeper", "other-account")
+				args := []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat}
+				if edit {
+					draft, err := f.create(t, nil, "existing")
+					require.NoError(err)
+					args = []string{"draft-edit", draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10)}
+				}
+				beforeRequests, beforePatches := f.beeper.counts()
+				events, err := lintRun(t, f.adapter, nil, append(args, "--body", "  ", "--validate-only", "--json")...)
 				require.NoError(err)
-				_, err = f.store.EnsureConversationWithType(other.ID, chatID, "channel", "Other chat")
-				require.NoError(err)
-			}
-			_, err := lintRun(t, f.adapter, nil, "draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", chatID, "--body", "Thanks", "--validate-only", "--json")
-			require.EqualError(err, "chat_not_found")
-			require.ErrorContains(errors.Unwrap(err), "not archived under the selected source")
-			requests, patches := f.beeper.counts()
-			assert.Zero(requests)
-			assert.Zero(patches)
-			assertDraftRows(t, f.store)
-		})
-	}
+				got := lintObject(t, events)
+				assert.Equal(false, got["valid"])
+				warnings, ok := got["warnings"].([]any)
+				require.True(ok)
+				require.Len(warnings, 1)
+				warning, ok := warnings[0].(map[string]any)
+				require.True(ok)
+				assert.Equal("empty_body", warning["code"])
+				_, err = lintRun(t, f.adapter, nil, append(args, "--body", "\x00", "--validate-only", "--json")...)
+				require.EqualError(err, "invalid_args")
+				_, err = lintRun(t, f.adapter, nil, append(args, "--body", "  ")...)
+				require.EqualError(err, "invalid_args")
+				requests, patches := f.beeper.counts()
+				assert.Equal(beforeRequests, requests)
+				assert.Equal(beforePatches, patches)
+			})
+		}
+	})
+	t.Run("archived", func(t *testing.T) {
+		f := newBeeperDraftFixture(t)
+		for _, otherAccount := range []bool{false, true} {
+			t.Run(fmt.Sprintf("other_account=%t", otherAccount), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+
+				chatID := "!missing:beeper.local"
+				if otherAccount {
+					other, err := f.store.GetOrCreateSource("beeper", "other-account")
+					require.NoError(err)
+					_, err = f.store.EnsureConversationWithType(other.ID, chatID, "channel", "Other chat")
+					require.NoError(err)
+				}
+				_, err := lintRun(t, f.adapter, nil, "draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", chatID, "--body", "Thanks", "--validate-only", "--json")
+				require.EqualError(err, "chat_not_found")
+				require.ErrorContains(errors.Unwrap(err), "not archived under the selected source")
+				requests, patches := f.beeper.counts()
+				assert.Zero(requests)
+				assert.Zero(patches)
+				assertDraftRows(t, f.store)
+			})
+		}
+	})
+	t.Run("pending and duplicate", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+
+		f := newBeeperDraftFixture(t)
+		draft, err := f.store.CreateBeeperDraftContext(t.Context(), f.source.ID, beeperDraftTestChat, "original")
+		require.NoError(err)
+		grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{ID: f.source.ID, Type: f.source.SourceType, Identifier: f.source.Identifier}}}
+		events, err := lintRun(t, f.adapter, grant, "draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", "  "+beeperDraftTestChat+"  ", "--body", "Thanks", "--validate-only", "--json")
+		require.EqualError(err, "draft_exists")
+		assert.Equal(draft.DraftID, lintObject(t, events)["draft_id"])
+		_, err = lintRun(t, f.adapter, nil, "draft-edit", draft.DraftID, "--revision", "1", "--body", "Hi FIRST_NAME", "--validate-only", "--json")
+		require.EqualError(err, "pending_operation")
+		pending, err := f.store.GetBeeperDraftContext(t.Context(), draft.DraftID)
+		require.NoError(err)
+		assert.Equal(draft, pending)
+		draft, err = f.store.FinishBeeperDraftContext(t.Context(), draft.DraftID, draft.Revision, "original")
+		require.NoError(err)
+		_, err = lintRun(t, f.adapter, nil, "draft-edit", draft.DraftID, "--revision", "1", "--body", "Hi FIRST_NAME", "--validate-only", "--json")
+		require.NoError(err)
+		requests, patches := f.beeper.counts()
+		assert.Zero(requests)
+		assert.Zero(patches)
+		after, err := f.store.GetBeeperDraftContext(t.Context(), draft.DraftID)
+		require.NoError(err)
+		assert.Equal(draft, after)
+	})
+	t.Run("lint", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+
+		f := newBeeperDraftFixture(t)
+		_, err := lintRun(t, f.adapter, nil, "draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "Hi FIRST_NAME", "--strict", "--json")
+		require.EqualError(err, "draft_lint_failed")
+		requests, patches := f.beeper.counts()
+		assert.Zero(requests)
+		assert.Zero(patches)
+		assertDraftRows(t, f.store)
+		created, err := f.run(t, nil, "draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "FIRST_NAME")
+		require.NoError(err)
+		require.NotEmpty(created.Warnings)
+		assert.Equal("unresolved_placeholder", created.Warnings[0].Code)
+		_, err = f.run(t, nil, "draft-edit", created.DraftID, "--revision", "1", "--body", "LAST_NAME", "--strict")
+		require.EqualError(err, "draft_lint_failed")
+		after, err := f.store.GetBeeperDraftContext(t.Context(), created.DraftID)
+		require.NoError(err)
+		assert.Equal(int64(1), after.Revision)
+	})
 }

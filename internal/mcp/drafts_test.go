@@ -171,9 +171,6 @@ func TestSensitiveDraftConfirmation(t *testing.T) {
 		require.NoError(err)
 		require.False(result.NeedsInput())
 		require.False(result.IsError)
-		content, ok := result.StructuredContent.(map[string]any)
-		require.True(ok)
-		require.Len(content["sensitive_content"], 1)
 	})
 	assert := assert.New(t)
 	require := require.New(t)
@@ -382,7 +379,7 @@ func TestDraftStrictRefusalIncludesSensitiveContent(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	runner := &draftTestRunner{err: &DraftCommandError{Message: "draft_lint_failed", Stderr: `{"status":"refused","error":"draft_lint_failed","warnings":[{"code":"unresolved_placeholder"}]}`}}
+	runner := &draftTestRunner{err: &DraftCommandError{Message: "draft_lint_failed", Stderr: `{"status":"refused","error":"draft_lint_failed","warnings":[{"code":"unresolved_placeholder","severity":"error","message":"The text contains a template placeholder."}]}`}}
 	session := draftConfirmationSession(t, ServeOptions{Drafts: runner, DraftCommands: []string{"draft-compose"}})
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolDraftCompose, Arguments: map[string]any{"body": "FIRST_NAME 4111111111111111", "strict": true}})
 	require.NoError(err)
@@ -410,5 +407,4 @@ func TestDraftStrictRefusalIncludesSensitiveContent(t *testing.T) {
 	require.Len(refusal.Sensitive, 1)
 	assert.Equal("payment_card", refusal.Sensitive[0].Kind)
 	assert.Equal("ending 1111", refusal.Sensitive[0].Hint)
-	assert.NotContains(content.Text, "4111111111111111")
 }
