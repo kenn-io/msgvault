@@ -13,11 +13,6 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
-const (
-	calendarExceptionKind = "exception"
-	calendarSeriesKind    = "series"
-)
-
 type CalendarOccurrence struct {
 	row               CalendarEventRow
 	original          calrecur.Identity
@@ -76,10 +71,10 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 	byID := make(map[int64]CalendarEventRow, len(rows))
 	for _, row := range rows {
 		byID[row.MessageID] = row
-		if row.Event.Kind == calendarSeriesKind || row.Event.Kind == "single" {
+		if row.Event.Kind == "series" || row.Event.Kind == "single" {
 			masters[seriesKey{row.SourceID, row.Event.ProviderEventID}] = true
 		}
-		if row.Event.Kind == calendarExceptionKind {
+		if row.Event.Kind == "exception" {
 			key := seriesKey{row.SourceID, row.Event.SeriesProviderID}
 			exceptions[key] = append(exceptions[key], row)
 		}
@@ -102,7 +97,7 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 			attendees = []calevent.Attendee{}
 		}
 		original := o.Original
-		if original == (calrecur.Identity{}) && e.Kind == calendarExceptionKind && e.Original != nil {
+		if original == (calrecur.Identity{}) && e.Kind == "exception" && e.Original != nil {
 			original = *e.Original
 		}
 		ref := OccurrenceRef{MessageID: row.MessageID}
@@ -151,7 +146,7 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 			return page, err
 		}
 		e := row.Event
-		if e.Kind == calendarExceptionKind && e.Original == nil {
+		if e.Kind == "exception" && e.Original == nil {
 			report(row.MessageID, "exception has no original start")
 		}
 		if e.Kind == "exception" && calendarRangeException(e) && !masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
@@ -165,22 +160,22 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 			continue
 		}
 		switch e.Kind {
-		case calendarExceptionKind, "single":
-			if e.Kind == calendarExceptionKind && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
+		case "exception", "single":
+			if e.Kind == "exception" && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
 				continue
 			}
 			if e.Start == nil || e.End == nil {
 				report(row.MessageID, calendarMissingBoundsReason(e))
 			}
 			// A record keeps an identifiable copy whose effective bounds are unavailable.
-			if e.Start != nil && e.End != nil || !filterOverlap && (e.Start != nil || e.End != nil || e.Kind == calendarExceptionKind && e.Original != nil) {
+			if e.Start != nil && e.End != nil || !filterOverlap && (e.Start != nil || e.End != nil || e.Kind == "exception" && e.Original != nil) {
 				add(row, 0, calendarEventOccurrence(e, row.MessageID), time.Time{})
 			}
-			if e.Kind == calendarExceptionKind || len(exceptions[seriesKey{row.SourceID, e.ProviderEventID}]) == 0 {
+			if e.Kind == "exception" || len(exceptions[seriesKey{row.SourceID, e.ProviderEventID}]) == 0 {
 				continue
 			}
 			fallthrough
-		case calendarSeriesKind:
+		case "series":
 			calendarReportMismatchedExceptions(e, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], report)
 			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining)
 			remaining -= count
@@ -250,7 +245,7 @@ func calendarMissingBoundsReason(event calevent.Event) string {
 	if event.Status == calendarEventDecodeFailureStatus {
 		return "event data could not be decoded"
 	}
-	if event.Kind == calendarExceptionKind {
+	if event.Kind == "exception" {
 		return "missing series master and event bounds"
 	}
 	return "missing event bounds"

@@ -30,6 +30,7 @@ var concurrentlyBuiltIndexes = []struct{ index, table string }{
 	{"idx_beeper_media_occurrences_source", "beeper_media_occurrences"},
 	{"idx_message_recipients_email_from", "message_recipients"},
 	{"idx_calendar_events_ical_uid", "calendar_events"},
+	{"idx_calendar_events_series_provider_id", "calendar_events"},
 	{"idx_message_recipients_normalized_email", "message_recipients"},
 	{"idx_calendar_events_series_id", "calendar_events"},
 	{"idx_source_merge_archive_only_original", "source_merge_archive_only_messages"},

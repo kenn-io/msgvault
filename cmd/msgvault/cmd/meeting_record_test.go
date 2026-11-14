@@ -47,10 +47,15 @@ func TestMeetingLinksCLIPartialRecord(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		jsonOutput bool
-	}{{"table", false}, {"json", true}} {
+		noNotes    bool
+	}{{"table", false, false}, {"json", true, false}, {"without notes", false, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
-			client := &meetingRecordClient{version: "5.4.0", record: &record}
+			input := record
+			if tc.noNotes {
+				input.MessageIDs = []int64{}
+			}
+			client := &meetingRecordClient{version: "5.4.0", record: &input}
 			command := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 			var out, stderr bytes.Buffer
 			command.SetOut(&out)
@@ -67,7 +72,11 @@ func TestMeetingLinksCLIPartialRecord(t *testing.T) {
 			} else {
 				assert.Contains(out.String(), "STATUS")
 				assert.Regexp(`evt:4\s+unknown\s+unknown`, out.String())
-				assert.Contains(out.String(), "Notes: 42\n")
+				if tc.noNotes {
+					assert.Contains(out.String(), "Notes: none\n")
+				} else {
+					assert.Contains(out.String(), "Notes: 42\n")
+				}
 				assert.Contains(stderr.String(), "message 7 (unsupported recurrence)")
 			}
 		})
@@ -96,15 +105,4 @@ func TestMeetingLinksCLIReferenceNormalizationAndSchemaGate(t *testing.T) {
 		require.ErrorContains(command.Execute(), "daemon API schema 5.4.0 or newer")
 		assert.Empty(client.refs)
 	})
-}
-
-func TestMeetingLinksCLIWithoutNotes(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	client := &meetingRecordClient{version: "5.4.0", record: &store.MeetingRecord{Links: []store.MeetingLink{{Ref: "evt:23", Start: new(time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)), End: new(time.Date(2027, 3, 14, 11, 0, 0, 0, time.UTC))}}, MessageIDs: []int64{}, Unexpandable: []store.CalendarUnexpandable{}}}
-	command := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
-	var out bytes.Buffer
-	command.SetOut(&out)
-	command.SetArgs([]string{"evt:23"})
-	require.NoError(command.Execute())
-	assert.Contains(out.String(), "Notes: none\n")
 }

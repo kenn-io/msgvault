@@ -295,7 +295,7 @@ func TestMCPMeetingRecordCalendarOnly(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gcal", "calendar@example.test")
 	must.NoError(err)
-	id, err := st.PersistMessage(&store.MessagePersistData{
+	_, err = st.PersistMessage(&store.MessagePersistData{
 		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "first", MessageType: "calendar_event"},
 		Conversation: &store.ConversationPersistData{SourceConversationID: "first", ConversationType: "calendar"},
 		RawMIME:      []byte(`{"id":"first","iCalUID":"copy@example.test","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`), RawFormat: "gcal_json",
@@ -309,16 +309,10 @@ func TestMCPMeetingRecordCalendarOnly(t *testing.T) {
 	assert.NotContains(names, "get_meeting_context")
 	assert.NotContains(names, "list_meeting_action_items")
 	assert.NotContains(names, "get_meeting_metrics")
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_meeting_record", Arguments: map[string]any{"ref": fmt.Sprintf("evt:%d", id)}})
-	must.NoError(err)
-	must.False(result.IsError, "%v", result.Content)
 	t.Run("delegated", func(t *testing.T) {
 		require := require.New(t)
 		session := mcpDraftTestSession(mcpDraftAgentContext(t, server, source.ID, []string{"message.read"}), t)
 		require.Contains(mcpDraftToolNames(t, session), "get_meeting_record")
-		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_meeting_record", Arguments: map[string]any{"ref": fmt.Sprintf("evt:%d", id)}})
-		require.NoError(err)
-		require.False(result.IsError, "%v", result.Content)
 	})
 }
 

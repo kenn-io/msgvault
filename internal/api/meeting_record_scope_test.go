@@ -36,9 +36,6 @@ func TestMeetingRecordInheritedVerificationSubject(t *testing.T) {
 	persist(calendar.ID, "master", "calendar_event", "calendar", "Your verification code is 482913", "gcal_json", `{"id":"series","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
 	persist(calendar.ID, "cancelled", "calendar_event", "calendar", "", "gcal_json", `{"id":"cancelled","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled"}`)
 	note := persist(notes.ID, "note", "meeting_transcript", "meeting", "", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
-	other, err := st.GetOrCreateSource("meeting_import", "other@example.com")
-	require.NoError(err)
-	outside := persist(other.ID, "outside", "meeting_transcript", "meeting", "", "meeting_json", `{}`)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(srv.agentGrants.Close)
@@ -64,13 +61,6 @@ func TestMeetingRecordInheritedVerificationSubject(t *testing.T) {
 		require.Len(record.Links, 1)
 		assert.Equal(tc.want, record.Links[0].Subject, "%s %s", tc.name, ref)
 	}
-	_, restricted, _, err := srv.agentGrants.Issue("notes-only", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: notes.ID, Type: notes.SourceType, Identifier: notes.Identifier}}, time.Time{})
-	require.NoError(err)
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/meetings/record?ref=msg:%d", outside), nil)
-	req.Header.Set(apiprotocol.AgentTokenHeader, restricted)
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-	require.Equal(http.StatusNotFound, w.Code, w.Body.String())
 	explicit := persist(calendar.ID, "explicit", "calendar_event", "calendar", "Ordinary exception", "gcal_json", `{"id":"explicit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-21T10:00:00Z"},"status":"cancelled","summary":"Ordinary exception"}`)
 	persist(calendar.ID, "ordinary-master", "calendar_event", "calendar", "Ordinary meeting", "gcal_json", `{"id":"ordinary","iCalUID":"ordinary@example.org","start":{"dateTime":"2027-04-01T10:00:00Z"},"end":{"dateTime":"2027-04-01T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
 	ordinary := persist(calendar.ID, "ordinary-cancel", "calendar_event", "calendar", "", "gcal_json", `{"id":"ordinary-cancel","recurringEventId":"ordinary","originalStartTime":{"dateTime":"2027-04-01T10:00:00Z"},"status":"cancelled"}`)

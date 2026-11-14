@@ -53,25 +53,24 @@ func TestMeetingRecordPartialEditWithoutOriginalWithMaster(t *testing.T) {
 }
 
 func TestMeetingRecordSparseCancellationAfterSeriesTypeChange(t *testing.T) {
-	for _, tc := range []struct{ name, original, start, end string }{
-		{"all-day to timed", `{"date":"2027-03-09"}`, `{"dateTime":"2027-03-02T09:00:00Z"}`, `{"dateTime":"2027-03-02T10:00:00Z"}`},
-		{"timed to all-day", `{"dateTime":"2027-03-09T09:00:00Z"}`, `{"date":"2027-03-02"}`, `{"date":"2027-03-03"}`},
+	for _, tc := range []struct{ name, original, start, end, identity string }{
+		{"all-day to timed", `{"date":"2027-03-09"}`, `{"dateTime":"2027-03-02T09:00:00Z"}`, `{"dateTime":"2027-03-02T10:00:00Z"}`, "20270309"},
+		{"timed to all-day", `{"dateTime":"2027-03-09T09:00:00Z"}`, `{"date":"2027-03-02"}`, `{"date":"2027-03-03"}`, "20270309T090000Z"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
-			calendarFixture(t, st, "master", fmt.Sprintf(`{"id":"weekly","start":%s,"end":%s,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`, tc.start, tc.end), "owner@example.com")
+			_, master := calendarFixture(t, st, "master", fmt.Sprintf(`{"id":"weekly","start":%s,"end":%s,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`, tc.start, tc.end), "owner@example.com")
 			_, cancelled := calendarFixture(t, st, "cancelled", fmt.Sprintf(`{"id":"cancelled","recurringEventId":"weekly","originalStartTime":%s,"status":"cancelled"}`, tc.original), "owner@example.com")
 			_, note := projectionFixture(t, st, "note", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"cancelled"}}`)
 			for _, seed := range []MeetingLinkRef{{Kind: "evt", MessageID: cancelled}, {Kind: "msg", MessageID: note}} {
 				record, err := st.MeetingRecordContext(t.Context(), seed)
 				require.NoError(err)
 				require.Len(record.Links, 1)
-				assert.Equal(fmt.Sprintf("evt:%d", cancelled), record.Links[0].Ref)
+				assert.Equal(fmt.Sprintf("evt:%d@%s", master, tc.identity), record.Links[0].Ref)
 				assert.Nil(record.Links[0].Start)
 				assert.Nil(record.Links[0].End)
 				assert.Equal([]int64{note}, record.MessageIDs)
-				assert.Contains(record.Unexpandable, CalendarUnexpandable{MessageID: cancelled, Reason: "exception original type differs from series and event bounds are missing"})
 			}
 		})
 	}

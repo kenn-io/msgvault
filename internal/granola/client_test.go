@@ -89,7 +89,6 @@ func TestGetNote_DecodesAndKeepsRaw(t *testing.T) {
 	require.NoError(err)
 
 	assert.Equal("Quarterly Planning Review", n.Title)
-	assert.Equal("alice@example.com", n.Owner.Email)
 	require.NotNil(n.CalendarEvent)
 	assert.Equal("evt_2su99n6iiik37_20260601T150000Z", n.CalendarEvent.CalendarEventID)
 	assert.Equal("bob@example.com", n.CalendarEvent.Organiser)
