@@ -136,7 +136,7 @@ func TestDocumentSearchVersionsOrdersTimestampOffsets(t *testing.T) {
 	assert.Equal(t, []string{"00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000001"}, ids)
 }
 
-func TestDocumentSearchVersionsTextFormatsExcludeImages(t *testing.T) {
+func TestDocumentSearchVersionsTextFormatsExcludeRecordings(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -165,6 +165,7 @@ func TestDocumentSearchVersionsTextFormatsExcludeImages(t *testing.T) {
 		"00000000-0000-4000-8000-000000000008",
 		"00000000-0000-4000-8000-000000000009",
 		"00000000-0000-4000-8000-00000000000a",
+		"00000000-0000-4000-8000-00000000000b",
 	}
 	f.SeedDocumentAttachments(mid, formats)
 	ids, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", nil)

@@ -179,8 +179,9 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(settings).toBeVisible();
     await settings.getByRole('button', { name: 'Advanced', exact: true }).click();
     await expectRenderedContrast(settings.getByText('UTC or an IANA name such as America/New_York.', { exact: true }), 4.5);
-    await expectRenderedContrast(settings.locator('.notice--pending'), 4.5);
-    await expectRenderedBoundary(settings.locator('.notice--pending'), 'borderLeftColor', 3);
+    await expectRenderedContrast(settings.getByText('Restart pending.', { exact: true }), 4.5);
+    await expectRenderedContrast(settings.getByText('On the computer running msgvault', { exact: false }), 4.5);
+    await expectRenderedBoundary(settings.locator('.kit-notice').filter({ hasText: 'Restart pending.' }), 'borderLeftColor', 3);
   });
 }
 
@@ -202,19 +203,12 @@ async function expectRenderedContrast(locator: import('@playwright/test').Locato
   expect(ratio).toBeGreaterThanOrEqual(minimum);
 }
 
-async function expectRenderedBoundary(
-  locator: import('@playwright/test').Locator,
-  property: 'borderTopColor' | 'borderLeftColor',
-  minimum: number
-) {
+async function expectRenderedBoundary(locator: import('@playwright/test').Locator, property: 'borderLeftColor', minimum: number) {
   const ratio = await locator.evaluate(measureRenderedContrast, { property });
   expect(ratio).toBeGreaterThanOrEqual(minimum);
 }
 
-function measureRenderedContrast(
-  element: Element,
-  { property }: { property: 'color' | 'borderTopColor' | 'borderLeftColor' | 'boxShadow' }
-): number {
+function measureRenderedContrast(element: Element, { property }: { property: 'color' | 'borderLeftColor' }): number {
   let current: Element | null = element;
   let background = getComputedStyle(document.documentElement).backgroundColor;
   while (current) {
@@ -226,10 +220,7 @@ function measureRenderedContrast(
     }
     current = current.parentElement;
   }
-  const rendered = getComputedStyle(element)[property];
-  const foreground = property === 'boxShadow'
-    ? rendered.match(/rgba?\([^)]+\)|#[0-9a-f]{3,8}/i)?.[0] ?? rendered
-    : rendered;
+  const foreground = getComputedStyle(element)[property];
   const luminance = (color: string) => {
     const channels = color.startsWith('color(srgb ')
       ? color.match(/[\d.]+/g)?.slice(0, 3).map(Number) ?? []
@@ -306,7 +297,7 @@ test('clicking a filename returns to Files keyboard navigation without extra row
     occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_type: 'synthetic',
     source_identifier: 'archive@example.com', containing_title: `Containing item ${id}`,
     filename: `Attachment ${id}.pdf`, mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 2048,
-    content_state: 'missing_blob', content_available: false
+    content_state: 'unverified', content_available: null
   }));
   await page.route('**/api/v1/files/search', route => route.fulfill({ json: {
     files, total_count: 2, cache_revision: 'cache-theme', search_provenance: {}

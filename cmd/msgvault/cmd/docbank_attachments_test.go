@@ -167,7 +167,7 @@ func TestDocbankAttachmentConsumerLifecycle(t *testing.T) {
 			st := storetest.New(t).Store
 			sched := scheduler.New(nil)
 			t.Cleanup(func() { <-sched.Stop().Done() })
-			cfg := config.DocbankIntegrationConfig{Enabled: true, AttachmentUploadConsent: true, URL: "https://example.com"}
+			cfg := config.DocbankIntegrationConfig{Enabled: true, AttachmentUploadConsent: true, URL: "https://example.com", AttachmentSearchProfile: "existing-profile"}
 			require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, nil, t.TempDir(), t.TempDir(), cfg, nil))
 			assert.True(sched.IsJobScheduled(api.DocbankAttachmentMirrorJob))
 			recordings, err := newMessageRecordingReader(t.Context(), st, cfg)
@@ -175,6 +175,9 @@ func TestDocbankAttachmentConsumerLifecycle(t *testing.T) {
 			reader, err := newDocbankAttachmentReader(t.Context(), st, cfg, recordings.Client)
 			require.NoError(err)
 			require.NotNil(reader)
+			if change == "consent" {
+				assert.Equal("existing-profile", reader.SearchProfile)
+			}
 			destination, err := docbankAttachmentDestination(t.Context(), st, cfg)
 			require.NoError(err)
 			key := store.DocbankAttachmentConsumerKey(destination)

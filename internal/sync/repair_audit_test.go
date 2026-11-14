@@ -206,8 +206,9 @@ func TestAuditGmailMessagesMarksNonMIMEStoredRawInconclusive(t *testing.T) {
 	assert.Equal(AuditInconclusive, results[0].Fields[AuditFieldRawMIME])
 }
 
-func TestAuditGmailMessagesOmitsCoherentLegacyEvidence(t *testing.T) {
+func TestAuditGmailMessagesReportsInconclusiveLegacyEvidence(t *testing.T) {
 	t.Parallel()
+	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
@@ -227,7 +228,13 @@ func TestAuditGmailMessagesOmitsCoherentLegacyEvidence(t *testing.T) {
 	_, err = env.Store.DB().ExecContext(t.Context(), `UPDATE attachments SET source_part_key = NULL WHERE message_id = ?`, id)
 	require.NoError(err)
 
-	assert.Empty(t, collectAudit(t, env.Syncer, source.ID))
+	results := collectAudit(t, env.Syncer, source.ID)
+	require.Len(results, 1)
+	assert.Equal(AuditInconclusive, results[0].Status)
+	assert.Equal(AuditInconclusive, results[0].Fields[AuditFieldFrom])
+	assert.Equal(AuditInconclusive, results[0].Fields[AuditFieldTo])
+	assert.Equal(AuditInconclusive, results[0].Fields[AuditFieldAttachmentPartKeys])
+	assert.Equal(AuditMatch, results[0].Fields[AuditFieldAttachmentHashes])
 }
 
 func TestAuditGmailMessagesComparesAttachmentHashesWithoutOccurrenceKeys(t *testing.T) {
@@ -304,7 +311,11 @@ func TestAuditGmailMessagesAcceptsRepeatedPartStoredOnceWithoutOccurrenceKeys(t 
 	_, err = env.Store.DB().ExecContext(t.Context(), `UPDATE attachments SET source_part_key = NULL WHERE id = ?`, keep)
 	require.NoError(err)
 
-	assert.Empty(t, collectAudit(t, env.Syncer, source.ID))
+	results := collectAudit(t, env.Syncer, source.ID)
+	require.Len(results, 1)
+	assert.Equal(t, AuditInconclusive, results[0].Status)
+	assert.Equal(t, AuditMatch, results[0].Fields[AuditFieldAttachmentHashes])
+	assert.Equal(t, AuditInconclusive, results[0].Fields[AuditFieldAttachmentPartKeys])
 }
 
 func TestAuditGmailMessagesTreatsLegacyOnlyAttachmentAsInconclusive(t *testing.T) {
@@ -328,9 +339,11 @@ func TestAuditGmailMessagesTreatsLegacyOnlyAttachmentAsInconclusive(t *testing.T
 		Filename: "", MIMEType: "text/plain", StoragePath: "ab/abcd", ContentHash: "abcd", Size: 150,
 	}))
 
-	assert.Empty(t, collectAudit(t, env.Syncer, source.ID))
-	fields := auditFieldsForMessage(t, env, id)
-	assert.Equal(t, AuditInconclusive, fields[AuditFieldAttachmentHashes])
+	results := collectAudit(t, env.Syncer, source.ID)
+	require.Len(results, 1)
+	assert.Equal(t, AuditInconclusive, results[0].Status)
+	assert.Equal(t, AuditInconclusive, results[0].Fields[AuditFieldAttachmentHashes])
+	assert.Equal(t, AuditInconclusive, results[0].Fields[AuditFieldAttachmentPartKeys])
 }
 
 func TestAuditGmailMessagesFlagsSwappedAttachmentHashes(t *testing.T) {
@@ -594,19 +607,6 @@ func seedGmailAuditRow(
 	})
 	require.NoError(err)
 	return id
-}
-
-func auditFieldsForMessage(t *testing.T, env *TestEnv, id int64) map[string]AuditState {
-	t.Helper()
-	var fields map[string]AuditState
-	_, err := env.Store.StreamGmailAuditEvidencePageContext(
-		t.Context(), 0, id-1, 1, func(evidence store.GmailAuditEvidence) error {
-			result, _ := auditGmailEvidence(evidence)
-			fields = result.Fields
-			return nil
-		})
-	require.NoError(t, err)
-	return fields
 }
 
 func collectAudit(t *testing.T, syncer *Syncer, sourceID int64) []RepairAuditResult {

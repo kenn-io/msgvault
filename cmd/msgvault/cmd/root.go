@@ -30,8 +30,7 @@ func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   daemonService,
 		Short: "Offline email, chat, and meeting archive tool",
-		Long: `Archive email, chats, and meetings offline. Use the daemon
-or config.toml's [remote].url; --local forces local.
+		Long: `Archive email, chats, and meetings offline.
 
 Start here:
   msgvault list-accounts --json
@@ -44,9 +43,9 @@ Start here:
   msgvault setup status --json
 
 Output:
-  --json: JSON stdout (export-messages: JSON Lines). Logs/progress: stderr.
-  --log-level=warn quiets logs. Exit: 0 success, 1 error, 130 interrupted.
-  More: msgvault quickstart.`,
+  --json: stdout (JSONL for export-messages).
+  Logs, progress: stderr. Exit: 0 OK, 1 error, 130 interrupted.
+  See msgvault quickstart.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			inv := prepareInvocation(cmd)
 			if inv == nil {
@@ -306,7 +305,7 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 		return true
 	}
 	for c := cmd; c != nil; c = c.Parent() {
-		if c == skillsCmd {
+		if c == skillsCmd || c == agentCmd {
 			return true
 		}
 	}

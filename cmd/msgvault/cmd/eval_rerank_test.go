@@ -19,9 +19,11 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/eval"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/rerank"
@@ -349,10 +351,10 @@ func TestRunEvalPreflightsJevRequestEstimateBeforeOpeningArchive(t *testing.T) {
 
 func TestEvalRerankCandidateText(t *testing.T) {
 	assert := assert.New(t)
-	text := truncateUTF8Bytes(strings.Repeat("界", 1000), rerank.MaxCandidateBytes)
+	text := textutil.PrefixBytes(strings.Repeat("界", 1000), rerank.MaxCandidateBytes)
 	assert.LessOrEqual(len([]byte(text)), 2048)
 	assert.True(utf8.ValidString(text))
-	assert.Equal("abc", truncateUTF8Bytes("abc", 2048))
+	assert.Equal("abc", textutil.PrefixBytes("abc", 2048))
 }
 
 func TestEvalRerankOptIn(t *testing.T) {

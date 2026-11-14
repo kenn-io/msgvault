@@ -1,3 +1,4 @@
+import { isLocalBound } from '../explore/date-bound';
 import type { SavedViewStateEnvelope } from '../api/generated/models';
 import {
   filterDimensionLabel,
@@ -15,7 +16,7 @@ import {
 import { trimAttributeText } from '../directory/attribute-text';
 
 export type CanonicalState = SavedViewStateEnvelope;
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 export function supportsSavedViewSchema(version: number): boolean {
   return version >= 1 && version <= CURRENT_SCHEMA_VERSION;
@@ -26,6 +27,10 @@ const LEGACY_FILTER_FIELDS: Record<string, ExploreFilterDimension> = {
   source_id: 'source',
   participant_id: 'participant'
 };
+
+export function savedViewSchemaVersion(state: ExploreURLState): number {
+  return state.filters.some((filter) => (filter.dimension === 'after' || filter.dimension === 'before') && filter.values.some(isLocalBound)) ? 3 : 2;
+}
 
 export function canonicalSavedViewState(state: ExploreURLState): CanonicalState {
   const query = trimAttributeText(state.query);
@@ -86,7 +91,7 @@ export function exploreStateFromSavedView(saved: CanonicalState, schemaVersion =
     searchMode: mode,
     filters: (saved.filters ?? []).map((filter) => ({
       dimension: filterDimension(filter.field),
-      values: [...filter.values]
+      values: filter.values.map((value) => schemaVersion < 3 && ['after', 'before'].includes(filterDimension(filter.field)) && isLocalBound(value) && !Number.isNaN(Date.parse(value)) ? new Date(value).toISOString() : value)
     })),
     groupingChain: [...(saved.grouping ?? [])] as ExploreURLState['groupingChain'],
     presentation,

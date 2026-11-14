@@ -2,7 +2,9 @@ package store_test
 
 import (
 	"database/sql"
+	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -102,61 +104,120 @@ func TestSearchMessagesQuery_ToFilterCaseInsensitive(t *testing.T) {
 	require.Len(msgs, 1)
 }
 
-// TestSearchMessages_R3PunctuationTerms covers R3: the raw search path
-// must not feed `to_tsquery` invalid lexemes built from punctuation-
-// heavy input. Before the fix, a query like `---` or `foo-bar` would
-// emit `---:*` / `foo-bar:*` and PG would error at parse time
-// ("syntax error in tsquery"). The fix tokenizes user terms into
-// letter/digit-only lexemes so punctuation-only inputs collapse to
-// FALSE and hyphenated/email/dotted inputs decompose into individual
-// lexemes that to_tsquery accepts.
-//
-// On both backends the test asserts the query returns *no error* —
-// that's the load-bearing R3 guarantee. Lexeme-level matching is
-// unit-tested via TestPostgreSQLDialect_BuildFTSArg; we don't assert
-// hit counts here because SQLite's FTS5 path strips punctuation
-// without splitting (e.g. `foo-bar` becomes `foobar`, which won't
-// match a body containing the two separate words), so cross-backend
-// match-count assertions would diverge.
-func TestSearchMessages_R3PunctuationTerms(t *testing.T) {
+func TestSearchFTSPunctuation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
+	id := f.NewMessage().WithSourceMessageID("m1").WithSubject("Release 1.2.0 notes").Create(t, f.Store)
+	require.NoError(f.Store.UpsertFTS(id, "Release 1.2.0 notes", "Write to both@example.com or see changelog.example.net.", "+15550100777", "", ""))
+	_, _, err := f.Store.SearchMessages("foo ---", 0, 50)
+	require.NoError(err)
+	for term, want := range map[string][]int64{"notes": {id}, "both@example.com": {id}, "both@exam": {id}, "changelog.example.net": {id}, "1.2.0": {id}, "+15550100777": {id}, "15550100777": {id}, "example@both": nil, "---": nil} {
+		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
+		require.NoError(err, term)
+		assert.ElementsMatch(want, ids, term)
+	}
+	crossField := f.NewMessage().WithSourceMessageID("cross-field").Create(t, f.Store)
+	require.NoError(f.Store.UpsertFTS(crossField, "alice", "", "example.com", "", ""))
+	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice@example"}}, 10)
+	require.NoError(err)
+	assert.NotContains(ids, crossField)
+	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice", "example"}}, 10)
+	require.NoError(err)
+	assert.Contains(ids, crossField)
+}
 
-	msg1 := f.NewMessage().
-		WithSourceMessageID("r3-msg-1").
-		WithSubject("project foo bar").
-		WithSnippet("foo bar baz").
-		Create(t, f.Store)
-	require.NoError(t, f.Store.UpsertMessageBody(msg1,
-		sql.NullString{String: "foo and bar appear together here", Valid: true},
-		sql.NullString{}), "UpsertMessageBody 1")
+func TestPostgresFTSSaturatedPhrases(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL indexing")
+	}
+	for _, count := range []int{255, 256} {
+		id := f.NewMessage().WithSourceMessageID(fmt.Sprintf("repeat-boundary-%d", count)).Create(t, f.Store)
+		require.NoError(f.Store.UpsertFTS(id, "", strings.Repeat("boundary ", count)+"match", "", "", ""))
+		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"boundary@match"}}, 10)
+		require.NoError(err)
+		assert.Contains(ids, id, "repetitions: %d", count)
+	}
+	{
+		var want []int64
+		for i := range 5 {
+			id := f.NewMessage().WithSourceMessageID(fmt.Sprintf("saturated-field-%d", i)).Create(t, f.Store)
+			fields := make([]string, 5)
+			fields[i] = strings.Repeat("alice ", 300) + "alice@example.com"
+			require.NoError(f.Store.UpsertFTS(id, fields[0], fields[4], fields[1], fields[2], fields[3]))
+			want = append(want, id)
+		}
+		separated := f.NewMessage().WithSourceMessageID("metadata-separated").Create(t, f.Store)
+		require.NoError(f.Store.UpsertFTS(separated, strings.Repeat("alice ", 300)+"alice extra example com", "", "", "", ""))
+		crossField := f.NewMessage().WithSourceMessageID("metadata-cross-field").Create(t, f.Store)
+		require.NoError(f.Store.UpsertFTS(crossField, strings.Repeat("alice ", 300), "", "example.com", "", ""))
+		for _, tc := range []struct {
+			term string
+			want []int64
+		}{
+			{"alice@example.com", want},
+			{"alice@exam", want},
+			{"example@alice", nil},
+		} {
+			ids, count, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{tc.term}}, 10)
+			require.NoError(err)
+			assert.ElementsMatch(tc.want, ids, tc.term)
+			assert.Equal(int64(len(tc.want)), count, tc.term)
+		}
+	}
+	{
+		id := f.NewMessage().WithSourceMessageID("position-saturated").Create(t, f.Store)
+		var body strings.Builder
+		for i := range 17000 {
+			fmt.Fprintf(&body, "word%d ", i)
+		}
+		body.WriteString("alice@example.com")
+		require.NoError(f.Store.UpsertFTS(id, "", body.String(), "", "", ""))
+		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice@exam"}}, 10)
+		require.NoError(err)
+		assert.Contains(ids, id)
+	}
+	unicodeID := f.NewMessage().WithSourceMessageID("unicode-saturated").Create(t, f.Store)
+	require.NoError(f.Store.UpsertFTS(unicodeID, "", strings.Repeat("filler ", 17000)+"CAFÉ@東京.example e\u0301xample", "", "", ""))
+	for _, term := range []string{"café@東京.exam", "e@xam"} {
+		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
+		require.NoError(err)
+		assert.Contains(ids, unicodeID)
+	}
+}
 
-	msg2 := f.NewMessage().
-		WithSourceMessageID("r3-msg-2").
-		WithSubject("email from alice").
-		WithSnippet("contact us at user@example.com please").
-		Create(t, f.Store)
-	require.NoError(t, f.Store.UpsertMessageBody(msg2,
-		sql.NullString{String: "reach us at user@example.com for support", Valid: true},
-		sql.NullString{}), "UpsertMessageBody 2")
-
+func TestPostgresFTSSaturatedEditAndRebuild(t *testing.T) {
+	skipUnlessPostgres(t)
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	id := f.NewMessage().WithSourceMessageID("edited-body").WithSubject("ordinary").Create(t, f.Store)
+	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: strings.Repeat("padding ", 17000) + "old@example.test", Valid: true}, sql.NullString{}))
 	_, err := f.Store.BackfillFTS(nil)
-	require.NoError(t, err, "BackfillFTS")
-
-	queries := []string{
-		"---",              // dashes-only — used to crash to_tsquery
-		"...",              // dots-only
-		"foo-bar",          // hyphenated word
-		"user@example.com", // email-like
-		"a.b.c",            // dotted acronym
-		"foo ---",          // mixed clean + punct
-		"v1.2.3-rc.1",      // version-like punctuation
+	require.NoError(err)
+	check := func(term string) {
+		t.Helper()
+		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
+		require.NoError(err)
+		assert.Equal([]int64{id}, ids)
 	}
-	for _, q := range queries {
-		t.Run(q, func(t *testing.T) {
-			_, _, err := f.Store.SearchMessages(q, 0, 50)
-			assert.NoError(t, err, "SearchMessages(%q): must accept punctuation-heavy input without erroring", q)
-		})
-	}
+	check("old@example.test")
+	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: strings.Repeat("padding ", 17000) + "new@example.test", Valid: true}, sql.NullString{}))
+	_, err = f.Store.RebuildFTS(nil)
+	require.NoError(err)
+	check("new@example.test")
+	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: "short@example.test", Valid: true}, sql.NullString{}))
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 2 WHERE id = $1`, id)
+	require.NoError(err)
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	check("short@example.test")
+	var fieldsCleared bool
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT search_fts_fields IS NULL FROM messages WHERE id = $1`, id).Scan(&fieldsCleared))
+	assert.True(fieldsCleared)
 }
 
 // TestEnsureParticipant_Concurrent covers H5: 50 goroutines all

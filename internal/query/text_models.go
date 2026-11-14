@@ -183,4 +183,6 @@ var KnownMessageTypes = []string{
 	"github",
 	"gitlab",
 	"gitea",
+	"x_dm",
+	"feed_item",
 }

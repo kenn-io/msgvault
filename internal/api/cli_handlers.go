@@ -30,6 +30,7 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/identityops"
+	imapclient "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/provideridentity"
@@ -122,6 +123,7 @@ type ContextCLIStore interface {
 	CountSourceDeletedMessagesContext(ctx context.Context, sourceIDs ...int64) (int64, error)
 	NeedsFTSBackfillQuickContext(ctx context.Context) bool
 	NeedsFTSBackfillContext(ctx context.Context) (bool, error)
+	BackfillFTSContext(ctx context.Context, progress func(done, total int64)) (int64, error)
 	RebuildFTSContext(ctx context.Context, progress func(done, total int64)) (int64, error)
 }
 
@@ -268,6 +270,10 @@ func (s *requestCLIStore) CountSourceDeletedMessages(sourceIDs ...int64) (int64,
 
 func (s *requestCLIStore) NeedsFTSBackfillQuick() bool {
 	return s.contextStore.NeedsFTSBackfillQuickContext(s.ctx)
+}
+
+func (s *requestCLIStore) BackfillFTS(progress func(done, total int64)) (int64, error) {
+	return s.contextStore.BackfillFTSContext(s.ctx, progress)
 }
 
 func (s *requestCLIStore) RebuildFTS(
@@ -872,6 +878,7 @@ type cliAccountResponse struct {
 	Type               string     `json:"type"`
 	DisplayName        string     `json:"display_name"`
 	OAuthApp           string     `json:"oauth_app,omitempty"`
+	AuthMethod         string     `json:"auth_method,omitempty"`
 	MessageCount       int64      `json:"message_count"`
 	SourceDeletedCount int64      `json:"source_deleted_count"`
 	LastSync           *time.Time `json:"last_sync"`
@@ -1679,7 +1686,19 @@ func cliRunCommandAllowed(args []string) bool {
 		return false
 	}
 	if args[0] == "source" {
-		return len(args) >= 3 && (args[1] == "facebook-comments" || args[1] == "instagram-comments") && (args[2] == "add" || args[2] == "sync")
+		if len(args) < 3 {
+			return false
+		}
+		switch args[1] {
+		case "facebook-comments", "instagram-comments":
+			return args[2] == "add" || args[2] == "sync"
+		case "feeds":
+			switch args[2] {
+			case "add", "list", "remove", "sync":
+				return true
+			}
+		}
+		return false
 	}
 	// Internal subprocess commands are callable only by their owning public
 	// command on the daemon host, never through the generic HTTP runner.
@@ -1777,6 +1796,8 @@ func cliRunCommandAllowed(args []string) bool {
 		"import-pst",
 		"import-slackdump",
 		"import-telegram",
+		"import-discord-package",
+		"import-x",
 		"import-synctech-sms",
 		"import-whatsapp",
 		"list-deletions",
@@ -2478,10 +2499,26 @@ func (s *Server) ensureCLISearchIndexAsync(cliStore CLIStore, mayRepair bool) st
 	if bound, ok := cliStore.(*requestCLIStore); ok {
 		cliStore = bound.CLIStore
 	}
+	s.importMu.Lock()
+	if s.importsClosed {
+		s.importMu.Unlock()
+		return state
+	}
+	finishIdle, ok := s.idleTracker.BeginMaintenanceWorkContext(s.importContext)
+	if !ok {
+		s.importMu.Unlock()
+		return state
+	}
+	s.importWG.Add(1)
+	s.importMu.Unlock()
 	s.ftsEnsureMayRepair = mayRepair
 	s.ftsEnsureRunning.Store(true)
 	s.ftsIndexState.Store(state)
-	go s.runCLISearchIndexEnsure(cliStore, knownIncomplete, !mayRepair)
+	go func() {
+		defer s.importWG.Done()
+		defer finishIdle()
+		s.runCLISearchIndexEnsure(cliStore, knownIncomplete, !mayRepair)
+	}()
 	return state
 }
 
@@ -2808,6 +2845,11 @@ func newCLIAccountResponse(src *store.Source, count, sourceDeleted int64) cliAcc
 		Type:               src.SourceType,
 		MessageCount:       count,
 		SourceDeletedCount: sourceDeleted,
+	}
+	if src.SourceType == "imap" && src.SyncConfig.Valid {
+		if cfg, err := imapclient.ConfigFromJSON(src.SyncConfig.String); err == nil {
+			account.AuthMethod = string(cfg.EffectiveAuthMethod())
+		}
 	}
 	if src.DisplayName.Valid {
 		account.DisplayName = src.DisplayName.String

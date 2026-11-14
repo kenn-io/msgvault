@@ -2366,6 +2366,7 @@ func (c ChoiceDescriptor) Validate() error {
 
 type CliAccountResponse struct {
 	Alias              *string          `json:"alias" validate:"required"`
+	AuthMethod         *string          `json:"auth_method,omitzero"`
 	DisplayName        string           `json:"display_name" validate:"required"`
 	Email              string           `json:"email" validate:"required"`
 	HistoryOnly        bool             `json:"history_only"`
@@ -4701,6 +4702,62 @@ func (e ExploreFilter) Validate() error {
 	return errors
 }
 
+type ExploreGroupActivity struct {
+	Bucket string `json:"bucket" validate:"required"`
+	Count  int64  `json:"count"`
+}
+
+func (e ExploreGroupActivity) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type ExploreGroupCoParticipant struct {
+	Count int64  `json:"count"`
+	Key   string `json:"key" validate:"required"`
+	Label string `json:"label" validate:"required"`
+}
+
+func (e ExploreGroupCoParticipant) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type ExploreGroupOverview struct {
+	Activity       []ExploreGroupActivity      `json:"activity" validate:"required"`
+	CoParticipants []ExploreGroupCoParticipant `json:"co_participants" validate:"required"`
+	FirstAt        time.Time                   `json:"first_at" validate:"required"`
+}
+
+func (e ExploreGroupOverview) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.Activity, "required"); err != nil {
+		errors = errors.Append("Activity", err)
+	}
+	for i, item := range e.Activity {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Activity[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.CoParticipants, "required"); err != nil {
+		errors = errors.Append("CoParticipants", err)
+	}
+	for i, item := range e.CoParticipants {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("CoParticipants[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.FirstAt, "required"); err != nil {
+		errors = errors.Append("FirstAt", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ExploreGroupRow struct {
 	Count          int64                 `json:"count"`
 	EstimatedBytes int64                 `json:"estimated_bytes"`
@@ -4708,6 +4765,7 @@ type ExploreGroupRow struct {
 	Label          string                `json:"label" validate:"required"`
 	LatestAt       time.Time             `json:"latest_at" validate:"required"`
 	Level          *ExploreGroupRowLevel `json:"level,omitempty"`
+	TotalItems     *int64                `json:"total_items,omitempty"`
 }
 
 func (e ExploreGroupRow) Validate() error {
@@ -4777,7 +4835,7 @@ type ExploreGroupsHTTPRequest struct {
 	SentOnly *bool              `json:"sent_only,omitempty"`
 	Sort     []ExploreGroupSort `json:"sort,omitempty"`
 
-	// Timezone IANA timezone for day grouping; defaults to UTC
+	// Timezone IANA timezone for day, month, and year grouping; defaults to UTC
 	Timezone *string `json:"timezone,omitzero"`
 }
 
@@ -4845,20 +4903,28 @@ func (e ExploreGroupsHTTPRequest) Validate() error {
 }
 
 type ExploreGroupsHTTPResponse struct {
-	CacheRevision       string            `json:"cache_revision" validate:"required"`
-	CandidateSnapshotID *string           `json:"candidate_snapshot_id,omitzero"`
-	NextCursor          *string           `json:"next_cursor,omitzero"`
-	Rows                []ExploreGroupRow `json:"rows" validate:"required"`
-	SearchDeletionScope *string           `json:"search_deletion_scope,omitzero"`
-	SearchProvenance    SearchProvenance  `json:"search_provenance"`
-	TotalCount          int64             `json:"total_count"`
-	Warnings            []string          `json:"warnings,omitempty"`
+	CacheRevision       string                `json:"cache_revision" validate:"required"`
+	CandidateSnapshotID *string               `json:"candidate_snapshot_id,omitzero"`
+	NextCursor          *string               `json:"next_cursor,omitzero"`
+	Overview            *ExploreGroupOverview `json:"overview,omitempty"`
+	Rows                []ExploreGroupRow     `json:"rows" validate:"required"`
+	SearchDeletionScope *string               `json:"search_deletion_scope,omitzero"`
+	SearchProvenance    SearchProvenance      `json:"search_provenance"`
+	TotalCount          int64                 `json:"total_count"`
+	Warnings            []string              `json:"warnings,omitempty"`
 }
 
 func (e ExploreGroupsHTTPResponse) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(e.CacheRevision, "required"); err != nil {
 		errors = errors.Append("CacheRevision", err)
+	}
+	if e.Overview != nil {
+		if v, ok := any(e.Overview).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Overview", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(e.Rows, "required"); err != nil {
 		errors = errors.Append("Rows", err)
@@ -5297,18 +5363,20 @@ func (f FileGroupsHTTPResponse) Validate() error {
 }
 
 type FileMetadataResponse struct {
-	ContentAvailable bool                             `json:"content_available"`
-	ContentHash      *string                          `json:"content_hash,omitzero"`
-	ContentState     FileMetadataResponseContentState `json:"content_state" validate:"required"`
-	ConversationID   int64                            `json:"conversation_id"`
-	Docbank          []DocbankAttachmentRef           `json:"docbank,omitempty"`
-	EntryKey         string                           `json:"entry_key" validate:"required"`
-	Filename         *string                          `json:"filename" validate:"required"`
-	ID               int64                            `json:"id"`
-	MessageID        int64                            `json:"message_id"`
-	MimeType         *string                          `json:"mime_type" validate:"required"`
-	SizeBytes        int64                            `json:"size_bytes"`
-	URL              *string                          `json:"url,omitzero"`
+	ContentAvailable bool    `json:"content_available"`
+	ContentHash      *string `json:"content_hash,omitzero"`
+
+	// ContentState File details check whether content can be opened; read or integrity errors can still occur.
+	ContentState   FileMetadataResponseContentState `json:"content_state" validate:"required"`
+	ConversationID int64                            `json:"conversation_id"`
+	Docbank        []DocbankAttachmentRef           `json:"docbank,omitempty"`
+	EntryKey       string                           `json:"entry_key" validate:"required"`
+	Filename       *string                          `json:"filename" validate:"required"`
+	ID             int64                            `json:"id"`
+	MessageID      int64                            `json:"message_id"`
+	MimeType       *string                          `json:"mime_type" validate:"required"`
+	SizeBytes      int64                            `json:"size_bytes"`
+	URL            *string                          `json:"url,omitzero"`
 }
 
 func (f FileMetadataResponse) Validate() error {
@@ -5416,8 +5484,12 @@ func (f FileSearchHTTPResponse) Validate() error {
 }
 
 type FileSearchRow struct {
-	ContainingTitle    string                    `json:"containing_title" validate:"required"`
-	ContentAvailable   bool                      `json:"content_available"`
+	ContainingTitle string `json:"containing_title" validate:"required"`
+
+	// ContentAvailable Null means availability has not been checked.
+	ContentAvailable *bool `json:"content_available" validate:"omitempty"`
+
+	// ContentState List availability is based on metadata; file details check whether storage can be opened.
 	ContentState       FileSearchRowContentState `json:"content_state" validate:"required"`
 	ConversationID     int64                     `json:"conversation_id"`
 	EntryKey           string                    `json:"entry_key" validate:"required"`
@@ -5443,6 +5515,11 @@ func (f FileSearchRow) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(f.ContainingTitle, "required"); err != nil {
 		errors = errors.Append("ContainingTitle", err)
+	}
+	if v, ok := any(f.ContentAvailable).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentAvailable", err)
+		}
 	}
 	if v, ok := any(f.ContentState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
@@ -5572,22 +5649,30 @@ func (f FileSuggestionHTTPResponse) Validate() error {
 }
 
 type FileSuggestionRow struct {
-	ContentAvailable bool                           `json:"content_available"`
-	ContentState     FileSuggestionRowContentState  `json:"content_state" validate:"required"`
-	ConversationID   int64                          `json:"conversation_id"`
-	Filename         string                         `json:"filename" validate:"required"`
-	FilenameMatch    FileSuggestionRowFilenameMatch `json:"filename_match" validate:"required"`
-	ID               int64                          `json:"id"`
-	MessageID        int64                          `json:"message_id"`
-	MimeFamily       FileSuggestionRowMimeFamily    `json:"mime_family" validate:"required"`
-	MimeType         *string                        `json:"mime_type" validate:"required"`
-	OccurredAt       *time.Time                     `json:"occurred_at" validate:"omitempty"`
-	SizeBytes        int64                          `json:"size_bytes"`
-	SourceID         int64                          `json:"source_id"`
+	// ContentAvailable Null means availability has not been checked.
+	ContentAvailable *bool `json:"content_available" validate:"omitempty"`
+
+	// ContentState Suggestion availability is based on metadata; file details check whether storage can be opened.
+	ContentState   FileSuggestionRowContentState  `json:"content_state" validate:"required"`
+	ConversationID int64                          `json:"conversation_id"`
+	Filename       string                         `json:"filename" validate:"required"`
+	FilenameMatch  FileSuggestionRowFilenameMatch `json:"filename_match" validate:"required"`
+	ID             int64                          `json:"id"`
+	MessageID      int64                          `json:"message_id"`
+	MimeFamily     FileSuggestionRowMimeFamily    `json:"mime_family" validate:"required"`
+	MimeType       *string                        `json:"mime_type" validate:"required"`
+	OccurredAt     *time.Time                     `json:"occurred_at" validate:"omitempty"`
+	SizeBytes      int64                          `json:"size_bytes"`
+	SourceID       int64                          `json:"source_id"`
 }
 
 func (f FileSuggestionRow) Validate() error {
 	var errors runtime.ValidationErrors
+	if v, ok := any(f.ContentAvailable).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentAvailable", err)
+		}
+	}
 	if v, ok := any(f.ContentState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("ContentState", err)
@@ -6939,7 +7024,7 @@ func (k KataIssueCreateRequest) Validate() error {
 type KataIssueListResponse struct {
 	Issues []KataIssueReceipt `json:"issues" validate:"required"`
 
-	// Truncated The list may omit issues that cite this source: more matched than were returned, or some issues could not be checked
+	// Truncated The list may omit matching issues: more matched than were returned, or some citations could not be checked
 	Truncated bool `json:"truncated"`
 }
 
@@ -7280,7 +7365,7 @@ type MediaAttachmentResult struct {
 	AttachmentID    int64      `json:"attachment_id"`
 	ContainingTitle string     `json:"containing_title" validate:"omitempty"`
 	ConversationID  int64      `json:"conversation_id"`
-	Excerpt         string     `json:"excerpt" validate:"required"`
+	Excerpt         string     `json:"excerpt" validate:"omitempty"`
 	Filename        string     `json:"filename" validate:"omitempty"`
 	MessageID       int64      `json:"message_id"`
 	OccurredAt      *time.Time `json:"occurred_at,omitempty"`
@@ -7291,19 +7376,38 @@ func (m MediaAttachmentResult) Validate() error {
 }
 
 type MediaAttachmentSearch struct {
-	ErrorData *ErrorResponse          `json:"error,omitempty"`
-	Results   []MediaAttachmentResult `json:"results" validate:"required"`
-	Truncated bool                    `json:"truncated"`
+	ActualMode    string                  `json:"actual_mode" validate:"required"`
+	Coverage      SearchCoverage          `json:"coverage"`
+	Degradations  []string                `json:"degradations" validate:"required"`
+	ErrorData     *ErrorResponse          `json:"error,omitempty"`
+	Partial       bool                    `json:"partial"`
+	RequestedMode string                  `json:"requested_mode" validate:"required"`
+	Results       []MediaAttachmentResult `json:"results" validate:"required"`
+	Truncated     bool                    `json:"truncated"`
 }
 
 func (m MediaAttachmentSearch) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.ActualMode, "required"); err != nil {
+		errors = errors.Append("ActualMode", err)
+	}
+	if v, ok := any(m.Coverage).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Coverage", err)
+		}
+	}
+	if err := typesValidator.Var(m.Degradations, "required"); err != nil {
+		errors = errors.Append("Degradations", err)
+	}
 	if m.ErrorData != nil {
 		if v, ok := any(m.ErrorData).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("ErrorData", err)
 			}
 		}
+	}
+	if err := typesValidator.Var(m.RequestedMode, "required"); err != nil {
+		errors = errors.Append("RequestedMode", err)
 	}
 	if err := typesValidator.Var(m.Results, "required"); err != nil {
 		errors = errors.Append("Results", err)
@@ -12057,8 +12161,12 @@ func (p PersonFileSearchHTTPResponse) Validate() error {
 }
 
 type PersonFileSearchRow struct {
-	ContainingTitle    string                          `json:"containing_title" validate:"required"`
-	ContentAvailable   bool                            `json:"content_available"`
+	ContainingTitle string `json:"containing_title" validate:"required"`
+
+	// ContentAvailable Null means availability has not been checked.
+	ContentAvailable *bool `json:"content_available" validate:"omitempty"`
+
+	// ContentState List availability is based on metadata; file details check whether storage can be opened.
 	ContentState       PersonFileSearchRowContentState `json:"content_state" validate:"required"`
 	ConversationID     int64                           `json:"conversation_id"`
 	EntryKey           string                          `json:"entry_key" validate:"required"`
@@ -12085,6 +12193,11 @@ func (p PersonFileSearchRow) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(p.ContainingTitle, "required"); err != nil {
 		errors = errors.Append("ContainingTitle", err)
+	}
+	if v, ok := any(p.ContentAvailable).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentAvailable", err)
+		}
 	}
 	if v, ok := any(p.ContentState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
@@ -12218,7 +12331,10 @@ func (p PersonFileSuggestionHTTPResponse) Validate() error {
 }
 
 type PersonFileSuggestionRow struct {
-	ContentAvailable bool                                 `json:"content_available"`
+	// ContentAvailable Null means availability has not been checked.
+	ContentAvailable *bool `json:"content_available" validate:"omitempty"`
+
+	// ContentState Suggestion availability is based on metadata; file details check whether storage can be opened.
 	ContentState     PersonFileSuggestionRowContentState  `json:"content_state" validate:"required"`
 	ConversationID   int64                                `json:"conversation_id"`
 	Filename         string                               `json:"filename" validate:"required"`
@@ -12235,6 +12351,11 @@ type PersonFileSuggestionRow struct {
 
 func (p PersonFileSuggestionRow) Validate() error {
 	var errors runtime.ValidationErrors
+	if v, ok := any(p.ContentAvailable).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentAvailable", err)
+		}
+	}
 	if v, ok := any(p.ContentState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("ContentState", err)
@@ -14505,6 +14626,9 @@ func (r Result) Validate() error {
 type RunSavedViewRequest struct {
 	Cursor *string `json:"cursor,omitzero"`
 	Limit  *int64  `json:"limit,omitempty" validate:"omitempty,gte=0,lte=100"`
+
+	// Timezone IANA timezone for calendar grouping; defaults to UTC
+	Timezone *string `json:"timezone,omitzero"`
 }
 
 func (r RunSavedViewRequest) Validate() error {
@@ -16347,6 +16471,9 @@ func (t TaskLinkTask) Validate() error {
 
 type TaskSearchResponse struct {
 	Tasks []TaskSummary `json:"tasks" validate:"required"`
+
+	// Truncated More tasks matched than were returned
+	Truncated bool `json:"truncated"`
 }
 
 func (t TaskSearchResponse) Validate() error {

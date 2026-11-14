@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -31,6 +33,7 @@ import (
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 var listDeletionsJSON bool
@@ -857,11 +860,15 @@ func deleteStagedScopeEscalationForSource(ctx context.Context,
 
 // msmailScopeEscalation reports whether a Graph mail token lacks
 // Mail.ReadWrite. Trash and permanent delete need the same scope.
-func msmailScopeEscalation(account string, state *invocation) (deleteStagedScopeEscalation, error) {
+func msmailScopeEscalation(account string, src *store.Source, state *invocation) (deleteStagedScopeEscalation, error) {
 	if state == nil || state.cfg == nil || state.logger == nil {
 		return deleteStagedScopeEscalation{}, errors.New("configuration is unavailable")
 	}
-	ok, err := newGraphMailWriteManager(state).HasScopes(account)
+	mgr, err := newGraphMailWriteManager(state, src)
+	if err != nil {
+		return deleteStagedScopeEscalation{}, err
+	}
+	ok, err := mgr.HasScopes(account)
 	if err != nil {
 		return deleteStagedScopeEscalation{}, fmt.Errorf("read Microsoft Graph mail token for %s: %w", account, err)
 	}
@@ -1112,7 +1119,7 @@ Examples:
 		}
 
 		if src.SourceType == sourceTypeMSMail {
-			escalation, err := msmailScopeEscalation(account, state)
+			escalation, err := msmailScopeEscalation(account, src, state)
 			if err != nil {
 				return err
 			}
@@ -1124,7 +1131,7 @@ Examples:
 						return err
 					}
 				}
-				if err := authorizeGraphMailWrite(ctx, account, state); err != nil {
+				if err := authorizeGraphMailWrite(ctx, account, sourceOAuthApp(src), state); err != nil {
 					return err
 				}
 			}
@@ -1154,7 +1161,11 @@ Examples:
 		}
 		var client gmail.MessageDeleter
 		if src.SourceType == sourceTypeMSMail {
-			tokenFn, err := newGraphMailWriteManager(state).TokenSource(ctx, account)
+			mgr, err := newGraphMailWriteManager(state, src)
+			if err != nil {
+				return err
+			}
+			tokenFn, err := mgr.TokenSource(ctx, account)
 			if err != nil {
 				return err
 			}
@@ -1397,7 +1408,7 @@ func preflightDeleteStagedScopeEscalation(ctx context.Context, plan *daemonclien
 		return errors.New("configuration is unavailable")
 	}
 	if plan.ScopeEscalationSourceType == sourceTypeMSMail {
-		return authorizeGraphMailWrite(ctx, plan.ScopeEscalationAccount, state)
+		return authorizeGraphMailWrite(ctx, plan.ScopeEscalationAccount, plan.ScopeEscalationOAuthApp, state)
 	}
 	clientSecretsPath, err := state.cfg.OAuth.CredentialsFor(plan.ScopeEscalationOAuthApp)
 	if err != nil {
@@ -1406,8 +1417,12 @@ func preflightDeleteStagedScopeEscalation(ctx context.Context, plan *daemonclien
 	return authorizeDeletionScopeEscalation(ctx, plan.ScopeEscalationAccount, deletePermanent, clientSecretsPath)
 }
 
-func authorizeGraphMailWrite(ctx context.Context, account string, state *invocation) error {
-	mgr := newGraphMailWriteManager(state)
+func authorizeGraphMailWrite(ctx context.Context, account, appName string, state *invocation) error {
+	src := &store.Source{OAuthApp: sql.NullString{String: appName, Valid: appName != ""}}
+	mgr, err := newGraphMailWriteManager(state, src)
+	if err != nil {
+		return err
+	}
 	if deleteHeadless {
 		mgr.UseDeviceCode()
 	}
@@ -1530,7 +1545,7 @@ func planCLIDeleteStaged(
 			return api.CLIDeleteStagedPlanResponse{}, err
 		}
 		if target.Source.SourceType == sourceTypeMSMail {
-			escalation, err := msmailScopeEscalation(target.Account, state)
+			escalation, err := msmailScopeEscalation(target.Account, target.Source, state)
 			if err != nil {
 				return api.CLIDeleteStagedPlanResponse{}, err
 			}
@@ -1541,6 +1556,7 @@ func planCLIDeleteStaged(
 				plan.ScopeEscalationCancelHint = escalation.CancelHint
 				plan.ScopeEscalationAccount = escalation.Account
 				plan.ScopeEscalationSourceType = target.Source.SourceType
+				plan.ScopeEscalationOAuthApp = sourceOAuthApp(target.Source)
 			}
 		}
 		if target.Source.SourceType == sourceTypeGmail {
@@ -1684,7 +1700,7 @@ func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen-3] + "..."
+	return textutil.PrefixBytes(s, maxLen-3) + "..."
 }
 
 func limitManifests(manifests []*deletion.Manifest, maxN int) []*deletion.Manifest {

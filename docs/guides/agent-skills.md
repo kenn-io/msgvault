@@ -29,7 +29,8 @@ direction before archive mutations such as sync, import, dedup or deletion.
 msgvault skills install
 ```
 
-This detects installed agents by directory (`~/.claude`, `~/.codex`)
+This detects installed agents by directory (`~/.claude`, `~/.codex`, or the
+directories set by `CLAUDE_CONFIG_DIR` and `CODEX_HOME`)
 and writes the skills to each agent's user-level skills directory
 (`~/.claude/skills/`, `~/.codex/skills/`). Options:
 
@@ -56,8 +57,8 @@ CLI's command tree in CI, so examples stay correct as the CLI evolves.
 
 ## Follow through on feedback
 
-The feedback skill is newer than the latest release. After upgrading msgvault,
-run `msgvault skills install` again. Ask your agent to record feedback from a
+After upgrading msgvault, run `msgvault skills install` again to get the
+feedback skill. Ask your agent to record feedback from a
 specific person or message, review your earlier decision, or follow through on
 an accepted change. Summarizing feedback alone does not authorize task writes.
 

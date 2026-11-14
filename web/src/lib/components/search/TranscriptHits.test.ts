@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
-import { recording, recordingSearchHit as hit, recordingSearchReport as report } from '../../archive/recording-fixtures.test-support';
+import { attachmentSearchReport, recording, recordingSearchHit as hit, recordingSearchReport as report } from '../../archive/recording-fixtures.test-support';
 import TranscriptHits from './TranscriptHits.svelte';
 
 function mount(fetchFn = vi.fn<typeof fetch>(async () => Response.json(report()))) {
@@ -223,7 +223,7 @@ describe('TranscriptHits', () => {
   it('opens attachment messages with their filenames and excerpts', async () => {
     const onOpen = vi.fn();
     const attachment = { message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'report.pdf', containing_title: 'Quarterly report', occurred_at: '2026-07-18T12:00:00Z', excerpt: 'quartz inside the PDF' };
-    const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(report({ attachments: { results: [attachment], truncated: true } }))));
+    const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(report({ attachments: { ...attachmentSearchReport(), results: [attachment], truncated: true } }))));
     render(TranscriptHits, { props: { client, query: 'quartz', supported: true, onOpen } });
     const link = await screen.findByRole('link', { name: 'Quarterly report' });
     expect(link.getAttribute('href')).toBe('/messages/44');
@@ -248,9 +248,9 @@ describe('TranscriptHits', () => {
     ['transport', true], ['server_error', true], ['timeout', true], ['rate_limited', true],
     ['invalid_request', false],
   ])('offers attachment retry for %s only when transient', async (error, retryable) => {
-    const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report({ attachments: {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report({ attachments: { ...attachmentSearchReport({ actual_mode: 'unavailable' }),
       results: [], truncated: false, error: { error, message: 'Attachment search is unavailable.' },
-    } }))).mockResolvedValue(Response.json(report({ attachments: { results: [], truncated: false } })));
+    } }))).mockResolvedValue(Response.json(report({ attachments: { ...attachmentSearchReport(), results: [], truncated: false } })));
     mount(fetchFn);
     await screen.findByText('Attachment search is unavailable.');
     expect(screen.getByRole('heading', { name: 'Attachments' }).textContent).toBe('Attachments');
@@ -262,7 +262,7 @@ describe('TranscriptHits', () => {
   });
 
   it('handles partial recording failure alongside attachment hits', async () => {
-    const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report({ results: [], partial: true, recordings_error: { error: 'media_search_unavailable', message: 'Docbank transcript search is unavailable' }, attachments: {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report({ results: [], partial: true, recordings_error: { error: 'media_search_unavailable', message: 'Docbank transcript search is unavailable' }, attachments: { ...attachmentSearchReport(),
       results: [{ message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'report.pdf', containing_title: 'Report', excerpt: 'quartz' }], truncated: false,
     } }))).mockResolvedValue(Response.json(report()));
     mount(fetchFn);
@@ -280,7 +280,7 @@ describe('TranscriptHits', () => {
     ['a recording and an attachment', [hit({ message_id: 44 })], 'voice.wav'],
     ['two attachments', [], 'report.pdf'],
   ])('marks one row when the selected message has %s', async (_, recordings, filename) => {
-    const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(report({ results: recordings, attachments: {
+    const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(report({ results: recordings, attachments: { ...attachmentSearchReport(),
       results: [
         { message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'report.pdf', containing_title: 'Report', excerpt: 'quartz' },
         { message_id: 44, conversation_id: 22, attachment_id: 56, filename: 'appendix.pdf', containing_title: 'Report', excerpt: 'quartz' },
@@ -300,7 +300,7 @@ describe('TranscriptHits', () => {
     const client = createAPIClient(fetchFn);
     const view = render(TranscriptHits, { props: { client, query: 'quartz', supported: true, missingMessageID: 44 } });
     await vi.advanceTimersByTimeAsync(300);
-    finish(Response.json(report({ results: [hit({ message_id: 44 }), hit({ message_id: 45 })], attachments: {
+    finish(Response.json(report({ results: [hit({ message_id: 44 }), hit({ message_id: 45 })], attachments: { ...attachmentSearchReport(),
       results: [
         { message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'missing.pdf', containing_title: 'Missing report', excerpt: 'quartz' },
         { message_id: 46, conversation_id: 22, attachment_id: 56, filename: 'available.pdf', containing_title: 'Available report', excerpt: 'quartz' },

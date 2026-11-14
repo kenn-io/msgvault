@@ -6,6 +6,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/circleback"
+	"go.kenn.io/msgvault/internal/feeds"
 	"go.kenn.io/msgvault/internal/forge/gitea"
 	"go.kenn.io/msgvault/internal/forge/github"
 	"go.kenn.io/msgvault/internal/forge/gitlab"
@@ -71,6 +72,9 @@ const GitLabJobName = gitlab.Name
 
 // GiteaJobName drives every added Gitea and Forgejo account.
 const GiteaJobName = gitea.Name
+
+// FeedsJobName drives every followed feed; all feeds share one source.
+const FeedsJobName = "feeds"
 
 // IMessageJobName drives the selected Apple Messages source.
 const IMessageJobName = "apple-messages"
@@ -189,6 +193,8 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		return BeeperJobName, true
 	case sourceTypeInline:
 		return InlineJobName, true
+	case feeds.SourceType:
+		return FeedsJobName, true
 	case sourceTypeMatrix:
 		return MatrixJobName, true
 	case github.Name:

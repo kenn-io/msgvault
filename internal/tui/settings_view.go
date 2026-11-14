@@ -5,34 +5,36 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
+const settingsRestartNotice = "Restart pending. On the daemon host, restart its service, or stop and rerun your foreground msgvault serve with the same flags. Otherwise, run:\nmsgvault daemon restart\nwith the same --home and --config."
+
 func (m Model) renderSettingsView() string {
-	if m.settings.peopleControls.active {
-		return m.renderPeopleInferenceControls()
-	}
-	if m.settings.codex.active {
-		return m.renderCodexSettings()
-	}
+	title, body, actions, _ := m.settingsScreen()
+	v, footer := m.settingsViewport(title, body, actions)
+	return strings.Join([]string{ansi.Wrap(title, max(m.width, 20), ""), v.View(), footer}, "\n")
+}
+
+func (m Model) mainSettingsParts() (string, string, string, int) {
 	title := "Settings"
 	if m.settings.dirty() {
 		title += " *"
 	}
-	header := m.styles.titleBar.Render(title)
-	if m.settings.confirmDiscard {
-		return strings.Join([]string{
-			header,
-			"",
-			m.styles.modalTitle.Render("Discard unsaved changes?"),
-			"",
-			"Your settings drafts have not been saved.",
-			"",
-			"[Y] Discard and return    [N/Esc] Keep editing",
-		}, "\n")
+	var lines []string
+	if m.settings.status != "" {
+		status := textutil.SanitizeTerminalMultiline(m.settings.status)
+		if m.settings.statusIsError {
+			status = m.styles.err.Render(status)
+		} else {
+			status = m.styles.flash.Render(status)
+		}
+		lines = append(lines, status)
 	}
-
-	lines := []string{header}
+	if m.settings.pendingRestart || (m.settings.peopleInferenceStatus != nil && m.settings.peopleInferenceStatus.PendingRestart) {
+		lines = append(lines, m.styles.flash.Render(settingsRestartNotice))
+	}
 	if status := m.settings.peopleInferenceStatus; status != nil {
 		configured := textutil.SanitizeTerminal(status.Configured)
 		running := textutil.SanitizeTerminal(status.Running)
@@ -46,18 +48,27 @@ func (m Model) renderSettingsView() string {
 		if status.ConfiguredFingerprint != "" {
 			lines = append(lines, strings.Join(wrapText("Profile fingerprint: "+textutil.SanitizeTerminal(status.ConfiguredFingerprint), max(m.width, 20)), "\n"))
 		}
-		if status.PendingRestart {
-			lines = append(lines, "Restart the daemon to apply the people inference selection.")
-		}
-	}
-	if m.settings.pendingRestart {
-		lines = append(lines, m.styles.flash.Render("Pending restart — saved changes take effect after the daemon restarts."))
 	}
 	if m.settings.loading {
-		return strings.Join(append(lines, "", m.styles.loading.Render("Loading settings…"), "", "[Esc] Back"), "\n")
+		return m.styles.titleBar.Render(title), strings.Join(append(lines, m.styles.loading.Render("Loading settings…")), "\n"), "[Esc] Back", 0
 	}
-
-	availableHeight := max(m.height-len(lines)-3, 4)
+	titleBar := m.styles.titleBar.Render(title)
+	actions := m.settingsFooter()
+	_, titleRows, _, footer := m.settingsViewportContent(titleBar, "", actions)
+	statusRows := settingsWrappedRows(lines, max(m.width, 20))
+	availableHeight := min(max(m.height-3-statusRows, 4), max(m.height-titleRows-len(footer)-1, 1))
+	categoryRow := min(m.settings.groupCursor, max(availableHeight-1, 1)-1) + 1
+	rows := max(min(len(m.settings.currentFields()), availableHeight/2), 1)
+	fieldRow := min(m.settings.rowCursor, rows-1) + 1
+	var focus int
+	if m.settingsIsNarrow() && !m.settings.narrowFields {
+		focus = categoryRow
+	} else if m.settingsIsNarrow() {
+		focus = fieldRow
+	} else {
+		focus = min(categoryRow, fieldRow)
+	}
+	focus += statusRows
 	if m.settingsIsNarrow() {
 		if m.settings.narrowFields {
 			lines = append(lines, m.renderSettingsFields(max(m.width, 20), availableHeight))
@@ -67,22 +78,9 @@ func (m Model) renderSettingsView() string {
 	} else {
 		categoryWidth := min(max(m.width/4, 20), 30)
 		fieldWidth := max(m.width-categoryWidth-3, 30)
-		categories := m.renderSettingsCategories(categoryWidth, availableHeight)
-		fields := m.renderSettingsFields(fieldWidth, availableHeight)
-		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top, categories, " │ ", fields))
+		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top, m.renderSettingsCategories(categoryWidth, availableHeight), " │ ", m.renderSettingsFields(fieldWidth, availableHeight)))
 	}
-
-	if m.settings.status != "" {
-		status := textutil.SanitizeTerminalMultiline(m.settings.status)
-		if m.settings.statusIsError {
-			status = m.styles.err.Render(status)
-		} else {
-			status = m.styles.flash.Render(status)
-		}
-		lines = append(lines, status)
-	}
-	lines = append(lines, m.settingsFooter())
-	return strings.Join(lines, "\n")
+	return titleBar, strings.Join(lines, "\n"), actions, focus
 }
 
 func (m Model) renderSettingsCategories(width, height int) string {
@@ -117,9 +115,6 @@ func (m Model) renderSettingsCategories(width, height int) string {
 		if i+1 < end {
 			sb.WriteString("\n")
 		}
-	}
-	if m.settingsIsNarrow() {
-		sb.WriteString("\n\n[↑/↓] Category  [Enter/l] Open  [Esc] Back")
 	}
 	return sb.String()
 }

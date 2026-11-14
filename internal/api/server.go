@@ -73,7 +73,7 @@ type TaskLinkOperations interface {
 	Link(ctx context.Context, taskID string, identity tasklinks.MessageIdentity, addedAt time.Time) (taskclient.Task, error)
 	Unlink(ctx context.Context, taskID string, identity tasklinks.MessageIdentity) (taskclient.Task, error)
 	Lookup(ctx context.Context, identity tasklinks.MessageIdentity) tasklinks.LookupResult
-	Search(ctx context.Context, query string) ([]tasklinks.TaskSummary, error)
+	Search(ctx context.Context, query string) ([]tasklinks.TaskSummary, bool, error)
 }
 
 type TaskIdentityResolver func(context.Context, *APIMessage) (tasklinks.MessageIdentity, error)
@@ -938,6 +938,17 @@ func (s *Server) StartOnListener(ln net.Listener) error {
 	s.listenerBound = true
 	s.server = server
 	s.serverMu.Unlock()
+	if backend, ok := s.store.(interface{ IsPostgreSQL() bool }); ok && backend.IsPostgreSQL() {
+		if cliStore, ok := s.store.(CLIStore); ok {
+			s.importMu.Lock()
+			if !s.importsClosed {
+				s.importWG.Go(func() {
+					s.ensureCLISearchIndexAsync(bindCLIStoreContext(s.importContext, cliStore), true)
+				})
+			}
+			s.importMu.Unlock()
+		}
+	}
 	s.signalStarted(nil)
 
 	s.logger.Info("starting API server", "addr", ln.Addr().String())

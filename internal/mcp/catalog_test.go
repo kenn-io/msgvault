@@ -386,6 +386,7 @@ func TestCatalogSchemas(t *testing.T) {
 				checks.Equal(expectedNames, names)
 
 				byName := toolsByName(t, tools)
+
 				searchMessagesProperties := []string{"account", "limit", "offset", "query"}
 				semanticProperties := []string{"query"}
 				if shape.semantic {

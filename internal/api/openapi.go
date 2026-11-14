@@ -17,6 +17,9 @@ import (
 // (info.version). It tracks the HTTP wire contract, not the binary build
 // version, so clients can reason about compatibility independently of releases.
 //
+// Record each change with a summary in internal/api/testdata/api-version-contracts.
+// See docs/development.md#api-schema-version-maintenance. Do not add entries here.
+//
 // 1.1.0: GET /api/v1/cli/search no longer blocks on the FTS completeness
 // probe/backfill; it returns immediately and reports background index work in
 // the additive index_state field ("checking"/"building"). Clients older than
@@ -409,7 +412,12 @@ import (
 // Docbank owns document processing.
 // 4.1.0 adds recorded names, saved contacts, and reconciled addresses to merge-list and detail responses,
 // registered service labels to current contact points, and identity keys to observations.
-const APISchemaVersion = "4.1.0"
+// 4.2.0 adds attachment retrieval modes, coverage, and degradations to media search.
+// 5.0.0 makes file list and suggestion content availability nullable when storage has not been checked.
+// 5.1.0 adds keyed group overviews, time-group item totals, saved view schema 3, and saved view run timezones.
+// 5.2.0 adds open Kata issue search and optional task search queries.
+// 5.3.0 adds the IMAP authentication method to CLI accounts.
+const APISchemaVersion = "5.3.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1030,6 +1038,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		{"ContactCandidate", "display_name"},
 		{"MediaAttachmentResult", "filename"},
 		{"MediaAttachmentResult", "containing_title"},
+		{"MediaAttachmentResult", "excerpt"},
 		{"MessagingRoute", "merged_into_chat_id"},
 		{"MessagingRoute", "network"},
 		{"MessagingRoute", "network_label"},
@@ -1051,6 +1060,14 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 				property.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
 					"validate": "omitempty",
 				}
+			}
+		}
+	}
+	for _, name := range []string{"FileSearchRow", "FileSuggestionRow", "PersonFileSearchRow", "PersonFileSuggestionRow"} {
+		if schema := schemas[name]; schema != nil {
+			if property := schema.Properties["content_available"]; property != nil {
+				setCodegenGoType(property, "*bool")
+				nullableSchemaProperty(schema, "content_available")
 			}
 		}
 	}

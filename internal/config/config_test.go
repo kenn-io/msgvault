@@ -2090,6 +2090,28 @@ strip_signatures = false
 	assert.True(cfg.Vector.Preprocess.StripQuotesEnabled(), "StripQuotesEnabled() should be true (unset → default)")
 }
 
+func TestLoadEmbeddingTransportDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name, settings string
+		batch          int
+		timeout        time.Duration
+	}{
+		{"local", "local_only = true", 8, 5 * time.Minute},
+		{"remote", `endpoint = "https://example.com/v1"`, 32, 30 * time.Second},
+		{"local overrides", "local_only = true\nbatch_size = 17\ntimeout = \"45s\"", 17, 45 * time.Second},
+		{"local batch override", "local_only = true\nbatch_size = 32", 32, 5 * time.Minute},
+		{"local timeout override", "local_only = true\ntimeout = \"30s\"", 8, 30 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(path, []byte("[vector.embeddings]\n"+tc.settings+"\n"), 0o600))
+			cfg, err := Load(path, "")
+			require.NoError(t, err)
+			assert.Equal(t, []any{tc.batch, tc.timeout}, []any{cfg.Vector.Embeddings.BatchSize, cfg.Vector.Embeddings.Timeout})
+		})
+	}
+}
+
 func TestLoadAllowsIndependentMultimodalVectorLane(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -2654,4 +2676,23 @@ func TestRemovedDocumentConfigGuidesMigration(t *testing.T) {
 	assert.Contains(logs.String(), "[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile")
 	assert.Contains(logs.String(), "for Mistral run docbank processing probe --profile <name> --seeds <dir>")
 	assert.Equal(1, strings.Count(logs.String(), "[attachments.documents]"))
+}
+
+func TestMicrosoftNamedApps(t *testing.T) {
+	cfg := MicrosoftConfig{ClientID: "default", TenantID: "tenant-a", RedirectURI: "http://localhost:9000/callback", Apps: map[string]MicrosoftApp{
+		"orgb":  {ClientID: "client-b"},
+		"empty": {},
+	}}
+	app, err := cfg.App("")
+	require.NoError(t, err)
+	assert.Equal(t, "default", app.ClientID)
+	app, err = cfg.App("orgb")
+	require.NoError(t, err)
+	assert.Equal(t, "client-b", app.ClientID)
+	assert.Equal(t, "common", app.EffectiveTenantID())
+	assert.Equal(t, "http://localhost:8089/callback/microsoft", app.EffectiveRedirectURI())
+	_, err = cfg.App("missing")
+	require.ErrorContains(t, err, "[microsoft.apps.missing]")
+	_, err = cfg.App("empty")
+	require.ErrorContains(t, err, "[microsoft.apps.empty]")
 }

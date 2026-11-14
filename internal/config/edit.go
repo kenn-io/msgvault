@@ -910,6 +910,7 @@ func validateEditableCandidate(cfg *Config) error {
 		"github.schedule":                 cfg.GitHub.Schedule,
 		"gitlab.schedule":                 cfg.GitLab.Schedule,
 		"gitea.schedule":                  cfg.Gitea.Schedule,
+		"feeds.schedule":                  cfg.Feeds.Schedule,
 		"imessage.schedule":               cfg.IMessage.Schedule,
 	}
 	for index, account := range cfg.Accounts {

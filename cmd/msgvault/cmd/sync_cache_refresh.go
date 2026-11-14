@@ -40,7 +40,17 @@ func manualSyncCLICommand(args []string) bool {
 		return false
 	}
 	if args[0] == "source" {
-		return len(args) >= 3 && (args[1] == "facebook-comments" || args[1] == "instagram-comments") && args[2] == "sync"
+		if len(args) < 3 {
+			return false
+		}
+		switch args[1] {
+		case "facebook-comments", "instagram-comments":
+			return args[2] == "sync"
+		case "feeds":
+			// add archives the items a new feed lists now.
+			return args[2] == "sync" || args[2] == "add"
+		}
+		return false
 	}
 	switch args[0] {
 	case "sync-slack", "sync-teams", "sync-beeper", "sync-chatwoot", "sync-discord", "sync-matrix", "sync-inline", "backfill-inline-media", "sync-circleback", "sync-plaud",

@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/personscope"
+	"go.kenn.io/msgvault/internal/textutil"
 	"go.kenn.io/msgvault/internal/vector/preprocess"
 )
 
@@ -429,7 +430,7 @@ func (s *Store) hydratePersonSweepMessageSet(
 			continue
 		}
 		fullHash := sweepSHA256(text)
-		excerpt := truncateSweepRunes(text, personfacts.MaxEvidenceExcerptRunes)
+		excerpt := textutil.PrefixRunes(text, personfacts.MaxEvidenceExcerptRunes)
 		item := peoplesweep.EvidenceItem{
 			Ref: peoplesweep.EvidenceRef{SourceLane: lane, SourceID: row.sourceID, MessageID: row.id,
 				SourceMessageID: row.sourceMessageID, SpanEnd: utf8.RuneCountInString(excerpt)},
@@ -459,13 +460,6 @@ func canonicalSweepMessageText(subject, body, snippet string) string {
 	return subject
 }
 
-func truncateSweepRunes(value string, limit int) string {
-	runes := []rune(value)
-	if len(runes) <= limit {
-		return value
-	}
-	return string(runes[:limit])
-}
 func sweepSHA256(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
@@ -789,7 +783,7 @@ func personSweepAuthorship(
 // the single list behind personSweepSourceAuthenticatesSender and the SQL
 // authorship predicate, so the two can never disagree.
 func personSweepAuthenticatedSenderSourceTypes() []string {
-	return []string{"apple_messages", "beeper", "discord", "facebook_messenger", "gitea", "github",
+	return []string{"apple_messages", "beeper", "discord", "discord_package", "facebook_messenger", "gitea", "github",
 		"gitlab", "google_messages", "imazing_csv", "imessage", "inline", "matrix", "slack", "slackdump",
 		"synctech-sms", "synctech_sms", "teams", "telegram", "whatsapp"}
 }

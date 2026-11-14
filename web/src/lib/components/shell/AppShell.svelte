@@ -116,7 +116,8 @@
       (authority: RelatedOperationStatus) => void,
       () => void,
       OperationsController,
-      () => Promise<void>
+      () => Promise<void>,
+      (personID: number) => void
     ]>;
     appearanceDefaults?: AppearanceDefaults;
     searchModeDefault?: ExploreSearchMode;
@@ -1101,10 +1102,14 @@
     if (exploreState.current.selectedRow === row.key) return;
     commitNavigation({ selectedRow: row.key });
   }
+  function groupIsDrillable(dimension: ExploreGroupDimension | undefined): boolean {
+    return !!dimension && groupingByDimension(dimension).drillable && (exploreState.current.workspace !== 'files' || dimension !== 'kind');
+  }
+
   function drillGroup(row: ExploreGroupRow): void {
     const [dimension, ...remaining] = exploreState.current.groupingChain;
-    if (!dimension || !groupingByDimension(dimension).drillable) return;
-    const filters = filtersForGroup(exploreState.current.filters, dimension, row.key);
+    if (!dimension || !groupIsDrillable(dimension)) return;
+    const filters = filtersForGroup(exploreState.current.filters, dimension, row.key, exploreState.current.workspace === 'files');
     if (!filters) {
       commitNavigation({ selectedRow: `group:${dimension}:${row.key}` });
       return;
@@ -1322,7 +1327,8 @@
           openOperationAuthority,
           () => void shellData.jobs.refresh(true),
           operationsController,
-          () => directoryController.reloadFirstPage()
+          () => directoryController.reloadFirstPage(),
+          openDirectoryPerson
         )}{/if}
       {:else if exploreState.current.workspace === 'sources'}
         <SourcesWorkspace bind:this={sourcesPage} {client} onStatusChange={() => void shellData.jobs.refresh(true)} onOpenSettings={(settingsCategory, connection) => { cardDAVSettingsRequest = connection ? { connection, key: ++cardDAVSettingsRequestKey } : undefined; commitNavigation({ workspace: 'settings', settingsCategory, settingsAuthority: '' }); }} onOpenOperations={() => openOperations('source_sync')} />
@@ -1442,7 +1448,7 @@
           {#if exploreState.current.groupingChain.length > 0}{@render filesToolbar(undefined, undefined, false)}{/if}
           <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
           {#if exploreState.current.groupingChain.length > 0}
-            <GroupTable
+            <GroupTable sources={shellData.jobs.sources}
               rows={loader.groupRows}
               dimension={exploreState.current.groupingChain[0]!}
               workspaceLabel="Files"
@@ -1454,7 +1460,7 @@
               error={loader.error}
               pageError={loader.pageError}
               unavailable={loader.unavailable}
-              drillable={groupingByDimension(exploreState.current.groupingChain[0]!).drillable}
+              drillable={groupIsDrillable(exploreState.current.groupingChain[0])}
               focusedKey={exploreState.current.activeRow}
               inspectedKey={readingTargetKey}
               scrollAnchor={exploreState.current.scrollAnchor}
@@ -1513,8 +1519,8 @@
                   scrollAnchor: null,
                 })}
               onActiveKey={(activeRow) => replaceTransient({ activeRow })}
-              onSelectedKey={(selectedRow) =>
-                selectedRow ? commitNavigation({ selectedRow }) : replaceCommittedNavigation({ selectedRow: null })}
+              onSelectedKey={(selectedRow, options) =>
+                selectedRow ? (options?.replace ? replaceCommittedNavigation({ selectedRow }) : commitNavigation({ selectedRow })) : replaceCommittedNavigation({ selectedRow: null })}
               onOpenItem={openFileItem}
               onOpenConversation={openFileConversation}
             />
@@ -1522,6 +1528,7 @@
         </main>
       {:else}
         <EverythingWorkspace
+          sources={shellData.jobs.sources}
           onAddSource={shellData.jobs.noSources ? addSource : undefined}
           bind:resultsWidth
           {client}

@@ -29,6 +29,7 @@ const (
 
 var topLevelCommandGroups = map[string]string{
 	"source":                  helpGroupSources,
+	"address":                 helpGroupPeople,
 	"activity":                helpGroupIndex,
 	"add-account":             helpGroupSources,
 	"add-beeper":              helpGroupSources,
@@ -55,6 +56,7 @@ var topLevelCommandGroups = map[string]string{
 	"add-teams":               helpGroupSources,
 	"add-twenty":              helpGroupSources,
 	"add-twilio":              helpGroupSources,
+	"agent":                   helpGroupOperations,
 	"agent-token":             helpGroupOperations,
 	"archive-remote-images":   helpGroupSources,
 	"attribute-definition":    helpGroupPeople,
@@ -108,7 +110,9 @@ var topLevelCommandGroups = map[string]string{
 	"import-messenger":        helpGroupImport,
 	"import-pst":              helpGroupImport,
 	"import-slackdump":        helpGroupImport,
+	"import-discord-package":  helpGroupImport,
 	"import-telegram":         helpGroupImport,
+	"import-x":                helpGroupImport,
 	"import-synctech-sms":     helpGroupImport,
 	"import-whatsapp":         helpGroupImport,
 	"init-db":                 helpGroupMaintenance,

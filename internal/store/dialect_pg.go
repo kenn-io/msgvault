@@ -9,12 +9,12 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver for database/sql
 
 	"go.kenn.io/msgvault/internal/sqldialect"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // PostgreSQLDialect implements Dialect for PostgreSQL.
@@ -329,24 +329,9 @@ func (d *PostgreSQLDialect) JSONIsDistinctExpr(col string) string {
 	return col + " IS DISTINCT FROM ?::JSONB"
 }
 
-// BuildFTSArg formats search terms for to_tsquery: each term is split
-// into letter/digit-only lexemes via sqldialect.EscapeTSQueryTerm so
-// punctuation like `-`, `.`, `@` (which would otherwise produce
-// invalid tsquery strings such as `---:*` or `foo-bar:*`) becomes a
-// lexeme boundary. Each surviving lexeme is suffixed with ":*" for
-// prefix matching and joined with " & ". Matches the shape emitted by
-// the query package's PostgreSQLQueryDialect.BuildFTSTerm so the API
-// search and engine deep-search return the same hits. If no lexemes
-// survive, returns "" so the caller can substitute a FALSE predicate
-// rather than feed to_tsquery an empty argument.
+// BuildFTSArg builds unordered candidates whose final pieces match prefixes.
 func (d *PostgreSQLDialect) BuildFTSArg(terms []string) string {
-	out := make([]string, 0, len(terms))
-	for _, t := range terms {
-		for _, lex := range sqldialect.EscapeTSQueryTerm(t) {
-			out = append(out, lex+":*")
-		}
-	}
-	return strings.Join(out, " & ")
+	return sqldialect.TSQuery(terms, "", " & ")
 }
 
 // InsertOrIgnore rewrites INSERT OR IGNORE INTO to INSERT INTO and appends
@@ -389,73 +374,31 @@ func (d *PostgreSQLDialect) InsertOrIgnoreSuffix() string {
 // empirically). The 600000-char cap makes the error unlikely for typical
 // (mostly-ASCII, repetitive) bodies, but does not make it impossible.
 //
-// A residual SQLSTATE 54000 is handled GRACEFULLY rather than wedging FTS:
-//   - Sync path (FTSUpsert): ALL FIVE tsvector inputs (subject, body, from, to,
-//     cc) are additionally byte-truncated in Go to maxFTSBodyBytes BEFORE
-//     binding (see below) — the SQL LEFT char cap cannot bound multibyte input,
-//     so byte-truncating every field (not just the body) is what keeps a
-//     multibyte subject/recipient list from tripping the limit. Dense distinct
-//     tokens can still overflow inside both caps, so the message write goes
-//     through upsertFTSOrUnsearchable, which marks the message unsearchable
-//     instead of failing the write.
-//   - Backfill path (FTSBackfillBatchSQL): the body lives in the DB, so only
-//     the LEFT char cap applies; backfillFTSRowByRow skips the offending row
-//     (with a logged warning) and continues, so one pathological row never
-//     aborts BackfillFTS or wedges later batches.
-//
-// SQLite's FTS5 has no such limit, so this cap is PostgreSQL-only.
+// Dense tokens can still exceed the limit. Atomic message persistence, email
+// repair and backfill mark recognized overflows unsearchable; direct indexing
+// entries propagate the error.
 const maxFTSBodyChars = 600000
 
-// maxFTSBodyBytes is the BYTE bound applied to EACH tsvector input field
-// (subject, body, from, to, cc) on the sync path (FTSUpsert) as defense-in-
-// depth, in addition to the SQL LEFT char cap. It is
-// well under PostgreSQL's 1MB (1048575-byte) tsvector limit: for the worst-case
-// shape — a body of all-distinct multibyte tokens, where the packed tsvector
-// (lexeme bytes + per-position overhead) is roughly the same order as the input
-// byte length — bounding the input to 700000 bytes keeps the resulting tsvector
-// under the limit with comfortable margin. (The empirical overflow was ~600000
-// distinct 2-byte chars producing a 1.2MB tsvector; 700000 input bytes of that
-// same density stays below 1MB.) Truncation is rune-safe (never splits a
-// multibyte rune). A UTF-8-safe byte truncation is not cleanly available in SQL
-// (no convert_to/convert_from boundary hack is attempted), so the backfill SQL
-// path keeps the char cap and relies on the row-by-row skip for any residual.
+// maxFTSBodyBytes bounds each input before PostgreSQL builds the vector.
 const maxFTSBodyBytes = 700000
 
 // truncateBytesRuneSafe returns s truncated to at most maxFTSBodyBytes bytes
 // without splitting a multibyte UTF-8 rune. If s already fits it is returned
 // unchanged.
-func truncateBytesRuneSafe(s string) string {
-	if len(s) <= maxFTSBodyBytes {
-		return s
-	}
-	// Walk back from maxFTSBodyBytes to the start of the rune that straddles
-	// the boundary so we never emit a partial rune.
-	cut := maxFTSBodyBytes
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut]
-}
 
 // FTSUpsert updates the tsvector column on messages for a single message.
 // PostgreSQL stores the FTS index inline on `messages.search_fts`, so there
 // is no separate virtual table — the operation is an UPDATE, not an INSERT.
 //
-// ALL FIVE tsvector inputs (subject, body, from, to, cc) are bounded twice on
-// this sync path: byte-truncated to maxFTSBodyBytes in Go here (rune-safe,
-// robust against multibyte input that the SQL char cap cannot bound) and
-// additionally LEFT-capped to maxFTSBodyChars in SQL. The SQL LEFT char cap
-// cannot bound multibyte input, so a multibyte subject/recipient list could
-// otherwise still trip SQLSTATE 54000 and leave search_fts NULL — the Go
-// byte-truncation closes that gap for every field, not just the body. A
-// residual 54000 is still possible for dense distinct tokens; the message
-// write handles it in upsertFTSOrUnsearchable.
+// All five inputs are bounded by bytes and characters in Go. Dense distinct
+// tokens can still exceed PostgreSQL limits; upsertFTSOrUnsearchable handles
+// that case.
 func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
 	vector, args := pgFTSVector(doc)
 	_, err := q.Exec(
-		`UPDATE messages SET search_fts = `+vector+`,
+		`UPDATE messages SET search_fts = v.vector, search_fts_fields = $7::text[],
 			indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`
-		WHERE id = $1`,
+		FROM (SELECT `+vector+` AS vector) v WHERE id = $1`,
 		args...,
 	)
 	return err
@@ -466,9 +409,10 @@ func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 	vector, args := pgFTSVector(doc)
 	var matches bool
 	err := q.QueryRow(
-		`SELECT COALESCE(search_fts = `+vector+`
+		`SELECT COALESCE(search_fts = v.vector
+			AND search_fts_fields IS NOT DISTINCT FROM $7::text[]
 			AND indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`, FALSE)
-		FROM messages WHERE id = $1`,
+		FROM messages, (SELECT `+vector+` AS vector) v WHERE id = $1`,
 		args...,
 	).Scan(&matches)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -478,78 +422,92 @@ func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 }
 
 // pgFTSVector returns the bounded tsvector expression for doc and its
-// arguments, with $1 bound to doc.MessageID.
+// arguments, with $1 bound to doc.MessageID. The punctuation lexeme inserts
+// a position between fields and cannot appear in a normalized search term.
 func pgFTSVector(doc FTSDoc) (string, []any) {
-	charCap := strconv.Itoa(maxFTSBodyChars)
-	vector := `setweight(to_tsvector('simple', LEFT(COALESCE($2, ''), ` + charCap + `)), 'A') ||
-			setweight(to_tsvector('simple', LEFT(COALESCE($4, ''), ` + charCap + `)), 'B') ||
-			setweight(to_tsvector('simple', LEFT(COALESCE($5, ''), ` + charCap + `)), 'C') ||
-			setweight(to_tsvector('simple', LEFT(COALESCE($6, ''), ` + charCap + `)), 'C') ||
-			setweight(to_tsvector('simple', LEFT(COALESCE($3, ''), ` + charCap + `)), 'D')`
-	return vector, []any{
-		doc.MessageID,
-		truncateBytesRuneSafe(doc.Subject),
-		truncateBytesRuneSafe(doc.Body),
-		truncateBytesRuneSafe(doc.FromAddr),
-		truncateBytesRuneSafe(doc.ToAddrs),
-		truncateBytesRuneSafe(doc.CcAddrs),
+	doc, fields := preparePostgresFTSDoc(doc)
+	vector := pgFTSVectorFields("$2", "$3", "$4", "$5", "$6")
+	return vector, []any{doc.MessageID, doc.Subject, doc.Body, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, fields}
+}
+
+func preparePostgresFTSDoc(doc FTSDoc) (FTSDoc, []string) {
+	prepare := func(s string) string {
+		s = textutil.PrefixBytes(s, maxFTSBodyBytes)
+		s = textutil.PrefixRunes(s, maxFTSBodyChars)
+		s = sqldialect.CanonicalFTSText(s)
+		return textutil.PrefixBytes(s, maxFTSBodyBytes)
 	}
+	doc.Subject = prepare(doc.Subject)
+	doc.Body = prepare(doc.Body)
+	doc.FromAddr = prepare(doc.FromAddr)
+	doc.ToAddrs = prepare(doc.ToAddrs)
+	doc.CcAddrs = prepare(doc.CcAddrs)
+	fields := []string{doc.Subject, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, doc.Body}
+	counts := make(map[string]int)
+	positions := 4 // Separator lexemes between the five fields.
+	saturated := false
+	for _, field := range fields {
+		for token := range strings.FieldsSeq(field) {
+			positions++
+			counts[token]++
+			// Stay one position below PostgreSQL's 256-position cap per lexeme.
+			if positions > 16000 || counts[token] > 255 {
+				saturated = true
+				break
+			}
+		}
+		if saturated {
+			break
+		}
+	}
+	if !saturated {
+		return doc, nil
+	}
+	return doc, fields
+}
+
+func pgFTSVectorFields(subject, body, sender, to, cc string) string {
+	return `setweight(to_tsvector('simple', COALESCE(` + subject + `, '')), 'A') || '''!'':1'::tsvector ||
+			setweight(to_tsvector('simple', COALESCE(` + sender + `, '')), 'B') || '''!'':1'::tsvector ||
+			setweight(to_tsvector('simple', COALESCE(` + to + `, '')), 'C') || '''!'':1'::tsvector ||
+			setweight(to_tsvector('simple', COALESCE(` + cc + `, '')), 'C') || '''!'':1'::tsvector ||
+			setweight(to_tsvector('simple', COALESCE(` + body + `, '')), 'D')`
 }
 
 // FTSSearchClause returns SQL fragments for tsvector full-text search.
 // PostgreSQL stores the tsvector on the messages table — no JOIN needed.
-// Uses to_tsquery (not plainto_tsquery) so the bound argument can carry
-// prefix-match operators ("invo:*" matches "invoice"); BuildFTSArg
-// produces the matching shape. Uses `?` placeholders; loggedDB rebinds
-// to `$N` at execution time. ts_rank needs the query term a second time,
-// so orderArgCount is 1.
-func (d *PostgreSQLDialect) FTSSearchClause(rowIDs bool) (join, where, orderBy string, orderArgCount int) {
+// Rank uses BuildFTSArg's candidate query, binding the argument a second time.
+func (d *PostgreSQLDialect) FTSSearchClause(rowIDs bool, terms []string) (join, where, orderBy string, orderArgCount int) {
 	return "",
-		"m.search_fts @@ to_tsquery('simple', ?)",
+		sqldialect.PostgreSQLSearchPredicate("?", terms),
 		"-ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?))",
 		1
 }
 
 // FTSDeleteSQL returns the SQL to clear tsvector data for messages belonging to a source.
 func (d *PostgreSQLDialect) FTSDeleteSQL() string {
-	return `UPDATE messages SET search_fts = NULL WHERE source_id = $1`
+	return `UPDATE messages SET search_fts = NULL, search_fts_fields = NULL WHERE source_id = $1`
 }
 
 func (d *PostgreSQLDialect) InvalidateFTSForMessage(q querier, messageID int64) error {
 	_, err := q.Exec(
-		"UPDATE messages SET search_fts = NULL, indexing_version = NULL WHERE id = $1",
+		"UPDATE messages SET search_fts = NULL, search_fts_fields = NULL, indexing_version = NULL WHERE id = $1",
 		messageID,
 	)
 	return err
 }
 
-// FTSBackfillBatchSQL returns the SQL to populate tsvector for a range of message IDs.
-// Parameters: $1=fromID, $2=toID. Uses LEFT JOIN on message_bodies via a subquery
-// so messages without a body row are still indexed (subject + participants).
+// FTSBackfillBatchSQL selects the rows to normalize and index in Go.
 func (d *PostgreSQLDialect) FTSBackfillBatchSQL() string {
-	envelope := storedFTSEnvelopeSQL("STRING_AGG")
-	charCap := strconv.Itoa(maxFTSBodyChars)
-	return `UPDATE messages m SET search_fts =
-		setweight(to_tsvector('simple', LEFT(` + envelope.subject + `, ` + charCap + `)), 'A') ||
-		setweight(to_tsvector('simple', LEFT(` + envelope.fromAddr + `, ` + charCap + `)), 'B') ||
-		setweight(to_tsvector('simple', LEFT(` + envelope.toAddrs + `, ` + charCap + `)), 'C') ||
-		setweight(to_tsvector('simple', LEFT(` + envelope.ccAddrs + `, ` + charCap + `)), 'C') ||
-		setweight(to_tsvector('simple', LEFT(COALESCE(src.body_text, ''), ` + charCap + `)), 'D'),
-		indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + `
-	FROM (
-		SELECT m2.id, mb.body_text
-		FROM messages m2
-		LEFT JOIN message_bodies mb ON mb.message_id = m2.id
-		WHERE m2.id >= $1 AND m2.id < $2
-	) src
-	WHERE m.id = src.id`
+	return `SELECT id FROM messages WHERE id >= ? AND id < ?`
 }
 
 func (d *PostgreSQLDialect) FTSBackfillMissingBatchSQL(_ context.Context, _ *sql.DB) (string, error) {
-	return d.FTSBackfillBatchSQL() + fmt.Sprintf(
-		" AND (m.search_fts IS NULL OR m.indexing_version IS DISTINCT FROM %d)",
-		CurrentFTSIndexingVersion,
-	), nil
+	return d.FTSBackfillBatchSQL() + " AND " + postgresFTSStalePredicate(""), nil
+}
+
+func postgresFTSStalePredicate(prefix string) string {
+	return fmt.Sprintf("(%ssearch_fts IS NULL OR %sindexing_version IS DISTINCT FROM %d)", prefix, prefix, CurrentFTSIndexingVersion)
 }
 
 // FTSAvailable reports whether tsvector search is available.
@@ -564,16 +522,12 @@ func (d *PostgreSQLDialect) FTSAvailable(ctx context.Context, db SQLReader) (boo
 }
 
 func postgresFTSNeedsBackfillSQL() string {
-	return fmt.Sprintf(
-		"SELECT EXISTS (SELECT 1 FROM messages WHERE search_fts IS NULL OR indexing_version IS DISTINCT FROM %d)",
-		CurrentFTSIndexingVersion,
-	)
+	return "SELECT EXISTS (SELECT 1 FROM messages WHERE " + postgresFTSStalePredicate("") + ")"
 }
 
 // FTSNeedsBackfill reports whether the tsvector column needs population or
-// uses an obsolete field-weight layout. It probes for a NULL search_fts or an
-// indexing_version other than CurrentFTSIndexingVersion, so both interrupted
-// backfills and durable layout migrations remain visible.
+// uses a different field-weight layout. It finds missing vectors and differing
+// versions, so interrupted backfills remain visible.
 //
 // Uses EXISTS rather than COUNT(*): a GIN index on search_fts cannot serve an
 // `IS NULL` predicate, so COUNT(*) was a full sequential scan of every message
@@ -621,14 +575,14 @@ func (d *PostgreSQLDialect) SchemaFTS() string {
 // as the SQLite path covers a malformed shadow table.
 //
 // Runs on the querier so RebuildFTS can route it through the maintenance
-// transaction: the full-table `UPDATE messages SET search_fts = NULL` and
+// transaction: the full-table reset of search fields and
 // GIN rebuild over a populated table can exceed the pool-wide 30s
 // statement_timeout on a large archive (finding S1).
 func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQuerier) error {
 	if _, err := q.ExecContext(ctx, "DROP INDEX IF EXISTS messages_search_fts_idx"); err != nil {
 		return fmt.Errorf("drop messages_search_fts_idx: %w", err)
 	}
-	if _, err := q.ExecContext(ctx, "UPDATE messages SET search_fts = NULL"); err != nil {
+	if _, err := q.ExecContext(ctx, "UPDATE messages SET search_fts = NULL, search_fts_fields = NULL"); err != nil {
 		return fmt.Errorf("clear search_fts: %w", err)
 	}
 	if _, err := q.ExecContext(ctx,
@@ -718,6 +672,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		// column and FTS stays unavailable. Its GIN index is created
 		// separately by EnsureFTSIndex AFTER this migration runs. [cr2-10]
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts TSVECTOR`, "search_fts"},
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts_fields TEXT[]`, "search_fts_fields"},
 		// embed_gen: per-message vector-embedding watermark. NULL default
 		// means every legacy row reads as "needs embedding", which is
 		// correct — the scan-and-fill worker (and backstop) will embed and
@@ -739,6 +694,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		// Legacy rows stay NULL (unfillable without re-parsing raw MIME) and
 		// discovery falls back to the participant's email for them.
 		{`ALTER TABLE message_recipients ADD COLUMN IF NOT EXISTS email_address TEXT`, "message_recipients.email_address"},
+		{`ALTER TABLE message_recipients ADD COLUMN IF NOT EXISTS is_relayed BOOLEAN NOT NULL DEFAULT FALSE`, "message_recipients.is_relayed"},
 		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS attachment_role TEXT NOT NULL DEFAULT 'unknown' CHECK (attachment_role IN ('standalone', 'inline', 'avatar', 'thumbnail', 'preview', 'sticker', 'ui_asset', 'unknown'))`, "attachments.attachment_role"},
 		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS role_source TEXT NOT NULL DEFAULT 'unknown' CHECK (role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'legacy_api', 'raw_mime_repair', 'unknown'))`, "attachments.role_source"},
 		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS source_part_key TEXT CHECK (source_part_key IS NULL OR source_part_key != '')`, "attachments.source_part_key"},
@@ -789,9 +745,12 @@ func (d *PostgreSQLDialect) EnsureFTSIndex(q querier) error {
 	// cannot alter the legacy NULL-only index on upgraded databases.
 	staleIndexName := fmt.Sprintf("idx_messages_search_fts_stale_v%d", CurrentFTSIndexingVersion)
 	if _, err := q.Exec(
-		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON messages (id) WHERE search_fts IS NULL OR indexing_version IS DISTINCT FROM %d", staleIndexName, CurrentFTSIndexingVersion),
+		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON messages (id) WHERE %s", staleIndexName, postgresFTSStalePredicate("")),
 	); err != nil {
 		return fmt.Errorf("create %s: %w", staleIndexName, err)
+	}
+	if _, err := q.Exec("DROP INDEX IF EXISTS idx_messages_search_fts_stale_v2"); err != nil {
+		return fmt.Errorf("drop idx_messages_search_fts_stale_v2: %w", err)
 	}
 	return nil
 }
@@ -2297,10 +2256,18 @@ var exclusiveLockTables = []string{
 	// here without holding tables those transactions still need.
 	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_policy", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
+	// Recording reconciliation and visual publication transactions take the
+	// sync_runs gate before child writes (including FK checks on messages).
+	// Publication commit writes publications then claims; generation cleanup
+	// uses the reverse order, so table ordering alone cannot fence both safely.
+	"recording_references",
 	"message_delivery_addresses", "email_link_keys",
 	"meeting_details", "meeting_action_items",
 	"calendar_events", "calendar_event_attendees",
 	"attachments", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
+	// Ungated attachment updates invalidate publications through triggers.
+	// Drain attachments before fencing those trigger writes.
+	"visual_publications", "visual_work_claims",
 	"matrix_encrypted_events", "matrix_megolm_claims", "matrix_pending_edits",
 	"participant_contact_observations", identityMatchCandidatesTableName, identityMatchCandidateSourcesTableName,
 	identityMatchEvidenceTableName, identityMatchEvidenceSourcesTableName,
@@ -2319,10 +2286,14 @@ var exclusiveLockTables = []string{
 	"chat_members", "chat_members_dirty", "chat_anchors",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
 	"source_merges", "source_settings", "source_merge_preserved_labels",
+	// Source merge takes the identity row before any archive writes, matching
+	// BeginExclusive. Subset copies write these markers only to new SQLite DBs.
+	"source_merge_messages", "source_merge_archive_only_messages", "source_merge_conversations",
+	"source_merge_attachments", "source_merge_preserved_attachments",
 	"sync_operations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
 	"imap_folder_state", "imap_message_memberships", "imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts",
-	"loop_decisions",
+	"loop_decisions", "loop_message_evidence",
 }
 
 // BeginExclusive opens a transaction on conn and locks every table the

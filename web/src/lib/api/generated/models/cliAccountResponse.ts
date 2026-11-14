@@ -5,6 +5,7 @@ import type { VirtualAccount } from "./virtualAccount";
 
 export interface CliAccountResponse {
   alias: string;
+  auth_method?: string;
   display_name: string;
   email: string;
   history_only: boolean;

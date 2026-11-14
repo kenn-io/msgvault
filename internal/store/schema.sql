@@ -1495,7 +1495,8 @@ CREATE TABLE IF NOT EXISTS message_recipients (
     -- identity discovery reads it so merges cannot rewrite evidence.
     -- NULL on rows from writers without envelope addresses (non-email
     -- importers, legacy rows).
-    email_address TEXT
+    email_address TEXT,
+    is_relayed BOOLEAN NOT NULL DEFAULT FALSE
 
     -- Uniqueness spans the normalized envelope address so one participant
     -- can carry several alias snapshots on the same message (two aliases of
@@ -2336,7 +2337,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_reply_to_message_id ON messages(reply_to
     WHERE reply_to_message_id IS NOT NULL;
 
 -- Message recipients
--- idx_message_recipients_email_from is built after legacy column migrations in Store.
+-- Recipient address indexes are built after legacy column migrations in Store.
 CREATE INDEX IF NOT EXISTS idx_message_recipients_message ON message_recipients(message_id);
 CREATE INDEX IF NOT EXISTS idx_message_recipients_participant ON message_recipients(participant_id, recipient_type);
 
