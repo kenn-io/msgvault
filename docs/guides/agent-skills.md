@@ -42,8 +42,8 @@ msgvault skills uninstall                  # remove installed skills
 ```
 
 Installed files carry a generation marker. Re-running `skills install`
-after upgrading msgvault refreshes them; files you have hand-edited
-(marker removed) are skipped unless you pass `--force`, and
+overwrites files with the marker, including any edits. Files without the marker
+are skipped unless you pass `--force`, which overwrites all bundled skills for the selected agents, and
 `skills uninstall` never removes files without the marker.
 
 ## Skills and the MCP server

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -35,6 +34,7 @@ func TestAgentSetupCustomRootsAndScopedRepair(t *testing.T) {
 	_, err := agentsetup.Run(t.Context(), opts)
 	require.NoError(t, err)
 	claudeSkill := filepath.Join(claude, "skills", "msgvault-search", "SKILL.md")
+	otherSkill := filepath.Join(claude, "skills", "msgvault-attachments", "SKILL.md")
 	codexSkill := filepath.Join(codex, "skills", "msgvault-search", "SKILL.md")
 	require.FileExists(t, claudeSkill)
 	require.FileExists(t, codexSkill)
@@ -44,8 +44,19 @@ func TestAgentSetupCustomRootsAndScopedRepair(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, agentsetup.StateModified, report.Rows[0].State)
 	assert.Contains(t, report.Rows[0].Reason, "has no msgvault marker")
-	assert.Equal(t, "msgvault skills install --force --agent claude", report.Rows[0].NextStep)
-	require.NoError(t, runSkillsInstall(&bytes.Buffer{}, []string{"claude"}, "", true))
+	assert.Equal(t, "Move "+claudeSkill+" aside; then run msgvault agent setup --agent claude (overwrites other marked skills)", report.Rows[0].NextStep)
+	require.NoError(t, os.WriteFile(otherSkill, []byte("other custom"), 0o600))
+	moved := claudeSkill + ".custom"
+	require.NoError(t, os.Rename(claudeSkill, moved))
+	_, err = agentsetup.Run(t.Context(), opts)
+	require.NoError(t, err)
+	saved, err := os.ReadFile(moved)
+	require.NoError(t, err)
+	assert.Equal(t, "claude custom", string(saved))
+	other, err := os.ReadFile(otherSkill)
+	require.NoError(t, err)
+	assert.Equal(t, "other custom", string(other))
+	require.FileExists(t, claudeSkill)
 	content, err := os.ReadFile(codexSkill)
 	require.NoError(t, err)
 	assert.Equal(t, "codex custom", string(content))

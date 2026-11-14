@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/kit/agentmcp"
@@ -41,7 +42,7 @@ func agentSetupItems(agent string) ([]agentsetup.Item, error) {
 		case skills.CheckCurrent:
 			status.State = agentsetup.StateOK
 		case skills.CheckModified:
-			return agentsetup.Status{State: agentsetup.StateModified, Reason: result.Skill + " has no msgvault marker", NextStep: "msgvault skills install --force --agent " + agent}, nil
+			return agentsetup.Status{State: agentsetup.StateModified, Reason: result.Skill + " has no msgvault marker", NextStep: "Move " + filepath.Join(root, result.Skill, "SKILL.md") + " aside; then run msgvault agent setup --agent " + agent + " (overwrites other marked skills)"}, nil
 		case skills.CheckMissing:
 			status.State = agentsetup.StateMissing
 		case skills.CheckOutdated:
