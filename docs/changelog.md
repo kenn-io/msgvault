@@ -137,7 +137,7 @@ All notable changes to msgvault, grouped by release.
 - Instagram comment sync can also archive comments on the account's ads that
   its media list leaves out. Set `ad_account_id` and `ad_token_env` on the
   profile; see [Include ad media](usage/instagram-comments.md#include-ad-media).
-- Let owner MCP clients read person attributes and definitions, and confirm attribute edits with `--allow-attribute-writes`.
+- Let owner MCP clients read person attributes and definitions, and enable attribute edits with `--allow-attribute-writes`. The owner approves the previewed value, and the write refuses if that value or empty slot changes before saving.
 - Use `msgvault family show <id>`, the MCP tool `get_email_family`, or the family read endpoint to find an email's archived copies, replies and forwards across accounts. Results identify the evidence connecting each copy and report when the lookup is incomplete. These reads are available to the archive owner.
 - Open **Related copies** beside an email to find copies in other accounts and conversations. The panel loads when opened and leaves out messages already shown in the conversation.
 
