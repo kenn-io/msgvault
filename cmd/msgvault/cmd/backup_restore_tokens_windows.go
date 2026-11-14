@@ -54,7 +54,7 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 	var selected []string
 	for _, entry := range tree.Entries {
 		prefix, name, ok := strings.Cut(entry.Path, "/")
-		if !ok || !strings.EqualFold(prefix, "tokens") {
+		if !ok || prefix != "tokens" {
 			continue
 		}
 		if !filepath.IsLocal(filepath.FromSlash(name)) {
@@ -70,7 +70,7 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 		return 0, fmt.Errorf("%w; selected token files were secured, but token directory permissions were not changed; resolve the conflict or move the omitted entry aside", err)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("%w; credentials may be unreadable and permissions may have changed", err)
+		return 0, err
 	}
 	return len(selected), nil
 }

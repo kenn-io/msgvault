@@ -5,6 +5,7 @@ package cmd
 import (
 	"bytes"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,6 +16,19 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func prepareBackupTokenRestore(t *testing.T) {
+	t.Helper()
+	oldOut, oldErr, oldLogger := rootCmd.OutOrStdout(), rootCmd.ErrOrStderr(), slog.Default()
+	resetBackupRestoreFlags()
+	t.Cleanup(func() {
+		resetBackupRestoreFlags()
+		rootCmd.SetOut(oldOut)
+		rootCmd.SetErr(oldErr)
+		rootCmd.SetArgs(nil)
+		slog.SetDefault(oldLogger)
+	})
+}
 
 func backupTokenFixture(t *testing.T) (*config.Config, string, string) {
 	t.Helper()

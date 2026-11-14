@@ -480,5 +480,17 @@ func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
 		requirements.NoError(err)
 		defer windows.CloseHandle(root) //nolint:errcheck
 		requirements.NoError(verifyOwnerOnlyHandle(root, false))
+		nested, err := openSecurityHandle(filepath.Dir(selected), true, windows.READ_CONTROL)
+		requirements.NoError(err)
+		defer windows.CloseHandle(nested) //nolint:errcheck
+		requirements.NoError(verifyOwnerOnlyHandle(nested, false))
+	})
+	t.Run("kelvin sign does not match k", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "tokens")
+		require.NoError(t, os.Mkdir(dir, 0700))
+		shareRestoredTestDirectory(t, dir, windows.GENERIC_READ, windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "K.json"), []byte("selected"), 0600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "k.json"), []byte("omitted"), 0600))
+		require.ErrorIs(t, SecureRestored(dir, []string{"K.json"}), ErrRestorePermissionsConflict)
 	})
 }

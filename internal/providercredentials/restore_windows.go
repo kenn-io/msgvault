@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
-	"strings"
+	"slices"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -26,6 +27,7 @@ func SecureRestored(dir string, restored []string) error {
 			ancestors = append(ancestors, parent)
 		}
 	}
+	slices.SortFunc(ancestors, func(a, b string) int { return len(a) - len(b) })
 	return withDirectoryMutex(dir, func(directory windows.Handle) error {
 		if err := verifyHandleOwner(directory); err != nil {
 			return fmt.Errorf("inspect restored token directory: %w", err)
@@ -35,13 +37,21 @@ func SecureRestored(dir string, restored []string) error {
 				return fmt.Errorf("secure restored token %q: %w", name, err)
 			}
 		}
-		if verifyOwnerOnlyHandle(directory, false) != nil {
-			if err := restorePreflight(dir, restored, ancestors); err != nil {
-				return err
-			}
-			return secureOwnerOnlyHandle(directory)
+		if err := restorePreflight(dir, restored, ancestors); err != nil {
+			return err
 		}
-		return nil
+		for _, name := range ancestors {
+			h, err := openSecurityHandle(filepath.Join(dir, name), true, windows.READ_CONTROL|windows.WRITE_DAC)
+			if err != nil {
+				return fmt.Errorf("secure restored token directory %q: %w", name, err)
+			}
+			err = secureOwnerOnlyHandle(h)
+			windows.CloseHandle(h) //nolint:errcheck
+			if err != nil {
+				return fmt.Errorf("secure restored token directory %q: %w", name, err)
+			}
+		}
+		return secureOwnerOnlyHandle(directory)
 	})
 }
 
@@ -73,11 +83,11 @@ func restorePreflight(dir string, selected, ancestors []string) error {
 		if err != nil {
 			return fmt.Errorf("inspect tokens/%s: %w", rel, err)
 		}
-		if entry.IsDir() && control&windows.SE_DACL_PROTECTED != 0 {
-			return fs.SkipDir
-		}
 		if containsPath(ancestors, rel) {
 			return nil
+		}
+		if entry.IsDir() && control&windows.SE_DACL_PROTECTED != 0 {
+			return fs.SkipDir
 		}
 		inherited, err := inheritedAccess(sd)
 		if err != nil {
@@ -92,13 +102,24 @@ func restorePreflight(dir string, selected, ancestors []string) error {
 
 // containsPath matches snapshot paths without regard to case.
 func containsPath(names []string, name string) bool {
+	name16, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return false
+	}
 	for _, candidate := range names {
-		if strings.EqualFold(candidate, name) {
+		candidate16, err := windows.UTF16PtrFromString(candidate)
+		if err != nil {
+			continue
+		}
+		result, _, _ := compareStringOrdinal.Call(uintptr(unsafe.Pointer(candidate16)), ^uintptr(0), uintptr(unsafe.Pointer(name16)), ^uintptr(0), 1)
+		if result == 2 {
 			return true
 		}
 	}
 	return false
 }
+
+var compareStringOrdinal = windows.NewLazySystemDLL("kernel32.dll").NewProc("CompareStringOrdinal")
 
 func inheritedAccess(sd *windows.SECURITY_DESCRIPTOR) (bool, error) {
 	acl, _, err := sd.DACL()
