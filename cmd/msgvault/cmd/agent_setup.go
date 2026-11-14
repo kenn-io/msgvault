@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -54,6 +55,22 @@ func agentSetupItems(agent string) ([]agentsetup.Item, error) {
 }
 
 func checkAgentSetup(ctx context.Context) (agentsetup.Report, error) {
+	if !agentCLIAvailable() {
+		return agentsetup.Report{}, ctx.Err()
+	}
+	return runAgentCheck(ctx)
+}
+
+func agentCLIAvailable() bool {
+	for _, name := range []string{"claude", "codex"} {
+		if _, err := exec.LookPath(name); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func runAgentCheck(ctx context.Context) (agentsetup.Report, error) {
 	opts := agentsetup.Options{SetupCommand: "msgvault agent setup", Items: agentSetupItems}
 	opts.CheckOnly = true
 	report, err := agentsetup.Run(ctx, opts)

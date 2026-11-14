@@ -1453,8 +1453,12 @@ func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
 }
 
 func TestSetupStatusAgents(t *testing.T) {
-	for _, name := range []string{"text", "json", "error", "interrupted"} {
+	for _, name := range []string{"text", "json", "error", "interrupted", "no_agents", "no_agents_json"} {
 		t.Run(name, func(t *testing.T) {
+			if strings.HasPrefix(name, "no_agents") {
+				setTestHome(t, t.TempDir())
+				t.Setenv("PATH", t.TempDir())
+			}
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
 			row := agentsetup.Row{Agent: "claude", AgentName: "Claude Code", Piece: "skills", State: agentsetup.StateOK}
 			if name == "text" {
@@ -1470,6 +1474,8 @@ func TestSetupStatusAgents(t *testing.T) {
 				},
 				agents: func(context.Context) (agentsetup.Report, error) {
 					switch name {
+					case "no_agents", "no_agents_json":
+						return checkAgentSetup(ctx)
 					case "error":
 						return agentsetup.Report{}, errors.New("agent check failed")
 					case "interrupted":
@@ -1483,7 +1489,7 @@ func TestSetupStatusAgents(t *testing.T) {
 			command.SilenceUsage = true
 			command.SetOut(&output)
 			command.SetErr(&errOutput)
-			if name == "json" || name == "error" || name == "interrupted" {
+			if name == "json" || name == "error" || name == "interrupted" || name == "no_agents_json" {
 				command.SetArgs([]string{"--json"})
 			} else {
 				command.SetArgs([]string{})
@@ -1510,6 +1516,15 @@ func TestSetupStatusAgents(t *testing.T) {
 			case "error":
 				assert.Contains(t, errOutput.String(), "check agents: agent check failed\n")
 				assert.NotContains(t, output.String(), `"agents"`)
+			case "no_agents", "no_agents_json":
+				assert.Empty(t, errOutput.String())
+				assert.NotContains(t, output.String(), "Agents:")
+				if name == "no_agents_json" {
+					var report laneReport
+					require.NoError(t, json.Unmarshal(output.Bytes(), &report))
+					assert.NotEmpty(t, report.Lanes)
+					assert.Empty(t, report.Agents)
+				}
 			}
 		})
 	}
