@@ -68,7 +68,8 @@ projection catches up; results marked `stale` are provisional. See
 [activity configuration](/docs/configuration/#activity).
 
 `first_contact_kind` describes the envelope evidence, not a verified introduction: `email_intro` is an inbound email
-from a third party with you among the recipients, the person in To or Cc, and
+with exactly one third-party From address, matching the recorded sender when present,
+you among the recipients, the person in To or Cc, and
 at most four other non-owner recipients (counting linked aliases once per saved
 person); `observed` covers other evidence. `introducer` identifies the sender of an introduction email when known. These fields
 reflect archived evidence and currently linked identities, not a claim about
