@@ -501,7 +501,7 @@ func TestDraftChatAndBeeperReportLint(t *testing.T) {
 	})
 }
 
-func TestBeeperDraftBlankValidateOnlyPreview(t *testing.T) {
+func TestBeeperDraftBlankBody(t *testing.T) {
 	for _, edit := range []bool{false, true} {
 		t.Run(fmt.Sprintf("edit=%t", edit), func(t *testing.T) {
 			assert := assert.New(t)
@@ -527,25 +527,11 @@ func TestBeeperDraftBlankValidateOnlyPreview(t *testing.T) {
 			assert.Equal("empty_body", warning["code"])
 			_, err = lintRun(t, f.adapter, nil, append(args, "--body", "\x00", "--validate-only", "--json")...)
 			require.EqualError(err, "invalid_args")
+			_, err = lintRun(t, f.adapter, nil, append(args, "--body", "  ")...)
+			require.EqualError(err, "invalid_args")
 			requests, patches := f.beeper.counts()
 			assert.Equal(beforeRequests, requests)
 			assert.Equal(beforePatches, patches)
-		})
-	}
-}
-
-func TestBeeperDraftBlankWritesUnchanged(t *testing.T) {
-	for _, edit := range []bool{false, true} {
-		t.Run(fmt.Sprintf("edit=%t", edit), func(t *testing.T) {
-			f := newBeeperDraftFixture(t)
-			args := []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "  "}
-			if edit {
-				draft, err := f.create(t, nil, "existing")
-				require.NoError(t, err)
-				args = []string{"draft-edit", draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10), "--body", "  "}
-			}
-			_, err := lintRun(t, f.adapter, nil, args...)
-			require.EqualError(t, err, "invalid_args")
 		})
 	}
 }

@@ -162,6 +162,19 @@ func TestDraftConfirmationBindsToolAndArguments(t *testing.T) {
 }
 
 func TestSensitiveDraftConfirmation(t *testing.T) {
+	t.Run("validate-only", func(t *testing.T) {
+		require := require.New(t)
+		runner := &draftTestRunner{result: DraftCommandResult{Stdout: `{"status":"validated","valid":true}`}}
+		session := draftConfirmationSession(t, ServeOptions{Drafts: runner, DraftCommands: []string{"draft-compose"}, ConfirmSensitiveDrafts: true})
+		args := map[string]any{"body": "4111111111111111", "validate_only": true}
+		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolDraftCompose, Arguments: args})
+		require.NoError(err)
+		require.False(result.NeedsInput())
+		require.False(result.IsError)
+		content, ok := result.StructuredContent.(map[string]any)
+		require.True(ok)
+		require.Len(content["sensitive_content"], 1)
+	})
 	assert := assert.New(t)
 	require := require.New(t)
 	runner := &draftTestRunner{result: DraftCommandResult{Stdout: `{"draft_id":"d1","revision":2}`}}
@@ -364,21 +377,6 @@ func TestDraftToolLintFlagsPassed(t *testing.T) {
 			assert.Equal([]string{"true"}, runner.request.Flags["validate-only"])
 		})
 	}
-}
-
-func TestDraftValidateOnlySensitiveContent(t *testing.T) {
-	require := require.New(t)
-
-	runner := &draftTestRunner{result: DraftCommandResult{Stdout: `{"status":"validated","valid":true}`}}
-	session := draftConfirmationSession(t, ServeOptions{Drafts: runner, DraftCommands: []string{"draft-compose"}, ConfirmSensitiveDrafts: true})
-	args := map[string]any{"body": "4111111111111111", "validate_only": true}
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolDraftCompose, Arguments: args})
-	require.NoError(err)
-	require.False(result.NeedsInput())
-	require.False(result.IsError)
-	content, ok := result.StructuredContent.(map[string]any)
-	require.True(ok)
-	require.Len(content["sensitive_content"], 1)
 }
 
 func TestDraftStrictRefusalIncludesSensitiveContent(t *testing.T) {
