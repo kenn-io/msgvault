@@ -218,6 +218,16 @@ Showing up to 50 reply loops and 50 cited promises. Use --limit up to 200 to see
 	assert.Equal("No open loops.\n", out.String(), "no line about unreadable messages when there are none")
 
 	out.Reset()
+	incomplete := false
+	require.NoError(writeLoops(&out, generated.LoopListResponse{CommitmentsComplete: &incomplete}, 50, now))
+	assert.Equal("No open reply loops.\nPromise discovery has not started.\n", out.String())
+
+	out.Reset()
+	require.NoError(writeLoops(&out, generated.LoopListResponse{CommitmentsSince: &now, CommitmentsComplete: &incomplete}, 50, now))
+	assert.Contains(out.String(), "increase max_bytes in [people.sweep.commitments] to retry")
+	assert.NotContains(out.String(), "still searching")
+
+	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{SkippedUnparseable: 1}, 50, now))
 	assert.Equal("No open loops.\n1 stored message could not be read, so a reply in it may have settled a loop.\n", out.String())
 

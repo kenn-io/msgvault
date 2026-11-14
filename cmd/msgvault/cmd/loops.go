@@ -270,7 +270,11 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 	}{{title: "Waiting on you", kind: loops.ReplyOwed}, {title: "Waiting on them", kind: loops.AwaitingReply}}
 	if len(result.Items) == 0 && len(result.Commitments) == 0 {
 		var sb strings.Builder
-		sb.WriteString("No open loops.\n")
+		if result.CommitmentsComplete != nil && !*result.CommitmentsComplete {
+			sb.WriteString("No open reply loops.\n")
+		} else {
+			sb.WriteString("No open loops.\n")
+		}
 		writeCommitmentWindow(&sb, result)
 		writeLoopWarnings(&sb, result.SkippedUnparseable, result.CoverageIncomplete)
 		if _, err := io.WriteString(w, sb.String()); err != nil {
@@ -356,10 +360,13 @@ func writeLoopCommitments(sb *strings.Builder, commitments []generated.LoopCommi
 
 func writeCommitmentWindow(sb *strings.Builder, result generated.LoopListResponse) {
 	if result.CommitmentsSince == nil {
+		if result.CommitmentsComplete != nil && !*result.CommitmentsComplete {
+			fmt.Fprintln(sb, "Promise discovery has not started.")
+		}
 		return
 	}
 	if result.CommitmentsComplete != nil && !*result.CommitmentsComplete {
-		fmt.Fprintf(sb, "Checked promises since %s; still searching.\n", result.CommitmentsSince.Format(time.DateOnly))
+		fmt.Fprintf(sb, "Promise discovery since %s is incomplete. If messages are too large, increase max_bytes in [people.sweep.commitments] to retry.\n", result.CommitmentsSince.Format(time.DateOnly))
 	} else {
 		fmt.Fprintf(sb, "Promises checked since %s.\n", result.CommitmentsSince.Format(time.DateOnly))
 	}
