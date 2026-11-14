@@ -107,7 +107,7 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 				key := fmt.Sprintf("attachment:%d", i)
 				p := a.Pointer
 				match := matchingPointer(a, old.Standard.Attachments, m, claimed)
-				if match == nil || p == nil || len(p.Locator.Hash) == 0 {
+				if p == nil || len(p.Locator.Hash) == 0 {
 					p = match
 				}
 				archived[key] = p

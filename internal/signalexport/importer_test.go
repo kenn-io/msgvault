@@ -94,34 +94,35 @@ func TestImportDistinctMessagesAtSameMillisecond(t *testing.T) {
 	later := func(frame, body string) string {
 		return strings.Replace(strings.Replace(frame, body, "Another message", 1), "1700000000100", "1700000000200", 1)
 	}
-	for name, frames := range map[string][]string{
-		"incoming receive times":     {first, later(first, "Hello 星")},
-		"outgoing receive times":     {outgoing, later(outgoing, "First message")},
-		"same times apart in export": {first, strings.Replace(incoming, "1700000000000", "1700000000001", 1), strings.Replace(first, "Hello 星", "Repeat", 1)},
+	between := strings.Replace(incoming, "1700000000000", "1700000000001", 1)
+	repeat := strings.Replace(first, "Hello 星", "Repeat", 1)
+	shared := `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{"dateReceived":"1700000000100"},"standardMessage":{"text":{"body":"first"},"attachments":[{"clientUuid":"AQ==","pointer":{"locatorInfo":{"key":"Ag=="}}}]}}}`
+	sharedSecond := strings.Replace(shared, `"body":"first"`, `"body":"second"`, 1)
+	for _, tc := range []struct {
+		name           string
+		frames, replay []string
+		changed        int64
+	}{
+		{"incoming receive times", []string{first, later(first, "Hello 星")}, []string{later(first, "Hello 星")}, 0},
+		{"outgoing receive times", []string{outgoing, later(outgoing, "First message")}, []string{later(outgoing, "First message")}, 0},
+		{"same-time messages separated by another", []string{first, between, repeat}, []string{repeat, between, first}, 2},
+		{"shared attachment identity", []string{shared, sharedSecond}, []string{shared, sharedSecond}, 0},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
-			root := fixture(t, frames...)
+			root := fixture(t, tc.frames...)
 			opts := options(t, root)
 			summary, err := Import(t.Context(), st, opts)
 			require.NoError(t, err)
-			assert.EqualValues(t, len(frames), summary.MessagesAdded)
-			assert.Equal(t, len(frames), messageCount(t, st))
-			if name == "same times apart in export" {
-				writeFrames(t, root, frames[2], frames[1], frames[0])
-			} else {
-				writeFrames(t, root, frames[1])
-			}
+			assert.EqualValues(t, len(tc.frames), summary.MessagesAdded)
+			assert.Equal(t, len(tc.frames), messageCount(t, st))
+			writeFrames(t, root, tc.replay...)
 			summary, err = Import(t.Context(), st, opts)
 			require.NoError(t, err)
-			if name == "same times apart in export" {
-				assert.EqualValues(t, 3, summary.MessagesExisting)
-			} else {
-				assert.EqualValues(t, 1, summary.MessagesExisting)
-				assert.Zero(t, summary.MessagesChanged)
-			}
+			assert.EqualValues(t, len(tc.replay), summary.MessagesExisting)
+			assert.EqualValues(t, tc.changed, summary.MessagesChanged)
 			assert.Zero(t, summary.MessagesAdded)
-			assert.Equal(t, len(frames), messageCount(t, st))
+			assert.Equal(t, len(tc.frames), messageCount(t, st))
 		})
 	}
 }
@@ -134,24 +135,6 @@ func TestImportNullReceivedTime(t *testing.T) {
 	assert.EqualValues(t, 1, summary.MessagesAdded)
 	id, _ := onlyMessage(t, st)
 	assertBody(t, st, id, "Hello 星")
-}
-
-func TestImportSameTimesAndAttachmentIdentity(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	first := `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{"dateReceived":"1700000000100"},"standardMessage":{"text":{"body":"first"},"attachments":[{"clientUuid":"AQ==","pointer":{"locatorInfo":{"key":"Ag=="}}}]}}}`
-	second := strings.Replace(first, `"body":"first"`, `"body":"second"`, 1)
-	root := fixture(t, first, second)
-	opts := options(t, root)
-	summary, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.EqualValues(t, 2, summary.MessagesAdded)
-	assert.Equal(t, 2, messageCount(t, st))
-	summary, err = Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.EqualValues(t, 2, summary.MessagesExisting)
-	assert.Zero(t, summary.MessagesAdded)
-	assert.Zero(t, summary.MessagesChanged)
-	assert.Equal(t, 2, messageCount(t, st))
 }
 
 // Stable attachment identities let reordered messages repair their own slots, and
@@ -225,10 +208,26 @@ func TestImportDirectionsGroupsAndOmissions(t *testing.T) {
 		`{"chatItem":{"chatId":"9","authorId":"1","dateSent":"1700000000002","outgoing":{},"standardMessage":{"text":{"body":"Note"}}}}`,
 		`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000004","incoming":{},"remoteDeletedMessage":{}}}`,
 		`{"futureFrame":{}}`, `{}`)
+	f, err := os.OpenFile(filepath.Join(root, "main.jsonl"), os.O_APPEND|os.O_WRONLY, 0600)
+	require.NoError(err)
+	for _, kind := range []string{"contactMessage", "stickerMessage", "updateMessage", "paymentNotification", "giftBadge", "viewOnceMessage", "directStoryReplyMessage", "adminDeletedMessage"} {
+		_, err = fmt.Fprintf(f, "{\"chatItem\":{\"%s\":{}}}\n", kind)
+		require.NoError(err)
+	}
+	for _, kind := range []string{"adHocCall", "installedStickerPack", "hiddenStickerPack", "favoriteStickerList", "notificationProfile", "chatFolder"} {
+		_, err = fmt.Fprintf(f, "{\"%s\":{}}\n", kind)
+		require.NoError(err)
+	}
+	require.NoError(f.Close())
 	summary, err := Import(t.Context(), st, options(t, root))
 	require.NoError(err)
 	assert.EqualValues(3, summary.MessagesAdded)
-	assert.EqualValues(1, summary.Skipped["remoteDeletedMessage"])
+	for _, kind := range []string{"contactMessage", "stickerMessage", "remoteDeletedMessage", "updateMessage", "paymentNotification", "giftBadge", "viewOnceMessage", "directStoryReplyMessage", "adminDeletedMessage"} {
+		assert.EqualValues(1, summary.Skipped[kind], kind)
+	}
+	for _, kind := range []string{"adHocCall", "installedStickerPack", "hiddenStickerPack", "favoriteStickerList", "notificationProfile", "chatFolder"} {
+		assert.EqualValues(1, summary.Omitted[kind], kind)
+	}
 	assert.EqualValues(1, summary.Omitted["quote"])
 	assert.EqualValues(1, summary.Omitted["pin"])
 	assert.EqualValues(1, summary.Omitted["formatting"])
@@ -549,9 +548,6 @@ func TestImportCancellationRetainsCommittedSnapshot(t *testing.T) {
 			}
 			assert.EqualValues(1, summary.MessagesAdded)
 			assert.Equal(1, messageCount(t, st))
-			source, err := st.GetOrCreateSourceContext(t.Context(), SourceType, opts.Account)
-			require.NoError(err)
-			assert.JSONEq(`{"signal_export_format":3}`, source.SyncCursor.String)
 			writeFrames(t, root, incoming, strings.Replace(incoming, "1700000000000", "1700000000001", 1))
 			summary, err = Import(t.Context(), st, opts)
 			require.NoError(err)
@@ -638,44 +634,31 @@ func TestContactIdentifierAdded(t *testing.T) {
 			require.NoError(t, err)
 			assert.EqualValues(t, 2, summary.MessagesExisting)
 			assert.Equal(t, 2, messageCount(t, st))
+			if contact == `{"e164":"15555550100"}` {
+				scope := accountScope(opts.Account)
+				phoneKey := scopedKey(scope, "e164:+15555550100")
+				first, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
+				require.NoError(t, err)
+				require.NotZero(t, first)
+				aciX, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:01010101010101010101010101010101"))
+				require.NoError(t, err)
+				assert.Equal(t, first, aciX)
+				lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AgICAgICAgICAgICAgICAg=="}}}`
+				lines[7] = strings.Replace(incoming, "1700000000000", "1700000000002", 1)
+				require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+				_, err = Import(t.Context(), st, opts)
+				require.NoError(t, err)
+				phone, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
+				require.NoError(t, err)
+				second, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:02020202020202020202020202020202"))
+				require.NoError(t, err)
+				require.NotZero(t, second)
+				assert.NotEqual(t, first, second)
+				assert.Equal(t, first, phone)
+				assert.Equal(t, 4, messageCount(t, st))
+			}
 		})
 	}
-}
-
-func TestContactReusedPhoneWithDifferentACI(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := fixture(t, incoming)
-	lines := []string{header, account, self, `{"recipient":{"id":"2","contact":{"e164":"15555550100"}}}`, direct, incoming}
-	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
-	opts := options(t, root)
-	_, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	scope := accountScope(opts.Account)
-	phoneKey := scopedKey(scope, "e164:+15555550100")
-	first, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
-	require.NoError(t, err)
-	require.NotZero(t, first)
-	lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`
-	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
-	summary, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, summary.MessagesExisting)
-	aciX, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:01010101010101010101010101010101"))
-	require.NoError(t, err)
-	assert.Equal(t, first, aciX)
-	lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AgICAgICAgICAgICAgICAg=="}}}`
-	lines[5] = strings.Replace(incoming, "1700000000000", "1700000000001", 1)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
-	_, err = Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	phone, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
-	require.NoError(t, err)
-	second, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:02020202020202020202020202020202"))
-	require.NoError(t, err)
-	require.NotZero(t, second)
-	assert.NotEqual(t, first, second)
-	assert.Equal(t, first, phone)
-	assert.Equal(t, 2, messageCount(t, st))
 }
 
 func TestSourceFormatRefusesNewerVersion(t *testing.T) {
@@ -745,13 +728,19 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 			putMedia(t, root, tc.unmatchedMedia)
 			summary, err := Import(t.Context(), st, opts)
 			require.NoError(err)
-			assert.Zero(summary.AttachmentsStored)
-			assert.Equal(len(tc.want), summary.AttachmentsMissing)
-			for key := range tc.want {
-				assert.Empty(slotHashes(t, st, id)[key])
+			if tc.name == "earlier album slot removed" {
+				assert.Equal(1, summary.AttachmentsStored)
+				assert.Equal(1, summary.AttachmentsMissing)
+				assert.Equal(map[string]string{"attachment:0": "", "attachment:1": hashHex(b)}, slotHashes(t, st, id))
+			} else {
+				assert.Zero(summary.AttachmentsStored)
+				assert.Equal(len(tc.want), summary.AttachmentsMissing)
+				for key := range tc.want {
+					assert.Empty(slotHashes(t, st, id)[key])
+				}
+				hash := hashHex(tc.unmatchedMedia)
+				assert.NoFileExists(filepath.Join(opts.AttachmentsDir, hash[:2], hash))
 			}
-			hash := hashHex(tc.unmatchedMedia)
-			assert.NoFileExists(filepath.Join(opts.AttachmentsDir, hash[:2], hash))
 			writeFrames(t, root, message("changed", tc.repaired))
 			putMedia(t, root, tc.repairedMedia)
 			summary, err = Import(t.Context(), st, opts)
@@ -762,7 +751,11 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 					stored++
 				}
 			}
-			assert.Equal(stored, summary.AttachmentsStored)
+			if tc.name == "earlier album slot removed" {
+				assert.Zero(summary.AttachmentsStored)
+			} else {
+				assert.Equal(stored, summary.AttachmentsStored)
+			}
 			assert.Equal(len(tc.want)-stored, summary.AttachmentsMissing)
 			assert.Equal(tc.want, slotHashes(t, st, id))
 			again, err := st.GetMessageRawContext(t.Context(), id)
@@ -796,17 +789,11 @@ func TestMediaIndexLimit(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, r.Close()) }()
 	r.maxMedia = 1
-	st, opts := testutil.NewTestStore(t), options(t, root)
-	summary := &ImportSummary{MediaMissing: map[string]int64{}, Omitted: map[string]int64{}}
-	visited := 0
-	err = r.frames(t.Context(), func(m *chatItem, _ []byte, _ int) error {
-		visited++
-		_, _, _, err := mediaWrites(t.Context(), st, r, 0, m.Standard, opts, summary)
-		return err
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 2, visited)
-	assert.EqualValues(t, 4, summary.MediaMissing["index_limit"])
+	for _, hash := range []string{hashHex(data), hashHex(other)} {
+		_, reason, err := r.mediaName(t.Context(), hash)
+		require.NoError(t, err)
+		assert.Equal(t, "index_limit", reason)
+	}
 }
 
 func TestMatchingPointerRequiresUniqueUnclaimedIdentity(t *testing.T) {

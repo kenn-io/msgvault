@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"database/sql"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -85,35 +84,15 @@ func TestImportSignalExportNewerFormat(t *testing.T) {
 	assert.NotContains(t, out.String(), "Re-run")
 }
 
-func TestSignalExportReasonLabelIndexLimit(t *testing.T) {
-	assert.Equal(t, "file scan limit reached", signalExportReasonLabel("index_limit"))
-}
-
 func TestImportSignalExportReasonLabels(t *testing.T) {
-	cfg := lifecycleTestConfig(t.TempDir())
-	cfg.Data.DataDir = t.TempDir()
-	ctx := withStoreResolverConfig(t, cfg)
-	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "metadata.json"), []byte(`{"version":1}`), 0600))
-	var input bytes.Buffer
-	input.WriteString("{\"version\":\"1\"}\n{\"account\":{}}\n")
-	for _, kind := range []string{"contactMessage", "stickerMessage", "remoteDeletedMessage", "updateMessage", "paymentNotification", "giftBadge", "viewOnceMessage", "directStoryReplyMessage", "adminDeletedMessage"} {
-		fmt.Fprintf(&input, "{\"chatItem\":{\"%s\":{}}}\n", kind)
-	}
-	for _, kind := range []string{"adHocCall", "installedStickerPack", "hiddenStickerPack", "favoriteStickerList", "notificationProfile", "chatFolder"} {
-		fmt.Fprintf(&input, "{\"%s\":{}}\n", kind)
-	}
-	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), input.Bytes(), 0600))
-	cmd := &cobra.Command{Use: "import-signal-export"}
-	cmd.SetContext(ctx)
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(io.Discard)
-	require.NoError(t, runImportSignalExport(cmd, root, "fictional"))
-	for _, label := range []string{
-		"Skipped contact cards: 1", "Skipped stickers: 1", "Skipped deleted messages: 1", "Skipped chat updates: 1", "Skipped payments: 1", "Skipped gifts: 1", "Skipped view-once messages: 1", "Skipped story replies: 1", "Skipped messages deleted by admins: 1",
-		"Omitted calls: 1", "Omitted installed sticker packs: 1", "Omitted hidden sticker packs: 1", "Omitted favorite stickers: 1", "Omitted notification profiles: 1", "Omitted chat folders: 1",
+	for reason, want := range map[string]string{
+		"index_limit":    "file scan limit reached",
+		"contactMessage": "contact cards", "stickerMessage": "stickers", "remoteDeletedMessage": "deleted messages",
+		"updateMessage": "chat updates", "paymentNotification": "payments", "giftBadge": "gifts",
+		"viewOnceMessage": "view-once messages", "directStoryReplyMessage": "story replies", "adminDeletedMessage": "messages deleted by admins",
+		"adHocCall": "calls", "installedStickerPack": "installed sticker packs", "hiddenStickerPack": "hidden sticker packs",
+		"favoriteStickerList": "favorite stickers", "notificationProfile": "notification profiles", "chatFolder": "chat folders",
 	} {
-		assert.Contains(t, out.String(), label)
+		assert.Equal(t, want, signalExportReasonLabel(reason), reason)
 	}
 }
