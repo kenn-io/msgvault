@@ -7331,7 +7331,6 @@ func (l LocalEmbeddingsStatus) Validate() error {
 }
 
 type LoopCommitment struct {
-	ClaimID      int64                   `json:"claim_id"`
 	Direction    LoopCommitmentDirection `json:"direction" validate:"required"`
 	DueOn        *string                 `json:"due_on,omitzero"`
 	Freshness    LoopCommitmentFreshness `json:"freshness" validate:"required"`

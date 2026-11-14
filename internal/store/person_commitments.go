@@ -29,7 +29,6 @@ var ErrCommitmentChanged = errors.New("commitment changed; retry")
 type PersonCommitment struct {
 	ID              int64                       `json:"id"`
 	PersonID        int64                       `json:"person_id"`
-	ClaimID         int64                       `json:"claim_id,omitempty"`
 	TargetKey       string                      `json:"target_key"`
 	AnchorMessageID int64                       `json:"anchor_message_id"`
 	Direction       string                      `json:"direction"`
@@ -206,7 +205,6 @@ func (s *Store) loadCommitmentCandidateEvidenceTx(ctx context.Context, tx *logge
 	if err != nil || promise.Input.SpanStart == nil || promise.Input.SpanEnd == nil {
 		return errors.New("invalid commitment citation")
 	}
-	c.ClaimID = claimID
 	c.AnchorMessageID, c.Direction, c.Quote = messageID, value.Direction, promise.Input.Excerpt
 	c.Start, c.End = *promise.Input.SpanStart, *promise.Input.SpanEnd
 	c.Summary, c.DueOn, c.PromisedAt = value.Summary, value.DueOn, promise.Input.EventTime

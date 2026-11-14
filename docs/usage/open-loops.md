@@ -167,8 +167,8 @@ with `msgvault person provider status`. Use `msgvault person provider revoke`
 to revoke both the ordinary inference and commitment grants for the profile.
 
 Cited promises appear under **Promises you made** and **Promises to you**.
-Each row links to the quoted message. The JSON response also gives the claim
-ID and original-body rune range. See the [person facts CLI reference](../cli-reference.md#person-track-tiers-provider-sweep-and-facts) for claim kinds
+Each row links to the quoted message. The JSON response also gives the
+original-body rune range. See the [person facts CLI reference](../cli-reference.md#person-track-tiers-provider-sweep-and-facts) for claim kinds
 and freshness. A due date is a calendar date in the configured activity timezone. Open promises remain visible as their evidence ages; evidence older than 90 days is marked stale. Unsupported claims leave the list. If a message edit changes a quote so it can't be matched to the original, rediscovery can list it as a new open promise.
 
 Use the commitment ID for actions on a promise. This ID starts with `c`.

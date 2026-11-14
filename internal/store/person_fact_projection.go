@@ -80,11 +80,6 @@ type personFactApplyMetadata struct {
 func (s *Store) ApplyPersonFactGenerationContext(
 	ctx context.Context, input personfacts.GenerationInput, aligner personfacts.EvidenceAligner,
 ) (*personfacts.GenerationResult, error) {
-	for _, claim := range input.Claims {
-		if claim.Origin == personfacts.OriginCommitment || claim.Target.Kind == personfacts.TargetCommitment {
-			return nil, errors.New("commitment claims require a validated sweep attempt")
-		}
-	}
 	prepared, err := personfacts.PreparePersonFactGeneration(ctx, input, aligner)
 	if err != nil {
 		return nil, err

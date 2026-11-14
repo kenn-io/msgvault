@@ -133,7 +133,7 @@ func TestLoopsListPagesPromises(t *testing.T) {
 		a.Equal("200", req.URL.Query().Get("commitment_offset"))
 		a.Equal("1", req.URL.Query().Get("limit"))
 		a.Equal("true", req.URL.Query().Get("include_closed"))
-		_, err := w.Write([]byte(`{"items":[],"commitments":[{"id":"c201","person_id":1,"claim_id":1,"direction":"owed_to","summary":"Call","promise":{"message_id":42,"text":"I will call.","start":0,"end":12},"promised_at":"2026-01-01T00:00:00Z","freshness":"fresh","state":"done"}],"truncated":true,"commitments_next_offset":201}`))
+		_, err := w.Write([]byte(`{"items":[],"commitments":[{"id":"c201","person_id":1,"direction":"owed_to","summary":"Call","promise":{"message_id":42,"text":"I will call.","start":0,"end":12},"promised_at":"2026-01-01T00:00:00Z","freshness":"fresh","state":"done"}],"truncated":true,"commitments_next_offset":201}`))
 		a.NoError(err)
 	}))
 	t.Cleanup(server.Close)

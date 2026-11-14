@@ -7,7 +7,6 @@ import type { LoopCommitmentFreshness } from "./loopCommitmentFreshness";
 import type { LoopCommitmentState } from "./loopCommitmentState";
 
 export interface LoopCommitment {
-  claim_id: number;
   direction: LoopCommitmentDirection;
   due_on?: string;
   freshness: LoopCommitmentFreshness;

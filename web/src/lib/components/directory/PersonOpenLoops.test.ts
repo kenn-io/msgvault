@@ -76,8 +76,8 @@ describe("PersonOpenLoops", () => {
       commitments_since: "2026-10-01T00:00:00Z",
       commitments_complete: false,
       commitments: [
-        { id: "c12", claim_id: 12, person_id: 7, summary: "Send the draft", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: 52, start: 0, end: 22, text: "I will send the draft." }, promised_at: "2026-10-12T12:00:00Z", due_on: `${year}-11-15` },
-        { id: "c13", claim_id: 13, person_id: 7, summary: "Check the venue", state: "open", direction: "owed_to", freshness: "stale", promise: { message_id: 53, start: 0, end: 23, text: "I will check the venue." }, promised_at: "2026-10-12T12:00:00Z", due_on: `${year + 1}-11-15` },
+        { id: "c12", person_id: 7, summary: "Send the draft", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: 52, start: 0, end: 22, text: "I will send the draft." }, promised_at: "2026-10-12T12:00:00Z", due_on: `${year}-11-15` },
+        { id: "c13", person_id: 7, summary: "Check the venue", state: "open", direction: "owed_to", freshness: "stale", promise: { message_id: 53, start: 0, end: 23, text: "I will check the venue." }, promised_at: "2026-10-12T12:00:00Z", due_on: `${year + 1}-11-15` },
       ],
     }));
     render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });

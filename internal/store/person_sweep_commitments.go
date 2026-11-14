@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -317,11 +316,6 @@ func (s *Store) currentCommitmentSource(ctx context.Context, personID, messageID
 }
 
 func validatePersonSweepApplyCommitment(request peoplesweep.ApplyRequest) error {
-	for _, claim := range request.Generation.Claims {
-		if claim.Origin == personfacts.OriginCommitment || claim.Target.Kind == personfacts.TargetCommitment {
-			return errors.New("ordinary sweep claims cannot carry commitments")
-		}
-	}
 	hasCall := false
 	for _, batch := range request.Batches {
 		if request.CommitmentOnly && !personSweepCommitmentPurpose(batch.Purpose) {
@@ -396,36 +390,8 @@ func (s *Store) commitmentWindowCurrentTx(ctx context.Context, tx *loggedTx, req
 	if err := tx.QueryRowContext(ctx, `SELECT sequence FROM person_sweep_change_clock WHERE singleton = TRUE`).Scan(&latest); err != nil || prepared.snapshot > latest {
 		return false, err
 	}
-	if changed, err := s.commitmentCitedChangedTx(ctx, tx, request, prepared); err != nil || changed {
-		return false, err
-	}
-	var allowSensitive bool
-	var sourceSince, sourceJSON string
-	var sourceUntil sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT allow_sensitive, source_since, source_until, CAST(allowed_sources AS TEXT)
-		FROM person_inference_profiles WHERE fingerprint = ?`,
-		request.Generation.Policy.ProviderPolicyFingerprint).Scan(&allowSensitive, &sourceSince, &sourceUntil, &sourceJSON)
-	if err != nil {
-		return false, err
-	}
-	var lanes []peoplesweep.SourceClass
-	if err := json.Unmarshal([]byte(sourceJSON), &lanes); err != nil {
-		return false, err
-	}
-	if !allowSensitive || !slices.Contains(lanes, peoplesweep.SourceConversationText) {
-		return false, nil
-	}
-	profile := peoplesweep.ProviderProfile{AllowSensitive: allowSensitive, SourceSince: sourceSince, SourceUntil: sourceUntil.String, AllowedSources: lanes}
-	if prepared.scope != peoplesweep.CommitmentScopeFingerprint(profile, request.Commitment.Config) {
-		return false, nil
-	}
-	for _, source := range request.Commitment.Window.Sources {
-		day := source.EventTime.Format(time.DateOnly)
-		if day < sourceSince || (sourceUntil.Valid && day > sourceUntil.String) {
-			return false, nil
-		}
-	}
-	return true, nil
+	changed, err := s.commitmentCitedChangedTx(ctx, tx, request, prepared)
+	return !changed, err
 }
 
 func (s *Store) applyCommitmentStatusesTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, sweep *preparedCommitmentSweep) error {

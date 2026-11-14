@@ -22,7 +22,6 @@ type CommitmentQuote struct {
 type LoopCommitment struct {
 	ID           string          `json:"id"`
 	PersonID     int64           `json:"person_id"`
-	ClaimID      int64           `json:"claim_id"`
 	Direction    string          `json:"direction" enum:"owed_by,owed_to"`
 	Summary      string          `json:"summary"`
 	Promise      CommitmentQuote `json:"promise"`
@@ -48,7 +47,7 @@ func loopCommitments(commitments []store.PersonCommitment) []LoopCommitment {
 	var response []LoopCommitment
 	for _, c := range commitments {
 		response = append(response, LoopCommitment{
-			ID: loops.FormatCommitmentID(c.ID), PersonID: c.PersonID, ClaimID: c.ClaimID,
+			ID: loops.FormatCommitmentID(c.ID), PersonID: c.PersonID,
 			Direction: c.Direction, Summary: c.Summary, PromisedAt: c.PromisedAt, DueOn: c.DueOn,
 			Freshness: string(c.Freshness), State: c.State, SnoozedUntil: c.SnoozedUntil,
 			Promise: CommitmentQuote{MessageID: c.AnchorMessageID, Text: c.Quote, Start: c.Start, End: c.End},
