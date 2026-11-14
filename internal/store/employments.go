@@ -150,7 +150,7 @@ func (s *Store) UpdateEmploymentContext(ctx context.Context, id, expectedRevisio
 				return err
 			}
 			var inferenceBefore map[int64]personInferenceExportProjection
-			if provenanceIsInferred(input.Source) {
+			if provenanceIsInferred(input.Source) || (input.IsPrimary != nil && *input.IsPrimary && input.ExpectedPrimary != nil && input.ExpectedPrimary.ID != id) {
 				inferenceBefore, err = s.captureInferenceExportPeopleTx(ctx, tx, snapshot.PersonID, input.PersonID)
 				if err != nil {
 					return err

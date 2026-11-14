@@ -235,6 +235,12 @@ func (b *daemonMCPOperations) employmentDisclosureContext(ctx context.Context, n
 	if !ok {
 		return nil, unavailable
 	}
-	current.Employment.Description = nil
+	if name == "replace_employment" || name == "delete_employment" {
+		if current.Employment.Description != nil && len(*current.Employment.Description) > 8<<10 {
+			return nil, &mcpserver.OperationRefusalError{Code: "employment_description_too_large"}
+		}
+	} else {
+		current.Employment.Description = nil
+	}
 	return &current, nil
 }

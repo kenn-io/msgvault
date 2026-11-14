@@ -190,7 +190,7 @@ func TestMCPEmploymentNativePrimaryConflictAndDisclosure(t *testing.T) {
 	replace, err := b.OperationDisclosure(t.Context(), "replace_employment", map[string]any{"employment_id": record.Employment.ID, "etag": record.ETag, "employment": map[string]any{"person_id": person, "organization_id": org, "source": "user", "end_date": "2024-05"}})
 	require.NoError(err)
 	assert.Contains(replace, "Replace mutable fields; omitted ones clear. Omitted is_current is kept only without end_date; omitted is_primary only while the record stays current.")
-	assert.NotContains(replace, "Synthetic employment note")
+	assert.Contains(replace, "Synthetic employment note")
 	args := map[string]any{"employment": map[string]any{"person_id": person, "organization_id": other.ID, "source": "user", "is_primary": true}}
 	conflict, err := b.ExecuteOperation(t.Context(), "create_employment", args)
 	require.NoError(err)
@@ -215,7 +215,7 @@ func TestMCPEmploymentNativePrimaryConflictAndDisclosure(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(staleDisclosure, `"etag":"stale"`)
 	assert.Contains(staleDisclosure, `"operation":"delete_employment"`)
-	assert.NotContains(staleDisclosure, "Synthetic employment note")
+	assert.Contains(staleDisclosure, "Synthetic employment note")
 
 }
 
@@ -471,4 +471,70 @@ func legacyOperationSession(t *testing.T, b *daemonMCPOperations, family mcpserv
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = session.Close() })
 	return session
+}
+
+func TestMCPEmploymentDescriptionDisclosure(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		size   int
+		refuse bool
+	}{{"small", 12, false}, {"limit", 8 << 10, false}, {"over limit", (8 << 10) + 1, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			must := require.New(t)
+			b, st, person, org := employmentFixture(t)
+			description := strings.Repeat("x", tc.size)
+			first, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Source: store.ProvenanceUser, Description: &description, IsPrimary: new(true)})
+			must.NoError(err)
+			read, err := b.ExecuteOperation(t.Context(), "get_employment", map[string]any{"employment_id": first.ID})
+			must.NoError(err)
+			for _, call := range []struct {
+				name string
+				args map[string]any
+			}{
+				{"replace_employment", map[string]any{"employment_id": first.ID, "etag": read.ETag, "employment": map[string]any{"person_id": person, "organization_id": org, "source": "user"}}},
+				{"delete_employment", map[string]any{"employment_id": first.ID, "etag": read.ETag}},
+			} {
+				disclosure, err := b.OperationDisclosure(t.Context(), call.name, call.args)
+				if tc.refuse {
+					var refusal *mcpserver.OperationRefusalError
+					must.ErrorAs(err, &refusal)
+					must.Equal("employment_description_too_large", refusal.Code)
+				} else {
+					must.NoError(err)
+					must.Contains(disclosure, description)
+				}
+			}
+			end, err := b.OperationDisclosure(t.Context(), "end_employment", map[string]any{"employment_id": first.ID, "etag": read.ETag, "end_date": "2024"})
+			must.NoError(err)
+			must.NotContains(end, description)
+			second, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Source: store.ProvenanceUser, Title: new("Other"), IsPrimary: new(false)})
+			must.NoError(err)
+			secondRead, err := b.ExecuteOperation(t.Context(), "get_employment", map[string]any{"employment_id": second.ID})
+			must.NoError(err)
+			demotion, err := b.OperationDisclosure(t.Context(), "replace_employment", map[string]any{"employment_id": second.ID, "etag": secondRead.ETag, "employment": map[string]any{"person_id": person, "organization_id": org, "source": "user", "is_primary": true}})
+			must.NoError(err)
+			must.NotContains(demotion, description)
+		})
+	}
+}
+
+func TestMCPEmploymentDescriptionChangedDuringApproval(t *testing.T) {
+	must := require.New(t)
+	b, st, person, org := employmentFixture(t)
+	employment, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Source: store.ProvenanceUser, Description: new("Approved description")})
+	must.NoError(err)
+	read, err := b.ExecuteOperation(t.Context(), "get_employment", map[string]any{"employment_id": employment.ID})
+	must.NoError(err)
+	session := legacyOperationSession(t, b, mcpserver.OperationFamilyEmployment, func(ctx context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		assert.Contains(t, request.Params.Message, "Approved description")
+		_, err := st.UpdateEmploymentContext(ctx, employment.ID, employment.Revision, store.EmploymentInput{PersonID: person, OrganizationID: org, Source: store.ProvenanceUser, Description: new("Changed description")})
+		assert.NoError(t, err)
+		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+	})
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "delete_employment", Arguments: map[string]any{"employment_id": employment.ID, "etag": read.ETag}})
+	must.NoError(err)
+	must.Equal("operation_context_changed", loopToolFailure(t, result)["error"])
+	current, err := st.GetEmploymentContext(t.Context(), employment.ID)
+	must.NoError(err)
+	must.Equal("Changed description", *current.Description)
 }
