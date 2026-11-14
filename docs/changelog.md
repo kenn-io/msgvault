@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Saved people show their first archived appearance, including copied recipients, and the introducing sender when the evidence identifies one. See [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance).
 - Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
 
 ## 0.24.0

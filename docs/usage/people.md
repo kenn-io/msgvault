@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: "2026-11-11"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -51,6 +51,32 @@ or a UID from one of its bound CardDAV cards. JSON profile reads include
 `vcard_uid` and `carddav_bindings`, which show the connection, book, resource
 href, remote UID, and mapping status. UID lookup needs daemon API schema 3.10.0
 or newer.
+
+## See a person's first archived appearance
+
+Run `msgvault person get <person-id> --json` to see the earliest
+archived event supported by a saved person’s activity, including messages where
+they were copied. Conversation rosters do not establish an appearance; a
+sender or explicitly addressed person does, including meeting attendees. If
+only roster evidence exists, no first appearance is shown. `first_seen_at` and
+`first_seen_ref` describe that appearance;
+`first_contact_at` and interaction counts still describe direct contact.
+The HTTP contact-state route, assembled profiles, MCP `get_person_profile`, and `person get --json` carry the same fields. `person get` includes them when daemon API schema 5.3.0 or newer is available; older daemons and failed history reads still return the person. The Web UI and TUI do not yet show first appearance.
+
+After an import, first appearance reflects new messages once the activity
+projection catches up; results marked `stale` are provisional. See
+[activity configuration](/docs/configuration/#activity).
+
+`first_contact_kind` describes the envelope evidence, not a verified
+introduction. `email_intro` is an inbound email, excluding meetings, with
+exactly one third-party From address in the archived envelope, matching the
+recorded sender when present. You must be a recipient, the person must be in
+To or Cc, and there can be at most four other non-owner recipients, counting
+linked aliases once per saved person. Email with a relayed From address uses
+`observed`, as does other evidence.
+`introducer` identifies the sender of an introduction email when known. These fields reflect archived
+evidence and currently linked identities, not a claim about when you met
+offline.
 
 ## Review identity matches
 

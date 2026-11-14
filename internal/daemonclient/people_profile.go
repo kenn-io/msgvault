@@ -21,6 +21,9 @@ var _ peoplebrowser.ProfileUIDReader = (*PeopleBrowser)(nil)
 // resolving a person profile by current or CardDAV UID.
 const PersonUIDLookupMinAPISchemaVersion = "3.10.0"
 
+// FirstAppearanceMinAPISchemaVersion is the first schema exposing first appearance.
+const FirstAppearanceMinAPISchemaVersion = "5.3.0"
+
 // maxProfileOrganizationLookups bounds the per-organization name resolution
 // a single profile read may perform beyond the primary-employment projection.
 const maxProfileOrganizationLookups = 10
@@ -70,14 +73,11 @@ func (b *PeopleBrowser) GetPersonProfile(
 					PathParams: &generated.GetPersonContactStatePath{ID: personID},
 				})
 		})
-	switch {
-	case err == nil:
+	if err == nil {
 		// A missing projection is an HTTP 200 response with zero ComputedAt.
-		if !state.JSON200.ComputedAt.IsZero() {
+		if !state.JSON200.ComputedAt.IsZero() || state.JSON200.FirstSeenAt != nil {
 			profile.ContactState = contactStateFromGenerated(*state.JSON200)
 		}
-	case !absentAPIResource(err):
-		return nil, err
 	}
 
 	profile.Brief, err = b.GetPersonBrief(ctx, personID)
@@ -244,7 +244,15 @@ func absentAPIResource(err error) bool {
 }
 
 func contactStateFromGenerated(state generated.ContactState) *store.ContactState {
+	var introducer *store.FirstContactIntroducer
+	if state.Introducer != nil {
+		introducer = &store.FirstContactIntroducer{ParticipantID: state.Introducer.ParticipantID, DisplayName: state.Introducer.DisplayName, PersonID: copyInt64(state.Introducer.PersonID)}
+	}
 	return &store.ContactState{
+		FirstSeenAt:         copyTime(state.FirstSeenAt),
+		FirstSeenRef:        stringValue(state.FirstSeenRef),
+		FirstContactKind:    store.FirstContactKind(stringValue(state.FirstContactKind)),
+		Introducer:          introducer,
 		PersonID:            state.PersonID,
 		FirstContactAt:      copyTime(state.FirstContactAt),
 		FirstContactRef:     stringValue(state.FirstContactRef),

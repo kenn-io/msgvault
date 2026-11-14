@@ -3671,6 +3671,11 @@ msgvault person attributes set <person-id> <slug> (--value <scalar> | --value-js
 msgvault person attributes clear <person-id> <slug> [flags]
 ```
 
+`person get --json` includes first archived appearance and the first direct contact
+with daemon API schema 5.3.0 or newer. JSON includes the appearance reference, `email_intro` or `observed` kind, and introducer when known. See
+[first archived appearance](usage/people.md#see-a-persons-first-archived-appearance)
+for evidence rules and limitations.
+
 `promote` seeds a new profile with the first nonblank observed name in its
 linked cluster, ordered by participant ID. It leaves the name empty when no
 member has an observed name. Repeating promotion preserves the saved name,

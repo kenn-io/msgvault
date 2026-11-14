@@ -52,8 +52,10 @@ func TestPersonGetLooksUpVCardUIDAndJSONIncludesCardDAVBindings(t *testing.T) {
 	var requestedPath string
 	var requestedUID string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestedPath = r.URL.Path
-		requestedUID = r.URL.Query().Get("uid")
+		if r.URL.Path == "/api/v1/people/by-uid" {
+			requestedPath = r.URL.Path
+			requestedUID = r.URL.Query().Get("uid")
+		}
 		assert.Equal(http.MethodGet, r.Method)
 		if r.URL.Path == "/api/v1/health" {
 			w.Header().Set("Content-Type", "application/json")
