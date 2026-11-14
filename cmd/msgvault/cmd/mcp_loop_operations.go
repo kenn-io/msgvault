@@ -11,12 +11,9 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/daemonclient"
-	"go.kenn.io/msgvault/internal/loops"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
-
-const commitmentDecisionPath = "/api/v1/loops/commitments/{commitment_id}/decision"
 
 func loopMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol.MCPCapabilities) []string {
 	var names []string
@@ -35,17 +32,12 @@ func loopMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol.MCPCa
 			names = append(names, route.name)
 		}
 	}
-	if hasRoute("setCommitmentDecision", http.MethodPost, commitmentDecisionPath) &&
-		mcpRequestPropertiesPresent(capabilities, "setCommitmentDecision", "state", "until") {
-		names = append(names, "set_commitment_decision")
-	}
 	return names
 }
 
 type loopListArguments struct {
-	PersonID      *int64 `json:"person_id,omitempty"`
-	Limit         *int64 `json:"limit,omitempty"`
-	IncludeClosed *bool  `json:"include_closed,omitempty"`
+	PersonID *int64 `json:"person_id,omitempty"`
+	Limit    *int64 `json:"limit,omitempty"`
 }
 type loopDecisionArguments struct {
 	MessageID int64 `json:"message_id"`
@@ -58,32 +50,6 @@ type loopSnoozeArguments struct {
 	MessageID          int64   `json:"message_id"`
 	QuestionMessageIDs []int64 `json:"question_message_ids"`
 	Until              string  `json:"until"`
-}
-
-type commitmentDecisionArguments struct {
-	ID    string `json:"commitment_id"`
-	State string `json:"state"`
-	Until string `json:"until,omitempty"`
-}
-
-func (b *daemonMCPOperations) commitmentDecisionInput(args map[string]any) (commitmentDecisionArguments, *time.Time, error) {
-	input, err := decodeMCPOperationArguments[commitmentDecisionArguments](args)
-	if err != nil {
-		return input, nil, err
-	}
-	if _, err := loops.ParseCommitmentID(input.ID); err != nil {
-		return input, nil, err
-	}
-	switch input.State {
-	case "snoozed":
-		until, err := b.loopDeadline(input.Until)
-		return input, &until, err
-	case "open", "done":
-		if input.Until == "" {
-			return input, nil, nil
-		}
-	}
-	return input, nil, errors.New("invalid commitment decision")
 }
 
 // validLoopQuestions requires at least one listed question, each a safe ID.
@@ -113,25 +79,10 @@ func (b *daemonMCPOperations) executeLoopOperation(ctx context.Context, name str
 		if err != nil || input.PersonID != nil && !validLoopID(*input.PersonID) || input.Limit != nil && (*input.Limit < 1 || *input.Limit > 200) {
 			return invalid()
 		}
-		if input.IncludeClosed != nil && !b.includeClosedLoops {
-			return operationFailure("operation_unavailable", false), true, nil
-		}
 		if input.Limit == nil {
 			input.Limit = new(int64(50))
 		}
-		result, err := readMCPLoopJSON[generated.LoopListResponse](ctx, b.client, http.MethodGet, "/api/v1/loops", &generated.ListLoopsRequestOptions{Query: &generated.ListLoopsQuery{PersonID: input.PersonID, Limit: input.Limit, IncludeClosed: input.IncludeClosed}})
-		return result, true, err
-	}
-	if name == "set_commitment_decision" {
-		input, until, err := b.commitmentDecisionInput(args)
-		if err != nil {
-			return invalid()
-		}
-		options := &generated.SetCommitmentDecisionRequestOptions{
-			PathParams: &generated.SetCommitmentDecisionPath{CommitmentID: input.ID},
-			Body:       &generated.SetCommitmentDecisionBody{State: generated.CommitmentDecisionRequestState(input.State), Until: until},
-		}
-		result, err := readMCPLoopJSON[generated.CommitmentDecisionResponse](ctx, b.client, http.MethodPost, commitmentDecisionPath, options)
+		result, err := readMCPLoopJSON[generated.LoopListResponse](ctx, b.client, http.MethodGet, "/api/v1/loops", &generated.ListLoopsRequestOptions{Query: &generated.ListLoopsQuery{PersonID: input.PersonID, Limit: input.Limit}})
 		return result, true, err
 	}
 	var id int64
@@ -181,17 +132,6 @@ func (b *daemonMCPOperations) executeLoopOperation(ctx context.Context, name str
 }
 
 func (b *daemonMCPOperations) loopOperationDisclosure(name string, args map[string]any) (string, bool, error) {
-	if name == "set_commitment_decision" {
-		input, until, err := b.commitmentDecisionInput(args)
-		if err != nil {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
-		}
-		if until != nil {
-			input.Until = until.Format(time.RFC3339Nano)
-		}
-		data, err := json.Marshal(input, json.Deterministic(true))
-		return string(data), true, err
-	}
 	var id int64
 	var questions []int64
 	var until string
@@ -238,7 +178,7 @@ func (b *daemonMCPOperations) loopOperationDisclosure(name string, args map[stri
 
 func loopRefusal(code string) bool {
 	switch code {
-	case "commitment_not_found", "loop_not_found", "loop_decision_not_found", "loop_scan_incomplete", "loops_unavailable", "invalid_request", "server_busy":
+	case "loop_not_found", "loop_decision_not_found", "loop_scan_incomplete", "loops_unavailable", "invalid_request", "server_busy":
 		return true
 	default:
 		return false
