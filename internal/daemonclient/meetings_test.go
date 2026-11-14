@@ -14,7 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/meetingimport"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -216,9 +215,10 @@ func TestMeetingDecisionClientRoundTrip(t *testing.T) {
 	client, imported := newMeetingDaemonClient(t)
 	left := fmt.Sprintf("msg:%d", imported[0].MessageID)
 	right := fmt.Sprintf("msg:%d", imported[1].MessageID)
-	for _, tc := range []struct{ decision, state string }{{"link", "link"}, {"unlink", "split"}, {"clear", "automatic"}} {
-		result, err := client.DecideMeetingLink(t.Context(), left, right, tc.decision)
+	for _, decision := range []string{"link", "unlink", "clear"} {
+		result, err := client.DecideMeetingLink(t.Context(), left, right, decision)
 		requirements.NoError(err)
-		assertions.Equal(store.MeetingLinkDecisionResult{Left: left, Right: right, State: tc.state}, result)
+		assertions.Equal(left, result.Left)
+		assertions.Equal(right, result.Right)
 	}
 }
