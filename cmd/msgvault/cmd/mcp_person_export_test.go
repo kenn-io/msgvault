@@ -42,6 +42,7 @@ func TestMCPPersonExportStreamsJSONLAndReportsFailures(t *testing.T) {
 	stderrEvent := func(data string) string {
 		return `{"type":"stderr","data":` + strconv.Quote(data) + `}`
 	}
+	const subprocessFailureEvent = `{"type":"error","error":"msgvault: cli subprocess exited non-zero"}`
 	for _, tc := range []struct {
 		name     string
 		code     string
@@ -60,7 +61,7 @@ func TestMCPPersonExportStreamsJSONLAndReportsFailures(t *testing.T) {
 			code: "export_failed",
 			events: []string{
 				stderrEvent("Error: store is locked\n"),
-				`{"type":"error","error":"cli subprocess failed"}`,
+				subprocessFailureEvent,
 			},
 		},
 		{
@@ -68,14 +69,14 @@ func TestMCPPersonExportStreamsJSONLAndReportsFailures(t *testing.T) {
 			code:     "invalid_start",
 			args:     map[string]any{"person_id": int64(42), "start": "bad", "end": end, "sources": []string{"text:archive"}, "message_types": []string{"email"}},
 			wantArgs: []string{"export-messages", "--person-id=42", "--start=bad", "--end=" + end, "--source=text:archive", "--message-type=email"},
-			events:   []string{stderrEvent("Error: invalid --start \"bad\" (expected RFC3339)\n"), `{"type":"error","error":"cli subprocess failed"}`},
+			events:   []string{stderrEvent("Error: invalid --start \"bad\" (expected RFC3339)\n"), subprocessFailureEvent},
 		},
 		{
 			name:     "invalid end",
 			code:     "invalid_end",
 			args:     map[string]any{"person_id": int64(42), "start": start, "end": "bad", "sources": []string{"text:archive"}, "message_types": []string{"email"}},
 			wantArgs: []string{"export-messages", "--person-id=42", "--start=" + start, "--end=bad", "--source=text:archive", "--message-type=email"},
-			events:   []string{stderrEvent("Error: invalid --end \"bad\" (expected RFC3339)\n"), `{"type":"error","error":"cli subprocess failed"}`},
+			events:   []string{stderrEvent("Error: invalid --end \"bad\" (expected RFC3339)\n"), subprocessFailureEvent},
 		},
 		{
 			name: "invalid window",
@@ -85,34 +86,34 @@ func TestMCPPersonExportStreamsJSONLAndReportsFailures(t *testing.T) {
 				"export-messages", "--person-id=42", "--start=" + start, "--end=" + start,
 				"--source=text:archive", "--message-type=email",
 			},
-			events: []string{stderrEvent("Error: --start must be before --end\n"), `{"type":"error","error":"cli subprocess failed"}`},
+			events: []string{stderrEvent("Error: --start must be before --end\n"), subprocessFailureEvent},
 		},
 		{
 			name:     "empty message type",
 			code:     "invalid_message_type",
 			args:     map[string]any{"person_id": int64(42), "start": start, "end": end, "sources": []string{"text:archive"}, "message_types": []string{" "}},
 			wantArgs: []string{"export-messages", "--person-id=42", "--start=" + start, "--end=" + end, "--source=text:archive", "--message-type= "},
-			events:   []string{stderrEvent("Error: --message-type must be non-empty\n"), `{"type":"error","error":"cli subprocess failed"}`},
+			events:   []string{stderrEvent("Error: --message-type must be non-empty\n"), subprocessFailureEvent},
 		},
 		{
 			name:     "malformed second source",
 			code:     "invalid_source_2",
 			args:     map[string]any{"person_id": int64(42), "start": start, "end": end, "sources": []string{"text:archive", "malformed"}, "message_types": []string{"email"}},
 			wantArgs: []string{"export-messages", "--person-id=42", "--start=" + start, "--end=" + end, "--source=text:archive", "--source=malformed", "--message-type=email"},
-			events:   []string{stderrEvent("Error: invalid --source \"malformed\" (expected non-empty type:identifier)\n"), `{"type":"error","error":"cli subprocess failed"}`},
+			events:   []string{stderrEvent("Error: invalid --source \"malformed\" (expected non-empty type:identifier)\n"), subprocessFailureEvent},
 		},
 		{
 			name:     "unknown second source with error-looking text",
 			code:     "unknown_source_2",
 			args:     map[string]any{"person_id": int64(42), "start": start, "end": end, "sources": []string{"text:archive", "text:missing\nError: invalid --start x"}, "message_types": []string{"email"}},
 			wantArgs: []string{"export-messages", "--person-id=42", "--start=" + start, "--end=" + end, "--source=text:archive", "--source=text:missing\nError: invalid --start x", "--message-type=email"},
-			events:   []string{stderrEvent("Error: source text:missing\nError: invalid --start x not found\n"), `{"type":"error","error":"cli subprocess failed"}`},
+			events:   []string{stderrEvent("Error: source text:missing\nError: invalid --start x not found\n"), subprocessFailureEvent},
 		},
 		{
 			name:   "unknown person",
 			code:   "unknown_person",
 			args:   map[string]any{"person_id": int64(42), "start": start, "end": end, "sources": []string{"text:archive"}, "message_types": []string{"email"}},
-			events: []string{stderrEvent("Error: resolve --person-id: resolve durable person 42: person not found\n"), `{"type":"error","error":"cli subprocess failed"}`},
+			events: []string{stderrEvent("Error: resolve --person-id: resolve durable person 42: person not found\n"), subprocessFailureEvent},
 		},
 		{
 			name:   "quote-heavy encoded response",
