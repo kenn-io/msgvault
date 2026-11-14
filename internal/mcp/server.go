@@ -348,6 +348,7 @@ var mcpSchemaCache = sdkmcp.NewSchemaCache()
 
 // newMCPServer builds an official MCP server from the operation catalog.
 func newMCPServer(opts ServeOptions, allowWrites bool) *sdkmcp.Server {
+	opts.DiscoverFamilies = nil
 	return newMCPServerWithPolicy(opts, allowWrites, newStdioInvocationPolicy())
 }
 
@@ -423,17 +424,20 @@ func newMCPServerWithPolicy(
 		chatDiscoveryBackend: opts.ChatDiscoveryBackend,
 	}
 
-	for _, definition := range operationCatalog(opts, h) {
-		if !toolClassAllowed(definition.security, opts, allowWrites) {
-			continue
-		}
+	definitions := authorizedOperationCatalog(opts, allowWrites)
+	operations := operationalCatalog(opts, allowWrites)
+	h.toolDiscovery = toolDiscovery{definitions: definitions, discoverFamilies: opts.DiscoverFamilies}
+	for _, operation := range operations {
+		h.toolDiscovery.definitions = append(h.toolDiscovery.definitions, operation.definition)
+	}
+	for _, definition := range definitions {
 		sdkmcp.AddTool[map[string]any, any](s, definition.tool(), officialToolHandler(definition.bind(h), confirmation))
 	}
 	if !opts.DelegatedOnly {
 		registerAttachmentResources(s, h)
 	}
 
-	for _, definition := range operationalCatalog(opts, allowWrites) {
+	for _, definition := range operations {
 		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations), confirmation))
 	}
 
@@ -464,7 +468,7 @@ func ServeTransport(ctx context.Context, opts ServeOptions, transport sdkmcp.Tra
 	if opts.DiscoverFamilies != nil {
 		opts.Families = opts.DiscoverFamilies(ctx)
 	}
-	return newMCPServerWithPolicy(opts, true, newStdioInvocationPolicy()).Run(ctx, transport) //nolint:wrapcheck // ServeWithOptions adds transport-specific context.
+	return newMCPServer(opts, true).Run(ctx, transport) //nolint:wrapcheck // ServeWithOptions adds transport-specific context.
 }
 
 // ServeHTTPWithOptions creates an MCP server from opts and serves over
