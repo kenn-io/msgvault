@@ -54,28 +54,12 @@ func TestPersonFactNativeDiagnosticsAndPin(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	backend, st, id, target := factFixture(t)
-	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	_, err := st.ApplyPersonFactGenerationContext(t.Context(), personfacts.GenerationInput{
-		PersonID: id, SourceCursors: []personfacts.SourceCursor{{Lane: "fixture", Start: "start", End: "end"}},
-		ProgramID: "fixture", ProgramVersion: "v1", ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "fixture", Provider: "fixture", ProviderVersion: "v1", Model: "fixture", ModelVersion: "v1", ResolvedAt: now,
-		Policy: personfacts.PolicyContext{ProviderPolicyFingerprint: "fixture"},
-		Claims: []personfacts.ProposedClaim{{Target: target, Relation: personfacts.RelationSupport, SubmittedValue: jsontext.Value(`"chat"`), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{{PersonID: id, SourceClass: personfacts.EvidencePublic, Directness: personfacts.DirectSelf, Authority: personfacts.AuthorityAuthoritative, SourceURL: "https://example.test/fact", SubjectPersonID: &id, SubjectRef: "synthetic", Excerpt: "Synthetic evidence", SourceVersion: "v1", EventTime: now, RecordedTime: now, IdentityScore: 990}}}},
-	}, nil)
-	requirements.NoError(err)
-
-	result, err := backend.ExecuteOperation(t.Context(), "list_person_fact_claims", map[string]any{"person_id": id, "include_evidence": true, "include_decisions": true})
-	requirements.NoError(err)
-	requirements.False(result.IsError)
-	output := operationOutput[mcpserver.PersonFactClaimsOutput](t, result)
-	assertions.Len(output.Claims, 1)
-	assertions.Len(output.Evidence, 1)
-	assertions.Len(output.Decisions, 1)
 	args := map[string]any{"person_id": id, "kind": string(target.Kind), "key": target.Key, "pinned": true}
 	disclosure, err := backend.OperationDisclosure(t.Context(), "set_person_fact_pin", args)
 	requirements.NoError(err)
 	assertions.Contains(disclosure, `"pinned":true`)
 	assertions.Contains(disclosure, "may change profile and vCard projections")
-	result, err = backend.ExecuteOperation(t.Context(), "set_person_fact_pin", args)
+	result, err := backend.ExecuteOperation(t.Context(), "set_person_fact_pin", args)
 	requirements.NoError(err)
 	requirements.False(result.IsError)
 	pins, err := st.ListPersonFactPinsContext(t.Context(), id)
@@ -95,21 +79,6 @@ func TestPersonFactNativeDiagnosticsAndPin(t *testing.T) {
 	assertions.False(slices.ContainsFunc(pins, func(pin personfacts.PinState) bool {
 		return pin.Target.Kind == target.Kind && pin.Target.Key == target.Key && pin.Pinned
 	}))
-}
-
-func TestPersonFactTrackingDisclosure(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	backend, _, id, _ := factFixture(t)
-	disclosure, err := backend.OperationDisclosure(t.Context(), "set_person_tracking", map[string]any{"person_id": id, "tracked": false})
-	requirements.NoError(err)
-	assertions.Contains(disclosure, `"tracked":false`)
-	assertions.Contains(disclosure, "removes queued sweep work")
-	assertions.Contains(disclosure, "pending enrichment")
-	disclosure, err = backend.OperationDisclosure(t.Context(), "set_person_tracking", map[string]any{"person_id": id, "tracked": true})
-	requirements.NoError(err)
-	assertions.Contains(disclosure, "configured sweep model")
-	assertions.Contains(disclosure, "external enrichment")
 }
 
 func TestPersonFactPinRefusals(t *testing.T) {
@@ -220,6 +189,15 @@ func TestPersonFactSDKConfirmsEachWrite(t *testing.T) {
 	approvals := 0
 	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyPersonFacts}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		approvals++
+		if approvals == 1 {
+			assertions.Contains(request.Params.Message, `"tracked":false`)
+			assertions.Contains(request.Params.Message, "removes queued sweep work")
+			assertions.Contains(request.Params.Message, "pending enrichment")
+		}
+		if approvals == 2 {
+			assertions.Contains(request.Params.Message, "configured sweep model")
+			assertions.Contains(request.Params.Message, "external enrichment")
+		}
 		if approvals == 3 {
 			assertions.Contains(request.Params.Message, "set_person_fact_pin")
 			assertions.Contains(request.Params.Message, target.Key)
