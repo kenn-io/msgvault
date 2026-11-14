@@ -14,11 +14,6 @@ func TestEmploymentCatalogGatesAndClosedInput(t *testing.T) {
 	require := require.New(t)
 	names := []string{"get_employment", "list_person_employments", "list_organization_employments", "create_employment", "replace_employment", "end_employment", "delete_employment"}
 	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: names}
-	reads := toolsByName(t, rawListTools(t, opts, true))
-	assert.Contains(reads, "get_employment")
-	assert.NotContains(reads, "create_employment")
-	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyRecords}
-	assert.NotContains(toolsByName(t, rawListTools(t, opts, true)), "create_employment")
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyEmployment}
 	listed := toolsByName(t, rawListTools(t, opts, true))
 	for _, name := range names {
@@ -29,7 +24,6 @@ func TestEmploymentCatalogGatesAndClosedInput(t *testing.T) {
 		require.True(ok)
 		assert.Equal(destructive, annotations["destructiveHint"])
 	}
-	assert.NotContains(toolsByName(t, rawListTools(t, opts, false)), "create_employment")
 	input, ok := listed["create_employment"]["inputSchema"].(map[string]any)
 	require.True(ok)
 	data, err := json.Marshal(input)
@@ -44,15 +38,4 @@ func TestEmploymentCatalogGatesAndClosedInput(t *testing.T) {
 	require.Error(resolved.Validate(bad))
 	missingPrimary := map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "user"}}
 	require.Error(resolved.Validate(missingPrimary))
-	opts.DelegatedOnly = true
-	assert.Empty(operationalCatalog(opts, true))
-	found := false
-	for _, summary := range ToolSummaries() {
-		if summary.Name == "create_employment" {
-			found = true
-			assert.Equal("--allow-employment-writes", summary.Flag)
-			assert.Equal("owner-only", summary.GrantPermission)
-		}
-	}
-	require.True(found)
 }

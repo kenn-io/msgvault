@@ -52,11 +52,6 @@ type employmentBodyArgs struct {
 	ETag         string                    `json:"etag,omitempty"`
 	Employment   *generated.EmploymentBody `json:"employment"`
 }
-type replaceEmploymentArgs struct {
-	EmploymentID int64                     `json:"employment_id"`
-	ETag         string                    `json:"etag"`
-	Employment   *generated.EmploymentBody `json:"employment"`
-}
 type employmentEndArgs struct {
 	EmploymentID int64  `json:"employment_id"`
 	ETag         string `json:"etag"`
@@ -99,7 +94,7 @@ func (b *daemonMCPOperations) executeEmploymentOperation(ctx context.Context, na
 		}
 		result, err = readMCPOperationJSON[generated.Employment](ctx, b.client, http.MethodPost, "/api/v1/employments", &generated.CreateEmploymentRequestOptions{Body: a.Employment}, http.StatusCreated)
 	case "replace_employment":
-		a, e := decodeMCPOperationArguments[replaceEmploymentArgs](args)
+		a, e := decodeMCPOperationArguments[employmentBodyArgs](args)
 		if e != nil {
 			return invalid()
 		}

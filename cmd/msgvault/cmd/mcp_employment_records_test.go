@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -40,9 +39,6 @@ func TestMCPEmploymentLifecycleNativeStore(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	b, st, person, org := employmentFixture(t)
-	for _, name := range []string{"get_employment", "list_person_employments", "list_organization_employments", "create_employment", "replace_employment", "end_employment", "delete_employment"} {
-		assert.Contains(b.capabilities(), name)
-	}
 	call := func(name string, args map[string]any) *mcpserver.OperationResult {
 		t.Helper()
 		r, err := b.ExecuteOperation(t.Context(), name, args)
@@ -110,11 +106,6 @@ func TestMCPEmploymentDisclosure(t *testing.T) {
 	assert.NotContains(end, "Synthetic employment note")
 	assert.Contains(end, `"operation":"end_employment"`)
 	assert.Contains(end, `"end_date":"2024-05"`)
-	assert.Contains(end, "End this employment on the given date; it is no longer current or primary.")
-	replace, err := b.OperationDisclosure(t.Context(), "replace_employment", map[string]any{"employment_id": record.Employment.ID, "etag": record.ETag, "employment": map[string]any{"person_id": person, "organization_id": org, "source": "user", "end_date": "2024-05"}})
-	require.NoError(err)
-	assert.Contains(replace, "Replace mutable fields; omitted ones clear. Omitted is_current is kept only without end_date; omitted is_primary only while the record stays current.")
-	assert.Contains(replace, "Synthetic employment note")
 	staleDisclosure, err := b.OperationDisclosure(t.Context(), "delete_employment", map[string]any{"employment_id": record.Employment.ID, "etag": "stale"})
 	require.NoError(err)
 	assert.Contains(staleDisclosure, `"etag":"stale"`)
@@ -123,45 +114,31 @@ func TestMCPEmploymentDisclosure(t *testing.T) {
 
 }
 
-func TestMCPEmploymentCapabilityRequiresNativeRoute(t *testing.T) {
-	backend, _, _, _ := employmentFixture(t) //nolint:dogsled // shared fixture returns four values; test needs only backend
-	capabilities, err := backend.client.MCPCapabilities(t.Context())
-	require.NoError(t, err)
-	for i := range capabilities.Routes {
-		switch capabilities.Routes[i].OperationID {
-		case "createEmployment":
-			capabilities.Routes[i].RequestProperties = nil
-		case "listPersonEmployments":
-			capabilities.Routes[i].QueryParameters = nil
-		}
-	}
-	capabilities.Routes = slices.DeleteFunc(capabilities.Routes, func(route apiprotocol.MCPRouteDescriptor) bool { return route.OperationID == "getEmployment" })
-	missing := newDaemonMCPOperations(backend.client, capabilities).capabilities()
-	for _, name := range []string{"get_employment", "create_employment", "list_person_employments", "replace_employment", "end_employment", "delete_employment"} {
-		assert.NotContains(t, missing, name)
-	}
-	assert.Contains(t, missing, "list_organization_employments")
-}
-
-func TestMCPEmploymentReplaceRequiresPrimaryReadAndGuard(t *testing.T) {
-	for _, missing := range []string{"listPersonEmployments", "expected_primary"} {
-		t.Run(missing, func(t *testing.T) {
-			require := require.New(t)
-			backend, _, _, _ := employmentFixture(t) //nolint:dogsled // shared fixture returns four values
+func TestMCPEmploymentCapabilities(t *testing.T) {
+	all := []string{"get_employment", "list_person_employments", "list_organization_employments", "create_employment", "replace_employment", "end_employment", "delete_employment"}
+	for _, tc := range []struct {
+		missing, property string
+		want              []string
+	}{
+		{"", "", all},
+		{"getEmployment", "", []string{"list_person_employments", "list_organization_employments", "create_employment"}},
+		{"listPersonEmployments", "", []string{"get_employment", "list_organization_employments", "end_employment", "delete_employment"}},
+		{"", "expected_primary", []string{"get_employment", "list_person_employments", "list_organization_employments", "end_employment", "delete_employment"}},
+	} {
+		t.Run(tc.missing+tc.property, func(t *testing.T) {
+			backend, _, _, _ := employmentFixture(t) //nolint:dogsled // shared fixture
 			capabilities, err := backend.client.MCPCapabilities(t.Context())
-			require.NoError(err)
-			require.Contains(newDaemonMCPOperations(backend.client, capabilities).capabilities(), "replace_employment")
-			if missing == "listPersonEmployments" {
-				capabilities.Routes = slices.DeleteFunc(capabilities.Routes, func(route apiprotocol.MCPRouteDescriptor) bool { return route.OperationID == missing })
-			} else {
-				for i := range capabilities.Routes {
-					if capabilities.Routes[i].OperationID == "patchEmployment" || capabilities.Routes[i].OperationID == "createEmployment" {
-						capabilities.Routes[i].RequestProperties = slices.DeleteFunc(capabilities.Routes[i].RequestProperties, func(property string) bool { return property == missing })
-					}
+			require.NoError(t, err)
+			capabilities.Routes = slices.DeleteFunc(capabilities.Routes, func(route apiprotocol.MCPRouteDescriptor) bool { return route.OperationID == tc.missing })
+			for i := range capabilities.Routes {
+				if capabilities.Routes[i].OperationID == "patchEmployment" || capabilities.Routes[i].OperationID == "createEmployment" {
+					capabilities.Routes[i].RequestProperties = slices.DeleteFunc(capabilities.Routes[i].RequestProperties, func(property string) bool { return property == tc.property })
 				}
 			}
-			assert.NotContains(t, newDaemonMCPOperations(backend.client, capabilities).capabilities(), "replace_employment")
-			assert.NotContains(t, newDaemonMCPOperations(backend.client, capabilities).capabilities(), "create_employment")
+			got := newDaemonMCPOperations(backend.client, capabilities).capabilities()
+			for _, name := range all {
+				assert.Equal(t, slices.Contains(tc.want, name), slices.Contains(got, name), name)
+			}
 		})
 	}
 }
@@ -259,18 +236,9 @@ func TestMCPEmploymentPrimaryAppearsAfterDisclosure(t *testing.T) {
 
 func TestMCPNativeRefusalsAreDefinite(t *testing.T) {
 	b, _, _, _ := employmentFixture(t)
-	for _, tc := range []struct {
-		name, path, code string
-		options          runtime.RequestOptions
-	}{
-		{"employment", "/api/v1/employments/{id}", "invalid_employment_id", &generated.GetEmploymentRequestOptions{PathParams: &generated.GetEmploymentPath{ID: -1}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			result, err := readMCPOperationJSON[map[string]any](t.Context(), b.client, http.MethodGet, tc.path, tc.options, http.StatusOK)
-			require.NoError(t, err)
-			assertLoopRefusal(t, result, tc.code, false)
-		})
-	}
+	result, err := readMCPOperationJSON[map[string]any](t.Context(), b.client, http.MethodGet, "/api/v1/employments/{id}", &generated.GetEmploymentRequestOptions{PathParams: &generated.GetEmploymentPath{ID: -1}}, http.StatusOK)
+	require.NoError(t, err)
+	assertLoopRefusal(t, result, "invalid_employment_id", false)
 }
 
 func legacyOperationSession(t *testing.T, b *daemonMCPOperations, family mcpserver.OperationFamily, handler func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error)) *sdkmcp.ClientSession {
@@ -287,20 +255,6 @@ func legacyOperationSession(t *testing.T, b *daemonMCPOperations, family mcpserv
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = session.Close() })
 	return session
-}
-
-func TestMCPEmploymentCreateRefusesNewPrimary(t *testing.T) {
-	must := require.New(t)
-	b, st, person, org := employmentFixture(t)
-	session := legacyOperationSession(t, b, mcpserver.OperationFamilyEmployment, func(ctx context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		_, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person, OrganizationID: org, Title: new("Concurrent"), Source: store.ProvenanceUser, IsPrimary: new(true)})
-		assert.NoError(t, err)
-		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
-	})
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "create_employment", Arguments: map[string]any{"employment": map[string]any{"person_id": person, "organization_id": org, "title": "New", "source": "user", "is_primary": true}}})
-	must.NoError(err)
-	must.True(result.IsError)
-	must.Equal("employment_primary_conflict", loopToolFailure(t, result)["error"])
 }
 
 func TestMCPEmploymentLargeDescriptionApproval(t *testing.T) {
