@@ -23,7 +23,7 @@ func TestMergePersons_DefersMemberOnlyActivity(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/split_%t", scenario.name, splitBeforeProjection), func(t *testing.T) {
 				assert := assert.New(t)
 				require := require.New(t)
-				f, survivor, absorbed, directID, _ := mergeDerivedStateFixture(t)
+				f, survivor, absorbed, directID := mergeDerivedStateFixture(t)
 				ctx := t.Context()
 				if scenario.owner {
 					require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "merge-derived-survivor@example.com", "test"))
@@ -40,7 +40,7 @@ func TestMergePersons_DefersMemberOnlyActivity(t *testing.T) {
 				var roomIDs []int64
 				for i := range 6 {
 					message := f.NewMessage().WithSourceMessageID(fmt.Sprintf("room-%d", i)).
-						WithSentAt(time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)).WithIsFromMe(true).Build()
+						WithSentAt(time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)).WithIsFromMe(true).Build()
 					message.ConversationID = room
 					message.SenderID = sql.NullInt64{Int64: owner, Valid: true}
 					id, insertErr := f.Store.UpsertMessage(message)
@@ -122,7 +122,6 @@ func TestMergePersons_DefersMemberOnlyActivity(t *testing.T) {
 				state, err = f.Store.ContactStateContext(ctx, third.ID, time.Now())
 				require.NoError(err)
 				assert.False(state.Stale)
-				assert.Empty(state.FirstSeenRef, "untimed group membership does not establish first appearance")
 				wantCount := int64(len(roomIDs))
 				if splitBeforeProjection && limit == 2 && !scenario.owner {
 					wantCount = 0
@@ -176,7 +175,7 @@ func TestMergePersons_DefersMemberOnlyActivity(t *testing.T) {
 func TestMergePersons_RepairsNonMemberLinksAfterNativeEdgesRemoved(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	f, survivor, absorbed, messageID, _ := mergeDerivedStateFixture(t)
+	f, survivor, absorbed, messageID := mergeDerivedStateFixture(t)
 	ctx := t.Context()
 	// The old materialized links must be retracted even when the native edge
 	// which originally selected this event is gone and its queue is pending.

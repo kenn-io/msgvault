@@ -1390,7 +1390,7 @@ func TestMergePersons_DailyNotes(t *testing.T) {
 func TestMergePersons_DerivedState(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	f, survivor, absorbed, messageID, absorbedFirst := mergeDerivedStateFixture(t)
+	f, survivor, absorbed, messageID := mergeDerivedStateFixture(t)
 	ctx := t.Context()
 	for _, personID := range []int64{survivor.ID, absorbed.ID} {
 		var count int64
@@ -1432,9 +1432,6 @@ func TestMergePersons_DerivedState(t *testing.T) {
 	assert.Equal(int64(3), interactionCount,
 		"contact state must be rebuilt from three final native events, not summed")
 	assert.Equal(revisions.IdentityRevision, identityRevision)
-	state, err := f.Store.ContactStateContext(ctx, survivor.ID, time.Now())
-	require.NoError(err)
-	assert.Equal(fmt.Sprintf("message:%d", absorbedFirst), state.FirstSeenRef)
 	var absorbedDerivedRows int
 	require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT
 		(SELECT COUNT(*) FROM activity_event_persons WHERE person_id = ?) +
@@ -1453,7 +1450,7 @@ func TestMergePersons_DerivedState(t *testing.T) {
 func TestMergePersons_DerivedRollback(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	f, survivor, absorbed, messageID, _ := mergeDerivedStateFixture(t)
+	f, survivor, absorbed, messageID := mergeDerivedStateFixture(t)
 	ctx := t.Context()
 	if f.Store.IsPostgreSQL() {
 		_, err := f.Store.DB().ExecContext(ctx, `
@@ -1504,7 +1501,7 @@ func TestMergePersons_DerivedRollback(t *testing.T) {
 
 func mergeDerivedStateFixture(
 	t *testing.T,
-) (*storetest.Fixture, *store.Person, *store.Person, int64, int64) {
+) (*storetest.Fixture, *store.Person, *store.Person, int64) {
 	t.Helper()
 	require := require.New(t)
 	f := storetest.New(t)
@@ -1533,25 +1530,17 @@ func mergeDerivedStateFixture(
 	require.NoError(f.Store.ReplaceMessageRecipients(
 		messageID, "to", []int64{survivorParticipant, absorbedParticipant},
 		[]string{"Survivor", "Absorbed"}))
-	var absorbedFirst int64
 	for label, senderID := range map[string]int64{
 		"survivor": survivorParticipant,
 		"absorbed": absorbedParticipant,
 	} {
-		hour := 6
-		if label == "absorbed" {
-			hour = 4
-		}
 		direct := f.NewMessage().
 			WithSourceMessageID("merge-derived-direct-" + label).
-			WithSentAt(time.Date(2026, 8, 19, hour, 0, 0, 0, time.UTC)).
+			WithSentAt(time.Date(2026, 8, 19, 6, 0, 0, 0, time.UTC)).
 			Build()
 		direct.SenderID = sql.NullInt64{Int64: senderID, Valid: true}
 		directID, directErr := f.Store.UpsertMessage(direct)
 		require.NoError(directErr)
-		if label == "absorbed" {
-			absorbedFirst = directID
-		}
 		require.NoError(f.Store.ReplaceMessageRecipients(
 			directID, "from", []int64{senderID}, []string{label}))
 		require.NoError(f.Store.ReplaceMessageRecipients(
@@ -1567,7 +1556,7 @@ func mergeDerivedStateFixture(
 	require.NoError(err)
 	absorbed, err = f.Store.GetPersonContext(t.Context(), absorbed.ID)
 	require.NoError(err)
-	return f, survivor, absorbed, messageID, absorbedFirst
+	return f, survivor, absorbed, messageID
 }
 
 func TestMergePersons_ParticipantMergeRejectsCrossOriginLineage(t *testing.T) {

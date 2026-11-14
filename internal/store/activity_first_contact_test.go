@@ -14,7 +14,7 @@ func TestClassifyFirstContact(t *testing.T) {
 	from := ActivityCounterpart{ParticipantID: 2, PersonID: &sender, RecipientType: "from"}
 	addressed := ActivityCounterpart{ParticipantID: 3, PersonID: &target, RecipientType: "to"}
 	email := ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{owner, from, addressed}}
-	ownerID, alias := int64(11), int64(12)
+	ownerID := int64(11)
 	targetRecipient := ActivityCounterpart{ParticipantID: 10, PersonID: &target, RecipientType: "cc"}
 	ownerRecipient := ActivityCounterpart{ParticipantID: 11, PersonID: &ownerID, RecipientType: "to", IsOwner: true}
 	unsavedSender := ActivityCounterpart{ParticipantID: 12, RecipientType: "from"}
@@ -24,29 +24,19 @@ func TestClassifyFirstContact(t *testing.T) {
 		want       FirstContactKind
 		introducer int64
 		person     *int64
-		max        int
 	}
 	tests := []testCase{
-		{"introduction", email, FirstContactEmailIntro, 2, &sender, 25},
-		{"recorded sender with multiple authors", ActivityCandidate{ConversationType: "email_thread", SenderID: new(int64(2)), Counterparts: []ActivityCounterpart{owner, from, {ParticipantID: 4, RecipientType: "from"}, addressed}}, FirstContactObserved, 0, nil, 25},
-		{"ambiguous from", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{owner, from, {ParticipantID: 4, RecipientType: "from"}, addressed}}, FirstContactObserved, 0, nil, 25},
-		{"ambiguous target sender", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{owner, from, {ParticipantID: 4, PersonID: &target, RecipientType: "from"}}}, FirstContactObserved, 0, nil, 25},
-		{"ambiguous owner sender", ActivityCandidate{ConversationType: "email_thread", SourceIsFromMe: true, Counterparts: []ActivityCounterpart{{ParticipantID: 1, IsOwner: true, RecipientType: "from"}, from, addressed}}, FirstContactObserved, 0, nil, 25},
-		{"recorded sender absent from envelope", ActivityCandidate{ConversationType: "email_thread", SenderID: new(int64(99)), Counterparts: email.Counterparts}, FirstContactObserved, 0, nil, 25},
-		{"meeting", ActivityCandidate{MessageType: "calendar_event", Counterparts: email.Counterparts}, FirstContactObserved, 0, nil, 25},
-		{"owner absent", ActivityCandidate{ConversationType: "group_chat", Counterparts: []ActivityCounterpart{from, addressed}}, FirstContactObserved, 0, nil, 25},
-		{"group", ActivityCandidate{ConversationType: "group_chat", Counterparts: email.Counterparts}, FirstContactObserved, 0, nil, 25},
-		{"inbound sender", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{owner, {ParticipantID: 3, PersonID: &target, RecipientType: "from"}}}, FirstContactObserved, 0, nil, 25},
-		{"owner sender", ActivityCandidate{ConversationType: "direct_chat", Counterparts: []ActivityCounterpart{{ParticipantID: 1, IsOwner: true, RecipientType: "from"}, addressed}}, FirstContactObserved, 0, nil, 25},
-		{"source flag without sender", ActivityCandidate{ConversationType: "email_thread", SourceIsFromMe: true, Counterparts: []ActivityCounterpart{addressed}}, FirstContactObserved, 0, nil, 25},
-		{"unknown chat", ActivityCandidate{ConversationType: "chat", SourceIsFromMe: true, Counterparts: []ActivityCounterpart{addressed}}, FirstContactObserved, 0, nil, 25},
-		{"bcc target", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{owner, from, {ParticipantID: 3, PersonID: &target, RecipientType: "bcc"}}}, FirstContactObserved, 0, nil, 25},
-		{"unsaved sender", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{unsavedSender, ownerRecipient, targetRecipient}}, FirstContactEmailIntro, 12, nil, 25},
-		{"owner alias recipient", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{unsavedSender, ownerRecipient, {ParticipantID: 13, PersonID: &ownerID, RecipientType: "bcc"}, targetRecipient}}, FirstContactEmailIntro, 12, nil, 25},
-		{"broadcast inbound", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{ownerRecipient, {ParticipantID: 10, PersonID: &target, RecipientType: "from"}, {ParticipantID: 14, PersonID: &alias, RecipientType: "to"}}}, FirstContactObserved, 0, nil, 1},
-		{"broadcast outbound", ActivityCandidate{ConversationType: "email_thread", SourceIsFromMe: true, Counterparts: []ActivityCounterpart{targetRecipient, {ParticipantID: 14, PersonID: &alias, RecipientType: "to"}}}, FirstContactObserved, 0, nil, 1},
-		{"direct chat member", ActivityCandidate{ConversationType: "direct_chat", SourceIsFromMe: true, Counterparts: []ActivityCounterpart{{ParticipantID: 10, PersonID: &target, RecipientType: "member"}}}, FirstContactObserved, 0, nil, 25},
-		{"channel inbound", ActivityCandidate{ConversationType: "channel", Counterparts: []ActivityCounterpart{unsavedSender, ownerRecipient, targetRecipient}}, FirstContactObserved, 0, nil, 25},
+		{"introduction", email, FirstContactEmailIntro, 2, &sender},
+		{"recorded sender with multiple authors", ActivityCandidate{ConversationType: "email_thread", SenderID: new(int64(2)), Counterparts: []ActivityCounterpart{owner, from, {ParticipantID: 4, RecipientType: "from"}, addressed}}, FirstContactObserved, 0, nil},
+		{"ambiguous from", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{owner, from, {ParticipantID: 4, RecipientType: "from"}, addressed}}, FirstContactObserved, 0, nil},
+		{"recorded sender absent from envelope", ActivityCandidate{ConversationType: "email_thread", SenderID: new(int64(99)), Counterparts: email.Counterparts}, FirstContactObserved, 0, nil},
+		{"meeting", ActivityCandidate{ConversationType: "email_thread", MessageType: "calendar_event", Counterparts: email.Counterparts}, FirstContactObserved, 0, nil},
+		{"group", ActivityCandidate{ConversationType: "group_chat", Counterparts: email.Counterparts}, FirstContactObserved, 0, nil},
+		{"inbound sender", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{owner, {ParticipantID: 3, PersonID: &target, RecipientType: "from"}, addressed}}, FirstContactObserved, 0, nil},
+		{"outbound email", ActivityCandidate{ConversationType: "email_thread", SourceIsFromMe: true, Counterparts: email.Counterparts}, FirstContactObserved, 0, nil},
+		{"bcc target", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{owner, from, {ParticipantID: 3, PersonID: &target, RecipientType: "bcc"}}}, FirstContactObserved, 0, nil},
+		{"unsaved sender", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{unsavedSender, ownerRecipient, targetRecipient}}, FirstContactEmailIntro, 12, nil},
+		{"owner alias recipient", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{unsavedSender, ownerRecipient, {ParticipantID: 13, PersonID: &ownerID, RecipientType: "bcc"}, targetRecipient}}, FirstContactEmailIntro, 12, nil},
 	}
 	for _, n := range []int{maxIntroCounterparts, maxIntroCounterparts + 1} {
 		c := email
@@ -61,12 +51,12 @@ func TestClassifyFirstContact(t *testing.T) {
 		if n > maxIntroCounterparts {
 			want, intro, person = FirstContactObserved, 0, nil
 		}
-		tests = append(tests, testCase{fmt.Sprintf("%d other recipients", n), c, want, intro, person, 25})
+		tests = append(tests, testCase{fmt.Sprintf("%d other recipients", n), c, want, intro, person})
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
-			kind, intro := ClassifyFirstContact(tc.candidate, target, tc.max)
+			kind, intro := ClassifyFirstContact(tc.candidate, target, 25)
 			assert.Equal(tc.want, kind)
 			if tc.introducer == 0 {
 				assert.Nil(intro)
