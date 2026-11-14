@@ -1035,8 +1035,11 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		finish()
 		defer refresh()
 		status := "changed_externally"
+		matched := false
 		if recovered {
 			status = "recovered"
+			replacement, buildErr := imaplib.BuildDraftReplacement(observed.Message.Raw, intent.Body, time.Now(), "")
+			matched = intent.Operation == api.CLIRunDraftEditCommand && buildErr == nil && replacement.Parsed.BodyText == parsed.BodyText
 		}
 		output, outputErr := a.gmailDraftLifecycleOutput(evidenceCtx, adopted, status, &gmailDraftLifecycleObservation{
 			State: "changed", Code: status, GmailDraftID: observed.ID,
@@ -1051,8 +1054,15 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 				return err
 			}
 		}
-		if err := emitGmailDraftLifecycleOutput(emit, cliStreamStderr, intent, output); err != nil {
+		stream := cliStreamStderr
+		if matched {
+			stream = cliStreamStdout
+		}
+		if err := emitGmailDraftLifecycleOutput(emit, stream, intent, output); err != nil {
 			return draftReplyError("output_failed", err)
+		}
+		if matched {
+			return nil
 		}
 		if recovered {
 			return draftReplyError("revision_mismatch", errors.New("pending edit recovered; review the new revision before retrying"))

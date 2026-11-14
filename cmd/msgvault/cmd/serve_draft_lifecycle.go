@@ -507,8 +507,8 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 	if err != nil {
 		return err
 	}
-	if intent.Operation == api.CLIRunDraftEditCommand {
-		if draft.Pending != nil && intent.ValidateOnly {
+	if intent.Operation == api.CLIRunDraftEditCommand && intent.ValidateOnly {
+		if draft.Pending != nil {
 			return draftReplyError("pending_operation", store.ErrIMAPDraftPending)
 		}
 		currentRaw, readErr := a.store.GetMessageRawContext(ctx, draft.CurrentMessageID)
@@ -527,10 +527,8 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		kind := "edit"
 		if imaplib.IsGeneratedForward(replacement.Raw) {
 			kind = "forward"
-			if intent.ValidateOnly {
-				if _, err := a.forwardDraftAttachmentWrites(ctx, draft.CurrentMessageID, replacement); err != nil {
-					return draftReplyError("invalid_draft", err)
-				}
+			if _, err := a.forwardDraftAttachmentWrites(ctx, draft.CurrentMessageID, replacement); err != nil {
+				return draftReplyError("invalid_draft", err)
 			}
 		}
 		lint, done, lintErr := a.gateDraftLint(ctx, emailDraftLintInput(kind, intent.Body, replacement), intent.draftLintOptions, intent.JSON, emit)
@@ -605,6 +603,17 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 			return draftReplyError("output_failed", err)
 		}
 		return nil
+	}
+	if intent.Operation == api.CLIRunDraftEditCommand {
+		kind := "edit"
+		if imaplib.IsGeneratedForward(replacement.Raw) {
+			kind = "forward"
+		}
+		lint, done, lintErr := a.gateDraftLint(ctx, emailDraftLintInput(kind, intent.Body, replacement), intent.draftLintOptions, intent.JSON, emit)
+		if done || lintErr != nil {
+			return lintErr
+		}
+		intent.lint = lint
 	}
 	var attachmentWrites []store.AttachmentWrite
 	if intent.Operation == api.CLIRunDraftEditCommand {

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -536,33 +537,48 @@ func TestBeeperDraftBlankBody(t *testing.T) {
 }
 
 func TestGmailDraftStrictPendingEditRecovery(t *testing.T) {
-	for _, accepted := range []bool{false, true} {
-		t.Run(fmt.Sprintf("accepted=%t", accepted), func(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		accepted bool
+		body     string
+	}{{"unaccepted", false, "FIRST_NAME"}, {"accepted same", true, "FIRST_NAME"}, {"accepted different", true, "different"}} {
+		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 
 			f := newGmailDraftTestFixture(t)
 			draft := f.seedDraft(t)
-			raw := gmailDraftTestRaw("FIRST_NAME", "candidate@example.test")
-			_, err := f.store.ClaimGmailDraftContext(t.Context(), draft.DraftID, draft.Revision, store.GmailDraftOperationEdit, raw)
+			current, err := f.store.GetMessageRawContext(t.Context(), draft.CurrentMessageID)
+			require.NoError(err)
+			candidate, err := imaplib.BuildDraftReplacement(current, "FIRST_NAME", time.Now(), "candidate@example.test")
+			require.NoError(err)
+			raw := candidate.Raw
+			_, err = f.store.ClaimGmailDraftContext(t.Context(), draft.DraftID, draft.Revision, store.GmailDraftOperationEdit, raw)
 			require.NoError(err)
 			code, id := "remote_unknown", ""
-			if accepted {
+			if tc.accepted {
 				code, id = "accepted_local_failed", "gmail-message-replacement"
 			}
 			require.NoError(f.store.RecordGmailDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, code, id))
-			if accepted {
+			if tc.accepted {
 				f.client.getDraft.Message.ID = id
 				f.client.getDraft.Message.Raw = raw
 			}
-			args := []string{"draft-edit", draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10), "--body", "FIRST_NAME", "--strict", "--json"}
+			args := []string{"draft-edit", draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10), "--body", tc.body, "--strict", "--json"}
 			events, err := lintRun(t, f.adapter, nil, args...)
-			if accepted {
-				require.EqualError(err, "revision_mismatch")
+			if tc.accepted {
+				if tc.body == "FIRST_NAME" {
+					require.NoError(err)
+					assert.Equal(cliStreamStdout, events[0].Type)
+				} else {
+					require.EqualError(err, "revision_mismatch")
+					assert.Equal(cliStreamStderr, events[0].Type)
+				}
 				assert.Contains(events[0].Data, `"status":"recovered"`)
 				latest, loadErr := f.store.GetGmailDraftContext(t.Context(), draft.DraftID)
 				require.NoError(loadErr)
 				args[3] = strconv.FormatInt(latest.Revision, 10)
+				args[5] = "FIRST_NAME"
 				_, err = lintRun(t, f.adapter, nil, args...)
 			}
 			require.EqualError(err, "draft_lint_failed")

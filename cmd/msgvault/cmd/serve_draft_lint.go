@@ -91,8 +91,7 @@ func appendDraftLint(advisory *draftRecipientAdvisory, result draftlint.Result) 
 	advisory.Warnings = append(append([]draftlint.Warning(nil), result.Warnings...), advisory.Warnings...)
 }
 
-// gateDraftLint is shared by create and edit paths and runs before locks,
-// claims, provider calls, attachment catalog writes, or recovery transitions.
+// gateDraftLint is shared by create and edit paths before new provider writes.
 func (a *storeAPIAdapter) gateDraftLint(ctx context.Context, in draftlint.Input, options draftLintOptions, asJSON bool, emit func(api.CLIRunEvent) error) (draftlint.Result, bool, error) {
 	result := draftlint.Check(in)
 	if err := ctx.Err(); err != nil {
