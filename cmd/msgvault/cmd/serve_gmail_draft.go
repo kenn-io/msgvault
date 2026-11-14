@@ -459,6 +459,7 @@ type gmailDraftLifecycleObservation struct {
 
 type gmailDraftLifecycleOutput struct {
 	draftRecipientAdvisory
+
 	Status                           string                          `json:"status"`
 	Provider                         string                          `json:"provider"`
 	DraftID                          string                          `json:"draft_id"`

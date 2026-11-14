@@ -36,6 +36,7 @@ const (
 
 type draftReplyIntent struct {
 	draftLintOptions
+
 	MessageID   int64
 	From        string
 	Body        string

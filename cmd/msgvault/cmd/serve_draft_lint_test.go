@@ -24,7 +24,7 @@ func lintRun(t *testing.T, a *storeAPIAdapter, grant *agentgrant.Grant, args ...
 	t.Helper()
 	var events []api.CLIRunEvent
 	req := api.CLIRunRequest{Args: args, Grant: grant}
-	var emit func(api.CLIRunEvent) error = func(e api.CLIRunEvent) error { events = append(events, e); return nil }
+	var emit = func(e api.CLIRunEvent) error { events = append(events, e); return nil }
 	switch args[0] {
 	case "draft-reply":
 		return eventsWithError(&events, func() error { return a.runCLIReplyDraft(t.Context(), req, emit) })
@@ -108,13 +108,17 @@ func TestDraftReplyLintAndProvenanceWarnings(t *testing.T) {
 			events, err := f.run(t, f.grantedAdapter(), args...)
 			require.NoError(t, err)
 			got := lintObject(t, events)
-			warnings := got["warnings"].([]any)
-			assert.Equal(t, "unresolved_placeholder", warnings[0].(map[string]any)["code"])
+			warnings, ok := got["warnings"].([]any)
+			require.True(t, ok)
+			require.NotEmpty(t, warnings)
+			first, ok := warnings[0].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, "unresolved_placeholder", first["code"])
 			severity := "error"
 			if allow {
 				severity = "warn"
 			}
-			assert.Equal(t, severity, warnings[0].(map[string]any)["severity"])
+			assert.Equal(t, severity, first["severity"])
 			if allow {
 				return
 			}
