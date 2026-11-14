@@ -91,13 +91,9 @@ func agentSetupItems(agent string) ([]agentsetup.Item, error) {
 }
 
 func checkAgentSetup(ctx context.Context) (agentsetup.Report, error) {
-	return agentsetup.Run(ctx, agentCheckOptions())
-}
-
-func agentCheckOptions() agentsetup.Options {
 	opts := agentSetupOptions()
 	opts.CheckOnly = true
-	return opts
+	return agentsetup.Run(ctx, opts)
 }
 
 func refreshAgentSetup(cmd *cobra.Command, _ []string) error {
@@ -117,13 +113,9 @@ func refreshAgentSetup(cmd *cobra.Command, _ []string) error {
 	return copyErr
 }
 
-func newAgentSetupCommand() *cobra.Command {
+func init() {
 	setup := agentsetup.NewCommand(agentSetupOptions())
 	setup.PreRunE = refreshAgentSetup
-	return setup
-}
-
-func init() {
-	agentCmd.AddCommand(newAgentSetupCommand())
+	agentCmd.AddCommand(setup)
 	rootCmd.AddCommand(agentCmd)
 }

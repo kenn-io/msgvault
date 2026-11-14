@@ -4891,7 +4891,7 @@ configured remote daemon; run it on the daemon host or pass `--local`.
 
 ### setup status
 
-Status also asks Claude Code and Codex about msgvault. Codex may start `msgvault mcp` and the daemon, which can create files under the msgvault home; the command prints this notice on stderr.
+Status also asks Claude Code and Codex about msgvault. Codex may start `msgvault mcp` and the daemon, which can create files under the msgvault home.
 
 Report the setup state of each feature (text search, semantic people search,
 visual attachments, people sweep, activity

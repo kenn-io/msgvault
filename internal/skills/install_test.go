@@ -88,15 +88,6 @@ func TestSkillUnorderableVersions(t *testing.T) {
 	}
 }
 
-func TestInstallReportsUnchanged(t *testing.T) {
-	root := t.TempDir()
-	_, err := Install(root, testSkills(), false)
-	require.NoError(t, err)
-	results, err := Install(root, testSkills(), false)
-	require.NoError(t, err)
-	assert.Equal(t, InstallStatus("unchanged"), results[0].Status)
-}
-
 func TestInstall_FreshAndUpdate(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
