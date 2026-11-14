@@ -273,7 +273,8 @@ func nonLocalLocator(path string) bool {
 	path = strings.ToLower(path)
 	for _, prefix := range []string{
 		"mxc://", "matrix:mxc://", "inline:pending:", "discord:pending:",
-		"slack:pending:", "excluded:", "chatwoot:attachment:",
+		"slack:pending:", "slackdump:skipped:", "slackdump:missing:",
+		"slackdump:available:", "excluded:", "chatwoot:attachment:",
 		"chatwoot:recording:", "chatwoot:part:", "imessage:",
 	} {
 		if strings.HasPrefix(path, prefix) {

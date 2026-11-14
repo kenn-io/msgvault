@@ -3265,7 +3265,8 @@ slot. The command reads no message text or RAW MIME. It does not discover
 attachments whose SQL rows are absent.
 
 HTTP(S)/MXC addresses, importer placeholders (`inline:pending:`, `matrix:mxc://`,
-`discord:pending:`, `slack:pending:`, `chatwoot:attachment:`, `chatwoot:recording:`,
+`discord:pending:`, `slack:pending:`, `slackdump:skipped:`, `slackdump:missing:`,
+`slackdump:available:`, `chatwoot:attachment:`, `chatwoot:recording:`,
 `chatwoot:part:`, `imessage:`), and `excluded:` markers do not name retained
 local files. Without a retained hash, an explicit policy skip is an intentional
 omission; pending or failed downloads remain not materialized.

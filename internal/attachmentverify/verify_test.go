@@ -3,6 +3,7 @@ package attachmentverify_test
 import (
 	"bytes"
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -18,8 +19,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/attachmentverify"
+	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -212,6 +215,7 @@ func TestOmissionsAndUnverifiableReferences(t *testing.T) {
 		{"local policy", "", "legacy/file", "skipped", "policy_scope", attachmentverify.Inconclusive},
 		{"local provider-like name", "", "legacy/inline:pending:document:1", "skipped", "policy_scope", attachmentverify.Inconclusive},
 		{"inline-like local name", "", "inline:pending-file", "skipped", "policy_scope", attachmentverify.Inconclusive},
+		{"slackdump-like local name", "", "slackdump:skipped-file", "skipped", "policy_scope", attachmentverify.Inconclusive},
 		{"matrix-like local name", "", "matrix:file.bin", "skipped", "policy_scope", attachmentverify.Inconclusive},
 		{"invalid hash", "invalid", "legacy/file", "stored", "", attachmentverify.Inconclusive},
 		{"escaping path", strings.Repeat("a", 64), "../outside", "stored", "", attachmentverify.Inconclusive},
@@ -796,6 +800,9 @@ func TestCurrentProviderLocators(t *testing.T) {
 		"excluded:beeper:mxc://example.org/media",
 		"discord:pending:attachment-1",
 		"slack:pending:file-1",
+		"slackdump:skipped:F_TEST",
+		"slackdump:missing:F_TEST",
+		"slackdump:available:F_TEST",
 		"chatwoot:attachment:1",
 		"chatwoot:recording:1",
 		"chatwoot:part:0",
@@ -833,5 +840,76 @@ func TestCurrentProviderLocators(t *testing.T) {
 				assert.Equal(attachmentverify.Inconclusive, local.References[0].Status)
 			})
 		}
+	}
+}
+
+// Use the real importer to keep marker classification tied to the rows it writes.
+func TestSlackdumpImportOutcomes(t *testing.T) {
+	for _, mode := range []string{"policy omission", "missing export file", "available without storage"} {
+		t.Run(mode, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newFixture(t)
+			// Remove captured URLs from a private copy of the synthetic export so
+			// all three fallback markers are produced by the real importer.
+			exportDir := t.TempDir()
+			require.NoError(os.CopyFS(exportDir, os.DirFS("../slack/testdata/slackdump/standard")))
+			files, err := filepath.Glob(filepath.Join(exportDir, "*", "????-??-??.json"))
+			require.NoError(err)
+			for _, path := range files {
+				data, err := os.ReadFile(path)
+				require.NoError(err)
+				var messages []map[string]any
+				require.NoError(json.Unmarshal(data, &messages))
+				for _, message := range messages {
+					attachments, _ := message["files"].([]any)
+					for _, value := range attachments {
+						file, ok := value.(map[string]any)
+						require.True(ok)
+						delete(file, "permalink")
+						delete(file, "url_private")
+						delete(file, "url_private_download")
+					}
+				}
+				data, err = json.Marshal(messages)
+				require.NoError(err)
+				require.NoError(os.WriteFile(path, data, 0o600))
+			}
+			opts := slack.SlackdumpImportOptions{
+				Me: "UALICE", AttachmentsDir: f.root,
+				MediaPolicy: attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeAll, MaxBytes: 100 << 20},
+			}
+			marker := "slackdump:missing:%"
+			switch mode {
+			case "policy omission":
+				opts.MediaPolicy.Scope = attachmentpolicy.ScopeNone
+				marker = "slackdump:skipped:%"
+			case "available without storage":
+				opts.AttachmentsDir = ""
+				marker = "slackdump:available:%"
+			}
+			_, err = slack.ImportSlackdump(t.Context(), f.st, exportDir, opts)
+			require.NoError(err)
+			var marked int
+			require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind("SELECT COUNT(*) FROM attachments WHERE storage_path LIKE ?"), marker).Scan(&marked))
+			require.Positive(marked, "the real importer must emit the marker under test")
+			report := f.run()
+			assert.Zero(report.ReferencesAffected)
+			assert.Zero(report.Counts[attachmentverify.Inconclusive], "import markers must not be mistaken for hashless local files")
+			switch mode {
+			case "policy omission":
+				assert.Equal("complete", report.State)
+				assert.Equal(3, report.Counts[attachmentverify.Omitted])
+				assert.Zero(report.ContentsOpened)
+			case "missing export file":
+				assert.Equal("inconclusive", report.State)
+				assert.Equal(1, report.Counts[attachmentverify.NotMaterialized])
+				assert.Equal(2, report.ReferencesVerified)
+			case "available without storage":
+				assert.Equal("inconclusive", report.State)
+				assert.Equal(3, report.Counts[attachmentverify.NotMaterialized])
+				assert.Zero(report.ContentsOpened)
+			}
+		})
 	}
 }
