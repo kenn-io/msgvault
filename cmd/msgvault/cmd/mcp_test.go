@@ -107,7 +107,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	savedAllowPersonMerges := mcpAllowPersonMerges
 	savedAllowCardDAVWrites := mcpAllowCardDAVWrites
 	savedAllowCalendarWrites := mcpAllowCalendarWrites
-	savedAllowLoops, savedAllowSources := mcpAllowLoopWrites, mcpAllowSourceWrites
+	savedAllowLoops, savedAllowSources, savedAllowCurated := mcpAllowLoopWrites, mcpAllowSourceWrites, mcpAllowCuratedWrites
 	savedConfirmSensitiveDrafts := mcpConfirmSensitiveDrafts
 	savedServeHTTP := serveMCPHTTPWithOptions
 	allowWritesFlag := mcpCmd.Flags().Lookup("http-allow-writes")
@@ -122,6 +122,9 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	loopWritesFlag := mcpCmd.Flags().Lookup("allow-loop-writes")
 	require.NotNil(loopWritesFlag)
 	require.NoError(loopWritesFlag.Value.Set("true"))
+	curatedWritesFlag := mcpCmd.Flags().Lookup("allow-curated-writes")
+	require.NotNil(curatedWritesFlag)
+	require.NoError(curatedWritesFlag.Value.Set("true"))
 	mcpAllowSourceWrites = false
 	mcpAllowProfileWrites = true
 	mcpAllowIdentityDecisions = true
@@ -140,6 +143,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 		mcpAllowCardDAVWrites = savedAllowCardDAVWrites
 		mcpAllowCalendarWrites = savedAllowCalendarWrites
 		mcpAllowLoopWrites, mcpAllowSourceWrites = savedAllowLoops, savedAllowSources
+		mcpAllowCuratedWrites = savedAllowCurated
 		mcpConfirmSensitiveDrafts = savedConfirmSensitiveDrafts
 		serveMCPHTTPWithOptions = savedServeHTTP
 	})
@@ -157,7 +161,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	err := mcpCmd.RunE(mcpCmd, nil)
 
 	require.ErrorIs(err, wantErr)
-	assert.ElementsMatch([]mcpserver.OperationFamily{mcpserver.OperationFamilyRecords, mcpserver.OperationFamilyLoops}, gotServeOpts.OperationWriteFamilies)
+	assert.ElementsMatch([]mcpserver.OperationFamily{mcpserver.OperationFamilyRecords, mcpserver.OperationFamilyLoops, mcpserver.OperationFamilyCurated}, gotServeOpts.OperationWriteFamilies)
 	assert.True(gotServeOpts.AllowProfileWrites)
 	assert.True(gotServeOpts.AllowIdentityDecisions)
 	assert.True(gotServeOpts.AllowIdentityScoring)

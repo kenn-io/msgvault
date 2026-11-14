@@ -27,18 +27,18 @@ import (
 func TestMCPOperationFailureCompletion(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
-		name, method, body, want string
-		status                   int
+		name, method, path, body, want string
+		status                         int
 	}{
-		{"post-commit credential conflict", http.MethodPatch, `{"error":"credential_conflict"}`,
+		{"post-commit credential conflict", http.MethodPatch, "/api/v1/settings", `{"error":"credential_conflict"}`,
 			`{"error":"operation_refused","operation_may_have_completed":true}`, http.StatusPreconditionFailed},
-		{"unclassified server failure", http.MethodPost, `{"error":"settings_write_failed"}`,
+		{"unclassified server failure", http.MethodPost, "/api/v1/settings", `{"error":"settings_write_failed"}`,
 			`{"error":"operation_refused","operation_may_have_completed":true}`, http.StatusInternalServerError},
-		{"known pre-commit conflict", http.MethodPatch, `{"error":"settings_conflict"}`,
+		{"known pre-commit conflict", http.MethodPatch, "/api/v1/settings", `{"error":"settings_conflict"}`,
 			`{"error":"settings_conflict","operation_may_have_completed":false}`, http.StatusPreconditionFailed},
-		{"read failure", http.MethodGet, `{"error":"credential_conflict"}`,
+		{"read failure", http.MethodGet, "/api/v1/settings", `{"error":"credential_conflict"}`,
 			`{"error":"operation_refused","operation_may_have_completed":false}`, http.StatusPreconditionFailed},
-		{"read validation failure", http.MethodGet, `{"error":"validation_failed"}`,
+		{"read validation failure", http.MethodGet, "/api/v1/settings", `{"error":"validation_failed"}`,
 			`{"error":"validation_failed","operation_may_have_completed":false}`, http.StatusUnprocessableEntity},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -46,12 +46,12 @@ func TestMCPOperationFailureCompletion(t *testing.T) {
 			requirements, assertions := require.New(t), assert.New(t)
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				assertions.Equal(tt.method, r.Method)
-				assertions.Equal("/api/v1/settings", r.URL.Path)
+				assertions.Equal(tt.path, r.URL.Path)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tt.status)
 				_, _ = w.Write([]byte(tt.body))
 			})
-			result, err := readMCPOperationJSON[generated.SettingsResponse](t.Context(), client, tt.method, "/api/v1/settings", nil, http.StatusOK)
+			result, err := readMCPOperationJSON[generated.SettingsResponse](t.Context(), client, tt.method, tt.path, nil, http.StatusOK)
 			requirements.NoError(err)
 			requirements.NotNil(result)
 			assertions.True(result.IsError)

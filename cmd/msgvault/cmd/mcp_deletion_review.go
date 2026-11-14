@@ -29,7 +29,7 @@ func (b *daemonMCPOperations) executeDeletionReviewOperation(ctx context.Context
 		if err != nil {
 			return operationFailure("invalid_arguments", false), true, nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
 		}
-		result, err := readMCPOperationJSONWithClassifier[generated.ListDeletionsResponse](ctx, b.client, http.MethodGet, "/api/v1/deletions", &generated.ListDeletionsRequestOptions{Query: &generated.ListDeletionsQuery{Status: input.Status}}, func(code string) bool { return code == "invalid_status" }, http.StatusOK)
+		result, err := readMCPOperationJSON[generated.ListDeletionsResponse](ctx, b.client, http.MethodGet, "/api/v1/deletions", &generated.ListDeletionsRequestOptions{Query: &generated.ListDeletionsQuery{Status: input.Status}}, http.StatusOK)
 		return result, true, err
 	case "get_deletion":
 		input, err := decodeMCPOperationArguments[struct {

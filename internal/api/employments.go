@@ -46,6 +46,9 @@ type EmploymentBody struct {
 	Source         string   `json:"source" enum:"user,carddav_import,vcard_import,archive_observation,extraction,enrichment,system"`
 	SourceRef      *string  `json:"source_ref,omitzero" nullable:"true"`
 	Confidence     *float64 `json:"confidence,omitzero" nullable:"true"`
+
+	// ExpectedPrimary is a write precondition, not a stored field.
+	ExpectedPrimary *store.EmploymentRevision `json:"expected_primary,omitzero" nullable:"false" doc:"Approved primary employment and revision"`
 }
 
 type EndEmploymentBody struct {
@@ -405,7 +408,7 @@ func employmentInputFromBody(body EmploymentBody) (store.EmploymentInput, error)
 		Title: body.Title, Role: body.Role, Department: body.Department,
 		Location: body.Location, AddressID: body.AddressID, Description: body.Description,
 		IsCurrent: body.IsCurrent, IsPrimary: body.IsPrimary, Source: source,
-		SourceRef: body.SourceRef, Confidence: body.Confidence,
+		SourceRef: body.SourceRef, Confidence: body.Confidence, ExpectedPrimary: body.ExpectedPrimary,
 	}
 	if body.StartDate != nil {
 		startDate, err := store.ParsePartialDate(*body.StartDate)
@@ -447,6 +450,8 @@ func (s *Server) writeEmploymentError(w http.ResponseWriter, err error) {
 		return
 	}
 	switch {
+	case errors.Is(err, store.ErrPersonEnrichmentDispatchInProgress):
+		writeError(w, http.StatusConflict, "person_enrichment_dispatch_in_progress", "Person enrichment dispatch is in progress")
 	case errors.Is(err, store.ErrEmploymentNotFound):
 		writeError(w, http.StatusNotFound, "employment_not_found", "Employment not found")
 	case errors.Is(err, store.ErrEmploymentRevisionConflict):

@@ -476,6 +476,10 @@ The MCP server exposes the following tools to connected AI clients:
 | `preview_person_tiers` | List saved people in tier 1 or 2 from archived two-way messages and meetings, with the matching rule, tracking state, and the latest day that counted. Read-only; it never tracks anyone. See [profile automation](/docs/usage/people-automation/). | — |
 | `explain_person_tier` | Show every count behind one saved person's tier against its threshold, including tier 3 and any exclusion. Read-only. | `person_id` (int, required) |
 | `search_person_files` | Find archived attachment occurrences related to a saved person. | `person_id` (int, required), `directions` (array: `from_person`/`to_person`/`group`), `filename` (substring), `mime_families` (array), `after`, `before`, `limit` (1–100, default 100), `cursor` |
+| `get_person_record` | Read the structured person profile and ETag. | `person_id` (required), `offset`, `length`, `sha256` |
+| `get_person_record_history` | Read current and superseded profile values. | `person_id` (required) |
+| `get_person_record_media` | Read stored profile media in chunks. | `person_id`, `media_id` (required), `offset`, `length`, `sha256` |
+| `patch_person_record` | Atomically add and supersede profile values with approval. | `person_id`, `etag`, `patch` (required) |
 | `get_person_profile` | Read a saved person profile: contact history, current brief and its sources, contact details, non-sensitive attributes, employment, relationships, and categories. Includes the vCard UID and mapped CardDAV bindings when the daemon provides them; older daemons return no CardDAV binding entries. Excludes sensitive attributes, private Notes, and media; makes no provider calls. See [Brief text is data](#brief-text-is-data). | Exactly one of `person_id` (int) or `vcard_uid` (string; current or retired person UID, or mapped CardDAV UID) |
 | `list_directory_people` | List durable Directory people with filtering and last-contact ordering when the daemon supports API schema 2.13.0 or newer. `address` requires API schema 3.29.0 or newer and matches a literal, case-insensitive substring of current bound participant addresses and identifiers or curated contact points on saved people. Sparse or absent address matches can scan all saved people; combine a known `query` to narrow candidates. `last_contact_after` and `last_contact_before` accept inclusive RFC3339 timestamps or `YYYY-MM-DD` dates (midnight UTC). Pages default to 50 rows and are capped at 100. Sort defaults to `last_contact_desc`; allowed values are `last_contact_desc`, `last_contact_asc`, and `name`. Rows include identity, revision, contact state, last contact time, primary channel, categories, and organizations; API schema 3.10.0 or newer also provides the vCard UID and CardDAV bindings. Older daemons return empty values for those fields. `next_cursor` is opaque and belongs to the same filter set. `search_people` remains the separate observed-contact and profile search on older compatible daemons. | `query`, `address`, `cursor`, `limit`, `sort`, `last_contact_after`, `last_contact_before`, `contact_state`, `category`, `organization`, `primary_channel` |
 
@@ -934,7 +938,42 @@ one second, then make a new call, which needs approval again. MCP never
 retries a write by itself. If a write reports
 `operation_may_have_completed: true`, list the loops again before retrying.
 
+## Employment records
+
+On unreleased `main`, `get_employment` reads one record with its revision
+ETag. `list_person_employments` and `list_organization_employments` list
+history in pages of at most 200.
+
+With `--allow-employment-writes` and daemon API schema 5.4.0 or newer, a client
+can create, replace, end, or delete a record after confirmation. Changes to an
+existing record require the exact ETag from a fresh read. Creating or promoting
+a primary shows the current primary and refuses if it changes before the write;
+creating a primary also refuses while one exists. If a mutation may have
+completed, list the person's employments before retrying.
+
 ## Write controls
+
+On unreleased `main`, owner sessions can use `get_person_record`,
+`get_person_record_history`, and `get_person_record_media` to read all structured
+profile values, including sensitive values and stored media. These reads require
+daemon API schema 5.3.0 or newer. The record includes its
+exact ETag. History over 1 MiB returns `operation_response_limit_exceeded`.
+
+Profiles over 1 MiB return a first chunk automatically; media returns chunks.
+Inline profile reads omit fields unknown to the MCP server. Chunked profile reads
+preserve the daemon's response, including unknown fields.
+Follow the [chunk download steps](#export-original-emails), using the same person
+ID and, for media, the same media ID for each chunk.
+
+With curated writes enabled,
+`patch_person_record` applies adds and supersedes atomically using the exact
+ETag. Patches leave unknown fields stored. Each call requires explicit client
+confirmation; the client is responsible for obtaining user approval. The
+disclosure supplies media byte size and SHA-256 in place of base64 data.
+Disclosures are capped at 13 MiB; larger
+disclosures are refused. A successful patch returns its new ETag and omits the
+profile when it exceeds 1 MiB. If the result says the operation may have
+completed, read the record again before retrying.
 
 Enable only the writes intended for the assistant's session:
 
@@ -942,6 +981,8 @@ Enable only the writes intended for the assistant's session:
 |---|---|---|
 | Native email tag edits, Saved View management, attachment export, deletion staging, and drafts | Available by default | `--http-allow-writes` |
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
+| Structured person profile patches | `--allow-curated-writes` | `--http-allow-writes --allow-curated-writes` |
+| Employment record writes | `--allow-employment-writes` | `--http-allow-writes --allow-employment-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
@@ -1032,7 +1073,9 @@ msgvault mcp --http 8080
 | `--http-token-env` | — | Name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-curated-writes` | `false` | On unreleased `main`, expose atomic structured person profile patches. Each call requires explicit client confirmation; the client is responsible for obtaining user approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-loop-writes` | `false` | Expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
+| `--allow-employment-writes` | `false` | On unreleased `main`, expose confirmed employment record writes. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |

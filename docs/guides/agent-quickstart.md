@@ -211,7 +211,7 @@ explain the limit and ask the owner to choose the next step.
 
 This is the full static catalog, including backend-dependent tools. Use the
 connected server's `tools/list` for its actual tools and schemas. Class flags
-below are for `msgvault mcp`; HTTP writes also need `--http-allow-writes`.
+below are for `msgvault mcp`; HTTP writes also need `--http-allow-writes` and MCP protocol `2026-07-28` or newer.
 A dash means no extra class flag, not guaranteed availability or authorization.
 
 The delegated column names permissions only for the scoped archive-read gate.
@@ -231,6 +231,11 @@ backend checks for action permissions, source scope, and sender identity;
 | `calendar_update` | calendar_write | `--allow-calendar-writes` | backend-dependent |
 | `approve_carddav_publication` | carddav_write | `--allow-carddav-writes` | owner-only |
 | `sync_carddav` | carddav_write | `--allow-carddav-writes` | owner-only |
+| `patch_person_record` | curated_write | `--allow-curated-writes` | owner-only |
+| `create_employment` | employment_write | `--allow-employment-writes` | owner-only |
+| `delete_employment` | employment_write | `--allow-employment-writes` | owner-only |
+| `end_employment` | employment_write | `--allow-employment-writes` | owner-only |
+| `replace_employment` | employment_write | `--allow-employment-writes` | owner-only |
 | `accept_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `reject_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `score_identity_matches` | identity_scoring | `--allow-identity-scoring` | owner-only |
@@ -260,6 +265,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_carddav_sync_status` | read | — | owner-only |
 | `get_deletion` | read | — | owner-only |
 | `get_embeddings_status` | read | — | owner-only |
+| `get_employment` | read | — | owner-only |
 | `get_identity_match` | read | — | owner-only |
 | `get_identity_scoring_status` | read | — | owner-only |
 | `get_kata_issue_context` | read | — | owner-only |
@@ -274,6 +280,9 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_person_messaging_routes` | read | — | owner-only |
 | `get_person_notes` | read | — | owner-only |
 | `get_person_profile` | read | — | owner-only |
+| `get_person_record` | read | — | owner-only |
+| `get_person_record_history` | read | — | owner-only |
+| `get_person_record_media` | read | — | owner-only |
 | `get_person_relationship` | read | — | owner-only |
 | `get_saved_view` | read | — | owner-only |
 | `get_slack_sync_policy` | read | — | owner-only |
@@ -287,6 +296,8 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_meeting_action_items` | read | — | owner-only |
 | `list_messages` | read | — | search.read |
 | `list_open_loops` | read | — | owner-only |
+| `list_organization_employments` | read | — | owner-only |
+| `list_person_employments` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |

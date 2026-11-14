@@ -123,9 +123,25 @@ func decodeMCPOperationArguments[T any](args map[string]any) (T, error) {
 	return value, err
 }
 
+func operationReadFailure(current *mcpserver.OperationResult, forward func(string) bool) error {
+	if current == nil || current.IsError {
+		code := "operation_context_unavailable"
+		var failure struct {
+			Error string `json:"error"`
+		}
+		if current != nil && forward != nil {
+			if data, err := json.Marshal(current.Output); err == nil && json.Unmarshal(data, &failure) == nil && forward(failure.Error) {
+				code = failure.Error
+			}
+		}
+		return &mcpserver.OperationRefusalError{Code: code}
+	}
+	return nil
+}
+
 func (b *daemonMCPOperations) executeSourceOperation(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	invalid := func() (*mcpserver.OperationResult, bool, error) {
-		return operationFailure("invalid_arguments", false), true, nil
+		return operationFailure(invalidArguments, false), true, nil
 	}
 	var result *mcpserver.OperationResult
 	var err error
@@ -272,18 +288,18 @@ func (b *daemonMCPOperations) sourceOperationDisclosure(ctx context.Context, nam
 	case "update_slack_sync_policy":
 		input, err := decodeMCPOperationArguments[slackPolicyArguments](args)
 		if err != nil || input.ETag == "" {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 		}
 		updates, err := slackSettingUpdates(input)
 		if err != nil || len(updates) == 0 {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 		}
 		readName, expected, conflictCode = "get_slack_sync_policy", input.ETag, "settings_conflict"
 	case "set_person_display_name":
 		input, err := decodeMCPOperationArguments[personNameArguments](args)
 		_, present := args["display_name"]
 		if err != nil || input.PersonID <= 0 || input.ETag == "" || !present {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 		}
 		readName, readArgs, expected, conflictCode = "get_person_edit_context", map[string]any{"person_id": input.PersonID}, input.ETag, "person_revision_conflict"
 	default:
@@ -293,8 +309,8 @@ func (b *daemonMCPOperations) sourceOperationDisclosure(ctx context.Context, nam
 	if err != nil {
 		return "", true, err
 	}
-	if current == nil || current.IsError {
-		return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+	if err := operationReadFailure(current, nil); err != nil {
+		return "", true, err
 	}
 	if current.ETag != expected {
 		return "", true, &mcpserver.OperationRefusalError{Code: conflictCode}

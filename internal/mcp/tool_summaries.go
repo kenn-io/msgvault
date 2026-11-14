@@ -98,8 +98,12 @@ func ToolSummaries() []ToolSummary {
 				summary.Flag = securityFlag(toolSecurityProfileWrite)
 			case OperationFamilySources:
 				summary.Security, summary.Flag = "source_write", "--allow-source-writes"
+			case OperationFamilyEmployment:
+				summary.Security, summary.Flag = "employment_write", "--allow-employment-writes"
 			case OperationFamilyLoops:
 				summary.Security, summary.Flag = "loop_write", "--allow-loop-writes"
+			case OperationFamilyCurated:
+				summary.Security, summary.Flag = "curated_write", "--allow-curated-writes"
 			}
 		}
 		summaries = append(summaries, summary)

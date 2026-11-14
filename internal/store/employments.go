@@ -52,6 +52,13 @@ type EmploymentInput struct {
 	Source                            Provenance
 	SourceRef                         *string
 	Confidence                        *float64
+	// ExpectedPrimary is checked only when the replacement becomes primary.
+	ExpectedPrimary *EmploymentRevision
+}
+
+type EmploymentRevision struct {
+	ID       int64 `json:"id"`
+	Revision int64 `json:"revision"`
 }
 
 type EmploymentFilter struct {
@@ -144,7 +151,7 @@ func (s *Store) UpdateEmploymentContext(ctx context.Context, id, expectedRevisio
 				return err
 			}
 			var inferenceBefore map[int64]personInferenceExportProjection
-			if provenanceIsInferred(input.Source) {
+			if provenanceIsInferred(input.Source) || input.ExpectedPrimary != nil {
 				inferenceBefore, err = s.captureInferenceExportPeopleTx(ctx, tx, snapshot.PersonID, input.PersonID)
 				if err != nil {
 					return err
@@ -248,8 +255,8 @@ func (s *Store) setPrimaryEmploymentOnce(ctx context.Context, id, expectedRevisi
 		if !current.IsCurrent {
 			return fmt.Errorf("%w: a historical employment cannot be primary", ErrEmploymentInvalid)
 		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE employments SET is_primary = ?, revision = revision + 1, updated_at = %s WHERE person_id = ? AND id <> ? AND %s`, s.dialect.Now(), s.dialect.BoolTrueExpr("is_primary")), false, current.PersonID, id); err != nil {
-			return fmt.Errorf("demote primary employment: %w", err)
+		if err := s.demotePrimaryTx(ctx, tx, current.PersonID, id); err != nil {
+			return err
 		}
 		employment, err = scanEmployment(tx.QueryRowContext(ctx, fmt.Sprintf(`UPDATE employments SET is_primary = ?, revision = revision + 1, updated_at = %s WHERE id = ? AND revision = ? RETURNING %s`, s.dialect.Now(), employmentColumns), true, id, expectedRevision))
 		if errors.Is(err, sql.ErrNoRows) {
@@ -502,10 +509,13 @@ func (s *Store) reviseEmploymentTx(
 	}
 	var primary bool
 	if input.IsPrimary == nil {
-		// Preserve the stored flag and demote only when the row stops being
-		// current, matching endEmploymentTx.
 		primary = currentEmployment.IsPrimary && current
 	} else {
+		if *input.IsPrimary {
+			if err := s.guardExpectedPrimaryTx(ctx, tx, input.PersonID, input.ExpectedPrimary, id); err != nil {
+				return nil, err
+			}
+		}
 		primary, err = s.resolveEmploymentPrimaryTx(ctx, tx, input, current, id)
 		if err != nil {
 			return nil, err
@@ -706,6 +716,38 @@ func personFactEmploymentTargetRef() (personfacts.TargetRef, error) {
 		}
 	}
 	return personfacts.TargetRef{}, errors.New("employment fact target is unavailable")
+}
+
+func (s *Store) guardExpectedPrimaryTx(ctx context.Context, tx *loggedTx, personID int64, expected *EmploymentRevision, id int64) error {
+	if expected == nil {
+		return nil
+	}
+	var primaryID, revision int64
+	err := tx.QueryRowContext(ctx, `SELECT id, revision FROM employments WHERE person_id = ? AND `+s.dialect.BoolTrueExpr("is_primary")+` AND `+s.dialect.BoolTrueExpr("is_current"), personID).Scan(&primaryID, &revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		if expected.ID == 0 && expected.Revision == 0 {
+			return nil
+		}
+		return ErrEmploymentPrimaryConflict
+	}
+	if err != nil {
+		return fmt.Errorf("read primary employment: %w", err)
+	}
+	if primaryID != expected.ID || revision != expected.Revision {
+		return ErrEmploymentPrimaryConflict
+	}
+	if primaryID != id {
+		return s.demotePrimaryTx(ctx, tx, personID, id)
+	}
+	return nil
+}
+
+func (s *Store) demotePrimaryTx(ctx context.Context, tx *loggedTx, personID, excludeID int64) error {
+	_, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE employments SET is_primary = ?, revision = revision + 1, updated_at = %s WHERE person_id = ? AND id <> ? AND %s`, s.dialect.Now(), s.dialect.BoolTrueExpr("is_primary")), false, personID, excludeID)
+	if err != nil {
+		return fmt.Errorf("demote primary employment: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) resolveEmploymentPrimaryTx(ctx context.Context, tx *loggedTx, input EmploymentInput, current bool, excludeID int64) (bool, error) {

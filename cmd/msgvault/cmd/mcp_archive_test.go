@@ -231,12 +231,13 @@ func TestMCPArchiveDelegatedScope(t *testing.T) {
 
 func TestMCPArchiveCatalogBudgets(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		kinds  []string
-		budget int
+		name        string
+		kinds       []string
+		budget      int
+		writeBudget int
 	}{
-		{"mail only", []string{"mbox"}, 191_000},
-		{"every source", []string{"gcal", "granola", "circleback", "pocket", "muesli", "notion_meetings", "meeting_import", "omi", "plaud", "twilio", "twenty", "chatwoot", "gmail", "imap", "beeper", "slack", "slackdump", "teams", "discord", "whatsapp", "telegram", "matrix", "apple_messages", "synctech_sms", "imazing_csv", "facebook_messenger", "google_voice", "inline", "mbox"}, 249_000},
+		{"mail only", []string{"mbox"}, 213_300, 269_000},
+		{"every source", []string{"gcal", "granola", "circleback", "pocket", "muesli", "notion_meetings", "meeting_import", "omi", "plaud", "twilio", "twenty", "chatwoot", "gmail", "imap", "beeper", "slack", "slackdump", "teams", "discord", "whatsapp", "telegram", "matrix", "apple_messages", "synctech_sms", "imazing_csv", "facebook_messenger", "google_voice", "inline", "mbox"}, 266_000, 376_000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -283,6 +284,16 @@ func TestMCPArchiveCatalogBudgets(t *testing.T) {
 					t.Logf("%s: %d bytes", tool.Name, len(data))
 				}
 			}
+			opts.AllowProfileWrites = true
+			opts.AllowIdentityDecisions, opts.AllowIdentityScoring, opts.AllowPersonMerges = true, true, true
+			opts.AllowCardDAVWrites, opts.AllowCalendarWrites, opts.AllowKataWrites = true, true, true
+			opts.OperationWriteFamilies = []mcpserver.OperationFamily{mcpserver.OperationFamilySources, mcpserver.OperationFamilyRecords, mcpserver.OperationFamilyLoops, mcpserver.OperationFamilyCurated, mcpserver.OperationFamilyEmployment}
+			writeCatalog := archiveMCPCatalog(t, opts)
+			encoded, err = json.Marshal(writeCatalog)
+			require.NoError(err)
+			t.Logf("%s writes: %d bytes, %d tools", tc.name, len(encoded), len(writeCatalog.Tools))
+			assert.True(slices.ContainsFunc(writeCatalog.Tools, func(tool *sdkmcp.Tool) bool { return tool.Name == "create_employment" }))
+			assert.LessOrEqual(len(encoded), tc.writeBudget)
 		})
 	}
 }

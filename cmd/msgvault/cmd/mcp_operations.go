@@ -18,6 +18,8 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+const invalidArguments = "invalid_arguments"
+
 type daemonMCPOperations struct {
 	now       func() time.Time
 	client    *daemonclient.Client
@@ -52,6 +54,8 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	backend.supported = append(backend.supported, deletionReviewMCPCapabilities(hasRoute)...)
 	backend.supported = append(backend.supported, loopMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, personRecordCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, employmentMCPCapabilities(hasRoute, capabilities)...)
 	return backend
 }
 
@@ -71,10 +75,16 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		}
 		return readMCPOperationJSON[generated.TriggerSyncResponse](ctx, b.client, http.MethodPost, "/api/v1/sync/{account}", &generated.TriggerSyncRequestOptions{PathParams: &generated.TriggerSyncPath{Account: account}, Query: &generated.TriggerSyncQuery{SourceType: &sourceType}}, http.StatusAccepted)
 	default:
+		if result, handled, err := b.executePersonRecord(ctx, name, args); handled {
+			return result, err
+		}
 		if result, handled, err := b.executeDeletionReviewOperation(ctx, name, args); handled {
 			return result, err
 		}
 		if result, handled, err := b.executeLoopOperation(ctx, name, args); handled {
+			return result, err
+		}
+		if result, handled, err := b.executeEmploymentOperation(ctx, name, args); handled {
 			return result, err
 		}
 		if result, handled, err := b.executeSourceOperation(ctx, name, args); handled {
@@ -86,7 +96,13 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 
 func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name string, args map[string]any) (string, error) {
 	if slices.Contains(b.supported, name) {
+		if disclosure, handled, err := b.personRecordDisclosure(ctx, name, args); handled {
+			return disclosure, err
+		}
 		if disclosure, handled, err := b.loopOperationDisclosure(name, args); handled {
+			return disclosure, err
+		}
+		if disclosure, handled, err := b.employmentOperationDisclosure(ctx, name, args); handled {
 			return disclosure, err
 		}
 		if disclosure, handled, err := b.sourceOperationDisclosure(ctx, name, args); handled {
@@ -159,25 +175,33 @@ func operationFailure(code string, uncertain bool) *mcpserver.OperationResult {
 // cancellation without the daemon client's busy retry loop. Mutations with an
 // unclassified/interrupted response retain uncertain completion explicitly.
 func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, success ...int) (*mcpserver.OperationResult, error) {
-	return readMCPOperationJSONWithClassifier[T](ctx, client, method, path, options, nil, success...)
+	data, headers, failure, err := readMCPOperationBytes(ctx, client, method, path, options, 1<<20, success...)
+	if failure != nil {
+		return failure, err
+	}
+	var output T
+	if err := json.Unmarshal(data, &output); err != nil {
+		return operationFailure("invalid_operation_response", method != http.MethodGet), err
+	}
+	return &mcpserver.OperationResult{Output: output, ETag: headers.Get("ETag")}, nil
 }
 
-func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, success ...int) (*mcpserver.OperationResult, error) {
+func readMCPOperationBytes(ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, limit int64, success ...int) ([]byte, http.Header, *mcpserver.OperationResult, error) {
 	writes := method != http.MethodGet
 	response, err := client.DoGeneratedRequestWithContext(ctx, method, path, options)
 	if err != nil {
 		if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
-			return operationFailure(local.APIErrorCode(), false), err
+			return nil, nil, operationFailure(local.APIErrorCode(), false), err
 		}
-		return operationFailure("operation_failed", writes), err
+		return nil, nil, operationFailure("operation_failed", writes), err
 	}
 	defer func() { _ = response.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
-		return operationFailure("operation_response_failed", writes), err
+		return nil, nil, operationFailure("operation_response_failed", writes), err
 	}
-	if len(data) > 1<<20 {
-		return operationFailure("operation_response_limit_exceeded", writes), nil
+	if int64(len(data)) > limit {
+		return nil, nil, operationFailure("operation_response_limit_exceeded", writes), nil
 	}
 	if !slices.Contains(success, response.StatusCode) {
 		var failure struct {
@@ -185,22 +209,27 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 		}
 		_ = json.Unmarshal(data, &failure)
 		code := failure.Error
-		if classify != nil && classify(code) {
-			return operationFailure(code, false), nil
+		if nativeDefiniteRefusal(code) {
+			return nil, nil, operationFailure(code, false), nil
 		}
 		switch code {
-		case "unauthorized", "not_found", "scheduler_unavailable", "source_not_schedulable", "store_unavailable", "missing_account", "sync_error", "operation_in_progress", "settings_conflict", "settings_edit_rejected", "if_match_required", "person_revision_conflict", "person_profile_not_found", "person_enrichment_dispatch_in_progress", "persons_unavailable", "cache_build_not_found", "cache_build_unavailable", "bad_request", "invalid_participant_id", "participant_not_found", "analytical_cache_unavailable", "query_resource_exhausted", "engine_unavailable":
-			return operationFailure(code, false), nil
 		case "validation_failed":
 			// Settings credential cleanup can return this after the config commits.
-			return operationFailure(code, writes), nil
+			return nil, nil, operationFailure(code, writes), nil
 		default:
-			return operationFailure("operation_refused", writes), nil
+			return nil, nil, operationFailure("operation_refused", writes), nil
 		}
 	}
-	var output T
-	if err := json.Unmarshal(data, &output); err != nil {
-		return operationFailure("invalid_operation_response", writes), err
+	return data, response.Header, nil, nil
+}
+
+func nativeDefiniteRefusal(code string) bool {
+	switch code {
+	case invalidArguments, "unauthorized", "not_found", "scheduler_unavailable", "source_not_schedulable", "store_unavailable", "missing_account", "sync_error", "operation_in_progress", "settings_conflict", "settings_edit_rejected", "if_match_required", "person_revision_conflict", "person_profile_not_found", "person_enrichment_dispatch_in_progress", "persons_unavailable", "cache_build_not_found", "cache_build_unavailable", "bad_request", "invalid_participant_id", "participant_not_found", "analytical_cache_unavailable", "query_resource_exhausted", "engine_unavailable",
+		"employment_not_found", "employment_revision_conflict", "employment_primary_conflict", "employment_duplicate_active", "invalid_employment", "invalid_employment_id", "invalid_partial_date", "invalid_source", "invalid_person_id", "invalid_organization_id", "invalid_organization", "organization_not_found", "organizations_unavailable", "invalid_if_match", "employments_unavailable", "server_busy",
+		"profile_values_unavailable", "profile_media_not_found", "profile_media_content_unavailable", "invalid_profile_media_id", "profile_value_not_found", "invalid_profile_value", "profile_patch_too_large", "person_category_duplicate", "service_alias_conflict",
+		"loop_not_found", "loop_decision_not_found", "loop_scan_incomplete", "loops_unavailable", "invalid_request", "invalid_status":
+		return true
 	}
-	return &mcpserver.OperationResult{Output: output, ETag: response.Header.Get("ETag")}, nil
+	return false
 }
