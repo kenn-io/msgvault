@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -21,6 +22,35 @@ type loopFixture struct {
 	f      *storetest.Fixture
 	router http.Handler
 	owed   int64
+}
+
+func TestListLoopsWithholdsVerificationContent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	now := time.Now().UTC().Add(-5 * 24 * time.Hour)
+	f.PersistEmail(storetest.EmailSpec{Thread: "secret", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Subject: "Please respond", Body: "Your verification code is 482913. Can you confirm?", SentAt: now})
+	f.PersistEmail(storetest.EmailSpec{Thread: "ordinary", From: "sam@example.test", To: []string{storetest.OwnerAddress}, Subject: "Lunch plans", Body: "Can you join lunch?", SentAt: now})
+	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
+	for _, tc := range []struct{ header, secret string }{
+		{apiprotocol.VerificationWithhold, "[verification content masked]"},
+		{"", "Please respond"},
+	} {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil)
+		req.Header.Set(apiprotocol.VerificationHeader, tc.header)
+		w := httptest.NewRecorder()
+		server.Router().ServeHTTP(w, req)
+		require.Equal(http.StatusOK, w.Code, w.Body.String())
+		var response LoopListResponse
+		require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+		require.Len(response.Items, 2)
+		summaries := map[string]string{}
+		for _, item := range response.Items {
+			summaries[item.Counterparty.Address] = item.Summary
+		}
+		assert.Equal(tc.secret, summaries["alex@example.test"])
+		assert.Equal("Lunch plans", summaries["sam@example.test"])
+	}
 }
 
 func newLoopFixture(t *testing.T) *loopFixture {

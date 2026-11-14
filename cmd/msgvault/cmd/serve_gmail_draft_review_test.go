@@ -445,6 +445,21 @@ func TestGmailDraftLifecyclePublishesEditAndDelete(t *testing.T) {
 	assert := assert.New(t)
 	fixture := newGmailDraftTestFixture(t)
 	draft := fixture.seedDraft(t)
+	_, err := fixture.store.ClaimGmailDraftContext(t.Context(), draft.DraftID, draft.Revision, store.GmailDraftOperationEdit, gmailDraftTestRaw("pending secret", "candidate@example.test"))
+	require.NoError(err)
+	var protected strings.Builder
+	err = fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: []string{api.CLIRunDraftGetCommand, draft.DraftID, "--json"}, WithholdVerification: true}, func(event api.CLIRunEvent) error {
+		protected.WriteString(event.Data)
+		return nil
+	})
+	require.NoError(err)
+	assert.Contains(protected.String(), draft.DraftID)
+	assert.NotContains(protected.String(), `"raw_mime"`)
+	assert.NotContains(protected.String(), `"content"`)
+	assert.NotContains(protected.String(), `"candidate_content"`)
+	assert.NotContains(protected.String(), "pending secret")
+	_, err = fixture.store.AbortGmailDraftContext(t.Context(), draft.DraftID, draft.Revision)
+	require.NoError(err)
 	fixture.client.updateDraft = &gmail.Draft{
 		ID:      "gmail-draft-managed",
 		Message: gmail.RawMessage{ID: "gmail-message-edited", ThreadID: "gmail-thread-1"},

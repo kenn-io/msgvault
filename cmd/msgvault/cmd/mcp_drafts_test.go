@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -79,16 +80,19 @@ func mcpDraftTestSession(ctx context.Context, t *testing.T) *sdkmcp.ClientSessio
 	cmd := &cobra.Command{Use: "mcp"}
 	cmd.SetContext(ctx)
 	done := make(chan error, 1)
-	go func() { done <- mcpCmd.RunE(cmd, nil) }()
+	go func() {
+		runErr := mcpCmd.RunE(cmd, nil)
+		// Unblock client initialization if startup exits before serving.
+		conn, err := serverTransport.Connect(ctx)
+		if err == nil {
+			_ = conn.Close()
+		}
+		done <- runErr
+	}()
 	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "draft-routing-test", Version: "1"}, &sdkmcp.ClientOptions{MultiRoundTrip: &sdkmcp.MultiRoundTripOptions{Disabled: true}})
 	session, err := client.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		cancel()
-		select {
-		case runErr := <-done:
-			t.Logf("MCP startup: %v", runErr)
-		case <-time.After(time.Second):
-		}
 	}
 	t.Cleanup(func() {
 		if session != nil {
@@ -96,7 +100,10 @@ func mcpDraftTestSession(ctx context.Context, t *testing.T) *sdkmcp.ClientSessio
 		}
 		cancel()
 		select {
-		case <-done:
+		case runErr := <-done:
+			if runErr != nil {
+				t.Logf("MCP startup: %v", runErr)
+			}
 		case <-time.After(5 * time.Second):
 			require.Fail("MCP server did not stop after cancellation")
 		}
@@ -246,31 +253,44 @@ func TestMCPDelegatedRejectsHTTPTransport(t *testing.T) {
 	assert.Equal(before, requests.Load())
 }
 
-func TestMCPOwnerDraftGetMatchesCLI(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	fixture := newDraftReplyFixture(t)
-	server := mcpDraftTestDaemon(t, fixture.grantedAdapter(), nil)
-	ctx := withStoreResolverConfig(t, &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Remote: config.RemoteConfig{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true}})
-	session := mcpDraftTestSession(ctx, t)
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftReply, Arguments: map[string]any{"message_id": fixture.parentID, "from": testutil.IMAPTestUsername, "body": "reply body"}})
-	require.NoError(err)
-	require.False(result.IsError)
-	structured, ok := result.StructuredContent.(map[string]any)
-	require.True(ok)
-	id, ok := structured["draft_id"].(string)
-	require.True(ok)
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftGet, Arguments: map[string]any{"draft_id": id}})
-	require.NoError(err)
-	require.False(result.IsError)
-	root := newTestRootCmd()
-	root.AddCommand(newDraftGetCommand())
-	root.SetArgs([]string{"draft-get", id, "--json"})
-	var stdout bytes.Buffer
-	root.SetOut(&stdout)
-	root.SetErr(&bytes.Buffer{})
-	require.NoError(root.ExecuteContext(ctx))
-	assert.JSONEq(stdout.String(), mcpDraftResultText(t, result))
+func TestMCPOwnerDraftLifecycleVerification(t *testing.T) {
+	for _, reveal := range []bool{true, false} {
+		t.Run(strconv.FormatBool(reveal), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			oldReveal := mcpRevealVerification
+			mcpRevealVerification = reveal
+			t.Cleanup(func() { mcpRevealVerification = oldReveal })
+			fixture := newDraftReplyFixture(t)
+			server := mcpDraftTestDaemon(t, fixture.grantedAdapter(), nil)
+			ctx := withStoreResolverConfig(t, &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Remote: config.RemoteConfig{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true}})
+			session := mcpDraftTestSession(ctx, t)
+			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftReply, Arguments: map[string]any{"message_id": fixture.parentID, "from": testutil.IMAPTestUsername, "body": "reply body 482913"}})
+			require.NoError(err)
+			require.False(result.IsError, "%+v", result.Content)
+			structured, ok := result.StructuredContent.(map[string]any)
+			require.True(ok)
+			id, ok := structured["draft_id"].(string)
+			require.True(ok)
+			result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftGet, Arguments: map[string]any{"draft_id": id}})
+			require.NoError(err)
+			require.False(result.IsError)
+			if !reveal {
+				text := mcpDraftResultText(t, result)
+				assert.NotContains(text, "reply body")
+				return
+			}
+			assert.Contains(mcpDraftResultText(t, result), "reply body 482913")
+			root := newTestRootCmd()
+			root.AddCommand(newDraftGetCommand())
+			root.SetArgs([]string{"draft-get", id, "--json"})
+			var stdout bytes.Buffer
+			root.SetOut(&stdout)
+			root.SetErr(&bytes.Buffer{})
+			require.NoError(root.ExecuteContext(ctx))
+			assert.JSONEq(stdout.String(), mcpDraftResultText(t, result))
+		})
+	}
 }
 
 func TestMCPDraftToolPropertiesMatchCommandFlags(t *testing.T) {
@@ -341,6 +361,9 @@ func runMCPCapabilityGate(t *testing.T, delegated bool) {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
+			oldReveal := mcpRevealVerification
+			mcpRevealVerification = !delegated
+			t.Cleanup(func() { mcpRevealVerification = oldReveal })
 			fixture := newDraftReplyFixture(t)
 			var probing atomic.Bool
 			var healthCalls atomic.Int64
@@ -371,7 +394,6 @@ func runMCPCapabilityGate(t *testing.T, delegated bool) {
 			}
 			probing.Store(true)
 			if delegated {
-				// Delegated tool selection needs the grant source inventory.
 				served := false
 				previousServe := serveMCPStdioWithOptions
 				serveMCPStdioWithOptions = func(context.Context, mcpserver.ServeOptions) error { served = true; return nil }
@@ -387,7 +409,7 @@ func runMCPCapabilityGate(t *testing.T, delegated bool) {
 					require.ErrorContains(err, "upgrade the daemon")
 				}
 				assert.False(served)
-				assert.Equal(int64(2), healthCalls.Load(), "startup compatibility and delegated source inventory probes")
+				assert.Equal(int64(2), healthCalls.Load(), "startup compatibility and capability probes")
 				return
 			}
 			session := mcpDraftTestSession(ctx, t)

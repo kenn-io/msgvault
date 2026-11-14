@@ -30,8 +30,8 @@ func TestPeopleBrowserGetPersonProfileComposesPersonRoutes(t *testing.T) {
 		case "/api/v1/people/51/tracking":
 			writePeopleBrowserJSON(t, w, http.StatusOK, `{"person_id":51,"tracked":true,"tracked_at":"2026-08-21T09:00:00Z"}`)
 		case "/api/v1/people/51/brief":
-			writePeopleBrowserJSON(t, w, http.StatusNotFound,
-				`{"error":"person_brief_not_found","message":"Person brief not found"}`)
+			writePeopleBrowserJSON(t, w, http.StatusForbidden,
+				`{"error":"verification_masked","message":"verification content withheld"}`)
 		case "/api/v1/people/51/contact-state":
 			writePeopleBrowserJSON(t, w, http.StatusOK, `{
 				"person_id":51,"first_contact_at":"2025-01-02T03:04:05Z","first_contact_ref":"message:1",
@@ -134,7 +134,7 @@ func TestPeopleBrowserGetPersonProfileComposesPersonRoutes(t *testing.T) {
 	assert.Equal(int64(42), profile.ContactState.InteractionCount)
 	assert.Equal("message:9", profile.ContactState.LastContactRef)
 	assert.Equal("ok", profile.ContactState.CadenceStatus)
-	assert.Nil(profile.Brief, "a person with no brief version keeps the rest of the profile")
+	assert.Nil(profile.Brief, "a withheld brief keeps the rest of the profile")
 
 	require.Len(profile.Attributes, 1)
 	assert.True(profile.Attributes[0].Definition.IsSensitive, "definitions keep their sensitivity flag for the caller to filter")

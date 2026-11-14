@@ -6,6 +6,8 @@ import (
 )
 
 const (
+	VerificationHeader      = "X-Msgvault-Verification"
+	VerificationWithhold    = "withhold"
 	ClientClassHeader       = "X-Msgvault-Client"
 	ClientClassCLI          = "cli"
 	DeduplicatePlanProtocol = "explicit-backfill-v1"

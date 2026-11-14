@@ -12,6 +12,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 // LoopCounterparty is who a loop waits on or is owed to.
@@ -160,6 +161,9 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 			item.Counterparty.PersonID = &l.Counterparty.PersonID
 		}
 		response.Items = append(response.Items, item)
+	}
+	if _, ok := withholdRows(s, w, r, response.Items, func(item *LoopItem) int64 { return item.AnchorMessageID }, func(item *LoopItem) { item.Summary = verification.Masked }); !ok {
+		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, response)

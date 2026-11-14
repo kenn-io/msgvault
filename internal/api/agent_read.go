@@ -30,6 +30,53 @@ var agentReadPermissions = map[string]agentgrant.Permission{
 	"listCLIAccounts":  agentgrant.PermissionSearchRead, "listCLICollections": agentgrant.PermissionSearchRead,
 }
 
+// Owner operations are admitted when they mask message content or contain no message text.
+// True values require a snapshot while classifying content.
+var ownerVerificationOperations = map[string]bool{
+	"searchCLI": true, "searchMessages": true, "fastSearch": true, "deepSearch": true,
+	"filterMessages": true, "listMessages": true, "searchMessagesByDomains": true,
+	"getCLIMessageThread": true, "getMessage": false, "getCLIMessage": false,
+	"getAttachment": true, "getAttachmentContent": true, "getCLIAttachment": true,
+	"findSimilarMessages": false,
+	"health":              false, "headHealth": false, "getHealth": false, "getMCPCapabilities": false, "getMediaSearchStatus": false,
+	"getStats": false, "getTotalStats": false, "getCLIStats": false, "getTextStats": false,
+	"getAggregates": false, "getSubAggregates": false, "getTextAggregates": false,
+	"listAccounts": false, "listCLIAccounts": false, "listCLICollections": false, "listSourceStatus": false,
+	"getEmbeddingStatus": false, "getPersonMatchScoringStatus": false,
+	"listCardDAVConnections": false, "getCardDAVStatus": false, "getCardDAVPublication": false, "getSettings": false,
+	"listSavedViews": false, "getSavedView": false, "searchPeople": false, "listDirectoryPeople": false,
+	"listPeople": false, "getPersonProfile": false, "listPersonAttributes": false, "listPersonIdentities": false,
+	"listPersonEmployments": false, "getParticipant": false, "searchParticipants": false,
+	"createSavedView": false, "patchSavedView": false, "deleteSavedView": false,
+	"getSchedulerStatus": false, "triggerSync": false, "listSourceIdentities": false,
+	"getCacheBuildStatus": false, "createPerson": false, "patchPerson": false, "patchSettings": false,
+	"completeParticipants": false,
+	"listLoops":            true, "markLoopDone": false, "snoozeLoop": false, "reopenLoop": false,
+	"getMessageTags": false, "updateMessageTags": false,
+	"getGmailIDsByFilter": false, "createCLIDeletionManifest": false,
+	"listDeletions": false, "getDeletion": false,
+	"previewPersonTiers": false, "explainPersonTier": false, "mergePersons": false,
+	"approveCardDAVPublication": false, "syncCardDAV": false,
+	"getPersonByUID": false, "getPersonTracking": false, "getPersonContactState": false, "getOrganization": false,
+	"listPersonRelationships": false, "getPersonStructuredProfile": false,
+	"findContactCandidates": false, "getPersonMessagingRoutes": false,
+	"personMatchScoringConsent": false, "personMatchScoringRevoke": false,
+	"runCLI": false, "controlCalendar": false,
+}
+
+// Ranking runs before the owner snapshot, but hydration and classification share it.
+func (s *Server) beginOwnerVerificationSnapshot(w http.ResponseWriter, r *http.Request, operation string) (func(), bool) {
+	if !s.withholdsVerification(r) || s.requestAuthentication(r).Grant != nil || sourcescope.Restricted(r.Context()) {
+		return func() {}, true
+	}
+	release, apiErr := s.beginAgentRead(r, operation, nil, "")
+	if apiErr != nil {
+		writeAPIHTTPError(w, apiErr)
+		return nil, false
+	}
+	return release, true
+}
+
 func agentReadDenied(permission agentgrant.Permission) *apiHTTPError {
 	return newAPIHTTPError(http.StatusForbidden, "permission_denied", "Agent grant requires "+string(permission)+" on the requested sources")
 }
@@ -59,9 +106,8 @@ func agentReadPermission(operation string, grant *agentgrant.Grant) (agentgrant.
 	return permission, nil
 }
 
-// readSnapshotConcurrency stays below the SQLite pool size (4) because each agent
-// or caller-scoped read holds one connection for its snapshot; sync writes and
-// owner reads keep the rest.
+// readSnapshotConcurrency reserves SQLite pool capacity for physical pack
+// resolution, which needs another connection while a snapshot is held.
 const readSnapshotConcurrency = 2
 
 type agentReadSnapshotStore interface {
@@ -104,9 +150,11 @@ func (s *Server) beginAgentRead(req *http.Request, operation string, grant *agen
 		readContext = context.WithValue(readContext, analyticsEngineContextKey{}, &analyticsEngineState{engine: engine, mode: AnalyticsModeSQL})
 	}
 	*req = *req.WithContext(readContext)
-	if apiErr := s.authorizeAgentRead(req, operation, grant, permission, indexGeneration, indexComplete); apiErr != nil {
-		release()
-		return nil, apiErr
+	if grant != nil {
+		if apiErr := s.authorizeAgentRead(req, operation, grant, permission, indexGeneration, indexComplete); apiErr != nil {
+			release()
+			return nil, apiErr
+		}
 	}
 	return release, nil
 }

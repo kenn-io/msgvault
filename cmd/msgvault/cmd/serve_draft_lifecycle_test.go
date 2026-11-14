@@ -154,6 +154,16 @@ func TestDraftLifecycleDelegatedIMAPGetEditDelete(t *testing.T) {
 
 	_, err = fixture.store.ClaimIMAPDraftContext(t.Context(), created.DraftID, created.Revision, store.IMAPDraftOperationEdit, []byte("pending candidate"))
 	requirements.NoError(err)
+	var ownerOutput strings.Builder
+	err = adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: []string{api.CLIRunDraftGetCommand, created.DraftID, "--json"}, WithholdVerification: true}, func(event api.CLIRunEvent) error {
+		ownerOutput.WriteString(event.Data)
+		return nil
+	})
+	requirements.NoError(err)
+	assertions.Contains(ownerOutput.String(), created.DraftID)
+	assertions.NotContains(ownerOutput.String(), "initial body")
+	assertions.NotContains(ownerOutput.String(), "pending candidate")
+	assertions.NotContains(ownerOutput.String(), `"raw_mime"`)
 	for _, asJSON := range []bool{false, true} {
 		args := []string{api.CLIRunDraftGetCommand, created.DraftID}
 		if asJSON {

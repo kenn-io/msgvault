@@ -47,8 +47,8 @@ func chatDraftAuthorizer(grant *agentgrant.Grant, permissions ...agentgrant.Perm
 }
 
 // redactChatDraftBody keeps delete access metadata-only, like the email draft path.
-func redactChatDraftBody(grant *agentgrant.Grant, draft store.ChatDraft) store.ChatDraft {
-	if grant != nil && !grant.Allows(agentgrant.PermissionDraftEdit, agentgrant.SourceRef{
+func redactChatDraftBody(grant *agentgrant.Grant, metadataOnly bool, draft store.ChatDraft) store.ChatDraft {
+	if metadataOnly || grant != nil && !grant.Allows(agentgrant.PermissionDraftEdit, agentgrant.SourceRef{
 		Type: draft.SourceType, Identifier: draft.SourceIdentifier,
 	}) {
 		draft.Body = ""
@@ -122,7 +122,7 @@ func (a *storeAPIAdapter) runCLIChatDraftLifecycle(
 			return chatDraftStoreError(err, grant)
 		}
 		for i := range drafts {
-			drafts[i] = redactChatDraftBody(grant, drafts[i])
+			drafts[i] = redactChatDraftBody(grant, intent.MetadataOnly, drafts[i])
 		}
 		return emitChatDrafts(emit, intent.JSON, true, "ok", drafts...)
 	}
@@ -148,8 +148,8 @@ func (a *storeAPIAdapter) runCLIChatDraftLifecycle(
 	if err != nil {
 		return chatDraftStoreError(err, grant)
 	}
-	if intent.Operation != api.CLIRunDraftEditCommand {
-		draft = redactChatDraftBody(grant, draft)
+	if intent.MetadataOnly || intent.Operation != api.CLIRunDraftEditCommand {
+		draft = redactChatDraftBody(grant, intent.MetadataOnly, draft)
 	}
 	return emitChatDrafts(emit, intent.JSON, false, status, draft)
 }

@@ -124,6 +124,13 @@ func installServeMCP(ctx context.Context, cmd *cobra.Command, server *api.Server
 	if err != nil {
 		return err
 	}
+	reveal, _ := cmd.Flags().GetBool("mcp-reveal-verification")
+	if !reveal {
+		client, err = client.WithVerificationWithheld()
+		if err != nil {
+			return err
+		}
+	}
 	discoveryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	opts := daemonMCPServeOptions(discoveryCtx, client, state)

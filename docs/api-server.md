@@ -166,7 +166,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.2.0**.
+it is separate from the binary release version. The current schema is **5.3.0**.
+
+Schema 5.3.0 adds owner-requested verification withholding for canonical message reads, search rows and attachment downloads. Protected raw MIME and archive SQL requests are refused. See [verification content](#verification-content) for the header contract and its limits.
 
 Schema 5.2.0 adds open Kata issue search and optional task search queries.
 
@@ -3442,11 +3444,15 @@ MCP exposes the same response through `get_embeddings_status` on API 3.21.0 or n
 
 ## Verification content
 
-Delegated HTTP, CLI, and MCP message reads without `verification.read` replace detected verification messages' subjects, snippets, excerpts, bodies, conversation titles, and attachment filenames with `[verification content masked]`, and clear their HTML. Sender, date, labels, and IDs remain available. The modifier requires the operation's existing read permission and source grant. Owner reads and stored messages stay unchanged.
+Delegated HTTP, CLI, and MCP message reads without `verification.read` and owner MCP reads by default replace detected verification messages' subjects, snippets, excerpts, bodies, conversation titles, and attachment filenames with `[verification content masked]`, and clear their HTML. Sender, date, labels, and IDs remain available. The modifier requires the operation's existing read permission and source grant. Stored messages and ordinary owner API reads stay unchanged.
+
+Authenticated owner clients can request this policy with `X-Msgvault-Verification: withhold`. The daemon admits operations that mask verification content, carry no message text, or control a live calendar. Open loop lists mask summaries of detected verification messages. Draft lifecycle results withhold draft text, raw MIME, and candidate content. Other operations return 403 `verification_masked`, including Saved View runs, text conversations, Explore, person note updates, files and agenda, identity reviews, CardDAV previews, media and visual search, meeting reads, original MIME, and archive SQL. Unsupported non-empty header values return 400. Attachment hashes without associated metadata are refused because their MIME type, filename and parent cannot be classified.
+
+Owner MCP uses `--reveal-verification` to permit originals; native `/mcp` and `/mcp/writes` use `serve --mcp-reveal-verification`. Delegated grants cannot be widened by these flags. Protected standalone MCP requires daemon API 5.3.0 and marks every request. Person profiles omit the message-derived brief while withholding.
 
 Detection considers subject, snippet, conversation title, attachment filenames, and both body formats together. It folds fullwidth digits to ASCII and looks for 4–10 digits, including spaced digits, or 6–10-character codes containing at least three digits tied to a code cue. Codes of 5–10 characters mixing ASCII letters and digits, or 6–10 uppercase letters only except `INVALID` and `DISABLED`, also count directly after a verification, security, login, sign-in, authentication, or one-time code, PIN, or password cue, or an OTP, passcode, or 2FA cue. Confirmation cues keep the three-digit rule. A cue in one field can describe a value in another. Years from 1900 through 2099 count only after a cue in the same field. Sign-in links need an opaque token or UUID and a sign-in cue or credential query key, such as `token` or `oobCode`. Unsubscribe and preferences paths are excluded. A sign-in cue anywhere in the message applies to every link with an opaque token, including click-tracked links, so newsletters that mention signing in and carry tracked links are withheld. Fields of 1 MiB or more are withheld.
 
-Without `verification.read`, downloads declared `message/*` or named `.eml` on any authorized record of the hash return 403 `verification_masked`. Other text-class downloads, declared `text/*` or sniffed as text, check their bytes and every authorized parent message of the hash. They return 403 if any parent is withheld, the bytes contain a NUL, invalid UTF-8, or a `Content-Transfer-Encoding:` header line in any letter case, or the detector withholds the text or filenames. Text of 1 MiB or more is withheld. Allowed text and binary files download unchanged. Withheld parents mask filenames in metadata and download headers. Parent bodies and attachment metadata are loaded in batches, so a shared hash can be checked across more than 32,766 messages.
+For protected reads, downloads declared `message/*` or named `.eml` on any authorized record of the hash return 403 `verification_masked`. Other text-class downloads, declared `text/*` or sniffed as text, check their bytes and every authorized parent message of the hash. They return 403 if any parent is withheld, the bytes contain a NUL, invalid UTF-8, or a `Content-Transfer-Encoding:` header line in any letter case, or the detector withholds the text or filenames. Text of 1 MiB or more is withheld. Allowed text and binary files download unchanged. Withheld parents mask filenames in metadata and download headers. Parent bodies and attachment metadata are loaded in batches, so a shared hash can be checked across more than 32,766 messages.
 
 Agent grants are held in daemon memory, so tokens issued before an upgrade stop working when the daemon restarts. Replacement tokens with the same permissions see masked verification messages and the attachment refusals above unless the grant includes `verification.read`.
 
@@ -3456,4 +3462,4 @@ These heuristics can miss unfamiliar wording and layouts, lowercase letter-only 
 
 Search rows are masked in place, with membership and counts unchanged.
 
-Search can confirm a withheld value through exact or prefix queries, and draft output can include verification content. These known limits are covered by later slices for search confirmation and draft quotes. Add `verification.read` only when the delegated reader should receive verification content.
+Search can confirm a withheld value through exact or prefix queries. Saved views, Explore-derived rows, draft quotes, live calendar data, media, person-file and visual results, other derived content, and kind or expiry metadata are outside this protection. Add `verification.read` only when the delegated reader should receive verification content.

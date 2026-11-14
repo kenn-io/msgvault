@@ -1187,6 +1187,12 @@ func (s *Server) handleHybridSearch(
 		return
 	}
 
+	release, ok := s.beginOwnerVerificationSnapshot(w, r, "searchMessages")
+	if !ok {
+		return
+	}
+	defer release()
+	ctx = r.Context()
 	hydrationStarted := time.Now()
 	pageStart := min(offset, len(hits))
 	pageEnd := min(pageStart+pageSize, len(hits))
@@ -1267,6 +1273,18 @@ func (s *Server) handleHybridSearch(
 	}
 	if includeMatches {
 		s.enrichHybridMatches(ctx, backend, vectorCfg, meta.Generation.ID, meta.QueryVector, items, minScore)
+	}
+	_, ok = withholdRows(s, w, r, items, func(row *hybridSearchItem) int64 { return row.ID }, func(row *hybridSearchItem) {
+		row.Subject, row.Snippet = verification.Masked, verification.Masked
+		for i := range row.AttachmentNames {
+			row.AttachmentNames[i] = verification.Masked
+		}
+		for i := range row.Matches {
+			row.Matches[i].Snippet = verification.Masked
+		}
+	})
+	if !ok {
+		return
 	}
 	hydrationDuration := time.Since(hydrationStarted)
 
@@ -1421,6 +1439,11 @@ func (s *Server) handleSimilarSearch(w http.ResponseWriter, r *http.Request) {
 		wantIDs = append(wantIDs, hit.MessageID)
 	}
 
+	release, ok := s.beginOwnerVerificationSnapshot(w, r, "findSimilarMessages")
+	if !ok {
+		return
+	}
+	defer release()
 	summaries, err := s.getMessagesSummariesByIDs(r.Context(), wantIDs)
 	if err != nil {
 		if s.writeIfContextError(w, err) {
@@ -1442,6 +1465,9 @@ func (s *Server) handleSimilarSearch(w http.ResponseWriter, r *http.Request) {
 		messages = append(messages, toMessageSummary(msg))
 	}
 
+	if !s.maskMessageSummaries(w, r, messages, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, similarSearchResponse{
 		SeedMessageID: seedID,
 		Returned:      len(messages),

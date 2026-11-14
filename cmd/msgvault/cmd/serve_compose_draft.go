@@ -170,7 +170,7 @@ func (a *storeAPIAdapter) runCLIComposeDraft(
 	if source, err := sourceops.ResolveExactOneContext(ctx, a.store, sourceops.Selector{
 		Account: intent.Account, SourceID: intent.SourceID, SourceIDSet: intent.SourceIDSet,
 	}); err == nil && source.SourceType == "beeper" {
-		return a.runBeeperDraftCreate(ctx, req.Grant, intent, source, emit)
+		return a.runBeeperDraftCreate(ctx, req.Grant, intent, source, req.WithholdVerification, emit)
 	}
 	target, from, _, err := a.resolveDraftTarget(
 		ctx, nil, intent.Account, intent.SourceID, intent.SourceIDSet, intent.From, req.Grant, false,

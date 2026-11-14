@@ -580,12 +580,22 @@ func TestGeneratedResponseErrorRejectsMissingJSON200Payload(t *testing.T) {
 }
 
 func TestGeneratedCLIResponseErrorReturnsBareServerMessage(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	err := CLIResponseError(&generated.CreateCLICollectionResp{
 		StatusCode: http.StatusBadRequest,
 		Body:       []byte(`{"error":"invalid_collection","message":"bad account"}`),
 	}, nil)
 
-	require.EqualError(t, err, "bad account", "CLI error")
+	require.EqualError(err, "bad account", "CLI error")
+	var apiErr *APIError
+	assert.NotErrorAs(err, &apiErr)
+	err = CLIResponseError(&generated.CreateCLICollectionResp{
+		StatusCode: http.StatusForbidden,
+		Body:       []byte(`{"error":"verification_masked","message":"verification content is withheld"}`),
+	}, nil)
+	require.EqualError(err, "verification content is withheld")
+	assert.NotErrorAs(err, &apiErr)
 }
 
 func TestRunCLICommandTypesDaemonReportedFailures(t *testing.T) {
@@ -1008,3 +1018,32 @@ func (r *boundaryErrorReader) Read(p []byte) (int, error) {
 }
 
 func (r *boundaryErrorReader) Close() error { return nil }
+
+func TestVerificationWithholdingRequests(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	healthHeaders := make(chan string, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/prefix/api/v1/health" {
+			healthHeaders <- r.Header.Get(apiprotocol.VerificationHeader)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"ok"}`)
+	}))
+	t.Cleanup(server.Close)
+	ordinary, err := New(Config{URL: server.URL + "/prefix", AllowInsecure: true})
+	require.NoError(err)
+	protected, err := ordinary.WithVerificationWithheld()
+	require.NoError(err)
+	_, err = protected.Health(t.Context())
+	require.NoError(err)
+	response, err := protected.DoGeneratedRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
+	require.NoError(err)
+	require.NoError(response.Body.Close())
+	_, err = ordinary.Health(t.Context())
+	require.NoError(err)
+	require.Len(healthHeaders, 3)
+	assert.Equal(apiprotocol.VerificationWithhold, <-healthHeaders)
+	assert.Equal(apiprotocol.VerificationWithhold, <-healthHeaders)
+	assert.Empty(<-healthHeaders)
+}

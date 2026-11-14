@@ -57,7 +57,8 @@ func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Oper
 		// sync with the context and body passed through timeout and gate handling.
 		s.timeoutMiddleware(gate(http.HandlerFunc(func(_ http.ResponseWriter, timed *http.Request) {
 			*r = *timed
-			if sourcescope.Restricted(r.Context()) {
+			scoped := sourcescope.Restricted(r.Context())
+			if scoped {
 				release, apiErr := s.beginCallerRead(r)
 				if apiErr != nil {
 					writeAPIHTTPError(w, apiErr)
@@ -65,6 +66,12 @@ func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Oper
 				}
 				defer release()
 			}
+			release, apiErr := s.ownerVerificationPolicy(ctx, r, scoped)
+			if apiErr != nil {
+				writeAPIHTTPError(w, apiErr)
+				return
+			}
+			defer release()
 			next(ctx)
 		}))).ServeHTTP(w, r)
 	})

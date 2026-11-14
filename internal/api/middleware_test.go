@@ -185,11 +185,14 @@ func TestCORSPreflightHeaders(t *testing.T) {
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, "/api/v1/settings", nil)
 	req.Header.Set("Origin", "http://localhost:3000")
+	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+	req.Header.Set("Access-Control-Request-Headers", "x-msgvault-verification")
 	w := httptest.NewRecorder()
 
 	handler.ServeHTTP(w, req)
 
 	// Check all preflight headers
+	assert.Equal(http.StatusNoContent, w.Code)
 	assert.NotEmpty(w.Header().Get("Access-Control-Allow-Origin"), "missing Access-Control-Allow-Origin")
 	methods := w.Header().Get("Access-Control-Allow-Methods")
 	assert.NotEmpty(methods, "missing Access-Control-Allow-Methods")
@@ -202,6 +205,7 @@ func TestCORSPreflightHeaders(t *testing.T) {
 		"preflight must allow X-Request-Id for task-creation idempotency keys")
 	assert.Contains(headers, "Idempotency-Key",
 		"preflight must allow person merge and split idempotency keys")
+	assert.Contains(headers, "X-Msgvault-Verification")
 	assert.NotEmpty(w.Header().Get("Access-Control-Max-Age"), "missing Access-Control-Max-Age")
 }
 

@@ -67,11 +67,14 @@ func TestLocalRecoveryErrorsAreSafeAcrossMCPHandlers(t *testing.T) {
 	}
 }
 
-func TestRemoteDaemonUnavailableCodeKeepsExistingClassification(t *testing.T) {
+func TestRemoteAndVerificationDaemonRequestErrorClassification(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	remote := &daemonclient.APIError{Status: 503, Code: "daemon_unavailable", Message: "remote diagnostic"}
 	assertions.Nil(translateDaemonRequestError(remote))
+	mapped := translateDaemonRequestError(directoryPeopleError{code: "verification_masked"})
+	requirements.NotNil(mapped)
+	assertions.Equal(verificationMaskedMessage, mapped.text)
 	_, _, err := officialToolHandler(func(context.Context, toolRequest) (*toolResult, error) {
 		return nil, newInternalError("remote", remote)
 	})(t.Context(), &sdkmcp.CallToolRequest{}, nil)

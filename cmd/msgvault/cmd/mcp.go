@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+var mcpRevealVerification bool
 var mcpForceSQL bool
 var mcpNoSQLiteScanner bool
 var mcpHTTPAddr string
@@ -83,6 +84,19 @@ Add to Claude Desktop config:
 			return fmt.Errorf("open daemon: %w", err)
 		}
 		defer func() { _ = st.Close() }()
+		if !isAgentMode(state) && !mcpRevealVerification {
+			version, err := st.APISchemaVersion(cmd.Context())
+			if err != nil {
+				return fmt.Errorf("check daemon verification support: %w", err)
+			}
+			if !daemonclient.APISchemaVersionAtLeast(version, daemonclient.VerificationMinAPISchemaVersion) {
+				return fmt.Errorf("verification withholding requires daemon API schema %s or newer (daemon reports %q); upgrade the daemon or use --reveal-verification", daemonclient.VerificationMinAPISchemaVersion, version)
+			}
+			st, err = st.WithVerificationWithheld()
+			if err != nil {
+				return err
+			}
+		}
 		if httpAddr != "" {
 			if !cmd.Flags().Changed("http-token-file") && !cmd.Flags().Changed("http-token-env") {
 				// Local startup may have created the key. OpenHTTPStore refreshes
@@ -518,6 +532,7 @@ func (s daemonMCPSimilarSearcher) FindSimilar(
 func init() {
 	mcpCmd.AddCommand(newMCPStatusCommand())
 	rootCmd.AddCommand(mcpCmd)
+	mcpCmd.Flags().BoolVar(&mcpRevealVerification, "reveal-verification", false, "Allow verification content in owner MCP reads")
 	mcpCmd.Flags().BoolVar(&mcpForceSQL, "force-sql", false, "Deprecated in 0.17.0: set [analytics].engine = \"sql\" in config.toml")
 	mcpCmd.Flags().BoolVar(&mcpNoSQLiteScanner, "no-sqlite-scanner", false, "Deprecated in 0.17.0: cache engine selection is daemon-managed")
 	mcpCmd.Flags().StringVar(&mcpHTTPAddr, "http", "",

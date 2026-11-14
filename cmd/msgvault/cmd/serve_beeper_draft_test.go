@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -14,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
@@ -21,6 +25,76 @@ import (
 )
 
 const beeperDraftTestChat = "!chat:beeper.local"
+
+func TestBeeperDraftComposeVerificationWithholding(t *testing.T) {
+	for _, scenario := range []string{"existing", "failure", "success"} {
+		for _, withhold := range []bool{true, false} {
+			if scenario == "success" && !withhold {
+				continue
+			}
+			t.Run(scenario+"/"+strconv.FormatBool(withhold), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				f := newBeeperDraftFixture(t)
+				switch scenario {
+				case "existing":
+					created, err := f.create(t, nil, "saved secret")
+					require.NoError(err)
+					_, err = f.store.ClaimBeeperDraftContext(t.Context(), created.DraftID, created.Revision, store.BeeperDraftOperationEdit, "pending secret")
+					require.NoError(err)
+				case "failure":
+					f.beeper.set("null", true)
+				}
+				args := []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "proposed secret", "--json"}
+				var output string
+				if scenario == "existing" && withhold {
+					f.adapter.config.Server.APIKey = "owner"
+					srv := api.NewServerWithOptions(api.ServerOptions{Config: f.adapter.config, Store: f.adapter, Logger: slog.New(slog.DiscardHandler)})
+					t.Cleanup(func() { require.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
+					body, err := json.Marshal(map[string]any{"args": args})
+					require.NoError(err)
+					req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+					req.Header.Set("Content-Type", "application/json")
+					req.Header.Set("X-Api-Key", "owner")
+					req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+					response := httptest.NewRecorder()
+					srv.Router().ServeHTTP(response, req)
+					require.Equal(http.StatusOK, response.Code, response.Body.String())
+					output = response.Body.String()
+					assert.Contains(output, `"type":"error"`)
+				} else {
+					var events []api.CLIRunEvent
+					err := f.adapter.runCLIComposeDraft(t.Context(), api.CLIRunRequest{Args: args, WithholdVerification: withhold}, func(event api.CLIRunEvent) error {
+						events = append(events, event)
+						return nil
+					})
+					if scenario == "success" {
+						require.NoError(err)
+					} else {
+						require.Error(err)
+					}
+					require.Len(events, 1)
+					output = events[0].Data
+				}
+				if scenario == "success" {
+					assert.Contains(output, "proposed secret")
+				} else {
+					secrets := []string{"proposed secret"}
+					if scenario == "existing" {
+						secrets = []string{"saved secret", "pending secret"}
+					}
+					for _, secret := range secrets {
+						if withhold {
+							assert.NotContains(output, secret)
+						} else {
+							assert.Contains(output, secret)
+						}
+					}
+				}
+			})
+		}
+	}
+}
 
 // fakeBeeperDrafts models Beeper Desktop's composer: setting text over a
 // draft is refused with 409, and accepted text comes back formatted.
@@ -283,8 +357,24 @@ func TestBeeperDraftDeleteOnlyResponses(t *testing.T) {
 			// An unconfirmed edit has both committed and candidate text to hide.
 			_, err = f.store.ClaimBeeperDraftContext(t.Context(), created.DraftID, created.Revision, store.BeeperDraftOperationEdit, "pending owner draft")
 			require.NoError(err)
+			var ownerOutput strings.Builder
+			err = f.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: []string{api.CLIRunDraftGetCommand, created.DraftID, "--json"}, WithholdVerification: true}, func(event api.CLIRunEvent) error {
+				ownerOutput.WriteString(event.Data)
+				return nil
+			})
+			require.NoError(err)
+			assert.Contains(ownerOutput.String(), created.DraftID)
+			assert.NotContains(ownerOutput.String(), "owner draft")
 			require.NoError(run("ok", api.CLIRunDraftGetCommand, created.DraftID))
 			f.beeper.set(`{"text":"<p>pending owner draft</p>"}`, false)
+			ownerOutput.Reset()
+			err = f.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: []string{api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "1", "--json"}, WithholdVerification: true}, func(event api.CLIRunEvent) error {
+				ownerOutput.WriteString(event.Data)
+				return nil
+			})
+			assertBeeperDraftCode(t, err, "pending_operation")
+			assert.Contains(ownerOutput.String(), created.DraftID)
+			assert.NotContains(ownerOutput.String(), "owner draft")
 			err = run("pending_operation", api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "1")
 			assertBeeperDraftCode(t, err, "pending_operation")
 

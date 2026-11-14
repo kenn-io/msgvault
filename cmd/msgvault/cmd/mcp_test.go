@@ -74,6 +74,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
+			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status": "ok", "api_schema_version": api.APISchemaVersion,
 			})
@@ -273,7 +274,6 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 
 func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 	assert := assert.New(t)
-	require := require.New(t)
 	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
@@ -305,7 +305,7 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 		Mode:  "hybrid",
 	})
 	var coded interface{ APIErrorCode() string }
-	require.ErrorAs(err, &coded)
+	require.ErrorAs(t, err, &coded)
 	assert.Equal("vector_initializing", coded.APIErrorCode())
 	path := <-requests
 	assert.Equal("/api/v1/mcp/capabilities", path, "startup probes optional operations")
@@ -453,6 +453,7 @@ func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/health":
 			if healthRequests.Add(1) == 1 {
+				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"status": "ok", "api_schema_version": "2.28.0",
 					"vector": map[string]any{
@@ -647,4 +648,73 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 	assert.False(opts.KataDocbank)
 	assert.Contains(logs.String(), "Kata transcript citations hidden because the Docbank status probe failed")
 	assert.Contains(logs.String(), "503")
+}
+
+func TestMCPStandaloneVerificationHandshake(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		reveal       bool
+		probeFailure bool
+		wantServe    bool
+	}{
+		{name: "old daemon fails closed"},
+		{name: "probe failure", probeFailure: true},
+		{name: "old daemon with reveal", reveal: true, wantServe: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			var marked atomic.Int32
+			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/v1/health" {
+					http.NotFound(w, r)
+					return
+				}
+				if r.Header.Get("X-Msgvault-Verification") != "" {
+					marked.Add(1)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if tc.probeFailure {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = w.Write([]byte(`{"error":"unavailable","message":"probe unavailable"}`))
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "5.0.0"})
+			}))
+			t.Cleanup(daemon.Close)
+			setMCPTokenTestFlags(t, nil)
+			mcpHTTPAddr = ""
+			oldReveal, oldServe := mcpRevealVerification, serveMCPStdioWithOptions
+			revealFlag := mcpCmd.Flags().Lookup("reveal-verification")
+			require.NotNil(revealFlag)
+			oldChanged := revealFlag.Changed
+			t.Cleanup(func() {
+				mcpRevealVerification, serveMCPStdioWithOptions = oldReveal, oldServe
+				revealFlag.Changed = oldChanged
+			})
+			require.NoError(revealFlag.Value.Set(strconv.FormatBool(tc.reveal)))
+			served := false
+			stopped := errors.New("serve reached")
+			serveMCPStdioWithOptions = func(context.Context, mcpserver.ServeOptions) error {
+				served = true
+				return stopped
+			}
+			cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Remote: config.RemoteConfig{URL: daemon.URL, AllowInsecure: true}}
+			mcpCmd.SetContext(withStoreResolverConfig(t, cfg))
+			err := mcpCmd.RunE(mcpCmd, nil)
+			if tc.wantServe {
+				require.ErrorIs(err, stopped)
+			} else if tc.probeFailure {
+				require.ErrorContains(err, "check daemon verification support")
+				require.ErrorContains(err, "probe unavailable")
+			} else {
+				require.ErrorContains(err, "requires daemon API schema 5.3.0")
+				require.ErrorContains(err, "--reveal-verification")
+			}
+			assert.Equal(tc.wantServe, served)
+			if tc.reveal {
+				assert.Zero(marked.Load())
+			}
+		})
+	}
 }

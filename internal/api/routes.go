@@ -14,6 +14,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
@@ -161,6 +162,7 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 	configureHuma()
 
 	config := huma.DefaultConfig("msgvault API", APISchemaVersion)
+	config.Info.Description = "API v1 requests may set X-Msgvault-Verification: withhold to mask detected verification content. Other nonempty values receive 400. Operations that may expose verification content receive 403 with error code verification_masked while withholding."
 	config.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", prefixedSchemaName)
 	jsonFormat := huma.Format{
 		Marshal: marshalAPIJSON,
@@ -250,9 +252,54 @@ func withAPIKeySecurity(op huma.Operation) huma.Operation {
 	return op
 }
 
+// ownerVerificationPolicy admits operations and snapshots classified owner reads.
+func (s *Server) ownerVerificationPolicy(ctx huma.Context, req *http.Request, hasSnapshot bool) (func(), *apiHTTPError) {
+	noRelease := func() {}
+	if value := req.Header.Get(apiprotocol.VerificationHeader); value != "" && value != apiprotocol.VerificationWithhold {
+		return nil, newAPIHTTPError(http.StatusBadRequest, "bad_request", "Unsupported verification header value")
+	}
+	auth := s.requestAuthentication(req)
+	if auth.Mode == AuthModeRequired || !s.withholdsVerification(req) {
+		return noRelease, nil
+	}
+	if auth.Grant != nil {
+		return noRelease, nil
+	}
+	op := ctx.Operation()
+	operation := "unknown operation"
+	if op != nil {
+		operation = op.OperationID
+	}
+	snapshot, admitted := ownerVerificationOperations[operation]
+	if !admitted {
+		return nil, newAPIHTTPError(http.StatusForbidden, "verification_masked", operation+" is unavailable while verification content is withheld; disable verification withholding to allow it")
+	}
+	if !snapshot || hasSnapshot {
+		return noRelease, nil
+	}
+	if op.OperationID == "searchMessages" && (req.URL.Query().Get("mode") == "vector" || req.URL.Query().Get("mode") == exploreSearchModeHybrid) {
+		return noRelease, nil // Ranking can wait on an embedding provider.
+	}
+	return s.beginAgentRead(req, op.OperationID, nil, "")
+}
+
 func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 	req, _ := humago.Unwrap(ctx)
 	auth := s.requestAuthentication(req)
+	if auth.Mode == AuthModeRemoteClient {
+		op := ctx.Operation()
+		if op == nil || !remoteClientOperationAllowed(op.OperationID, auth.RemoteClient.CollectionsWrite) {
+			s.logger.Warn("remote client operation denied", pathKey, req.URL.Path, "client_id", auth.RemoteClient.ClientID)
+			writeHumaError(ctx, http.StatusForbidden, "forbidden", "Operation is not available to remote clients")
+			return
+		}
+	}
+	release, policyErr := s.ownerVerificationPolicy(ctx, req, false)
+	if policyErr != nil {
+		writeHumaError(ctx, policyErr.status, policyErr.ErrorResponse.Error, policyErr.Message)
+		return
+	}
+	defer release()
 	if auth.Mode == AuthModeDelegated {
 		if op := ctx.Operation(); op != nil && delegatedOperationAllowed(op.OperationID) {
 			permission, err := agentReadPermission(op.OperationID, auth.Grant)
@@ -273,15 +320,6 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 		}
 		s.logUnauthorizedAPIRequest(req)
 		writeHumaError(ctx, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
-		return
-	}
-	if auth.Mode == AuthModeRemoteClient {
-		if op := ctx.Operation(); op != nil && remoteClientOperationAllowed(op.OperationID, auth.RemoteClient.CollectionsWrite) {
-			next(ctx)
-			return
-		}
-		s.logger.Warn("remote client operation denied", pathKey, req.URL.Path, "client_id", auth.RemoteClient.ClientID)
-		writeHumaError(ctx, http.StatusForbidden, "forbidden", "Operation is not available to remote clients")
 		return
 	}
 	if auth.Mode != AuthModeRequired {

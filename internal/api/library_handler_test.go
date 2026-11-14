@@ -4,15 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/sourcescope"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func newLibraryHandlerTestServer(t *testing.T) *Server {
@@ -181,5 +188,84 @@ func TestLibraryHandlerOwnsDaemonControls(t *testing.T) {
 	case <-stopped:
 	case <-time.After(5 * time.Second):
 		require.FailNow("caller-authorized shutdown did not reach the supplied callback")
+	}
+}
+
+func TestLibraryHandlerVerificationPolicy(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "verification", "Your verification code is 482913", "Your verification code is 482913")
+	require.NoError(t, err)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	handler := srv.Handler(nil)
+
+	t.Run("protected source scoped messages", func(t *testing.T) {
+		// Leave one slot available to catch nested snapshots.
+		srv.readSnapshotSlots <- struct{}{}
+		t.Cleanup(func() { <-srv.readSnapshotSlots })
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		t.Cleanup(cancel)
+		ctx = sourcescope.WithSourceIDs(ctx, []int64{source.ID})
+		r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/messages", nil)
+		r.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Len(t, srv.readSnapshotSlots, 1)
+	})
+
+	t.Run("admitted aggregate", func(t *testing.T) {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/aggregates?view_type=invalid", nil)
+		r.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	})
+}
+
+func TestLibraryHandlerRejectsInvalidVerificationHeader(t *testing.T) {
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: testutil.NewTestStore(t), Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	for _, handler := range []http.Handler{srv.Handler(nil), srv.Router()} {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages", nil)
+		req.Header.Set(apiprotocol.VerificationHeader, "withheld")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), `"bad_request"`)
+	}
+}
+
+func TestLibraryHandlerVerificationRefusesUnclassifiedReads(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	_, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "code", "Your verification code is 482913", "Your verification code is 482913")
+	require.NoError(t, err)
+	view, err := st.CreateSavedView(t.Context(), store.SavedViewInput{Name: "all", CanonicalState: []byte(`{}`), SchemaVersion: 1})
+	require.NoError(t, err)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, SavedViewStore: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, fmt.Sprintf("/api/v1/saved-views/%d/run", view.ID)},
+		{http.MethodGet, fmt.Sprintf("/api/v1/conversations/%d", id)},
+		{http.MethodGet, "/api/v1/cli/message/original?id=1"},
+		{http.MethodGet, "/api/v1/cli/message/raw?id=1"},
+		{http.MethodPost, "/api/v1/query/archive"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			handlers := []http.Handler{srv.Router()}
+			if tc.path == "/api/v1/query/archive" {
+				handlers = append(handlers, srv.Handler(nil))
+			}
+			for _, handler := range handlers {
+				request := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, strings.NewReader(`{}`))
+				request.Header.Set("Content-Type", "application/json")
+				request.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, request)
+				assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+				assert.Contains(t, w.Body.String(), `"verification_masked"`)
+				assert.Contains(t, w.Body.String(), "disable verification withholding")
+			}
+		})
 	}
 }

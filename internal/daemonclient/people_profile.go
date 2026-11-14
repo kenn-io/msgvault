@@ -87,6 +87,8 @@ func (b *PeopleBrowser) GetPersonProfile(
 		// A daemon without the brief store degrades like the other optional
 		// sub-resources; a missing version already came back as a nil brief.
 		profile.Brief = nil
+	case verificationContentWithheld(err):
+		profile.Brief = nil
 	default:
 		return nil, err
 	}
@@ -136,6 +138,11 @@ func (b *PeopleBrowser) GetPersonProfile(
 		return nil, err
 	}
 	return profile, nil
+}
+
+func verificationContentWithheld(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.APIErrorCode() == "verification_masked"
 }
 
 // GetPersonProfileByUID resolves either the profile's vCard UID or a UID on a

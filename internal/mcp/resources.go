@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/query"
@@ -172,6 +173,10 @@ func registerAttachmentResources(server *sdkmcp.Server, h *handlers) {
 		if err != nil {
 			if _, ok := errors.AsType[*attachmentUnavailableError](err); ok {
 				return nil, sdkmcp.ResourceNotFoundError(rawURI)
+			}
+			var coded daemonAPIErrorCoder
+			if errors.As(err, &coded) && coded.APIErrorCode() == "verification_masked" {
+				return nil, &jsonrpc.Error{Code: jsonrpc.CodeInternalError, Message: verificationMaskedMessage}
 			}
 			return nil, mapInternalError(err)
 		}

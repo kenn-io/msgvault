@@ -1154,3 +1154,16 @@ func TestMCPInternalErrorIsolationPreservesSafeControls(t *testing.T) {
 	checks.Equal(true, vectorSentinel.Result["isError"])
 	checks.Contains(vectorRaw, "vector_not_enabled")
 }
+
+func TestAttachmentResourceVerificationRefusal(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	opts := task4ResourceOptions([]byte("unused"))
+	opts.AttachmentReader = attachmentReaderFunc(func(context.Context, string) ([]byte, error) {
+		return nil, directoryPeopleError{code: "verification_masked"}
+	})
+	response, raw := task4RawRequest(t, newMCPHTTPServer(opts, HTTPOptions{}).Handler, "resources/read", map[string]any{"uri": "msgvault://attachment/7"}, nil)
+	require.NotEmpty(response.Error, "response: %s", raw)
+	assert.InDelta(float64(jsonrpc.CodeInternalError), response.Error["code"], 0)
+	assert.Equal(verificationMaskedMessage, response.Error["message"])
+}

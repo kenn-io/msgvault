@@ -526,12 +526,18 @@ type CLIRepairMessageEvent struct {
 }
 
 type CLIRunRequest struct {
-	Args         []string          `json:"args"`
-	Env          map[string]string `json:"env,omitempty"`
-	Cwd          string            `json:"cwd,omitempty"`
-	GrantDecided bool              `json:"-"`
+	Args                 []string          `json:"args"`
+	Env                  map[string]string `json:"env,omitempty"`
+	Cwd                  string            `json:"cwd,omitempty"`
+	GrantDecided         bool              `json:"-"`
+	WithholdVerification bool              `json:"-"`
 	// Grant carries the authenticated agent grant when classified AuthModeDelegated. Never decoded from the wire.
 	Grant *agentgrant.Grant `json:"-"`
+}
+
+func (req CLIRunRequest) withVerificationWithheld(withhold bool) CLIRunRequest {
+	req.WithholdVerification = withhold
+	return req
 }
 
 type CLIAddCalendarPlanRequest struct {
@@ -1404,6 +1410,10 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auth := s.requestAuthentication(r)
+	if auth.Grant == nil && s.withholdsVerification(r) && !IsCLIRunDraftReply(req.Args) && !IsCLIRunDraftCompose(req.Args) && !IsCLIRunDraftSendAs(req.Args) && !IsCLIRunDraftLifecycle(req.Args) {
+		writeAPIHTTPError(w, newAPIHTTPError(http.StatusForbidden, "verification_masked", "Command is unavailable while verification content is withheld"))
+		return
+	}
 	if auth.Mode == AuthModeDelegated {
 		if !delegatedCLIRunAdmitted(req.Args, auth.Grant) {
 			writeError(w, http.StatusBadRequest, "command_not_allowed", "command is not allowed through the daemon CLI runner")
@@ -1440,7 +1450,7 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeEvent := newCLINDJSONEventWriter[CLIRunEvent](w)
-	if err := runner.RunCLICommand(s.WithPublishedVectorConfig(r.Context()), req, writeEvent); err != nil {
+	if err := runner.RunCLICommand(s.WithPublishedVectorConfig(r.Context()), req.withVerificationWithheld(auth.Grant == nil && s.withholdsVerification(r)), writeEvent); err != nil {
 		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
 			s.logger.Error("failed to run CLI command", "command", req.Args[0], "error_code", coded.Code, "cause", coded.Err)
 		} else {
@@ -3566,7 +3576,7 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var attachments []query.AttachmentInfo
-	if s.requestAuthentication(r).Grant != nil {
+	if s.requestAuthentication(r).Grant != nil || s.withholdsVerification(r) {
 		var apiErr *apiHTTPError
 		attachments, apiErr = s.attachmentCandidatesForRequest(r, contentHash)
 		if apiErr != nil {

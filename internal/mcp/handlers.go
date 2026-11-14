@@ -511,6 +511,8 @@ type expectedHandlerError struct {
 
 func (e *expectedHandlerError) Error() string { return e.message }
 
+const verificationMaskedMessage = "verification_masked: verification content is withheld. Ask the archive owner to allow verification access."
+
 type daemonAPIErrorCoder interface {
 	APIErrorCode() string
 }
@@ -526,6 +528,8 @@ func translateDaemonRequestError(err error) *toolResult {
 
 	var message string
 	switch coded.APIErrorCode() {
+	case "verification_masked":
+		message = verificationMaskedMessage
 	case "permission_denied", "unsupported_agent_scope":
 		// The daemon's message names the missing permission or the supported scope.
 		message = coded.APIErrorCode() + ": " + daemonErrorMessage(err)

@@ -134,6 +134,7 @@ func TestNativeMCPBridge(t *testing.T) {
 			defer func() { release(); require.NoError(server.Shutdown(t.Context())) }()
 			cmd := &cobra.Command{Use: "serve"}
 			addServeConfigFlags(cmd)
+			require.NoError(cmd.Flags().Set("mcp-reveal-verification", "true"))
 			require.NoError(installServeMCP(t.Context(), cmd, server, &invocation{cfg: cfg}))
 			listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 			require.NoError(err)
@@ -198,6 +199,7 @@ func TestNativeMCPBridge(t *testing.T) {
 		defer func() { release(); require.NoError(server.Shutdown(t.Context())) }()
 		cmd := &cobra.Command{Use: "serve"}
 		addServeConfigFlags(cmd)
+		require.NoError(cmd.Flags().Set("mcp-reveal-verification", "true"))
 		serveCtx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		require.NoError(installServeMCP(serveCtx, cmd, server, &invocation{cfg: cfg}))
@@ -253,6 +255,8 @@ func TestNativeMCPBridge(t *testing.T) {
 			defer func() { require.NoError(server.Shutdown(t.Context())) }()
 			cmd := &cobra.Command{Use: "serve"}
 			addServeConfigFlags(cmd)
+			// This mock engine has no store snapshot; this test exercises cancellation.
+			require.NoError(cmd.Flags().Set("mcp-reveal-verification", "true"))
 			require.NoError(installServeMCP(t.Context(), cmd, server, &invocation{cfg: cfg}))
 			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_messages","arguments":{}}}`))
 			request.Header.Set("Authorization", "Bearer owner")
@@ -298,6 +302,8 @@ func TestInstallServeMCPCatalogs(t *testing.T) {
 			must.Zero(cfg.Server.APIPort)
 			cmd := &cobra.Command{Use: "serve"}
 			addServeConfigFlags(cmd)
+			// Catalog and origin checks use a synthetic engine-only message.
+			must.NoError(cmd.Flags().Set("mcp-reveal-verification", "true"))
 			if mode != "read" {
 				must.NoError(cmd.Flags().Set("mcp-allow-writes", "true"))
 			}

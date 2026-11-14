@@ -44,15 +44,16 @@ type Config struct {
 
 // Client provides HTTP access to a local or configured remote msgvault daemon.
 type Client struct {
-	baseURL          string
-	apiKey           string
-	agentToken       string
-	httpClient       *http.Client
-	typedClient      *apiclient.Client
-	busyNotify       func(message string)
-	rootContext      context.Context
-	requestMode      RequestMode
-	localDaemonToken string
+	baseURL              string
+	apiKey               string
+	agentToken           string
+	httpClient           *http.Client
+	typedClient          *apiclient.Client
+	busyNotify           func(message string)
+	rootContext          context.Context
+	requestMode          RequestMode
+	localDaemonToken     string
+	withholdVerification bool
 }
 
 // SetBusyNotifier registers a callback invoked when the daemon reports that
@@ -164,6 +165,17 @@ func New(cfg Config) (*Client, error) {
 	return c, nil
 }
 
+// WithVerificationWithheld returns an independent client with a rebuilt typed client.
+func (c *Client) WithVerificationWithheld() (*Client, error) {
+	clone := *c
+	clone.withholdVerification = true
+	clone.typedClient = nil
+	if _, err := clone.GeneratedClient(); err != nil {
+		return nil, err
+	}
+	return &clone, nil
+}
+
 // Close is a no-op for HTTP clients.
 func (c *Client) Close() error {
 	return nil
@@ -215,7 +227,7 @@ func (c *Client) GeneratedClient() (*apiclient.Client, error) {
 			client:      c.httpClient,
 			rootContext: c.requestContext(),
 		}),
-		runtime.WithRequestEditorFn(requestEditor(c.apiKey, c.agentToken, c.requestMode, c.localDaemonToken)),
+		runtime.WithRequestEditorFn(requestEditor(c.apiKey, c.agentToken, c.requestMode, c.localDaemonToken, c.withholdVerification)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create generated API client: %w", err)
@@ -400,8 +412,11 @@ func (b *cancelOnCloseBody) Close() error {
 
 type grantDecisionContextKey struct{}
 
-func requestEditor(apiKey, agentToken string, mode RequestMode, localDaemonToken string) apiclient.RequestEditorFn {
+func requestEditor(apiKey, agentToken string, mode RequestMode, localDaemonToken string, withholdVerification bool) apiclient.RequestEditorFn {
 	return func(ctx context.Context, req *http.Request) error {
+		if withholdVerification {
+			req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+		}
 		if agentToken != "" {
 			// #nosec G101 -- this is a header value set from the configured agent
 			// token, not a hardcoded credential.

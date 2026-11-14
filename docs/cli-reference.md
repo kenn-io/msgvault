@@ -4655,7 +4655,7 @@ be verified, including when another process reuses the PID. Stdio sessions are
 not listening endpoints and do not appear. An empty JSON list means no HTTP
 listeners were found in this application's configured data directory.
 
-Start the Model Context Protocol server for AI assistant integration.
+Start the Model Context Protocol server for AI assistant integration. Owner MCP withholds detected verification content by default in message detail, thread, list, and keyword and vector search reads. Draft lifecycle results withhold draft text, raw MIME, and candidate content. Saved View runs, text conversations, person files and agenda, media and meeting reads, Explore, original MIME, and archive SQL are refused while withholding. This requires daemon API 5.3.0 or newer; use `--reveal-verification` to allow the original content. See [verification content](api-server.md#verification-content) for detection and limits.
 
 Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Msgvault never sends. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
 
@@ -4667,6 +4667,7 @@ msgvault mcp [flags]
 
 | Flag | Default | Description |
 |---|---|---|
+| `--reveal-verification` | `false` | Allow detected verification content in owner MCP reads. Delegated grants keep their own permissions. |
 | `--force-sql` | `false` | Deprecated in 0.17.0; use `[analytics].engine = "sql"` in `config.toml` instead. See [Configuration: analytics](/docs/configuration/#analytics). |
 | `--no-sqlite-scanner` | `false` | Deprecated in 0.17.0; cache engine selection is daemon-managed. Use `[analytics].engine = "sql"` for live SQL. |
 | `--http` | — | Serve MCP over StreamableHTTP on this address instead of stdio. Bare ports bind to loopback, e.g. `8080` becomes `127.0.0.1:8080`. Non-loopback addresses require an effective inbound key or `--http-allow-insecure`. |
@@ -4784,6 +4785,7 @@ with the configured owner bearer key. Native MCP never permits keyless access.
 
 | Flag | Default | Effect |
 |---|---|---|
+| `--mcp-reveal-verification` | `false` | Allow detected verification content on both native MCP endpoints. |
 | `--mcp-allow-writes` | `false` | Enable the independent `/mcp/writes` catalog; `/mcp` stays read-only. |
 | `--mcp-allow-profile-writes` | `false` | Enable profile promotion, display-name and Notes writes. |
 | `--mcp-allow-identity-decisions` | `false` | Enable confirmed identity match accept/reject calls. |

@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/verification"
@@ -24,6 +25,8 @@ type MessageBodyLoader interface {
 	PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error
 }
 
+const verificationClassificationBatchSize = 32
+
 // verificationWithheld classifies complete messages in the authorized snapshot.
 // A nil map means the caller has authority to read verification content.
 func (s *Server) verificationWithheld(w http.ResponseWriter, r *http.Request, ids []int64) (map[int64]bool, bool) {
@@ -32,9 +35,9 @@ func (s *Server) verificationWithheld(w http.ResponseWriter, r *http.Request, id
 	}
 	loader, ok := s.store.(MessageBodyLoader)
 	withheld := make(map[int64]bool, len(ids))
-	// Only one page of bodies is held at a time; verdicts outlive their batch.
-	for start := 0; start < len(ids); start += maxPageSize {
-		messages := make([]store.APIMessage, min(maxPageSize, len(ids)-start))
+	// Only one batch of bodies is held at a time; verdicts outlive their batch.
+	for start := 0; start < len(ids); start += verificationClassificationBatchSize {
+		messages := make([]store.APIMessage, min(verificationClassificationBatchSize, len(ids)-start))
 		for i := range messages {
 			messages[i].ID = ids[start+i]
 		}
@@ -67,7 +70,7 @@ func messageVerificationContent(subject, snippet, title, text, html string, atta
 
 func (s *Server) withholdsVerification(r *http.Request) bool {
 	grant := s.requestAuthentication(r).Grant
-	return grant != nil && !grant.HasPermission(agentgrant.PermissionVerificationRead)
+	return r.Header.Get(apiprotocol.VerificationHeader) == apiprotocol.VerificationWithhold || grant != nil && !grant.HasPermission(agentgrant.PermissionVerificationRead)
 }
 
 func withholdRows[T any](s *Server, w http.ResponseWriter, r *http.Request, rows []T, id func(*T) int64, mask func(*T)) (map[int64]bool, bool) {
@@ -165,6 +168,9 @@ func (s *Server) textAttachmentReader(w http.ResponseWriter, r *http.Request, co
 		return content, false, nil
 	}
 	denied := newAPIHTTPError(403, "verification_masked", "Attachment text requires verification.read")
+	if s.requestAuthentication(r).Grant == nil {
+		denied = newAPIHTTPError(403, "verification_masked", "Attachment text is unavailable while verification content is withheld")
+	}
 	text := false
 	html := false
 	names := make([]string, len(candidates))
