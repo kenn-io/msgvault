@@ -101,10 +101,7 @@ func (s *Store) migrateAttributeValueJSONSQLite(ctx context.Context) (err error)
 				return fmt.Errorf("rebuild %s: %w", table, err)
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO sqlite_sequence(name, seq) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = ?)`, table, sequence, table); err != nil {
-			return fmt.Errorf("restore %s sequence: %w", table, err)
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = ?`, sequence, table); err != nil {
+		if err := advanceSubsetSQLiteSequence(ctx, tx, table, sequence); err != nil {
 			return fmt.Errorf("restore %s sequence: %w", table, err)
 		}
 		for _, index := range indexes {

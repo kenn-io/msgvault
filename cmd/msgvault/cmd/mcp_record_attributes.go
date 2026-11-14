@@ -294,11 +294,7 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 		current = map[string]any{"ordinal": ordinal, "superseded": superseded}
 	}
 	if name == "patch_attribute_definition" || name == "delete_attribute_definition" {
-		input, err := decodeMCPOperationArguments[attributeDefinitionArgs](args)
-		if err != nil {
-			return "", true, &mcpserver.OperationRefusalError{Code: attributeInvalidArguments}
-		}
-		result, _, err := b.executeRecordAttributeOperation(ctx, "get_attribute_definition", map[string]any{"definition_id": input.ID})
+		result, _, err := b.executeRecordAttributeOperation(ctx, "get_attribute_definition", map[string]any{"definition_id": args["definition_id"]})
 		if err != nil || result == nil || result.IsError {
 			return "", true, attributeContextRefusal(result)
 		}

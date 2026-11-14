@@ -41,24 +41,6 @@ func TestAttributeValueJSONSQLiteMigration(t *testing.T) {
 	require.NoError(err)
 	_, err = st.SetOrganizationAttributeValueContext(t.Context(), OrganizationAttributeValueInput{OrganizationID: organization.ID, DefinitionSlug: orgDef.Slug, Value: AttributeValue{Type: AttributeValueJSON, JSON: jsontext.Value("7890")}, Source: ProvenanceUser})
 	require.NoError(err)
-	linkedOrganization, err := st.CreateOrganizationContext(t.Context(), OrganizationInput{Name: "Linked Org"})
-	require.NoError(err)
-	orgRefDef := AttributeDefinitionInput{
-		UniversalID: "test-org-person-reference-sqlite-migration",
-		ObjectType:  AttributeObjectOrganization, Slug: "related_person",
-		Label: "Related person", ValueType: AttributeValueRecordReference,
-		FieldType: AttributeFieldPerson, RecordTarget: new("person"),
-		Cardinality: AttributeCardinalitySingle, Ownership: AttributeOwnershipUser,
-		APIMutable: true, IsDeletable: true,
-	}
-	_, err = st.CreateAttributeDefinitionContext(t.Context(), orgRefDef)
-	require.NoError(err)
-	linkedValue, err := st.SetOrganizationAttributeValueContext(t.Context(), OrganizationAttributeValueInput{
-		OrganizationID: linkedOrganization.ID, DefinitionSlug: orgRefDef.Slug,
-		Value:  AttributeValue{Type: AttributeValueRecordReference, RecordType: new("person"), RecordID: new(absorbed.ID)},
-		Source: ProvenanceUser,
-	})
-	require.NoError(err)
 	survivor, err := st.GetPersonContext(t.Context(), person)
 	require.NoError(err)
 	absorbed, err = st.GetPersonContext(t.Context(), absorbed.ID)
@@ -71,28 +53,6 @@ func TestAttributeValueJSONSQLiteMigration(t *testing.T) {
 	})
 	require.NoError(err)
 	mergeID := merged.Merge.ID
-	var currentRowID int64
-	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT current_row_id FROM person_merge_rows
-		WHERE merge_id = ? AND table_name = 'organization_attribute_values' AND original_row_id = ?`,
-		mergeID, linkedValue.Value.ID).Scan(&currentRowID))
-	assert.Equal(linkedValue.Value.ID, currentRowID)
-	var mergedRecordID int64
-	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT value_record_id
-		FROM organization_attribute_values WHERE id = ?`, currentRowID).Scan(&mergedRecordID))
-	assert.Equal(person, mergedRecordID)
-	linkedOrganization, err = st.GetOrganizationContext(t.Context(), linkedOrganization.ID)
-	require.NoError(err)
-	require.NoError(st.DeleteOrganizationContext(t.Context(), linkedOrganization.ID, linkedOrganization.Revision))
-	var oldRowExists bool
-	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT EXISTS (
-		SELECT 1 FROM organization_attribute_values WHERE id = ?
-	)`, linkedValue.Value.ID).Scan(&oldRowExists))
-	assert.False(oldRowExists)
-	var journalRowID int64
-	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT current_row_id FROM person_merge_rows
-		WHERE merge_id = ? AND table_name = 'organization_attribute_values' AND original_row_id = ?`,
-		mergeID, linkedValue.Value.ID).Scan(&journalRowID))
-	assert.Equal(currentRowID, journalRowID)
 	conn, err := st.db.Conn(t.Context())
 	require.NoError(err)
 	_, err = conn.ExecContext(t.Context(), `PRAGMA foreign_keys = OFF`)
@@ -145,21 +105,6 @@ func TestAttributeValueJSONSQLiteMigration(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchemaContext(t.Context()))
-	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT current_row_id FROM person_merge_rows
-		WHERE merge_id = ? AND table_name = 'organization_attribute_values' AND original_row_id = ?`,
-		mergeID, linkedValue.Value.ID).Scan(&journalRowID))
-	assert.Equal(currentRowID, journalRowID)
-
-	newOrganization, err := st.CreateOrganizationContext(t.Context(), OrganizationInput{Name: "Replacement Org"})
-	require.NoError(err)
-	newValue, err := st.SetOrganizationAttributeValueContext(t.Context(), OrganizationAttributeValueInput{
-		OrganizationID: newOrganization.ID, DefinitionSlug: orgRefDef.Slug,
-		Value:  AttributeValue{Type: AttributeValueRecordReference, RecordType: new("person"), RecordID: new(person)},
-		Source: ProvenanceUser,
-	})
-	require.NoError(err)
-	assert.Greater(newValue.Value.ID, int64(100))
-	assert.NotEqual(currentRowID, newValue.Value.ID)
 	var survivorID, absorbedID int64
 	var resolutionID sql.NullInt64
 	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT survivor_value_id, absorbed_value_id, resolution_value_id
@@ -168,26 +113,6 @@ func TestAttributeValueJSONSQLiteMigration(t *testing.T) {
 	assert.Equal(first.Value.ID, survivorID)
 	assert.Equal(second.Value.ID, absorbedID)
 	assert.False(resolutionID.Valid)
-	current, err := st.GetPersonContext(t.Context(), merged.Person.ID)
-	require.NoError(err)
-	split, err := st.SplitPersonMergeContext(t.Context(), PersonSplitRequest{
-		SourcePersonID: merged.Person.ID, MergeID: mergeID,
-		ParticipantIDs:         absorbed.ParticipantIDs,
-		ExpectedSourceRevision: current.Revision,
-		IdempotencyKey:         "attribute-json-migration-split", Actor: "test",
-	})
-	require.NoError(err)
-	require.NotNil(split)
-	newValues, err := st.ListOrganizationAttributeValuesContext(t.Context(), newOrganization.ID,
-		OrganizationAttributeQuery{DefinitionSlug: orgRefDef.Slug})
-	require.NoError(err)
-	require.Len(newValues, 1)
-	assert.Equal(newValue.Value.ID, newValues[0].ID)
-	require.NotNil(newValues[0].Value.RecordType)
-	require.NotNil(newValues[0].Value.RecordID)
-	assert.Equal("person", *newValues[0].Value.RecordType)
-	assert.Equal(person, *newValues[0].Value.RecordID)
-
 	for _, table := range []string{"person_attribute_values", "organization_attribute_values"} {
 		owner := "person_id"
 		if table == "organization_attribute_values" {

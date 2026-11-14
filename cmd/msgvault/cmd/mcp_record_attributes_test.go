@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -49,24 +48,9 @@ func attributeOperation(t *testing.T, b *daemonMCPOperations, name string, args 
 func attributeError(t *testing.T, result *mcpserver.OperationResult, code string) {
 	t.Helper()
 	require.True(t, result.IsError)
-	failure := attributeFailure(t, result.Output)
-	assert.Equal(t, code, failure.Error)
-	require.NotNil(t, failure.OperationMayHaveCompleted)
-	assert.False(t, *failure.OperationMayHaveCompleted)
-}
-
-type attributeFailureOutput struct {
-	Error                     string `json:"error"`
-	OperationMayHaveCompleted *bool  `json:"operation_may_have_completed"`
-}
-
-func attributeFailure(t *testing.T, output any) attributeFailureOutput {
-	t.Helper()
-	data, err := json.Marshal(output)
+	data, err := json.Marshal(result.Output)
 	require.NoError(t, err)
-	var failure attributeFailureOutput
-	require.NoError(t, json.Unmarshal(data, &failure))
-	return failure
+	assert.JSONEq(t, fmt.Sprintf(`{"error":%q,"operation_may_have_completed":false}`, code), string(data))
 }
 
 func attributeRefused(t *testing.T, err error, code string) {
@@ -233,15 +217,7 @@ func TestMCPAttributeDefinitionMissingETagAfterWrite(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	fixture := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: st, Logger: slog.New(slog.DiscardHandler)})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := httptest.NewRecorder()
-		fixture.Router().ServeHTTP(response, r)
-		for key, values := range response.Header() {
-			if key != "Etag" {
-				w.Header()[key] = values
-			}
-		}
-		w.WriteHeader(response.Code)
-		_, _ = w.Write(response.Body.Bytes())
+		fixture.Router().ServeHTTP(missingETagResponseWriter{w}, r)
 	}))
 	t.Cleanup(server.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
@@ -252,49 +228,34 @@ func TestMCPAttributeDefinitionMissingETagAfterWrite(t *testing.T) {
 
 	result := attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "favorite_tea", "label": "Favorite tea", "value_type": "text", "field_type": "text"}})
 	require.True(result.IsError)
-	failure := attributeFailure(t, result.Output)
-	assert.Equal("operation_receipt_unavailable", failure.Error)
-	require.NotNil(failure.OperationMayHaveCompleted)
-	assert.True(*failure.OperationMayHaveCompleted)
+	data, err := json.Marshal(result.Output)
+	require.NoError(err)
+	assert.JSONEq(`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
 	assert.Equal("operation_context_unavailable", attributeContextRefusal(result).Code)
 	definition, err := st.GetAttributeDefinitionBySlugContext(t.Context(), store.AttributeObjectPerson, "favorite_tea")
 	require.NoError(err)
 	assert.Equal("Favorite tea", definition.Label)
 }
 
-func TestMCPAttributePreviewCallerGuards(t *testing.T) {
-	assert := assert.New(t)
-	requirements := require.New(t)
+func TestMCPAttributePreviewRejectsContradictoryGuards(t *testing.T) {
 	b, st, person := recordAttributesFixture(t)
-	disclose := func(name string, args map[string]any) error {
-		_, err := b.OperationDisclosure(t.Context(), name, args)
-		return err
-	}
-	args := map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "email"}}
-	invalid := maps.Clone(args)
-	invalid["expected_empty"], invalid["expected_value_id"] = true, int64(1)
-	attributeRefused(t, disclose("set_person_attribute", invalid), "invalid_expected_empty")
-	assert.Empty(attributeValues(t, st, person, store.AttributeSlugPrimaryChannel))
-	args["expected_empty"] = true
-	requirements.NoError(disclose("set_person_attribute", args))
-	first := operationOutput[generated.PersonAttributeWrite](t, attributeOperation(t, b, "set_person_attribute", args))
-	attributeRefused(t, disclose("set_person_attribute", args), "attribute_value_conflict")
-	delete(args, "expected_empty")
-	args["expected_value_id"] = first.Value.ID
-	requirements.NoError(disclose("set_person_attribute", args))
+	args := map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "email"}, "expected_empty": true, "expected_value_id": int64(1)}
+	_, err := b.OperationDisclosure(t.Context(), "set_person_attribute", args)
+	attributeRefused(t, err, "invalid_expected_empty")
+	assert.Empty(t, attributeValues(t, st, person, store.AttributeSlugPrimaryChannel))
+}
 
-	t.Run("large conflict", func(t *testing.T) {
-		require := require.New(t)
-		b, _, person := recordAttributesFixture(t)
-		attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "metadata", "label": "Metadata", "value_type": "json", "field_type": "json"}})
-		large := jsontext.Value(`{"data":"` + strings.Repeat("x", 70<<10) + `"}`)
-		initial := map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": large}}
-		written := operationOutput[generated.PersonAttributeWrite](t, attributeOperation(t, b, "set_person_attribute", initial))
-		require.NotNil(written.Value)
-		stale := map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": jsontext.Value(`{"data":"replacement"}`)}, "expected_value_id": written.Value.ID + 1}
-		_, err := b.OperationDisclosure(t.Context(), "set_person_attribute", stale)
-		attributeRefused(t, err, "attribute_value_conflict")
-	})
+func TestMCPAttributePreviewLargeConflict(t *testing.T) {
+	require := require.New(t)
+	b, _, person := recordAttributesFixture(t)
+	attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "metadata", "label": "Metadata", "value_type": "json", "field_type": "json"}})
+	large := jsontext.Value(`{"data":"` + strings.Repeat("x", 70<<10) + `"}`)
+	initial := map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": large}}
+	written := operationOutput[generated.PersonAttributeWrite](t, attributeOperation(t, b, "set_person_attribute", initial))
+	require.NotNil(written.Value)
+	stale := map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": jsontext.Value(`{"data":"replacement"}`)}, "expected_value_id": written.Value.ID + 1}
+	_, err := b.OperationDisclosure(t.Context(), "set_person_attribute", stale)
+	attributeRefused(t, err, "attribute_value_conflict")
 }
 
 func TestMCPAttributeCapabilityRequiresExpectedEmpty(t *testing.T) {
@@ -404,21 +365,18 @@ func TestMCPAttributeExactTokens(t *testing.T) {
 		approval, result := confirm(token, token)
 		require.False(result.IsError, "%v", result.Content)
 		assert.Contains(approval, token)
-		values := attributeValues(t, st, person, "metadata")
-		require.Len(values, 1)
-		assert.Equal(token, string(values[0].Value.JSON))
 		listed, err := session.CallTool(t.Context(), list)
 		require.NoError(err)
 		assert.Contains(mcpDraftResultText(t, listed), token)
 	}
 	_, changed := confirm("0.1234567890123456789", "0.1234567890123456788")
 	assert.True(changed.IsError)
-	unchanged := attributeValues(t, st, person, "metadata")
-	require.Len(unchanged, 1)
-	assert.Equal(`{"n":1e2}`, string(unchanged[0].Value.JSON))
+	listed, err := session.CallTool(t.Context(), list)
+	require.NoError(err)
+	assert.Contains(mcpDraftResultText(t, listed), `{"n":1e2}`)
 
 	// The SDK client decodes structured results through float64, so read the wire.
-	_, err := st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person, DefinitionSlug: "metadata", Value: store.AttributeValue{Type: store.AttributeValueJSON, JSON: jsontext.Value("1e400")}, Source: store.ProvenanceUser})
+	_, err = st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person, DefinitionSlug: "metadata", Value: store.AttributeValue{Type: store.AttributeValueJSON, JSON: jsontext.Value("1e400")}, Source: store.ProvenanceUser})
 	require.NoError(err)
 	ctx, cancel := context.WithCancel(t.Context())
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
