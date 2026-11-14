@@ -259,6 +259,7 @@ export * from "./employment";
 export * from "./employmentBody";
 export * from "./employmentBodySource";
 export * from "./employmentProjectionResponse";
+export * from "./employmentRevision";
 export * from "./employmentsResponse";
 export * from "./employmentVCard";
 export * from "./endEmploymentBody";

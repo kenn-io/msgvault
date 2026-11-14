@@ -130,7 +130,7 @@ func TestMCPEmploymentCapabilities(t *testing.T) {
 		{"", "expected_primary", []string{"get_employment", "list_person_employments", "list_organization_employments", "end_employment", "delete_employment"}},
 	} {
 		t.Run(tc.missing+tc.property, func(t *testing.T) {
-			backend, _, _, _ := employmentFixture(t) //nolint:dogsled // shared fixture
+			backend, _, _, _ := employmentFixture(t)
 			capabilities, err := backend.client.MCPCapabilities(t.Context())
 			require.NoError(t, err)
 			capabilities.Routes = slices.DeleteFunc(capabilities.Routes, func(route apiprotocol.MCPRouteDescriptor) bool { return route.OperationID == tc.missing })
@@ -193,7 +193,6 @@ func TestMCPEmploymentApprovedPrimaryIsGuarded(t *testing.T) {
 	current, err = st.GetEmploymentContext(t.Context(), first.ID)
 	require.NoError(err)
 	assert.False(current.IsPrimary)
-
 }
 
 func legacyOperationSession(t *testing.T, b *daemonMCPOperations, family mcpserver.OperationFamily, handler func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error)) *sdkmcp.ClientSession {

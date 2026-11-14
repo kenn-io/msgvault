@@ -109,6 +109,7 @@ func exerciseApprovalMatrix(t *testing.T, makeCase func(*testing.T) approvalCase
 
 func TestApprovalMatrixSource(t *testing.T) {
 	exerciseApprovalMatrix(t, func(t *testing.T) approvalCase {
+		t.Helper()
 		st := testutil.NewTestStore(t)
 		source, err := st.GetOrCreateSource("gmail", "sender@example.test")
 		require.NoError(t, err)
@@ -122,6 +123,7 @@ func TestApprovalMatrixSource(t *testing.T) {
 
 func TestApprovalMatrixPersonName(t *testing.T) {
 	exerciseApprovalMatrix(t, func(t *testing.T) approvalCase {
+		t.Helper()
 		st := testutil.NewTestStore(t)
 		participant, err := st.EnsureParticipant("person@example.test", "Person", "example.test")
 		require.NoError(t, err)
@@ -140,6 +142,7 @@ func TestApprovalMatrixPersonName(t *testing.T) {
 
 func TestApprovalMatrixCuratedPerson(t *testing.T) {
 	exerciseApprovalMatrix(t, func(t *testing.T) approvalCase {
+		t.Helper()
 		b, id := personRecordFixture(t)
 		initial, err := b.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
 		require.NoError(t, err)
@@ -156,6 +159,7 @@ func TestApprovalMatrixCuratedPerson(t *testing.T) {
 
 func TestApprovalMatrixEmployment(t *testing.T) {
 	exerciseApprovalMatrix(t, func(t *testing.T) approvalCase {
+		t.Helper()
 		b, st, person, org := employmentFixture(t)
 		_, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Source: store.ProvenanceUser})
 		require.NoError(t, err)

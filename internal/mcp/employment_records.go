@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"maps"
 	"slices"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -40,10 +41,7 @@ func employmentOperationalDefinitions() []operationalDefinition {
 	}
 	createBody := *body
 	createBody.Required = append(slices.Clone(body.Required), "is_primary")
-	createBody.Properties = make(map[string]*jsonschema.Schema, len(body.Properties))
-	for key, value := range body.Properties {
-		createBody.Properties[key] = value
-	}
+	createBody.Properties = maps.Clone(body.Properties)
 	createBody.Properties["is_primary"] = booleanSchema("Whether this employment is primary")
 	record := outputSchemaFor[EmploymentRecord]()
 	list := outputSchemaFor[generated.EmploymentsResponse]()
