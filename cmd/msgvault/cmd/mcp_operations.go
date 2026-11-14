@@ -218,6 +218,9 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 	}
 	var output T
 	if err := json.Unmarshal(data, &output); err != nil {
+		if writes {
+			return operationFailure("operation_receipt_unavailable", true), err
+		}
 		return operationFailure("invalid_operation_response", writes), err
 	}
 	return &mcpserver.OperationResult{Output: output, ETag: response.Header.Get("ETag")}, nil

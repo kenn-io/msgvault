@@ -930,6 +930,12 @@ one second, then make a new call, which needs approval again. MCP never
 retries a write by itself. If a write reports
 `operation_may_have_completed: true`, list the loops again before retrying.
 
+## Write responses
+
+If an MCP operation write returns `operation_receipt_unavailable`, the write
+may have completed but its receipt could not be read. Read the current state
+before retrying.
+
 ## Write controls
 
 On unreleased `main`, owner sessions can read person attributes and definitions. Notes edits go
@@ -938,10 +944,6 @@ the value being replaced, and the write fails if it changes or an empty slot is 
 keep their spelling, except values PostgreSQL stored before this change; HTTP protocol `2026-07-28`
 and newer rejects numbers outside the float64 range, such as `1e400`. Listings and previews over
 1 MiB are refused; use `slug` or `history: false` to narrow a listing.
-
-If an MCP operation write returns `operation_receipt_unavailable`, the write
-may have completed but its receipt could not be read. Read the current state
-before retrying.
 
 Enable only the writes intended for the assistant's session:
 
