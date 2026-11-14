@@ -5,8 +5,10 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -249,6 +251,36 @@ func TestMCPAttributePreviewCallerGuards(t *testing.T) {
 		}
 	}
 	assert.NotContains(t, newDaemonMCPOperations(b.client, capabilities).capabilities(), "set_person_attribute")
+}
+
+func TestMCPAttributePreviewLargeConflict(t *testing.T) {
+	b, st, person := recordAttributesFixture(t)
+	attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "metadata", "label": "Metadata", "value_type": "json", "field_type": "json"}})
+	large := jsontext.Value(`{"data":"` + strings.Repeat("x", 70<<10) + `"}`)
+	initial := map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": large}}
+	written := operationOutput[generated.PersonAttributeWrite](t, attributeOperation(t, b, "set_person_attribute", initial))
+	require.NotNil(t, written.Value)
+	stale := map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": jsontext.Value(`{"data":"replacement"}`)}, "expected_value_id": written.Value.ID + 1}
+	preview := maps.Clone(stale)
+	preview["dry_run"] = true
+	method, path, options, ok := attributeRequest("set_person_attribute", preview)
+	require.True(t, ok)
+	response, err := b.client.DoGeneratedRequestWithErrorLimit(t.Context(), method, path, options, 1<<20)
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusConflict, response.StatusCode)
+	assert.Greater(t, len(body), 64<<10)
+	var conflict api.PersonAttributeConflictResponse
+	require.NoError(t, json.Unmarshal(body, &conflict))
+	assert.Equal(t, "attribute_value_conflict", conflict.Error)
+	_, err = b.OperationDisclosure(t.Context(), "set_person_attribute", stale)
+	attributeRefused(t, err, "attribute_value_conflict")
+	values := attributeValues(t, st, person, "metadata")
+	require.Len(t, values, 1)
+	assert.Equal(t, written.Value.ID, values[0].ID)
+	assert.Equal(t, string(large), string(values[0].Value.JSON))
 }
 
 type attributeRaceBackend struct {
