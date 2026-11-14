@@ -139,6 +139,12 @@ func TestMCPAttributeNotesFallbackRouting(t *testing.T) {
 	assert.Empty(approvals)
 	require.Len(attributeValues(t, st, person, notes), 1)
 	assert.Equal("original", *attributeValues(t, st, person, notes)[0].Value.Text)
+
+	result := call("set_person_attribute", map[string]any{"person_id": person, "slug": store.AttributeSlugNotes, "value": map[string]any{"type": "text", "text": "ordinary"}})
+	require.False(result.IsError)
+	values := attributeValues(t, st, person, store.AttributeSlugNotes)
+	require.Len(values, 1)
+	assert.Equal("ordinary", *values[0].Value.Text)
 }
 
 func TestMCPAttributeProvenance(t *testing.T) {
