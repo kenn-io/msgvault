@@ -21,6 +21,8 @@ func TestPersonExportReadWithoutWriteOptIn(t *testing.T) {
 	opts := ServeOptions{Operations: personExportTestBackend{}, OperationCapabilities: []string{"export_person_messages"}}
 	tools := toolsByName(t, rawListTools(t, opts, false))
 	assertions.Contains(tools, "export_person_messages")
+	assertions.Contains(tools["export_person_messages"]["description"], "unknown nonempty types match nothing")
+	assertions.Contains(tools["export_person_messages"]["description"], "unknown_source_N")
 	response := rawModernCall(t, opts, HTTPOptions{}, "tools/call", map[string]any{
 		"name": "export_person_messages",
 		"arguments": map[string]any{

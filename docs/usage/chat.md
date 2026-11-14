@@ -230,8 +230,6 @@ The `mcp` command starts a [Model Context Protocol](https://modelcontextprotocol
 
 ### Tools available for your archive
 
-On unreleased `main`, owner sessions can use `export_person_messages` to return native JSONL for one person within an explicit inclusive start and exclusive end. Optional source selectors and message types narrow the export. The tool refuses incomplete output and exports larger than 512 KiB; choose a smaller time window when needed.
-
 MCP lists calendar, meeting, chat, Slack, and draft tools when the archive has a source that supports them. CardDAV tools need a configured connection. Kata tools, including `get_person_agenda`, need `[integrations.kata]` enabled with an endpoint. An mbox-only archive retains search, messages, attachments, people, and Saved Views. Reconnect after adding a source or integration to refresh the list, including on the native daemon endpoints. Each discovery read has its own 10-second deadline. A failed read hides its families; successful reads keep theirs available. Family discovery controls tool listings; HTTP calls use the daemon's existing authorization and consent checks.
 
 Delegated sessions select tools from the grant's sources and permissions. They require daemon API schema 3.9.0 or newer; upgrade the daemon when the bridge requests it.
@@ -448,7 +446,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `list_messages` | List messages with filters | `from` (string), `to` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool), `conversation_id` (int), `limit` (int), `offset` (int), `account` (string) |
 | `list_thread` | List visible archived messages in one conversation, oldest first, with `has_raw` marking messages whose original `.eml` is stored. See [Export original emails](#export-original-emails). | exactly one of `id` (int), `source_message_id` (string), or `thread_id` (string); `account` (string), `limit` (1–500, default 100), `offset` (int) |
 | `export_eml` | Export one email's original `.eml` bytes in verified chunks. See [Export original emails](#export-original-emails). | exactly one of `id` (int) or `source_message_id` (string); `account` (string), `offset` (int), `length` (1–4194304, default 1048576), `sha256` (string, required after offset 0) |
-| `export_person_messages` | Export one person's messages as bounded native JSONL. | `person_id` (int), `start` (RFC3339), `end` (RFC3339); optional `sources` (string array), `message_types` (string array) |
+| `export_person_messages` | Export one person's messages as native JSONL, limited to 512 KiB. | `person_id` (int), `start` (RFC3339), `end` (RFC3339); optional `sources` (string array), `message_types` (string array) |
 | `get_attachment` | Get attachment content by ID. Pass `offset` or `length` to receive verified chunks instead of one embedded blob. | `attachment_id` (int), `offset` (int), `length` (int), `sha256` (string, required after offset 0) |
 | `export_attachment` | Save attachment to filesystem | `attachment_id` (int), `destination` (string) |
 | `get_stats` | Archive overview statistics, plus each account's `LastSyncAt` and its `virtual_accounts`, whose keys the `account` argument takes. Includes vector index state when configured. | — |

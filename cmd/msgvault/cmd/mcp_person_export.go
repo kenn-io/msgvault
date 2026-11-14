@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -11,7 +12,7 @@ import (
 )
 
 const mcpPersonExportLimit = 512 << 10
-const mcpPersonExportErrorTailLimit = 4 << 10
+const mcpPersonExportErrorTailLimit = 16 << 10
 
 type mcpPersonExportArgs struct {
 	PersonID     int64    `json:"person_id"`
@@ -29,26 +30,17 @@ func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map
 	if err != nil {
 		return refuse("invalid_arguments")
 	}
-	command := newExportMessagesCmd(defaultExportMessagesDeps())
-	flags := command.Flags()
-	for name, value := range map[string]string{"person-id": strconv.FormatInt(input.PersonID, 10), "start": input.Start, "end": input.End} {
-		if err := flags.Set(name, value); err != nil {
-			return refuse("invalid_arguments")
-		}
+	argv := []string{
+		"export-messages",
+		"--person-id=" + strconv.FormatInt(input.PersonID, 10),
+		"--start=" + input.Start,
+		"--end=" + input.End,
 	}
-	for _, value := range input.Sources {
-		if err := flags.Set("source", value); err != nil {
-			return refuse("invalid_arguments")
-		}
+	for _, source := range input.Sources {
+		argv = append(argv, "--source="+source)
 	}
-	for _, value := range input.MessageTypes {
-		if err := flags.Set("message-type", value); err != nil {
-			return refuse("invalid_arguments")
-		}
-	}
-	argv, err := daemonCLIArgsFromCobra(command, nil)
-	if err != nil {
-		return refuse("invalid_arguments")
+	for _, messageType := range input.MessageTypes {
+		argv = append(argv, "--message-type="+messageType)
 	}
 	var output strings.Builder
 	var stderr []byte
@@ -78,20 +70,48 @@ func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map
 		return operationFailure(local.APIErrorCode(), false), nil
 	}
 	if err != nil {
-		if _, cliRunError := errors.AsType[*daemonclient.CLIRunError](err); cliRunError && isMCPPersonExportArgumentError(string(stderr)) {
-			return refuse("invalid_arguments")
+		if _, cliRunError := errors.AsType[*daemonclient.CLIRunError](err); cliRunError {
+			if code := personExportRefusalCode(lastMCPPersonExportErrorLine(stderr), input.Sources); code != "" {
+				return refuse(code)
+			}
 		}
 		return refuse("export_failed")
 	}
 	return &mcpserver.OperationResult{Output: mcpserver.PersonExport{JSONL: output.String()}}, nil
 }
 
-func isMCPPersonExportArgumentError(stderr string) bool {
-	return strings.Contains(stderr, "invalid --start ") ||
-		strings.Contains(stderr, "invalid --end ") ||
-		strings.Contains(stderr, "--start must be before --end") ||
-		strings.Contains(stderr, "--message-type must be non-empty") ||
-		strings.Contains(stderr, "invalid --source ") ||
-		strings.Contains(stderr, "source ") && strings.Contains(stderr, " not found") ||
-		strings.Contains(stderr, "resolve durable person ") && strings.Contains(stderr, "person not found")
+func lastMCPPersonExportErrorLine(stderr []byte) string {
+	lines := strings.Split(string(stderr), "\n")
+	for i := range slices.Backward(lines) {
+		line := strings.TrimSuffix(lines[i], "\r")
+		if strings.HasPrefix(line, "Error: ") {
+			return line
+		}
+	}
+	return ""
+}
+
+func personExportRefusalCode(line string, sources []string) string {
+	switch {
+	case strings.HasPrefix(line, "Error: invalid --start "):
+		return "invalid_start"
+	case strings.HasPrefix(line, "Error: invalid --end "):
+		return "invalid_end"
+	case line == "Error: --start must be before --end":
+		return "invalid_window"
+	case line == "Error: --message-type must be non-empty":
+		return "invalid_message_type"
+	case strings.HasPrefix(line, "Error: resolve --person-id: resolve durable person ") &&
+		strings.HasSuffix(line, ": person not found"):
+		return "unknown_person"
+	}
+	for i, source := range sources {
+		if strings.HasPrefix(line, "Error: invalid --source "+strconv.Quote(source)+" ") {
+			return "invalid_source_" + strconv.Itoa(i+1)
+		}
+		if line == "Error: source "+source+" not found" {
+			return "unknown_source_" + strconv.Itoa(i+1)
+		}
+	}
+	return ""
 }
