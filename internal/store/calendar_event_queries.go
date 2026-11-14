@@ -31,7 +31,7 @@ const maxCalendarSeries = 2000
 const maxCalendarExceptions = 20000
 const calendarCandidateMargin = 28 * time.Hour
 
-var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''),
+var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''), e.projection_version,
  m.deleted_from_source_at IS NOT NULL, EXISTS (SELECT 1 FROM message_raw raw WHERE raw.message_id=m.id AND raw.raw_format='ics'),
  e.ical_uid, e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
  e.status, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
@@ -99,12 +99,16 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 		var original, start, end sql.NullTime
 		var originalDate, recurrence string
 		var uid sql.NullString
-		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.DeletedFromSource, &row.ics,
+		var version int
+		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &version, &row.DeletedFromSource, &row.ics,
 			&uid, &e.ProviderEventID, &e.SeriesProviderID, &e.Kind, &original, &originalDate, &e.Status, &e.AllDay,
 			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence)
 		if err != nil {
 			_ = result.Close()
 			return nil, fmt.Errorf("scan calendar event: %w", err)
+		}
+		if version > calendarEventProjectionVersion {
+			return nil, newMeetingSelectionError(ErrMeetingProjectionUnavailable, []int64{row.MessageID})
 		}
 		e.ICalUID = uid.String
 		if originalDate != "" {

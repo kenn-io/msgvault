@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -11,6 +12,34 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/calrecur"
 )
+
+func TestMeetingRecordRejectsUpgradedArchive(t *testing.T) {
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00Z"}}`
+	_, seed := projectionFixture(t, st, "seed", "twenty_json", raw)
+	_, peer := projectionFixture(t, st, "peer", "twenty_json", raw)
+	_, err := st.db.Exec(`UPDATE meeting_details SET projection_version = ?, link_key = ? WHERE message_id = ?`, meetingProjectionVersion+1, `future-key`, peer)
+	require.NoError(err)
+	_, err = st.db.Exec(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`, strconv.Itoa(SchemaVersion+1))
+	require.NoError(err)
+	require.ErrorContains(st.InitSchemaContext(t.Context()), "newer")
+	_, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: seed})
+	require.ErrorIs(err, ErrMeetingProjectionUnavailable)
+}
+
+func TestMeetingRecordRejectsFutureCalendarProjection(t *testing.T) {
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "event", `{"id":"event","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	_, err := st.db.Exec(`UPDATE calendar_events SET projection_version = ? WHERE message_id = ?`, calendarEventProjectionVersion+1, event)
+	require.NoError(err)
+	for _, ref := range []MeetingLinkRef{{Kind: "evt", MessageID: event}, {Kind: "msg", MessageID: note}} {
+		_, err := st.MeetingRecordContext(t.Context(), ref)
+		require.ErrorIs(err, ErrMeetingProjectionUnavailable)
+	}
+}
 
 func TestMeetingRecordRejectsFutureLinkProjection(t *testing.T) {
 	for _, tc := range []struct {
