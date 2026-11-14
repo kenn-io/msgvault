@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"testing"
 
-	Assert "github.com/stretchr/testify/assert"
-	Require "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	imaplib "go.kenn.io/msgvault/internal/imap"
@@ -43,24 +43,24 @@ func eventsWithError(events *[]api.CLIRunEvent, run func() error) ([]api.CLIRunE
 }
 func lintObject(t *testing.T, events []api.CLIRunEvent) map[string]any {
 	t.Helper()
-	Require.NotEmpty(t, events)
+	require.NotEmpty(t, events)
 	var got map[string]any
-	Require.NoError(t, json.Unmarshal([]byte(events[0].Data), &got))
+	require.NoError(t, json.Unmarshal([]byte(events[0].Data), &got))
 	return got
 }
 func assertDraftRows(t *testing.T, st *store.Store) {
 	t.Helper()
 	for _, table := range []string{"imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts", "attachments"} {
 		var n int
-		Require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&n))
-		Assert.Zero(t, n, table)
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&n))
+		assert.Zero(t, n, table)
 	}
 }
 func TestDraftReplyStrictRefuses(t *testing.T) {
 	for _, provider := range []string{"imap", sourceTypeGmail} {
 		t.Run(provider, func(t *testing.T) {
-			assert := Assert.New(t)
-			require := Require.New(t)
+			assert := assert.New(t)
+			require := require.New(t)
 
 			var a *storeAPIAdapter
 			var st *store.Store
@@ -104,8 +104,8 @@ func TestDraftReplyStrictRefuses(t *testing.T) {
 func TestDraftReplyLintAndProvenanceWarnings(t *testing.T) {
 	for _, allow := range []bool{false, true} {
 		t.Run(fmt.Sprintf("allow=%t", allow), func(t *testing.T) {
-			assert := Assert.New(t)
-			require := Require.New(t)
+			assert := assert.New(t)
+			require := require.New(t)
 
 			f := newDraftReplyFixture(t)
 			args := []string{"--body", "Hi FIRST_NAME", "--json"}
@@ -146,7 +146,7 @@ func TestDraftReplyLintAndProvenanceWarnings(t *testing.T) {
 
 func TestValidateOnlyWritesNothing(t *testing.T) {
 	t.Run("imap", func(t *testing.T) {
-		assert := Assert.New(t)
+		assert := assert.New(t)
 
 		f := newDraftReplyFixture(t)
 		a := f.grantedAdapter()
@@ -155,7 +155,7 @@ func TestValidateOnlyWritesNothing(t *testing.T) {
 			return nil, errors.New("unexpected call")
 		}
 		events, err := f.run(t, a, "--body", "Hi FIRST_NAME", "--validate-only", "--strict", "--json")
-		Require.NoError(t, err)
+		require.NoError(t, err)
 		got := lintObject(t, events)
 		assert.Equal("validated", got["status"])
 		assert.Equal(false, got["valid"])
@@ -164,7 +164,7 @@ func TestValidateOnlyWritesNothing(t *testing.T) {
 		assertDraftRows(t, f.store)
 	})
 	t.Run("chat", func(t *testing.T) {
-		require := Require.New(t)
+		require := require.New(t)
 
 		st := testutil.NewTestStore(t)
 		source, err := st.GetOrCreateSource("slack", "synthetic")
@@ -175,7 +175,7 @@ func TestValidateOnlyWritesNothing(t *testing.T) {
 		events, err := lintRun(t, a, nil, "draft-compose", "--conversation", strconv.FormatInt(id, 10), "--body", "Hi Sam,", "--validate-only", "--json")
 		require.NoError(err)
 		got := lintObject(t, events)
-		Assert.Nil(t, got["recipients"])
+		assert.Nil(t, got["recipients"])
 		assertDraftRows(t, st)
 	})
 }
@@ -189,8 +189,8 @@ func TestGmailDraftReplyValidateOnlyChecksScopes(t *testing.T) {
 		{"both allowed", oauth.ScopeGmailModify, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert := Assert.New(t)
-			require := Require.New(t)
+			assert := assert.New(t)
+			require := require.New(t)
 
 			f := newGmailDraftTestFixture(t)
 			_, state := setupCommandOAuth(t)
@@ -221,8 +221,8 @@ func TestGmailDraftReplyValidateOnlyChecksScopes(t *testing.T) {
 }
 
 func TestValidateOnlyReplyAllMatchesCreate(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 
 	f := newDraftReplyFixture(t)
 	raw, err := f.store.GetMessageRawContext(t.Context(), f.parentID)
@@ -255,9 +255,6 @@ func TestValidateOnlyReplyAllMatchesCreate(t *testing.T) {
 }
 
 func TestDraftLintParsers(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-
 	// Exercise each existing command parser, including forward delegation.
 	for _, tc := range []struct {
 		name  string
@@ -282,8 +279,8 @@ func TestDraftLintParsers(t *testing.T) {
 		}, []string{"draft-edit", "draft", "--revision", "1", "--body", "ok"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert := Assert.New(t)
-			require := Require.New(t)
+			assert := assert.New(t)
+			require := require.New(t)
 			for _, flag := range []string{"strict", "allow-placeholders", "validate-only"} {
 				values := []string{""}
 				if tc.name == "reply" {
@@ -315,6 +312,9 @@ func TestDraftLintParsers(t *testing.T) {
 			}
 		})
 	}
+	assert := assert.New(t)
+	require := require.New(t)
+
 	got, err := parseDraftComposeArgs([]string{"draft-compose", "--source-id", "1", "--to", "a@example.com", "--body", "--strict"})
 	require.NoError(err)
 	assert.Equal("--strict", got.Body)
@@ -336,8 +336,8 @@ func TestDraftLintParsers(t *testing.T) {
 
 func TestValidateOnlyEditWritesNothing(t *testing.T) {
 	t.Run("imap", func(t *testing.T) {
-		assert := Assert.New(t)
-		require := Require.New(t)
+		assert := assert.New(t)
+		require := require.New(t)
 
 		f := newDraftReplyFixture(t)
 		a := f.grantedAdapter()
@@ -363,8 +363,8 @@ func TestValidateOnlyEditWritesNothing(t *testing.T) {
 		assert.Equal(before, after)
 	})
 	t.Run(sourceTypeGmail, func(t *testing.T) {
-		assert := Assert.New(t)
-		require := Require.New(t)
+		assert := assert.New(t)
+		require := require.New(t)
 
 		f := newGmailDraftTestFixture(t)
 		draft := f.seedDraft(t)
@@ -380,7 +380,7 @@ func TestValidateOnlyEditWritesNothing(t *testing.T) {
 		assert.Nil(after.Pending)
 	})
 	t.Run("chat", func(t *testing.T) {
-		require := Require.New(t)
+		require := require.New(t)
 
 		st := testutil.NewTestStore(t)
 		s, err := st.GetOrCreateSource("slack", "synthetic")
@@ -394,11 +394,11 @@ func TestValidateOnlyEditWritesNothing(t *testing.T) {
 		require.NoError(err)
 		after, err := st.GetChatDraftContext(t.Context(), draft.DraftID)
 		require.NoError(err)
-		Assert.Equal(t, draft, after)
+		assert.Equal(t, draft, after)
 	})
 	t.Run("beeper", func(t *testing.T) {
-		assert := Assert.New(t)
-		require := Require.New(t)
+		assert := assert.New(t)
+		require := require.New(t)
 
 		f := newBeeperDraftFixture(t)
 		draft, err := f.store.CreateBeeperDraftContext(t.Context(), f.source.ID, beeperDraftTestChat, "original")
@@ -421,7 +421,7 @@ func TestValidateOnlyEditWritesNothing(t *testing.T) {
 	})
 }
 func TestGmailDraftEditValidateOnlyChecksScope(t *testing.T) {
-	assert := Assert.New(t)
+	assert := assert.New(t)
 
 	f := newGmailDraftTestFixture(t)
 	draft := f.seedDraft(t)
@@ -438,15 +438,15 @@ func TestGmailDraftEditValidateOnlyChecksScope(t *testing.T) {
 		events = append(events, event)
 		return nil
 	})
-	Require.EqualError(t, err, "insufficient_scope")
+	require.EqualError(t, err, "insufficient_scope")
 	assert.Empty(events)
 	assert.Equal(before, f.client.getCalls)
 	assert.Zero(f.client.updateCalls)
 }
 
 func TestDraftForwardValidateAndStrict(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 
 	f := newDraftReplyFixture(t)
 	a := f.grantedAdapter()
@@ -467,8 +467,8 @@ func TestDraftForwardValidateAndStrict(t *testing.T) {
 
 func TestDraftChatAndBeeperReportLint(t *testing.T) {
 	t.Run("chat", func(t *testing.T) {
-		assert := Assert.New(t)
-		require := Require.New(t)
+		assert := assert.New(t)
+		require := require.New(t)
 
 		st := testutil.NewTestStore(t)
 		s, err := st.GetOrCreateSource("slack", "synthetic")
@@ -495,8 +495,8 @@ func TestDraftChatAndBeeperReportLint(t *testing.T) {
 		assert.Contains(events[0].Data, "unresolved_placeholder")
 	})
 	t.Run("beeper", func(t *testing.T) {
-		assert := Assert.New(t)
-		require := Require.New(t)
+		assert := assert.New(t)
+		require := require.New(t)
 
 		f := newBeeperDraftFixture(t)
 		_, err := lintRun(t, f.adapter, nil, "draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "Hi FIRST_NAME", "--strict", "--json")
@@ -520,8 +520,8 @@ func TestDraftChatAndBeeperReportLint(t *testing.T) {
 func TestBeeperDraftBlankValidateOnlyPreview(t *testing.T) {
 	for _, edit := range []bool{false, true} {
 		t.Run(fmt.Sprintf("edit=%t", edit), func(t *testing.T) {
-			assert := Assert.New(t)
-			require := Require.New(t)
+			assert := assert.New(t)
+			require := require.New(t)
 
 			f := newBeeperDraftFixture(t)
 			args := []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat}
@@ -557,11 +557,11 @@ func TestBeeperDraftBlankWritesUnchanged(t *testing.T) {
 			args := []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "  "}
 			if edit {
 				draft, err := f.create(t, nil, "existing")
-				Require.NoError(t, err)
+				require.NoError(t, err)
 				args = []string{"draft-edit", draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10), "--body", "  "}
 			}
 			_, err := lintRun(t, f.adapter, nil, args...)
-			Require.EqualError(t, err, "invalid_args")
+			require.EqualError(t, err, "invalid_args")
 		})
 	}
 }
@@ -569,8 +569,8 @@ func TestBeeperDraftBlankWritesUnchanged(t *testing.T) {
 func TestGmailDraftStrictPendingEditRecovery(t *testing.T) {
 	for _, accepted := range []bool{false, true} {
 		t.Run(fmt.Sprintf("accepted=%t", accepted), func(t *testing.T) {
-			assert := Assert.New(t)
-			require := Require.New(t)
+			assert := assert.New(t)
+			require := require.New(t)
 
 			f := newGmailDraftTestFixture(t)
 			draft := f.seedDraft(t)
@@ -605,8 +605,8 @@ func TestGmailDraftStrictPendingEditRecovery(t *testing.T) {
 func TestBeeperDraftValidateOnlyRequiresArchivedChat(t *testing.T) {
 	for _, otherAccount := range []bool{false, true} {
 		t.Run(fmt.Sprintf("other_account=%t", otherAccount), func(t *testing.T) {
-			assert := Assert.New(t)
-			require := Require.New(t)
+			assert := assert.New(t)
+			require := require.New(t)
 
 			f := newBeeperDraftFixture(t)
 			chatID := "!missing:beeper.local"
