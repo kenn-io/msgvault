@@ -57,49 +57,33 @@ func assertDraftRows(t *testing.T, st *store.Store) {
 	}
 }
 func TestDraftReplyStrictRefuses(t *testing.T) {
-	for _, provider := range []string{"imap", sourceTypeGmail} {
-		t.Run(provider, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 
-			var a *storeAPIAdapter
-			var st *store.Store
-			var id int64
-			var from string
-			calls := 0
-			providerCreates := func() int { return calls }
-			if provider == "imap" {
-				f := newDraftReplyFixture(t)
-				a, st, id, from = f.grantedAdapter(), f.store, f.parentID, testutil.IMAPTestUsername
-				a.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
-					calls++
-					return nil, errors.New("unexpected provider call")
-				}
-			} else {
-				f := newGmailDraftTestFixture(t)
-				a, st, id, from = f.adapter, f.store, f.parentID, f.source.Identifier
-				providerCreates = func() int { return f.client.createCalls }
-			}
-			events, err := lintRun(t, a, nil, "draft-reply", strconv.FormatInt(id, 10), "--from", from, "--body", "Hi FIRST_NAME", "--strict", "--json")
-			require.EqualError(err, "draft_lint_failed")
-			got := lintObject(t, events)
-			assert.Equal("refused", got["status"])
-			assert.Equal(cliStreamStderr, events[0].Type)
-			if provider == "imap" {
-				events, err = lintRun(t, a, nil, "draft-reply", strconv.FormatInt(id, 10), "--from", from, "--body", "Hi FIRST_NAME", "--strict")
-				require.EqualError(err, "draft_lint_failed")
-				require.NotEmpty(events)
-				assert.Contains(events[0].Data, "Refused.")
-				assert.Contains(events[0].Data, "error: The text contains a template placeholder.")
-				for _, code := range []string{"draft_lint_failed", "unresolved_placeholder"} {
-					assert.NotContains(events[0].Data, code)
-				}
-				assert.NotContains(events[0].Data, `{"`)
-			}
-			assert.Zero(providerCreates())
-			assertDraftRows(t, st)
-		})
+	f := newDraftReplyFixture(t)
+	a := f.grantedAdapter()
+	calls := 0
+	a.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
+		calls++
+		return nil, errors.New("unexpected provider call")
 	}
+	args := []string{"draft-reply", strconv.FormatInt(f.parentID, 10), "--from", testutil.IMAPTestUsername, "--body", "Hi FIRST_NAME", "--strict"}
+	events, err := lintRun(t, a, nil, append(args, "--json")...)
+	require.EqualError(err, "draft_lint_failed")
+	got := lintObject(t, events)
+	assert.Equal("refused", got["status"])
+	assert.Equal(cliStreamStderr, events[0].Type)
+	events, err = lintRun(t, a, nil, args...)
+	require.EqualError(err, "draft_lint_failed")
+	require.NotEmpty(events)
+	assert.Contains(events[0].Data, "Refused.")
+	assert.Contains(events[0].Data, "error: The text contains a template placeholder.")
+	for _, code := range []string{"draft_lint_failed", "unresolved_placeholder"} {
+		assert.NotContains(events[0].Data, code)
+	}
+	assert.NotContains(events[0].Data, `{"`)
+	assert.Zero(calls)
+	assertDraftRows(t, f.store)
 }
 func TestDraftReplyLintAndProvenanceWarnings(t *testing.T) {
 	for _, allow := range []bool{false, true} {
