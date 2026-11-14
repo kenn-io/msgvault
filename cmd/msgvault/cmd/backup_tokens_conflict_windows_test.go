@@ -75,6 +75,7 @@ func TestBackupRestorePermissionConflictAfterPublication(t *testing.T) {
 	info, readErr := os.Stat(db)
 	require.NoError(readErr)
 	require.NoError(os.Rename(omitted, filepath.Join(t.TempDir(), "omitted")))
+	backupRestoreOverwrite = false
 	var output bytes.Buffer
 	rootCmd.SetOut(&output)
 	rootCmd.SetArgs([]string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", manifest.SnapshotID, "--repo", repo.Root(), "--target", target, "--permissions-only"})

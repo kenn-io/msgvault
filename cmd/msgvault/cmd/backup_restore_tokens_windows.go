@@ -4,7 +4,7 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -23,27 +23,27 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 	}
 	lease, err := repo.AcquireSharedLock("secure restored tokens", forceUnlock)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("lock snapshot repository: %w", err)
 	}
 	defer func() { err = errors.Join(err, lease.Release()) }()
 	manifest, err := repo.LoadManifest(snapshotID)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("load snapshot manifest: %w", err)
 	}
 	if !manifest.Options.IncludeTokens || manifest.Extras.Tree == "" {
 		return 0, nil
 	}
 	id, err := pack.ParseBlobID(manifest.Extras.Tree)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("parse snapshot extras tree ID: %w", err)
 	}
 	index, err := repo.LoadBlobIndex()
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("load snapshot blob index: %w", err)
 	}
 	raw, err := repo.ReadBlob(index, id, nil, backupapp.New(Version).PackFileExtension())
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("read snapshot extras tree: %w", err)
 	}
 	var tree backup.ExtrasTree
 	if err := json.Unmarshal(raw, &tree); err != nil {

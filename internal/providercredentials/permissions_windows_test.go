@@ -476,7 +476,7 @@ func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
 	assertions.Equal(beforeSelected, descriptor(selected, false))
 	assertions.Equal(beforeOmitted, descriptor(omitted, false))
 	_, err = os.Stat(filepath.Join(dir, ".provider-credentials.lock"))
-	assertions.ErrorIs(err, os.ErrNotExist)
+	requirements.ErrorIs(err, os.ErrNotExist)
 	requirements.NoError(os.Remove(omitted))
 	requirements.NoError(SecureRestored(dir, []string{filepath.Join("nested", "selected")}))
 	h, err := openSecurityHandle(selected, false, windows.READ_CONTROL)
@@ -484,7 +484,11 @@ func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
 	defer windows.CloseHandle(h) //nolint:errcheck
 	requirements.NoError(verifyOwnerOnlyHandle(h, false))
 
-	setProviderCredentialTestACL(t, dir, []windows.EXPLICIT_ACCESS{access}, true)
+	setProviderCredentialTestACL(t, dir, []windows.EXPLICIT_ACCESS{access, providerCredentialTestAccess(windowsProviderCredentialSID(t), windows.GENERIC_READ, windows.TRUSTEE_IS_WELL_KNOWN_GROUP)}, true)
+	dirHandle, err := openSecurityHandle(dir, true, windows.READ_CONTROL)
+	requirements.NoError(err)
+	defer windows.CloseHandle(dirHandle) //nolint:errcheck
+	requirements.Error(verifyOwnerOnlyHandle(dirHandle, false))
 	requirements.NoError(os.WriteFile(omitted, []byte("omitted"), 0600))
 	omittedHandle, err := openSecurityHandle(omitted, false, windows.READ_CONTROL)
 	requirements.NoError(err)
@@ -495,7 +499,7 @@ func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
 	requirements.NoError(err)
 	requirements.True(inherited)
 	beforeOmitted = descriptor(omitted, false)
-	requirements.NoError(SecureRestored(dir, []string{filepath.Join("nested", "selected")}))
+	requirements.ErrorIs(SecureRestored(dir, []string{filepath.Join("nested", "selected")}), ErrRestorePermissionsConflict)
 	assertions.Equal(beforeOmitted, descriptor(omitted, false))
 }
 
@@ -558,7 +562,9 @@ func TestSecureRestoredSkipsUnreadableProtectedDirectory(t *testing.T) {
 	require.NoError(t, os.Mkdir(omitted, 0o700))
 	child := filepath.Join(omitted, "child")
 	require.NoError(t, os.WriteFile(child, []byte("unchanged"), 0o600))
-	handle := setProviderCredentialTestACL(t, omitted, nil, true)
+	handle := setProviderCredentialTestACL(t, omitted, []windows.EXPLICIT_ACCESS{
+		providerCredentialTestAccess(currentWindowsProviderCredentialSID(t), windows.READ_CONTROL, windows.TRUSTEE_IS_USER),
+	}, true)
 	t.Cleanup(func() { require.NoError(t, secureOwnerOnlyHandle(handle)) })
 	before, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	require.NoError(t, err)
@@ -573,5 +579,4 @@ func TestSecureRestoredSkipsUnreadableProtectedDirectory(t *testing.T) {
 	after, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	require.NoError(t, err)
 	assert.Equal(t, before.String(), after.String())
-
 }
