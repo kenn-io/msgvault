@@ -104,6 +104,7 @@ describe('FactLedgerController', () => {
     await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
     expect(controller.evidence.rows[0]?.excerpt).toBe('allowed excerpt fresh');
     expect(controller.claims.rows[0]?.submittedValue).toBe('allowed value fresh');
+    expect(controller.claims.rows[0]).toMatchObject({ kind: 'preference', status: 'stale' });
   });
 
   it('keeps independent successful lanes usable and retries only the failed lane with bounded errors', async () => {
