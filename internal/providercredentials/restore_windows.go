@@ -54,7 +54,7 @@ func SecureRestored(dir string, restored []string) error {
 			changed = append(changed, ".")
 		}
 		for _, name := range changed {
-			if err := restorePreflight(dir, name, restored, ancestors); err != nil {
+			if err := restorePreflight(dir, name, restored, ancestors, changed); err != nil {
 				return err
 			}
 		}
@@ -76,8 +76,8 @@ func SecureRestored(dir string, restored []string) error {
 	})
 }
 
-func restorePreflight(dir, changed string, selected, ancestors []string) error {
-	root := filepath.Join(dir, changed)
+func restorePreflight(dir, changedDir string, selected, ancestors, changed []string) error {
+	root := filepath.Join(dir, changedDir)
 	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return fmt.Errorf("inspect tokens: %w", walkErr)
@@ -106,6 +106,9 @@ func restorePreflight(dir, changed string, selected, ancestors []string) error {
 			return fmt.Errorf("inspect tokens/%s: %w", rel, err)
 		}
 		if containsPath(ancestors, rel) {
+			if control&windows.SE_DACL_PROTECTED != 0 && !containsPath(changed, rel) {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		if entry.IsDir() && control&windows.SE_DACL_PROTECTED != 0 {
