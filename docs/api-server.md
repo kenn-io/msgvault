@@ -29,7 +29,7 @@ Connect AI assistants through the [native MCP endpoints](usage/chat.md#native-da
 
 ### Filename suggestions
 
-Newer than the latest release, API schema 3.15 adds
+API schema 3.15 adds
 `POST /api/v1/files/suggest` and `POST /api/v1/people/{id}/files/suggest`.
 They suggest attachment filenames without changing existing file or message
 search. Both are read-only operations under existing owner authentication;
@@ -166,9 +166,13 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.1.0**.
+it is separate from the binary release version. The current schema is **5.3.0**.
 
-Schema 5.1.0 adds [message archiving](#message-archiving) and incoming sender restrictions for delegated grants.
+Schema 5.3.0 adds [message and Beeper chat archiving](#message-archiving) and incoming sender restrictions for delegated grants.
+
+Schema 5.2.0 adds open Kata issue search and optional task search queries.
+
+Schema 5.1.0 adds time-zone-aware Month and Year grouping, group overviews, and item totals for time groups.
 
 Schema 5.0.0 changes `content_available` in file lists and suggestions from a
 boolean to a nullable boolean. A null value means storage has not been checked;
@@ -428,7 +432,7 @@ returns `409 person_uid_ambiguous`.
 
 `POST /api/v1/messages/{id}/archive` sets a Gmail message's archive state or the
 state of the entire Beeper chat containing a message.
-Requires API schema 5.1.0 and owner authorization or a `message.archive` grant
+Requires API schema 5.3.0 and owner authorization or a `message.archive` grant
 for the message's source. Beeper requires API schema 5.3.0 and `whole_chat: true`.
 Other providers return 501 `archive_unsupported`.
 
@@ -453,7 +457,8 @@ to restore the chat). This affects the whole chat, including messages newer than
 the local archive. The result also includes `chat_id`. Sender-restricted grants
 cannot archive Beeper chats and receive `404 message_not_found`; use an owner
 or a source-wide `message.archive` grant. Beeper state is read live, checked
-against the source account, and verified after writing. Missing archive state
+against the source account, and verified after writing. Merged or redirected
+chats are refused rather than affecting another source. Missing archive state
 returns `archive_unsupported`; an uncertain write or failed readback returns
 `remote_unknown`. No local message labels are changed.
 
@@ -471,7 +476,7 @@ or invalid From targets return `404 message_not_found`, matching wrong-source
 targets. A token without `message.archive` receives `403 permission_denied`
 before the message lookup.
 
-Raw API callers must check that `/api/v1/health` reports `api_schema_version` 5.1.0 or newer before issuing `incoming_senders`: older daemons ignore this field and issue an unrestricted grant.
+Raw API callers must check that `/api/v1/health` reports `api_schema_version` 5.3.0 or newer before issuing `incoming_senders`: older daemons ignore this field and issue an unrestricted grant.
 
 Gmail writes require `gmail.modify` or `mail.google.com`. Missing consent returns
 403 `insufficient_scope`; reauthorize with `msgvault add-account <account> --force`.
@@ -2020,7 +2025,7 @@ Recording search requires Docbank's source-selected search contract: `media_sour
 
 Schema 3.27.0 adds optional `attachments` with `results`, `truncated`, and optional `error` containing `error` and `message`. Each result has `message_id`, `conversation_id`, `attachment_id`, `filename`, `containing_title`, optional `occurred_at`, and a plain `excerpt`. It searches delivered mirror versions using text Docbank has extracted. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. A Docbank result limit or occurrence limit sets `truncated`, meaning more may match. Docbank may include filename-only candidates in its limit even when all extracted-text matches fit. Visibility and Person scope apply to both lists. The limit applies independently to each list. An empty attachment list without an error means no match in extracted text and says nothing about files whose text Docbank hasn't extracted.
 
-Schema 4.2.0 (newer `main`, after v0.23.0) accepts `mode=semantic` and
+Schema 4.2.0 accepts `mode=semantic` and
 `mode=hybrid` for attachment text. `attachments` adds `requested_mode`,
 `actual_mode`, `coverage`, `partial`, and `degradations`. `actual_mode` is
 `unavailable` when no search ran or remote retrieval failed. Coverage describes
@@ -2866,11 +2871,13 @@ Grouping, person filters, semantic and hybrid search, per-row exact-match counts
 `message_type`, `mailing_list`, `kind`, `year`, `month`, or `day`.
 `day` returns `YYYY-MM-DD` keys and counts individual messages; other
 dimensions count entries, with chats collapsed into conversations.
-`timezone` sets the IANA time zone for day grouping and defaults to `UTC`.
+`timezone` sets the IANA time zone for day, month, and year grouping and defaults to `UTC`. It also sets the calendar dates in a keyed group's activity overview.
 Day rows include `level` for calendar shading only when the page contains every day row. It ranks each count across that complete day set; partial pages and keyed lookups omit `level`.
 `sent_only: true` excludes drafts and unsent items from the counts.
 Day grouping is request-only and cannot be stored in a saved view.
 Files grouping (`POST /api/v1/files/groups`) uses UTC days and has no `timezone` parameter.
+
+Month and year rows include `total_items`, the number of entries across all matching time groups before pagination. A `group_key` lookup for a matching non-day group adds `overview` with its `first_at` timestamp, an `activity` series, and up to three `co_participants`. Activity buckets are days for month groups and months for other groups.
 
 ### Preflight an analytical selection {#post-apiv1explorepreflight}
 
@@ -2978,7 +2985,7 @@ by an agent without rebuilding its query.
 | `DELETE` | `/api/v1/saved-views/{id}` | Delete a view definition. Requires `If-Match`. Never touches archive messages. |
 | `POST` | `/api/v1/saved-views/{id}/run` | Execute a view through its canonical Explore definition. |
 
-New definitions use `schema_version: 2`. The daemon reads schema 1 with pipes as literal text in full-text queries. `canonical_state` is a closed object. The daemon rejects a
+Definitions with local-calendar date bounds use `schema_version: 3`; UTC-only definitions use version 2. Numeric offsets in schema 3 preserve local calendar dates; offsets in older definitions retain their UTC meaning. The daemon reads schema 1 with pipes as literal text in full-text queries. `canonical_state` is a closed object. The daemon rejects a
 definition it could not execute, so every stored view can be opened by the
 Web UI and run by the API:
 
@@ -3036,16 +3043,19 @@ that endpoint applies:
 - Every other view runs `POST /api/v1/explore` as a table. Timeline is a
   client-side rendering of the same entry rows.
 
+Grouped runs use UTC by default. Month and Year groups sort newest first; other groups sort by descending count. The saved sort applies to entry results.
+
 ```json
 {
   "limit": 20,
-  "cursor": "eyJvZmZzZXQiOjIwLC..."
+  "cursor": "eyJvZmZzZXQiOjIwLC...",
+  "timezone": "America/New_York"
 }
 ```
 
 `limit` is `1` to `100` and defaults to `100`. `cursor` is the opaque
 `next_cursor` from the previous page and is omitted for the first page. An
-empty object `{}` is a valid body.
+empty object `{}` is a valid body. `timezone` is an optional IANA time zone for calendar groups; use the same zone for each page.
 
 ```json
 {

@@ -5060,6 +5060,33 @@ components:
         - dimension
         - values
       type: object
+    ExploreGroupActivity:
+      additionalProperties: true
+      properties:
+        bucket:
+          type: string
+        count:
+          format: int64
+          type: integer
+      required:
+        - bucket
+        - count
+      type: object
+    ExploreGroupCoParticipant:
+      additionalProperties: true
+      properties:
+        count:
+          format: int64
+          type: integer
+        key:
+          type: string
+        label:
+          type: string
+      required:
+        - key
+        - label
+        - count
+      type: object
     ExploreGroupDimension:
       enum:
         - source
@@ -5072,6 +5099,25 @@ components:
         - month
         - day
       type: string
+    ExploreGroupOverview:
+      additionalProperties: true
+      properties:
+        activity:
+          items:
+            $ref: "#/components/schemas/ExploreGroupActivity"
+          type: array
+        co_participants:
+          items:
+            $ref: "#/components/schemas/ExploreGroupCoParticipant"
+          type: array
+        first_at:
+          format: date-time
+          type: string
+      required:
+        - first_at
+        - activity
+        - co_participants
+      type: object
     ExploreGroupRow:
       additionalProperties: true
       properties:
@@ -5096,6 +5142,9 @@ components:
             - THIRD_QUARTILE
             - FOURTH_QUARTILE
           type: string
+        total_items:
+          format: int64
+          type: integer
       required:
         - key
         - label
@@ -5168,7 +5217,7 @@ components:
           maxItems: 1
           type: array
         timezone:
-          description: IANA timezone for day grouping; defaults to UTC
+          description: IANA timezone for day, month, and year grouping; defaults to UTC
           type: string
       required:
         - grouping
@@ -5182,6 +5231,8 @@ components:
           type: string
         next_cursor:
           type: string
+        overview:
+          $ref: "#/components/schemas/ExploreGroupOverview"
         rows:
           items:
             $ref: "#/components/schemas/ExploreGroupRow"
@@ -7144,7 +7195,7 @@ components:
             $ref: "#/components/schemas/KataIssueReceipt"
           type: array
         truncated:
-          description: "The list may omit issues that cite this source: more matched than were returned, or some issues could not be checked"
+          description: "The list may omit matching issues: more matched than were returned, or some citations could not be checked"
           type: boolean
       required:
         - issues
@@ -14685,6 +14736,9 @@ components:
           maximum: 100
           minimum: 0
           type: integer
+        timezone:
+          description: IANA timezone for calendar grouping; defaults to UTC
+          type: string
       type: object
     RunSavedViewResponse:
       additionalProperties: true
@@ -16439,7 +16493,11 @@ components:
           items:
             $ref: "#/components/schemas/TaskSummary"
           type: array
+        truncated:
+          description: More tasks matched than were returned
+          type: boolean
       required:
+        - truncated
         - tasks
       type: object
     TaskSummary:
@@ -24170,6 +24228,63 @@ paths:
       summary: Add exact archive evidence to an existing Kata issue
       tags:
         - API
+  /api/v1/integrations/kata/open-issues:
+    get:
+      operationId: listOpenKataIssues
+      parameters:
+        - description: Search open issue text by whole word or enter an exact qualified ref, including closed issues, up to 256 bytes
+          in: query
+          name: q
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataIssueListResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List or search Kata issues in the configured project
+      tags:
+        - API
   /api/v1/integrations/kata/status:
     get:
       operationId: getKataIntegrationStatus
@@ -24195,10 +24310,9 @@ paths:
     get:
       operationId: searchIntegrationTasks
       parameters:
-        - description: Task title search within the configured project
+        - description: Task title search within the configured project; omit to list tasks
           in: query
           name: q
-          required: true
           schema:
             type: string
       responses:
@@ -31763,7 +31877,7 @@ paths:
       tags:
         - API
     patch:
-      description: Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR.
+      description: Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR, or 3 for local date offsets.
       operationId: patchSavedView
       parameters:
         - description: Saved View ID

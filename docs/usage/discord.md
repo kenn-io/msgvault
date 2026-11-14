@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-03
+last_edited: "2026-11-10"
 title: Discord
-description: Archive Discord guild channels, threads, and attachments through a read-only bot.
+description: Import personal Discord data packages or archive guild channels through a read-only bot.
 ---
 
 msgvault can archive Discord guild history into the same local database as
@@ -11,6 +11,40 @@ conversation. Messages use `message_type = discord`.
 
 Discord sync is read-only. It never sends or edits messages, reacts, changes
 membership, or moderates a guild.
+
+## Import a personal data package
+
+Import an extracted official
+[Discord data package](https://support.discord.com/hc/en-us/articles/360004957991-Your-Discord-Data-Package):
+
+```bash
+msgvault import-discord-package /path/to/extracted-package
+```
+
+A package contains only the exporting account's **sent messages**, including
+DMs. Messages from other people are not in it. Importing needs no Discord
+credentials or network access.
+
+- The package directory must contain `account/user.json` and `messages/`
+  (`Account` and `Messages` also work). ZIP files are not supported; extract
+  the package first.
+- Run the command on the daemon host. A remote client cannot upload a package.
+- Legacy CSV transcripts are supported. JSON transcripts from current packages
+  are experimental: they have not yet been checked against a real export.
+- Each exporting account gets its own `discord_package` source, separate from
+  bot guild sources, even when both hold the same message.
+- Message and channel IDs, original text, timestamps, and channel metadata are
+  kept. A timestamp without a time zone is resolved from the message ID.
+- Attachment URLs are stored as links. Media is not downloaded.
+- Packages with more than 100,000 channel folders are refused.
+
+The command reports how many channels and messages it imported, updated, or
+skipped, with skip reasons, even when it stops partway.
+
+Re-running the import updates each message to the latest package without
+creating duplicates. Messages missing from a newer package are kept. After an
+interruption, run the same command again. Use `--no-default-identity` to skip
+assigning this account to your default identity.
 
 ## Scope and prerequisites
 

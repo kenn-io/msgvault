@@ -1449,7 +1449,7 @@ document_profile = "documents"
 | `attachment_upload_consent` | `false` | Allow attachment bytes from all sources, including future imports, to leave msgvault. Without consent, status reports mirroring as disabled |
 | `document_profile` | Empty | Docbank profile used to process mirrored attachments and search their text |
 | `attachment_folder` | `/msgvault` | Clean absolute virtual directory path; missing directories are created in Docbank |
-| `attachment_search_profile` | `""` | On newer `main` builds, name an existing Docbank processing profile for semantic/hybrid attachment retrieval. Does not queue processing or embeddings |
+| `attachment_search_profile` | `""` | Name an existing Docbank processing profile for semantic/hybrid attachment retrieval. Does not queue processing or embeddings |
 
 Set `document_profile` to a Docbank profile with a rendition stage that extracts text. Processing covers mirrored files except declared images, audio, and video, while a live message holds them. Attachment search also includes images with text already processed in Docbank. In Docbank, run `docbank processing plan <path-or-id> --profile <name>` on one mirrored file, review the plan, then run `docbank processing build <path-or-id> --profile <name> --plan-fingerprint <fp> --consent`. This grants consent for that profile across documents. msgvault always sends `consent:false`; consent stays in Docbank.
 
@@ -1490,7 +1490,7 @@ HTTP API, and MCP expose `docbank` receipts containing `endpoint`, `folder`,
 `node_id`, `version_id`, and `blob_hash`, so callers can open the corresponding
 Docbank file. List and search views omit these receipts. URL-only attachments are excluded from discovery. Details recover a hashless Slack or Discord attachment's hash from its trusted CAS storage path. The mirror reads these aliases from loose files or retained pack entries and verifies their SHA-256. It sends attachment content and excludes thumbnails from `thumbnail_hash`. Missing or corrupt archive bytes fail only that file. Docbank processes mirrored documents and supplies their searchable text.
 
-#### Search document text through Docbank (unreleased)
+#### Search document text through Docbank
 
 Configure a Docbank rendition profile, such as a Docling profile, and set its name in `[integrations.docbank] document_profile`. Docbank's daemon must support the chosen processor. A Mistral profile needs Docbank v0.17.0 or later. Create the five seed files and run `docbank processing probe --profile <name> --seeds <dir>` to write its capability manifest, as [Docbank's Mistral OCR configuration](https://github.com/kenn-io/docbank/blob/main/docs/configuration.md#document-ocr-with-mistral) describes. It replaces `msgvault documents probe-mistral`.
 
@@ -1641,7 +1641,7 @@ before choosing media caps or configuring a remote daemon.
 
 ### `[[facebook_comments]]` {#facebook-comments}
 
-Select one Facebook Page for comment ingestion (unreleased). See
+Select one Facebook Page for comment ingestion. See
 [Facebook Page comments](usage/facebook-comments.md) for token setup, coverage,
 and recovery. Tokens are read only from the named daemon environment variable.
 
@@ -1673,8 +1673,8 @@ keys, and invalid schedules are rejected. The source identifier is
 
 ### `[[instagram_comments]]` {#instagram-comments}
 
-Select a professional Instagram account linked to an explicitly selected Page
-(unreleased). See [Instagram comments](usage/instagram-comments.md) for setup
+Select a professional Instagram account linked to an explicitly selected Page.
+See [Instagram comments](usage/instagram-comments.md) for setup
 and coverage. Each profile requires `identifier`, `app_id`, `page_id`,
 `instagram_account_id`, and `token_env`; `enabled` defaults to `false`, and
 an empty `schedule` means manual sync only.
@@ -1687,6 +1687,22 @@ environment variable. Renaming the label preserves archive identity.
 The canonical source identifier is
 `app:<app_id>:page:<page_id>:instagram:<instagram_account_id>`; its generic
 scheduler job is `instagram_comments:<source-identifier>`.
+
+### `[feeds]` {#feeds}
+
+Fetch the RSS, Atom, and JSON feeds followed with `msgvault source feeds add`. The
+feeds themselves are kept in the archive, not here; see [Feeds](usage/feeds.md).
+
+```toml
+[feeds]
+enabled = true                    # gate for the daemon schedule
+schedule = "*/30 * * * *"         # 5-field cron; empty = manual sync only
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Whether the daemon schedules feed sync |
+| `schedule` | — | Cron expression used by `msgvault serve` |
 
 ### `[[chatwoot]]` {#chatwoot}
 
@@ -2182,8 +2198,8 @@ Text embeddings use a configured endpoint or the shared local `kennembed` server
 | `document_prefix` | `""` | Model-specific instruction prepended to every document chunk after chunking (for example, `"search_document: "` for `nomic-embed-text`). The prefix does not reduce `max_input_chars`; maximum 4096 UTF-8 bytes. |
 | `query_prefix` | `""` | Model-specific instruction prepended to every vector-search query (for example, `"search_query: "` for `nomic-embed-text`); maximum 4096 UTF-8 bytes. |
 | `api_key_env` | — | Name of an environment variable containing the API key. Omit for anonymous endpoints. |
-| `batch_size` | `32` | Embedding inputs per HTTP call. Long messages can contribute multiple chunk inputs. |
-| `timeout` | `30s` | Per-request timeout. |
+| `batch_size` | `32`, or `8` for `local_only` | Embedding inputs per HTTP call. Long messages can contribute multiple chunk inputs. |
+| `timeout` | `30s`, or `5m` for `local_only` | Per-request timeout. |
 | `max_retries` | `3` | Retries per batch on transient failures. |
 | `max_input_chars` | `32768` | Character cap per embedding chunk, counted in characters rather than tokens. Too high and chunks are rejected or silently truncated; too low and long messages split into more chunks, adding embedding overhead. For example, start around `6000` for a 2k-token model such as Ollama's `nomic-embed-text`, then check representative content. See [Matching `max_input_chars` to your embedder's context window](usage/vector-search.md#matching-max_input_chars-to-your-embedders-context-window). |
 | `eta_window` | `10` | Number of completed batches used for foreground throughput and ETA smoothing; daemon status retains at most 20. Zero or negative values use 10. |

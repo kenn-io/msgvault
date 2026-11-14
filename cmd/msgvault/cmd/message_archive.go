@@ -18,9 +18,9 @@ type messageArchiveBackend interface {
 func newMessageArchiveCommand(archived bool, backend messageArchiveBackend) *cobra.Command {
 	var id int64
 	var dryRun, asJSON, wholeChat bool
-	name, short := "archive", "Archive a Gmail message or a Beeper chat"
+	name, short := "archive", "Archive mail or Beeper chats"
 	if !archived {
-		name, short = "unarchive", "Restore a Gmail message or a Beeper chat to its inbox"
+		name, short = "unarchive", "Restore mail or Beeper chats"
 	}
 	cmd := &cobra.Command{
 		Use: name + " --message <id>", Short: short, Args: cobra.NoArgs,
@@ -38,9 +38,6 @@ func newMessageArchiveCommand(archived bool, backend messageArchiveBackend) *cob
 				client = st
 			}
 			minVersion := daemonclient.MessageArchiveMinAPISchemaVersion
-			if wholeChat {
-				minVersion = "5.3.0"
-			}
 			supported, err := client.SupportsAPISchemaVersion(cmd.Context(), minVersion)
 			if err != nil {
 				return fmt.Errorf("check daemon archive support: %w", err)
@@ -70,7 +67,7 @@ func newMessageArchiveCommand(archived bool, backend messageArchiveBackend) *cob
 		},
 	}
 	cmd.Flags().Int64Var(&id, "message", 0, "Archived message ID")
-	cmd.Flags().BoolVar(&wholeChat, "whole-chat", false, "Archive the entire Beeper chat containing this message")
+	cmd.Flags().BoolVar(&wholeChat, "whole-chat", false, "Apply to the entire Beeper chat containing this message")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview without writing")
 	cmd.Flags().BoolVar(&asJSON, flagJSON, false, "Output result as JSON")
 	return cmd

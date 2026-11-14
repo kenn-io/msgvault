@@ -654,7 +654,7 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 }
 
 func TestDelegatedMCPArchiveCapability(t *testing.T) {
-	for _, version := range []string{"5.0.0", "5.1.0"} {
+	for _, version := range []string{"5.0.0", "5.1.0", "5.2.0", "5.3.0"} {
 		t.Run(version, func(t *testing.T) {
 			assertionsForTest := assert.New(t)
 			requirementsForTest := require.New(t)
@@ -675,7 +675,7 @@ func TestDelegatedMCPArchiveCapability(t *testing.T) {
 			t.Cleanup(func() { _ = client.Close() })
 			opts, err := delegatedMCPServeOptions(t.Context(), client)
 			requirementsForTest.NoError(err)
-			if version == "5.0.0" {
+			if version != "5.3.0" {
 				assertionsForTest.Nil(opts.MessageArchive)
 			} else {
 				assertionsForTest.NotNil(opts.MessageArchive)

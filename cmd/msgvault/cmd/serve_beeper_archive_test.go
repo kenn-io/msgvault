@@ -22,6 +22,7 @@ func TestBeeperArchive(t *testing.T) {
 	for _, tc := range []struct {
 		name                                                                                           string
 		before, desired, dry, whole, restricted, wrongSource, wrongAccount, missingState, failReadback bool
+		merged, ignoreWrite                                                                            bool
 		wantCode                                                                                       string
 		writes                                                                                         int
 	}{
@@ -34,6 +35,8 @@ func TestBeeperArchive(t *testing.T) {
 		{name: "sender restricted", desired: true, whole: true, restricted: true, wantCode: "message_not_found"},
 		{name: "wrong source", desired: true, whole: true, wrongSource: true, wantCode: "message_not_found"},
 		{name: "account mismatch", desired: true, whole: true, wrongAccount: true, wantCode: "stale_identity"},
+		{name: "merged chat", desired: true, whole: true, merged: true, wantCode: "stale_identity"},
+		{name: "readback mismatch", desired: true, whole: true, ignoreWrite: true, writes: 1, wantCode: "remote_unknown"},
 		{name: "unsupported state", desired: true, whole: true, missingState: true, wantCode: "archive_unsupported"},
 		{name: "readback failure", desired: true, whole: true, failReadback: true, writes: 1, wantCode: "remote_unknown"},
 	} {
@@ -57,7 +60,9 @@ func TestBeeperArchive(t *testing.T) {
 					var payload map[string]bool
 					require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
 					assert.Equal(t, map[string]bool{"archived": tc.desired}, payload)
-					archived = payload["archived"]
+					if !tc.ignoreWrite {
+						archived = payload["archived"]
+					}
 					writes++
 					w.WriteHeader(http.StatusNoContent)
 					return
@@ -74,6 +79,9 @@ func TestBeeperArchive(t *testing.T) {
 					account = "other"
 				}
 				state := map[string]any{"id": chatID, "accountID": account}
+				if tc.merged {
+					state["mergedIntoChatID"] = "!another:example.test"
+				}
 				if !tc.missingState {
 					state["isArchived"] = archived
 				}

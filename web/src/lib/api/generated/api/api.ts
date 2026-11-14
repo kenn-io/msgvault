@@ -238,6 +238,7 @@ import type {
   ListMessageRecordingsPathParameters,
   ListMessageTasksPathParameters,
   ListMessagesParams,
+  ListOpenKataIssuesParams,
   ListOperationRunsParams,
   ListOrganizationAttributesParams,
   ListOrganizationAttributesPathParameters,
@@ -2164,6 +2165,18 @@ export const linkKataEvidence = (
   );
 };
 /**
+ * @summary List or search Kata issues in the configured project
+ */
+export const listOpenKataIssues = (
+  params?: ListOpenKataIssuesParams,
+  options?: SecondParameter<typeof orvalFetch<KataIssueListResponse>>,
+) => {
+  return orvalFetch<KataIssueListResponse>(
+    { url: `/api/v1/integrations/kata/open-issues`, method: "GET", params },
+    options,
+  );
+};
+/**
  * @summary Get Kata person agenda availability
  */
 export const getKataIntegrationStatus = (
@@ -2178,7 +2191,7 @@ export const getKataIntegrationStatus = (
  * @summary Search tasks in the configured project
  */
 export const searchIntegrationTasks = (
-  params: SearchIntegrationTasksParams,
+  params?: SearchIntegrationTasksParams,
   options?: SecondParameter<typeof orvalFetch<TaskSearchResponse>>,
 ) => {
   return orvalFetch<TaskSearchResponse>(
@@ -3976,7 +3989,7 @@ export const getSavedView = (
   );
 };
 /**
- * Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR.
+ * Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR, or 3 for local date offsets.
  * @summary Update a shared analytical Saved View
  */
 export const patchSavedView = (

@@ -4719,6 +4719,62 @@ func (e ExploreFilter) Validate() error {
 	return errors
 }
 
+type ExploreGroupActivity struct {
+	Bucket string `json:"bucket" validate:"required"`
+	Count  int64  `json:"count"`
+}
+
+func (e ExploreGroupActivity) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type ExploreGroupCoParticipant struct {
+	Count int64  `json:"count"`
+	Key   string `json:"key" validate:"required"`
+	Label string `json:"label" validate:"required"`
+}
+
+func (e ExploreGroupCoParticipant) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type ExploreGroupOverview struct {
+	Activity       []ExploreGroupActivity      `json:"activity" validate:"required"`
+	CoParticipants []ExploreGroupCoParticipant `json:"co_participants" validate:"required"`
+	FirstAt        time.Time                   `json:"first_at" validate:"required"`
+}
+
+func (e ExploreGroupOverview) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.Activity, "required"); err != nil {
+		errors = errors.Append("Activity", err)
+	}
+	for i, item := range e.Activity {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Activity[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.CoParticipants, "required"); err != nil {
+		errors = errors.Append("CoParticipants", err)
+	}
+	for i, item := range e.CoParticipants {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("CoParticipants[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.FirstAt, "required"); err != nil {
+		errors = errors.Append("FirstAt", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ExploreGroupRow struct {
 	Count          int64                 `json:"count"`
 	EstimatedBytes int64                 `json:"estimated_bytes"`
@@ -4726,6 +4782,7 @@ type ExploreGroupRow struct {
 	Label          string                `json:"label" validate:"required"`
 	LatestAt       time.Time             `json:"latest_at" validate:"required"`
 	Level          *ExploreGroupRowLevel `json:"level,omitempty"`
+	TotalItems     *int64                `json:"total_items,omitempty"`
 }
 
 func (e ExploreGroupRow) Validate() error {
@@ -4795,7 +4852,7 @@ type ExploreGroupsHTTPRequest struct {
 	SentOnly *bool              `json:"sent_only,omitempty"`
 	Sort     []ExploreGroupSort `json:"sort,omitempty"`
 
-	// Timezone IANA timezone for day grouping; defaults to UTC
+	// Timezone IANA timezone for day, month, and year grouping; defaults to UTC
 	Timezone *string `json:"timezone,omitzero"`
 }
 
@@ -4863,20 +4920,28 @@ func (e ExploreGroupsHTTPRequest) Validate() error {
 }
 
 type ExploreGroupsHTTPResponse struct {
-	CacheRevision       string            `json:"cache_revision" validate:"required"`
-	CandidateSnapshotID *string           `json:"candidate_snapshot_id,omitzero"`
-	NextCursor          *string           `json:"next_cursor,omitzero"`
-	Rows                []ExploreGroupRow `json:"rows" validate:"required"`
-	SearchDeletionScope *string           `json:"search_deletion_scope,omitzero"`
-	SearchProvenance    SearchProvenance  `json:"search_provenance"`
-	TotalCount          int64             `json:"total_count"`
-	Warnings            []string          `json:"warnings,omitempty"`
+	CacheRevision       string                `json:"cache_revision" validate:"required"`
+	CandidateSnapshotID *string               `json:"candidate_snapshot_id,omitzero"`
+	NextCursor          *string               `json:"next_cursor,omitzero"`
+	Overview            *ExploreGroupOverview `json:"overview,omitempty"`
+	Rows                []ExploreGroupRow     `json:"rows" validate:"required"`
+	SearchDeletionScope *string               `json:"search_deletion_scope,omitzero"`
+	SearchProvenance    SearchProvenance      `json:"search_provenance"`
+	TotalCount          int64                 `json:"total_count"`
+	Warnings            []string              `json:"warnings,omitempty"`
 }
 
 func (e ExploreGroupsHTTPResponse) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(e.CacheRevision, "required"); err != nil {
 		errors = errors.Append("CacheRevision", err)
+	}
+	if e.Overview != nil {
+		if v, ok := any(e.Overview).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Overview", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(e.Rows, "required"); err != nil {
 		errors = errors.Append("Rows", err)
@@ -6976,7 +7041,7 @@ func (k KataIssueCreateRequest) Validate() error {
 type KataIssueListResponse struct {
 	Issues []KataIssueReceipt `json:"issues" validate:"required"`
 
-	// Truncated The list may omit issues that cite this source: more matched than were returned, or some issues could not be checked
+	// Truncated The list may omit matching issues: more matched than were returned, or some citations could not be checked
 	Truncated bool `json:"truncated"`
 }
 
@@ -14578,6 +14643,9 @@ func (r Result) Validate() error {
 type RunSavedViewRequest struct {
 	Cursor *string `json:"cursor,omitzero"`
 	Limit  *int64  `json:"limit,omitempty" validate:"omitempty,gte=0,lte=100"`
+
+	// Timezone IANA timezone for calendar grouping; defaults to UTC
+	Timezone *string `json:"timezone,omitzero"`
 }
 
 func (r RunSavedViewRequest) Validate() error {
@@ -16420,6 +16488,9 @@ func (t TaskLinkTask) Validate() error {
 
 type TaskSearchResponse struct {
 	Tasks []TaskSummary `json:"tasks" validate:"required"`
+
+	// Truncated More tasks matched than were returned
+	Truncated bool `json:"truncated"`
 }
 
 func (t TaskSearchResponse) Validate() error {
