@@ -277,8 +277,19 @@ func TestPersonFactEvidenceHTTPVisibleOnlyFollowsCurrentSensitivity(t *testing.T
 	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	srv, st, personID, targets := newPersonFactAPIFixtureWithoutClaims(t)
-	applyPersonFactAPIGeneration(t, st, personID, targets[store.AttributeSlugPrimaryChannel], "visibility", `"chat"`)
+	srv, st, personID, _ := newPersonFactAPIFixtureWithoutClaims(t)
+	definition, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: "test-api-visibility", ObjectType: store.AttributeObjectPerson, Slug: "api_visibility_fixture", Label: "Visibility fixture", Description: new("A synthetic fact"), ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, APIMutable: true, IsDeletable: true})
+	requirements.NoError(err)
+	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), false)
+	requirements.NoError(err)
+	var target personfacts.TargetDescriptor
+	for _, item := range catalog.Targets {
+		if item.Key == definition.UniversalID {
+			target = item
+		}
+	}
+	requirements.NotEmpty(target.Key)
+	applyPersonFactAPIGeneration(t, st, personID, target, "visibility", `"chat"`)
 	evidenceCount := func(query string) int {
 		t.Helper()
 		response := doRequest(t, srv.Router(), http.MethodGet,
@@ -288,9 +299,7 @@ func TestPersonFactEvidenceHTTPVisibleOnlyFollowsCurrentSensitivity(t *testing.T
 		requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
 		return len(body.Evidence)
 	}
-	assertions.Equal(1, evidenceCount("?visible_only=true"))
-
-	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE attribute_definitions SET is_sensitive = TRUE WHERE slug = ?`), store.AttributeSlugPrimaryChannel)
+	_, err = st.UpdateAttributeDefinitionContext(t.Context(), definition.ID, definition.Revision, store.AttributeDefinitionUpdate{IsSensitive: new(true)})
 	requirements.NoError(err)
 	assertions.Zero(evidenceCount("?visible_only=true"))
 	assertions.Equal(1, evidenceCount(""))

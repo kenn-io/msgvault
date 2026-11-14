@@ -20,7 +20,7 @@ func TestPersonFactEvidenceVisibleTargets(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st, personID := newPersonFactLedgerStore(t)
-	publicTarget, restrictedTarget := personFactLedgerCatalogTargets(t, st)
+	publicTarget, restrictedTarget, definition := personFactLedgerCatalogTargets(t, st)
 	public := personFactLedgerClaim(personID, "public", `"chat"`, "public")
 	public.Target = publicTarget
 	restricted := personFactLedgerClaim(personID, "restricted", `"restricted"`, "restricted")
@@ -31,44 +31,23 @@ func TestPersonFactEvidenceVisibleTargets(t *testing.T) {
 	public.SubmittedValue = []byte(`"shared"`)
 	prepared = preparePersonFactLedgerGeneration(t, personID, "visibility", []personfacts.ProposedClaim{public, restricted}, nil)
 	persistPersonFactLedgerGeneration(t, st, prepared, nil)
-	markPersonFactLedgerTargetSensitive(t, st)
 	target := personfacts.TargetRef{Kind: publicTarget.Kind, Key: publicTarget.Key, Revision: publicTarget.Revision}
+	page, err := st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{Target: &target, VisibleOnly: true})
+	requirements.NoError(err)
+	requirements.Len(page, 2, "shared evidence stays visible while both targets are public")
+	_, err = st.UpdateAttributeDefinitionContext(t.Context(), definition.ID, definition.Revision, AttributeDefinitionUpdate{IsSensitive: new(true)})
+	requirements.NoError(err)
 	unfiltered, err := st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{Target: &target, Limit: 3})
 	requirements.NoError(err)
 	requirements.Len(unfiltered, 2)
 	assertions.NotEqual("Synthetic evidence public", unfiltered[0].Input.Excerpt)
-	page, err := st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{Target: &target, VisibleOnly: true, Limit: 1})
+	page, err = st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{Target: &target, VisibleOnly: true, Limit: 1})
 	requirements.NoError(err)
 	requirements.Len(page, 1)
 	assertions.Equal("Synthetic evidence public", page[0].Input.Excerpt)
 	page, err = st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{Target: &target, VisibleOnly: true, Limit: 1, Offset: 1})
 	requirements.NoError(err)
 	assertions.Empty(page)
-}
-
-func TestPersonFactEvidenceOmitsSharedExcerptAfterSensitivityChange(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	st, personID := newPersonFactLedgerStore(t)
-	publicTarget, changingTarget := personFactLedgerCatalogTargets(t, st)
-	public := personFactLedgerClaim(personID, "public", `"chat"`, "shared")
-	public.Target = publicTarget
-	changing := personFactLedgerClaim(personID, "changing", `"shared"`, "shared")
-	changing.Target = changingTarget
-	prepared := preparePersonFactLedgerGeneration(t, personID, "shared", []personfacts.ProposedClaim{public, changing}, nil)
-	persistPersonFactLedgerGeneration(t, st, prepared, nil)
-	target := personfacts.TargetRef{Kind: publicTarget.Kind, Key: publicTarget.Key, Revision: publicTarget.Revision}
-	visibleOnly := personfacts.EvidenceFilter{Target: &target, VisibleOnly: true}
-	page, err := st.ListPersonFactEvidenceContext(t.Context(), personID, visibleOnly)
-	requirements.NoError(err)
-	requirements.Len(page, 1, "evidence shared with a visible target stays visible")
-	markPersonFactLedgerTargetSensitive(t, st)
-	page, err = st.ListPersonFactEvidenceContext(t.Context(), personID, visibleOnly)
-	requirements.NoError(err)
-	assertions.Empty(page, "evidence shared with a newly sensitive target must be omitted")
-	page, err = st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{Target: &target})
-	requirements.NoError(err)
-	assertions.Len(page, 1, "unfiltered evidence access must not apply visibility")
 }
 
 func TestPersonFactGenerationEnvelopeOwnsMultipleClaims(t *testing.T) {
@@ -726,29 +705,23 @@ func personFactLedgerClaim(personID int64, targetKey, submitted, sourceSuffix st
 	}
 }
 
-// personFactLedgerCatalogTargets returns a target that stays public and one
-// (AskMeAbout) that markPersonFactLedgerTargetSensitive can later restrict.
-func personFactLedgerCatalogTargets(t *testing.T, st *Store) (public, restrictable personfacts.TargetDescriptor) {
+func personFactLedgerCatalogTargets(t *testing.T, st *Store) (public, restrictable personfacts.TargetDescriptor, definition *AttributeDefinition) {
 	t.Helper()
+	definition, err := st.CreateAttributeDefinitionContext(t.Context(), AttributeDefinitionInput{UniversalID: "test-restrictable", ObjectType: AttributeObjectPerson, Slug: "restrictable_fixture", Label: "Restrictable fixture", Description: new("A synthetic fact"), ValueType: AttributeValueText, FieldType: AttributeFieldText, Cardinality: AttributeCardinalitySingle, Ownership: AttributeOwnershipUser, APIMutable: true, IsDeletable: true})
+	require.NoError(t, err)
 	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), false)
 	require.NoError(t, err)
 	for _, target := range catalog.Targets {
 		switch target.Slug {
 		case AttributeSlugPrimaryChannel:
 			public = target
-		case AttributeSlugAskMeAbout:
+		case "restrictable_fixture":
 			restrictable = target
 		}
 	}
 	require.NotEmpty(t, public.Key)
 	require.NotEmpty(t, restrictable.Key)
-	return public, restrictable
-}
-
-func markPersonFactLedgerTargetSensitive(t *testing.T, st *Store) {
-	t.Helper()
-	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE attribute_definitions SET is_sensitive = TRUE WHERE slug = ?`), AttributeSlugAskMeAbout)
-	require.NoError(t, err)
+	return public, restrictable, definition
 }
 
 func seedPersonFactEvidence(t *testing.T, st *Store, personID int64, suffix string) string {

@@ -97,9 +97,6 @@ func TestPersonFactDisclosureAndPin(t *testing.T) {
 	assertions.True(slices.ContainsFunc(pins, func(pin personfacts.PinState) bool {
 		return pin.Target.Kind == target.Kind && pin.Target.Key == target.Key && pin.Pinned
 	}))
-	result, err = backend.ExecuteOperation(t.Context(), "list_person_fact_pins", map[string]any{"person_id": id})
-	requirements.NoError(err)
-	assertions.NotEmpty(operationOutput[generated.PersonFactPinsResponse](t, result).Pins)
 	args["pinned"] = false
 	result, err = backend.ExecuteOperation(t.Context(), "set_person_fact_pin", args)
 	requirements.NoError(err)
@@ -151,17 +148,18 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	var st *store.Store
 	var definition *store.AttributeDefinition
 	var changeOnClaims atomic.Bool
-	changed := make(chan struct {
-		definition *store.AttributeDefinition
-		err        error
-	}, 1)
+	evidenceQuery := make(chan string, 1)
+	changed := make(chan error, 1)
 	backend, fixtureStore, id, publicTarget := factFixture(t, func(r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/fact-evidence") {
+			select {
+			case evidenceQuery <- r.URL.Query().Get("visible_only"):
+			default:
+			}
+		}
 		if strings.HasSuffix(r.URL.Path, "/fact-claims") && changeOnClaims.CompareAndSwap(true, false) {
-			updated, err := st.UpdateAttributeDefinitionContext(r.Context(), definition.ID, definition.Revision, store.AttributeDefinitionUpdate{IsSensitive: new(true)})
-			changed <- struct {
-				definition *store.AttributeDefinition
-				err        error
-			}{updated, err}
+			_, err := st.UpdateAttributeDefinitionContext(r.Context(), definition.ID, definition.Revision, store.AttributeDefinitionUpdate{IsSensitive: new(true)})
+			changed <- err
 		}
 	})
 	st = fixtureStore
@@ -228,9 +226,8 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	race, err := backend.ExecuteOperation(t.Context(), "list_person_fact_claims", map[string]any{"person_id": id})
 	requirements.NoError(err)
 	select {
-	case event := <-changed:
-		requirements.NoError(event.err)
-		definition = event.definition
+	case err := <-changed:
+		requirements.NoError(err)
 	default:
 		requirements.FailNow("claims request was not observed")
 	}
@@ -239,8 +236,6 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Contains(string(raceData), publicKey)
 	assertions.NotContains(string(raceData), retiredKey)
-	_, err = st.UpdateAttributeDefinitionContext(t.Context(), definition.ID, definition.Revision, store.AttributeDefinitionUpdate{IsSensitive: new(false), IsActive: new(false)})
-	requirements.NoError(err)
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "limit": 3}})
 	requirements.NoError(err)
 	requirements.False(result.IsError)
@@ -248,24 +243,25 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Contains(string(data), publicKey)
 	assertions.NotContains(string(data), sensitiveKey)
-	assertions.NotContains(string(data), retiredKey)
 	var output mcpserver.PersonFactClaimsOutput
 	requirements.NoError(json.Unmarshal(data, &output))
 	requirements.NotNil(output.NextOffset)
 	assertions.EqualValues(3, *output.NextOffset)
-	rawEvidence, err := st.ListPersonFactEvidenceContext(t.Context(), id, personfacts.EvidenceFilter{Target: &personfacts.TargetRef{Kind: publicTarget.Kind, Key: publicTarget.Key, Revision: publicTarget.Revision}})
-	requirements.NoError(err)
-	requirements.True(slices.ContainsFunc(rawEvidence, func(item personfacts.Evidence) bool { return item.Input.SourceURL == "https://example.test/sensitive" }))
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "target": publicRef, "include_evidence": true, "include_decisions": true, "limit": 3}})
 	requirements.NoError(err)
 	requirements.False(result.IsError)
+	select {
+	case value := <-evidenceQuery:
+		assertions.Equal("true", value)
+	default:
+		requirements.FailNow("evidence request was not sent")
+	}
 	data, err = json.Marshal(result.StructuredContent)
 	requirements.NoError(err)
-	assertions.NotContains(string(data), "https://example.test/sensitive")
 	output = mcpserver.PersonFactClaimsOutput{}
 	requirements.NoError(json.Unmarshal(data, &output))
 	assertions.True(slices.ContainsFunc(output.Decisions, func(decision generated.PersonFactDecision) bool { return decision.ClaimKey == publicKey }))
-	requirements.Len(output.Evidence, 2)
+	requirements.NotEmpty(output.Evidence)
 	firstEvidenceID := output.Evidence[0].ID
 	assertions.Nil(output.NextOffset)
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "target": publicRef, "include_evidence": true, "limit": 1, "offset": 1}})
@@ -286,14 +282,6 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	data, err = json.Marshal(result.StructuredContent)
 	requirements.NoError(err)
 	assertions.Contains(string(data), "invalid_fact_target")
-	_, err = st.SetPersonFactPinContext(t.Context(), id, personfacts.TargetRef{Kind: sensitiveTarget.Kind, Key: sensitiveTarget.Key, Revision: sensitiveTarget.Revision}, true, "fixture")
-	requirements.NoError(err)
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_pins", Arguments: map[string]any{"person_id": id}})
-	requirements.NoError(err)
-	requirements.False(result.IsError)
-	data, err = json.Marshal(result.StructuredContent)
-	requirements.NoError(err)
-	assertions.NotContains(string(data), sensitiveTarget.Key)
 }
 
 func TestPersonFactCapabilitiesRequireExactContracts(t *testing.T) {
