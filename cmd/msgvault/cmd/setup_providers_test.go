@@ -1508,7 +1508,7 @@ func TestSetupStatusAgentError(t *testing.T) {
 	assert.NotContains(t, output.String(), `"agents"`)
 }
 
-func TestReviewStatusInterruptedAgentCheck(t *testing.T) {
+func TestSetupStatusInterruptedAgentCheck(t *testing.T) {
 	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -1529,4 +1529,26 @@ func TestReviewStatusInterruptedAgentCheck(t *testing.T) {
 	command.SetArgs([]string{"--json"})
 	assert.ErrorIs(t, command.ExecuteContext(ctx), context.Canceled)
 	assert.Empty(t, output.String())
+}
+
+func TestSetupStatusCheckKeepsArchive(t *testing.T) {
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+	home := filepath.Join(t.TempDir(), "archive with space")
+	flags := rootCmd.PersistentFlags()
+	oldHome, _ := flags.GetString("home")
+	t.Cleanup(func() { _ = flags.Set("home", oldHome) })
+	require.NoError(t, flags.Set("home", home))
+	command := newSetupStatusCommand(setupStatusDeps{
+		config: func() *config.Config { return fixture.load(t) },
+		environment: func(*cobra.Command, *config.Config) setupEnvironment {
+			return setupEnvironment{lookupEnv: fixture.lookupEnv, fileExists: defaultFileExists}
+		},
+		agents: func(context.Context) (agentsetup.Report, error) {
+			return agentsetup.Report{Rows: []agentsetup.Row{{Agent: "claude", AgentName: "Claude Code", Piece: "skills", Status: agentsetup.Status{State: agentsetup.StateMissing}}}}, nil
+		},
+	})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	require.NoError(t, command.ExecuteContext(t.Context()))
+	assert.Contains(t, output.String(), "msgvault agent setup --home '"+home+"' --check")
 }

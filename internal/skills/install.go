@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/update"
 )
 
 const skillFileName = "SKILL.md"
@@ -48,9 +50,27 @@ const (
 	CheckMissing  CheckState = "missing"
 	CheckModified CheckState = "modified"
 	CheckOutdated CheckState = "outdated"
+	CheckNewer    CheckState = "newer"
 )
 
 func generated(content []byte) bool { return bytes.Contains(content, []byte(Marker)) }
+
+func markerVersion(content []byte) string {
+	_, version, ok := strings.Cut(string(content), Marker+" v")
+	if !ok {
+		return ""
+	}
+	version, _, _ = strings.Cut(version, " ")
+	return version
+}
+
+func differentState(content []byte, sk Skill) CheckState {
+	installed, target := markerVersion(content), markerVersion([]byte(sk.Content))
+	if !update.IsDevBuildVersion(installed) && !update.IsDevBuildVersion(target) && update.IsNewer(installed, target) {
+		return CheckNewer
+	}
+	return CheckOutdated
+}
 
 // CheckResult describes the state of one skill.
 type CheckResult struct {
@@ -68,23 +88,26 @@ func checkSkill(path string, sk Skill) (CheckState, error) {
 	case !generated(content):
 		return CheckModified, nil
 	case !bytes.Equal(content, []byte(sk.Content)):
-		return CheckOutdated, nil
+		return differentState(content, sk), nil
 	default:
 		return CheckCurrent, nil
 	}
 }
 
 // Check compares installed skills with the rendered files.
-func Check(root string, list []Skill) ([]CheckResult, error) {
-	results := make([]CheckResult, 0, len(list))
+func Check(root string, list []Skill) (CheckResult, error) {
+	result := CheckResult{State: CheckCurrent}
+	rank := map[CheckState]int{CheckCurrent: 0, CheckOutdated: 1, CheckMissing: 2, CheckModified: 3, CheckNewer: 3}
 	for _, sk := range list {
 		state, err := checkSkill(filepath.Join(root, sk.Name, skillFileName), sk)
 		if err != nil {
-			return results, err
+			return result, err
 		}
-		results = append(results, CheckResult{Skill: sk.Name, State: state})
+		if rank[state] > rank[result.State] {
+			result = CheckResult{Skill: sk.Name, State: state}
+		}
 	}
-	return results, nil
+	return result, nil
 }
 
 // DetectAgents returns the skills roots of agents whose config
@@ -132,6 +155,7 @@ const (
 	StatusInstalled InstallStatus = "installed"
 	StatusUpdated   InstallStatus = "updated"
 	StatusSkipped   InstallStatus = "skipped"
+	StatusUnchanged InstallStatus = "unchanged"
 )
 
 // InstallResult reports the outcome for one skill.
@@ -156,9 +180,9 @@ func Install(root string, list []Skill, force bool) ([]InstallResult, error) {
 		status := StatusUpdated
 		switch state {
 		case CheckCurrent:
-			results = append(results, InstallResult{Skill: sk.Name, Path: path, Status: status})
+			results = append(results, InstallResult{Skill: sk.Name, Path: path, Status: StatusUnchanged})
 			continue
-		case CheckModified:
+		case CheckModified, CheckNewer:
 			if !force {
 				results = append(results, InstallResult{Skill: sk.Name, Path: path, Status: StatusSkipped})
 				continue

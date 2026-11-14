@@ -29,7 +29,8 @@ direction before archive mutations such as sync, import, dedup or deletion.
 msgvault skills install
 ```
 
-This detects installed agents by directory (`~/.claude`, `~/.codex`)
+This detects installed agents by directory (`~/.claude`, `~/.codex`, or the
+directories set by `CLAUDE_CONFIG_DIR` and `CODEX_HOME`)
 and writes the skills to each agent's user-level skills directory
 (`~/.claude/skills/`, `~/.codex/skills/`). Options:
 
@@ -42,7 +43,7 @@ msgvault skills uninstall                  # remove installed skills
 
 Installed files carry a generation marker. Re-running `skills install`
 after upgrading msgvault refreshes them; files you have hand-edited
-(marker removed) are skipped unless you pass `--force`, and
+(marker removed) and skills from a newer msgvault are skipped unless you pass `--force`, and
 `skills uninstall` never removes files without the marker.
 
 ## Skills and the MCP server

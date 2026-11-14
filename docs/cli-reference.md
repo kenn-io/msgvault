@@ -4708,17 +4708,18 @@ msgvault skills install
 msgvault skills uninstall
 ```
 
-Install detects Claude Code and Codex from `~/.claude` and `~/.codex`, then
+Install detects Claude Code and Codex by their agent directories, then
 writes the `msgvault-search`, `msgvault-attachments`, and
 `msgvault-analytics` skills to their user-level skill directories. Existing
-generated copies are updated in place; files without msgvault's generation
-marker are preserved unless `--force` is supplied.
+generated copies are updated in place; hand-edited skills and skills from a
+newer msgvault are preserved unless `--force` is supplied. `CLAUDE_CONFIG_DIR`
+and `CODEX_HOME` override the default agent directories.
 
 | Install flag | Description |
 |---|---|
 | `--agent claude` / `--agent codex` | Restrict installation to one or more detected agents; repeat or comma-separate values |
 | `--dir <path>` | Install into an explicit skill directory instead of detected agents |
-| `--force` | Overwrite skill files that no longer carry the msgvault generation marker |
+| `--force` | Overwrite hand-edited skills or skills from a newer msgvault |
 
 `skills uninstall` accepts `--agent` and `--dir` with the same target
 semantics, and removes only generated copies that still carry the marker. See
