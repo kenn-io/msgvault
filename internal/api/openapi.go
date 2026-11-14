@@ -1331,12 +1331,6 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 		schema.Extensions["x-enum-names"] = enumNames
 	}
-	if request := schemas["CommitmentDecisionRequest"]; request != nil {
-		setEnumNames(request.Properties["state"], []any{"CommitmentDecisionRequestStateOpen", "CommitmentDecisionRequestStateDone", "CommitmentDecisionRequestStateSnoozed"})
-	}
-	if commitment := schemas["LoopCommitment"]; commitment != nil {
-		setEnumNames(commitment.Properties["state"], []any{"LoopCommitmentStateOpen", "LoopCommitmentStateDone", "LoopCommitmentStateSnoozed"})
-	}
 	for _, name := range []string{"FileSuggestionRow", "PersonFileSuggestionRow"} {
 		schema := schemas[name]
 		nullableSchemaProperty(schema, "occurred_at")
@@ -1393,6 +1387,8 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 	}
 	for schemaName, properties := range map[string]map[string][]any{
+		"CommitmentDecisionRequest": {"state": qualifiedEnumNames("CommitmentDecisionRequestState", []string{"open", "done", "snoozed"})},
+		"LoopCommitment":            {"state": qualifiedEnumNames("LoopCommitmentState", []string{"open", "done", "snoozed"})},
 		"CreateAttributeDefinitionRequest": {
 			"cardinality": {"Single", "Multi"},
 		},

@@ -27,13 +27,9 @@ const (
 	errCommitmentInvalidOutput = commitmentPrepareError(peoplesweep.FailureInvalidOutput)
 )
 
-type preparedCommitmentPromise struct {
-	promise peoplesweep.CommitmentPromise
-}
-
 type preparedCommitmentSweep struct {
 	generation        personfacts.PreparedGeneration
-	promises          []preparedCommitmentPromise
+	promises          []peoplesweep.CommitmentPromise
 	through           int64
 	snapshot          int64
 	observedOnly      bool
@@ -165,7 +161,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 			Target: descriptor, Relation: personfacts.RelationSupport, Origin: personfacts.OriginCommitment,
 			SubmittedValue: value, Evidence: []personfacts.EvidenceInput{evidence},
 		})
-		prepared.promises = append(prepared.promises, preparedCommitmentPromise{promise: promise})
+		prepared.promises = append(prepared.promises, promise)
 	}
 	if len(generation.Claims) != 0 {
 		var err error
@@ -199,7 +195,7 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 			return err
 		}
 		for _, p := range prepared.promises {
-			_, err := tx.ExecContext(ctx, `INSERT INTO person_commitments (person_id, target_key) VALUES (?, ?) ON CONFLICT (person_id, target_key) DO NOTHING`, personID, p.promise.TargetKey)
+			_, err := tx.ExecContext(ctx, `INSERT INTO person_commitments (person_id, target_key) VALUES (?, ?) ON CONFLICT (person_id, target_key) DO NOTHING`, personID, p.TargetKey)
 			if err != nil {
 				return fmt.Errorf("persist commitment decision: %w", err)
 			}
@@ -272,7 +268,7 @@ func (s *Store) currentCommitmentSourceWithOwners(ctx context.Context, personID,
 	var conversationID int64
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.conversation_id
 		FROM messages m JOIN sources src ON src.id = m.source_id
-		WHERE m.id = ? AND m.conversation_id IS NOT NULL AND m.deleted_from_source_at IS NULL AND `+s.loopLiveMessageSQL()), messageID).Scan(&conversationID)
+		WHERE m.id = ? AND m.conversation_id IS NOT NULL AND m.deleted_from_source_at IS NULL AND `+s.loopLiveMessageSQL("m", "src")), messageID).Scan(&conversationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return peoplesweep.CommitmentSource{}, false, nil
 	}
@@ -283,13 +279,13 @@ func (s *Store) currentCommitmentSourceWithOwners(ctx context.Context, personID,
 	if err != nil {
 		return peoplesweep.CommitmentSource{}, false, err
 	}
-	for _, conversation := range conversations {
+	if len(conversations) > 0 {
 		messages, err := s.loopMessages(ctx, []int64{messageID}, owners)
 		if err != nil {
 			return peoplesweep.CommitmentSource{}, false, err
 		}
 		if len(messages) == 1 {
-			return s.commitmentMessage(ctx, personID, conversation, messages[0])
+			return s.commitmentMessage(ctx, personID, conversations[0], messages[0], owners)
 		}
 	}
 	return peoplesweep.CommitmentSource{}, false, nil

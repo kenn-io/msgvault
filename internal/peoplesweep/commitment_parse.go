@@ -1,14 +1,11 @@
 package peoplesweep
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -82,15 +79,11 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 		return invalid()
 	}
 	var parsed ParsedCommitments
-	decoder := jsontext.NewDecoder(bytes.NewReader(output), json.RejectUnknownMembers(true))
-	if err := json.UnmarshalDecode(decoder, &parsed); err != nil {
+	if err := decodeSingleJSON(output, &parsed); err != nil {
 		return invalid()
 	}
 	// A full response may have omitted more promises; retry without advancing.
 	if len(parsed.Promises) >= 2000 {
-		return invalid()
-	}
-	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		return invalid()
 	}
 	sources := make(map[string]CommitmentSource, len(window.Sources))

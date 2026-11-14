@@ -52,14 +52,6 @@ func scanPersonCommitment(row scanner) (PersonCommitment, error) {
 	return c, err
 }
 
-// CommitmentCitation locates an exact quote in an original message body.
-type CommitmentCitation struct {
-	MessageID int64
-	Quote     string
-	Start     int64
-	End       int64
-}
-
 type commitmentCandidate struct {
 	commitment PersonCommitment
 	promise    personfacts.Evidence
@@ -253,8 +245,8 @@ func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commit
 	if candidate.promise.ID == 0 {
 		return c, false, nil
 	}
-	promise, live, err := s.currentCommitmentCitation(ctx, c.PersonID, c.Direction, candidate.promise.Input, lookup)
-	if err != nil || !live || promise.MessageID != c.AnchorMessageID || promise.Quote != c.Quote || promise.Start != c.Start || promise.End != c.End {
+	live, err := s.currentCommitmentCitation(ctx, c.PersonID, c.Direction, candidate.promise.Input, lookup)
+	if err != nil || !live {
 		return c, false, err
 	}
 	c.Freshness = describePersonFactFreshness(personfacts.TargetRef{Kind: personfacts.TargetCommitment}, nil, &c.PromisedAt, now).Status
@@ -264,29 +256,29 @@ func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commit
 	return c, true, nil
 }
 
-func (s *Store) currentCommitmentCitation(ctx context.Context, personID int64, direction string, input personfacts.EvidenceInput, lookup func(context.Context, int64, int64) (peoplesweep.CommitmentSource, bool, error)) (CommitmentCitation, bool, error) {
+func (s *Store) currentCommitmentCitation(ctx context.Context, personID int64, direction string, input personfacts.EvidenceInput, lookup func(context.Context, int64, int64) (peoplesweep.CommitmentSource, bool, error)) (bool, error) {
 	message, found := strings.CutPrefix(input.SourceRef, personfacts.CommitmentMessageRefPrefix)
 	if !found {
-		return CommitmentCitation{}, false, nil
+		return false, nil
 	}
 	id, err := strconv.ParseInt(message, 10, 64)
 	if err != nil {
-		return CommitmentCitation{}, false, fmt.Errorf("parse commitment citation message: %w", err)
+		return false, fmt.Errorf("parse commitment citation message: %w", err)
 	}
 	if id <= 0 || input.SpanStart == nil || input.SpanEnd == nil {
-		return CommitmentCitation{}, false, nil
+		return false, nil
 	}
 	source, live, err := lookup(ctx, personID, id)
 	if err != nil || !live || source.Direction != direction || source.SourceVersion != input.SourceVersion ||
 		source.ContentSHA256 != input.ContentSHA256 ||
 		!personFactPortableTime(source.EventTime).Equal(input.EventTime) ||
 		!personFactPortableTime(source.RecordedTime).Equal(input.RecordedTime) {
-		return CommitmentCitation{}, false, err
+		return false, err
 	}
 	if !source.MatchesQuote(input.Excerpt, *input.SpanStart, *input.SpanEnd) {
-		return CommitmentCitation{}, false, nil
+		return false, nil
 	}
-	return CommitmentCitation{MessageID: id, Quote: input.Excerpt, Start: *input.SpanStart, End: *input.SpanEnd}, true, nil
+	return true, nil
 }
 
 func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, state string, until *time.Time, now time.Time) (PersonCommitment, error) {
@@ -413,7 +405,7 @@ func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now ti
 // commitmentMessage admits both sides only when participant identities prove a
 // direct owner/person exchange. Email without verified owner participation,
 // third-party recipients, bulk mail and List-Id are refused.
-func (s *Store) commitmentMessage(ctx context.Context, personID int64, conv LoopConversation, m LoopMessage) (peoplesweep.CommitmentSource, bool, error) {
+func (s *Store) commitmentMessage(ctx context.Context, personID int64, conv LoopConversation, m LoopMessage, owners loopOwners) (peoplesweep.CommitmentSource, bool, error) {
 	if conv.GroupChat || (conv.ConversationType != string(MessageExportConversationDirectChat) && conv.ConversationType != "email_thread") || m.ListID != "" {
 		return peoplesweep.CommitmentSource{}, false, nil
 	}
@@ -435,7 +427,7 @@ func (s *Store) commitmentMessage(ctx context.Context, personID int64, conv Loop
 	}
 	if conv.ConversationType == string(MessageExportConversationDirectChat) {
 		var err error
-		owner, person, err = s.commitmentChatMembers(ctx, conv.ConversationID, personID, owner, person)
+		owner, person, err = s.commitmentChatMembers(ctx, conv.ConversationID, personID, owner, person, owners)
 		if err != nil {
 			return peoplesweep.CommitmentSource{}, false, err
 		}
@@ -499,11 +491,7 @@ func commitmentEmailRunes(body string) []rune {
 }
 
 // A chat importer may record recipients only at the conversation level.
-func (s *Store) commitmentChatMembers(ctx context.Context, conversationID, personID int64, owner, person bool) (bool, bool, error) {
-	owners, err := s.loopOwnerIdentities(ctx)
-	if err != nil {
-		return false, false, err
-	}
+func (s *Store) commitmentChatMembers(ctx context.Context, conversationID, personID int64, owner, person bool, owners loopOwners) (bool, bool, error) {
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT cp.participant_id, COALESCE(pp.person_id, 0)
 		FROM conversation_participants cp LEFT JOIN person_participants pp ON pp.participant_id = cp.participant_id
 		WHERE cp.conversation_id = ?`), conversationID)
@@ -560,11 +548,11 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 		day := at.UTC().Format(time.DateOnly)
 		return day >= profile.SourceSince && (profile.SourceUntil == "" || day <= profile.SourceUntil)
 	}
-	_, err = s.loadCommitmentSources(ctx, &window, cfg, previous, inProfile)
+	err = s.loadCommitmentSources(ctx, &window, cfg, previous, inProfile)
 	return window, err
 }
 
-func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, inProfile func(time.Time) bool) (int64, error) {
+func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, inProfile func(time.Time) bool) error {
 	personID, through := window.PersonID, window.ThroughSequence
 	// -1 means complete, -2 means complete with an oversized gap, and lower
 	// values encode the backfill position while such a gap remains.
@@ -581,7 +569,6 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			}
 		}
 	}()
-	backfillEnd := max(0, window.BackfillMessageID)
 	seen, used := map[int64]bool{}, 0
 	add := func(source peoplesweep.CommitmentSource) (bool, error) {
 		if seen[source.MessageID] {
@@ -626,7 +613,7 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 	}
 	changes, err := s.ScanPersonSweepChanges(ctx, personID, previous, maxPersonSweepChangeScan)
 	if err != nil {
-		return backfillEnd, err
+		return err
 	}
 	if len(changes) == maxPersonSweepChangeScan {
 		window.ThroughSequence = min(through, changes[len(changes)-1].Sequence)
@@ -641,7 +628,7 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 		}
 		source, ok, err := s.currentCommitmentSource(ctx, personID, change.MessageID)
 		if err != nil {
-			return backfillEnd, err
+			return err
 		}
 		if !ok || !inProfile(source.EventTime) ||
 			(source.EventTime.Before(cutoff) && source.RecordedTime.Before(cutoff) && change.RecordedAt.Before(cutoff)) {
@@ -649,41 +636,40 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 		}
 		added, err := add(source)
 		if err != nil {
-			return backfillEnd, err
+			return err
 		}
 		if !added {
 			window.ThroughSequence = change.Sequence - 1
-			return backfillEnd, nil
+			return nil
 		}
 	}
 	if window.BackfillMessageID < 0 {
-		return backfillEnd, nil
+		return nil
 	}
 	const backfillPage = 256
 	ids, err := s.commitmentBackfillMessages(ctx, personID, window.BackfillMessageID, cutoff, backfillPage)
 	if err != nil {
-		return backfillEnd, err
+		return err
 	}
 	for _, id := range ids {
 		if !seen[id] {
 			source, ok, err := s.currentCommitmentSource(ctx, personID, id)
 			if err != nil {
-				return backfillEnd, err
+				return err
 			}
 			if ok && inProfile(source.EventTime) {
 				added, err := add(source)
 				if err != nil || !added {
-					return backfillEnd, err
+					return err
 				}
 			}
 		}
 		window.BackfillMessageID = id
-		backfillEnd = id
 	}
 	if len(ids) < backfillPage {
 		window.BackfillMessageID = -1
 	}
-	return backfillEnd, nil
+	return nil
 }
 
 // resolvePersonCommitmentTargetTx has no confidence score: only a currently
@@ -745,7 +731,7 @@ func (s *Store) commitmentBackfillMessages(ctx context.Context, personID, after 
 	query := `WITH scoped AS (` + scoped + `)
 		SELECT m.id FROM messages m JOIN scoped c ON c.conversation_id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
-		WHERE m.id > ? AND ` + s.loopLiveMessageSQL() + `
+		WHERE m.id > ? AND ` + s.loopLiveMessageSQL("m", "src") + `
 		AND (` + s.loopTimeKey("m.sent_at") + ` >= ` + s.loopTimeKey("?") + `
 			OR ` + s.loopTimeKey("m.archived_at") + ` >= ` + s.loopTimeKey("?") + `)
 		ORDER BY m.id LIMIT ?`
@@ -754,13 +740,5 @@ func (s *Store) commitmentBackfillMessages(ctx context.Context, personID, after 
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
+	return scanInt64Rows(rows)
 }

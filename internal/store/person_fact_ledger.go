@@ -11,7 +11,6 @@ import (
 	"reflect"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/personfacts"
@@ -1367,11 +1366,10 @@ func hydratePersonFactFreshnessTx(ctx context.Context, tx *loggedTx, claims []pe
 	for i := range claims {
 		args = append(args, claims[i].ID)
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(claims)), ",")
 	rows, err := tx.QueryContext(ctx, `SELECT ce.claim_id, MAX(e.event_time)
  FROM person_fact_claim_evidence ce
  JOIN person_fact_evidence e ON e.id = ce.evidence_id
- WHERE e.event_time <= ? AND ce.claim_id IN (`+placeholders+`) AND COALESCE((
+ WHERE e.event_time <= ? AND ce.claim_id IN (`+placeholders(len(claims))+`) AND COALESCE((
   SELECT status.supported `+latestPersonFactEvidenceStatusSQL("e.person_id", "e.evidence_key", "e.source_version")+`
  ), TRUE) = TRUE GROUP BY ce.claim_id`, args...)
 	if err != nil {
