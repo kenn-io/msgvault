@@ -10,9 +10,6 @@ each time you ask, so a reply that just synced clears its loop on the next
 list. There is nothing to turn on. No model is called, and nothing changes at
 your email provider.
 
-Open loops are on unreleased `main`. They need a daemon with HTTP API schema
-3.44.0 or newer.
-
 ## See your open loops
 
 ```bash

@@ -95,7 +95,7 @@ export const GROUPING_CATALOG: readonly GroupingCatalogEntry[] = [
     family: 'kind',
     keywords: 'entry kind message conversation',
     requestable: true,
-    drillable: false, // The API groups by entry kind but has no matching filter.
+    drillable: true,
     requestDimensions: ['kind']
   },
   {

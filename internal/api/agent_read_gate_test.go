@@ -455,6 +455,10 @@ func (s *boundedAgentIndexStore) BackfillFTS(func(int64, int64)) (int64, error) 
 	return 1, nil
 }
 
+func (s *boundedAgentIndexStore) BackfillFTSContext(_ context.Context, progress func(int64, int64)) (int64, error) {
+	return s.BackfillFTS(progress)
+}
+
 func TestAgentIndexProbeHasFiniteLifetime(t *testing.T) {
 	for _, arrival := range []string{"healthy", "stale", "owner after request cancellation", "agent only", "owner before timeout", "owner after timeout", "owner first", "probe failure", "failed repair", "owner at exit", "owner probe failure", "gate refused"} {
 		st := &boundedAgentIndexStore{Store: testutil.NewTestStore(t), needs: arrival != "healthy"}

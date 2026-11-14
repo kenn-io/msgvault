@@ -174,3 +174,82 @@ func TestStore_RebuildFTS_ReportsProgress(t *testing.T) {
 	assert.NotZero(calls, "progress callback never invoked")
 	assert.Equal(lastTotal, lastDone, "final progress should have done == total")
 }
+
+func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
+	f := storetest.New(t)
+	if !f.Store.FTS5Available() {
+		t.Skip("FTS unavailable")
+	}
+	for _, tc := range []struct {
+		kind, term string
+	}{
+		{"slack", "slacksnapshot"},
+		{"teams", "teamssnapshot"},
+		{"inline", "inlinesnapshot"},
+		{"discord", "discordsnapshot"},
+		{"facebook_comments", "facebooksnapshot"},
+		{"instagram_comments", "instagramsnapshot"},
+		{"fbmessenger", "messengertitle"},
+		{"imessage", "15550100777"},
+		{"beeper", "beepersnapshot"},
+		{"google_chat", "saved@example.test"},
+	} {
+		if tc.kind == "beeper" && !f.Store.IsPostgreSQL() {
+			continue
+		}
+		t.Run(tc.kind, func(t *testing.T) {
+			require := require.New(t)
+			id := f.CreateMessage(tc.kind)
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`), tc.kind, id)
+			require.NoError(err)
+			switch tc.kind {
+			case "slack", "teams", "inline", "facebook_comments", "instagram_comments", "discord":
+				pid := f.EnsureParticipant(tc.kind+"@example.test", "Participant", "example.test")
+				require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{pid}, []string{tc.term}))
+				if tc.kind == "discord" {
+					mentioned := f.EnsureParticipant("mention@example.test", "Mention", "example.test")
+					require.NoError(f.Store.ReplaceMessageRecipients(id, "mention", []int64{mentioned}, []string{"discordmention"}))
+				}
+			case "fbmessenger":
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET title = ? WHERE id = ?`), tc.term, f.ConvID)
+				require.NoError(err)
+			case "imessage":
+				pid := f.EnsureParticipant("phone@example.test", "Phone", "example.test")
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE participants SET email_address = NULL, phone_number = ? WHERE id = ?`), tc.term, pid)
+				require.NoError(err)
+				require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{pid}, []string{"Phone"}))
+			case "beeper":
+				require.NoError(f.Store.UpsertMessageRawWithFormat(id, []byte(`{"senderName":"beepersnapshot"}`), "beeper_json"))
+			case "google_chat":
+				pid := f.EnsureParticipant("current@example.test", "Current", "example.test")
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), pid, id)
+				require.NoError(err)
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address) VALUES (?, ?, 'from', ?)`), id, pid, tc.term)
+				require.NoError(err)
+			}
+			to := ""
+			if tc.kind == "discord" {
+				to = "discordmention"
+			}
+			require.NoError(f.Store.UpsertFTS(id, "", "", tc.term, to, ""))
+			if f.Store.IsPostgreSQL() {
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET search_fts_fields = NULL, indexing_version = 2 WHERE id = ?`), id)
+			} else {
+				_, err = f.Store.DB().ExecContext(t.Context(), `DELETE FROM messages_fts WHERE rowid = ?`, id)
+			}
+			require.NoError(err)
+			_, err = f.Store.BackfillFTS(nil)
+			require.NoError(err)
+			assertFTSContains(t, f.Store, tc.term, 1)
+			if tc.kind == "google_chat" {
+				assertFTSContains(t, f.Store, "current@example.test", 0)
+			}
+			if tc.kind == "slack" {
+				assertFTSContains(t, f.Store, "slack@example.test", 1)
+			}
+			if tc.kind == "discord" {
+				assertFTSContains(t, f.Store, "discordmention", 1)
+			}
+		})
+	}
+}

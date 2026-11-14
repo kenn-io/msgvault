@@ -104,9 +104,9 @@ These tools run the matching CLI commands through your selected daemon. They req
 
 Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists return a `data` array. `draft_send_as` returns a `send_as` list.
 
-On unreleased `main`, successful draft creation and edit receipts include `sensitive_content` when the submitted subject or body contains a likely `payment_card`, `iban`, `us_ssn`, `api_key`, or `password`. Each entry has a `kind` and an optional `hint` showing the last four characters of a card or IBAN, or the first four characters of a prefixed key. The `quoted: true` label identifies sensitive content in parts of the body that msgvault recognizes as quoted history. The quote rules cover `>` lines and their reply attribution, keeping an unmarked answer below the block authored. A reply attribution without a `>` block, a dashed forwarded or original-message separator, or an Outlook `From:`/`Sent:` header marks history through the end of the body. The label neither proves authorship nor changes confirmation, and the approval prompt repeats it. Review these values before sending. The draft is still written unchanged.
+Successful draft creation and edit receipts include `sensitive_content` when the submitted subject or body contains a likely `payment_card`, `iban`, `us_ssn`, `api_key`, or `password`. Each entry has a `kind` and an optional `hint` showing the last four characters of a card or IBAN, or the first four characters of a prefixed key. The `quoted: true` label identifies sensitive content in parts of the body that msgvault recognizes as quoted history. The quote rules cover `>` lines and their reply attribution, keeping an unmarked answer below the block authored. A reply attribution without a `>` block, a dashed forwarded or original-message separator, or an Outlook `From:`/`Sent:` header marks history through the end of the body. The label neither proves authorship nor changes confirmation, and the approval prompt repeats it. Review these values before sending. The draft is still written unchanged.
 
-On unreleased `main`, `msgvault mcp --confirm-sensitive-drafts` requires client approval before creating or editing a draft with detected sensitive content. For native daemon endpoints, use `msgvault serve --mcp-allow-writes --mcp-confirm-sensitive-drafts`. This option is off by default. Clients without elicitation support, and HTTP clients using a protocol older than `2026-07-28`, cannot write flagged drafts when it is enabled. The option grants no tools; standalone HTTP writes still require `--http-allow-writes`.
+`msgvault mcp --confirm-sensitive-drafts` requires client approval before creating or editing a draft with detected sensitive content. For native daemon endpoints, use `msgvault serve --mcp-allow-writes --mcp-confirm-sensitive-drafts`. This option is off by default. Clients without elicitation support, and HTTP clients using a protocol older than `2026-07-28`, cannot write flagged drafts when it is enabled. The option grants no tools; standalone HTTP writes still require `--http-allow-writes`.
 
 Cards need 13 to 19 digits that pass the checksum, with a first digit of 2 to 6 or 8. IBANs need a registered country length and a valid checksum. Unlabelled keys are recognized only for common provider prefixes. A labelled value needs at least eight characters with a letter and a digit or one of `!@#$%^&*+/=~`; a quoted multi-word passphrase also counts under a password label. Labels and values must be on the same line, separated by `:` or `=`; `Bearer` values also count. An absent finding does not mean the content is safe. Stored drafts, server-appended history, and attachments are outside this scan.
 
@@ -456,10 +456,12 @@ The MCP server exposes the following tools to connected AI clients:
 | `update_message_tags` | Add or remove native email tags through the daemon. Write-class. | `message_id` (int, required), `add` / `remove` (string arrays), `mailbox` (string, IMAP only), `dry_run` (bool) |
 | `list_saved_views` | List persistent reusable Saved Views and their complete definitions. Read-only. | — |
 | `get_saved_view` | Get one Saved View and its canonical definition and revision. Read-only. | `id` (int, required) |
-| `run_saved_view` | Execute a Saved View through Explore without reconstructing its query. Returns typed entries, groups, or files. Read-only. | `id` (int, required), `limit` (int), `cursor` (string) |
-| `create_saved_view` | Create a persistent Saved View. Write-class. | `name` (string, required), `canonical_state` (object, required), `schema_version` (int, required; use `2` for new definitions; schema `1` retains literal-pipe meaning), `description` (string) |
+| `run_saved_view` | Execute a Saved View through Explore without reconstructing its query. Returns typed entries, groups, or files. Read-only. | `id` (int, required), `limit` (int), `cursor` (string), `timezone` (IANA time zone) |
+| `create_saved_view` | Create a persistent Saved View. Write-class. | `name` (string, required), `canonical_state` (object, required), `schema_version` (int, required; use `3` for local date bounds with numeric offsets, or `2` for UTC; schema `1` retains literal-pipe meaning), `description` (string) |
 | `update_saved_view` | Patch supplied Saved View fields using optimistic revision checking. Write-class. | `id` (int, required), `revision` (int, required), at least one of `name`, `description`, `canonical_state`, `schema_version` |
 | `delete_saved_view` | Delete a Saved View definition, not archive messages. Write-class and destructive. | `id` (int, required), `revision` (int, required) |
+| `list_deletions` | List staged deletion batches, optionally by status. | Optional `status`: `pending`, `in_progress`, `completed`, `failed`, or `cancelled` |
+| `get_deletion` | Read a staged batch lifecycle receipt. | Required `batch_id` |
 | `stage_deletion` | Stage every match its source can delete (creates manifest only); refuses above 100000 Gmail, Microsoft Graph, or IMAP matches | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
 | `find_contact_candidates` | Find durable people by saved or observed names; returns stable UIDs and explicit ambiguity. Available with daemon API schema 3.20.0 or newer. | `query` (required), `limit` (1–100, default 20), `after_id` |
 | `get_person_messaging_routes` | Resolve a selected UID to curated points, bound observations, unreviewed suggestions and exact archived routes, with status and evidence. | `person_uid` (required), `network`, `source_id`, `limit` (1–100 per section, default 20), `after_conversation_id`, `after_contact_point_id`, `after_observation_id`, `after_suggestion_id` |
@@ -549,7 +551,7 @@ slice of the body plus `body_length`, `body_returned`, `offset`, and
 `has_more`, so unusually large messages are paged across calls instead of
 being returned in a single response.
 
-On newer `main` builds, `get_message` with `include_segments: true` returns
+`get_message` with `include_segments: true` returns
 `segments_version: "seg-v1"` and `segments` with `kind`, `start`, and `end`.
 For plain-text email, kinds are `authored`, `quoted`, `forwarded`, and
 `signature`. Quoted ranges carry `depth`, the count of leading `>` markers,
@@ -584,7 +586,7 @@ assistant can tell a cancelled or moved event from a confirmed one. A field
 is `null` when the stored event does not carry it; calendar sync does not
 store a `sequence` of 0, so a `null` sequence usually means 0.
 
-On newer `main` builds, `get_message` and `search_in_message` include
+`get_message` and `search_in_message` include
 the best-effort flag `hidden_text_present`. True means the stored HTML likely hides
 readable text. False does not guarantee that text is visible. Many newsletters
 hide a preview line, called a preheader, and those set the flag too. The flag
@@ -764,10 +766,8 @@ array. Request the next page by passing the opaque `next_cursor` as `cursor`;
 
 The daemon executes the view. `run_saved_view` calls
 `POST /api/v1/saved-views/{id}/run`, which hands the stored definition to the
-same Explore endpoint the Web UI uses, so the query, search mode, filters,
-grouping, presentation, and sort run exactly as saved. A grouped view runs at
-the first level of its grouping chain, the level the Web UI shows when it
-opens that view, and a timeline view returns the same entry rows as a table.
+same Explore endpoint the Web UI uses. A grouped view runs at the first level
+of its grouping chain. Calendar groups use the requested time zone, or UTC by default; Month and Year groups appear newest first, while other groups sort by descending count. Use the same time zone for every page. A timeline view returns the same entry rows as a table.
 The tools are offered only when the daemon serves that endpoint (API schema
 2.21.0 or later); an older daemon omits them from the tool list.
 
@@ -882,11 +882,10 @@ and may require a daemon restart; inspect `pending_restart` in the response.
 
 ## Open loops
 
-On unreleased `main`, an assistant connected as the owner can see who is
+An assistant connected as the owner can see who is
 waiting on a reply and record decisions. See [Open loops](open-loops.md) for
 what counts as a loop. Delegated sessions get none of these tools. A tool
-appears only when the daemon offers its route, which needs HTTP API schema
-3.44.0 or newer.
+appears only when the daemon offers its route.
 
 | Tool | Effect | Parameters |
 |---|---|---|
@@ -943,7 +942,7 @@ Enable only the writes intended for the assistant's session:
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
 
-`draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available. On unreleased `main`, `--confirm-sensitive-drafts` also requires confirmation for flagged draft creation and edits; it grants no write access.
+`draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available. `--confirm-sensitive-drafts` also requires confirmation for flagged draft creation and edits; it grants no write access.
 
 Profile tools use the following arguments. Reads need no write opt-in; writes
 require `--allow-profile-writes` and the HTTP opt-in when applicable.
@@ -980,6 +979,8 @@ provenance are user-authored; MCP writes use `enrichment` provenance.
 
 ## Staged Deletion via MCP
 
+Owner sessions can use `list_deletions` and `get_deletion` without enabling writes when the selected daemon advertises their routes. Delegated sessions cannot use these reads. Pass `batch_id` from `stage_deletion` or `id` from `list_deletions` to `get_deletion`. The lifecycle receipt can include failed and checkpoint IDs; it is not a selection preview. Lists or receipts over 1 MiB return `operation_response_limit_exceeded`; use the CLI or HTTP API to read them.
+
 When enabled for the transport, `stage_deletion` lets an AI assistant help you
 plan archive cleanup. It accepts either a Gmail-style query string or structured filters (sender, domain, label, date range), but not both at once. Query staging includes Gmail, Microsoft Graph, and IMAP mail. It stages every match its source can delete, or refuses without saving a batch. Chats and mail from other sources are left out of the search. Matches no longer in the archive or that cannot be deleted from their source, including archive-only mail and meetings, are skipped and counted in `skipped_count`. A query with matches but none deletable refuses without saving a batch. The 100,000 limit counts Gmail, Microsoft Graph, and IMAP matches, including skipped ones. Structured filters stage eligible Gmail and Microsoft Graph mail and do not report `skipped_count`. Narrow a larger selection with `before:`, `after:`, or `account` and stage each part.
 
@@ -998,9 +999,9 @@ The tool returns the batch ID, message count, and next steps:
 }
 ```
 
-## Server identity (unreleased)
+## Server identity
 
-On `main`, the MCP server declares msgvault's website and icon. The icon is
+The MCP server declares msgvault's website and icon. The icon is
 included as a PNG data URI, so stdio and HTTP clients can load it without an
 external request. Whether it appears depends on the client.
 
@@ -1027,7 +1028,7 @@ msgvault mcp --http 8080
 | `--http-token-env` | — | Name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
-| `--allow-loop-writes` | `false` | On unreleased `main`, expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
+| `--allow-loop-writes` | `false` | Expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |
