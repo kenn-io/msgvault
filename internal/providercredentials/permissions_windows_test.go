@@ -465,7 +465,7 @@ func shareRestoredTestDirectory(t *testing.T, dir string, inheritance uint32) wi
 }
 
 func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
-	t.Run("repairs inherited directories deepest first", func(t *testing.T) {
+	t.Run("repairs inherited nested directories", func(t *testing.T) {
 		require := require.New(t)
 		dir := filepath.Join(t.TempDir(), "tokens")
 		require.NoError(os.Mkdir(dir, 0700))
