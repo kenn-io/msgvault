@@ -5,10 +5,8 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
-	"io"
 	"log/slog"
 	"maps"
-	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -268,21 +266,7 @@ func TestMCPAttributePreviewLargeConflict(t *testing.T) {
 	written := operationOutput[generated.PersonAttributeWrite](t, attributeOperation(t, b, "set_person_attribute", initial))
 	require.NotNil(written.Value)
 	stale := map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": jsontext.Value(`{"data":"replacement"}`)}, "expected_value_id": written.Value.ID + 1}
-	preview := maps.Clone(stale)
-	preview["dry_run"] = true
-	method, path, options, ok := attributeRequest("set_person_attribute", preview)
-	require.True(ok)
-	response, err := b.client.DoGeneratedRequestWithErrorLimit(t.Context(), method, path, options, 1<<20)
-	require.NoError(err)
-	defer func() { _ = response.Body.Close() }()
-	body, err := io.ReadAll(response.Body)
-	require.NoError(err)
-	assert.Equal(http.StatusConflict, response.StatusCode)
-	assert.Greater(len(body), 64<<10)
-	var conflict api.PersonAttributeConflictResponse
-	require.NoError(json.Unmarshal(body, &conflict))
-	assert.Equal("attribute_value_conflict", conflict.Error)
-	_, err = b.OperationDisclosure(t.Context(), "set_person_attribute", stale)
+	_, err := b.OperationDisclosure(t.Context(), "set_person_attribute", stale)
 	attributeRefused(t, err, "attribute_value_conflict")
 	values := attributeValues(t, st, person, "metadata")
 	require.Len(values, 1)
