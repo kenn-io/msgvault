@@ -62,6 +62,11 @@ func TestRewriteGeneratedValidatorsAllowsEmptyContactRouteStrings(t *testing.T) 
 	assertions.NotContains(string(got), `typesValidator.Var(m.ProviderChatID, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(p.AliasReason, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(c.DisplayName, "required")`)
+	assertions.NotContains(string(got), "RemoteUID string `json:\"remote_uid\" validate:\"required\"`")
+	assertions.NotContains(string(got), `typesValidator.Var(p.Endpoint, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(p.ParticipantIds, "required")`)
+	assertions.Contains(string(got), "if p.ParticipantIds == nil {")
+	assertions.NotContains(string(got), "ParticipantIds []int64 `json:\"participant_ids\" validate:\"required\"`")
 	assertions.Contains(string(got), "Address       string `json:\"address\"`\n")
 	assertions.Contains(string(got), "DisplayName   string `json:\"display_name\"`\n")
 	assertions.NotContains(string(got), `typesValidator.Var(l.Summary, "required")`)
@@ -213,7 +218,9 @@ func (c CreateDailyNoteEntryRequest) Validate() error {
 	var errors runtime.ValidationErrors
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
 }
-` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture() + loopCounterpartyEmptyStringValidatorFixture()
+` + personEmptyParticipantIDsValidatorFixture() + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture() +
+		cardDAVBindingEmptyRemoteUIDValidatorFixture() + personEnrichmentEndpointValidatorFixture() +
+		loopCounterpartyEmptyStringValidatorFixture()
 }
 
 func contactRouteEmptyStringValidatorFixture() string {
@@ -233,6 +240,25 @@ func contactCandidateEmptyStringValidatorFixture() string {
 		"func (c ContactCandidate) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
 		"\tif err := typesValidator.Var(c.DisplayName, \"required\"); err != nil {\n\t\terrors = errors.Append(\"DisplayName\", err)\n\t}\n" +
 		"\tif len(errors) == 0 {\n\t\treturn nil\n\t}\n\treturn errors\n}\n"
+}
+
+func cardDAVBindingEmptyRemoteUIDValidatorFixture() string {
+	return "type CardDAVBinding struct {\n\tRemoteUID string `json:\"remote_uid\" validate:\"required\"`\n}\n" +
+		"func (c CardDAVBinding) Validate() error {\n\treturn runtime.ConvertValidatorError(typesValidator.Struct(c))\n}\n"
+}
+
+func personEmptyParticipantIDsValidatorFixture() string {
+	return "type Person struct {\n\tParticipantIds []int64 `json:\"participant_ids\" validate:\"required\"`\n}\n" +
+		"func (p Person) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
+		"\tif err := typesValidator.Var(p.ParticipantIds, \"required\"); err != nil {\n" +
+		"\t\terrors = errors.Append(\"ParticipantIds\", err)\n\t}\n\treturn errors\n}\n"
+}
+
+func personEnrichmentEndpointValidatorFixture() string {
+	return "type PersonEnrichmentProviderSetting struct {\n\tEndpoint string `json:\"endpoint\" validate:\"required\"`\n}\n" +
+		"func (p PersonEnrichmentProviderSetting) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
+		"\tif err := typesValidator.Var(p.Endpoint, \"required\"); err != nil {\n" +
+		"\t\terrors = errors.Append(\"Endpoint\", err)\n\t}\n\treturn errors\n}\n"
 }
 
 func loopCounterpartyEmptyStringValidatorFixture() string {
