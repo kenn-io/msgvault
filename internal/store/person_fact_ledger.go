@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/personfacts"
@@ -497,10 +498,18 @@ func (s *Store) ListPersonFactEvidenceContext(
 	if err != nil {
 		return nil, err
 	}
+	filter.Limit, filter.Offset = limit, offset
 	evidence := make([]personfacts.Evidence, 0)
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
-		evidence, err = s.queryPersonFactEvidenceTx(ctx, tx, personID,
-			personfacts.EvidenceFilter{Target: filter.Target, Limit: limit, Offset: offset})
+		var visible []personfacts.TargetDescriptor
+		if filter.VisibleOnly {
+			catalog, err := s.buildPersonFactCatalogContext(ctx, tx, false)
+			if err != nil {
+				return err
+			}
+			visible = append([]personfacts.TargetDescriptor{}, catalog.Targets...)
+		}
+		evidence, err = s.queryPersonFactEvidenceTx(ctx, tx, personID, visible, filter)
 		if err != nil {
 			return err
 		}
@@ -580,6 +589,7 @@ func (s *Store) queryPersonFactEvidenceTx(
 	ctx context.Context,
 	tx *loggedTx,
 	personID int64,
+	visible []personfacts.TargetDescriptor,
 	filter personfacts.EvidenceFilter,
 ) ([]personfacts.Evidence, error) {
 	query := `SELECT ` + personFactEvidenceColumns + `
@@ -592,6 +602,20 @@ func (s *Store) queryPersonFactEvidenceTx(
 			WHERE ce.evidence_id = e.id AND c.person_id = e.person_id
 			  AND c.target_kind = ? AND c.target_key = ? AND c.target_revision = ?)`
 		args = append(args, filter.Target.Kind, filter.Target.Key, filter.Target.Revision)
+	}
+	if visible != nil {
+		query += ` AND NOT EXISTS (
+			SELECT 1 FROM person_fact_claim_evidence ce2
+			JOIN person_fact_claims c2 ON c2.id = ce2.claim_id
+			WHERE ce2.evidence_id = e.id`
+		// An empty visible set excludes all linked evidence.
+		if len(visible) > 0 {
+			query += ` AND (c2.target_kind, c2.target_key) NOT IN (` + strings.TrimSuffix(strings.Repeat("(?,?),", len(visible)), ",") + `)`
+			for _, target := range visible {
+				args = append(args, string(target.Kind), target.Key)
+			}
+		}
+		query += `)`
 	}
 	query += ` ORDER BY e.id DESC LIMIT ? OFFSET ?`
 	args = append(args, filter.Limit, filter.Offset)

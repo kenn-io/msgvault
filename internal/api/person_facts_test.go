@@ -238,6 +238,73 @@ func TestPersonFactPinHTTPUsesAPIActorAndReturnsOnlyFinalProjectionReferences(t 
 	assertions.Equal(http.StatusBadRequest, unknownField.Code, unknownField.Body.String())
 }
 
+func TestPersonFactPinHTTPVisibleOnlyRejectsSensitiveTargets(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		visibleOnly bool
+		status      int
+	}{
+		{"already sensitive", true, http.StatusBadRequest},
+		{"native sensitive pin", false, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			srv, st, personID, targets := newPersonFactAPIFixtureWithoutClaims(t)
+			target := targets[store.AttributeSlugReligion]
+			requirements.NotEmpty(target.Key)
+			requirements.True(target.Sensitive)
+			path := fmt.Sprintf("/api/v1/people/%d/fact-pins/%s/%s", personID, target.Kind, target.Key)
+			if tc.visibleOnly {
+				path += "?visible_only=true"
+			}
+			response := doRequest(t, srv.Router(), http.MethodPut, path, []byte(`{"pinned":true}`), nil)
+			assertions.Equal(tc.status, response.Code, response.Body.String())
+			pins, err := st.ListPersonFactPinsContext(t.Context(), personID)
+			requirements.NoError(err)
+			var pinned bool
+			for _, pin := range pins {
+				if pin.Target.Key == target.Key {
+					pinned = pin.Pinned
+				}
+			}
+			assertions.Equal(tc.status == http.StatusOK, pinned)
+		})
+	}
+}
+
+func TestPersonFactEvidenceHTTPVisibleOnlyFollowsCurrentSensitivity(t *testing.T) {
+	t.Parallel()
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, st, personID, _ := newPersonFactAPIFixtureWithoutClaims(t)
+	definition, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: "test-api-visibility", ObjectType: store.AttributeObjectPerson, Slug: "api_visibility_fixture", Label: "Visibility fixture", Description: new("A synthetic fact"), ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, APIMutable: true, IsDeletable: true})
+	requirements.NoError(err)
+	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), false)
+	requirements.NoError(err)
+	var target personfacts.TargetDescriptor
+	for _, item := range catalog.Targets {
+		if item.Key == definition.UniversalID {
+			target = item
+		}
+	}
+	requirements.NotEmpty(target.Key)
+	applyPersonFactAPIGeneration(t, st, personID, target, "visibility", `"chat"`)
+	evidenceCount := func(query string) int {
+		t.Helper()
+		response := doRequest(t, srv.Router(), http.MethodGet,
+			fmt.Sprintf("/api/v1/people/%d/fact-evidence%s", personID, query), nil, nil)
+		requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+		var body PersonFactEvidenceResponse
+		requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+		return len(body.Evidence)
+	}
+	_, err = st.UpdateAttributeDefinitionContext(t.Context(), definition.ID, definition.Revision, store.AttributeDefinitionUpdate{IsSensitive: new(true)})
+	requirements.NoError(err)
+	assertions.Zero(evidenceCount("?visible_only=true"))
+	assertions.Equal(1, evidenceCount(""))
+}
+
 func TestPersonFactHTTPMapsInvalidMissingConflictAndUnavailable(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

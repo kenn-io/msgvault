@@ -16,6 +16,40 @@ import (
 
 var personFactLedgerNow = time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
 
+func TestPersonFactEvidenceVisibleTargets(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st, personID := newPersonFactLedgerStore(t)
+	publicTarget, restrictedTarget, definition := personFactLedgerCatalogTargets(t, st)
+	public := personFactLedgerClaim(personID, "public", `"chat"`, "public")
+	public.Target = publicTarget
+	restricted := personFactLedgerClaim(personID, "restricted", `"restricted"`, "restricted")
+	restricted.Target = restrictedTarget
+	prepared := preparePersonFactLedgerGeneration(t, personID, "visible", []personfacts.ProposedClaim{public}, nil)
+	persistPersonFactLedgerGeneration(t, st, prepared, nil)
+	public.Evidence = []personfacts.EvidenceInput{restricted.Evidence[0]}
+	public.SubmittedValue = []byte(`"shared"`)
+	prepared = preparePersonFactLedgerGeneration(t, personID, "visibility", []personfacts.ProposedClaim{public, restricted}, nil)
+	persistPersonFactLedgerGeneration(t, st, prepared, nil)
+	target := personfacts.TargetRef{Kind: publicTarget.Kind, Key: publicTarget.Key, Revision: publicTarget.Revision}
+	page, err := st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{Target: &target, VisibleOnly: true})
+	requirements.NoError(err)
+	requirements.Len(page, 2, "shared evidence stays visible while both targets are public")
+	_, err = st.UpdateAttributeDefinitionContext(t.Context(), definition.ID, definition.Revision, AttributeDefinitionUpdate{IsSensitive: new(true)})
+	requirements.NoError(err)
+	unfiltered, err := st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{Target: &target, Limit: 3})
+	requirements.NoError(err)
+	requirements.Len(unfiltered, 2)
+	assertions.NotEqual("Synthetic evidence public", unfiltered[0].Input.Excerpt)
+	page, err = st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{Target: &target, VisibleOnly: true, Limit: 1})
+	requirements.NoError(err)
+	requirements.Len(page, 1)
+	assertions.Equal("Synthetic evidence public", page[0].Input.Excerpt)
+	page, err = st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{Target: &target, VisibleOnly: true, Limit: 1, Offset: 1})
+	requirements.NoError(err)
+	assertions.Empty(page)
+}
+
 func TestPersonFactGenerationEnvelopeOwnsMultipleClaims(t *testing.T) {
 	st, personID := newPersonFactLedgerStore(t)
 	prepared := preparePersonFactLedgerGeneration(t, personID, "multi", []personfacts.ProposedClaim{
@@ -669,6 +703,25 @@ func personFactLedgerClaim(personID int64, targetKey, submitted, sourceSuffix st
 		Origin:     personfacts.OriginExtraction,
 		Confidence: personfacts.ConfidenceInputs{ReportedScore: 900},
 	}
+}
+
+func personFactLedgerCatalogTargets(t *testing.T, st *Store) (public, restrictable personfacts.TargetDescriptor, definition *AttributeDefinition) {
+	t.Helper()
+	definition, err := st.CreateAttributeDefinitionContext(t.Context(), AttributeDefinitionInput{UniversalID: "test-restrictable", ObjectType: AttributeObjectPerson, Slug: "restrictable_fixture", Label: "Restrictable fixture", Description: new("A synthetic fact"), ValueType: AttributeValueText, FieldType: AttributeFieldText, Cardinality: AttributeCardinalitySingle, Ownership: AttributeOwnershipUser, APIMutable: true, IsDeletable: true})
+	require.NoError(t, err)
+	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), false)
+	require.NoError(t, err)
+	for _, target := range catalog.Targets {
+		switch target.Slug {
+		case AttributeSlugPrimaryChannel:
+			public = target
+		case "restrictable_fixture":
+			restrictable = target
+		}
+	}
+	require.NotEmpty(t, public.Key)
+	require.NotEmpty(t, restrictable.Key)
+	return public, restrictable, definition
 }
 
 func seedPersonFactEvidence(t *testing.T, st *Store, personID int64, suffix string) string {

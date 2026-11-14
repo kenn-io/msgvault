@@ -9501,6 +9501,7 @@ func (o *ListPersonFactPinsRequestOptions) GetHeader() (map[string]string, error
 // SetPersonFactPinRequestOptions is the options needed to make a request to SetPersonFactPin.
 type SetPersonFactPinRequestOptions struct {
 	PathParams *SetPersonFactPinPath
+	Query      *SetPersonFactPinQuery
 	Body       *SetPersonFactPinBody
 }
 
@@ -9513,6 +9514,14 @@ func (o *SetPersonFactPinRequestOptions) Validate() error {
 		if v, ok := any(o.PathParams).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
 			}
 		}
 	}
@@ -9538,7 +9547,7 @@ func (o *SetPersonFactPinRequestOptions) GetPathParams() (map[string]any, error)
 
 // GetQuery returns the query params as a map.
 func (o *SetPersonFactPinRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
+	return runtime.AsMap[any](o.Query)
 }
 
 // GetBody returns the payload in any type that can be marshalled to JSON by the client.

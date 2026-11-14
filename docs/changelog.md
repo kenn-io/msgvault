@@ -9,6 +9,7 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
+- Let an MCP assistant read person fact claims with optional evidence and decisions, and pins. For pin and tracking writes, standalone `msgvault mcp` needs `--allow-person-fact-writes`; its HTTP mode also needs `--http-allow-writes`. Native `msgvault serve` needs `--mcp-allow-writes` and `--mcp-allow-person-fact-writes` on `/mcp/writes`. HTTP writes require protocol `2026-07-28` or newer. Each call requires client confirmation; the client must obtain user approval.
 
 ## 0.24.0
 <small>2026-11-13</small>

@@ -168,6 +168,7 @@ func (s *Server) registerPersonFactRoutes(api huma.API) {
 
 	evidence := personFactHistoryOperation("listPersonFactEvidence", "/people/{id}/fact-evidence",
 		"List immutable person fact evidence")
+	evidence.Parameters = append(evidence.Parameters, queryBooleanParam("visible_only", "Exclude evidence linked to sensitive or retired targets"))
 	evidence.Responses = jsonResponsesFor[PersonFactEvidenceResponse](api)
 	addErrorResponses(api, evidence.Responses, http.StatusBadRequest, http.StatusNotFound,
 		http.StatusServiceUnavailable)
@@ -220,6 +221,7 @@ func (s *Server) registerPersonFactRoutes(api huma.API) {
 		&huma.Param{Name: "key", In: personFactPathParameterLocation, Required: true,
 			Description: "Exact person fact target key",
 			Schema:      &huma.Schema{Type: huma.TypeString}},
+		queryBooleanParam("visible_only", "Reject sensitive and retired targets"),
 	)
 	setPin.RequestBody = jsonRequestBodyFor[SetPersonFactPinRequest](api)
 	setPin.Responses = jsonResponsesFor[PersonFactPinWrite](api)
@@ -270,8 +272,13 @@ func (s *Server) handleListPersonFactEvidence(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	visibleOnly, _, err := queryBool(r, "visible_only")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	rows, err := facts.ListPersonFactEvidenceContext(r.Context(), personID,
-		personfacts.EvidenceFilter{Target: filter.target, Limit: filter.limit, Offset: filter.offset})
+		personfacts.EvidenceFilter{Target: filter.target, VisibleOnly: visibleOnly, Limit: filter.limit, Offset: filter.offset})
 	if err != nil {
 		s.writePersonFactError(w, err)
 		return
@@ -409,7 +416,12 @@ func (s *Server) handleSetPersonFactPin(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "bad_request", "pinned must be a boolean")
 		return
 	}
-	catalog, err := facts.BuildPersonFactCatalogContext(r.Context(), true)
+	visibleOnly, _, err := queryBool(r, "visible_only")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
+	catalog, err := facts.BuildPersonFactCatalogContext(r.Context(), !visibleOnly)
 	if err != nil {
 		s.writePersonFactError(w, err)
 		return

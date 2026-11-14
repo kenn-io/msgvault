@@ -950,6 +950,7 @@ export * from "./setPersonAttributePathParameters";
 export * from "./setPersonAttributeRequest";
 export * from "./setPersonAttributeRequestSource";
 export * from "./setPersonBriefEnrollmentPathParameters";
+export * from "./setPersonFactPinParams";
 export * from "./setPersonFactPinPathParameters";
 export * from "./setPersonFactPinRequest";
 export * from "./setPersonTrackingPathParameters";

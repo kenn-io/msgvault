@@ -930,6 +930,20 @@ one second, then make a new call, which needs approval again. MCP never
 retries a write by itself. If a write reports
 `operation_may_have_completed: true`, list the loops again before retrying.
 
+## Person facts
+
+On unreleased `main`, an owner-connected assistant can read fact claims and pins, and change pins and tracking. Delegated sessions get none of these tools. A tool appears only
+when the daemon offers its route.
+
+Use `list_person_fact_claims`, `list_person_fact_pins`, `set_person_fact_pin`, and `set_person_tracking` for these operations.
+
+- Build `target` as `kind:key:revision` from a claim's `target`. Evidence and decisions require a target. If there are no claims, use `msgvault person facts catalog` to find target keys and revisions.
+- Use `msgvault person facts evidence-status <person-id>` to inspect evidence support history.
+- If a read that accepts `limit` returns `operation_response_limit_exceeded`, retry with a smaller `limit`.
+- Claims, evidence, and decisions for sensitive attributes are omitted, as are rows for targets no longer in the active catalog and evidence shared with such a claim. A claim's `evidence_ids` may list IDs missing from `evidence`. Use `msgvault person facts claims`, `msgvault person facts evidence`, and `msgvault person facts decisions` in the CLI to see them. Each included list is a separate page with the same filters and may not cover every claim reference. `next_offset` is present when any returned list was full; call again with that offset until it is absent.
+- Pins for sensitive or retired targets are hidden from MCP. Use `msgvault person facts unpin <person-id> <kind> <key>` to unpin them in the CLI.
+- Writes require `--allow-person-fact-writes` and explicit client confirmation for each call; the client is responsible for user approval. The person must be tracked to set a pin. If a write reports `operation_may_have_completed: true`, call `list_person_fact_pins` or `get_person_profile` before retrying.
+
 ## Write controls
 
 Enable only the writes intended for the assistant's session:
@@ -938,6 +952,7 @@ Enable only the writes intended for the assistant's session:
 |---|---|---|
 | Native email tag edits, Saved View management, attachment export, deletion staging, and drafts | Available by default | `--http-allow-writes` |
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
+| Person fact pins and tracking | `--allow-person-fact-writes` | `--http-allow-writes --allow-person-fact-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
@@ -1028,6 +1043,7 @@ msgvault mcp --http 8080
 | `--http-token-env` | — | Name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-person-fact-writes` | `false` | On unreleased `main`, expose person fact pin and tracking writes. Each call requires client confirmation; the client must obtain user approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-loop-writes` | `false` | Expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |

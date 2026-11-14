@@ -1108,6 +1108,9 @@ type ListPersonFactEvidenceQuery struct {
 
 	// Offset Zero-based row offset
 	Offset *int64 `json:"offset,omitempty"`
+
+	// VisibleOnly Exclude evidence linked to sensitive or retired targets
+	VisibleOnly *bool `json:"visible_only,omitempty"`
 }
 
 type ListPersonFactEvidenceStatusEventsQuery struct {
@@ -1122,6 +1125,11 @@ type ListPersonFactEvidenceStatusEventsQuery struct {
 
 	// Offset Zero-based event offset
 	Offset *int64 `json:"offset,omitempty"`
+}
+
+type SetPersonFactPinQuery struct {
+	// VisibleOnly Reject sensitive and retired targets
+	VisibleOnly *bool `json:"visible_only,omitempty"`
 }
 
 type ListPersonMergesQuery struct {

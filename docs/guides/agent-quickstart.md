@@ -237,6 +237,8 @@ backend checks for action permissions, source scope, and sender identity;
 | `close_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `reopen_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `snooze_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
+| `set_person_fact_pin` | person_fact_write | `--allow-person-fact-writes` | owner-only |
+| `set_person_tracking` | person_fact_write | `--allow-person-fact-writes` | owner-only |
 | `merge_person` | person_merge | `--allow-person-merges` | owner-only |
 | `promote_person` | profile_write | `--allow-profile-writes` | owner-only |
 | `set_person_display_name` | profile_write | `--allow-profile-writes` | owner-only |
@@ -285,6 +287,8 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_meeting_action_items` | read | — | owner-only |
 | `list_messages` | read | — | search.read |
 | `list_open_loops` | read | — | owner-only |
+| `list_person_fact_claims` | read | — | owner-only |
+| `list_person_fact_pins` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |

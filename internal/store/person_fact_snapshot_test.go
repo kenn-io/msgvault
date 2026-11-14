@@ -21,7 +21,7 @@ func TestPersonFactLedgerReadsOneRepeatableSnapshot(t *testing.T) {
 
 	var inside []personfacts.Evidence
 	err = reader.withReadSnapshotContext(t.Context(), func(tx *loggedTx) error {
-		inside, err = reader.queryPersonFactEvidenceTx(t.Context(), tx, personID,
+		inside, err = reader.queryPersonFactEvidenceTx(t.Context(), tx, personID, nil,
 			personfacts.EvidenceFilter{Limit: 50})
 		if err != nil {
 			return err
