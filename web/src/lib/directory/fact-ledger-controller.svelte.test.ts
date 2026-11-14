@@ -29,7 +29,7 @@ function payload(path: string, marker = 'safe') {
   }] };
   if (path.endsWith('/fact-claims')) return { claims: [{
     id: 4, claim_key: 'private-claim-key', generation_id: 5, evidence_ids: [1], target: { kind: 'attribute', key: 'work:email', revision },
-    submitted_value: JSON.stringify(`allowed value ${marker}`), normalized_value: JSON.stringify(`allowed normalized ${marker}`), relation: 'support', origin: 'extraction',
+    submitted_value: JSON.stringify(`allowed value ${marker}`), normalized_value: JSON.stringify(`allowed normalized ${marker}`), relation: 'support', origin: 'extraction', kind: 'preference', status: 'stale',
     valid_from: '2026-01-01T00:00:00Z', valid_until: null, confidence: { reported_score: 80 }, created_at: '2026-08-03T00:00:00Z',
     program_fingerprint: 'private-program-fingerprint', program_id: 'private-program', program_version: 'private-program-version',
     value_fingerprint: 'private-value-fingerprint'

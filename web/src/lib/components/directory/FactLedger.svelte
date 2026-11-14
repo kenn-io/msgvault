@@ -159,7 +159,7 @@
                 <div class="links"><Button label="Show decision" class="text-action" size="sm" onclick={() => void controller.showDecision(row.claimKey, row.targetCanonical)} />{#if row.evidenceIDs.length === 1}<Button label="Show evidence" class="text-action" size="sm" onclick={() => void controller.showEvidence(row.evidenceIDs[0]!, row.targetCanonical)} />{/if}</div>
                 <Disclosure variant="plain" title="Raw values"><dl><div><dt>Origin</dt><dd><code>{row.origin}</code></dd></div><div><dt>Relation</dt><dd><code>{row.relation}</code></dd></div>{#if shown}<div><dt>Submitted</dt><dd><code>{row.submittedValue}</code></dd></div>{#if row.normalizedValue !== null}<div><dt>Normalized</dt><dd><code>{row.normalizedValue}</code></dd></div>{/if}{/if}</dl></Disclosure>
               {/snippet}
-              {#snippet meta()}<span class="meta">{#if originWords(row.origin)}{originWords(row.origin)}{' · '}{/if}<time datetime={row.createdAt} title={formatDateTime(row.createdAt)}>{formatShortDate(row.createdAt)}</time></span>{/snippet}
+              {#snippet meta()}<span class="meta"><span>{row.kind}</span>{' · '}<span>{row.status}</span>{' · '}{#if originWords(row.origin)}{originWords(row.origin)}{' · '}{/if}<time datetime={row.createdAt} title={formatDateTime(row.createdAt)}>{formatShortDate(row.createdAt)}</time></span>{/snippet}
             </DetailRow>
             </div>
           {:else}{#if !controller.claims.error}<EmptyLine message={emptyTitle('claims')} />{/if}{/each}

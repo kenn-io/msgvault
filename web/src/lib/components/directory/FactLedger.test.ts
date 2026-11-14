@@ -26,7 +26,7 @@ function ledgerResponse(path: string): Response {
     id: 1, claim_key: 'private-claim-key', generation_id: 2, evidence_ids: [],
     target: { kind: 'attribute', key: 'private-note', revision },
     submitted_value: JSON.stringify('private-sensitive-value'), normalized_value: JSON.stringify('private-normalized-value'),
-    relation: 'support', origin: 'extraction', confidence: { reported_score: 80 },
+    relation: 'support', origin: 'extraction', kind: 'preference', status: 'stale', confidence: { reported_score: 80 },
     created_at: '2026-08-03T00:00:00Z', program_fingerprint: 'private', program_id: 'private',
     program_version: 'private', value_fingerprint: 'private'
   }] });
@@ -46,7 +46,7 @@ function controller(): FactLedgerController {
   value.evidence.rows = [{ rowToken: 'evidence-0', sourceClass: 'archive', directness: 'direct-self', authority: 'ordinary', identityScore: 950,
     evidenceID: 1, eventTime: '2026-08-01', recordedTime: '2026-08-02', supported: true, currentSupportLabel: 'Supported — Source reimported', createdAt: '2026-08-03',
     excerpt: 'allowed evidence excerpt', evidenceKey: 'forbidden-evidence-key' }];
-  value.claims.rows = [{ rowToken: 'claim-0', targetKind: 'attribute', targetKey: 'note', displayValue: 'allowed sensitive value', claimKey: 'claim', evidenceIDs: [], submittedValue: 'allowed sensitive value', normalizedValue: 'allowed normalized value', relation: 'support', origin: 'extraction',
+  value.claims.rows = [{ rowToken: 'claim-0', targetKind: 'attribute', targetKey: 'note', displayValue: 'allowed sensitive value', claimKey: 'claim', evidenceIDs: [], submittedValue: 'allowed sensitive value', normalizedValue: 'allowed normalized value', relation: 'support', origin: 'extraction', kind: 'fact', status: 'fresh',
     validFrom: '2026-01-01', validUntil: null, reportedScore: 88, createdAt: '2026-08-03', targetCanonical: value.targets[0]!.canonical }];
   value.decisions.rows = [{ rowToken: 'decision-0', claimKey: 'claim', displayValue: 'allowed sensitive value', parsedValue: 'allowed sensitive value', targetKind: 'attribute', outcome: 'saved', targetKey: 'note', targetCanonical: value.targets[0]!.canonical, scoreMaxima: { authority: 300, confidence: 100, corroboration: 150, directness: 400, freshness: 100, sourceClass: 500, total: 1550 }, action: 'applied', reason: 'applied-projection', score: { authority: 100, confidence: 8, corroboration: 0,
     directness: 400, freshness: 100, sourceClass: 300, total: 908 }, projectionKind: 'person_attribute', createdAt: '2026-08-03' }];
@@ -266,6 +266,8 @@ describe('FactLedger', () => {
     value.selectedSection = 'claims';
     const rendered = render(FactLedger, { controller: value });
 
+    expect(screen.getByText('preference')).toBeDefined();
+    expect(screen.getByText('stale')).toBeDefined();
     expect(rendered.container.innerHTML).not.toContain('private-sensitive-value');
     expect(rendered.container.innerHTML).not.toContain('private-normalized-value');
     expect(screen.getByRole('status', { name: 'Fact value hidden until target sensitivity is verified.' })).toBeDefined();
