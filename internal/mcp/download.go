@@ -46,6 +46,7 @@ type downloadSnapshot struct {
 type downloadCache struct {
 	mu      sync.Mutex
 	entries map[downloadKey]*downloadSnapshot
+	loading map[downloadKey]chan struct{}
 	bytes   int
 	closed  bool
 }
@@ -83,6 +84,33 @@ retry:
 	}
 	if req.offset != 0 {
 		return nil, errDownloadExpired
+	}
+	if key.operation == "" {
+		if pending := c.loading[key]; pending != nil {
+			err := func() error {
+				c.mu.Unlock()
+				defer c.mu.Lock()
+				select {
+				case <-pending:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}()
+			if err != nil {
+				return nil, err
+			}
+			goto retry
+		}
+		if c.loading == nil {
+			c.loading = make(map[downloadKey]chan struct{})
+		}
+		pending := make(chan struct{})
+		c.loading[key] = pending
+		defer func() {
+			delete(c.loading, key)
+			close(pending)
+		}()
 	}
 	entry, err := func() (*downloadSnapshot, error) {
 		c.mu.Unlock()
