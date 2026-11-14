@@ -27,6 +27,10 @@ func decodeTwenty(fields map[string]jsontext.Value) Content {
 		c.LinkEvidence.ICalUID = strings.TrimSpace(uid)
 		if at, ok := rawTime(calendar["startsAt"], false); ok {
 			c.LinkEvidence.ScheduledAt = &at
+			if end, ok := rawTime(calendar["endsAt"], false); ok && end.After(at) {
+				seconds := end.Sub(at).Seconds()
+				c.LinkEvidence.ScheduledDuration = &seconds
+			}
 		}
 	}
 	c.Notes = Section{State: StateUnsupported}
@@ -69,13 +73,9 @@ func decodeTwenty(fields map[string]jsontext.Value) Content {
 		setDuration(&c, end.Sub(start).Seconds(), DurationProvider)
 		return c
 	}
-	if c.LinkEvidence.ScheduledAt != nil {
-		start = *c.LinkEvidence.ScheduledAt
-		end, endOK = rawTime(calendar["endsAt"], false)
-		if endOK && end.After(start) {
-			setDuration(&c, end.Sub(start).Seconds(), DurationScheduled)
-			return c
-		}
+	if c.LinkEvidence.ScheduledDuration != nil {
+		setDuration(&c, *c.LinkEvidence.ScheduledDuration, DurationScheduled)
+		return c
 	}
 	if value, ok := twentyTranscriptSpan(recording["transcript"]); ok && c.Transcript.State == StateAvailable {
 		setDuration(&c, value, DurationTranscriptSpan)

@@ -312,6 +312,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `search_tools` | read | — | metadata-only |
 | `search_visual_attachments` | read | — | owner-only |
 | `semantic_search_messages` | read | — | owner-only |
+| `suggest_meeting_links` | read | — | message.read |
 | `sync_source` | source_write | `--allow-source-writes` | owner-only |
 | `update_slack_sync_policy` | source_write | `--allow-source-writes` | owner-only |
 | `create_saved_view` | write | — | owner-only |

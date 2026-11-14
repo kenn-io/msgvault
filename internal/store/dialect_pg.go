@@ -615,6 +615,8 @@ func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQueri
 //	TEXT → TEXT, DATETIME → TIMESTAMPTZ, JSON → JSONB.
 func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
+		{`ALTER TABLE meeting_details ADD COLUMN IF NOT EXISTS scheduled_start TIMESTAMPTZ`, "meeting_details.scheduled_start"},
+		{`ALTER TABLE meeting_details ADD COLUMN IF NOT EXISTS scheduled_duration_seconds DOUBLE PRECISION`, "meeting_details.scheduled_duration_seconds"},
 		{`ALTER TABLE meeting_details ADD COLUMN IF NOT EXISTS link_key TEXT`, "meeting_details.link_key"},
 		{`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS ical_uid TEXT NOT NULL DEFAULT ''`, "calendar_events.ical_uid"},
 		{`ALTER TABLE carddav_resources ADD COLUMN IF NOT EXISTS owns_display_name BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.owns_display_name"},

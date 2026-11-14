@@ -29,10 +29,7 @@ func decodeGranola(fields map[string]jsontext.Value) Content {
 	}
 	content.SourceParticipants = granolaParticipants(fields, owner)
 
-	start, startOK := rawTime(calendar["scheduled_start_time"], false)
-	end, endOK := rawTime(calendar["scheduled_end_time"], false)
-	if startOK && endOK && end.After(start) {
-		setDuration(&content, end.Sub(start).Seconds(), DurationScheduled)
+	if granolaScheduledInterval(&content, calendar) {
 		return content
 	}
 	var starts, ends []time.Time
@@ -50,6 +47,24 @@ func decodeGranola(fields map[string]jsontext.Value) Content {
 		}
 	}
 	return content
+}
+
+func granolaScheduledInterval(content *Content, calendar map[string]jsontext.Value) bool {
+	start, startOK := rawTime(calendar["scheduled_start_time"], true)
+	end, endOK := rawTime(calendar["scheduled_end_time"], true)
+	if !startOK || !endOK || !end.After(start) {
+		return false
+	}
+	content.LinkEvidence.ScheduledAt = &start
+	seconds := end.Sub(start).Seconds()
+	content.LinkEvidence.ScheduledDuration = &seconds
+	_, timedStart := rawTime(calendar["scheduled_start_time"], false)
+	_, timedEnd := rawTime(calendar["scheduled_end_time"], false)
+	if timedStart && timedEnd {
+		setDuration(content, seconds, DurationScheduled)
+		return true
+	}
+	return false
 }
 
 func decodeGranolaTranscript(fields map[string]jsontext.Value) ([]Segment, Transcript) {
