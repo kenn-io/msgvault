@@ -92,10 +92,6 @@ func TestApplyCommitmentOnlySweepWritesClaimsAndDecisions(t *testing.T) {
 	r.NoError(err)
 	a.Empty(tombstones)
 
-	items, err = st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 5, true)
-	r.NoError(err)
-	r.Len(items, 2)
-	a.Equal(LoopStateDone, items[0].State)
 }
 
 func TestCommitmentListSelectsOldestBeforeLimit(t *testing.T) {

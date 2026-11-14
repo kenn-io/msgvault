@@ -70,7 +70,7 @@ describe("PersonOpenLoops", () => {
 
   it("shows cited promises and their discovery window", async () => {
     const fetcher = vi.fn<typeof fetch>(async () => Response.json({
-      items: [loop()],
+      items: [loop(42), loop(43), loop(44), loop(45), loop(46)],
       truncated: true,
       commitments_since: "2026-10-01T00:00:00Z",
       commitments_complete: false,
@@ -86,7 +86,7 @@ describe("PersonOpenLoops", () => {
     expect(screen.getByRole("heading", { name: "Promises to you · stale evidence" })).toBeDefined();
     expect(screen.getByText("Due 2026-11-15")).toBeDefined();
     expect(screen.getByText(/still searching/)).toBeDefined();
-    expect(screen.getByText("3+ open")).toBeDefined();
+    expect(screen.getByText("7+ open")).toBeDefined();
     expect(screen.queryByRole("button", { name: /done|snooze|closed/i })).toBeNull();
     const request = fetcher.mock.calls[0]?.[0];
     const url = new URL(request instanceof Request ? request.url : String(request), "http://localhost");

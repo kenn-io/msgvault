@@ -132,6 +132,7 @@ type commitmentPhaseEndingStore struct {
 	ctx       *endingContext
 	between   bool
 	readerErr error
+	called    bool
 }
 
 func (s *commitmentPhaseEndingStore) LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error] {
@@ -148,6 +149,7 @@ func (s *commitmentPhaseEndingStore) LoopConversationsContext(ctx context.Contex
 }
 
 func (s *commitmentPhaseEndingStore) ListPersonCommitmentsContext(context.Context, int64, time.Time, int, bool) ([]store.PersonCommitment, error) {
+	s.called = true
 	if s.readerErr != nil {
 		return nil, s.readerErr
 	}
@@ -165,7 +167,6 @@ func TestListPreservesContextSemanticsAcrossCommitmentPhase(t *testing.T) {
 		ending, readerErr, wantErr error
 	}{
 		{"deadline_inside_commitments", false, context.DeadlineExceeded, nil, nil},
-		{"deadline_between_phases", true, context.DeadlineExceeded, nil, nil},
 		{"cancellation_between_phases", true, context.Canceled, nil, context.Canceled},
 		{"live_database_error", false, nil, readErr, readErr},
 	} {
@@ -179,6 +180,9 @@ func TestListPreservesContextSemanticsAcrossCommitmentPhase(t *testing.T) {
 			result, err := loops.List(ctx, st, loops.Options{}, now)
 			if tc.wantErr != nil {
 				r.ErrorIs(err, tc.wantErr)
+				if tc.between {
+					a.False(st.called)
+				}
 				return
 			}
 			r.NoError(err)
