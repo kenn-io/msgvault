@@ -130,6 +130,8 @@ func TestPostRestoreRepairDoesNotForceUnlock(t *testing.T) {
 	})
 	require.NoError(err)
 	target := t.TempDir()
+	oldForceUnlock := backupRestoreForceUnlock
+	t.Cleanup(func() { backupRestoreForceUnlock = oldForceUnlock })
 	prepareBackupTokenRestore(t)
 	lock, err := repo.AcquireExclusiveLock("create", false)
 	require.NoError(err)
