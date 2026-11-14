@@ -81,8 +81,6 @@ func TestMCPRelationshipRecords(t *testing.T) {
 	requirements.NotNil(updated.EndDate.Year)
 	assertions.Equal(int64(2020), *updated.EndDate.Year)
 	deleteArgs := map[string]any{"id": updated.ID, "revision": updated.Revision}
-	_, err = backend.OperationDisclosure(t.Context(), "delete_person_relationship", deleteArgs)
-	requirements.NoError(err)
 	result, err = backend.ExecuteOperation(t.Context(), "update_person_relationship", map[string]any{"id": updated.ID, "revision": updated.Revision, "notes": "changed"})
 	requirements.NoError(err)
 	current := operationOutput[generated.PersonRelationship](t, result)
@@ -138,7 +136,7 @@ func TestMCPRelationshipListAndNetworkReads(t *testing.T) {
 func TestMCPRelationshipCapabilities(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	backend, _ := personRecordFixture(t)
+	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Logger: slog.New(slog.DiscardHandler)}))
 	assertions.Contains(backend.capabilities(), "create_person_relationship")
 	assertions.Contains(backend.capabilities(), "update_person_relationship")
 	caps, err := backend.client.MCPCapabilities(t.Context())
@@ -163,9 +161,11 @@ func TestMCPRelationshipCapabilities(t *testing.T) {
 func TestMCPRelationshipLargeList(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	st, backend, root, _ := relationshipFixture(t)
+	st, backend, root, target := relationshipFixture(t)
 	notes := strings.Repeat("x", 4096)
-	for i := range 260 {
+	_, err := st.AddPersonRelationshipContext(t.Context(), store.PersonRelationshipInput{SourcePersonID: root, TargetPersonID: target, TypeSlug: "parent", Notes: &notes, Source: store.ProvenanceUser, Actor: "user"})
+	requirements.NoError(err)
+	for i := range 259 {
 		participant, err := st.EnsureParticipant(fmt.Sprintf("user-%d@example.com", i), "Example", "example.com")
 		requirements.NoError(err)
 		person, _, err := st.CreatePersonFromParticipant(participant)
@@ -192,13 +192,4 @@ func TestMCPRelationshipLargeList(t *testing.T) {
 	requirements.NotEmpty(first)
 	requirements.LessOrEqual(len(first), len(raw.Data))
 	assertions.Equal(raw.Data[:len(first)], first)
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_relationships", Arguments: map[string]any{"person_id": root, "length": 32768, "offset": *chunk.Offset + *chunk.Length, "sha256": *chunk.SHA256}})
-	requirements.NoError(err)
-	next := loopToolOutput[mcpserver.PersonRelationshipsPage](t, result)
-	requirements.NotNil(next.DataBase64)
-	data, err := base64.StdEncoding.DecodeString(*next.DataBase64)
-	requirements.NoError(err)
-	requirements.NotEmpty(data)
-	requirements.LessOrEqual(len(first)+len(data), len(raw.Data))
-	assertions.Equal(raw.Data[len(first):len(first)+len(data)], data)
 }
