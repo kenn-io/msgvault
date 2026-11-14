@@ -178,7 +178,7 @@ func (b *daemonMCPOperations) loopOperationDisclosure(name string, args map[stri
 
 func loopRefusal(code string) bool {
 	switch code {
-	case "loop_not_found", "loop_decision_not_found", "loop_scan_incomplete", "loops_unavailable", "invalid_request", "server_busy":
+	case "loop_not_found", "loop_decision_not_found", "loop_scan_incomplete", "loops_unavailable", "invalid_request":
 		return true
 	default:
 		return false

@@ -958,17 +958,16 @@ disclosures are refused. A successful patch returns its new ETag and omits the
 profile when it exceeds 1 MiB. If the result says the operation may have
 completed, read the record again before retrying.
 
-Owner merge recovery reads are `list_person_merges`, `get_person_merge` with a
-row count, and `get_person_merge_snapshot` with verified lineage. These tools
-require native daemon support. Detail, snapshot and split responses accept up
-to 16 MiB from the daemon; listing accepts up to 1 MiB. Candidate records
-identify attribute values by ID. With merge recovery writes enabled,
-`decide_person_merge_candidate` and
-`split_person_merge` each need the person's current ETag from
-`get_person_edit_context`. Pick one stable `idempotency_key` per split and
-reuse it when retrying that split. Accepting a candidate makes the exact
-split unavailable. If a result says the operation may have completed, read
-`get_person_merge` and the person's edit context again before retrying.
+Owner merge recovery reads are `list_person_merges` and `get_person_merge`.
+Merge details return up to 500 rows at a time; use `next_row_offset` to read
+more. With merge recovery writes enabled, `decide_person_merge_candidate` and
+`split_person_merge` need the person's ETag from `get_person_edit_context`.
+Candidate confirmations show the attribute and both values. Accepting a
+candidate makes an exact split unavailable. Split results include both people's
+new ETags and up to 500 ambiguous and unrestored row references per list. To
+read more, repeat the identical split with the same `idempotency_key` and the
+returned `next_row_offset` as `row_offset`. If an operation may have completed,
+read the merge and person edit context before retrying.
 
 Enable only the writes intended for the assistant's session:
 

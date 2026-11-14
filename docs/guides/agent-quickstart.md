@@ -273,7 +273,6 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_person_edit_context` | read | — | owner-only |
 | `get_person_merge` | read | — | owner-only |
 | `get_person_merge_context` | read | — | owner-only |
-| `get_person_merge_snapshot` | read | — | owner-only |
 | `get_person_messaging_routes` | read | — | owner-only |
 | `get_person_notes` | read | — | owner-only |
 | `get_person_profile` | read | — | owner-only |

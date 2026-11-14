@@ -47,13 +47,6 @@ type personPatchArgs struct {
 	Patch    *generated.PersonProfilePatchRequest `json:"patch"`
 }
 
-func personRecordRefusal(code string) bool {
-	switch code {
-	case "profile_values_unavailable", "profile_media_not_found", "profile_media_content_unavailable", "profile_value_not_found", "invalid_profile_value", "profile_patch_too_large", "person_category_duplicate", "service_alias_conflict", "invalid_if_match", "server_busy":
-		return true
-	}
-	return false
-}
 func (b *daemonMCPOperations) executePersonRecord(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	invalid := func() (*mcpserver.OperationResult, bool, error) {
 		return operationFailure(invalidArguments, false), true, nil
@@ -65,7 +58,7 @@ func (b *daemonMCPOperations) executePersonRecord(ctx context.Context, name stri
 			return invalid()
 		}
 		if name == "get_person_record" {
-			data, headers, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile", &generated.GetPersonStructuredProfileRequestOptions{PathParams: &generated.GetPersonStructuredProfilePath{ID: input.PersonID}}, mcpserver.MaxDownloadBytes, personRecordRefusal, http.StatusOK)
+			data, headers, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile", &generated.GetPersonStructuredProfileRequestOptions{PathParams: &generated.GetPersonStructuredProfilePath{ID: input.PersonID}}, mcpserver.MaxDownloadBytes, nil, http.StatusOK)
 			if failure != nil {
 				return failure, true, err
 			}
@@ -74,14 +67,14 @@ func (b *daemonMCPOperations) executePersonRecord(ctx context.Context, name stri
 			}
 			return &mcpserver.OperationResult{Data: data, ETag: headers.Get("ETag")}, true, nil
 		}
-		result, err := readMCPOperationJSONWithClassifier[generated.PersonProfileHistory](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/history", &generated.GetPersonProfileHistoryRequestOptions{PathParams: &generated.GetPersonProfileHistoryPath{ID: input.PersonID}}, personRecordRefusal, http.StatusOK)
+		result, err := readMCPOperationJSONWithClassifier[generated.PersonProfileHistory](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/history", &generated.GetPersonProfileHistoryRequestOptions{PathParams: &generated.GetPersonProfileHistoryPath{ID: input.PersonID}}, nil, http.StatusOK)
 		return result, true, err
 	case "patch_person_record":
 		input, err := decodeMCPOperationArguments[personPatchArgs](args)
 		if err != nil || !validLoopID(input.PersonID) || input.ETag == "" || input.Patch == nil {
 			return invalid()
 		}
-		data, headers, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodPatch, "/api/v1/people/{id}/profile", &generated.PatchPersonStructuredProfileRequestOptions{PathParams: &generated.PatchPersonStructuredProfilePath{ID: input.PersonID}, Header: &generated.PatchPersonStructuredProfileHeaders{IfMatch: input.ETag}, Body: input.Patch}, mcpserver.MaxDownloadBytes, personRecordRefusal, http.StatusOK)
+		data, headers, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodPatch, "/api/v1/people/{id}/profile", &generated.PatchPersonStructuredProfileRequestOptions{PathParams: &generated.PatchPersonStructuredProfilePath{ID: input.PersonID}, Header: &generated.PatchPersonStructuredProfileHeaders{IfMatch: input.ETag}, Body: input.Patch}, mcpserver.MaxDownloadBytes, nil, http.StatusOK)
 		if failure != nil {
 			return failure, true, err
 		}
@@ -102,7 +95,7 @@ func (b *daemonMCPOperations) executePersonRecord(ctx context.Context, name stri
 		if err != nil || !validLoopID(input.PersonID) || !validLoopID(input.MediaID) {
 			return invalid()
 		}
-		data, headers, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/media/{media_id}/content", &generated.GetPersonProfileMediaContentRequestOptions{PathParams: &generated.GetPersonProfileMediaContentPath{ID: input.PersonID, MediaID: input.MediaID}}, mcpserver.MaxDownloadBytes, personRecordRefusal, http.StatusOK)
+		data, headers, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/media/{media_id}/content", &generated.GetPersonProfileMediaContentRequestOptions{PathParams: &generated.GetPersonProfileMediaContentPath{ID: input.PersonID, MediaID: input.MediaID}}, mcpserver.MaxDownloadBytes, nil, http.StatusOK)
 		if failure != nil {
 			return failure, true, err
 		}
@@ -253,7 +246,7 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 		return "", true, err
 	}
 	if missing {
-		data, _, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/history", &generated.GetPersonProfileHistoryRequestOptions{PathParams: &generated.GetPersonProfileHistoryPath{ID: input.PersonID}}, mcpserver.MaxDownloadBytes, personRecordRefusal, http.StatusOK)
+		data, _, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/history", &generated.GetPersonProfileHistoryRequestOptions{PathParams: &generated.GetPersonProfileHistoryPath{ID: input.PersonID}}, mcpserver.MaxDownloadBytes, nil, http.StatusOK)
 		if err != nil {
 			return "", true, err
 		}
