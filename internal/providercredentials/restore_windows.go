@@ -55,6 +55,7 @@ func SecureRestored(dir string, restored []string) error {
 		if rootChanged {
 			changed = append(changed, ".")
 		}
+		slices.SortStableFunc(changed, func(a, b string) int { return len(b) - len(a) })
 		for _, name := range changed {
 			if err := restorePreflight(dir, name, restored, ancestors, changed); err != nil {
 				return err

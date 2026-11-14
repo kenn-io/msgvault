@@ -22,15 +22,18 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
+	manifest, err := repo.LoadManifest(snapshotID)
+	if err != nil {
+		return 0, fmt.Errorf("load snapshot manifest: %w", err)
+	}
+	if !manifest.Options.IncludeTokens {
+		return 0, nil
+	}
 	lease, err := repo.AcquireSharedLock("secure restored tokens", forceUnlock)
 	if err != nil {
 		return 0, fmt.Errorf("lock snapshot repository: %w", err)
 	}
 	defer func() { err = errors.Join(err, lease.Release()) }()
-	manifest, err := repo.LoadManifest(snapshotID)
-	if err != nil {
-		return 0, fmt.Errorf("load snapshot manifest: %w", err)
-	}
 	if manifest.Extras.Tree == "" {
 		return 0, nil
 	}

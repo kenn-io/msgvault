@@ -119,22 +119,31 @@ func TestBackupRestoreConflictNoTokensAndPermissionRetry(t *testing.T) {
 	require.NoError(err)
 }
 
-func TestPostRestoreRepairDoesNotForceUnlock(t *testing.T) {
+func TestPermissionRepairHonorsSnapshotAndLock(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg, dbPath, attachments := backupTokenFixture(t)
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(err)
+	emptyManifest, err := backup.Create(t.Context(), repo, backupapp.New("test"), backup.CreateOptions{
+		DBPath: dbPath, ContentDir: attachments, DataDir: cfg.Data.DataDir,
+	})
+	require.NoError(err)
 	manifest, err := backup.Create(t.Context(), repo, backupapp.New("test"), backup.CreateOptions{
 		DBPath: dbPath, ContentDir: attachments, DataDir: cfg.Data.DataDir,
+		IncludeTokens: true, AllowPlaintextSecrets: true,
 	})
 	require.NoError(err)
 	target := t.TempDir()
 	prepareBackupTokenRestore(t)
 	lock, err := repo.AcquireExclusiveLock("create", false)
 	require.NoError(err)
+	count, err := secureRestoredTokens(t.Context(), repo, emptyManifest.SnapshotID, target, false)
+	require.NoError(err)
+	assert.Zero(count)
+	assert.FileExists(repo.Path("locks", "exclusive.json"))
 	backupRestoreForceUnlock = true
-	_, err = securePostRestoreTokens(t.Context(), repo, manifest.SnapshotID, target)
+	_, err = secureRestoredTokens(t.Context(), repo, manifest.SnapshotID, target, false)
 	require.ErrorIs(err, backup.ErrRepoLocked)
 	assert.FileExists(repo.Path("locks", "exclusive.json"))
 	require.NoError(lock.Release())

@@ -465,6 +465,24 @@ func shareRestoredTestDirectory(t *testing.T, dir string, inheritance uint32) wi
 }
 
 func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
+	t.Run("repairs inherited directories deepest first", func(t *testing.T) {
+		require := require.New(t)
+		dir := filepath.Join(t.TempDir(), "tokens")
+		require.NoError(os.Mkdir(dir, 0700))
+		root := shareRestoredTestDirectory(t, dir, windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE)
+		parent := filepath.Join(dir, "parent")
+		child := filepath.Join(parent, "child")
+		require.NoError(os.MkdirAll(child, 0700))
+		require.NoError(os.WriteFile(filepath.Join(child, "token"), []byte("selected"), 0600))
+		require.NoError(SecureRestored(dir, []string{filepath.Join("parent", "child", "token")}))
+		for _, path := range []string{parent, child} {
+			h, err := openSecurityHandle(path, true, windows.READ_CONTROL)
+			require.NoError(err)
+			require.NoError(verifyOwnerOnlyHandle(h, false))
+			require.NoError(windows.CloseHandle(h))
+		}
+		require.NoError(verifyOwnerOnlyHandle(root, false))
+	})
 	t.Run("omitted without inherited access", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "tokens")
 		require.NoError(t, (nativePermissions{}).secureDirectory(dir))
