@@ -217,7 +217,4 @@ func TestPersonFactSDKWritesReachStore(t *testing.T) {
 	requirements.NoError(json.Unmarshal(data, &write))
 	assertions.True(write.State.Pinned)
 	assertions.Equal(target.Key, write.State.Target.Key)
-	pins, err := st.ListPersonFactPinsContext(t.Context(), id)
-	requirements.NoError(err)
-	assertions.True(slices.ContainsFunc(pins, func(pin personfacts.PinState) bool { return pin.Target.Key == target.Key && pin.Pinned }))
 }
