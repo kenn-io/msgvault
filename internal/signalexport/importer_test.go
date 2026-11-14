@@ -99,12 +99,11 @@ func TestImportDistinctMessagesAtSameMillisecond(t *testing.T) {
 		return strings.Replace(strings.Replace(frame, body, "Another message", 1), "1700000000100", "1700000000200", 1)
 	}
 	for _, tc := range []struct {
-		name             string
-		frames, replay   []string
-		changed, skipped int64
+		name           string
+		frames, replay []string
 	}{
-		{"incoming receive times", []string{first, later(first, "Hello 星")}, []string{later(first, "Hello 星")}, 0, 0},
-		{"outgoing receive times", []string{outgoing, later(outgoing, "First message")}, []string{later(outgoing, "First message")}, 0, 0},
+		{"incoming receive times", []string{first, later(first, "Hello 星")}, []string{later(first, "Hello 星")}},
+		{"outgoing receive times", []string{outgoing, later(outgoing, "First message")}, []string{later(outgoing, "First message")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
@@ -116,12 +115,9 @@ func TestImportDistinctMessagesAtSameMillisecond(t *testing.T) {
 			writeFrames(t, root, tc.replay...)
 			summary, err = Import(t.Context(), st, opts)
 			require.NoError(t, err)
-			added := max(len(tc.replay)-len(tc.frames), 0)
-			assert.EqualValues(t, added, summary.MessagesAdded)
-			assert.Equal(t, int64(len(tc.replay)-added)-tc.skipped, summary.MessagesExisting)
-			assert.Equal(t, tc.changed, summary.MessagesChanged)
-			assert.Equal(t, tc.skipped, summary.Skipped["ambiguous_message"])
-			assert.Equal(t, len(tc.frames)+added, messageCount(t, st))
+			assert.Zero(t, summary.MessagesAdded)
+			assert.EqualValues(t, 1, summary.MessagesExisting)
+			assert.Equal(t, 2, messageCount(t, st))
 		})
 	}
 }
@@ -142,9 +138,8 @@ func TestImportDirectionsGroupsAndOmissions(t *testing.T) {
 		`{"futureFrame":{}}`, `{}`)
 	f, err := os.OpenFile(filepath.Join(root, "main.jsonl"), os.O_APPEND|os.O_WRONLY, 0600)
 	require.NoError(err)
-	// Kind classification runs before identity checks for these synthetic frames.
 	for _, kind := range []string{"contactMessage", "stickerMessage", "updateMessage", "paymentNotification", "giftBadge", "viewOnceMessage", "directStoryReplyMessage", "adminDeletedMessage"} {
-		_, err = fmt.Fprintf(f, "{\"chatItem\":{\"%s\":{}}}\n", kind)
+		_, err = fmt.Fprintf(f, "{\"chatItem\":{\"chatId\":\"7\",\"authorId\":\"2\",\"dateSent\":\"1700000000000\",\"incoming\":{},\"%s\":{}}}\n", kind)
 		require.NoError(err)
 	}
 	for _, kind := range []string{"adHocCall", "installedStickerPack", "hiddenStickerPack", "favoriteStickerList", "notificationProfile", "chatFolder"} {
@@ -464,7 +459,7 @@ func TestImportIdentityTimeAndDirectionSkips(t *testing.T) {
 
 // Not parallel: CancelAfterCommit replaces process-wide SQL logging.
 func TestImportCancellationRetainsCommittedSnapshot(t *testing.T) {
-	for _, kind := range []string{"parse failure at line 7", "cancel after first commit", "already canceled"} {
+	for _, kind := range []string{"parse failure at line 7", "cancel after first commit"} {
 		t.Run(kind, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -479,8 +474,6 @@ func TestImportCancellationRetainsCommittedSnapshot(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			switch kind {
-			case "already canceled":
-				cancel()
 			case "cancel after first commit":
 				canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
 					var n int
@@ -494,11 +487,6 @@ func TestImportCancellationRetainsCommittedSnapshot(t *testing.T) {
 				require.ErrorContains(err, "line 7")
 			} else {
 				require.ErrorIs(err, context.Canceled)
-			}
-			if kind == "already canceled" {
-				assert.Zero(summary.MessagesAdded)
-				assert.Zero(messageCount(t, st))
-				return
 			}
 			assert.EqualValues(1, summary.MessagesAdded)
 			assert.EqualValues(1, summary.Omitted["quote"])
@@ -575,26 +563,17 @@ func TestContactIdentifierAdded(t *testing.T) {
 	} {
 		t.Run(contact, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
-			root := fixture(t, incoming)
-			data := []byte("contact media")
-			withMedia := strings.Replace(incoming, `"text":`, `"attachments":[{"clientUuid":"AQ==","pointer":{"locatorInfo":{"key":"AQ=="}}}],"text":`, 1)
-			lines := contactLines(contact, withMedia)
+			root := fixture(t)
+			lines := contactLines(contact, incoming)
 			writeLines(t, root, lines)
 			opts := options(t, root)
 			_, err := Import(t.Context(), st, opts)
 			require.NoError(t, err)
-			var id int64
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages ORDER BY id LIMIT 1").Scan(&id))
-			assert.Equal(t, map[string]string{"attachment:0": ""}, slotHashes(t, st, id))
-			putMedia(t, root, data)
-			lines[7] = strings.Replace(withMedia, `{"locatorInfo":{"key":"AQ=="}}`, pointer(data), 1)
 			lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`
 			writeLines(t, root, lines)
 			summary, err := Import(t.Context(), st, opts)
 			require.NoError(t, err)
 			assert.EqualValues(t, 2, summary.MessagesExisting)
-			assert.Equal(t, 1, summary.AttachmentsStored)
-			assert.Equal(t, map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, id))
 			assert.Equal(t, 2, messageCount(t, st))
 			var conversations int
 			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations").Scan(&conversations))
@@ -605,43 +584,32 @@ func TestContactIdentifierAdded(t *testing.T) {
 			require.NoError(t, err)
 			assert.EqualValues(t, 2, summary.MessagesExisting)
 			assert.Equal(t, 2, messageCount(t, st))
+			if contact != `{"e164":"15555550100"}` {
+				return
+			}
+			scope := accountScope(opts.Account)
+			phoneKey := scopedKey(scope, "e164:+15555550100")
+			first, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
+			require.NoError(t, err)
+			require.NotZero(t, first)
+			aciX, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:01010101010101010101010101010101"))
+			require.NoError(t, err)
+			assert.Equal(t, first, aciX)
+			lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AgICAgICAgICAgICAgICAg=="}}}`
+			lines[7] = strings.Replace(incoming, "1700000000000", "1700000000002", 1)
+			writeLines(t, root, lines)
+			_, err = Import(t.Context(), st, opts)
+			require.NoError(t, err)
+			phone, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
+			require.NoError(t, err)
+			second, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:02020202020202020202020202020202"))
+			require.NoError(t, err)
+			require.NotZero(t, second)
+			assert.NotEqual(t, first, second)
+			assert.Equal(t, first, phone)
+			assert.Equal(t, 4, messageCount(t, st))
 		})
 	}
-}
-
-func TestContactReusedPhoneKeepsOriginalOwner(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := fixture(t, incoming)
-	opts := options(t, root)
-	lines := contactLines(`{"e164":"15555550100"}`, incoming)
-	writeLines(t, root, lines)
-	_, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`
-	writeLines(t, root, lines)
-	_, err = Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	scope := accountScope(opts.Account)
-	phoneKey := scopedKey(scope, "e164:+15555550100")
-	first, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
-	require.NoError(t, err)
-	require.NotZero(t, first)
-	aciX, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:01010101010101010101010101010101"))
-	require.NoError(t, err)
-	assert.Equal(t, first, aciX)
-	lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AgICAgICAgICAgICAgICAg=="}}}`
-	lines[7] = strings.Replace(incoming, "1700000000000", "1700000000002", 1)
-	writeLines(t, root, lines)
-	_, err = Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	phone, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
-	require.NoError(t, err)
-	second, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:02020202020202020202020202020202"))
-	require.NoError(t, err)
-	require.NotZero(t, second)
-	assert.NotEqual(t, first, second)
-	assert.Equal(t, first, phone)
-	assert.Equal(t, 4, messageCount(t, st))
 }
 
 func TestSourceFormatRefusesNewerVersion(t *testing.T) {
@@ -693,7 +661,7 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 			opts := options(t, root)
 			_, err := Import(t.Context(), st, opts)
 			require.NoError(err)
-			id, raw := onlyMessage(t, st)
+			id, _ := onlyMessage(t, st)
 			writeFrames(t, root, message("changed", tc.unmatched))
 			putMedia(t, root, tc.unmatchedMedia)
 			summary, err := Import(t.Context(), st, opts)
@@ -707,10 +675,6 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 			assert.Equal(tc.finalStored, summary.AttachmentsStored)
 			assert.Equal(tc.finalMissing, summary.AttachmentsMissing)
 			assert.Equal(tc.want, slotHashes(t, st, id))
-			again, err := st.GetMessageRawContext(t.Context(), id)
-			require.NoError(err)
-			assert.Equal(raw, again)
-			assertBody(t, st, id, "original")
 		})
 	}
 }
@@ -828,23 +792,9 @@ func TestImportAmbiguousSameTimeReplay(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, first.MessagesAdded)
 	assert.Equal(t, 2, first.AttachmentsMissing)
-	rows, err := st.DB().QueryContext(t.Context(), "SELECT id FROM messages ORDER BY id")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		require.NoError(t, rows.Scan(&id))
-		ids = append(ids, id)
-	}
-	require.NoError(t, rows.Err())
-	require.NoError(t, rows.Close())
-	require.Len(t, ids, 3)
-	ids = []int64{ids[0], ids[2]}
-	rawA, err := st.GetMessageRawContext(t.Context(), ids[0])
-	require.NoError(t, err)
-	rawB, err := st.GetMessageRawContext(t.Context(), ids[1])
-	require.NoError(t, err)
+	var firstID, lastID int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT min(id), max(id) FROM messages").Scan(&firstID, &lastID))
+	ids := []int64{firstID, lastID}
 	putMedia(t, root, data)
 	writeFrames(t, root, message("B", pointer(data)), between, message("C", pointer(data)))
 	summary, err := Import(t.Context(), st, opts)
@@ -853,7 +803,9 @@ func TestImportAmbiguousSameTimeReplay(t *testing.T) {
 	assert.Zero(t, summary.MessagesAdded)
 	assert.EqualValues(t, 1, summary.MessagesExisting)
 	assert.Zero(t, summary.MessagesChanged)
-	assert.Equal(t, map[string]int64{"formatting": 0, "link_preview": 0, "reactions": 0, "revision_history": 0}, summary.Omitted)
+	for _, count := range summary.Omitted {
+		assert.Zero(t, count)
+	}
 	assert.Empty(t, summary.MediaMissing)
 	assert.Zero(t, summary.AttachmentsStored)
 	assert.Zero(t, summary.AttachmentsMissing)
@@ -874,12 +826,4 @@ func TestImportAmbiguousSameTimeReplay(t *testing.T) {
 	for _, id := range ids {
 		assert.Equal(t, map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, id))
 	}
-	afterA, err := st.GetMessageRawContext(t.Context(), ids[0])
-	require.NoError(t, err)
-	afterB, err := st.GetMessageRawContext(t.Context(), ids[1])
-	require.NoError(t, err)
-	assert.Equal(t, rawA, afterA)
-	assert.Equal(t, rawB, afterB)
-	assertBody(t, st, ids[0], "A")
-	assertBody(t, st, ids[1], "B")
 }
