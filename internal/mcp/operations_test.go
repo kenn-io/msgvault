@@ -16,7 +16,7 @@ import (
 
 type operationalTestBackend struct{}
 
-func (operationalTestBackend) ExecuteOperation(_ context.Context, _ string, _ map[string]any) (*OperationResult, error) {
+func (operationalTestBackend) ExecuteOperation(context.Context, string, map[string]any) (*OperationResult, error) {
 	return &OperationResult{Output: map[string]any{"running": false, "accounts": []any{}}}, nil
 }
 func (operationalTestBackend) OperationDisclosure(context.Context, string, map[string]any) (string, error) {
