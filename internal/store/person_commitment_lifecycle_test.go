@@ -31,6 +31,11 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 				f := newPersonSweepApplyFixture(t, "commitment-evidence", false)
 				st := f.store
 				_, persist := newCommitmentTestConversation(t, f)
+				profile := f.request.Generation.Policy.ProviderPolicyFingerprint
+				_, err := st.RevokePersonInferenceConsent(ctx, profile, "test")
+				r.NoError(err)
+				_, _, err = st.GrantPersonCommitmentConsent(ctx, profile, "test")
+				r.NoError(err)
 				const quote = "I will send the draft."
 				id := persist("promise", quote, -time.Hour)
 				if owner {
@@ -183,7 +188,7 @@ func TestCommitmentRejectsSourceDeletedBeforeFirstExtraction(t *testing.T) {
 	a.Empty(claims, "an earlier provider window cannot create a supported claim from a deleted source")
 }
 
-func TestCommitmentOnlyMaintenanceInvalidatesEvidenceBeyondFirstBatch(t *testing.T) {
+func TestCommitmentOnlyMaintenanceInvalidatesDeletedEvidence(t *testing.T) {
 	r, a, ctx := require.New(t), assert.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "commitment-maintenance-pages", false)
 	st := f.store

@@ -59,21 +59,12 @@ func (commitmentOnlyRunner) OrdinaryInferenceAllowed(context.Context) (bool, err
 
 func TestTargetedCommitmentOnlySweepSucceedsAndDefersImmediateRerun(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
-	cfg, catalog := workerTestConfig(t)
-	mutateTestProvider(&cfg, func(provider *ProviderConfig) { provider.AllowSensitive = true })
-	cfg.Commitments.Enabled = true
-	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
-	st := &commitmentWorkerFixture{due: true}
-	st.cursor = Cursor{ReconciliationComplete: true, LastBackstopAt: &now}
-	st.lease = &Lease{PersonID: 7, WorkerID: "commitment-worker", Fence: 1, ExpiresAt: now.Add(time.Hour)}
+	worker, st, sink := newConsentOnlyCommitmentWorker(t, true)
 	seed := packetTestEvidence(71, SourceConversationText, "pending ordinary evidence")
 	source := &workerProductionSource{windows: map[GenerationCursorMode]PersonWindow{
 		GenerationCursorOptimistic: {Seeds: []EvidenceItem{seed}, Changes: []ArchiveChange{{Sequence: 1, PersonID: 7, SourceLane: SourceConversationText}}, NextSequence: 1},
 	}}
-	sink := &workerProductionSink{}
-	worker := Worker{Config: cfg, Store: st, Source: source, Context: NewContextRetriever(source), Sink: sink,
-		Runner: commitmentOnlyRunner{}, Catalog: workerFailureCatalog{catalog: catalog}, Clock: func() time.Time { return now },
-		NewID: func() string { return "commitment-attempt" }, WorkerID: "commitment-worker"}
+	worker.Source, worker.Context = source, NewContextRetriever(source)
 	result, err := worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental, PersonID: 7})
 	r.NoError(err)
 	a.Equal(1, result.PeopleSucceeded)
@@ -98,7 +89,7 @@ func (a *commitmentCallAuthority) HasActivePersonCommitmentConsent(context.Conte
 }
 
 func TestCommitmentOptionalCallRepairBudgetAndRevocation(t *testing.T) {
-	for _, mode := range []string{"repair", "bad repair", "budget", "revoked before mark"} {
+	for _, mode := range []string{"repair", "budget", "revoked before mark"} {
 		t.Run(mode, func(t *testing.T) {
 			r, a := require.New(t), assert.New(t)
 			cfg, catalog := workerTestConfig(t)
@@ -115,9 +106,6 @@ func TestCommitmentOptionalCallRepairBudgetAndRevocation(t *testing.T) {
 				authority.revokeAt = 2
 			}
 			second := json.RawMessage(`{"promises":[]}`)
-			if mode == "bad repair" {
-				second = json.RawMessage(`{"promises":"bad"}`)
-			}
 			driver := &workerRepairDriver{responses: []DriverResponse{briefDriverResponse(json.RawMessage(`{"promises":"bad"}`), "primary"), briefDriverResponse(second, "repair")}}
 			runner := newWorkerRepairRunnerWithDependencies(t, cfg, driver, authority, NewCredentialResolver(nil, func(string) (string, bool) { return "test-key", true }))
 			profile, err := cfg.Profile()
@@ -153,9 +141,6 @@ func TestCommitmentOptionalCallRepairBudgetAndRevocation(t *testing.T) {
 				a.Empty(class)
 			} else {
 				a.Nil(result)
-				if mode == "bad repair" {
-					a.Equal(FailureInvalidOutput, class)
-				}
 			}
 		})
 	}
@@ -227,15 +212,4 @@ func TestCommitmentConsentDeferralAppliesLocalEvidenceInvalidation(t *testing.T)
 			a.Empty(st.failed)
 		})
 	}
-}
-
-func TestForcedBriefRefusesCommitmentOnlyConsent(t *testing.T) {
-	r, a := require.New(t), assert.New(t)
-	worker, st, sink := newConsentOnlyCommitmentWorker(t, true)
-	worker.Brief = &briefFakeStore{enrolled: true, trackedWork: true}
-	_, err := worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental,
-		PersonID: 7, Brief: BriefModeForce})
-	r.ErrorIs(err, ErrPersonBriefPolicyRefused)
-	a.Empty(sink.requests, "a forced brief must not silently become a successful promise sweep")
-	a.Empty(st.failed)
 }

@@ -296,7 +296,11 @@ func TestLoopsCommitmentDecisionUsesItsDaemonSchema(t *testing.T) {
 					a.NoError(json.NewDecoder(req.Body).Decode(&body))
 					a.Equal("done", body["state"])
 				}
-				a.NoError(json.NewEncoder(w).Encode(map[string]any{"id": tc.id, "state": "done", "anchor_message_id": 42}))
+				if tc.id == "c12" {
+					a.NoError(json.NewEncoder(w).Encode(map[string]any{"id": tc.id, "state": "done"}))
+				} else {
+					a.NoError(json.NewEncoder(w).Encode(map[string]any{"anchor_message_id": 42, "state": "done"}))
+				}
 			}))
 			t.Cleanup(server.Close)
 			ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
