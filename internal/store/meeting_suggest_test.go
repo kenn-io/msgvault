@@ -464,3 +464,18 @@ func TestMeetingSuggestionsDeclinedAndAllDay(t *testing.T) {
 	r.NoError(err)
 	r.Empty(page.Suggestions)
 }
+
+func TestMeetingSuggestionsBudgetAfterFirstResult(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	for i := range 2 {
+		calendarFixture(t, st, fmt.Sprintf("budget-event-%d", i), fmt.Sprintf(`{"id":"budget-%d","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, i))
+	}
+	data, note := projectionFixture(t, st, "budget-note", "meeting_json", `{}`)
+	data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Valid: true}
+	_, err := st.UpsertMessage(data.Message)
+	r.NoError(err)
+	page, err := st.suggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10, nil, 10)
+	r.Len(page.Suggestions, 1)
+	r.ErrorIs(err, ErrQueryTooBroad)
+}

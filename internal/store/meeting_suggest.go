@@ -127,6 +127,10 @@ func (s *Store) suggestionMembers(ctx context.Context, ids []int64) ([]suggestMe
 }
 
 func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkRef, limit int, withheld func(context.Context, []int64) (map[int64]bool, error)) (MeetingSuggestionPage, error) {
+	return s.suggestMeetingLinksContext(ctx, ref, limit, withheld, calrecur.RequestReadBudget)
+}
+
+func (s *Store) suggestMeetingLinksContext(ctx context.Context, ref MeetingLinkRef, limit int, withheld func(context.Context, []int64) (map[int64]bool, error), budget int) (MeetingSuggestionPage, error) {
 	page := MeetingSuggestionPage{Suggestions: []MeetingSuggestion{}, Unexpandable: []CalendarUnexpandable{}}
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
@@ -329,19 +333,12 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 	}
 	limit = min(limit, 100)
 	seen := map[string]bool{}
-	budget := calrecur.RequestReadBudget
 	for _, candidate := range candidates {
 		note := MeetingLinkRef{Kind: meetingRefMessage, MessageID: candidate.MemberMessageID}
 		a, b := endpointFromRef(note), candidate.eventEndpoint
 		a, err = s.meetingOccurrenceKey(ctx, a, &budget)
 		if err == nil {
 			b, err = s.meetingOccurrenceKey(ctx, b, &budget)
-		}
-		if errors.Is(err, ErrQueryTooBroad) {
-			if len(page.Suggestions) == 0 {
-				return page, ErrQueryTooBroad
-			}
-			break
 		}
 		if err != nil {
 			return page, err
@@ -354,12 +351,6 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			continue
 		}
 		graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{a, b}, &budget)
-		if errors.Is(err, ErrQueryTooBroad) {
-			if len(page.Suggestions) == 0 {
-				return page, ErrQueryTooBroad
-			}
-			break
-		}
 		if err != nil {
 			return page, err
 		}
