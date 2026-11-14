@@ -43,8 +43,8 @@ Start here:
   msgvault setup status --json
 
 Output:
-  --json writes JSON to stdout (JSONL for export-messages).
-  Logs and progress go to stderr. Exit: 0 OK, 1 error, 130 interrupted.
+  --json: stdout (JSONL for export-messages).
+  Logs, progress: stderr. Exit: 0 OK, 1 error, 130 interrupted.
   See msgvault quickstart.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			inv := prepareInvocation(cmd)

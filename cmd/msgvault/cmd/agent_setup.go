@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/skills"
 )
 
-var agentCmd = &cobra.Command{Use: "agent", Short: "Set up coding agent integrations"}
+var agentCmd = &cobra.Command{Use: "agent", Short: "Set up agents"}
 
 func agentSetupItems(agent string) ([]agentsetup.Item, error) {
 	mcp := agentsetup.MCP(agent, "msgvault", agentmcp.Server{Command: "msgvault", Args: []string{"mcp"}})
