@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -29,10 +31,10 @@ import (
 
 func personRecordFixture(t *testing.T) (*daemonMCPOperations, int64, *atomic.Int64, *atomic.Int64) {
 	t.Helper()
-	return personRecordFixtureWithHook(t, nil)
+	return personRecordFixtureWithHook(t, nil, nil)
 }
 
-func personRecordFixtureWithHook(t *testing.T, hook func(*http.Request)) (*daemonMCPOperations, int64, *atomic.Int64, *atomic.Int64) {
+func personRecordFixtureWithHook(t *testing.T, hook func(*http.Request), historyTransform func([]byte) []byte) (*daemonMCPOperations, int64, *atomic.Int64, *atomic.Int64) {
 	t.Helper()
 	f := storetest.New(t)
 	person, _, err := f.Store.CreatePersonFromParticipant(f.EnsureParticipant("synthetic@example.test", "", "example.test"))
@@ -50,6 +52,14 @@ func personRecordFixtureWithHook(t *testing.T, hook func(*http.Request)) (*daemo
 		}
 		if r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/profile") {
 			patches.Add(1)
+		}
+		if historyTransform != nil && r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/profile/history") {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, r)
+			maps.Copy(w.Header(), recorder.Header())
+			w.WriteHeader(recorder.Code)
+			_, _ = w.Write(historyTransform(recorder.Body.Bytes()))
+			return
 		}
 		router.ServeHTTP(w, r)
 	}))
@@ -80,7 +90,7 @@ func TestPersonRecordDisclosure(t *testing.T) {
 			}
 			result <- err
 		}
-	})
+	}, nil)
 	current, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
 	require.NoError(t, err)
 	added, err := backend.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": current.ETag, "patch": map[string]any{"addresses": map[string]any{"add": []any{
@@ -145,6 +155,23 @@ func TestPersonRecordDisclosure(t *testing.T) {
 	}
 	require.ErrorAs(t, err, &refusal)
 	assert.Equal(t, "person_revision_conflict", refusal.Code)
+}
+
+func TestPersonRecordDisclosureFutureHistoryFields(t *testing.T) {
+	backend, id, _, _ := personRecordFixtureWithHook(t, nil, func(data []byte) []byte {
+		return bytes.Replace(data, []byte(`"active_until":`), []byte(`"future":{"nested":"visible"},"active_until":`), 1)
+	})
+	current, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
+	require.NoError(t, err)
+	added, err := backend.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": current.ETag, "patch": map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "free_text": "Old address", "envelope": map[string]any{"source": "user", "active_until": "2020-01-01T00:00:00Z"}}}}}})
+	require.NoError(t, err)
+	history, err := backend.ExecuteOperation(t.Context(), "get_person_record_history", map[string]any{"person_id": id})
+	require.NoError(t, err)
+	values := operationOutput[generated.PersonProfileHistory](t, history)
+	require.Len(t, values.Addresses, 1)
+	disclosure, err := backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": added.ETag, "patch": map[string]any{"addresses": map[string]any{"supersede": []int64{values.Addresses[0].Envelope.ID}}}})
+	require.NoError(t, err)
+	assert.Contains(t, disclosure, `"future":{"nested":"visible"}`)
 }
 
 func TestPersonRecordSDKPatchAllKindsAndHistory(t *testing.T) {
@@ -381,11 +408,14 @@ func TestPersonRecordSupersedeLargeValue(t *testing.T) {
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "patch_person_record", Arguments: map[string]any{"person_id": id, "etag": current.ETag, "patch": map[string]any{"addresses": map[string]any{"supersede": []int64{profile.Addresses[0].Envelope.ID}}}}})
 	require.NoError(t, err)
 	require.False(t, result.IsError)
-	encoded, err := json.Marshal(profile.Addresses[0], json.Deterministic(true))
-	require.NoError(t, err)
-	sum := sha256.Sum256(encoded)
+	var raw struct {
+		Addresses []jsontext.Value `json:"addresses"`
+	}
+	require.NoError(t, json.Unmarshal(current.Data, &raw))
+	require.Len(t, raw.Addresses, 1)
+	sum := sha256.Sum256(raw.Addresses[0])
 	assert.Contains(t, disclosure, fmt.Sprintf(`"sha256":"%x"`, sum))
-	assert.Contains(t, disclosure, `"size"`)
+	assert.Contains(t, disclosure, fmt.Sprintf(`"size":%d`, len(raw.Addresses[0])))
 	assert.NotContains(t, disclosure, value)
 	assert.Equal(t, int64(2), patches.Load())
 }

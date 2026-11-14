@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"net/http"
 	"slices"
@@ -202,7 +203,7 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	if current.ETag != input.ETag {
 		return "", true, &mcpserver.OperationRefusalError{Code: "person_revision_conflict"}
 	}
-	var profile generated.StructuredPersonProfile
+	var profile personDisclosureProfile
 	if err := json.Unmarshal(current.Data, &profile); err != nil {
 		return "", true, err
 	}
@@ -215,30 +216,49 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 		Categories    []any            `json:"categories,omitempty"`
 		Media         []any            `json:"media,omitempty"`
 	}{Person: profile.Person}
-	selectValues := func(history generated.PersonProfileHistory) bool {
+	selectValues := func(values personDisclosureProfile) (bool, error) {
 		missing := false
+		selectSection := func(dest *[]any, values []jsontext.Value, ids []int64) error {
+			var err error
+			*dest, missing, err = superseded(values, ids, missing)
+			return err
+		}
 		if p := input.Patch.Names; p != nil {
-			selected.Names, missing = superseded(history.Names, p.Supersede, func(v generated.PersonName) generated.ValueEnvelope { return v.Envelope }, missing)
+			if err := selectSection(&selected.Names, values.Names, p.Supersede); err != nil {
+				return false, err
+			}
 		}
 		if p := input.Patch.ContactPoints; p != nil {
-			selected.ContactPoints, missing = superseded(history.ContactPoints, p.Supersede, func(v generated.PersonContactPoint) generated.ValueEnvelope { return v.Envelope }, missing)
+			if err := selectSection(&selected.ContactPoints, values.ContactPoints, p.Supersede); err != nil {
+				return false, err
+			}
 		}
 		if p := input.Patch.Addresses; p != nil {
-			selected.Addresses, missing = superseded(history.Addresses, p.Supersede, func(v generated.PersonAddress) generated.ValueEnvelope { return v.Envelope }, missing)
+			if err := selectSection(&selected.Addresses, values.Addresses, p.Supersede); err != nil {
+				return false, err
+			}
 		}
 		if p := input.Patch.Dates; p != nil {
-			selected.Dates, missing = superseded(history.Dates, p.Supersede, func(v generated.PersonDate) generated.ValueEnvelope { return v.Envelope }, missing)
+			if err := selectSection(&selected.Dates, values.Dates, p.Supersede); err != nil {
+				return false, err
+			}
 		}
 		if p := input.Patch.Categories; p != nil {
-			selected.Categories, missing = superseded(history.Categories, p.Supersede, func(v generated.PersonCategory) generated.ValueEnvelope { return v.Envelope }, missing)
+			if err := selectSection(&selected.Categories, values.Categories, p.Supersede); err != nil {
+				return false, err
+			}
 		}
 		if p := input.Patch.Media; p != nil {
-			selected.Media, missing = superseded(history.Media, p.Supersede, func(v generated.PersonMedia) generated.ValueEnvelope { return v.Envelope }, missing)
+			if err := selectSection(&selected.Media, values.Media, p.Supersede); err != nil {
+				return false, err
+			}
 		}
-		return missing
+		return missing, nil
 	}
-	history := generated.PersonProfileHistory{Names: profile.Names, ContactPoints: profile.ContactPoints, Addresses: profile.Addresses, Dates: profile.Dates, Categories: profile.Categories, Media: profile.Media}
-	missing := selectValues(history)
+	missing, err := selectValues(profile)
+	if err != nil {
+		return "", true, err
+	}
 	if missing {
 		data, _, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/history", &generated.GetPersonProfileHistoryRequestOptions{PathParams: &generated.GetPersonProfileHistoryPath{ID: input.PersonID}}, mcpserver.MaxDownloadBytes, personRecordRefusal, http.StatusOK)
 		if err != nil {
@@ -247,14 +267,17 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 		if failure != nil {
 			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 		}
-		history = generated.PersonProfileHistory{}
+		var history personDisclosureProfile
 		if err := json.Unmarshal(data, &history); err != nil {
 			return "", true, err
 		}
 		if history.Person.Revision != profile.Person.Revision {
 			return "", true, &mcpserver.OperationRefusalError{Code: "person_revision_conflict"}
 		}
-		missing = selectValues(history)
+		missing, err = selectValues(history)
+		if err != nil {
+			return "", true, err
+		}
 	}
 	if missing {
 		return "", true, &mcpserver.OperationRefusalError{Code: "profile_value_not_found"}
@@ -276,15 +299,34 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	return string(data), true, err
 }
 
-func superseded[T any](values []T, ids []int64, envelope func(T) generated.ValueEnvelope, missing bool) ([]any, bool) {
+type personDisclosureProfile struct {
+	Person        generated.Person `json:"person"`
+	Names         []jsontext.Value `json:"names"`
+	ContactPoints []jsontext.Value `json:"contact_points"`
+	Addresses     []jsontext.Value `json:"addresses"`
+	Dates         []jsontext.Value `json:"dates"`
+	Categories    []jsontext.Value `json:"categories"`
+	Media         []jsontext.Value `json:"media"`
+}
+
+func superseded(values []jsontext.Value, ids []int64, missing bool) ([]any, bool, error) {
 	var selected []any
 	found := make(map[int64]bool, len(ids))
 	for _, value := range values {
-		meta := envelope(value)
+		var entry struct {
+			Envelope generated.ValueEnvelope `json:"envelope"`
+		}
+		if err := json.Unmarshal(value, &entry); err != nil {
+			return nil, false, err
+		}
+		meta := entry.Envelope
 		if meta.SupersededAt == nil && slices.Contains(ids, meta.ID) {
 			found[meta.ID] = true
 			data, err := json.Marshal(value, json.Deterministic(true))
-			if err == nil && len(data) > 256<<10 {
+			if err != nil {
+				return nil, false, err
+			}
+			if len(data) > 256<<10 {
 				sum := sha256.Sum256(data)
 				selected = append(selected, map[string]any{"id": meta.ID, "size": len(data), "sha256": hex.EncodeToString(sum[:])})
 			} else {
@@ -295,5 +337,5 @@ func superseded[T any](values []T, ids []int64, envelope func(T) generated.Value
 	for _, value := range ids {
 		missing = missing || !found[value]
 	}
-	return selected, missing
+	return selected, missing, nil
 }
