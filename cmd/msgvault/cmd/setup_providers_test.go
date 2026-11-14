@@ -1507,3 +1507,26 @@ func TestSetupStatusAgentError(t *testing.T) {
 	assert.Contains(t, errOutput.String(), "check agents: agent check failed\n")
 	assert.NotContains(t, output.String(), `"agents"`)
 }
+
+func TestReviewStatusInterruptedAgentCheck(t *testing.T) {
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	command := newSetupStatusCommand(setupStatusDeps{
+		config: func() *config.Config { return fixture.load(t) },
+		environment: func(*cobra.Command, *config.Config) setupEnvironment {
+			return setupEnvironment{lookupEnv: fixture.lookupEnv, fileExists: defaultFileExists}
+		},
+		agents: func(context.Context) (agentsetup.Report, error) {
+			cancel()
+			return agentsetup.Report{}, context.Canceled
+		},
+	})
+	var output, errOutput bytes.Buffer
+	command.SilenceUsage = true
+	command.SetOut(&output)
+	command.SetErr(&errOutput)
+	command.SetArgs([]string{"--json"})
+	assert.ErrorIs(t, command.ExecuteContext(ctx), context.Canceled)
+	assert.Empty(t, output.String())
+}

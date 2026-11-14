@@ -17,8 +17,10 @@ var agentCmd = &cobra.Command{Use: "agent", Short: "Set up agents"}
 
 func agentSetupItems(agent string) ([]agentsetup.Item, error) {
 	opts := prepareInvocation(rootCmd).options
-	envHome := os.Getenv("MSGVAULT_HOME")
-	for _, path := range []*string{&opts.cfgFile, &opts.homeDir, &envHome} {
+	if opts.cfgFile == "" && opts.homeDir == "" {
+		opts.homeDir = os.Getenv("MSGVAULT_HOME")
+	}
+	for _, path := range []*string{&opts.cfgFile, &opts.homeDir} {
 		if *path != "" && !strings.HasPrefix(*path, "~") {
 			absolute, err := filepath.Abs(*path)
 			if err != nil {
@@ -29,9 +31,6 @@ func agentSetupItems(agent string) ([]agentsetup.Item, error) {
 	}
 	args := invocationGlobalArgs(invocationOptions{cfgFile: opts.cfgFile, homeDir: opts.homeDir})
 	server := agentmcp.Server{Command: "msgvault", Args: append(args, "mcp")}
-	if envHome != "" {
-		server.Env = map[string]string{"MSGVAULT_HOME": envHome}
-	}
 	mcp := agentsetup.MCP(agent, "msgvault", server)
 	home, err := os.UserHomeDir()
 	if err != nil {
