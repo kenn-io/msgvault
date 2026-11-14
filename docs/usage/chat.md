@@ -993,12 +993,8 @@ profile when it exceeds 1 MiB. If the result says the operation may have
 completed, read the record again before retrying.
 
 If an MCP operation write returns `operation_receipt_unavailable`, the write
-may have completed but its receipt could not be read. Before retrying, use the
-matching read tool: `get_person_edit_context` for a display name or
-`get_slack_sync_policy` for Slack settings. For a named `promote_person` call,
-use `get_participant_identity` or `search_people` to find the person. For
-`sync_source`, check `list_source_status` and `get_source_scheduler_status` for
-progress.
+may have completed but its receipt could not be read. Read the current state
+before retrying.
 
 ## Write controls
 
