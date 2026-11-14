@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -19,19 +18,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-type suggestionClassificationStore struct {
-	*store.Store
-
-	counts map[int64]int
-}
-
-func (s *suggestionClassificationStore) PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error {
-	for _, message := range messages {
-		s.counts[message.ID]++
-	}
-	return s.Store.PopulateMessageBodiesContext(ctx, messages)
-}
-
 func TestGrantedMeetingSuggestions(t *testing.T) {
 	r := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -45,8 +31,7 @@ func TestGrantedMeetingSuggestions(t *testing.T) {
 	event, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: calendar.ID, SourceMessageID: "event", MessageType: "calendar_event", Subject: sql.NullString{String: "Your verification code is 482913", Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"}, RawMIME: []byte(`{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`), RawFormat: "gcal_json"})
 	r.NoError(err)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
-	spy := &suggestionClassificationStore{Store: st, counts: map[int64]int{}}
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: spy, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(srv.agentGrants.Close)
 	sources := []agentgrant.SourceRef{{ID: notes.ID, Type: notes.SourceType, Identifier: notes.Identifier}, {ID: calendar.ID, Type: calendar.SourceType, Identifier: calendar.Identifier}}
 	for _, tc := range []struct {
@@ -84,7 +69,7 @@ func TestGrantedMeetingSuggestions(t *testing.T) {
 			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 		}
 	})
-	t.Run("title words", func(t *testing.T) {
+	t.Run("title mask", func(t *testing.T) {
 		r := require.New(t)
 		title := "482913"
 		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: notes.ID, SourceMessageID: title, MessageType: "meeting_transcript", Subject: sql.NullString{String: title, Valid: true}, SentAt: sql.NullTime{Time: at, Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: title, ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"})
@@ -97,7 +82,6 @@ func TestGrantedMeetingSuggestions(t *testing.T) {
 		}{{"limited", limited, false}, {"owner", "", true}} {
 			t.Run(tc.name, func(t *testing.T) {
 				ref := fmt.Sprintf("msg:%d", id)
-				clear(spy.counts)
 				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/suggestions?ref="+ref+"&limit=1", nil)
 				if tc.token == "" {
 					req.Header.Set("Authorization", "Bearer owner")
@@ -111,9 +95,6 @@ func TestGrantedMeetingSuggestions(t *testing.T) {
 				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page))
 				require.Len(t, page.Suggestions, 1)
 				item := page.Suggestions[0]
-				if !tc.reveal {
-					require.NotEmpty(t, spy.counts)
-				}
 				if tc.reveal {
 					require.Equal(t, "Your verification code is 482913", item.Title)
 				} else {

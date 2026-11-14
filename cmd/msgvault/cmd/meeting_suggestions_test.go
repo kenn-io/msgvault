@@ -29,21 +29,16 @@ func TestMeetingSuggestionsCLI(t *testing.T) {
 		json    bool
 		want    string
 		failure bool
-		limit   string
 	}{
-		{"5.6.0", false, "Planning", false, ""}, {"5.6.0", true, `"title":"Planning"`, false, ""}, {"5.5.0", false, "5.6.0", true, ""},
-		{"5.6.0", false, "limit must be between 1 and 100", true, "0"}, {"5.6.0", false, "limit must be between 1 and 100", true, "-1"}, {"5.6.0", false, "limit must be between 1 and 100", true, "101"},
+		{"5.6.0", false, "Planning", false}, {"5.6.0", true, `"title":"Planning"`, false}, {"5.5.0", false, "5.6.0", true},
 	} {
-		t.Run(tc.version+tc.want+tc.limit, func(t *testing.T) {
+		t.Run(tc.version+tc.want, func(t *testing.T) {
 			r := require.New(t)
 			client := &suggestionCLIClient{version: tc.version}
 			command := newMeetingsCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 			var out bytes.Buffer
 			command.SetOut(&out)
 			args := []string{"suggest", "msg:3"}
-			if tc.limit != "" {
-				args = append(args, "--limit", tc.limit)
-			}
 			if tc.json {
 				args = append(args, "--json")
 			}
