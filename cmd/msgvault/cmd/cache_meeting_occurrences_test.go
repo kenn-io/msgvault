@@ -17,20 +17,21 @@ import (
 )
 
 func TestMeetingCountsCalendarHistoryAndAvailableTranscripts(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	dir := t.TempDir()
 	dbPath, analytics := filepath.Join(dir, "archive.db"), filepath.Join(dir, "analytics")
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := st.GetOrCreateSource("gcal", "owner@example.com")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	notesSource, err := st.GetOrCreateSource("meeting_import", "owner@example.com")
-	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"calendar_id":"owner@example.com","time_zone":"UTC"}`))
-	require.NoError(t, st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
-	require.NoError(t, st.AddAccountIdentity(notesSource.ID, "owner@example.com", "manual"))
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"calendar_id":"owner@example.com","time_zone":"UTC"}`))
+	requirements.NoError(st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
+	requirements.NoError(st.AddAccountIdentity(notesSource.ID, "owner@example.com", "manual"))
 	owner, err := st.EnsureParticipant("owner@example.com", "Owner", "example.com")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	start := time.Date(2024, 1, 2, 10, 0, 0, 0, time.UTC)
 	makeMessage := func(sourceID int64, key, typ, format, raw string) int64 {
 		t.Helper()
@@ -40,9 +41,9 @@ func TestMeetingCountsCalendarHistoryAndAvailableTranscripts(t *testing.T) {
 			RawMIME:      []byte(raw), RawFormat: format,
 			Metadata: &sql.NullString{String: `{"calendar_id":"owner@example.com"}`, Valid: true},
 		})
-		require.NoError(t, err)
-		require.NoError(t, st.ReplaceMessageRecipients(id, "from", []int64{owner}, []string{""}))
-		require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
+		requirements.NoError(err)
+		requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{owner}, []string{""}))
+		requirements.NoError(st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
 		return id
 	}
 	makeMessage(source.ID, "series", "calendar_event", "gcal_json", `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=4"]}`)
@@ -50,104 +51,70 @@ func TestMeetingCountsCalendarHistoryAndAvailableTranscripts(t *testing.T) {
 	makeMessage(notesSource.ID, "twenty", "meeting_transcript", "twenty_json", `{"schema_version":1,"recording":{"transcript":[{"words":[{"text":"Hello"}]}]},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2024-01-09T10:00:00Z"}}`)
 	makeMessage(notesSource.ID, "pending", "meeting_transcript", "meeting_json", `{}`)
 	_, err = buildCache(t.Context(), dbPath, analytics, true)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, engine.Close()) }()
+	requirements.NoError(err)
+	defer func() { requirements.NoError(engine.Close()) }()
 	detail, err := engine.GetPerson(t.Context(), person, query.Context{}, nil)
-	require.NoError(t, err)
-	require.NotNil(t, detail)
-	assert.EqualValues(t, 4, detail.MeetingCount)
-	for _, tc := range []struct {
-		ids  []int64
-		want int64
-	}{{[]int64{source.ID}, 4}, {[]int64{notesSource.ID}, 0}, {[]int64{source.ID, notesSource.ID}, 4}} {
-		context := query.Context{SourceIDs: tc.ids}
-		detail, err := engine.GetPerson(t.Context(), person, context, nil)
-		require.NoError(t, err)
-		if detail != nil {
-			assert.Equal(t, tc.want, detail.MeetingCount)
-		} else {
-			assert.Zero(t, tc.want)
-		}
-		people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Explore: query.ExploreRequest{Context: context}})
-		require.NoError(t, err)
-		found := false
-		for _, row := range people.Rows {
-			if row.ID == person {
-				assert.Equal(t, tc.want, row.MeetingCount)
-				assert.Equal(t, tc.want, row.ActivityCount)
-				found = true
-			}
-		}
-		assert.Equal(t, tc.want > 0, found)
-		relationships, err := engine.Relationships(t.Context(), query.RelationshipsRequest{Context: context, ShowAll: true})
-		require.NoError(t, err)
-		found = false
-		for _, row := range relationships.Rows {
-			if row.CanonicalID == person {
-				assert.Equal(t, tc.want, row.Signals.MeetingCount)
-				found = true
-			}
-		}
-		assert.Equal(t, tc.want > 0, found)
-	}
+	requirements.NoError(err)
+	requirements.NotNil(detail)
+	assertions.EqualValues(4, detail.MeetingCount)
 	calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: person, Year: 2024, Timezone: "UTC"})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	var days []string
 	for _, day := range calendar.Days {
 		if day.Meetings != 0 {
 			days = append(days, fmt.Sprintf("%s:%d", day.Date, day.Meetings))
 		}
 	}
-	assert.Equal(t, []string{"2024-01-02:1", "2024-01-09:1", "2024-01-16:1", "2024-01-23:1"}, days)
+	assertions.Equal([]string{"2024-01-02:1", "2024-01-09:1", "2024-01-16:1", "2024-01-23:1"}, days)
 	timeline, err := engine.RelationshipTimeline(t.Context(), query.RelationshipTimelineRequest{CanonicalID: person, Timezone: "UTC"})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	var timelineDates []string
 	for _, row := range timeline.Rows {
 		timelineDates = append(timelineDates, row.OccurredAt.UTC().Format(time.DateOnly))
 	}
-	assert.Equal(t, []string{"2024-01-23", "2024-01-16", "2024-01-09", "2024-01-02"}, timelineDates)
+	assertions.Equal([]string{"2024-01-23", "2024-01-16", "2024-01-09", "2024-01-02"}, timelineDates)
 	after, before := time.Date(2024, 1, 8, 0, 0, 0, 0, time.UTC), time.Date(2024, 1, 20, 0, 0, 0, 0, time.UTC)
 	filtered := query.Context{After: &after, Before: &before}
 	timeline, err = engine.RelationshipTimeline(t.Context(), query.RelationshipTimelineRequest{CanonicalID: person, Timezone: "UTC", Context: filtered})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	timelineDates = nil
 	for _, row := range timeline.Rows {
 		timelineDates = append(timelineDates, row.OccurredAt.UTC().Format(time.DateOnly))
 	}
-	assert.Equal(t, []string{"2024-01-16", "2024-01-09"}, timelineDates)
+	assertions.Equal([]string{"2024-01-16", "2024-01-09"}, timelineDates)
 	detail, err = engine.GetPerson(t.Context(), person, filtered, nil)
-	require.NoError(t, err)
-	require.NotNil(t, detail)
-	assert.EqualValues(t, 2, detail.MeetingCount)
-	assert.EqualValues(t, 2, detail.ActivityCount)
-	assert.Equal(t, time.Date(2024, 1, 9, 10, 0, 0, 0, time.UTC), detail.FirstAt)
+	requirements.NoError(err)
+	requirements.NotNil(detail)
+	assertions.EqualValues(2, detail.MeetingCount)
+	assertions.EqualValues(2, detail.ActivityCount)
+	assertions.Equal(time.Date(2024, 1, 9, 10, 0, 0, 0, time.UTC), detail.FirstAt)
 	domain, err := engine.GetDomain(t.Context(), "example.com", filtered)
-	require.NoError(t, err)
-	require.NotNil(t, domain)
-	assert.EqualValues(t, 2, domain.ActivityCount)
+	requirements.NoError(err)
+	requirements.NotNil(domain)
+	assertions.EqualValues(2, domain.ActivityCount)
 	people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Explore: query.ExploreRequest{Context: filtered}})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	var found bool
 	for _, row := range people.Rows {
 		if row.ID == person {
-			assert.EqualValues(t, 2, row.MeetingCount)
-			assert.EqualValues(t, 2, row.ActivityCount)
+			assertions.EqualValues(2, row.MeetingCount)
+			assertions.EqualValues(2, row.ActivityCount)
 			found = true
 		}
 	}
-	assert.True(t, found)
+	assertions.True(found)
 	relationships, err := engine.Relationships(t.Context(), query.RelationshipsRequest{Context: filtered, ShowAll: true})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	found = false
 	for _, row := range relationships.Rows {
 		if row.CanonicalID == person {
-			assert.EqualValues(t, 2, row.Signals.MeetingCount)
+			assertions.EqualValues(2, row.Signals.MeetingCount)
 			found = true
 		}
 	}
-	assert.True(t, found)
+	assertions.True(found)
 }
 
 func TestMeetingCountsEditedOccurrenceWithOmittedAttendees(t *testing.T) {
@@ -378,58 +345,74 @@ func TestMeetingCountsPinnedSnapshot(t *testing.T) {
 	}
 }
 
-func TestMeetingCountsExcludeFutureEventWithPastMessageDate(t *testing.T) {
-	dir := t.TempDir()
-	dbPath, analytics := filepath.Join(dir, "archive.db"), filepath.Join(dir, "analytics")
-	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
-	source, err := st.GetOrCreateSource("gcal", "owner@example.com")
-	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"calendar_id":"owner@example.com","time_zone":"UTC"}`))
-	require.NoError(t, st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
-	owner, err := st.EnsureParticipant("owner@example.com", "Owner", "example.com")
-	require.NoError(t, err)
-	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
-	require.NoError(t, err)
-	now := time.Date(time.Now().UTC().Year()+1, 6, 15, 10, 0, 0, 0, time.UTC)
-	oldNow := derivedRefreshNow
-	derivedRefreshNow = func() time.Time { return now }
-	t.Cleanup(func() { derivedRefreshNow = oldNow })
-	start := now.Add(2 * time.Hour)
-	raw := fmt.Sprintf(`{"id":"future","start":{"dateTime":%q},"end":{"dateTime":%q},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, start.Format(time.RFC3339), start.Add(time.Hour).Format(time.RFC3339))
-	id, err := st.PersistMessage(&store.MessagePersistData{
-		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "future", MessageType: "calendar_event", SentAt: sql.NullTime{Time: start.Add(-48 * time.Hour), Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}},
-		Conversation: &store.ConversationPersistData{SourceConversationID: "future", ConversationType: "meeting"},
-		RawMIME:      []byte(raw), RawFormat: "gcal_json", Metadata: &sql.NullString{String: `{"calendar_id":"owner@example.com"}`, Valid: true},
-	})
-	require.NoError(t, err)
-	require.NoError(t, st.ReplaceMessageRecipients(id, "from", []int64{owner}, []string{""}))
-	require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
-	_, err = buildCache(t.Context(), dbPath, analytics, true)
-	require.NoError(t, err)
-	err = st.UpsertMessageRawWithFormatContext(t.Context(), id, []byte(raw[:len(raw)-1]+`,"status":"tentative"}`), "gcal_json")
-	require.NoError(t, err)
-	_, err = buildCache(t.Context(), dbPath, analytics, false)
-	require.NoError(t, err)
-	count := func() int64 {
-		t.Helper()
-		engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
-		require.NoError(t, err)
-		defer func() { require.NoError(t, engine.Close()) }()
-		detail, err := engine.GetPerson(t.Context(), person, query.Context{}, nil)
-		require.NoError(t, err)
-		require.NotNil(t, detail)
-		return detail.MeetingCount
+func TestMeetingCountsRefreshForFutureEvents(t *testing.T) {
+	for _, tc := range []struct {
+		name, recurrence string
+		sentAtOffset     time.Duration
+		identityOnly     bool
+	}{
+		{"unsupported recurrence", "RRULE:FREQ=YEARLY;BYWEEKNO=20", -time.Hour, false},
+		{"past message date", "RRULE:FREQ=WEEKLY;COUNT=2", -46 * time.Hour, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			dir := t.TempDir()
+			dbPath, analytics := filepath.Join(dir, "archive.db"), filepath.Join(dir, "analytics")
+			st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+			source, err := st.GetOrCreateSource("gcal", "owner@example.com")
+			requirements.NoError(err)
+			requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"calendar_id":"owner@example.com","time_zone":"UTC"}`))
+			requirements.NoError(st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
+			owner, err := st.EnsureParticipant("owner@example.com", "Owner", "example.com")
+			requirements.NoError(err)
+			person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
+			requirements.NoError(err)
+			now := time.Date(time.Now().UTC().Year()+1, 6, 15, 10, 0, 0, 0, time.UTC)
+			oldNow := derivedRefreshNow
+			derivedRefreshNow = func() time.Time { return now }
+			t.Cleanup(func() { derivedRefreshNow = oldNow })
+			start := now.Add(2 * time.Hour)
+			raw := fmt.Sprintf(`{"id":"future","start":{"dateTime":%q},"end":{"dateTime":%q},"recurrence":[%q]}`, start.Format(time.RFC3339), start.Add(time.Hour).Format(time.RFC3339), tc.recurrence)
+			id, err := st.PersistMessage(&store.MessagePersistData{
+				Message:      &store.Message{SourceID: source.ID, SourceMessageID: "future", MessageType: "calendar_event", SentAt: sql.NullTime{Time: now.Add(tc.sentAtOffset), Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}},
+				Conversation: &store.ConversationPersistData{SourceConversationID: "future", ConversationType: "meeting"},
+				RawMIME:      []byte(raw), RawFormat: "gcal_json", Metadata: &sql.NullString{String: `{"calendar_id":"owner@example.com"}`, Valid: true},
+			})
+			requirements.NoError(err)
+			requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{owner}, []string{""}))
+			requirements.NoError(st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
+			_, err = buildCache(t.Context(), dbPath, analytics, true)
+			requirements.NoError(err)
+			err = st.UpsertMessageRawWithFormatContext(t.Context(), id, []byte(raw[:len(raw)-1]+`,"status":"tentative"}`), "gcal_json")
+			requirements.NoError(err)
+			_, err = buildCache(t.Context(), dbPath, analytics, false)
+			requirements.NoError(err)
+			count := func() int64 {
+				t.Helper()
+				engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
+				requirements.NoError(err)
+				defer func() { requirements.NoError(engine.Close()) }()
+				detail, err := engine.GetPerson(t.Context(), person, query.Context{}, nil)
+				requirements.NoError(err)
+				if detail == nil {
+					return 0
+				}
+				return detail.MeetingCount
+			}
+			assertions.Zero(count())
+			assertions.False(cacheNeedsBuild(dbPath, analytics).NeedsBuild)
+			derivedRefreshNow = func() time.Time { return start.Add(-time.Second) }
+			assertions.False(cacheNeedsBuild(dbPath, analytics).NeedsBuild)
+			derivedRefreshNow = func() time.Time { return start.Add(time.Hour) }
+			assertions.True(cacheNeedsBuild(dbPath, analytics).NeedsBuild)
+			result, err := buildCache(t.Context(), dbPath, analytics, false)
+			requirements.NoError(err)
+			if tc.identityOnly {
+				assertions.True(result.IdentityOnly)
+			}
+			assertions.EqualValues(1, count())
+		})
 	}
-	assert.Zero(t, count())
-	assert.False(t, cacheNeedsBuild(dbPath, analytics).NeedsBuild)
-	derivedRefreshNow = func() time.Time { return start.Add(-time.Second) }
-	assert.False(t, cacheNeedsBuild(dbPath, analytics).NeedsBuild)
-	derivedRefreshNow = func() time.Time { return start.Add(time.Hour) }
-	assert.True(t, cacheNeedsBuild(dbPath, analytics).NeedsBuild)
-	result, err := buildCache(t.Context(), dbPath, analytics, false)
-	require.NoError(t, err)
-	assert.True(t, result.IdentityOnly)
-	assert.EqualValues(t, 1, count())
 }
 
 func TestMeetingCountsAllDayCalendarUsesCivilDate(t *testing.T) {

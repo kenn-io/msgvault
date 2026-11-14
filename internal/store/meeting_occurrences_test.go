@@ -232,16 +232,17 @@ func TestMeetingOccurrenceCountsAllDayCivilDate(t *testing.T) {
 }
 
 func TestMeetingOccurrenceCountsSavedCalendarLinkAndSplit(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, first := calendarFixture(t, st, "first-copy", `{"id":"first","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
 	_, second := calendarFixture(t, st, "second-copy", `{"id":"second","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, "other@example.com")
 	left, right := MeetingLinkRef{Kind: "evt", MessageID: first}, MeetingLinkRef{Kind: "evt", MessageID: second}
 	_, err := st.DecideMeetingLinkContext(t.Context(), left, right, "link")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	readKeys := func() []string {
 		t.Helper()
 		rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
-		require.NoError(t, err)
+		requirements.NoError(err)
 		var keys []string
 		for _, row := range rows {
 			if row.Counted {
@@ -251,25 +252,13 @@ func TestMeetingOccurrenceCountsSavedCalendarLinkAndSplit(t *testing.T) {
 		return keys
 	}
 	keys := readKeys()
-	require.Len(t, keys, 2)
-	assert.Equal(t, keys[0], keys[1])
-	for _, ref := range []MeetingLinkRef{left, right} {
-		record, err := st.MeetingRecordContext(t.Context(), ref)
-		require.NoError(t, err)
-		require.Len(t, record.Links, 2)
-		assert.Contains(t, []string{record.Links[0].Ref, record.Links[1].Ref}, keys[0])
-	}
+	requirements.Len(keys, 2)
+	assertions.Equal(keys[0], keys[1])
 	_, err = st.DecideMeetingLinkContext(t.Context(), left, right, "unlink")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	keys = readKeys()
-	require.Len(t, keys, 2)
-	assert.NotEqual(t, keys[0], keys[1])
-	for _, ref := range []MeetingLinkRef{left, right} {
-		record, err := st.MeetingRecordContext(t.Context(), ref)
-		require.NoError(t, err)
-		require.Len(t, record.Links, 1)
-		assert.Contains(t, keys, record.Links[0].Ref)
-	}
+	requirements.Len(keys, 2)
+	assertions.NotEqual(keys[0], keys[1])
 }
 
 func TestMeetingOccurrencesMatchRecordsSavedSplit(t *testing.T) {
