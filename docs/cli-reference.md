@@ -3246,7 +3246,7 @@ msgvault verify-attachments --after-id 123 --limit 100 --max-bytes 1073741824 --
 This owner-only command runs in the selected daemon and uses its shared
 loose/packed readers. It does not contact Gmail. Unlike `verify`, it reads
 attachment files. Unlike `backup verify`, it checks references in the live
-archive. Daemons older than API schema 5.3.0 reject the command; upgrade the
+archive. Daemons older than API schema 5.4.0 reject the command; upgrade the
 daemon before using it. Delegated agents and read-only remote-client keys cannot
 run this archive-wide diagnostic.
 

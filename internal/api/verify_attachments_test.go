@@ -1,9 +1,10 @@
 package api
 
 import (
+	"testing"
+
 	"github.com/stretchr/testify/assert"
 	"go.kenn.io/msgvault/internal/agentgrant"
-	"testing"
 )
 
 func TestVerifyAttachmentsOwnerAdmission(t *testing.T) {

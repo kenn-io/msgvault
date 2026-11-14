@@ -1,5 +1,6 @@
-// Package attachmentverify relates a bounded selection of live attachment
-// references to the existing physical readers. It never repairs storage.
+// Package attachmentverify checks retained attachment content and thumbnails
+// against live SQL references using the existing loose and packed readers.
+// It reports observations during the run and never repairs storage.
 package attachmentverify
 
 import (
@@ -20,15 +21,29 @@ import (
 )
 
 const (
-	Verified         = "verified"
-	MissingLoose     = "missing_loose"
-	PackUnavailable  = "pack_unavailable"
-	Corrupt          = "corrupt"
+	// Verified means the stream reached verified EOF, closed successfully,
+	// and matched the occurrence size when one was recorded.
+	Verified = "verified"
+	// MissingLoose means no loose candidate could be opened and the catalogue
+	// still referenced the content without assigning it to a pack.
+	MissingLoose = "missing_loose"
+	// PackUnavailable means the authoritative pack could not be opened.
+	PackUnavailable = "pack_unavailable"
+	// Corrupt means the physical reader detected a content or container mismatch.
+	Corrupt = "corrupt"
+	// MetadataMismatch means verified bytes disagree with the occurrence size.
 	MetadataMismatch = "metadata_mismatch"
-	Omitted          = "intentionally_omitted"
-	NotMaterialized  = "not_materialized"
-	Inconclusive     = "inconclusive"
-	NotChecked       = "not_checked"
+	// Omitted means an explicit policy skip records why no bytes were retained.
+	Omitted = "intentionally_omitted"
+	// NotMaterialized means the reference makes no claim to local retained bytes.
+	// Pending or failed acquisition alone does not establish intentional omission.
+	NotMaterialized = "not_materialized"
+	// Inconclusive means metadata, storage errors, or concurrent changes prevent
+	// a conclusion about integrity. It does not establish missing or corrupt bytes.
+	Inconclusive = "inconclusive"
+	// NotChecked means a limit or interruption left verification unfinished.
+	// Its attachment row must remain eligible when the caller resumes.
+	NotChecked = "not_checked"
 )
 
 // Options bounds selection, physical reads and runtime. The page counts
@@ -48,6 +63,7 @@ type Scope struct {
 	Timeout  string `json:"timeout"`
 }
 
+// Validate rejects bounds that would allow unbounded selection, I/O, or runtime.
 func (o Options) Validate() error {
 	if o.AfterID < 0 || o.Limit < 1 || o.Limit > 1000 {
 		return errors.New("after-id must be nonnegative and limit must be between 1 and 1000")
@@ -61,11 +77,14 @@ func (o Options) Validate() error {
 	return nil
 }
 
-// StreamStore is the production mixed loose/packed streaming contract.
+// StreamStore opens content through the daemon's shared loose and packed reader.
+// Integrity errors may arrive on Read or Close; opening a stream is not verification.
 type StreamStore interface {
 	OpenStream(ctx context.Context, hash string) (io.ReadCloser, int64, error)
 }
 
+// Reference reports one attachment content or thumbnail slot. References sharing
+// a hash reuse the same physical read, but each retains its own size comparison.
 type Reference struct {
 	AttachmentID int64  `json:"attachment_id"`
 	MessageID    int64  `json:"message_id"`
@@ -78,37 +97,45 @@ type Reference struct {
 	PackID       string `json:"pack_id,omitempty"`
 }
 
+// Report describes one bounded page. State describes traversal, not integrity:
+// a complete page may contain faults, which Counts and ReferencesAffected expose.
 type Report struct {
-	Scope              Scope          `json:"scope"`
-	StartedAt          time.Time      `json:"started_at"`
-	FinishedAt         time.Time      `json:"finished_at"`
-	State              string         `json:"state"`
-	RowsSelected       int            `json:"rows_selected"`
-	NextAfterID        int64          `json:"next_after_id"`
-	More               bool           `json:"more"`
-	ReferencesSelected int            `json:"references_selected"`
-	DistinctContents   int            `json:"distinct_contents"`
-	ContentsOpened     int            `json:"contents_opened"`
-	ContentsVerified   int            `json:"contents_verified"`
-	ReferencesVerified int            `json:"references_verified"`
-	ReferencesAffected int            `json:"references_affected"`
-	BytesRead          int64          `json:"bytes_read"`
-	Counts             map[string]int `json:"counts"`
-	StopReason         string         `json:"stop_reason,omitempty"`
-	References         []Reference    `json:"references"`
+	Scope        Scope     `json:"scope"`
+	StartedAt    time.Time `json:"started_at"`
+	FinishedAt   time.Time `json:"finished_at"`
+	State        string    `json:"state"`
+	RowsSelected int       `json:"rows_selected"`
+	// NextAfterID advances only past rows whose slots have all been checked
+	// or classified. A completed inconclusive result can therefore be passed.
+	NextAfterID int64 `json:"next_after_id"`
+	// More reports rows beyond the selected page, not unfinished work in it.
+	More               bool `json:"more"`
+	ReferencesSelected int  `json:"references_selected"`
+	DistinctContents   int  `json:"distinct_contents"`
+	ContentsOpened     int  `json:"contents_opened"`
+	// ContentsVerified counts hashes that passed the physical reader. Individual
+	// references may still have a MetadataMismatch against their recorded size.
+	ContentsVerified   int `json:"contents_verified"`
+	ReferencesVerified int `json:"references_verified"`
+	ReferencesAffected int `json:"references_affected"`
+	// BytesRead counts decoded bytes once per hash, unlike Reference.BytesRead.
+	BytesRead  int64          `json:"bytes_read"`
+	Counts     map[string]int `json:"counts"`
+	StopReason string         `json:"stop_reason,omitempty"`
+	References []Reference    `json:"references"`
 }
 
-type content struct {
-	hash  string
-	paths []string
-	refs  []int
+type selectedContent struct {
+	hash             string
+	recordedPaths    []string
+	referenceIndexes []int
 }
 
 // Run selects once, releases SQL resources, then consumes and closes each
 // distinct content stream. The caller must supply the daemon's shared store
 // so pack retirement uses its existing reader leases. A report is not a global
 // SQL/filesystem snapshot. Concurrent authority changes are inconclusive.
-func Run(ctx context.Context, st *store.Store, blobs StreamStore, root string, opts Options) (Report, error) {
+func Run(ctx context.Context, st *store.Store, blobs StreamStore, attachmentsDir string, opts Options) (Report, error) {
 	report := Report{Scope: Scope{AfterID: opts.AfterID, Limit: opts.Limit, MaxBytes: opts.MaxBytes, Timeout: opts.Timeout.String()}, StartedAt: time.Now().UTC(), State: "inconclusive", NextAfterID: opts.AfterID,
 		Counts: map[string]int{}, References: []Reference{}}
 	if err := opts.Validate(); err != nil {
@@ -121,8 +148,8 @@ func Run(ctx context.Context, st *store.Store, blobs StreamStore, root string, o
 		return report, err
 	}
 	report.RowsSelected, report.More = len(rows), more
-	var contents []*content
-	byHash := map[string]*content{}
+	var contents []*selectedContent
+	byHash := map[string]*selectedContent{}
 	add := func(row store.AttachmentVerificationRow, kind, hash, path string, size *int64) {
 		ref := Reference{AttachmentID: row.ID, MessageID: row.MessageID, Kind: kind,
 			Hash: strings.ToLower(hash), ExpectedSize: size, Status: NotChecked}
@@ -131,7 +158,8 @@ func Run(ctx context.Context, st *store.Store, blobs StreamStore, root string, o
 			ref.Status, ref.Reason = Inconclusive, "recorded path exceeds 4096 bytes"
 		case hash == "":
 			ref.Status, ref.Reason = NotMaterialized, "no retained content hash; bytes not verified"
-			// Only explicit policy skips with no local locator establish intentional omission.
+			// A stale skip must not hide a local file claim. Only a recognized policy
+			// reason without a retained hash or local path establishes omission.
 			if kind == "content" && (path == "" || nonLocalLocator(path)) && row.State == string(attachmentpolicy.StateSkipped) && policySkip(row.SkipReason) {
 				ref.Status, ref.Reason = Omitted, "recorded policy omission"
 			}
@@ -141,6 +169,8 @@ func Run(ctx context.Context, st *store.Store, blobs StreamStore, root string, o
 		case export.ValidateContentHash(hash) != nil:
 			ref.Status, ref.Reason = Inconclusive, "invalid expected SHA-256"
 		case nonLocalLocator(path):
+			// Providers also use storage_path for remote IDs and pending markers.
+			// Even with a hash, these values do not claim a local file exists.
 			ref.Status, ref.Reason = NotMaterialized, "external locator; no local storage claim"
 		}
 		index := len(report.References)
@@ -150,13 +180,13 @@ func Run(ctx context.Context, st *store.Store, blobs StreamStore, root string, o
 		}
 		item := byHash[ref.Hash]
 		if item == nil {
-			item = &content{hash: ref.Hash}
+			item = &selectedContent{hash: ref.Hash}
 			byHash[ref.Hash] = item
 			contents = append(contents, item)
 		}
-		item.refs = append(item.refs, index)
+		item.referenceIndexes = append(item.referenceIndexes, index)
 		if path != "" {
-			item.paths = append(item.paths, path)
+			item.recordedPaths = append(item.recordedPaths, path)
 		}
 	}
 	for _, row := range rows {
@@ -180,23 +210,23 @@ func Run(ctx context.Context, st *store.Store, blobs StreamStore, root string, o
 			report.StopReason = "byte limit"
 			break
 		}
-		status, reason, packID, n, stopped, checked := check(ctx, st, blobs, root, item, opts.MaxBytes-report.BytesRead)
-		report.BytesRead += n
-		if checked {
+		status, reason, packID, bytesRead, stopReason, opened := verifyContent(ctx, st, blobs, attachmentsDir, item, opts.MaxBytes-report.BytesRead)
+		report.BytesRead += bytesRead
+		if opened {
 			report.ContentsOpened++
 		}
 		if status == Verified {
 			report.ContentsVerified++
 		}
-		for _, index := range item.refs {
+		for _, index := range item.referenceIndexes {
 			ref := &report.References[index]
-			ref.Status, ref.Reason, ref.PackID, ref.BytesRead = status, reason, packID, n
-			if status == Verified && ref.ExpectedSize != nil && *ref.ExpectedSize != n {
+			ref.Status, ref.Reason, ref.PackID, ref.BytesRead = status, reason, packID, bytesRead
+			if status == Verified && ref.ExpectedSize != nil && *ref.ExpectedSize != bytesRead {
 				ref.Status, ref.Reason = MetadataMismatch, "verified content length differs from recorded occurrence size"
 			}
 		}
-		if stopped != "" {
-			report.StopReason = stopped
+		if stopReason != "" {
+			report.StopReason = stopReason
 			break
 		}
 	}
@@ -215,6 +245,9 @@ func Run(ctx context.Context, st *store.Store, blobs StreamStore, root string, o
 	if report.More || report.StopReason != "" {
 		report.State = "partial"
 	}
+	// Hash deduplication can finish later rows before an earlier row's thumbnail.
+	// Resume from the first unfinished row so no slot is skipped, even if that
+	// repeats successful reads from this page.
 	unfinished := make(map[int64]bool)
 	for _, ref := range report.References {
 		if ref.Status == NotChecked {
@@ -251,6 +284,8 @@ func nonLocalLocator(path string) bool {
 }
 
 // SQL drivers can report interruption before the caller observes ctx.Err().
+// Treat interrupted lookups and rechecks as unfinished, even after verified EOF,
+// so cancellation cannot advance the resume cursor past an unchecked reference.
 func interrupted(ctx context.Context, err error) bool {
 	return ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
@@ -271,7 +306,10 @@ func sameAuthority(a, b store.AttachmentBlobLocation) bool {
 	return a.Pack == nil || *a.Pack == *b.Pack
 }
 
-func check(ctx context.Context, st *store.Store, blobs StreamStore, root string, item *content, remaining int64) (status, reason, packID string, n int64, stopped string, checked bool) {
+// verifyContent consumes one distinct hash and rechecks its catalogue membership
+// and pack assignment. These checks detect observed authority changes; they do
+// not freeze occurrence metadata or rule out changes between observations.
+func verifyContent(ctx context.Context, st *store.Store, blobs StreamStore, attachmentsDir string, item *selectedContent, remaining int64) (status, reason, packID string, bytesRead int64, stopReason string, opened bool) {
 	before, err := st.ResolveAttachmentBlobContext(ctx, item.hash)
 	if interrupted(ctx, err) {
 		return NotChecked, "cancelled or timeout before verification completed", "", 0, "cancelled or timeout", false
@@ -298,7 +336,7 @@ func check(ctx context.Context, st *store.Store, blobs StreamStore, root string,
 			return Inconclusive, "authority changed or became unavailable", packID, 0, "", false
 		}
 		var source io.ReadCloser
-		source, _, _, _, err = attachmentstore.OpenLooseCandidates(root, item.hash, func() ([]string, error) { return item.paths, nil })
+		source, _, _, _, err = attachmentstore.OpenLooseCandidates(attachmentsDir, item.hash, func() ([]string, error) { return item.recordedPaths, nil })
 		if err == nil {
 			reader, err = contentverify.NewReadCloser(source, item.hash)
 			if err != nil {
@@ -306,47 +344,52 @@ func check(ctx context.Context, st *store.Store, blobs StreamStore, root string,
 			}
 		}
 	}
-	// Only a failed Open establishes absence; Read and Close can also wrap ErrNotExist.
+	// ErrNotExist proves absence only when opening fails and the catalogue
+	// remains unchanged. A late Read or Close error cannot establish absence;
+	// retain it as an inconclusive result unless the reader proves corruption.
 	openErr := err
-	checked = openErr == nil
-	if checked {
-		// One extra byte distinguishes budget exhaustion from verified EOF. Close
-		// is checked even on cancellation, read failure and an incomplete stream.
+	opened = openErr == nil
+	if opened {
+		// Read one byte beyond the remaining budget to distinguish a stream that
+		// ends exactly at the limit from one that still has unread content. Always
+		// close: integrity errors can surface there after a successful final Read.
 		var readErr error
-		n, readErr = io.CopyBuffer(io.Discard, io.LimitReader(contextReader{ctx, reader}, remaining+1), make([]byte, 64<<10))
+		bytesRead, readErr = io.CopyBuffer(io.Discard, io.LimitReader(contextReader{ctx, reader}, remaining+1), make([]byte, 64<<10))
 		closeErr := reader.Close()
 		err = errors.Join(readErr, closeErr)
-		if n > remaining {
-			return NotChecked, "stream did not reach verified EOF within byte limit", packID, n, "byte limit", checked
+		if bytesRead > remaining {
+			return NotChecked, "stream did not reach verified EOF within byte limit", packID, bytesRead, "byte limit", opened
 		}
 	}
 	if ctx.Err() != nil {
-		return NotChecked, "cancelled or timeout before verification completed", packID, n, "cancelled or timeout", checked
+		return NotChecked, "cancelled or timeout before verification completed", packID, bytesRead, "cancelled or timeout", opened
 	}
 	after, resolveErr := st.ResolveAttachmentBlobContext(ctx, item.hash)
 	if interrupted(ctx, resolveErr) {
-		return NotChecked, "cancelled or timeout before verification completed", packID, n, "cancelled or timeout", checked
+		return NotChecked, "cancelled or timeout before verification completed", packID, bytesRead, "cancelled or timeout", opened
 	}
 	if resolveErr != nil || !sameAuthority(before, after) {
-		return Inconclusive, "authority changed or became unavailable", packID, n, "", checked
+		return Inconclusive, "authority changed or became unavailable", packID, bytesRead, "", opened
 	}
 	if err == nil {
-		return Verified, "", packID, n, "", checked
+		return Verified, "", packID, bytesRead, "", opened
 	}
 	switch {
 	case errors.Is(packstore.ClassifyIntegrityError(err), packstore.ErrPhysicalCorrupt), errors.Is(err, contentverify.ErrMismatch):
-		return Corrupt, "physical reader rejected content or container integrity", packID, n, "", checked
+		return Corrupt, "physical reader rejected content or container integrity", packID, bytesRead, "", opened
 	case errors.Is(openErr, os.ErrNotExist):
 		if before.Pack != nil {
-			return PackUnavailable, "authoritative pack could not be opened", packID, n, "", checked
+			return PackUnavailable, "authoritative pack could not be opened", packID, bytesRead, "", opened
 		}
-		return MissingLoose, "canonical and selected recorded loose paths are missing", "", n, "", checked
+		return MissingLoose, "canonical and selected recorded loose paths are missing", "", bytesRead, "", opened
 	default:
 		// Permissions, generic I/O, limits and close failures do not prove corruption.
-		return Inconclusive, boundedError(err), packID, n, "", checked
+		return Inconclusive, boundedError(err), packID, bytesRead, "", opened
 	}
 }
 
+// contextReader checks cancellation between reads. It cannot interrupt an
+// underlying filesystem call that is already blocked.
 type contextReader struct {
 	ctx    context.Context
 	reader io.Reader
