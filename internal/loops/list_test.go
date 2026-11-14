@@ -148,7 +148,7 @@ func (s *commitmentPhaseEndingStore) LoopConversationsContext(ctx context.Contex
 	}
 }
 
-func (s *commitmentPhaseEndingStore) ListPersonCommitmentsContext(context.Context, int64, time.Time, int, bool) ([]store.PersonCommitment, error) {
+func (s *commitmentPhaseEndingStore) ListPersonCommitmentsContext(context.Context, int64, time.Time, int, int, bool) ([]store.PersonCommitment, error) {
 	s.called = true
 	if s.readerErr != nil {
 		return nil, s.readerErr

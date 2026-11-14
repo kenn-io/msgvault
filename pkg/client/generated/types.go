@@ -7466,8 +7466,11 @@ func (l LoopItem) Validate() error {
 type LoopListResponse struct {
 	Commitments         []LoopCommitment `json:"commitments,omitempty"`
 	CommitmentsComplete *bool            `json:"commitments_complete,omitempty"`
-	CommitmentsSince    *time.Time       `json:"commitments_since,omitempty"`
-	CommitmentsUntil    *time.Time       `json:"commitments_until,omitempty"`
+
+	// CommitmentsNextOffset Offset for the next promise page; keep the same person and include_closed filters
+	CommitmentsNextOffset *int64     `json:"commitments_next_offset,omitempty"`
+	CommitmentsSince      *time.Time `json:"commitments_since,omitempty"`
+	CommitmentsUntil      *time.Time `json:"commitments_until,omitempty"`
 
 	// CoverageIncomplete True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue
 	CoverageIncomplete bool       `json:"coverage_incomplete"`
@@ -7476,7 +7479,7 @@ type LoopListResponse struct {
 	// SkippedUnparseable Stored originals that failed to parse and were passed over; a reply in one may have settled a listed loop
 	SkippedUnparseable int64 `json:"skipped_unparseable"`
 
-	// Truncated True when more loops are open than limit returned
+	// Truncated True when more reply loops or promises remain than the limit returned
 	Truncated bool `json:"truncated"`
 }
 

@@ -86,8 +86,10 @@
   ]);
 
   const promiseGroups = $derived([
-    { key: 'by', label: 'Promises you made', items: commitments.filter((item) => item.direction === 'owed_by') },
-    { key: 'to', label: 'Promises to you', items: commitments.filter((item) => item.direction === 'owed_to') },
+    { key: 'by', label: 'Promises you made', items: commitments.filter((item) => item.direction === 'owed_by' && item.freshness === 'fresh') },
+    { key: 'to', label: 'Promises to you', items: commitments.filter((item) => item.direction === 'owed_to' && item.freshness === 'fresh') },
+    { key: 'stale-by', label: 'Stale promises you made', items: commitments.filter((item) => item.direction === 'owed_by' && item.freshness === 'stale') },
+    { key: 'stale-to', label: 'Stale promises to you', items: commitments.filter((item) => item.direction === 'owed_to' && item.freshness === 'stale') },
   ]);
 
   function ageLabel(since: string): string {
@@ -135,7 +137,7 @@
             {#each group.items as promise (promise.id)}
               <li class="promise">
                 <a href={`/messages/${promise.promise.message_id}`} title={promise.promise.text}>{promise.promise.text}</a>
-                <span class="promise-meta muted">{#if promise.freshness === 'stale'}<span class="stale">Stale evidence</span><span aria-hidden="true">·</span>{/if}{#if promise.due_on}<span>Due {dueLabel(promise.due_on)}</span><span aria-hidden="true">·</span>{/if}<span>{ageLabel(promise.promised_at)}</span></span>
+                <span class="promise-meta muted">{#if promise.due_on}<span>Due {dueLabel(promise.due_on)}</span><span aria-hidden="true">·</span>{/if}<span>{ageLabel(promise.promised_at)}</span></span>
               </li>
             {/each}
           </ul>
@@ -143,7 +145,7 @@
       {/if}
     {/each}
     {#if commitmentsSince && commitmentsUntil && commitmentsUntil.slice(0, 10) < commitmentsSince.slice(0, 10)}<p class="muted">No messages were eligible for promise discovery in the current window.</p>
-    {:else if commitmentsSince && !commitmentsComplete}<p class="muted discovery">Promise discovery {commitmentsUntil ? `from ${formatContactDate(commitmentsSince)} through ${formatContactDate(commitmentsUntil)}` : `since ${formatContactDate(commitmentsSince)}`} is incomplete. If messages are too large, increase <code>max_bytes</code> in <code>[people.sweep.commitments]</code> to retry.</p>
+    {:else if commitmentsSince && !commitmentsComplete}<p class="muted discovery">Promise discovery {commitmentsUntil ? `from ${formatContactDate(commitmentsSince)} through ${formatContactDate(commitmentsUntil)}` : `since ${formatContactDate(commitmentsSince)}`} is incomplete. Some messages may be too large to check.</p>
     {:else if commitmentsComplete === false && !commitmentsSince}<p class="muted">Promise discovery has not started.</p>
     {:else if commitmentsSince && commitments.length === 0}<p class="muted">No promises found {commitmentsUntil ? `from ${formatContactDate(commitmentsSince)} through ${formatContactDate(commitmentsUntil)}` : `since ${formatContactDate(commitmentsSince)}`}.</p>{/if}
   {/if}
@@ -165,14 +167,12 @@
   h4 { color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 500; }
   .group { display: grid; gap: var(--space-1); }
   .discovery { margin-top: var(--space-4); }
-  .discovery code { font-size: 0.9em; background: var(--bg-inset); border-radius: var(--radius-sm); }
   ul { display: grid; gap: var(--space-1); padding: 0; list-style: none; }
   li { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); min-width: 0; }
   a { min-width: 0; overflow: hidden; color: var(--link-ink); text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
   a:hover { text-decoration: underline; }
   li > span { flex: none; }
   .promise-meta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
-  .stale { color: var(--status-warning-ink); }
   .muted { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   [role="alert"] { color: var(--text-danger); }
 </style>

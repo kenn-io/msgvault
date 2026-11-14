@@ -49,6 +49,7 @@ func newLoopsListCommand() *cobra.Command {
   msgvault loops list --person 42`,
 	}
 	command.Flags().IntVar(&opts.Limit, "limit", loops.DefaultLimit, "Maximum entries per collection (1 through 200)")
+	command.Flags().IntVar(&opts.CommitmentOffset, "commitment-offset", 0, "Skip this many cited promises")
 	command.Flags().BoolVar(&opts.IncludeClosed, "include-closed", false, "Include done and snoozed commitments")
 	command.Flags().Int64Var(&opts.PersonID, "person", 0, "Show loops with this person ID")
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output as JSON")
@@ -56,19 +57,18 @@ func newLoopsListCommand() *cobra.Command {
 		if cmd.Flags().Changed("person") && opts.PersonID <= 0 {
 			return usageErr(cmd, errors.New("--person must be a positive person ID"))
 		}
+		if opts.CommitmentOffset < 0 {
+			return usageErr(cmd, errors.New("--commitment-offset must be nonnegative"))
+		}
 		if opts.Limit < 1 || opts.Limit > loops.MaxLimit {
 			return usageErr(cmd, fmt.Errorf("--limit must be from 1 through %d", loops.MaxLimit))
 		}
 		version := loopsMinAPISchemaVersion
-		if opts.IncludeClosed {
+		if opts.IncludeClosed || opts.CommitmentOffset > 0 {
 			version = "5.5.0"
 		}
-		return withLoopsClientVersion(cmd, version, func(client *daemonclient.Client) error {
+		return withLoopsClientVersion(cmd, version, func(client *daemonclient.Client, version string) error {
 			result, err := client.ListLoops(cmd.Context(), opts)
-			if err != nil {
-				return err
-			}
-			version, err := client.APISchemaVersion(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -221,7 +221,7 @@ func runCommitmentDecision(cmd *cobra.Command, id, state string, until *time.Tim
 	if cmd.Flags().Changed("questions") {
 		return usageErr(cmd, errors.New("--questions is available only for reply loops"))
 	}
-	return withLoopsClientVersion(cmd, "5.5.0", func(client *daemonclient.Client) error {
+	return withLoopsClientVersion(cmd, "5.5.0", func(client *daemonclient.Client, _ string) error {
 		decision, err := client.SetCommitmentDecision(cmd.Context(), id, state, until)
 		if err != nil {
 			return err
@@ -242,10 +242,10 @@ func loopActionError(id int64, err error) error {
 
 // withLoopsClient opens the daemon and refuses one that predates the loop routes.
 func withLoopsClient(cmd *cobra.Command, run func(*daemonclient.Client) error) error {
-	return withLoopsClientVersion(cmd, loopsMinAPISchemaVersion, run)
+	return withLoopsClientVersion(cmd, loopsMinAPISchemaVersion, func(client *daemonclient.Client, _ string) error { return run(client) })
 }
 
-func withLoopsClientVersion(cmd *cobra.Command, minimum string, run func(*daemonclient.Client) error) error {
+func withLoopsClientVersion(cmd *cobra.Command, minimum string, run func(*daemonclient.Client, string) error) error {
 	client, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err
@@ -259,7 +259,7 @@ func withLoopsClientVersion(cmd *cobra.Command, minimum string, run func(*daemon
 		return fmt.Errorf("open loops require daemon API schema %s or newer (daemon reports %q); upgrade and restart the daemon",
 			minimum, version)
 	}
-	return run(client)
+	return run(client, version)
 }
 
 type loopRow struct{ age, with, subject, id string }
@@ -322,6 +322,9 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 			fmt.Fprintf(&notes, "Showing up to %d reply loops and %d cited promises; more remain.\n", limit, limit)
 		}
 	}
+	if result.CommitmentsNextOffset != nil {
+		fmt.Fprintf(&notes, "More promises: repeat this command with --commitment-offset %d.\n", *result.CommitmentsNextOffset)
+	}
 	writeLoopWarnings(&notes, result.SkippedUnparseable, result.CoverageIncomplete)
 	if notes.Len() > 0 {
 		sb.WriteString("\n" + notes.String())
@@ -374,7 +377,7 @@ func writeCommitmentWindow(sb *strings.Builder, result generated.LoopListRespons
 		window = "from " + result.CommitmentsSince.Format(time.DateOnly) + " through " + result.CommitmentsUntil.Format(time.DateOnly)
 	}
 	if result.CommitmentsComplete != nil && !*result.CommitmentsComplete {
-		fmt.Fprintf(sb, "Promise discovery %s is incomplete. If messages are too large, increase max_bytes in [people.sweep.commitments] to retry.\n", window)
+		fmt.Fprintf(sb, "Promise discovery %s is incomplete. Some messages may be too large to check.\n", window)
 	} else {
 		fmt.Fprintf(sb, "Promises checked %s.\n", window)
 	}

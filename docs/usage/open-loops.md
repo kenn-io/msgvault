@@ -160,7 +160,7 @@ Enable `[people.sweep.commitments]` in [configuration](../configuration.md#commi
 Use `msgvault person provider consent --commitments` to see the provider,
 source dates, and what the request discloses. Repeat with `--yes` to consent
 to sending conversation text from both sides of verified direct chats and
-email. The request includes the full eligible message text within the configured byte limit, after leading quoted history and whitespace are removed and embedded quoted history is masked. Messages that exceed the byte limit are skipped until the limit is raised. Each cited quote is limited to 2,000 runes.
+email. The request includes the full eligible message text within the configured byte limit, after leading quoted history and whitespace are removed and embedded quoted history is masked. Messages that exceed the byte limit are skipped until they fit within the configured limit. Each cited quote is limited to 2,000 runes.
 Changing provider source dates, the commitment window, or message and byte limits restarts recent discovery while keeping saved decisions.
 The profile must allow sensitive `conversation_text` sources. Check the grant
 with `msgvault person provider status`. Use `msgvault person provider revoke`
@@ -169,10 +169,10 @@ to revoke both the ordinary inference and commitment grants for the profile.
 Cited promises appear under **Promises you made** and **Promises to you**.
 Each row links to the quoted message. The JSON response also gives the claim
 ID and original-body rune range. See the [person facts CLI reference](../cli-reference.md#person-track-tiers-provider-sweep-and-facts) for claim kinds
-and freshness. A due date is a calendar date in the configured activity timezone. Open promises remain visible as their evidence ages; evidence older than 90 days is marked stale. Unsupported claims leave the list.
+and freshness. A due date is a calendar date in the configured activity timezone. Open promises remain visible as their evidence ages; evidence older than 90 days is marked stale. Unsupported claims leave the list. If a message edit changes a quote so it can't be matched to the original, rediscovery can list it as a new open promise.
 
 Use the commitment ID for actions on a promise. This ID starts with `c`.
-The same message can anchor multiple promises and a reply loop. Run `msgvault loops list --include-closed --limit 200` to find done or snoozed promises that you can reopen.
+The same message can anchor multiple promises and a reply loop. Run `msgvault loops list --include-closed --limit 200` to find done or snoozed promises that you can reopen. When more promises remain, repeat the command with the displayed `--commitment-offset` and the same filters to see the next page.
 
 ```bash
 msgvault loops done c12

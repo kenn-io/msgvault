@@ -121,6 +121,26 @@ func TestLoopsDoneAndSnooze(t *testing.T) {
 	require.Error(err)
 }
 
+func TestLoopsListPagesPromises(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if req.URL.Path == "/api/v1/health" {
+			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"5.5.0"}`))
+			assert.NoError(t, err)
+			return
+		}
+		assert.Equal(t, "200", req.URL.Query().Get("commitment_offset"))
+		assert.Equal(t, "true", req.URL.Query().Get("include_closed"))
+		_, err := w.Write([]byte(`{"items":[{"kind":"reply_owed","anchor_message_id":1,"conversation_id":1,"source_id":1,"channel":"email","summary":"Reply","owed_since_at":"2026-01-01T00:00:00Z","last_activity_at":"2026-01-01T00:00:00Z","counterparty":{"display_name":"Example"}}],"truncated":true,"commitments_next_offset":400}`))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	output, err := runLoops(ctx, t, "list", "--include-closed", "--commitment-offset", "200")
+	require.NoError(t, err)
+	assert.Contains(t, output, "--commitment-offset 400")
+}
+
 func TestLoopsOldDaemonWarnsOnStderr(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -153,6 +173,7 @@ func TestLoopsRequireDaemonSchema(t *testing.T) {
 	}{
 		{"old_reply_loop_daemon", "3.23.0", "3.44.0", []string{"list", "--json"}},
 		{"old_closed_commitment_daemon", "5.4.0", "5.5.0", []string{"list", "--json", "--include-closed"}},
+		{"old_commitment_pagination_daemon", "5.4.0", "5.5.0", []string{"list", "--json", "--commitment-offset", "1"}},
 		{"older_commitment_daemon", "5.4.0", "5.5.0", []string{"done", "c12"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -277,7 +298,7 @@ Showing up to 50 reply loops and 50 cited promises. Use --limit up to 200 to see
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{CommitmentsSince: &now, CommitmentsComplete: &incomplete}, 50, now))
-	assert.Contains(out.String(), "increase max_bytes in [people.sweep.commitments] to retry")
+	assert.Contains(out.String(), "Some messages may be too large to check.")
 
 	out.Reset()
 	until := now.AddDate(0, 0, -1)

@@ -37,28 +37,19 @@ type LoopItem struct {
 	LastActivityAt     time.Time        `json:"last_activity_at"`
 }
 
-// CommitmentConsentReader reports whether promise discovery is consented.
-type CommitmentConsentReader interface {
-	HasActivePersonCommitmentConsent(context.Context, string) (bool, error)
-}
-
-// CommitmentDiscoveryReader reports the promise discovery window.
-type CommitmentDiscoveryReader interface {
-	PersonCommitmentDiscoveryContext(context.Context, int64, string) (*time.Time, bool, error)
-}
-
 // LoopListResponse lists open loops oldest first.
 type LoopListResponse struct {
 	Items              []LoopItem `json:"items"`
-	Truncated          bool       `json:"truncated" doc:"True when more loops are open than limit returned"`
+	Truncated          bool       `json:"truncated" doc:"True when more reply loops or promises remain than the limit returned"`
 	CoverageIncomplete bool       `json:"coverage_incomplete" doc:"True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue"`
 	// SkippedUnparseable counts stored originals the list could not parse. A reply in one of them may have settled a loop that still lists.
 	SkippedUnparseable int `json:"skipped_unparseable" doc:"Stored originals that failed to parse and were passed over; a reply in one may have settled a listed loop"`
 
-	Commitments         []LoopCommitment `json:"commitments,omitempty"`
-	CommitmentsUntil    *time.Time       `json:"commitments_until,omitempty"`
-	CommitmentsSince    *time.Time       `json:"commitments_since,omitempty"`
-	CommitmentsComplete *bool            `json:"commitments_complete,omitempty"`
+	Commitments           []LoopCommitment `json:"commitments,omitempty"`
+	CommitmentsUntil      *time.Time       `json:"commitments_until,omitempty"`
+	CommitmentsNextOffset *int             `json:"commitments_next_offset,omitempty" doc:"Offset for the next promise page; keep the same person and include_closed filters"`
+	CommitmentsSince      *time.Time       `json:"commitments_since,omitempty"`
+	CommitmentsComplete   *bool            `json:"commitments_complete,omitempty"`
 }
 
 // LoopDecisionResponse is the result of a done, snooze, or reopen action.
@@ -119,8 +110,12 @@ func loopListParameters() []*huma.Param {
 		p.Schema.Minimum, p.Schema.Maximum, p.Schema.Default = &lo, &hi, def
 		return p
 	}
+	offset := queryIntegerParam("commitment_offset", "Number of cited promises to skip")
+	zero := float64(0)
+	offset.Schema.Minimum = &zero
 	return []*huma.Param{
 		queryIntegerParam("person_id", "Only loops with this person"),
+		offset,
 		{Name: "include_closed", In: "query", Description: "Include done and snoozed commitments", Schema: &huma.Schema{Type: huma.TypeBoolean}},
 		bounded("limit", "Maximum loops to return", loops.DefaultLimit, loops.MaxLimit),
 	}
@@ -147,6 +142,14 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 		opts.Limit, err = boundedActivityQuery(r, "limit", loops.DefaultLimit, 1, loops.MaxLimit)
 	}
 	if err == nil {
+		if values, supplied := r.URL.Query()["commitment_offset"]; supplied {
+			opts.CommitmentOffset, err = strconv.Atoi(values[0])
+			if len(values) != 1 || err != nil || opts.CommitmentOffset < 0 {
+				err = store.ErrInvalidActivityRequest
+			}
+		}
+	}
+	if err == nil {
 		if values, supplied := r.URL.Query()["person_id"]; supplied {
 			if opts.PersonID, err = strconv.ParseInt(values[0], 10, 64); err != nil || len(values) != 1 || opts.PersonID < 1 {
 				err = store.ErrInvalidActivityRequest
@@ -162,7 +165,7 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "person_id, limit and include_closed must be valid")
+		writeError(w, http.StatusBadRequest, "invalid_request", "person_id, limit, commitment_offset and include_closed must be valid")
 		return
 	}
 	evidence := &gatedLoopEvidence{Store: loopStore, gate: s.operationGate}
@@ -175,17 +178,16 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 	response.Commitments = loopCommitments(result.Commitments)
 	if cfg, ok := s.currentPeopleSweepConfig(); ok && cfg.Commitments.Enabled {
 		profile, profileErr := cfg.Profile()
-		consent, canCheckConsent := s.store.(CommitmentConsentReader)
 		active := false
-		if profileErr == nil && canCheckConsent {
-			active, err = consent.HasActivePersonCommitmentConsent(r.Context(), profile.Fingerprint)
+		if profileErr == nil {
+			active, err = loopStore.HasActivePersonCommitmentConsent(r.Context(), profile.Fingerprint)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment consent")
 				return
 			}
 		}
-		if reader, ok := s.store.(CommitmentDiscoveryReader); ok && active {
-			since, complete, err := reader.PersonCommitmentDiscoveryContext(r.Context(), opts.PersonID, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
+		if active {
+			since, complete, err := loopStore.PersonCommitmentDiscoveryContext(r.Context(), opts.PersonID, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment discovery")
 				return
@@ -270,7 +272,7 @@ func (s *Server) fillLoopEvidence(st loops.Store, personID int64) {
 
 func loopListResponse(result loops.Result) LoopListResponse {
 	return LoopListResponse{
-		Items: make([]LoopItem, 0, len(result.Loops)), Truncated: result.Truncated,
+		Items: make([]LoopItem, 0, len(result.Loops)), Truncated: result.Truncated, CommitmentsNextOffset: result.CommitmentsNextOffset,
 		CoverageIncomplete: result.CoverageIncomplete, SkippedUnparseable: result.SkippedUnparseable,
 	}
 }
@@ -428,12 +430,4 @@ func (g *gatedLoopEvidence) SaveLoopMessageEvidenceContext(ctx context.Context, 
 	}
 	defer release()
 	return g.Store.SaveLoopMessageEvidenceContext(ctx, id, version, token, e)
-}
-
-func (g *gatedLoopEvidence) ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int, includeClosed bool) ([]store.PersonCommitment, error) {
-	reader, ok := g.Store.(loops.CommitmentReader)
-	if !ok {
-		return nil, nil
-	}
-	return reader.ListPersonCommitmentsContext(ctx, personID, now, limit, includeClosed)
 }

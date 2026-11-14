@@ -1468,6 +1468,17 @@ func hydratePersonFactFreshnessTx(ctx context.Context, tx *loggedTx, claims []pe
 	return nil
 }
 
+// latestPersonFactEvidenceStatusSQL is the shared status precedence contract.
+// Expressions are internal SQL identifiers or placeholders, never user input.
+func latestPersonFactEvidenceStatusSQL(person, key, version string) string {
+	return fmt.Sprintf(`FROM person_fact_evidence_status_events status
+ JOIN person_fact_generations generation ON generation.id = status.generation_id
+ WHERE status.person_id = %s AND status.evidence_key = %s AND status.source_version = %s
+ ORDER BY generation.resolved_at DESC, status.id DESC LIMIT 1`, person, key, version)
+}
+
+const commitmentFreshnessDays = 90
+
 // describePersonFactFreshness uses the newest currently supported evidence, not the date
 // of extraction. Expiry takes precedence, including at the exact boundary.
 func describePersonFactFreshness(target personfacts.TargetRef, validUntil, latestSupported *time.Time, now time.Time) personfacts.Freshness {
@@ -1478,7 +1489,7 @@ func describePersonFactFreshness(target personfacts.TargetRef, validUntil, lates
 	days := 365
 	switch {
 	case target.Kind == personfacts.TargetCommitment:
-		kind, days = personfacts.KindCommitment, 90
+		kind, days = personfacts.KindCommitment, commitmentFreshnessDays
 	case target.Kind == personfacts.TargetAttribute && seededPreference(target.Key):
 		kind, days = personfacts.KindPreference, 90
 	case validUntil != nil && target.Kind != personfacts.TargetEmployment:

@@ -581,6 +581,9 @@ type ListLoopsQuery struct {
 	// PersonID Only loops with this person
 	PersonID *int64 `json:"person_id,omitempty"`
 
+	// CommitmentOffset Number of cited promises to skip
+	CommitmentOffset *int64 `json:"commitment_offset,omitempty" validate:"omitempty,gte=0"`
+
 	// IncludeClosed Include done and snoozed commitments
 	IncludeClosed *bool `json:"include_closed,omitempty"`
 

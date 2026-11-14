@@ -122,3 +122,28 @@ func TestCommitmentDiscoveryCompletesAfterMessageShrinks(t *testing.T) {
 	r.NoError(err)
 	assert.True(t, complete)
 }
+
+func TestCommitmentScopeReductionUsesCurrentWindow(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "scope-reduction", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	oldID := persist("old", "I will send the old report.", -70*24*time.Hour)
+	_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET archived_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-70*24*time.Hour)), oldID)
+	r.NoError(err)
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-70*24*time.Hour)), oldID)
+	r.NoError(err)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	cfg.Commitments.Window = 90 * 24 * time.Hour
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	scope := peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments)
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, 0, ?, ?)`), f.personID, f.store.dialect.TimestampParam(personFactLedgerNow), scope, f.store.dialect.TimestampParam(personFactLedgerNow.Add(-90*24*time.Hour)))
+	r.NoError(err)
+	cfg.Commitments.Window = 30 * 24 * time.Hour
+	now := personFactLedgerNow.Add(24 * time.Hour)
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, now, "UTC")
+	r.NoError(err)
+	assert.Equal(t, now, window.SelectionAt)
+	assert.Empty(t, window.Sources)
+}

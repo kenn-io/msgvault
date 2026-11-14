@@ -22,6 +22,9 @@ import (
 	"go.kenn.io/msgvault/internal/vector/preprocess"
 )
 
+// ErrCommitmentChanged reports a decision that changed during an update.
+var ErrCommitmentChanged = errors.New("commitment changed; retry")
+
 // PersonCommitment keeps mutable owner decisions separate from immutable facts.
 type PersonCommitment struct {
 	ID              int64                       `json:"id"`
@@ -90,8 +93,8 @@ func (s *Store) commitmentSourceCache(owners loopOwners) func(context.Context, i
 	}
 }
 
-func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int, includeClosed bool) ([]PersonCommitment, error) {
-	if personID < 0 || limit < 1 || limit > 201 {
+func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit, offset int, includeClosed bool) ([]PersonCommitment, error) {
+	if personID < 0 || limit < 1 || limit > 201 || offset < 0 {
 		return nil, ErrInvalidActivityRequest
 	}
 	owners, err := s.loopOwnerIdentities(ctx)
@@ -114,6 +117,10 @@ func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64
 					return nil, err
 				}
 				if !visible {
+					continue
+				}
+				if offset > 0 {
+					offset--
 					continue
 				}
 				result = append(result, c)
@@ -160,7 +167,7 @@ func (s *Store) loadCommitmentCandidates(ctx context.Context, personID int64, no
 		} else {
 			query += ` AND (` + key + ` <= ` + s.loopTimeKey("?") + ` OR ` + key + ` > ` + s.loopTimeKey("?") + `)`
 		}
-		args = append(args, s.dialect.TimestampParam(now.Add(-90*24*time.Hour)), s.dialect.TimestampParam(now))
+		args = append(args, s.dialect.TimestampParam(now.Add(-commitmentFreshnessDays*24*time.Hour)), s.dialect.TimestampParam(now))
 		if after.ID != 0 {
 			query += ` AND (` + key + `, id) > (` + s.loopTimeKey("?") + `, ?)`
 			cursor := s.dialect.TimestampParam(after.PromisedAt)
@@ -324,6 +331,9 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 			AND COALESCE((SELECT status.supported `+latestPersonFactEvidenceStatusSQL("?", "?", "?")+`), TRUE) = TRUE
 			RETURNING `+commitmentColumns, state, deadline, id, previous.State,
 			candidate.promise.Input.PersonID, candidate.promise.Key, candidate.promise.Input.SourceVersion))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrCommitmentChanged
+		}
 		return err
 	})
 	if err == nil {
@@ -540,16 +550,7 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return window, err
 	}
-	if scope != window.ScopeFingerprint && window.BackfillMessageID == -1 {
-		var oversized bool
-		if err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM person_commitment_oversized WHERE person_id = ?)`), personID).Scan(&oversized); err != nil {
-			return window, err
-		}
-		if oversized {
-			window.BackfillMessageID = 0
-		}
-	}
-	if window.BackfillMessageID != -1 && since.Valid && since.Time.Before(now.Add(-cfg.Window)) {
+	if scope == window.ScopeFingerprint && window.BackfillMessageID != -1 && since.Valid && since.Time.Before(now.Add(-cfg.Window)) {
 		window.SelectionAt = since.Time.Add(cfg.Window)
 	}
 	if scope != window.ScopeFingerprint {

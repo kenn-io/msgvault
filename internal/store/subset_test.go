@@ -1991,7 +1991,7 @@ func TestCopySubsetRediscoveryPreservesCommitmentDecisions(t *testing.T) {
 	cfg.ApplyDefaults()
 	cfg.Commitments.Enabled = true
 	applyCommitmentTestSources(t, f, cfg.Commitments)
-	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, false)
+	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, 0, false)
 	r.NoError(err)
 	r.Len(items, 2)
 	until := personFactLedgerNow.Add(24 * time.Hour)
@@ -2025,7 +2025,7 @@ func TestCopySubsetRediscoveryPreservesCommitmentDecisions(t *testing.T) {
 	r.NoError(err)
 	r.True(live)
 	applyCommitmentTestSources(t, d, cfg.Commitments)
-	got, err := destination.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, true)
+	got, err := destination.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, 0, true)
 	r.NoError(err)
 	r.Len(got, 2)
 	r.Equal(items[0].ID, got[0].ID)

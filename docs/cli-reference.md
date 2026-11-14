@@ -68,7 +68,9 @@ fails with `<id> isn't an open loop.`
 For cited commitments, use the displayed `c<ID>` with `done`, `snooze`, or
 `reopen`. `list --json` includes exact citations in `commitments` when
 promises are open. Add `--include-closed` to find done or snoozed
-promises you can reopen. `--questions` selects reply-loop question IDs.
+promises you can reopen. Repeat the command with the displayed
+`--commitment-offset` to see the next page. Keep the same filters.
+`--questions` selects reply-loop question IDs.
 Commitment extraction and decisions require API schema 5.5.0 or newer.
 See [cited commitments](usage/open-loops.md#see-cited-commitments).
 

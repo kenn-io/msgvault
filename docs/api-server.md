@@ -2017,14 +2017,16 @@ for what counts as a loop.
 
 `GET /api/v1/loops` lists reply loops and cited promises. The optional
 `person_id` filters both collections. The `limit` applies to each collection
-separately (1 to 200, default 50). Set `include_closed=true` to include done,
-snoozed promises.
+separately (1 to 200, default 50). Set `include_closed=true` to include done and
+snoozed promises. Set `commitment_offset` to the returned `commitments_next_offset` to get the next promise page. Keep the same `person_id` and `include_closed` filters.
 
 | Field | Meaning |
 |---|---|
 | `items` | The loops. Each has `kind` (`reply_owed` or `awaiting_reply`), `anchor_message_id` (the message that started the wait), `question_message_ids` (the questions it covers, oldest first), `conversation_id`, `source_id`, `channel` (`email` or `chat`), `counterparty` (`participant_id`, optional `person_id`, `display_name`, `address`), `summary`, `owed_since_at`, and `last_activity_at`. |
 | `commitments` | Cited promises with their `c<ID>`, direction, exact message citation, evidence freshness and owner-visible state. |
 | `commitments_since` | Start of the promise discovery window, when available. |
+| `commitments_until` | End of the promise discovery window when the configured end date has passed. |
+| `commitments_next_offset` | Offset for the next promise page, when more promises remain. |
 | `commitments_complete` | Whether discovery has checked the window, when available. |
 | `truncated` | More eligible entries are available in at least one collection. |
 | `coverage_incomplete` | The request stopped before checking all history, because it read 1,000 new messages or ran out of time. Items come only from conversations checked in full. Call again to continue; saved results carry over. |

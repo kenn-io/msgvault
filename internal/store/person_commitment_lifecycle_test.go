@@ -53,7 +53,7 @@ func TestCommitmentSurvivesDelayedEditProcessing(t *testing.T) {
 	request.Generation.EvidenceStatusChanges = changes
 	_, err = st.ApplyPersonSweepStatusOnly(ctx, peoplesweep.StatusOnlyApplyRequest{AttemptID: request.AttemptID, Lease: request.Lease, Generation: request.Generation, CompletedAt: request.CompletedAt})
 	r.NoError(err)
-	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, false)
+	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
 	r.NoError(err)
 	r.Len(items, 1)
 	a.Equal("I will send the report.", items[0].Quote)
@@ -128,7 +128,7 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 				r.NoError(err)
 				r.Len(evidence, 1)
 				a.False(evidence[0].Supported)
-				loops, err := st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, true)
+				loops, err := st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, true)
 				r.NoError(err)
 				a.Empty(loops)
 				if mutation.reason != personfacts.EvidenceStatusSourceEdited {
@@ -185,7 +185,7 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 				r.NoError(err)
 				r.Len(evidence, 1)
 				a.True(evidence[0].Supported)
-				loops, err = st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, true)
+				loops, err = st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, true)
 				r.NoError(err)
 				a.Len(loops, 1)
 			})

@@ -20,20 +20,22 @@ type Options struct {
 	PersonID int64
 	Limit    int
 
-	IncludeClosed bool
+	IncludeClosed    bool
+	CommitmentOffset int
 }
 
-// Result is the oldest-first slice of open loops. Truncated is set when more
-// than Limit loops are open. SkippedUnparseable counts the stored originals
+// Result lists reply loops and promises. Truncated is set when either
+// collection exceeds Limit. SkippedUnparseable counts the stored originals
 // the list could not read, which may hide a reply that settled a loop.
 // CoverageIncomplete is set when List stopped after MaxListEvidenceComputations
 // uncached messages; the loops come from the conversations read in full.
 type Result struct {
-	Loops              []Loop
-	Commitments        []store.PersonCommitment
-	Truncated          bool
-	SkippedUnparseable int
-	CoverageIncomplete bool
+	Loops                 []Loop
+	Commitments           []store.PersonCommitment
+	CommitmentsNextOffset *int
+	Truncated             bool
+	SkippedUnparseable    int
+	CoverageIncomplete    bool
 }
 
 // MaxListEvidenceComputations bounds uncached message classifications per request.
@@ -73,15 +75,10 @@ type Store interface {
 	MarkLoopDoneContext(ctx context.Context, anchorID int64, questions []store.LoopMessage) (store.LoopDecision, error)
 	SnoozeLoopContext(ctx context.Context, anchorID int64, until time.Time, questions []store.LoopMessage) (store.LoopDecision, error)
 	ClearLoopDecisionContext(ctx context.Context, messageID int64) (bool, error)
-}
-
-// CommitmentReader is the optional cited-promise lane on an archive.
-type CommitmentReader interface {
-	ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int, includeClosed bool) ([]store.PersonCommitment, error)
-}
-
-type CommitmentDecider interface {
+	ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit, offset int, includeClosed bool) ([]store.PersonCommitment, error)
 	DecidePersonCommitmentContext(ctx context.Context, id int64, state string, until *time.Time, now time.Time) (store.PersonCommitment, error)
+	HasActivePersonCommitmentConsent(ctx context.Context, fingerprint string) (bool, error)
+	PersonCommitmentDiscoveryContext(ctx context.Context, personID int64, scopeFingerprint string) (*time.Time, bool, error)
 }
 
 type storeReader struct {
@@ -223,11 +220,11 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 	if len(kept) > opts.Limit {
 		result.Loops, result.Truncated = kept[:opts.Limit], true
 	}
-	if reader, ok := st.(CommitmentReader); ok {
+	{
 		var commitments []store.PersonCommitment
 		err := ctx.Err()
 		if err == nil {
-			commitments, err = reader.ListPersonCommitmentsContext(ctx, opts.PersonID, now, min(opts.Limit, MaxLimit)+1, opts.IncludeClosed)
+			commitments, err = st.ListPersonCommitmentsContext(ctx, opts.PersonID, now, min(opts.Limit, MaxLimit)+1, opts.CommitmentOffset, opts.IncludeClosed)
 		}
 		stopped, err := requestStop(ctx, err)
 		if err != nil {
@@ -236,6 +233,8 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 		result.CoverageIncomplete = result.CoverageIncomplete || stopped
 		if len(commitments) > opts.Limit {
 			commitments = commitments[:opts.Limit]
+			next := opts.CommitmentOffset + opts.Limit
+			result.CommitmentsNextOffset = &next
 			result.Truncated = true
 		}
 		result.Commitments = commitments

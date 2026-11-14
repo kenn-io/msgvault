@@ -7,6 +7,8 @@ import type { LoopItem } from "./loopItem";
 export interface LoopListResponse {
   commitments?: LoopCommitment[];
   commitments_complete?: boolean;
+  /** Offset for the next promise page; keep the same person and include_closed filters */
+  commitments_next_offset?: number;
   commitments_since?: string;
   commitments_until?: string;
   /** True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue */
@@ -14,7 +16,7 @@ export interface LoopListResponse {
   items: LoopItem[];
   /** Stored originals that failed to parse and were passed over; a reply in one may have settled a listed loop */
   skipped_unparseable: number;
-  /** True when more loops are open than limit returned */
+  /** True when more reply loops or promises remain than the limit returned */
   truncated: boolean;
   [key: string]: unknown;
 }

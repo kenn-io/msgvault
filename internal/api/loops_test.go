@@ -507,3 +507,46 @@ func TestLoopBackfillStopsWhenServerShutsDown(t *testing.T) {
 	assert.Equal(second, result.Items[1].AnchorMessageID)
 	assert.Equal(reads+1, st.reads.Load())
 }
+
+type conflictingCommitmentStore struct{ *store.Store }
+
+func (s *conflictingCommitmentStore) DecidePersonCommitmentContext(context.Context, int64, string, *time.Time, time.Time) (store.PersonCommitment, error) {
+	return store.PersonCommitment{}, store.ErrCommitmentChanged
+}
+
+func TestCommitmentDecisionReturnsConflict(t *testing.T) {
+	f := storetest.New(t)
+	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: &conflictingCommitmentStore{f.Store}, Scheduler: newMockScheduler(), Logger: testLogger()})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/loops/commitments/c1/decision", strings.NewReader(`{"state":"done"}`))
+	req.Header.Set("Content-Type", "application/json")
+	server.Router().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Contains(t, w.Body.String(), "commitment_changed")
+}
+
+type pagingCommitmentStore struct {
+	*store.Store
+	offset int
+}
+
+func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, _ int, offset int, _ bool) ([]store.PersonCommitment, error) {
+	s.offset = offset
+	return []store.PersonCommitment{{ID: 201}, {ID: 202}}, nil
+}
+
+func TestListLoopsPagesCommitments(t *testing.T) {
+	f := storetest.New(t)
+	st := &pagingCommitmentStore{Store: f.Store}
+	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+	w := httptest.NewRecorder()
+	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops?limit=1&commitment_offset=200&include_closed=true", nil))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var response LoopListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Len(t, response.Commitments, 1)
+	assert.Equal(t, "c201", response.Commitments[0].ID)
+	assert.Equal(t, 200, st.offset)
+	require.NotNil(t, response.CommitmentsNextOffset)
+	assert.Equal(t, 201, *response.CommitmentsNextOffset)
+}

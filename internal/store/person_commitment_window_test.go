@@ -119,5 +119,7 @@ func TestCommitmentWindowCountsMaskedTextAsEncodedBytes(t *testing.T) {
 	fits, err := peoplesweep.CommitmentInputFits(window)
 	r.NoError(err)
 	a.True(fits)
-	a.Equal(int64(-2), window.BackfillMessageID)
+	var oversized int
+	r.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`), person.ID, large).Scan(&oversized))
+	a.Equal(1, oversized)
 }

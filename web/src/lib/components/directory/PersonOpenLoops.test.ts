@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/svelte";
+import { render, screen } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 import { tick } from "svelte";
 import { createAPIClient } from "../../api/client";
@@ -84,14 +84,12 @@ describe("PersonOpenLoops", () => {
     const cite = await screen.findByRole("link", { name: "I will send the draft." });
     expect(cite.getAttribute("href")).toBe("/messages/52");
     expect(screen.getByRole("heading", { name: "Promises you made" })).toBeDefined();
-    expect(screen.getByRole("heading", { name: "Promises to you" })).toBeDefined();
+    expect(screen.getByRole("heading", { name: "Stale promises to you" })).toBeDefined();
     expect(cite.closest("li")!.textContent).toMatch(/Due Nov 15\s*·\s*\d+[mhd]/);
     const stale = screen.getByRole("link", { name: "I will check the venue." });
-    expect(within(stale.closest("li")!).getByText("Stale evidence")).toBeDefined();
-    expect(stale.closest("li")!.textContent).toMatch(new RegExp(`Stale evidence\\s*·\\s*Due Nov 15, ${year + 1}\\s*·\\s*\\d+[mhd]`));
+    expect(stale.closest("li")!.textContent).toMatch(new RegExp(`Due Nov 15, ${year + 1}\\s*·\\s*\\d+[mhd]`));
     expect(screen.getByText(/discovery since.*incomplete/)).toBeDefined();
-    expect(screen.getByText("max_bytes").tagName).toBe("CODE");
-    expect(screen.getByText("[people.sweep.commitments]").tagName).toBe("CODE");
+    expect(screen.getByText(/Some messages may be too large to check/)).toBeDefined();
     expect(screen.getByText("7+ open")).toBeDefined();
     expect(screen.queryByRole("button", { name: /^(done|snooze)$/i })).toBeNull();
     const request = fetcher.mock.calls[0]?.[0];

@@ -21,12 +21,17 @@ type LoopListOptions struct {
 	PersonID int64
 	Limit    int
 
-	IncludeClosed bool
+	IncludeClosed    bool
+	CommitmentOffset int
 }
 
 // ListLoops returns the open loops, oldest first.
 func (c *Client) ListLoops(ctx context.Context, opts LoopListOptions) (generated.LoopListResponse, error) {
 	query := &generated.ListLoopsQuery{}
+	if opts.CommitmentOffset != 0 {
+		offset := int64(opts.CommitmentOffset)
+		query.CommitmentOffset = &offset
+	}
 	if opts.IncludeClosed {
 		query.IncludeClosed = &opts.IncludeClosed
 	}
