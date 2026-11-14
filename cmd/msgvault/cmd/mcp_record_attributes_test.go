@@ -49,12 +49,24 @@ func attributeOperation(t *testing.T, b *daemonMCPOperations, name string, args 
 func attributeError(t *testing.T, result *mcpserver.OperationResult, code string) {
 	t.Helper()
 	require.True(t, result.IsError)
-	data, err := json.Marshal(result.Output)
-	require.NoError(t, err)
-	var failure mcpOperationFailure
-	require.NoError(t, json.Unmarshal(data, &failure))
+	failure := attributeFailure(t, result.Output)
 	assert.Equal(t, code, failure.Error)
-	assert.False(t, failure.OperationMayHaveCompleted)
+	require.NotNil(t, failure.OperationMayHaveCompleted)
+	assert.False(t, *failure.OperationMayHaveCompleted)
+}
+
+type attributeFailureOutput struct {
+	Error                     string `json:"error"`
+	OperationMayHaveCompleted *bool  `json:"operation_may_have_completed"`
+}
+
+func attributeFailure(t *testing.T, output any) attributeFailureOutput {
+	t.Helper()
+	data, err := json.Marshal(output)
+	require.NoError(t, err)
+	var failure attributeFailureOutput
+	require.NoError(t, json.Unmarshal(data, &failure))
+	return failure
 }
 
 func attributeRefused(t *testing.T, err error, code string) {
@@ -214,6 +226,8 @@ func TestMCPAttributePersonDefinitions(t *testing.T) {
 }
 
 func TestMCPAttributeDefinitionMissingETagAfterWrite(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	fixture := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: st, Logger: slog.New(slog.DiscardHandler)})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -229,22 +243,21 @@ func TestMCPAttributeDefinitionMissingETagAfterWrite(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-	require.NoError(t, err)
+	require.NoError(err)
 	capabilities, err := client.MCPCapabilities(t.Context())
-	require.NoError(t, err)
+	require.NoError(err)
 	b := newDaemonMCPOperations(client, capabilities)
 
 	result := attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "favorite_tea", "label": "Favorite tea", "value_type": "text", "field_type": "text"}})
-	require.True(t, result.IsError)
-	data, err := json.Marshal(result.Output)
-	require.NoError(t, err)
-	var failure mcpOperationFailure
-	require.NoError(t, json.Unmarshal(data, &failure))
-	assert.Equal(t, "operation_receipt_unavailable", failure.Error)
-	assert.True(t, failure.OperationMayHaveCompleted)
+	require.True(result.IsError)
+	failure := attributeFailure(t, result.Output)
+	assert.Equal("operation_receipt_unavailable", failure.Error)
+	require.NotNil(failure.OperationMayHaveCompleted)
+	assert.True(*failure.OperationMayHaveCompleted)
+	assert.Equal("operation_context_unavailable", attributeContextRefusal(result).Code)
 	definition, err := st.GetAttributeDefinitionBySlugContext(t.Context(), store.AttributeObjectPerson, "favorite_tea")
-	require.NoError(t, err)
-	assert.Equal(t, "Favorite tea", definition.Label)
+	require.NoError(err)
+	assert.Equal("Favorite tea", definition.Label)
 }
 
 func TestMCPAttributePreviewCallerGuards(t *testing.T) {

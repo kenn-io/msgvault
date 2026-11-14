@@ -210,23 +210,21 @@ func (b *daemonMCPOperations) executeRecordAttributeOperation(ctx context.Contex
 }
 
 func attributeContextRefusal(result *mcpserver.OperationResult) *mcpserver.OperationRefusalError {
-	if result != nil && result.IsError {
-		var code string
-		switch failure := result.Output.(type) {
-		case mcpOperationFailure:
-			if !failure.OperationMayHaveCompleted {
+	code := "operation_context_unavailable"
+	if result != nil {
+		data, err := json.Marshal(result.Output)
+		if err == nil {
+			var failure struct {
+				Error                     string `json:"error"`
+				OperationMayHaveCompleted *bool  `json:"operation_may_have_completed"`
+			}
+			if json.Unmarshal(data, &failure) == nil && failure.Error != "" &&
+				failure.OperationMayHaveCompleted != nil && !*failure.OperationMayHaveCompleted {
 				code = failure.Error
 			}
-		case attributeConflictOutput:
-			if !failure.OperationMayHaveCompleted {
-				code = failure.Error
-			}
-		}
-		if code != "" {
-			return &mcpserver.OperationRefusalError{Code: code}
 		}
 	}
-	return &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+	return &mcpserver.OperationRefusalError{Code: code}
 }
 
 func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, name string, args map[string]any) (string, bool, error) {
