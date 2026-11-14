@@ -2034,51 +2034,45 @@ func TestRemoveMicrosoftMailTokensKeepsSharedMailbox(t *testing.T) {
 	}
 }
 
-func TestRemoveMicrosoftMailTokensPreservesWhenConfigUnreadable(t *testing.T) {
-	dir := t.TempDir()
-	cfg := lifecycleTestConfig(dir)
-	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
-	src, err := st.GetOrCreateSource(sourceTypeIMAP, "imaps://other@example.com@host.example:993")
-	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, "invalid"))
-	require.NoError(t, os.MkdirAll(cfg.TokensDir(), 0o700))
-	path := microsoft.NewManager("", "", "", cfg.TokensDir(), nil).TokenPath("user@example.com")
-	require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
-	require.Error(t, removeMicrosoftMailTokensIfUnused(st, cfg, "user@example.com", false, testDiscardLogger()))
-	_, err = os.Stat(path)
-	require.NoError(t, err)
-	require.NoError(t, st.Close())
-	require.Error(t, removeMicrosoftMailTokensIfUnused(st, cfg, "user@example.com", false, testDiscardLogger()))
-	_, err = os.Stat(path)
-	require.NoError(t, err)
-}
-
-func TestRemoveMicrosoftMailTokensIgnoresUnrelatedMissingConfig(t *testing.T) {
-	dir := t.TempDir()
-	cfg := lifecycleTestConfig(dir)
-	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
-	_, err := st.GetOrCreateSource(sourceTypeIMAP, "imaps://other@example.com@host.example:993")
-	require.NoError(t, err)
-	require.NoError(t, os.MkdirAll(cfg.TokensDir(), 0o700))
-	path := microsoft.NewManager("", "", "", cfg.TokensDir(), nil).TokenPath("user@example.com")
-	require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
-	require.NoError(t, removeMicrosoftMailTokensIfUnused(st, cfg, "user@example.com", false, testDiscardLogger()))
-	_, err = os.Stat(path)
-	require.True(t, os.IsNotExist(err))
-}
-
-func TestRemoveMicrosoftMailTokensPreservesMatchingMissingConfig(t *testing.T) {
-	dir := t.TempDir()
-	cfg := lifecycleTestConfig(dir)
-	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
-	_, err := st.GetOrCreateSource(sourceTypeIMAP, "imaps://USER@example.com@host.example:993")
-	require.NoError(t, err)
-	require.NoError(t, os.MkdirAll(cfg.TokensDir(), 0o700))
-	path := microsoft.NewManager("", "", "", cfg.TokensDir(), nil).TokenPath("user@example.com")
-	require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
-	require.Error(t, removeMicrosoftMailTokensIfUnused(st, cfg, "user@example.com", false, testDiscardLogger()))
-	_, err = os.Stat(path)
-	require.NoError(t, err)
+func TestRemoveMicrosoftMailTokensWhenConfigUnavailable(t *testing.T) {
+	for _, tc := range []struct {
+		name, identifier, config string
+		closeStore, wantError    bool
+	}{
+		{name: "invalid config", identifier: "imaps://other@example.com@host.example:993", config: "invalid", wantError: true},
+		{name: "closed store", identifier: "imaps://other@example.com@host.example:993", closeStore: true, wantError: true},
+		{name: "unrelated missing config", identifier: "imaps://other@example.com@host.example:993"},
+		{name: "matching missing config", identifier: "imaps://USER@example.com@host.example:993", wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := lifecycleTestConfig(dir)
+			st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
+			src, err := st.GetOrCreateSource(sourceTypeIMAP, tc.identifier)
+			require.NoError(t, err)
+			if tc.config != "" {
+				require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, tc.config))
+			}
+			require.NoError(t, os.MkdirAll(cfg.TokensDir(), 0o700))
+			path := microsoft.NewManager("", "", "", cfg.TokensDir(), nil).TokenPath("user@example.com")
+			require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
+			if tc.closeStore {
+				require.NoError(t, st.Close())
+			}
+			err = removeMicrosoftMailTokensIfUnused(st, cfg, "user@example.com", false, testDiscardLogger())
+			if tc.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			_, err = os.Stat(path)
+			if tc.wantError {
+				require.NoError(t, err)
+			} else {
+				require.True(t, os.IsNotExist(err))
+			}
+		})
+	}
 }
 
 func TestRemoveMicrosoftTokensSeparatesMailProtocols(t *testing.T) {

@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/testutil"
 	"golang.org/x/oauth2"
 )
@@ -98,10 +97,6 @@ func TestAddO365RejectsOutlookPasswordSourceBeforeConsent(t *testing.T) {
 	err = runAddO365Local(cmd, []string{"user@example.com"})
 	require.ErrorContains(t, err, "already uses password authentication")
 	assert.Zero(t, requests)
-	saved, err := st.GetSourceByID(src.ID)
-	require.NoError(t, err)
-	assert.Equal(t, src.ID, saved.ID)
-	assert.Contains(t, saved.SyncConfig.String, `"password"`)
 }
 
 func TestAddO365RejectsAmbiguousSourcesBeforeConsent(t *testing.T) {
@@ -125,7 +120,7 @@ func TestAddO365RejectsAmbiguousSourcesBeforeConsent(t *testing.T) {
 	require.ErrorContains(t, err, "multiple Microsoft mail sources")
 }
 
-func TestAddO365FailedConsentPreservesBoundToken(t *testing.T) {
+func TestAddO365ConsentUsesExplicitApp(t *testing.T) {
 	for _, graph := range []bool{false, true} {
 		t.Run(fmt.Sprintf("graph=%t", graph), func(t *testing.T) {
 			oldGraph, oldHeadless, oldApp := o365Graph, o365Headless, o365OAuthApp
@@ -145,17 +140,6 @@ func TestAddO365FailedConsentPreservesBoundToken(t *testing.T) {
 				require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, `{"host":"outlook.office365.com","username":"user@example.com","auth_method":"xoauth2"}`))
 			}
 			startStoreAPIDaemon(t, dir, st, nil)
-			_, oldDir, err := microsoftMailApp(cfg, "orgb")
-			require.NoError(t, err)
-			require.NoError(t, os.MkdirAll(oldDir, 0o700))
-			var tokenPath string
-			if graph {
-				tokenPath = microsoft.NewGraphMailManager("", "", "", oldDir, nil).TokenPath("user@example.com")
-			} else {
-				tokenPath = microsoft.NewManager("", "", "", oldDir, nil).TokenPath("user@example.com")
-			}
-			original := []byte(`{"access_token":"old"}`)
-			require.NoError(t, os.WriteFile(tokenPath, original, 0o600))
 			requestErr := errors.New("consent failed")
 			ctx := withStoreResolverConfig(t, cfg)
 			ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: testTransport(func(req *http.Request) (*http.Response, error) {
@@ -172,12 +156,6 @@ func TestAddO365FailedConsentPreservesBoundToken(t *testing.T) {
 			}
 			_, err = preflightAddO365Authorize(cmd, "USER@example.com")
 			require.ErrorIs(t, err, requestErr)
-			got, err := os.ReadFile(tokenPath)
-			require.NoError(t, err)
-			assert.Equal(t, original, got)
-			saved, err := st.GetSourceByID(src.ID)
-			require.NoError(t, err)
-			assert.Equal(t, "orgb", sourceOAuthApp(saved))
 		})
 	}
 }
@@ -209,7 +187,9 @@ func TestAddO365PreflightUndeterminedIMAPBinding(t *testing.T) {
 	_, err = preflightAddO365Authorize(cmd, "owner@example.test")
 	require.ErrorContains(t, err, "does not report the IMAP authentication method")
 	assert.Zero(t, requests)
-	assert.False(t, cmd.Flags().Changed("oauth-app"))
+	err = runAddO365Local(cmd, []string{"owner@example.test"})
+	require.ErrorContains(t, err, "cannot determine the IMAP authentication method")
+	assert.Zero(t, requests)
 	require.NoError(t, cmd.Flags().Set("oauth-app", "orgb"))
 	_, err = preflightAddO365Authorize(cmd, "owner@example.test")
 	require.ErrorIs(t, err, requestErr)

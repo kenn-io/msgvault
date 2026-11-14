@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -128,7 +127,6 @@ func selectO365Account(accounts []daemonclient.CLIAccount, email string, graph b
 		for _, match := range matches {
 			ids = append(ids, match.Identifier)
 		}
-		sort.Strings(ids)
 		return nil, false, fmt.Errorf("multiple Microsoft mail sources match %s: %s", email, strings.Join(ids, ", "))
 	}
 	if len(matches) == 1 {
@@ -460,7 +458,7 @@ func runAddO365GraphLocal(cmd *cobra.Command, email string, mailWrite bool, s *s
 }
 
 func storeO365Binding(ctx context.Context, s *store.Store, source *store.Source, binding addAccountBinding) error {
-	return s.UpdateSourceO365Registration(ctx, source.ID, "", sql.NullString{String: binding.resolvedApp, Valid: binding.resolvedApp != ""}, "")
+	return s.UpdateSourceOAuthApp(ctx, source.ID, sql.NullString{String: binding.resolvedApp, Valid: binding.resolvedApp != ""})
 }
 
 func init() {

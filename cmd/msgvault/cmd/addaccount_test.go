@@ -64,7 +64,7 @@ func TestAddAccountPreflightMatchesGmailSourceCase(t *testing.T) {
 	_, err = preflightAddAccountAuthorize(cmd, "user@example.com")
 	require.NoError(t, err)
 	_, err = preflightAddAccountAuthorize(cmd, "USER@example.com")
-	require.Error(t, err)
+	require.ErrorContains(t, err, "missing.json")
 }
 
 // TestAddAccount_InheritedBindingValidatesToken verifies that re-running
