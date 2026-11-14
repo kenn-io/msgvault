@@ -155,8 +155,7 @@ Enable `[people.sweep.commitments]` in [configuration](../configuration.md#commi
 Use `msgvault person provider consent --commitments` to see the provider,
 source dates, and what the request discloses. Repeat with `--yes` to consent
 to sending conversation text from both sides of verified direct chats and
-email. Each message contributes its first 2,000 runes after leading quoted
-history and whitespace, with embedded quoted history masked.
+email. The request includes the full eligible message text within the configured byte limit, after leading quoted history and whitespace are removed and embedded quoted history is masked. Messages that exceed the byte limit are skipped until the limit is raised. Each cited quote is limited to 2,000 runes.
 Changing provider source dates, the commitment window, or message and byte limits restarts recent discovery while keeping saved decisions.
 The profile must allow sensitive `conversation_text` sources. Check the grant
 with `msgvault person provider status`. Use `msgvault person provider revoke`

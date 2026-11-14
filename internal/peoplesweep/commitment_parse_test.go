@@ -2,7 +2,6 @@ package peoplesweep
 
 import (
 	"encoding/json/jsontext"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -28,14 +27,6 @@ func TestParseCommitmentsBindsEachPromiseToItsExactLocator(t *testing.T) {
 	parsed, err = ParseCommitments(output, window)
 	r.NoError(err)
 	a.Equal(first, parsed.Promises[0].TargetKey)
-	window.Sources[0].Text = strings.Repeat("Promise. ", 33)
-	var promises []string
-	for i := range 33 {
-		promises = append(promises, fmt.Sprintf(`{"source_id":"m1","direction":"owed_by","quote":"Promise.","start":%d,"end":%d,"summary":"Promise","due_on":null}`, i*9, i*9+8))
-	}
-	parsed, err = ParseCommitments(jsontext.Value(`{"promises":[`+strings.Join(promises, ",")+`]}`), window)
-	r.NoError(err)
-	a.Len(parsed.Promises, 33)
 }
 
 func TestParseCommitmentsRejectsWholeUnsupportedOutput(t *testing.T) {
@@ -82,4 +73,8 @@ func TestCommitmentRequestSendsOnlyPromptFields(t *testing.T) {
 		"now": "2026-10-19T12:00:00Z",
 		"timezone": "UTC"
 	}`, packet)
+	window.Sources[0].Text = strings.Repeat("x", 2001) + "PRIVATE TAIL"
+	request, err = commitmentRequest(window, 1024)
+	r.NoError(err)
+	a.Contains(request.InputText, strings.Repeat("x", 2001)+"PRIVATE TAIL")
 }

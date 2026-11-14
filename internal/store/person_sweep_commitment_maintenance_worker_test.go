@@ -26,71 +26,74 @@ func (r consentAwareSweepRunner) OrdinaryInferenceAllowed(ctx context.Context) (
 	return r.store.HasActivePersonInferenceConsent(ctx, r.fingerprint)
 }
 
-func TestPersonSweepDeletionOnlyMaintenanceProgressWithCommitmentLaneNotDue(t *testing.T) {
-	r, a, ctx := require.New(t), assert.New(t), t.Context()
-	f := newBriefWorkerEndToEndFixture(t, "deletion-only-maintenance")
-	st, personID := f.journal.store, f.journal.alicePersonID
-	var messages []int64
-	for i := range 3 {
-		messages = append(messages, f.journal.insertMessage(t, fmt.Sprintf("delete-%d", i), "chat", f.journal.aliceID, f.now.Add(-time.Hour)))
+func TestPersonSweepCommitmentMaintenance(t *testing.T) {
+	setup := func(t *testing.T, st *store.Store, personID int64, profile peoplesweep.ProviderProfile, cfg *peoplesweep.Config, now time.Time, sequence int64) {
+		t.Helper()
+		_, err := st.RevokePersonInferenceConsent(t.Context(), profile.Fingerprint, "test-owner")
+		require.NoError(t, err)
+		_, _, err = st.GrantPersonCommitmentConsent(t.Context(), profile.Fingerprint, "test-owner")
+		require.NoError(t, err)
+		cfg.Commitments.Enabled = true
+		cfg.ChangeBatchSize, cfg.WorkBatchSize = 1, 1
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO person_commitment_frontiers
+			(person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint) VALUES (?, ?, ?, -1, ?)`),
+			personID, sequence, now, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
+		require.NoError(t, err)
 	}
-	profile, err := f.config.Profile()
-	r.NoError(err)
-	sweepCursorsToHighWater(t, st, personID, profile, f.now)
-	_, err = st.RevokePersonInferenceConsent(ctx, profile.Fingerprint, "test-owner")
-	r.NoError(err)
-	_, _, err = st.GrantPersonCommitmentConsent(ctx, profile.Fingerprint, "test-owner")
-	r.NoError(err)
-	f.config.Commitments.Enabled = true
-	f.config.ChangeBatchSize, f.config.WorkBatchSize = 1, 1
-	_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO person_commitment_frontiers
-				(person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint)
-				VALUES (?, ?, ?, -1, ?)`), personID, latestPersonSweepSequence(t, st), f.now,
-		peoplesweep.CommitmentScopeFingerprint(profile, f.config.Commitments))
-	r.NoError(err)
-	for _, id := range messages {
-		_, err = st.DB().ExecContext(ctx, st.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), id)
+	t.Run("deletion paging", func(t *testing.T) {
+		r, a, ctx := require.New(t), assert.New(t), t.Context()
+		f := newBriefWorkerEndToEndFixture(t, "deletion-only-maintenance")
+		st, personID := f.journal.store, f.journal.alicePersonID
+		var messages []int64
+		for i := range 3 {
+			messages = append(messages, f.journal.insertMessage(t, fmt.Sprintf("delete-%d", i), "chat", f.journal.aliceID, f.now.Add(-time.Hour)))
+		}
+		profile, err := f.config.Profile()
 		r.NoError(err)
-	}
-	highwater := latestPersonSweepSequence(t, st)
-	due, err := st.PersonCommitmentsDue(ctx, personID, f.now, f.config.Commitments.MinInterval,
-		f.config.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, f.config.Commitments))
-	r.NoError(err)
-	r.False(due)
-	calls := 0
-	f.runner.respond = func(peoplesweep.StructuredRequest) json.RawMessage {
-		calls++
-		return json.RawMessage(`{"claims":[]}`)
-	}
-	f.worker.Config = f.config
-	f.worker.Runner = consentAwareSweepRunner{f.runner, st, profile.Fingerprint}
-	ids := 0
-	f.worker.NewID = func() string { ids++; return fmt.Sprintf("deletion-maintenance-%d", ids) }
-	for range 3 {
-		_, err = f.worker.Run(ctx, peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
+		sweepCursorsToHighWater(t, st, personID, profile, f.now)
+		setup(t, st, personID, profile, &f.config, f.now, latestPersonSweepSequence(t, st))
+		for _, id := range messages {
+			_, err = st.DB().ExecContext(ctx, st.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), id)
+			r.NoError(err)
+		}
+		highwater := latestPersonSweepSequence(t, st)
+		due, err := st.PersonCommitmentsDue(ctx, personID, f.now, f.config.Commitments.MinInterval,
+			f.config.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, f.config.Commitments))
+		r.NoError(err)
+		r.False(due)
+		calls := 0
+		f.runner.respond = func(peoplesweep.StructuredRequest) json.RawMessage {
+			calls++
+			return json.RawMessage(`{"claims":[]}`)
+		}
+		f.worker.Config = f.config
+		f.worker.Runner = consentAwareSweepRunner{f.runner, st, profile.Fingerprint}
+		ids := 0
+		f.worker.NewID = func() string { ids++; return fmt.Sprintf("deletion-maintenance-%d", ids) }
+		for range 3 {
+			_, err = f.worker.Run(ctx, peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
+				PersonID: personID, Limit: 1, Brief: peoplesweep.BriefModeSkip})
+			r.NoError(err)
+		}
+		var through int64
+		r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT optimistic_sequence FROM person_sweep_cursors
+				WHERE person_id = ? AND source_lane = ?`), personID, peoplesweep.SourceConversationText).Scan(&through))
+		a.Equal(highwater, through, "provider-free deletion progress must reach later journal pages")
+		a.Zero(calls, "neither revoked ordinary inference nor a not-due commitment lane needs a provider call")
+		message := f.journal.insertMessage(t, "pending", "chat", f.journal.aliceID, f.now)
+		addSweepBody(t, f.journal, message, "A new fact needs extraction.")
+		result, err := f.worker.Run(ctx, peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
 			PersonID: personID, Limit: 1, Brief: peoplesweep.BriefModeSkip})
 		r.NoError(err)
-	}
-	var through int64
-	r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT optimistic_sequence FROM person_sweep_cursors
-				WHERE person_id = ? AND source_lane = ?`), personID, peoplesweep.SourceConversationText).Scan(&through))
-	a.Equal(highwater, through, "provider-free deletion progress must reach later journal pages")
-	a.Zero(calls, "neither revoked ordinary inference nor a not-due commitment lane needs a provider call")
-	message := f.journal.insertMessage(t, "pending", "chat", f.journal.aliceID, f.now)
-	addSweepBody(t, f.journal, message, "A new fact needs extraction.")
-	result, err := f.worker.Run(ctx, peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
-		PersonID: personID, Limit: 1, Brief: peoplesweep.BriefModeSkip})
-	r.NoError(err)
-	a.Zero(result.PeopleSucceeded)
-	var deferred, failed int
-	r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM person_sweep_attempts WHERE person_id = ? AND status = 'cancelled'`), personID).Scan(&deferred))
-	r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM person_sweep_attempts WHERE person_id = ? AND status = 'failed'`), personID).Scan(&failed))
-	a.Equal(1, deferred)
-	a.Zero(failed)
-	a.Zero(calls)
-}
+		a.Zero(result.PeopleSucceeded)
+		var deferred, failed int
+		r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM person_sweep_attempts WHERE person_id = ? AND status = 'cancelled'`), personID).Scan(&deferred))
+		r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM person_sweep_attempts WHERE person_id = ? AND status = 'failed'`), personID).Scan(&failed))
+		a.Equal(1, deferred)
+		a.Zero(failed)
+		a.Zero(calls)
+	})
 
-func TestPersonSweepCommitmentMaintenanceReachesOrdinaryEvidenceBehindLiveSeed(t *testing.T) {
 	for _, deleted := range []bool{false, true} {
 		t.Run(fmt.Sprintf("deleted=%t", deleted), func(t *testing.T) {
 			r, a, ctx := require.New(t), assert.New(t), t.Context()
@@ -115,16 +118,7 @@ func TestPersonSweepCommitmentMaintenanceReachesOrdinaryEvidenceBehindLiveSeed(t
 			}
 			sweepCursorsToHighWater(t, st, personID, profile, now)
 			baseline := latestPersonSweepSequence(t, st)
-			_, err = st.RevokePersonInferenceConsent(ctx, profile.Fingerprint, "test-owner")
-			r.NoError(err)
-			_, _, err = st.GrantPersonCommitmentConsent(ctx, profile.Fingerprint, "test-owner")
-			r.NoError(err)
-			worker.Config.Commitments.Enabled = true
-			worker.Config.ChangeBatchSize, worker.Config.WorkBatchSize = 1, 1
-			_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO person_commitment_frontiers
-				(person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint) VALUES (?, 0, ?, -1, ?)`),
-				personID, now, peoplesweep.CommitmentScopeFingerprint(profile, worker.Config.Commitments))
-			r.NoError(err)
+			setup(t, st, personID, profile, &worker.Config, now, 0)
 			blocker := f.insertMessage(t, "pending-provider-seed", "chat", f.aliceID, now.Add(-30*time.Minute))
 			addSweepBody(t, f, blocker, "A new ordinary fact needs extraction.")
 			if deleted {

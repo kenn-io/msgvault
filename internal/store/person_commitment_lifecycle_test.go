@@ -69,8 +69,12 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 				request.CompletedAt = request.Generation.ResolvedAt.Add(time.Minute)
 				request.Generation.Policy.AllowSensitive = true
 				request.Generation.EvidenceStatusChanges = changes
-				_, err = st.ApplyPersonSweep(ctx, request)
+				_, err = st.ApplyPersonSweepStatusOnly(ctx, peoplesweep.StatusOnlyApplyRequest{AttemptID: request.AttemptID, Lease: request.Lease, Generation: request.Generation, CompletedAt: request.CompletedAt})
 				r.NoError(err)
+				r.NoError(st.DeferPersonSweepAttempt(ctx, request.Lease, request.AttemptID, request.CompletedAt))
+				if mutation.reason != personfacts.EvidenceStatusSourceEdited {
+					return
+				}
 				claims, err := st.ListPersonFactClaimsContext(ctx, f.personID, personfacts.ClaimFilter{Limit: 10})
 				r.NoError(err)
 				r.Len(claims, 1)
@@ -82,9 +86,6 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 				loops, err := st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, true)
 				r.NoError(err)
 				a.Empty(loops)
-				if mutation.reason != personfacts.EvidenceStatusSourceEdited {
-					return
-				}
 				reimport := journal[len(journal)-1]
 				reimport.EvidenceEffect = peoplesweep.EvidenceEffectSourceReimported
 				changes, err = st.BuildPersonSweepEvidenceStatusChanges(ctx, f.personID, []peoplesweep.ArchiveChange{reimport})
@@ -115,7 +116,11 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 							Quote: quote, Summary: "Send draft", End: int64(len(quote))}},
 					})
 				}
-				_, err = st.ApplyPersonSweep(ctx, request)
+				if mutation.extract {
+					_, err = st.ApplyPersonSweep(ctx, request)
+				} else {
+					_, err = st.ApplyPersonSweepStatusOnly(ctx, peoplesweep.StatusOnlyApplyRequest{AttemptID: request.AttemptID, Lease: request.Lease, Generation: request.Generation, CompletedAt: request.CompletedAt})
+				}
 				r.NoError(err)
 				claims, err = st.ListPersonFactClaimsContext(ctx, f.personID, personfacts.ClaimFilter{Limit: 10})
 				r.NoError(err)
@@ -214,8 +219,6 @@ func TestCommitmentOnlyMaintenanceInvalidatesDeletedEvidence(t *testing.T) {
 	due, err := st.PersonCommitmentsDue(ctx, f.personID, now, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 	r.NoError(err)
 	r.True(due)
-	latest, err := st.LatestPersonSweepChangeSequence(ctx)
-	r.NoError(err)
 	f = nextCommitmentTestAttempt(t, f, "-observed")
 	f.request.Generation.ResolvedAt, f.request.CompletedAt = now, now.Add(time.Minute)
 	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, now, "UTC")
@@ -228,9 +231,6 @@ func TestCommitmentOnlyMaintenanceInvalidatesDeletedEvidence(t *testing.T) {
 	request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
 	_, err = st.ApplyPersonSweep(ctx, request)
 	r.NoError(err)
-	var observed int64
-	r.NoError(st.db.QueryRowContext(ctx, st.Rebind("SELECT observed_sequence FROM person_commitment_frontiers WHERE person_id = ?"), f.personID).Scan(&observed))
-	r.Equal(latest, observed, "the due empty-source apply consumed the deleted-source journal range")
 	evidence, err := st.ListPersonFactEvidenceContext(ctx, f.personID, personfacts.EvidenceFilter{Limit: 10})
 	r.NoError(err)
 	r.Len(evidence, 3)

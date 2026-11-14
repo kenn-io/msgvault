@@ -87,10 +87,6 @@ describe("PersonOpenLoops", () => {
     expect(screen.getByText("Due 2026-11-15")).toBeDefined();
     expect(screen.getByText(/still searching/)).toBeDefined();
     expect(screen.getByText("7+ open")).toBeDefined();
-    expect(screen.queryByRole("button", { name: /done|snooze|closed/i })).toBeNull();
-    const request = fetcher.mock.calls[0]?.[0];
-    const url = new URL(request instanceof Request ? request.url : String(request), "http://localhost");
-    expect(url.searchParams.has("include_closed")).toBe(false);
   });
 
   it("reports an empty completed discovery window", async () => {

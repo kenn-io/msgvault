@@ -336,23 +336,12 @@ func validatePersonSweepApplyCommitment(request peoplesweep.ApplyRequest) error 
 	if window.SelectionAt.IsZero() || window.SelectionAt.After(window.Now) || len(window.ScopeFingerprint) != 64 {
 		return errors.New("invalid commitment selection bounds")
 	}
-	fits, err := peoplesweep.CommitmentInputFits(window)
-	if err != nil || !fits {
-		return errors.Join(errors.New("commitment input exceeds wire limit"), err)
-	}
 	if hasCall == (len(window.Sources) == 0) ||
 		(!hasCall && (len(result.Output.Promises) != 0)) {
 		return errors.New("commitment result does not match its provider call")
 	}
 	if err := result.Config.Validate(request.Budget); err != nil {
 		return err
-	}
-	size := 0
-	for _, source := range window.Sources {
-		size += len(source.Text)
-		if size > result.Config.MaxBytes {
-			return errors.New("commitment window exceeds its byte limit")
-		}
 	}
 	return nil
 }

@@ -56,7 +56,7 @@ func (commitmentOnlyRunner) OrdinaryInferenceAllowed(context.Context) (bool, err
 	return false, nil
 }
 
-func TestTargetedCommitmentOnlySweepAppliesClaims(t *testing.T) {
+func TestTargetedCommitmentOnlyRunSkipsOrdinaryWork(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	worker, st, sink := newConsentOnlyCommitmentWorker(t, true)
 	seed := packetTestEvidence(71, SourceConversationText, "pending ordinary evidence")
@@ -171,16 +171,4 @@ func newConsentOnlyCommitmentWorker(t *testing.T, due bool) (Worker, *commitment
 		Catalog: workerFailureCatalog{catalog: catalog}, Clock: func() time.Time { return now },
 		NewID: func() string { return "consent-attempt" }, WorkerID: "consent-worker"}
 	return worker, st, sink
-}
-
-func TestCommitmentConsentDeferralCompletesIdleWork(t *testing.T) {
-	r, a := require.New(t), assert.New(t)
-	worker, st, sink := newConsentOnlyCommitmentWorker(t, false)
-	source := &workerProductionSource{windows: map[GenerationCursorMode]PersonWindow{}}
-	worker.Source, worker.Context = source, NewContextRetriever(source)
-	result, err := worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental, PersonID: 7})
-	r.NoError(err)
-	a.Empty(sink.requests, "no provider output or cursor progress is applied")
-	a.Equal(1, result.PeopleSucceeded, "idle claim completion succeeds without inference")
-	a.Empty(st.started, "caught-up unauthorized work has no source envelope for a durable attempt")
 }

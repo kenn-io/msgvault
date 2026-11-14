@@ -79,24 +79,6 @@ func TestApplyCommitmentOnlySweepWritesClaimsAndDecisions(t *testing.T) {
 	a.Equal(decisionID, repeated[0].ID)
 	a.Equal(LoopStateDone, repeated[0].State)
 	a.Equal(personfacts.StatusStale, repeated[1].Freshness)
-	since, complete, err := st.PersonCommitmentDiscoveryContext(ctx, f.personID)
-	r.NoError(err)
-	r.NotNil(since)
-	a.Equal(window.SelectionAt.Add(-cfg.Commitments.Window), *since)
-	a.True(complete)
-	persist("pending-one", "I will reply.", 0)
-	persist("pending-two", "I will write.", 0)
-	f = nextCommitmentTestAttempt(t, f, "-journal-page")
-	window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{
-		AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
-	}, cfg.Commitments, personFactLedgerNow, "UTC")
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{}}))
-	r.NoError(err)
-	_, complete, err = st.PersonCommitmentDiscoveryContext(ctx, f.personID)
-	r.NoError(err)
-	a.False(complete)
 }
 
 func TestCommitmentListPrioritizesFreshBeforeLimit(t *testing.T) {
@@ -112,7 +94,7 @@ func TestCommitmentListPrioritizesFreshBeforeLimit(t *testing.T) {
 	for i, message := range []struct {
 		quote string
 		age   time.Duration
-	}{{"I will send the draft.", -time.Hour}, {"I will send the report.", -100 * 24 * time.Hour}} {
+	}{{"I will send the draft.", -time.Hour}, {"I will send the report.", -100 * 24 * time.Hour}, {"I will call.", 48 * time.Hour}} {
 		id := persist(fmt.Sprintf("promise-%d", i), message.quote, message.age)
 		if i > 0 {
 			f = nextCommitmentTestAttempt(t, f, "-older")
@@ -129,6 +111,17 @@ func TestCommitmentListPrioritizesFreshBeforeLimit(t *testing.T) {
 	r.NoError(err)
 	r.Len(items, 1)
 	r.Equal("I will send the draft.", items[0].Quote)
+	items, err = st.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 5, false)
+	r.NoError(err)
+	r.Len(items, 3)
+	var future *PersonCommitment
+	for i := range items {
+		if items[i].Quote == "I will call." {
+			future = &items[i]
+		}
+	}
+	r.NotNil(future)
+	r.Equal(personfacts.StatusStale, future.Freshness)
 }
 
 func newCommitmentTestConversation(t *testing.T, f personSweepApplyFixture) (int64, func(string, string, time.Duration) int64) {
@@ -311,31 +304,22 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 			r.NotNil(since)
 			a.Equal(laterNow.Add(-cfg.Commitments.Window), *since)
 			a.True(complete)
+			for i := range 11 {
+				persist(fmt.Sprintf("pending-%d", i), "I will reply.", 0)
+			}
+			f = nextCommitmentTestAttempt(t, f, "-journal-page")
+			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, laterNow, "UTC")
+			r.NoError(err)
+			r.Len(window.Sources, 10)
+			request = commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{}})
+			request.Generation.ResolvedAt = laterNow
+			_, err = f.store.ApplyPersonSweep(ctx, request)
+			r.NoError(err)
+			_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID)
+			r.NoError(err)
+			a.False(complete)
 		})
 	}
-}
-
-func TestCommitmentFutureEvidenceMatchesFactHistory(t *testing.T) {
-	r, ctx := require.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "future-promise", false)
-	_, persist := newCommitmentTestConversation(t, f)
-	const quote = "I will call."
-	persist("future", quote, 48*time.Hour)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
-	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
-	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":"I will call.","start":0,"end":12,"summary":"Call","due_on":null}]}`, window.Sources[0].ID)), window)
-	r.NoError(err)
-	_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, parsed))
-	r.NoError(err)
-	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 5, false)
-	r.NoError(err)
-	r.Len(items, 1)
-	r.Equal(personfacts.StatusStale, items[0].Freshness)
 }
 
 func TestEmptyCommitmentScanKeepsProviderFrontierAndWaitsForNewWork(t *testing.T) {
