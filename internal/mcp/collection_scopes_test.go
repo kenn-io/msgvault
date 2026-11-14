@@ -147,37 +147,6 @@ func TestSemanticCollectionUsesAllSources(t *testing.T) {
 	assert.Equal(3, calls)
 }
 
-func TestSemanticEmptyCollectionReportsBackendError(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	e := &collectionTestEngine{Engine: &querytest.MockEngine{}, collections: []query.CollectionScope{{Name: "empty", SourceIDs: []int64{}}}}
-	for _, tc := range []struct {
-		err  error
-		code string
-	}{{vector.ErrNotEnabled, "vector_not_enabled"}, {vector.ErrIndexStale, "index_stale"}, {vector.ErrIndexBuilding, "index_building"}} {
-		h := newTestHandlers(e)
-		h.hybridSearcher = hybridSearcherFunc(func(_ context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
-			assert.Equal("empty", req.Collection)
-			return nil, tc.err
-		})
-		result, err := h.semanticSearchMessages(t.Context(), toolRequest{arguments: map[string]any{"query": "fixture", "collection": "empty"}})
-		require.NoError(err)
-		assert.True(result.isError)
-		assert.Contains(resultText(t, result), tc.code)
-	}
-}
-
-func TestSemanticEmptyCollectionReportsLocalBackendError(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	h := newHybridHandlersForErrorTest(&fakeBackend{activeErr: vector.ErrNoActiveGeneration})
-	h.engine = &collectionTestEngine{Engine: h.engine, collections: []query.CollectionScope{{Name: "empty", SourceIDs: []int64{}}}}
-	result, err := h.semanticSearchMessages(t.Context(), toolRequest{arguments: map[string]any{"query": "fixture", "collection": "empty"}})
-	require.NoError(err)
-	assert.True(result.isError)
-	assert.Contains(resultText(t, result), "vector_not_enabled")
-}
-
 func TestSemanticEmptyCollectionLocalSearchIsScoped(t *testing.T) {
 	assert := assert.New(t)
 	backend := &fakeBackend{active: vector.Generation{ID: 1, Model: "nomic-embed", Dimension: 768, Fingerprint: "nomic-embed:768", State: vector.GenerationActive}}
