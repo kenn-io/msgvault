@@ -5,7 +5,9 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/url"
+	"slices"
 
+	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -22,7 +24,8 @@ func personFactMCPCapabilities(has mcpRouteCheck) []string {
 		{"set_person_tracking", "setPersonTracking", "PUT", "/api/v1/people/{id}/tracking", nil},
 	} {
 		if has(r.id, r.method, r.path, r.query...) &&
-			(r.name != "list_person_fact_claims" || (has("listPersonFactEvidence", "GET", "/api/v1/people/{id}/fact-evidence", "target", "limit", "offset") &&
+			(r.name != "list_person_fact_claims" || (has("listPersonFactTargets", "GET", "/api/v1/person-fact-targets") &&
+				has("listPersonFactEvidence", "GET", "/api/v1/people/{id}/fact-evidence", "target", "limit", "offset") &&
 				has("listPersonFactDecisions", "GET", "/api/v1/people/{id}/fact-decisions", "target", "limit", "offset"))) {
 			names = append(names, r.name)
 		}
@@ -66,29 +69,8 @@ func (b *daemonMCPOperations) executePersonFactOperation(ctx context.Context, na
 	}
 	switch name {
 	case "list_person_fact_claims":
-		r, e := readMCPOperationJSONWithClassifier[generated.PersonFactClaimsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-claims", &generated.ListPersonFactClaimsRequestOptions{PathParams: &generated.ListPersonFactClaimsPath{ID: a.PersonID}, Query: &generated.ListPersonFactClaimsQuery{Target: a.Target, Limit: a.Limit, Offset: a.Offset}}, factClassify, http.StatusOK)
-		if e != nil || r.IsError {
-			return r, true, e
-		}
-		claims, _ := r.Output.(generated.PersonFactClaimsResponse)
-		out := mcpserver.PersonFactClaimsOutput{Claims: claims.Claims}
-		if a.IncludeEvidence {
-			r, e = readMCPOperationJSONWithClassifier[generated.PersonFactEvidenceResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-evidence", &generated.ListPersonFactEvidenceRequestOptions{PathParams: &generated.ListPersonFactEvidencePath{ID: a.PersonID}, Query: &generated.ListPersonFactEvidenceQuery{Target: a.Target, Limit: a.Limit, Offset: a.Offset}}, factClassify, http.StatusOK)
-			if e != nil || r.IsError {
-				return r, true, e
-			}
-			page, _ := r.Output.(generated.PersonFactEvidenceResponse)
-			out.Evidence = page.Evidence
-		}
-		if a.IncludeDecisions {
-			r, e = readMCPOperationJSONWithClassifier[generated.PersonFactDecisionsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-decisions", &generated.ListPersonFactDecisionsRequestOptions{PathParams: &generated.ListPersonFactDecisionsPath{ID: a.PersonID}, Query: &generated.ListPersonFactDecisionsQuery{Target: a.Target, Limit: a.Limit, Offset: a.Offset}}, factClassify, http.StatusOK)
-			if e != nil || r.IsError {
-				return r, true, e
-			}
-			page, _ := r.Output.(generated.PersonFactDecisionsResponse)
-			out.Decisions = page.Decisions
-		}
-		return &mcpserver.OperationResult{Output: out}, true, nil
+		r, e := b.listPersonFactClaims(ctx, a)
+		return r, true, e
 	case "list_person_fact_pins":
 		r, e := readMCPOperationJSONWithClassifier[generated.PersonFactPinsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-pins", &generated.ListPersonFactPinsRequestOptions{PathParams: &generated.ListPersonFactPinsPath{ID: a.PersonID}}, factClassify, http.StatusOK)
 		return r, true, e
@@ -101,6 +83,114 @@ func (b *daemonMCPOperations) executePersonFactOperation(ctx context.Context, na
 	}
 	return nil, false, nil
 }
+
+const (
+	personFactScanPageSize = 50
+	personFactScanMaxPages = 100
+)
+
+// scanPersonFactRows reads every row of one list in fixed pages so rows can be
+// filtered before the caller's limit and offset apply. It fails closed when the
+// list exceeds the scan cap instead of returning unfiltered or partial data.
+func scanPersonFactRows[R, T any](ctx context.Context, b *daemonMCPOperations, rows func(R) []T, options func(limit, offset *int64) runtime.RequestOptions, path string) ([]T, *mcpserver.OperationResult, error) {
+	var all []T
+	limit := int64(personFactScanPageSize)
+	for page := range personFactScanMaxPages {
+		offset := int64(page) * personFactScanPageSize
+		r, e := readMCPOperationJSONWithClassifier[R](ctx, b.client, http.MethodGet, path, options(&limit, &offset), factClassify, http.StatusOK)
+		if e != nil || r.IsError {
+			return nil, r, e
+		}
+		output, _ := r.Output.(R)
+		got := rows(output)
+		all = append(all, got...)
+		if len(got) < personFactScanPageSize {
+			return all, nil, nil
+		}
+	}
+	return nil, operationFailure("person_fact_scan_limit", false), nil
+}
+
+func personFactPage[T any](rows []T, limit, offset *int64) []T {
+	from, count := int64(0), int64(personFactScanPageSize)
+	if offset != nil {
+		from = *offset
+	}
+	if limit != nil {
+		count = *limit
+	}
+	if from >= int64(len(rows)) {
+		return []T{}
+	}
+	return rows[from:min(from+count, int64(len(rows)))]
+}
+
+// listPersonFactClaims omits every row tied to a sensitive, retired, or unknown
+// target. Evidence has no target and decisions reference claims by key, so both
+// are filtered through an index of all of the person's claims.
+func (b *daemonMCPOperations) listPersonFactClaims(ctx context.Context, a factArgs) (*mcpserver.OperationResult, error) {
+	r, e := readMCPOperationJSONWithClassifier[generated.Catalog](ctx, b.client, http.MethodGet, "/api/v1/person-fact-targets", &generated.ListPersonFactTargetsRequestOptions{}, factClassify, http.StatusOK)
+	if e != nil || r.IsError {
+		return r, e
+	}
+	catalog, _ := r.Output.(generated.Catalog)
+	visible := map[[2]string]bool{}
+	for _, target := range catalog.Targets {
+		visible[[2]string{target.Kind, target.Key}] = true
+	}
+	claimRows := func(r generated.PersonFactClaimsResponse) []generated.PersonFactClaim { return r.Claims }
+	claimOptions := func(target *string) func(limit, offset *int64) runtime.RequestOptions {
+		return func(limit, offset *int64) runtime.RequestOptions {
+			return &generated.ListPersonFactClaimsRequestOptions{PathParams: &generated.ListPersonFactClaimsPath{ID: a.PersonID}, Query: &generated.ListPersonFactClaimsQuery{Target: target, Limit: limit, Offset: offset}}
+		}
+	}
+	const claimsPath = "/api/v1/people/{id}/fact-claims"
+	all, failed, e := scanPersonFactRows(ctx, b, claimRows, claimOptions(nil), claimsPath)
+	if failed != nil || e != nil {
+		return failed, e
+	}
+	allowedClaims, shown, hidden := map[string]bool{}, map[int64]bool{}, map[int64]bool{}
+	for _, claim := range all {
+		allowed := visible[[2]string{claim.Target.Kind, claim.Target.Key}]
+		allowedClaims[claim.ClaimKey] = allowed
+		for _, id := range claim.EvidenceIds {
+			if allowed {
+				shown[id] = true
+			} else {
+				hidden[id] = true
+			}
+		}
+	}
+	selected := all
+	if a.Target != nil {
+		if selected, failed, e = scanPersonFactRows(ctx, b, claimRows, claimOptions(a.Target), claimsPath); failed != nil || e != nil {
+			return failed, e
+		}
+	}
+	out := mcpserver.PersonFactClaimsOutput{Claims: personFactPage(slices.DeleteFunc(slices.Clone(selected), func(c generated.PersonFactClaim) bool { return !allowedClaims[c.ClaimKey] }), a.Limit, a.Offset)}
+	if a.IncludeEvidence {
+		rows, failed, e := scanPersonFactRows(ctx, b, func(r generated.PersonFactEvidenceResponse) []generated.PersonFactEvidence { return r.Evidence }, func(limit, offset *int64) runtime.RequestOptions {
+			return &generated.ListPersonFactEvidenceRequestOptions{PathParams: &generated.ListPersonFactEvidencePath{ID: a.PersonID}, Query: &generated.ListPersonFactEvidenceQuery{Target: a.Target, Limit: limit, Offset: offset}}
+		}, "/api/v1/people/{id}/fact-evidence")
+		if failed != nil || e != nil {
+			return failed, e
+		}
+		out.Evidence = personFactPage(slices.DeleteFunc(rows, func(v generated.PersonFactEvidence) bool { return !shown[v.ID] || hidden[v.ID] }), a.Limit, a.Offset)
+	}
+	if a.IncludeDecisions {
+		rows, failed, e := scanPersonFactRows(ctx, b, func(r generated.PersonFactDecisionsResponse) []generated.PersonFactDecision { return r.Decisions }, func(limit, offset *int64) runtime.RequestOptions {
+			return &generated.ListPersonFactDecisionsRequestOptions{PathParams: &generated.ListPersonFactDecisionsPath{ID: a.PersonID}, Query: &generated.ListPersonFactDecisionsQuery{Target: a.Target, Limit: limit, Offset: offset}}
+		}, "/api/v1/people/{id}/fact-decisions")
+		if failed != nil || e != nil {
+			return failed, e
+		}
+		out.Decisions = personFactPage(slices.DeleteFunc(rows, func(v generated.PersonFactDecision) bool {
+			return !allowedClaims[v.ClaimKey] || v.CompetingClaimKey != nil && !allowedClaims[*v.CompetingClaimKey]
+		}), a.Limit, a.Offset)
+	}
+	return &mcpserver.OperationResult{Output: out}, nil
+}
+
 func (b *daemonMCPOperations) personFactOperationDisclosure(name string, args map[string]any) (string, bool, error) {
 	switch name {
 	case "set_person_fact_pin", "set_person_tracking":
