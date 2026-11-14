@@ -588,6 +588,8 @@ client_id = "org-b-client-id"
 tenant_id = "org-b-tenant-id"
 ```
 
+Restart the daemon after changing Microsoft app settings so scheduled syncs use the updated configuration.
+
 ```bash
 msgvault add-o365 user@org-a.example
 msgvault add-o365 user@org-b.example --oauth-app orgb
