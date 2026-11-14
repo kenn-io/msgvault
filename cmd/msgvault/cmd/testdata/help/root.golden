@@ -118,7 +118,7 @@ Import local exports:
   import-gvoice          Import Google Voice history from Takeout export
   import-imazing-csv     Import Messages CSV exports created by iMazing
   import-imessage        Import iMessages from local database
-  import-line            Import LINE messages from an iPhone backup
+  import-line            Import LINE chats from iPhone backups
   import-maildir         Import a Maildir or Maildir++ archive
   import-mbox            Import an MBOX export into msgvault
   import-messenger       Import Facebook Messenger from a Meta data export

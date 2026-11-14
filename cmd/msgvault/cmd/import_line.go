@@ -23,7 +23,7 @@ func newImportLineCmd() *cobra.Command {
 	var opts lineCLIOptions
 	cmd := &cobra.Command{
 		Use:   "import-line <path>",
-		Short: "Import LINE messages from an iPhone backup",
+		Short: "Import LINE chats from iPhone backups",
 		Long: `Import LINE chats from the message store the LINE iOS app keeps, as
 found in an unencrypted iPhone backup.
 
