@@ -251,10 +251,10 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening backup repository: %w", err)
 	}
-	if backupRestoreTarget == "" {
-		return errors.New("backup: restore target directory is required")
-	}
 	if backupRestorePermissionsOnly {
+		if backupRestoreTarget == "" {
+			return errors.New("backup: restore target directory is required")
+		}
 		for _, name := range []string{"overwrite", "jobs", "integrity-check", "loose-attachments"} {
 			if cmd.Flags().Changed(name) {
 				return fmt.Errorf("--%s cannot be used with --permissions-only", name)
