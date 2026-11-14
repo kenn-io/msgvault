@@ -637,10 +637,6 @@ func (s *Server) handleSetOrganizationAttribute(w http.ResponseWriter, r *http.R
 	if !decodeEntityRequest(w, r, &body, "organization") {
 		return
 	}
-	if body.ExpectedValueID != nil && *body.ExpectedValueID < 0 {
-		writeError(w, http.StatusBadRequest, "invalid_expected_value_id", "expected_value_id must be non-negative")
-		return
-	}
 	result, err := organizations.SetOrganizationAttributeValueContext(r.Context(), store.OrganizationAttributeValueInput{OrganizationID: id, DefinitionSlug: body.DefinitionSlug, Ordinal: body.Ordinal, Value: body.Value, ActiveFrom: body.ActiveFrom, ActiveUntil: body.ActiveUntil, Source: store.Provenance(body.Source), SourceRef: body.SourceRef, Confidence: body.Confidence, Actor: body.Actor, ExpectedValueID: body.ExpectedValueID, DryRun: body.DryRun})
 	if err != nil {
 		s.writeOrganizationError(w, err)

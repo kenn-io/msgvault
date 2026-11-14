@@ -188,6 +188,9 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 			if len(rows.Employments) > 0 && rows.Employments[0].IsPrimary {
 				primary = &rows.Employments[0]
 				primary.Description = nil
+				if name == "create_employment" {
+					return "", true, &mcpserver.OperationRefusalError{Code: "employment_primary_conflict"}
+				}
 				guard = map[string]any{"id": primary.ID, "revision": primary.Revision}
 			}
 			body, ok := args["employment"].(map[string]any)

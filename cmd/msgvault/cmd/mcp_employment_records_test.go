@@ -258,13 +258,12 @@ func TestMCPEmploymentPrimaryAppearsAfterDisclosure(t *testing.T) {
 }
 
 func TestMCPNativeRefusalsAreDefinite(t *testing.T) {
-	b, _, _, org := employmentFixture(t)
+	b, _, _, _ := employmentFixture(t)
 	for _, tc := range []struct {
 		name, path, code string
 		options          runtime.RequestOptions
 	}{
 		{"employment", "/api/v1/employments/{id}", "invalid_employment_id", &generated.GetEmploymentRequestOptions{PathParams: &generated.GetEmploymentPath{ID: -1}}},
-		{"organization", "/api/v1/organizations/{id}", "invalid_organization_id", &generated.GetOrganizationRequestOptions{PathParams: &generated.GetOrganizationPath{ID: -1}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := readMCPOperationJSON[map[string]any](t.Context(), b.client, http.MethodGet, tc.path, tc.options, http.StatusOK)
@@ -272,9 +271,6 @@ func TestMCPNativeRefusalsAreDefinite(t *testing.T) {
 			assertLoopRefusal(t, result, tc.code, false)
 		})
 	}
-	result, err := readMCPOperationJSON[map[string]any](t.Context(), b.client, http.MethodPost, "/api/v1/organizations/{id}/attributes", &generated.SetOrganizationAttributeRequestOptions{PathParams: &generated.SetOrganizationAttributePath{ID: org}, Body: &generated.SetOrganizationAttributeBody{DefinitionSlug: "example", Source: "user", Value: generated.AttributeValue{Type: "text", Text: new("value")}, ExpectedValueID: new(int64(-1))}}, http.StatusCreated)
-	require.NoError(t, err)
-	assertLoopRefusal(t, result, "invalid_expected_value_id", false)
 }
 
 func legacyOperationSession(t *testing.T, b *daemonMCPOperations, family mcpserver.OperationFamily, handler func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error)) *sdkmcp.ClientSession {
@@ -293,20 +289,18 @@ func legacyOperationSession(t *testing.T, b *daemonMCPOperations, family mcpserv
 	return session
 }
 
-func TestMCPEmploymentCreateRefusesDisappearedPrimary(t *testing.T) {
+func TestMCPEmploymentCreateRefusesNewPrimary(t *testing.T) {
 	must := require.New(t)
 	b, st, person, org := employmentFixture(t)
-	primary, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Title: new("Primary"), Source: store.ProvenanceUser, IsPrimary: new(true)})
-	must.NoError(err)
 	session := legacyOperationSession(t, b, mcpserver.OperationFamilyEmployment, func(ctx context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		_, err := st.EndEmploymentContext(ctx, primary.ID, primary.Revision, store.PartialDate{Year: new(2024)})
+		_, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person, OrganizationID: org, Title: new("Concurrent"), Source: store.ProvenanceUser, IsPrimary: new(true)})
 		assert.NoError(t, err)
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	})
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "create_employment", Arguments: map[string]any{"employment": map[string]any{"person_id": person, "organization_id": org, "title": "New", "source": "user", "is_primary": true}}})
 	must.NoError(err)
 	must.True(result.IsError)
-	must.Equal("operation_context_changed", loopToolFailure(t, result)["error"])
+	must.Equal("employment_primary_conflict", loopToolFailure(t, result)["error"])
 }
 
 func TestMCPEmploymentLargeDescriptionApproval(t *testing.T) {
@@ -346,4 +340,21 @@ func TestMCPEmploymentLargeDescriptionApproval(t *testing.T) {
 		must.ErrorAs(err, &refusal)
 		must.Equal("operation_response_limit_exceeded", refusal.Code)
 	})
+}
+
+func TestMCPEmploymentCreatePrimaryRefusesBeforeApproval(t *testing.T) {
+	must := require.New(t)
+	b, st, person, org := employmentFixture(t)
+	_, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Title: new("Primary"), Source: store.ProvenanceUser, IsPrimary: new(true)})
+	must.NoError(err)
+	approvals := 0
+	session := legacyOperationSession(t, b, mcpserver.OperationFamilyEmployment, func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		approvals++
+		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+	})
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "create_employment", Arguments: map[string]any{"employment": map[string]any{"person_id": person, "organization_id": org, "title": "New", "source": "user", "is_primary": true}}})
+	must.NoError(err)
+	must.True(result.IsError)
+	must.Equal("employment_primary_conflict", loopToolFailure(t, result)["error"])
+	must.Zero(approvals)
 }

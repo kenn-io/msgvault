@@ -88,7 +88,7 @@ func (s *Store) AddEmploymentContext(ctx context.Context, input EmploymentInput)
 				return err
 			}
 			var inferenceProjectionBefore map[int64]personInferenceExportProjection
-			if provenanceIsInferred(input.Source) || input.ExpectedPrimary != nil {
+			if provenanceIsInferred(input.Source) {
 				inferenceProjectionBefore, err = s.captureInferenceExportPeopleTx(ctx, tx, input.PersonID)
 				if err != nil {
 					return fmt.Errorf("load inference export projection before employment add: %w", err)
@@ -105,7 +105,7 @@ func (s *Store) AddEmploymentContext(ctx context.Context, input EmploymentInput)
 					return err
 				}
 			}
-			if provenanceIsInferred(input.Source) || input.ExpectedPrimary != nil {
+			if provenanceIsInferred(input.Source) {
 				if err := s.invalidateInferenceExportChangesTx(ctx, tx, inferenceProjectionBefore); err != nil {
 					return err
 				}

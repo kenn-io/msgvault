@@ -944,7 +944,7 @@ On unreleased `main`, `get_employment` reads one record with its revision
 ETag. `list_person_employments` and `list_organization_employments` list
 history in pages of at most 200.
 
-With `--allow-employment-writes`, a client can create, replace, end, or delete
+With `--allow-employment-writes` and daemon API schema 5.4.0 or newer, a client can create, replace, end, or delete
 a record after confirmation. Creation requires an explicit `is_primary` value.
 Replacement can promote a record and supplies the full
 mutable record. Omitted text, dates, and other optional fields are cleared;
@@ -953,10 +953,12 @@ omitted `is_current` is kept only if `end_date` is omitted, and omitted
 may be a year, year and month, or full date. Changes to an existing record
 require the exact ETag from a fresh read. A promotion shows the current primary
 and refuses if that primary changes before the write. Creating a primary also
-checks the primary state shown for approval. If a mutation may have
+checks the primary state shown for approval; creation refuses if a primary already exists. If a mutation may have
 completed, list the person's employments before retrying.
 
 ## Write controls
+
+HTTP writes require `--http-allow-writes` and MCP protocol `2026-07-28` or newer.
 
 On unreleased `main`, owner sessions can use `get_person_record`,
 `get_person_record_history`, and `get_person_record_media` to read all structured

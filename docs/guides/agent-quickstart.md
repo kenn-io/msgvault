@@ -211,7 +211,7 @@ explain the limit and ask the owner to choose the next step.
 
 This is the full static catalog, including backend-dependent tools. Use the
 connected server's `tools/list` for its actual tools and schemas. Class flags
-below are for `msgvault mcp`; HTTP writes also need `--http-allow-writes`.
+below are for `msgvault mcp`; HTTP writes also need `--http-allow-writes` and MCP protocol `2026-07-28` or newer.
 A dash means no extra class flag, not guaranteed availability or authorization.
 
 The delegated column names permissions only for the scoped archive-read gate.
