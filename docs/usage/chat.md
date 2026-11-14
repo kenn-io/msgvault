@@ -948,7 +948,8 @@ omitted `is_current` is kept only if `end_date` is omitted, and omitted
 `is_primary` is kept only while the resulting record stays current. Dates
 may be a year, year and month, or full date. Changes to an existing record
 require the exact ETag from a fresh read. A promotion shows the current primary
-and refuses if that primary changes before the write. If a mutation may have
+and refuses if that primary changes before the write. Creating a primary also
+checks the primary state shown for approval. If a mutation may have
 completed, list the person's employments before retrying.
 
 ## Write controls

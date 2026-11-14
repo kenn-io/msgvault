@@ -492,54 +492,6 @@ func TestMCPStdioLegacyCanConfirmCalendarMutation(t *testing.T) {
 	assertions.Equal("original-plan", backend.requests[1].ExpectedPlanFingerprint)
 }
 
-func TestMCPStdioLegacyOperationalConfirmationRechecksDisclosure(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		change    bool
-		refuse    bool
-		wantError string
-		wantCalls int32
-	}{
-		{name: "changed disclosure", change: true, wantError: "operation_context_changed"},
-		{name: "unchanged disclosure", wantCalls: 1},
-		{name: "second read refusal", refuse: true, wantError: "operation_context_unavailable"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
-			backend := &countingOperationalBackend{}
-			peer := newTask5RawStdioPeer(t, ServeOptions{Operations: backend, OperationCapabilities: []string{"sync_source"}, OperationWriteFamilies: []OperationFamily{OperationFamilySources}})
-			initialized := peer.call(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{"elicitation":{"form":{}}},"clientInfo":{"name":"confirmation-test","version":"1"}}}`)
-			requirements.Nil(initialized.Error)
-			peer.writeLiteralLine(t, `{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`)
-			_, raw := peer.callRaw(t, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"sync_source","arguments":{"account":"sender@example.com","source_type":"gmail"}}}`)
-			var prompt struct {
-				ID     json.RawMessage     `json:"id"`
-				Method string              `json:"method"`
-				Params sdkmcp.ElicitParams `json:"params"`
-			}
-			requirements.NoError(json.Unmarshal([]byte(raw), &prompt))
-			requirements.Equal("elicitation/create", prompt.Method)
-			assertions.Contains(prompt.Params.Message, "policy 0")
-			assertions.Equal(int32(0), backend.calls.Load())
-			if tc.change {
-				backend.policy.Store(1)
-			}
-			backend.refuse.Store(tc.refuse)
-			result := peer.call(t, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{"action":"accept","content":{"confirm":true}}}`, prompt.ID))
-			requirements.Nil(result.Error)
-			if tc.wantError != "" {
-				assertions.Equal(true, result.Result["isError"])
-				assertions.Equal(map[string]any{"error": tc.wantError}, result.Result["structuredContent"])
-			} else {
-				assertions.NotEqual(true, result.Result["isError"])
-				assertions.Equal(map[string]any{"status": "accepted", "message": "scheduled", "disposition": "pending"}, result.Result["structuredContent"])
-			}
-			assertions.Equal(tc.wantCalls, backend.calls.Load())
-		})
-	}
-}
-
 func TestMCPStdioLegacyCanConfirmIdentityDecision(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

@@ -123,18 +123,6 @@ func decodeMCPOperationArguments[T any](args map[string]any) (T, error) {
 	return value, err
 }
 
-// operationContext checks a disclosure's pre-read. A failed read refuses as
-// operation_context_unavailable unless forward recognizes its fixed code.
-func operationContext(current *mcpserver.OperationResult, expected, conflict string, forward func(string) bool) error {
-	if err := operationReadFailure(current, forward); err != nil {
-		return err
-	}
-	if current.ETag != expected {
-		return &mcpserver.OperationRefusalError{Code: conflict}
-	}
-	return nil
-}
-
 func operationReadFailure(current *mcpserver.OperationResult, forward func(string) bool) error {
 	if current == nil || current.IsError {
 		code := "operation_context_unavailable"
@@ -321,8 +309,11 @@ func (b *daemonMCPOperations) sourceOperationDisclosure(ctx context.Context, nam
 	if err != nil {
 		return "", true, err
 	}
-	if err := operationContext(current, expected, conflictCode, nil); err != nil {
+	if err := operationReadFailure(current, nil); err != nil {
 		return "", true, err
+	}
+	if current.ETag != expected {
+		return "", true, &mcpserver.OperationRefusalError{Code: conflictCode}
 	}
 	effect := "persist the explicit display name; an empty name clears the saved override"
 	if name == "update_slack_sync_policy" {

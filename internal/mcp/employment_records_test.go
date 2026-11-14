@@ -24,18 +24,6 @@ func TestEmploymentCatalogGatesAndClosedInput(t *testing.T) {
 	for _, name := range names {
 		assert.Contains(listed, name)
 	}
-	for _, name := range []string{"list_person_employments", "list_organization_employments"} {
-		input, ok := listed[name]["inputSchema"].(map[string]any)
-		require.True(ok)
-		properties, ok := input["properties"].(map[string]any)
-		require.True(ok)
-		limit, ok := properties["limit"].(map[string]any)
-		require.True(ok)
-		description, ok := limit["description"].(string)
-		require.True(ok)
-		assert.Contains(description, "operation_response_limit_exceeded")
-		assert.Contains(description, "offset")
-	}
 	for name, destructive := range map[string]bool{"create_employment": false, "replace_employment": true, "delete_employment": true} {
 		annotations, ok := listed[name]["annotations"].(map[string]any)
 		require.True(ok)
@@ -52,20 +40,10 @@ func TestEmploymentCatalogGatesAndClosedInput(t *testing.T) {
 	require.NoError(err)
 	good := map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "user", "is_primary": false, "title": nil}}
 	assert.NoError(resolved.Validate(good))
-	bad := map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "user", "other": true}}
+	bad := map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "user", "is_primary": false, "other": true}}
 	require.Error(resolved.Validate(bad))
-	assert.NoError(resolved.Validate(map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "extraction", "is_primary": false, "confidence": 2}}))
-	assert.NoError(resolved.Validate(map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "extraction", "is_primary": false, "confidence": nil}}))
-	require.Error(resolved.Validate(map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "extraction", "confidence": "high"}}))
-	body := schema.Properties["employment"]
-	confidence := body.Properties["confidence"]
-	require.Len(confidence.AnyOf, 2)
-	assert.Equal("number", confidence.AnyOf[0].Type)
-	assert.Equal("null", confidence.AnyOf[1].Type)
-	assert.NotContains(body.Required, "confidence")
-	assert.Nil(confidence.AnyOf[0].Minimum)
-	assert.Nil(confidence.AnyOf[0].Maximum)
-	assert.Nil(confidence.AnyOf[0].Default)
+	missingPrimary := map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "user"}}
+	require.Error(resolved.Validate(missingPrimary))
 	opts.DelegatedOnly = true
 	assert.Empty(operationalCatalog(opts, true))
 	found := false

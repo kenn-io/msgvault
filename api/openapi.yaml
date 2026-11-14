@@ -4593,6 +4593,9 @@ components:
           type:
             - string
             - "null"
+        expected_primary:
+          $ref: "#/components/schemas/EmploymentRevision"
+          description: Approved primary employment and revision
         is_current:
           type:
             - boolean
@@ -14649,83 +14652,6 @@ components:
         - identifier
         - removed
       type: object
-    ReplaceEmploymentBody:
-      additionalProperties: false
-      properties:
-        address_id:
-          format: int64
-          type:
-            - integer
-            - "null"
-        confidence:
-          format: double
-          type:
-            - number
-            - "null"
-        department:
-          type:
-            - string
-            - "null"
-        description:
-          type:
-            - string
-            - "null"
-        end_date:
-          type:
-            - string
-            - "null"
-        expected_primary:
-          $ref: "#/components/schemas/EmploymentRevision"
-          description: Primary employment and revision approved for demotion
-        is_current:
-          type:
-            - boolean
-            - "null"
-        is_primary:
-          type:
-            - boolean
-            - "null"
-        location:
-          type:
-            - string
-            - "null"
-        organization_id:
-          format: int64
-          type: integer
-        person_id:
-          format: int64
-          type: integer
-        role:
-          type:
-            - string
-            - "null"
-        source:
-          enum:
-            - user
-            - carddav_import
-            - vcard_import
-            - archive_observation
-            - extraction
-            - enrichment
-            - system
-          type: string
-        source_ref:
-          type:
-            - string
-            - "null"
-        start_date:
-          type:
-            - string
-            - "null"
-        title:
-          type:
-            - string
-            - "null"
-      required:
-        - person_id
-        - organization_id
-        - source
-      type: object
     Result:
       additionalProperties: true
       properties:
@@ -22383,7 +22309,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ReplaceEmploymentBody"
+              $ref: "#/components/schemas/EmploymentBody"
         required: true
       responses:
         "200":

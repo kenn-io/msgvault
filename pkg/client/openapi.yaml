@@ -4576,6 +4576,9 @@ components:
         end_date:
           nullable: true
           type: string
+        expected_primary:
+          $ref: "#/components/schemas/EmploymentRevision"
+          description: Approved primary employment and revision
         is_current:
           nullable: true
           type: boolean
@@ -14394,71 +14397,6 @@ components:
         - identifier
         - removed
       type: object
-    ReplaceEmploymentBody:
-      additionalProperties: false
-      properties:
-        address_id:
-          format: int64
-          nullable: true
-          type: integer
-        confidence:
-          format: double
-          nullable: true
-          type: number
-        department:
-          nullable: true
-          type: string
-        description:
-          nullable: true
-          type: string
-        end_date:
-          nullable: true
-          type: string
-        expected_primary:
-          $ref: "#/components/schemas/EmploymentRevision"
-          description: Primary employment and revision approved for demotion
-        is_current:
-          nullable: true
-          type: boolean
-        is_primary:
-          nullable: true
-          type: boolean
-        location:
-          nullable: true
-          type: string
-        organization_id:
-          format: int64
-          type: integer
-        person_id:
-          format: int64
-          type: integer
-        role:
-          nullable: true
-          type: string
-        source:
-          enum:
-            - user
-            - carddav_import
-            - vcard_import
-            - archive_observation
-            - extraction
-            - enrichment
-            - system
-          type: string
-        source_ref:
-          nullable: true
-          type: string
-        start_date:
-          nullable: true
-          type: string
-        title:
-          nullable: true
-          type: string
-      required:
-        - person_id
-        - organization_id
-        - source
-      type: object
     Result:
       properties:
         blockers:
@@ -22102,7 +22040,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ReplaceEmploymentBody"
+              $ref: "#/components/schemas/EmploymentBody"
         required: true
       responses:
         "200":

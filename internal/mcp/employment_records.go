@@ -23,6 +23,7 @@ func employmentOperationalDefinitions() []operationalDefinition {
 	}
 	body := outputSchemaFor[generated.EmploymentBody]()
 	body.Schema = ""
+	delete(body.Properties, "expected_primary")
 	body.Properties["person_id"] = safeIDSchema("Durable person ID")
 	body.Properties["organization_id"] = safeIDSchema("Organization ID")
 	body.Properties["address_id"] = safeIDSchema("Address ID belonging to organization_id")

@@ -31,26 +31,22 @@ type EmploymentStore interface {
 // EmploymentBody is the full mutable field set. Partial dates are inbound
 // truncated ISO 8601 strings while responses expose their known components.
 type EmploymentBody struct {
-	PersonID       int64    `json:"person_id"`
-	OrganizationID int64    `json:"organization_id"`
-	Title          *string  `json:"title,omitzero" nullable:"true"`
-	Role           *string  `json:"role,omitzero" nullable:"true"`
-	Department     *string  `json:"department,omitzero" nullable:"true"`
-	Location       *string  `json:"location,omitzero" nullable:"true"`
-	AddressID      *int64   `json:"address_id,omitzero" nullable:"true"`
-	Description    *string  `json:"description,omitzero" nullable:"true"`
-	StartDate      *string  `json:"start_date,omitzero" nullable:"true"`
-	EndDate        *string  `json:"end_date,omitzero" nullable:"true"`
-	IsCurrent      *bool    `json:"is_current,omitzero" nullable:"true"`
-	IsPrimary      *bool    `json:"is_primary,omitzero" nullable:"true"`
-	Source         string   `json:"source" enum:"user,carddav_import,vcard_import,archive_observation,extraction,enrichment,system"`
-	SourceRef      *string  `json:"source_ref,omitzero" nullable:"true"`
-	Confidence     *float64 `json:"confidence,omitzero" nullable:"true"`
-}
-
-type ReplaceEmploymentBody struct {
-	EmploymentBody
-	ExpectedPrimary *store.EmploymentRevision `json:"expected_primary,omitzero" nullable:"false" doc:"Primary employment and revision approved for demotion"`
+	PersonID        int64                     `json:"person_id"`
+	OrganizationID  int64                     `json:"organization_id"`
+	Title           *string                   `json:"title,omitzero" nullable:"true"`
+	Role            *string                   `json:"role,omitzero" nullable:"true"`
+	Department      *string                   `json:"department,omitzero" nullable:"true"`
+	Location        *string                   `json:"location,omitzero" nullable:"true"`
+	AddressID       *int64                    `json:"address_id,omitzero" nullable:"true"`
+	Description     *string                   `json:"description,omitzero" nullable:"true"`
+	StartDate       *string                   `json:"start_date,omitzero" nullable:"true"`
+	EndDate         *string                   `json:"end_date,omitzero" nullable:"true"`
+	IsCurrent       *bool                     `json:"is_current,omitzero" nullable:"true"`
+	IsPrimary       *bool                     `json:"is_primary,omitzero" nullable:"true"`
+	Source          string                    `json:"source" enum:"user,carddav_import,vcard_import,archive_observation,extraction,enrichment,system"`
+	SourceRef       *string                   `json:"source_ref,omitzero" nullable:"true"`
+	Confidence      *float64                  `json:"confidence,omitzero" nullable:"true"`
+	ExpectedPrimary *store.EmploymentRevision `json:"expected_primary,omitzero" nullable:"false" doc:"Approved primary employment and revision"`
 }
 
 type EndEmploymentBody struct {
@@ -101,7 +97,7 @@ func (s *Server) registerEmploymentRoutes(api huma.API) {
 	patch := rawAPIV1Operation("patchEmployment", http.MethodPatch, "/employments/{id}", "Replace an employment record's mutable fields")
 	addEmploymentIDParameter(&patch)
 	addEmploymentIfMatchParameter(&patch)
-	patch.RequestBody = jsonRequestBodyFor[ReplaceEmploymentBody](api)
+	patch.RequestBody = jsonRequestBodyFor[EmploymentBody](api)
 	patch.Responses = jsonResponsesFor[store.Employment](api)
 	addEmploymentETagHeader(patch.Responses[httpStatusKey(http.StatusOK)])
 	addErrorResponses(api, patch.Responses, http.StatusBadRequest, http.StatusConflict, http.StatusNotFound, http.StatusPreconditionRequired, http.StatusServiceUnavailable)
@@ -208,16 +204,15 @@ func (s *Server) handlePatchEmployment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var body ReplaceEmploymentBody
+	var body EmploymentBody
 	if _, ok := decodeEntityRequestFields(w, r, &body, "employment"); !ok {
 		return
 	}
-	input, err := employmentInputFromBody(body.EmploymentBody)
+	input, err := employmentInputFromBody(body)
 	if err != nil {
 		s.writeEmploymentError(w, err)
 		return
 	}
-	input.ExpectedPrimary = body.ExpectedPrimary
 	employment, err := employments.UpdateEmploymentContext(r.Context(), id, revision, input)
 	if err != nil {
 		s.writeEmploymentError(w, err)
@@ -411,7 +406,7 @@ func employmentInputFromBody(body EmploymentBody) (store.EmploymentInput, error)
 		Title: body.Title, Role: body.Role, Department: body.Department,
 		Location: body.Location, AddressID: body.AddressID, Description: body.Description,
 		IsCurrent: body.IsCurrent, IsPrimary: body.IsPrimary, Source: source,
-		SourceRef: body.SourceRef, Confidence: body.Confidence,
+		SourceRef: body.SourceRef, Confidence: body.Confidence, ExpectedPrimary: body.ExpectedPrimary,
 	}
 	if body.StartDate != nil {
 		startDate, err := store.ParsePartialDate(*body.StartDate)

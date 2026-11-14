@@ -92,7 +92,7 @@ type GetDomainTimelineBody = ExploreHTTPRequest
 
 type CreateEmploymentBody = EmploymentBody
 
-type PatchEmploymentBody = ReplaceEmploymentBody
+type PatchEmploymentBody = EmploymentBody
 
 type ExploreBody = ExploreHTTPRequest
 

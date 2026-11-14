@@ -13,7 +13,7 @@ import (
 
 func employmentMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol.MCPCapabilities) []string {
 	var names []string
-	body := []string{"person_id", "organization_id", "source", "title", "role", "department", "location", "address_id", "description", "start_date", "end_date", "is_current", "is_primary", "source_ref", "confidence"}
+	body := []string{"person_id", "organization_id", "source", "title", "role", "department", "location", "address_id", "description", "start_date", "end_date", "is_current", "is_primary", "source_ref", "confidence", "expected_primary"}
 	for _, r := range []struct {
 		name, id, method, path string
 		query                  []string
@@ -32,11 +32,11 @@ func employmentMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol
 		needsGet               bool
 	}{
 		{"create_employment", "createEmployment", http.MethodPost, "/api/v1/employments", body, false},
-		{"replace_employment", "patchEmployment", http.MethodPatch, "/api/v1/employments/{id}", append(slices.Clone(body), "expected_primary"), true},
+		{"replace_employment", "patchEmployment", http.MethodPatch, "/api/v1/employments/{id}", body, true},
 		{"end_employment", "endEmployment", http.MethodPost, "/api/v1/employments/{id}/end", []string{"end_date"}, true},
 		{"delete_employment", "deleteEmployment", http.MethodDelete, "/api/v1/employments/{id}", nil, true},
 	} {
-		if hasRoute(r.id, r.method, r.path) && (!r.needsGet || slices.Contains(names, "get_employment")) && (r.name != "replace_employment" || slices.Contains(names, "list_person_employments")) && (len(r.properties) == 0 || mcpRequestPropertiesPresent(capabilities, r.id, r.properties...)) {
+		if hasRoute(r.id, r.method, r.path) && (!r.needsGet || slices.Contains(names, "get_employment")) && ((r.name != "replace_employment" && r.name != "create_employment") || slices.Contains(names, "list_person_employments")) && (len(r.properties) == 0 || mcpRequestPropertiesPresent(capabilities, r.id, r.properties...)) {
 			names = append(names, r.name)
 		}
 	}
@@ -53,9 +53,9 @@ type employmentBodyArgs struct {
 	Employment   *generated.EmploymentBody `json:"employment"`
 }
 type replaceEmploymentArgs struct {
-	EmploymentID int64                            `json:"employment_id"`
-	ETag         string                           `json:"etag"`
-	Employment   *generated.ReplaceEmploymentBody `json:"employment"`
+	EmploymentID int64                     `json:"employment_id"`
+	ETag         string                    `json:"etag"`
+	Employment   *generated.EmploymentBody `json:"employment"`
 }
 type employmentEndArgs struct {
 	EmploymentID int64  `json:"employment_id"`
@@ -141,19 +141,14 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 		return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 	}
 	var id int64
+	var input *generated.EmploymentBody
 	switch name {
-	case "create_employment":
+	case "create_employment", "replace_employment":
 		a, e := decodeMCPOperationArguments[employmentBodyArgs](args)
-		if e != nil || a.Employment == nil || a.Employment.IsPrimary == nil {
+		if e != nil || a.Employment == nil || (name == "create_employment" && a.Employment.IsPrimary == nil) {
 			return invalid()
 		}
-		id = a.EmploymentID
-	case "replace_employment":
-		a, e := decodeMCPOperationArguments[replaceEmploymentArgs](args)
-		if e != nil || a.Employment == nil {
-			return invalid()
-		}
-		id = a.EmploymentID
+		id, input = a.EmploymentID, a.Employment
 	case "end_employment":
 		a, e := decodeMCPOperationArguments[employmentEndArgs](args)
 		if e != nil {
@@ -172,13 +167,13 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 		return "", true, err
 	}
 	var primary *generated.Employment
-	if name == "replace_employment" {
-		input, e := decodeMCPOperationArguments[replaceEmploymentArgs](args)
-		if e != nil || input.Employment == nil {
-			return invalid()
+	if input != nil {
+		willBePrimary := input.IsPrimary != nil && *input.IsPrimary
+		if input.IsPrimary == nil && current != nil && current.Employment.IsPrimary && input.EndDate == nil && (input.IsCurrent == nil || *input.IsCurrent) {
+			willBePrimary = true
 		}
-		if input.Employment.IsPrimary != nil && *input.Employment.IsPrimary {
-			listed, _, e := b.executeEmploymentOperation(ctx, "list_person_employments", map[string]any{"person_id": input.Employment.PersonID, "current_only": true, "limit": 1})
+		if willBePrimary {
+			listed, _, e := b.executeEmploymentOperation(ctx, "list_person_employments", map[string]any{"person_id": input.PersonID, "current_only": true, "limit": 1})
 			if e != nil {
 				return "", true, e
 			}
@@ -189,16 +184,18 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 			if !ok {
 				return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 			}
+			guard := map[string]any{"id": int64(0), "revision": int64(0)}
 			if len(rows.Employments) > 0 && rows.Employments[0].IsPrimary {
 				primary = &rows.Employments[0]
 				primary.Description = nil
-				body, ok := args["employment"].(map[string]any)
-				if !ok {
-					return invalid()
-				}
-				if _, exists := body["expected_primary"]; !exists {
-					body["expected_primary"] = map[string]any{"id": primary.ID, "revision": primary.Revision}
-				}
+				guard = map[string]any{"id": primary.ID, "revision": primary.Revision}
+			}
+			body, ok := args["employment"].(map[string]any)
+			if !ok {
+				return invalid()
+			}
+			if _, exists := body["expected_primary"]; !exists {
+				body["expected_primary"] = guard
 			}
 		}
 	}
@@ -228,18 +225,16 @@ func (b *daemonMCPOperations) employmentDisclosureContext(ctx context.Context, n
 	if err != nil {
 		return nil, err
 	}
-	if err := operationReadFailure(result, nativeDefiniteRefusal); err != nil {
+	if err := operationReadFailure(result, func(code string) bool {
+		return code == "operation_response_limit_exceeded" || nativeDefiniteRefusal(code)
+	}); err != nil {
 		return nil, err
 	}
 	current, ok := result.Output.(mcpserver.EmploymentRecord)
 	if !ok {
 		return nil, unavailable
 	}
-	if name == "replace_employment" || name == "delete_employment" {
-		if current.Employment.Description != nil && len(*current.Employment.Description) > 8<<10 {
-			return nil, &mcpserver.OperationRefusalError{Code: "employment_description_too_large"}
-		}
-	} else {
+	if name != "replace_employment" && name != "delete_employment" {
 		current.Employment.Description = nil
 	}
 	return &current, nil
