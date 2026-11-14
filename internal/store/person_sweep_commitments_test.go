@@ -55,6 +55,13 @@ func TestApplyCommitmentOnlySweepPreservesDecisionAcrossRequote(t *testing.T) {
 	claims, err := st.ListPersonFactClaimsContext(ctx, f.personID, personfacts.ClaimFilter{Limit: 10})
 	r.NoError(err)
 	r.Len(claims, 2)
+	for _, claim := range claims {
+		a.Nil(claim.ValidUntil)
+		var value personfacts.CommitmentValue
+		r.NoError(json.Unmarshal(claim.Normalized.JSON, &value))
+		a.Equal("owed_to", value.Direction)
+		a.NotEmpty(value.Summary)
+	}
 
 	decision, err := st.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
 	r.NoError(err)

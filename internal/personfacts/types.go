@@ -22,6 +22,7 @@ const (
 	ValueDate         ValueType   = "date"
 	ValueTimestamp    ValueType   = "timestamp"
 	ValueEmployment   ValueType   = "employment"
+	ValueCommitment   ValueType   = "commitment"
 	ValueOrganization ValueType   = "organization"
 	ValuePartialDate  ValueType   = "partial-date"
 	CardinalitySingle Cardinality = "single"
@@ -208,6 +209,12 @@ type PartialDateValue struct {
 	Year  int `json:"year"`
 	Month int `json:"month,omitzero"`
 	Day   int `json:"day,omitzero"`
+}
+
+type CommitmentValue struct {
+	Direction string  `json:"direction"`
+	Summary   string  `json:"summary"`
+	DueOn     *string `json:"due_on"`
 }
 
 type EmploymentValue struct {

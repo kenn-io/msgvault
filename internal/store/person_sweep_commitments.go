@@ -232,13 +232,13 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 			return nil, errCommitmentInvalidOutput
 		}
 		descriptor := personfacts.TargetDescriptor{Kind: personfacts.TargetCommitment,
-			Key: promise.TargetKey, Slug: "commitment", ValueType: personfacts.ValueText,
+			Key: promise.TargetKey, Slug: "commitment", ValueType: personfacts.ValueCommitment,
 			Cardinality: personfacts.CardinalitySingle, Sensitive: true, MaxLength: 240}
 		descriptor.Revision, err = personfacts.DescriptorRevision(descriptor)
 		if err != nil {
 			return nil, err
 		}
-		value, err := json.Marshal(promise.Summary)
+		value, err := json.Marshal(personfacts.CommitmentValue{Direction: promise.Direction, Summary: promise.Summary, DueOn: promise.DueOn})
 		if err != nil {
 			return nil, err
 		}
@@ -250,7 +250,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		aligner[key] = evidence
 		generation.Claims = append(generation.Claims, personfacts.ProposedClaim{
 			Target: descriptor, Relation: personfacts.RelationSupport, Origin: personfacts.OriginCommitment,
-			SubmittedValue: value, ValidUntil: &expires, Evidence: []personfacts.EvidenceInput{evidence},
+			SubmittedValue: value, Evidence: []personfacts.EvidenceInput{evidence},
 		})
 		current, err := s.commitmentClaimCurrent(ctx, match.existing, source, request.Generation.EvidenceStatusChanges)
 		if err != nil {

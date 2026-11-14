@@ -1415,6 +1415,8 @@ func describePersonFactFreshness(target personfacts.TargetRef, validUntil, lates
 	kind := personfacts.KindFact
 	days := 365
 	switch {
+	case target.Kind == personfacts.TargetCommitment:
+		kind, days = personfacts.KindCommitment, 90
 	case target.Kind == personfacts.TargetAttribute && seededPreference(target.Key):
 		kind, days = personfacts.KindPreference, 90
 	case validUntil != nil && target.Kind != personfacts.TargetEmployment:
