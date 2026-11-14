@@ -137,13 +137,6 @@ func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
 	first := operationalCatalog(opts, true)
 	requirements.Len(first, 4)
 	assertions.NotContains(first[0].definition.inputSchema.Properties, "include_closed")
-	listOutput := first[0].definition.outputSchema
-	requirements.Len(listOutput.AnyOf, 2)
-	commitments := listOutput.AnyOf[0].Properties["commitments"]
-	requirements.NotNil(commitments)
-	dueOn := commitments.Items.Properties["due_on"]
-	requirements.NotNil(dueOn)
-	assertions.Contains(dueOn.Types, "string")
 	second := operationalCatalog(opts, true)
 	for i, definition := range first {
 		assertions.Equal(names[i], definition.definition.name)

@@ -200,7 +200,7 @@ func TestPersonSweepStatusTableIncludesOldestDirtyTime(t *testing.T) {
 	assert.Contains(t, output, "Oldest dirty:")
 }
 
-func TestPersonSweepHistoryReportsFailuresWithoutEvidence(t *testing.T) {
+func TestPersonSweepHistoryNeverPrintsEvidence(t *testing.T) {
 	checks, must := assert.New(t), require.New(t)
 	st, personID, config := newPersonSweepCommandStore(t, true)
 	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)

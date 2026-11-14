@@ -42,6 +42,19 @@ func TestCommitmentScopeExpansionRevisitsJournaledHistory(t *testing.T) {
 			request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
 			_, err = st.ApplyPersonSweep(ctx, request)
 			r.NoError(err)
+			var through, observed int64
+			err = st.db.QueryRowContext(ctx, `SELECT through_sequence, observed_sequence FROM person_commitment_frontiers WHERE person_id = ?`, f.personID).Scan(&through, &observed)
+			r.NoError(err)
+			a.Zero(through)
+			a.Equal(window.ThroughSequence, observed)
+			if expanded == "dates" {
+				due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window, "")
+				r.NoError(err)
+				a.False(due)
+			}
+			due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.Window), cfg.Commitments.MinInterval, cfg.Commitments.Window, "")
+			r.NoError(err)
+			a.True(due)
 			switch expanded {
 			case "dates":
 				profile.SourceSince = "2026-01-01"
@@ -52,7 +65,7 @@ func TestCommitmentScopeExpansionRevisitsJournaledHistory(t *testing.T) {
 			default:
 				cfg.Commitments.MaxItems++
 			}
-			due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
+			due, err = st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 			r.NoError(err)
 			a.True(due, "scope changes do not wait out the old minimum interval")
 			window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")

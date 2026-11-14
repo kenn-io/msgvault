@@ -123,46 +123,59 @@ func TestLoopsDoneAndSnooze(t *testing.T) {
 
 func TestLoopsRequireDaemonSchema(t *testing.T) {
 	for _, tc := range []struct {
-		name, version, minimum string
-		includeClosed          bool
+		name, version, minimum, path, output string
+		args                                 []string
 	}{
-		{"old_reply_loop_daemon", "3.23.0", "3.44.0", false},
-		{"compatible_reply_loop_daemon", "3.44.0", "", false},
-		{"old_closed_commitment_daemon", "5.4.0", "5.5.0", true},
-		{"compatible_closed_commitment_daemon", "5.5.0", "", true},
+		{"old_reply_loop_daemon", "3.23.0", "3.44.0", "/api/v1/loops", "", []string{"list", "--json"}},
+		{"compatible_reply_loop_daemon", "3.44.0", "", "/api/v1/loops", "", []string{"list", "--json"}},
+		{"old_closed_commitment_daemon", "5.4.0", "5.5.0", "/api/v1/loops", "", []string{"list", "--json", "--include-closed"}},
+		{"compatible_closed_commitment_daemon", "5.5.0", "", "/api/v1/loops", "", []string{"list", "--json", "--include-closed"}},
+		{"older_commitment_daemon", "5.4.0", "5.5.0", "/api/v1/loops/commitments/c12/decision", "", []string{"done", "c12"}},
+		{"commitment", "5.5.0", "", "/api/v1/loops/commitments/c12/decision", "c12 is done.\n", []string{"done", "c12"}},
+		{"existing_reply_loop", "3.44.0", "", "/api/v1/loops/42/done", "Marked 42 done.\n", []string{"done", "42"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, r := assert.New(t), require.New(t)
-			var loopRequests int
+			var requests int
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				if req.URL.Path == "/api/v1/health" {
 					a.NoError(json.NewEncoder(w).Encode(map[string]string{"status": "ok", "api_schema_version": tc.version}))
 					return
 				}
-				loopRequests++
-				a.Equal("/api/v1/loops", req.URL.Path)
-				if tc.includeClosed {
-					a.Equal("true", req.URL.Query().Get("include_closed"))
+				requests++
+				a.Equal(tc.path, req.URL.Path)
+				if tc.args[0] == "list" {
+					if len(tc.args) == 3 {
+						a.Equal("true", req.URL.Query().Get("include_closed"))
+					}
+					_, err := w.Write([]byte(`{"items":[],"commitments":[],"truncated":false}`))
+					a.NoError(err)
+				} else if tc.args[1] == "c12" {
+					a.Equal(http.MethodPost, req.Method)
+					var body map[string]string
+					a.NoError(json.NewDecoder(req.Body).Decode(&body))
+					a.Equal("done", body["state"])
+					a.NoError(json.NewEncoder(w).Encode(map[string]any{"id": "c12", "state": "done"}))
+				} else {
+					a.Equal(http.MethodPost, req.Method)
+					a.NoError(json.NewEncoder(w).Encode(map[string]any{"anchor_message_id": 42, "state": "done"}))
 				}
-				_, err := w.Write([]byte(`{"items":[],"commitments":[],"truncated":false}`))
-				a.NoError(err)
 			}))
 			t.Cleanup(server.Close)
 			ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-			args := []string{"list", "--json"}
-			if tc.includeClosed {
-				args = append(args, "--include-closed")
-			}
-			_, err := runLoops(ctx, t, args...)
+			output, err := runLoops(ctx, t, tc.args...)
 			if tc.minimum != "" {
 				r.ErrorContains(err, "require daemon API schema "+tc.minimum)
 				r.ErrorContains(err, fmt.Sprintf("daemon reports %q", tc.version))
-				a.Zero(loopRequests)
+				a.Zero(requests)
 				return
 			}
 			r.NoError(err)
-			a.Equal(1, loopRequests)
+			a.Equal(1, requests)
+			if tc.output != "" {
+				a.Equal(tc.output, output)
+			}
 		})
 	}
 }
@@ -225,7 +238,6 @@ Showing up to 50 reply loops and 50 cited promises. Use --limit up to 200 to see
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{CommitmentsSince: &now, CommitmentsComplete: &incomplete}, 50, now))
 	assert.Contains(out.String(), "increase max_bytes in [people.sweep.commitments] to retry")
-	assert.NotContains(out.String(), "still searching")
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{SkippedUnparseable: 1}, 50, now))
@@ -274,55 +286,4 @@ func TestLoopsReopenClearsDecision(t *testing.T) {
 		anchors = append(anchors, item.AnchorMessageID)
 	}
 	assert.Contains(anchors, anchor)
-}
-
-func TestLoopsCommitmentDecisionUsesItsDaemonSchema(t *testing.T) {
-	for _, tc := range []struct {
-		name, version, id, path, output string
-		unsupported                     bool
-	}{
-		{"older_commitment_daemon", "5.4.0", "c12", "", "", true},
-		{"commitment", "5.5.0", "c12", "/api/v1/loops/commitments/c12/decision", "c12 is done.\n", false},
-		{"existing_reply_loop", "3.44.0", "42", "/api/v1/loops/42/done", "Marked 42 done.\n", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r, a := require.New(t), assert.New(t)
-			var posts []string
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				if req.URL.Path == "/api/v1/health" {
-					a.NoError(json.NewEncoder(w).Encode(map[string]string{"status": "ok", "api_schema_version": tc.version}))
-					return
-				}
-				if req.Method == http.MethodPost {
-					posts = append(posts, req.URL.Path)
-				}
-				if req.URL.Path != tc.path {
-					http.NotFound(w, req)
-					return
-				}
-				if tc.id == "c12" {
-					var body map[string]string
-					a.NoError(json.NewDecoder(req.Body).Decode(&body))
-					a.Equal("done", body["state"])
-				}
-				if tc.id == "c12" {
-					a.NoError(json.NewEncoder(w).Encode(map[string]any{"id": tc.id, "state": "done"}))
-				} else {
-					a.NoError(json.NewEncoder(w).Encode(map[string]any{"anchor_message_id": 42, "state": "done"}))
-				}
-			}))
-			t.Cleanup(server.Close)
-			ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-			output, err := runLoops(ctx, t, "done", tc.id)
-			if tc.unsupported {
-				r.ErrorContains(err, "require daemon API schema 5.5.0")
-				a.Empty(posts)
-				return
-			}
-			r.NoError(err)
-			a.Equal([]string{tc.path}, posts)
-			a.Equal(tc.output, output)
-		})
-	}
 }

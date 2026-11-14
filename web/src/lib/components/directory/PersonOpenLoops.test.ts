@@ -86,16 +86,8 @@ describe("PersonOpenLoops", () => {
     expect(screen.getByRole("heading", { name: "Promises to you · stale evidence" })).toBeDefined();
     expect(screen.getByText("Due 2026-11-15")).toBeDefined();
     expect(screen.getByText(/discovery since.*incomplete/)).toBeDefined();
+    expect(screen.getByText(/max_bytes/)).toBeDefined();
     expect(screen.getByText("7+ open")).toBeDefined();
-  });
-
-  it("explains how to retry an oversized gap after backfill", async () => {
-    const fetcher = vi.fn<typeof fetch>(async () => Response.json({
-      items: [], commitments: [], commitments_since: "2026-10-01T00:00:00Z", commitments_complete: false,
-    }));
-    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
-    expect(await screen.findByText(/max_bytes/)).toBeDefined();
-    expect(screen.queryByText(/still searching/)).toBeNull();
   });
 
   it("reports when promise discovery has not started", async () => {

@@ -72,9 +72,6 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 				_, err = st.ApplyPersonSweepStatusOnly(ctx, peoplesweep.StatusOnlyApplyRequest{AttemptID: request.AttemptID, Lease: request.Lease, Generation: request.Generation, CompletedAt: request.CompletedAt})
 				r.NoError(err)
 				r.NoError(st.DeferPersonSweepAttempt(ctx, request.Lease, request.AttemptID, request.CompletedAt))
-				if mutation.reason != personfacts.EvidenceStatusSourceEdited {
-					return
-				}
 				claims, err := st.ListPersonFactClaimsContext(ctx, f.personID, personfacts.ClaimFilter{Limit: 10})
 				r.NoError(err)
 				r.Len(claims, 1)
@@ -86,6 +83,9 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 				loops, err := st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, true)
 				r.NoError(err)
 				a.Empty(loops)
+				if mutation.reason != personfacts.EvidenceStatusSourceEdited {
+					return
+				}
 				reimport := journal[len(journal)-1]
 				reimport.EvidenceEffect = peoplesweep.EvidenceEffectSourceReimported
 				changes, err = st.BuildPersonSweepEvidenceStatusChanges(ctx, f.personID, []peoplesweep.ArchiveChange{reimport})

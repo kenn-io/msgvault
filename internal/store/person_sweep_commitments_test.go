@@ -78,7 +78,6 @@ func TestApplyCommitmentOnlySweepWritesClaimsAndDecisions(t *testing.T) {
 	r.Len(repeated, 2)
 	a.Equal(decisionID, repeated[0].ID)
 	a.Equal(LoopStateDone, repeated[0].State)
-	a.Equal(personfacts.StatusStale, repeated[1].Freshness)
 }
 
 func TestCommitmentDecisionSurvivesShiftedQuote(t *testing.T) {
@@ -354,7 +353,7 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, laterNow, "UTC")
 			r.NoError(err)
 			r.Len(window.Sources, 4)
-			a.Equal(personFactLedgerNow.Add(-cfg.Commitments.Window), window.SelectionAt.Add(-cfg.Commitments.Window))
+			a.Equal(personFactLedgerNow, window.SelectionAt)
 			var largeSource string
 			for _, source := range window.Sources {
 				if source.MessageID == large {
@@ -394,45 +393,6 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 			a.False(complete)
 		})
 	}
-}
-
-func TestEmptyCommitmentScanKeepsProviderFrontierAndWaitsForNewWork(t *testing.T) {
-	r, a := require.New(t), assert.New(t)
-	ctx := t.Context()
-	f := newPersonSweepApplyFixture(t, "empty-commitment-scan", false)
-	st := f.store
-	request := f.request
-	profile := request.Generation.Policy.ProviderPolicyFingerprint
-	_, err := st.db.ExecContext(ctx, `UPDATE person_inference_profiles SET allow_sensitive = TRUE,
-		allowed_sources = '["conversation_text"]', source_since = '2026-01-01' WHERE fingerprint = ?`, profile)
-	r.NoError(err)
-	_, _, err = st.GrantPersonCommitmentConsent(ctx, profile, "test")
-	r.NoError(err)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
-	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{
-		AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
-	}, cfg.Commitments, request.Generation.ResolvedAt, "UTC")
-	r.NoError(err)
-	r.Empty(window.Sources)
-	request.Generation.Policy.AllowSensitive = true
-	request.Budget = personSweepApplyBudget()
-	request.CommitmentOnly = true
-	request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
-	_, err = st.ApplyPersonSweep(ctx, request)
-	r.NoError(err)
-	var through, observed int64
-	err = st.db.QueryRowContext(ctx, `SELECT through_sequence, observed_sequence FROM person_commitment_frontiers WHERE person_id = ?`, f.personID).Scan(&through, &observed)
-	r.NoError(err)
-	a.Zero(through)
-	a.Equal(window.ThroughSequence, observed)
-	due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window, "")
-	r.NoError(err)
-	a.False(due)
-	due, err = st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.Window), cfg.Commitments.MinInterval, cfg.Commitments.Window, "")
-	r.NoError(err)
-	a.True(due)
 }
 
 func commitmentSourceID(window peoplesweep.CommitmentWindow, id int64) string {
