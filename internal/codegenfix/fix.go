@@ -137,7 +137,6 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		{"Evidence", "Excerpt", "e"},
 		{"ContactCandidate", "DisplayName", "c"},
 		{"CardDAVBinding", "RemoteUID", "c"},
-		{"PersonEnrichmentProviderSetting", "Endpoint", "p"},
 		{"MessagingRoute", "MergedIntoChatID", "m"},
 		{"MessagingRoute", "Network", "m"},
 		{"MessagingRoute", "NetworkLabel", "m"},
@@ -175,15 +174,6 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		default:
 			return nil, shapeErr
 		}
-	}
-	var err error
-	result, err = removeRequiredValidationTag(result, "PersonEnrichmentProviderSetting", "Endpoint", "string")
-	if err != nil {
-		return nil, err
-	}
-	result, err = rewriteRequiredSlicePresenceValidator(result, "Person", "ParticipantIds", "p", "[]int64")
-	if err != nil {
-		return nil, err
 	}
 	const dailyNoteRequest = "CreateDailyNoteEntryRequest"
 	startMarker := []byte("func (c " + dailyNoteRequest + ") Validate() error {")
@@ -229,51 +219,5 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		return nil, errors.New("generated AttributeValue.JSON shape changed")
 	}
 	result = optionalValueJSONTag.ReplaceAll(result, []byte("${1},omitzero${2}"))
-	return result, nil
-}
-
-func removeRequiredValidationTag(source []byte, typeName, field, fieldType string) ([]byte, error) {
-	shapeErr := fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
-	tagged := regexp.MustCompile(`(?m)(^type ` + typeName + ` struct \{\n(?:[ \t]*[^\n]*\n)*?\t` + field + `\s+` + regexp.QuoteMeta(fieldType) + `\s+` + "`" + `json:"[^"]+")\s+validate:"required"` + "`")
-	if loc := tagged.FindSubmatchIndex(source); loc != nil {
-		result := append(append(append([]byte(nil), source[:loc[3]]...), '`'), source[loc[1]:]...)
-		return result, nil
-	}
-	fieldPattern := regexp.MustCompile(`(?m)^type ` + typeName + ` struct \{\n(?:[ \t]*[^\n]*\n)*?\t` + field + `\s+` + regexp.QuoteMeta(fieldType) + `\s+`)
-	if !fieldPattern.Match(source) {
-		return nil, shapeErr
-	}
-	return source, nil
-}
-
-func rewriteRequiredSlicePresenceValidator(source []byte, typeName, field, receiver, fieldType string) ([]byte, error) {
-	shapeErr := fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
-	startMarker := []byte("func (" + receiver + " " + typeName + ") Validate() error {")
-	start := bytes.Index(source, startMarker)
-	if start < 0 {
-		return nil, shapeErr
-	}
-	endOffset := bytes.Index(source[start:], []byte("\n}\n"))
-	if endOffset < 0 {
-		return nil, shapeErr
-	}
-	end := start + endOffset
-	validator := source[start:end]
-	required := []byte("\tif err := typesValidator.Var(" + receiver + "." + field + ", \"required\"); err != nil {\n\t\terrors = errors.Append(\"" + field + "\", err)\n\t}\n")
-	presence := []byte("\tif " + receiver + "." + field + " == nil {\n\t\terrors = errors.Append(\"" + field + "\", fmt.Errorf(\"required field is missing\"))\n\t}\n")
-	generatedCount := bytes.Count(validator, required)
-	presenceCount := bytes.Count(validator, presence)
-	switch {
-	case generatedCount == 1 && presenceCount == 0:
-		rewritten := bytes.Replace(validator, required, presence, 1)
-		source = append(append(append([]byte(nil), source[:start]...), rewritten...), source[end:]...)
-	case generatedCount == 0 && presenceCount == 1:
-	default:
-		return nil, shapeErr
-	}
-	result, err := removeRequiredValidationTag(source, typeName, field, fieldType)
-	if err != nil {
-		return nil, err
-	}
 	return result, nil
 }
