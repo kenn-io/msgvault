@@ -1154,14 +1154,13 @@ func (w *Worker) runPerson(
 	}
 	lease = *renewed
 	completedAt := w.now()
-	var briefRetryAt time.Time
+	var briefRetryAt, commitmentRetryAt time.Time
+	retryAt := completedAt.Add(personSweepRetryDelay(attemptID, lease.AttemptCount, 0, w.Config.RetryBase, w.Config.RetryMax))
 	if briefFailure != "" {
-		briefRetryAt = completedAt.Add(personSweepRetryDelay(attemptID, lease.AttemptCount, 0,
-			w.Config.RetryBase, w.Config.RetryMax))
+		briefRetryAt = retryAt
 	}
-	var commitmentRetryAt time.Time
 	if commitmentFailure != "" {
-		commitmentRetryAt = completedAt.Add(personSweepRetryDelay(attemptID, lease.AttemptCount, 0, w.Config.RetryBase, w.Config.RetryMax))
+		commitmentRetryAt = retryAt
 	}
 	apply, applyErr := w.Sink.ApplyPersonSweep(ctx, ApplyRequest{Lease: lease, RunID: runID,
 		AttemptID: attemptID, Generation: generation, CursorEnvelope: assembly.CursorEnvelope,
