@@ -3449,7 +3449,7 @@ grant consent to a provider or enroll a person in briefs.
 | `person facts pin <person-id> <kind> <key>` | Protect a field's current or empty value |
 | `person facts unpin <person-id> <kind> <key>` | Allow automatic resolution for the field again |
 
-On unreleased main, claim reads include `kind` (`fact`, `event`, `preference`, `commitment`)
+Claim reads include `kind` (`fact`, `event`, `preference`, `commitment`)
 and `status` (`fresh`, `stale`, or `expired`). Kind comes from the claim's saved
 identity. The shipped primary channel, contact frequency, “ask me about,” interest, and favorites
 categories are preferences even if renamed. Custom attributes without an end
