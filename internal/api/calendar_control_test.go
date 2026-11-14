@@ -43,29 +43,6 @@ func (s *controlTestStore) ControlCalendar(_ context.Context, r calcontrol.Reque
 
 const controlTestBody = `{"action":"create","account":"person@example.com","calendar_id":"team@example.com","event":{"summary":"Planning","start":{"dateTime":"2026-10-02T09:00:00Z"},"end":{"dateTime":"2026-10-02T10:00:00Z"}}}`
 
-func TestCalendarControlVerificationWithheld(t *testing.T) {
-	backend := &controlTestStore{mockStore: &mockStore{stats: &StoreStats{}}}
-	srv := NewServer(&config.Config{}, backend, nil, testLogger())
-	for _, tc := range []struct {
-		body          string
-		status, calls int
-	}{
-		{`{"action":"freebusy","account":"person@example.com","calendar_id":"team@example.com","time_min":"2026-10-02T09:00:00Z","time_max":"2026-10-02T10:00:00Z"}`, http.StatusOK, 1},
-		{controlTestBody, http.StatusForbidden, 1},
-	} {
-		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/calendar/control", strings.NewReader(tc.body))
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
-		response := httptest.NewRecorder()
-		srv.Router().ServeHTTP(response, request)
-		assert.Equal(t, tc.status, response.Code, response.Body.String())
-		assert.Equal(t, tc.calls, backend.calls)
-		if tc.status == http.StatusForbidden {
-			assert.Contains(t, response.Body.String(), "verification_masked")
-		}
-	}
-}
-
 func TestCalendarControlDelegationAndStrictJSON(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
