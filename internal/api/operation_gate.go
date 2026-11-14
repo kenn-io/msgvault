@@ -616,6 +616,7 @@ func cliRepairMessageGateDecision(r *http.Request) (label string, skip bool, err
 // cliRunReadOnlyCommands are proxied CLI commands that only read. Keys are
 // the leading command-path words of CLIRunRequest args (flags follow them).
 var cliRunReadOnlyCommands = map[string]bool{
+	"diagnose-fts":      true,
 	"export-messages":   true,
 	"export-discord":    true,
 	"list-folders":      true,

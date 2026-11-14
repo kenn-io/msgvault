@@ -359,6 +359,14 @@ durable reason explaining how it arose; do not infer its history from the
 vector alone. The terminal check tests only an empty vector and current
 version, not a separately persisted overflow cause.
 
+The read-only [FTS diagnostic](../cli-reference.md#diagnose-fts) compares saved
+search documents with stored message text, subjects, senders and recipient search
+fields, including the extra data PostgreSQL v3 uses for phrase searches.
+It reports missing, obsolete and differing entries, and inconclusive comparisons.
+Each message is checked at one point in time; different messages and pages can
+reflect later writes. These checks do not verify the underlying search index
+structures. Backfill checks remain cheaper and narrower.
+
 #### How can indexing resume?
 
 `BackfillFTSContext` fills absent SQLite entries and PostgreSQL entries whose

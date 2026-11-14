@@ -28,6 +28,7 @@ const (
 )
 
 var topLevelCommandGroups = map[string]string{
+	"diagnose-fts":            helpGroupIndex,
 	"source":                  helpGroupSources,
 	"address":                 helpGroupPeople,
 	"activity":                helpGroupIndex,
@@ -239,25 +240,11 @@ func registerHelpTemplateFunctions() {
 	helpTemplateFunctions.Do(func() {
 		cobra.AddTemplateFunc("globalFlagNames", globalFlagNames)
 		cobra.AddTemplateFunc("parentFlagUsages", parentFlagUsages)
-		cobra.AddTemplateFunc("groupNamePadding", groupNamePadding)
 	})
 }
 
 func isHelpOnlyGroup(command *cobra.Command) bool {
 	return command.Annotations[helpOnlyGroupAnnotation] == "true"
-}
-
-// Align each group independently so long source names do not pad every row.
-func groupNamePadding(commands []*cobra.Command, group string) int {
-	padding := 11 // Cobra's minimum name padding.
-	for _, command := range commands {
-		if command.GroupID == group && (command.IsAvailableCommand() || command.Name() == "help") {
-			if len(command.Name()) > padding {
-				padding = len(command.Name())
-			}
-		}
-	}
-	return padding
 }
 
 // isRootFlag reports whether an inherited flag is the root's own persistent
@@ -309,7 +296,7 @@ func suggestionText(command *cobra.Command, arg string) string {
 }
 
 // Based on Cobra v1.10.2's defaultUsageTemplate in command.go. When bumping
-// Cobra, re-diff this copy. Inherited flags, help-only groups, and group padding differ.
+// Cobra, re-diff this copy. Inherited flags, help-only groups, and root spacing differ.
 // Root flags are listed by name; flags from parent groups print in full.
 const compactHelpUsageTemplate = `Usage:{{if and .Runnable (not (index .Annotations "` + helpOnlyGroupAnnotation + `"))}}
   {{.UseLine}}{{end}}{{if .HasAvailableSubCommands}}
@@ -325,7 +312,7 @@ Available Commands:{{range $cmds}}{{if (or .IsAvailableCommand (eq .Name "help")
   {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{else}}{{range $group := .Groups}}
 
 {{.Title}}{{range $cmds}}{{if (and (eq .GroupID $group.ID) (or .IsAvailableCommand (eq .Name "help")))}}
-  {{rpad .Name (groupNamePadding $cmds $group.ID) }} {{.Short}}{{end}}{{end}}{{end}}{{if not .AllChildCommandsHaveGroup}}
+  {{.Name}}  {{.Short}}{{end}}{{end}}{{end}}{{if not .AllChildCommandsHaveGroup}}
 
 Additional Commands:{{range $cmds}}{{if (and (eq .GroupID "") (or .IsAvailableCommand (eq .Name "help")))}}
   {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{end}}{{end}}{{if .HasAvailableLocalFlags}}

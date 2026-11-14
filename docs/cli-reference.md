@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-14"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -18,6 +18,7 @@ appear in full under Inherited Flags.
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full), [source feeds add](#source-feeds-add) |
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-discord-package](#import-discord-package), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
+| Check search representations | [diagnose-fts](#diagnose-fts) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
 | Find a partial address | [address](#address) |
@@ -4197,6 +4198,97 @@ archive. `msgvault serve` also runs this projection on the schedule configured
 under `[activity]`.
 
 ---
+
+## diagnose-fts
+
+Not in the latest release yet.
+
+Compare a bounded page of search documents with stored message text, subjects,
+senders and the recipient fields used for search, through the configured daemon.
+This command opens the archive read-only.
+It does not repair, migrate, rebuild, synchronize, or contact message providers.
+Daemon startup and scheduled work keep their normal lifecycle effects; use an
+isolated copy with scheduled work disabled for operator verification.
+
+```bash
+msgvault diagnose-fts --limit 100 --timeout 30s --json
+msgvault diagnose-fts --cursor '<next_cursor>' --json
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--limit` | `100` | Maximum selected messages, from 1 to 1,000 |
+| `--timeout` | `30s` | Diagnostic time limit, from 1 second to 5 minutes |
+| `--cursor` | Empty | Resume the reported interval on the same archive and indexing format |
+| `--json` | `false` | Emit one bounded JSON report instead of text |
+
+Selection includes all persisted messages, including source-deleted and hidden
+rows, in increasing internal ID order. The first page fixes `through_id` to the
+largest visible ID. The cursor binds that bound and the completed prefix to the
+archive identity, backend and indexing format. Keep cursors private with the
+reports: they contain archive identity, but no message content or provider IDs.
+A cursor is a continuation, not an authorization token or a saved SQL snapshot.
+
+Each entry has `state` of `matched`, `defect`, or `inconclusive`. `issues` can
+contain `missing`, `obsolete_version` (PostgreSQL), `document_mismatch`,
+`auxiliary_mismatch` (PostgreSQL phrase-search fields), or `identity_mismatch`
+(SQLite row identity). An inconclusive entry may also have a proven issue;
+`defects` counts entries with issues, and `inconclusive` counts unfinished
+comparisons. These counts can overlap. No private text or raw SQL error is
+included. `empty_document` identifies an empty expected document; a matching
+empty document is legitimate.
+
+The report always identifies `backend`. With `backend: "sqlite"`,
+`indexing_version: 0` means the version is not applicable: SQLite has no
+PostgreSQL-style document version. Zero does not mean missing or obsolete;
+use the entry state and issues for those findings. With `backend: "postgres"`,
+`indexing_version` reports the expected format, currently 3.
+
+PostgreSQL uses the current v3 preparation, vector construction and NULL-safe
+`search_fts_fields` comparison. A current version alone does not establish a
+match. An empty vector differs from a legitimate v3 empty document, which still
+contains separators. If the expected vector itself overflows, the result is
+`inconclusive`, with `expected_vector_overflow`; no cause is inferred from a
+stored empty vector. SQLite compares the five FTS5 content columns and row
+identity. These checks compare saved search documents. They do not verify the
+underlying index structure, how text was extracted from original messages or
+split into search terms, or the original message bytes.
+Existing database integrity checks cover a different dimension.
+
+Inputs are limited to 1,000,000 bytes per document field and 256 recipients.
+The recipient address/name preflight allows 1,000,000 bytes on SQLite or
+1,000,000 characters on PostgreSQL. SQLite reads and measures bytes so embedded
+NUL characters cannot hide a suffix. SQL bounds text before transfer. Inputs
+exceeding those limits yield `inconclusive` with
+`input_limit`; a truncated comparison never establishes a match. Missing body
+rows use the empty-body rule of stored-message indexing. Caller-supplied index
+documents can intentionally differ from this stored-data rule: a mismatch
+establishes that difference, not its cause or a provider ingestion defect.
+
+Each message uses one read-only SQL snapshot, with repeatable read on PostgreSQL
+and a read transaction on SQLite. A concurrent commit cannot split that
+message's comparison. Different messages and pages can see different commits.
+Deletion after selection is `inconclusive`. Later insertions and writes behind
+the cursor are outside the guarantee, including late commits with lower IDs.
+Use a quiescent copy for a stable full traversal, and restart from the first page
+after repair or when a fresh assessment is needed.
+
+`complete` describes exhaustion of the selected interval for this page. `outcome`
+is `ok` only when selection completed, all comparisons were conclusive, and no
+defects were found. It is `defects` for a completed conclusive page with defects,
+and `incomplete` for remaining pages, inconclusive entries, SQL failures or
+interruption. Only `ok` exits successfully. Counts apply to each report; retain
+and combine every page, since a final successful page does not clear earlier
+findings. Inconclusive entries are recorded and advance the cursor; review their
+internal IDs and repeat a fresh traversal after resolving the limitation.
+Cancellation, timeout and SQL failure leave the interrupted row eligible in
+`next_cursor`. If transport cancellation or an output failure loses the report,
+retry the original cursor; repeating observations is safe. No checkpoint is
+written to the archive.
+
+Older daemons reject `diagnose-fts` through the CLI runner's command allowlist.
+An API version shared with another feature does not establish command support.
+Use a CLI and daemon that both contain this command.
 
 ## rebuild-fts
 
