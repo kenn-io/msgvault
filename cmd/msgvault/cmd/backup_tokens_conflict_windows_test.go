@@ -3,7 +3,7 @@
 package cmd
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"os/exec"
@@ -103,8 +103,11 @@ func TestPostRestoreRepairDoesNotForceUnlock(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg, dbPath, attachments := backupTokenFixture(t)
-	repo := createBackupTokenSnapshot(t, cfg, dbPath, attachments)
-	manifest, err := repo.LatestSnapshot()
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(err)
+	manifest, err := backup.Create(t.Context(), repo, backupapp.New("test"), backup.CreateOptions{
+		DBPath: dbPath, ContentDir: attachments, DataDir: cfg.Data.DataDir,
+	})
 	require.NoError(err)
 	target := t.TempDir()
 	prepareBackupTokenRestore(t)

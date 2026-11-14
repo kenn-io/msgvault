@@ -361,9 +361,7 @@ func TestSecureRestoredRejectsIntermediateJunctionBeforeChangingOutsideACL(t *te
 	before := restoredTestDescriptor(t, file, false)
 	junction := filepath.Join(root, "junction")
 	output, err := exec.CommandContext(t.Context(), "cmd.exe", "/d", "/c", "mklink", "/J", junction, outside).CombinedOutput()
-	if err != nil {
-		t.Skipf("create directory junction: %v: %s", err, output)
-	}
+	require.NoError(err, "%s", output)
 	t.Cleanup(func() { require.NoError(os.Remove(junction)) })
 	err = SecureRestored(root, []string{filepath.Join("junction", "nested", "credential.json")})
 	assert.Error(t, err)
