@@ -254,15 +254,17 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	if backupRestoreTarget == "" {
 		return errors.New("backup: restore target directory is required")
 	}
-	if err := refuseRestoreIntoLiveDaemonHome(backupRestoreTarget, cfg); err != nil {
-		return err
-	}
 	if backupRestorePermissionsOnly {
 		for _, name := range []string{"overwrite", "jobs", "integrity-check", "loose-attachments"} {
 			if cmd.Flags().Changed(name) {
 				return fmt.Errorf("--%s cannot be used with --permissions-only", name)
 			}
 		}
+	}
+	if err := refuseRestoreIntoLiveDaemonHome(backupRestoreTarget, cfg); err != nil {
+		return err
+	}
+	if backupRestorePermissionsOnly {
 		if len(args) == 0 || args[0] == "" {
 			return errors.New("--permissions-only requires an explicit snapshot ID")
 		}

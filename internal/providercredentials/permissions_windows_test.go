@@ -518,7 +518,9 @@ func TestRestorePreflightRejectsReparseEntry(t *testing.T) {
 		providerCredentialTestAccess(user, windows.GENERIC_ALL, windows.TRUSTEE_IS_USER),
 		providerCredentialTestAccess(windowsProviderCredentialSID(t, "S-1-1-0"), windows.GENERIC_READ, windows.TRUSTEE_IS_WELL_KNOWN_GROUP),
 	}, true)
-	requirements.ErrorIs(SecureRestored(dir, []string{"selected"}), ErrRestorePermissionsConflict)
+	err := SecureRestored(dir, []string{"selected"})
+	requirements.ErrorContains(err, "reparse point or non-regular entry")
+	requirements.NotErrorIs(err, ErrRestorePermissionsConflict)
 }
 
 func TestSecureRestoredPreservesProtectedMixedTree(t *testing.T) {
@@ -580,6 +582,9 @@ func TestSecureRestoredSkipsUnreadableProtectedDirectory(t *testing.T) {
 	after, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	require.NoError(t, err)
 	assert.Equal(t, before.String(), after.String())
+	err = SecureRestored(dir, []string{filepath.Join("omitted", "child")})
+	require.ErrorIs(t, err, os.ErrPermission)
+	require.NotErrorIs(t, err, ErrRestorePermissionsConflict)
 }
 
 func TestSecureRestoredRepairsProtectedSelectedDirectory(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/msgvault/internal/config"
@@ -40,4 +41,26 @@ func TestBackupRestorePermissionsOnlyValidatesInputs(t *testing.T) {
 			require.ErrorContains(t, err, "--"+flag+" cannot be used with --permissions-only")
 		})
 	}
+}
+
+func TestBackupRestoreRejectsIncompatibleFlagsBeforeLiveDaemon(t *testing.T) {
+	dataDir := t.TempDir()
+	owner, err := tryAcquireDaemonOwnerLock(dataDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	cfg := &config.Config{Data: config.DataConfig{DataDir: dataDir}}
+	require.ErrorContains(t, refuseRestoreIntoLiveDaemonHome(dataDir, cfg), "running daemon")
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	prepareBackupTokenRestore(t)
+	backupRestoreRepo, backupRestoreTarget, backupRestorePermissionsOnly = repo.Root(), dataDir, true
+	cmd := &cobra.Command{Use: "restore"}
+	cmd.Flags().Bool("overwrite", false, "")
+	require.NoError(t, cmd.Flags().Set("overwrite", "true"))
+	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	err = runBackupRestore(cmd, []string{"snapshot"})
+	require.ErrorContains(t, err, "--overwrite cannot be used with --permissions-only")
+	cmd.Flags().Lookup("overwrite").Changed = false
+	err = runBackupRestore(cmd, []string{"snapshot"})
+	require.ErrorContains(t, err, "running daemon")
 }

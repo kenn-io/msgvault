@@ -64,23 +64,23 @@ func restorePreflight(dir string, selected, ancestors ordinalPaths, rootAffected
 	affected := map[string]bool{".": rootAffected}
 	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return fmt.Errorf("%w: inspect tokens: %w", ErrRestorePermissionsConflict, walkErr)
+			return fmt.Errorf("inspect tokens: %w", walkErr)
 		}
 		if path == dir {
 			return nil
 		}
 		rel, err := filepath.Rel(dir, path)
 		if err != nil {
-			return fmt.Errorf("%w: inspect tokens: %w", ErrRestorePermissionsConflict, err)
+			return fmt.Errorf("inspect tokens: %w", err)
 		}
 		parentAffected := affected[filepath.Dir(rel)]
 		selectedFile, err := selected.contains(rel)
 		if err != nil {
-			return fmt.Errorf("%w: compare tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
+			return fmt.Errorf("compare tokens/%s: %w", rel, err)
 		}
 		selectedAncestor, err := ancestors.contains(rel)
 		if err != nil {
-			return fmt.Errorf("%w: compare tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
+			return fmt.Errorf("compare tokens/%s: %w", rel, err)
 		}
 		if !parentAffected && !selectedFile && !selectedAncestor {
 			if entry.IsDir() {
@@ -89,26 +89,26 @@ func restorePreflight(dir string, selected, ancestors ordinalPaths, rootAffected
 			return nil
 		}
 		if entry.Type()&fs.ModeSymlink != 0 || (!entry.IsDir() && !entry.Type().IsRegular()) {
-			return fmt.Errorf("%w: ambiguous tokens/%s", ErrRestorePermissionsConflict, rel)
+			return fmt.Errorf("inspect tokens/%s: reparse point or non-regular entry", rel)
 		}
 		h, err := openSecurityHandle(path, entry.IsDir(), windows.READ_CONTROL)
 		if err != nil {
-			return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
+			return fmt.Errorf("inspect tokens/%s: %w", rel, err)
 		}
 		defer windows.CloseHandle(h) //nolint:errcheck // inspection result is authoritative
 		sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 		if err != nil {
-			return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
+			return fmt.Errorf("inspect tokens/%s: %w", rel, err)
 		}
 		control, _, err := sd.Control()
 		if err != nil {
-			return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
+			return fmt.Errorf("inspect tokens/%s: %w", rel, err)
 		}
 		protected := control&windows.SE_DACL_PROTECTED != 0
 		if entry.IsDir() {
 			if selectedAncestor && verifyOwnerOnlyHandle(h, false) != nil {
 				if err := verifyHandleOwner(h); err != nil {
-					return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
+					return fmt.Errorf("inspect tokens/%s: %w", rel, err)
 				}
 				directories = append(directories, rel)
 				affected[rel] = true
@@ -126,7 +126,7 @@ func restorePreflight(dir string, selected, ancestors ordinalPaths, rootAffected
 		}
 		inherited, err := inheritedAccess(sd)
 		if err != nil {
-			return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
+			return fmt.Errorf("inspect tokens/%s: %w", rel, err)
 		}
 		if inherited {
 			return fmt.Errorf("%w: tokens/%s", ErrRestorePermissionsConflict, rel)
