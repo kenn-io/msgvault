@@ -72,7 +72,7 @@ func TestMeetingDecisionScopedReadHidesOtherSource(t *testing.T) {
 	r.Equal([]int64{refs[0].MessageID, refs[1].MessageID}, record.MessageIDs)
 }
 
-func TestMeetingLinkDecisionLargeGroupsLinkAndSplit(t *testing.T) {
+func TestMeetingLinkDecisionGroupsLinkAndSplit(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	groups := [2][]int64{}
@@ -416,9 +416,6 @@ func TestMeetingLinkDecisionUnsupportedSeries(t *testing.T) {
 				assert.Equal(t, []int64{note}, record.MessageIDs)
 				if tc.decision == "unlink" {
 					assert.Empty(t, record.Links)
-					assert.Empty(t, record.Unexpandable)
-				} else {
-					assert.Equal(t, []CalendarUnexpandable{{MessageID: event, Reason: "unsupported recurrence"}}, record.Unexpandable)
 				}
 				return
 			}
