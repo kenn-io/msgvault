@@ -331,10 +331,13 @@ func (w missingETagResponseWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
-type emptyReceiptResponseWriter struct{ http.ResponseWriter }
+type emptyReceiptResponseWriter struct {
+	http.ResponseWriter
+	body string
+}
 
 func (w emptyReceiptResponseWriter) Write(data []byte) (int, error) {
-	_, err := w.ResponseWriter.Write([]byte(`{}`))
+	_, err := w.ResponseWriter.Write([]byte(w.body))
 	return len(data), err
 }
 
@@ -375,7 +378,11 @@ func TestMCPCommittedWriteWithUnusableReceiptRemainsUncertain(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodPatch {
 					if strings.HasSuffix(kind, "empty receipt") {
-						router.ServeHTTP(emptyReceiptResponseWriter{w}, r)
+						body := `{}`
+						if strings.HasPrefix(kind, "person") {
+							body = `{"id":1}`
+						}
+						router.ServeHTTP(emptyReceiptResponseWriter{ResponseWriter: w, body: body}, r)
 						return
 					}
 					router.ServeHTTP(missingETagResponseWriter{w}, r)
