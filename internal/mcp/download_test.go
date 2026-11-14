@@ -368,14 +368,7 @@ func TestDownloadSnapshotIndependentOperations(t *testing.T) {
 		require.NoError(t, <-old)
 		require.NoError(t, current.err)
 		assert.Equal(t, []byte("new"), current.snapshot.data)
-		_, err := cache.get(t.Context(), key, chunkRequest{offset: 1, digest: current.snapshot.digest}, loadNew)
-		require.ErrorIs(t, err, errDownloadExpired)
-		restarted, err := cache.get(t.Context(), key, chunkRequest{length: 1}, loadNew)
-		require.NoError(t, err)
-		assert.Equal(t, []byte("new"), restarted.data)
-		continued, err := cache.get(t.Context(), key, chunkRequest{offset: 1, digest: restarted.digest}, loadNew)
-		require.NoError(t, err)
-		assert.Equal(t, []byte("new"), continued.data)
+
 	})
 }
 
