@@ -19,9 +19,11 @@ func TestDraftQuotedMailboxValidation(t *testing.T) {
 	require.NoError(t, err)
 	got := lintObject(t, events)
 	assert.Equal(t, true, got["valid"])
-	recipients := got["recipients"].(map[string]any)
+	recipients, ok := got["recipients"].(map[string]any)
+	require.True(t, ok)
 	for _, field := range []string{"to", "cc", "bcc"} {
-		values := recipients[field].([]any)
+		values, ok := recipients[field].([]any)
+		require.True(t, ok)
 		require.Len(t, values, 1)
 		address, ok := values[0].(string)
 		require.True(t, ok)
