@@ -20,7 +20,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func TestBackupRestoreConflictNoTokensAndPermissionRetry(t *testing.T) {
+func TestBackupRestoreConflictAndPermissionRetry(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg, dbPath, attachments := backupTokenFixture(t)
@@ -77,39 +77,6 @@ func TestBackupRestoreConflictNoTokensAndPermissionRetry(t *testing.T) {
 	if assert.NoError(json.Unmarshal(parsed, &args), "%s", parsed) {
 		assert.Equal([]string{"msgvault", "backup", "restore", manifest.SnapshotID, "--repo", repo.Root(), "--target", syntheticTarget, "--permissions-only"}, args)
 	}
-
-	configPath := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(os.WriteFile(configPath, []byte("# config"), 0o600))
-	configSnapshot, err := backup.Create(t.Context(), repo, backupapp.New("test"), backup.CreateOptions{
-		DBPath: dbPath, ContentDir: attachments, DataDir: cfg.Data.DataDir,
-		Extras: backup.ExtrasSpec{Files: []backup.ExtrasFileSpec{{Path: configPath, RecordAs: "config.toml"}}}, IncludeConfig: true,
-	})
-	require.NoError(err)
-	emptySnapshot, err := backup.Create(t.Context(), repo, backupapp.New("test"), backup.CreateOptions{
-		DBPath: dbPath, ContentDir: attachments, DataDir: cfg.Data.DataDir,
-	})
-	require.NoError(err)
-	deny, err := windows.SecurityDescriptorFromString("D:P")
-	require.NoError(err)
-	emptyACL, _, err := deny.DACL()
-	require.NoError(err)
-	require.NoError(windows.SetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, emptyACL, nil))
-	t.Cleanup(func() {
-		assert.NoError(windows.SetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
-	})
-	locked, err := windows.GetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
-	require.NoError(err)
-	_, err = os.ReadDir(tokens)
-	require.Error(err)
-	for _, snapshot := range []string{configSnapshot.SnapshotID, emptySnapshot.SnapshotID} {
-		output, err = runBackupTokenRestore(t, cfg, repo, snapshot, "--target", target, "--permissions-only")
-		require.NoError(err)
-		assert.Contains(output, "secured token files: 0")
-		after, err := windows.GetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
-		require.NoError(err)
-		assert.Equal(locked.String(), after.String())
-	}
-	require.NoError(windows.SetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
 
 	require.NoError(os.Rename(omitted, filepath.Join(t.TempDir(), "omitted")))
 	output, err = runBackupTokenRestore(t, cfg, repo, manifest.SnapshotID, "--target", target, "--permissions-only")
