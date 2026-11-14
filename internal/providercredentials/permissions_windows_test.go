@@ -493,7 +493,7 @@ func TestRestorePreflightRejectsReparseEntry(t *testing.T) {
 	requirements.NoError(os.WriteFile(filepath.Join(dir, "selected"), []byte("selected"), 0o600))
 	shareRestoredTestDirectory(t, dir, windows.GENERIC_READ, windows.NO_INHERITANCE)
 	err := SecureRestored(dir, []string{"selected"})
-	requirements.ErrorContains(err, "reparse point or non-regular entry")
+	requirements.ErrorContains(err, "links and special files are unsupported")
 	requirements.NotErrorIs(err, ErrRestorePermissionsConflict)
 }
 
@@ -513,9 +513,16 @@ func TestSecureRestoredPreservesOmittedBelowProtectedAncestor(t *testing.T) {
 	omittedBelow := filepath.Join(changedAncestor, "omitted")
 	requirements.NoError(os.WriteFile(filepath.Join(changedAncestor, "selected"), []byte("selected"), 0600))
 	requirements.NoError(os.WriteFile(omittedBelow, []byte("omitted"), 0600))
-	before := restoredTestDescriptor(t, omittedBelow, false)
-	requirements.NoError(SecureRestored(dir, []string{filepath.Join("nested", "changed", "selected")}))
-	assert.Equal(t, before, restoredTestDescriptor(t, omittedBelow, false))
+	selected := filepath.Join(changedAncestor, "selected")
+	paths := []string{dir, nested, changedAncestor, selected, omittedBelow}
+	before := make([]string, len(paths))
+	for i, path := range paths {
+		before[i] = restoredTestDescriptor(t, path, i < 3)
+	}
+	requirements.ErrorIs(SecureRestored(dir, []string{filepath.Join("nested", "changed", "selected")}), ErrRestorePermissionsConflict)
+	for i, path := range paths {
+		assert.Equal(t, before[i], restoredTestDescriptor(t, path, i < 3))
+	}
 }
 
 func TestSecureRestoredHandlesUnreadableProtectedDirectory(t *testing.T) {
@@ -528,11 +535,14 @@ func TestSecureRestoredHandlesUnreadableProtectedDirectory(t *testing.T) {
 	child := filepath.Join(omitted, "child")
 	require.NoError(t, os.WriteFile(child, []byte("unchanged"), 0o600))
 	handle := setProviderCredentialTestACL(t, omitted, []windows.EXPLICIT_ACCESS{
-		providerCredentialTestAccess(currentWindowsProviderCredentialSID(t), windows.READ_CONTROL, windows.TRUSTEE_IS_USER),
+		providerCredentialTestAccess(currentWindowsProviderCredentialSID(t), windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES, windows.TRUSTEE_IS_USER),
 	}, true)
 	t.Cleanup(func() { require.NoError(t, secureOwnerOnlyHandle(handle)) })
+	probe, err := openSecurityHandle(omitted, true, windows.READ_CONTROL)
+	require.NoError(t, err)
+	require.NoError(t, windows.CloseHandle(probe))
 	before := restoredTestDescriptor(t, omitted, true)
-	_, err := os.ReadDir(omitted)
+	_, err = os.ReadDir(omitted)
 	require.Error(t, err)
 	shareRestoredTestDirectory(t, dir, windows.GENERIC_READ, windows.NO_INHERITANCE)
 	require.NoError(t, SecureRestored(dir, []string{"selected"}))

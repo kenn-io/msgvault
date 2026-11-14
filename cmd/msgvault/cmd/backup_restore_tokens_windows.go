@@ -35,15 +35,15 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 	}
 	id, err := pack.ParseBlobID(manifest.Extras.Tree)
 	if err != nil {
-		return 0, fmt.Errorf("parse snapshot extras tree ID: %w", err)
+		return 0, fmt.Errorf("read saved credentials: %w", err)
 	}
 	index, err := repo.LoadBlobIndex()
 	if err != nil {
-		return 0, fmt.Errorf("load snapshot blob index: %w", err)
+		return 0, fmt.Errorf("read saved credentials: %w", err)
 	}
 	raw, err := repo.ReadBlob(index, id, nil, backupapp.New(Version).PackFileExtension())
 	if err != nil {
-		return 0, fmt.Errorf("read snapshot extras tree: %w", err)
+		return 0, fmt.Errorf("read saved credentials: %w", err)
 	}
 	var tree backup.ExtrasTree
 	if err := json.Unmarshal(raw, &tree); err != nil {

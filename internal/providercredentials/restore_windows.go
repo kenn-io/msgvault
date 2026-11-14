@@ -80,7 +80,7 @@ func restorePreflight(dir string, selected, ancestors []string, rootAffected boo
 			return nil
 		}
 		if entry.Type()&fs.ModeSymlink != 0 || (!entry.IsDir() && !entry.Type().IsRegular()) {
-			return fmt.Errorf("inspect tokens/%s: reparse point or non-regular entry", rel)
+			return fmt.Errorf("inspect tokens/%s: links and special files are unsupported", rel)
 		}
 		h, err := openSecurityHandle(path, entry.IsDir(), windows.READ_CONTROL)
 		if err != nil {
