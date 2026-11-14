@@ -496,8 +496,13 @@ func TestMeetingSuggestionsBudgetAfterFirstResult(t *testing.T) {
 	data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Valid: true}
 	_, err := st.UpsertMessage(data.Message)
 	r.NoError(err)
-	// Two event graphs need more than ten row reads; the first fits within it.
-	page, err := st.suggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10, nil, 10)
+	// Each candidate costs six reads for its occurrence and decision graph.
+	const oneCandidateBudget = 6
+	ref := MeetingLinkRef{Kind: "msg", MessageID: note}
+	page, err := st.suggestMeetingLinksContext(t.Context(), ref, 1, nil, oneCandidateBudget)
+	r.NoError(err)
+	r.Len(page.Suggestions, 1)
+	page, err = st.suggestMeetingLinksContext(t.Context(), ref, 2, nil, oneCandidateBudget)
 	r.Len(page.Suggestions, 1)
 	r.ErrorIs(err, ErrQueryTooBroad)
 }
