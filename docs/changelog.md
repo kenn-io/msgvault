@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Preview draft recipients and lint with `--validate-only`, refuse saves with lint errors using `--strict`, or allow templates with `--allow-placeholders`. See [draft lint and validation](usage/chat.md#draft-lint-and-validation).
+- Preview draft recipients and lint with `--validate-only`, and refuse saves with lint errors using `--strict`. See [draft lint and validation](usage/chat.md#draft-lint-and-validation).
 
 - Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
 

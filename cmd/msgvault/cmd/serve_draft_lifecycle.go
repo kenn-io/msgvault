@@ -138,7 +138,7 @@ func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
 				return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft-get accepts one positive --conversation"))
 			}
 			intent.ConversationID = parsed
-		case "strict", "allow-placeholders", "validate-only":
+		case "strict", "validate-only":
 			if err := setDraftLintFlag(&intent.draftLintOptions, lintSeen, name, value, hasValue); err != nil {
 				return draftLifecycleIntent{}, err
 			}

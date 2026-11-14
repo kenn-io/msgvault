@@ -359,7 +359,7 @@ func TestDraftToolLintFlagsPassed(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 
-			args := map[string]any{"body": "ok", "strict": true, "allow_placeholders": true, "validate_only": true}
+			args := map[string]any{"body": "ok", "strict": true, "validate_only": true}
 			if command == "draft-reply" || command == "draft-forward" {
 				args["message_id"] = 7
 			}
@@ -373,7 +373,6 @@ func TestDraftToolLintFlagsPassed(t *testing.T) {
 			require.NoError(err)
 			require.False(result.IsError)
 			assert.Equal([]string{"true"}, runner.request.Flags["strict"])
-			assert.Equal([]string{"true"}, runner.request.Flags["allow-placeholders"])
 			assert.Equal([]string{"true"}, runner.request.Flags["validate-only"])
 		})
 	}

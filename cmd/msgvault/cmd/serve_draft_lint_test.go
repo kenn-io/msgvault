@@ -91,7 +91,7 @@ func TestDraftReplyStrictRefuses(t *testing.T) {
 func TestDraftLintRepeatedFindingsOutput(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	in := draftlint.Input{Channel: "chat", Body: "FIRST_NAME LAST_NAME <URL> \x01\x02"}
+	in := draftlint.Input{Channel: "chat", Body: "FIRST_NAME LAST_NAME <URL> <URL>"}
 	result := draftlint.Check(in)
 	var events []api.CLIRunEvent
 	emit := func(event api.CLIRunEvent) error { events = append(events, event); return nil }
@@ -99,55 +99,34 @@ func TestDraftLintRepeatedFindingsOutput(t *testing.T) {
 	require.Len(events, 1)
 	assert.Equal(1, strings.Count(events[0].Data, "error: The text contains a template placeholder."))
 	assert.Equal(1, strings.Count(events[0].Data, "warn: The text contains a template placeholder."))
-	assert.Equal(1, strings.Count(events[0].Data, "error: The text contains a control or replacement character."))
 	events = nil
 	require.NoError(emitValidatedDraft(emit, result, in, true))
 	got := lintObject(t, events)
 	warnings, ok := got["warnings"].([]any)
 	require.True(ok)
-	assert.Len(warnings, 5)
+	assert.Len(warnings, 4)
 }
 func TestDraftReplyLintAndProvenanceWarnings(t *testing.T) {
-	for _, allow := range []bool{false, true} {
-		t.Run(fmt.Sprintf("allow=%t", allow), func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 
-			f := newDraftReplyFixture(t)
-			args := []string{"--body", "Hi FIRST_NAME", "--json"}
-			if allow {
-				args = append(args, "--strict", "--allow-placeholders")
-			}
-			events, err := f.run(t, f.grantedAdapter(), args...)
-			require.NoError(err)
-			got := lintObject(t, events)
-			warnings, ok := got["warnings"].([]any)
-			require.True(ok)
-			require.NotEmpty(warnings)
-			first, ok := warnings[0].(map[string]any)
-			require.True(ok)
-			assert.Equal("unresolved_placeholder", first["code"])
-			severity := "error"
-			if allow {
-				severity = "warn"
-			}
-			assert.Equal(severity, first["severity"])
-			if allow {
-				return
-			}
-			found := false
-			for _, w := range warnings {
-				warning, ok := w.(map[string]any)
-				require.True(ok)
-				if warning["code"] == "recipient_provenance" {
-					found = true
-					assert.Equal("warn", warning["severity"])
-					assert.Equal("to", warning["field"])
-				}
-			}
-			assert.True(found)
-		})
+	f := newDraftReplyFixture(t)
+	events, err := f.run(t, f.grantedAdapter(), "--body", "Hi FIRST_NAME", "--json")
+	require.NoError(err)
+	warnings, ok := lintObject(t, events)["warnings"].([]any)
+	require.True(ok)
+	require.NotEmpty(warnings)
+	first, ok := warnings[0].(map[string]any)
+	require.True(ok)
+	assert.Equal("unresolved_placeholder", first["code"])
+	assert.Equal("error", first["severity"])
+	found := false
+	for _, w := range warnings {
+		warning, ok := w.(map[string]any)
+		require.True(ok)
+		found = found || warning["code"] == "recipient_provenance"
 	}
+	assert.True(found)
 }
 
 func TestValidateOnlyWritesNothing(t *testing.T) {
@@ -287,7 +266,7 @@ func TestDraftLintParsers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			for _, flag := range []string{"strict", "allow-placeholders", "validate-only"} {
+			for _, flag := range []string{"strict", "validate-only"} {
 				values := []string{""}
 				if tc.name == "reply" {
 					values = []string{"", "=true", "=false", "=invalid", "duplicate"}
@@ -308,8 +287,6 @@ func TestDraftLintParsers(t *testing.T) {
 					switch flag {
 					case "strict":
 						want.Strict = enabled
-					case "allow-placeholders":
-						want.AllowPlaceholders = enabled
 					case "validate-only":
 						want.ValidateOnly = enabled
 					}
@@ -331,7 +308,7 @@ func TestDraftLintParsers(t *testing.T) {
 		if command != "draft-get" {
 			args = append(args, "--revision", "1")
 		}
-		for _, flag := range []string{"strict", "allow-placeholders", "validate-only"} {
+		for _, flag := range []string{"strict", "validate-only"} {
 			_, err := parseDraftLifecycleArgs(append(append([]string{}, args...), "--"+flag+"=false"))
 			require.NoError(err)
 			_, err = parseDraftLifecycleArgs(append(append([]string{}, args...), "--"+flag))

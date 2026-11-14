@@ -8,19 +8,14 @@ type Span struct {
 type Warning struct {
 	Code     string `json:"code"`
 	Severity string `json:"severity"`
-	Field    string `json:"field,omitempty"`
 	Span     *Span  `json:"span,omitempty"`
-	Excerpt  string `json:"excerpt,omitempty"`
 	Address  string `json:"address,omitempty"`
 	Flag     string `json:"flag,omitempty"`
 	Message  string `json:"message"`
-	Hint     string `json:"hint,omitempty"`
 }
 type Input struct {
-	Kind, Channel, Subject, Body string
-	To, Cc, Bcc                  []string
-	AttachmentCount, BuiltSize   int
-	AllowPlaceholders            bool
+	Kind, Channel, Body string
+	To, Cc, Bcc         []string
 }
 type Result struct {
 	Warnings []Warning
@@ -36,13 +31,7 @@ func (r Result) Blocking() bool {
 }
 
 const (
-	CodeEmptyBody                  = "empty_body"
-	CodeQuotedOnlyBody             = "quoted_only_body"
-	CodeUnresolvedPlaceholder      = "unresolved_placeholder"
-	CodeControlCharacters          = "control_characters"
-	CodeAttachmentMentionedMissing = "attachment_mentioned_missing"
-	CodeEmptySubject               = "empty_subject"
-	CodeEmptyTo                    = "empty_to"
-	CodeOversize                   = "oversize"
-	CodeRecipientProvenance        = "recipient_provenance"
+	CodeEmptyBody             = "empty_body"
+	CodeUnresolvedPlaceholder = "unresolved_placeholder"
+	CodeRecipientProvenance   = "recipient_provenance"
 )

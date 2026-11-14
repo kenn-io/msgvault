@@ -216,7 +216,6 @@ func (a *storeAPIAdapter) runGmailReplyDraft(
 		result.draftRecipientAdvisory = a.draftRecipientAdvisory(ctx, result.MessageID, result.SourceID, target.grant)
 	}
 	appendDraftLint(&result.draftRecipientAdvisory, target.lint)
-	setDraftProvenanceFields(&result.draftRecipientAdvisory, emailDraftLintInput("", "", reply))
 	outputErr := emitGmailDraftReplyOutput(emit, cliStreamStdout, intent.JSON, result)
 	finish(true)
 	if outputErr != nil {

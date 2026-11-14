@@ -471,14 +471,13 @@ and `draft-edit`) accept these options on unreleased `main`:
 | Option | Behavior |
 |---|---|
 | `--strict` | Refuse before writing when lint reports an error. |
-| `--allow-placeholders` | Report unresolved placeholders as warnings. |
 | `--validate-only` | Return the computed recipients and lint without provider or store writes. |
 
 Validation returns `status: "validated"` and a `valid` boolean; an invalid
 draft still exits successfully. `--strict` has no additional effect during
 validation.
 See [draft lint and validation](usage/chat.md#draft-lint-and-validation) for
-warning codes, receipt fields, and permission rules.
+warning codes and permission rules.
 
 ## draft-compose
 

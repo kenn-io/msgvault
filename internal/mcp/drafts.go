@@ -71,7 +71,6 @@ var stableDraftDefinitions = func() map[string]toolDefinition {
 	for _, command := range []string{"draft-reply", "draft-compose", "draft-forward", "draft-edit"} {
 		definition := definitions[command]
 		definition.inputSchema.Properties["strict"] = booleanSchema("Refuse writes on lint errors")
-		definition.inputSchema.Properties["allow_placeholders"] = booleanSchema("Report placeholders as warnings")
 		definition.inputSchema.Properties["validate_only"] = booleanSchema("Validate without writing")
 		definition.description += " With validate_only, writes nothing."
 		definitions[command] = definition
@@ -96,7 +95,7 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 					return toolErrorResult(err.Error()), nil
 				}
 				values = []string{strconv.FormatInt(id, 10)}
-			case "all", "strict", "allow_placeholders", "validate_only":
+			case "all", "strict", "validate_only":
 				if enabled, _ := value.(bool); enabled {
 					values = []string{"true"}
 				}

@@ -121,7 +121,7 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 				}
 				intent.Bcc = append(intent.Bcc, value)
 			}
-		case "strict", "allow-placeholders", "validate-only":
+		case "strict", "validate-only":
 			if err := setDraftLintFlag(&intent.draftLintOptions, lintSeen, name, value, hasValue); err != nil {
 				return draftComposeIntent{}, err
 			}

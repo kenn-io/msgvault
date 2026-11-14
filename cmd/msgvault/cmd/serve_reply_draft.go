@@ -145,7 +145,7 @@ func parseDraftReplyArgs(args []string) (draftReplyIntent, error) {
 				return invalidDraftReplyArgs("--all accepts one flag without a value")
 			}
 			intent.ReplyAll, allSet = true, true
-		case "strict", "allow-placeholders", "validate-only":
+		case "strict", "validate-only":
 			if err := setDraftLintFlag(&intent.draftLintOptions, lintSeen, name, value, hasValue); err != nil {
 				return draftReplyIntent{}, err
 			}
@@ -618,7 +618,6 @@ func (a *storeAPIAdapter) createDraft(
 		result.draftRecipientAdvisory = a.draftRecipientAdvisory(ctx, result.MessageID, result.SourceID, target.grant)
 	}
 	appendDraftLint(&result.draftRecipientAdvisory, target.lint)
-	setDraftProvenanceFields(&result.draftRecipientAdvisory, emailDraftLintInput("", "", draft))
 	if err := emitDraftReplyOutput(emit, cliStreamStdout, asJSON, result); err != nil {
 		return draftReplyError("output_failed", err)
 	}

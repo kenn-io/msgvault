@@ -129,25 +129,18 @@ For an HTTP loopback daemon URL, add `--agent-allow-insecure` before `mcp`. Dele
 
 ### Draft lint and validation
 
-Draft creation and edits check submitted text and the computed envelope. Findings appear in `warnings` with a code, severity, message, and, where applicable, a field, code-point span, and excerpt. Clean receipts omit warnings. Compose checks the submitted subject; reply, forward, and edit check the submitted body.
+Draft creation and edits check the submitted body and the computed envelope. Findings appear in `warnings` with a code, severity, message, and, for placeholders, a code-point span. Clean receipts omit warnings.
 
 | Code | Severity | Channels |
 |---|---|---|
 | `empty_body` | error | All; forwards may have an empty note |
-| `quoted_only_body` | error | Email |
 | `unresolved_placeholder` | error; `<UPPER>` and `{name}` are warnings | All |
-| `control_characters` | error | All |
-| `attachment_mentioned_missing` | warn | Email |
-| `empty_subject` | warn | Email compose |
-| `empty_to` | warn | Email |
-| `oversize` | warn | Email; built message exceeds 500 KB |
 | `recipient_provenance` | warn | Email creation |
 
-Set `strict: true` (CLI `--strict`) to refuse writes when lint reports an error. Set `allow_placeholders: true` (`--allow-placeholders`) to report all placeholders as warnings.
+Set `strict: true` (CLI `--strict`) to refuse writes when lint reports an error. Technical text such as `see <URL>` and `use {id}` stays advisory.
+Quoted email history does not trigger placeholder findings.
 
-Set `validate_only: true` (`--validate-only`) to compute the envelope and lint without a provider call or write. The result includes `status: "validated"`, `valid`, `warnings`, and `recipients`. Email recipients contain `to`, `cc`, and `bcc` arrays; chat and Beeper return `recipients: null`. Beeper compose previews require the chat to be archived under the selected source. Validation succeeds even when `valid` is false, and uses the command's existing permissions and destination checks. Recipient provenance is computed after creation and is absent from previews and refusals.
-
-Quoted history and fenced code do not trigger placeholder or missing-attachment findings. Fenced code still counts as body text. MCP sensitive-content findings also inspect quoted text and show a masked hint.
+Set `validate_only: true` (`--validate-only`) to compute the envelope and lint without a provider call or write. The result includes `status: "validated"`, `valid`, `warnings`, and `recipients`. Email recipients contain `to`, `cc`, and `bcc` arrays; chat and Beeper return `recipients: null`. Beeper compose previews require the chat to be archived under the selected source, and a blank Beeper body returns `valid: false` with `empty_body`. Validation succeeds even when `valid` is false, and uses the command's existing permissions and destination checks. Recipient provenance is computed after creation and is absent from previews and refusals.
 
 ### Recipient evidence on new drafts
 
