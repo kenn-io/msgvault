@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -59,7 +60,6 @@ func runImportSignalExport(cmd *cobra.Command, root, account string) error {
 		RootDir:        root,
 		Account:        account,
 		AttachmentsDir: state.cfg.AttachmentsDir(),
-		Logger:         state.logger,
 	})
 	if errors.Is(err, signalexport.ErrNewerFormat) {
 		return err
@@ -79,15 +79,10 @@ func runImportSignalExport(cmd *cobra.Command, root, account string) error {
 		name   string
 		counts map[string]int64
 	}{{"Skipped", summary.Skipped}, {"Omitted", summary.Omitted}, {"Missing media", summary.MediaMissing}} {
-		keys := make([]string, 0, len(group.counts))
-		for key, n := range group.counts {
-			if n > 0 {
-				keys = append(keys, key)
+		for _, key := range slices.Sorted(maps.Keys(group.counts)) {
+			if group.counts[key] > 0 {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s %s: %d\n", group.name, signalExportReasonLabel(key), group.counts[key])
 			}
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s %s: %d\n", group.name, signalExportReasonLabel(key), group.counts[key])
 		}
 	}
 	if summary.SourceID != 0 {
@@ -114,18 +109,10 @@ func signalExportReasonLabel(reason string) string {
 		return "missing account identity"
 	case "revision":
 		return "invalid edit history"
-	case "sent_time":
-		return "missing or invalid sent time"
 	case "missing":
 		return "file not found"
-	case "ambiguous":
-		return "multiple matching files"
-	case "index_limit":
-		return "media directory entry limit reached"
 	case "invalid_hash":
 		return "missing or invalid file hash"
-	case "unsafe_or_nonregular":
-		return "unsafe path or non-regular file"
 	}
 	words := signalReasonWordBoundary.ReplaceAllString(reason, "${1} ${2}")
 	return strings.ToLower(strings.ReplaceAll(words, "_", " "))

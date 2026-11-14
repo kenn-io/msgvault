@@ -173,22 +173,17 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 				_ = src.Close()
 				continue
 			}
-			if opts.AttachmentsDir == "" {
-				reason = "storage_disabled"
-				_ = src.Close()
-			} else {
-				write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentStream(ctx, opts.AttachmentsDir, src, limit)
-				err = errors.Join(err, src.Close())
-				switch {
-				case ctx.Err() != nil:
-					return "", nil, false, ctx.Err()
-				case errors.Is(err, contentverify.ErrMismatch):
-					reason = "hash_mismatch"
-				case errors.Is(err, export.ErrAttachmentTooLarge):
-					reason = "changed_file"
-				case err != nil:
-					return "", nil, false, fmt.Errorf("read or store Signal media %s: %w", hex.EncodeToString(p.Locator.Hash), err)
-				}
+			write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentStream(ctx, opts.AttachmentsDir, src, limit)
+			err = errors.Join(err, src.Close())
+			switch {
+			case ctx.Err() != nil:
+				return "", nil, false, ctx.Err()
+			case errors.Is(err, contentverify.ErrMismatch):
+				reason = "hash_mismatch"
+			case errors.Is(err, export.ErrAttachmentTooLarge):
+				reason = "changed_file"
+			case err != nil:
+				return "", nil, false, fmt.Errorf("read or store Signal media %s: %w", hex.EncodeToString(p.Locator.Hash), err)
 			}
 			if reason != "" {
 				write.StoragePath, write.ContentHash, write.Size = "", "", 0

@@ -2,6 +2,7 @@ package signalexport
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -22,7 +23,6 @@ const ambiguousMedia = "\x00"
 type peer struct {
 	key, name, kind string
 	aci, phone      string
-	resolved        bool
 }
 type reader struct {
 	media                  map[string]map[string]string
@@ -31,7 +31,7 @@ type reader struct {
 	omitted                map[string]int64
 	root                   *os.Root
 	file                   *os.File
-	lines                  *bufio.Reader
+	lines                  *bufio.Scanner
 	line                   int
 	header                 backupInfo
 	peers                  map[decimal]peer
@@ -82,7 +82,8 @@ func openReader(ctx context.Context, path string) (r *reader, retErr error) {
 	if err != nil {
 		return nil, err
 	}
-	r.lines = bufio.NewReaderSize(&export.ContextReader{Context: ctx, Reader: r.file}, 64<<10)
+	r.lines = bufio.NewScanner(&export.ContextReader{Context: ctx, Reader: r.file})
+	r.lines.Buffer(make([]byte, 0, 64<<10), maxRecord)
 	b, err = r.next()
 	if err != nil {
 		return nil, fmt.Errorf("signal header: %w", err)
@@ -136,26 +137,17 @@ func decodeObject(b []byte) (map[string]jsontext.Value, error) {
 	}
 	return obj, nil
 }
+
+// next returns a line that is valid until the following call.
 func (r *reader) next() ([]byte, error) {
-	var b []byte
-	for {
-		part, err := r.lines.ReadSlice('\n')
-		if len(b)+len(part) > maxRecord {
+	if !r.lines.Scan() {
+		if err := r.lines.Err(); errors.Is(err, bufio.ErrTooLong) {
 			return nil, fmt.Errorf("signal line %d: record limit (16 MiB)", r.line+1)
 		}
-		b = append(b, part...)
-		if errors.Is(err, bufio.ErrBufferFull) {
-			continue
-		}
-		if errors.Is(err, io.EOF) && len(b) > 0 {
-			err = nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		r.line++
-		return b, nil
+		return nil, cmp.Or(r.lines.Err(), io.EOF)
 	}
+	r.line++
+	return r.lines.Bytes(), nil
 }
 func (r *reader) budget(n int) error {
 	if len(r.peers)+len(r.chats) >= r.maxEntries {
@@ -210,12 +202,6 @@ func (r *reader) frame(b []byte, visit func(*chatItem, []byte, int) error) error
 			}
 			p := recipientPeer(rec)
 			if old, ok := r.peers[rec.ID]; ok {
-				old.resolved = false
-				if old.aci != "" {
-					old.key = old.aci
-				} else if old.phone != "" {
-					old.key = old.phone
-				}
 				if old != p {
 					return errors.New("conflicting recipient definition")
 				}

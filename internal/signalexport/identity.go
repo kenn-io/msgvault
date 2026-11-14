@@ -71,18 +71,15 @@ func originalDate(m *chatItem) (decimal, bool) {
 	// Revisions must describe this same message, oldest first; nested chains
 	// are not native history and cannot define an unambiguous identity.
 	date := decimal(m.DateSent)
-	if _, ok := sentTime(date); !ok {
+	top, ok := sentTime(date)
+	if !ok {
 		return "", false
 	}
 	var previous time.Time
 	for i := range m.Revisions {
 		rev := &m.Revisions[i]
 		at, ok := sentTime(decimal(rev.DateSent))
-		if !ok || rev.ChatID != m.ChatID || rev.AuthorID != m.AuthorID || len(rev.Revisions) > 0 || (!previous.IsZero() && !at.After(previous)) {
-			return "", false
-		}
-		top, _ := sentTime(decimal(m.DateSent))
-		if at.After(top) {
+		if !ok || rev.ChatID != m.ChatID || rev.AuthorID != m.AuthorID || len(rev.Revisions) > 0 || (!previous.IsZero() && !at.After(previous)) || at.After(top) {
 			return "", false
 		}
 		if i == 0 {

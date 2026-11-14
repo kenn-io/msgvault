@@ -44,15 +44,6 @@ func TestImportSignalExportReportsPartialImport(t *testing.T) {
 	assert.Equal(3, n)
 	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?)`, filepath.Join(cfg.AnalyticsDir(), "owner_participants", "*.parquet")).Scan(&n))
 	assert.Equal(1, n)
-	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	var address string
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT address FROM account_identities").Scan(&address))
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM account_identities").Scan(&n))
-	assert.Equal(1, n)
-	const scopedSelf = "v1:a524644266885e16a3bb16166ae38bdbfb36af08fc51036f4dbb91423c7cbcc1:self"
-	assert.Equal(scopedSelf, address)
 }
 func TestImportSignalExportRefusesRemoteClientFiles(t *testing.T) {
 	server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)

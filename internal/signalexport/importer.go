@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -21,7 +20,6 @@ type ImportOptions struct {
 	RootDir        string
 	Account        string
 	AttachmentsDir string
-	Logger         *slog.Logger
 }
 type ImportSummary struct {
 	SourceID                                         int64
@@ -103,9 +101,13 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		}
 		return participant, nil
 	}
+	resolved := map[decimal]peer{} // only reader recipients, so bounded by its entry limit
 	resolveKey := func(id decimal) (peer, error) {
+		if p, ok := resolved[id]; ok {
+			return p, nil
+		}
 		p := r.peers[id]
-		if p.resolved || (p.aci == "" && p.phone == "") {
+		if p.aci == "" && p.phone == "" {
 			return p, nil
 		}
 		for _, candidate := range []string{p.aci, p.phone} {
@@ -131,8 +133,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 				break
 			}
 		}
-		p.resolved = true
-		r.peers[id] = p
+		resolved[id] = p
 		return p, nil
 	}
 	selfConfirmed := false
@@ -274,9 +275,6 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 			return fmt.Errorf("persist Signal message: %w", err)
 		}
 		s.MessagesAdded++
-		if opts.Logger != nil {
-			opts.Logger.Debug("Signal message imported", "line", line)
-		}
 		return nil
 	})
 	return s, err
