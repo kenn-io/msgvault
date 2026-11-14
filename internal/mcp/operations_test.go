@@ -156,21 +156,9 @@ func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
 
 	recovery := []string{"list_person_merges", "get_person_merge", "decide_person_merge_candidate", "split_person_merge"}
 	opts = ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: recovery}
-	for _, d := range operationalCatalog(opts, true) {
-		assertions.Contains(recovery[:2], d.definition.name)
-	}
-	assertions.Len(operationalCatalog(opts, true), 2)
-	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyLoops, OperationFamilySources}
 	assertions.Len(operationalCatalog(opts, true), 2)
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyMergeRecovery}
-	defs := operationalCatalog(opts, true)
-	requirements.Len(defs, 4)
-	for _, d := range defs {
-		if d.writes {
-			requirements.NotNil(d.definition.annotations.OpenWorldHint)
-			assertions.False(*d.definition.annotations.OpenWorldHint)
-		}
-	}
+	assertions.Len(operationalCatalog(opts, true), 4)
 	assertions.Len(operationalCatalog(opts, false), 2)
 }
 

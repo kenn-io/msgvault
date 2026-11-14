@@ -7,8 +7,9 @@ import (
 
 type MergeDetail struct {
 	generated.PersonMergeDetail `json:",inline"`
-	RowCount                    int  `json:"row_count"`
-	NextRowOffset               *int `json:"next_row_offset,omitempty"`
+
+	RowCount      int  `json:"row_count"`
+	NextRowOffset *int `json:"next_row_offset,omitempty"`
 }
 type MergeCandidateReceipt struct {
 	Candidate generated.PersonMergeReviewCandidate `json:"candidate"`
@@ -16,11 +17,12 @@ type MergeCandidateReceipt struct {
 }
 type MergeSplitReceipt struct {
 	generated.PersonSplitResult `json:",inline"`
-	ETag                        string `json:"etag"`
-	NewPersonETag               string `json:"new_person_etag"`
-	AmbiguousRowCount           int    `json:"ambiguous_row_count"`
-	UnrestoredRowCount          int    `json:"unrestored_row_count"`
-	NextRowOffset               *int   `json:"next_row_offset,omitempty"`
+
+	ETag               string `json:"etag"`
+	NewPersonETag      string `json:"new_person_etag"`
+	AmbiguousRowCount  int    `json:"ambiguous_row_count"`
+	UnrestoredRowCount int    `json:"unrestored_row_count"`
+	NextRowOffset      *int   `json:"next_row_offset,omitempty"`
 }
 
 func mergeRecoveryDefinitions() []operationalDefinition {
