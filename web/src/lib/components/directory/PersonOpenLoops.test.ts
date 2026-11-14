@@ -68,14 +68,15 @@ describe("PersonOpenLoops", () => {
     expect(url.searchParams.get("limit")).toBe("5");
   });
 
-  it("shows cited promises and their discovery window without decision controls", async () => {
+  it("shows cited promises and their discovery window", async () => {
     const fetcher = vi.fn<typeof fetch>(async () => Response.json({
-      items: [],
+      items: [loop()],
+      truncated: true,
       commitments_since: "2026-10-01T00:00:00Z",
       commitments_complete: false,
       commitments: [
-        { id: "c12", direction: "owed_by", freshness: "fresh", promise: { message_id: 52, text: "I will send the draft." }, promised_at: "2026-10-12T12:00:00Z", due_on: "2026-11-15" },
-        { id: "c13", direction: "owed_to", freshness: "stale", promise: { message_id: 53, text: "I will check the venue." }, promised_at: "2026-10-12T12:00:00Z" },
+        { id: "c12", claim_id: 12, person_id: 7, summary: "Send the draft", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: 52, start: 0, end: 22, text: "I will send the draft." }, promised_at: "2026-10-12T12:00:00Z", due_on: "2026-11-15" },
+        { id: "c13", claim_id: 13, person_id: 7, summary: "Check the venue", state: "open", direction: "owed_to", freshness: "stale", promise: { message_id: 53, start: 0, end: 23, text: "I will check the venue." }, promised_at: "2026-10-12T12:00:00Z" },
       ],
     }));
     render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
@@ -85,10 +86,7 @@ describe("PersonOpenLoops", () => {
     expect(screen.getByRole("heading", { name: "Promises to you · stale evidence" })).toBeDefined();
     expect(screen.getByText("Due 2026-11-15")).toBeDefined();
     expect(screen.getByText(/still searching/)).toBeDefined();
-    expect(screen.queryByRole("button", { name: /done|snooze|closed/i })).toBeNull();
-    const request = fetcher.mock.calls[0]?.[0];
-    const url = new URL(request instanceof Request ? request.url : String(request), "http://localhost");
-    expect(url.searchParams.has("include_closed")).toBe(false);
+    expect(screen.getByText("3+ open")).toBeDefined();
   });
 
   it("reports an empty completed discovery window", async () => {

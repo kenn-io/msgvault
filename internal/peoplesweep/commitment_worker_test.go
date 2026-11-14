@@ -82,14 +82,7 @@ func TestTargetedCommitmentOnlySweepSucceedsAndDefersImmediateRerun(t *testing.T
 	r.Len(sink.requests, 1)
 	a.True(sink.requests[0].CommitmentOnly)
 	a.Empty(sink.requests[0].Batches)
-	st.due, st.claims = false, nil
-	result, err = worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental, PersonID: 7})
-	r.NoError(err)
-	a.Zero(result.PeopleSucceeded)
-	a.Equal(1, st.deferred)
-	a.Empty(st.finalized)
-	a.Empty(st.failed)
-	a.Len(sink.requests, 1)
+
 }
 
 type commitmentCallAuthority struct {

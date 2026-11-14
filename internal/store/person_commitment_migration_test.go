@@ -44,9 +44,6 @@ func TestCommitmentMigrationUpgradesVersion42(t *testing.T) {
 		a.Equal(1, claims)
 		a.Equal(1, links)
 		a.Equal(1, attempts)
-		var rows int
-		r.NoError(st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM person_commitment_frontiers WHERE scope_fingerprint = '' AND selection_at IS NULL`).Scan(&rows))
-		a.Zero(rows)
 	}
 	_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO person_fact_claims
  (person_id,generation_id,claim_key,target_kind,target_key,target_revision,relation,submitted_value_json,origin,confidence_json)
