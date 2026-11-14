@@ -369,7 +369,9 @@ func TestMCPPersonCommittedRenameWithMissingETagRemainsUncertain(t *testing.T) {
 
 func TestMCPSlackWriteProjectionWithMissingETagRemainsUncertain(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
-	result := slackPolicyProjection(&mcpserver.OperationResult{Output: generated.SettingsResponse{}}, true)
+	result := slackPolicyProjection(&mcpserver.OperationResult{Output: generated.SettingsResponse{
+		CredentialEtag: "revision", Groups: []generated.SettingGroup{}, Settings: []generated.Setting{},
+	}}, true)
 	requirements.True(result.IsError)
 	data, err := json.Marshal(result.Output)
 	requirements.NoError(err)
