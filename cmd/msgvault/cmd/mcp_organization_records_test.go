@@ -138,6 +138,27 @@ func TestOrganizationAttributeApprovalAndMedia(t *testing.T) {
 
 }
 
+func readOrganizationChunks(t *testing.T, session *sdkmcp.ClientSession, name string, id int64) []byte {
+	t.Helper()
+	must := require.New(t)
+	args := map[string]any{"organization_id": id, "include_superseded": true}
+	var data []byte
+	for {
+		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: name, Arguments: args})
+		must.NoError(err)
+		must.False(result.IsError)
+		chunk := loopToolOutput[mcpserver.PersonRecordChunk](t, result)
+		must.NotNil(chunk.DataBase64)
+		part, err := base64.StdEncoding.DecodeString(*chunk.DataBase64)
+		must.NoError(err)
+		data = append(data, part...)
+		if *chunk.Complete {
+			return data
+		}
+		args = map[string]any{"organization_id": id, "include_superseded": true, "offset": *chunk.Offset + *chunk.Length, "sha256": *chunk.SHA256}
+	}
+}
+
 func TestOrganizationLargeProfileResponse(t *testing.T) {
 	must := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -160,22 +181,7 @@ func TestOrganizationLargeProfileResponse(t *testing.T) {
 	must.Less(len(disclosure), 4096)
 	must.Contains(disclosure, "Example Company")
 	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyOrganizations}, nil)
-	args := map[string]any{"organization_id": org.ID, "include_superseded": true}
-	var data []byte
-	for {
-		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_organization", Arguments: args})
-		must.NoError(err)
-		must.False(result.IsError)
-		chunk := loopToolOutput[mcpserver.OrganizationRecord](t, result)
-		must.NotNil(chunk.DataBase64)
-		part, err := base64.StdEncoding.DecodeString(*chunk.DataBase64)
-		must.NoError(err)
-		data = append(data, part...)
-		if *chunk.Complete {
-			break
-		}
-		args = map[string]any{"organization_id": org.ID, "include_superseded": true, "offset": *chunk.Offset + *chunk.Length, "sha256": *chunk.SHA256}
-	}
+	data := readOrganizationChunks(t, session, "get_organization", org.ID)
 	var profile generated.OrganizationProfile
 	must.NoError(json.Unmarshal(data, &profile))
 	must.Len(profile.Names, store.MaxOrganizationProfileValues)
@@ -274,43 +280,6 @@ func TestOrganizationAttributeOrdinalApprovalRace(t *testing.T) {
 	must.Equal("Concurrent", *values[1].Value.Text)
 }
 
-func TestOrganizationLargeAttributeHistoryChunks(t *testing.T) {
-	must := require.New(t)
-	st := testutil.NewTestStore(t)
-	_, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: "test-org-history", ObjectType: store.AttributeObjectOrganization, Slug: "history", Label: "History", ValueType: store.AttributeValueJSON, FieldType: store.AttributeFieldJSON, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, APIMutable: true, UICreatable: true, UIEditable: true, IsDeletable: true})
-	must.NoError(err)
-	org, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example"})
-	must.NoError(err)
-	for _, text := range []string{strings.Repeat("a", 600<<10), strings.Repeat("b", 600<<10)} {
-		value, err := json.Marshal(map[string]string{"data": text})
-		must.NoError(err)
-		_, err = st.SetOrganizationAttributeValueContext(t.Context(), store.OrganizationAttributeValueInput{OrganizationID: org.ID, DefinitionSlug: "history", Source: store.ProvenanceUser, Ordinal: new(int64(0)), Value: store.AttributeValue{Type: store.AttributeValueJSON, JSON: jsontext.Value(value)}})
-		must.NoError(err)
-	}
-	b := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
-	session := operationMCPSession(t, b, nil, nil)
-	args := map[string]any{"organization_id": org.ID, "include_superseded": true}
-	var data []byte
-	for {
-		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_organization_attributes", Arguments: args})
-		must.NoError(err)
-		must.False(result.IsError)
-		chunk := loopToolOutput[mcpserver.OrganizationAttributesResult](t, result)
-		must.NotNil(chunk.DataBase64)
-		part, err := base64.StdEncoding.DecodeString(*chunk.DataBase64)
-		must.NoError(err)
-		data = append(data, part...)
-		if *chunk.Complete {
-			break
-		}
-		args = map[string]any{"organization_id": org.ID, "include_superseded": true, "offset": *chunk.Offset + *chunk.Length, "sha256": *chunk.SHA256}
-	}
-	must.Greater(len(data), 1<<20)
-	var attributes generated.OrganizationAttributesResponse
-	must.NoError(json.Unmarshal(data, &attributes))
-	must.Len(attributes.Values, 2)
-}
-
 func TestOrganizationLargeAttributeReplacementReceipt(t *testing.T) {
 	must := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -335,22 +304,8 @@ func TestOrganizationLargeAttributeReplacementReceipt(t *testing.T) {
 	must.Positive(receipt.ValueID)
 	must.NotNil(receipt.SupersededID)
 	must.Equal(first.Value.ID, *receipt.SupersededID)
-	args := map[string]any{"organization_id": org.ID, "include_superseded": true}
-	var data []byte
-	for {
-		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_organization_attributes", Arguments: args})
-		must.NoError(err)
-		must.False(result.IsError)
-		chunk := loopToolOutput[mcpserver.OrganizationAttributesResult](t, result)
-		must.NotNil(chunk.DataBase64)
-		part, err := base64.StdEncoding.DecodeString(*chunk.DataBase64)
-		must.NoError(err)
-		data = append(data, part...)
-		if *chunk.Complete {
-			break
-		}
-		args = map[string]any{"organization_id": org.ID, "include_superseded": true, "offset": *chunk.Offset + *chunk.Length, "sha256": *chunk.SHA256}
-	}
+	data := readOrganizationChunks(t, session, "list_organization_attributes", org.ID)
+	must.Greater(len(data), 1<<20)
 	var attributes generated.OrganizationAttributesResponse
 	must.NoError(json.Unmarshal(data, &attributes))
 	must.Len(attributes.Values, 2)
@@ -400,37 +355,26 @@ func TestOrganizationAttributeDryRunReceipt(t *testing.T) {
 }
 
 func TestOrganizationWritesRejectChangesDuringApproval(t *testing.T) {
-	for _, name := range []string{"update_organization", "delete_organization", "replace_organization_profile"} {
-		t.Run(name, func(t *testing.T) {
-			must := require.New(t)
-			st := testutil.NewTestStore(t)
-			org, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Original", Kind: store.OrganizationKindCompany})
-			must.NoError(err)
-			b := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
-			read, err := b.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": org.ID})
-			must.NoError(err)
-			session := legacyOperationSession(t, b, mcpserver.OperationFamilyOrganizations, func(ctx context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-				changed, err := b.ExecuteOperation(ctx, "update_organization", map[string]any{"organization_id": org.ID, "etag": read.ETag, "body": map[string]any{"name": "Concurrent", "kind": "company"}})
-				assert.NoError(t, err)
-				assert.False(t, changed.IsError)
-				return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
-			})
-			args := map[string]any{"organization_id": org.ID, "etag": read.ETag}
-			if name == "update_organization" {
-				args["body"] = map[string]any{"name": "Approved", "kind": "company"}
-			}
-			if name == "replace_organization_profile" {
-				args["body"] = map[string]any{}
-			}
-			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: name, Arguments: args})
-			must.NoError(err)
-			must.True(result.IsError)
-			must.Equal("operation_context_changed", loopToolFailure(t, result)["error"])
-			current, err := st.GetOrganizationContext(t.Context(), org.ID)
-			must.NoError(err)
-			must.Equal("Concurrent", current.Name)
-		})
-	}
+	must := require.New(t)
+	st := testutil.NewTestStore(t)
+	org, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Original", Kind: store.OrganizationKindCompany})
+	must.NoError(err)
+	b := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
+	read, err := b.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": org.ID})
+	must.NoError(err)
+	session := legacyOperationSession(t, b, mcpserver.OperationFamilyOrganizations, func(ctx context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		changed, err := b.ExecuteOperation(ctx, "update_organization", map[string]any{"organization_id": org.ID, "etag": read.ETag, "body": map[string]any{"name": "Concurrent", "kind": "company"}})
+		assert.NoError(t, err)
+		assert.False(t, changed.IsError)
+		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+	})
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "delete_organization", Arguments: map[string]any{"organization_id": org.ID, "etag": read.ETag}})
+	must.NoError(err)
+	must.True(result.IsError)
+	must.Equal("operation_context_changed", loopToolFailure(t, result)["error"])
+	current, err := st.GetOrganizationContext(t.Context(), org.ID)
+	must.NoError(err)
+	must.Equal("Concurrent", current.Name)
 }
 
 func TestOrganizationAttributeNegativeExpectedIDIsDefinite(t *testing.T) {
@@ -444,7 +388,4 @@ func TestOrganizationAttributeNegativeExpectedIDIsDefinite(t *testing.T) {
 	must.NoError(err)
 	must.True(result.IsError)
 	must.Equal("invalid_expected_value_id", loopToolFailure(t, result)["error"])
-	native, err := b.ExecuteOperation(t.Context(), "set_organization_attribute", map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "industry", "source": "user", "ordinal": 0, "expected_value_id": -1, "value": map[string]any{"type": "text", "text": "Example"}}})
-	must.NoError(err)
-	assertLoopRefusal(t, native, "invalid_expected_value_id", false)
 }

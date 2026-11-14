@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"net/http"
-	"strings"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
@@ -220,15 +219,11 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 		if err := json.Unmarshal(result.Data, &profile); err != nil {
 			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 		}
-		name := profile.Organization.Name
-		if len(name) > 256 {
-			name = strings.ToValidUTF8(name[:256], "") + "…"
-		}
 		current = struct {
 			ETag string `json:"etag"`
 			Name string `json:"name"`
 			Kind string `json:"kind"`
-		}{result.ETag, name, profile.Organization.Kind}
+		}{result.ETag, profile.Organization.Name, profile.Organization.Kind}
 	}
 	if name == "set_organization_attribute" {
 		switch options := r.options.(type) {

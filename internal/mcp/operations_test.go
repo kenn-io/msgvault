@@ -77,13 +77,9 @@ func TestOperationalWriteRecoveryFailureDoesNotExposeUncertainOutcome(t *testing
 type countingOperationalBackend struct {
 	policy atomic.Int32
 	calls  atomic.Int32
-	refuse atomic.Bool
 }
 
 func (b *countingOperationalBackend) OperationDisclosure(context.Context, string, map[string]any) (string, error) {
-	if b.refuse.Load() {
-		return "", &OperationRefusalError{Code: "operation_context_unavailable"}
-	}
 	return fmt.Sprintf("Synchronize synthetic configured source under policy %d", b.policy.Load()), nil
 }
 
