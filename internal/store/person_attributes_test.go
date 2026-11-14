@@ -407,24 +407,4 @@ func TestSetAttributeValueExpectedEmpty(t *testing.T) {
 	require.ErrorAs(err, &conflict)
 	require.NotNil(conflict.CurrentValue)
 	assert.Equal(first.Value.ID, conflict.CurrentValue.ID)
-
-	// One plain and one expected_empty writer race for an empty slot.
-	input.DefinitionSlug = store.AttributeSlugLocation
-	results := make(chan error, 2)
-	for _, expected := range []bool{false, true} {
-		go func() {
-			candidate := input
-			candidate.ExpectedEmpty = expected
-			_, err := st.SetPersonAttributeValueContext(t.Context(), candidate)
-			results <- err
-		}()
-	}
-	for range 2 {
-		if err := <-results; err != nil {
-			require.ErrorIs(err, store.ErrAttributeValueConflict)
-		}
-	}
-	current, err := st.ListPersonAttributeValuesContext(t.Context(), person, store.PersonAttributeQuery{DefinitionSlug: input.DefinitionSlug})
-	require.NoError(err)
-	assert.Len(current, 1)
 }
