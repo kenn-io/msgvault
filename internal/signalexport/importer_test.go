@@ -731,7 +731,7 @@ func TestImportAmbiguousSameTimeReplay(t *testing.T) {
 			require.NoError(t, err)
 			assert.EqualValues(t, 2, summary.Skipped["ambiguous_message"])
 			assert.Zero(t, summary.MessagesAdded)
-			assert.EqualValues(t, tc.existing, summary.MessagesExisting)
+			assert.Equal(t, tc.existing, summary.MessagesExisting)
 			assert.Zero(t, summary.MessagesChanged)
 			assert.Empty(t, summary.MediaMissing)
 			assert.Zero(t, summary.AttachmentsStored)
