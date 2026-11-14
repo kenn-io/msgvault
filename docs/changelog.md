@@ -8,8 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Open loops can show cited promises owed by or to you, with due dates and owner decisions. Enable the commitment lane and grant separate consent to analyze both sides of direct conversations.
-
+- Open loops can show cited promises owed by or to you, with due dates, evidence freshness, and owner decisions. The list shows the discovery window. Enable the commitment lane and grant separate consent to analyze both sides of direct conversations.
 - The CLI and HTTP API show person fact claim kinds and whether supporting evidence is fresh, stale, or expired.
 - Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
 

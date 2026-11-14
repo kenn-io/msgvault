@@ -77,7 +77,7 @@ func newLoopsListCommand() *cobra.Command {
 // request sends include_closed, which an older daemon would ignore.
 func loopsListSchemaVersion(opts daemonclient.LoopListOptions) string {
 	if opts.IncludeClosed {
-		return "5.4.0"
+		return "5.5.0"
 	}
 	return loopsMinAPISchemaVersion
 }
@@ -219,7 +219,7 @@ func runCommitmentDecision(cmd *cobra.Command, id, state string, until *time.Tim
 	if cmd.Flags().Changed("questions") {
 		return usageErr(cmd, errors.New("--questions is available only for reply loops"))
 	}
-	return withLoopsClientVersion(cmd, "5.4.0", func(client *daemonclient.Client) error {
+	return withLoopsClientVersion(cmd, "5.5.0", func(client *daemonclient.Client) error {
 		decision, err := client.SetCommitmentDecision(cmd.Context(), id, state, until)
 		if err != nil {
 			return err

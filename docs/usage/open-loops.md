@@ -150,7 +150,7 @@ Only the owner can use loops. Delegated agent tokens and remote clients can't.
 
 ## See cited commitments
 
-Commitments are optional and require daemon API schema 5.4.0 or newer.
+Commitments are optional and require daemon API schema 5.5.0 or newer.
 Enable `[people.sweep.commitments]` in [configuration](../configuration.md#commitment-extraction).
 Use `msgvault person provider consent --commitments` to see the provider,
 source dates, and what the request discloses. Repeat with `--yes` to consent
