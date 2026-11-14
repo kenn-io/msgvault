@@ -651,7 +651,10 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 		if seen[source.MessageID] {
 			return true, nil
 		}
-		if !inProfile(source.EventTime) || len(window.Sources) >= cfg.MaxItems || used+len(source.Text) > cfg.MaxBytes {
+		if !inProfile(source.EventTime) || len(source.Text) > cfg.MaxBytes {
+			return true, nil
+		}
+		if len(window.Sources) >= cfg.MaxItems || used+len(source.Text) > cfg.MaxBytes {
 			return false, nil
 		}
 		var beyond bool
@@ -666,7 +669,13 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 		fits, err := peoplesweep.CommitmentInputFits(*window, true)
 		if err != nil || !fits {
 			window.Sources = window.Sources[:len(window.Sources)-1]
-			return false, err
+			if err != nil {
+				return false, err
+			}
+			single := *window
+			single.Sources = []peoplesweep.CommitmentSource{source}
+			fitsAlone, err := peoplesweep.CommitmentInputFits(single, true)
+			return !fitsAlone, err
 		}
 		seen[source.MessageID] = true
 		used += len(source.Text)

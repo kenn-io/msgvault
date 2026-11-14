@@ -429,14 +429,14 @@ func commitmentApplyRequest(t *testing.T, f personSweepApplyFixture, window peop
 	return request
 }
 
-func TestCommitmentByteLimitRetainsUnprocessedSourceBoundary(t *testing.T) {
+func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T) {
 	for _, journal := range []bool{false, true} {
 		t.Run(fmt.Sprintf("journal=%t", journal), func(t *testing.T) {
 			r, a, ctx := require.New(t), assert.New(t), t.Context()
 			f := newPersonSweepApplyFixture(t, "commitment-byte-boundary", false)
 			_, persist := newCommitmentTestConversation(t, f)
-			const quote = "I will send the report."
-			persist("byte-bounded-promise", quote, -time.Hour)
+			large := persist("large", strings.Repeat("x", 100), -2*time.Hour)
+			small := persist("small", "I will call.", -time.Hour)
 			if !journal {
 				_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`DELETE FROM person_sweep_changes WHERE person_id = ?`), f.personID)
 				r.NoError(err)
@@ -444,32 +444,26 @@ func TestCommitmentByteLimitRetainsUnprocessedSourceBoundary(t *testing.T) {
 			cfg := peoplesweep.Config{}
 			cfg.ApplyDefaults()
 			cfg.Commitments.Enabled = true
-			cfg.Commitments.MaxBytes = len(quote) - 1
-			r.NoError(cfg.Commitments.Validate(personSweepApplyBudget()))
-			profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01",
-				AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
-			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+			cfg.Commitments.MaxBytes = 20
+			profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 			r.NoError(err)
-			a.Empty(window.Sources)
-			a.Zero(window.BackfillMessageID, "an excluded source must stay ahead of the historical cursor")
-			if journal {
-				r.Positive(window.SnapshotSequence)
-				a.Less(window.ThroughSequence, window.SnapshotSequence, "an excluded source must stay ahead of the journal frontier")
-			}
-			request := f.request
-			request.Generation.Policy.AllowSensitive = true
-			request.Budget = personSweepApplyBudget()
-			request.CommitmentOnly = true
-			request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
+			r.Len(window.Sources, 1)
+			a.Equal(small, window.Sources[0].MessageID)
+			parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":"I will call.","start":0,"end":12,"summary":"Call","due_on":null}],"fulfilments":[]}`, window.Sources[0].ID)), window)
+			r.NoError(err)
+			request := commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
 			_, err = f.store.ApplyPersonSweep(ctx, request)
 			r.NoError(err)
-			next, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, request.CompletedAt, "UTC")
+			items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 5, false)
 			r.NoError(err)
-			a.Empty(next.Sources)
-			a.Zero(next.BackfillMessageID, "saving an empty scan must preserve the excluded historical source")
-			if journal {
-				a.Less(next.ThroughSequence, next.SnapshotSequence, "saving an empty scan must preserve the excluded journal source")
-			}
+			r.Len(items, 1)
+			a.Equal(small, items[0].AnchorMessageID)
+			cfg.Commitments.MaxBytes = 200
+			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+			r.NoError(err)
+			r.Len(window.Sources, 2)
+			a.Equal(large, window.Sources[0].MessageID)
 		})
 	}
 }
