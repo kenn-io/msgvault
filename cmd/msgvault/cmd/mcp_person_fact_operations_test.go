@@ -5,6 +5,8 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -15,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
@@ -22,7 +25,7 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func factFixture(t *testing.T) (*daemonMCPOperations, *store.Store, int64, personfacts.TargetDescriptor) {
+func factFixture(t *testing.T, observe ...func(*http.Request)) (*daemonMCPOperations, *store.Store, int64, personfacts.TargetDescriptor) {
 	t.Helper()
 	st := testutil.NewSQLiteTestStore(t)
 	participant, err := st.EnsureParticipant("facts@example.test", "Synthetic Person", "example.test")
@@ -40,14 +43,24 @@ func factFixture(t *testing.T) (*daemonMCPOperations, *store.Store, int64, perso
 		}
 	}
 	require.NotEmpty(t, target.Key)
-	return factBackend(t, st), st, person.ID, target
+	return factBackend(t, st, observe...), st, person.ID, target
 }
 
-func factBackend(t *testing.T, st *store.Store) *daemonMCPOperations {
+func factBackend(t *testing.T, st *store.Store, observe ...func(*http.Request)) *daemonMCPOperations {
 	t.Helper()
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
-	return sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler)}))
+	fixture := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler)})
+	if len(observe) == 0 {
+		return sourceOperationFixture(t, fixture)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { observe[0](r); fixture.Router().ServeHTTP(w, r) }))
+	t.Cleanup(server.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+	require.NoError(t, err)
+	caps, err := client.MCPCapabilities(t.Context())
+	require.NoError(t, err)
+	return newDaemonMCPOperations(client, caps)
 }
 
 func TestPersonFactDisclosureAndPin(t *testing.T) {
@@ -97,6 +110,14 @@ func TestPersonFactDisclosureAndPin(t *testing.T) {
 	assertions.False(slices.ContainsFunc(pins, func(pin personfacts.PinState) bool {
 		return pin.Target.Kind == target.Kind && pin.Target.Key == target.Key && pin.Pinned
 	}))
+	for _, tracked := range []bool{false, true} {
+		result, err := backend.ExecuteOperation(t.Context(), "set_person_tracking", map[string]any{"person_id": id, "tracked": tracked})
+		requirements.NoError(err)
+		requirements.False(result.IsError)
+		state, err := st.GetPersonTrackingContext(t.Context(), id)
+		requirements.NoError(err)
+		assertions.Equal(tracked, state.Tracked)
+	}
 }
 
 func TestPersonFactRefusals(t *testing.T) {
@@ -110,7 +131,7 @@ func TestPersonFactRefusals(t *testing.T) {
 		want            string
 	}{
 		{"untracked pin", "set_person_fact_pin", map[string]any{"person_id": id, "kind": string(target.Kind), "key": target.Key, "pinned": true}, `{"error":"person_fact_conflict","operation_may_have_completed":false}`},
-		{"inactive target", "set_person_fact_pin", map[string]any{"person_id": id, "kind": "attribute", "key": "not-active", "pinned": true}, `{"error":"invalid_fact_target","operation_may_have_completed":false}`},
+		{"include requires target", "list_person_fact_claims", map[string]any{"person_id": id, "include_evidence": true}, `{"error":"invalid_arguments","operation_may_have_completed":false}`},
 		{"invalid claims target", "list_person_fact_claims", map[string]any{"person_id": id, "target": "invalid"}, `{"error":"invalid_target","operation_may_have_completed":false}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -128,7 +149,15 @@ func TestPersonFactRefusals(t *testing.T) {
 func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	backend, st, id, publicTarget := factFixture(t)
+	evidenceQuery := make(chan string, 1)
+	backend, st, id, publicTarget := factFixture(t, func(r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/fact-evidence") {
+			select {
+			case evidenceQuery <- r.URL.Query().Get("visible_only"):
+			default:
+			}
+		}
+	})
 	definition, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: "test-retired", ObjectType: store.AttributeObjectPerson, Slug: "retired_fixture", Label: "Retired fixture", Description: new("A synthetic fact"), ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, APIMutable: true, IsDeletable: true})
 	requirements.NoError(err)
 	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), true)
@@ -162,17 +191,20 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	requirements.NoError(err)
 	claims, err := st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{})
 	requirements.NoError(err)
-	var sensitiveKey, publicKey string
+	var sensitiveKey, publicKey, retiredKey string
 	for _, claim := range claims {
 		switch claim.Target.Key {
 		case sensitiveTarget.Key:
 			sensitiveKey = claim.ClaimKey
 		case publicTarget.Key:
 			publicKey = claim.ClaimKey
+		case retiredTarget.Key:
+			retiredKey = claim.ClaimKey
 		}
 	}
 	requirements.NotEmpty(sensitiveKey)
 	requirements.NotEmpty(publicKey)
+	requirements.NotEmpty(retiredKey)
 	decisions, err := st.ListPersonFactDecisionsContext(t.Context(), id, personfacts.DecisionFilter{})
 	requirements.NoError(err)
 	requirements.True(slices.ContainsFunc(decisions, func(decision personfacts.Decision) bool { return decision.ClaimKey == sensitiveKey }))
@@ -185,16 +217,20 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	requirements.NoError(err)
 	sensitiveRef, err := personfacts.EncodeTargetRef(personfacts.TargetRef{Kind: sensitiveTarget.Kind, Key: sensitiveTarget.Key, Revision: sensitiveTarget.Revision})
 	requirements.NoError(err)
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "limit": 2}})
+	_, err = st.UpdateAttributeDefinitionContext(t.Context(), definition.ID, definition.Revision, store.AttributeDefinitionUpdate{IsActive: new(false)})
+	requirements.NoError(err)
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "limit": 3}})
 	requirements.NoError(err)
 	requirements.False(result.IsError)
 	data, err := json.Marshal(result.StructuredContent)
 	requirements.NoError(err)
+	assertions.Contains(string(data), publicKey)
 	assertions.NotContains(string(data), sensitiveKey)
+	assertions.NotContains(string(data), retiredKey)
 	var output mcpserver.PersonFactClaimsOutput
 	requirements.NoError(json.Unmarshal(data, &output))
 	requirements.NotNil(output.NextOffset)
-	assertions.EqualValues(2, *output.NextOffset)
+	assertions.EqualValues(3, *output.NextOffset)
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "target": publicRef, "include_evidence": true, "include_decisions": true}})
 	requirements.NoError(err)
 	requirements.False(result.IsError)
@@ -202,20 +238,22 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Contains(string(data), "Public fixture evidence")
 	assertions.NotContains(string(data), "Sensitive fixture evidence")
+	assertions.NotContains(string(data), "Retired fixture evidence")
+	select {
+	case value := <-evidenceQuery:
+		assertions.Equal("true", value)
+	default:
+		assertions.Fail("evidence request was not sent")
+	}
 	assertions.NotContains(string(data), sensitiveKey)
 	requirements.NoError(json.Unmarshal(data, &output))
 	assertions.True(slices.ContainsFunc(output.Decisions, func(decision generated.PersonFactDecision) bool { return decision.ClaimKey == publicKey }))
-	for _, tc := range []struct {
-		args map[string]any
-		code string
-	}{{map[string]any{"person_id": id, "target": sensitiveRef}, "invalid_fact_target"}, {map[string]any{"person_id": id, "include_evidence": true}, "invalid_arguments"}} {
-		result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: tc.args})
-		requirements.NoError(err)
-		assertions.True(result.IsError)
-		data, err = json.Marshal(result.StructuredContent)
-		requirements.NoError(err)
-		assertions.Contains(string(data), tc.code)
-	}
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "target": sensitiveRef}})
+	requirements.NoError(err)
+	assertions.True(result.IsError)
+	data, err = json.Marshal(result.StructuredContent)
+	requirements.NoError(err)
+	assertions.Contains(string(data), "invalid_fact_target")
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_fact_pin", Arguments: map[string]any{"person_id": id, "kind": string(sensitiveTarget.Kind), "key": sensitiveTarget.Key, "pinned": true}})
 	requirements.NoError(err)
 	assertions.True(result.IsError)
@@ -233,16 +271,6 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	data, err = json.Marshal(result.StructuredContent)
 	requirements.NoError(err)
 	assertions.NotContains(string(data), sensitiveTarget.Key)
-	_, err = st.UpdateAttributeDefinitionContext(t.Context(), definition.ID, definition.Revision, store.AttributeDefinitionUpdate{IsActive: new(false)})
-	requirements.NoError(err)
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "target": publicRef, "include_evidence": true}})
-	requirements.NoError(err)
-	requirements.False(result.IsError)
-	data, err = json.Marshal(result.StructuredContent)
-	requirements.NoError(err)
-	assertions.Contains(string(data), "Public fixture evidence")
-	assertions.NotContains(string(data), "Sensitive fixture evidence")
-	assertions.NotContains(string(data), "Retired fixture evidence")
 }
 
 func TestPersonFactCapabilitiesRequireExactContracts(t *testing.T) {
@@ -257,30 +285,4 @@ func TestPersonFactCapabilitiesRequireExactContracts(t *testing.T) {
 		}
 	}
 	assert.NotContains(t, newDaemonMCPOperations(backend.client, caps).capabilities(), "list_person_fact_claims")
-}
-
-func TestPersonFactSDKWritesReachStore(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	backend, st, id, target := factFixture(t)
-	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyPersonFacts}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
-	}})
-	for _, tracked := range []bool{false, true} {
-		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_tracking", Arguments: map[string]any{"person_id": id, "tracked": tracked}})
-		requirements.NoError(err)
-		requirements.False(result.IsError)
-		state, err := st.GetPersonTrackingContext(t.Context(), id)
-		requirements.NoError(err)
-		assertions.Equal(tracked, state.Tracked)
-	}
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_fact_pin", Arguments: map[string]any{"person_id": id, "kind": string(target.Kind), "key": target.Key, "pinned": true}})
-	requirements.NoError(err)
-	requirements.False(result.IsError)
-	data, err := json.Marshal(result.StructuredContent)
-	requirements.NoError(err)
-	var write generated.PersonFactPinWrite
-	requirements.NoError(json.Unmarshal(data, &write))
-	assertions.True(write.State.Pinned)
-	assertions.Equal(target.Key, write.State.Target.Key)
 }

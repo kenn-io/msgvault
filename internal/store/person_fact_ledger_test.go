@@ -16,6 +16,26 @@ import (
 
 var personFactLedgerNow = time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
 
+func TestPersonFactEvidenceVisibleTargets(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st, personID := newPersonFactLedgerStore(t)
+	public := personFactLedgerClaim(personID, "public", `"public"`, "public")
+	sensitive := personFactLedgerClaim(personID, "sensitive", `"sensitive"`, "sensitive")
+	retired := personFactLedgerClaim(personID, "retired", `"retired"`, "retired")
+	public.Evidence = append(public.Evidence, sensitive.Evidence[0], retired.Evidence[0])
+	prepared := preparePersonFactLedgerGeneration(t, personID, "visibility", []personfacts.ProposedClaim{public, sensitive, retired}, nil)
+	persistPersonFactLedgerGeneration(t, st, prepared, nil)
+	target := personfacts.TargetRef{Kind: public.Target.Kind, Key: public.Target.Key, Revision: public.Target.Revision}
+	unfiltered, err := st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{Target: &target, Limit: 3})
+	requirements.NoError(err)
+	requirements.Len(unfiltered, 3)
+	visible, err := st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{Target: &target, VisibleTargets: []personfacts.TargetDescriptor{public.Target}, Limit: 3})
+	requirements.NoError(err)
+	requirements.Len(visible, 1)
+	assertions.Equal("Synthetic evidence public", visible[0].Input.Excerpt)
+}
+
 func TestPersonFactGenerationEnvelopeOwnsMultipleClaims(t *testing.T) {
 	st, personID := newPersonFactLedgerStore(t)
 	prepared := preparePersonFactLedgerGeneration(t, personID, "multi", []personfacts.ProposedClaim{
