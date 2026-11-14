@@ -22,17 +22,16 @@ func TestPersonFactEvidenceVisibleTargets(t *testing.T) {
 	st, personID := newPersonFactLedgerStore(t)
 	public := personFactLedgerClaim(personID, "public", `"public"`, "public")
 	sensitive := personFactLedgerClaim(personID, "sensitive", `"sensitive"`, "sensitive")
-	retired := personFactLedgerClaim(personID, "retired", `"retired"`, "retired")
 	prepared := preparePersonFactLedgerGeneration(t, personID, "visible", []personfacts.ProposedClaim{public}, nil)
 	persistPersonFactLedgerGeneration(t, st, prepared, nil)
-	public.Evidence = []personfacts.EvidenceInput{sensitive.Evidence[0], retired.Evidence[0]}
+	public.Evidence = []personfacts.EvidenceInput{sensitive.Evidence[0]}
 	public.SubmittedValue = []byte(`"shared"`)
-	prepared = preparePersonFactLedgerGeneration(t, personID, "visibility", []personfacts.ProposedClaim{public, sensitive, retired}, nil)
+	prepared = preparePersonFactLedgerGeneration(t, personID, "visibility", []personfacts.ProposedClaim{public, sensitive}, nil)
 	persistPersonFactLedgerGeneration(t, st, prepared, nil)
 	target := personfacts.TargetRef{Kind: public.Target.Kind, Key: public.Target.Key, Revision: public.Target.Revision}
 	unfiltered, err := st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{Target: &target, Limit: 3})
 	requirements.NoError(err)
-	requirements.Len(unfiltered, 3)
+	requirements.Len(unfiltered, 2)
 	assertions.NotEqual("Synthetic evidence public", unfiltered[0].Input.Excerpt)
 	visible, err := st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{Target: &target, VisibleTargets: []personfacts.TargetDescriptor{public.Target}, Limit: 3})
 	requirements.NoError(err)

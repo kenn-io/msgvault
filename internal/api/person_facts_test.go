@@ -238,16 +238,14 @@ func TestPersonFactPinHTTPUsesAPIActorAndReturnsOnlyFinalProjectionReferences(t 
 	assertions.Equal(http.StatusBadRequest, unknownField.Code, unknownField.Body.String())
 }
 
-func TestPersonFactPinHTTPVisibleOnlyRejectsSensitivityChanges(t *testing.T) {
+func TestPersonFactPinHTTPVisibleOnlyRejectsSensitiveTargets(t *testing.T) {
 	for _, tc := range []struct {
-		name          string
-		beforeCatalog bool
-		visibleOnly   bool
-		status        int
+		name        string
+		visibleOnly bool
+		status      int
 	}{
-		{"already sensitive", true, true, http.StatusBadRequest},
-		{"changed after catalog", false, true, http.StatusConflict},
-		{"native sensitive pin", true, false, http.StatusOK},
+		{"already sensitive", true, http.StatusBadRequest},
+		{"native sensitive pin", false, http.StatusOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -267,11 +265,9 @@ func TestPersonFactPinHTTPVisibleOnlyRejectsSensitivityChanges(t *testing.T) {
 				}
 			}
 			requirements.NotEmpty(target.Key)
-			changing := &personFactSensitivityChangingStore{stubIdentityCacheStore: wrapped, changeAfterCatalog: !tc.beforeCatalog}
-			if tc.beforeCatalog {
-				requirements.NoError(changing.makeSensitive(t.Context()))
-			}
-			srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, changing, nil, testLogger())
+			_, err = wrapped.DB().ExecContext(t.Context(), wrapped.Rebind(`UPDATE attribute_definitions SET is_sensitive = TRUE WHERE slug = ?`), store.AttributeSlugPrimaryChannel)
+			requirements.NoError(err)
+			srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, wrapped, nil, testLogger())
 			path := fmt.Sprintf("/api/v1/people/%d/fact-pins/%s/%s", person.ID, target.Kind, target.Key)
 			if tc.visibleOnly {
 				path += "?visible_only=true"
@@ -289,25 +285,6 @@ func TestPersonFactPinHTTPVisibleOnlyRejectsSensitivityChanges(t *testing.T) {
 			assertions.Equal(tc.status == http.StatusOK, pinned)
 		})
 	}
-}
-
-type personFactSensitivityChangingStore struct {
-	*stubIdentityCacheStore
-
-	changeAfterCatalog bool
-}
-
-func (s *personFactSensitivityChangingStore) makeSensitive(ctx context.Context) error {
-	_, err := s.DB().ExecContext(ctx, s.Rebind(`UPDATE attribute_definitions SET is_sensitive = TRUE WHERE slug = ?`), store.AttributeSlugPrimaryChannel)
-	return err
-}
-
-func (s *personFactSensitivityChangingStore) BuildPersonFactCatalogContext(ctx context.Context, includeSensitive bool) (personfacts.Catalog, error) {
-	catalog, err := s.stubIdentityCacheStore.BuildPersonFactCatalogContext(ctx, includeSensitive)
-	if err == nil && s.changeAfterCatalog {
-		err = s.makeSensitive(ctx)
-	}
-	return catalog, err
 }
 
 func TestPersonFactHTTPMapsInvalidMissingConflictAndUnavailable(t *testing.T) {

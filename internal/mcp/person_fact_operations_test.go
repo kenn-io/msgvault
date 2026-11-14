@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPersonFactCatalogGatesAnnotationsAndTargetSchema(t *testing.T) {
+func TestPersonFactCatalogGatesAnnotations(t *testing.T) {
 	assertions := assert.New(t)
 	names := []string{"list_person_fact_claims", "list_person_fact_pins", "set_person_fact_pin", "set_person_tracking"}
 	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: names}

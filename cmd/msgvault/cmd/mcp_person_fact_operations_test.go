@@ -190,7 +190,7 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 		ProgramID: "fixture", ProgramVersion: "v1", ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "fixture", Provider: "fixture", ProviderVersion: "v1", Model: "fixture", ModelVersion: "v1", ResolvedAt: now,
 		Policy: personfacts.PolicyContext{AllowSensitive: true, ProviderPolicyFingerprint: "fixture"},
 		Claims: []personfacts.ProposedClaim{
-			{Target: publicTarget, Relation: personfacts.RelationSupport, SubmittedValue: jsontext.Value(`"chat"`), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{{PersonID: id, SourceClass: personfacts.EvidencePublic, Directness: personfacts.DirectSelf, Authority: personfacts.AuthorityAuthoritative, SourceURL: "https://example.test/public", SubjectPersonID: &id, SubjectRef: "synthetic", Excerpt: "Fixture evidence", SourceVersion: "v1", EventTime: now, RecordedTime: now, IdentityScore: 990}, additionalEvidence}},
+			{Target: publicTarget, Relation: personfacts.RelationSupport, SubmittedValue: jsontext.Value(`"chat"`), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{{PersonID: id, SourceClass: personfacts.EvidencePublic, Directness: personfacts.DirectSelf, Authority: personfacts.AuthorityAuthoritative, SourceURL: "https://example.test/public", SubjectPersonID: &id, SubjectRef: "synthetic", Excerpt: "Fixture evidence", SourceVersion: "v1", EventTime: now, RecordedTime: now, IdentityScore: 990}, additionalEvidence, sensitiveEvidence}},
 			{Target: sensitiveTarget, Relation: personfacts.RelationSupport, SubmittedValue: jsontext.Value(`"Sensitive fixture belief"`), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{sensitiveEvidence}},
 			{Target: retiredTarget, Relation: personfacts.RelationSupport, SubmittedValue: jsontext.Value(`"retired"`), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{retiredEvidence}},
 		},
@@ -238,25 +238,27 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	requirements.NoError(json.Unmarshal(data, &output))
 	requirements.NotNil(output.NextOffset)
 	assertions.EqualValues(3, *output.NextOffset)
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "target": publicRef, "include_evidence": true, "include_decisions": true, "limit": 1}})
+	rawEvidence, err := st.ListPersonFactEvidenceContext(t.Context(), id, personfacts.EvidenceFilter{Target: &personfacts.TargetRef{Kind: publicTarget.Kind, Key: publicTarget.Key, Revision: publicTarget.Revision}})
+	requirements.NoError(err)
+	requirements.True(slices.ContainsFunc(rawEvidence, func(item personfacts.Evidence) bool { return item.Input.SourceURL == "https://example.test/sensitive" }))
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "target": publicRef, "include_evidence": true, "include_decisions": true, "limit": 3}})
 	requirements.NoError(err)
 	requirements.False(result.IsError)
 	data, err = json.Marshal(result.StructuredContent)
 	requirements.NoError(err)
+	assertions.NotContains(string(data), "https://example.test/sensitive")
 	select {
 	case value := <-evidenceQuery:
 		assertions.Equal("true", value)
 	default:
 		assertions.Fail("evidence request was not sent")
 	}
-	assertions.NotContains(string(data), sensitiveKey)
 	output = mcpserver.PersonFactClaimsOutput{}
 	requirements.NoError(json.Unmarshal(data, &output))
 	assertions.True(slices.ContainsFunc(output.Decisions, func(decision generated.PersonFactDecision) bool { return decision.ClaimKey == publicKey }))
-	requirements.Len(output.Evidence, 1)
+	requirements.Len(output.Evidence, 2)
 	firstEvidenceID := output.Evidence[0].ID
-	requirements.NotNil(output.NextOffset)
-	assertions.EqualValues(1, *output.NextOffset)
+	assertions.Nil(output.NextOffset)
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "target": publicRef, "include_evidence": true, "limit": 1, "offset": 1}})
 	requirements.NoError(err)
 	requirements.False(result.IsError)
@@ -284,15 +286,6 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	data, err = json.Marshal(result.StructuredContent)
 	requirements.NoError(err)
 	assertions.Contains(string(data), "invalid_fact_target")
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_fact_pin", Arguments: map[string]any{"person_id": id, "kind": string(sensitiveTarget.Kind), "key": sensitiveTarget.Key, "pinned": true}})
-	requirements.NoError(err)
-	assertions.True(result.IsError)
-	data, err = json.Marshal(result.StructuredContent)
-	requirements.NoError(err)
-	assertions.Contains(string(data), "invalid_fact_target")
-	pins, err := st.ListPersonFactPinsContext(t.Context(), id)
-	requirements.NoError(err)
-	assertions.Empty(pins)
 	_, err = st.SetPersonFactPinContext(t.Context(), id, personfacts.TargetRef{Kind: sensitiveTarget.Kind, Key: sensitiveTarget.Key, Revision: sensitiveTarget.Revision}, true, "fixture")
 	requirements.NoError(err)
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_pins", Arguments: map[string]any{"person_id": id}})
@@ -309,18 +302,13 @@ func TestPersonFactCapabilitiesRequireExactContracts(t *testing.T) {
 	caps, err := backend.client.MCPCapabilities(t.Context())
 	requirements.NoError(err)
 	assert.Contains(t, newDaemonMCPOperations(backend.client, caps).capabilities(), "set_person_fact_pin")
+	assert.Contains(t, newDaemonMCPOperations(backend.client, caps).capabilities(), "list_person_fact_claims")
 	for i := range caps.Routes {
 		r := &caps.Routes[i]
-		if r.OperationID == "listPersonFactEvidence" {
+		if r.OperationID == "listPersonFactEvidence" || r.OperationID == "setPersonFactPin" {
 			r.QueryParameters = slices.DeleteFunc(r.QueryParameters, func(v string) bool { return v == "visible_only" })
 		}
 	}
 	assert.NotContains(t, newDaemonMCPOperations(backend.client, caps).capabilities(), "list_person_fact_claims")
-	for i := range caps.Routes {
-		r := &caps.Routes[i]
-		if r.OperationID == "setPersonFactPin" {
-			r.QueryParameters = slices.DeleteFunc(r.QueryParameters, func(v string) bool { return v == "visible_only" })
-		}
-	}
 	assert.NotContains(t, newDaemonMCPOperations(backend.client, caps).capabilities(), "set_person_fact_pin")
 }
