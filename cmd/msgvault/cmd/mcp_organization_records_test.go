@@ -306,3 +306,49 @@ func TestOrganizationLargeAttributeHistoryChunks(t *testing.T) {
 	must.NoError(json.Unmarshal(data, &attributes))
 	must.Len(attributes.Values, 2)
 }
+
+func TestOrganizationLargeAttributeReplacementReceipt(t *testing.T) {
+	must := require.New(t)
+	st := testutil.NewTestStore(t)
+	_, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: "test-large-attribute", ObjectType: store.AttributeObjectOrganization, Slug: "large", Label: "Large", ValueType: store.AttributeValueJSON, FieldType: store.AttributeFieldJSON, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, APIMutable: true, UICreatable: true, UIEditable: true, IsDeletable: true})
+	must.NoError(err)
+	org, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example"})
+	must.NoError(err)
+	old, err := json.Marshal(map[string]string{"data": strings.Repeat("a", 600<<10)})
+	must.NoError(err)
+	first, err := st.SetOrganizationAttributeValueContext(t.Context(), store.OrganizationAttributeValueInput{OrganizationID: org.ID, DefinitionSlug: "large", Source: store.ProvenanceUser, Ordinal: new(int64(0)), Value: store.AttributeValue{Type: store.AttributeValueJSON, JSON: jsontext.Value(old)}})
+	must.NoError(err)
+	b := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
+	session := legacyOperationSession(t, b, mcpserver.OperationFamilyOrganizations, func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		assert.Contains(t, request.Params.Message, strings.Repeat("a", 600<<10))
+		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+	})
+	newValue := strings.Repeat("b", 600<<10)
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_organization_attribute", Arguments: map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "large", "source": "user", "ordinal": 0, "expected_value_id": first.Value.ID, "value": map[string]any{"type": "json", "json": map[string]any{"data": newValue}}}}})
+	must.NoError(err)
+	must.False(result.IsError, "%v", result.Content)
+	receipt := loopToolOutput[mcpserver.OrganizationAttributeReceipt](t, result)
+	must.Positive(receipt.ValueID)
+	must.NotNil(receipt.SupersededID)
+	must.Equal(first.Value.ID, *receipt.SupersededID)
+	args := map[string]any{"organization_id": org.ID, "include_superseded": true}
+	var data []byte
+	for {
+		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_organization_attributes", Arguments: args})
+		must.NoError(err)
+		must.False(result.IsError)
+		chunk := loopToolOutput[mcpserver.OrganizationAttributesResult](t, result)
+		must.NotNil(chunk.DataBase64)
+		part, err := base64.StdEncoding.DecodeString(*chunk.DataBase64)
+		must.NoError(err)
+		data = append(data, part...)
+		if *chunk.Complete {
+			break
+		}
+		args = map[string]any{"organization_id": org.ID, "include_superseded": true, "offset": *chunk.Offset + *chunk.Length, "sha256": *chunk.SHA256}
+	}
+	var attributes generated.OrganizationAttributesResponse
+	must.NoError(json.Unmarshal(data, &attributes))
+	must.Len(attributes.Values, 2)
+	must.Contains(string(data), newValue)
+}

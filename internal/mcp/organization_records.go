@@ -56,6 +56,11 @@ type OrganizationMutation struct {
 type OrganizationDeleted struct {
 	Deleted bool `json:"deleted"`
 }
+type OrganizationAttributeReceipt struct {
+	ValueID      int64  `json:"value_id"`
+	Ordinal      int64  `json:"ordinal"`
+	SupersededID *int64 `json:"superseded_id,omitzero"`
+}
 type OrganizationCreateArgs struct {
 	Body generated.OrganizationCreateBody `json:"body"`
 }
@@ -98,7 +103,7 @@ func organizationWriteDefinitions() []operationalDefinition {
 		destructive(newOperationalDefinition("update_organization", "Replace mutable organization fields using the exact ETag. Omitted fields are cleared except retired. Requires client confirmation.", OperationFamilyOrganizations, organizationInputSchema[OrganizationUpdateArgs]("organization_id", "etag", "body"), outputSchemaFor[OrganizationMutation](), true)),
 		destructive(newOperationalDefinition("delete_organization", "Delete an organization using its exact ETag. Native deletion refuses organizations with employment records. Requires client confirmation.", OperationFamilyOrganizations, organizationInputSchema[OrganizationDeleteArgs]("organization_id", "etag"), outputSchemaFor[OrganizationDeleted](), true)),
 		destructive(newOperationalDefinition("replace_organization_profile", "Replace all profile collections using the exact ETag; omitted collections are cleared. Oversized saves return an ETag; use get_organization to read chunks. URIs are never fetched. Requires client confirmation.", OperationFamilyOrganizations, organizationInputSchema[OrganizationProfileArgs]("organization_id", "etag", "body"), outputSchemaFor[OrganizationRecord](), true)),
-		destructive(newOperationalDefinition("set_organization_attribute", "Set an organization attribute with an explicit ordinal, expected value and dry-run controls. Requires client confirmation.", OperationFamilyOrganizations, organizationSetAttributeSchema(), organizationAttributeWriteSchema(), true)),
+		destructive(newOperationalDefinition("set_organization_attribute", "Set an organization attribute with an explicit ordinal, expected value and dry-run controls. Returns a receipt; read values with list_organization_attributes. Requires client confirmation.", OperationFamilyOrganizations, organizationSetAttributeSchema(), outputSchemaFor[OrganizationAttributeReceipt](), true)),
 	}
 }
 
@@ -110,12 +115,6 @@ func organizationAttributeValueSchema(s *jsonschema.Schema) {
 func organizationAttributesSchema() *jsonschema.Schema {
 	s := outputSchemaFor[OrganizationAttributesResult]()
 	organizationAttributeValueSchema(s.Properties["values"].Items)
-	return s
-}
-func organizationAttributeWriteSchema() *jsonschema.Schema {
-	s := outputSchemaFor[generated.OrganizationAttributeWrite]()
-	organizationAttributeValueSchema(s.Properties["value"])
-	organizationAttributeValueSchema(s.Properties["superseded"])
 	return s
 }
 func organizationSetAttributeSchema() *jsonschema.Schema {

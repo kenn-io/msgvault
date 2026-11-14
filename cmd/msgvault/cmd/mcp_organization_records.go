@@ -13,6 +13,7 @@ import (
 )
 
 const organizationSourceField = "source"
+const organizationAttributePreviewBytes = 2<<20 + 64<<10
 
 func organizationMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCapabilities) []string {
 	var names []string
@@ -151,8 +152,18 @@ func (b *daemonMCPOperations) executeOrganizationWriteOrMedia(ctx context.Contex
 		return &mcpserver.OperationResult{Output: mcpserver.OrganizationDeleted{Deleted: true}}, true, nil
 	}
 	if name == "set_organization_attribute" {
-		result, err := readMCPOperationJSON[generated.OrganizationAttributeWrite](ctx, b.client, r.method, r.path, r.options, http.StatusOK, http.StatusCreated)
-		return result, true, err
+		write, failure, err := b.readOrganizationAttributeWrite(ctx, r)
+		if failure != nil || err != nil {
+			return failure, true, err
+		}
+		if write.Value == nil {
+			return operationFailure("invalid_operation_response", true), true, nil
+		}
+		receipt := mcpserver.OrganizationAttributeReceipt{ValueID: write.Value.ID, Ordinal: write.Value.Ordinal}
+		if write.Superseded != nil {
+			receipt.SupersededID = &write.Superseded.ID
+		}
+		return &mcpserver.OperationResult{Output: receipt}, true, nil
 	}
 	if name == "replace_organization_profile" {
 		data, headers, failure, err := readMCPOperationBytes(ctx, b.client, r.method, r.path, r.options, mcpserver.MaxDownloadBytes, http.StatusOK)
@@ -213,16 +224,12 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 			options.Body = &body
 
 		}
-		result, err := readMCPOperationJSON[generated.OrganizationAttributeWrite](ctx, b.client, r.method, r.path, r.options, http.StatusOK, http.StatusCreated)
+		write, result, err := b.readOrganizationAttributeWrite(ctx, r)
 		if err != nil {
 			result = nil
 		}
-		if err != nil || result == nil || result.IsError {
+		if err != nil || result != nil {
 			return "", true, operationReadFailure(result, nativeDefiniteRefusal)
-		}
-		write, ok := result.Output.(generated.OrganizationAttributeWrite)
-		if !ok {
-			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 		}
 		var ordinal int64
 		var superseded any
@@ -268,4 +275,16 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 		Effect    string         `json:"effect"`
 	}{name, current, preview, changes, effect}, json.Deterministic(true))
 	return string(disclosure), true, err
+}
+
+func (b *daemonMCPOperations) readOrganizationAttributeWrite(ctx context.Context, r organizationRequest) (generated.OrganizationAttributeWrite, *mcpserver.OperationResult, error) {
+	data, _, failure, err := readMCPOperationBytes(ctx, b.client, r.method, r.path, r.options, organizationAttributePreviewBytes, http.StatusOK, http.StatusCreated)
+	var write generated.OrganizationAttributeWrite
+	if failure != nil || err != nil {
+		return write, failure, err
+	}
+	if err := json.Unmarshal(data, &write); err != nil {
+		return write, operationFailure("invalid_operation_response", true), err
+	}
+	return write, nil, nil
 }
