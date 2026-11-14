@@ -97,7 +97,7 @@ func TestOrganizationWritesUseRevisions(t *testing.T) {
 	must.NoError(err)
 	missing, err := backend.ExecuteOperation(t.Context(), "update_organization", blank)
 	must.NoError(err)
-	assertLoopRefusal(t, missing, "if_match_required", false)
+	assertDefiniteRefusal(t, missing, "if_match_required")
 	deletable, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Deletable", Kind: store.OrganizationKindCompany})
 	must.NoError(err)
 	readable, err := backend.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": deletable.ID})
@@ -243,6 +243,7 @@ func TestApprovalMatrixOrganization(t *testing.T) {
 	})
 	t.Run("delete organization", func(t *testing.T) {
 		exerciseApprovalMatrix(t, func(t *testing.T) approvalCase {
+			t.Helper()
 			st := testutil.NewTestStore(t)
 			org, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Original", Kind: store.OrganizationKindCompany})
 			require.NoError(t, err)
