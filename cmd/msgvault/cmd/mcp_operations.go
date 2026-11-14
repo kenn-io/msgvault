@@ -215,16 +215,12 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 	if err := json.Unmarshal(data, &output); err != nil {
 		return invalidOperationResponse(writes), err
 	}
-	if validator, ok := any(output).(runtime.Validator); ok {
-		if err := validator.Validate(); err != nil {
-			return invalidOperationResponse(writes), nil
+	if writes {
+		if validator, ok := any(output).(runtime.Validator); ok {
+			if err := validator.Validate(); err != nil {
+				return invalidOperationResponse(true), nil
+			}
 		}
-	}
-	if person, ok := any(output).(generated.Person); ok && person.ID <= 0 {
-		return invalidOperationResponse(writes), nil
-	}
-	if decision, ok := any(output).(generated.LoopDecisionResponse); ok && decision.AnchorMessageID <= 0 {
-		return invalidOperationResponse(writes), nil
 	}
 	return &mcpserver.OperationResult{Output: output, ETag: response.Header.Get("ETag")}, nil
 }

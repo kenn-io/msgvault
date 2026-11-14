@@ -237,7 +237,7 @@ name = "minimal"
 	unusableSettings := slices.Clone(policy.Settings)
 	unusableSettings[0].Value = nil
 	projection := slackPolicyProjection(&mcpserver.OperationResult{
-		Output: slackSettingsResponse{PendingRestart: policy.PendingRestart, Settings: unusableSettings}, ETag: policy.ETag,
+		Output: slackSettingsResponse{PendingRestart: new(policy.PendingRestart), Settings: unusableSettings}, ETag: policy.ETag,
 	}, false)
 	assertions.True(projection.IsError)
 	data, err = json.Marshal(projection.Output)
@@ -263,6 +263,36 @@ name = "minimal"
 	reloaded, err := config.Load(path, "")
 	requirements.NoError(err)
 	assertions.False(reloaded.Slack.DMsEnabled())
+}
+
+const slackSettingsWithoutPendingRestart = `{"settings":[{"key":"slack.dms","group":"sources","label":"Direct messages","description":"Include one-to-one direct messages","kind":"boolean","value":{"boolean":true}},{"key":"slack.group_dms","group":"sources","label":"Group direct messages","description":"Include group direct messages","kind":"boolean","value":{"boolean":true}},{"key":"slack.channels","group":"sources","label":"Channels","description":"Included channel selectors","kind":"string_array","value":{"strings":["C_EXAMPLE"]}},{"key":"slack.exclude_channels","group":"sources","label":"Excluded channels","description":"Excluded channel selectors","kind":"string_array","value":{"strings":[]}}]}`
+
+func TestMCPSlackPolicyRejectsMissingPendingRestart(t *testing.T) {
+	for _, tt := range []struct {
+		name, method, want string
+		writes             bool
+	}{
+		{"read", http.MethodGet, `{"error":"invalid_operation_response","operation_may_have_completed":false}`, false},
+		{"write", http.MethodPatch, `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			requirements, assertions := require.New(t), assert.New(t)
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("ETag", `"settings"`)
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(slackSettingsWithoutPendingRestart))
+			})
+			result, err := readMCPOperationJSON[slackSettingsResponse](t.Context(), client, tt.method, "/api/v1/settings", nil, http.StatusOK)
+			requirements.NoError(err)
+			result = slackPolicyProjection(result, tt.writes)
+			requirements.True(result.IsError)
+			data, err := json.Marshal(result.Output)
+			requirements.NoError(err)
+			assertions.JSONEq(tt.want, string(data))
+		})
+	}
 }
 
 func TestMCPSlackPolicyCommittedBeforeCredentialCleanupFailure(t *testing.T) {
@@ -305,6 +335,38 @@ dimension = 8
 	credentials, err = providercredentials.Read(cfg.TokensDir())
 	requirements.NoError(err)
 	assertions.True(credentials.Stored(providercredentials.VectorEmbeddingsID))
+}
+
+func TestMCPPersonIDProjectionPreservesCreateAndEditReceipts(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"revision"`)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":0,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","participant_ids":[],"vcard_uid":"example","revision":1}`))
+	})
+	backend := &daemonMCPOperations{client: client, supported: []string{"get_person_edit_context", "set_person_display_name"}}
+	result, err := backend.ExecuteOperation(t.Context(), "get_person_edit_context", map[string]any{"person_id": 1})
+	requirements.NoError(err)
+	data, err := json.Marshal(result.Output)
+	requirements.NoError(err)
+	assertions.JSONEq(`{"error":"invalid_operation_response","operation_may_have_completed":false}`, string(data))
+
+	result, err = backend.ExecuteOperation(t.Context(), "set_person_display_name", map[string]any{
+		"person_id": 1, "etag": `"revision"`, "display_name": "Edited Name",
+	})
+	requirements.NoError(err)
+	data, err = json.Marshal(result.Output)
+	requirements.NoError(err)
+	assertions.JSONEq(`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
+
+	name := "Created Name"
+	browser := daemonMCPNamedPeopleBrowser{client: client}
+	result, err = browser.PromoteWithDisplayName(t.Context(), 1, &name)
+	requirements.NoError(err)
+	data, err = json.Marshal(result.Output)
+	requirements.NoError(err)
+	assertions.JSONEq(`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
 }
 
 func TestMCPPersonNameClearAndStaleRevisionUseOwnerCAS(t *testing.T) {
@@ -475,9 +537,10 @@ func TestMCPPersonCommittedRenameWithMissingETagRemainsUncertain(t *testing.T) {
 
 func TestMCPSlackWriteProjectionWithMissingETagRemainsUncertain(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
-	result := slackPolicyProjection(&mcpserver.OperationResult{Output: generated.SettingsResponse{
-		CredentialEtag: "revision", Groups: []generated.SettingGroup{}, Settings: []generated.Setting{},
-	}}, true)
+	var settings slackSettingsResponse
+	requirements.NoError(json.Unmarshal([]byte(slackSettingsWithoutPendingRestart), &settings))
+	settings.PendingRestart = new(false)
+	result := slackPolicyProjection(&mcpserver.OperationResult{Output: settings}, true)
 	requirements.True(result.IsError)
 	data, err := json.Marshal(result.Output)
 	requirements.NoError(err)

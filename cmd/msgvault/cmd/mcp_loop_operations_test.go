@@ -278,6 +278,20 @@ func TestMCPLoopResponseClassifierIsScoped(t *testing.T) {
 	}
 }
 
+func TestMCPLoopDecisionMissingAnchorReceiptIsUncertain(t *testing.T) {
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/v1/loops/1/reopen", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"state":"done"}`))
+	})
+	backend := &daemonMCPOperations{client: client, supported: []string{"reopen_open_loop"}}
+	result, err := backend.ExecuteOperation(t.Context(), "reopen_open_loop", map[string]any{"message_id": 1})
+	require.NoError(t, err)
+	assertLoopRefusal(t, result, "operation_receipt_unavailable", true)
+}
+
 func TestMCPLoopRealRefusals(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

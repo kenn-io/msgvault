@@ -22,7 +22,8 @@ type daemonMCPNamedPeopleBrowser struct {
 }
 
 func (b daemonMCPNamedPeopleBrowser) PromoteWithDisplayName(ctx context.Context, participantID int64, name *string) (*mcpserver.OperationResult, error) {
-	return readMCPOperationJSON[generated.Person](ctx, b.client, http.MethodPost, "/api/v1/people", &generated.CreatePersonRequestOptions{Body: &generated.CreatePersonBody{ParticipantID: participantID, DisplayName: name}}, http.StatusOK, http.StatusCreated)
+	result, err := readMCPOperationJSON[generated.Person](ctx, b.client, http.MethodPost, "/api/v1/people", &generated.CreatePersonRequestOptions{Body: &generated.CreatePersonBody{ParticipantID: participantID, DisplayName: name}}, http.StatusOK, http.StatusCreated)
+	return personIDProjection(result, true), err
 }
 
 func supportsNamedPromotion(capabilities *apiprotocol.MCPCapabilities) bool {
@@ -85,7 +86,7 @@ func mcpRequestPropertiesPresent(capabilities *apiprotocol.MCPCapabilities, id s
 }
 
 type slackSettingsResponse struct {
-	PendingRestart bool                `json:"pending_restart"`
+	PendingRestart *bool               `json:"pending_restart"`
 	Settings       []generated.Setting `json:"settings"`
 }
 
@@ -202,11 +203,26 @@ func personEditProjection(result *mcpserver.OperationResult, writes bool) *mcpse
 	if result == nil || result.IsError {
 		return result
 	}
+	result = personIDProjection(result, writes)
+	if result.IsError {
+		return result
+	}
 	person, ok := result.Output.(generated.Person)
 	if !ok || result.ETag == "" {
 		return invalidOperationResponse(writes)
 	}
 	result.Output = mcpserver.PersonEditContext{ETag: result.ETag, Person: person}
+	return result
+}
+
+func personIDProjection(result *mcpserver.OperationResult, writes bool) *mcpserver.OperationResult {
+	if result == nil || result.IsError {
+		return result
+	}
+	person, ok := result.Output.(generated.Person)
+	if !ok || person.ID <= 0 {
+		return invalidOperationResponse(writes)
+	}
 	return result
 }
 
@@ -222,10 +238,10 @@ func slackPolicyProjection(result *mcpserver.OperationResult, writes bool) *mcps
 		return result
 	}
 	settings, ok := result.Output.(slackSettingsResponse)
-	if !ok || result.ETag == "" {
+	if !ok || result.ETag == "" || settings.PendingRestart == nil {
 		return invalidOperationResponse(writes)
 	}
-	policy := mcpserver.SlackSyncPolicy{ETag: result.ETag, PendingRestart: settings.PendingRestart, Settings: []generated.Setting{}}
+	policy := mcpserver.SlackSyncPolicy{ETag: result.ETag, PendingRestart: *settings.PendingRestart, Settings: []generated.Setting{}}
 	found := make(map[string]struct{}, len(slackSelectionKinds))
 	for _, setting := range settings.Settings {
 		expectedKind, selected := slackSelectionKinds[setting.Key]
