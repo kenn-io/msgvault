@@ -142,7 +142,6 @@ func TestPermissionRepairHonorsSnapshotAndLock(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(count)
 	assert.FileExists(repo.Path("locks", "exclusive.json"))
-	backupRestoreForceUnlock = true
 	_, err = secureRestoredTokens(t.Context(), repo, manifest.SnapshotID, target, false)
 	require.ErrorIs(err, backup.ErrRepoLocked)
 	assert.FileExists(repo.Path("locks", "exclusive.json"))
