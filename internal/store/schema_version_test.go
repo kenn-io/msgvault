@@ -124,7 +124,7 @@ func TestSchemaVersionCalendarSeriesIndexUpgrade(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	ctx := t.Context()
-	_, err := f.Store.DB().ExecContext(ctx, `DROP INDEX idx_calendar_events_series_provider_id`)
+	_, err := f.Store.DB().ExecContext(ctx, `DROP INDEX IF EXISTS idx_calendar_events_series_provider_id`)
 	require.NoError(err)
 	_, err = f.Store.DB().ExecContext(ctx, `UPDATE archive_metadata SET value = '42' WHERE key = 'schema_version'`)
 	require.NoError(err)
