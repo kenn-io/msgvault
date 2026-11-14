@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPersonAndRelationshipCatalogGatingAndWarnings(t *testing.T) {
+func TestPersonAndRelationshipCatalogGatingAndRelationshipWarnings(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"get_person_record", "get_person_record_history", "get_person_record_media", "patch_person_record", "list_person_relationships", "get_person_network", "create_person_relationship"}}
