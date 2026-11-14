@@ -257,12 +257,22 @@ func TestMCPLoopDeadlineCrossesApproval(t *testing.T) {
 	}
 }
 
-func TestMCPLoopResponseClassifierIsScoped(t *testing.T) {
-	for _, code := range []string{"loop_not_found", "loop_decision_not_found", "loop_scan_incomplete", "loops_unavailable", "invalid_request", "server_busy"} {
-		t.Run(code, func(t *testing.T) {
+func TestMCPLoopAndGenericResponseClassifiers(t *testing.T) {
+	for _, tc := range []struct {
+		code, genericCode string
+		uncertain         bool
+	}{
+		{"loop_not_found", "operation_refused", true},
+		{"loop_decision_not_found", "operation_refused", true},
+		{"loop_scan_incomplete", "operation_refused", true},
+		{"loops_unavailable", "operation_refused", true},
+		{"invalid_request", "operation_refused", true},
+		{"server_busy", "server_busy", false},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusServiceUnavailable)
-				_, err := fmt.Fprintf(w, `{"error":%q}`, code)
+				_, err := fmt.Fprintf(w, `{"error":%q}`, tc.code)
 				assert.NoError(t, err)
 			}))
 			defer server.Close()
@@ -270,10 +280,10 @@ func TestMCPLoopResponseClassifierIsScoped(t *testing.T) {
 			require.NoError(t, err)
 			result, err := readMCPLoopJSON[generated.LoopDecisionResponse](t.Context(), client, http.MethodPost, "/api/v1/loops/1/done", nil)
 			require.NoError(t, err)
-			assertLoopRefusal(t, result, code, false)
+			assertLoopRefusal(t, result, tc.code, false)
 			result, err = readMCPOperationJSON[generated.Person](t.Context(), client, http.MethodPost, "/api/v1/people", nil, http.StatusOK)
 			require.NoError(t, err)
-			assertLoopRefusal(t, result, "operation_refused", true)
+			assertLoopRefusal(t, result, tc.genericCode, tc.uncertain)
 		})
 	}
 }
