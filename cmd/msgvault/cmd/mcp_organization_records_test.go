@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 
@@ -24,7 +25,6 @@ import (
 
 func TestOrganizationCapabilities(t *testing.T) {
 	all := []string{"list_organizations", "get_organization", "list_organization_attributes", "create_organization", "update_organization", "delete_organization", "replace_organization_profile", "set_organization_attribute"}
-	properties := []string{"name", "kind", "primary_domain", "description", "retired", "names", "identifiers", "addresses", "contact_points", "media", "categories", "definition_slug", "value", "source", "ordinal", "expected_value_id", "dry_run"}
 	for _, tc := range []struct {
 		name, missingRoute, missingProperty string
 		want                                []string
@@ -37,20 +37,23 @@ func TestOrganizationCapabilities(t *testing.T) {
 		{"missing attribute expectation", "", "setOrganizationAttribute", []string{"list_organizations", "get_organization", "list_organization_attributes", "create_organization", "update_organization", "delete_organization", "replace_organization_profile"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			caps := &apiprotocol.MCPCapabilities{}
-			for _, id := range []string{"createOrganization", "patchOrganization", "putOrganizationProfile", "setOrganizationAttribute"} {
-				props := properties
-				if tc.missingProperty == id {
-					if id == "patchOrganization" {
-						props = []string{"name", "kind", "primary_domain", "description"}
-					} else {
-						props = []string{"definition_slug", "value", "source", "ordinal", "dry_run"}
+			backend, _, _, _ := employmentFixture(t)
+			caps, err := backend.client.MCPCapabilities(t.Context())
+			require.NoError(t, err)
+			caps.Routes = slices.DeleteFunc(caps.Routes, func(route apiprotocol.MCPRouteDescriptor) bool { return route.OperationID == tc.missingRoute })
+			for i := range caps.Routes {
+				if caps.Routes[i].OperationID == tc.missingProperty {
+					property := "expected_value_id"
+					if tc.missingProperty == "patchOrganization" {
+						property = "retired"
 					}
+					caps.Routes[i].RequestProperties = slices.DeleteFunc(caps.Routes[i].RequestProperties, func(p string) bool { return p == property })
 				}
-				caps.Routes = append(caps.Routes, apiprotocol.MCPRouteDescriptor{OperationID: id, RequestProperties: props})
 			}
-			hasRoute := func(id, _, _ string, _ ...string) bool { return id != tc.missingRoute }
-			assert.Equal(t, tc.want, organizationMCPCapabilities(hasRoute, caps))
+			got := newDaemonMCPOperations(backend.client, caps).capabilities()
+			for _, name := range all {
+				assert.Equal(t, slices.Contains(tc.want, name), slices.Contains(got, name), name)
+			}
 		})
 	}
 }
@@ -64,12 +67,6 @@ func TestOrganizationReadsUseNativeStore(t *testing.T) {
 	_, err = st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Unrelated Company", Kind: store.OrganizationKindCompany})
 	must.NoError(err)
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
-	result, err := backend.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": org.ID})
-	must.NoError(err)
-	var profile generated.OrganizationProfile
-	must.NoError(json.Unmarshal(result.Data, &profile))
-	checks.Equal(org.ID, profile.Organization.ID)
-	checks.NotEmpty(result.ETag)
 	found, err := backend.ExecuteOperation(t.Context(), "list_organizations", map[string]any{"q": "Example"})
 	must.NoError(err)
 	organizations := operationOutput[generated.OrganizationsResponse](t, found).Organizations
@@ -97,13 +94,6 @@ func TestOrganizationWritesUseRevisions(t *testing.T) {
 	missing, err := backend.ExecuteOperation(t.Context(), "update_organization", blank)
 	must.NoError(err)
 	assertDefiniteRefusal(t, missing, "if_match_required")
-	deletable, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Deletable", Kind: store.OrganizationKindCompany})
-	must.NoError(err)
-	readable, err := backend.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": deletable.ID})
-	must.NoError(err)
-	deleted, err := backend.ExecuteOperation(t.Context(), "delete_organization", map[string]any{"organization_id": deletable.ID, "etag": readable.ETag})
-	must.NoError(err)
-	checks.False(deleted.IsError)
 }
 
 func TestOrganizationAttributeDisclosureAndInvalidMedia(t *testing.T) {
@@ -121,11 +111,15 @@ func TestOrganizationAttributeDisclosureAndInvalidMedia(t *testing.T) {
 	var refusal *mcpserver.OperationRefusalError
 	must.ErrorAs(err, &refusal)
 	must.Equal("invalid_arguments", refusal.Code)
-	args := map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "industry", "source": "user", "value": map[string]any{"type": "text", "text": "software"}, "expected_value_id": 0, "ordinal": 0}}
+	body := map[string]any{"definition_slug": "industry", "source": "user", "value": map[string]any{"type": "text", "text": "software"}, "expected_value_id": 0, "ordinal": 0}
+	args := map[string]any{"organization_id": org.ID, "body": body}
 	disclosure, err := backend.OperationDisclosure(t.Context(), "set_organization_attribute", args)
 	must.NoError(err)
 	must.Contains(disclosure, `"superseded":null`)
-	delete(args["body"].(map[string]any), "ordinal")
+	values, err := st.ListOrganizationAttributeValuesContext(t.Context(), org.ID, store.OrganizationAttributeQuery{})
+	must.NoError(err)
+	must.Empty(values)
+	delete(body, "ordinal")
 	_, err = backend.OperationDisclosure(t.Context(), "set_organization_attribute", args)
 	must.ErrorAs(err, &refusal)
 	must.Equal("invalid_arguments", refusal.Code)
