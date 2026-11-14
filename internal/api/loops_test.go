@@ -25,6 +25,8 @@ type loopFixture struct {
 }
 
 func TestListLoopsWithholdsVerificationContent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	now := time.Now().UTC().Add(-5 * 24 * time.Hour)
 	f.PersistEmail(storetest.EmailSpec{Thread: "secret", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Subject: "Please respond", Body: "Your verification code is 482913. Can you confirm?", SentAt: now})
@@ -38,16 +40,16 @@ func TestListLoopsWithholdsVerificationContent(t *testing.T) {
 		req.Header.Set(apiprotocol.VerificationHeader, tc.header)
 		w := httptest.NewRecorder()
 		server.Router().ServeHTTP(w, req)
-		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		require.Equal(http.StatusOK, w.Code, w.Body.String())
 		var response LoopListResponse
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
-		require.Len(t, response.Items, 2)
+		require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+		require.Len(response.Items, 2)
 		summaries := map[string]string{}
 		for _, item := range response.Items {
 			summaries[item.Counterparty.Address] = item.Summary
 		}
-		assert.Equal(t, tc.secret, summaries["alex@example.test"])
-		assert.Equal(t, "Lunch plans", summaries["sam@example.test"])
+		assert.Equal(tc.secret, summaries["alex@example.test"])
+		assert.Equal("Lunch plans", summaries["sam@example.test"])
 	}
 }
 
