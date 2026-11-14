@@ -72,7 +72,8 @@ introduction. `email_intro` is an inbound email, excluding meetings, with
 exactly one third-party From address in the archived envelope, matching the
 recorded sender when present. You must be a recipient, the person must be in
 To or Cc, and there can be at most four other non-owner recipients, counting
-linked aliases once per saved person. `observed` covers other evidence.
+linked aliases once per saved person. Email with a relayed From address uses
+`observed`, as does other evidence.
 `introducer` identifies the sender of an introduction email when known. These fields reflect archived
 evidence and currently linked identities, not a claim about when you met
 offline.
