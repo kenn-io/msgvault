@@ -591,13 +591,15 @@ func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
 	})
 	t.Run("unrelated inherited entries do not block repair", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "tokens")
-		require.NoError(t, (nativePermissions{}).secureDirectory(dir))
+		require.NoError(t, os.Mkdir(dir, 0700))
+		root := shareRestoredTestDirectory(t, dir, windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE)
+		omitted := filepath.Join(dir, "omitted")
+		require.NoError(t, os.WriteFile(omitted, []byte("omitted"), 0600))
+		require.NoError(t, secureOwnerOnlyHandle(root))
 		selectedDir := filepath.Join(dir, "selected")
 		require.NoError(t, os.Mkdir(selectedDir, 0700))
 		shareRestoredTestDirectory(t, selectedDir, windows.NO_INHERITANCE)
 		require.NoError(t, os.WriteFile(filepath.Join(selectedDir, "token"), []byte("selected"), 0600))
-		omitted := filepath.Join(dir, "omitted")
-		require.NoError(t, os.WriteFile(omitted, []byte("omitted"), 0600))
 		h, err := openSecurityHandle(omitted, false, windows.READ_CONTROL)
 		require.NoError(t, err)
 		defer windows.CloseHandle(h) //nolint:errcheck
