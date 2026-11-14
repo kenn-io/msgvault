@@ -1972,10 +1972,10 @@ func TestRemoveMicrosoftMailTokensAcrossApps(t *testing.T) {
 		t.Run(fmt.Sprintf("graph=%t", graph), func(t *testing.T) {
 			cfg := lifecycleTestConfig(t.TempDir())
 			cfg.Microsoft.Apps = map[string]config.MicrosoftApp{"orgb": {ClientID: "client-b"}}
-			dir1, err := microsoftTokensDir(cfg, "orgb")
+			_, dir1, err := microsoftMailApp(cfg, "orgb")
 			require.NoError(t, err)
 			cfg.Microsoft.Apps["orgb"] = config.MicrosoftApp{ClientID: "client-c"}
-			dir2, err := microsoftTokensDir(cfg, "orgb")
+			_, dir2, err := microsoftMailApp(cfg, "orgb")
 			require.NoError(t, err)
 			var paths []string
 			for _, dir := range []string{dir1, dir2, cfg.TokensDir()} {
@@ -2002,7 +2002,7 @@ func TestRemoveMicrosoftMailTokensAcrossApps(t *testing.T) {
 func TestRemoveMicrosoftIMAPTokensUsesConfiguredClient(t *testing.T) {
 	cfg := lifecycleTestConfig(t.TempDir())
 	cfg.Microsoft.Apps = map[string]config.MicrosoftApp{"orgb": {ClientID: "client-b"}}
-	dir, err := microsoftTokensDir(cfg, "orgb")
+	_, dir, err := microsoftMailApp(cfg, "orgb")
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(dir, 0o700))
 	path := microsoft.NewManager("", "", "", dir, nil).TokenPath("user@example.com")

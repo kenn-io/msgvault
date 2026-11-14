@@ -8,7 +8,6 @@ import (
 	"go.kenn.io/msgvault/internal/emailtags"
 	"go.kenn.io/msgvault/internal/gmail"
 	imaplib "go.kenn.io/msgvault/internal/imap"
-	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/msmail"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/provideridentity"
@@ -93,11 +92,10 @@ func (a *storeAPIAdapter) providerMessageTags(ctx context.Context, source *store
 		write := change != nil && !change.DryRun
 		state := invocationFromContext(ctx)
 		if write {
-			app, dir, err := microsoftMailApp(state.cfg, sourceOAuthApp(source))
+			manager, err := newGraphMailWriteManager(state, source)
 			if err != nil {
 				return nil, emailtags.Failure("provider_unavailable", "Cannot connect to the Microsoft mailbox", nil, err)
 			}
-			manager := microsoft.NewGraphMailWriteManager(app.ClientID, app.EffectiveTenantID(), app.EffectiveRedirectURI(), dir, state.logger)
 			granted, err := manager.HasScopes(source.Identifier)
 			if err != nil || !granted {
 				return nil, emailtags.Failure("insufficient_scope", "Microsoft category editing requires Mail.ReadWrite; reauthorize with add-o365 --graph --mail-write", nil, err)

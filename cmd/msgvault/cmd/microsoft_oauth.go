@@ -74,17 +74,6 @@ func microsoftTenantID(flagTenant string, cfg *config.Config) string {
 	return cfg.Microsoft.EffectiveTenantID()
 }
 
-func microsoftTokensDir(cfg *config.Config, name string) (string, error) {
-	if name == "" {
-		return cfg.TokensDir(), nil
-	}
-	app, err := cfg.Microsoft.App(name)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(cfg.TokensDir(), "microsoft-apps", fmt.Sprintf("%x", sha256.Sum256([]byte(app.ClientID)))), nil
-}
-
 func microsoftMailApp(cfg *config.Config, name string) (config.MicrosoftConfig, string, error) {
 	if cfg == nil {
 		return config.MicrosoftConfig{}, "", errors.New("configuration is unavailable")
@@ -93,8 +82,11 @@ func microsoftMailApp(cfg *config.Config, name string) (config.MicrosoftConfig, 
 	if err != nil {
 		return app, "", err
 	}
-	dir, err := microsoftTokensDir(cfg, name)
-	return app, dir, err
+	dir := cfg.TokensDir()
+	if name != "" {
+		dir = filepath.Join(dir, "microsoft-apps", fmt.Sprintf("%x", sha256.Sum256([]byte(app.ClientID))))
+	}
+	return app, dir, nil
 }
 
 func newMicrosoftIMAPManager(cfg *config.Config, logger *slog.Logger, src *store.Source) (*microsoft.Manager, error) {

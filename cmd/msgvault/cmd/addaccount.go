@@ -328,7 +328,7 @@ func preflightAddAccountAuthorize(cmd *cobra.Command, email string) (bool, error
 		return false, nil
 	}
 	storedApp, sourceExists, _, _, err := lookupAccountBinding(cmd.Context(), func(account daemonclient.CLIAccount) (bool, bool) {
-		return account.Type == sourceTypeGmail && strings.EqualFold(account.Email, email), false
+		return account.Type == sourceTypeGmail && account.Email == email, false
 	})
 	if err != nil {
 		return false, err

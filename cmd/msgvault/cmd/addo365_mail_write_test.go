@@ -124,7 +124,7 @@ func TestAddO365FailedConsentPreservesBoundToken(t *testing.T) {
 				require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, `{"host":"outlook.office365.com","username":"user@example.com","auth_method":"xoauth2"}`))
 			}
 			startStoreAPIDaemon(t, dir, st, nil)
-			oldDir, err := microsoftTokensDir(cfg, "orgb")
+			_, oldDir, err := microsoftMailApp(cfg, "orgb")
 			require.NoError(t, err)
 			require.NoError(t, os.MkdirAll(oldDir, 0o700))
 			var tokenPath string

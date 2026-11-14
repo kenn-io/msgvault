@@ -166,10 +166,10 @@ func TestMicrosoftMailAppsRefreshOwnTokens(t *testing.T) {
 	}
 	assert.Equal(t, 2, requests["client-a"])
 	assert.Equal(t, 2, requests["client-b"])
-	oldDir, err := microsoftTokensDir(cfg, "orgb")
+	_, oldDir, err := microsoftMailApp(cfg, "orgb")
 	require.NoError(t, err)
 	cfg.Microsoft.Apps["orgb"] = config.MicrosoftApp{ClientID: "client-c"}
-	newDir, err := microsoftTokensDir(cfg, "orgb")
+	_, newDir, err := microsoftMailApp(cfg, "orgb")
 	require.NoError(t, err)
 	assert.NotEqual(t, oldDir, newDir)
 	changed, err := newGraphMailManager(state, &store.Source{OAuthApp: sql.NullString{String: "orgb", Valid: true}})
@@ -206,7 +206,7 @@ func TestAddO365StoresAndChangesAppBinding(t *testing.T) {
 				if tc.flag != nil {
 					require.NoError(t, cmd.Flags().Set("oauth-app", *tc.flag))
 				}
-				dir, err := microsoftTokensDir(cfg, tc.want)
+				_, dir, err := microsoftMailApp(cfg, tc.want)
 				require.NoError(t, err)
 				require.NoError(t, os.MkdirAll(dir, 0o700))
 				var path string

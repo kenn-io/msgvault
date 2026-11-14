@@ -49,6 +49,24 @@ func TestFindGmailSource(t *testing.T) {
 	assert.Equal("gmail", src.SourceType, "source type")
 }
 
+func TestAddAccountPreflightMatchesGmailSourceCase(t *testing.T) {
+	dir := t.TempDir()
+	cfg := lifecycleTestConfig(dir)
+	cfg.OAuth.ClientSecrets = filepath.Join(dir, "missing.json")
+	cfg.OAuth.Apps = map[string]config.OAuthApp{"named": {ServiceAccountKey: "named-key"}}
+	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
+	src, err := s.GetOrCreateSource(sourceTypeGmail, "user@example.com")
+	require.NoError(t, err)
+	require.NoError(t, s.UpdateSourceOAuthApp(t.Context(), src.ID, sql.NullString{String: "named", Valid: true}))
+	startStoreAPIDaemon(t, dir, s, nil)
+	cmd := newAddAccountCmd()
+	cmd.SetContext(withStoreResolverConfig(t, cfg))
+	_, err = preflightAddAccountAuthorize(cmd, "user@example.com")
+	require.NoError(t, err)
+	_, err = preflightAddAccountAuthorize(cmd, "USER@example.com")
+	require.Error(t, err)
+}
+
 // TestAddAccount_InheritedBindingValidatesToken verifies that re-running
 // add-account without --oauth-app on a named-app account validates the
 // token's client_id against the inherited binding.
