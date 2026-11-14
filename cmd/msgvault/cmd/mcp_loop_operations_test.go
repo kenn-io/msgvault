@@ -440,3 +440,22 @@ func TestMCPLoopDiscoveryRequiresEveryDescriptorDetail(t *testing.T) {
 		}
 	}
 }
+
+func TestMCPLoopLegacyApprovalRechecksDeadline(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, backend, anchor := loopOperationFixture(t)
+	start := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	backend.now = func() time.Time { return start }
+	session := legacyOperationSession(t, backend, mcpserver.OperationFamilyLoops, func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		backend.now = func() time.Time { return start.Add(48 * time.Hour) }
+		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+	})
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "snooze_open_loop", Arguments: map[string]any{"message_id": anchor, "question_message_ids": []int64{anchor}, "until": "2030-01-02T00:00:00Z"}})
+	requirements.NoError(err)
+	requirements.True(result.IsError)
+	assertions.Equal("invalid_arguments", loopToolFailure(t, result)["error"])
+	var decisions int
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM loop_decisions").Scan(&decisions))
+	assertions.Zero(decisions)
+}

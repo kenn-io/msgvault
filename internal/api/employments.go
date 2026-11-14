@@ -48,6 +48,11 @@ type EmploymentBody struct {
 	Confidence     *float64 `json:"confidence,omitzero" nullable:"true"`
 }
 
+type ReplaceEmploymentBody struct {
+	EmploymentBody
+	ExpectedPrimary *store.EmploymentRevision `json:"expected_primary,omitzero" nullable:"false" doc:"Primary employment and revision approved for demotion"`
+}
+
 type EndEmploymentBody struct {
 	EndDate string `json:"end_date"`
 }
@@ -96,7 +101,7 @@ func (s *Server) registerEmploymentRoutes(api huma.API) {
 	patch := rawAPIV1Operation("patchEmployment", http.MethodPatch, "/employments/{id}", "Replace an employment record's mutable fields")
 	addEmploymentIDParameter(&patch)
 	addEmploymentIfMatchParameter(&patch)
-	patch.RequestBody = jsonRequestBodyFor[EmploymentBody](api)
+	patch.RequestBody = jsonRequestBodyFor[ReplaceEmploymentBody](api)
 	patch.Responses = jsonResponsesFor[store.Employment](api)
 	addEmploymentETagHeader(patch.Responses[httpStatusKey(http.StatusOK)])
 	addErrorResponses(api, patch.Responses, http.StatusBadRequest, http.StatusConflict, http.StatusNotFound, http.StatusPreconditionRequired, http.StatusServiceUnavailable)
@@ -203,15 +208,16 @@ func (s *Server) handlePatchEmployment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var body EmploymentBody
+	var body ReplaceEmploymentBody
 	if _, ok := decodeEntityRequestFields(w, r, &body, "employment"); !ok {
 		return
 	}
-	input, err := employmentInputFromBody(body)
+	input, err := employmentInputFromBody(body.EmploymentBody)
 	if err != nil {
 		s.writeEmploymentError(w, err)
 		return
 	}
+	input.ExpectedPrimary = body.ExpectedPrimary
 	employment, err := employments.UpdateEmploymentContext(r.Context(), id, revision, input)
 	if err != nil {
 		s.writeEmploymentError(w, err)

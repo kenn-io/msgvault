@@ -52,6 +52,12 @@ type EmploymentInput struct {
 	Source                            Provenance
 	SourceRef                         *string
 	Confidence                        *float64
+	ExpectedPrimary                   *EmploymentRevision
+}
+
+type EmploymentRevision struct {
+	ID       int64 `json:"id"`
+	Revision int64 `json:"revision"`
 }
 
 type EmploymentFilter struct {
@@ -506,6 +512,23 @@ func (s *Store) reviseEmploymentTx(
 		// current, matching endEmploymentTx.
 		primary = currentEmployment.IsPrimary && current
 	} else {
+		if *input.IsPrimary && input.ExpectedPrimary != nil {
+			expected := input.ExpectedPrimary
+			var primaryID, revision int64
+			err := tx.QueryRowContext(ctx, `SELECT id, revision FROM employments WHERE person_id = ? AND `+s.dialect.BoolTrueExpr("is_primary")+` AND `+s.dialect.BoolTrueExpr("is_current"), input.PersonID).Scan(&primaryID, &revision)
+			if errors.Is(err, sql.ErrNoRows) || err == nil && (primaryID != expected.ID || revision != expected.Revision) {
+				return nil, ErrEmploymentPrimaryConflict
+			}
+			if err != nil {
+				return nil, fmt.Errorf("read primary employment: %w", err)
+			}
+			if primaryID != id {
+				_, err = tx.ExecContext(ctx, fmt.Sprintf(`UPDATE employments SET is_primary = ?, revision = revision + 1, updated_at = %s WHERE id = ? AND revision = ?`, s.dialect.Now()), false, primaryID, revision)
+				if err != nil {
+					return nil, fmt.Errorf("demote primary employment: %w", err)
+				}
+			}
+		}
 		primary, err = s.resolveEmploymentPrimaryTx(ctx, tx, input, current, id)
 		if err != nil {
 			return nil, err

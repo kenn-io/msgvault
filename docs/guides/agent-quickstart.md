@@ -234,7 +234,6 @@ backend checks for action permissions, source scope, and sender identity;
 | `delete_employment` | employment_write | `--allow-employment-writes` | owner-only |
 | `end_employment` | employment_write | `--allow-employment-writes` | owner-only |
 | `replace_employment` | employment_write | `--allow-employment-writes` | owner-only |
-| `set_primary_employment` | employment_write | `--allow-employment-writes` | owner-only |
 | `accept_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `reject_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `score_identity_matches` | identity_scoring | `--allow-identity-scoring` | owner-only |

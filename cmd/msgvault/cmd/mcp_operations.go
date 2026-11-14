@@ -175,11 +175,7 @@ func operationFailure(code string, uncertain bool) *mcpserver.OperationResult {
 // cancellation without the daemon client's busy retry loop. Mutations with an
 // unclassified/interrupted response retain uncertain completion explicitly.
 func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, success ...int) (*mcpserver.OperationResult, error) {
-	return readMCPOperationJSONWithClassifier[T](ctx, client, method, path, options, nil, success...)
-}
-
-func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, success ...int) (*mcpserver.OperationResult, error) {
-	data, headers, failure, err := readMCPOperationBytes(ctx, client, method, path, options, 1<<20, classify, success...)
+	data, headers, failure, err := readMCPOperationBytes(ctx, client, method, path, options, 1<<20, success...)
 	if failure != nil {
 		return failure, err
 	}
@@ -190,7 +186,7 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 	return &mcpserver.OperationResult{Output: output, ETag: headers.Get("ETag")}, nil
 }
 
-func readMCPOperationBytes(ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, limit int64, classify func(string) bool, success ...int) ([]byte, http.Header, *mcpserver.OperationResult, error) {
+func readMCPOperationBytes(ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, limit int64, success ...int) ([]byte, http.Header, *mcpserver.OperationResult, error) {
 	writes := method != http.MethodGet
 	response, err := client.DoGeneratedRequestWithContext(ctx, method, path, options)
 	if err != nil {
@@ -213,12 +209,10 @@ func readMCPOperationBytes(ctx context.Context, client *daemonclient.Client, met
 		}
 		_ = json.Unmarshal(data, &failure)
 		code := failure.Error
-		if classify != nil && classify(code) {
+		if nativeDefiniteRefusal(code) {
 			return nil, nil, operationFailure(code, false), nil
 		}
 		switch code {
-		case "unauthorized", "not_found", "scheduler_unavailable", "source_not_schedulable", "store_unavailable", "missing_account", "sync_error", "operation_in_progress", "settings_conflict", "settings_edit_rejected", "if_match_required", "person_revision_conflict", "person_profile_not_found", "person_enrichment_dispatch_in_progress", "persons_unavailable", "cache_build_not_found", "cache_build_unavailable", "bad_request", "invalid_participant_id", "participant_not_found", "analytical_cache_unavailable", "query_resource_exhausted", "engine_unavailable":
-			return nil, nil, operationFailure(code, false), nil
 		case "validation_failed":
 			// Settings credential cleanup can return this after the config commits.
 			return nil, nil, operationFailure(code, writes), nil
@@ -227,4 +221,16 @@ func readMCPOperationBytes(ctx context.Context, client *daemonclient.Client, met
 		}
 	}
 	return data, response.Header, nil, nil
+}
+
+func nativeDefiniteRefusal(code string) bool {
+	switch code {
+	case invalidArguments, "unauthorized", "not_found", "scheduler_unavailable", "source_not_schedulable", "store_unavailable", "missing_account", "sync_error", "operation_in_progress", "settings_conflict", "settings_edit_rejected", "if_match_required", "person_revision_conflict", "person_profile_not_found", "person_enrichment_dispatch_in_progress", "persons_unavailable", "cache_build_not_found", "cache_build_unavailable", "bad_request", "invalid_participant_id", "participant_not_found", "analytical_cache_unavailable", "query_resource_exhausted", "engine_unavailable",
+		"employment_not_found", "employment_revision_conflict", "employment_primary_conflict", "employment_duplicate_active", "invalid_employment", "invalid_employment_id", "invalid_partial_date", "invalid_source", "invalid_person_id", "invalid_organization_id", "invalid_organization", "organization_not_found", "organizations_unavailable", "invalid_if_match", "employments_unavailable", "server_busy",
+		"profile_values_unavailable", "profile_media_not_found", "profile_media_content_unavailable", "invalid_profile_media_id", "profile_value_not_found", "invalid_profile_value", "profile_patch_too_large", "person_category_duplicate", "service_alias_conflict",
+		"loop_not_found", "loop_decision_not_found", "loop_scan_incomplete", "loops_unavailable", "invalid_request", "invalid_status",
+		"organization_revision_conflict", "organization_has_employments", "organization_merge_conflict", "organization_profile_too_large", "invalid_attribute_slug", "invalid_attribute_definition", "attribute_definition_not_found", "attribute_definition_inactive", "attribute_definition_not_writable", "invalid_attribute_value", "attribute_value_not_found", "attribute_value_conflict", "invalid_ordinal", "invalid_expected_value_id":
+		return true
+	}
+	return false
 }

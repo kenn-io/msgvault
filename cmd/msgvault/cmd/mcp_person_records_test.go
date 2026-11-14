@@ -378,3 +378,24 @@ func TestPersonRecordLargeProfileAndSmallMedia(t *testing.T) {
 		assertions.Nil(updated.Profile)
 	})
 }
+
+func TestPersonRecordLegacyApprovalRechecksProfile(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	backend, id := personRecordFixture(t)
+	initial, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
+	requirements.NoError(err)
+	patch := func(name string) map[string]any {
+		return map[string]any{"names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": name, "envelope": map[string]any{"source": "user"}}}}}
+	}
+	session := legacyOperationSession(t, backend, mcpserver.OperationFamilyCurated, func(ctx context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		changed, changeErr := backend.ExecuteOperation(ctx, "patch_person_record", map[string]any{"person_id": id, "etag": initial.ETag, "patch": patch("Changed")})
+		requirements.NoError(changeErr)
+		requirements.False(changed.IsError)
+		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+	})
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "patch_person_record", Arguments: map[string]any{"person_id": id, "etag": initial.ETag, "patch": patch("Approved")}})
+	requirements.NoError(err)
+	requirements.True(result.IsError)
+	assertions.Equal("person_revision_conflict", loopToolFailure(t, result)["error"])
+}

@@ -37,6 +37,13 @@ func employmentOperationalDefinitions() []operationalDefinition {
 		}
 		body.Properties[key] = &jsonschema.Schema{AnyOf: []*jsonschema.Schema{body.Properties[key], {Type: "null"}}}
 	}
+	createBody := *body
+	createBody.Required = append(slices.Clone(body.Required), "is_primary")
+	createBody.Properties = make(map[string]*jsonschema.Schema, len(body.Properties))
+	for key, value := range body.Properties {
+		createBody.Properties[key] = value
+	}
+	createBody.Properties["is_primary"] = booleanSchema("Whether this employment is primary")
 	record := outputSchemaFor[EmploymentRecord]()
 	list := outputSchemaFor[generated.EmploymentsResponse]()
 	mutation := func(name, description string, properties map[string]*jsonschema.Schema, required ...string) operationalDefinition {
@@ -54,10 +61,9 @@ func employmentOperationalDefinitions() []operationalDefinition {
 		newOperationalDefinition("get_employment", "Read one employment and its exact revision ETag."+untrusted, OperationFamilyEmployment, closedObject(map[string]*jsonschema.Schema{"employment_id": id}, "employment_id"), record, false),
 		newOperationalDefinition("list_person_employments", "List a person's employment history and current primary projection."+untrusted, OperationFamilyEmployment, listInput("person_id"), list, false),
 		newOperationalDefinition("list_organization_employments", "List an organization's employment history."+untrusted, OperationFamilyEmployment, listInput("organization_id"), list, false),
-		mutation("create_employment", "Create an employment record; native primary and duplicate guards apply.", map[string]*jsonschema.Schema{"employment": body}, "employment"),
+		mutation("create_employment", "Create an employment record; native primary and duplicate guards apply.", map[string]*jsonschema.Schema{"employment": &createBody}, "employment"),
 		destructive(mutation("replace_employment", "Replace mutable fields using the exact ETag; omitted text, dates and other optional fields are cleared. Omitted is_current is kept only if end_date is omitted; omitted is_primary is kept only while the resulting record stays current. Reads return dates as year/month/day objects; send partial ISO date strings.", map[string]*jsonschema.Schema{"employment_id": id, "etag": etag, "employment": body}, "employment_id", "etag", "employment")),
 		mutation("end_employment", "End the employment on a partial date using the exact ETag.", map[string]*jsonschema.Schema{"employment_id": id, "etag": etag, "end_date": stringSchema("Partial ISO end date")}, "employment_id", "etag", "end_date"),
-		mutation("set_primary_employment", "Set this current employment primary using the exact ETag; another primary may be demoted.", map[string]*jsonschema.Schema{"employment_id": id, "etag": etag}, "employment_id", "etag"),
 		destructive(newOperationalDefinition("delete_employment", "Delete this employment using the exact ETag. Requires client confirmation.", OperationFamilyEmployment, closedObject(map[string]*jsonschema.Schema{"employment_id": id, "etag": etag}, "employment_id", "etag"), closedObject(nil), true)),
 	}
 }

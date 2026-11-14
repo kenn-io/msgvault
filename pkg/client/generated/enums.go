@@ -2584,6 +2584,28 @@ func (r RemoveResultCacheState) Validate() error {
 	}
 }
 
+type ReplaceEmploymentBodySource string
+
+const (
+	ReplaceEmploymentBodySourceArchiveObservation ReplaceEmploymentBodySource = "archive_observation"
+	ReplaceEmploymentBodySourceCarddavImport      ReplaceEmploymentBodySource = "carddav_import"
+	ReplaceEmploymentBodySourceEnrichment         ReplaceEmploymentBodySource = "enrichment"
+	ReplaceEmploymentBodySourceExtraction         ReplaceEmploymentBodySource = "extraction"
+	ReplaceEmploymentBodySourceSystem             ReplaceEmploymentBodySource = "system"
+	ReplaceEmploymentBodySourceUser               ReplaceEmploymentBodySource = "user"
+	ReplaceEmploymentBodySourceVcardImport        ReplaceEmploymentBodySource = "vcard_import"
+)
+
+// Validate checks if the ReplaceEmploymentBodySource value is valid
+func (r ReplaceEmploymentBodySource) Validate() error {
+	switch r {
+	case ReplaceEmploymentBodySourceArchiveObservation, ReplaceEmploymentBodySourceCarddavImport, ReplaceEmploymentBodySourceEnrichment, ReplaceEmploymentBodySourceExtraction, ReplaceEmploymentBodySourceSystem, ReplaceEmploymentBodySourceUser, ReplaceEmploymentBodySourceVcardImport:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ReplaceEmploymentBodySource value, got: %v", r))
+	}
+}
+
 type RunSavedViewResponseResultKind string
 
 const (

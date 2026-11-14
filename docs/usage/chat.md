@@ -940,14 +940,16 @@ On unreleased `main`, `get_employment` reads one record with its revision
 ETag. `list_person_employments` and `list_organization_employments` list
 history in pages of at most 200.
 
-With `--allow-employment-writes`, a client can create, replace, end, set
-primary, or delete a record after confirmation. Replacement supplies the full
+With `--allow-employment-writes`, a client can create, replace, end, or delete
+a record after confirmation. Creation requires an explicit `is_primary` value.
+Replacement can promote a record and supplies the full
 mutable record. Omitted text, dates, and other optional fields are cleared;
 omitted `is_current` is kept only if `end_date` is omitted, and omitted
 `is_primary` is kept only while the resulting record stays current. Dates
 may be a year, year and month, or full date. Changes to an existing record
-require the exact ETag from a fresh read. Setting a primary employment can demote another. If a
-mutation may have completed, read the record before deciding what to do next.
+require the exact ETag from a fresh read. A promotion shows the current primary
+and refuses if that primary changes before the write. If a mutation may have
+completed, list the person's employments before retrying.
 
 ## Write controls
 

@@ -638,7 +638,7 @@ func addMCPWriteFlags(cmd *cobra.Command, prefix string) {
 		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	flags.BoolVar(bind(&mcpAllowCalendarWrites), prefix+"allow-calendar-writes", false,
 		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
-	flags.BoolVar(new(bool), prefix+"allow-employment-writes", false,
+	flags.BoolVar(bind(&mcpAllowEmploymentWrites), prefix+"allow-employment-writes", false,
 		"Expose employment record writes. Each operation requires client confirmation; HTTP also requires the general write opt-in.")
 	flags.BoolVar(bind(&mcpAllowLoopWrites), prefix+"allow-loop-writes", false,
 		"Allow approved open-loop done, snooze, and reopen decisions")

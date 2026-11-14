@@ -635,3 +635,52 @@ func TestMCPCacheJobStatusRetainsRealLifecycle(t *testing.T) {
 	requirements.NotNil(status.ErrorData)
 	assertions.NotContains(*status.ErrorData, directory)
 }
+
+func TestPersonNameLegacyApprovalRechecksPerson(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	participant, err := st.EnsureParticipant("person@example.test", "Example Person", "example.test")
+	requirements.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(participant)
+	requirements.NoError(err)
+	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
+	initial, err := backend.ExecuteOperation(t.Context(), "get_person_edit_context", map[string]any{"person_id": person.ID})
+	requirements.NoError(err)
+	requirements.False(initial.IsError)
+	session := legacyOperationSession(t, backend, mcpserver.OperationFamilyRecords, func(ctx context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		changed, changeErr := backend.ExecuteOperation(ctx, "set_person_display_name", map[string]any{"person_id": person.ID, "etag": initial.ETag, "display_name": "Changed"})
+		requirements.NoError(changeErr)
+		requirements.False(changed.IsError)
+		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+	})
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_display_name", Arguments: map[string]any{"person_id": person.ID, "etag": initial.ETag, "display_name": "Approved"}})
+	requirements.NoError(err)
+	requirements.True(result.IsError)
+	assertions.Equal("person_revision_conflict", loopToolFailure(t, result)["error"])
+	current, err := st.GetPerson(person.ID)
+	requirements.NoError(err)
+	requirements.NotNil(current.DisplayName)
+	assertions.Equal("Changed", *current.DisplayName)
+}
+
+func TestSourceLegacyApprovalRechecksAvailability(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "sender@example.test")
+	requirements.NoError(err)
+	sched := scheduler.New(func(context.Context, string) error { return nil })
+	t.Cleanup(func() { <-sched.Stop().Done() })
+	requirements.NoError(sched.AddAccount("sender@example.test", "0 2 * * *"))
+	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: st}, Scheduler: &schedulerAdapter{scheduler: sched}, Logger: slog.New(slog.DiscardHandler)}))
+	session := legacyOperationSession(t, backend, mcpserver.OperationFamilySources, func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		_, startErr := st.StartSync(source.ID, "incremental")
+		requirements.NoError(startErr)
+		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+	})
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "sync_source", Arguments: map[string]any{"account": "sender@example.test", "source_type": "gmail"}})
+	requirements.NoError(err)
+	requirements.True(result.IsError)
+	assertions.Equal("source_not_schedulable", loopToolFailure(t, result)["error"])
+}

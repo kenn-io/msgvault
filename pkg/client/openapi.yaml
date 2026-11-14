@@ -4642,6 +4642,19 @@ components:
         - organization_name
         - vcard
       type: object
+    EmploymentRevision:
+      additionalProperties: false
+      properties:
+        id:
+          format: int64
+          type: integer
+        revision:
+          format: int64
+          type: integer
+      required:
+        - id
+        - revision
+      type: object
     EmploymentVCard:
       properties:
         org:
@@ -14381,6 +14394,71 @@ components:
         - identifier
         - removed
       type: object
+    ReplaceEmploymentBody:
+      additionalProperties: false
+      properties:
+        address_id:
+          format: int64
+          nullable: true
+          type: integer
+        confidence:
+          format: double
+          nullable: true
+          type: number
+        department:
+          nullable: true
+          type: string
+        description:
+          nullable: true
+          type: string
+        end_date:
+          nullable: true
+          type: string
+        expected_primary:
+          $ref: "#/components/schemas/EmploymentRevision"
+          description: Primary employment and revision approved for demotion
+        is_current:
+          nullable: true
+          type: boolean
+        is_primary:
+          nullable: true
+          type: boolean
+        location:
+          nullable: true
+          type: string
+        organization_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+        role:
+          nullable: true
+          type: string
+        source:
+          enum:
+            - user
+            - carddav_import
+            - vcard_import
+            - archive_observation
+            - extraction
+            - enrichment
+            - system
+          type: string
+        source_ref:
+          nullable: true
+          type: string
+        start_date:
+          nullable: true
+          type: string
+        title:
+          nullable: true
+          type: string
+      required:
+        - person_id
+        - organization_id
+        - source
+      type: object
     Result:
       properties:
         blockers:
@@ -16906,7 +16984,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.3.0
+  version: 5.4.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -22024,7 +22102,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/EmploymentBody"
+              $ref: "#/components/schemas/ReplaceEmploymentBody"
         required: true
       responses:
         "200":

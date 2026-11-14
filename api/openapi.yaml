@@ -4667,6 +4667,19 @@ components:
         - organization_name
         - vcard
       type: object
+    EmploymentRevision:
+      additionalProperties: false
+      properties:
+        id:
+          format: int64
+          type: integer
+        revision:
+          format: int64
+          type: integer
+      required:
+        - id
+        - revision
+      type: object
     EmploymentVCard:
       additionalProperties: true
       properties:
@@ -14636,6 +14649,83 @@ components:
         - identifier
         - removed
       type: object
+    ReplaceEmploymentBody:
+      additionalProperties: false
+      properties:
+        address_id:
+          format: int64
+          type:
+            - integer
+            - "null"
+        confidence:
+          format: double
+          type:
+            - number
+            - "null"
+        department:
+          type:
+            - string
+            - "null"
+        description:
+          type:
+            - string
+            - "null"
+        end_date:
+          type:
+            - string
+            - "null"
+        expected_primary:
+          $ref: "#/components/schemas/EmploymentRevision"
+          description: Primary employment and revision approved for demotion
+        is_current:
+          type:
+            - boolean
+            - "null"
+        is_primary:
+          type:
+            - boolean
+            - "null"
+        location:
+          type:
+            - string
+            - "null"
+        organization_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+        role:
+          type:
+            - string
+            - "null"
+        source:
+          enum:
+            - user
+            - carddav_import
+            - vcard_import
+            - archive_observation
+            - extraction
+            - enrichment
+            - system
+          type: string
+        source_ref:
+          type:
+            - string
+            - "null"
+        start_date:
+          type:
+            - string
+            - "null"
+        title:
+          type:
+            - string
+            - "null"
+      required:
+        - person_id
+        - organization_id
+        - source
+      type: object
     Result:
       additionalProperties: true
       properties:
@@ -17197,7 +17287,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.3.0
+  version: 5.4.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -22293,7 +22383,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/EmploymentBody"
+              $ref: "#/components/schemas/ReplaceEmploymentBody"
         required: true
       responses:
         "200":

@@ -4380,6 +4380,11 @@ func (e EmploymentProjectionResponse) Validate() error {
 	return errors
 }
 
+type EmploymentRevision struct {
+	ID       int64 `json:"id"`
+	Revision int64 `json:"revision"`
+}
+
 type EmploymentVCard struct {
 	Org   []string `json:"org,omitempty"`
 	Role  *string  `json:"role,omitzero"`
@@ -14598,6 +14603,45 @@ func (r RemoveResult) Validate() error {
 	}
 	if err := typesValidator.Var(r.Identifier, "required"); err != nil {
 		errors = errors.Append("Identifier", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ReplaceEmploymentBody struct {
+	AddressID       *int64                      `json:"address_id,omitempty"`
+	Confidence      *float64                    `json:"confidence,omitempty"`
+	Department      *string                     `json:"department,omitzero"`
+	Description     *string                     `json:"description,omitzero"`
+	EndDate         *string                     `json:"end_date,omitzero"`
+	ExpectedPrimary *EmploymentRevision         `json:"expected_primary,omitempty"`
+	IsCurrent       *bool                       `json:"is_current,omitempty"`
+	IsPrimary       *bool                       `json:"is_primary,omitempty"`
+	Location        *string                     `json:"location,omitzero"`
+	OrganizationID  int64                       `json:"organization_id"`
+	PersonID        int64                       `json:"person_id"`
+	Role            *string                     `json:"role,omitzero"`
+	Source          ReplaceEmploymentBodySource `json:"source" validate:"required"`
+	SourceRef       *string                     `json:"source_ref,omitzero"`
+	StartDate       *string                     `json:"start_date,omitzero"`
+	Title           *string                     `json:"title,omitzero"`
+}
+
+func (r ReplaceEmploymentBody) Validate() error {
+	var errors runtime.ValidationErrors
+	if r.ExpectedPrimary != nil {
+		if v, ok := any(r.ExpectedPrimary).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ExpectedPrimary", err)
+			}
+		}
+	}
+	if v, ok := any(r.Source).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
 	}
 	if len(errors) == 0 {
 		return nil

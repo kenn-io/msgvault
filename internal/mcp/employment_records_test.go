@@ -12,7 +12,7 @@ import (
 func TestEmploymentCatalogGatesAndClosedInput(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	names := []string{"get_employment", "list_person_employments", "list_organization_employments", "create_employment", "replace_employment", "end_employment", "set_primary_employment", "delete_employment"}
+	names := []string{"get_employment", "list_person_employments", "list_organization_employments", "create_employment", "replace_employment", "end_employment", "delete_employment"}
 	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: names}
 	reads := toolsByName(t, rawListTools(t, opts, true))
 	assert.Contains(reads, "get_employment")
@@ -54,8 +54,8 @@ func TestEmploymentCatalogGatesAndClosedInput(t *testing.T) {
 	assert.NoError(resolved.Validate(good))
 	bad := map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "user", "other": true}}
 	require.Error(resolved.Validate(bad))
-	assert.NoError(resolved.Validate(map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "extraction", "confidence": 2}}))
-	assert.NoError(resolved.Validate(map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "extraction", "confidence": nil}}))
+	assert.NoError(resolved.Validate(map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "extraction", "is_primary": false, "confidence": 2}}))
+	assert.NoError(resolved.Validate(map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "extraction", "is_primary": false, "confidence": nil}}))
 	require.Error(resolved.Validate(map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "extraction", "confidence": "high"}}))
 	body := schema.Properties["employment"]
 	confidence := body.Properties["confidence"]

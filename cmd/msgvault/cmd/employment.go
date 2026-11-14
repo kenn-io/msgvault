@@ -87,8 +87,16 @@ var employmentSetCmd = &cobra.Command{Use: "set <id>", Short: "Update an employm
 	if err != nil {
 		return err
 	}
+	replacement := generated.ReplaceEmploymentBody{
+		PersonID: body.PersonID, OrganizationID: body.OrganizationID,
+		Title: body.Title, Role: body.Role, Department: body.Department,
+		Location: body.Location, AddressID: body.AddressID, Description: body.Description,
+		StartDate: body.StartDate, EndDate: body.EndDate, IsCurrent: body.IsCurrent,
+		IsPrimary: body.IsPrimary, Source: generated.ReplaceEmploymentBodySource(body.Source),
+		SourceRef: body.SourceRef, Confidence: body.Confidence,
+	}
 	resp, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.PatchEmploymentResp, error) {
-		return api.PatchEmploymentWithResponse(cmd.Context(), &generated.PatchEmploymentRequestOptions{PathParams: &generated.PatchEmploymentPath{ID: id}, Header: &generated.PatchEmploymentHeaders{IfMatch: employmentETag(id, current.JSON200.Revision)}, Body: &body})
+		return api.PatchEmploymentWithResponse(cmd.Context(), &generated.PatchEmploymentRequestOptions{PathParams: &generated.PatchEmploymentPath{ID: id}, Header: &generated.PatchEmploymentHeaders{IfMatch: employmentETag(id, current.JSON200.Revision)}, Body: &replacement})
 	})
 	if err != nil {
 		return err
