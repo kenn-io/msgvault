@@ -148,13 +148,11 @@ func mcpSyncArguments(args map[string]any) (string, string, error) {
 	return account, sourceType, nil
 }
 
-type mcpOperationFailure struct {
-	Error                     string `json:"error"`
-	OperationMayHaveCompleted bool   `json:"operation_may_have_completed"`
-}
-
 func operationFailure(code string, uncertain bool) *mcpserver.OperationResult {
-	return &mcpserver.OperationResult{IsError: true, Output: mcpOperationFailure{code, uncertain}}
+	return &mcpserver.OperationResult{IsError: true, Output: struct {
+		Error                     string `json:"error"`
+		OperationMayHaveCompleted bool   `json:"operation_may_have_completed"`
+	}{code, uncertain}}
 }
 
 func invalidOperationResponse(writes bool) *mcpserver.OperationResult {
@@ -216,11 +214,6 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 	var output T
 	if err := json.Unmarshal(data, &output); err != nil {
 		return invalidOperationResponse(writes), err
-	}
-	if validator, ok := any(output).(runtime.Validator); ok {
-		if err := validator.Validate(); err != nil {
-			return invalidOperationResponse(writes), nil
-		}
 	}
 	if person, ok := any(output).(generated.Person); ok && person.ID <= 0 {
 		return invalidOperationResponse(writes), nil
