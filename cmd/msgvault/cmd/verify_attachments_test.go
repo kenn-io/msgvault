@@ -63,3 +63,36 @@ func TestVerifyAttachmentsDaemonUsesSharedReaderWithoutChildOrMaintenance(t *tes
 	err = adapter.runCLICommandWithRunner(t.Context(), api.CLIRunRequest{Args: []string{"verify-attachments", "--json"}}, func(api.CLIRunEvent) error { return failure }, nil)
 	require.ErrorIs(err, failure)
 }
+
+func TestVerifyAttachmentsTextKeepsJSONReasons(t *testing.T) {
+	for _, tc := range []struct {
+		name, status, reason, stop string
+		showReason                 bool
+	}{
+		{"corruption", attachmentverify.Corrupt, "physical reader rejected content or container integrity", "", false},
+		{"cancellation", attachmentverify.NotChecked, "cancelled or timeout before verification completed", "cancelled or timeout", false},
+		{"byte limit", attachmentverify.NotChecked, "stream did not reach verified EOF within byte limit", "byte limit", false},
+		{"unfinished without stop", attachmentverify.NotChecked, "additional verification detail", "", true},
+		{"catalogue", attachmentverify.Inconclusive, "catalogue could not be resolved", "", true},
+		{"missing", attachmentverify.MissingLoose, "selected recorded loose paths are missing", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			ref := attachmentverify.Reference{AttachmentID: 7, MessageID: 11, Kind: "content", Hash: strings.Repeat("a", 64), Status: tc.status, Reason: tc.reason}
+			text := string(appendAttachmentVerificationReference(nil, ref, tc.stop))
+			assert.Contains(text, "attachment=7 message=11 content "+ref.Hash+": "+tc.status)
+			if tc.showReason {
+				assert.Contains(text, "("+tc.reason+")")
+			} else {
+				assert.NotContains(text, tc.reason)
+			}
+			encoded, err := json.Marshal(ref)
+			require.NoError(err)
+			var decoded attachmentverify.Reference
+			require.NoError(json.Unmarshal(encoded, &decoded))
+			assert.Equal(tc.reason, decoded.Reason, "text formatting must preserve the machine-readable reason")
+			assert.Equal(tc.status, decoded.Status)
+		})
+	}
+}

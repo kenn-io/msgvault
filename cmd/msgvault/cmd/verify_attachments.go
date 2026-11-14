@@ -65,11 +65,7 @@ func (a *storeAPIAdapter) newDaemonVerifyAttachmentsCmd(cmdArgs []string, emit f
 				report.ReferencesVerified, report.ReferencesAffected, report.BytesRead, report.More, report.NextAfterID))
 			output = fmt.Appendf(output, "Requested: after ID %d; limit %d rows; %d bytes; timeout %s.\n", opts.AfterID, opts.Limit, opts.MaxBytes, opts.Timeout)
 			for _, ref := range report.References {
-				output = fmt.Appendf(output, "  attachment=%d message=%d %s %s: %s", ref.AttachmentID, ref.MessageID, ref.Kind, ref.Hash, ref.Status)
-				if ref.Reason != "" {
-					output = fmt.Appendf(output, " (%s)", ref.Reason)
-				}
-				output = append(output, '\n')
+				output = appendAttachmentVerificationReference(output, ref, report.StopReason)
 			}
 			if report.StopReason != "" {
 				output = fmt.Appendf(output, "Stopped: %s\n", report.StopReason)
@@ -98,3 +94,14 @@ func (a *storeAPIAdapter) newDaemonVerifyAttachmentsCmd(cmdArgs []string, emit f
 }
 
 func init() { rootCmd.AddCommand(newVerifyAttachmentsCmd(nil)) }
+
+// The status and final stop line already explain corrupt and unfinished slots.
+// Keep the detailed reasons in the report used by JSON, without repeating them.
+func appendAttachmentVerificationReference(output []byte, ref attachmentverify.Reference, stopReason string) []byte {
+	output = fmt.Appendf(output, "  attachment=%d message=%d %s %s: %s", ref.AttachmentID, ref.MessageID, ref.Kind, ref.Hash, ref.Status)
+	if ref.Reason != "" && ref.Status != attachmentverify.Corrupt &&
+		(ref.Status != attachmentverify.NotChecked || stopReason == "") {
+		output = fmt.Appendf(output, " (%s)", ref.Reason)
+	}
+	return append(output, '\n')
+}
