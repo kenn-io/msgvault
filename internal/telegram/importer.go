@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/beeper"
+	"go.kenn.io/msgvault/internal/chatresume"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 )
@@ -94,15 +95,12 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 	summary.SourceID = source.ID
 	cp := telegramCheckpoint{Version: checkpointVersion, RootDir: root, ExportSize: info.Size(), ExportModTime: info.ModTime().UnixNano()}
 	if !opts.NoResume {
-		prev, err := st.GetLatestCheckpointedSyncByType(ctx, source.ID, syncType)
-		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
-			return summary, err
+		var prior telegramCheckpoint
+		found, err := chatresume.Load(ctx, st, source.ID, syncType, &prior)
+		if err != nil {
+			return summary, fmt.Errorf("telegram: load checkpoint; use --no-resume: %w", err)
 		}
-		if prev != nil && prev.CursorBefore.Valid {
-			var prior telegramCheckpoint
-			if err := json.Unmarshal([]byte(prev.CursorBefore.String), &prior); err != nil {
-				return summary, fmt.Errorf("telegram: decode checkpoint; use --no-resume: %w", err)
-			}
+		if found {
 			if prior.Version > checkpointVersion {
 				return summary, fmt.Errorf("telegram: checkpoint version %d is newer than supported; use --no-resume", prior.Version)
 			}
@@ -118,24 +116,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 	}
 	st = st.ScopedToSync(source.ID, syncID)
 	defer func() {
-		cleanup := context.WithoutCancel(ctx)
-		retErr = errors.Join(retErr, st.ResolveDeferredMessageRepliesContext(cleanup, source.ID, MessageType, 500), st.RecomputeConversationStatsContext(cleanup, source.ID))
-		var checkpoint *store.Checkpoint
-		if !opts.NoResume {
-			payload, err := json.Marshal(cp)
-			retErr = errors.Join(retErr, err)
-			if err == nil {
-				checkpoint = &store.Checkpoint{PageToken: string(payload), MessagesProcessed: summary.MessagesAdded + summary.MessagesSkipped, MessagesAdded: summary.MessagesAdded}
-				retErr = errors.Join(retErr, st.UpdateSyncCheckpointContext(cleanup, syncID, checkpoint))
-			}
-		}
-		if retErr != nil {
-			retErr = errors.Join(retErr, st.FailSyncContext(cleanup, syncID, retErr.Error()))
-		} else if summary.LimitReached && checkpoint != nil {
-			retErr = errors.Join(retErr, st.PauseSyncWithCheckpoint(cleanup, syncID, checkpoint))
-		} else {
-			retErr = errors.Join(retErr, st.CompleteSyncContext(cleanup, syncID, ""))
-		}
+		retErr = chatresume.Finish(ctx, st, source.ID, syncID, MessageType, cp, summary.MessagesAdded+summary.MessagesSkipped, summary.MessagesAdded, summary.LimitReached, retErr)
 	}()
 	participants := map[string]int64{}
 	named := map[string]bool{}
@@ -188,14 +169,9 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 			logger.Info("telegram: chat imported", "peer", chat.PeerKey())
 		}
 		cp.NextChat = index
-		if !opts.NoResume {
-			payload, err := json.Marshal(cp)
-			if err != nil {
-				return err
-			}
-			return st.UpdateSyncCheckpointContext(context.WithoutCancel(ctx), syncID, &store.Checkpoint{PageToken: string(payload), MessagesProcessed: summary.MessagesAdded + summary.MessagesSkipped, MessagesAdded: summary.MessagesAdded})
-		}
-		return nil
+		// Preserve the last completed chat after cancellation.
+		_, err := chatresume.Save(context.WithoutCancel(ctx), st, syncID, cp, summary.MessagesAdded+summary.MessagesSkipped, summary.MessagesAdded)
+		return err
 	})
 	if errors.Is(err, errLimitReached) {
 		summary.LimitReached = true

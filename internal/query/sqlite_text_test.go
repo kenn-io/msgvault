@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
@@ -478,4 +479,45 @@ func TestSQLiteListConversationMessagesUsesIDTiebreakerForEqualTimestamps(t *tes
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func TestSQLiteUnnamedLINEParticipantsAcrossViews(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
+	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
+	_, err := tdb.DB.ExecContext(t.Context(), `
+ INSERT INTO sources (id, source_type, identifier) VALUES (7, 'line', 'owner');
+ INSERT INTO participants (id) VALUES (11);
+ INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (11, 'line', 'line-id');
+ INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES (701, 7, 'chat', 'direct_chat');
+ INSERT INTO conversation_participants (conversation_id, participant_id) VALUES (701, 11);
+ INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id) VALUES (801, 701, 7, 'message', 'line', '2026-08-20 10:00:00', 'hello', 11);
+ INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (801, 11, 'from'), (801, 11, 'to');
+ `)
+	require.NoError(err)
+	engine := NewSQLiteEngine(tdb.DB)
+	messages, err := engine.ListConversationMessages(t.Context(), 701, TextFilter{})
+	require.NoError(err)
+	require.Len(messages, 1)
+	assert.Equal("line-id", messages[0].FromName)
+	groups, err := engine.TextAggregate(t.Context(), TextViewContactNames, TextAggregateOptions{})
+	require.NoError(err)
+	require.Len(groups, 1)
+	assert.Equal("line-id", groups[0].Key)
+	conversations, err := engine.ListConversations(t.Context(), TextFilter{ContactName: groups[0].Key})
+	require.NoError(err)
+	require.Len(conversations, 1)
+	assert.EqualValues(701, conversations[0].ConversationID)
+	listed, err := engine.ListMessages(t.Context(), MessageFilter{})
+	require.NoError(err)
+	require.Len(listed, 1)
+	assert.Equal("line-id", listed[0].FromName)
+	hits, err := engine.SearchFast(t.Context(), search.Parse(""), MessageFilter{}, 10, 0)
+	require.NoError(err)
+	require.Len(hits, 1)
+	assert.Equal("line-id", hits[0].FromName)
+	detail, err := engine.GetMessage(t.Context(), 801)
+	require.NoError(err)
+	require.Len(detail.To, 1)
+	assert.Equal("line-id", detail.To[0].Name)
 }
