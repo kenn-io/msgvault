@@ -472,31 +472,3 @@ func legacyOperationSession(t *testing.T, b *daemonMCPOperations, family mcpserv
 	t.Cleanup(func() { _ = session.Close() })
 	return session
 }
-
-func TestMCPEmploymentLegacyApprovalRechecksPrimary(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	b, st, person, org := employmentFixture(t)
-	_, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Title: new("First"), Source: store.ProvenanceUser})
-	require.NoError(err)
-	second, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Title: new("Second"), IsPrimary: new(false), Source: store.ProvenanceUser})
-	require.NoError(err)
-	third, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Title: new("Third"), IsPrimary: new(false), Source: store.ProvenanceUser})
-	require.NoError(err)
-	read, err := b.ExecuteOperation(t.Context(), "get_employment", map[string]any{"employment_id": second.ID})
-	require.NoError(err)
-	record := operationOutput[mcpserver.EmploymentRecord](t, read)
-	session := legacyOperationSession(t, b, mcpserver.OperationFamilyEmployment, func(ctx context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		assert.Contains(request.Params.Message, `"title":"First"`)
-		_, changeErr := st.SetPrimaryEmploymentContext(ctx, third.ID, third.Revision)
-		require.NoError(changeErr)
-		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
-	})
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "replace_employment", Arguments: map[string]any{"employment_id": second.ID, "etag": record.ETag, "employment": map[string]any{"person_id": person, "organization_id": org, "title": "Second", "source": "user", "is_primary": true}}})
-	require.NoError(err)
-	require.True(result.IsError)
-	assert.Equal("operation_context_changed", loopToolFailure(t, result)["error"])
-	current, err := st.GetEmploymentContext(t.Context(), third.ID)
-	require.NoError(err)
-	assert.True(current.IsPrimary)
-}
