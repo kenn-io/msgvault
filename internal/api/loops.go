@@ -164,7 +164,7 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 	if cfg, ok := s.currentPeopleSweepConfig(); ok && cfg.Commitments.Enabled {
 		profile, profileErr := cfg.Profile()
 		consent, canCheckConsent := s.store.(interface {
-			HasActivePersonCommitmentConsent(context.Context, string) (bool, error)
+			HasActivePersonCommitmentConsent(ctx context.Context, fingerprint string) (bool, error)
 		})
 		active := false
 		if profileErr == nil && canCheckConsent {
@@ -175,7 +175,7 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if reader, ok := s.store.(interface {
-			PersonCommitmentDiscoveryContext(context.Context, int64) (*time.Time, bool, error)
+			PersonCommitmentDiscoveryContext(ctx context.Context, personID int64) (*time.Time, bool, error)
 		}); ok && active {
 			since, complete, err := reader.PersonCommitmentDiscoveryContext(r.Context(), opts.PersonID)
 			if err != nil {

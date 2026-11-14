@@ -226,7 +226,7 @@ func (s *Store) loadCommitmentCandidateEvidenceTx(ctx context.Context, tx *logge
 	}
 	messageID, err := strconv.ParseInt(strings.TrimPrefix(promise.Input.SourceRef, personfacts.CommitmentMessageRefPrefix), 10, 64)
 	if err != nil || promise.Input.SpanStart == nil || promise.Input.SpanEnd == nil {
-		return fmt.Errorf("invalid commitment citation")
+		return errors.New("invalid commitment citation")
 	}
 	c.ClaimID = claimID
 	c.AnchorMessageID, c.Direction, c.Quote = messageID, value.Direction, promise.Input.Excerpt
@@ -717,7 +717,7 @@ func (s *Store) commitmentBackfillMessages(ctx context.Context, personID, after 
 	query := `WITH scoped AS (` + scoped + `)
 		SELECT m.id FROM messages m JOIN scoped c ON c.conversation_id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
-		WHERE m.id > ? AND ` + s.loopLiveMessageSQL("m", "src") + `
+		WHERE m.id > ? AND ` + s.loopLiveMessageSQL("src") + `
 		AND (` + s.loopTimeKey("m.sent_at") + ` >= ` + s.loopTimeKey("?") + `
 			OR ` + s.loopTimeKey("m.archived_at") + ` >= ` + s.loopTimeKey("?") + `)
 		ORDER BY m.id LIMIT ?`

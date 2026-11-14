@@ -1265,7 +1265,7 @@ func (w *Worker) ready(ctx context.Context) (ProviderProfile, personfacts.Catalo
 
 func (w *Worker) ordinaryInferenceAllowed(ctx context.Context) (bool, error) {
 	if authority, ok := w.Runner.(interface {
-		OrdinaryInferenceAllowed(context.Context) (bool, error)
+		OrdinaryInferenceAllowed(ctx context.Context) (bool, error)
 	}); ok && w.Config.Commitments.Enabled {
 		return authority.OrdinaryInferenceAllowed(ctx)
 	}
