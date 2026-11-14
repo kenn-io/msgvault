@@ -80,7 +80,6 @@ func TestAgentSetupSelectsInstalledAgents(t *testing.T) {
 	require.Len(t, status.Rows, 2)
 	assert.NoDirExists(t, filepath.Join(home, ".claude"))
 	assert.NoDirExists(t, filepath.Join(home, ".codex"))
-
 }
 
 func TestAgentSetupArchiveSelection(t *testing.T) {

@@ -1456,7 +1456,7 @@ func TestSetupStatusAgents(t *testing.T) {
 	for _, name := range []string{"text", "json", "error", "interrupted", "archive"} {
 		t.Run(name, func(t *testing.T) {
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-			row := agentsetup.Row{Agent: "claude", AgentName: "Claude Code", Piece: "skills", Status: agentsetup.Status{State: agentsetup.StateOK}}
+			row := agentsetup.Row{Agent: "claude", AgentName: "Claude Code", Piece: "skills", State: agentsetup.StateOK}
 			var output, errOutput bytes.Buffer
 			const notice = "checking agents: Codex may start msgvault mcp and the daemon, which can create files under the msgvault home\n"
 			ctx, cancel := context.WithCancel(t.Context())
@@ -1497,7 +1497,7 @@ func TestSetupStatusAgents(t *testing.T) {
 			}
 			err := command.ExecuteContext(ctx)
 			if name == "interrupted" {
-				assert.ErrorIs(t, err, context.Canceled)
+				require.ErrorIs(t, err, context.Canceled)
 				assert.Empty(t, output.String())
 				return
 			}

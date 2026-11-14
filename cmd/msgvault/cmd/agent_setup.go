@@ -36,11 +36,12 @@ func archiveArgs() ([]string, error) {
 
 func agentSetupCommand() string {
 	args, _ := archiveArgs()
-	command := "msgvault agent setup"
+	var command strings.Builder
+	command.WriteString("msgvault agent setup")
 	for i := 0; i < len(args); i += 2 {
-		command += " " + args[i] + " " + oauth.ShellQuote(args[i+1])
+		command.WriteString(" " + args[i] + " " + oauth.ShellQuote(args[i+1]))
 	}
-	return command
+	return command.String()
 }
 
 func agentSetupOptions() agentsetup.Options {
@@ -76,6 +77,8 @@ func agentSetupItems(agent string) ([]agentsetup.Item, error) {
 		}
 		status := agentsetup.Status{State: agentsetup.StateOK}
 		switch result.State {
+		case skills.CheckCurrent:
+			status.State = agentsetup.StateOK
 		case skills.CheckModified:
 			return agentsetup.Status{State: agentsetup.StateModified, Reason: result.Skill + " has no msgvault marker", NextStep: "msgvault skills install --force --agent " + agent}, nil
 		case skills.CheckNewer:
@@ -93,7 +96,11 @@ func agentSetupItems(agent string) ([]agentsetup.Item, error) {
 func checkAgentSetup(ctx context.Context) (agentsetup.Report, error) {
 	opts := agentSetupOptions()
 	opts.CheckOnly = true
-	return agentsetup.Run(ctx, opts)
+	report, err := agentsetup.Run(ctx, opts)
+	if err != nil {
+		return report, fmt.Errorf("check agent setup: %w", err)
+	}
+	return report, nil
 }
 
 func refreshAgentSetup(cmd *cobra.Command, _ []string) error {
@@ -104,13 +111,21 @@ func refreshAgentSetup(cmd *cobra.Command, _ []string) error {
 			return
 		}
 		if values, ok := flag.Value.(pflag.SliceValue); ok {
-			copyErr = fresh.Flags().Lookup(flag.Name).Value.(pflag.SliceValue).Replace(values.GetSlice())
+			target, ok := fresh.Flags().Lookup(flag.Name).Value.(pflag.SliceValue)
+			if !ok {
+				copyErr = fmt.Errorf("copy flag %s: expected a slice", flag.Name)
+				return
+			}
+			copyErr = target.Replace(values.GetSlice())
 		} else {
 			copyErr = fresh.Flags().Set(flag.Name, flag.Value.String())
 		}
 	})
 	cmd.RunE = fresh.RunE
-	return copyErr
+	if copyErr != nil {
+		return fmt.Errorf("copy setup flags: %w", copyErr)
+	}
+	return nil
 }
 
 func init() {

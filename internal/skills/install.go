@@ -189,6 +189,8 @@ func Install(root string, list []Skill, force bool) ([]InstallResult, error) {
 			}
 		case CheckMissing:
 			status = StatusInstalled
+		case CheckOutdated:
+			status = StatusUpdated
 		}
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return results, fmt.Errorf("create skill directory %s: %w", dir, err)

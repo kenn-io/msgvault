@@ -610,7 +610,7 @@ func writeLaneReport(w io.Writer, report laneReport, jsonOutput bool) error {
 	if len(report.Agents) > 0 {
 		_, _ = fmt.Fprintln(w, "\nAgents:")
 		if err := (agentsetup.Report{Rows: report.Agents}).WriteText(w, agentSetupCommand()+" --check"); err != nil {
-			return err
+			return fmt.Errorf("write agent report: %w", err)
 		}
 	}
 	_, _ = fmt.Fprintf(w, "Config: %s\n", report.ConfigPath)
