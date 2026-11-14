@@ -177,9 +177,12 @@ func TestMCPAttributePersonDefinitions(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	b, st, _ := recordAttributesFixture(t)
-	legacy := store.SeededAttributeDefinitions()[0]
-	organization := legacy
-	organization.ObjectType, organization.Slug, organization.UniversalID = store.AttributeObjectOrganization, "organization_example", "1583e7c1-5e7c-4115-b636-c8b03dab5010"
+	organization := store.AttributeDefinitionInput{
+		UniversalID: "1583e7c1-5e7c-4115-b636-c8b03dab5010", ObjectType: store.AttributeObjectOrganization,
+		Slug: "organization_example", Label: "Organization example",
+		ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText,
+		Ownership: store.AttributeOwnershipUser, APIMutable: true, IsDeletable: true,
+	}
 	orgDefinition, err := st.CreateAttributeDefinitionContext(t.Context(), organization)
 	require.NoError(err)
 	definitions := operationOutput[generated.AttributeDefinitionsResponse](t, attributeOperation(t, b, "list_attribute_definitions", map[string]any{"include_hidden": true}))
@@ -227,14 +230,7 @@ func TestMCPAttributeDefinitionMissingETagAfterWrite(t *testing.T) {
 	assert.Equal("Favorite tea", definition.Label)
 }
 
-func TestMCPAttributePreviewRefusesInvalidExpectedEmpty(t *testing.T) {
-	b, _, person := recordAttributesFixture(t)
-	args := map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "email"}, "expected_empty": true, "expected_value_id": int64(1)}
-	_, err := b.OperationDisclosure(t.Context(), "set_person_attribute", args)
-	attributeRefused(t, err, "invalid_expected_empty")
-}
-
-func TestMCPAttributePreviewLargeConflict(t *testing.T) {
+func TestMCPAttributePreviewRefusals(t *testing.T) {
 	require := require.New(t)
 	b, _, person := recordAttributesFixture(t)
 	attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "metadata", "label": "Metadata", "value_type": "json", "field_type": "json"}})
@@ -243,14 +239,27 @@ func TestMCPAttributePreviewLargeConflict(t *testing.T) {
 	written := operationOutput[generated.PersonAttributeWrite](t, attributeOperation(t, b, "set_person_attribute", initial))
 	require.NotNil(written.Value)
 	stale := map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": jsontext.Value(`{"data":"replacement"}`)}, "expected_value_id": written.Value.ID + 1}
-	_, err := b.OperationDisclosure(t.Context(), "set_person_attribute", stale)
-	attributeRefused(t, err, "attribute_value_conflict")
+	invalid := map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "email"}, "expected_empty": true, "expected_value_id": int64(1)}
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+		code string
+	}{
+		{"large conflict", stale, "attribute_value_conflict"},
+		{"invalid expected empty", invalid, "invalid_expected_empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := b.OperationDisclosure(t.Context(), "set_person_attribute", tc.args)
+			attributeRefused(t, err, tc.code)
+		})
+	}
 }
 
 func TestMCPAttributeCapabilityRequiresExpectedEmpty(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	b, _, _ := recordAttributesFixture(t)
+	assert.Contains(b.capabilities(), "set_person_attribute")
 	capabilities, err := b.client.MCPCapabilities(t.Context())
 	require.NoError(err)
 	for i, route := range capabilities.Routes {
