@@ -122,3 +122,25 @@ func TestMeetingRecordSparseCancellationAfterSeriesTypeChange(t *testing.T) {
 		})
 	}
 }
+
+func TestMeetingRecordExactSubmicrosecondTime(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "precise", `{"id":"precise","iCalUID":"precise@example.org","start":{"dateTime":"2027-03-14T10:00:00.1230001Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	_, exact := projectionFixture(t, st, "exact", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"precise@example.org","startsAt":"2027-03-14T10:00:00.1230001Z"}}`)
+	_, other := projectionFixture(t, st, "other", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"precise@example.org","startsAt":"2027-03-14T10:00:00.1230009Z"}}`)
+	for _, seed := range []MeetingLinkRef{{Kind: "evt", MessageID: event}, {Kind: "msg", MessageID: exact}} {
+		record, err := st.MeetingRecordContext(t.Context(), seed)
+		require.NoError(err)
+		assert.Equal([]int64{exact}, record.MessageIDs)
+		assert.NotContains(record.MessageIDs, other)
+		require.Len(record.Links, 1)
+		assert.Equal(fmt.Sprintf("evt:%d", event), record.Links[0].Ref)
+		require.NotNil(record.Links[0].Start)
+		assert.Equal("2027-03-14T10:00:00.1230001Z", record.Links[0].Start.Format(time.RFC3339Nano))
+	}
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: other})
+	require.NoError(err)
+	assert.Equal([]int64{other}, record.MessageIDs)
+	assert.Empty(record.Links)
+}

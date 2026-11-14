@@ -305,6 +305,14 @@ func (s *Store) meetingNoteKeys(ctx context.Context, keys []string, budget *int)
 }
 
 func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (MeetingRecord, error) {
+	return s.meetingRecordContext(ctx, ref, false)
+}
+
+func (s *Store) MeetingNotesContext(ctx context.Context, ref MeetingLinkRef) (MeetingRecord, error) {
+	return s.meetingRecordContext(ctx, ref, true)
+}
+
+func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, notesOnly bool) (MeetingRecord, error) {
 	record := MeetingRecord{Links: []MeetingLink{}, MessageIDs: []int64{}, Unexpandable: []CalendarUnexpandable{}}
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
@@ -381,6 +389,18 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 		} else {
 			keys = occurrenceKeys(seed)
 		}
+	}
+	if notesOnly {
+		if len(keys) > 0 && (keys[0][0] != "google_event_id" || isMeetingInstanceKey(keys[0])) {
+			notes, err := s.meetingNoteKeys(ctx, []string{keys[0].text()}, &budget)
+			if err != nil {
+				return record, err
+			}
+			record.MessageIDs = append(record.MessageIDs, notes[keys[0].text()]...)
+			slices.Sort(record.MessageIDs)
+			record.MessageIDs = slices.Compact(record.MessageIDs)
+		}
+		return record, nil
 	}
 	var copies []CalendarOccurrence
 	if seed.Ref != "" {
@@ -462,4 +482,9 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 	})
 	record.Unexpandable = slices.Compact(record.Unexpandable)
 	return record, nil
+}
+
+func isMeetingInstanceKey(key meetingLinkKey) bool {
+	_, _, instance := calrecur.ParseInstanceID(key[2])
+	return instance
 }

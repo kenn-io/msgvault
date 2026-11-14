@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"go.kenn.io/msgvault/internal/calrecur"
@@ -18,18 +20,32 @@ func (s *Store) meetingEventRows(ctx context.Context, predicate string, args []a
 		return nil, err
 	}
 	*budget -= len(rows)
-	owners := make(map[int64]string)
+	owners := make(map[int64]*Source)
 	for i := range rows {
-		owner, ok := owners[rows[i].SourceID]
+		source, ok := owners[rows[i].SourceID]
 		if !ok {
-			source, err := s.GetSourceByIDContext(ctx, rows[i].SourceID)
+			source, err = s.GetSourceByIDContext(ctx, rows[i].SourceID)
 			if err != nil {
 				return nil, err
 			}
-			owner = calendarMailbox(source.SyncConfig)
-			owners[rows[i].SourceID] = owner
+			owners[rows[i].SourceID] = source
 		}
-		rows[i].CalendarID = owner
+		rows[i].CalendarID = calendarMailbox(source.SyncConfig)
+		if s.IsPostgreSQL() && rows[i].Event.ICalUID != "" {
+			// PostgreSQL timestamps have microsecond precision; recover the exact key from the source.
+			var raw []byte
+			var compression, metadata sql.NullString
+			err := s.db.QueryRowContext(ctx, `SELECT r.raw_data, r.compression, m.metadata FROM message_raw r JOIN messages m ON m.id = r.message_id WHERE r.message_id = ?`, rows[i].MessageID).Scan(&raw, &compression, &metadata)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("read calendar meeting evidence: %w", err)
+			}
+			event, ok := decodeCalendarProjection(raw, compression, []byte(metadata.String), calendarConfigZone(source.SyncConfig))
+			if err != nil || !ok || event.ICalUID != rows[i].Event.ICalUID {
+				rows[i].Event.ICalUID = ""
+				continue
+			}
+			rows[i].Event.Start, rows[i].Event.End, rows[i].Event.Original = event.Start, event.End, event.Original
+		}
 	}
 	return rows, nil
 }

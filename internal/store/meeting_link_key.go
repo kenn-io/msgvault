@@ -14,7 +14,7 @@ type meetingLinkKey [4]string
 func canonicalMeetingKey(kind, namespace, value string, at *time.Time) meetingLinkKey {
 	key := meetingLinkKey{kind, strings.ToLower(strings.TrimSpace(namespace)), value, ""}
 	if at != nil {
-		key[3] = at.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
+		key[3] = at.UTC().Format(time.RFC3339Nano)
 	}
 	return key
 }

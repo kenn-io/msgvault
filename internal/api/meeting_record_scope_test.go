@@ -48,8 +48,8 @@ func TestMeetingRecordInheritedVerificationSubject(t *testing.T) {
 		permissions []agentgrant.Permission
 		want        string
 	}{
-		{"restricted", []agentgrant.Permission{agentgrant.PermissionMessageRead}, "[verification content masked]"},
-		{"verification", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionVerificationRead}, "Your verification code is 482913"},
+		{"restricted", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionCalendarEventRead}, "[verification content masked]"},
+		{"verification", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionCalendarEventRead, agentgrant.PermissionVerificationRead}, "Your verification code is 482913"},
 	} {
 		_, token, _, err := srv.agentGrants.Issue(tc.name, tc.permissions, sources, time.Time{})
 		require.NoError(err)
@@ -69,7 +69,7 @@ func TestMeetingRecordInheritedVerificationSubject(t *testing.T) {
 	for _, tc := range []struct {
 		ref    string
 		status int
-	}{{fmt.Sprintf("msg:%d", note), http.StatusOK}, {fmt.Sprintf("evt:%d", cancelled), http.StatusNotFound}, {fmt.Sprintf("evt:%d", master), http.StatusNotFound}, {fmt.Sprintf("msg:%d", outside), http.StatusNotFound}} {
+	}{{fmt.Sprintf("msg:%d", note), http.StatusOK}, {fmt.Sprintf("evt:%d", cancelled), http.StatusForbidden}, {fmt.Sprintf("evt:%d", master), http.StatusForbidden}, {fmt.Sprintf("msg:%d", outside), http.StatusNotFound}} {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/record?ref="+tc.ref, nil)
 		req.Header.Set(apiprotocol.AgentTokenHeader, restricted)
 		w := httptest.NewRecorder()
@@ -86,7 +86,7 @@ func TestMeetingRecordInheritedVerificationSubject(t *testing.T) {
 	ordinary := persist(calendar.ID, "ordinary-cancel", "calendar_event", "calendar", "", "gcal_json", `{"id":"ordinary-cancel","recurringEventId":"ordinary","originalStartTime":{"dateTime":"2027-04-01T10:00:00Z"},"status":"cancelled"}`)
 	body := persist(calendar.ID, "body-cancel", "calendar_event", "calendar", "", "gcal_json", `{"id":"body-cancel","recurringEventId":"ordinary","originalStartTime":{"dateTime":"2027-04-08T10:00:00Z"},"status":"cancelled"}`)
 	require.NoError(st.UpsertMessageBody(body, sql.NullString{String: "Your verification code is 482913", Valid: true}, sql.NullString{}))
-	_, token, _, err := srv.agentGrants.Issue("ordinary-reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, sources, time.Time{})
+	_, token, _, err := srv.agentGrants.Issue("ordinary-reader", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionCalendarEventRead}, sources, time.Time{})
 	require.NoError(err)
 	for _, tc := range []struct {
 		id   int64
@@ -214,6 +214,74 @@ func TestMeetingRecordRequiresSeriesOccurrence(t *testing.T) {
 				requirements.NoError(json.Unmarshal(explicit.Body.Bytes(), &record))
 				requirements.Len(record.Links, 1)
 				assertions.Equal(fmt.Sprintf("evt:%d@%s", id, key), record.Links[0].Ref)
+			}
+		})
+	}
+}
+
+func TestMeetingRecordCalendarDetailsRequireGrant(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	calendar, err := st.GetOrCreateSource("gcal", "calendar@example.com")
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), calendar.ID, `{"calendar_id":"calendar@example.com","time_zone":"UTC"}`))
+	notes, err := st.GetOrCreateSource("meeting_import", "notes@example.com")
+	requirements.NoError(err)
+	persist := func(source int64, key, kind, conversationType, format, raw string) int64 {
+		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source, SourceMessageID: key, MessageType: kind}, Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: conversationType}, RawMIME: []byte(raw), RawFormat: format})
+		requirements.NoError(err)
+		return id
+	}
+	event := persist(calendar.ID, "event", "calendar_event", "calendar", "gcal_json", `{"id":"event","iCalUID":"meeting@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	note := persist(notes.ID, "note", "meeting_transcript", "meeting", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"meeting@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	peer := persist(notes.ID, "peer", "meeting_transcript", "meeting", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"meeting@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	sharedSourceNote := persist(calendar.ID, "shared-note", "meeting_transcript", "meeting", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"meeting@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	indirect := persist(notes.ID, "indirect", "meeting_transcript", "meeting", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"event"}}`)
+	barePeer := persist(notes.ID, "bare-peer", "meeting_transcript", "meeting", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"event"}}`)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(srv.agentGrants.Close)
+	sources := []agentgrant.SourceRef{{ID: calendar.ID, Type: calendar.SourceType, Identifier: calendar.Identifier}, {ID: notes.ID, Type: notes.SourceType, Identifier: notes.Identifier}}
+	for _, tc := range []struct {
+		name        string
+		permissions []agentgrant.Permission
+		ref         string
+		status      int
+		wantLinks   bool
+	}{
+		{"notes only", []agentgrant.Permission{agentgrant.PermissionMessageRead}, fmt.Sprintf("msg:%d", note), http.StatusOK, false},
+		{"bare event ID", []agentgrant.Permission{agentgrant.PermissionMessageRead}, fmt.Sprintf("msg:%d", indirect), http.StatusOK, false},
+		{"event without calendar grant", []agentgrant.Permission{agentgrant.PermissionMessageRead}, fmt.Sprintf("evt:%d", event), http.StatusForbidden, false},
+		{"availability grant", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionCalendarRead}, fmt.Sprintf("evt:%d", event), http.StatusForbidden, false},
+		{"calendar and messages", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionCalendarEventRead}, fmt.Sprintf("msg:%d", note), http.StatusOK, true},
+		{"event with calendar grant", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionCalendarEventRead}, fmt.Sprintf("evt:%d", event), http.StatusOK, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			_, token, _, err := srv.agentGrants.Issue(tc.name, tc.permissions, sources, time.Time{})
+			require.NoError(err)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/record?ref="+tc.ref, nil)
+			req.Header.Set(apiprotocol.AgentTokenHeader, token)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			require.Equal(tc.status, w.Code, w.Body.String())
+			if tc.status != http.StatusOK {
+				return
+			}
+			var record store.MeetingRecord
+			require.NoError(json.Unmarshal(w.Body.Bytes(), &record))
+			if tc.wantLinks {
+				assert.ElementsMatch([]int64{note, peer, sharedSourceNote, indirect, barePeer}, record.MessageIDs)
+				require.Len(record.Links, 1)
+				assert.Equal(fmt.Sprintf("evt:%d", event), record.Links[0].Ref)
+			} else {
+				if tc.ref == fmt.Sprintf("msg:%d", indirect) {
+					assert.Equal([]int64{indirect}, record.MessageIDs)
+				} else {
+					assert.ElementsMatch([]int64{note, peer, sharedSourceNote}, record.MessageIDs)
+				}
+				assert.Empty(record.Links)
+				assert.Empty(record.Unexpandable)
 			}
 		})
 	}
