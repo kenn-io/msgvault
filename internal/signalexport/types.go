@@ -56,12 +56,17 @@ type chat struct {
 	ID          decimal `json:"id"`
 	RecipientID decimal `json:"recipientId"`
 }
+
+// receiveInfo reads the receive time of an incoming or outgoing item; null leaves it nil.
+type receiveInfo struct {
+	DateReceived *decimal `json:"dateReceived"`
+}
 type chatItem struct {
 	ChatID        decimal          `json:"chatId"`
 	AuthorID      decimal          `json:"authorId"`
 	DateSent      string           `json:"dateSent"`
-	Incoming      *struct{}        `json:"incoming"`
-	Outgoing      *struct{}        `json:"outgoing"`
+	Incoming      *receiveInfo     `json:"incoming"`
+	Outgoing      *receiveInfo     `json:"outgoing"`
 	Directionless *struct{}        `json:"directionless"`
 	Pin           any              `json:"pinDetails"`
 	Revisions     []chatItem       `json:"revisions"`

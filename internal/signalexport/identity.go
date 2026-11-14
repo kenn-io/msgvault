@@ -55,10 +55,24 @@ func accountScope(account string) string {
 	return hex.EncodeToString(h[:])
 }
 func scopedKey(scope, key string) string { return "v1:" + scope + ":" + key }
-func messageKey(conversation, author string, date decimal) string {
+func messageKey(conversation, author string, date, received decimal) string {
 	// A JSON array avoids delimiter ambiguity and versions the identity format.
-	b, _ := json.Marshal([]string{"v1", conversation, author, string(date)})
+	b, _ := json.Marshal([]string{"v2", conversation, author, string(date), string(received)})
 	return string(b)
+}
+func originalReceived(m *chatItem) decimal {
+	// An edit keeps the first revision's receive time, like its send time.
+	if len(m.Revisions) > 0 {
+		m = &m.Revisions[0]
+	}
+	info := m.Incoming
+	if info == nil {
+		info = m.Outgoing
+	}
+	if info == nil || info.DateReceived == nil {
+		return ""
+	}
+	return *info.DateReceived
 }
 func sentTime(d decimal) (time.Time, bool) {
 	n, err := strconv.ParseInt(string(d), 10, 64)

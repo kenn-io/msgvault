@@ -51,7 +51,8 @@ func TestImportSnapshotsAndScope(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	root := fixture(t, incoming)
+	original := strings.Replace(incoming, `"incoming":{}`, `"incoming":{"dateReceived":"1700000000100"}`, 1)
+	root := fixture(t, original)
 	opts := options(t, root)
 	first, err := Import(t.Context(), st, opts)
 	require.NoError(err)
@@ -60,9 +61,9 @@ func TestImportSnapshotsAndScope(t *testing.T) {
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
 	raw, err := st.GetMessageRaw(id)
 	require.NoError(err)
-	assert.JSONEq(strings.TrimSuffix(strings.TrimPrefix(incoming, `{"chatItem":`), `}`), string(raw))
+	assert.JSONEq(strings.TrimSuffix(strings.TrimPrefix(original, `{"chatItem":`), `}`), string(raw))
 	// Every local ID changes, and an edit changes the top-level time.
-	edited := `{"chatItem":{"chatId":"70","authorId":"20","dateSent":"1700000005000","incoming":{},"revisions":[{"chatId":"70","authorId":"20","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"Hello 星"}}}],"standardMessage":{"text":{"body":"edited"}}}}`
+	edited := `{"chatItem":{"chatId":"70","authorId":"20","dateSent":"1700000005000","incoming":{"dateReceived":"1700000005100"},"revisions":[{"chatId":"70","authorId":"20","dateSent":"1700000000000","incoming":{"dateReceived":"1700000000100"},"standardMessage":{"text":{"body":"Hello 星"}}}],"standardMessage":{"text":{"body":"edited"}}}}`
 	lines := []string{header, account, strings.Replace(self, `"1"`, `"10"`, 1), strings.Replace(contact, `"2"`, `"20"`, 1), `{"chat":{"id":"70","recipientId":"20"}}`, edited}
 	require.NoError(os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
 	second, err := Import(t.Context(), st, opts)
@@ -86,6 +87,42 @@ func TestImportSnapshotsAndScope(t *testing.T) {
 	assert.Equal(time.UnixMilli(1700000000000).UTC(), sent.UTC())
 	assertBody(t, st, id, "edited")
 }
+
+func TestImportDistinctMessagesAtSameMillisecond(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	first := strings.Replace(incoming, `"incoming":{}`, `"incoming":{"dateReceived":"1700000000100"}`, 1)
+	second := strings.Replace(first, "Hello 星", "Another message", 1)
+	second = strings.Replace(second, "1700000000100", "1700000000200", 1)
+	root := fixture(t, first, second)
+	summary, err := Import(t.Context(), st, options(t, root))
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, summary.MessagesAdded)
+	assert.Equal(t, 2, messageCount(t, st))
+}
+
+func TestImportDistinctOutgoingMessagesAtSameMillisecond(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	first := `{"chatItem":{"chatId":"7","authorId":"1","dateSent":"1700000000000","outgoing":{"dateReceived":"1700000000100"},"standardMessage":{"text":{"body":"First message"}}}}`
+	second := strings.Replace(first, "First message", "Second message", 1)
+	second = strings.Replace(second, "1700000000100", "1700000000200", 1)
+	root := fixture(t, first, second)
+	summary, err := Import(t.Context(), st, options(t, root))
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, summary.MessagesAdded)
+	assert.Equal(t, 2, messageCount(t, st))
+}
+
+func TestImportNullReceivedTime(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	message := strings.Replace(incoming, `"incoming":{}`, `"incoming":{"dateReceived":null}`, 1)
+	root := fixture(t, message)
+	summary, err := Import(t.Context(), st, options(t, root))
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, summary.MessagesAdded)
+	id, _ := onlyMessage(t, st)
+	assertBody(t, st, id, "Hello 星")
+}
+
 func TestImportDirectionsGroupsAndOmissions(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -420,7 +457,7 @@ func TestImportCancellationRetainsCommittedSnapshot(t *testing.T) {
 			assert.Equal(1, messageCount(t, st))
 			source, err := st.GetOrCreateSourceContext(t.Context(), SourceType, opts.Account)
 			require.NoError(err)
-			assert.JSONEq(`{"signal_export_format":1}`, source.SyncCursor.String)
+			assert.JSONEq(`{"signal_export_format":2}`, source.SyncCursor.String)
 			writeFrames(t, root, incoming, strings.Replace(incoming, "1700000000000", "1700000000001", 1))
 			summary, err = Import(t.Context(), st, opts)
 			require.NoError(err)
@@ -511,13 +548,49 @@ func TestContactIdentifierAdded(t *testing.T) {
 	}
 }
 
+func TestContactReusedPhoneWithDifferentACI(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := fixture(t, incoming)
+	lines := []string{header, account, self, `{"recipient":{"id":"2","contact":{"e164":"15555550100"}}}`, direct, incoming}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+	opts := options(t, root)
+	_, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	scope := accountScope(opts.Account)
+	phoneKey := scopedKey(scope, "e164:+15555550100")
+	first, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
+	require.NoError(t, err)
+	require.NotZero(t, first)
+	lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`
+	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, summary.MessagesExisting)
+	aciX, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:01010101010101010101010101010101"))
+	require.NoError(t, err)
+	assert.Equal(t, first, aciX)
+	lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AgICAgICAgICAgICAgICAg=="}}}`
+	lines[5] = strings.Replace(incoming, "1700000000000", "1700000000001", 1)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+	_, err = Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	phone, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
+	require.NoError(t, err)
+	second, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:02020202020202020202020202020202"))
+	require.NoError(t, err)
+	require.NotZero(t, second)
+	assert.NotEqual(t, first, second)
+	assert.Equal(t, first, phone)
+	assert.Equal(t, 2, messageCount(t, st))
+}
+
 func TestSourceFormatRefusesNewerVersion(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := fixture(t, incoming)
 	opts := options(t, root)
 	source, err := st.GetOrCreateSourceContext(t.Context(), SourceType, opts.Account)
 	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncState(t.Context(), source.ID, `{"signal_export_format":2}`))
+	require.NoError(t, st.UpdateSourceSyncState(t.Context(), source.ID, `{"signal_export_format":3}`))
 	summary, err := Import(t.Context(), st, opts)
 	require.ErrorIs(t, err, ErrNewerFormat)
 	assert.Zero(t, summary.SourceID)

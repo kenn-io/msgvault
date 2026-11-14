@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-const formatVersion = 1
+const formatVersion = 2
 
 var ErrNewerFormat = errors.New("saved Signal messages use a newer format; upgrade msgvault")
 
@@ -106,7 +106,10 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		if p, ok := resolved[id]; ok {
 			return p, nil
 		}
-		p := r.peers[id]
+		p, err := withoutReusedPhone(ctx, st, scope, r.peers[id])
+		if err != nil {
+			return p, err
+		}
 		if p.aci == "" && p.phone == "" {
 			return p, nil
 		}
@@ -114,19 +117,12 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 			if candidate == "" {
 				continue
 			}
-			participant, _, err := st.ParticipantByIdentifierContext(ctx, SourceType, scopedKey(scope, candidate))
+			key, found, err := knownKey(ctx, st, scope, candidate)
 			if err != nil {
 				return p, err
 			}
-			if participant != 0 {
-				primary, err := st.PrimaryParticipantIdentifierContext(ctx, participant, SourceType)
-				if err != nil {
-					return p, err
-				}
-				p.key = candidate
-				if key, ok := strings.CutPrefix(primary, "v1:"+scope+":"); ok {
-					p.key = key
-				}
+			if found {
+				p.key = key
 				if _, err := resolve(p); err != nil {
 					return p, err
 				}
@@ -201,7 +197,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		}
 		convKey := scopedKey(scope, conversation.key)
 		authorKey := scopedKey(scope, author.key)
-		key := messageKey(convKey, authorKey, date)
+		key := messageKey(convKey, authorKey, date, originalReceived(m))
 		ids, err := st.MessageExistsBatchContext(ctx, source.ID, []string{key})
 		if err != nil {
 			return err
@@ -278,6 +274,38 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		return nil
 	})
 	return s, err
+}
+
+// knownKey returns the primary key of the participant that already holds candidate.
+func knownKey(ctx context.Context, st *store.Store, scope, candidate string) (string, bool, error) {
+	participant, _, err := st.ParticipantByIdentifierContext(ctx, SourceType, scopedKey(scope, candidate))
+	if err != nil || participant == 0 {
+		return "", false, err
+	}
+	primary, err := st.PrimaryParticipantIdentifierContext(ctx, participant, SourceType)
+	if err != nil {
+		return "", false, err
+	}
+	key, ok := strings.CutPrefix(primary, "v1:"+scope+":")
+	if !ok {
+		key = candidate
+	}
+	return key, true, nil
+}
+
+// withoutReusedPhone drops a phone number held by a participant with another ACI.
+func withoutReusedPhone(ctx context.Context, st *store.Store, scope string, p peer) (peer, error) {
+	if p.aci == "" || p.phone == "" {
+		return p, nil
+	}
+	var others int
+	err := st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM participant_identifiers phone JOIN participant_identifiers aci ON aci.participant_id = phone.participant_id
+		WHERE phone.identifier_type = ? AND phone.identifier_value = ? AND aci.identifier_type = ? AND aci.identifier_value LIKE ? AND aci.identifier_value <> ?`),
+		SourceType, scopedKey(scope, p.phone), SourceType, scopedKey(scope, "aci:")+"%", scopedKey(scope, p.aci)).Scan(&others)
+	if others > 0 {
+		p.phone = ""
+	}
+	return p, err
 }
 
 func countOmissions(s *ImportSummary, m *chatItem) {
