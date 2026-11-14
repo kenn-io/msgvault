@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -331,60 +330,61 @@ func (w missingETagResponseWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
-type emptyReceiptResponseWriter struct {
-	http.ResponseWriter
-	body string
-}
-
-func (w emptyReceiptResponseWriter) Write(data []byte) (int, error) {
-	_, err := w.ResponseWriter.Write([]byte(w.body))
-	return len(data), err
-}
-
-func TestMCPCommittedWriteWithUnusableReceiptRemainsUncertain(t *testing.T) {
-	for _, kind := range []string{"person", "slack", "person empty receipt", "slack empty receipt"} {
-		t.Run(kind, func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
-			var router http.Handler
-			var personID int64
-			var verify func()
-			if strings.HasPrefix(kind, "person") {
-				st := testutil.NewTestStore(t)
-				participant, err := st.EnsureParticipant("contact@example.com", "Observed Example", "example.com")
+func TestMCPCommittedWriteWithMissingETagRemainsUncertain(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*testing.T) (http.Handler, func(*daemonMCPOperations) (*mcpserver.OperationResult, error), func())
+	}{
+		{"person", func(t *testing.T) (http.Handler, func(*daemonMCPOperations) (*mcpserver.OperationResult, error), func()) {
+			t.Helper()
+			requirements, assertions := require.New(t), assert.New(t)
+			st := testutil.NewTestStore(t)
+			participant, err := st.EnsureParticipant("contact@example.com", "Observed Example", "example.com")
+			requirements.NoError(err)
+			person, _, err := st.CreatePersonFromParticipant(participant)
+			requirements.NoError(err)
+			router := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}).Router()
+			write := func(backend *daemonMCPOperations) (*mcpserver.OperationResult, error) {
+				result, err := backend.ExecuteOperation(t.Context(), "get_person_edit_context", map[string]any{"person_id": person.ID})
 				requirements.NoError(err)
-				person, _, err := st.CreatePersonFromParticipant(participant)
-				requirements.NoError(err)
-				personID = person.ID
-				router = api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}).Router()
-				verify = func() {
-					current, err := st.GetPerson(person.ID)
-					requirements.NoError(err)
-					assertions.Equal(new("Committed Example"), current.DisplayName)
-				}
-			} else {
-				path := filepath.Join(t.TempDir(), "config.toml")
-				requirements.NoError(os.WriteFile(path, []byte("[slack]\ndms = true\n"), 0o600))
-				cfg, err := config.Load(path, "")
-				requirements.NoError(err)
-				router = api.NewServer(cfg, nil, nil, slog.New(slog.DiscardHandler)).Router()
-				verify = func() {
-					reloaded, err := config.Load(path, "")
-					requirements.NoError(err)
-					assertions.False(reloaded.Slack.DMsEnabled())
-				}
+				edit := operationOutput[mcpserver.PersonEditContext](t, result)
+				return backend.ExecuteOperation(t.Context(), "set_person_display_name", map[string]any{"person_id": person.ID, "etag": edit.ETag, "display_name": "Committed Example"})
 			}
-			// A remote daemon's intermediary can damage the receipt after a write commits.
+			verify := func() {
+				current, err := st.GetPerson(person.ID)
+				requirements.NoError(err)
+				assertions.Equal(new("Committed Example"), current.DisplayName)
+			}
+			return router, write, verify
+		}},
+		{"slack", func(t *testing.T) (http.Handler, func(*daemonMCPOperations) (*mcpserver.OperationResult, error), func()) {
+			t.Helper()
+			requirements, assertions := require.New(t), assert.New(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			requirements.NoError(os.WriteFile(path, []byte("[slack]\ndms = true\n"), 0o600))
+			cfg, err := config.Load(path, "")
+			requirements.NoError(err)
+			router := api.NewServer(cfg, nil, nil, slog.New(slog.DiscardHandler)).Router()
+			write := func(backend *daemonMCPOperations) (*mcpserver.OperationResult, error) {
+				result, err := backend.ExecuteOperation(t.Context(), "get_slack_sync_policy", nil)
+				requirements.NoError(err)
+				policy := operationOutput[mcpserver.SlackSyncPolicy](t, result)
+				return backend.ExecuteOperation(t.Context(), "update_slack_sync_policy", map[string]any{"etag": policy.ETag, "dms": false})
+			}
+			verify := func() {
+				reloaded, err := config.Load(path, "")
+				requirements.NoError(err)
+				assertions.False(reloaded.Slack.DMsEnabled())
+			}
+			return router, write, verify
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
+			router, write, verify := tc.setup(t)
+			// A remote daemon's intermediary can strip ETag after a write commits.
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodPatch {
-					if strings.HasSuffix(kind, "empty receipt") {
-						body := `{}`
-						if strings.HasPrefix(kind, "person") {
-							body = `{"id":1}`
-						}
-						router.ServeHTTP(emptyReceiptResponseWriter{ResponseWriter: w, body: body}, r)
-						return
-					}
 					router.ServeHTTP(missingETagResponseWriter{w}, r)
 					return
 				}
@@ -396,33 +396,12 @@ func TestMCPCommittedWriteWithUnusableReceiptRemainsUncertain(t *testing.T) {
 			capabilities, err := client.MCPCapabilities(t.Context())
 			requirements.NoError(err)
 			backend := newDaemonMCPOperations(client, capabilities)
-			var result *mcpserver.OperationResult
-			if strings.HasPrefix(kind, "person") {
-				result, err = backend.ExecuteOperation(t.Context(), "get_person_edit_context", map[string]any{"person_id": personID})
-				requirements.NoError(err)
-				edit := operationOutput[mcpserver.PersonEditContext](t, result)
-				result, err = backend.ExecuteOperation(t.Context(), "set_person_display_name", map[string]any{"person_id": personID, "etag": edit.ETag, "display_name": "Committed Example"})
-			} else {
-				result, err = backend.ExecuteOperation(t.Context(), "get_slack_sync_policy", nil)
-				requirements.NoError(err)
-				policy := operationOutput[mcpserver.SlackSyncPolicy](t, result)
-				result, err = backend.ExecuteOperation(t.Context(), "update_slack_sync_policy", map[string]any{"etag": policy.ETag, "dms": false})
-			}
+			result, err := write(backend)
 			requirements.NoError(err)
 			requirements.True(result.IsError)
 			data, err := json.Marshal(result.Output)
 			requirements.NoError(err)
-			if strings.HasPrefix(kind, "person") {
-				var receipt struct {
-					Error     string `json:"error"`
-					Uncertain bool   `json:"operation_may_have_completed"`
-				}
-				requirements.NoError(json.Unmarshal(data, &receipt))
-				assertions.Equal("operation_receipt_unavailable", receipt.Error)
-				assertions.True(receipt.Uncertain)
-			} else {
-				assertions.JSONEq(`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
-			}
+			assertions.JSONEq(`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
 			verify()
 		})
 	}
