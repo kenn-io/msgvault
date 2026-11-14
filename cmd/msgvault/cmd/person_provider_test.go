@@ -913,6 +913,8 @@ func TestPersonProviderCommitmentConsentDisclosesAndReportsStatus(t *testing.T) 
 	must.ErrorContains(err, "--yes")
 	check.Contains(disclosure, profile.Endpoint)
 	check.Contains(disclosure, "written by you and the other person")
+	check.Contains(disclosure, fmt.Sprintf("up to %d bytes of message text per request", cfg.Commitments.MaxBytes))
+	check.Contains(disclosure, "full message after quoted history is removed or masked")
 	output, err := executePersonProviderCommand(t, deps, "consent", "--commitments", "--yes", "--json")
 	must.NoError(err)
 	var status personProviderStatusOutput

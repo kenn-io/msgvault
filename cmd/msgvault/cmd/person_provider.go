@@ -1197,7 +1197,7 @@ func runPersonCommitmentConsent(command *cobra.Command, deps personProviderComma
 	if !confirmed || !jsonOutput {
 		w := command.OutOrStdout()
 		printPersonProviderDisclosure(w, profile)
-		if _, err := fmt.Fprintln(w, "Commitment extraction sends exact text written by you and the other person in verified direct conversations."); err != nil {
+		if _, err := fmt.Fprintf(w, "Commitment extraction sends text written by you and the other person in verified direct conversations. It sends the full message after quoted history is removed or masked, up to %d bytes of message text per request. Oversized messages are skipped.\n", cfg.Commitments.MaxBytes); err != nil {
 			return fmt.Errorf("write commitment policy disclosure: %w", err)
 		}
 	}
