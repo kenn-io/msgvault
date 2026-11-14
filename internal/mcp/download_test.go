@@ -406,6 +406,37 @@ func TestPersonDownloadRefreshDoesNotShareLoad(t *testing.T) {
 	require.NoError(t, <-old)
 	require.NoError(t, current.err)
 	assert.Equal(t, []byte("new"), current.snapshot.data)
+	continued, err := cache.get(t.Context(), key, chunkRequest{offset: 1, digest: current.snapshot.digest}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("new"), continued.data)
+}
+
+func TestPersonDownloadFailedRefreshKeepsEarlierLoad(t *testing.T) {
+	var cache downloadCache
+	defer cache.close()
+	key := downloadKey{operation: "get_person_record", identity: "1"}
+	started, release := make(chan struct{}), make(chan struct{})
+	result := make(chan *downloadSnapshot, 1)
+	go func() {
+		snapshot, _ := cache.get(t.Context(), key, chunkRequest{length: 1}, func() (*downloadSnapshot, error) {
+			close(started)
+			<-release
+			return &downloadSnapshot{data: []byte("first")}, nil
+		})
+		result <- snapshot
+	}()
+	<-started
+	loadErr := errors.New("refresh failed")
+	_, err := cache.get(t.Context(), key, chunkRequest{length: 1}, func() (*downloadSnapshot, error) {
+		return nil, loadErr
+	})
+	close(release)
+	first := <-result
+	require.ErrorIs(t, err, loadErr)
+	require.NotNil(t, first)
+	continued, err := cache.get(t.Context(), key, chunkRequest{offset: 1, digest: first.digest}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("first"), continued.data)
 }
 
 func TestPersonDownloadSnapshotReuseRefreshAndSmallResults(t *testing.T) {
