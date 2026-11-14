@@ -88,6 +88,8 @@ func ParseBrief(
 	// keptHighlights maps a submitted highlight index onto its index after
 	// drops so a surviving follow-up still points at the highlight it explains.
 	keptHighlights := make(map[int]int, len(candidate.Highlights))
+	valid := make([]BriefHighlight, 0, len(candidate.Highlights))
+	originalIndexes := make([]int, 0, len(candidate.Highlights))
 	for index, highlight := range candidate.Highlights {
 		items, ok := cited.resolve(highlight.EvidenceIDs)
 		if !ok || !briefSpeakerSupported(highlight.Speaker, items, packet.PersonID) ||
@@ -95,15 +97,31 @@ func ParseBrief(
 			parsed.DroppedItemCount++
 			continue
 		}
+		valid = append(valid, highlight)
+		originalIndexes = append(originalIndexes, index)
+	}
+	var dropped int
+	var reindexed map[int]int
+	parsed.Output.Highlights, reindexed, dropped = mergeBriefEvents(
+		valid, packet.BriefContext, evidence, packet.PersonID, window.Boundary.ThroughEventTime)
+	parsed.DroppedItemCount += dropped
+	for index, original := range originalIndexes {
+		if final, ok := reindexed[index]; ok {
+			keptHighlights[original] = final
+		}
+	}
+	for _, highlight := range parsed.Output.Highlights {
+		items, ok := cited.resolve(highlight.EvidenceIDs)
+		if !ok {
+			return ParsedBrief{}, errors.New("retained event cites unavailable evidence")
+		}
 		cited.keep(items)
-		keptHighlights[index] = len(parsed.Output.Highlights)
-		parsed.Output.Highlights = append(parsed.Output.Highlights, highlight)
 	}
 
 	for _, followUp := range candidate.FollowUps {
 		reindexed, referenced := keptHighlights[followUp.HighlightIndex]
 		items, ok := cited.resolve(followUp.EvidenceIDs)
-		if !referenced || !ok {
+		if !referenced || !ok || parsed.Output.Highlights[reindexed].LifeEvent != nil {
 			parsed.DroppedItemCount++
 			continue
 		}
