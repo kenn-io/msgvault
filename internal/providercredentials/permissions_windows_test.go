@@ -345,6 +345,31 @@ func TestWindowsProviderCredentialReparseRejection(t *testing.T) {
 	assert.Empty(t, entries, "reject the directory before creating a lock file")
 }
 
+func TestSecureRestoredRejectsIntermediateJunctionBeforeChangingOutsideACL(t *testing.T) {
+	require := require.New(t)
+	root := filepath.Join(t.TempDir(), "tokens")
+	require.NoError((nativePermissions{}).secureDirectory(root))
+	outside := t.TempDir()
+	nested := filepath.Join(outside, "nested")
+	require.NoError(os.Mkdir(nested, 0o700))
+	file := filepath.Join(nested, "credential.json")
+	require.NoError(os.WriteFile(file, []byte("credential"), 0o600))
+	setProviderCredentialTestACL(t, file, []windows.EXPLICIT_ACCESS{
+		providerCredentialTestAccess(currentWindowsProviderCredentialSID(t), windows.GENERIC_ALL, windows.TRUSTEE_IS_USER),
+		providerCredentialTestAccess(windowsProviderCredentialSID(t), windows.GENERIC_READ, windows.TRUSTEE_IS_WELL_KNOWN_GROUP),
+	}, true)
+	before := restoredTestDescriptor(t, file, false)
+	junction := filepath.Join(root, "junction")
+	output, err := exec.CommandContext(t.Context(), "cmd.exe", "/d", "/c", "mklink", "/J", junction, outside).CombinedOutput()
+	if err != nil {
+		t.Skipf("create directory junction: %v: %s", err, output)
+	}
+	t.Cleanup(func() { require.NoError(os.Remove(junction)) })
+	err = SecureRestored(root, []string{filepath.Join("junction", "nested", "credential.json")})
+	assert.Error(t, err)
+	assert.Equal(t, before, restoredTestDescriptor(t, file, false))
+}
+
 func currentWindowsProviderCredentialSID(t *testing.T) *windows.SID {
 	t.Helper()
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()

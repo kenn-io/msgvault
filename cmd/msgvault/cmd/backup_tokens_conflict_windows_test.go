@@ -3,9 +3,12 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,7 +36,7 @@ func TestBackupRestoreConflictNoTokensAndPermissionRetry(t *testing.T) {
 	require.NoError(err)
 	prepareBackupTokenRestore(t)
 
-	target := filepath.Join(t.TempDir(), "restored archive") + string(os.PathSeparator)
+	target := filepath.Join(t.TempDir(), "restored&archive") + string(os.PathSeparator)
 	tokens := filepath.Join(target, "tokens")
 	require.NoError(os.MkdirAll(tokens, 0o700))
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
@@ -61,7 +64,16 @@ func TestBackupRestoreConflictNoTokensAndPermissionRetry(t *testing.T) {
 	require.ErrorContains(err, "permissions conflict")
 	assert.Contains(err.Error(), "selected token files were secured, but token directory permissions were not changed")
 	assert.Contains(output, fmt.Sprintf("Restored snapshot %s to %s", manifest.SnapshotID, target))
-	assert.Contains(err.Error(), "--target \""+target+"\\\" --permissions-only")
+	_, hint, ok := strings.Cut(err.Error(), "retry with: ")
+	require.True(ok)
+	powershell := exec.CommandContext(t.Context(), "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", `$tokens = $null; $errors = $null; $ast = [System.Management.Automation.Language.Parser]::ParseInput($env:MSGVAULT_RETRY_HINT, [ref]$tokens, [ref]$errors); $commands = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true)); if ($errors.Count -ne 0 -or $commands.Count -ne 1) { exit 1 }; $values = @($commands[0].CommandElements | ForEach-Object { if ($_ -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $_.Value } else { $_.Extent.Text } }); ConvertTo-Json -InputObject $values -Compress`)
+	powershell.Env = append(os.Environ(), "MSGVAULT_RETRY_HINT="+hint)
+	parsed, parseErr := powershell.CombinedOutput()
+	assert.NoError(parseErr, "%s", parsed)
+	var args []string
+	if assert.NoError(json.Unmarshal(parsed, &args), "%s", parsed) {
+		assert.Equal([]string{"msgvault", "backup", "restore", manifest.SnapshotID, "--repo", repo.Root(), "--target", target, "--permissions-only"}, args)
+	}
 
 	configPath := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(os.WriteFile(configPath, []byte("# config"), 0o600))
@@ -84,5 +96,26 @@ func TestBackupRestoreConflictNoTokensAndPermissionRetry(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(output, "secured token files: 2")
 	_, err = providercredentials.Read(tokens)
+	require.NoError(err)
+}
+
+func TestPostRestoreRepairDoesNotForceUnlock(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	cfg, dbPath, attachments := backupTokenFixture(t)
+	repo := createBackupTokenSnapshot(t, cfg, dbPath, attachments)
+	manifest, err := repo.LatestSnapshot()
+	require.NoError(err)
+	target := t.TempDir()
+	prepareBackupTokenRestore(t)
+	lock, err := repo.AcquireExclusiveLock("create", false)
+	require.NoError(err)
+	_, err = securePostRestoreTokens(t.Context(), repo, manifest.SnapshotID, target, true)
+	assert.ErrorIs(err, backup.ErrRepoLocked)
+	require.NoError(lock.Release())
+	lock, err = repo.AcquireExclusiveLock("create", false)
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(lock.Release()) })
+	_, err = runBackupTokenRestore(t, cfg, repo, manifest.SnapshotID, "--target", target, "--permissions-only", "--force-unlock")
 	require.NoError(err)
 }
