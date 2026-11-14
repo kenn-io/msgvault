@@ -229,6 +229,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `calendar_update` | calendar_write | `--allow-calendar-writes` | backend-dependent |
 | `approve_carddav_publication` | carddav_write | `--allow-carddav-writes` | owner-only |
 | `sync_carddav` | carddav_write | `--allow-carddav-writes` | owner-only |
+| `patch_person_record` | curated_write | `--allow-curated-writes` | owner-only |
 | `accept_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `reject_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `score_identity_matches` | identity_scoring | `--allow-identity-scoring` | owner-only |
@@ -272,6 +273,9 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_person_messaging_routes` | read | — | owner-only |
 | `get_person_notes` | read | — | owner-only |
 | `get_person_profile` | read | — | owner-only |
+| `get_person_record` | read | — | owner-only |
+| `get_person_record_history` | read | — | owner-only |
+| `get_person_record_media` | read | — | owner-only |
 | `get_person_relationship` | read | — | owner-only |
 | `get_saved_view` | read | — | owner-only |
 | `get_slack_sync_policy` | read | — | owner-only |

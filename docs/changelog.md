@@ -9,6 +9,9 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
+- Let an MCP assistant read structured person records, history and stored media, and read large profiles in chunks.
+  With `--allow-curated-writes` and explicit client confirmation, it can apply
+  atomic profile patches. The client is responsible for obtaining user approval.
 
 ## 0.24.0
 <small>2026-11-13</small>
