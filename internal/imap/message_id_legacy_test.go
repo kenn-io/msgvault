@@ -7,6 +7,9 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"hegel.dev/go/hegel"
+
+	"go.kenn.io/msgvault/internal/mime"
 )
 
 func TestLegacyMessageIDPreservedAcrossIMAPFetchPaths(t *testing.T) {
@@ -97,4 +100,55 @@ func TestLegacyMessageIDSourceValidation(t *testing.T) {
 			assert.Equal(t, test.wantMatch, matches)
 		})
 	}
+}
+
+func TestHegelMessageIDContract(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		atom := func(alphabet string) string {
+			return hegel.Draw(ht, hegel.Text().MinSize(1).MaxSize(8).Alphabet(alphabet))
+		}
+		local := atom("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+-")
+		if hegel.Draw(ht, hegel.Booleans()) {
+			local += "." + atom("abcdefghijklmnopqrstuvwxyz0123456789_+-")
+		}
+		id := local + "@" + atom("abcdefghijklmnopqrstuvwxyz0123456789") + ".example.test"
+		legacy := "[" + local + "==@example.test]"
+		digits := atom("0123456789")
+		form := hegel.Draw(ht, hegel.Integers(0, 9))
+		var header, wantIMAP, wantStorage string
+		switch form {
+		case 0:
+			header, wantIMAP, wantStorage = "<"+id+">", id, id
+		case 1:
+			header, wantIMAP, wantStorage = id, id, id
+		case 2:
+			header, wantIMAP, wantStorage = digits, digits, digits
+		case 3:
+			header, wantIMAP, wantStorage = "<"+legacy+">", legacy, legacy
+		case 4:
+			header = "<<" + id + ">>"
+		case 5:
+			header = id + ">"
+		case 6:
+			header = "<>"
+		// IMAP recovers these legacy forms; storage rejects the malformed value.
+		case 7:
+			header, wantIMAP = "<"+id, id
+		case 8:
+			header, wantIMAP = "<"+id+"> type=\"text/plain\"", id
+		case 9:
+			header, wantIMAP = "<"+id+"> (comment)", id
+		}
+		fold := hegel.Draw(ht, hegel.SampledFrom([]string{" ", "\r\n\t"}))
+		raw := []byte("Message-ID:" + fold + header + "\r\n\r\nMessage-ID: decoy@example.test\r\n")
+		if hegel.Draw(ht, hegel.Booleans()) {
+			raw = []byte("Subject: no identifier\r\n\r\nMessage-ID: <" + id + ">\r\n")
+			wantIMAP, wantStorage = "", ""
+		}
+		ht.Logf("form=%d raw=%q", form, raw)
+		parsed, err := mime.Parse(raw)
+		require.NoError(ht, err)
+		assert.Equal(ht, wantIMAP, rawMIMEMessageID(raw))
+		assert.Equal(ht, wantStorage, mime.NormalizeMessageID(parsed.MessageID))
+	})
 }
