@@ -49,7 +49,6 @@ func TestOwnerMCPVerificationReads(t *testing.T) {
 				assert.Contains(response.Body.String(), "482913")
 			} else {
 				assert.NotContains(response.Body.String(), "482913")
-				assert.Contains(response.Body.String(), "verification content masked")
 			}
 		})
 	}

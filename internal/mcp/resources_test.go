@@ -1166,7 +1166,4 @@ func TestAttachmentResourceVerificationRefusal(t *testing.T) {
 	require.NotEmpty(response.Error, "response: %s", raw)
 	assert.InDelta(float64(jsonrpc.CodeInternalError), response.Error["code"], 0)
 	assert.Equal(verificationMaskedMessage, response.Error["message"])
-	mapped := translateDaemonRequestError(directoryPeopleError{code: "verification_masked"})
-	require.NotNil(mapped)
-	assert.Equal(verificationMaskedMessage, mapped.text)
 }

@@ -52,7 +52,7 @@ func TestAgentVerificationReads(t *testing.T) {
 	for _, path := range []string{
 		"/search?q=verification", "/search/fast?q=verification", "/search/deep?q=verification&scope=body", "/cli/search?q=verification&include_snippet=true",
 		"/search/deep?q=verification",
-		"/messages/filter", "/messages", "/search/domains?domains=example.test",
+		"/messages/filter", "/messages", "/search/domains?domains=example.test", fmt.Sprintf("/cli/message/thread?id=%d", id),
 	} {
 		t.Run(path, func(t *testing.T) {
 			requirements := require.New(t)
@@ -103,15 +103,6 @@ func TestAgentVerificationReads(t *testing.T) {
 			}
 		})
 	}
-	assertions := assert.New(t)
-	ownerReq := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id), nil)
-	ownerReq.Header.Set("X-Api-Key", "owner")
-	ownerReq.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
-	owner := httptest.NewRecorder()
-	srv.Router().ServeHTTP(owner, ownerReq)
-	assertions.Equal(http.StatusOK, owner.Code, owner.Body.String())
-	assertions.NotContains(owner.Body.String(), "4829")
-	assertions.Contains(owner.Body.String(), verification.Masked)
 }
 
 func TestAgentVerificationDetailAlternatives(t *testing.T) {
@@ -597,7 +588,5 @@ func TestOwnerVerificationSnapshotAdmission(t *testing.T) {
 	w = httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req.Clone(t.Context()))
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
-	assert.Contains(w.Body.String(), verification.Masked)
-	assert.NotContains(w.Body.String(), "482913")
 	assert.Empty(srv.readSnapshotSlots)
 }

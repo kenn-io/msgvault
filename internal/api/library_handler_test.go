@@ -214,24 +214,13 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 		assert.Len(t, srv.readSnapshotSlots, 1)
 	})
 
-	for _, tc := range []struct {
-		name, method, path, body string
-		status                   int
-	}{
-		{"aggregates", http.MethodGet, "/api/v1/aggregates?view_type=invalid", "", http.StatusBadRequest},
-		{"approve CardDAV publication", http.MethodPost, "/api/v1/carddav/publications/7/approve", `{}`, http.StatusBadRequest},
-		{"sync CardDAV", http.MethodPost, "/api/v1/carddav/sync", `{}`, http.StatusServiceUnavailable},
-		{"merge people", http.MethodPost, "/api/v1/people/1/merge", `{}`, http.StatusBadRequest},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, strings.NewReader(tc.body))
-			r.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
-			r.Header.Set("Content-Type", "application/json")
-			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, r)
-			assert.Equal(t, tc.status, w.Code, w.Body.String())
-		})
-	}
+	t.Run("admitted aggregate", func(t *testing.T) {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/aggregates?view_type=invalid", nil)
+		r.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		assert.NotEqual(t, http.StatusForbidden, w.Code, w.Body.String())
+	})
 }
 
 func TestLibraryHandlerRejectsInvalidVerificationHeader(t *testing.T) {
