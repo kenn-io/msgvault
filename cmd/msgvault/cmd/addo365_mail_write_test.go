@@ -343,15 +343,25 @@ func TestAddO365ReauthorizesSelectedSource(t *testing.T) {
 				path = microsoft.NewGraphMailManager("", "", "", tokenDir, nil).TokenPath("user@example.com")
 			}
 			require.NoError(t, os.WriteFile(path, []byte(`{"access_token":"token"}`), 0o600))
-			require.NoError(t, runAddO365Local(cmd, []string{"user@example.com"}))
+			firstBinding := "new"
+			if graph {
+				require.NoError(t, runAddO365Local(cmd, []string{"user@example.com"}))
+			} else {
+				require.ErrorContains(t, runAddO365Local(cmd, []string{"user@example.com"}), "already belongs to another source")
+				firstBinding = "first"
+			}
 			first, err := st.GetSourceByID(sources[0].ID)
 			require.NoError(t, err)
 			second, err := st.GetSourceByID(sources[1].ID)
 			require.NoError(t, err)
 			assert.Equal(t, identifiers[0], first.Identifier)
-			assert.Equal(t, "new", sourceOAuthApp(first))
+			assert.Equal(t, firstBinding, sourceOAuthApp(first))
 			assert.Equal(t, identifiers[1], second.Identifier)
 			assert.Equal(t, "second", sourceOAuthApp(second))
+			if !graph {
+				assert.JSONEq(t, `{"username":"user@example.com","auth_method":"xoauth2"}`, first.SyncConfig.String)
+				assert.JSONEq(t, `{"username":"user@example.com","auth_method":"xoauth2"}`, second.SyncConfig.String)
+			}
 			require.NoError(t, cmd.Flags().Set("source-id", strconv.FormatInt(sources[1].ID, 10)))
 			if graph {
 				path = microsoft.NewGraphMailManager("", "", "", tokenDir, nil).TokenPath("USER@example.com")
@@ -363,7 +373,7 @@ func TestAddO365ReauthorizesSelectedSource(t *testing.T) {
 			second, err = st.GetSourceByID(sources[1].ID)
 			require.NoError(t, err)
 			assert.Equal(t, identifiers[0], first.Identifier)
-			assert.Equal(t, "new", sourceOAuthApp(first))
+			assert.Equal(t, firstBinding, sourceOAuthApp(first))
 			assert.Equal(t, identifiers[1], second.Identifier)
 			assert.Equal(t, "new", sourceOAuthApp(second))
 		})

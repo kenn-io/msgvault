@@ -596,7 +596,7 @@ msgvault add-o365 user@org-b.example --oauth-app orgb
 msgvault add-o365 user@org-b.example --graph --oauth-app orgb --headless
 ```
 
-Each named app uses `common` and `http://localhost:8089/callback/microsoft` when its tenant and redirect URI are omitted. Set these fields on the named app if it needs different values. Re-run `add-o365` without `--oauth-app` to recover a lost token; msgvault remembers the source's app. Pass another app name to switch, or `--oauth-app ""` to switch to `[microsoft]`. Named app tokens are stored under `tokens/microsoft-apps/` in directories keyed by client ID. Switching apps or changing a named app's `client_id` leaves its previous token on disk until you delete it. Teams, contacts, and the Web add-source template use `[microsoft]`.
+Each named app uses `common` and `http://localhost:8089/callback/microsoft` when its tenant and redirect URI are omitted. Set these fields on the named app if it needs different values. Re-run `add-o365` without `--oauth-app` to recover a lost token; msgvault remembers the source's app. Pass another app name to switch, or `--oauth-app ""` to switch to `[microsoft]`. Named app tokens are stored under `tokens/microsoft-apps/` in directories keyed by client ID. Switching apps or changing a named app's `client_id` leaves its previous token on disk until you remove the account or delete the token. Teams, contacts, and the Web add-source template use `[microsoft]`.
 
 After changing the default `[microsoft].client_id`, re-run `add-o365` for each mailbox using the default app.
 

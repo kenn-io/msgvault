@@ -163,20 +163,19 @@ func o365AccountMailbox(account daemonclient.CLIAccount, graph bool) string {
 	return cfg.Username
 }
 
-func o365IMAPHostForSource(host, email string, source *store.Source, sources []*store.Source) string {
-	if source == nil {
-		return host
-	}
-	identifier := (&imapclient.Config{Host: host, Port: 993, TLS: true, Username: email}).Identifier()
+func o365IMAPRegistration(host, email string, source *store.Source, sources []*store.Source) (string, string, error) {
+	cfg := &imapclient.Config{Host: host, Port: 993, TLS: true, Username: email, AuthMethod: imapclient.AuthXOAuth2}
+	identifier := cfg.Identifier()
 	for _, other := range sources {
-		if other.ID != source.ID && other.Identifier == identifier {
-			cfg, err := imapclient.ParseIdentifier(source.Identifier)
-			if err == nil {
-				return cfg.Host
-			}
+		if (source == nil || other.ID != source.ID) && other.Identifier == identifier {
+			return "", "", fmt.Errorf("IMAP host %s already belongs to another source (ID %d)", host, other.ID)
 		}
 	}
-	return host
+	configJSON, err := cfg.ToJSON()
+	if err != nil {
+		return "", "", fmt.Errorf("serialize config: %w", err)
+	}
+	return identifier, configJSON, nil
 }
 
 func selectO365Account(accounts []daemonclient.CLIAccount, email string, graph bool) (*daemonclient.CLIAccount, bool, error) {
@@ -380,19 +379,9 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("determine IMAP host: %w", err)
 	}
 
-	imapCfg := &imapclient.Config{
-		Host:       o365IMAPHostForSource(imapHost, email, source, existing),
-		Port:       993,
-		TLS:        true,
-		Username:   email,
-		AuthMethod: imapclient.AuthXOAuth2,
-	}
-
-	identifier := imapCfg.Identifier()
-
-	cfgJSON, err := imapCfg.ToJSON()
+	identifier, cfgJSON, err := o365IMAPRegistration(imapHost, email, source, existing)
 	if err != nil {
-		return fmt.Errorf("serialize config: %w", err)
+		return err
 	}
 	source, err = s.RegisterMicrosoftMail(cmd.Context(), source, sourceTypeIMAP, identifier, sql.NullString{String: binding.resolvedApp, Valid: binding.resolvedApp != ""}, cfgJSON)
 	if err != nil {

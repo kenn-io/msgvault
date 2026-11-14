@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -418,18 +419,8 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			)
 		}
 	case sourceTypeMSMail:
-		mgr, err := newGraphMailManager(state, source)
-		if err == nil {
-			var used bool
-			used, err = microsoftMailTokenInUse(s, cfg, source.Identifier, mgr.TokenPath(source.Identifier), true)
-			if err == nil && !used {
-				err = mgr.DeleteToken(source.Identifier)
-			}
-		}
-		if err != nil {
-			fmt.Fprintf(os.Stderr,
-				"Warning: could not remove Microsoft Graph mail token: %v\n", err,
-			)
+		if err := removeMicrosoftMailTokens(s, cfg, logger, source, source.Identifier, true); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not remove Microsoft Graph mail token: %v\n", err)
 		}
 	case sourceTypeDiscord:
 		// Discord credential cleanup is part of the lifecycle-locked cascade
@@ -483,18 +474,8 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			if parseErr == nil {
 				switch imapCfg.EffectiveAuthMethod() {
 				case imaplib.AuthXOAuth2:
-					mgr, err := newMicrosoftIMAPManager(cfg, logger, source)
-					if err == nil {
-						var used bool
-						used, err = microsoftMailTokenInUse(s, cfg, imapCfg.Username, mgr.TokenPath(imapCfg.Username), false)
-						if err == nil && !used {
-							err = mgr.DeleteToken(imapCfg.Username)
-						}
-					}
-					if err != nil {
-						fmt.Fprintf(os.Stderr,
-							"Warning: could not remove Microsoft token: %v\n", err,
-						)
+					if err := removeMicrosoftMailTokens(s, cfg, logger, source, imapCfg.Username, false); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: could not remove Microsoft token: %v\n", err)
 					}
 				default:
 					credPath := imaplib.CredentialsPath(
@@ -734,6 +715,48 @@ func removeAccountSelector(cmd *cobra.Command, args []string) (sourceops.Selecto
 
 func init() {
 	rootCmd.AddCommand(newRemoveAccountCmd())
+}
+
+func removeMicrosoftMailTokens(s *store.Store, cfg *config.Config, logger *slog.Logger, source *store.Source, email string, graph bool) error {
+	dirs := []string{cfg.TokensDir()}
+	root := filepath.Join(cfg.TokensDir(), "microsoft-apps")
+	entries, err := os.ReadDir(root)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("list Microsoft token directories: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			dirs = append(dirs, filepath.Join(root, entry.Name()))
+		}
+	}
+	var current *microsoft.Manager
+	if !graph {
+		current, _ = newMicrosoftIMAPManager(cfg, logger, source)
+	}
+	for _, dir := range dirs {
+		path := microsoftTokenPath(dir, email, graph)
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		used, err := microsoftMailTokenInUse(s, cfg, email, path, graph)
+		if err != nil {
+			return err
+		}
+		if used {
+			continue
+		}
+		if current != nil && filepath.Clean(current.TokenPath(email)) == filepath.Clean(path) {
+			err = current.DeleteToken(email)
+		} else {
+			err = os.Remove(path)
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 func microsoftMailTokenInUse(s *store.Store, cfg *config.Config, email, tokenPath string, graph bool) (bool, error) {

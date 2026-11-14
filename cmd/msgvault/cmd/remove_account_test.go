@@ -1456,6 +1456,12 @@ func TestRemoveAccountMicrosoftNamedApp(t *testing.T) {
 					path = microsoft.NewManager("", "", "", tokenDir, nil).TokenPath("user@example.com")
 				}
 				require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
+				require.NoError(t, os.MkdirAll(cfg.TokensDir(), 0o700))
+				oldPath := microsoft.NewManager("", "", "", cfg.TokensDir(), nil).TokenPath("user@example.com")
+				if graph {
+					oldPath = microsoft.NewGraphMailManager("", "", "", cfg.TokensDir(), nil).TokenPath("user@example.com")
+				}
+				require.NoError(t, os.WriteFile(oldPath, []byte(`{}`), 0o600))
 				st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
 				src, err := st.GetOrCreateSource(typ, identifier)
 				require.NoError(t, err)
@@ -1471,14 +1477,11 @@ func TestRemoveAccountMicrosoftNamedApp(t *testing.T) {
 				root.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 				root.AddCommand(newRemoveAccountLocalTestCmd())
 				root.SetArgs([]string{"remove-account", identifier, "--yes", "--type", typ})
-				stderr := captureStderrDuring(t, func() { require.NoError(t, root.Execute()) })
+				captureStderrDuring(t, func() { require.NoError(t, root.Execute()) })
 				_, err = os.Stat(path)
-				if dropped {
-					require.NoError(t, err)
-					assert.Contains(t, stderr, "Warning:")
-				} else {
-					assert.True(t, os.IsNotExist(err))
-				}
+				assert.True(t, os.IsNotExist(err))
+				_, err = os.Stat(oldPath)
+				assert.True(t, os.IsNotExist(err), "remove the previous app's token")
 				st, err = store.Open(filepath.Join(dir, "msgvault.db"))
 				require.NoError(t, err)
 				defer func() { _ = st.Close() }()
@@ -2085,4 +2088,33 @@ func TestRemoveAccountMatrixFencesMergeDuringLogout(t *testing.T) {
 	history, err = st.GetSourceByID(history.ID)
 	require.NoError(err)
 	assert.Zero(history.MergedIntoSourceID, "the refused merge must not retire its source")
+}
+
+func TestRemoveMicrosoftMailTokensPreservesRemainingSource(t *testing.T) {
+	dir := t.TempDir()
+	cfg := lifecycleTestConfig(dir)
+	cfg.Microsoft.ClientID = "default-client"
+	cfg.Microsoft.Apps = map[string]config.MicrosoftApp{"work": {ClientID: "work-client"}}
+	_, namedDir, err := microsoftMailApp(cfg, "work")
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(namedDir, 0o700))
+	defaultPath := microsoft.NewManager("", "", "", cfg.TokensDir(), nil).TokenPath("user@example.com")
+	namedPath := microsoft.NewManager("", "", "", namedDir, nil).TokenPath("user@example.com")
+	require.NoError(t, os.WriteFile(defaultPath, []byte(`{}`), 0o600))
+	require.NoError(t, os.WriteFile(namedPath, []byte(`{}`), 0o600))
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
+	removed, err := st.GetOrCreateSource(sourceTypeIMAP, "imaps://user@example.com@outlook.office.com:993")
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceOAuthApp(t.Context(), removed.ID, sql.NullString{String: "work", Valid: true}))
+	remaining, err := st.GetOrCreateSource(sourceTypeIMAP, "imaps://user@example.com@outlook.office365.com:993")
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), remaining.ID, `{"username":"user@example.com","auth_method":"xoauth2"}`))
+	_, _, err = st.RemoveSourceSerialized(t.Context(), removed.ID)
+	require.NoError(t, err)
+	removed.OAuthApp = sql.NullString{String: "work", Valid: true}
+	require.NoError(t, removeMicrosoftMailTokens(st, cfg, testDiscardLogger(), removed, "user@example.com", false))
+	_, err = os.Stat(defaultPath)
+	require.NoError(t, err)
+	_, err = os.Stat(namedPath)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
