@@ -17,8 +17,10 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/draftlint"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -33,6 +35,8 @@ const (
 )
 
 type draftReplyIntent struct {
+	draftLintOptions
+
 	MessageID   int64
 	From        string
 	Body        string
@@ -46,6 +50,7 @@ type draftReplyIntent struct {
 // draftReplyTarget is the archived parent message and the granted source
 // mailbox that will hold the reply.
 type draftReplyTarget struct {
+	lint             draftlint.Result
 	parent           *store.APIMessage
 	parentSource     *store.Source
 	source           *store.Source
@@ -90,6 +95,7 @@ func parseDraftReplyArgs(args []string) (draftReplyIntent, error) {
 		return invalidDraftReplyArgs("expected %s as the first argument", api.CLIRunDraftReplyCommand)
 	}
 	var intent draftReplyIntent
+	lintSeen := map[string]bool{}
 	var positional string
 	var fromSet, bodySet, jsonSet, allSet, accountSet, sourceIDSet bool
 	rest := args[1:]
@@ -139,6 +145,10 @@ func parseDraftReplyArgs(args []string) (draftReplyIntent, error) {
 				return invalidDraftReplyArgs("--all accepts one flag without a value")
 			}
 			intent.ReplyAll, allSet = true, true
+		case "strict", "validate-only":
+			if err := setDraftLintFlag(&intent.draftLintOptions, lintSeen, name, value, hasValue); err != nil {
+				return draftReplyIntent{}, err
+			}
 		case "json":
 			if jsonSet {
 				return invalidDraftReplyArgs("--json given more than once")
@@ -482,6 +492,16 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	if err != nil {
 		return draftReplyError("invalid_reply_metadata", err)
 	}
+	if target.source.SourceType == sourceTypeGmail {
+		if err := gmailDraftScopeGate(ctx, a.config, target.source, oauth.ScopesGmailDraftWrite, oauth.ScopesGmailSendAsList); err != nil {
+			return err
+		}
+	}
+	lint, done, err := a.gateDraftLint(emailDraftLintInput("reply", intent.Body, reply), intent.draftLintOptions, intent.JSON, emit)
+	if done || err != nil {
+		return err
+	}
+	target.lint = lint
 	if target.source.SourceType == "gmail" {
 		if len(reply.Parsed.From) != 1 || len(reply.Parsed.To)+len(reply.Parsed.Cc)+len(reply.Parsed.Bcc) == 0 {
 			return draftReplyError("invalid_reply_metadata", errors.New("composed reply needs one From and at least one recipient"))
@@ -587,6 +607,7 @@ func (a *storeAPIAdapter) createDraft(
 	})
 	if err != nil {
 		result.Status = draftReplyStatusLocalFailed
+		appendDraftLint(&result.draftRecipientAdvisory, target.lint)
 		_ = emitDraftReplyOutput(emit, cliStreamStderr, asJSON, result)
 		return draftReplyError(draftReplyStatusLocalFailed, err)
 	}
@@ -597,6 +618,7 @@ func (a *storeAPIAdapter) createDraft(
 	if asJSON {
 		result.draftRecipientAdvisory = a.draftRecipientAdvisory(ctx, result.MessageID, result.SourceID, target.grant)
 	}
+	appendDraftLint(&result.draftRecipientAdvisory, target.lint)
 	if err := emitDraftReplyOutput(emit, cliStreamStdout, asJSON, result); err != nil {
 		return draftReplyError("output_failed", err)
 	}
@@ -743,6 +765,9 @@ func emitDraftReplyOutput(emit func(api.CLIRunEvent) error, stream string, asJSO
 			result.MessageID, result.Mailbox, result.UIDValidity, result.UID, result.OperationRef, result.DraftID, result.Revision)
 	default:
 		text = fmt.Sprintf("remote accepted; local persistence failed, inspect operation %s\n", result.OperationRef)
+	}
+	if !asJSON && (result.Status == draftReplyStatusCreated || result.Status == draftReplyStatusLocalFailed) {
+		text += draftLintText(draftlint.Result{Warnings: result.Warnings})
 	}
 	return emit(api.CLIRunEvent{Type: stream, Data: text})
 }

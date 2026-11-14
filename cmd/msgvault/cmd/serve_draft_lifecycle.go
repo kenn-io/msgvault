@@ -13,6 +13,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/draftlint"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	msgmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
@@ -20,6 +21,9 @@ import (
 )
 
 type draftLifecycleIntent struct {
+	draftLintOptions
+
+	lint         draftlint.Result
 	Operation    string
 	DraftID      string
 	Revision     int64
@@ -53,6 +57,8 @@ type draftLifecycleObservation struct {
 }
 
 type draftLifecycleOutput struct {
+	draftRecipientAdvisory
+
 	Status               string                     `json:"status"`
 	DraftID              string                     `json:"draft_id"`
 	Revision             int64                      `json:"revision"`
@@ -77,6 +83,7 @@ func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
 		return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("expected a draft lifecycle command"))
 	}
 	intent := draftLifecycleIntent{Operation: args[0]}
+	lintSeen := map[string]bool{}
 	var positional string
 	var revisionSet, bodySet, jsonSet bool
 	rest := args[1:]
@@ -131,6 +138,10 @@ func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
 				return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft-get accepts one positive --conversation"))
 			}
 			intent.ConversationID = parsed
+		case "strict", "validate-only":
+			if err := setDraftLintFlag(&intent.draftLintOptions, lintSeen, name, value, hasValue); err != nil {
+				return draftLifecycleIntent{}, err
+			}
 		case "json":
 			if jsonSet || (hasValue && value != "true") {
 				return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("--json accepts one flag without a value"))
@@ -143,6 +154,9 @@ func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
 		default:
 			return draftLifecycleIntent{}, draftReplyError("invalid_args", fmt.Errorf("unknown flag --%s", name))
 		}
+	}
+	if intent.Operation != api.CLIRunDraftEditCommand && intent.draftLintOptions != (draftLintOptions{}) {
+		return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("lint flags require draft-edit"))
 	}
 	if intent.ConversationID != 0 {
 		if positional != "" || revisionSet || bodySet {
@@ -267,6 +281,7 @@ func emitDraftLifecycleOutput(
 	intent draftLifecycleIntent,
 	output draftLifecycleOutput,
 ) error {
+	appendDraftLint(&output.draftRecipientAdvisory, intent.lint)
 	if emit == nil {
 		return nil
 	}
@@ -341,7 +356,7 @@ func emitDraftLifecycleOutput(
 		fmt.Fprintf(&data, "old draft ID remains blocked at revision %d\n", output.Revision)
 		fmt.Fprintln(&data, "manual action: reconcile the provider receipt and local state before retrying")
 	}
-	return emit(api.CLIRunEvent{Type: stream, Data: data.String()})
+	return emit(api.CLIRunEvent{Type: stream, Data: data.String() + draftLintText(intent.lint)})
 }
 
 func formatDraftLifecycleReceipt(receipt draftLifecycleReceipt) string {
@@ -492,6 +507,37 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 	if err != nil {
 		return err
 	}
+	if intent.Operation == api.CLIRunDraftEditCommand && intent.ValidateOnly {
+		if draft.Pending != nil {
+			return draftReplyError("pending_operation", store.ErrIMAPDraftPending)
+		}
+		currentRaw, readErr := a.store.GetMessageRawContext(ctx, draft.CurrentMessageID)
+		if readErr != nil {
+			return draftReplyError("draft_read_failed", readErr)
+		}
+		if req.Grant != nil {
+			if _, err := a.authorizeDelegatedDraftContent(ctx, intent, req.Grant, source.ID, currentRaw); err != nil {
+				return err
+			}
+		}
+		replacement, buildErr := imaplib.BuildIMAPDraftReplacement(currentRaw, intent.Body, time.Now(), "")
+		if buildErr != nil {
+			return draftReplyError("invalid_draft", buildErr)
+		}
+		kind := "edit"
+		forward := imaplib.IsGeneratedForward(replacement.Raw)
+		if forward {
+			kind = "forward"
+		}
+		if _, err := a.forwardDraftAttachmentWrites(ctx, draft.CurrentMessageID, replacement); err != nil {
+			return draftReplyError("invalid_draft", err)
+		}
+		lint, done, lintErr := a.gateDraftLint(emailDraftLintInput(kind, intent.Body, replacement), intent.draftLintOptions, intent.JSON, emit)
+		if done || lintErr != nil {
+			return lintErr
+		}
+		intent.lint = lint
+	}
 	execution, err := a.store.AcquireSyncExecutionContext(ctx, source.ID)
 	if err != nil {
 		if errors.Is(err, store.ErrSyncAlreadyActive) {
@@ -549,6 +595,12 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		status := "edited"
 		if intent.Operation == api.CLIRunDraftDeleteCommand {
 			status = "deleted"
+		} else {
+			kind := "edit"
+			if imaplib.IsGeneratedForward(replacement.Raw) {
+				kind = "forward"
+			}
+			intent.lint = draftlint.Check(draftlint.Input{Kind: kind, Channel: "email", Body: intent.Body})
 		}
 		output, err := a.draftLifecycleOutput(ctx, finished, status, nil, nil)
 		if err != nil {
@@ -558,6 +610,18 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 			return draftReplyError("output_failed", err)
 		}
 		return nil
+	}
+	forward := intent.Operation == api.CLIRunDraftEditCommand && imaplib.IsGeneratedForward(replacement.Raw)
+	if intent.Operation == api.CLIRunDraftEditCommand {
+		kind := "edit"
+		if forward {
+			kind = "forward"
+		}
+		lint, done, lintErr := a.gateDraftLint(emailDraftLintInput(kind, intent.Body, replacement), intent.draftLintOptions, intent.JSON, emit)
+		if done || lintErr != nil {
+			return lintErr
+		}
+		intent.lint = lint
 	}
 	var attachmentWrites []store.AttachmentWrite
 	if intent.Operation == api.CLIRunDraftEditCommand {

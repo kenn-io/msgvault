@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/draftlint"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 )
@@ -90,21 +91,33 @@ func (a *storeAPIAdapter) runCLIChatDraftCreate(
 	if err := invalidChatDraftBody(intent.Body); err != nil {
 		return err
 	}
-	authorize := chatDraftAuthorizer(grant, agentgrant.PermissionDraftCreate)
 	authorized := false
-	draft, err := a.store.CreateChatDraftContext(ctx, intent.ConversationID, intent.ReplyTo, intent.Body,
-		func(sourceType, identifier string) error {
-			err := authorize(sourceType, identifier)
-			authorized = err == nil
-			return err
-		})
+	checkSource := chatDraftAuthorizer(grant, agentgrant.PermissionDraftCreate)
+	authorize := func(sourceType, identifier string) error {
+		err := checkSource(sourceType, identifier)
+		authorized = err == nil
+		return err
+	}
+	if intent.ValidateOnly {
+		if _, err := a.store.ResolveChatDraftContext(ctx, intent.ConversationID, intent.ReplyTo, authorize); err != nil {
+			if authorized {
+				grant = nil
+			}
+			return chatDraftStoreError(err, grant)
+		}
+	}
+	lint, done, err := a.gateDraftLint(draftlint.Input{Kind: "compose", Channel: "chat", Body: intent.Body}, intent.draftLintOptions, intent.JSON, emit)
+	if done || err != nil {
+		return err
+	}
+	draft, err := a.store.CreateChatDraftContext(ctx, intent.ConversationID, intent.ReplyTo, intent.Body, authorize)
 	if err != nil {
 		if authorized {
 			grant = nil // the grant covers this source, so later errors reveal nothing to hide
 		}
 		return chatDraftStoreError(err, grant)
 	}
-	return emitChatDrafts(emit, intent.JSON, false, "created", draft)
+	return emitChatDraftsWithLint(emit, intent.JSON, false, "created", lint, draft)
 }
 
 func (a *storeAPIAdapter) runCLIChatDraftLifecycle(
@@ -140,6 +153,15 @@ func (a *storeAPIAdapter) runCLIChatDraftLifecycle(
 		if err := invalidChatDraftBody(intent.Body); err != nil {
 			return err
 		}
+		// A preview must reject stale revisions just as an edit would.
+		if draft.Revision != intent.Revision {
+			return draftReplyError("revision_mismatch", store.ErrChatDraftRevisionConflict)
+		}
+		lint, done, lintErr := a.gateDraftLint(draftlint.Input{Kind: "edit", Channel: "chat", Body: intent.Body}, intent.draftLintOptions, intent.JSON, emit)
+		if done || lintErr != nil {
+			return lintErr
+		}
+		intent.lint = lint
 		draft, err = a.store.UpdateChatDraftContext(ctx, draft.DraftID, intent.Revision, intent.Body)
 	case api.CLIRunDraftDeleteCommand:
 		status = "deleted"
@@ -151,11 +173,15 @@ func (a *storeAPIAdapter) runCLIChatDraftLifecycle(
 	if intent.Operation != api.CLIRunDraftEditCommand {
 		draft = redactChatDraftBody(grant, draft)
 	}
-	return emitChatDrafts(emit, intent.JSON, false, status, draft)
+	return emitChatDraftsWithLint(emit, intent.JSON, false, status, intent.lint, draft)
 }
 
 // emitChatDrafts writes one draft, or a list as a JSON array, to stdout.
 func emitChatDrafts(emit func(api.CLIRunEvent) error, asJSON, list bool, status string, drafts ...store.ChatDraft) error {
+	return emitChatDraftsWithLint(emit, asJSON, list, status, draftlint.Result{}, drafts...)
+}
+
+func emitChatDraftsWithLint(emit func(api.CLIRunEvent) error, asJSON, list bool, status string, lint draftlint.Result, drafts ...store.ChatDraft) error {
 	outputs := make([]chatDraftOutput, 0, len(drafts))
 	var text strings.Builder
 	for _, d := range drafts {
@@ -168,6 +194,7 @@ func emitChatDrafts(emit func(api.CLIRunEvent) error, asJSON, list bool, status 
 		if status == "created" {
 			output.RecipientProvenanceStatus = "not_applicable"
 		}
+		appendDraftLint(&output.draftRecipientAdvisory, lint)
 		outputs = append(outputs, output)
 		fmt.Fprintf(&text, "location=msgvault draft=%s revision=%d status=%s source=%s source_type=%s conversation=%d conversation_type=%s source_conversation=%s",
 			textutil.SanitizeTerminal(d.DraftID), d.Revision, status, textutil.SanitizeTerminal(d.SourceIdentifier),
@@ -181,7 +208,7 @@ func emitChatDrafts(emit func(api.CLIRunEvent) error, asJSON, list bool, status 
 	if len(drafts) == 0 {
 		text.WriteString("drafts=0\n")
 	}
-	data := text.String()
+	data := text.String() + draftLintText(lint)
 	if asJSON {
 		var value any = outputs
 		if !list {

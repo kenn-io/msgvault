@@ -58,15 +58,17 @@ func (h *draftContentReadHandler) Handle(_ context.Context, record slog.Record) 
 
 func TestDelegatedDraftLifecycleConcurrentIMAPSync(t *testing.T) {
 	for _, tc := range []struct {
-		name, operation, sender string
-		allowed, pending        bool
+		name, operation, sender        string
+		allowed, pending, validateOnly bool
 	}{
-		{"get excluded sender", api.CLIRunDraftGetCommand, "other@example.test", false, false},
-		{"get excluded candidate sender", api.CLIRunDraftGetCommand, "other@example.test", false, true},
-		{"get allowed candidate sender", api.CLIRunDraftGetCommand, "alice@example.com", true, true},
-		{"get allowed sender", api.CLIRunDraftGetCommand, "alice@example.com", true, false},
-		{"edit excluded sender", api.CLIRunDraftEditCommand, "other@example.test", false, false},
-		{"delete excluded sender", api.CLIRunDraftDeleteCommand, "other@example.test", false, false},
+		{"get excluded sender", api.CLIRunDraftGetCommand, "other@example.test", false, false, false},
+		{"get excluded candidate sender", api.CLIRunDraftGetCommand, "other@example.test", false, true, false},
+		{"get allowed candidate sender", api.CLIRunDraftGetCommand, "alice@example.com", true, true, false},
+		{"get allowed sender", api.CLIRunDraftGetCommand, "alice@example.com", true, false, false},
+		{"edit excluded sender", api.CLIRunDraftEditCommand, "other@example.test", false, false, false},
+		{"delete excluded sender", api.CLIRunDraftDeleteCommand, "other@example.test", false, false, false},
+		{"preview excluded sender", api.CLIRunDraftEditCommand, "other@example.test", false, false, true},
+		{"preview allowed sender", api.CLIRunDraftEditCommand, "alice@example.com", true, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -101,8 +103,11 @@ func TestDelegatedDraftLifecycleConcurrentIMAPSync(t *testing.T) {
 			})
 			require.NoError(err)
 			require.Equal(fixture.draft.CurrentMessageID, archivedID)
-			testutil.AppendIMAPRawMessage(t, user, "Sent", []byte(strings.ReplaceAll(strings.ReplaceAll(original,
-				"alice@example.com", tc.sender), "original body", "synced body")))
+			syncedRaw := strings.NewReplacer("alice@example.com", tc.sender, "original body", "synced body").Replace(original)
+			if tc.validateOnly {
+				syncedRaw = strings.Replace(syncedRaw, "bob@example.com", "changed@example.test", 1)
+			}
+			testutil.AppendIMAPRawMessage(t, user, "Sent", []byte(syncedRaw))
 
 			client := imaplib.NewClient(fixture.config, testutil.IMAPTestPassword)
 			t.Cleanup(func() { _ = client.Close() })
@@ -144,6 +149,9 @@ func TestDelegatedDraftLifecycleConcurrentIMAPSync(t *testing.T) {
 			if tc.operation == api.CLIRunDraftEditCommand {
 				args = append(args, "--body", "delegated body")
 			}
+			if tc.validateOnly {
+				args = append(args, "--validate-only")
+			}
 			providerCalls := 0
 			factory := fixture.adapter.draftClientFactory
 			fixture.adapter.draftClientFactory = func(ctx context.Context, source *store.Source) (*imaplib.Client, error) {
@@ -159,13 +167,21 @@ func TestDelegatedDraftLifecycleConcurrentIMAPSync(t *testing.T) {
 			if tc.allowed {
 				require.NoError(err)
 				require.Len(events, 1)
-				var output draftLifecycleOutput
-				require.NoError(json.Unmarshal([]byte(events[0].Data), &output))
-				assert.Equal("synced body", output.Content)
-				assert.Contains(output.RawMIME, "From: "+tc.sender+"\r\n")
-				assert.Contains(output.RawMIME, "synced body")
-				if tc.pending {
-					assert.Equal(original, output.CandidateContent)
+				if tc.validateOnly {
+					output := lintObject(t, events)
+					assert.Equal("validated", output["status"])
+					recipients, ok := output["recipients"].(map[string]any)
+					require.True(ok)
+					assert.Equal([]any{"changed@example.test"}, recipients["to"])
+				} else {
+					var output draftLifecycleOutput
+					require.NoError(json.Unmarshal([]byte(events[0].Data), &output))
+					assert.Equal("synced body", output.Content)
+					assert.Contains(output.RawMIME, "From: "+tc.sender+"\r\n")
+					assert.Contains(output.RawMIME, "synced body")
+					if tc.pending {
+						assert.Equal(original, output.CandidateContent)
+					}
 				}
 			} else {
 				require.Error(err)
@@ -181,6 +197,65 @@ func TestDelegatedDraftLifecycleConcurrentIMAPSync(t *testing.T) {
 			assert.Equal(tc.sender, archived.FromEmail)
 			assert.Equal("synced body", archived.BodyText)
 			assert.Equal(fixture.draft.CurrentMessageID, latest.CurrentMessageID)
+		})
+	}
+}
+
+func TestDelegatedGmailEditPreviewConcurrentArchiveRefresh(t *testing.T) {
+	for _, tc := range []struct {
+		sender  string
+		allowed bool
+	}{
+		{"owner@example.test", true},
+		{"other@example.test", false},
+	} {
+		t.Run(tc.sender, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
+			f := newGmailDraftTestFixture(t)
+			draft := f.seedDraft(t)
+			grant := delegatedGmailDraftGrant(f, []agentgrant.Permission{agentgrant.PermissionDraftEdit}, f.source.SourceType, f.source.Identifier)
+			raw := strings.NewReplacer("owner@example.test", tc.sender, "sender@example.test", "changed@example.test").Replace(
+				string(gmailDraftTestRaw("refreshed", "gmail-original@example.test")),
+			)
+			var refreshed atomic.Bool
+			previous := slog.Default()
+			slog.SetDefault(slog.New(&draftContentReadHandler{
+				Handler: slog.DiscardHandler,
+				afterRead: func() {
+					if refreshed.CompareAndSwap(false, true) {
+						require.NoError(f.store.UpsertMessageRawWithFormatContext(t.Context(), draft.CurrentMessageID, []byte(raw), "mime"))
+					}
+				},
+			}))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+
+			var events []api.CLIRunEvent
+			err := f.adapter.runCLIDraftLifecycle(store.WithRequestID(t.Context(), "draft-sync-race"), api.CLIRunRequest{
+				Args:  []string{"draft-edit", draft.DraftID, "--revision", "1", "--body", "Thanks", "--validate-only", "--json"},
+				Grant: grant,
+			}, func(event api.CLIRunEvent) error {
+				events = append(events, event)
+				return nil
+			})
+			require.True(refreshed.Load())
+			if tc.allowed {
+				require.NoError(err)
+				output := lintObject(t, events)
+				assert.Equal("validated", output["status"])
+				recipients, ok := output["recipients"].(map[string]any)
+				require.True(ok)
+				assert.Equal([]any{"changed@example.test"}, recipients["to"])
+			} else {
+				require.EqualError(err, "not_permitted")
+				assert.Empty(events)
+			}
+			assert.Zero(f.client.getCalls)
+			assert.Zero(f.client.updateCalls)
+			latest, err := f.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			assert.Equal(draft, latest)
 		})
 	}
 }

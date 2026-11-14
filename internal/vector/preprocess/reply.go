@@ -11,6 +11,7 @@ const LoopEvidenceTextVersion = 1
 const notReplyStart = `(?:[^o \t\r\n]|o[^n\r\n]|on[^ \t\r\n])[^\n]*`
 
 const replyAttribution = `(?:on [^\n]*\bwrote:|on [^\n]*\r?\n(?:[ \t]*(?:` + notReplyStart + `)?\r?\n){0,2}?[ \t]*(?:` + notReplyStart + `)?\bwrote:)`
+const quotedHeader = `(?:-{2,}\s*(?:original message|forwarded message)\b|begin forwarded message:\s*$|from:[ \t][^\n]*\n[ \t]*sent:[ \t])`
 
 var (
 	// quotedReply drops a wrapped attribution and its quoted lines, keeping
@@ -19,7 +20,8 @@ var (
 	// quotedStart is where the quoted part begins: a reply attribution that
 	// may wrap onto a second line, an "Original Message" or "Forwarded
 	// message" separator, or Outlook's From:/Sent: header pair.
-	quotedStart = regexp.MustCompile(`(?im)^[ \t]*(?:` + replyAttribution + `[ \t\r]*$|-{2,}\s*(?:original message|forwarded message)\b|begin forwarded message:\s*$|from:[ \t][^\n]*\n[ \t]*sent:[ \t])`)
+	quotedStart       = regexp.MustCompile(`(?im)^[ \t]*(?:` + replyAttribution + `[ \t\r]*$|` + quotedHeader + `)`)
+	quotedHeaderStart = regexp.MustCompile(`(?im)^[ \t]*` + quotedHeader)
 
 	quotedLine = regexp.MustCompile(`(?m)^[ \t]*>+[ \t]?.*\n?`)
 )
@@ -27,14 +29,21 @@ var (
 // StripReplyQuotes removes quoted history for open-loop detection.
 // It keeps authored text above and below marked quotations.
 func StripReplyQuotes(body string) string {
-	return dropReplyQuotes(body, func(string) string { return "" })
+	return dropReplyQuotes(body, quotedStart, func(string) string { return "" })
 }
 
 // MaskReplyQuotes blanks quoted history while preserving byte offsets and line endings.
-// It applies the shared quote rules without deleting text. Later matches see
-// blanked text rather than the adjacent lines StripReplyQuotes can create.
 func MaskReplyQuotes(body string) string {
-	return dropReplyQuotes(body, func(quote string) string {
+	return maskReplyQuotes(body, quotedStart)
+}
+
+// MaskDraftReplyQuotes keeps text after a bare attribution visible for linting.
+func MaskDraftReplyQuotes(body string) string {
+	return maskReplyQuotes(body, quotedHeaderStart)
+}
+
+func maskReplyQuotes(body string, start *regexp.Regexp) string {
+	return dropReplyQuotes(body, start, func(quote string) string {
 		masked := []byte(quote)
 		for i, b := range masked {
 			if b != '\r' && b != '\n' {
@@ -45,9 +54,9 @@ func MaskReplyQuotes(body string) string {
 	})
 }
 
-func dropReplyQuotes(body string, drop func(string) string) string {
+func dropReplyQuotes(body string, start *regexp.Regexp, drop func(string) string) string {
 	body = quotedReply.ReplaceAllStringFunc(body, drop)
-	if loc := quotedStart.FindStringIndex(body); loc != nil {
+	if loc := start.FindStringIndex(body); loc != nil {
 		body = body[:loc[0]] + drop(body[loc[0]:])
 	}
 	return quotedLine.ReplaceAllStringFunc(body, drop)

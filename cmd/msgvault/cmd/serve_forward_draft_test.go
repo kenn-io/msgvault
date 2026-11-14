@@ -572,6 +572,9 @@ func TestDraftForwardEditChecksAttachmentsBeforeConnecting(t *testing.T) {
 		connections++
 		return nil, errors.New("provider offline")
 	}
+	_, err = runReviewLifecycle(t, fixture.adapter, "draft-edit", fixture.draft.DraftID, "--revision", "1", "--body", "updated", "--validate-only")
+	requirements.ErrorContains(err, "invalid_draft")
+	assertions.Zero(connections)
 	_, err = runReviewLifecycle(t, fixture.adapter, "draft-edit", fixture.draft.DraftID, "--revision", "1", "--body", "updated")
 	requirements.ErrorContains(err, "invalid_draft")
 	assertions.Zero(connections)

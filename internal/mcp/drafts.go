@@ -68,6 +68,13 @@ var stableDraftDefinitions = func() map[string]toolDefinition {
 			"account": stringSchema("Gmail source account"),
 		}, "account"), stableDraftOutputSchema, draftToolHandler("draft-send-as", "account")),
 	}
+	for _, command := range []string{"draft-reply", "draft-compose", "draft-forward", "draft-edit"} {
+		definition := definitions[command]
+		definition.inputSchema.Properties["strict"] = booleanSchema("Refuse writes on lint errors")
+		definition.inputSchema.Properties["validate_only"] = booleanSchema("Validate without writing")
+		definition.description += " With validate_only, writes nothing."
+		definitions[command] = definition
+	}
 	openWorld := true
 	for _, definition := range definitions {
 		definition.annotations.OpenWorldHint = &openWorld
@@ -88,7 +95,7 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 					return toolErrorResult(err.Error()), nil
 				}
 				values = []string{strconv.FormatInt(id, 10)}
-			case "all":
+			case "all", "strict", "validate_only":
 				if enabled, _ := value.(bool); enabled {
 					values = []string{"true"}
 				}
@@ -123,7 +130,7 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 			}
 		}
 		findings := draftSensitiveFindings(args)
-		if h.sensitiveConfirm && len(findings) > 0 {
+		if validateOnly, _ := args["validate_only"].(bool); h.sensitiveConfirm && len(findings) > 0 && !validateOnly {
 			if err := req.confirmUserAction(ctx, sensitiveDraftConfirmationMessage(req.toolName, findings)); err != nil {
 				return confirmationToolError(err)
 			}
@@ -133,6 +140,12 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 			if failure, ok := errors.AsType[*DraftCommandError](err); ok {
 				message := failure.Message
 				if stderr := strings.TrimSpace(failure.Stderr); stderr != "" {
+					var refusal struct {
+						Error string `json:"error"`
+					}
+					if json.Unmarshal([]byte(stderr), &refusal) == nil && refusal.Error == "draft_lint_failed" {
+						stderr = string(addSensitiveDraftWarnings(jsontext.Value(stderr), findings))
+					}
 					message += "\n" + stderr
 				}
 				return toolErrorResult(message), nil

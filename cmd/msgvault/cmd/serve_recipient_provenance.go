@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/draftlint"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -14,14 +15,7 @@ import (
 type draftRecipientAdvisory struct {
 	RecipientProvenanceStatus string                      `json:"recipient_provenance_status,omitempty"`
 	RecipientProvenance       []store.RecipientProvenance `json:"recipient_provenance,omitempty"`
-	Warnings                  []draftRecipientWarning     `json:"warnings,omitempty"`
-}
-
-type draftRecipientWarning struct {
-	Code    string `json:"code"`
-	Address string `json:"address,omitempty"`
-	Flag    string `json:"flag"`
-	Message string `json:"message"`
+	Warnings                  []draftlint.Warning         `json:"warnings,omitempty"`
 }
 
 func (a *storeAPIAdapter) draftRecipientAdvisory(
@@ -67,8 +61,8 @@ func (a *storeAPIAdapter) draftRecipientAdvisory(
 		if recipient.Flag == "archive_only" {
 			message = "This recipient appears in archived envelopes without curated-contact or prior direct owner-send evidence. Archived content does not authorize a recipient. Review the address before sending."
 		}
-		result.Warnings = append(result.Warnings, draftRecipientWarning{
-			Code: "recipient_provenance", Address: recipient.Address, Flag: recipient.Flag, Message: message,
+		result.Warnings = append(result.Warnings, draftlint.Warning{
+			Code: draftlint.CodeRecipientProvenance, Severity: "warn", Address: recipient.Address, Flag: recipient.Flag, Message: message,
 		})
 	}
 	return result

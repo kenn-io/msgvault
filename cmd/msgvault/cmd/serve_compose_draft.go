@@ -14,6 +14,8 @@ import (
 )
 
 type draftComposeIntent struct {
+	draftLintOptions
+
 	From        string
 	Account     string
 	SourceID    int64
@@ -38,6 +40,7 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 		return invalidDraftComposeArgs("expected %s as the first argument", api.CLIRunDraftComposeCommand)
 	}
 	var intent draftComposeIntent
+	lintSeen := map[string]bool{}
 	var fromSet, accountSet, sourceIDSet, subjectSet, bodySet, jsonSet bool
 	rest := args[1:]
 	for len(rest) > 0 {
@@ -118,6 +121,10 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 				}
 				intent.Bcc = append(intent.Bcc, value)
 			}
+		case "strict", "validate-only":
+			if err := setDraftLintFlag(&intent.draftLintOptions, lintSeen, name, value, hasValue); err != nil {
+				return draftComposeIntent{}, err
+			}
 		case "json":
 			if jsonSet || (hasValue && value != "true") {
 				return invalidDraftComposeArgs("--json accepts one flag without a value")
@@ -133,7 +140,7 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 	}
 	if intent.ConversationID != 0 {
 		if fromSet || accountSet || sourceIDSet || subjectSet || len(intent.To)+len(intent.Cc)+len(intent.Bcc) > 0 {
-			return invalidDraftComposeArgs("--conversation accepts only --body, --reply-to, and --json")
+			return invalidDraftComposeArgs("--conversation cannot be combined with --from, --account, --source-id, --subject, --to, --cc, or --bcc")
 		}
 		return intent, nil
 	}
@@ -185,5 +192,10 @@ func (a *storeAPIAdapter) runCLIComposeDraft(
 	if err != nil {
 		return draftReplyError("invalid_compose_metadata", err)
 	}
+	lint, done, err := a.gateDraftLint(emailDraftLintInput("compose", intent.Body, draft), intent.draftLintOptions, intent.JSON, emit)
+	if done || err != nil {
+		return err
+	}
+	target.lint = lint
 	return a.createDraft(ctx, target, draft, intent.JSON, emit)
 }

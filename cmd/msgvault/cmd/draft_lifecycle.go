@@ -42,6 +42,7 @@ func newDraftEditCommand() *cobra.Command {
 	command.Flags().String("body", "", "replacement plain-text body")
 	_ = command.MarkFlagRequired("revision")
 	_ = command.MarkFlagRequired("body")
+	addDraftLintFlags(command)
 	command.Flags().Bool("json", false, "emit one JSON result")
 	return command
 }

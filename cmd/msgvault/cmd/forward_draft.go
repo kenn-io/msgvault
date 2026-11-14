@@ -20,6 +20,7 @@ func newDraftForwardCommand() *cobra.Command {
 	command.Flags().String("account", "", "destination source account or display name")
 	command.Flags().Int64("source-id", 0, "exact destination source ID")
 	command.Flags().String("body", "", "forwarding note")
+	addDraftLintFlags(command)
 	command.Flags().Bool("json", false, "emit one JSON result")
 	return command
 }

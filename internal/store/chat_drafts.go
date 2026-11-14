@@ -81,6 +81,33 @@ func loadChatDraftDestination(
 	return dest, nil
 }
 
+// ResolveChatDraftContext checks the same destination and reply target as create,
+// without starting a write transaction or allocating a draft ID.
+func (s *Store) ResolveChatDraftContext(ctx context.Context, conversationID, replyToMessageID int64, authorize ChatDraftAuthorizer) (ChatDraft, error) {
+	return resolveChatDraftContext(ctx, s.db, conversationID, replyToMessageID, authorize)
+}
+
+func resolveChatDraftContext(ctx context.Context, q contextRowQuerier, conversationID, replyToMessageID int64, authorize ChatDraftAuthorizer) (ChatDraft, error) {
+	dest, err := loadChatDraftDestination(ctx, q, conversationID, authorize)
+	if err != nil {
+		return ChatDraft{}, err
+	}
+	if strings.TrimSpace(dest.nativeID.String) == "" || strings.TrimSpace(dest.conversationType.String) == "" {
+		return ChatDraft{}, fmt.Errorf("conversation %d has no source key: %w", conversationID, ErrChatDraftInvalidDestination)
+	}
+	var reply sql.NullString
+	if replyToMessageID != 0 {
+		err := q.QueryRowContext(ctx, `SELECT source_message_id FROM messages WHERE id = ? AND conversation_id = ?`, replyToMessageID, conversationID).Scan(&reply)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return ChatDraft{}, fmt.Errorf("read chat draft reply target: %w", err)
+		}
+		if strings.TrimSpace(reply.String) == "" {
+			return ChatDraft{}, fmt.Errorf("reply target %d: %w", replyToMessageID, ErrChatDraftInvalidDestination)
+		}
+	}
+	return ChatDraft{SourceID: dest.sourceID, SourceType: dest.sourceType, SourceIdentifier: dest.identifier, ConversationID: conversationID, SourceConversationID: dest.nativeID.String, ConversationType: dest.conversationType.String, ReplyToSourceMessageID: reply.String}, nil
+}
+
 // CreateChatDraftContext stores unsent text for an archived conversation
 // without writing an archive message or contacting a provider.
 func (s *Store) CreateChatDraftContext(
@@ -93,33 +120,19 @@ func (s *Store) CreateChatDraftContext(
 	draftID := ChatDraftIDPrefix + hex.EncodeToString(raw[:])
 	var draft ChatDraft
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		dest, err := loadChatDraftDestination(ctx, tx, conversationID, authorize)
+		destination, err := resolveChatDraftContext(ctx, tx, conversationID, replyToMessageID, authorize)
 		if err != nil {
 			return err
 		}
-		if strings.TrimSpace(dest.nativeID.String) == "" || strings.TrimSpace(dest.conversationType.String) == "" {
-			return fmt.Errorf("conversation %d has no source key: %w", conversationID, ErrChatDraftInvalidDestination)
-		}
-		var reply sql.NullString
-		if replyToMessageID != 0 {
-			err := tx.QueryRowContext(ctx, `
-				SELECT source_message_id FROM messages WHERE id = ? AND conversation_id = ?
-			`, replyToMessageID, conversationID).Scan(&reply)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("read chat draft reply target: %w", err)
-			}
-			if strings.TrimSpace(reply.String) == "" {
-				return fmt.Errorf("reply target %d: %w", replyToMessageID, ErrChatDraftInvalidDestination)
-			}
-		}
+
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			INSERT INTO chat_drafts (
 				draft_id, source_id, conversation_id, source_conversation_id,
 				conversation_type, reply_to_source_message_id, body, revision,
 				created_at, updated_at
 			) VALUES (?, ?, ?, ?, ?, ?, ?, 1, %s, %s)
-		`, s.dialect.ContentChangedNow(), s.dialect.Now()), draftID, dest.sourceID, conversationID,
-			dest.nativeID.String, dest.conversationType.String, reply, body); err != nil {
+		`, s.dialect.ContentChangedNow(), s.dialect.Now()), draftID, destination.SourceID, conversationID,
+			destination.SourceConversationID, destination.ConversationType, sql.NullString{String: destination.ReplyToSourceMessageID, Valid: destination.ReplyToSourceMessageID != ""}, body); err != nil {
 			return fmt.Errorf("insert chat draft: %w", err)
 		}
 		draft, err = loadChatDraft(ctx, tx, draftID)

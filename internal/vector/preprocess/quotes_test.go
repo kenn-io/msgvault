@@ -46,3 +46,18 @@ func TestMaskReplyQuotes(t *testing.T) {
 		})
 	}
 }
+
+func TestMaskDraftReplyQuotes(t *testing.T) {
+	for _, tc := range []struct{ body, present, absent string }{
+		{"On Monday I wrote:\nFIRST_NAME", "FIRST_NAME", ""},
+		{"Thanks\nOn Monday someone wrote:\n> Hello FIRST_NAME\n", "Thanks", "FIRST_NAME"},
+		{"On Monday someone wrote:\n> Hello FIRST_NAME\n\nThanks LAST_NAME", "Thanks LAST_NAME", "FIRST_NAME"},
+		{"Thanks\n--- Forwarded message ---\nFIRST_NAME", "Thanks", "FIRST_NAME"},
+	} {
+		got := MaskDraftReplyQuotes(tc.body)
+		assert.Contains(t, got, tc.present)
+		if tc.absent != "" {
+			assert.NotContains(t, got, tc.absent)
+		}
+	}
+}

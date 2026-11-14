@@ -162,6 +162,16 @@ func TestDraftConfirmationBindsToolAndArguments(t *testing.T) {
 }
 
 func TestSensitiveDraftConfirmation(t *testing.T) {
+	t.Run("validate-only", func(t *testing.T) {
+		require := require.New(t)
+		runner := &draftTestRunner{result: DraftCommandResult{Stdout: `{"status":"validated","valid":true}`}}
+		session := draftConfirmationSession(t, ServeOptions{Drafts: runner, DraftCommands: []string{"draft-compose"}, ConfirmSensitiveDrafts: true})
+		args := map[string]any{"body": "4111111111111111", "validate_only": true}
+		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolDraftCompose, Arguments: args})
+		require.NoError(err)
+		require.False(result.NeedsInput())
+		require.False(result.IsError)
+	})
 	assert := assert.New(t)
 	require := require.New(t)
 	runner := &draftTestRunner{result: DraftCommandResult{Stdout: `{"draft_id":"d1","revision":2}`}}
@@ -338,4 +348,63 @@ func TestDraftToolResultShapes(t *testing.T) {
 		require.ErrorContains(err, "internal server error")
 		assert.NotContains(err.Error(), "private transport detail")
 	})
+}
+
+func TestDraftToolLintFlagsPassed(t *testing.T) {
+	for _, command := range []string{"draft-reply", "draft-compose", "draft-forward", "draft-edit"} {
+		t.Run(command, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
+			args := map[string]any{"body": "ok", "strict": true, "validate_only": true}
+			if command == "draft-reply" || command == "draft-forward" {
+				args["message_id"] = 7
+			}
+			if command == "draft-edit" {
+				args["draft_id"] = "d1"
+				args["revision"] = 1
+			}
+			runner := &draftTestRunner{result: DraftCommandResult{Stdout: `{"status":"validated","valid":true}`}}
+			session := draftConfirmationSession(t, ServeOptions{Drafts: runner, DraftCommands: []string{command}})
+			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: strings.ReplaceAll(command, "-", "_"), Arguments: args})
+			require.NoError(err)
+			require.False(result.IsError)
+			assert.Equal([]string{"true"}, runner.request.Flags["strict"])
+			assert.Equal([]string{"true"}, runner.request.Flags["validate-only"])
+		})
+	}
+}
+
+func TestDraftStrictRefusalIncludesSensitiveContent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	runner := &draftTestRunner{err: &DraftCommandError{Message: "draft_lint_failed", Stderr: `{"status":"refused","error":"draft_lint_failed","warnings":[{"code":"unresolved_placeholder","severity":"error","message":"The text contains a template placeholder."}]}`}}
+	session := draftConfirmationSession(t, ServeOptions{Drafts: runner, DraftCommands: []string{"draft-compose"}})
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolDraftCompose, Arguments: map[string]any{"body": "FIRST_NAME 4111111111111111", "strict": true}})
+	require.NoError(err)
+	require.True(result.IsError)
+	require.Len(result.Content, 1)
+	content, ok := result.Content[0].(*sdkmcp.TextContent)
+	require.True(ok)
+	prefix, payload, ok := strings.Cut(content.Text, "\n")
+	require.True(ok)
+	assert.Equal("draft_lint_failed", prefix)
+	var refusal struct {
+		Error    string `json:"error"`
+		Warnings []struct {
+			Code string `json:"code"`
+		} `json:"warnings"`
+		Sensitive []struct {
+			Kind string `json:"kind"`
+			Hint string `json:"hint"`
+		} `json:"sensitive_content"`
+	}
+	require.NoError(json.Unmarshal([]byte(payload), &refusal))
+	assert.Equal("draft_lint_failed", refusal.Error)
+	require.Len(refusal.Warnings, 1)
+	assert.Equal("unresolved_placeholder", refusal.Warnings[0].Code)
+	require.Len(refusal.Sensitive, 1)
+	assert.Equal("payment_card", refusal.Sensitive[0].Kind)
+	assert.Equal("ending 1111", refusal.Sensitive[0].Hint)
 }
