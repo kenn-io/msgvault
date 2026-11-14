@@ -943,6 +943,8 @@ daemon API schema 5.3.0 or newer and no write opt-in. The record includes its
 exact ETag. History over 1 MiB returns `operation_response_limit_exceeded`.
 
 Profiles over 1 MiB return a first chunk automatically; media returns chunks.
+Inline profile reads omit fields unknown to the MCP server. Chunked profile reads
+preserve the daemon's response, including unknown fields.
 Decode and append `data_base64`, then request `offset + length` with the first
 chunk's `sha256`, the same person ID, and, for media, the same media ID. Repeat
 until `complete` is true.
@@ -951,9 +953,10 @@ On `download_expired`, discard the partial data and restart at offset 0 without
 
 With curated writes enabled,
 `patch_person_record` applies adds and supersedes atomically using the exact
-ETag. Each call requires explicit client confirmation; the client is responsible
-for obtaining user approval. The disclosure supplies media byte size and SHA-256
-in place of base64 data. Disclosures are capped at 13 MiB; larger
+ETag. Patches leave unknown fields stored. Each call requires explicit client
+confirmation; the client is responsible for obtaining user approval. The
+disclosure supplies media byte size and SHA-256 in place of base64 data.
+Disclosures are capped at 13 MiB; larger
 disclosures are refused. A successful patch returns its new ETag and omits the
 profile when it exceeds 1 MiB. If the result says the operation may have
 completed, read the record again before retrying.
