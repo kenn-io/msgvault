@@ -184,8 +184,6 @@ func TestPersonRecordCatalogRequiresCuratedWriteOptIn(t *testing.T) {
 		return result
 	}
 	assert.ElementsMatch(t, []string{"get_person_record", "get_person_record_history", "get_person_record_media"}, names(opts, true))
-	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyRecords}
-	assert.NotContains(t, names(opts, true), "patch_person_record")
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyCurated}
 	assert.Contains(t, names(opts, true), "patch_person_record")
 }

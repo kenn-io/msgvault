@@ -341,3 +341,30 @@ func TestTaskLinkBackendDegradedStatesUseOnlySafeCache(t *testing.T) {
 		require.Len(t, result.Tasks, 1)
 	})
 }
+
+func TestTaskLinkBackendSearchEmptyQuery(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	tasks := []taskclient.Task{{ID: "task-1", Project: "project", Title: "Send the budget", Revision: "r1"}}
+	service := readyTaskBackendServer(t, tasks)
+	t.Cleanup(service.Close)
+	var listed atomic.Bool
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/projects/project/tasks" {
+			listed.Store(true)
+			assert.False(r.URL.Query().Has("q"))
+			assert.Equal("25", r.URL.Query().Get("limit"))
+			writeJSON(w, http.StatusOK, taskclient.TaskList{Tasks: tasks, NextCursor: "next-page"})
+			return
+		}
+		service.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(proxy.Close)
+	backend := &taskLinkBackend{config: config.TaskIntegrationConfig{Enabled: true, Endpoint: proxy.URL, APIKey: "test-key", DefaultProject: "project"}}
+	result, truncated, err := backend.Search(t.Context(), "")
+	require.NoError(err)
+	assert.True(listed.Load())
+	assert.True(truncated)
+	assert.Equal([]tasklinks.TaskSummary{{ID: "task-1", Title: "Send the budget", Revision: "r1"}}, result)
+}

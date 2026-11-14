@@ -1,4 +1,5 @@
-// Package credentialprovider exchanges scoped message MCP credentials with a
+// Package credentialprovider exchanges scoped message MCP credentials, and the
+// inbound credentials msgvault sends to external source endpoints, with a
 // trusted local executable. It does not grant access or implement a login flow.
 // The caller retains operation identities, keeps secrets in memory, and owns
 // retries. See docs/guides/credential-providers.md for the wire contract.
@@ -38,11 +39,11 @@ const (
 
 var (
 	// ErrInvalidRequest reports malformed input without exposing its contents.
-	ErrInvalidRequest = errors.New("invalid message credential provider request")
+	ErrInvalidRequest = errors.New("invalid credential provider request")
 	// ErrInvalidResponse reports a result that cannot authorize this request.
-	ErrInvalidResponse = errors.New("invalid message credential provider response")
+	ErrInvalidResponse = errors.New("invalid credential provider response")
 	// ErrProviderFailed reports a failed process exchange, not a domain denial.
-	ErrProviderFailed = errors.New("message credential provider failed")
+	ErrProviderFailed = errors.New("credential provider failed")
 )
 
 // Scope identifies the exact approved selection. SourceIDs are ascending decimal

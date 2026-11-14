@@ -18,6 +18,8 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+const invalidArguments = "invalid_arguments"
+
 type daemonMCPOperations struct {
 	now       func() time.Time
 	client    *daemonclient.Client
@@ -49,6 +51,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	if hasRoute("triggerSync", http.MethodPost, "/api/v1/sync/{account}", "source_type") && hasRoute("listSourceStatus", http.MethodGet, "/api/v1/sources/status", "source_type") {
 		backend.supported = append(backend.supported, "sync_source")
 	}
+	backend.supported = append(backend.supported, deletionReviewMCPCapabilities(hasRoute)...)
 	backend.supported = append(backend.supported, loopMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, mergeRecoveryCapabilities(hasRoute, capabilities)...)
@@ -76,6 +79,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 			return result, err
 		}
 		if result, handled, err := b.executePersonRecord(ctx, name, args); handled {
+			return result, err
+		}
+		if result, handled, err := b.executeDeletionReviewOperation(ctx, name, args); handled {
 			return result, err
 		}
 		if result, handled, err := b.executeLoopOperation(ctx, name, args); handled {

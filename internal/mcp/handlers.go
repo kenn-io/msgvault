@@ -1886,7 +1886,7 @@ func (h *handlers) getAttachment(ctx context.Context, req toolRequest) (*toolRes
 	var snapshot *downloadSnapshot
 	if chunked {
 		snapshot, err = h.downloads.get(ctx, downloadKey{attachment: id}, chunkReq, func() (*downloadSnapshot, error) {
-			payload, err := h.attachmentService().loadBounded(ctx, id, maxDownloadBytes)
+			payload, err := h.attachmentService().loadBounded(ctx, id, MaxDownloadBytes)
 			if err != nil {
 				return nil, err
 			}

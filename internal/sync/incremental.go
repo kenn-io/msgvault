@@ -302,18 +302,19 @@ func (s *Syncer) incrementalWithRecovery(
 							continue
 						}
 						threadID := newMsgThreads[newMsgIDs[i]]
-						if _, err := s.ingestMessage(
+						_, err := s.ingestMessage(
 							ctx, source.ID, raw, threadID, labelMap,
-						); err != nil {
+						)
+						if err != nil {
 							s.logger.Warn("failed to ingest added message", "id", newMsgIDs[i], "error", err)
-							if recErr := s.recordAcquisitionFailure(syncID, newMsgIDs[i], syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
-								s.failStoppedSync(syncID, recErr)
-								return nil, recErr
-							}
-							checkpoint.ErrorsCount++
-							if _, committed := errors.AsType[*committedMessageError](err); !committed {
-								continue
-							}
+						}
+						_, acquired, recErr := s.recordIngestOutcome(syncID, newMsgIDs[i], err, checkpoint)
+						if recErr != nil {
+							s.failStoppedSync(syncID, recErr)
+							return nil, recErr
+						}
+						if !acquired {
+							continue
 						}
 						checkpoint.MessagesAdded++
 						summary.BytesDownloaded += int64(len(raw.Raw))
@@ -501,17 +502,16 @@ func (s *Syncer) replayAcquisitionFailures(
 				continue
 			}
 
-			if _, err := s.ingestMessage(ctx, sourceID, result.Message, result.Message.ThreadID, labelMap); err != nil {
-				if errors.Is(err, store.ErrSyncRunSuperseded) || ctx.Err() != nil {
-					return nil, err
-				}
-				if recErr := s.recordAcquisitionFailure(syncID, messageID, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
-					return nil, recErr
-				}
-				checkpoint.ErrorsCount++
-				if _, committed := errors.AsType[*committedMessageError](err); !committed {
-					continue
-				}
+			_, err := s.ingestMessage(ctx, sourceID, result.Message, result.Message.ThreadID, labelMap)
+			if err != nil && (errors.Is(err, store.ErrSyncRunSuperseded) || ctx.Err() != nil) {
+				return nil, err
+			}
+			_, acquired, recErr := s.recordIngestOutcome(syncID, messageID, err, checkpoint)
+			if recErr != nil {
+				return nil, recErr
+			}
+			if !acquired {
+				continue
 			}
 			checkpoint.MessagesAdded++
 			summary.BytesDownloaded += int64(len(result.Message.Raw))
@@ -590,33 +590,30 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 				checkpoint.ErrorsCount++
 				return false, false, err
 			}
-			if _, err := s.ingestMessage(
+			_, err = s.ingestMessage(
 				ctx, sourceID, raw, threadID, labelMap,
-			); err != nil {
-				committed, saved := errors.AsType[*committedMessageError](err)
-				if saved {
-					existingMap[messageID] = committed.messageID
-				}
-				if recErr := s.recordAcquisitionFailure(syncID, messageID, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
-					return false, false, recErr
-				}
-				checkpoint.ErrorsCount++
-				if saved {
-					checkpoint.MessagesAdded++
-					summary.BytesDownloaded += int64(len(raw.Raw))
-					return false, true, err
-				}
+			)
+			committedID, acquired, recErr := s.recordIngestOutcome(syncID, messageID, err, checkpoint)
+			if committedID != 0 {
+				existingMap[messageID] = committedID
+			}
+			if recErr != nil {
+				return false, false, recErr
+			}
+			if !acquired {
 				return false, false, err
 			}
 			// Later label events in this sync must take the existing-message
 			// path, or a transient refetch failure would leave retry debt for a
 			// message that is already archived.
-			ingested, err := s.store.MessageExistsBatch(sourceID, []string{messageID})
-			if err != nil {
-				return false, false, fmt.Errorf("look up ingested message: %w", err)
-			}
-			if id, ok := ingested[messageID]; ok {
-				existingMap[messageID] = id
+			if err == nil {
+				ingested, lookupErr := s.store.MessageExistsBatch(sourceID, []string{messageID})
+				if lookupErr != nil {
+					return false, false, fmt.Errorf("look up ingested message: %w", lookupErr)
+				}
+				if id, ok := ingested[messageID]; ok {
+					existingMap[messageID] = id
+				}
 			}
 			// The new message gets embed_gen = NULL by column default, so
 			// the scan-and-fill embed worker picks it up automatically — no
@@ -625,7 +622,7 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 			if raw != nil {
 				summary.BytesDownloaded += int64(len(raw.Raw))
 			}
-			return false, true, nil
+			return false, true, err
 		}
 		// Removing labels from non-existent message is a no-op
 		return false, false, nil

@@ -89,13 +89,32 @@ func embeddedIPv4(addr netip.Addr) (netip.Addr, bool) {
 // ProhibitedHostname reports whether hostname is a reserved/private name,
 // unqualified name, or an obfuscated numeric destination.
 func ProhibitedHostname(hostname string) bool {
-	host := strings.ToLower(strings.TrimSpace(hostname))
-	host = strings.TrimSuffix(host, ".")
-	if host == "" {
-		return true
-	}
-	labels := strings.Split(host, ".")
-	if len(labels) < 2 || decimalLabel(labels[len(labels)-1]) || hexLabel(labels[len(labels)-1]) {
+	host := normalizeHostname(hostname)
+	return host == "" || numericHostname(host) || localHostname(host)
+}
+
+// LocalHostname reports whether hostname names a host on the user's own
+// network: an unqualified name such as nas, or one under localhost, local,
+// internal or home.arpa. A numeric name such as 2130706433 or 0x7f.1 is not
+// one: a system resolver may read it as any address, public ones included.
+func LocalHostname(hostname string) bool {
+	host := normalizeHostname(hostname)
+	return host != "" && !numericHostname(host) && localHostname(host)
+}
+
+func normalizeHostname(hostname string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(hostname)), ".")
+}
+
+// numericHostname reports whether host's last label is a number, which
+// resolvers that accept inet_aton forms read as an IPv4 address.
+func numericHostname(host string) bool {
+	last := host[strings.LastIndex(host, ".")+1:]
+	return decimalLabel(last) || hexLabel(last)
+}
+
+func localHostname(host string) bool {
+	if !strings.Contains(host, ".") {
 		return true
 	}
 	for _, suffix := range []string{"localhost", "local", "internal", "home.arpa"} {

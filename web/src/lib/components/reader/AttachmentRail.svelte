@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatBytes, formatDate } from '../../util/format';
   import type { ExploreFileFact } from '../../explore/models';
 
   let {
@@ -17,16 +18,6 @@
     Date.parse(left.occurred_at) - Date.parse(right.occurred_at) || left.key.localeCompare(right.key)
   ));
 
-  function bytes(value: number): string {
-    if (value < 1024) return `${value} B`;
-    if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
-    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-  }
-
-  function date(value: string): string {
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.valueOf()) ? value : parsed.toLocaleDateString();
-  }
 </script>
 
 <section class="attachment-rail" aria-label="Chronological files">
@@ -44,8 +35,8 @@
     <ol>
       {#each chronological as file (file.key)}
         <li>
-          <div><strong>{file.filename || '(unnamed file)'}</strong><span>{bytes(file.size)}</span></div>
-          <div><time datetime={file.occurred_at} data-mono>{date(file.occurred_at)}</time><span>{file.title || file.source_identifier}</span></div>
+          <div><strong>{file.filename || '(unnamed file)'}</strong><span>{formatBytes(file.size)}</span></div>
+          <div><time datetime={file.occurred_at} data-mono>{formatDate(file.occurred_at)}</time><span>{file.title || file.source_identifier}</span></div>
         </li>
       {/each}
     </ol>
