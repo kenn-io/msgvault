@@ -17,7 +17,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func TestBackupRestorePermissionConflictAfterPublication(t *testing.T) {
+func TestBackupRestoreConflictNoTokensAndPermissionRetry(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg, dbPath, attachments := backupTokenFixture(t)

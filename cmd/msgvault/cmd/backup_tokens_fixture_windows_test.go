@@ -20,7 +20,6 @@ import (
 func prepareBackupTokenRestore(t *testing.T) {
 	t.Helper()
 	oldOut, oldErr, oldLogger := rootCmd.OutOrStdout(), rootCmd.ErrOrStderr(), slog.Default()
-	resetBackupRestoreFlags()
 	t.Cleanup(func() {
 		resetBackupRestoreFlags()
 		rootCmd.SetOut(oldOut)
@@ -55,19 +54,14 @@ func createBackupTokenSnapshot(t *testing.T, cfg *config.Config, dbPath, attachm
 	})
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(err)
-	captureBackupTokenSnapshot(t, repo, cfg, dbPath, attachments)
-	return repo
-}
-
-func captureBackupTokenSnapshot(t *testing.T, repo *backup.Repo, cfg *config.Config, dbPath, attachments string) {
-	t.Helper()
 	extras, err := backupExtrasSpec(cfg)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = backup.Create(t.Context(), repo, backupapp.New("test"), backup.CreateOptions{
 		DBPath: dbPath, ContentDir: attachments, DataDir: cfg.Data.DataDir,
 		Extras: extras, IncludeTokens: true, AllowPlaintextSecrets: true,
 	})
-	require.NoError(t, err)
+	require.NoError(err)
+	return repo
 }
 
 func runBackupTokenRestore(t *testing.T, cfg *config.Config, repo *backup.Repo, args ...string) (string, error) {
