@@ -1,12 +1,16 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	stdjson "encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -44,7 +48,20 @@ func approvalReadProxy(t *testing.T, backend *daemonMCPOperations) (*atomic.Bool
 			return
 		}
 		if armed.Load() && r.Method != http.MethodGet {
-			writes.Add(1)
+			preview := false
+			if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/attributes") {
+				body, err := io.ReadAll(r.Body)
+				require.NoError(t, err)
+				r.Body = io.NopCloser(bytes.NewReader(body))
+				var request struct {
+					DryRun bool `json:"dry_run"`
+				}
+				require.NoError(t, stdjson.Unmarshal(body, &request))
+				preview = request.DryRun
+			}
+			if !preview {
+				writes.Add(1)
+			}
 		}
 		proxy.ServeHTTP(w, r)
 	}))
@@ -94,7 +111,7 @@ func exerciseApprovalMatrix(t *testing.T, makeCase func(*testing.T) approvalCase
 				}
 				must.Equal(state != "stable", result.IsError, "%v", result.Content)
 				if mode == "legacy" && state == "changed" {
-					codes := map[mcpserver.OperationFamily]string{mcpserver.OperationFamilySources: "source_not_schedulable", mcpserver.OperationFamilyRecords: "person_revision_conflict", mcpserver.OperationFamilyCurated: "person_revision_conflict", mcpserver.OperationFamilyEmployment: "operation_context_changed"}
+					codes := map[mcpserver.OperationFamily]string{mcpserver.OperationFamilySources: "source_not_schedulable", mcpserver.OperationFamilyRecords: "person_revision_conflict", mcpserver.OperationFamilyCurated: "person_revision_conflict", mcpserver.OperationFamilyEmployment: "operation_context_changed", mcpserver.OperationFamilyOrganizations: "attribute_value_conflict"}
 					must.Equal(codes[c.family], loopToolFailure(t, result)["error"])
 				}
 				if state == "stable" {
