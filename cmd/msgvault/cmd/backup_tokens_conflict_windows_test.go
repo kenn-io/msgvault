@@ -33,7 +33,7 @@ func TestBackupRestorePermissionConflictAfterPublication(t *testing.T) {
 	require.NoError(err)
 	prepareBackupTokenRestore(t)
 
-	target := filepath.Join(t.TempDir(), "restored")
+	target := filepath.Join(t.TempDir(), "restored archive") + string(os.PathSeparator)
 	tokens := filepath.Join(target, "tokens")
 	require.NoError(os.MkdirAll(tokens, 0o700))
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
@@ -61,7 +61,7 @@ func TestBackupRestorePermissionConflictAfterPublication(t *testing.T) {
 	require.ErrorContains(err, "permissions conflict")
 	assert.Contains(err.Error(), "selected token files were secured, but token directory permissions were not changed")
 	assert.Contains(output, fmt.Sprintf("Restored snapshot %s to %s", manifest.SnapshotID, target))
-	assert.Contains(err.Error(), "--permissions-only")
+	assert.Contains(err.Error(), "--target \""+target+"\\\" --permissions-only")
 
 	configPath := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(os.WriteFile(configPath, []byte("# config"), 0o600))

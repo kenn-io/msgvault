@@ -316,7 +316,7 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	if _, err := secureRestoredTokens(cmd.Context(), r, res.SnapshotID, backupRestoreTarget, backupRestoreForceUnlock); err != nil {
 		renderer.finish()
 		summaryErr := printBackupRestoreSummary(cmd.OutOrStdout(), backupRestoreTarget, res, looseAttachments)
-		permissionErr := fmt.Errorf("securing restored credentials failed: %w; retry with: msgvault backup restore %s --repo \"%s\" --target \"%s\" --permissions-only", err, res.SnapshotID, repo, backupRestoreTarget)
+		permissionErr := fmt.Errorf("securing restored credentials failed: %w; retry with: msgvault backup restore %s --repo %s --target %s --permissions-only", err, escapeRestoreArg(res.SnapshotID), escapeRestoreArg(repo), escapeRestoreArg(backupRestoreTarget))
 		if summaryErr != nil {
 			permissionErr = fmt.Errorf("snapshot %s was restored to %s, but %w", res.SnapshotID, backupRestoreTarget, permissionErr)
 		}
