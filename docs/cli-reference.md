@@ -116,7 +116,7 @@ schema 5.9.0 or newer.
 
 ### meetings suggest
 
-`msgvault meetings suggest <ref> [--limit N] [--json]` ranks overlapping meeting notes and calendar events. Use `meetings link` to accept a suggestion. This command requires daemon API schema 5.5.0 or newer.
+`msgvault meetings suggest <ref> [--limit N] [--json]` ranks overlapping meeting notes and calendar events. Use `meetings link` to accept a suggestion. This command requires daemon API schema 5.6.0 or newer.
 
 ### meetings link, unlink, and reset-link
 
