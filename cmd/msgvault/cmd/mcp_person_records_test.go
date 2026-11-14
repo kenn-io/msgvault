@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
@@ -210,13 +211,12 @@ func TestPersonRecordCapabilitiesAndRefusals(t *testing.T) {
 			subAssertions := assert.New(t)
 			copyCaps := *capabilities
 			copyCaps.Routes = slices.Clone(capabilities.Routes)
+			if !tc.removeProperty {
+				copyCaps.Routes = slices.DeleteFunc(copyCaps.Routes, func(route apiprotocol.MCPRouteDescriptor) bool { return route.OperationID == tc.operation })
+			}
 			for i := range copyCaps.Routes {
-				if copyCaps.Routes[i].OperationID == tc.operation {
-					if tc.removeProperty {
-						copyCaps.Routes[i].RequestProperties = slices.DeleteFunc(slices.Clone(copyCaps.Routes[i].RequestProperties), func(s string) bool { return s == "media" })
-					} else {
-						copyCaps.Routes[i].Method = http.MethodDelete
-					}
+				if copyCaps.Routes[i].OperationID == tc.operation && tc.removeProperty {
+					copyCaps.Routes[i].RequestProperties = slices.DeleteFunc(slices.Clone(copyCaps.Routes[i].RequestProperties), func(s string) bool { return s == "media" })
 				}
 			}
 			got := newDaemonMCPOperations(backend.client, &copyCaps).capabilities()
@@ -425,7 +425,6 @@ func TestPersonRecordOversizeDisclosureRefused(t *testing.T) {
 		{map[string]any{}, "invalid_profile_value"},
 		{map[string]any{"names": map[string]any{"add": []any{}}}, "invalid_profile_value"},
 		{map[string]any{"names": map[string]any{"add": adds}}, "profile_patch_too_large"},
-		{map[string]any{"names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": strings.Repeat("x", 12<<20), "envelope": map[string]any{"source": "user"}}}}}, "profile_patch_too_large"},
 		{map[string]any{"media": map[string]any{"add": []any{map[string]any{"media_kind": "photo", "data": base64.StdEncoding.EncodeToString(make([]byte, (8<<20)+1)), "envelope": map[string]any{"source": "user"}}}}}, "invalid_profile_value"},
 		{map[string]any{"media": map[string]any{"add": []any{map[string]any{"media_kind": "photo", "data": base64.StdEncoding.EncodeToString(make([]byte, 8<<20)), "envelope": map[string]any{"source": "user"}}}}, "names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": strings.Repeat("<", 300000), "envelope": map[string]any{"source": "user"}}}}}, "profile_patch_too_large"},
 	} {

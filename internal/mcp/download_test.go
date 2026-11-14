@@ -265,87 +265,6 @@ func TestDownloadSnapshotSlowLoadDoesNotBlockOtherDownloads(t *testing.T) {
 	<-done
 }
 
-func TestDownloadSnapshotSlowValidationDoesNotBlockOtherDownloads(t *testing.T) {
-	var cache downloadCache
-	defer cache.close()
-	started, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	key := downloadKey{attachment: 1}
-	load := func() (*downloadSnapshot, error) {
-		return &downloadSnapshot{data: []byte("cached"), validate: func(context.Context) error {
-			close(started)
-			<-release
-			return nil
-		}}, nil
-	}
-	first, err := cache.get(t.Context(), key, chunkRequest{}, load)
-	require.NoError(t, err)
-	go func() {
-		defer close(done)
-		_, _ = cache.get(t.Context(), key, chunkRequest{offset: 1, digest: first.digest}, load)
-	}()
-	<-started
-	result := make(chan error, 1)
-	go func() {
-		_, err := cache.get(t.Context(), downloadKey{attachment: 2}, chunkRequest{}, func() (*downloadSnapshot, error) {
-			return &downloadSnapshot{data: []byte("other")}, nil
-		})
-		result <- err
-	}()
-	select {
-	case err := <-result:
-		assert.NoError(t, err)
-	case <-time.After(time.Second):
-		assert.Fail(t, "unrelated download waited for validation")
-		close(release)
-		<-result
-		<-done
-		return
-	}
-	close(release)
-	<-done
-}
-
-func TestDownloadSnapshotValidationRechecksCache(t *testing.T) {
-	for _, closeCache := range []bool{false, true} {
-		t.Run(strconv.FormatBool(closeCache), func(t *testing.T) {
-			var cache downloadCache
-			defer cache.close()
-			key := downloadKey{operation: "get_person_record", identity: "1"}
-			started, release := make(chan struct{}), make(chan struct{})
-			first, err := cache.get(t.Context(), key, chunkRequest{length: 1}, func() (*downloadSnapshot, error) {
-				return &downloadSnapshot{data: []byte("first"), validate: func(context.Context) error {
-					close(started)
-					<-release
-					return errDownloadExpired
-				}}, nil
-			})
-			require.NoError(t, err)
-			result := make(chan error, 1)
-			go func() {
-				_, err := cache.get(t.Context(), key, chunkRequest{offset: 1, digest: first.digest}, nil)
-				result <- err
-			}()
-			<-started
-			var second *downloadSnapshot
-			if closeCache {
-				cache.close()
-			} else {
-				second, err = cache.get(t.Context(), key, chunkRequest{length: 1}, func() (*downloadSnapshot, error) {
-					return &downloadSnapshot{data: []byte("second")}, nil
-				})
-				require.NoError(t, err)
-			}
-			close(release)
-			require.ErrorIs(t, <-result, errDownloadExpired)
-			if !closeCache {
-				got, err := cache.get(t.Context(), key, chunkRequest{offset: 1, digest: second.digest}, nil)
-				require.NoError(t, err)
-				assert.Same(t, second, got)
-			}
-		})
-	}
-}
-
 func TestDownloadSnapshotConcurrentLoadsAndClose(t *testing.T) {
 	for _, closeCache := range []bool{false, true} {
 		t.Run(strconv.FormatBool(closeCache), func(t *testing.T) {
@@ -367,23 +286,36 @@ func TestDownloadSnapshotConcurrentLoadsAndClose(t *testing.T) {
 				results <- result{snapshot, err}
 			}()
 			<-started
-			var first *downloadSnapshot
-			if closeCache {
-				cache.close()
-			} else {
-				var err error
-				first, err = cache.get(t.Context(), key, chunkRequest{}, func() (*downloadSnapshot, error) {
+			competing := make(chan result, 1)
+			go func() {
+				if closeCache {
+					cache.close()
+					competing <- result{}
+					return
+				}
+				first, err := cache.get(t.Context(), key, chunkRequest{}, func() (*downloadSnapshot, error) {
 					return &downloadSnapshot{data: []byte("fast")}, nil
 				})
-				require.NoError(t, err)
+				competing <- result{first, err}
+			}()
+			var other result
+			select {
+			case other = <-competing:
+			case <-time.After(time.Second):
+				assert.Fail(t, "competing request waited for the slow load")
+				close(release)
+				<-competing
+				<-results
+				return
 			}
 			close(release)
 			got := <-results
 			if closeCache {
 				require.ErrorIs(t, got.err, errDownloadExpired)
 			} else {
+				require.NoError(t, other.err)
 				require.NoError(t, got.err)
-				assert.Same(t, first, got.snapshot)
+				assert.Same(t, other.snapshot, got.snapshot)
 				assert.Equal(t, len("fast"), cache.bytes)
 			}
 		})

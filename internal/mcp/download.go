@@ -63,15 +63,7 @@ retry:
 	if entry := c.entries[key]; entry != nil && (key.operation == "" || req.offset != 0) {
 		if time.Now().Before(entry.expires) {
 			if entry.validate != nil {
-				err := func() error {
-					c.mu.Unlock()
-					defer c.mu.Lock()
-					return entry.validate(ctx)
-				}()
-				if ctx.Err() != nil || c.closed || c.entries[key] != entry || !time.Now().Before(entry.expires) {
-					goto retry
-				}
-				if err != nil {
+				if err := entry.validate(ctx); err != nil {
 					if !errors.Is(err, errDownloadExpired) {
 						return nil, err
 					}
