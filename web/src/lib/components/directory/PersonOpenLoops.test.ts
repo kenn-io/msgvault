@@ -93,21 +93,16 @@ describe("PersonOpenLoops", () => {
     expect(screen.getByText("7+ open")).toBeDefined();
   });
 
-  it("reports when promise discovery has not started", async () => {
+  it.each([
+    { since: undefined, complete: false, message: /Promise discovery has not started/ },
+    { since: "2026-10-01T00:00:00Z", complete: true, message: /No promises found since/ },
+  ])("reports an empty discovery state", async ({ since, complete, message }) => {
     const fetcher = vi.fn<typeof fetch>(async () => Response.json({
-      items: [], commitments: [], commitments_complete: false,
+      items: [], commitments: [], commitments_since: since, commitments_complete: complete,
     }));
     render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
-    expect(await screen.findByText("Promise discovery has not started.")).toBeDefined();
+    expect(await screen.findByText(message)).toBeDefined();
     expect(screen.queryByText("Nothing open with this person.")).toBeNull();
-  });
-
-  it("reports an empty completed discovery window", async () => {
-    const fetcher = vi.fn<typeof fetch>(async () => Response.json({
-      items: [], commitments: [], commitments_since: "2026-10-01T00:00:00Z", commitments_complete: true,
-    }));
-    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
-    expect(await screen.findByText(/No promises found since/)).toBeDefined();
   });
 
   it("says how many messages could not be read, with or without loops", async () => {

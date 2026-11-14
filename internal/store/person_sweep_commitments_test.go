@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/personfacts"
 )
 
-func TestApplyCommitmentOnlySweepWritesClaimsAndDecisions(t *testing.T) {
+func TestApplyCommitmentOnlySweepWritesClaims(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	ctx := t.Context()
 	f := newPersonSweepApplyFixture(t, "commitments", false)
@@ -58,36 +58,17 @@ func TestApplyCommitmentOnlySweepWritesClaimsAndDecisions(t *testing.T) {
 		a.Equal("owed_to", value.Direction)
 		a.NotEmpty(value.Summary)
 	}
-
-	decision, err := st.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
-	r.NoError(err)
-	a.Equal(LoopStateDone, decision.State)
-	decisionID := decision.ID
-	f = nextCommitmentTestAttempt(t, f, "-repeat")
-	cfg.Commitments.MaxBytes++
-	window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{
-		AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
-	}, cfg.Commitments, personFactLedgerNow, "UTC")
-	r.NoError(err)
-	parsed.Promises[0].Quote = strings.TrimSuffix(first, ".")
-	parsed.Promises[0].End--
-	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, parsed))
-	r.NoError(err)
-	repeated, err := st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt.Add(120*24*time.Hour), 5, true)
-	r.NoError(err)
-	r.Len(repeated, 2)
-	a.Equal(decisionID, repeated[0].ID)
-	a.Equal(LoopStateDone, repeated[0].State)
 }
 
 func TestCommitmentDecisionSurvivesShiftedQuote(t *testing.T) {
 	for _, tc := range []struct {
-		name, state string
-		ambiguous   bool
+		name, state            string
+		ambiguous, sameVersion bool
 	}{
-		{"done", LoopStateDone, false},
-		{"snoozed", LoopStateSnoozed, false},
-		{"ambiguous", LoopStateDone, true},
+		{"done", LoopStateDone, false, false},
+		{"snoozed", LoopStateSnoozed, false, false},
+		{"ambiguous", LoopStateDone, true, false},
+		{"shorter_quote", LoopStateDone, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, a, ctx := require.New(t), assert.New(t), t.Context()
@@ -120,13 +101,22 @@ func TestCommitmentDecisionSurvivesShiftedQuote(t *testing.T) {
 			if tc.ambiguous {
 				body += " " + quote
 			}
-			_, err = f.store.db.ExecContext(ctx, f.store.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), body, id)
-			r.NoError(err)
+			if tc.sameVersion {
+				cfg.Commitments.MaxBytes++
+			} else {
+				_, err = f.store.db.ExecContext(ctx, f.store.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), body, id)
+				r.NoError(err)
+			}
 			f = nextCommitmentTestAttempt(t, f, "-edited")
 			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 			r.NoError(err)
 			r.Len(window.Sources, 1)
 			promises := []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send draft", Start: 8, End: 8 + int64(len(quote))}}
+			if tc.sameVersion {
+				promises[0].Quote = strings.TrimSuffix(quote, ".")
+				promises[0].Start = 0
+				promises[0].End = int64(len(quote) - 1)
+			}
 			if tc.ambiguous {
 				start := int64(9 + len(quote))
 				promises = append(promises, peoplesweep.CommitmentPromise{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send another draft", Start: start, End: start + int64(len(quote))})
