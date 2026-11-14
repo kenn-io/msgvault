@@ -168,9 +168,7 @@ The API publishes its generated OpenAPI contract at `/openapi.json`.
 opening an archive. OpenAPI `info.version` is the **API schema version**;
 it is separate from the binary release version. The current schema is **5.5.0**.
 
-Schema 5.5.0 lets organization attribute writes use `expected_value_id: 0` to require an empty slot.
 
-Schema 5.4.0 adds `expected_primary` to employment creation and replacement, allowing writes to check the approved primary employment and revision.
 
 Schema 5.3.0 advertises the existing structured person profile routes to MCP:
 `GET` and `PATCH /api/v1/people/{id}/profile`,

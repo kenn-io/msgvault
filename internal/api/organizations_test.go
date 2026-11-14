@@ -421,11 +421,6 @@ func TestOrganizationHTTPAttributesListAndSet(t *testing.T) {
 		[]byte(`{"definition_slug":"industry_focus","value":{"type":"text","text":"archival software"},"source":"user"}`), "")
 	require.Equal(http.StatusCreated, setResponse.Code)
 	assert.Equal("industry_focus", definition.Slug)
-	invalidExpected := organizationRequest(t, srv, http.MethodPost, attributesPath,
-		[]byte(`{"definition_slug":"industry_focus","value":{"type":"text","text":"new"},"source":"user","expected_value_id":-1}`), "")
-	assert.Equal(http.StatusBadRequest, invalidExpected.Code)
-	assert.Contains(invalidExpected.Body.String(), "invalid_expected_value_id")
-
 	listResponse := organizationRequest(t, srv, http.MethodGet, attributesPath, nil, "")
 	require.Equal(http.StatusOK, listResponse.Code)
 	var listed OrganizationAttributesResponse

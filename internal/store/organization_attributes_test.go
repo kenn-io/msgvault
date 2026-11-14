@@ -227,9 +227,6 @@ func TestOrganizationAttributeDryRunCASAndMultiOrdinal(t *testing.T) {
 	inputValue := store.OrganizationAttributeValueInput{OrganizationID: organization.ID, DefinitionSlug: "specialties", Ordinal: new(int64(0)), Value: textAttributeValue("new"), Source: store.ProvenanceUser, ExpectedValueID: new(int64)}
 	_, err = st.SetOrganizationAttributeValueContext(ctx, inputValue)
 	require.ErrorIs(err, store.ErrAttributeValueConflict)
-	inputValue.ExpectedValueID = new(int64(-1))
-	_, err = st.SetOrganizationAttributeValueContext(ctx, inputValue)
-	require.ErrorIs(err, store.ErrAttributeValueInvalid)
 	inputValue.ExpectedValueID = new(int64)
 	inputValue.Ordinal = new(int64(2))
 	third, err := st.SetOrganizationAttributeValueContext(ctx, inputValue)

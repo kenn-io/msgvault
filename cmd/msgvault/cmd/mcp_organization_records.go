@@ -13,7 +13,7 @@ import (
 )
 
 const organizationSourceField = "source"
-const organizationAttributePreviewBytes = 2<<20 + 64<<10
+const organizationAttributePreviewBytes = 1 << 20
 
 func organizationMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCapabilities) []string {
 	var names []string
@@ -151,7 +151,7 @@ func (b *daemonMCPOperations) executeOrganizationWriteOrMedia(ctx context.Contex
 		if failure != nil {
 			return failure, true, err
 		}
-		return &mcpserver.OperationResult{Output: mcpserver.OrganizationDeleted{Deleted: true}}, true, nil
+		return &mcpserver.OperationResult{Output: struct{}{}}, true, nil
 	}
 	if name == "set_organization_attribute" {
 		write, failure, err := b.readOrganizationAttributeWrite(ctx, r)
@@ -171,7 +171,7 @@ func (b *daemonMCPOperations) executeOrganizationWriteOrMedia(ctx context.Contex
 		return &mcpserver.OperationResult{Output: receipt}, true, nil
 	}
 	if name == "replace_organization_profile" {
-		data, headers, failure, err := readMCPOperationBytes(ctx, b.client, r.method, r.path, r.options, mcpserver.MaxDownloadBytes, http.StatusOK)
+		_, headers, failure, err := readMCPOperationBytes(ctx, b.client, r.method, r.path, r.options, mcpserver.MaxDownloadBytes, http.StatusOK)
 		if failure != nil {
 			return failure, true, err
 		}
@@ -180,13 +180,6 @@ func (b *daemonMCPOperations) executeOrganizationWriteOrMedia(ctx context.Contex
 			return operationFailure("invalid_operation_response", true), true, nil
 		}
 		record := mcpserver.OrganizationRecord{ETag: etag}
-		if len(data) <= 1<<20 {
-			var profile generated.OrganizationProfile
-			if err := json.Unmarshal(data, &profile); err != nil {
-				return operationFailure("invalid_operation_response", true), true, err
-			}
-			record.Profile = &profile
-		}
 		result := &mcpserver.OperationResult{Output: record, ETag: etag}
 		return result, true, err
 	}

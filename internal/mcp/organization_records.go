@@ -55,9 +55,6 @@ type OrganizationMutation struct {
 	ETag         string                 `json:"etag"`
 	Organization generated.Organization `json:"organization"`
 }
-type OrganizationDeleted struct {
-	Deleted bool `json:"deleted"`
-}
 type OrganizationAttributeReceipt struct {
 	DryRun       bool   `json:"dry_run"`
 	ValueID      int64  `json:"value_id,omitzero"`
@@ -104,8 +101,8 @@ func organizationWriteDefinitions() []operationalDefinition {
 	return []operationalDefinition{
 		newOperationalDefinition("create_organization", "Create an organization. Requires client confirmation.", OperationFamilyOrganizations, organizationInputSchema[OrganizationCreateArgs]("body"), outputSchemaFor[OrganizationMutation](), true),
 		destructive(newOperationalDefinition("update_organization", "Replace mutable organization fields using the exact ETag. Omitted fields are cleared except retired. Requires client confirmation.", OperationFamilyOrganizations, organizationInputSchema[OrganizationUpdateArgs]("organization_id", "etag", "body"), outputSchemaFor[OrganizationMutation](), true)),
-		destructive(newOperationalDefinition("delete_organization", "Delete an organization using its exact ETag. Native deletion refuses organizations with employment records. Requires client confirmation.", OperationFamilyOrganizations, organizationInputSchema[OrganizationDeleteArgs]("organization_id", "etag"), outputSchemaFor[OrganizationDeleted](), true)),
-		destructive(newOperationalDefinition("replace_organization_profile", "Replace all profile collections using the exact ETag; omitted collections are cleared. Oversized saves return an ETag; use get_organization to read chunks. URIs are never fetched. Requires client confirmation.", OperationFamilyOrganizations, organizationInputSchema[OrganizationProfileArgs]("organization_id", "etag", "body"), outputSchemaFor[OrganizationRecord](), true)),
+		destructive(newOperationalDefinition("delete_organization", "Delete an organization using its exact ETag. Native deletion refuses organizations with employment records. Requires client confirmation.", OperationFamilyOrganizations, organizationInputSchema[OrganizationDeleteArgs]("organization_id", "etag"), closedObject(nil), true)),
+		destructive(newOperationalDefinition("replace_organization_profile", "Replace all profile collections using the exact ETag; omitted collections are cleared. Saves return an ETag; use get_organization to read chunks. URIs are never fetched. Requires client confirmation.", OperationFamilyOrganizations, organizationInputSchema[OrganizationProfileArgs]("organization_id", "etag", "body"), outputSchemaFor[OrganizationRecord](), true)),
 		destructive(newOperationalDefinition("set_organization_attribute", "Set an organization attribute with an explicit ordinal, expected value and dry-run controls. The receipt marks dry runs; read saved values with list_organization_attributes. Requires client confirmation.", OperationFamilyOrganizations, organizationSetAttributeSchema(), outputSchemaFor[OrganizationAttributeReceipt](), true)),
 	}
 }
