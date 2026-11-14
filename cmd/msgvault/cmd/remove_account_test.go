@@ -1518,7 +1518,7 @@ func TestRemoveAccountKeepsSharedMicrosoftToken(t *testing.T) {
 			}
 			_, _, err = st.RemoveSourceSerialized(t.Context(), removedID)
 			require.NoError(t, err)
-			used, err := microsoftMailTokenInUse(st, cfg, "user@example.com", tokenDir, false)
+			used, err := microsoftMailTokenInUse(st, cfg, "user@example.com", path, false)
 			require.NoError(t, err)
 			assert.Equal(t, shared, used)
 		})
@@ -1531,15 +1531,30 @@ func TestMicrosoftGraphTokenUseByRemainingSource(t *testing.T) {
 	cfg.Microsoft.Apps = map[string]config.MicrosoftApp{"first": {ClientID: "client-a"}, "second": {ClientID: "client-a"}}
 	_, tokenDir, err := microsoftMailApp(cfg, "first")
 	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(tokenDir, 0o700))
+	mgr := microsoft.NewGraphMailManager("", "", "", tokenDir, nil)
+	require.NoError(t, os.WriteFile(mgr.TokenPath("user@example.com"), []byte(`{}`), 0o600))
+	require.NoError(t, os.WriteFile(mgr.TokenPath("USER@example.com"), []byte(`{}`), 0o600))
 	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
 	src, err := st.GetOrCreateSource(sourceTypeMSMail, "USER@example.com")
 	require.NoError(t, err)
 	require.NoError(t, st.UpdateSourceOAuthApp(t.Context(), src.ID, sql.NullString{String: "second", Valid: true}))
-	used, err := microsoftMailTokenInUse(st, cfg, "user@example.com", tokenDir, true)
+	used, err := microsoftMailTokenInUse(st, cfg, "USER@example.com", mgr.TokenPath("USER@example.com"), true)
 	require.NoError(t, err)
 	assert.True(t, used)
+	used, err = microsoftMailTokenInUse(st, cfg, "user@example.com", mgr.TokenPath("user@example.com"), true)
+	require.NoError(t, err)
+	lower, err := os.Stat(mgr.TokenPath("user@example.com"))
+	require.NoError(t, err)
+	upper, err := os.Stat(mgr.TokenPath("USER@example.com"))
+	require.NoError(t, err)
+	if os.SameFile(lower, upper) {
+		assert.True(t, used)
+	} else {
+		assert.False(t, used)
+	}
 	cfg.Microsoft.Apps["second"] = config.MicrosoftApp{ClientID: "client-b"}
-	used, err = microsoftMailTokenInUse(st, cfg, "user@example.com", tokenDir, true)
+	used, err = microsoftMailTokenInUse(st, cfg, "USER@example.com", mgr.TokenPath("USER@example.com"), true)
 	require.NoError(t, err)
 	assert.False(t, used)
 }

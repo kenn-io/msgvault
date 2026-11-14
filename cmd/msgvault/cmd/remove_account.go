@@ -421,7 +421,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 		mgr, err := newGraphMailManager(state, source)
 		if err == nil {
 			var used bool
-			used, err = microsoftMailTokenInUse(s, cfg, source.Identifier, filepath.Dir(mgr.TokenPath(source.Identifier)), true)
+			used, err = microsoftMailTokenInUse(s, cfg, source.Identifier, mgr.TokenPath(source.Identifier), true)
 			if err == nil && !used {
 				err = mgr.DeleteToken(source.Identifier)
 			}
@@ -486,7 +486,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 					mgr, err := newMicrosoftIMAPManager(cfg, logger, source)
 					if err == nil {
 						var used bool
-						used, err = microsoftMailTokenInUse(s, cfg, imapCfg.Username, filepath.Dir(mgr.TokenPath(imapCfg.Username)), false)
+						used, err = microsoftMailTokenInUse(s, cfg, imapCfg.Username, mgr.TokenPath(imapCfg.Username), false)
 						if err == nil && !used {
 							err = mgr.DeleteToken(imapCfg.Username)
 						}
@@ -736,7 +736,7 @@ func init() {
 	rootCmd.AddCommand(newRemoveAccountCmd())
 }
 
-func microsoftMailTokenInUse(s *store.Store, cfg *config.Config, email, dir string, graph bool) (bool, error) {
+func microsoftMailTokenInUse(s *store.Store, cfg *config.Config, email, tokenPath string, graph bool) (bool, error) {
 	typ := sourceTypeIMAP
 	if graph {
 		typ = sourceTypeMSMail
@@ -749,31 +749,64 @@ func microsoftMailTokenInUse(s *store.Store, cfg *config.Config, email, dir stri
 		if source.MergedIntoSourceID != 0 {
 			continue
 		}
-		username := source.Identifier
-		if !graph {
-			imapCfg, err := imaplib.ConfigFromJSON(source.SyncConfig.String)
-			if !source.SyncConfig.Valid || err != nil {
-				parsed, parseErr := imaplib.ParseIdentifier(source.Identifier)
-				if parseErr == nil && !strings.EqualFold(parsed.Username, email) {
-					continue
-				}
-				return false, fmt.Errorf("cannot read IMAP authentication configuration for %s", source.Identifier)
-			}
-			if imapCfg.EffectiveAuthMethod() != imaplib.AuthXOAuth2 {
-				continue
-			}
-			username = imapCfg.Username
-		}
-		if !strings.EqualFold(username, email) {
-			continue
-		}
-		_, otherDir, err := microsoftMailApp(cfg, sourceOAuthApp(source))
-		if err != nil {
-			return false, err
-		}
-		if strings.EqualFold(filepath.Clean(dir), filepath.Clean(otherDir)) {
-			return true, nil
+		used, err := microsoftSourceUsesToken(cfg, source, email, tokenPath, graph)
+		if err != nil || used {
+			return used, err
 		}
 	}
 	return false, nil
+}
+
+func microsoftSourceUsesToken(cfg *config.Config, source *store.Source, email, tokenPath string, graph bool) (bool, error) {
+	username := source.Identifier
+	if !graph {
+		imapCfg, err := imaplib.ConfigFromJSON(source.SyncConfig.String)
+		if !source.SyncConfig.Valid || err != nil {
+			parsed, parseErr := imaplib.ParseIdentifier(source.Identifier)
+			if parseErr == nil && !strings.EqualFold(parsed.Username, email) {
+				return false, nil
+			}
+			return false, fmt.Errorf("cannot read IMAP authentication configuration for %s", source.Identifier)
+		}
+		if imapCfg.EffectiveAuthMethod() != imaplib.AuthXOAuth2 {
+			return false, nil
+		}
+		username = imapCfg.Username
+	}
+	if !strings.EqualFold(filepath.Base(tokenPath), filepath.Base(microsoftTokenPath(filepath.Dir(tokenPath), username, graph))) {
+		return false, nil
+	}
+	_, dir, err := microsoftMailApp(cfg, sourceOAuthApp(source))
+	if err != nil {
+		return false, err
+	}
+	return sameMicrosoftTokenFile(tokenPath, microsoftTokenPath(dir, username, graph))
+}
+
+func microsoftTokenPath(dir, email string, graph bool) string {
+	if graph {
+		return microsoft.NewGraphMailManager("", "", "", dir, nil).TokenPath(email)
+	}
+	return microsoft.NewManager("", "", "", dir, nil).TokenPath(email)
+}
+
+func sameMicrosoftTokenFile(first, second string) (bool, error) {
+	if filepath.Clean(first) == filepath.Clean(second) {
+		return true, nil
+	}
+	firstInfo, err := os.Stat(first)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	secondInfo, err := os.Stat(second)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(firstInfo, secondInfo), nil
 }

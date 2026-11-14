@@ -122,18 +122,18 @@ func selectO365Account(accounts []daemonclient.CLIAccount, email string, graph b
 			return nil, false, fmt.Errorf("an Outlook IMAP account for %s already uses password authentication; remove or change that account before adding Microsoft OAuth", email)
 		}
 		match, undetermined := matchesO365Account(account, email, graph)
-		if match && selected == nil {
+		if match {
+			if selected != nil {
+				return nil, false, fmt.Errorf("multiple Microsoft mail sources match %s; resolve the duplicate sources before authorization", email)
+			}
 			selected = &account
 		}
 		unknown = unknown || undetermined
 	}
-	if selected != nil {
-		return selected, unknown, nil
-	}
-	if retired {
+	if selected == nil && retired {
 		return nil, false, fmt.Errorf("microsoft mail source for %s is retired: %w", email, store.ErrSourceRetired)
 	}
-	return nil, unknown, nil
+	return selected, unknown, nil
 }
 
 func matchesO365Account(account daemonclient.CLIAccount, email string, graph bool) (bool, bool) {

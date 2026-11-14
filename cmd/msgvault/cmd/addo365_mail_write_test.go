@@ -228,3 +228,44 @@ func TestAddO365PreflightUndeterminedIMAPBinding(t *testing.T) {
 	require.ErrorContains(t, err, "cannot determine the IMAP authentication method")
 	assert.Zero(t, requests)
 }
+
+func TestAddO365RejectsAmbiguousSourcesBeforeConsent(t *testing.T) {
+	for _, graph := range []bool{false, true} {
+		t.Run(fmt.Sprintf("graph=%t", graph), func(t *testing.T) {
+			oldGraph, oldHeadless, oldApp := o365Graph, o365Headless, o365OAuthApp
+			t.Cleanup(func() { o365Graph, o365Headless, o365OAuthApp = oldGraph, oldHeadless, oldApp })
+			dir := t.TempDir()
+			cfg := lifecycleTestConfig(dir)
+			cfg.Microsoft.ClientID = "client"
+			st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
+			for _, email := range []string{"user@example.com", "USER@example.com"} {
+				typ, identifier := sourceTypeMSMail, email
+				if !graph {
+					typ, identifier = sourceTypeIMAP, "imaps://"+email+"@outlook.office365.com:993"
+				}
+				src, err := st.GetOrCreateSource(typ, identifier)
+				require.NoError(t, err)
+				if !graph {
+					require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, fmt.Sprintf(`{"username":%q,"auth_method":"xoauth2"}`, email)))
+				}
+			}
+			startStoreAPIDaemon(t, dir, st, nil)
+			requests := 0
+			ctx := context.WithValue(withStoreResolverConfig(t, cfg), oauth2.HTTPClient, &http.Client{Transport: testTransport(func(*http.Request) (*http.Response, error) {
+				requests++
+				return nil, errors.New("unexpected authorization")
+			})})
+			cmd := newAddO365LocalCmd()
+			cmd.SetContext(ctx)
+			require.NoError(t, cmd.Flags().Set("headless", "true"))
+			if graph {
+				require.NoError(t, cmd.Flags().Set("graph", "true"))
+			}
+			_, err := preflightAddO365Authorize(cmd, "user@example.com")
+			require.ErrorContains(t, err, "multiple Microsoft mail sources")
+			err = runAddO365Local(cmd, []string{"user@example.com"})
+			require.ErrorContains(t, err, "multiple Microsoft mail sources")
+			assert.Zero(t, requests)
+		})
+	}
+}
