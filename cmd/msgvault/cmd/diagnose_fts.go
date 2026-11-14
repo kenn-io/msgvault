@@ -20,13 +20,15 @@ func newDiagnoseFTSCmd() *cobra.Command {
 		Long: `Compare search documents with the stored body and envelope, without changing
 the archive or contacting providers. Runs through the configured daemon.
 
-Each message is read in one SQL snapshot. Pages observe different times;
-use a quiescent isolated copy for a stable archive-wide result. A match checks
-the stored representation, not physical index postings or original MIME.
+Each message is checked at one point in time. Pages may reflect different times.
+For stable archive-wide results, use an isolated copy with writes stopped.
+Matches compare stored data; they do not check underlying search index entries
+or original MIME.
 
-Only a complete page interval with no defects or inconclusive comparisons
-returns success. Continue with --cursor from next_cursor, using the same archive.
-A lost response can be retried with the original cursor.`,
+Success means this page reaches the end of the selected messages with no
+differences or checks that could not be completed. Continue on the same archive
+with --cursor and the report's next_cursor value. If a response is lost, retry
+with the cursor supplied for that request.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.Limit < 1 || opts.Limit > 1000 || opts.Timeout < time.Second || opts.Timeout > 5*time.Minute {
@@ -52,7 +54,7 @@ A lost response can be retried with the original cursor.`,
 			return runFTSDiagnostic(cmd, st, opts, jsonOut)
 		},
 	}
-	command.Flags().StringVar(&opts.Cursor, "cursor", "", "Resume the reported ID interval on this archive")
+	command.Flags().StringVar(&opts.Cursor, "cursor", "", "Continue with the report's next_cursor value on this archive")
 	command.Flags().IntVar(&opts.Limit, "limit", 100, "Maximum messages to check (1..1000)")
 	command.Flags().DurationVar(&opts.Timeout, "timeout", 30*time.Second, "Maximum diagnostic runtime (1s..5m)")
 	command.Flags().BoolVar(&jsonOut, "json", false, "Output the bounded report as JSON")
@@ -68,6 +70,9 @@ func runFTSDiagnostic(cmd *cobra.Command, st *store.Store, opts store.FTSDiagnos
 		return runErr
 	}
 	if report.Outcome != "ok" {
+		// The text report already explains this outcome. Keep the failure exit
+		// status without printing it again; JSON retains its stderr result.
+		cmd.SilenceErrors = !jsonOut
 		return fmt.Errorf("FTS diagnostic result: %s", report.Outcome)
 	}
 	return nil
@@ -133,11 +138,11 @@ func ftsDiagnosticDescription(code string) string {
 	case "auxiliary_mismatch":
 		return "phrase-search fields differ from the expected fields"
 	case "identity_mismatch":
-		return "FTS row identity differs from its message"
+		return "Search entry has an invalid message ID"
 	case "input_limit":
 		return "comparison input exceeds the diagnostic limit"
 	case "expected_vector_overflow":
-		return "expected PostgreSQL vector cannot be constructed; cause of stored state unproven"
+		return "Expected search data exceeds PostgreSQL's limit; stored data remains unverified"
 	case "message_disappeared":
 		return "message disappeared after selection"
 	case "fts_unavailable":
@@ -149,7 +154,7 @@ func ftsDiagnosticDescription(code string) string {
 	case "timeout":
 		return "verification reached its time limit"
 	case "selection_failed", "comparison_failed":
-		return "SQL verification failed; retry from the reported cursor"
+		return "Message check failed; retry with --cursor and the reported continuation value"
 	default:
 		return code
 	}

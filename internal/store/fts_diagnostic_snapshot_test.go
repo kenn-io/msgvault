@@ -228,7 +228,7 @@ func TestFTSDiagnosticSQLFailureAndUnavailable(t *testing.T) {
 	_, err := st.db.ExecContext(t.Context(), statement)
 	r.NoError(err)
 	got, err := st.DiagnoseFTSContext(t.Context(), FTSDiagnosticOptions{})
-	r.ErrorContains(err, "comparison failed")
+	r.ErrorContains(err, "check failed; retry with --cursor")
 	a.Equal("incomplete", got.Outcome)
 	a.Zero(got.Matched)
 	a.Zero(got.Checked)
