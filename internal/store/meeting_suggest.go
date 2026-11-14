@@ -16,7 +16,6 @@ type MeetingSuggestion struct {
 	TitleOriginID   int64 `json:"-"`
 	TitleWithheld   bool  `json:"-"`
 	eventEndpoint   meetingDecisionEndpoint
-	allDay          bool
 	Ref             string    `json:"ref" doc:"Calendar event reference; the suggestion when the seed is a note"`
 	MemberMessageID int64     `json:"member_message_id" doc:"Meeting note ID; the suggestion when the seed is an event"`
 	Title           string    `json:"title" doc:"Title of the suggested event or note"`
@@ -38,10 +37,11 @@ type MeetingSuggestionPage struct {
 }
 
 type suggestMember struct {
-	ID         int64
-	Title      string
-	Start, End time.Time
-	Emails     map[string]bool
+	ID            int64
+	Title         string
+	Start, End    time.Time
+	Emails        map[string]bool
+	DurationKnown bool
 }
 
 func rankMeetingSuggestion(member suggestMember, event CalendarOccurrence) (MeetingSuggestion, bool) {
@@ -58,19 +58,18 @@ func rankMeetingSuggestion(member suggestMember, event CalendarOccurrence) (Meet
 	if !end.After(start) {
 		return MeetingSuggestion{}, false
 	}
-	result := MeetingSuggestion{Ref: event.Ref, MemberMessageID: member.ID, OverlapMinutes: int((end.Sub(start)-1)/time.Minute) + 1}
+	result := MeetingSuggestion{Ref: event.Ref, MemberMessageID: member.ID}
+	if member.DurationKnown {
+		result.OverlapMinutes = int((end.Sub(start)-1)/time.Minute) + 1
+	}
 	seen := map[string]bool{}
 	for _, attendee := range event.Attendees {
-		if attendee.IsCopySelf && attendee.RSVP == "declined" {
-			return MeetingSuggestion{}, false
-		}
 		email := strings.ToLower(strings.TrimSpace(attendee.Email))
 		if attendee.Role != "room" && !attendee.IsCopySelf && attendee.RSVP != "declined" && email != "" && member.Emails[email] && !seen[email] {
 			seen[email] = true
 			result.SharedAttendees++
 		}
 	}
-	result.allDay = event.AllDay
 	tokens := uniqueChatTokens(member.Title)
 	for _, token := range uniqueChatTokens(event.Subject) {
 		if slices.Contains(tokens, token) {
@@ -89,7 +88,7 @@ func (s *Store) suggestionMembers(ctx context.Context, ids []int64) ([]suggestMe
 	args := appendInt64Args(nil, ids)
 	args = append(args, scopeArgs...)
 	start, duration := s.suggestionIntervalExpressions()
-	rows, err := r.QueryContext(ctx, `SELECT m.id,COALESCE(m.subject,''),`+start+`,`+duration+` FROM messages m LEFT JOIN meeting_details d ON d.message_id=m.id WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL AND m.id IN (`+placeholders(len(ids))+`)`+scope+` ORDER BY m.id`, args...)
+	rows, err := r.QueryContext(ctx, `SELECT m.id,COALESCE(m.subject,''),`+start+`,`+duration+`,COALESCE(d.duration_seconds,0) FROM messages m LEFT JOIN meeting_details d ON d.message_id=m.id WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL AND m.id IN (`+placeholders(len(ids))+`)`+scope+` ORDER BY m.id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -97,8 +96,8 @@ func (s *Store) suggestionMembers(ctx context.Context, ids []int64) ([]suggestMe
 	for rows.Next() {
 		var m suggestMember
 		var start nullableTimestamp
-		var duration float64
-		if err := rows.Scan(&m.ID, &m.Title, &start, &duration); err != nil {
+		var duration, knownDuration float64
+		if err := rows.Scan(&m.ID, &m.Title, &start, &duration, &knownDuration); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -106,6 +105,7 @@ func (s *Store) suggestionMembers(ctx context.Context, ids []int64) ([]suggestMe
 			m.Start = start.Time
 			m.End = m.Start.Add(time.Duration(duration * float64(time.Second)))
 		}
+		m.DurationKnown = knownDuration > 0
 		members = append(members, m)
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
@@ -304,12 +304,6 @@ func (s *Store) suggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 	slices.SortFunc(candidates, func(a, b MeetingSuggestion) int {
 		if a.SharedAttendees != b.SharedAttendees {
 			return b.SharedAttendees - a.SharedAttendees
-		}
-		if a.allDay != b.allDay {
-			if a.allDay {
-				return 1
-			}
-			return -1
 		}
 		if a.OverlapMinutes != b.OverlapMinutes {
 			return b.OverlapMinutes - a.OverlapMinutes

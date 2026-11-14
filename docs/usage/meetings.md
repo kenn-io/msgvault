@@ -64,6 +64,8 @@ including after a reschedule. Other note formats remain separate unless linked b
 
 Use `msgvault meetings suggest <ref>` to find events that overlap a meeting note, or notes that overlap a calendar event. Use `msgvault meetings link <ref> <ref>` to accept a suggestion. Suggestions rank shared attendees, overlap, and title words. The API and MCP tool `suggest_meeting_links` return the same suggestions.
 
+When a note has no known duration, the search uses a 30-minute window and assigns an overlap score of zero.
+
 Each result's `ref` identifies the calendar event, and `member_message_id` identifies the meeting note. For a note seed, `ref` is the suggested event; for an event seed, `member_message_id` is the suggested note. The `title` and `start` describe the suggestion.
 
 Use `msgvault meetings link <ref> <ref>` to join copies, including notes from

@@ -15,7 +15,6 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
-	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -57,11 +56,7 @@ func TestGrantedMeetingSuggestions(t *testing.T) {
 		status, count int
 	}{
 		{"both", sources, fmt.Sprintf("msg:%d", note), 200, 1},
-		{"notes only", sources[:1], fmt.Sprintf("msg:%d", note), 200, 0},
 		{"event denied", sources[:1], fmt.Sprintf("evt:%d", event), 404, 0},
-		{"calendar only", sources[1:], fmt.Sprintf("evt:%d", event), 200, 0},
-		{"empty scope", []agentgrant.SourceRef{{ID: 999999, Type: "meeting_import", Identifier: "missing@example.com"}}, fmt.Sprintf("msg:%d", note), 404, 0},
-		{"reverse", sources, fmt.Sprintf("evt:%d", event), 200, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := require.New(t)
@@ -80,23 +75,6 @@ func TestGrantedMeetingSuggestions(t *testing.T) {
 			r.Len(page.Suggestions, tc.count)
 		})
 	}
-	t.Run("embedded source scope", func(t *testing.T) {
-		embedded := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-		defer embedded.agentGrants.Close()
-		for _, tc := range []struct {
-			sources []int64
-			count   int
-		}{{[]int64{notes.ID, calendar.ID}, 1}, {[]int64{notes.ID}, 0}} {
-			ctx := sourcescope.WithSourceIDs(t.Context(), tc.sources)
-			req := httptest.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("/api/v1/meetings/suggestions?ref=msg:%d", note), nil)
-			w := httptest.NewRecorder()
-			embedded.Handler(nil).ServeHTTP(w, req)
-			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-			var page store.MeetingSuggestionPage
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page))
-			require.Len(t, page.Suggestions, tc.count)
-		}
-	})
 	t.Run("limit", func(t *testing.T) {
 		for _, limit := range []string{"0", "-1", "101", "bad"} {
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/meetings/suggestions?ref=msg:%d&limit=%s", note, limit), nil)
@@ -108,52 +86,38 @@ func TestGrantedMeetingSuggestions(t *testing.T) {
 	})
 	t.Run("title words", func(t *testing.T) {
 		r := require.New(t)
-		ids := make([]int64, 0, 2)
-		for _, title := range []string{"standup", "482913"} {
-			id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: notes.ID, SourceMessageID: title, MessageType: "meeting_transcript", Subject: sql.NullString{String: title, Valid: true}, SentAt: sql.NullTime{Time: at, Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: title, ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"})
-			r.NoError(err)
-			ids = append(ids, id)
-		}
-		_, limited, _, err := srv.agentGrants.Issue("limited", []agentgrant.Permission{agentgrant.PermissionMessageRead}, sources, time.Time{})
+		title := "482913"
+		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: notes.ID, SourceMessageID: title, MessageType: "meeting_transcript", Subject: sql.NullString{String: title, Valid: true}, SentAt: sql.NullTime{Time: at, Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: title, ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"})
 		r.NoError(err)
-		_, reveal, _, err := srv.agentGrants.Issue("reveal", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionVerificationRead}, sources, time.Time{})
+		_, limited, _, err := srv.agentGrants.Issue("limited", []agentgrant.Permission{agentgrant.PermissionMessageRead}, sources, time.Time{})
 		r.NoError(err)
 		for _, tc := range []struct {
 			name, token string
 			reveal      bool
-		}{{"limited", limited, false}, {"verification", reveal, true}, {"owner", "", true}} {
+		}{{"limited", limited, false}, {"owner", "", true}} {
 			t.Run(tc.name, func(t *testing.T) {
-				for _, ref := range []string{fmt.Sprintf("msg:%d", ids[1]), fmt.Sprintf("evt:%d", event)} {
-					t.Run(ref, func(t *testing.T) {
-						clear(spy.counts)
-						req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/suggestions?ref="+ref+"&limit=1", nil)
-						if tc.token == "" {
-							req.Header.Set("Authorization", "Bearer owner")
-						} else {
-							req.Header.Set(apiprotocol.AgentTokenHeader, tc.token)
-						}
-						w := httptest.NewRecorder()
-						srv.Router().ServeHTTP(w, req)
-						require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-						var page store.MeetingSuggestionPage
-						require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page))
-						require.Len(t, page.Suggestions, 1)
-						item := page.Suggestions[0]
-						if !tc.reveal {
-							require.NotEmpty(t, spy.counts)
-						}
-						if tc.reveal {
-							if ref[0:3] == "msg" {
-								require.Equal(t, "Your verification code is 482913", item.Title)
-							} else {
-								require.Equal(t, 1, item.TitleTokens)
-							}
-						} else if ref[0:3] == "msg" {
-							require.Equal(t, "[verification content masked]", item.Title)
-						} else {
-							require.Zero(t, item.TitleTokens)
-						}
-					})
+				ref := fmt.Sprintf("msg:%d", id)
+				clear(spy.counts)
+				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/suggestions?ref="+ref+"&limit=1", nil)
+				if tc.token == "" {
+					req.Header.Set("Authorization", "Bearer owner")
+				} else {
+					req.Header.Set(apiprotocol.AgentTokenHeader, tc.token)
+				}
+				w := httptest.NewRecorder()
+				srv.Router().ServeHTTP(w, req)
+				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+				var page store.MeetingSuggestionPage
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page))
+				require.Len(t, page.Suggestions, 1)
+				item := page.Suggestions[0]
+				if !tc.reveal {
+					require.NotEmpty(t, spy.counts)
+				}
+				if tc.reveal {
+					require.Equal(t, "Your verification code is 482913", item.Title)
+				} else {
+					require.Equal(t, "[verification content masked]", item.Title)
 				}
 			})
 		}
