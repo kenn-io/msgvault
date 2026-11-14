@@ -110,18 +110,13 @@ func (b *daemonMCPOperations) listPersonFactClaims(ctx context.Context, a factAr
 	if a.Target == nil && (a.IncludeEvidence || a.IncludeDecisions) {
 		return operationFailure("invalid_arguments", false), nil
 	}
-	visible, failure, err := b.personFactVisibleTargets(ctx)
-	if failure != nil || err != nil {
-		return failure, err
-	}
+	var target personfacts.TargetRef
 	if a.Target != nil {
-		target, err := personfacts.DecodeTargetRef(*a.Target)
+		decoded, err := personfacts.DecodeTargetRef(*a.Target)
 		if err != nil {
 			return operationFailure("invalid_target", false), nil //nolint:nilerr // Invalid targets are operation refusals.
 		}
-		if !visible[[2]string{string(target.Kind), target.Key}] {
-			return operationFailure("invalid_fact_target", false), nil
-		}
+		target = decoded
 	}
 	r, err := readMCPOperationJSONWithClassifier[generated.PersonFactClaimsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-claims", &generated.ListPersonFactClaimsRequestOptions{PathParams: &generated.ListPersonFactClaimsPath{ID: a.PersonID}, Query: &generated.ListPersonFactClaimsQuery{Target: a.Target, Limit: a.Limit, Offset: a.Offset}}, factClassify, http.StatusOK)
 	if err != nil || r.IsError {
@@ -135,9 +130,8 @@ func (b *daemonMCPOperations) listPersonFactClaims(ctx context.Context, a factAr
 	if a.Offset != nil {
 		offset = *a.Offset
 	}
-	rawCount := len(claims.Claims)
-	out := mcpserver.PersonFactClaimsOutput{Claims: slices.DeleteFunc(claims.Claims, func(c generated.PersonFactClaim) bool { return !visible[[2]string{c.Target.Kind, c.Target.Key}] })}
-	more := int64(rawCount) == limit
+	out := mcpserver.PersonFactClaimsOutput{}
+	more := int64(len(claims.Claims)) == limit
 	if a.IncludeEvidence {
 		r, err := readMCPOperationJSONWithClassifier[generated.PersonFactEvidenceResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-evidence", &generated.ListPersonFactEvidenceRequestOptions{PathParams: &generated.ListPersonFactEvidencePath{ID: a.PersonID}, Query: &generated.ListPersonFactEvidenceQuery{Target: a.Target, Limit: a.Limit, Offset: a.Offset, VisibleOnly: new(true)}}, factClassify, http.StatusOK)
 		if err != nil || r.IsError {
@@ -156,11 +150,17 @@ func (b *daemonMCPOperations) listPersonFactClaims(ctx context.Context, a factAr
 		out.Decisions = rows.Decisions
 		more = more || int64(len(rows.Decisions)) == limit
 	}
-	if more {
-		next := offset + limit
-		out.NextOffset = &next
+	visible, failure, err := b.personFactVisibleTargets(ctx)
+	if failure != nil || err != nil {
+		return failure, err
 	}
-	return &mcpserver.OperationResult{Output: out}, nil
+	if a.Target != nil && !visible[[2]string{string(target.Kind), target.Key}] {
+		return operationFailure("invalid_fact_target", false), nil
+	}
+	if more {
+		out.NextOffset = new(offset + limit)
+	}
+	return &mcpserver.OperationResult{Output: mcpserver.PersonFactClaimsOutput{Claims: slices.DeleteFunc(claims.Claims, func(c generated.PersonFactClaim) bool { return !visible[[2]string{c.Target.Kind, c.Target.Key}] }), Evidence: out.Evidence, Decisions: out.Decisions, NextOffset: out.NextOffset}}, nil
 }
 
 func (b *daemonMCPOperations) personFactOperationDisclosure(name string, args map[string]any) (string, bool, error) {
