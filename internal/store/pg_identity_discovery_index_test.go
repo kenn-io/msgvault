@@ -34,6 +34,7 @@ var concurrentlyBuiltIndexes = []struct{ index, table string }{
 	{"idx_calendar_events_series_id", "calendar_events"},
 	{"idx_source_merge_archive_only_original", "source_merge_archive_only_messages"},
 	{"idx_calendar_events_series_provider_id", "calendar_events"},
+	{"idx_meeting_details_link_key", "meeting_details"},
 }
 
 // Both probes below check pg_index.indisvalid rather than just counting rows

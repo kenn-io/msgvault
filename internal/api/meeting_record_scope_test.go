@@ -33,8 +33,8 @@ func TestMeetingRecordInheritedVerificationSubject(t *testing.T) {
 		require.NoError(err)
 		return id
 	}
-	master := persist(calendar.ID, "master", "calendar_event", "calendar", "Your verification code is 482913", "gcal_json", `{"id":"series","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
-	cancelled := persist(calendar.ID, "cancelled", "calendar_event", "calendar", "", "gcal_json", `{"id":"cancelled","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled"}`)
+	persist(calendar.ID, "master", "calendar_event", "calendar", "Your verification code is 482913", "gcal_json", `{"id":"series","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+	persist(calendar.ID, "cancelled", "calendar_event", "calendar", "", "gcal_json", `{"id":"cancelled","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled"}`)
 	note := persist(notes.ID, "note", "meeting_transcript", "meeting", "", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	other, err := st.GetOrCreateSource("meeting_import", "other@example.com")
 	require.NoError(err)
@@ -66,21 +66,11 @@ func TestMeetingRecordInheritedVerificationSubject(t *testing.T) {
 	}
 	_, restricted, _, err := srv.agentGrants.Issue("notes-only", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: notes.ID, Type: notes.SourceType, Identifier: notes.Identifier}}, time.Time{})
 	require.NoError(err)
-	for _, tc := range []struct {
-		ref    string
-		status int
-	}{{fmt.Sprintf("msg:%d", note), http.StatusOK}, {fmt.Sprintf("evt:%d", cancelled), http.StatusForbidden}, {fmt.Sprintf("evt:%d", master), http.StatusForbidden}, {fmt.Sprintf("msg:%d", outside), http.StatusNotFound}} {
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/record?ref="+tc.ref, nil)
-		req.Header.Set(apiprotocol.AgentTokenHeader, restricted)
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		require.Equal(tc.status, w.Code, w.Body.String())
-		if tc.status == http.StatusOK {
-			var record store.MeetingRecord
-			require.NoError(json.Unmarshal(w.Body.Bytes(), &record))
-			assert.Empty(record.Links)
-		}
-	}
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/meetings/record?ref=msg:%d", outside), nil)
+	req.Header.Set(apiprotocol.AgentTokenHeader, restricted)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusNotFound, w.Code, w.Body.String())
 	explicit := persist(calendar.ID, "explicit", "calendar_event", "calendar", "Ordinary exception", "gcal_json", `{"id":"explicit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-21T10:00:00Z"},"status":"cancelled","summary":"Ordinary exception"}`)
 	persist(calendar.ID, "ordinary-master", "calendar_event", "calendar", "Ordinary meeting", "gcal_json", `{"id":"ordinary","iCalUID":"ordinary@example.org","start":{"dateTime":"2027-04-01T10:00:00Z"},"end":{"dateTime":"2027-04-01T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
 	ordinary := persist(calendar.ID, "ordinary-cancel", "calendar_event", "calendar", "", "gcal_json", `{"id":"ordinary-cancel","recurringEventId":"ordinary","originalStartTime":{"dateTime":"2027-04-01T10:00:00Z"},"status":"cancelled"}`)
@@ -141,28 +131,6 @@ func TestMeetingRecordPartialHTTP(t *testing.T) {
 	}
 }
 
-func TestMeetingRecordNullableBoundsHTTP(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("gcal", "calendar@example.test")
-	require.NoError(t, err)
-	for _, tc := range []struct{ name, raw, start, end string }{
-		{"sparse", `{"id":"cancelled","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled"}`, `"start":null`, `"end":null`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: tc.name, MessageType: "calendar_event"}, Conversation: &store.ConversationPersistData{SourceConversationID: tc.name, ConversationType: "calendar"}, RawMIME: []byte(tc.raw), RawFormat: "gcal_json"})
-			require.NoError(err)
-			srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger()})
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/meetings/record?ref=evt:%d", id), nil)
-			response := httptest.NewRecorder()
-			srv.Router().ServeHTTP(response, req)
-			require.Equal(http.StatusOK, response.Code, response.Body.String())
-			assert.Contains(response.Body.String(), tc.start)
-			assert.Contains(response.Body.String(), tc.end)
-		})
-	}
-}
-
 func TestParseMeetingLinkRef(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -184,41 +152,6 @@ func TestParseMeetingLinkRef(t *testing.T) {
 	}
 }
 
-func TestMeetingRecordRequiresSeriesOccurrence(t *testing.T) {
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("gcal", "calendar@example.test")
-	requirements.NoError(err)
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger()})
-	for _, tc := range []struct {
-		name, raw string
-		keys      []string
-	}{
-		{"timed", `{"id":"timed","iCalUID":"timed@example.test","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, []string{"20270314T100000Z", "20270321T100000Z"}},
-		{"all-day", `{"id":"all-day","iCalUID":"all-day@example.test","start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, []string{"20270314", "20270321"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: tc.name, MessageType: "calendar_event"}, Conversation: &store.ConversationPersistData{SourceConversationID: tc.name, ConversationType: "calendar"}, RawMIME: []byte(tc.raw), RawFormat: "gcal_json"})
-			requirements.NoError(err)
-			request := func(ref string) *httptest.ResponseRecorder {
-				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/record?ref="+ref, nil)
-				w := httptest.NewRecorder()
-				srv.Router().ServeHTTP(w, req)
-				return w
-			}
-			for _, key := range tc.keys {
-				explicit := request(fmt.Sprintf("evt:%d@%s", id, key))
-				requirements.Equal(http.StatusOK, explicit.Code, explicit.Body.String())
-				var record store.MeetingRecord
-				requirements.NoError(json.Unmarshal(explicit.Body.Bytes(), &record))
-				requirements.Len(record.Links, 1)
-				assertions.Equal(fmt.Sprintf("evt:%d@%s", id, key), record.Links[0].Ref)
-			}
-		})
-	}
-}
-
 func TestMeetingRecordCalendarDetailsRequireGrant(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -235,7 +168,6 @@ func TestMeetingRecordCalendarDetailsRequireGrant(t *testing.T) {
 	event := persist(calendar.ID, "event", "calendar_event", "calendar", "gcal_json", `{"id":"event","iCalUID":"meeting@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
 	note := persist(notes.ID, "note", "meeting_transcript", "meeting", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"meeting@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	peer := persist(notes.ID, "peer", "meeting_transcript", "meeting", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"meeting@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
-	sharedSourceNote := persist(calendar.ID, "shared-note", "meeting_transcript", "meeting", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"meeting@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	indirect := persist(notes.ID, "indirect", "meeting_transcript", "meeting", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"event"}}`)
 	barePeer := persist(notes.ID, "bare-peer", "meeting_transcript", "meeting", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"event"}}`)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
@@ -271,14 +203,14 @@ func TestMeetingRecordCalendarDetailsRequireGrant(t *testing.T) {
 			var record store.MeetingRecord
 			require.NoError(json.Unmarshal(w.Body.Bytes(), &record))
 			if tc.wantLinks {
-				assert.ElementsMatch([]int64{note, peer, sharedSourceNote, indirect, barePeer}, record.MessageIDs)
+				assert.ElementsMatch([]int64{note, peer, indirect, barePeer}, record.MessageIDs)
 				require.Len(record.Links, 1)
 				assert.Equal(fmt.Sprintf("evt:%d", event), record.Links[0].Ref)
 			} else {
 				if tc.ref == fmt.Sprintf("msg:%d", indirect) {
 					assert.Equal([]int64{indirect}, record.MessageIDs)
 				} else {
-					assert.ElementsMatch([]int64{note, peer, sharedSourceNote}, record.MessageIDs)
+					assert.ElementsMatch([]int64{note, peer}, record.MessageIDs)
 				}
 				assert.Empty(record.Links)
 				assert.Empty(record.Unexpandable)

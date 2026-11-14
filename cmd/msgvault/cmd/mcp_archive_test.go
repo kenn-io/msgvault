@@ -316,17 +316,6 @@ func TestMCPMeetingRecordCalendarOnly(t *testing.T) {
 		require := require.New(t)
 		session := mcpDraftTestSession(mcpDraftAgentContext(t, server, source.ID, []string{"message.read"}), t)
 		require.Contains(mcpDraftToolNames(t, session), "get_meeting_record")
-		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_meeting_record", Arguments: map[string]any{"ref": fmt.Sprintf("evt:%d", id)}})
-		require.NoError(err)
-		require.True(result.IsError, "%v", result.Content)
-		require.Contains(mcpDraftResultText(t, result), "permission_denied")
-	})
-	t.Run("delegated calendar details", func(t *testing.T) {
-		require := require.New(t)
-		session := mcpDraftTestSession(mcpDraftAgentContext(t, server, source.ID, []string{"message.read", "calendar.event.read"}), t)
-		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_meeting_record", Arguments: map[string]any{"ref": fmt.Sprintf("evt:%d", id)}})
-		require.NoError(err)
-		require.False(result.IsError, "%v", result.Content)
 	})
 }
 

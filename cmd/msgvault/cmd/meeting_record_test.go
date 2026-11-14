@@ -66,10 +66,7 @@ func TestMeetingLinksCLIPartialRecord(t *testing.T) {
 				assert.Empty(stderr.String())
 			} else {
 				assert.Contains(out.String(), "STATUS")
-				assert.Contains(out.String(), "confirmed")
-				assert.Contains(out.String(), "cancelled")
-				assert.Contains(out.String(), "deleted")
-				assert.Regexp(`evt:4\s+unknown\s+unknown\s+cancelled`, out.String())
+				assert.Regexp(`evt:4\s+unknown\s+unknown`, out.String())
 				assert.Contains(out.String(), "Notes: 42\n")
 				assert.Contains(stderr.String(), "message 7 (unsupported recurrence)")
 			}

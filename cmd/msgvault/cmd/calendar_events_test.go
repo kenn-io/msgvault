@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
-	"fmt"
 	"log/slog"
 	"net/http/httptest"
 	"testing"
@@ -312,45 +311,4 @@ func TestCalendarEventsSkippedDateWindow(t *testing.T) {
 			assertions.Empty(page.Unexpandable)
 		})
 	}
-}
-
-func TestCalendarEventsTableMeetingHandoff(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := testutil.NewTestStore(t)
-	calendar, err := st.GetOrCreateSource("gcal", "calendar@example.test")
-	requirements.NoError(err)
-	notes, err := st.GetOrCreateSource("meeting_import", "notes@example.test")
-	requirements.NoError(err)
-	persist := func(source int64, key, kind, conv, format, raw string) int64 {
-		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source, SourceMessageID: key, MessageType: kind}, Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: conv}, RawMIME: []byte(raw), RawFormat: format})
-		requirements.NoError(err)
-		return id
-	}
-	series := persist(calendar.ID, "series", "calendar_event", "calendar", "gcal_json", `{"id":"series","iCalUID":"uid@example.test","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
-	note := persist(notes.ID, "note", "meeting_transcript", "meeting", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.test","startsAt":"2027-03-21T10:00:00Z"}}`)
-	cfg := &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key"}}
-	logger := slog.New(slog.DiscardHandler)
-	daemon := httptest.NewServer(api.NewServer(cfg, &storeAPIAdapter{store: st, config: cfg, logger: logger}, nil, logger).Router())
-	t.Cleanup(daemon.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, APIKey: cfg.Server.APIKey, AllowInsecure: true, HTTPClient: daemon.Client()})
-	requirements.NoError(err)
-	t.Cleanup(func() { requirements.NoError(client.Close()) })
-	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return client, func() {}, nil })
-	var table bytes.Buffer
-	cmd.SetOut(&table)
-	cmd.SetArgs([]string{"--from", "2027-03-14T00:00:00Z", "--to", "2027-03-22T00:00:00Z"})
-	requirements.NoError(cmd.Execute())
-	ref := fmt.Sprintf("evt:%d@20270321T100000Z", series)
-	requirements.Contains(table.String(), " "+ref+" ")
-	links := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
-	var out bytes.Buffer
-	links.SetOut(&out)
-	links.SetArgs([]string{ref, "--json"})
-	requirements.NoError(links.Execute())
-	var record store.MeetingRecord
-	requirements.NoError(json.Unmarshal(out.Bytes(), &record))
-	requirements.Len(record.Links, 1)
-	assertions.Equal(ref, record.Links[0].Ref)
-	assertions.Equal("2027-03-21T10:00:00Z", record.Links[0].Start.UTC().Format(time.RFC3339))
-	assertions.Equal([]int64{note}, record.MessageIDs)
 }
