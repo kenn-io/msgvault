@@ -62,7 +62,7 @@ func (b *daemonMCPOperations) executePersonFactOperation(ctx context.Context, na
 	}
 	a, err := decodeMCPOperationArguments[factArgs](args)
 	if err != nil {
-		return operationFailure("invalid_arguments", false), true, nil
+		return operationFailure("invalid_arguments", false), true, nil //nolint:nilerr // Invalid arguments are operation refusals.
 	}
 	switch name {
 	case "list_person_fact_claims":
