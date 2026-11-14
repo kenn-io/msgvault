@@ -67,11 +67,7 @@ After an import, first appearance reflects new messages once the activity
 projection catches up; results marked `stale` are provisional. See
 [activity configuration](/docs/configuration/#activity).
 
-`first_contact_kind` describes the envelope evidence, not a verified introduction: `email_intro` is an inbound email
-with exactly one third-party From address, matching the recorded sender when present,
-you among the recipients, the person in To or Cc, and
-at most four other non-owner recipients (counting linked aliases once per saved
-person); `observed` covers other evidence. `introducer` identifies the sender of an introduction email when known. These fields
+`first_contact_kind` describes the envelope evidence, not a verified introduction. `email_intro` is an inbound email, excluding meetings, with exactly one third-party From address that matches the recorded sender when present. You must be a recipient, the person must be in To or Cc, and there can be at most four other non-owner recipients, counting linked aliases once per saved person. `observed` covers other evidence. `introducer` identifies the sender of an introduction email when known. These fields
 reflect archived evidence and currently linked identities, not a claim about
 when you met offline.
 
