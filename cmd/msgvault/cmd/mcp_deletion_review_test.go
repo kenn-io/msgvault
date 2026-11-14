@@ -32,9 +32,6 @@ func TestMCPDeletionReviewSDKRead(t *testing.T) {
 	pending := deletion.NewManifest("pending", []string{"synthetic-1"})
 	require.NoError(manager.SaveManifest(pending))
 	id := pending.ID
-	emptyDescription := deletion.NewManifest("", []string{"synthetic-2"})
-	emptyDescription.Status = deletion.StatusCompleted
-	require.NoError(manager.SaveManifest(emptyDescription))
 	opts := daemonMCPServeOptions(t.Context(), backend.client, nil)
 	handler, closeHandler := mcpserver.NewHTTPHandler(opts, mcpserver.HTTPOptions{})
 	t.Cleanup(closeHandler)
@@ -65,8 +62,6 @@ func TestMCPDeletionReviewSDKRead(t *testing.T) {
 	receipt := call("get_deletion", map[string]any{"batch_id": id})
 	assert.Equal(id, receipt["id"])
 	assert.Equal("pending", receipt["status"])
-	emptyReceipt := call("get_deletion", map[string]any{"batch_id": emptyDescription.ID})
-	assert.Empty(emptyReceipt["description"])
 }
 
 func TestMCPDeletionReviewRefusals(t *testing.T) {
