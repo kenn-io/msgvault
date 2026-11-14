@@ -984,8 +984,8 @@ func (h *handlers) searchMessageBodiesHybrid(
 			return dependencyError("resolve semantic-search collection", err)
 		}
 	}
-	if selection.sourceIDs != nil && len(selection.sourceIDs) == 0 {
-		return jsonResult(searchMessageBodiesResponse{paginatedResponse: newPaginatedResponseNoTotal([]searchMessageItem{}, intArg(args, toolArgOffset, 0), false), Mode: mode})
+	if selection.sourceIDs != nil && len(selection.sourceIDs) == 0 && h.hybridSearcher == nil {
+		parsed.ConversationIDs = []int64{} // An empty scope matches no conversations.
 	}
 	if h.hybridSearcher != nil {
 		return h.searchMessageBodiesHybridViaSearcher(ctx, args, queryStr, mode, explain, selection)

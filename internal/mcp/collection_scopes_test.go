@@ -11,6 +11,8 @@ import (
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
 type collectionTestEngine struct {
@@ -131,16 +133,58 @@ func TestSemanticCollectionUsesAllSources(t *testing.T) {
 	calls := 0
 	h.hybridSearcher = hybridSearcherFunc(func(_ context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
 		calls++
-		assert.Equal("many", req.Collection)
+		assert.Contains([]string{"many", "empty"}, req.Collection)
 		return &HybridSearchResult{}, nil
 	})
 	runTool[searchMessageBodiesResponse](t, ToolSemanticSearchMessages, h.semanticSearchMessages, map[string]any{"query": "fixture", "collection": "many"})
 	runTool[searchMessageBodiesResponse](t, ToolSearchMessages, h.searchMessages, map[string]any{"query": "fixture", "mode": "hybrid", "collection": "many"})
 	runTool[searchMessageBodiesResponse](t, ToolSemanticSearchMessages, h.semanticSearchMessages, map[string]any{"query": "fixture", "collection": "empty"})
-	assert.Equal(2, calls)
+	assert.Equal(3, calls)
 	result, err := h.semanticSearchMessages(t.Context(), toolRequest{arguments: map[string]any{"query": "subject:fixture", "collection": "empty"}})
 	require.NoError(err)
 	assert.True(result.isError)
 	assert.Contains(resultText(t, result), "missing_free_text")
-	assert.Equal(2, calls)
+	assert.Equal(3, calls)
+}
+
+func TestSemanticEmptyCollectionReportsBackendError(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	e := &collectionTestEngine{Engine: &querytest.MockEngine{}, collections: []query.CollectionScope{{Name: "empty", SourceIDs: []int64{}}}}
+	for _, tc := range []struct {
+		err  error
+		code string
+	}{{vector.ErrNotEnabled, "vector_not_enabled"}, {vector.ErrIndexStale, "index_stale"}, {vector.ErrIndexBuilding, "index_building"}} {
+		h := newTestHandlers(e)
+		h.hybridSearcher = hybridSearcherFunc(func(_ context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
+			assert.Equal("empty", req.Collection)
+			return nil, tc.err
+		})
+		result, err := h.semanticSearchMessages(t.Context(), toolRequest{arguments: map[string]any{"query": "fixture", "collection": "empty"}})
+		require.NoError(err)
+		assert.True(result.isError)
+		assert.Contains(resultText(t, result), tc.code)
+	}
+}
+
+func TestSemanticEmptyCollectionReportsLocalBackendError(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	h := newHybridHandlersForErrorTest(&fakeBackend{activeErr: vector.ErrNoActiveGeneration})
+	h.engine = &collectionTestEngine{Engine: h.engine, collections: []query.CollectionScope{{Name: "empty", SourceIDs: []int64{}}}}
+	result, err := h.semanticSearchMessages(t.Context(), toolRequest{arguments: map[string]any{"query": "fixture", "collection": "empty"}})
+	require.NoError(err)
+	assert.True(result.isError)
+	assert.Contains(resultText(t, result), "vector_not_enabled")
+}
+
+func TestSemanticEmptyCollectionLocalSearchIsScoped(t *testing.T) {
+	assert := assert.New(t)
+	backend := &fakeBackend{active: vector.Generation{ID: 1, Model: "nomic-embed", Dimension: 768, Fingerprint: "nomic-embed:768", State: vector.GenerationActive}}
+	h := newHybridHandlersForErrorTest(backend)
+	h.hybridEngine = hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{ExpectedFingerprint: "nomic-embed:768"})
+	h.engine = &collectionTestEngine{Engine: h.engine, collections: []query.CollectionScope{{Name: "empty", SourceIDs: []int64{}}}}
+	got := runTool[searchMessageBodiesResponse](t, ToolSemanticSearchMessages, h.semanticSearchMessages, map[string]any{"query": "fixture", "mode": "vector", "collection": "empty"})
+	assert.Empty(got.Data)
+	assert.Equal([]int64{-1}, backend.searchFilter.ConversationIDs)
 }

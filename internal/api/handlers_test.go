@@ -9613,3 +9613,42 @@ func TestCLICollectionMembers(t *testing.T) {
 	assert.True(remoteClientOperationAllowed("getCLICollectionMembers", false))
 	assert.NotContains(agentReadPermissions, "getCLICollectionMembers")
 }
+
+func TestSemanticEmptyCollectionReportsUnavailable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "empty@example.test")
+	require.NoError(err)
+	_, err = st.CreateCollection("empty", "", []int64{source.ID})
+	require.NoError(err)
+	require.NoError(st.RemoveSourcesFromCollection("empty", []int64{source.ID}))
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+	rec := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search?q=fixture&mode=hybrid&collection=empty", nil))
+	assert.Equal(http.StatusServiceUnavailable, rec.Code)
+	assert.Contains(rec.Body.String(), "vector_not_enabled")
+	for _, tc := range []struct {
+		name    string
+		backend *fakeVectorBackend
+		code    string
+	}{
+		{"stale", &fakeVectorBackend{active: &vector.Generation{ID: 1, Fingerprint: "old", State: vector.GenerationActive}}, "index_stale"},
+		{"building", &fakeVectorBackend{building: &vector.Generation{ID: 1, State: vector.GenerationBuilding}}, "index_building"},
+	} {
+		engine := hybrid.NewEngine(tc.backend, nil, realEmbedder{dim: 4}, hybrid.Config{ExpectedFingerprint: "new"})
+		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, HybridEngine: engine, Backend: tc.backend, Logger: testLogger()})
+		rec := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search?q=fixture&mode=vector&collection=empty", nil))
+		assert.Equal(http.StatusServiceUnavailable, rec.Code, tc.name)
+		assert.Contains(rec.Body.String(), tc.code, tc.name)
+	}
+	backend := &fakeVectorBackend{active: &vector.Generation{ID: 1, Fingerprint: "ready", State: vector.GenerationActive}}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{ExpectedFingerprint: "ready"})
+	srv = NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, HybridEngine: engine, Backend: backend, Logger: testLogger()})
+	rec = httptest.NewRecorder()
+	srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search?q=fixture&mode=vector&collection=empty", nil))
+	assert.Equal(http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal([]int64{-1}, backend.searchFilter.ConversationIDs)
+
+}

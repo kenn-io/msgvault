@@ -900,27 +900,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		parsedQuery.AccountIDs = agentReadSourceIDs(r)
 	}
 
-	account := r.URL.Query().Get("account")
-	collection := r.URL.Query().Get("collection")
-	scope := cliScope{}
-	if account != "" || collection != "" {
-		cliStore, apiErr := s.cliStore()
-		if apiErr != nil {
-			writeAPIHTTPError(w, apiErr)
-			return
-		}
-		var err error
-		scope, err = resolveCLIStatsScope(r.Context(), bindCLIStoreContext(r.Context(), cliStore), account, collection)
-		if err != nil {
-			writeAPIHTTPError(w, s.cliScopeError(err))
-			return
-		}
-		sourceIDs := scope.sourceIDs()
-		if len(sourceIDs) == 0 {
-			writeError(w, http.StatusBadRequest, "empty_scope", cliEmptyScopeMessage(account, collection))
-			return
-		}
-		parsedQuery.AccountIDs = append(parsedQuery.AccountIDs, sourceIDs...)
+	scope, ok := s.resolveSearchScope(w, r, parsedQuery, mode)
+	if !ok {
+		return
 	}
 
 	if mode == "vector" || mode == exploreSearchModeHybrid {
@@ -1066,6 +1048,33 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		PageSize:   pageSize,
 		Messages:   summaries,
 	})
+}
+
+func (s *Server) resolveSearchScope(w http.ResponseWriter, r *http.Request, parsedQuery *search.Query, mode string) (cliScope, bool) {
+	account, collection := r.URL.Query().Get("account"), r.URL.Query().Get("collection")
+	if account == "" && collection == "" {
+		return cliScope{}, true
+	}
+	cliStore, apiErr := s.cliStore()
+	if apiErr != nil {
+		writeAPIHTTPError(w, apiErr)
+		return cliScope{}, false
+	}
+	scope, err := resolveCLIStatsScope(r.Context(), bindCLIStoreContext(r.Context(), cliStore), account, collection)
+	if err != nil {
+		writeAPIHTTPError(w, s.cliScopeError(err))
+		return cliScope{}, false
+	}
+	sourceIDs := scope.sourceIDs()
+	if len(sourceIDs) == 0 {
+		if collection == "" || (mode != "vector" && mode != exploreSearchModeHybrid) {
+			writeError(w, http.StatusBadRequest, "empty_scope", cliEmptyScopeMessage(account, collection))
+			return cliScope{}, false
+		}
+		parsedQuery.ConversationIDs = []int64{} // An empty scope matches no conversations.
+	}
+	parsedQuery.AccountIDs = append(parsedQuery.AccountIDs, sourceIDs...)
+	return scope, true
 }
 
 func parseSearchQueryRequest(r *http.Request, query string) *search.Query {
