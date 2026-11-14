@@ -233,7 +233,13 @@ func Run(ctx context.Context, st *store.Store, blobs StreamStore, root string, o
 
 func remotePath(path string) bool {
 	path = strings.ToLower(path)
-	return strings.HasPrefix(path, "https://") || strings.HasPrefix(path, "http://")
+	return strings.HasPrefix(path, "https://") || strings.HasPrefix(path, "http://") ||
+		strings.HasPrefix(path, "inline:pending:") || strings.HasPrefix(path, "matrix:mxc://")
+}
+
+// SQL drivers can report interruption before the caller observes ctx.Err().
+func interrupted(ctx context.Context, err error) bool {
+	return ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func policySkip(reason string) bool {
@@ -254,6 +260,9 @@ func sameAuthority(a, b store.AttachmentBlobLocation) bool {
 
 func check(ctx context.Context, st *store.Store, blobs StreamStore, root string, item *content, remaining int64) (status, reason, packID string, n int64, stopped string, checked bool) {
 	before, err := st.ResolveAttachmentBlobContext(ctx, item.hash)
+	if interrupted(ctx, err) {
+		return NotChecked, "cancelled or timeout before verification completed", "", 0, "cancelled or timeout", false
+	}
 	if err != nil {
 		return Inconclusive, "catalogue could not be resolved", "", 0, "", false
 	}
@@ -269,6 +278,9 @@ func check(ctx context.Context, st *store.Store, blobs StreamStore, root string,
 		// to hide a missing authoritative pack. The Kit reader handles migrations
 		// of canonical loose files and packs itself.
 		current, resolveErr := st.ResolveAttachmentBlobContext(ctx, item.hash)
+		if interrupted(ctx, resolveErr) {
+			return NotChecked, "cancelled or timeout before verification completed", packID, 0, "cancelled or timeout", false
+		}
 		if resolveErr != nil || !sameAuthority(before, current) {
 			return Inconclusive, "authority changed or became unavailable", packID, 0, "", false
 		}
@@ -299,6 +311,9 @@ func check(ctx context.Context, st *store.Store, blobs StreamStore, root string,
 		return NotChecked, "cancelled or timeout before verification completed", packID, n, "cancelled or timeout", checked
 	}
 	after, resolveErr := st.ResolveAttachmentBlobContext(ctx, item.hash)
+	if interrupted(ctx, resolveErr) {
+		return NotChecked, "cancelled or timeout before verification completed", packID, n, "cancelled or timeout", checked
+	}
 	if resolveErr != nil || !sameAuthority(before, after) {
 		return Inconclusive, "authority changed or became unavailable", packID, n, "", checked
 	}

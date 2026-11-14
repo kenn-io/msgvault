@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -203,6 +205,14 @@ func TestOmissionsAndUnverifiableReferences(t *testing.T) {
 		{"unavailable", "", "", "unavailable", "source_unavailable", attachmentverify.NotMaterialized},
 		{"unexplained skip", "", "", "skipped", "", attachmentverify.NotMaterialized},
 		{"external", "", "https://files.example.com/content", "pending", "", attachmentverify.NotMaterialized},
+		{"inline policy", "", "inline:pending:document:1", "skipped", "policy_scope", attachmentverify.Omitted},
+		{"matrix policy", "", "matrix:mxc://example.org/media", "skipped", "size_cap", attachmentverify.Omitted},
+		{"inline pending", "", "inline:pending:document:1", "pending", "", attachmentverify.NotMaterialized},
+		{"matrix failed", "", "matrix:mxc://example.org/media", "failed", "fetch_failure", attachmentverify.NotMaterialized},
+		{"local policy", "", "legacy/file", "skipped", "policy_scope", attachmentverify.Inconclusive},
+		{"local provider-like name", "", "legacy/inline:pending:document:1", "skipped", "policy_scope", attachmentverify.Inconclusive},
+		{"inline-like local name", "", "inline:pending-file", "skipped", "policy_scope", attachmentverify.Inconclusive},
+		{"matrix-like local name", "", "matrix:file.bin", "skipped", "policy_scope", attachmentverify.Inconclusive},
 		{"invalid hash", "invalid", "legacy/file", "stored", "", attachmentverify.Inconclusive},
 		{"escaping path", strings.Repeat("a", 64), "../outside", "stored", "", attachmentverify.Inconclusive},
 	} {
@@ -597,4 +607,184 @@ func TestLateNotExistErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// sqlBoundaryHandler observes real catalogue queries after QueryRowContext,
+// before Scan. Cancelling here exercises database/sql's actual error path.
+type sqlBoundaryHandler struct{ observe func(slog.Record) }
+
+func (h sqlBoundaryHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h sqlBoundaryHandler) Handle(_ context.Context, record slog.Record) error {
+	h.observe(record)
+	return nil
+}
+func (h sqlBoundaryHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h sqlBoundaryHandler) WithGroup(string) slog.Handler      { return h }
+
+type streamStoreFunc func(context.Context, string) (io.ReadCloser, int64, error)
+
+func (f streamStoreFunc) OpenStream(ctx context.Context, hash string) (io.ReadCloser, int64, error) {
+	return f(ctx, hash)
+}
+
+type closeObserved struct {
+	io.ReadCloser
+
+	closed func()
+}
+
+func (r closeObserved) Close() error {
+	err := r.ReadCloser.Close()
+	r.closed()
+	return err
+}
+
+func TestCatalogueInterruptionPreservesResumeCursor(t *testing.T) {
+	for _, phase := range []string{"initial loose", "initial packed", "legacy recheck", "final loose", "final packed"} {
+		for _, interruption := range []string{"cancel", "timeout"} {
+			t.Run(phase+"/"+interruption, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				f := newFixture(t)
+				prefix, _ := f.row("", "", 0)
+				_, err := f.st.DB().ExecContext(t.Context(), f.st.Rebind("UPDATE attachments SET attachment_state = ?, attachment_skip_reason = ? WHERE id = ?"), "skipped", "policy_scope", prefix)
+				require.NoError(err)
+				data := []byte("synthetic catalogue interruption bytes")
+				hash := pack.ComputeBlobID(data).String()
+				path := hash[:2] + "/" + hash
+				var target int64
+				if strings.Contains(phase, "packed") {
+					f.packed(data)
+					require.NoError(f.st.DB().QueryRowContext(t.Context(), "SELECT MAX(id) FROM attachments").Scan(&target))
+				} else {
+					if phase == "legacy recheck" {
+						path = "legacy/" + hash
+					}
+					target, _ = f.row(hash, path, len(data))
+					f.write(path, data)
+				}
+				lastData := []byte("synthetic next page bytes")
+				lastHash := pack.ComputeBlobID(lastData).String()
+				lastPath := lastHash[:2] + "/" + lastHash
+				last, _ := f.row(lastHash, lastPath, len(lastData))
+				f.write(lastPath, lastData)
+				f.st.DB().SetMaxOpenConns(1)
+				ctx, cancel := context.WithCancel(t.Context())
+				if interruption == "timeout" {
+					cancel()
+					ctx, cancel = context.WithTimeout(t.Context(), time.Second)
+				}
+				defer cancel()
+				var armed, fired, closed atomic.Bool
+				armed.Store(strings.HasPrefix(phase, "initial"))
+				previousLogger := slog.Default()
+				t.Cleanup(func() { slog.SetDefault(previousLogger) })
+				slog.SetDefault(slog.New(sqlBoundaryHandler{observe: func(record slog.Record) {
+					var kind, statement string
+					record.Attrs(func(attr slog.Attr) bool {
+						switch attr.Key {
+						case "kind":
+							kind = attr.Value.String()
+						case "stmt":
+							statement = attr.Value.String()
+						}
+						return true
+					})
+					if kind != "queryrow" || !strings.Contains(statement, "WITH requested(blob_hash)") || !armed.CompareAndSwap(true, false) {
+						return
+					}
+					fired.Store(true)
+					if interruption == "cancel" {
+						cancel()
+					}
+					<-ctx.Done()
+					// Wait for database/sql to close the cancelled rows, so Scan
+					// deterministically reports interruption on either backend.
+					require.Eventually(func() bool { return f.st.DB().Stats().InUse == 0 }, 5*time.Second, 10*time.Millisecond)
+				}}))
+				reader := streamStoreFunc(func(readCtx context.Context, hash string) (io.ReadCloser, int64, error) {
+					r, size, err := f.blobs.OpenStream(readCtx, hash)
+					if phase == "legacy recheck" {
+						require.ErrorIs(err, os.ErrNotExist)
+						armed.Store(true)
+					}
+					if err == nil {
+						r = closeObserved{r, func() {
+							closed.Store(true)
+							armed.Store(strings.HasPrefix(phase, "final"))
+						}}
+					}
+					return r, size, err
+				})
+				opts := options()
+				opts.Limit = 2
+				report, err := attachmentverify.Run(ctx, f.st, reader, f.root, opts)
+				require.NoError(err)
+				assert.True(fired.Load(), "interruption must occur during a real catalogue query")
+				assert.Equal("partial", report.State)
+				assert.Equal("cancelled or timeout", report.StopReason)
+				assert.True(report.More)
+				assert.Equal(prefix, report.NextAfterID)
+				assert.Equal(attachmentverify.NotChecked, report.References[1].Status)
+				assert.Equal(1, report.Counts[attachmentverify.NotChecked])
+				assert.Zero(report.ContentsVerified)
+				assert.Zero(report.ReferencesVerified)
+				assert.Zero(report.ReferencesAffected)
+				assert.Equal(strings.HasPrefix(phase, "final"), closed.Load())
+				if closed.Load() {
+					assert.Equal(int64(len(data)), report.BytesRead, "stream reached EOF before catalogue recheck")
+					assert.Equal(1, report.ContentsOpened)
+				}
+				// Resume must select the interrupted row, then the final page.
+				opts.AfterID, opts.Limit = report.NextAfterID, 1
+				resumed, err := attachmentverify.Run(t.Context(), f.st, f.blobs, f.root, opts)
+				require.NoError(err)
+				require.Len(resumed.References, 1)
+				assert.Equal(target, resumed.References[0].AttachmentID)
+				assert.Equal(1, resumed.ReferencesVerified)
+				assert.Equal(target, resumed.NextAfterID)
+				assert.True(resumed.More)
+				opts.AfterID = resumed.NextAfterID
+				finished, err := attachmentverify.Run(t.Context(), f.st, f.blobs, f.root, opts)
+				require.NoError(err)
+				assert.Equal("complete", finished.State)
+				assert.Equal(1, finished.ReferencesVerified)
+				assert.Equal(last, finished.NextAfterID)
+				assert.False(finished.More)
+			})
+		}
+	}
+}
+
+func TestProviderOmissionsPagination(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFixture(t)
+	var ids []int64
+	for _, path := range []string{"https://files.example.org/media", "inline:pending:document:1", "matrix:mxc://example.org/media"} {
+		id, _ := f.row("", path, 10)
+		ids = append(ids, id)
+		_, err := f.st.DB().ExecContext(t.Context(), f.st.Rebind("UPDATE attachments SET attachment_state = ?, attachment_skip_reason = ? WHERE id = ?"), "skipped", "policy_scope", id)
+		require.NoError(err)
+	}
+	opts := options()
+	opts.Limit = 2
+	first, err := attachmentverify.Run(t.Context(), f.st, f.blobs, f.root, opts)
+	require.NoError(err)
+	assert.Equal("partial", first.State)
+	assert.Equal(2, first.Counts[attachmentverify.Omitted])
+	assert.Equal(ids[1], first.NextAfterID)
+	assert.True(first.More)
+	assert.Zero(first.ContentsOpened)
+	assert.Zero(first.ReferencesAffected)
+	opts.AfterID = first.NextAfterID
+	last, err := attachmentverify.Run(t.Context(), f.st, f.blobs, f.root, opts)
+	require.NoError(err)
+	assert.Equal("complete", last.State)
+	assert.Equal(1, last.Counts[attachmentverify.Omitted])
+	assert.Equal(ids[2], last.NextAfterID)
+	assert.False(last.More)
+	assert.Zero(last.ContentsOpened)
+	assert.Zero(last.ReferencesVerified)
+	assert.Zero(last.ReferencesAffected)
 }

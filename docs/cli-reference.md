@@ -3263,6 +3263,12 @@ occurrences. Each row contributes a content slot and, when present, a thumbnail
 slot. The command reads no message text or RAW MIME. It does not discover
 attachments whose SQL rows are absent.
 
+HTTP(S) locators and the importer markers `inline:pending:` and `matrix:mxc://`
+describe remote content. Without a retained hash, an explicit policy skip is an
+intentional omission; pending or failed downloads remain not materialized.
+A local path without an expected hash remains inconclusive, including when the
+row records a policy skip.
+
 Valid local hashes are deduplicated within the page, including case aliases and
 hashes shared by content and thumbnails. The reader follows the current pack
 index when present, otherwise canonical loose storage, including compressed
@@ -3301,6 +3307,9 @@ Transport/output errors also fail; an absent report is never proof of success.
 
 Use `next_after_id` as `--after-id` to continue. It advances only past rows without
 unfinished slots; increase the byte budget if one large object prevents progress.
+Cancellation or timeout during a catalogue lookup or recheck leaves that slot
+`not_checked` and stops the page; the resume cursor stays before its row, even
+when the stream was already consumed and closed successfully.
 `more` describes rows beyond the selected page. Each page is a new observation.
 The SQL cursor closes before file reading; there is no global transaction across
 SQL and files. New rows after selection are not covered. Removal, replacement,
