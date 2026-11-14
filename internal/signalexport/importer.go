@@ -94,6 +94,9 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		for _, candidate := range []string{p.aci, p.phone} {
 			if candidate != "" {
 				if err := st.AddParticipantIdentifierIfAbsentContext(ctx, participant, SourceType, scopedKey(scope, candidate)); err != nil {
+					if errors.Is(err, store.ErrParticipantIdentifierConflict) {
+						return 0, fmt.Errorf("Signal contact identifiers belong to different participants: %w", err)
+					}
 					return 0, err
 				}
 			}

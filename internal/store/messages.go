@@ -5247,7 +5247,11 @@ func (s *Store) SetParticipantIdentifierContext(ctx context.Context, participant
 	return s.setParticipantIdentifierContext(ctx, participantID, identifierType, identifierValue, false)
 }
 
-// AddParticipantIdentifierIfAbsentContext preserves an existing identifier owner.
+// ErrParticipantIdentifierConflict means an identifier belongs to another participant.
+var ErrParticipantIdentifierConflict = errors.New("participant identifier belongs to another participant")
+
+// AddParticipantIdentifierIfAbsentContext returns ErrParticipantIdentifierConflict
+// when the identifier already belongs to another participant.
 func (s *Store) AddParticipantIdentifierIfAbsentContext(ctx context.Context, participantID int64, identifierType, identifierValue string) error {
 	return s.setParticipantIdentifierContext(ctx, participantID, identifierType, identifierValue, true)
 }
@@ -5275,7 +5279,10 @@ func (s *Store) setParticipantIdentifierContext(ctx context.Context, participant
 		existingParticipantID, exists, err := participantIdentifierTargetTx(
 			ctx, tx, identifierType, identifierValue,
 		)
-		noop = exists && (onlyAbsent || existingParticipantID == participantID)
+		if err == nil && exists && onlyAbsent && existingParticipantID != participantID {
+			return ErrParticipantIdentifierConflict
+		}
+		noop = exists && existingParticipantID == participantID
 		return err
 	}); err != nil || noop {
 		return err
@@ -5291,8 +5298,11 @@ func (s *Store) setParticipantIdentifierContext(ctx context.Context, participant
 		existingParticipantID, exists, err := participantIdentifierTargetTx(
 			ctx, tx, identifierType, identifierValue,
 		)
-		if err != nil || (exists && (onlyAbsent || existingParticipantID == participantID)) {
+		if err != nil || (exists && existingParticipantID == participantID) {
 			return err
+		}
+		if exists && onlyAbsent {
+			return ErrParticipantIdentifierConflict
 		}
 		serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
 			identifierType, identifierValue,

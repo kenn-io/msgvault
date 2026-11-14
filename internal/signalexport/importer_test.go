@@ -908,7 +908,8 @@ func TestContactDoesNotReassignExistingAlias(t *testing.T) {
 	lines := []string{header, account, self, `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`, direct, incoming}
 	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
 	_, err = Import(t.Context(), st, options(t, root))
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "Signal contact identifiers belong to different participants")
+	assert.Zero(t, messageCount(t, st))
 	aciOwner, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, aci)
 	require.NoError(t, err)
 	phoneOwner, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phone)
