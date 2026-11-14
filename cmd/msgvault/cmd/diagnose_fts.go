@@ -16,20 +16,23 @@ func newDiagnoseFTSCmd() *cobra.Command {
 	var jsonOut bool
 	command := &cobra.Command{
 		Use:   "diagnose-fts",
-		Short: "Check a bounded page of stored search documents",
+		Short: "Check search documents against stored messages",
 		Long: `Compare search documents with stored message text, subjects, senders and the
 recipient fields used for search. Leaves the archive unchanged and does not
 contact providers. Runs through the configured daemon.
 
 Each message is checked at one point in time. Pages may reflect different times.
 For stable archive-wide results, use an isolated copy with writes stopped.
-Matches compare stored data; they do not check underlying search index entries
-or original MIME.
+A match covers saved search documents. It does not verify the underlying search
+index or the original message bytes.
 
-Success means this page reaches the end of the selected messages with no
-differences or checks that could not be completed. Continue on the same archive
-with --cursor and the report's next_cursor value. If a response is lost, retry
-with the cursor supplied for that request.`,
+Matched means the search document agrees with stored data. A defect is a proven
+difference; an inconclusive check could not establish agreement. The complete
+field describes coverage, not whether documents match. A page succeeds only when
+it reaches the end of the selection with no defects or inconclusive checks.
+
+Continue on the same archive with --cursor and the report's next_cursor value.
+If a response is lost, retry with the cursor supplied for that request.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.Limit < 1 || opts.Limit > 1000 || opts.Timeout < time.Second || opts.Timeout > 5*time.Minute {
@@ -55,10 +58,10 @@ with the cursor supplied for that request.`,
 			return runFTSDiagnostic(cmd, st, opts, jsonOut)
 		},
 	}
-	command.Flags().StringVar(&opts.Cursor, "cursor", "", "Continue with the report's next_cursor value on this archive")
-	command.Flags().IntVar(&opts.Limit, "limit", 100, "Maximum messages to check (1..1000)")
-	command.Flags().DurationVar(&opts.Timeout, "timeout", 30*time.Second, "Maximum diagnostic runtime (1s..5m)")
-	command.Flags().BoolVar(&jsonOut, "json", false, "Output the bounded report as JSON")
+	command.Flags().StringVar(&opts.Cursor, "cursor", "", "Resume with the report's next_cursor value on the same archive")
+	command.Flags().IntVar(&opts.Limit, "limit", 100, "Maximum number of messages to check (1..1000)")
+	command.Flags().DurationVar(&opts.Timeout, "timeout", 30*time.Second, "Stop checking after this duration (1s..5m)")
+	command.Flags().BoolVar(&jsonOut, "json", false, "Write the report as JSON for scripts")
 	return command
 }
 
@@ -142,6 +145,8 @@ func writeFTSDiagnostic(w io.Writer, r store.FTSDiagnosticReport, jsonOut bool) 
 	return nil
 }
 
+// Translate report codes only for text output. JSON keeps the stable codes
+// so scripts do not depend on the wording of an explanation.
 func ftsDiagnosticDescription(code string) string {
 	switch code {
 	case "missing":
@@ -151,19 +156,19 @@ func ftsDiagnosticDescription(code string) string {
 	case "document_mismatch":
 		return "search document differs from stored data"
 	case "auxiliary_mismatch":
-		return "phrase-search fields differ from the expected fields"
+		return "data used for phrase searches differs from the stored message"
 	case "identity_mismatch":
 		return "Search entry has an invalid message ID"
 	case "input_limit":
-		return "comparison input exceeds the diagnostic limit"
+		return "message text or recipient data exceeds the diagnostic limits; comparison could not be completed"
 	case "expected_vector_overflow":
 		return "Expected search data exceeds PostgreSQL's limit; stored data remains unverified"
 	case "message_disappeared":
-		return "message disappeared after selection"
+		return "message was removed before it could be checked"
 	case "fts_unavailable":
 		return "search index is unavailable"
 	case "page_limit":
-		return "more messages remain in the selected interval"
+		return "more selected messages remain to be checked"
 	case "canceled", "interrupted":
 		return "verification interrupted"
 	case "timeout":

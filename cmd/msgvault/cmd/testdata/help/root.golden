@@ -155,7 +155,7 @@ Indexes, embeddings, and analytics cache:
   activity  Build the derived activity spine
   build-cache  Build analytics cache for fast TUI queries
   cache-stats  Show statistics about the analytics cache
-  diagnose-fts  Check a bounded page of stored search documents
+  diagnose-fts  Check search documents against stored messages
   embeddings  Manage message vector embeddings
   eval  Score search quality against relevance judgments (qrels)
   multimodal  Manage and search visual attachment embeddings

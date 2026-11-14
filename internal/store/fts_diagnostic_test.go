@@ -74,7 +74,8 @@ func TestFTSDiagnosticDocuments(t *testing.T) {
 				a.Equal("defects", got.Outcome)
 				a.Contains(got.Entries[0].Issues, tc.issue)
 				a.Equal(1, got.Defects)
-				// Existing readiness probes do not compare current documents.
+				// Backfill finds a missing entry, but does not detect wrong
+				// contents in an entry that is already present.
 				needs, err := f.Store.NeedsFTSBackfillContext(t.Context())
 				r.NoError(err)
 				a.Equal(tc.issue == "missing", needs)
@@ -286,7 +287,8 @@ func TestFTSDiagnosticSQLiteRecipientNULPreflight(t *testing.T) {
 	}
 	id := f.CreateMessage("synthetic-recipient-nul")
 	participant := f.EnsureParticipant("synthetic@example.test", "Synthetic", "example.test")
-	// Bcc is outside the FTS envelope, so only the preflight can enforce this bound.
+	// Bcc is not part of the compared search document. Only the recipient
+	// precheck can catch this oversized value.
 	r.NoError(f.Store.ReplaceMessageRecipientsContext(t.Context(), id, "bcc", []int64{participant}, nil))
 	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE message_recipients SET display_name = ? WHERE message_id = ?`, "prefix\x00"+strings.Repeat("x", 1_000_001), id)
 	r.NoError(err)

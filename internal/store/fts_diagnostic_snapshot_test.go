@@ -14,8 +14,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Observe real queries, including cancellation inside the driver. The forwarding
-// connector is shared with the existing Gmail snapshot tests; SQL is never faked.
+// Pause real database queries at a chosen read, including inside the driver
+// during cancellation. Reuse the Gmail snapshot test helpers while keeping the
+// actual SQLite and PostgreSQL queries and transaction behavior.
 type ftsDiagnosticGateConnector struct {
 	driver.Connector
 
@@ -219,8 +220,9 @@ func TestFTSDiagnosticSQLFailureAndUnavailable(t *testing.T) {
 	a, r := assert.New(t), require.New(t)
 	st, _ := newFTSDiagnosticGateStore(t, "unused")
 	id := seedFTSDiagnosticGateMessage(t, st)
-	// Real unavailable representation: the existing Store still remembers its
-	// startup capability, so a subsequent point read fails instead of matching.
+	// Remove search data after the Store has detected that search is available.
+	// Its next read must fail and preserve a retry position, rather than claim
+	// that the message matches.
 	statement := `DROP TABLE messages_fts`
 	if st.IsPostgreSQL() {
 		statement = `ALTER TABLE messages DROP COLUMN search_fts_fields`

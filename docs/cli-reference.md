@@ -4250,8 +4250,9 @@ match. An empty vector differs from a legitimate v3 empty document, which still
 contains separators. If the expected vector itself overflows, the result is
 `inconclusive`, with `expected_vector_overflow`; no cause is inferred from a
 stored empty vector. SQLite compares the five FTS5 content columns and row
-identity. These checks compare stored representations; they do not verify
-physical postings, tokenizer implementation, MIME extraction or original bytes.
+identity. These checks compare saved search documents. They do not verify the
+underlying index structure, how text was extracted from original messages or
+split into search terms, or the original message bytes.
 Existing database integrity checks cover a different dimension.
 
 Inputs are limited to 1,000,000 bytes per document field and 256 recipients.
