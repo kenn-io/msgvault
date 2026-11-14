@@ -30,7 +30,7 @@ func (s *Store) migrateAttributeValueJSON(ctx context.Context) error {
 
 func (s *Store) migrateAttributeValueJSONSQLite(ctx context.Context) (err error) {
 	if writableSnapshot(ctx, s.db.DB) != nil {
-		return nil // Fresh archives already use the current schema.
+		return nil
 	}
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
