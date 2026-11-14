@@ -381,15 +381,16 @@ func TestPersonAttributesHTTPKeepsInactiveDefinitionValuesVisibleAndClearable(t 
 }
 
 func TestSetPersonAttributeExpectedEmpty(t *testing.T) {
+	assert := assert.New(t)
 	srv, person := newPersonAttributeFixture(t)
 	path := personAttributesPath(person) + "/" + store.AttributeSlugPrimaryChannel
 	body := []byte(`{"value":{"type":"text","text":"email"},"expected_empty":true}`)
 	first := attributeRequest(t, srv, http.MethodPut, path, body, "")
 	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
 	second := attributeRequest(t, srv, http.MethodPut, path, body, "")
-	assert.Equal(t, http.StatusConflict, second.Code, second.Body.String())
-	assert.Contains(t, second.Body.String(), "current_value")
+	assert.Equal(http.StatusConflict, second.Code, second.Body.String())
+	assert.Contains(second.Body.String(), "current_value")
 	invalid := attributeRequest(t, srv, http.MethodPut, path, []byte(`{"value":{"type":"text","text":"email"},"expected_empty":true,"expected_value_id":1}`), "")
-	assert.Equal(t, http.StatusBadRequest, invalid.Code, invalid.Body.String())
-	assert.Contains(t, invalid.Body.String(), "invalid_expected_empty")
+	assert.Equal(http.StatusBadRequest, invalid.Code, invalid.Body.String())
+	assert.Contains(invalid.Body.String(), "invalid_expected_empty")
 }
