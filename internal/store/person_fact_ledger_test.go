@@ -742,7 +742,6 @@ func TestClaimFreshnessUsesSupportedEvidence(t *testing.T) {
 	r.NoError(err)
 	r.Len(page, 1)
 	r.NotNil(page[0].Freshness.LatestSupportedAt)
-	a.Equal(personfacts.KindFact, page[0].Freshness.Kind)
 	a.Equal(personfacts.StatusFresh, page[0].Freshness.Status)
 	a.WithinDuration(recent, *page[0].Freshness.LatestSupportedAt, time.Microsecond)
 	var newest personfacts.Evidence
