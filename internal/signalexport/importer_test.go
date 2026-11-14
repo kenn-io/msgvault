@@ -117,7 +117,7 @@ func TestImportDistinctMessagesAtSameMillisecond(t *testing.T) {
 			require.NoError(t, err)
 			added := max(len(tc.replay)-len(tc.frames), 0)
 			assert.EqualValues(t, added, summary.MessagesAdded)
-			assert.EqualValues(t, int64(len(tc.replay)-added)-tc.skipped, summary.MessagesExisting)
+			assert.Equal(t, int64(len(tc.replay)-added)-tc.skipped, summary.MessagesExisting)
 			assert.Equal(t, tc.changed, summary.MessagesChanged)
 			assert.Equal(t, tc.skipped, summary.Skipped["ambiguous_message"])
 			assert.Equal(t, len(tc.frames)+added, messageCount(t, st))
@@ -812,6 +812,7 @@ func TestImportAmbiguousSameTimeReplay(t *testing.T) {
 	assert.Equal(t, 2, first.AttachmentsMissing)
 	rows, err := st.DB().QueryContext(t.Context(), "SELECT id FROM messages ORDER BY id")
 	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
 	var ids []int64
 	for rows.Next() {
 		var id int64
@@ -876,6 +877,7 @@ func TestImportSameTimeMediaRepair(t *testing.T) {
 	assert.Equal(t, 2, first.AttachmentsMissing)
 	rows, err := st.DB().QueryContext(t.Context(), "SELECT id FROM messages ORDER BY id")
 	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
 	var ids []int64
 	for rows.Next() {
 		var id int64
