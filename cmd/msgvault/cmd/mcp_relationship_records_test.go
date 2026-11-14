@@ -103,36 +103,81 @@ func TestMCPRelationshipRecords(t *testing.T) {
 }
 
 func TestMCPRelationshipListAndNetworkReads(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	st, backend, source, target := relationshipFixture(t)
-	session := operationMCPSession(t, backend, nil, nil)
-	emptyResult, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_relationships", Arguments: map[string]any{"person_id": source}})
-	requirements.NoError(err)
-	empty := loopToolOutput[mcpserver.PersonRelationshipsPage](t, emptyResult)
-	requirements.NotNil(empty.Relationships)
-	assertions.Empty(*empty.Relationships)
-	person, err := st.GetPerson(target)
-	requirements.NoError(err)
-	ref, uid := "example-ref", "example-uid"
-	imported, err := st.ResolveRelatedValueContext(t.Context(), store.RelatedImport{PersonID: source, RawValue: person.VCardUID, RawType: "agent", ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport, SourceRef: &ref, SourceResourceUID: &uid, Actor: "system"})
-	requirements.NoError(err)
-	requirements.NotNil(imported.Relationship)
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_relationships", Arguments: map[string]any{"person_id": source}})
-	requirements.NoError(err)
-	inline := loopToolOutput[mcpserver.PersonRelationshipsPage](t, result)
-	requirements.NotNil(inline.Relationships)
-	requirements.Len(*inline.Relationships, 1)
-	assertions.Equal(&ref, (*inline.Relationships)[0].Relationship.SourceRef)
-	assertions.Equal(&uid, (*inline.Relationships)[0].Relationship.SourceResourceUID)
-	networkResult, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_person_network", Arguments: map[string]any{"person_id": source}})
-	requirements.NoError(err)
-	network := loopToolOutput[generated.PersonNetwork](t, networkResult)
-	assertions.Equal(source, network.RootPersonID)
-	requirements.Len(network.Edges, 1)
-	missing, err := backend.ExecuteOperation(t.Context(), "get_person_network", map[string]any{"person_id": int64(999999)})
-	requirements.NoError(err)
-	assertLoopRefusal(t, missing, "person_profile_not_found", false)
+	t.Run("inline", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		st, backend, source, target := relationshipFixture(t)
+		session := operationMCPSession(t, backend, nil, nil)
+		emptyResult, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_relationships", Arguments: map[string]any{"person_id": source}})
+		requirements.NoError(err)
+		empty := loopToolOutput[mcpserver.PersonRelationshipsPage](t, emptyResult)
+		requirements.NotNil(empty.Relationships)
+		assertions.Empty(*empty.Relationships)
+		person, err := st.GetPerson(target)
+		requirements.NoError(err)
+		ref, uid := "example-ref", "example-uid"
+		imported, err := st.ResolveRelatedValueContext(t.Context(), store.RelatedImport{PersonID: source, RawValue: person.VCardUID, RawType: "agent", ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport, SourceRef: &ref, SourceResourceUID: &uid, Actor: "system"})
+		requirements.NoError(err)
+		requirements.NotNil(imported.Relationship)
+		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_relationships", Arguments: map[string]any{"person_id": source}})
+		requirements.NoError(err)
+		inline := loopToolOutput[mcpserver.PersonRelationshipsPage](t, result)
+		requirements.NotNil(inline.Relationships)
+		requirements.Len(*inline.Relationships, 1)
+		assertions.Equal(&ref, (*inline.Relationships)[0].Relationship.SourceRef)
+		assertions.Equal(&uid, (*inline.Relationships)[0].Relationship.SourceResourceUID)
+		networkResult, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_person_network", Arguments: map[string]any{"person_id": source}})
+		requirements.NoError(err)
+		network := loopToolOutput[generated.PersonNetwork](t, networkResult)
+		assertions.Equal(source, network.RootPersonID)
+		requirements.Len(network.Edges, 1)
+		missing, err := backend.ExecuteOperation(t.Context(), "get_person_network", map[string]any{"person_id": int64(999999)})
+		requirements.NoError(err)
+		assertLoopRefusal(t, missing, "person_profile_not_found", false)
+	})
+	t.Run("large list", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		st, backend, root, _ := relationshipFixture(t)
+		notes := strings.Repeat("x", 4096)
+		for i := range 260 {
+			participant, err := st.EnsureParticipant(fmt.Sprintf("user-%d@example.com", i), "Example", "example.com")
+			requirements.NoError(err)
+			person, _, err := st.CreatePersonFromParticipant(participant)
+			requirements.NoError(err)
+			_, err = st.AddPersonRelationshipContext(t.Context(), store.PersonRelationshipInput{SourcePersonID: root, TargetPersonID: person.ID, TypeSlug: "parent", Notes: &notes, Source: store.ProvenanceUser, Actor: "user"})
+			requirements.NoError(err)
+		}
+		raw, err := backend.ExecuteOperation(t.Context(), "list_person_relationships", map[string]any{"person_id": root})
+		requirements.NoError(err)
+		requirements.False(raw.IsError)
+		requirements.Greater(len(raw.Data), 1<<20)
+		session := operationMCPSession(t, backend, nil, nil)
+		args := map[string]any{"person_id": root}
+		var assembled bytes.Buffer
+		for {
+			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_relationships", Arguments: args})
+			requirements.NoError(err)
+			chunk := loopToolOutput[mcpserver.PersonRelationshipsPage](t, result)
+			requirements.NotNil(chunk.DataBase64)
+			requirements.NotNil(chunk.Complete)
+			requirements.NotNil(chunk.Offset)
+			requirements.NotNil(chunk.Length)
+			requirements.NotNil(chunk.SHA256)
+			if assembled.Len() == 0 {
+				assertions.False(*chunk.Complete)
+			}
+			data, err := base64.StdEncoding.DecodeString(*chunk.DataBase64)
+			requirements.NoError(err)
+			_, err = assembled.Write(data)
+			requirements.NoError(err)
+			if *chunk.Complete {
+				break
+			}
+			args = map[string]any{"person_id": root, "offset": *chunk.Offset + *chunk.Length, "sha256": *chunk.SHA256}
+		}
+		assertions.JSONEq(string(raw.Data), assembled.String())
+	})
 }
 
 func TestMCPRelationshipCapabilities(t *testing.T) {
@@ -158,37 +203,4 @@ func TestMCPRelationshipCapabilities(t *testing.T) {
 	assertions.NotContains(limited.capabilities(), "create_person_relationship")
 	assertions.NotContains(limited.capabilities(), "update_person_relationship")
 	assertions.NotContains(limited.capabilities(), "delete_person_relationship")
-}
-
-func TestMCPRelationshipLargeList(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	st, backend, root, _ := relationshipFixture(t)
-	notes := strings.Repeat("x", 4096)
-	for i := range 260 {
-		participant, err := st.EnsureParticipant(fmt.Sprintf("user-%d@example.com", i), "Example", "example.com")
-		requirements.NoError(err)
-		person, _, err := st.CreatePersonFromParticipant(participant)
-		requirements.NoError(err)
-		_, err = st.AddPersonRelationshipContext(t.Context(), store.PersonRelationshipInput{SourcePersonID: root, TargetPersonID: person.ID, TypeSlug: "parent", Notes: &notes, Source: store.ProvenanceUser, Actor: "user"})
-		requirements.NoError(err)
-	}
-	raw, err := backend.ExecuteOperation(t.Context(), "list_person_relationships", map[string]any{"person_id": root})
-	requirements.NoError(err)
-	requirements.False(raw.IsError)
-	requirements.Greater(len(raw.Data), 1<<20)
-	session := operationMCPSession(t, backend, nil, nil)
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_relationships", Arguments: map[string]any{"person_id": root}})
-	requirements.NoError(err)
-	chunk := loopToolOutput[mcpserver.PersonRelationshipsPage](t, result)
-	requirements.NotNil(chunk.DataBase64)
-	requirements.NotNil(chunk.Complete)
-	assertions.False(*chunk.Complete)
-	requirements.NotNil(chunk.Offset)
-	requirements.NotNil(chunk.Length)
-	requirements.NotNil(chunk.SHA256)
-	first, err := base64.StdEncoding.DecodeString(*chunk.DataBase64)
-	requirements.NoError(err)
-	requirements.NotEmpty(first)
-	assertions.True(bytes.HasPrefix(raw.Data, first))
 }

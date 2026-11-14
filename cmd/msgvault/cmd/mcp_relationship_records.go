@@ -55,18 +55,13 @@ type relationshipArguments struct {
 	Notes                *string `json:"notes,omitempty"`
 }
 
-func decodeRelationshipArguments(args map[string]any) (relationshipArguments, bool) {
-	input, err := decodeMCPOperationArguments[relationshipArguments](args)
-	return input, err == nil
-}
-
 func (b *daemonMCPOperations) executeRelationshipRecord(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	if !slices.Contains([]string{"list_relationship_types", "list_person_relationships", "get_person_network", "create_person_relationship", "update_person_relationship", "delete_person_relationship"}, name) {
 		return nil, false, nil
 	}
-	input, ok := decodeRelationshipArguments(args)
-	if !ok {
-		return operationFailure(invalidArguments, false), true, nil
+	input, err := decodeMCPOperationArguments[relationshipArguments](args)
+	if err != nil {
+		return operationFailure(invalidArguments, false), true, nil //nolint:nilerr // Invalid arguments are returned as an operation refusal.
 	}
 	switch name {
 	case "list_relationship_types":
@@ -101,8 +96,8 @@ func (b *daemonMCPOperations) relationshipDisclosure(ctx context.Context, name s
 	if !slices.Contains([]string{"create_person_relationship", "update_person_relationship", "delete_person_relationship"}, name) {
 		return "", false, nil
 	}
-	input, ok := decodeRelationshipArguments(args)
-	if !ok || (name == "update_person_relationship" && input.EndDate == nil && input.Notes == nil) {
+	input, err := decodeMCPOperationArguments[relationshipArguments](args)
+	if err != nil || (name == "update_person_relationship" && input.EndDate == nil && input.Notes == nil) {
 		return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 	}
 	var current any
