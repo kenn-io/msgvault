@@ -28,6 +28,7 @@ func TestClassifyFirstContact(t *testing.T) {
 	}
 	tests := []testCase{
 		{"introduction", email, FirstContactEmailIntro, 2, &sender, 25},
+		{"recorded sender with multiple authors", ActivityCandidate{ConversationType: "email_thread", SenderID: new(int64(2)), Counterparts: []ActivityCounterpart{owner, from, {ParticipantID: 4, RecipientType: "from"}, addressed}}, FirstContactObserved, 0, nil, 25},
 		{"ambiguous from", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{owner, from, {ParticipantID: 4, RecipientType: "from"}, addressed}}, FirstContactObserved, 0, nil, 25},
 		{"ambiguous target sender", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{owner, from, {ParticipantID: 4, PersonID: &target, RecipientType: "from"}}}, FirstContactObserved, 0, nil, 25},
 		{"ambiguous owner sender", ActivityCandidate{ConversationType: "email_thread", SourceIsFromMe: true, Counterparts: []ActivityCounterpart{{ParticipantID: 1, IsOwner: true, RecipientType: "from"}, from, addressed}}, FirstContactObserved, 0, nil, 25},

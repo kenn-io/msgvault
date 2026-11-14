@@ -50,7 +50,7 @@ func ClassifyFirstContact(candidate ActivityCandidate, personID int64, maxDirect
 			others[activityAudienceKey(*c)] = struct{}{}
 		}
 	}
-	if candidate.SenderID == nil && fromCount != 1 {
+	if fromCount != 1 {
 		sender = nil
 	}
 	if sender != nil && !ownerLinked(*sender) && (sender.PersonID == nil || *sender.PersonID != personID) && addressed && len(others) <= maxIntroCounterparts {
