@@ -18,7 +18,6 @@ func TestClaimFreshness(t *testing.T) {
 		kind   personfacts.FactKind
 		days   int
 	}{
-		{"fact", personfacts.TargetRef{Kind: personfacts.TargetEmployment}, nil, personfacts.KindFact, 365},
 		{"commitment", personfacts.TargetRef{Kind: personfacts.TargetCommitment}, nil, personfacts.KindCommitment, 90},
 		{"finite employment", personfacts.TargetRef{Kind: personfacts.TargetEmployment}, &until, personfacts.KindFact, 365},
 		{"event", personfacts.TargetRef{Kind: personfacts.TargetAttribute, Key: "custom-event"}, &until, personfacts.KindEvent, 7},

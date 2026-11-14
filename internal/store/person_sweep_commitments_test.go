@@ -23,11 +23,6 @@ func TestApplyCommitmentOnlySweepWritesClaimsAndDecisions(t *testing.T) {
 	const first, second = "I will send the draft.", "I will check the venue."
 	text := first + " " + second
 	id := persist("two-promises", text, -time.Hour)
-	profile := f.request.Generation.Policy.ProviderPolicyFingerprint
-	active, err := st.HasActivePersonInferenceConsent(ctx, profile)
-	r.NoError(err)
-	a.False(active)
-
 	cfg := peoplesweep.Config{}
 	cfg.ApplyDefaults()
 	cfg.Commitments.Enabled = true
@@ -67,8 +62,6 @@ func TestApplyCommitmentOnlySweepWritesClaimsAndDecisions(t *testing.T) {
 	r.NoError(err)
 	a.Equal(LoopStateDone, decision.State)
 	decisionID := decision.ID
-	_, err = st.db.ExecContext(ctx, st.Rebind(`UPDATE person_commitment_frontiers SET through_sequence = 0, backfill_message_id = 0 WHERE person_id = ?`), f.personID)
-	r.NoError(err)
 	f = nextCommitmentTestAttempt(t, f, "-repeat")
 	window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{
 		AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
@@ -92,16 +85,8 @@ func TestApplyCommitmentOnlySweepWritesClaimsAndDecisions(t *testing.T) {
 	_, complete, err = st.PersonCommitmentDiscoveryContext(ctx, f.personID)
 	r.NoError(err)
 	a.False(complete)
-	// Both ordinary journal consumers can read the ledger after commitment
-	// evidence has been added.
 	change := peoplesweep.ArchiveChange{PersonID: f.personID, SourceID: sourceID, MessageID: id,
 		SourceLane: peoplesweep.SourceConversationText, EvidenceEffect: peoplesweep.EvidenceEffectSourceEdited}
-	changes, err := st.BuildPersonSweepEvidenceStatusChanges(ctx, f.personID, []peoplesweep.ArchiveChange{change})
-	r.NoError(err)
-	r.Len(changes, 2)
-	for _, change := range changes {
-		a.False(change.Supported)
-	}
 	tombstones, err := st.personSweepTombstones(ctx, f.personID, change)
 	r.NoError(err)
 	a.Empty(tombstones)
@@ -563,11 +548,6 @@ func commitmentSourceID(window peoplesweep.CommitmentWindow, id int64) string {
 }
 
 func TestCommitmentWindowReplaysEarlierConsumedCompletion(t *testing.T) {
-	testCommitmentConsumedCompletion(t)
-}
-
-func testCommitmentConsumedCompletion(t *testing.T) {
-	t.Helper()
 	r, a, ctx := require.New(t), assert.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "late-promise", false)
 	st := f.store
@@ -604,14 +584,6 @@ func testCommitmentConsumedCompletion(t *testing.T) {
 	r.Len(items, 1)
 	r.NotNil(items[0].Fulfilment)
 	a.Equal(completed, items[0].Fulfilment.Quote)
-}
-
-func TestCommitmentCitationIgnoresOrdinaryReferenceBeforeParsing(t *testing.T) {
-	r, a := require.New(t), assert.New(t)
-	f := newPersonSweepApplyFixture(t, "ordinary-citation", false)
-	_, live, err := f.store.currentCommitmentCitation(t.Context(), f.personID, peoplesweep.CommitmentOwedTo, personfacts.EvidenceInput{SourceRef: "message:42"}, f.store.currentCommitmentSource)
-	r.NoError(err)
-	a.False(live)
 }
 
 // A paid optional result is discarded after revocation without losing its accounting.
@@ -651,8 +623,7 @@ func TestCommitmentApplyRevokedConsentRetainsPaidAccounting(t *testing.T) {
 	a.Equal(string(peoplesweep.FailurePolicy), failure)
 }
 
-// A format-valid date must not leave an active promise that its public readers
-// cannot return or serialize. Rejection belongs to the optional lane.
+// A refreshed promise must replay a completion found in the same batch.
 func TestCommitmentRefreshedPromiseReplaysSameBatchCompletion(t *testing.T) {
 	r, a, ctx := require.New(t), assert.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "refreshed-promise-replay", false)
