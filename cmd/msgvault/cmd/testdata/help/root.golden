@@ -5,7 +5,6 @@ Start here:
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
   msgvault person --help
   msgvault daemon status
   msgvault setup status --json
@@ -179,6 +178,7 @@ Maintenance and repair:
   repair-senders          Restore missing email senders from archived MIME
   schema-version          Print the binary's expected archive schema version
   unpack-attachments      Restore packed attachments to loose files
+  verify-attachments      Check a bounded page of retained attachment files
 
 Setup, daemon, and integrations:
   agent-token  Manage restricted agent grant tokens
