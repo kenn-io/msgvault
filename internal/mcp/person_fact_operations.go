@@ -22,7 +22,7 @@ func personFactOperationalDefinitions() []operationalDefinition {
 		newOperationalDefinition("list_person_fact_claims", "Read fact claims, optionally including evidence and decisions. Rows for sensitive attributes are omitted, along with evidence and decisions tied to them; the CLI (`msgvault person facts`) provides access to them.", OperationFamilyPersonFacts, closedObject(map[string]*jsonschema.Schema{
 			"person_id":         safeIDSchema("Durable person ID"),
 			"target":            {Type: "string", Description: "Exact target as kind:key:revision, assembled from a claim's target; keys may contain colons", MinLength: new(1)},
-			"limit":             boundedIntegerSchema("Maximum rows per underlying list (default 50); omitted rows can shorten a page", 1, 200),
+			"limit":             boundedIntegerSchema("Maximum rows per underlying list (default 50); next_offset is set when any returned list was full", 1, 200),
 			"offset":            nonNegativeIntegerSchema("Zero-based offset in each underlying list", 0),
 			"include_evidence":  booleanSchema("Include a page of evidence; requires target"),
 			"include_decisions": booleanSchema("Include a page of decisions; requires target"),

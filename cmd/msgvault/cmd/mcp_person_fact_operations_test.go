@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -17,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
@@ -54,13 +52,7 @@ func factBackend(t *testing.T, st *store.Store, observe ...func(*http.Request)) 
 	if len(observe) == 0 {
 		return sourceOperationFixture(t, fixture)
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { observe[0](r); fixture.Router().ServeHTTP(w, r) }))
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-	require.NoError(t, err)
-	caps, err := client.MCPCapabilities(t.Context())
-	require.NoError(t, err)
-	return newDaemonMCPOperations(client, caps)
+	return sourceOperationHandlerFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { observe[0](r); fixture.Router().ServeHTTP(w, r) }))
 }
 
 func TestPersonFactDisclosureAndPin(t *testing.T) {
@@ -177,12 +169,14 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	sensitiveEvidence := personfacts.EvidenceInput{PersonID: id, SourceClass: personfacts.EvidencePublic, Directness: personfacts.DirectSelf, Authority: personfacts.AuthorityAuthoritative, SourceURL: "https://example.test/sensitive", SubjectPersonID: &id, SubjectRef: "synthetic", Excerpt: "Fixture evidence", SourceVersion: "v1", EventTime: now, RecordedTime: now, IdentityScore: 990}
 	retiredEvidence := sensitiveEvidence
 	retiredEvidence.SourceURL = "https://example.test/retired"
+	additionalEvidence := sensitiveEvidence
+	additionalEvidence.SourceURL = "https://example.test/public-extra"
 	_, err = st.ApplyPersonFactGenerationContext(t.Context(), personfacts.GenerationInput{
 		PersonID: id, SourceCursors: []personfacts.SourceCursor{{Lane: "fixture", Start: "start", End: "end"}},
 		ProgramID: "fixture", ProgramVersion: "v1", ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "fixture", Provider: "fixture", ProviderVersion: "v1", Model: "fixture", ModelVersion: "v1", ResolvedAt: now,
 		Policy: personfacts.PolicyContext{AllowSensitive: true, ProviderPolicyFingerprint: "fixture"},
 		Claims: []personfacts.ProposedClaim{
-			{Target: publicTarget, Relation: personfacts.RelationSupport, SubmittedValue: jsontext.Value(`"chat"`), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{{PersonID: id, SourceClass: personfacts.EvidencePublic, Directness: personfacts.DirectSelf, Authority: personfacts.AuthorityAuthoritative, SourceURL: "https://example.test/public", SubjectPersonID: &id, SubjectRef: "synthetic", Excerpt: "Fixture evidence", SourceVersion: "v1", EventTime: now, RecordedTime: now, IdentityScore: 990}}},
+			{Target: publicTarget, Relation: personfacts.RelationSupport, SubmittedValue: jsontext.Value(`"chat"`), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{{PersonID: id, SourceClass: personfacts.EvidencePublic, Directness: personfacts.DirectSelf, Authority: personfacts.AuthorityAuthoritative, SourceURL: "https://example.test/public", SubjectPersonID: &id, SubjectRef: "synthetic", Excerpt: "Fixture evidence", SourceVersion: "v1", EventTime: now, RecordedTime: now, IdentityScore: 990}, additionalEvidence}},
 			{Target: sensitiveTarget, Relation: personfacts.RelationSupport, SubmittedValue: jsontext.Value(`"Sensitive fixture belief"`), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{sensitiveEvidence}},
 			{Target: retiredTarget, Relation: personfacts.RelationSupport, SubmittedValue: jsontext.Value(`"retired"`), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{retiredEvidence}},
 		},
@@ -230,7 +224,7 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	requirements.NoError(json.Unmarshal(data, &output))
 	requirements.NotNil(output.NextOffset)
 	assertions.EqualValues(3, *output.NextOffset)
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "target": publicRef, "include_evidence": true, "include_decisions": true}})
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "target": publicRef, "include_evidence": true, "include_decisions": true, "limit": 1}})
 	requirements.NoError(err)
 	requirements.False(result.IsError)
 	data, err = json.Marshal(result.StructuredContent)
@@ -242,8 +236,34 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 		assertions.Fail("evidence request was not sent")
 	}
 	assertions.NotContains(string(data), sensitiveKey)
+	output = mcpserver.PersonFactClaimsOutput{}
 	requirements.NoError(json.Unmarshal(data, &output))
 	assertions.True(slices.ContainsFunc(output.Decisions, func(decision generated.PersonFactDecision) bool { return decision.ClaimKey == publicKey }))
+	requirements.Len(output.Evidence, 1)
+	firstEvidenceID := output.Evidence[0].ID
+	requirements.NotNil(output.NextOffset)
+	assertions.EqualValues(1, *output.NextOffset)
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "target": publicRef, "include_evidence": true, "limit": 1, "offset": 1}})
+	requirements.NoError(err)
+	requirements.False(result.IsError)
+	data, err = json.Marshal(result.StructuredContent)
+	requirements.NoError(err)
+	output = mcpserver.PersonFactClaimsOutput{}
+	requirements.NoError(json.Unmarshal(data, &output))
+	assertions.Empty(output.Claims)
+	requirements.Len(output.Evidence, 1)
+	assertions.NotEqual(firstEvidenceID, output.Evidence[0].ID)
+	requirements.NotNil(output.NextOffset)
+	assertions.EqualValues(2, *output.NextOffset)
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "target": publicRef, "include_evidence": true, "limit": 1, "offset": 2}})
+	requirements.NoError(err)
+	requirements.False(result.IsError)
+	data, err = json.Marshal(result.StructuredContent)
+	requirements.NoError(err)
+	output = mcpserver.PersonFactClaimsOutput{}
+	requirements.NoError(json.Unmarshal(data, &output))
+	assertions.Empty(output.Evidence)
+	assertions.Nil(output.NextOffset)
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "target": sensitiveRef}})
 	requirements.NoError(err)
 	assertions.True(result.IsError)

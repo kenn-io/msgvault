@@ -144,10 +144,7 @@ func (b *daemonMCPOperations) listPersonFactClaims(ctx context.Context, a factAr
 	}
 	rawCount := len(claims.Claims)
 	out := mcpserver.PersonFactClaimsOutput{Claims: slices.DeleteFunc(claims.Claims, func(c generated.PersonFactClaim) bool { return !visible[[2]string{c.Target.Kind, c.Target.Key}] })}
-	if int64(rawCount) == limit {
-		next := offset + limit
-		out.NextOffset = &next
-	}
+	more := int64(rawCount) == limit
 	if a.IncludeEvidence {
 		r, err := readMCPOperationJSONWithClassifier[generated.PersonFactEvidenceResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-evidence", &generated.ListPersonFactEvidenceRequestOptions{PathParams: &generated.ListPersonFactEvidencePath{ID: a.PersonID}, Query: &generated.ListPersonFactEvidenceQuery{Target: a.Target, Limit: a.Limit, Offset: a.Offset, VisibleOnly: new(true)}}, factClassify, http.StatusOK)
 		if err != nil || r.IsError {
@@ -155,6 +152,7 @@ func (b *daemonMCPOperations) listPersonFactClaims(ctx context.Context, a factAr
 		}
 		rows, _ := r.Output.(generated.PersonFactEvidenceResponse)
 		out.Evidence = rows.Evidence
+		more = more || int64(len(rows.Evidence)) == limit
 	}
 	if a.IncludeDecisions {
 		r, err := readMCPOperationJSONWithClassifier[generated.PersonFactDecisionsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-decisions", &generated.ListPersonFactDecisionsRequestOptions{PathParams: &generated.ListPersonFactDecisionsPath{ID: a.PersonID}, Query: &generated.ListPersonFactDecisionsQuery{Target: a.Target, Limit: a.Limit, Offset: a.Offset}}, factClassify, http.StatusOK)
@@ -163,6 +161,11 @@ func (b *daemonMCPOperations) listPersonFactClaims(ctx context.Context, a factAr
 		}
 		rows, _ := r.Output.(generated.PersonFactDecisionsResponse)
 		out.Decisions = rows.Decisions
+		more = more || int64(len(rows.Decisions)) == limit
+	}
+	if more {
+		next := offset + limit
+		out.NextOffset = &next
 	}
 	return &mcpserver.OperationResult{Output: out}, nil
 }

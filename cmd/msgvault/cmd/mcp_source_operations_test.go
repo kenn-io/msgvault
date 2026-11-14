@@ -66,7 +66,12 @@ func operationMCPSession(t *testing.T, backend *daemonMCPOperations, families []
 
 func sourceOperationFixture(t *testing.T, fixture *api.Server) *daemonMCPOperations {
 	t.Helper()
-	server := httptest.NewServer(fixture.Router())
+	return sourceOperationHandlerFixture(t, fixture.Router())
+}
+
+func sourceOperationHandlerFixture(t *testing.T, handler http.Handler) *daemonMCPOperations {
+	t.Helper()
+	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
 	require.NoError(t, err)
