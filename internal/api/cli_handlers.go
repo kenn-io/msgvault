@@ -3922,7 +3922,7 @@ func resolveCLICollectionScope(st CLIStore, input string) (cliScope, error) {
 	if err != nil {
 		return resolveMissingCLICollectionScope(st, input, err)
 	}
-	return cliScope{Account: collectionops.Scope{Input: input}, Collection: &store.CollectionWithSources{Collection: store.Collection{Name: input}, SourceIDs: ids}}, nil
+	return cliScope{Account: collectionops.Scope{Input: input}, Collection: &store.CollectionWithSources{Name: input, SourceIDs: ids}}, nil
 }
 
 func resolveMissingCLICollectionScope(st CLIStore, input string, lookupErr error) (cliScope, error) {

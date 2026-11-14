@@ -7523,6 +7523,7 @@ func TestHandleSearch_VectorRejectsInvalidTimePeriod(t *testing.T) {
 
 type searchCollectionLookupStore struct {
 	*mockStore
+
 	fullLookups int
 }
 

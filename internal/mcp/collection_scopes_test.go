@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,7 +41,7 @@ func TestCollectionScopesFilterRealMessageReads(t *testing.T) {
 	f := storetest.New(t)
 	other, err := f.Store.GetOrCreateSource("imap", "other@example.test")
 	require.NoError(err)
-	first := f.NewMessage().WithSubject("collection fixture").Create(t, f.Store)
+	first := f.NewMessage().WithSubject("collection fixture").WithSentAt(time.Date(2025, time.January, 1, 0, 0, 0, 0, time.UTC)).Create(t, f.Store)
 	convID, err := f.Store.EnsureConversation(t.Context(), other.ID, "other-thread", "Other Thread")
 	require.NoError(err)
 	second := storetest.NewMessage(other.ID, convID).WithSourceMessageID("other").WithSubject("collection fixture").Create(t, f.Store)
@@ -85,6 +86,8 @@ func TestCollectionScopesFilterRealMessageReads(t *testing.T) {
 	}
 	body := runToolExpectError(t, ToolSearchMessageBodies, h.searchMessageBodies, map[string]any{"query": "fixture", "collection": "both"})
 	assertions.Contains(resultText(t, body), "collection contains multiple sources")
+	unscoped := runTool[aggregateResponse](t, ToolAggregate, h.aggregate, map[string]any{"group_by": "time"})
+	assertions.NotEmpty(unscoped.Data)
 	empty := runTool[aggregateResponse](t, ToolAggregate, h.aggregate, map[string]any{"group_by": "time", "collection": "empty"})
 	assertions.Empty(empty.Data)
 	assertions.Zero(e.listCalls)
