@@ -27,7 +27,7 @@ type LoopCommitment struct {
 	Summary            string           `json:"summary"`
 	Promise            CommitmentQuote  `json:"promise"`
 	PromisedAt         time.Time        `json:"promised_at"`
-	ExpiresAt          time.Time        `json:"expires_at"`
+	Freshness          string           `json:"freshness" enum:"fresh,stale"`
 	State              string           `json:"state" enum:"open,done,snoozed,fulfilled"`
 	SnoozedUntil       *time.Time       `json:"snoozed_until,omitempty"`
 	DueOn              *string          `json:"due_on,omitempty" format:"date"`
@@ -54,7 +54,7 @@ func loopCommitments(commitments []store.PersonCommitment) []LoopCommitment {
 		item := LoopCommitment{
 			ID: loops.FormatCommitmentID(c.ID), PersonID: c.PersonID, ClaimID: *c.ClaimID,
 			Direction: c.Direction, Summary: c.Summary, PromisedAt: c.PromisedAt, DueOn: c.DueOn,
-			ExpiresAt: c.ExpiresAt, State: c.State, SnoozedUntil: c.SnoozedUntil,
+			Freshness: string(c.Freshness), State: c.State, SnoozedUntil: c.SnoozedUntil,
 			Promise: CommitmentQuote{MessageID: c.AnchorMessageID, Text: c.Quote, Start: c.Start, End: c.End},
 		}
 		if f := c.Fulfilment; f != nil {

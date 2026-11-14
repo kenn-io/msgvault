@@ -7189,7 +7189,7 @@ type LoopCommitment struct {
 	ClaimID            int64                   `json:"claim_id"`
 	Direction          LoopCommitmentDirection `json:"direction" validate:"required"`
 	DueOn              *runtime.Date           `json:"due_on,omitempty"`
-	ExpiresAt          time.Time               `json:"expires_at" validate:"required"`
+	Freshness          LoopCommitmentFreshness `json:"freshness" validate:"required"`
 	ID                 string                  `json:"id" validate:"required"`
 	PersonID           int64                   `json:"person_id"`
 	Promise            CommitmentQuote         `json:"promise"`
@@ -7214,8 +7214,10 @@ func (l LoopCommitment) Validate() error {
 			}
 		}
 	}
-	if err := typesValidator.Var(l.ExpiresAt, "required"); err != nil {
-		errors = errors.Append("ExpiresAt", err)
+	if v, ok := any(l.Freshness).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Freshness", err)
+		}
 	}
 	if err := typesValidator.Var(l.ID, "required"); err != nil {
 		errors = errors.Append("ID", err)
@@ -7332,7 +7334,9 @@ func (l LoopItem) Validate() error {
 }
 
 type LoopListResponse struct {
-	Commitments []LoopCommitment `json:"commitments,omitempty"`
+	Commitments         []LoopCommitment `json:"commitments,omitempty"`
+	CommitmentsComplete *bool            `json:"commitments_complete,omitempty"`
+	CommitmentsSince    *time.Time       `json:"commitments_since,omitempty"`
 
 	// CoverageIncomplete True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue
 	CoverageIncomplete bool       `json:"coverage_incomplete"`

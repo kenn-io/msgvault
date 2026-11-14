@@ -7307,8 +7307,10 @@ components:
         due_on:
           format: date
           type: string
-        expires_at:
-          format: date-time
+        freshness:
+          enum:
+            - fresh
+            - stale
           type: string
         id:
           type: string
@@ -7342,7 +7344,7 @@ components:
         - summary
         - promise
         - promised_at
-        - expires_at
+        - freshness
         - state
       type: object
     LoopCounterparty:
@@ -7442,6 +7444,11 @@ components:
           items:
             $ref: "#/components/schemas/LoopCommitment"
           type: array
+        commitments_complete:
+          type: boolean
+        commitments_since:
+          format: date-time
+          type: string
         coverage_incomplete:
           description: True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue
           type: boolean

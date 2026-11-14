@@ -166,16 +166,10 @@ to revoke both the ordinary inference and commitment grants for the profile.
 Cited promises appear under **Promises you made** and **Promises to you**.
 Each row links to the quoted message. The JSON response also gives the claim
 ID and original-body rune range. See the [person facts CLI reference](../cli-reference.md#person-track-tiers-provider-sweep-and-facts) for claim kinds
-and freshness. A due date is a calendar date in the
-configured activity timezone. A promise expires after the due date and
-configured grace period, or after the maximum duration if it has no due
-date. Expired and unsupported claims leave the list.
+and freshness. A due date is a calendar date in the configured activity timezone. Open promises remain visible as their evidence ages; evidence older than 90 days is marked stale. Unsupported claims leave the list.
 
 Use the commitment ID for actions on a promise. This ID starts with `c`.
-The same message can anchor multiple promises and a reply loop. Choose
-**Show closed promises** in People Details for a five-item summary. Run
-`msgvault loops list --include-closed --limit 200` to find more done, snoozed,
-or fulfilled promises that you can reopen.
+The same message can anchor multiple promises and a reply loop. Run `msgvault loops list --include-closed --limit 200` to find done, snoozed, or fulfilled promises that you can reopen.
 
 ```bash
 msgvault loops done c12

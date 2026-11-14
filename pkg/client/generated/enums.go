@@ -1238,6 +1238,23 @@ func (l LoopCommitmentDirection) Validate() error {
 	}
 }
 
+type LoopCommitmentFreshness string
+
+const (
+	Fresh                        LoopCommitmentFreshness = "fresh"
+	LoopCommitmentFreshnessStale LoopCommitmentFreshness = "stale"
+)
+
+// Validate checks if the LoopCommitmentFreshness value is valid
+func (l LoopCommitmentFreshness) Validate() error {
+	switch l {
+	case Fresh, LoopCommitmentFreshnessStale:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LoopCommitmentFreshness value, got: %v", l))
+	}
+}
+
 type LoopCommitmentState string
 
 const (
@@ -2372,14 +2389,14 @@ type PersonFactClaimStatus string
 
 const (
 	Expired                    PersonFactClaimStatus = "expired"
-	Fresh                      PersonFactClaimStatus = "fresh"
+	PersonFactClaimStatusFresh PersonFactClaimStatus = "fresh"
 	PersonFactClaimStatusStale PersonFactClaimStatus = "stale"
 )
 
 // Validate checks if the PersonFactClaimStatus value is valid
 func (p PersonFactClaimStatus) Validate() error {
 	switch p {
-	case Expired, Fresh, PersonFactClaimStatusStale:
+	case Expired, PersonFactClaimStatusFresh, PersonFactClaimStatusStale:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFactClaimStatus value, got: %v", p))

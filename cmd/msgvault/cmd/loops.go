@@ -271,6 +271,7 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 	if len(result.Items) == 0 && len(result.Commitments) == 0 {
 		var sb strings.Builder
 		sb.WriteString("No open loops.\n")
+		writeCommitmentWindow(&sb, result)
 		writeLoopWarnings(&sb, result.SkippedUnparseable, result.CoverageIncomplete)
 		if _, err := io.WriteString(w, sb.String()); err != nil {
 			return fmt.Errorf("write loops: %w", err)
@@ -307,6 +308,7 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 		}
 	}
 	writeLoopCommitments(&sb, result.Commitments)
+	writeCommitmentWindow(&sb, result)
 	var notes strings.Builder
 	if result.Truncated {
 		if limit < loops.MaxLimit {
@@ -326,12 +328,13 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 }
 
 func writeLoopCommitments(sb *strings.Builder, commitments []generated.LoopCommitment) {
-	for _, group := range []struct{ title, direction string }{
-		{"Promises you made", "owed_by"}, {"Promises to you", "owed_to"},
+	for _, group := range []struct{ title, direction, freshness string }{
+		{"Promises you made", "owed_by", "fresh"}, {"Promises to you", "owed_to", "fresh"},
+		{"Stale promises you made", "owed_by", "stale"}, {"Stale promises to you", "owed_to", "stale"},
 	} {
 		printedHeading := false
 		for _, item := range commitments {
-			if string(item.Direction) != group.direction {
+			if string(item.Direction) != group.direction || string(item.Freshness) != group.freshness {
 				continue
 			}
 			if !printedHeading {
@@ -350,6 +353,17 @@ func writeLoopCommitments(sb *strings.Builder, commitments []generated.LoopCommi
 				fmt.Fprintf(sb, "    proposed fulfilment, message %d: %s\n", proposal.MessageID, textutil.SanitizeTerminal(proposal.Text))
 			}
 		}
+	}
+}
+
+func writeCommitmentWindow(sb *strings.Builder, result generated.LoopListResponse) {
+	if result.CommitmentsSince == nil {
+		return
+	}
+	if result.CommitmentsComplete != nil && !*result.CommitmentsComplete {
+		fmt.Fprintf(sb, "Checked promises since %s; still searching.\n", result.CommitmentsSince.Format(time.DateOnly))
+	} else {
+		fmt.Fprintf(sb, "Promises checked since %s.\n", result.CommitmentsSince.Format(time.DateOnly))
 	}
 }
 

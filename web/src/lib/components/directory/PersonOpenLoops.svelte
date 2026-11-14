@@ -4,7 +4,7 @@
   import { Button } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import { formatContactDate } from '../../directory/labels';
-  import { listLoops, setCommitmentDecision } from '../../api/generated/api/api';
+  import { listLoops } from '../../api/generated/api/api';
   import type { LoopCommitment, LoopItem } from '../../api/generated/models';
 
   // refreshKey changes when the person's identities change, so the list reloads.
@@ -13,11 +13,9 @@
   const limit = 5;
   let items = $state<LoopItem[]>([]);
   let commitments = $state<LoopCommitment[]>([]);
-  let showClosed = $state(false);
-  let deciding = $state<string | null>(null);
-  let decisionFailed = $state(false);
-  let decide = $state<(id: string, state: 'done' | 'snoozed' | 'open') => void>(() => {});
-  const openCount = $derived(items.length + commitments.filter((item) => item.state === 'open').length);
+  let commitmentsSince = $state<string | undefined>();
+  let commitmentsComplete = $state<boolean | undefined>();
+  const openCount = $derived(items.length + commitments.length);
   let loading = $state(true);
   let checkingMore = $state(false);
   let checkMoreFailed = $state(false);
@@ -30,31 +28,10 @@
   $effect(() => {
     const selectedID = personID;
     const selectedClient = client;
-    const includeClosed = showClosed;
     void refreshKey;
     const controller = new AbortController();
     checkMoreFailed = false;
     checkingMore = false;
-    deciding = null;
-    decisionFailed = false;
-    decide = async (id, state) => {
-      deciding = id;
-      decisionFailed = false;
-      try {
-        const result = await setCommitmentDecision(
-          { commitmentId: id },
-          state === 'snoozed' ? { state, until: new Date(Date.now() + 86400000).toISOString() } : { state },
-          { ...selectedClient, signal: controller.signal },
-        );
-        if (controller.signal.aborted) return;
-        if (!result.data) throw new Error('Commitment decision was refused.');
-        await load();
-      } catch {
-        if (!controller.signal.aborted) decisionFailed = true;
-      } finally {
-        if (!controller.signal.aborted) deciding = null;
-      }
-    };
     async function load(more = false) {
       if (more) {
         checkingMore = true;
@@ -63,6 +40,8 @@
         loading = true;
         items = [];
         commitments = [];
+        commitmentsSince = undefined;
+        commitmentsComplete = undefined;
         truncated = false;
         coverageIncomplete = false;
         unreadable = 0;
@@ -70,13 +49,15 @@
       }
       try {
         const result = await listLoops(
-          { person_id: selectedID, limit, ...(includeClosed ? { include_closed: true } : {}) },
+          { person_id: selectedID, limit },
           { ...selectedClient, signal: controller.signal },
         );
         if (controller.signal.aborted) return;
         if (!result.data) throw new Error('Open loops are unavailable.');
         items = result.data.items ?? [];
         commitments = result.data.commitments ?? [];
+        commitmentsSince = result.data.commitments_since;
+        commitmentsComplete = result.data.commitments_complete;
         truncated = Boolean(result.data.truncated);
         coverageIncomplete = Boolean(result.data.coverage_incomplete);
         unreadable = result.data.skipped_unparseable ?? 0;
@@ -102,8 +83,10 @@
   ]);
 
   const promiseGroups = $derived([
-    { direction: 'owed_by', label: 'Promises you made', items: commitments.filter((item) => item.direction === 'owed_by') },
-    { direction: 'owed_to', label: 'Promises to you', items: commitments.filter((item) => item.direction === 'owed_to') },
+    { key: 'by', label: 'Promises you made', items: commitments.filter((item) => item.direction === 'owed_by' && item.freshness === 'fresh') },
+    { key: 'to', label: 'Promises to you', items: commitments.filter((item) => item.direction === 'owed_to' && item.freshness === 'fresh') },
+    { key: 'by-stale', label: 'Promises you made · stale evidence', items: commitments.filter((item) => item.direction === 'owed_by' && item.freshness === 'stale') },
+    { key: 'to-stale', label: 'Promises to you · stale evidence', items: commitments.filter((item) => item.direction === 'owed_to' && item.freshness === 'stale') },
   ]);
 
   function ageLabel(since: string): string {
@@ -115,13 +98,12 @@
 </script>
 
 <DetailSection title="Open loops">
-  {#snippet control()}{#if !loading && !failed && openCount > 0}<span class="muted">{openCount}{truncated && !showClosed ? '+' : ''} open{truncated && showClosed ? ' shown' : ''}</span>{/if}{/snippet}
+  {#snippet control()}{#if !loading && !failed && openCount > 0}<span class="muted">{openCount}{truncated ? '+' : ''} open</span>{/if}{/snippet}
   <div class="open-loops">
-  <div><Button size="sm" label={showClosed ? 'Hide closed promises' : 'Show closed promises'} onclick={() => { showClosed = !showClosed; }} /></div>
   {#if loading}<p class="muted" role="status">Loading…</p>
   {:else if failed}<InlineNotice message="Couldn't load open loops." />
-  {:else if items.length === 0 && commitments.length === 0 && coverageIncomplete}<p class="muted">No loops found in the messages checked.</p>
-  {:else if items.length === 0 && commitments.length === 0}<p class="muted">Nothing open with this person.</p>
+  {:else if items.length === 0 && commitments.length === 0 && coverageIncomplete && !commitmentsSince}<p class="muted">No open loops found. Some messages haven't been checked yet.</p>
+  {:else if items.length === 0 && commitments.length === 0 && !commitmentsSince}<p class="muted">Nothing open with this person.</p>
   {:else}
     {#each groups as group (group.kind)}
       {#if group.items.length > 0}
@@ -138,40 +120,24 @@
         </div>
       {/if}
     {/each}
-    {#each promiseGroups as group (group.direction)}
+    {#each promiseGroups as group (group.key)}
       {#if group.items.length > 0}
         <div class="group">
           <h4>{group.label}</h4>
           <ul>
             {#each group.items as promise (promise.id)}
               <li class="promise">
-                {#if promise.due_on}
-                  <span>Due {promise.due_on}</span>
-                {/if}
                 <a href={`/messages/${promise.promise.message_id}`} title={promise.promise.text}>{promise.promise.text}</a>
-                {#if promise.proposed_fulfilment}
-                  <a href={`/messages/${promise.proposed_fulfilment.message_id}`}>
-                    {promise.state === 'fulfilled' ? 'Fulfilment' : 'Proposed fulfilment'} · {promise.proposed_fulfilment.text}
-                  </a>
-                {/if}
-                <div class="actions">
-                  {#if promise.state !== 'open'}
-                    {#if promise.state !== 'fulfilled' || !promise.proposed_fulfilment}
-                      <span class="muted">{promise.state === 'done' ? 'Done' : promise.state === 'snoozed' ? 'Snoozed' : 'Fulfilled'}</span>
-                    {/if}
-                    <Button size="sm" label="Reopen" disabled={deciding !== null} onclick={() => decide(promise.id, 'open')} />
-                  {:else}
-                    <Button size="sm" label="Done" disabled={deciding !== null} onclick={() => decide(promise.id, 'done')} />
-                    <Button size="sm" label="Snooze for 24h" disabled={deciding !== null} onclick={() => decide(promise.id, 'snoozed')} />
-                  {/if}
-                </div>
+                {#if promise.due_on}<span>Due {promise.due_on}</span>{/if}
+                <span class="muted">{ageLabel(promise.promised_at)}</span>
               </li>
             {/each}
           </ul>
         </div>
       {/if}
     {/each}
-    {#if decisionFailed}<p role="alert">Couldn't save the commitment decision.</p>{/if}
+    {#if commitmentsSince && !commitmentsComplete}<p class="muted">Checked since {formatContactDate(commitmentsSince)}; still searching</p>
+    {:else if commitmentsSince && commitments.length === 0}<p class="muted">No promises found since {formatContactDate(commitmentsSince)}.</p>{/if}
   {/if}
   {#if !loading && !failed && unreadable > 0}
     <p class="muted">
@@ -195,8 +161,6 @@
   a { min-width: 0; overflow: hidden; color: var(--link-ink); text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
   a:hover { text-decoration: underline; }
   li > span { flex: none; }
-  .promise { display: grid; justify-content: stretch; gap: var(--space-1); }
-  .actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); }
   .muted { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   [role="alert"] { color: var(--text-danger); }
 </style>

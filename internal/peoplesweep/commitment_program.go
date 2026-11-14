@@ -87,8 +87,6 @@ type CommitmentConfig struct {
 	MaxBytes        int           `toml:"max_bytes"`
 	MaxOutputTokens int64         `toml:"max_output_tokens"`
 	MaxOpenAnchors  int           `toml:"max_open_anchors"`
-	ExpireAfterDue  time.Duration `toml:"expire_after_due"`
-	MaxDuration     time.Duration `toml:"max_duration"`
 	AutoFulfil      bool          `toml:"auto_fulfil"`
 }
 
@@ -99,14 +97,12 @@ func (c *CommitmentConfig) applyDefaults() {
 	setDefaultInt(&c.MaxBytes, 65536)
 	setDefaultInt64(&c.MaxOutputTokens, 2048)
 	setDefaultInt(&c.MaxOpenAnchors, 8)
-	setDefaultDuration(&c.ExpireAfterDue, 30*24*time.Hour)
-	setDefaultDuration(&c.MaxDuration, 90*24*time.Hour)
 }
 func (c *CommitmentConfig) Validate(budget BudgetConfig) error {
 	if !c.Enabled {
 		return nil
 	}
-	if c.MinInterval <= 0 || c.Window <= 0 || c.MaxItems <= 0 || c.MaxItems > 2000 || c.MaxBytes <= 0 || c.MaxOutputTokens <= 0 || c.MaxOpenAnchors <= 0 || c.MaxOpenAnchors > 8 || c.ExpireAfterDue <= 0 || c.MaxDuration <= 0 || c.MaxOutputTokens > budget.MaxOutputTokensPerPerson {
+	if c.MinInterval <= 0 || c.Window <= 0 || c.MaxItems <= 0 || c.MaxItems > 2000 || c.MaxBytes <= 0 || c.MaxOutputTokens <= 0 || c.MaxOpenAnchors <= 0 || c.MaxOpenAnchors > 8 || c.MaxOutputTokens > budget.MaxOutputTokensPerPerson {
 		return errors.New("[people.sweep.commitments] limits must be positive and fit the per-person budget (max_items <= 2000, max_open_anchors <= 8)")
 	}
 	return nil

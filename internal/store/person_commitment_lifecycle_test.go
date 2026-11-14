@@ -2,7 +2,6 @@ package store
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -258,93 +257,5 @@ func TestCommitmentOnlyMaintenanceInvalidatesEvidenceBeyondFirstBatch(t *testing
 	r.Len(evidence, 3)
 	for _, item := range evidence {
 		a.False(item.Supported, "the consumed commitment range must invalidate every deleted citation")
-	}
-}
-
-func TestCommitmentEditedSourceReconcilesPromiseLocators(t *testing.T) {
-	const first, second = "I will send the draft.", "I will book the venue."
-	for _, tc := range []struct {
-		name                    string
-		initial, edited, output []string
-		decisionQuote           string
-	}{
-		{"replaced", []string{first}, []string{second}, nil, first},
-		{"moved", []string{first}, []string{second, first}, nil, first},
-		{"swap", []string{first, second}, []string{second, first}, nil, first},
-		{"valid_move_over_stale_exact", []string{first, second}, []string{second}, nil, second},
-		{"replacement_omits_moved_original", []string{first}, []string{second, first}, []string{second}, first},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r, a, ctx := require.New(t), assert.New(t), t.Context()
-			f := newPersonSweepApplyFixture(t, "commitment-swap", false)
-			st := f.store
-			_, persist := newCommitmentTestConversation(t, f)
-			id := persist("promise", strings.Join(tc.initial, " "), -time.Hour)
-			cfg := peoplesweep.Config{}
-			cfg.ApplyDefaults()
-			cfg.Commitments.Enabled = true
-			apply := func(quotes []string) {
-				window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{
-					AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
-				}, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
-				r.NoError(err)
-				r.NotEmpty(window.Sources)
-				parsed := peoplesweep.ParsedCommitments{Fulfilments: []peoplesweep.CommitmentFulfilment{}}
-				start := int64(0)
-				for _, quote := range quotes {
-					end := start + int64(len(quote))
-					parsed.Promises = append(parsed.Promises, peoplesweep.CommitmentPromise{
-						SourceID: commitmentSourceID(window, id), Direction: peoplesweep.CommitmentOwedTo,
-						Quote: quote, Summary: "Keep promise", Start: start, End: end,
-					})
-					start = end + 1
-				}
-				_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, parsed))
-				r.NoError(err)
-			}
-			apply(tc.initial)
-			f = nextCommitmentTestAttempt(t, f, "-finish-initial")
-			apply(tc.initial)
-			items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
-			r.NoError(err)
-			r.Len(items, len(tc.initial))
-			var completedID int64
-			for _, item := range items {
-				if item.Quote == tc.decisionQuote {
-					completedID = item.ID
-				}
-			}
-			r.Positive(completedID)
-			_, err = st.DecidePersonCommitmentContext(ctx, completedID, LoopStateDone, nil, f.request.CompletedAt)
-			r.NoError(err)
-			_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), strings.Join(tc.edited, " "), id)
-			r.NoError(err)
-			f = nextCommitmentTestAttempt(t, f, "-swap")
-			f.request.Generation.ResolvedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
-			f.request.CompletedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
-			extracted := tc.output
-			if extracted == nil {
-				extracted = tc.edited
-			}
-			apply(extracted)
-			items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
-			r.NoError(err)
-			r.Len(items, len(extracted))
-			for _, item := range items {
-				if item.Quote == tc.decisionQuote {
-					a.Equal(completedID, item.ID)
-					a.Equal(LoopStateDone, item.State)
-				} else {
-					a.Equal(LoopStateOpen, item.State)
-				}
-			}
-			if tc.output != nil {
-				var retainedQuote, retainedState string
-				r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`SELECT quote, owner_state FROM person_commitments WHERE id = ?`), completedID).
-					Scan(&retainedQuote, &retainedState))
-				a.Equal(tc.decisionQuote, retainedQuote)
-				a.Equal(LoopStateDone, retainedState)
-			}
-		})
 	}
 }

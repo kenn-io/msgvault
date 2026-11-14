@@ -4397,23 +4397,13 @@ CREATE INDEX IF NOT EXISTS idx_docbank_processing_due
 CREATE TABLE IF NOT EXISTS person_commitments (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
- current_claim_id INTEGER REFERENCES person_fact_claims(id) ON DELETE SET NULL,
  target_key TEXT NOT NULL,
- anchor_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
- direction TEXT NOT NULL CHECK (direction IN ('owed_by','owed_to')),
- quote TEXT NOT NULL,
- quote_start INTEGER NOT NULL CHECK (quote_start >= 0),
- quote_end INTEGER NOT NULL CHECK (quote_end > quote_start),
- summary TEXT NOT NULL,
- due_on TEXT,
- promised_at DATETIME NOT NULL,
- expires_at DATETIME NOT NULL,
  owner_state TEXT NOT NULL DEFAULT 'open' CHECK (owner_state IN ('open','done','snoozed')),
  snoozed_until DATETIME,
  reopened_at DATETIME,
  fulfilment_evidence_id INTEGER REFERENCES person_fact_evidence(id) ON DELETE SET NULL,
  fulfilment_confirmed INTEGER NOT NULL DEFAULT 0 CHECK (fulfilment_confirmed IN (0,1)),
- UNIQUE(person_id,anchor_message_id,direction,quote_start,quote_end)
+ UNIQUE(person_id,target_key)
 );
 CREATE TABLE IF NOT EXISTS person_commitment_frontiers (
  person_id INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
@@ -4425,5 +4415,6 @@ CREATE TABLE IF NOT EXISTS person_commitment_frontiers (
  anchor_through_sequence INTEGER NOT NULL DEFAULT 0,
  anchor_backfill_id INTEGER NOT NULL DEFAULT 0,
  scope_fingerprint TEXT NOT NULL DEFAULT '',
- selection_at DATETIME
+ selection_at DATETIME,
+ discovery_since DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

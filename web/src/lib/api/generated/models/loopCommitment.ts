@@ -3,13 +3,14 @@
  */
 import type { CommitmentQuote } from "./commitmentQuote";
 import type { LoopCommitmentDirection } from "./loopCommitmentDirection";
+import type { LoopCommitmentFreshness } from "./loopCommitmentFreshness";
 import type { LoopCommitmentState } from "./loopCommitmentState";
 
 export interface LoopCommitment {
   claim_id: number;
   direction: LoopCommitmentDirection;
   due_on?: string;
-  expires_at: string;
+  freshness: LoopCommitmentFreshness;
   id: string;
   person_id: number;
   promise: CommitmentQuote;

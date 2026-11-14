@@ -1877,7 +1877,7 @@ snoozed, and fulfilled promises.
 | Field | Meaning |
 |---|---|
 | `items` | The loops. Each has `kind` (`reply_owed` or `awaiting_reply`), `anchor_message_id` (the message that started the wait), `question_message_ids` (the questions it covers, oldest first), `conversation_id`, `source_id`, `channel` (`email` or `chat`), `counterparty` (`participant_id`, optional `person_id`, `display_name`, `address`), `summary`, `owed_since_at`, and `last_activity_at`. |
-| `commitments` | Cited promises with their `c<ID>`, direction, exact message citation, expiry and owner-visible state. |
+| `commitments` | Cited promises with their `c<ID>`, direction, exact message citation, evidence freshness and owner-visible state. |
 | `truncated` | More eligible entries are available in at least one collection. |
 | `coverage_incomplete` | The request stopped before checking all history, because it read 1,000 new messages or ran out of time. Items come only from conversations checked in full. Call again to continue; saved results carry over. |
 | `skipped_unparseable` | Stored emails that couldn't be parsed. A reply in one of them may have answered a listed loop. |
