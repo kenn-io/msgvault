@@ -37,12 +37,13 @@ func TestBeeperDraftComposeVerificationWithholding(t *testing.T) {
 				f.adapter.config.Server.APIKey = "owner"
 				srv := api.NewServerWithOptions(api.ServerOptions{Config: f.adapter.config, Store: f.adapter, Logger: slog.New(slog.DiscardHandler)})
 				t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
-				if scenario == "existing" {
+				switch scenario {
+				case "existing":
 					created, err := f.create(t, nil, "saved secret")
 					require.NoError(t, err)
 					_, err = f.store.ClaimBeeperDraftContext(t.Context(), created.DraftID, created.Revision, store.BeeperDraftOperationEdit, "pending secret")
 					require.NoError(t, err)
-				} else if scenario == "failure" {
+				case "failure":
 					f.beeper.set("null", true)
 				}
 				body, err := json.Marshal(map[string]any{"args": []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "proposed secret", "--json"}})

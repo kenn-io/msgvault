@@ -301,7 +301,6 @@ func TestMCPOwnerDraftVerificationWithheld(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 	assert.Contains(t, mcpDraftResultText(t, result), "verification content is withheld")
-
 }
 
 func TestMCPDraftToolPropertiesMatchCommandFlags(t *testing.T) {

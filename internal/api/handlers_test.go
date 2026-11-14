@@ -5438,7 +5438,6 @@ func TestHandleAggregates(t *testing.T) {
 	assert.Equal("senders", resp.ViewType, "view_type")
 	require.Len(resp.Rows, 2, "rows count")
 	assert.Equal("alice@example.com", resp.Rows[0].Key, "first row key")
-
 }
 
 // TestHandleAggregatesListsView catches API parsing or response conversion
