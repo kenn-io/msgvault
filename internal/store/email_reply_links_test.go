@@ -308,3 +308,54 @@ func TestRFC822IDBackfillLinksWaitingReplies(t *testing.T) {
 	_, got = replyLinkState(t, st, reply)
 	assert.Equal(sql.NullInt64{Int64: parent, Valid: true}, got)
 }
+
+// TestRFC822IDBackfillLeavesReplyOfDuplicateParentsUnlinked covers two copies
+// of a parent that both gain the same Message-ID in one backfill. Linking
+// after the first write would pick that copy before the second makes the
+// parent ambiguous.
+func TestRFC822IDBackfillLeavesReplyOfDuplicateParentsUnlinked(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	for _, key := range []string{"parent", "parent-copy"} {
+		id := createThreadEmail(t, f, key, "thread", "")
+		require.NoError(st.UpsertMessageRaw(id, []byte(
+			"From: alice@example.test\r\nMessage-ID: <parent@example.test>\r\n\r\nBody")))
+	}
+	reply := createThreadEmail(t, f, "reply", "thread", "reply@example.test")
+	require.NoError(st.RecordEmailHeadersContext(t.Context(), f.Source.ID, reply, "", "parent@example.test"))
+
+	plan, err := st.PlanRFC822IDBackfill(t.Context(), []int64{f.Source.ID})
+	require.NoError(err)
+	require.Equal(int64(2), plan.Ready)
+	updated, err := st.ApplyRFC822IDBackfill(t.Context(), []int64{f.Source.ID}, plan, nil)
+	require.NoError(err)
+	require.Equal(int64(2), updated)
+
+	_, got := replyLinkState(t, st, reply)
+	assert.False(got.Valid, "two copies of the parent leave the reply unlinked")
+}
+
+// TestSetMessageMetadataKeepsStoredEmailParent covers IMAP saving the outgoing
+// origin of a byte-identical Sent copy. That write replaces the metadata
+// object, and the parent stored earlier must survive it.
+func TestSetMessageMetadataKeepsStoredEmailParent(t *testing.T) {
+	for _, tc := range []struct{ name, replacement string }{
+		{"changed parent", `{"imap_content_origin":"sent","email_in_reply_to":"other@example.test"}`},
+		{"omitted parent", `{"imap_content_origin":"sent"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			id := createThreadEmail(t, f, "draft", "thread", "draft@example.test")
+			require.NoError(f.Store.RecordEmailHeadersContext(t.Context(), f.Source.ID, id, "", "original@example.test"))
+
+			require.NoError(f.Store.SetMessageMetadataContext(t.Context(), id, sql.NullString{String: tc.replacement, Valid: true}))
+
+			metadata, _ := replyLinkState(t, f.Store, id)
+			assert.JSONEq(`{"imap_content_origin":"sent","email_in_reply_to":"original@example.test"}`, metadata.String)
+		})
+	}
+}

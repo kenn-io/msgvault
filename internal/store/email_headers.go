@@ -153,13 +153,14 @@ func (s *Store) lockEmailHeaderRow(ctx context.Context, tx *loggedTx, messageID 
 
 // keepEmailReplyParentTx carries an email's stored parent ID into metadata
 // that replaces the stored object. A stored parent is never replaced, and
-// reply_to_message_id may already point at it. A replacement that is not a
-// JSON object is returned as is.
+// reply_to_message_id may already point at it. Other message types and a
+// replacement that is not a JSON object are returned as is.
 func (s *Store) keepEmailReplyParentTx(
 	ctx context.Context, tx *loggedTx, messageID int64, replacement sql.NullString,
 ) (sql.NullString, error) {
 	var stored sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT metadata FROM messages WHERE id = ?`, messageID).Scan(&stored)
+	err := tx.QueryRowContext(ctx, `SELECT metadata FROM messages
+   WHERE id = ? AND message_type = 'email'`, messageID).Scan(&stored)
 	if errors.Is(err, sql.ErrNoRows) {
 		return replacement, nil
 	}

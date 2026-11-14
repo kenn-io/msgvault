@@ -1002,6 +1002,10 @@ func (s *Store) SetMessageMetadataContext(ctx context.Context, messageID int64, 
 		if err := s.requireSyncMessageSourceTx(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
 			return err
 		}
+		metadata, err := s.keepEmailReplyParentTx(ctx, tx, messageID, metadata)
+		if err != nil {
+			return err
+		}
 		if err := setMessageMetadataWith(boundQuerier{ctx: ctx, q: tx}, s.dialect, messageID, metadata); err != nil {
 			return err
 		}
@@ -2510,11 +2514,9 @@ func (s *Store) persistMessageWith(
 		}
 	}
 	if data.Metadata != nil {
-		metadata := *data.Metadata
-		if message.MessageType == MessageTypeEmail {
-			if metadata, err = s.keepEmailReplyParentTx(ctx, tx, messageID, metadata); err != nil {
-				return 0, err
-			}
+		metadata, err := s.keepEmailReplyParentTx(ctx, tx, messageID, *data.Metadata)
+		if err != nil {
+			return 0, err
 		}
 		if err := setMessageMetadataWith(q, s.dialect, messageID, metadata); err != nil {
 			return 0, fmt.Errorf("set metadata: %w", err)
