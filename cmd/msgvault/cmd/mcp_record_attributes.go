@@ -198,7 +198,9 @@ func (b *daemonMCPOperations) executeRecordAttributeOperation(ctx context.Contex
 		if result != nil && !result.IsError {
 			d, valid := result.Output.(generated.AttributeDefinition)
 			if !valid || result.ETag == "" {
-				result = operationFailure("invalid_operation_response", method != http.MethodGet)
+				result = invalidOperationResponse(method != http.MethodGet)
+			} else if d.ObjectType != "person" {
+				result = operationFailure("attribute_definition_not_found", false)
 			} else {
 				result.Output = mcpserver.AttributeDefinitionReceipt{ETag: result.ETag, Definition: d}
 			}

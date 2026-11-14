@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -17,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -208,6 +211,40 @@ func TestMCPAttributePersonDefinitions(t *testing.T) {
 		_, err = b.OperationDisclosure(t.Context(), name, map[string]any{"definition_id": orgDefinition.ID, "etag": "example", "changes": map[string]any{"label": "changed"}})
 		attributeRefused(t, err, "attribute_definition_not_found")
 	}
+}
+
+func TestMCPAttributeDefinitionMissingETagAfterWrite(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	fixture := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: st, Logger: slog.New(slog.DiscardHandler)})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := httptest.NewRecorder()
+		fixture.Router().ServeHTTP(response, r)
+		for key, values := range response.Header() {
+			if key != "Etag" {
+				w.Header()[key] = values
+			}
+		}
+		w.WriteHeader(response.Code)
+		_, _ = w.Write(response.Body.Bytes())
+	}))
+	t.Cleanup(server.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+	require.NoError(t, err)
+	capabilities, err := client.MCPCapabilities(t.Context())
+	require.NoError(t, err)
+	b := newDaemonMCPOperations(client, capabilities)
+
+	result := attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "favorite_tea", "label": "Favorite tea", "value_type": "text", "field_type": "text"}})
+	require.True(t, result.IsError)
+	data, err := json.Marshal(result.Output)
+	require.NoError(t, err)
+	var failure mcpOperationFailure
+	require.NoError(t, json.Unmarshal(data, &failure))
+	assert.Equal(t, "operation_receipt_unavailable", failure.Error)
+	assert.True(t, failure.OperationMayHaveCompleted)
+	definition, err := st.GetAttributeDefinitionBySlugContext(t.Context(), store.AttributeObjectPerson, "favorite_tea")
+	require.NoError(t, err)
+	assert.Equal(t, "Favorite tea", definition.Label)
 }
 
 func TestMCPAttributePreviewCallerGuards(t *testing.T) {
