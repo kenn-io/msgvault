@@ -381,9 +381,10 @@ func (s *ServerConfig) ValidateSecure() error {
 
 // AccountSchedule defines sync schedule for a single account.
 type AccountSchedule struct {
-	Email    string `toml:"email"`    // Gmail account email
-	Schedule string `toml:"schedule"` // Cron expression (e.g., "0 2 * * *" for 2am daily)
-	Enabled  bool   `toml:"enabled"`  // Whether scheduled sync is active
+	Email        string        `toml:"email"`    // Gmail account email
+	Schedule     string        `toml:"schedule"` // Cron expression (e.g., "0 2 * * *" for 2am daily)
+	Enabled      bool          `toml:"enabled"`  // Whether scheduled sync is active
+	PollInterval time.Duration `toml:"poll_interval"`
 }
 
 // CardDAVConfig contains non-secret connection settings for the external

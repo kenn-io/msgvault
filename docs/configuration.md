@@ -1289,6 +1289,9 @@ and may be duplicated.
 | `email` | (required) | Account identifier/display name, or exact Discord guild ID, to sync |
 | `schedule` | — | Cron expression for sync schedule (e.g., `0 * * * *`) |
 | `enabled` | `true` | Whether scheduled sync is active for this account |
+| `poll_interval` | `0s` | Optional Gmail or IMAP polling interval, in whole seconds from `15s` through `120s` |
+
+Polling requires a valid cron schedule and one active Gmail or unfiltered IMAP source. An exact identifier takes precedence over display names and archive aliases; otherwise the match must be unique. Each poll checks the current source, so polling resumes after a source is repaired. Use the identifier from `msgvault list-accounts` if a name matches multiple sources. Rejected polling attempts appear in account status while cron schedules continue. Invalid intervals are reported in the daemon log. Polling starts with a catch-up when the daemon starts. Provider limits, other work, and background indexing can delay visible results. See [email freshness](usage/email-freshness.md).
 
 For example, schedule one previously registered Discord guild independently:
 

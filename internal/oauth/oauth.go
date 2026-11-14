@@ -956,17 +956,17 @@ func SameGoogleAccount(expected, canonical string) bool {
 	}
 
 	// Normalize gmail.com / googlemail.com addresses for comparison
-	expectedNorm := normalizeGmailAddress(expected)
-	canonicalNorm := normalizeGmailAddress(canonical)
+	expectedNorm := NormalizeGmailAddress(expected)
+	canonicalNorm := NormalizeGmailAddress(canonical)
 
 	return expectedNorm != "" && expectedNorm == canonicalNorm
 }
 
-// normalizeGmailAddress returns a canonical form of a gmail.com or
+// NormalizeGmailAddress returns a canonical form of a gmail.com or
 // googlemail.com address by lowercasing, stripping +suffixes and dots
 // from the local part, and mapping googlemail.com → gmail.com.
 // Returns "" for non-Gmail addresses.
-func normalizeGmailAddress(email string) string {
+func NormalizeGmailAddress(email string) string {
 	local, domain, ok := strings.CutLast(email, "@")
 	if !ok {
 		return ""

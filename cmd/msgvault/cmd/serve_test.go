@@ -310,6 +310,23 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 	}
 }
 
+func TestRunServeKeepsCronForInvalidPollingInterval(t *testing.T) {
+	requirements := require.New(t)
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Server.APIPort = freeTCPPort(t)
+	cfg.Analytics.Engine = config.AnalyticsEngineSQL
+	cfg.Accounts = []config.AccountSchedule{{Email: "user@example.test", Enabled: true, Schedule: "0 * * * *", PollInterval: 14 * time.Second}, {Email: "other@example.test", Enabled: true, Schedule: "0 * * * *"}}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	cmd := &cobra.Command{Use: serveCmd.Use}
+	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
+	errCh := make(chan error, 1)
+	go func() { errCh <- runServe(cmd, nil) }()
+	waitForServeHealth(t, cfg.Server.APIPort, errCh)
+	cancel()
+	requirements.NoError(<-errCh)
+}
+
 func TestRunServeFailsPendingImportFromPreviousDaemon(t *testing.T) {
 	cfg := testConfigValue()
 
@@ -3446,6 +3463,13 @@ func TestScheduledSyncPreemptibleRequiresResumableSources(t *testing.T) {
 	require.NoError(err)
 	assert.True(scheduledSyncPreemptible(t.Context(), st.Store, gmail.Identifier, testDiscardLogger()), "Gmail history sync is resumable after repair")
 	assert.False(scheduledSyncPreemptible(t.Context(), st.Store, imap.Identifier, testDiscardLogger()), "IMAP uses a full pass with non-resumable offsets")
+	alias := "imap-archive@example.test"
+	_, err = st.Store.UpdateSourceSettingsContext(t.Context(), imap.ID, store.SourceSettingsUpdate{Alias: &alias})
+	require.NoError(err)
+	assert.False(scheduledSyncPreemptible(t.Context(), st.Store, alias, testDiscardLogger()), "IMAP aliases must protect non-resumable passes")
+	unicodeIMAP, err := st.Store.GetOrCreateSource(sourceTypeIMAP, "imaps://Ü@example.test")
+	require.NoError(err)
+	assert.False(scheduledSyncPreemptible(t.Context(), st.Store, strings.ToLower(unicodeIMAP.Identifier), testDiscardLogger()), "poll selectors must protect non-resumable passes")
 	assert.True(scheduledSyncPreemptible(t.Context(), st.Store, teams.Identifier, testDiscardLogger()), "Teams sync does not run archive repair")
 	assert.True(scheduledSyncPreemptible(t.Context(), st.Store, "new-reader@example.test", testDiscardLogger()), "missing source rows use the resumable Gmail fallback")
 }

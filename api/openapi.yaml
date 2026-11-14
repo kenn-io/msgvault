@@ -53,6 +53,12 @@ components:
       properties:
         email:
           type: string
+        last_attempted:
+          format: date-time
+          type: string
+        last_completed:
+          format: date-time
+          type: string
         last_error:
           type: string
         last_run:
@@ -63,6 +69,8 @@ components:
           type: string
         pending:
           type: boolean
+        poll_interval:
+          type: string
         queued:
           type: boolean
         queued_at:

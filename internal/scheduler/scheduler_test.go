@@ -117,6 +117,8 @@ func TestAddAccountsFromConfig(t *testing.T) {
 }
 
 func TestAddAccountsFromConfigWithErrors(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
 	s := New(func(ctx context.Context, email string) error {
 		return nil
 	})
@@ -125,13 +127,20 @@ func TestAddAccountsFromConfigWithErrors(t *testing.T) {
 		Accounts: []config.AccountSchedule{
 			{Email: "valid@gmail.com", Schedule: "0 1 * * *", Enabled: true},
 			{Email: "invalid@gmail.com", Schedule: "not a cron", Enabled: true},
+			{Email: "poll-only@gmail.com", Enabled: true, PollInterval: 30 * time.Second},
+			{Email: "integer@gmail.com", Schedule: "0 2 * * *", Enabled: true, PollInterval: 30},
 		},
 	}
 
 	scheduled, errs := s.AddAccountsFromConfig(cfg)
 
-	assert.Equal(t, 1, scheduled, "scheduled")
-	assert.Len(t, errs, 1, "errs")
+	checks.Equal(2, scheduled, "scheduled")
+	requirements.Len(errs, 3, "errs")
+	requirements.ErrorContains(errs[1], "poll-only@gmail.com")
+	requirements.ErrorContains(errs[1], "schedule")
+	requirements.ErrorContains(errs[2], `"30s"`)
+	checks.True(s.IsScheduled("valid@gmail.com"))
+	checks.True(s.IsScheduled("integer@gmail.com"))
 }
 
 func TestSchedulerGenericJobStatus(t *testing.T) {

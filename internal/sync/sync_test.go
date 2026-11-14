@@ -2233,16 +2233,20 @@ func TestRecoverExpiredHistoryConsumesChangesAfterSnapshotCursor(t *testing.T) {
 	env.Mock.AddMessage("arrived-during-recovery", testMIME(), []string{"INBOX"})
 	env.Mock.HistoryRecords = []gmail.HistoryRecord{historyAdded("arrived-during-recovery")}
 	env.Mock.HistoryID = 2000
-	syncer := New(&recoveryProfileSequenceAPI{
+	api := &recoveryProfileSequenceAPI{
 		MockAPI:    env.Mock,
-		historyIDs: []uint64{1500, 2000},
-	}, env.Store, nil)
+		historyIDs: []uint64{2000},
+	}
+	initial := *env.Mock.Profile
+	initial.HistoryID = 1500
+	syncer := New(api, env.Store, nil).WithInitialGmailProfile(&initial)
 
 	summary, err := syncer.RecoverExpiredHistory(env.Context, source)
 	require.NoError(err, "RecoverExpiredHistory")
 
 	assertRawDataExists(t, env.Store, "arrived-during-recovery")
 	assert.Equal(uint64(2000), summary.FinalHistoryID, "final history cursor")
+	assert.Equal(1, api.calls, "catch-up reads a fresh profile")
 	refreshed, err := env.Store.GetSourceByID(source.ID)
 	require.NoError(err, "GetSourceByID")
 	assert.Equal("2000", refreshed.SyncCursor.String, "persisted history cursor")

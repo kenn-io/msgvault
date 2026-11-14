@@ -258,7 +258,10 @@ func TestRateLimiter_Acquire_ContextCancelled(t *testing.T) {
 	cancel()
 
 	err := f.rl.Acquire(ctx, OpMessagesGet)
-	assert.ErrorIs(t, err, context.Canceled, "Acquire() with cancelled context")
+	require.ErrorIs(t, err, context.Canceled, "Acquire() with cancelled context")
+	f.rl.Throttle(time.Minute)
+	require.ErrorIs(t, f.rl.acquire(ctx, OpMessagesGet, true), context.Canceled)
+	assert.ErrorIs(t, f.rl.acquire(t.Context(), OpMessagesGet, true), ErrQuotaDeferred)
 }
 
 func TestRateLimiter_Acquire_ContextTimeout(t *testing.T) {

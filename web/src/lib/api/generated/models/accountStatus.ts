@@ -4,10 +4,13 @@
 
 export interface AccountStatus {
   email: string;
+  last_attempted?: string;
+  last_completed?: string;
   last_error?: string;
   last_run?: string;
   next_run: string;
   pending?: boolean;
+  poll_interval?: string;
   queued?: boolean;
   queued_at?: string;
   running: boolean;
