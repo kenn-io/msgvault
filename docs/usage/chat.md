@@ -472,6 +472,12 @@ The MCP server exposes the following tools to connected AI clients:
 | `preview_person_tiers` | List saved people in tier 1 or 2 from archived two-way messages and meetings, with the matching rule, tracking state, and the latest day that counted. Read-only; it never tracks anyone. See [profile automation](/docs/usage/people-automation/). | — |
 | `explain_person_tier` | Show every count behind one saved person's tier against its threshold, including tier 3 and any exclusion. Read-only. | `person_id` (int, required) |
 | `search_person_files` | Find archived attachment occurrences related to a saved person. | `person_id` (int, required), `directions` (array: `from_person`/`to_person`/`group`), `filename` (substring), `mime_families` (array), `after`, `before`, `limit` (1–100, default 100), `cursor` |
+| `list_relationship_types` | List declared relationship types. | — |
+| `list_person_relationships` | List a person's declared relationships; pass the first chunk's `sha256` with later offsets. | `person_id` (required), `include_ended`, `offset`, `length`, `sha256` |
+| `get_person_network` | Read a person's curated network. | `person_id` (required), `depth` (1–3), `include_ended` |
+| `create_person_relationship` | Declare a relationship with confirmation. | `source_person_id`, `target_person_id`, `relationship_type_slug` (required); `start_date`, `end_date`, `notes` |
+| `update_person_relationship` | Update a relationship with confirmation; use the listed revision. Empty `notes` clears them. | `id`, `revision` (required); at least one of `end_date`, `notes` |
+| `delete_person_relationship` | Delete a relationship with confirmation using the listed revision. | `id`, `revision` (required) |
 | `get_person_record` | Read the structured person profile and ETag. | `person_id` (required), `offset`, `length`, `sha256` |
 | `get_person_record_history` | Read current and superseded profile values. | `person_id` (required) |
 | `get_person_record_media` | Read stored profile media in chunks. | `person_id`, `media_id` (required), `offset`, `length`, `sha256` |
@@ -933,10 +939,6 @@ A decision refused with `loop_scan_incomplete` saved nothing. Wait at least
 one second, then make a new call, which needs approval again. MCP never
 retries a write by itself. If a write reports
 `operation_may_have_completed: true`, list the loops again before retrying.
-
-## Relationship records
-
-Owner sessions can list relationship types, read a person’s relationships in chunks, and inspect the curated network. Relationship writes require `--allow-relationship-writes` and confirmation. Use the listed relationship revision for updates and deletes.
 
 ## Write controls
 
