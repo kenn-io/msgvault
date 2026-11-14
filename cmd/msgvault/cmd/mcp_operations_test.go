@@ -27,46 +27,49 @@ import (
 
 func TestMCPOperationResponseFailures(t *testing.T) {
 	t.Parallel()
+	settings := func(ctx context.Context, client *daemonclient.Client, method, path string) (*mcpserver.OperationResult, error) {
+		return readMCPOperationJSON[generated.SettingsResponse](ctx, client, method, path, nil, http.StatusOK)
+	}
+	person := func(ctx context.Context, client *daemonclient.Client, method, path string) (*mcpserver.OperationResult, error) {
+		return readMCPOperationJSON[generated.Person](ctx, client, method, path, nil, http.StatusOK)
+	}
 	for _, tt := range []struct {
-		name, method, body, want     string
-		status                       int
-		interrupted, wantErr, person bool
+		name, method, body, want, path string
+		status                         int
+		interrupted, wantErr           bool
+		read                           func(context.Context, *daemonclient.Client, string, string) (*mcpserver.OperationResult, error)
 	}{
 		{"post-commit credential conflict", http.MethodPatch, `{"error":"credential_conflict"}`,
-			`{"error":"operation_refused","operation_may_have_completed":true}`, http.StatusPreconditionFailed, false, false, false},
+			`{"error":"operation_refused","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusPreconditionFailed, false, false, settings},
 		{"unclassified server failure", http.MethodPost, `{"error":"settings_write_failed"}`,
-			`{"error":"operation_refused","operation_may_have_completed":true}`, http.StatusInternalServerError, false, false, false},
+			`{"error":"operation_refused","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusInternalServerError, false, false, settings},
 		{"known pre-commit conflict", http.MethodPatch, `{"error":"settings_conflict"}`,
-			`{"error":"settings_conflict","operation_may_have_completed":false}`, http.StatusPreconditionFailed, false, false, false},
+			`{"error":"settings_conflict","operation_may_have_completed":false}`, "/api/v1/settings", http.StatusPreconditionFailed, false, false, settings},
 		{"read failure", http.MethodGet, `{"error":"credential_conflict"}`,
-			`{"error":"operation_refused","operation_may_have_completed":false}`, http.StatusPreconditionFailed, false, false, false},
+			`{"error":"operation_refused","operation_may_have_completed":false}`, "/api/v1/settings", http.StatusPreconditionFailed, false, false, settings},
 		{"oversized successful write receipt", http.MethodPatch, `{"data":"` + strings.Repeat("x", 1<<20) + `"}`,
-			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, http.StatusOK, false, false, false},
+			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusOK, false, false, settings},
 		{"interrupted write receipt", http.MethodPatch, `{"partial":`,
-			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, http.StatusOK, true, true, false},
+			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusOK, true, true, settings},
 		{"interrupted error response", http.MethodPatch, `{"error":`,
-			`{"error":"operation_response_failed","operation_may_have_completed":true}`, http.StatusInternalServerError, true, true, false},
+			`{"error":"operation_response_failed","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusInternalServerError, true, true, settings},
 		{"invalid write receipt", http.MethodPatch, `{}`,
-			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, http.StatusOK, false, false, false},
+			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusOK, false, false, settings},
 		{"person receipt without ID", http.MethodPatch, `{"id":0,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","participant_ids":[],"vcard_uid":"example"}`,
-			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, http.StatusOK, false, false, true},
+			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/people/1", http.StatusOK, false, false, person},
 		{"malformed write receipt", http.MethodPatch, `not json`,
-			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, http.StatusOK, false, true, false},
+			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusOK, false, true, settings},
 		{"oversized read", http.MethodGet, strings.Repeat("x", (1<<20)+1),
-			`{"error":"operation_response_limit_exceeded","operation_may_have_completed":false}`, http.StatusOK, false, false, false},
+			`{"error":"operation_response_limit_exceeded","operation_may_have_completed":false}`, "/api/v1/settings", http.StatusOK, false, false, settings},
 		{"read validation failure", http.MethodGet, `{"error":"validation_failed"}`,
-			`{"error":"validation_failed","operation_may_have_completed":false}`, http.StatusUnprocessableEntity, false, false, false},
+			`{"error":"validation_failed","operation_may_have_completed":false}`, "/api/v1/settings", http.StatusUnprocessableEntity, false, false, settings},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			requirements, assertions := require.New(t), assert.New(t)
-			path := "/api/v1/settings"
-			if tt.person {
-				path = "/api/v1/people/1"
-			}
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				assertions.Equal(tt.method, r.Method)
-				assertions.Equal(path, r.URL.Path)
+				assertions.Equal(tt.path, r.URL.Path)
 				w.Header().Set("Content-Type", "application/json")
 				if tt.interrupted {
 					w.Header().Set("Content-Length", "100")
@@ -74,13 +77,7 @@ func TestMCPOperationResponseFailures(t *testing.T) {
 				w.WriteHeader(tt.status)
 				_, _ = w.Write([]byte(tt.body))
 			})
-			var result *mcpserver.OperationResult
-			var err error
-			if tt.person {
-				result, err = readMCPOperationJSON[generated.Person](t.Context(), client, tt.method, path, nil, http.StatusOK)
-			} else {
-				result, err = readMCPOperationJSON[generated.SettingsResponse](t.Context(), client, tt.method, path, nil, http.StatusOK)
-			}
+			result, err := tt.read(t.Context(), client, tt.method, tt.path)
 			if tt.wantErr {
 				requirements.Error(err)
 			} else {
