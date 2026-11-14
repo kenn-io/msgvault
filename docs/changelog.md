@@ -10,7 +10,7 @@ All notable changes to msgvault, grouped by release.
 
 - Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
 
-- Owner MCP withholds detected verification content by default in message detail, thread, list, and keyword and vector search reads. Draft lifecycle results withhold draft text, raw MIME, and candidate content. It refuses Saved View runs, text conversations, open loop lists, Explore, person note updates, files and agenda, identity reviews, CardDAV previews, media and visual search, meeting reads, original MIME exports, and archive SQL while withholding. Use `--reveal-verification` or `serve --mcp-reveal-verification` to reveal it. Upgrade the daemon to use protected standalone MCP. See [verification protection](api-server.md#verification-content) for details.
+- Owner MCP withholds detected verification content by default in message detail, thread, list, open loop, and keyword and vector search reads. Draft lifecycle results withhold draft text, raw MIME, and candidate content. It refuses Saved View runs, text conversations, Explore, person note updates, files and agenda, identity reviews, CardDAV previews, media and visual search, meeting reads, original MIME exports, and archive SQL while withholding. Use `--reveal-verification` or `serve --mcp-reveal-verification` to reveal it. Upgrade the daemon to use protected standalone MCP. See [verification protection](api-server.md#verification-content) for details.
 
 ## 0.24.0
 <small>2026-11-13</small>
