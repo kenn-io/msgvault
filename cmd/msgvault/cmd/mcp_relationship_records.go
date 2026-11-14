@@ -25,9 +25,21 @@ func relationshipRecordCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MC
 		{"update_person_relationship", "patchPersonRelationship", http.MethodPatch, "/api/v1/person-relationships/{id}", nil, []string{"end_date", "notes"}},
 		{"delete_person_relationship", "deletePersonRelationship", http.MethodDelete, "/api/v1/person-relationships/{id}", nil, nil},
 	} {
-		if hasRoute(route.id, route.method, route.path, route.query...) && (route.method == http.MethodGet || mcpRequestPropertiesPresent(caps, route.id, route.properties...) && hasRoute("getPersonProfile", http.MethodGet, "/api/v1/people/{id}") && (route.name == "create_person_relationship" && hasRoute("listRelationshipTypes", http.MethodGet, "/api/v1/relationship-types") || route.name != "create_person_relationship" && hasRoute("getPersonRelationship", http.MethodGet, "/api/v1/person-relationships/{id}"))) {
-			names = append(names, route.name)
+		if !hasRoute(route.id, route.method, route.path, route.query...) {
+			continue
 		}
+		if route.method != http.MethodGet {
+			if !mcpRequestPropertiesPresent(caps, route.id, route.properties...) || !hasRoute("getPersonProfile", http.MethodGet, "/api/v1/people/{id}") {
+				continue
+			}
+			if route.name == "create_person_relationship" && !hasRoute("listRelationshipTypes", http.MethodGet, "/api/v1/relationship-types") {
+				continue
+			}
+			if route.name != "create_person_relationship" && !hasRoute("getPersonRelationship", http.MethodGet, "/api/v1/person-relationships/{id}") {
+				continue
+			}
+		}
+		names = append(names, route.name)
 	}
 	return names
 }

@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRelationshipWritesHaveSeparateOptIn(t *testing.T) {
+func TestRelationshipCatalogGatingAndWarnings(t *testing.T) {
 	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"list_person_relationships", "get_person_network", "create_person_relationship"}, OperationWriteFamilies: []OperationFamily{OperationFamilyRecords, OperationFamilyCurated}}
 	reads := toolsByName(t, rawListTools(t, opts, true))
 	assert.NotContains(t, reads, "create_person_relationship")

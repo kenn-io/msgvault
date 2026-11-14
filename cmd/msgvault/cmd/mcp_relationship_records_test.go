@@ -55,7 +55,7 @@ func assertRelationshipDisclosure(t *testing.T, disclosure string) {
 }
 
 func TestMCPRelationshipRecords(t *testing.T) {
-	st, backend, source, target := relationshipFixture(t)
+	_, backend, source, target := relationshipFixture(t)
 	_, err := backend.OperationDisclosure(t.Context(), "create_person_relationship", map[string]any{"source_person_id": source, "target_person_id": int64(999999), "relationship_type_slug": "parent"})
 	var refusal *mcpserver.OperationRefusalError
 	require.ErrorAs(t, err, &refusal)
@@ -85,6 +85,10 @@ func TestMCPRelationshipRecords(t *testing.T) {
 	result, err = backend.ExecuteOperation(t.Context(), "delete_person_relationship", deleteArgs)
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
+}
+
+func TestMCPRelationshipListProjection(t *testing.T) {
+	st, backend, source, target := relationshipFixture(t)
 	session := operationMCPSession(t, backend, nil, nil)
 	emptyResult, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_relationships", Arguments: map[string]any{"person_id": source}})
 	require.NoError(t, err)
@@ -141,6 +145,13 @@ func TestMCPRelationshipStaleWrite(t *testing.T) {
 	disclosure, err := backend.OperationDisclosure(t.Context(), "delete_person_relationship", map[string]any{"id": updated.ID, "revision": updated.Revision})
 	require.NoError(t, err)
 	assert.Contains(t, disclosure, "changed")
+}
+
+func TestMCPRelationshipNetworkMissingPerson(t *testing.T) {
+	_, backend, _, _ := relationshipFixture(t)
+	result, err := backend.ExecuteOperation(t.Context(), "get_person_network", map[string]any{"person_id": int64(999999)})
+	require.NoError(t, err)
+	assertLoopRefusal(t, result, "person_profile_not_found", false)
 }
 
 func TestMCPRelationshipCapabilities(t *testing.T) {
