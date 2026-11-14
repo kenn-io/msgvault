@@ -210,14 +210,16 @@ func TestMCPAttributeClearPinsPreviewedValue(t *testing.T) {
 }
 
 func TestMCPAttributePreviewCallerGuards(t *testing.T) {
-	_, _, err := (&daemonMCPOperations{}).recordAttributeDisclosure(t.Context(), "set_person_attribute", map[string]any{"expected_empty": true, "expected_value_id": int64(1)})
-	attributeRefused(t, err, "invalid_expected_empty")
-	b, _, person := recordAttributesFixture(t)
+	b, st, person := recordAttributesFixture(t)
 	disclose := func(name string, args map[string]any) error {
 		_, err := b.OperationDisclosure(t.Context(), name, args)
 		return err
 	}
 	args := map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "email"}}
+	invalid := maps.Clone(args)
+	invalid["expected_empty"], invalid["expected_value_id"] = true, int64(1)
+	attributeRefused(t, disclose("set_person_attribute", invalid), "invalid_expected_empty")
+	assert.Empty(t, attributeValues(t, st, person, store.AttributeSlugPrimaryChannel))
 	pinned := maps.Clone(args)
 	require.NoError(t, disclose("set_person_attribute", pinned))
 	assert.Equal(t, true, pinned["expected_empty"])
