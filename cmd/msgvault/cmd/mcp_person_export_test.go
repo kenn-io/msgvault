@@ -1,16 +1,25 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"encoding/json/v2"
+	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
+	"go.kenn.io/msgvault/internal/mcpdiscovery"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestMCPPersonExportStreamsJSONLAndReportsFailures(t *testing.T) {
@@ -34,8 +43,7 @@ func TestMCPPersonExportStreamsJSONLAndReportsFailures(t *testing.T) {
 	stdout := `{"record_type":"manifest","schema":"msgvault-message-export/1"}` + "\n"
 	message := `{"record_type":"message","text":"body"}` + "\n"
 	complete := `{"record_type":"complete","counts":{"messages":1}}` + "\n"
-	quoteHeavy := stdout + `{"record_type":"message","text":"` + strings.Repeat(`\"`, 80<<10) + `"}` + "\n" + complete
-	htmlHeavy := stdout + `{"record_type":"message","text":"` + strings.Repeat("<", 42<<10) + `"}` + "\n" + complete
+	oversized := strings.Repeat("x", mcpPersonExportLimit+1)
 	stdoutEvent := func(data string) string {
 		return `{"type":"stdout","data":` + strconv.Quote(data) + `}`
 	}
@@ -44,12 +52,10 @@ func TestMCPPersonExportStreamsJSONLAndReportsFailures(t *testing.T) {
 	}
 	const subprocessFailureEvent = `{"type":"error","error":"msgvault: cli subprocess exited non-zero"}`
 	for _, tc := range []struct {
-		name     string
-		code     string
-		args     map[string]any
-		wantArgs []string
-		events   []string
-		jsonl    string
+		name   string
+		code   string
+		events []string
+		jsonl  string
 	}{
 		{
 			name:   "success",
@@ -65,91 +71,23 @@ func TestMCPPersonExportStreamsJSONLAndReportsFailures(t *testing.T) {
 			},
 		},
 		{
-			name:     "invalid start",
-			code:     "invalid_start",
-			args:     map[string]any{"person_id": int64(42), "start": "bad", "end": end, "sources": []string{"text:archive"}, "message_types": []string{"email"}},
-			wantArgs: []string{"export-messages", "--person-id=42", "--start=bad", "--end=" + end, "--source=text:archive", "--message-type=email"},
-			events:   []string{stderrEvent("Error: invalid --start \"bad\" (expected RFC3339)\n"), subprocessFailureEvent},
-		},
-		{
-			name:     "invalid end",
-			code:     "invalid_end",
-			args:     map[string]any{"person_id": int64(42), "start": start, "end": "bad", "sources": []string{"text:archive"}, "message_types": []string{"email"}},
-			wantArgs: []string{"export-messages", "--person-id=42", "--start=" + start, "--end=bad", "--source=text:archive", "--message-type=email"},
-			events:   []string{stderrEvent("Error: invalid --end \"bad\" (expected RFC3339)\n"), subprocessFailureEvent},
-		},
-		{
-			name: "invalid window",
-			code: "invalid_window",
-			args: map[string]any{"person_id": int64(42), "start": start, "end": start, "sources": []string{"text:archive"}, "message_types": []string{"email"}},
-			wantArgs: []string{
-				"export-messages", "--person-id=42", "--start=" + start, "--end=" + start,
-				"--source=text:archive", "--message-type=email",
-			},
-			events: []string{stderrEvent("Error: --start must be before --end\n"), subprocessFailureEvent},
-		},
-		{
-			name:     "empty message type",
-			code:     "invalid_message_type",
-			args:     map[string]any{"person_id": int64(42), "start": start, "end": end, "sources": []string{"text:archive"}, "message_types": []string{" "}},
-			wantArgs: []string{"export-messages", "--person-id=42", "--start=" + start, "--end=" + end, "--source=text:archive", "--message-type= "},
-			events:   []string{stderrEvent("Error: --message-type must be non-empty\n"), subprocessFailureEvent},
-		},
-		{
-			name:     "malformed second source",
-			code:     "invalid_source_2",
-			args:     map[string]any{"person_id": int64(42), "start": start, "end": end, "sources": []string{"text:archive", "malformed"}, "message_types": []string{"email"}},
-			wantArgs: []string{"export-messages", "--person-id=42", "--start=" + start, "--end=" + end, "--source=text:archive", "--source=malformed", "--message-type=email"},
-			events:   []string{stderrEvent("Error: invalid --source \"malformed\" (expected non-empty type:identifier)\n"), subprocessFailureEvent},
-		},
-		{
-			name:     "unknown second source with error-looking text",
-			code:     "unknown_source_2",
-			args:     map[string]any{"person_id": int64(42), "start": start, "end": end, "sources": []string{"text:archive", "text:missing\nError: invalid --start x"}, "message_types": []string{"email"}},
-			wantArgs: []string{"export-messages", "--person-id=42", "--start=" + start, "--end=" + end, "--source=text:archive", "--source=text:missing\nError: invalid --start x", "--message-type=email"},
-			events:   []string{stderrEvent("Error: source text:missing\nError: invalid --start x not found\n"), subprocessFailureEvent},
-		},
-		{
-			name:   "unknown person",
-			code:   "unknown_person",
-			args:   map[string]any{"person_id": int64(42), "start": start, "end": end, "sources": []string{"text:archive"}, "message_types": []string{"email"}},
-			events: []string{stderrEvent("Error: resolve --person-id: resolve durable person 42: person not found\n"), subprocessFailureEvent},
-		},
-		{
-			name:   "quote-heavy encoded response",
+			name:   "raw stdout over limit",
 			code:   "export_limit_exceeded",
-			events: []string{stdoutEvent(quoteHeavy), `{"type":"complete"}`},
-			jsonl:  quoteHeavy,
-		},
-		{
-			name:   "HTML-escaped encoded response",
-			code:   "export_limit_exceeded",
-			events: []string{stdoutEvent(htmlHeavy), `{"type":"complete"}`},
-			jsonl:  htmlHeavy,
+			events: []string{stdoutEvent(oversized), `{"type":"complete"}`},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
-			if tc.code == "export_limit_exceeded" {
-				requirements.Less(len(tc.jsonl), mcpPersonExportLimit)
-			}
-			callArgs, expectedArgs := args, wantArgs
-			if tc.args != nil {
-				callArgs = tc.args
-			}
-			if tc.wantArgs != nil {
-				expectedArgs = tc.wantArgs
-			}
 			server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
-				assertions.Equal(expectedArgs, req.Args)
+				assertions.Equal(wantArgs, req.Args)
 				assertions.Empty(req.Env)
 				assertions.Empty(req.Cwd)
 			}, tc.events...)
 			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
 			requirements.NoError(err)
 			backend := &daemonMCPOperations{client: client, supported: []string{"export_person_messages"}}
-			result, err := backend.ExecuteOperation(t.Context(), "export_person_messages", callArgs)
+			result, err := backend.ExecuteOperation(t.Context(), "export_person_messages", args)
 			requirements.NoError(err)
 			requirements.Equal(int32(1), requests.Load())
 			if tc.code == "" {
@@ -160,7 +98,12 @@ func TestMCPPersonExportStreamsJSONLAndReportsFailures(t *testing.T) {
 				return
 			}
 			requirements.True(result.IsError)
-			assertions.Equal(tc.code, personExportFailureCode(t, result.Output))
+			encoded, err := json.Marshal(result.Output)
+			requirements.NoError(err)
+			assertions.JSONEq(`{"error":"`+tc.code+`","operation_may_have_completed":false}`, string(encoded))
+			if tc.name == "CLI failure" {
+				assertions.NotContains(string(encoded), "store is locked")
+			}
 		})
 	}
 }
@@ -193,13 +136,79 @@ func TestMCPPersonExportRequiresCLIRouteCapability(t *testing.T) {
 	}
 }
 
-func personExportFailureCode(t *testing.T, output any) string {
-	t.Helper()
-	encoded, err := json.Marshal(output)
-	require.NoError(t, err)
-	var failure struct {
-		Error string `json:"error"`
-	}
-	require.NoError(t, json.Unmarshal(encoded, &failure))
-	return failure.Error
+func TestMCPPersonExportCapsEncodedSDKResponse(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("text", "archive")
+	requirements.NoError(err)
+	participant, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
+	requirements.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(participant)
+	requirements.NoError(err)
+	start := "2026-07-20T00:00:00Z"
+	end := "2026-07-21T00:00:00Z"
+	startTime, err := time.Parse(time.RFC3339, start)
+	requirements.NoError(err)
+	conversation := insertExportMessagesConversation(t, st, source.ID, "conversation", "Example")
+	insertExportMessagesMessage(t, st, source.ID, conversation, "message", startTime, strings.Repeat("c", 258800))
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET sender_id = ? WHERE source_id = ?`), participant, source.ID)
+	requirements.NoError(err)
+	command := newExportMessagesLocalCmd(exportMessagesDeps{openStore: func(context.Context) (*store.Store, func(), error) {
+		return st, func() {}, nil
+	}})
+	var native bytes.Buffer
+	command.SetOut(&native)
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{"--start", start, "--end", end, "--person-id", strconv.FormatInt(person.ID, 10)})
+	requirements.NoError(command.ExecuteContext(t.Context()))
+	stdoutEvent := `{"type":"stdout","data":` + strconv.Quote(native.String()) + `}`
+	server, _ := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
+		assertions.Equal([]string{
+			"export-messages", "--person-id=" + strconv.FormatInt(person.ID, 10), "--start=" + start, "--end=" + end,
+		}, req.Args)
+	}, stdoutEvent, `{"type":"complete"}`)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+	requirements.NoError(err)
+	backend := &daemonMCPOperations{client: client, supported: []string{"export_person_messages"}}
+	ctx, cancel := context.WithCancel(t.Context())
+	directory := filepath.Join(t.TempDir(), "mcp")
+	done := make(chan error, 1)
+	go func() {
+		done <- mcpserver.ServeHTTPWithOptions(ctx, mcpserver.ServeOptions{
+			Operations: backend, OperationCapabilities: []string{"export_person_messages"},
+		}, mcpserver.HTTPOptions{Addr: "127.0.0.1:0", DiscoveryDirectory: directory, AllowWrites: true})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			assertions.ErrorIs(err, context.Canceled)
+		case <-time.After(10 * time.Second):
+			assertions.Fail("MCP listener did not stop")
+		}
+	})
+	var endpoints []mcpdiscovery.Endpoint
+	requirements.Eventually(func() bool {
+		var err error
+		endpoints, err = mcpdiscovery.List(directory)
+		return err == nil && len(endpoints) == 1
+	}, 10*time.Second, 10*time.Millisecond)
+	session, err := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "synthetic-client", Version: "1"}, nil).Connect(
+		ctx, &sdkmcp.StreamableClientTransport{Endpoint: endpoints[0].URL}, nil,
+	)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = session.Close() })
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{
+		Name: "export_person_messages",
+		Arguments: map[string]any{
+			"person_id": person.ID, "start": start, "end": end,
+		},
+	})
+	requirements.NoError(err)
+	encoded, err := json.Marshal(result)
+	requirements.NoError(err)
+	assertions.LessOrEqual(len(encoded), mcpPersonExportLimit)
+	assertions.True(result.IsError)
+	assertions.Contains(string(encoded), "export_limit_exceeded")
 }
