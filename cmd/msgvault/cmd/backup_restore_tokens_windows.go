@@ -17,37 +17,37 @@ import (
 	"go.kenn.io/msgvault/internal/providercredentials"
 )
 
-func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, target string) (err error) {
+func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, target string, forceUnlock bool) (count int, err error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return 0, err
 	}
-	lease, err := repo.AcquireSharedLock("secure restored tokens", false)
+	lease, err := repo.AcquireSharedLock("secure restored tokens", forceUnlock)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { err = errors.Join(err, lease.Release()) }()
 	manifest, err := repo.LoadManifest(snapshotID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if !manifest.Options.IncludeTokens || manifest.Extras.Tree == "" {
-		return nil
+		return 0, nil
 	}
 	id, err := pack.ParseBlobID(manifest.Extras.Tree)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	index, err := repo.LoadBlobIndex()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	raw, err := repo.ReadBlob(index, id, nil, backupapp.New(Version).PackFileExtension())
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var tree backup.ExtrasTree
 	if err := json.Unmarshal(raw, &tree); err != nil {
-		return fmt.Errorf("read snapshot extras: %w", err)
+		return 0, fmt.Errorf("read snapshot extras: %w", err)
 	}
 	var selected []string
 	for _, entry := range tree.Entries {
@@ -56,19 +56,19 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 			continue
 		}
 		if !fs.ValidPath(name) || strings.Contains(name, `\`) || !filepath.IsLocal(filepath.FromSlash(name)) {
-			return fmt.Errorf("invalid snapshot token path %q", entry.Path)
+			return 0, fmt.Errorf("invalid snapshot token path %q", entry.Path)
 		}
 		selected = append(selected, filepath.FromSlash(name))
 	}
 	if len(selected) == 0 {
-		return nil
+		return 0, nil
 	}
 	err = providercredentials.SecureRestored(filepath.Join(target, "tokens"), selected)
 	if errors.Is(err, providercredentials.ErrRestorePermissionsConflict) {
-		return fmt.Errorf("%w; credential permissions were not changed; resolve the conflict or move the omitted entry aside", err)
+		return 0, fmt.Errorf("%w; credential permissions were not changed; resolve the conflict or move the omitted entry aside", err)
 	}
 	if err != nil {
-		return fmt.Errorf("%w; credentials may be unreadable and permissions may have changed", err)
+		return 0, fmt.Errorf("%w; credentials may be unreadable and permissions may have changed", err)
 	}
-	return nil
+	return len(selected), nil
 }

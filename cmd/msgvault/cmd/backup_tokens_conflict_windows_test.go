@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -79,8 +80,11 @@ func TestBackupRestorePermissionConflictAfterPublication(t *testing.T) {
 	info, readErr := os.Stat(db)
 	require.NoError(readErr)
 	require.NoError(os.Rename(omitted, filepath.Join(t.TempDir(), "omitted")))
+	var output bytes.Buffer
+	rootCmd.SetOut(&output)
 	rootCmd.SetArgs([]string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", manifest.SnapshotID, "--repo", repo.Root(), "--target", target, "--permissions-only"})
 	require.NoError(executeRootContext(t.Context(), rootCmd))
+	assert.Contains(output.String(), "secured token files: 1")
 	after, readErr := os.ReadFile(db)
 	require.NoError(readErr)
 	afterInfo, readErr := os.Stat(db)

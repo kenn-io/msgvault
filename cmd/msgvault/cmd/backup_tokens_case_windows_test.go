@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -109,7 +110,17 @@ func TestBackupRestoreConfigOnlyLeavesUnrelatedTokenPath(t *testing.T) {
 	require.NoError(t, err)
 	_, err = os.ReadDir(tokens)
 	require.Error(t, err)
-	require.NoError(t, secureRestoredTokens(t.Context(), repo, manifest.SnapshotID, target))
+	prepareBackupTokenRestore(t)
+	lock := repo.Path("locks", "exclusive.json")
+	require.NoError(t, os.WriteFile(lock, []byte("{}"), 0o600))
+	args := []string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", manifest.SnapshotID, "--repo", repo.Root(), "--target", target, "--permissions-only"}
+	var output bytes.Buffer
+	rootCmd.SetOut(&output)
+	rootCmd.SetArgs(args)
+	require.ErrorIs(t, executeRootContext(t.Context(), rootCmd), backup.ErrRepoLocked)
+	rootCmd.SetArgs(append(args, "--force-unlock"))
+	require.NoError(t, executeRootContext(t.Context(), rootCmd))
+	assert.Contains(t, output.String(), "secured token files: 0 (snapshot contains no token files)")
 	after, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	require.NoError(t, err)
 	assert.Equal(t, locked.String(), after.String())

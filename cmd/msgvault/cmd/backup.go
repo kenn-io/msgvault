@@ -251,6 +251,9 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening backup repository: %w", err)
 	}
+	if backupRestoreTarget == "" {
+		return errors.New("backup: restore target directory is required")
+	}
 	if err := refuseRestoreIntoLiveDaemonHome(backupRestoreTarget, cfg); err != nil {
 		return err
 	}
@@ -261,8 +264,14 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 		if runtime.GOOS != "windows" {
 			return errors.New("--permissions-only is available only on Windows")
 		}
-		if err := secureRestoredTokens(cmd.Context(), r, args[0], backupRestoreTarget); err != nil {
+		count, err := secureRestoredTokens(cmd.Context(), r, args[0], backupRestoreTarget, backupRestoreForceUnlock)
+		if err != nil {
 			return fmt.Errorf("securing restored credentials: %w", err)
+		}
+		if count == 0 {
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "secured token files: 0 (snapshot contains no token files)")
+		} else {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "secured token files: %d\n", count)
 		}
 		return nil
 	}
@@ -301,7 +310,7 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("restoring snapshot: %w", err)
 	}
-	if err := secureRestoredTokens(cmd.Context(), r, res.SnapshotID, backupRestoreTarget); err != nil {
+	if _, err := secureRestoredTokens(cmd.Context(), r, res.SnapshotID, backupRestoreTarget, backupRestoreForceUnlock); err != nil {
 		return fmt.Errorf("snapshot %s was restored to %s, but securing restored credentials failed: %w; retry with: msgvault backup restore %s --repo \"%s\" --target \"%s\" --permissions-only", res.SnapshotID, backupRestoreTarget, err, res.SnapshotID, repo, backupRestoreTarget)
 	}
 	return printBackupRestoreSummary(cmd.OutOrStdout(), backupRestoreTarget, res, looseAttachments)
@@ -1099,7 +1108,7 @@ func init() {
 	backupRestoreCmd.Flags().StringVar(&backupRestoreRepo, "repo", "", "Backup repository directory")
 	backupRestoreCmd.Flags().StringVar(&backupRestoreTarget, "target", "", "Directory to restore into (required)")
 	_ = backupRestoreCmd.MarkFlagRequired("target")
-	backupRestoreCmd.Flags().BoolVar(&backupRestorePermissionsOnly, "permissions-only", false, "Retry credential permissions for a snapshot (Windows only)")
+	backupRestoreCmd.Flags().BoolVar(&backupRestorePermissionsOnly, "permissions-only", false, "Retry credential permissions for a snapshot and report the file count (Windows only)")
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreOverwrite, "overwrite", false, "Allow restoring into a non-empty target directory")
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreForceUnlock, "force-unlock", false, "Break a stale exclusive repository lock before restoring")
 	backupRestoreCmd.Flags().IntVar(&backupRestoreJobs, "jobs", 0, "Concurrent pack readers (default: one per CPU; use 1 for serial reads on spinning disks or NAS shares)")
