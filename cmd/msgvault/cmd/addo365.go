@@ -202,7 +202,7 @@ func selectO365Account(accounts []daemonclient.CLIAccount, email string, graph b
 		unknown = unknown || undetermined
 	}
 	if selected == nil && retired {
-		return nil, false, fmt.Errorf("microsoft mail source for %s is retired: %w", email, store.ErrSourceRetired)
+		return nil, false, fmt.Errorf("microsoft mail source for %s: %w", email, store.ErrSourceRetired)
 	}
 	return selected, unknown, nil
 }
