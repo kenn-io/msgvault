@@ -419,7 +419,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			)
 		}
 	case sourceTypeMSMail:
-		if err := removeMicrosoftMailTokens(cfg, source.Identifier, true, logger); err != nil {
+		if err := removeMicrosoftMailTokensIfUnused(s, cfg, source.Identifier, true, logger); err != nil {
 			fmt.Fprintf(os.Stderr,
 				"Warning: could not remove Microsoft Graph mail token: %v\n", err,
 			)
@@ -476,7 +476,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			if parseErr == nil {
 				switch imapCfg.EffectiveAuthMethod() {
 				case imaplib.AuthXOAuth2:
-					if err := removeMicrosoftMailTokens(cfg, imapCfg.Username, false, logger); err != nil {
+					if err := removeMicrosoftMailTokensIfUnused(s, cfg, imapCfg.Username, false, logger); err != nil {
 						fmt.Fprintf(os.Stderr,
 							"Warning: could not remove Microsoft token: %v\n", err,
 						)
@@ -719,6 +719,37 @@ func removeAccountSelector(cmd *cobra.Command, args []string) (sourceops.Selecto
 
 func init() {
 	rootCmd.AddCommand(newRemoveAccountCmd())
+}
+
+// removeMicrosoftMailTokensIfUnused retains credentials shared by another source.
+func removeMicrosoftMailTokensIfUnused(s *store.Store, cfg *config.Config, email string, graph bool, logger *slog.Logger) error {
+	typ := sourceTypeIMAP
+	if graph {
+		typ = sourceTypeMSMail
+	}
+	sources, err := s.ListSources(typ)
+	if err != nil {
+		return fmt.Errorf("check remaining Microsoft sources: %w", err)
+	}
+	for _, source := range sources {
+		if graph {
+			if strings.EqualFold(source.Identifier, email) {
+				return nil
+			}
+			continue
+		}
+		if !source.SyncConfig.Valid || source.SyncConfig.String == "" {
+			return fmt.Errorf("check remaining IMAP source %s: authentication configuration unavailable", source.Identifier)
+		}
+		imapCfg, err := imaplib.ConfigFromJSON(source.SyncConfig.String)
+		if err != nil {
+			return fmt.Errorf("check remaining IMAP source %s: %w", source.Identifier, err)
+		}
+		if imapCfg.EffectiveAuthMethod() == imaplib.AuthXOAuth2 && strings.EqualFold(imapCfg.Username, email) {
+			return nil
+		}
+	}
+	return removeMicrosoftMailTokens(cfg, email, graph, logger)
 }
 
 // removeMicrosoftMailTokens removes credentials left by any previous client.

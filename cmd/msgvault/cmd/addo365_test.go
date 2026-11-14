@@ -14,101 +14,21 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
-	imapclient "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/store"
 )
 
-func TestIsMicrosoftIMAPSource(t *testing.T) {
-	xoauth2Config := func(username string) string {
-		cfg := &imapclient.Config{
-			Host:       "outlook.office365.com",
-			Port:       993,
-			TLS:        true,
-			Username:   username,
-			AuthMethod: imapclient.AuthXOAuth2,
-		}
-		j, _ := cfg.ToJSON()
-		return j
+func TestSelectO365AccountRejectsAmbiguousMailboxes(t *testing.T) {
+	accounts := []daemonclient.CLIAccount{
+		{Type: sourceTypeIMAP, Identifier: "imaps://user@example.com@outlook.office.com:993", AuthMethod: "xoauth2", OAuthApp: "a"},
+		{Type: sourceTypeIMAP, Identifier: "imaps://user@example.com@outlook.office365.com:993", AuthMethod: "xoauth2", OAuthApp: "b"},
 	}
-	passwordConfig := func(username string) string {
-		cfg := &imapclient.Config{
-			Host:     "imap.example.com",
-			Port:     993,
-			TLS:      true,
-			Username: username,
-		}
-		j, _ := cfg.ToJSON()
-		return j
-	}
-
-	tests := []struct {
-		name  string
-		src   *store.Source
-		email string
-		want  bool
-	}{
-		{
-			name: "microsoft xoauth2 matching username",
-			src: &store.Source{
-				SourceType: "imap",
-				SyncConfig: sql.NullString{Valid: true, String: xoauth2Config("user@company.com")},
-			},
-			email: "user@company.com",
-			want:  true,
-		},
-		{
-			name: "microsoft xoauth2 username case-insensitive",
-			src: &store.Source{
-				SourceType: "imap",
-				SyncConfig: sql.NullString{Valid: true, String: xoauth2Config("User@Company.com")},
-			},
-			email: "user@company.com",
-			want:  true,
-		},
-		{
-			name: "non-microsoft password-auth source same display name",
-			src: &store.Source{
-				SourceType: "imap",
-				SyncConfig: sql.NullString{Valid: true, String: passwordConfig("user@company.com")},
-			},
-			email: "user@company.com",
-			want:  false,
-		},
-		{
-			name: "xoauth2 but different username",
-			src: &store.Source{
-				SourceType: "imap",
-				SyncConfig: sql.NullString{Valid: true, String: xoauth2Config("other@company.com")},
-			},
-			email: "user@company.com",
-			want:  false,
-		},
-		{
-			name: "no sync_config",
-			src: &store.Source{
-				SourceType: "imap",
-				SyncConfig: sql.NullString{Valid: false},
-			},
-			email: "user@company.com",
-			want:  false,
-		},
-		{
-			name: "invalid sync_config json",
-			src: &store.Source{
-				SourceType: "imap",
-				SyncConfig: sql.NullString{Valid: true, String: "not-json"},
-			},
-			email: "user@company.com",
-			want:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := isMicrosoftIMAPSource(tt.src, tt.email)
-			assert.Equal(t, tt.want, got, "isMicrosoftIMAPSource()")
-		})
+	for i := 0; i < 2; i++ {
+		_, _, err := selectO365Account(accounts, "USER@example.com", false)
+		require.ErrorContains(t, err, accounts[0].Identifier)
+		require.ErrorContains(t, err, accounts[1].Identifier)
+		accounts[0], accounts[1] = accounts[1], accounts[0]
 	}
 }
 
@@ -225,6 +145,98 @@ func TestAddO365StoresAndChangesAppBinding(t *testing.T) {
 				assert.Equal(t, tc.want, sourceOAuthApp(sources[0]))
 				cleanup()
 			}
+		})
+	}
+}
+
+func TestAddO365FailedRegistrationPreservesOldPair(t *testing.T) {
+	for _, graph := range []bool{false, true} {
+		t.Run(fmt.Sprintf("graph=%t", graph), func(t *testing.T) {
+			oldGraph, oldApp, oldIdentity := o365Graph, o365OAuthApp, noDefaultIdentityAddO365
+			t.Cleanup(func() { o365Graph, o365OAuthApp, noDefaultIdentityAddO365 = oldGraph, oldApp, oldIdentity })
+			cfg := lifecycleTestConfig(t.TempDir())
+			cfg.Microsoft.ClientID = "old-client"
+			cfg.Microsoft.Apps = map[string]config.MicrosoftApp{"new": {ClientID: "new-client"}}
+			state := testInvocationWithConfig(cfg)
+			ctx := withInvocation(t.Context(), state)
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(ctx, state)
+			require.NoError(t, err)
+			typ, identifier := sourceTypeIMAP, "imaps://user@example.com@outlook.office365.com:993"
+			if graph {
+				typ, identifier = sourceTypeMSMail, "user@example.com"
+			}
+			src, err := s.GetOrCreateSource(typ, identifier)
+			require.NoError(t, err)
+			oldConfig := `{"host":"outlook.office365.com","username":"user@example.com","auth_method":"xoauth2"}`
+			if !graph {
+				require.NoError(t, s.UpdateSourceSyncConfig(ctx, src.ID, oldConfig))
+			}
+			_, err = s.DB().ExecContext(ctx, `CREATE TRIGGER fail_binding BEFORE UPDATE OF oauth_app ON sources BEGIN SELECT RAISE(ABORT, 'binding failed'); END`)
+			require.NoError(t, err)
+			cleanup()
+			_, dir, err := microsoftMailApp(cfg, "new")
+			require.NoError(t, err)
+			require.NoError(t, os.MkdirAll(dir, 0o700))
+			require.NoError(t, os.MkdirAll(cfg.TokensDir(), 0o700))
+			var oldPath, newPath string
+			if graph {
+				oldPath = microsoft.NewGraphMailManager("", "", "", cfg.TokensDir(), nil).TokenPath("user@example.com")
+				newPath = microsoft.NewGraphMailManager("", "", "", dir, nil).TokenPath("user@example.com")
+			} else {
+				oldPath = microsoft.NewManager("", "", "", cfg.TokensDir(), nil).TokenPath("user@example.com")
+				newPath = microsoft.NewManager("", "", "", dir, nil).TokenPath("user@example.com")
+			}
+			oldToken := `{"access_token":"old","refresh_token":"old-refresh","expiry":"2000-01-01T00:00:00Z"}`
+			require.NoError(t, os.WriteFile(oldPath, []byte(oldToken), 0o600))
+			require.NoError(t, os.WriteFile(newPath, []byte(`{"access_token":"new"}`), 0o600))
+			cmd := newAddO365LocalCmd()
+			cmd.SetContext(ctx)
+			require.NoError(t, cmd.Flags().Set("oauth-preflighted", "true"))
+			require.NoError(t, cmd.Flags().Set("oauth-app", "new"))
+			if graph {
+				require.NoError(t, cmd.Flags().Set("graph", "true"))
+			}
+			require.ErrorContains(t, runAddO365Local(cmd, []string{"user@example.com"}), "binding failed")
+			s, cleanup, err = openWritableStoreAndInitForIngestInvocation(ctx, state)
+			require.NoError(t, err)
+			defer cleanup()
+			saved, err := s.GetSourceByID(src.ID)
+			require.NoError(t, err)
+			assert.Equal(t, identifier, saved.Identifier)
+			assert.Empty(t, sourceOAuthApp(saved))
+			if !graph {
+				assert.JSONEq(t, oldConfig, saved.SyncConfig.String)
+			}
+			contents, err := os.ReadFile(oldPath)
+			require.NoError(t, err)
+			assert.JSONEq(t, oldToken, string(contents))
+			previous := http.DefaultTransport
+			http.DefaultTransport = testTransport(func(req *http.Request) (*http.Response, error) {
+				require.NoError(t, req.ParseForm())
+				client := req.Form.Get("client_id")
+				if client == "" {
+					client, _, _ = req.BasicAuth()
+				}
+				assert.Equal(t, "old-client", client)
+				assert.Equal(t, "old-refresh", req.Form.Get("refresh_token"))
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"access_token":"fresh","token_type":"Bearer","expires_in":3600}`))}, nil
+			})
+			t.Cleanup(func() { http.DefaultTransport = previous })
+			var tokenFn func(context.Context) (string, error)
+			if graph {
+				mgr, err := newGraphMailManager(state, saved)
+				require.NoError(t, err)
+				tokenFn, err = mgr.TokenSource(ctx, "user@example.com")
+				require.NoError(t, err)
+			} else {
+				mgr, err := newMicrosoftIMAPManager(cfg, testDiscardLogger(), saved)
+				require.NoError(t, err)
+				tokenFn, err = mgr.TokenSource(ctx, "user@example.com")
+				require.NoError(t, err)
+			}
+			access, err := tokenFn(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, "fresh", access)
 		})
 	}
 }

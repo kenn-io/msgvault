@@ -104,6 +104,27 @@ func TestAddO365RejectsOutlookPasswordSourceBeforeConsent(t *testing.T) {
 	assert.Contains(t, saved.SyncConfig.String, `"password"`)
 }
 
+func TestAddO365RejectsAmbiguousSourcesBeforeConsent(t *testing.T) {
+	previousGraph, previousHeadless, previousApp := o365Graph, o365Headless, o365OAuthApp
+	t.Cleanup(func() { o365Graph, o365Headless, o365OAuthApp = previousGraph, previousHeadless, previousApp })
+	dir := t.TempDir()
+	cfg := lifecycleTestConfig(dir)
+	cfg.Microsoft.ClientID = "client"
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
+	for _, host := range []string{"outlook.office.com", "outlook.office365.com"} {
+		src, err := st.GetOrCreateSource(sourceTypeIMAP, "imaps://user@example.com@"+host+":993")
+		require.NoError(t, err)
+		require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, `{"username":"user@example.com","auth_method":"xoauth2"}`))
+	}
+	startStoreAPIDaemon(t, dir, st, nil)
+	cmd := newAddO365LocalCmd()
+	cmd.SetContext(withStoreResolverConfig(t, cfg))
+	_, err := preflightAddO365Authorize(cmd, "user@example.com")
+	require.ErrorContains(t, err, "multiple Microsoft mail sources")
+	err = runAddO365Local(cmd, []string{"user@example.com"})
+	require.ErrorContains(t, err, "multiple Microsoft mail sources")
+}
+
 func TestAddO365FailedConsentPreservesBoundToken(t *testing.T) {
 	for _, graph := range []bool{false, true} {
 		t.Run(fmt.Sprintf("graph=%t", graph), func(t *testing.T) {

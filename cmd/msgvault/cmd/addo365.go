@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -58,28 +59,31 @@ func preflightAddO365Authorize(cmd *cobra.Command, email string) (string, error)
 	if IsRemoteMode(state) {
 		return email, nil
 	}
-	conflict := false
-	stored, exists, undetermined, identifier, err := lookupAccountBinding(cmd.Context(), func(account daemonclient.CLIAccount) (bool, bool) {
-		if !o365Graph && isO365PasswordConflict(account, email) {
-			conflict = true
-		}
-		return matchesO365Account(account, email, o365Graph)
-	})
+	st, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return "", err
 	}
-	if conflict {
-		return "", fmt.Errorf("an Outlook IMAP account for %s already uses password authentication; remove or change that account before adding Microsoft OAuth", email)
+	accounts, _, err := st.GetCLIAccounts(cmd.Context())
+	_ = st.Close()
+	if err != nil {
+		return "", fmt.Errorf("look up existing source: %w", err)
+	}
+	account, undetermined, err := selectO365Account(accounts, email, o365Graph)
+	if err != nil {
+		return "", err
 	}
 	explicit := cmd.Flags().Changed("oauth-app")
-	if !explicit && !exists && undetermined {
-		return "", fmt.Errorf("daemon does not report the IMAP authentication method for %s; upgrade the daemon to 5.3.0 or later, or check the account's IMAP config", email)
+	if !explicit && undetermined {
+		return "", fmt.Errorf("daemon does not report the IMAP authentication method for %s; update the daemon or check the account's authentication configuration", email)
 	}
+	var stored sql.NullString
+	exists := account != nil
 	if exists {
+		stored = sql.NullString{String: account.OAuthApp, Valid: account.OAuthApp != ""}
 		if o365Graph {
-			email = identifier
+			email = account.Identifier
 		} else {
-			parsed, err := imapclient.ParseIdentifier(identifier)
+			parsed, err := imapclient.ParseIdentifier(account.Identifier)
 			if err != nil {
 				return "", err
 			}
@@ -104,6 +108,33 @@ func preflightAddO365Authorize(cmd *cobra.Command, email string) (string, error)
 		return "", fmt.Errorf("set --%s after authorization: %w", oauthPreflightedFlag, err)
 	}
 	return email, nil
+}
+
+func selectO365Account(accounts []daemonclient.CLIAccount, email string, graph bool) (*daemonclient.CLIAccount, bool, error) {
+	var matches []daemonclient.CLIAccount
+	unknown := false
+	for _, account := range accounts {
+		if !graph && isO365PasswordConflict(account, email) {
+			return nil, false, fmt.Errorf("an Outlook IMAP account for %s already uses password authentication; remove or change that account before adding Microsoft OAuth", email)
+		}
+		match, undetermined := matchesO365Account(account, email, graph)
+		if match {
+			matches = append(matches, account)
+		}
+		unknown = unknown || undetermined
+	}
+	if len(matches) > 1 {
+		ids := make([]string, 0, len(matches))
+		for _, match := range matches {
+			ids = append(ids, match.Identifier)
+		}
+		sort.Strings(ids)
+		return nil, false, fmt.Errorf("multiple Microsoft mail sources match %s: %s", email, strings.Join(ids, ", "))
+	}
+	if len(matches) == 1 {
+		return &matches[0], unknown, nil
+	}
+	return nil, unknown, nil
 }
 
 func matchesO365Account(account daemonclient.CLIAccount, email string, graph bool) (bool, bool) {
@@ -194,32 +225,39 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer cleanup()
-	var source *store.Source
+	typ := sourceTypeIMAP
 	if o365Graph {
-		var existing []*store.Source
-		existing, err = s.ListSources(sourceTypeMSMail)
+		typ = sourceTypeMSMail
+	}
+	existing, err := s.ListSources(typ)
+	if err != nil {
+		return fmt.Errorf("look up existing source: %w", err)
+	}
+	accounts := make([]daemonclient.CLIAccount, 0, len(existing))
+	for _, src := range existing {
+		account := daemonclient.CLIAccount{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier, OAuthApp: sourceOAuthApp(src)}
+		if src.SyncConfig.Valid {
+			if imapCfg, parseErr := imapclient.ConfigFromJSON(src.SyncConfig.String); parseErr == nil {
+				account.AuthMethod = string(imapCfg.EffectiveAuthMethod())
+			}
+		}
+		accounts = append(accounts, account)
+	}
+	account, unknown, err := selectO365Account(accounts, email, o365Graph)
+	if err != nil {
+		return err
+	}
+	if unknown && !cmd.Flags().Changed("oauth-app") {
+		return fmt.Errorf("cannot determine the IMAP authentication method for %s; update the daemon or check the account's authentication configuration", email)
+	}
+	var source *store.Source
+	if account != nil {
 		for _, src := range existing {
-			if strings.EqualFold(src.Identifier, email) {
+			if src.ID == account.ID {
 				source = src
 				break
 			}
 		}
-	} else {
-		var existing []*store.Source
-		existing, err = s.ListSources(sourceTypeIMAP)
-		for _, src := range existing {
-			if src.SyncConfig.Valid {
-				if imapCfg, parseErr := imapclient.ConfigFromJSON(src.SyncConfig.String); parseErr == nil && isO365PasswordConflict(daemonclient.CLIAccount{Type: src.SourceType, Identifier: src.Identifier, AuthMethod: string(imapCfg.EffectiveAuthMethod())}, email) {
-					return fmt.Errorf("an Outlook IMAP account for %s already uses password authentication; remove or change that account before adding Microsoft OAuth", email)
-				}
-			}
-			if src.SourceType == sourceTypeIMAP && isMicrosoftIMAPSource(src, email) {
-				source = src
-			}
-		}
-	}
-	if err != nil {
-		return fmt.Errorf("look up existing source: %w", err)
 	}
 	stored := sql.NullString{}
 	if source != nil {
@@ -280,25 +318,18 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 
 	identifier := imapCfg.Identifier()
 
-	if source != nil {
-		if err := s.UpdateSourceIdentifier(cmd.Context(), source.ID, identifier); err != nil {
-			return fmt.Errorf("update source identifier: %w", err)
-		}
-	} else {
+	if source == nil {
 		source, err = s.GetOrCreateSource(sourceTypeIMAP, identifier)
 		if err != nil {
 			return fmt.Errorf("create source: %w", err)
 		}
 	}
-	if err := storeO365Binding(cmd.Context(), s, source, binding); err != nil {
-		return fmt.Errorf("store OAuth app: %w", err)
-	}
 	cfgJSON, err := imapCfg.ToJSON()
 	if err != nil {
 		return fmt.Errorf("serialize config: %w", err)
 	}
-	if err := s.UpdateSourceSyncConfig(cmd.Context(), source.ID, cfgJSON); err != nil {
-		return fmt.Errorf("store config: %w", err)
+	if err := s.UpdateSourceO365Registration(cmd.Context(), source.ID, identifier, sql.NullString{String: binding.resolvedApp, Valid: binding.resolvedApp != ""}, cfgJSON); err != nil {
+		return fmt.Errorf("store Microsoft registration: %w", err)
 	}
 	if err := updateSourceDisplayNameForRegistration(s, source.ID, email, state.logger); err != nil {
 		return fmt.Errorf("set display name: %w", err)
@@ -429,23 +460,7 @@ func runAddO365GraphLocal(cmd *cobra.Command, email string, mailWrite bool, s *s
 }
 
 func storeO365Binding(ctx context.Context, s *store.Store, source *store.Source, binding addAccountBinding) error {
-	return s.UpdateSourceOAuthApp(ctx, source.ID, sql.NullString{String: binding.resolvedApp, Valid: binding.resolvedApp != ""})
-}
-
-// isMicrosoftIMAPSource returns true only if src is an IMAP source already
-// configured for Microsoft XOAUTH2 with the given username. This prevents
-// a non-Microsoft IMAP source (e.g. a password-auth source) that happens to
-// share the same display name from being silently repointed to Outlook XOAUTH2.
-func isMicrosoftIMAPSource(src *store.Source, email string) bool {
-	if !src.SyncConfig.Valid {
-		return false
-	}
-	cfg, err := imapclient.ConfigFromJSON(src.SyncConfig.String)
-	if err != nil {
-		return false
-	}
-	return cfg.EffectiveAuthMethod() == imapclient.AuthXOAuth2 &&
-		strings.EqualFold(cfg.Username, email)
+	return s.UpdateSourceO365Registration(ctx, source.ID, "", sql.NullString{String: binding.resolvedApp, Valid: binding.resolvedApp != ""}, "")
 }
 
 func init() {

@@ -2,6 +2,8 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,6 +12,24 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestUpdateSourceO365RegistrationRollsBack(t *testing.T) {
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "msgvault.db"))
+	ctx := t.Context()
+	source, err := st.GetOrCreateSource("imap", "old")
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceSyncConfig(ctx, source.ID, `{"username":"old"}`))
+	require.NoError(t, st.UpdateSourceOAuthApp(ctx, source.ID, sql.NullString{String: "old-app", Valid: true}))
+	_, err = st.DB().ExecContext(ctx, `CREATE TRIGGER fail_o365 BEFORE UPDATE OF oauth_app ON sources BEGIN SELECT RAISE(ABORT, 'binding failed'); END`)
+	require.NoError(t, err)
+	err = st.UpdateSourceO365Registration(ctx, source.ID, "new", sql.NullString{String: "new-app", Valid: true}, `{"username":"new"}`)
+	require.Error(t, err)
+	saved, err := st.GetSourceByID(source.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "old", saved.Identifier)
+	assert.Equal(t, "old-app", saved.OAuthApp.String)
+	assert.JSONEq(t, `{"username":"old"}`, saved.SyncConfig.String)
+}
 
 func TestSourceSettingsAliasLifecycleAtomic(t *testing.T) {
 	require := require.New(t)

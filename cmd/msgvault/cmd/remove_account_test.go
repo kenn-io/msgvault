@@ -1999,6 +1999,86 @@ func TestRemoveMicrosoftMailTokensAcrossApps(t *testing.T) {
 	}
 }
 
+func TestRemoveMicrosoftMailTokensKeepsSharedMailbox(t *testing.T) {
+	for _, graph := range []bool{false, true} {
+		t.Run(fmt.Sprintf("graph=%t", graph), func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := lifecycleTestConfig(dir)
+			st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
+			typ, identifier := sourceTypeIMAP, "imaps://USER@example.com@other.example:993"
+			if graph {
+				typ, identifier = sourceTypeMSMail, "USER@example.com"
+			}
+			src, err := st.GetOrCreateSource(typ, identifier)
+			require.NoError(t, err)
+			if !graph {
+				require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, `{"username":"USER@example.com","auth_method":"xoauth2"}`))
+			}
+			require.NoError(t, os.MkdirAll(cfg.TokensDir(), 0o700))
+			var path string
+			if graph {
+				path = microsoft.NewGraphMailManager("", "", "", cfg.TokensDir(), nil).TokenPath("user@example.com")
+			} else {
+				path = microsoft.NewManager("", "", "", cfg.TokensDir(), nil).TokenPath("user@example.com")
+			}
+			require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
+			require.NoError(t, removeMicrosoftMailTokensIfUnused(st, cfg, "user@example.com", graph, testDiscardLogger()))
+			_, err = os.Stat(path)
+			require.NoError(t, err)
+			_, _, err = st.RemoveSourceSerialized(t.Context(), src.ID)
+			require.NoError(t, err)
+			require.NoError(t, removeMicrosoftMailTokensIfUnused(st, cfg, "user@example.com", graph, testDiscardLogger()))
+			_, err = os.Stat(path)
+			require.True(t, os.IsNotExist(err))
+		})
+	}
+}
+
+func TestRemoveMicrosoftMailTokensPreservesWhenConfigUnreadable(t *testing.T) {
+	dir := t.TempDir()
+	cfg := lifecycleTestConfig(dir)
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
+	src, err := st.GetOrCreateSource(sourceTypeIMAP, "imaps://other@example.com@host.example:993")
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, "invalid"))
+	require.NoError(t, os.MkdirAll(cfg.TokensDir(), 0o700))
+	path := microsoft.NewManager("", "", "", cfg.TokensDir(), nil).TokenPath("user@example.com")
+	require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
+	require.Error(t, removeMicrosoftMailTokensIfUnused(st, cfg, "user@example.com", false, testDiscardLogger()))
+	_, err = os.Stat(path)
+	require.NoError(t, err)
+	require.NoError(t, st.Close())
+	require.Error(t, removeMicrosoftMailTokensIfUnused(st, cfg, "user@example.com", false, testDiscardLogger()))
+	_, err = os.Stat(path)
+	require.NoError(t, err)
+}
+
+func TestRemoveMicrosoftTokensSeparatesMailProtocols(t *testing.T) {
+	dir := t.TempDir()
+	cfg := lifecycleTestConfig(dir)
+	cfg.Microsoft.Apps = map[string]config.MicrosoftApp{"a": {ClientID: "same"}, "b": {ClientID: "same"}}
+	_, appDir, err := microsoftMailApp(cfg, "a")
+	require.NoError(t, err)
+	_, sharedDir, err := microsoftMailApp(cfg, "b")
+	require.NoError(t, err)
+	require.Equal(t, appDir, sharedDir)
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
+	src, err := st.GetOrCreateSource(sourceTypeIMAP, "imaps://user@example.com@outlook.office.com:993")
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, `{"username":"user@example.com","auth_method":"xoauth2"}`))
+	require.NoError(t, os.MkdirAll(appDir, 0o700))
+	imapPath := microsoft.NewManager("", "", "", appDir, nil).TokenPath("user@example.com")
+	graphPath := microsoft.NewGraphMailManager("", "", "", appDir, nil).TokenPath("user@example.com")
+	for _, path := range []string{imapPath, graphPath} {
+		require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
+	}
+	require.NoError(t, removeMicrosoftMailTokensIfUnused(st, cfg, "user@example.com", true, testDiscardLogger()))
+	_, err = os.Stat(graphPath)
+	require.True(t, os.IsNotExist(err))
+	_, err = os.Stat(imapPath)
+	require.NoError(t, err)
+}
+
 func TestRemoveMicrosoftIMAPTokensUsesConfiguredClient(t *testing.T) {
 	cfg := lifecycleTestConfig(t.TempDir())
 	cfg.Microsoft.Apps = map[string]config.MicrosoftApp{"orgb": {ClientID: "client-b"}}
