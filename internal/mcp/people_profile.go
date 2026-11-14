@@ -21,8 +21,8 @@ type getPersonProfileResponse struct {
 	VCardUID        string                 `json:"vcard_uid"`
 	CardDAVBindings []store.CardDAVBinding `json:"carddav_bindings"`
 	Tracked         *bool                  `json:"tracked"`
-	// ContactState is the deterministic activity projection; null until the
-	// activity job has computed a row for this person.
+	// ContactState includes computed direct contact or a first archived appearance;
+	// it is null when neither is available.
 	ContactState *store.ContactState `json:"contact_state"`
 	// PrimaryChannel is the curated primary_channel attribute when set.
 	PrimaryChannel string `json:"primary_channel,omitempty"`
