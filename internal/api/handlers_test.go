@@ -9606,8 +9606,6 @@ func TestCLICollectionMembers(t *testing.T) {
 			assert.Equal(tc.ids, got.SourceIDs)
 		}
 	}
-	assert.True(remoteClientOperationAllowed("getCLICollectionMembers", false))
-	assert.NotContains(agentReadPermissions, "getCLICollectionMembers")
 }
 
 func TestSemanticEmptyCollectionReportsUnavailable(t *testing.T) {

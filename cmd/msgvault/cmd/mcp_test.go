@@ -174,7 +174,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	}, gotHTTPOpts)
 }
 
-func TestDaemonMCPHybridSearcherPreservesPhaseTimings(t *testing.T) {
+func TestDaemonMCPHybridSearcherForwardsCollectionAndPhaseTimings(t *testing.T) {
 	assert := assert.New(t)
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/v1/search", r.URL.Path)

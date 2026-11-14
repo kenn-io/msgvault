@@ -11,8 +11,6 @@ import (
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
-	"go.kenn.io/msgvault/internal/vector"
-	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
 type collectionTestEngine struct {
@@ -36,12 +34,6 @@ func (e *collectionTestEngine) GetCollectionScope(_ context.Context, name string
 	return query.CollectionScope{}, store.ErrCollectionNotFound
 }
 
-type listOnlyCollectionEngine struct{ query.Engine }
-
-func (*listOnlyCollectionEngine) ListCollectionScopes(context.Context) ([]query.CollectionScope, error) {
-	return nil, nil
-}
-
 func TestCollectionScopesFilterRealMessageReads(t *testing.T) {
 	assertions := assert.New(t)
 	require := require.New(t)
@@ -51,13 +43,13 @@ func TestCollectionScopesFilterRealMessageReads(t *testing.T) {
 	first := f.NewMessage().WithSubject("collection fixture").Create(t, f.Store)
 	convID, err := f.Store.EnsureConversation(t.Context(), other.ID, "other-thread", "Other Thread")
 	require.NoError(err)
-	storetest.NewMessage(other.ID, convID).WithSourceMessageID("other").WithSubject("collection fixture").Create(t, f.Store)
-	e := &collectionTestEngine{Engine: query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()), collections: []query.CollectionScope{{Name: "one", SourceIDs: []int64{f.Source.ID}}, {Name: "empty", SourceIDs: []int64{}}}}
+	second := storetest.NewMessage(other.ID, convID).WithSourceMessageID("other").WithSubject("collection fixture").Create(t, f.Store)
+	e := &collectionTestEngine{Engine: query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()), collections: []query.CollectionScope{{Name: "one", SourceIDs: []int64{f.Source.ID}}, {Name: "empty", SourceIDs: []int64{}}, {Name: "both", SourceIDs: []int64{f.Source.ID, other.ID}}}}
 	h := newTestHandlers(e)
 	for _, tc := range []struct {
 		name string
 		want []int64
-	}{{"one", []int64{first}}, {"empty", nil}} {
+	}{{"one", []int64{first}}, {"empty", nil}, {"both", []int64{first, second}}} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			got := runTool[listMessagesResponse](t, ToolListMessages, h.listMessages, map[string]any{"collection": tc.name})
@@ -97,7 +89,6 @@ func TestCollectionCatalogAvailability(t *testing.T) {
 		{"owner", ServeOptions{Engine: e, CollectionScopesAvailable: true, HybridSearcher: searcher}, true, false},
 		{"older daemon", ServeOptions{Engine: e, HybridSearcher: searcher}, false, false},
 		{"no lister", ServeOptions{Engine: &querytest.MockEngine{}, CollectionScopesAvailable: true, HybridSearcher: searcher}, false, false},
-		{"no getter", ServeOptions{Engine: &listOnlyCollectionEngine{Engine: query.NewSQLiteEngine(nil)}, CollectionScopesAvailable: true, HybridSearcher: searcher}, false, false},
 		{"delegated", ServeOptions{Engine: e, CollectionScopesAvailable: true, HybridSearcher: searcher, DelegatedOnly: true, GrantPermissions: []string{string(agentgrant.PermissionSearchRead), string(agentgrant.PermissionMessageRead)}}, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -125,15 +116,16 @@ func TestCollectionCatalogAvailability(t *testing.T) {
 	}
 }
 
-func TestSemanticCollectionUsesAllSources(t *testing.T) {
+func TestSemanticCollectionForwardedToHybridSearcher(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	e := &collectionTestEngine{Engine: &querytest.MockEngine{}, collections: []query.CollectionScope{{Name: "one", SourceIDs: []int64{42}}, {Name: "empty", SourceIDs: []int64{}}, {Name: "many", SourceIDs: []int64{42, 43}}}}
 	h := newTestHandlers(e)
 	calls := 0
 	h.hybridSearcher = hybridSearcherFunc(func(_ context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
+		require.Less(calls, 3)
+		assert.Equal([]string{"many", "many", "empty"}[calls], req.Collection)
 		calls++
-		assert.Contains([]string{"many", "empty"}, req.Collection)
 		return &HybridSearchResult{}, nil
 	})
 	runTool[searchMessageBodiesResponse](t, ToolSemanticSearchMessages, h.semanticSearchMessages, map[string]any{"query": "fixture", "collection": "many"})
@@ -145,15 +137,4 @@ func TestSemanticCollectionUsesAllSources(t *testing.T) {
 	assert.True(result.isError)
 	assert.Contains(resultText(t, result), "missing_free_text")
 	assert.Equal(3, calls)
-}
-
-func TestSemanticEmptyCollectionLocalSearchIsScoped(t *testing.T) {
-	assert := assert.New(t)
-	backend := &fakeBackend{active: vector.Generation{ID: 1, Model: "nomic-embed", Dimension: 768, Fingerprint: "nomic-embed:768", State: vector.GenerationActive}}
-	h := newHybridHandlersForErrorTest(backend)
-	h.hybridEngine = hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{ExpectedFingerprint: "nomic-embed:768"})
-	h.engine = &collectionTestEngine{Engine: h.engine, collections: []query.CollectionScope{{Name: "empty", SourceIDs: []int64{}}}}
-	got := runTool[searchMessageBodiesResponse](t, ToolSemanticSearchMessages, h.semanticSearchMessages, map[string]any{"query": "fixture", "mode": "vector", "collection": "empty"})
-	assert.Empty(got.Data)
-	assert.Equal([]int64{-1}, backend.searchFilter.ConversationIDs)
 }

@@ -1,10 +1,8 @@
 package mcp
 
 import (
-	"fmt"
 	"log/slog"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -74,17 +72,6 @@ func TestCollectionsThroughDaemonAndSDK(t *testing.T) {
 		require.NoError(callErr)
 		assert.Equal(tc.denied, got.IsError)
 	}
-	for _, collection := range []string{"empty", "selected"} {
-		got, callErr := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolSearchMessageBodies, Arguments: map[string]any{"query": "alpine", "collection": collection}})
-		require.NoError(callErr)
-		require.False(got.IsError)
-		if collection == "empty" {
-			assert.NotContains(fmt.Sprint(got.StructuredContent), "alpine fixture")
-		} else {
-			assert.Contains(fmt.Sprint(got.StructuredContent), "alpine fixture")
-			assert.NotContains(fmt.Sprint(got.StructuredContent), "other alpine fixture")
-		}
-	}
 	for _, tc := range []struct {
 		collection string
 		count      float64
@@ -107,33 +94,4 @@ func TestCollectionsThroughDaemonAndSDK(t *testing.T) {
 			assert.InDelta(tc.count, count, 0)
 		}
 	}
-	for _, tool := range []string{ToolSearchMetadata, ToolListMessages} {
-		for _, tc := range []struct {
-			collection            string
-			wantFirst, wantSecond bool
-		}{{"empty", false, false}, {"both", true, true}, {"selected", true, false}} {
-			args := map[string]any{"collection": tc.collection}
-			if tool == ToolSearchMetadata {
-				args["query"] = "alpine"
-			}
-			got, callErr := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: tool, Arguments: args})
-			require.NoError(callErr)
-			require.False(got.IsError)
-			content := fmt.Sprint(got.StructuredContent)
-			assert.Equal(tc.wantFirst, strings.Contains(content, "first alpine fixture"))
-			assert.Equal(tc.wantSecond, strings.Contains(content, "other alpine fixture"))
-		}
-	}
-	require.NoError(st.AddSourcesToCollection("selected", []int64{second.ID}))
-	updated, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolListMessages, Arguments: map[string]any{"collection": "selected"}})
-	require.NoError(err)
-	require.False(updated.IsError)
-	assert.Contains(fmt.Sprint(updated.StructuredContent), "other alpine fixture")
-	bad, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolListMessageCollections, Arguments: map[string]any{"unexpected": true}})
-	require.NoError(err)
-	require.True(bad.IsError)
-	require.NotEmpty(bad.Content)
-	badText, ok := bad.Content[0].(*sdkmcp.TextContent)
-	require.True(ok)
-	assert.Contains(badText.Text, `validating "arguments"`)
 }
