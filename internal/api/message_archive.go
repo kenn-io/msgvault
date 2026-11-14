@@ -17,7 +17,7 @@ type MessageArchiveStore interface {
 }
 
 func (s *Server) registerMessageArchiveRoute(api huma.API) {
-	op := rawAPIV1Operation("archiveMessage", http.MethodPost, "/messages/{id}/archive", "Set a Gmail message's archive state")
+	op := rawAPIV1Operation("archiveMessage", http.MethodPost, "/messages/{id}/archive", "Set a Gmail message or Beeper chat archive state")
 	op.Parameters = []*huma.Param{param("id", "path", huma.TypeInteger, "Archived message ID", true)}
 	op.RequestBody = jsonRequestBodyFor[emailtags.ArchiveChange](api)
 	op.Responses = jsonResponsesFor[emailtags.ArchiveResult](api)
@@ -34,8 +34,8 @@ func decodeArchiveChange(w http.ResponseWriter, r *http.Request, change *emailta
 	if !ok {
 		return false
 	}
-	if string(fields["dry_run"]) == "null" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "dry_run must be true or false")
+	if string(fields["dry_run"]) == "null" || string(fields["whole_chat"]) == "null" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "dry_run and whole_chat must be true or false")
 		return false
 	}
 	return true

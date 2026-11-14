@@ -17,7 +17,16 @@ func (c *Client) ArchiveMessage(ctx context.Context, id int64, change emailtags.
 	if change.Archived == nil {
 		return nil, emailtags.Failure("invalid_request", "archived must be true or false", nil, nil)
 	}
-	options := &generated.ArchiveMessageRequestOptions{Body: &generated.ArchiveMessageBody{Archived: *change.Archived, DryRun: &change.DryRun}}
+	if change.WholeChat {
+		supported, err := c.SupportsAPISchemaVersion(ctx, "5.3.0")
+		if err != nil {
+			return nil, err
+		}
+		if !supported {
+			return nil, emailtags.Failure("archive_unsupported", "Upgrade the daemon to API schema 5.3.0 for Beeper archiving", nil, nil)
+		}
+	}
+	options := &generated.ArchiveMessageRequestOptions{Body: &generated.ArchiveMessageBody{Archived: *change.Archived, DryRun: &change.DryRun, WholeChat: &change.WholeChat}}
 	resp, err := c.doGeneratedRequestWithHTTPClient(ctx, http.MethodPost, fmt.Sprintf("/api/v1/messages/%d/archive", id), options, c.httpClient, maxMessageTagErrorBodyBytes)
 	if err != nil {
 		return nil, archiveResponseError(change, err)

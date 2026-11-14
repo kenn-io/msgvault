@@ -98,6 +98,9 @@ binaries did not start on most distributions.
 
 ### New features
 
+- Archive or unarchive a Beeper chat with `archive --message <id> --whole-chat`
+  or MCP `archive_message` with `whole_chat: true`. Dry runs preview the chat
+  state; sender-restricted grants cannot change whole chats.
 - Move Gmail messages out of or back into the inbox with [`archive` and
   `unarchive`](cli-reference.md#archive-and-unarchive), or preview the change
   with `--dry-run`. The [HTTP API](api-server.md#message-archiving) supports

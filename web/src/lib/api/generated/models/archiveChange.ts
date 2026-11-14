@@ -5,4 +5,5 @@
 export interface ArchiveChange {
   archived: boolean;
   dry_run?: boolean;
+  whole_chat?: boolean;
 }

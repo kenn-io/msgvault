@@ -5,6 +5,7 @@
 export interface ArchiveResult {
   archived: boolean;
   changed: boolean;
+  chat_id?: string;
   dry_run: boolean;
   message_id: number;
   source_id: number;

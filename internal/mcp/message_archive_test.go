@@ -27,11 +27,12 @@ func TestArchiveMessageToolPolicyAndArguments(t *testing.T) {
 	opts := ServeOptions{Engine: &querytest.MockEngine{}, MessageArchive: backend}
 	assert.NotContains(t, toolsByName(t, rawListTools(t, opts, false)), ToolArchiveMessage)
 	require.Contains(t, toolsByName(t, rawListTools(t, opts, true)), ToolArchiveMessage)
-	result := rawCallTool(t, opts, ToolArchiveMessage, map[string]any{"message_id": float64(7), "archived": false, "dry_run": true})
+	result := rawCallTool(t, opts, ToolArchiveMessage, map[string]any{"message_id": float64(7), "archived": false, "dry_run": true, "whole_chat": true})
 	require.NotEqual(t, true, result["isError"])
 	require.NotNil(t, backend.change.Archived)
 	assert.False(t, *backend.change.Archived)
 	assert.True(t, backend.change.DryRun)
+	assert.True(t, backend.change.WholeChat)
 	result = rawCallTool(t, opts, ToolArchiveMessage, map[string]any{"message_id": float64(7)})
 	assert.Equal(t, true, result["isError"])
 	backend.failure = emailtags.Failure("archive_unsupported", "Gmail only", nil, nil)
