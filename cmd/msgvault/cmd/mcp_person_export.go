@@ -12,7 +12,7 @@ import (
 )
 
 const mcpPersonExportLimit = 512 << 10
-const mcpPersonExportErrorTailLimit = 16 << 10
+const mcpPersonExportErrorTailLimit = 64 << 10
 
 type mcpPersonExportArgs struct {
 	PersonID     int64    `json:"person_id"`
@@ -23,12 +23,9 @@ type mcpPersonExportArgs struct {
 }
 
 func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map[string]any) (*mcpserver.OperationResult, error) {
-	refuse := func(code string) (*mcpserver.OperationResult, error) {
-		return operationFailure(code, false), nil
-	}
 	input, err := decodeMCPOperationArguments[mcpPersonExportArgs](args)
 	if err != nil {
-		return refuse("invalid_arguments")
+		return operationFailure("invalid_arguments", false), nil
 	}
 	argv := []string{
 		"export-messages",
@@ -71,11 +68,11 @@ func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map
 	}
 	if err != nil {
 		if _, cliRunError := errors.AsType[*daemonclient.CLIRunError](err); cliRunError {
-			if code := personExportRefusalCode(lastMCPPersonExportErrorLine(stderr), input.Sources); code != "" {
-				return refuse(code)
+			if code := personExportRefusalCode(stderr, input.Sources); code != "" {
+				return operationFailure(code, false), nil
 			}
 		}
-		return refuse("export_failed")
+		return operationFailure("export_failed", false), nil
 	}
 	return &mcpserver.OperationResult{Output: mcpserver.PersonExport{JSONL: output.String()}}, nil
 }
@@ -91,7 +88,14 @@ func lastMCPPersonExportErrorLine(stderr []byte) string {
 	return ""
 }
 
-func personExportRefusalCode(line string, sources []string) string {
+func personExportRefusalCode(stderr []byte, sources []string) string {
+	diagnostic := strings.TrimRight(string(stderr), "\r\n")
+	for i, source := range sources {
+		if strings.HasSuffix(diagnostic, "Error: source "+source+" not found") {
+			return "unknown_source_" + strconv.Itoa(i+1)
+		}
+	}
+	line := lastMCPPersonExportErrorLine(stderr)
 	switch {
 	case strings.HasPrefix(line, "Error: invalid --start "):
 		return "invalid_start"
@@ -108,9 +112,6 @@ func personExportRefusalCode(line string, sources []string) string {
 	for i, source := range sources {
 		if strings.HasPrefix(line, "Error: invalid --source "+strconv.Quote(source)+" ") {
 			return "invalid_source_" + strconv.Itoa(i+1)
-		}
-		if line == "Error: source "+source+" not found" {
-			return "unknown_source_" + strconv.Itoa(i+1)
 		}
 	}
 	return ""

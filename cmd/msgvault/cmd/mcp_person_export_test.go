@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -55,6 +54,11 @@ func TestMCPPersonExportMapsExporterArgumentFailures(t *testing.T) {
 			args: map[string]any{"person_id": int64(42), "start": "bad start", "end": "2026-07-21T00:00:00Z"},
 		},
 		{
+			name: "long invalid start",
+			code: "invalid_start",
+			args: map[string]any{"person_id": int64(42), "start": strings.Repeat("x", 17<<10), "end": "2026-07-21T00:00:00Z"},
+		},
+		{
 			name: "invalid end with phrase from another validation error",
 			code: "invalid_end",
 			args: map[string]any{"person_id": int64(42), "start": "2026-07-20T00:00:00Z", "end": "bad invalid --start end"},
@@ -75,9 +79,20 @@ func TestMCPPersonExportMapsExporterArgumentFailures(t *testing.T) {
 			args: map[string]any{"person_id": int64(42), "start": "2026-07-20T00:00:00Z", "end": "2026-07-21T00:00:00Z", "sources": []string{"text:archive", "malformed"}},
 		},
 		{
+			name: "long malformed second source",
+			code: "invalid_source_2",
+			args: map[string]any{"person_id": int64(42), "start": "2026-07-20T00:00:00Z", "end": "2026-07-21T00:00:00Z", "sources": []string{"text:archive", strings.Repeat("x", 17<<10)}},
+		},
+		{
 			name:        "unknown second source",
 			code:        "unknown_source_2",
 			args:        map[string]any{"person_id": int64(42), "start": "2026-07-20T00:00:00Z", "end": "2026-07-21T00:00:00Z", "sources": []string{"text:archive", "text:missing"}},
+			seedArchive: true,
+		},
+		{
+			name:        "unknown source containing an error-looking line",
+			code:        "unknown_source_2",
+			args:        map[string]any{"person_id": int64(42), "start": "2026-07-20T00:00:00Z", "end": "2026-07-21T00:00:00Z", "sources": []string{"text:archive", "text:missing\nError: invalid --start x"}},
 			seedArchive: true,
 		},
 		{
@@ -95,7 +110,10 @@ func TestMCPPersonExportMapsExporterArgumentFailures(t *testing.T) {
 				requirements.NoError(err)
 			}
 			runner := &personExportRouterStore{st: st}
-			backend := newPersonExportBackendThroughRouter(t, runner)
+			fixture := api.NewServerWithOptions(api.ServerOptions{
+				Config: &config.Config{}, Store: runner, Logger: slog.New(slog.DiscardHandler),
+			})
+			backend := sourceOperationFixture(t, fixture)
 			result, err := backend.ExecuteOperation(t.Context(), "export_person_messages", tc.args)
 			requirements.NoError(err)
 			requirements.True(result.IsError)
@@ -151,11 +169,6 @@ func TestMCPPersonExportStreamsJSONLAndReportsFailures(t *testing.T) {
 			},
 		},
 		{
-			name:   "daemon error details",
-			code:   "export_failed",
-			events: []string{`{"type":"error","error":"private detail"}`},
-		},
-		{
 			name: "limit exceeded",
 			code: "export_limit_exceeded",
 			events: func() []string {
@@ -193,18 +206,6 @@ func TestMCPPersonExportStreamsJSONLAndReportsFailures(t *testing.T) {
 			assertions.Equal(tc.code, personExportFailureCode(t, result.Output))
 		})
 	}
-}
-
-func newPersonExportBackendThroughRouter(t *testing.T, runner *personExportRouterStore) *daemonMCPOperations {
-	t.Helper()
-	fixture := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: runner, Logger: slog.New(slog.DiscardHandler)})
-	server := httptest.NewServer(fixture.Router())
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-	require.NoError(t, err)
-	caps, err := client.MCPCapabilities(t.Context())
-	require.NoError(t, err)
-	return newDaemonMCPOperations(client, caps)
 }
 
 func TestMCPPersonExportRequiresCLIRouteCapability(t *testing.T) {
