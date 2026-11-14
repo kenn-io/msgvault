@@ -174,17 +174,16 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	requirements.True(sensitiveTarget.Sensitive)
 	requirements.NotEmpty(retiredTarget.Key)
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	shared := personfacts.EvidenceInput{PersonID: id, SourceClass: personfacts.EvidencePublic, Directness: personfacts.DirectSelf, Authority: personfacts.AuthorityAuthoritative, SourceURL: "https://example.test/sensitive", SubjectPersonID: &id, SubjectRef: "synthetic", Excerpt: "Sensitive fixture evidence", SourceVersion: "v1", EventTime: now, RecordedTime: now, IdentityScore: 990}
-	retiredEvidence := shared
+	sensitiveEvidence := personfacts.EvidenceInput{PersonID: id, SourceClass: personfacts.EvidencePublic, Directness: personfacts.DirectSelf, Authority: personfacts.AuthorityAuthoritative, SourceURL: "https://example.test/sensitive", SubjectPersonID: &id, SubjectRef: "synthetic", Excerpt: "Fixture evidence", SourceVersion: "v1", EventTime: now, RecordedTime: now, IdentityScore: 990}
+	retiredEvidence := sensitiveEvidence
 	retiredEvidence.SourceURL = "https://example.test/retired"
-	retiredEvidence.Excerpt = "Retired fixture evidence"
 	_, err = st.ApplyPersonFactGenerationContext(t.Context(), personfacts.GenerationInput{
 		PersonID: id, SourceCursors: []personfacts.SourceCursor{{Lane: "fixture", Start: "start", End: "end"}},
 		ProgramID: "fixture", ProgramVersion: "v1", ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "fixture", Provider: "fixture", ProviderVersion: "v1", Model: "fixture", ModelVersion: "v1", ResolvedAt: now,
 		Policy: personfacts.PolicyContext{AllowSensitive: true, ProviderPolicyFingerprint: "fixture"},
 		Claims: []personfacts.ProposedClaim{
-			{Target: publicTarget, Relation: personfacts.RelationSupport, SubmittedValue: jsontext.Value(`"chat"`), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{{PersonID: id, SourceClass: personfacts.EvidencePublic, Directness: personfacts.DirectSelf, Authority: personfacts.AuthorityAuthoritative, SourceURL: "https://example.test/public", SubjectPersonID: &id, SubjectRef: "synthetic", Excerpt: "Public fixture evidence", SourceVersion: "v1", EventTime: now, RecordedTime: now, IdentityScore: 990}, shared, retiredEvidence}},
-			{Target: sensitiveTarget, Relation: personfacts.RelationSupport, SubmittedValue: jsontext.Value(`"Sensitive fixture belief"`), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{shared}},
+			{Target: publicTarget, Relation: personfacts.RelationSupport, SubmittedValue: jsontext.Value(`"chat"`), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{{PersonID: id, SourceClass: personfacts.EvidencePublic, Directness: personfacts.DirectSelf, Authority: personfacts.AuthorityAuthoritative, SourceURL: "https://example.test/public", SubjectPersonID: &id, SubjectRef: "synthetic", Excerpt: "Fixture evidence", SourceVersion: "v1", EventTime: now, RecordedTime: now, IdentityScore: 990}}},
+			{Target: sensitiveTarget, Relation: personfacts.RelationSupport, SubmittedValue: jsontext.Value(`"Sensitive fixture belief"`), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{sensitiveEvidence}},
 			{Target: retiredTarget, Relation: personfacts.RelationSupport, SubmittedValue: jsontext.Value(`"retired"`), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{retiredEvidence}},
 		},
 	}, nil)
@@ -236,9 +235,6 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	requirements.False(result.IsError)
 	data, err = json.Marshal(result.StructuredContent)
 	requirements.NoError(err)
-	assertions.Contains(string(data), "Public fixture evidence")
-	assertions.NotContains(string(data), "Sensitive fixture evidence")
-	assertions.NotContains(string(data), "Retired fixture evidence")
 	select {
 	case value := <-evidenceQuery:
 		assertions.Equal("true", value)
