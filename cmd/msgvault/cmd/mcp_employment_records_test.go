@@ -55,7 +55,7 @@ func TestMCPEmploymentLifecycleNativeStore(t *testing.T) {
 	require.NotEqual(got.ETag, replaced.ETag)
 	require.NotNil(replaced.Employment.Title)
 	assert.Equal("Engineer", *replaced.Employment.Title)
-	assertLoopRefusal(t, call("end_employment", map[string]any{"employment_id": got.Employment.ID, "etag": got.ETag, "end_date": "2024"}), "employment_revision_conflict", false)
+	assertDefiniteRefusal(t, call("end_employment", map[string]any{"employment_id": got.Employment.ID, "etag": got.ETag, "end_date": "2024"}), "employment_revision_conflict")
 	body["is_primary"] = true
 	primary := operationOutput[mcpserver.EmploymentRecord](t, call("replace_employment", map[string]any{"employment_id": got.Employment.ID, "etag": replaced.ETag, "employment": body}))
 	assert.True(primary.Employment.IsPrimary)
@@ -177,7 +177,7 @@ func TestMCPEmploymentApprovedPrimaryIsGuarded(t *testing.T) {
 	require.NoError(err)
 	result, err := b.ExecuteOperation(t.Context(), "replace_employment", args)
 	require.NoError(err)
-	assertLoopRefusal(t, result, "employment_primary_conflict", false)
+	assertDefiniteRefusal(t, result, "employment_primary_conflict")
 	current, err := st.GetEmploymentContext(t.Context(), third.ID)
 	require.NoError(err)
 	assert.True(current.IsPrimary)
