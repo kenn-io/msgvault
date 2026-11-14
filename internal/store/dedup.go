@@ -932,6 +932,9 @@ func (s *Store) CountActiveMessagesContext(ctx context.Context, sourceIDs ...int
 		}
 		query += " AND source_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
+	scope, scopeArgs := s.incomingScopeClause(ctx, "messages.id", "messages.source_id")
+	query += scope
+	args = append(args, scopeArgs...)
 	var count int64
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(&count)
 	return count, err
@@ -961,6 +964,9 @@ func (s *Store) CountSourceDeletedMessagesContext(
 		}
 		query += " AND source_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
+	scope, scopeArgs := s.incomingScopeClause(ctx, "messages.id", "messages.source_id")
+	query += scope
+	args = append(args, scopeArgs...)
 	var count int64
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(&count)
 	return count, err

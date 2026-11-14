@@ -51,7 +51,7 @@ func mcpDraftAgentContext(t *testing.T, server *httptest.Server, sourceID int64,
 	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true})
 	require.NoError(err)
 	t.Cleanup(func() { _ = owner.Close() })
-	grant, err := owner.IssueAgentToken(t.Context(), "MCP test agent", permissions, []int64{sourceID}, nil, time.Time{})
+	grant, err := owner.IssueAgentToken(t.Context(), "MCP test agent", permissions, []int64{sourceID}, nil, nil, time.Time{})
 	require.NoError(err)
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
 	require.NoError(os.WriteFile(tokenFile, []byte(grant.Secret+"\n"), 0o600))

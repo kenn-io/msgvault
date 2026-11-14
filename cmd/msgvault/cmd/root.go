@@ -37,7 +37,6 @@ Start here:
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
   msgvault person --help
   msgvault daemon status
   msgvault setup status --json
@@ -328,7 +327,7 @@ func agentDelegatedCapable(cmd *cobra.Command) bool {
 // agentDelegatedCommand owns the command set offered to an agent grant.
 func agentDelegatedCommand(name string) bool {
 	switch name {
-	case "search", "show-message", "show-thread", "stats", "draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover", "mcp":
+	case "search", "show-message", "show-thread", "stats", "draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover", "archive", "unarchive", "mcp":
 		return true
 	}
 	return false

@@ -71,7 +71,7 @@ func TestIssueAgentTokenRoundTripReadsIDForRevoke(t *testing.T) {
 	c, err := New(Config{URL: srv.URL, APIKey: "owner-key", AllowInsecure: true})
 	require.NoError(err)
 
-	result, err := c.IssueAgentToken(t.Context(), "round-trip-test", []string{"draft.create"}, []int64{1}, map[int64][]string{1: {"alice@example.com"}}, time.Time{})
+	result, err := c.IssueAgentToken(t.Context(), "round-trip-test", []string{"draft.create"}, []int64{1}, map[int64][]string{1: {"alice@example.com"}}, nil, time.Time{})
 	require.NoError(err)
 	require.NotNil(result)
 	assert.Equal("application/json", issueContentType, "issue requests must identify their JSON body")
@@ -151,7 +151,7 @@ func TestIssueAgentTokenSenderSelectionRefusesOldDaemon(t *testing.T) {
 
 	client, err := New(Config{URL: srv.URL, APIKey: "owner-key", AllowInsecure: true})
 	requirements.NoError(err)
-	_, err = client.IssueAgentToken(t.Context(), "old-daemon", []string{"draft.create"}, []int64{1}, map[int64][]string{1: {"alice@example.com"}}, time.Time{})
+	_, err = client.IssueAgentToken(t.Context(), "old-daemon", []string{"draft.create"}, []int64{1}, map[int64][]string{1: {"alice@example.com"}}, nil, time.Time{})
 	requirements.Error(err)
 	assertions.Contains(err.Error(), "requires daemon API schema 2.32.0")
 	assertions.Zero(postCount)
@@ -175,8 +175,46 @@ func TestIssueAgentTokenExpiryRefusesOldDaemon(t *testing.T) {
 	client, err := New(Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
-	_, err = client.IssueAgentToken(t.Context(), "reader", []string{"stats.read"}, []int64{1}, nil, time.Now().Add(time.Hour))
+	_, err = client.IssueAgentToken(t.Context(), "reader", []string{"stats.read"}, []int64{1}, nil, nil, time.Now().Add(time.Hour))
 	require.Error(err)
 	assert.Contains(err.Error(), "requires daemon API schema 3.9.0")
 	assert.Zero(posts)
+}
+
+func TestIssueIncomingSenderRestrictionsRefusesOldDaemon(t *testing.T) {
+	for _, version := range []string{"5.0.0", "5.1.0", "5.2.0", "5.3.0"} {
+		t.Run(version, func(t *testing.T) {
+			assertionsForTest := assert.New(t)
+			requirementsForTest := require.New(t)
+			posts := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/v1/health" {
+					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": version}))
+					return
+				}
+				posts++
+				var body map[string]any
+				if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&body)) {
+					return
+				}
+				assert.Equal(t, map[string]any{"1": []any{"codes@example.test"}}, body["incoming_senders"])
+				assert.NotContains(t, body, "sender_selections")
+				w.WriteHeader(http.StatusCreated)
+				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": "fixture", "secret": "fixture-secret"}))
+			}))
+			t.Cleanup(server.Close)
+			client, err := New(Config{URL: server.URL, APIKey: "fixture-owner", AllowInsecure: true})
+			requirementsForTest.NoError(err)
+			t.Cleanup(func() { require.NoError(t, client.Close()) })
+			_, err = client.IssueAgentToken(t.Context(), "archive", []string{"message.archive"}, []int64{1}, nil, map[int64][]string{1: {"codes@example.test"}}, time.Time{})
+			if version != "5.3.0" {
+				requirementsForTest.ErrorContains(err, "incoming sender restrictions require")
+				assertionsForTest.Zero(posts)
+			} else {
+				requirementsForTest.NoError(err)
+				assertionsForTest.Equal(1, posts)
+			}
+		})
+	}
 }

@@ -3890,9 +3890,11 @@ func (s *Store) CountMessagesForSource(sourceID int64) (int64, error) {
 // CountMessagesForSource.
 func (s *Store) CountMessagesForSourceContext(ctx context.Context, sourceID int64) (int64, error) {
 	var count int64
+	scope, scopeArgs := s.incomingScopeClause(ctx, "messages.id", "messages.source_id")
+	args := append([]any{sourceID}, scopeArgs...)
 	err := s.db.QueryRowContext(ctx, fmt.Sprintf(`
-		SELECT COUNT(*) FROM messages WHERE source_id = ? AND %s
-	`, LiveMessagesWhere("", true)), sourceID).Scan(&count)
+		SELECT COUNT(*) FROM messages WHERE source_id = ? AND %s%s
+	`, LiveMessagesWhere("", true), scope), args...).Scan(&count)
 	return count, err
 }
 

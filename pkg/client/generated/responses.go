@@ -2049,6 +2049,26 @@ type GetMessageResponse = MessageDetail
 
 type GetMessageErrorResponse = ErrorResponse
 
+type ArchiveMessageResponse = ArchiveResult
+
+type ArchiveMessageErrorResponse = MessageTagError
+
+type ArchiveMessageErrorResponseJSON = MessageTagError
+
+type ArchiveMessageErrorResponseJSON404 = MessageTagError
+
+type ArchiveMessageErrorResponseJSON409 = MessageTagError
+
+type ArchiveMessageErrorResponseJSON500 = MessageTagError
+
+type ArchiveMessageErrorResponseJSON501 = MessageTagError
+
+type ArchiveMessageErrorResponseJSON502 = MessageTagError
+
+type ArchiveMessageErrorResponseJSON503 = MessageTagError
+
+type ArchiveMessageErrorResponseJSONDefault = ErrorResponse
+
 type GetMessageInlinePartResponse = runtime.File
 
 type GetMessageInlinePartErrorResponse = ErrorResponse
@@ -5983,6 +6003,22 @@ type GetMessageResp struct {
 	StatusCode   int
 	JSON200      *GetMessageResponse
 	JSONDefault  *GetMessageErrorResponse
+}
+
+type ArchiveMessageResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ArchiveMessageResponse
+	JSON400      *ArchiveMessageErrorResponse
+	JSON403      *ArchiveMessageErrorResponseJSON
+	JSON404      *ArchiveMessageErrorResponseJSON404
+	JSON409      *ArchiveMessageErrorResponseJSON409
+	JSON500      *ArchiveMessageErrorResponseJSON500
+	JSON501      *ArchiveMessageErrorResponseJSON501
+	JSON502      *ArchiveMessageErrorResponseJSON502
+	JSON503      *ArchiveMessageErrorResponseJSON503
+	JSONDefault  *ArchiveMessageErrorResponseJSONDefault
 }
 
 type GetMessageInlinePartResp struct {

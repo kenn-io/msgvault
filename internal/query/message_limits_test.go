@@ -42,7 +42,7 @@ func TestBoundedDuckDBMessageDetails(t *testing.T) {
 	t.Run("text", func(t *testing.T) {
 		for _, limit := range []int64{32, 34} {
 			ctx := WithMessageByteLimit(t.Context(), limit)
-			detail, err := getMessageByQueryShared(ctx, db, noopRebind, "sqlite_db.", "m.id = ?", 1)
+			detail, err := getMessageByQueryShared(ctx, db, noopRebind, nil, "sqlite_db.", "m.id = ?", 1)
 			if limit == 32 {
 				require.ErrorIs(t, err, ErrOriginalMessageTooLarge)
 				continue

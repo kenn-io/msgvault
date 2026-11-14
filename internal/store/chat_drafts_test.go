@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func allowChatDraft(string, string) error { return nil }
+func allowChatDraft(string, string) ([]string, error) { return []string{}, nil }
 
 func TestChatDraftLifecycleKeepsDraftsOutOfArchive(t *testing.T) {
 	st := testutil.NewTestStore(t)

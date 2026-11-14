@@ -128,6 +128,17 @@ func (s agentReadScope) sourceCount() int {
 	return count
 }
 
+func installAgentReadScope(r *http.Request, allowed []int64, incoming map[int64][]string, scope agentReadScope) {
+	ctx := sourcescope.WithSourceIDs(r.Context(), allowed)
+	for _, keys := range incoming {
+		if len(keys) > 0 {
+			ctx = sourcescope.WithIncomingSenders(ctx, incoming) //nolint:fatcontext // At most one scope is installed.
+			break
+		}
+	}
+	*r = *r.WithContext(context.WithValue(ctx, agentReadScopeKey{}, scope))
+}
+
 func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *agentgrant.Grant, permission agentgrant.Permission, indexGeneration uint64, indexComplete bool) *apiHTTPError {
 	resolver, ok := s.store.(operationSourceLister)
 	if !ok {
@@ -138,22 +149,26 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 		return newAPIHTTPError(503, "source_scope_unavailable", "Source authorization is unavailable")
 	}
 	allowed := make([]int64, 0)
+	incoming := make(map[int64][]string)
 	account := r.URL.Query().Get("account")
 	accountGranted := false
 	for _, src := range sources {
-		if grant.MatchesSource(agentgrant.SourceRef{Type: src.SourceType, Identifier: src.Identifier}) {
+		ref := agentgrant.SourceRef{Type: src.SourceType, Identifier: src.Identifier}
+		if selected, ok := grant.MatchingSource(ref); ok {
 			allowed = append(allowed, src.ID)
+			incoming[src.ID] = selected.IncomingSenderKeys
 			accountGranted = accountGranted || src.Identifier == account
 		}
 	}
-	*r = *r.WithContext(context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: allowed}))
 	switch operation {
 	case "getCLIMessageThread":
 		if account != "" && !accountGranted {
 			return agentReadDenied(permission)
 		}
+		installAgentReadScope(r, allowed, incoming, agentReadScope{ids: allowed})
 		return nil
 	case "getMessage", "getCLIMessage", "getAttachment", "getAttachmentContent", "getCLIAttachment", "listCLIAccounts", "listCLICollections":
+		installAgentReadScope(r, allowed, incoming, agentReadScope{ids: allowed})
 		return nil
 	}
 	requested := []int64(nil)
@@ -221,7 +236,7 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	if len(requested) == 0 {
 		requested = []int64{-1}
 	} // an explicit empty population must never become unrestricted.
-	*r = *r.WithContext(context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: requested, scope: resolved}))
+	installAgentReadScope(r, allowed, incoming, agentReadScope{ids: requested, scope: resolved})
 	if operation == "deepSearch" {
 		if len(requested) != 1 {
 			return newAPIHTTPError(400, "unsupported_agent_scope", "Deep search requires exactly one granted source")

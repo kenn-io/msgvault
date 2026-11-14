@@ -5,7 +5,6 @@ Start here:
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
   msgvault person --help
   msgvault daemon status
   msgvault setup status --json
@@ -129,6 +128,7 @@ Import local exports:
   import-x               Import X direct-message archives
 
 Drafts, calendar, and Kata (write to providers):
+  archive       Archive mail or Beeper chats
   calendar      Read archived events and control live calendars
   draft-compose Create an email, native Beeper, or local chat draft
   draft-delete  Delete a managed draft
@@ -140,6 +140,7 @@ Drafts, calendar, and Kata (write to providers):
   draft-send-as List Gmail send-as identities
   kata          Create Kata issues that quote archived evidence
   message-tags  Read or update native email tags
+  unarchive     Restore mail or Beeper chats
 
 Review and delete:
   cancel-deletion Cancel pending or in-progress deletion batches

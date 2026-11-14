@@ -166,7 +166,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.2.0**.
+it is separate from the binary release version. The current schema is **5.3.0**.
+
+Schema 5.3.0 adds [message and Beeper chat archiving](#message-archiving) and incoming sender restrictions for delegated grants.
 
 Schema 5.2.0 adds open Kata issue search and optional task search queries.
 
@@ -425,6 +427,64 @@ Use `GET /api/v1/people/by-uid?uid={uid}` to resolve an exact current person UID
 retired UID that still aliases a person, or the UID of a CardDAV card mapped to
 that person. If the same CardDAV UID is mapped to different people, the API
 returns `409 person_uid_ambiguous`.
+
+### Message archiving
+
+`POST /api/v1/messages/{id}/archive` sets a Gmail message's archive state or the
+state of the entire Beeper chat containing a message.
+Requires API schema 5.3.0 and owner authorization or a `message.archive` grant
+for the message's source. Beeper requires API schema 5.3.0 and `whole_chat: true`.
+Other providers return 501 `archive_unsupported`.
+
+```json
+{"archived":true,"dry_run":false}
+```
+
+`archived` is required: `true` removes Gmail's `INBOX` label and `false` restores
+it. `dry_run` defaults to `false`; a preview changes neither Gmail nor the local
+archive. The result contains `message_id`, `source_id`, `archived`, `changed`,
+`dry_run`, and `verified`. Previews report the projected state and are unverified.
+
+A write reads current labels, modifies only `INBOX` when needed, reads the labels
+back, then saves the verified snapshot locally. A retry that already matches
+returns `changed: false` without modifying Gmail and still reconciles local
+labels. Unrelated labels and read/unread state are preserved. Source ownership
+and the daemon work gate follow the [native tag write rules](#native-email-tags).
+For 409 `sync_active`, retry after the active sync finishes.
+
+For Beeper, send `{"archived":true,"whole_chat":true}` (or `archived:false`
+to restore the chat). This affects the whole chat, including messages newer than
+the local archive. The result also includes `chat_id`. Sender-restricted grants
+cannot archive Beeper chats and receive `404 message_not_found`; use an owner
+or a source-wide `message.archive` grant. Beeper state is read live, checked
+against the source account, and verified after writing. Merged or redirected
+chats are refused rather than affecting another source. Missing archive state
+returns `archive_unsupported`; an uncertain write or failed readback returns
+`remote_unknown`. No local message labels are changed.
+
+Owners may issue `incoming_senders`, a map from selected source IDs to nonempty
+incoming mailbox lists, alongside a read, archive, or draft-create permission. Each source view exposes
+its `incoming_senders`. Omission allows any sender on that source. Addresses are
+canonicalized; invalid or duplicate addresses, empty/null lists, unselected
+sources, and restrictions without a relevant permission are rejected. These lists
+limit reads, reply parents, and archive writes independently of outgoing `sender_selections`.
+Responses omit shared conversation titles for sender-restricted sources. Verification checks use the complete archived context, including the title.
+Every recorded literal From address must be allowed. Missing From envelopes,
+including legacy NULL envelopes, fail closed for sender-restricted grants.
+This literal From filter does not authenticate the sender. Disallowed, missing,
+or invalid From targets return `404 message_not_found`, matching wrong-source
+targets. A token without `message.archive` receives `403 permission_denied`
+before the message lookup.
+
+Raw API callers must check that `/api/v1/health` reports `api_schema_version` 5.3.0 or newer before issuing `incoming_senders`: older daemons ignore this field and issue an unrestricted grant.
+
+Gmail writes require `gmail.modify` or `mail.google.com`. Missing consent returns
+403 `insufficient_scope`; reauthorize with `msgvault add-account <account> --force`.
+Readback failures return `remote_unknown`, mismatches return
+`verification_failed`, and failed local reconciliation returns
+`remote_accepted_local_failed`, with the last observed label result when available
+to owners or grants with `message.read`. Archive-only grants receive the error code
+without label state.
 
 ### Native email tags
 

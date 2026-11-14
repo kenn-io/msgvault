@@ -39,7 +39,7 @@ func TestToolSummariesCoverRegistries(t *testing.T) {
 		}
 	}
 	for _, summary := range summaries {
-		if permission, ok := agentReadToolPermission(summary.Name); ok {
+		if permission, ok := agentToolPermission(summary.Name); ok {
 			assertions.Equal(string(permission), summary.GrantPermission)
 		}
 	}

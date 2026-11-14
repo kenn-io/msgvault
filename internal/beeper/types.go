@@ -101,6 +101,7 @@ type ChatMerge struct {
 
 // Chat is a conversation on one account.
 type Chat struct {
+	IsArchived       *bool            `json:"isArchived"`
 	Merge            *ChatMerge       `json:"merge"`
 	MergedIntoChatID string           `json:"mergedIntoChatID"`
 	ID               string           `json:"id"` // Matrix room ID, globally unique

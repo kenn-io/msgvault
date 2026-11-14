@@ -56,7 +56,7 @@ func TestShowThreadDelegatedThroughRoot(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			grant, err := owner.IssueAgentToken(t.Context(), "reader", []string{tc.permission}, []int64{tc.sourceID}, nil, time.Time{})
+			grant, err := owner.IssueAgentToken(t.Context(), "reader", []string{tc.permission}, []int64{tc.sourceID}, nil, nil, time.Time{})
 			require.NoError(err)
 			tokenFile := filepath.Join(t.TempDir(), "agent.token")
 			require.NoError(os.WriteFile(tokenFile, []byte(grant.Secret), 0600))
@@ -102,7 +102,7 @@ func TestRemoteAgentReadCommands(t *testing.T) {
 	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = owner.Close() })
-	grant, err := owner.IssueAgentToken(t.Context(), "reader", []string{"search.read", "message.read", "stats.read"}, []int64{src.ID}, nil, time.Time{})
+	grant, err := owner.IssueAgentToken(t.Context(), "reader", []string{"search.read", "message.read", "stats.read"}, []int64{src.ID}, nil, nil, time.Time{})
 	requirements.NoError(err)
 	_, err = st.CreateCollection("selected", "", []int64{src.ID})
 	requirements.NoError(err)

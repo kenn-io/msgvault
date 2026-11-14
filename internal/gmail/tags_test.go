@@ -12,18 +12,20 @@ import (
 	"go.kenn.io/msgvault/internal/emailtags"
 )
 
-func TestMessageTagsNativeDeltaPreviewAndRetry(t *testing.T) {
+func newTagDeltaTestClient(t *testing.T, tags []string, onWrite func(add, remove, before []string)) *Client {
+	t.Helper()
 	assert := assert.New(t)
-	require := require.New(t)
-	tags := []string{"INBOX", "UNREAD", "Label_old", "Label_other"}
-	writes := 0
-	c := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	labels := []map[string]string{{"id": "INBOX", "name": "Inbox", "type": "system"}, {"id": "Label_old", "name": "Old", "type": "user"}, {"id": "Label_new", "name": "New", "type": "user"}, {"id": "Label_other", "name": "Other", "type": "user"}}
+	if slices.Contains(tags, "Label_keep") {
+		labels = append(labels, map[string]string{"id": "Label_keep", "name": "Keep", "type": "user"})
+	}
+	return newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/gmail/v1/users/me/labels":
-			_ = json.NewEncoder(w).Encode(map[string]any{"labels": []map[string]string{{"id": "INBOX", "name": "Inbox", "type": "system"}, {"id": "Label_old", "name": "Old", "type": "user"}, {"id": "Label_new", "name": "New", "type": "user"}, {"id": "Label_other", "name": "Other", "type": "user"}}})
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{"labels": labels}))
+			return
 		case "/gmail/v1/users/me/messages/message-1":
 			assert.Equal("metadata", r.URL.Query().Get("format"))
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "message-1", "labelIds": tags})
 		case "/gmail/v1/users/me/messages/message-1/modify":
 			assert.Equal(http.MethodPost, r.Method)
 			var delta struct {
@@ -31,18 +33,30 @@ func TestMessageTagsNativeDeltaPreviewAndRetry(t *testing.T) {
 				Remove []string `json:"removeLabelIds"`
 			}
 			if !assert.NoError(json.NewDecoder(r.Body).Decode(&delta)) {
+				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-			assert.Equal([]string{"Label_new"}, delta.Add)
-			assert.Equal([]string{"Label_old"}, delta.Remove)
-			writes++
+			onWrite(delta.Add, delta.Remove, tags)
 			tags = slices.DeleteFunc(tags, func(s string) bool { return slices.Contains(delta.Remove, s) })
 			tags = append(tags, delta.Add...)
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "message-1", "labelIds": tags})
 		default:
+			assert.Fail("unexpected Gmail request", r.URL.Path)
 			http.NotFound(w, r)
+			return
 		}
+		assert.NoError(json.NewEncoder(w).Encode(map[string]any{"id": "message-1", "labelIds": tags}))
 	}))
+}
+
+func TestMessageTagsNativeDeltaPreviewAndRetry(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	writes := 0
+	c := newTagDeltaTestClient(t, []string{"INBOX", "UNREAD", "Label_old", "Label_other"}, func(add, remove, _ []string) {
+		assert.Equal([]string{"Label_new"}, add)
+		assert.Equal([]string{"Label_old"}, remove)
+		writes++
+	})
 	change := emailtags.MessageTagChange{Add: []string{"Label_new"}, Remove: []string{"Label_old"}, DryRun: true}
 	preview, err := c.MessageTags(t.Context(), "message-1", &change)
 	require.NoError(err)

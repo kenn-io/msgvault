@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -2322,4 +2323,53 @@ func TestStore_GetStatsForScope_ExcludesSourceDeleted(t *testing.T) {
 	stats, err := f.Store.GetStatsForScope([]int64{f.Source.ID})
 	require.NoError(t, err, "GetStatsForScope")
 	assert.Equal(t, int64(1), stats.MessageCount, "MessageCount (source-deleted excluded)")
+}
+
+func TestIncomingSenderScopedCountsUseMessageIDs(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	const allowed, denied = "codes@example.test", "other@example.test"
+	participants := make(map[string]int64)
+	for _, address := range []string{allowed, denied} {
+		id, err := st.EnsureParticipant(address, "", "example.test")
+		requirements.NoError(err)
+		participants[address] = id
+	}
+	var source *store.Source
+	for _, message := range []struct {
+		provider, from, to string
+		deleted            bool
+	}{
+		{"allowed-live", allowed, denied, false},
+		{"denied-live", denied, allowed, false},
+		{"allowed-deleted", allowed, denied, true},
+		{"denied-deleted", denied, allowed, true},
+	} {
+		var id int64
+		var err error
+		source, id, err = testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", message.provider, message.provider, "")
+		requirements.NoError(err)
+		requirements.NoError(st.ReplaceMessageRecipients(id, "to", []int64{participants[message.to]}, nil))
+		requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participants[message.from]}, nil))
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = CASE recipient_type WHEN 'from' THEN ? ELSE ? END WHERE message_id = ?"), message.from, message.to, id)
+		requirements.NoError(err)
+		if message.deleted {
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), id)
+			requirements.NoError(err)
+		}
+	}
+	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{source.ID: {allowed}})
+	stats, err := st.GetStatsForScopeContext(ctx, []int64{source.ID})
+	requirements.NoError(err)
+	requirements.Equal(int64(1), stats.MessageCount)
+	requirements.Equal(int64(1), stats.SourceDeletedCount)
+	active, err := st.CountActiveMessagesContext(ctx, source.ID)
+	requirements.NoError(err)
+	requirements.Equal(int64(1), active)
+	deleted, err := st.CountSourceDeletedMessagesContext(ctx, source.ID)
+	requirements.NoError(err)
+	requirements.Equal(int64(1), deleted)
+	perSource, err := st.CountMessagesForSourceContext(ctx, source.ID)
+	requirements.NoError(err)
+	requirements.Equal(int64(1), perSource)
 }

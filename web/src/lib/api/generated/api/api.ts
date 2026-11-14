@@ -13,6 +13,9 @@ import type {
   AppendPersonNotePathParameters,
   AppendPersonNoteRequest,
   ApproveCardDAVPublicationPathParameters,
+  ArchiveChange,
+  ArchiveMessagePathParameters,
+  ArchiveResult,
   AttachmentInfo,
   AttributeDefinition,
   AttributeDefinitionsResponse,
@@ -2375,6 +2378,24 @@ export const getMessage = (
     {
       url: `/api/v1/messages/${encodeURIComponent(String(id))}`,
       method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Set a Gmail message or Beeper chat archive state
+ */
+export const archiveMessage = (
+  { id }: ArchiveMessagePathParameters,
+  archiveChange: ArchiveChange,
+  options?: SecondParameter<typeof orvalFetch<ArchiveResult>>,
+) => {
+  return orvalFetch<ArchiveResult>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/archive`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: archiveChange,
     },
     options,
   );

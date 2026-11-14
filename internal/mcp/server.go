@@ -194,8 +194,9 @@ type ServeOptions struct {
 	IdentityReview IdentityReviewBackend
 	// PersonCardDAV is present only when the daemon serves revision-guarded
 	// person merge and token-guarded CardDAV publication routes.
-	PersonCardDAV PersonCardDAVBackend
-	MessageTags   MessageTagBackend
+	PersonCardDAV  PersonCardDAVBackend
+	MessageTags    MessageTagBackend
+	MessageArchive MessageArchiveBackend
 	// IdentityScoring exposes consented manual scoring. Consent is
 	// recorded through the CLI/API, never by an MCP tool.
 	IdentityScoring IdentityScoringBackend
@@ -417,6 +418,7 @@ func newMCPServerWithPolicy(
 		identityReview:       opts.IdentityReview,
 		personCardDAV:        opts.PersonCardDAV,
 		messageTags:          opts.MessageTags,
+		messageArchive:       opts.MessageArchive,
 		identityScoring:      opts.IdentityScoring,
 		drafts:               opts.Drafts,
 		contactRoutesBackend: opts.ContactRoutesBackend,
@@ -630,8 +632,8 @@ func bearerAuthHandler(apiKey string, next http.Handler) http.Handler {
 	})
 }
 
-// agentReadToolPermission names the grant permission the daemon requires for a read tool.
-func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
+// agentToolPermission names the grant permission the daemon requires for a tool.
+func agentToolPermission(name string) (agentgrant.Permission, bool) {
 	switch name {
 	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
 		return agentgrant.PermissionSearchRead, true
@@ -641,6 +643,8 @@ func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
 		return agentgrant.PermissionAttachmentRead, true
 	case ToolGetStats:
 		return agentgrant.PermissionStatsRead, true
+	case ToolArchiveMessage:
+		return agentgrant.PermissionMessageArchive, true
 	}
 	return "", false
 }

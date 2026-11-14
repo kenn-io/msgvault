@@ -61,6 +61,7 @@ type catalogCapabilities struct {
 	identityReview  bool
 	personCardDAV   bool
 	messageTags     bool
+	messageArchive  bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -151,6 +152,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		identityReview:  opts.IdentityReview != nil,
 		personCardDAV:   opts.PersonCardDAV != nil,
 		messageTags:     opts.MessageTags != nil,
+		messageArchive:  opts.MessageArchive != nil,
 	}
 }
 
@@ -188,7 +190,7 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 	}
 	if opts.DelegatedOnly && opts.Engine != nil {
 		for _, definition := range stableOperationCatalogs.get(capabilitiesFor(opts)) {
-			if permission, ok := agentReadToolPermission(definition.name); ok && slices.Contains(opts.GrantPermissions, string(permission)) {
+			if permission, ok := agentToolPermission(definition.name); ok && slices.Contains(opts.GrantPermissions, string(permission)) {
 				definitions = append(definitions, definition)
 			}
 		}
@@ -241,6 +243,7 @@ func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 		getMessageDefinition(nil),
 		messageTagDefinition(false),
 		messageTagDefinition(true),
+		messageArchiveDefinition(),
 		getIdentityMatchDefinition(),
 		getPersonMergeContextDefinition(),
 		getCardDAVPublicationDefinition(),

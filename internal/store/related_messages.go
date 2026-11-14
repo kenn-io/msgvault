@@ -5,6 +5,8 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 // RelatedMessageCandidate decodes an alternate representation of an archived call.
@@ -42,11 +44,17 @@ func RelatedMessageTargetMatches(sourceID int64, messageType string, targetSourc
 }
 
 func (s *Store) populateRelatedMessages(ctx context.Context, messages []APIMessage) error {
-	return PopulateRelatedMessagesContext(ctx, ReadDBContext(ctx, s.DB()), s.Rebind, "", messages)
+	return PopulateRelatedMessagesContext(ctx, ReadDBContext(ctx, s.DB()), s.Rebind, s.dialect.UnicodeLowerExpression, "", messages)
+}
+
+func relatedMessageTargetsQuery(ctx context.Context, tablePrefix string, placeholders []string, args []any, lower func(string) string) (string, []any) {
+	predicate, scopeArgs := sourcescope.IncomingPredicate(ctx, "m.id", "m.source_id", lower)
+	query := fmt.Sprintf("SELECT m.id, m.source_id, COALESCE(m.message_type, '') FROM %smessages m WHERE m.id IN (%s) AND %s AND %s", tablePrefix, strings.Join(placeholders, ","), LiveMessagesWhere("m", true), predicate)
+	return query, append(args, scopeArgs...)
 }
 
 // PopulateRelatedMessagesContext keeps links to live alternate messages in the same source.
-func PopulateRelatedMessagesContext(ctx context.Context, db SQLReader, rebind func(string) string, tablePrefix string, messages []APIMessage) error {
+func PopulateRelatedMessagesContext(ctx context.Context, db SQLReader, rebind func(string) string, lower func(string) string, tablePrefix string, messages []APIMessage) error {
 	var args []any
 	var placeholders []string
 	for _, message := range messages {
@@ -58,7 +66,7 @@ func PopulateRelatedMessagesContext(ctx context.Context, db SQLReader, rebind fu
 	if len(args) == 0 {
 		return nil
 	}
-	query := fmt.Sprintf("SELECT m.id, m.source_id, COALESCE(m.message_type, '') FROM %smessages m WHERE m.id IN (%s) AND %s", tablePrefix, strings.Join(placeholders, ","), LiveMessagesWhere("m", true))
+	query, args := relatedMessageTargetsQuery(ctx, tablePrefix, placeholders, args, lower)
 	rows, err := db.QueryContext(ctx, rebind(query), args...)
 	if err != nil {
 		return fmt.Errorf("get related message targets: %w", err)

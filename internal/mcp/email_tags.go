@@ -74,14 +74,19 @@ func (h *handlers) messageTagsCall(ctx context.Context, req toolRequest, write b
 	}
 	value, err := h.messageTags.MessageTags(ctx, id, change, mailbox)
 	if err != nil {
-		if failure, ok := errors.AsType[*emailtags.MessageTagError](err); ok {
-			result, encodeErr := jsonResult(failure)
-			if result != nil {
-				result.isError = true
-			}
-			return result, encodeErr
-		}
-		return toolErrorResult(daemonclient.SafeMCPError(err).Error()), nil
+		return messageTagErrorResult(err)
 	}
 	return jsonResult(value)
+}
+
+// messageTagErrorResult preserves structured partial outcomes from the daemon.
+func messageTagErrorResult(err error) (*toolResult, error) {
+	if failure, ok := errors.AsType[*emailtags.MessageTagError](err); ok {
+		result, encodeErr := jsonResult(failure)
+		if result != nil {
+			result.isError = true
+		}
+		return result, encodeErr
+	}
+	return toolErrorResult(daemonclient.SafeMCPError(err).Error()), nil
 }

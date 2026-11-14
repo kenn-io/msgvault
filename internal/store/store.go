@@ -3098,38 +3098,42 @@ func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) 
 			return out
 		}
 
+		plainScope, plainArgs := s.incomingScopeClause(ctx, "messages.id", "messages.source_id")
+		messageScope, messageArgs := s.incomingScopeClause(ctx, "m.id", "m.source_id")
+		withScope := func(scopeArgs []any) []any { return append(cloneArgs(), scopeArgs...) }
+
 		queries = []struct {
 			query string
 			args  []any
 			dest  *int64
 		}{
 			{
-				"SELECT COUNT(*) FROM messages WHERE " + LiveMessagesWhere("", true) + " AND " + inClause,
-				cloneArgs(),
+				"SELECT COUNT(*) FROM messages WHERE " + LiveMessagesWhere("", true) + " AND " + inClause + plainScope,
+				withScope(plainArgs),
 				&stats.MessageCount,
 			},
 			{
-				"SELECT COUNT(*) FROM messages WHERE " + SourceDeletedMessagesWhere("") + " AND " + inClause,
-				cloneArgs(),
+				"SELECT COUNT(*) FROM messages WHERE " + SourceDeletedMessagesWhere("") + " AND " + inClause + plainScope,
+				withScope(plainArgs),
 				&stats.SourceDeletedCount,
 			},
 			{
-				"SELECT COUNT(DISTINCT conversation_id) FROM messages WHERE " + LiveMessagesWhere("", true) + " AND " + inClause,
-				cloneArgs(),
+				"SELECT COUNT(DISTINCT conversation_id) FROM messages WHERE " + LiveMessagesWhere("", true) + " AND " + inClause + plainScope,
+				withScope(plainArgs),
 				&stats.ThreadCount,
 			},
 			{
 				"SELECT COUNT(*) FROM attachments a WHERE EXISTS (" +
 					"SELECT 1 FROM messages m WHERE m.id = a.message_id AND " + LiveMessagesWhere("m", true) +
-					" AND m." + inClause + ")",
-				cloneArgs(),
+					" AND m." + inClause + messageScope + ")",
+				withScope(messageArgs),
 				&stats.AttachmentCount,
 			},
 			{
 				"SELECT COUNT(DISTINCT ml.label_id) FROM message_labels ml " +
 					"JOIN messages m ON m.id = ml.message_id WHERE " + LiveMessagesWhere("m", true) +
-					" AND m." + inClause,
-				cloneArgs(),
+					" AND m." + inClause + messageScope,
+				withScope(messageArgs),
 				&stats.LabelCount,
 			},
 		}

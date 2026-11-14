@@ -143,7 +143,7 @@ func validBeeperDraftBody(body string) error {
 // runBeeperDraftCreate writes a new draft into an empty Beeper chat composer.
 // --to names the chat.
 func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agentgrant.Grant, intent draftComposeIntent, source *store.Source, emit func(api.CLIRunEvent) error) error {
-	if err := authorizeDelegatedDraftSource(grant, source); err != nil {
+	if _, err := authorizeDelegatedDraftSource(grant, source); err != nil {
 		return err
 	}
 	if len(intent.To) != 1 || len(intent.Cc)+len(intent.Bcc) != 0 || intent.Subject != "" || intent.From != "" {
@@ -212,7 +212,7 @@ func (a *storeAPIAdapter) runBeeperDraftLifecycle(ctx context.Context, intent dr
 		if intent.Operation == api.CLIRunDraftGetCommand {
 			permissions = []agentgrant.Permission{agentgrant.PermissionDraftEdit, agentgrant.PermissionDraftDelete}
 		}
-		if err := chatDraftAuthorizer(grant, permissions...)(source.SourceType, source.Identifier); err != nil {
+		if _, err := chatDraftAuthorizer(grant, permissions...)(source.SourceType, source.Identifier); err != nil {
 			return err
 		}
 		intent.MetadataOnly = !grant.Allows(agentgrant.PermissionDraftEdit, agentgrant.SourceRef{

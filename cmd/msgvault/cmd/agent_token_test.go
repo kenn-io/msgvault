@@ -386,7 +386,7 @@ func TestDelegatedGmailDraftGetThroughAgentCLI(t *testing.T) {
 	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true})
 	require.NoError(err)
 	t.Cleanup(func() { _ = owner.Close() })
-	grant, err := owner.IssueAgentToken(t.Context(), "test agent", []string{"draft.create"}, []int64{fixture.source.ID}, nil, time.Time{})
+	grant, err := owner.IssueAgentToken(t.Context(), "test agent", []string{"draft.create"}, []int64{fixture.source.ID}, nil, nil, time.Time{})
 	require.NoError(err)
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
 	require.NoError(os.WriteFile(tokenFile, []byte(grant.Secret+"\n"), 0o600))
@@ -538,7 +538,7 @@ func TestOpenAgentDelegatedStore(t *testing.T) {
 	})
 	require.NoError(err)
 	t.Cleanup(func() { _ = owner.Close() })
-	grant, err := owner.IssueAgentToken(t.Context(), "test agent", []string{"draft.create"}, []int64{source.ID}, nil, time.Time{})
+	grant, err := owner.IssueAgentToken(t.Context(), "test agent", []string{"draft.create"}, []int64{source.ID}, nil, nil, time.Time{})
 	require.NoError(err)
 
 	// Write the token to a temp file.
@@ -731,4 +731,41 @@ func TestOpenAgentDelegatedStoreRejectsEmptyTokenFile(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "is empty")
 	})
+}
+
+func TestAgentTokenIncomingSenderFlagAndViews(t *testing.T) {
+	assertionsForTest := assert.New(t)
+	requirementsForTest := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/health" {
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "5.3.0"}))
+			return
+		}
+		source := map[string]any{"id": 1, "type": "gmail", "identifier": "owner@example.test", "sender_keys": []string{"owner@example.test"}, "incoming_senders": []string{"codes@example.test", "alerts@example.test"}}
+		view := map[string]any{"id": "archive-fixture", "label": "archive", "permissions": []string{"message.archive"}, "sources": []any{source}, "created_at": time.Now().UTC()}
+		if r.Method == http.MethodPost {
+			var body struct {
+				IncomingSenders map[string][]string `json:"incoming_senders"`
+			}
+			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&body)) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			assert.Equal(t, map[string][]string{"1": {"codes@example.test", "alerts@example.test"}}, body.IncomingSenders)
+			view["secret"] = "synthetic-token"
+			w.WriteHeader(http.StatusCreated)
+			assert.NoError(t, json.NewEncoder(w).Encode(view))
+		} else {
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"tokens": []any{view}}))
+		}
+	}))
+	t.Cleanup(server.Close)
+	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	output, err := runAgentTokenCommand(ctx, t, agentTokenIssueCmd, "--label", "archive", "--permissions", "message.archive", "--source-ids", "1", "--incoming-sender", "1=codes@example.test", "--incoming-sender", "1=alerts@example.test")
+	requirementsForTest.NoError(err)
+	assertionsForTest.Contains(output, "incoming senders: codes@example.test,alerts@example.test")
+	output, err = runAgentTokenCommand(ctx, t, agentTokenListCmd)
+	requirementsForTest.NoError(err)
+	assertionsForTest.Contains(output, "incoming senders: codes@example.test,alerts@example.test")
 }

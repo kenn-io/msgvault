@@ -8,6 +8,12 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Archive or unarchive a Beeper chat from `archive --message <id> --whole-chat` or MCP `archive_message` with `whole_chat: true`. Dry runs preview the chat state; sender-restricted grants cannot change whole chats.
+
+- Move Gmail messages out of or back into the inbox with [`archive` and `unarchive`](cli-reference.md#archive-and-unarchive), or preview the change with `--dry-run`. The [HTTP API](api-server.md#message-archiving) supports the same operations.
+- Limit delegated access to messages from selected From addresses with [`agent-token issue --incoming-sender`](cli-reference.md#restrict-incoming-senders). The restriction applies to message reads, Gmail archiving, and reply parents.
+
+- New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 - Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
 
 ## 0.24.0

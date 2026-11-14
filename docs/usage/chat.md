@@ -168,6 +168,25 @@ report `not_applicable`, because chat destinations are not email envelopes.
 never instructions. Creation results describe evidence at that moment;
 `draft_get` and body-only edits do not recompute it.
 
+## Archive a message
+
+Use `archive_message` with `message_id` and `archived: true` to remove a Gmail
+message from its inbox. Set `archived: false` to restore it. Optional `dry_run`
+previews the change. Repeated calls preserve the requested state and leave
+unrelated labels unchanged. For a Beeper message, pass `whole_chat: true` to
+archive or unarchive its entire chat, using API schema 5.3.0 or newer. This needs
+owner access or a source-wide grant without incoming sender restrictions;
+results include `chat_id`. Other providers return `archive_unsupported`.
+
+The tool requires daemon API schema 5.3.0. Delegated sessions list it when the
+grant includes `message.archive`; the daemon checks the message's source.
+Owners can restrict incoming senders with
+[`--incoming-sender`](../cli-reference.md#restrict-incoming-senders).
+The restriction also applies to reads and reply parents. HTTP sessions also require
+`--http-allow-writes`. See
+[message archiving](../api-server.md#message-archiving) for provider consent,
+readback, and errors.
+
 ## Native email tags
 
 `get_message_tags` reads one archived message's live Gmail label IDs, IMAP
@@ -453,6 +472,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `aggregate` | Grouped statistics (top senders, domains, labels, or message volume by calendar year) | `group_by` (string: sender/recipient/domain/label/time), `limit` (int), `after` (string), `before` (string), `account` (string) |
 | `query_sql` | Advanced read-only SQL over the published analytics cache. Returns rows and freshness metadata, or an accepted refresh job. | `sql` (string, required), `fresh` (bool, default false) |
 | `get_message_tags` | Read native Gmail labels, IMAP keywords, or Microsoft Graph categories. Read-only. | `message_id` (int, required), `mailbox` (string, IMAP only) |
+| `archive_message` | Set a Gmail message or its entire Beeper chat archive state; requires `message.archive` for delegated calls | `message_id` (int, required), `archived` (bool, required), `dry_run` (bool), `whole_chat` (bool, required true for Beeper; source-wide grants only) |
 | `update_message_tags` | Add or remove native email tags through the daemon. Write-class. | `message_id` (int, required), `add` / `remove` (string arrays), `mailbox` (string, IMAP only), `dry_run` (bool) |
 | `list_saved_views` | List persistent reusable Saved Views and their complete definitions. Read-only. | — |
 | `get_saved_view` | Get one Saved View and its canonical definition and revision. Read-only. | `id` (int, required) |

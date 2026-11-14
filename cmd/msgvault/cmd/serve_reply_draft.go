@@ -20,6 +20,7 @@ import (
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/sourceops"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -332,6 +333,15 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 	grant *agentgrant.Grant,
 	inferReplySender bool,
 ) (draftReplyTarget, string, []string, error) {
+	if grant != nil && parentID != nil {
+		var release func()
+		var err error
+		ctx, release, err = a.store.BeginReadSnapshotContext(ctx)
+		if err != nil {
+			return draftReplyTarget{}, "", nil, draftReplyNotPermitted(errors.New("parent source is not available"))
+		}
+		defer release()
+	}
 	var parentSource *store.Source
 	if parentID != nil {
 		var err error
@@ -342,8 +352,16 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 			}
 			return draftReplyTarget{}, "", nil, draftReplyError("invalid_parent", fmt.Errorf("load parent source: %w", err))
 		}
-		if err := authorizeDelegatedDraftSource(grant, parentSource); err != nil {
+		selected, err := authorizeDelegatedDraftSource(grant, parentSource)
+		if err != nil {
 			return draftReplyTarget{}, "", nil, err
+		}
+		if grant != nil {
+			ctx = sourcescope.WithIncomingSenders(ctx, map[int64][]string{parentSource.ID: selected.IncomingSenderKeys})
+			allowed, err := a.store.IncomingMessageAllowed(ctx, *parentID)
+			if err != nil || !allowed {
+				return draftReplyTarget{}, "", nil, draftReplyNotPermitted(errors.New("parent source is not available"))
+			}
 		}
 	}
 
@@ -359,7 +377,7 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 			}
 			return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", fmt.Errorf("resolve destination source: %w", err))
 		}
-	} else if parentSource != nil && (parentSource.SourceType == "imap" || parentSource.SourceType == "gmail") {
+	} else if parentSource != nil && (parentSource.SourceType == "imap" || parentSource.SourceType == sourceTypeGmail) {
 		source = parentSource
 	} else if parentSource != nil {
 		return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", errors.New("an offline parent requires --account or --source-id for a live IMAP destination"))
@@ -367,7 +385,7 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 		return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", errors.New("--account or --source-id is required"))
 	}
 
-	if err := authorizeDelegatedDraftSource(grant, source); err != nil {
+	if _, err := authorizeDelegatedDraftSource(grant, source); err != nil {
 		return draftReplyTarget{}, "", nil, err
 	}
 	identities, err := a.store.ListAccountIdentitiesContext(ctx, source.ID)
@@ -423,7 +441,7 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 		if imapConfig.Identifier() != source.Identifier {
 			return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", fmt.Errorf("source %d sync config identifier does not match the source", source.ID))
 		}
-	case "gmail":
+	case sourceTypeGmail:
 		if parentSource == nil {
 			return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", errors.New("draft-compose requires an IMAP source"))
 		}
@@ -482,7 +500,7 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	if err != nil {
 		return draftReplyError("invalid_reply_metadata", err)
 	}
-	if target.source.SourceType == "gmail" {
+	if target.source.SourceType == sourceTypeGmail {
 		if len(reply.Parsed.From) != 1 || len(reply.Parsed.To)+len(reply.Parsed.Cc)+len(reply.Parsed.Bcc) == 0 {
 			return draftReplyError("invalid_reply_metadata", errors.New("composed reply needs one From and at least one recipient"))
 		}
@@ -512,19 +530,17 @@ func (a *storeAPIAdapter) refreshDraftCache(ctx context.Context, source *store.S
 	}
 }
 
-// authorizeDelegatedDraftSource checks whether the grant (if any) permits
-// draft creation on the given source. Returns nil when grant is nil (owner
-// path). The check runs before authorizeIMAPDraft so an out-of-scope source
-// never discloses whether drafting is enabled.
-func authorizeDelegatedDraftSource(grant *agentgrant.Grant, source *store.Source) error {
+// authorizeDelegatedDraftSource returns the granted source for a draft. The
+// owner path has no grant. Check source scope before disclosing draft policy.
+func authorizeDelegatedDraftSource(grant *agentgrant.Grant, source *store.Source) (agentgrant.SourceRef, error) {
 	if grant == nil {
-		return nil
+		return agentgrant.SourceRef{}, nil
 	}
-	ref := draftSourceRef(source)
-	if !grant.Allows(agentgrant.PermissionDraftCreate, ref) {
-		return draftReplyNotPermitted(fmt.Errorf("source %d is not in grant %s", source.ID, grant.ID))
+	selected, ok := grant.MatchingSource(draftSourceRef(source))
+	if !ok || !grant.HasPermission(agentgrant.PermissionDraftCreate) {
+		return agentgrant.SourceRef{}, draftReplyNotPermitted(fmt.Errorf("source %d is not in grant %s", source.ID, grant.ID))
 	}
-	return nil
+	return selected, nil
 }
 
 func (a *storeAPIAdapter) createDraft(

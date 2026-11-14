@@ -22,10 +22,13 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 func TestAgentCLISearchOmitsHybridHint(t *testing.T) {
@@ -906,4 +909,257 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 		requirements.Len(response.Messages, 1)
 		assertions.Equal(scope.id, response.Messages[0].ID)
 	}
+}
+
+func TestAgentIncomingSenderScopesReads(t *testing.T) {
+	requirementsForTest := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("test", "owner@example.test")
+	requirementsForTest.NoError(err)
+	_, err = st.EnsureConversation(t.Context(), src.ID, "thread", "private code")
+	requirementsForTest.NoError(err)
+	_, denied, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "denied", "private code", "")
+	requirementsForTest.NoError(err)
+	_, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "allowed", "allowed code", "")
+	requirementsForTest.NoError(err)
+	for _, entry := range []struct {
+		id      int64
+		address string
+	}{{allowed, "codes@example.test"}, {denied, "other@example.test"}} {
+		participant, err := st.EnsureParticipant(entry.address, "", "example.test")
+		requirementsForTest.NoError(err)
+		requirementsForTest.NoError(st.ReplaceMessageRecipients(entry.id, "from", []int64{participant}, nil))
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ? AND recipient_type = 'from'"), entry.address, entry.id)
+		requirementsForTest.NoError(err)
+		if entry.id == allowed {
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE participants SET email_address = ? WHERE id = ?"), "changed@example.test", participant)
+			requirementsForTest.NoError(err)
+		}
+	}
+	_, err = st.CreateCollection("sender-scoped", "", []int64{src.ID})
+	requirementsForTest.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}
+	hash, content := strings.Repeat("b", 64), "synthetic private attachment"
+	path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
+	requirementsForTest.NoError(err)
+	requirementsForTest.NoError(os.MkdirAll(filepath.Dir(path), 0700))
+	requirementsForTest.NoError(os.WriteFile(path, []byte(content), 0600))
+	requirementsForTest.NoError(st.UpsertAttachment(t.Context(), denied, "private.bin", "application/octet-stream", filepath.Join(hash[:2], hash), hash, len(content)))
+	var deniedAttachment int64
+	requirementsForTest.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT id FROM attachments WHERE message_id = ?"), denied).Scan(&deniedAttachment))
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	defer srv.agentGrants.Close()
+	contentRoute := "/api/v1/attachments/" + hash + "/content"
+	contentRequest := httptest.NewRequestWithContext(t.Context(), http.MethodGet, contentRoute, nil)
+	contentRequest.Header.Set("X-Api-Key", "owner-key")
+	contentResponse := httptest.NewRecorder()
+	srv.Router().ServeHTTP(contentResponse, contentRequest)
+	requirementsForTest.Equal(http.StatusOK, contentResponse.Code, contentResponse.Body.String())
+	requirementsForTest.Equal(content, contentResponse.Body.String())
+	body := fmt.Sprintf(`{"label":"reader","permissions":["search.read","message.read","stats.read","attachment.read","verification.read"],"source_ids":[%d],"incoming_senders":{"%d":["codes@example.test"]}}`, src.ID, src.ID)
+	issue := httptest.NewRequestWithContext(t.Context(), http.MethodPost, agentTokensPath, strings.NewReader(body))
+	issue.Header.Set("X-Api-Key", "owner-key")
+	issue.Header.Set("Content-Type", "application/json")
+	issued := httptest.NewRecorder()
+	srv.Router().ServeHTTP(issued, issue)
+	requirementsForTest.Equal(http.StatusCreated, issued.Code, issued.Body.String())
+	var grant agentTokenIssueResponse
+	requirementsForTest.NoError(json.Unmarshal(issued.Body.Bytes(), &grant))
+	token := grant.Secret
+	for _, tc := range []struct {
+		path               string
+		status             int
+		contains, excludes string
+	}{
+		{"/api/v1/messages", http.StatusOK, "allowed code", "private code"},
+		{"/api/v1/search?q=code", http.StatusOK, "allowed code", "private code"},
+		{"/api/v1/messages/filter", http.StatusOK, "allowed code", "private code"},
+		{"/api/v1/stats/total", http.StatusOK, `"message_count":1`, `"message_count":2`},
+		{"/api/v1/cli/collections", http.StatusOK, `"message_count":1`, `"message_count":2`},
+		{fmt.Sprintf("/api/v1/cli/message/thread?id=%d", allowed), http.StatusOK, "allowed code", "private code"},
+		{fmt.Sprintf("/api/v1/cli/message/thread?id=%d", denied), http.StatusNotFound, "", "private code"},
+		{fmt.Sprintf("/api/v1/attachments/%d", deniedAttachment), http.StatusNotFound, "", "private.bin"},
+		{contentRoute, http.StatusNotFound, "", content},
+		{fmt.Sprintf("/api/v1/messages/%d", allowed), http.StatusOK, "allowed code", "private code"},
+		{fmt.Sprintf("/api/v1/messages/%d", denied), http.StatusNotFound, "", "private code"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tc.path, nil)
+			r.Header.Set(apiprotocol.AgentTokenHeader, token)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, r)
+			require.Equal(t, tc.status, w.Code, w.Body.String())
+			assert.Contains(t, w.Body.String(), tc.contains)
+			assert.NotContains(t, w.Body.String(), tc.excludes)
+		})
+	}
+	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{src.ID: {"codes@example.test"}})
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	term := &search.Query{TextTerms: []string{"code"}}
+	for _, searchWithStats := range []func() (*query.SearchFastResult, error){
+		func() (*query.SearchFastResult, error) {
+			return engine.SearchDeepWithStats(ctx, term, query.MessageFilter{}, 50, 0)
+		},
+		func() (*query.SearchFastResult, error) {
+			return engine.SearchFastWithStats(ctx, term, "code", query.MessageFilter{}, query.ViewSenders, 50, 0)
+		},
+	} {
+		result, err := searchWithStats()
+		requirementsForTest.NoError(err)
+		requirementsForTest.Len(result.Messages, 1)
+		requirementsForTest.Equal(allowed, result.Messages[0].ID)
+		requirementsForTest.Equal("private code", result.Messages[0].ConversationTitle)
+		requirementsForTest.Equal(int64(1), result.TotalCount)
+		requirementsForTest.NotNil(result.Stats)
+		requirementsForTest.Equal(int64(1), result.Stats.MessageCount)
+	}
+	detail, err := st.GetMessageContext(ctx, allowed)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Equal("private code", detail.ConversationTitle)
+	message, err := engine.GetMessageBySourceID(ctx, "allowed", []int64{src.ID})
+	requirementsForTest.NoError(err)
+	requirementsForTest.Equal("allowed code", message.Subject)
+	requirementsForTest.Equal("private code", message.ConversationTitle)
+	batch, err := engine.GetMessageSummariesByIDs(ctx, []int64{allowed})
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(batch, 1)
+	requirementsForTest.Equal("private code", batch[0].ConversationTitle)
+	owner, err := st.GetMessageContext(t.Context(), allowed)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Equal("private code", owner.ConversationTitle)
+
+	other, err := st.GetOrCreateSource("test", "other-account@example.test")
+	requirementsForTest.NoError(err)
+	_, err = st.EnsureConversation(t.Context(), other.ID, "thread", "other account title")
+	requirementsForTest.NoError(err)
+	_, otherID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "other-account@example.test", "other-message", "other subject", "")
+	requirementsForTest.NoError(err)
+	_, mixedToken, _, err := srv.agentGrants.Issue("mixed", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionVerificationRead}, []agentgrant.SourceRef{
+		{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier, IncomingSenderKeys: []string{"codes@example.test"}},
+		{ID: other.ID, Type: other.SourceType, Identifier: other.Identifier},
+	}, time.Time{})
+	requirementsForTest.NoError(err)
+	for _, tc := range []struct {
+		id            int64
+		want, exclude string
+	}{{allowed, "allowed code", "private code"}, {otherID, "other account title", "private code"}} {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", tc.id), nil)
+		r.Header.Set(apiprotocol.AgentTokenHeader, mixedToken)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, r)
+		requirementsForTest.Equal(http.StatusOK, w.Code, w.Body.String())
+		requirementsForTest.Contains(w.Body.String(), tc.want)
+		requirementsForTest.NotContains(w.Body.String(), tc.exclude)
+	}
+
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE conversations SET title = ? WHERE source_id = ?"), "Your verification code is 482913", src.ID)
+	requirementsForTest.NoError(err)
+	issueWithoutVerification := httptest.NewRequestWithContext(t.Context(), http.MethodPost, agentTokensPath, strings.NewReader(strings.Replace(body, `,"verification.read"`, "", 1)))
+	issueWithoutVerification.Header.Set("X-Api-Key", "owner-key")
+	issueWithoutVerification.Header.Set("Content-Type", "application/json")
+	issuedWithoutVerification := httptest.NewRecorder()
+	srv.Router().ServeHTTP(issuedWithoutVerification, issueWithoutVerification)
+	requirementsForTest.Equal(http.StatusCreated, issuedWithoutVerification.Code, issuedWithoutVerification.Body.String())
+	var maskedGrant agentTokenIssueResponse
+	requirementsForTest.NoError(json.Unmarshal(issuedWithoutVerification.Body.Bytes(), &maskedGrant))
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE conversations SET title = ? WHERE source_id = ?"), "Your verification code", src.ID)
+	requirementsForTest.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET subject = ?, snippet = '' WHERE id = ?"), "482913", allowed)
+	requirementsForTest.NoError(err)
+	requirementsForTest.NoError(st.UpsertFTSContext(t.Context(), allowed, "482913", "", src.Identifier, "", ""))
+	requirementsForTest.NoError(st.UpsertAttachment(t.Context(), allowed, "allowed.txt", "text/plain", "allowed.txt", strings.Repeat("c", 64), 4))
+	requirementsForTest.NoError(os.WriteFile(filepath.Join(cfg.AttachmentsDir(), "allowed.txt"), []byte("safe"), 0o600))
+	var allowedAttachment int64
+	requirementsForTest.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT id FROM attachments WHERE message_id = ?"), allowed).Scan(&allowedAttachment))
+	requestCount := 0
+	for _, withEngine := range []bool{true, false} {
+		if withEngine {
+			srv.SetAnalyticsEngine(query.NewEngine(st.DB(), st.IsPostgreSQL()), AnalyticsModeSQL)
+		} else {
+			srv.SetAnalyticsEngine(nil, "")
+		}
+		paths := []string{fmt.Sprintf("/api/v1/messages/%d", allowed)}
+		if withEngine {
+			paths = append(paths, "/api/v1/cli/message?id=allowed", fmt.Sprintf("/api/v1/cli/message/thread?id=%d", allowed), "/api/v1/messages", "/api/v1/cli/search?q=482913", fmt.Sprintf("/api/v1/attachments/%d", allowedAttachment))
+		}
+		for _, path := range paths {
+			for _, tc := range []struct {
+				secret string
+				masked bool
+			}{{maskedGrant.Secret, true}, {token, false}} {
+				r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
+				requestCount++
+				r.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", requestCount)
+				r.Header.Set(apiprotocol.AgentTokenHeader, tc.secret)
+				w := httptest.NewRecorder()
+				srv.Router().ServeHTTP(w, r)
+				requirementsForTest.Equal(http.StatusOK, w.Code, w.Body.String())
+				requirementsForTest.NotContains(w.Body.String(), "Your verification code")
+				if tc.masked {
+					requirementsForTest.Contains(w.Body.String(), verification.Masked, path)
+					requirementsForTest.NotContains(w.Body.String(), "482913", path)
+				} else if !strings.Contains(path, "/attachments/") {
+					requirementsForTest.Contains(w.Body.String(), "482913", path)
+				}
+			}
+		}
+	}
+	srv.SetAnalyticsEngine(query.NewEngine(st.DB(), st.IsPostgreSQL()), AnalyticsModeSQL)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE conversations SET title = ? WHERE source_id = ?"), "Your verification code is 482913", src.ID)
+	requirementsForTest.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET subject = ? WHERE id = ?"), "allowed code", allowed)
+	requirementsForTest.NoError(err)
+	readAllowed := func() string {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", allowed), nil)
+		r.Header.Set(apiprotocol.AgentTokenHeader, maskedGrant.Secret)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, r)
+		requirementsForTest.Equal(http.StatusOK, w.Code, w.Body.String())
+		return w.Body.String()
+	}
+	ordinary := readAllowed()
+	requirementsForTest.Contains(ordinary, verification.Masked)
+	requirementsForTest.NotContains(ordinary, "482913")
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET subject = ? WHERE id = ?"), "Your verification code is 987654", allowed)
+	requirementsForTest.NoError(err)
+	masked := readAllowed()
+	requirementsForTest.Contains(masked, verification.Masked)
+	requirementsForTest.NotContains(masked, "987654")
+}
+
+func TestAgentRelatedMessageIncomingScope(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "allowed", "allowed", "")
+	requirements.NoError(err)
+	_, target, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "target", "target", "")
+	requirements.NoError(err)
+	for _, tc := range []struct {
+		id      int64
+		address string
+	}{{allowed, "codes@example.test"}, {target, "other@example.test"}} {
+		participant, err := st.EnsureParticipant(tc.address, "", "example.test")
+		requirements.NoError(err)
+		requirements.NoError(st.ReplaceMessageRecipients(tc.id, "from", []int64{participant}, nil))
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), tc.address, tc.id)
+		requirements.NoError(err)
+	}
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET message_type = ?, metadata = ? WHERE id = ?"), "chatwoot", fmt.Sprintf(`{"meeting_message_id":%d}`, target), allowed)
+	requirements.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET message_type = ? WHERE id = ?"), "meeting_transcript", target)
+	requirements.NoError(err)
+	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{source.ID: {"codes@example.test"}})
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	checkRelated := func(want *int64) {
+		message, err := engine.GetMessage(ctx, allowed)
+		requirements.NoError(err)
+		requirements.Equal(want, message.RelatedMessageID)
+		storeMessage, err := st.GetMessageContext(ctx, allowed)
+		requirements.NoError(err)
+		requirements.Equal(want, storeMessage.RelatedMessageID)
+	}
+	checkRelated(nil)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), "codes@example.test", target)
+	requirements.NoError(err)
+	checkRelated(&target)
 }

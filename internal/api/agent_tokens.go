@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/mail"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +37,7 @@ type agentTokenIssueRequest struct {
 	Label            string              `json:"label"`
 	Permissions      []string            `json:"permissions"`
 	SourceIDs        []int64             `json:"source_ids"`
+	IncomingSenders  map[string][]string `json:"incoming_senders,omitempty"`
 	SenderSelections map[string][]string `json:"sender_selections,omitempty"`
 }
 
@@ -64,10 +66,11 @@ type agentTokenView struct {
 }
 
 type agentTokenSourceView struct {
-	ID         int64    `json:"id"`
-	Type       string   `json:"type"`
-	Identifier string   `json:"identifier"`
-	SenderKeys []string `json:"sender_keys"`
+	ID              int64    `json:"id"`
+	Type            string   `json:"type"`
+	Identifier      string   `json:"identifier"`
+	SenderKeys      []string `json:"sender_keys"`
+	IncomingSenders []string `json:"incoming_senders"`
 }
 
 type agentTokenListResponse struct {
@@ -88,7 +91,8 @@ func grantToView(g agentgrant.Grant) agentTokenView {
 	for i, s := range g.Sources {
 		sources[i] = agentTokenSourceView{
 			ID: s.ID, Type: s.Type, Identifier: s.Identifier,
-			SenderKeys: append([]string{}, s.SenderKeys...),
+			SenderKeys:      append([]string{}, s.SenderKeys...),
+			IncomingSenders: append([]string{}, s.IncomingSenderKeys...),
 		}
 	}
 	return agentTokenView{
@@ -178,6 +182,27 @@ func (s *Server) ownerAccessAuthorized(r *http.Request) bool {
 	return mode == AuthModeAPIKey || mode == AuthModeCaller
 }
 
+func decodeAgentTokenIssueRequest(w http.ResponseWriter, r *http.Request, req *agentTokenIssueRequest) bool {
+	dec := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	raw, err := dec.ReadValue()
+	if err == nil {
+		err = json.Unmarshal(raw, req, json.RejectUnknownMembers(true))
+	}
+	var fields map[string]jsontext.Value
+	if err == nil {
+		err = json.Unmarshal(raw, &fields)
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+		return false
+	}
+	if string(fields["incoming_senders"]) == "null" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "incoming_senders must be an object")
+		return false
+	}
+	return requireSingleJSONValue(w, dec, "invalid_request")
+}
+
 // handleIssueAgentToken issues a new restricted agent grant.
 // Requires owner API key.
 func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
@@ -195,13 +220,7 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req agentTokenIssueRequest
-	dec := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	if err := json.UnmarshalDecode(dec, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
-		return
-	}
-
-	if !requireSingleJSONValue(w, dec, "invalid_request") {
+	if !decodeAgentTokenIssueRequest(w, r, &req) {
 		return
 	}
 
@@ -275,6 +294,33 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 		if _, ok := validSourceIDs[id]; !ok {
 			writeError(w, http.StatusBadRequest, "invalid_sender", "sender selection names an unselected source")
 			return
+		}
+	}
+	for sourceID, selected := range req.IncomingSenders {
+		id, err := strconv.ParseInt(sourceID, 10, 64)
+		_, selectedSource := validSourceIDs[id]
+		if err != nil || id <= 0 || strconv.FormatInt(id, 10) != sourceID || !selectedSource {
+			writeError(w, http.StatusBadRequest, "invalid_sender", "incoming sender selection names an invalid or unselected source")
+			return
+		}
+		allowed := []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead, agentgrant.PermissionMessageArchive, agentgrant.PermissionDraftCreate}
+		if !slices.ContainsFunc(allowed, func(permission agentgrant.Permission) bool { return slices.Contains(perms, permission) }) || len(selected) == 0 {
+			writeError(w, http.StatusBadRequest, "invalid_sender", "incoming_senders requires a read, archive, or draft.create permission and a nonempty sender list")
+			return
+		}
+		keys := make([]string, 0, len(selected))
+		for _, value := range selected {
+			key, valid := canonicalMailboxIdentity(value)
+			if !valid || slices.Contains(keys, key) {
+				writeError(w, http.StatusBadRequest, "invalid_sender", "incoming sender must be a valid, unique mailbox")
+				return
+			}
+			keys = append(keys, key)
+		}
+		for i := range sources {
+			if sources[i].ID == id {
+				sources[i].IncomingSenderKeys = keys
+			}
 		}
 	}
 	for i := range sources {

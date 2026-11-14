@@ -9,7 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -639,4 +641,74 @@ func createSearchScopeMessage(
 			messageID, "to", []int64{recipientID}, []string{"Recipient Needle"}), "ReplaceMessageRecipients(to)")
 	}
 	return messageID
+}
+
+func TestAgentSearchAndLabelInventoryIncomingScope(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	first, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "first@example.test", "allowed", "allowed code", "")
+	requirements.NoError(err)
+	_, denied, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "first@example.test", "denied", "denied code", "")
+	requirements.NoError(err)
+	second, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "second@example.test", "other", "other", "")
+	requirements.NoError(err)
+	for _, tc := range []struct {
+		id      int64
+		address string
+	}{{allowed, "codes@example.test"}, {denied, "other@example.test"}} {
+		participant, err := st.EnsureParticipant(tc.address, "", "example.test")
+		requirements.NoError(err)
+		requirements.NoError(st.ReplaceMessageRecipients(tc.id, "from", []int64{participant}, nil))
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), tc.address, tc.id)
+		requirements.NoError(err)
+	}
+	for _, tc := range []struct {
+		source, message int64
+		name            string
+	}{{first.ID, 0, "empty"}, {first.ID, allowed, "allowed"}, {first.ID, denied, "denied"}, {second.ID, 0, "other empty"}} {
+		id, err := st.EnsureLabel(t.Context(), tc.source, tc.name, tc.name, "user")
+		requirements.NoError(err)
+		if tc.message != 0 {
+			requirements.NoError(st.AddMessageLabels(t.Context(), tc.message, []int64{id}))
+		}
+	}
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{first.ID: {"codes@example.test"}})
+	term := &search.Query{TextTerms: []string{"code"}}
+	deep, err := engine.SearchDeepWithStats(ctx, term, query.MessageFilter{}, 50, 0)
+	requirements.NoError(err)
+	requirements.Len(deep.Messages, 1)
+	requirements.Equal(allowed, deep.Messages[0].ID)
+	requirements.Equal(int64(1), deep.TotalCount)
+	requirements.NotNil(deep.Stats)
+	requirements.Equal(int64(1), deep.Stats.MessageCount)
+	fast, err := engine.SearchFastWithStats(ctx, term, "code", query.MessageFilter{}, query.ViewSenders, 50, 0)
+	requirements.NoError(err)
+	requirements.Len(fast.Messages, 1)
+	requirements.Equal(allowed, fast.Messages[0].ID)
+	requirements.Equal(int64(1), fast.TotalCount)
+	requirements.NotNil(fast.Stats)
+	requirements.Equal(int64(1), fast.Stats.MessageCount)
+	for _, tc := range []struct {
+		name              string
+		restricted, mixed bool
+		want              int64
+	}{{"unrestricted", false, false, 3}, {"restricted", true, false, 1}, {"mixed", true, true, 2}} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			incoming := map[int64][]string{first.ID: nil}
+			if tc.restricted {
+				incoming[first.ID] = []string{"codes@example.test"}
+			}
+			ids := []int64{first.ID}
+			if tc.mixed {
+				ids = append(ids, second.ID)
+				incoming[second.ID] = nil
+			}
+			ctx := sourcescope.WithIncomingSenders(sourcescope.WithSourceIDs(t.Context(), ids), incoming)
+			stats, err := engine.GetTotalStats(ctx, query.StatsOptions{})
+			requirements.NoError(err)
+			requirements.Equal(tc.want, stats.LabelCount)
+		})
+	}
 }

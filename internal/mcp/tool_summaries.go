@@ -59,7 +59,7 @@ type ToolSummary struct {
 
 func summarizeTool(definition toolDefinition) ToolSummary {
 	permission := "owner-only"
-	if required, ok := agentReadToolPermission(definition.name); ok {
+	if required, ok := agentToolPermission(definition.name); ok {
 		permission = string(required)
 	}
 	return ToolSummary{
