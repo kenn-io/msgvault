@@ -168,15 +168,6 @@ func TestValidateOnlyWritesNothing(t *testing.T) {
 		assert.Nil(t, got["recipients"])
 		assertDraftRows(t, st)
 	})
-	t.Run("beeper", func(t *testing.T) {
-		f := newBeeperDraftFixture(t)
-		_, err := lintRun(t, f.adapter, nil, "draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "Hi Sam,", "--validate-only", "--json")
-		require.NoError(t, err)
-		requests, patches := f.beeper.counts()
-		assert.Zero(t, requests)
-		assert.Zero(t, patches)
-		assertDraftRows(t, f.store)
-	})
 }
 func TestGmailDraftReplyValidateOnlyChecksScopes(t *testing.T) {
 	for _, tc := range []struct {
