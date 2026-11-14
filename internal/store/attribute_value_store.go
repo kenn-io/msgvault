@@ -442,7 +442,7 @@ func (s *Store) insertAttributeValueTx(
 		    active_from, active_until, source, source_ref, confidence, actor%s
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, ?, ?, ?, ?%s)
 		RETURNING id
-	`, owner.table, owner.column, createdAtColumn, s.dialect.JSONBindExpr(), createdAtBind),
+	`, owner.table, owner.column, createdAtColumn, s.dialect.JSONTextBindExpr(), createdAtBind),
 		args...,
 	).Scan(&insertedID); err != nil {
 		return nil, fmt.Errorf("insert attribute value for %s: %w", definition.Slug, err)
