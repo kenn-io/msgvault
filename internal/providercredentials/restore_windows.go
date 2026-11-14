@@ -30,18 +30,15 @@ func SecureRestored(dir string, restored []string) error {
 		if err := verifyHandleOwner(directory); err != nil {
 			return fmt.Errorf("inspect restored token directory: %w", err)
 		}
-		rootAffected := verifyOwnerOnlyHandle(directory, false) != nil
-		if rootAffected {
-			if err := restorePreflight(dir, restored, ancestors); err != nil {
-				return err
-			}
-		}
 		for _, name := range restored {
 			if err := secureFileACL(filepath.Join(dir, name)); err != nil {
 				return fmt.Errorf("secure restored token %q: %w", name, err)
 			}
 		}
-		if rootAffected {
+		if verifyOwnerOnlyHandle(directory, false) != nil {
+			if err := restorePreflight(dir, restored, ancestors); err != nil {
+				return err
+			}
 			return secureOwnerOnlyHandle(directory)
 		}
 		return nil

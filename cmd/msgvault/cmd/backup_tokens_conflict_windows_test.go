@@ -59,6 +59,7 @@ func TestBackupRestorePermissionConflictAfterPublication(t *testing.T) {
 	require.Error(err)
 	assert.NotContains(err.Error(), "was restored to")
 	require.ErrorContains(err, "permissions conflict")
+	assert.Contains(err.Error(), "selected token files were secured, but token directory permissions were not changed")
 	assert.Contains(output, fmt.Sprintf("Restored snapshot %s to %s", manifest.SnapshotID, target))
 	assert.Contains(err.Error(), "--permissions-only")
 
