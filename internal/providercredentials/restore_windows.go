@@ -62,18 +62,7 @@ func SecureRestored(dir string, restored []string) error {
 			}
 		}
 		for _, name := range changed {
-			if name == "." {
-				return secureOwnerOnlyHandle(directory)
-			}
-			h, err := openSecurityHandle(filepath.Join(dir, name), true, windows.READ_CONTROL|windows.WRITE_DAC)
-			if err != nil {
-				return fmt.Errorf("secure restored token directory %q: %w", name, err)
-			}
-			err = secureOwnerOnlyHandle(h)
-			if closeErr := windows.CloseHandle(h); closeErr != nil {
-				return fmt.Errorf("close restored token directory %q: %w", name, errors.Join(err, closeErr))
-			}
-			if err != nil {
+			if err := (nativePermissions{}).secureDirectory(filepath.Join(dir, name)); err != nil {
 				return fmt.Errorf("secure restored token directory %q: %w", name, err)
 			}
 		}
