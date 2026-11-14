@@ -8,6 +8,7 @@ import (
 	"go.kenn.io/msgvault/internal/emailtags"
 	"go.kenn.io/msgvault/internal/gmail"
 	imaplib "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/msmail"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/provideridentity"
@@ -92,7 +93,12 @@ func (a *storeAPIAdapter) providerMessageTags(ctx context.Context, source *store
 		write := change != nil && !change.DryRun
 		state := invocationFromContext(ctx)
 		if write {
-			granted, err := newGraphMailWriteManager(state).HasScopes(source.Identifier)
+			app, dir, err := microsoftMailApp(state.cfg, sourceOAuthApp(source))
+			if err != nil {
+				return nil, emailtags.Failure("provider_unavailable", "Cannot connect to the Microsoft mailbox", nil, err)
+			}
+			manager := microsoft.NewGraphMailWriteManager(app.ClientID, app.EffectiveTenantID(), app.EffectiveRedirectURI(), dir, state.logger)
+			granted, err := manager.HasScopes(source.Identifier)
 			if err != nil || !granted {
 				return nil, emailtags.Failure("insufficient_scope", "Microsoft category editing requires Mail.ReadWrite; reauthorize with add-o365 --graph --mail-write", nil, err)
 			}
@@ -100,9 +106,12 @@ func (a *storeAPIAdapter) providerMessageTags(ctx context.Context, source *store
 		factory := a.microsoftTagClientFactory
 		if factory == nil {
 			factory = func(ctx context.Context, source *store.Source, write bool) (*msmail.Client, error) {
-				manager := newGraphMailManager(state)
+				manager, err := newGraphMailManager(state, source)
 				if write {
-					manager = newGraphMailWriteManager(state)
+					manager, err = newGraphMailWriteManager(state, source)
+				}
+				if err != nil {
+					return nil, err
 				}
 				token, err := manager.TokenSource(ctx, source.Identifier)
 				if err != nil {

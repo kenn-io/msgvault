@@ -1,12 +1,16 @@
 package cmd
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	imapclient "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -19,15 +23,18 @@ var (
 	noDefaultIdentityAddO365 bool
 	o365Graph                bool
 	o365SignIn               string
+	o365OAuthApp             string
 )
 
 func newAddO365Cmd() *cobra.Command {
 	cmd := newAddO365LocalCmd()
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {
-			if err := preflightAddO365Authorize(cmd, args[0]); err != nil {
+			email, err := preflightAddO365Authorize(cmd, args[0])
+			if err != nil {
 				return err
 			}
+			args[0] = email
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
 		return runAddO365Local(cmd, args)
@@ -38,30 +45,90 @@ func newAddO365Cmd() *cobra.Command {
 // preflightAddO365Authorize runs the Microsoft browser flow in this process
 // before proxying, so the daemon subprocess never opens a browser or waits
 // on human consent while holding the operation gate.
-func preflightAddO365Authorize(cmd *cobra.Command, email string) error {
+func preflightAddO365Authorize(cmd *cobra.Command, email string) (string, error) {
 	mailWrite, err := o365MailWrite(cmd)
 	if err != nil {
-		return err
+		return "", err
 	}
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
-		return errors.New("configuration is unavailable")
+		return "", errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
 	if IsRemoteMode(state) {
-		// Tokens live on the remote host; authorization must happen there.
-		return nil
+		return email, nil
 	}
-	if err := requireMicrosoftOAuthConfig(cfg); err != nil {
-		return err
+	conflict := false
+	stored, exists, undetermined, identifier, err := lookupAccountBinding(cmd.Context(), func(account daemonclient.CLIAccount) (bool, bool) {
+		if !o365Graph && isO365PasswordConflict(account, email) {
+			conflict = true
+		}
+		return matchesO365Account(account, email, o365Graph)
+	})
+	if err != nil {
+		return "", err
 	}
-	if err := authorizeO365(cmd, email, mailWrite); err != nil {
-		return err
+	if conflict {
+		return "", fmt.Errorf("an Outlook IMAP account for %s already uses password authentication; remove or change that account before adding Microsoft OAuth", email)
+	}
+	explicit := cmd.Flags().Changed("oauth-app")
+	if !explicit && !exists && undetermined {
+		return "", fmt.Errorf("daemon does not report the IMAP authentication method for %s; upgrade the daemon to 5.3.0 or later, or check the account's IMAP config", email)
+	}
+	if exists {
+		if o365Graph {
+			email = identifier
+		} else {
+			parsed, err := imapclient.ParseIdentifier(identifier)
+			if err != nil {
+				return "", err
+			}
+			email = parsed.Username
+		}
+	}
+	binding := resolveAddAccountBinding(o365OAuthApp, explicit, stored, exists)
+	app, dir, err := microsoftMailApp(cfg, binding.resolvedApp)
+	if err != nil {
+		return "", err
+	}
+	if app.ClientID == "" {
+		return "", requireMicrosoftOAuthConfig(cfg)
+	}
+	if err := authorizeO365(cmd, email, mailWrite, app, dir); err != nil {
+		return "", err
+	}
+	if err := cmd.Flags().Set("oauth-app", binding.resolvedApp); err != nil {
+		return "", err
 	}
 	if err := cmd.Flags().Set(oauthPreflightedFlag, "true"); err != nil {
-		return fmt.Errorf("set --%s after authorization: %w", oauthPreflightedFlag, err)
+		return "", fmt.Errorf("set --%s after authorization: %w", oauthPreflightedFlag, err)
 	}
-	return nil
+	return email, nil
+}
+
+func matchesO365Account(account daemonclient.CLIAccount, email string, graph bool) (bool, bool) {
+	if graph {
+		return account.Type == sourceTypeMSMail && strings.EqualFold(account.Identifier, email), false
+	}
+	if account.Type != sourceTypeIMAP {
+		return false, false
+	}
+	parsed, err := imapclient.ParseIdentifier(account.Identifier)
+	if err != nil || !strings.EqualFold(parsed.Username, email) {
+		return false, false
+	}
+	if account.AuthMethod == "" {
+		return false, true
+	}
+	return account.AuthMethod == string(imapclient.AuthXOAuth2), false
+}
+
+func isO365PasswordConflict(account daemonclient.CLIAccount, email string) bool {
+	if account.Type != sourceTypeIMAP || account.AuthMethod != string(imapclient.AuthPassword) {
+		return false
+	}
+	cfg, err := imapclient.ParseIdentifier(account.Identifier)
+	return err == nil && cfg.TLS && cfg.Port == 993 && strings.EqualFold(cfg.Username, email) && (strings.EqualFold(cfg.Host, "outlook.office365.com") || strings.EqualFold(cfg.Host, "outlook.office.com"))
 }
 
 func newAddO365LocalCmd() *cobra.Command {
@@ -94,6 +161,7 @@ Examples:
 		Args: cobra.ExactArgs(1),
 		RunE: runAddO365Local,
 	}
+	cmd.Flags().StringVar(&o365OAuthApp, "oauth-app", "", "Microsoft OAuth app name")
 	cmd.Flags().StringVar(&o365TenantID, "tenant", "",
 		"Azure AD tenant ID (default: \"common\" for multi-tenant)")
 	cmd.Flags().BoolVar(&noDefaultIdentityAddO365, "no-default-identity", false, savedDefaultIdentityHelp)
@@ -121,27 +189,75 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 	logger := state.logger
 	email := args[0]
 
-	if err := requireMicrosoftOAuthConfig(cfg); err != nil {
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
+	if err != nil {
 		return err
 	}
+	defer cleanup()
+	var source *store.Source
 	if o365Graph {
-		return runAddO365GraphLocal(cmd, email, mailWrite)
+		var existing []*store.Source
+		existing, err = s.ListSources(sourceTypeMSMail)
+		for _, src := range existing {
+			if strings.EqualFold(src.Identifier, email) {
+				source = src
+				break
+			}
+		}
+	} else {
+		var existing []*store.Source
+		existing, err = s.ListSources(sourceTypeIMAP)
+		for _, src := range existing {
+			if src.SyncConfig.Valid {
+				if imapCfg, parseErr := imapclient.ConfigFromJSON(src.SyncConfig.String); parseErr == nil && isO365PasswordConflict(daemonclient.CLIAccount{Type: src.SourceType, Identifier: src.Identifier, AuthMethod: string(imapCfg.EffectiveAuthMethod())}, email) {
+					return fmt.Errorf("an Outlook IMAP account for %s already uses password authentication; remove or change that account before adding Microsoft OAuth", email)
+				}
+			}
+			if src.SourceType == sourceTypeIMAP && isMicrosoftIMAPSource(src, email) {
+				source = src
+			}
+		}
 	}
-
-	msMgr := microsoft.NewManager(
-		cfg.Microsoft.ClientID,
-		microsoftTenantID(o365TenantID, cfg),
-		cfg.Microsoft.EffectiveRedirectURI(),
-		cfg.TokensDir(),
-		logger,
-	)
+	if err != nil {
+		return fmt.Errorf("look up existing source: %w", err)
+	}
+	stored := sql.NullString{}
+	if source != nil {
+		stored = source.OAuthApp
+	}
+	binding := resolveAddAccountBinding(o365OAuthApp, cmd.Flags().Changed("oauth-app"), stored, source != nil)
+	if source != nil {
+		if o365Graph {
+			email = source.Identifier
+		} else {
+			parsed, err := imapclient.ParseIdentifier(source.Identifier)
+			if err != nil {
+				return fmt.Errorf("parse source identifier: %w", err)
+			}
+			email = parsed.Username
+		}
+	}
+	app, dir, err := microsoftMailApp(cfg, binding.resolvedApp)
+	if err != nil {
+		return err
+	}
+	if app.ClientID == "" {
+		return requireMicrosoftOAuthConfig(cfg)
+	}
+	if binding.bindingChanged {
+		fmt.Println("Switching OAuth app...")
+	}
+	if o365Graph {
+		return runAddO365GraphLocal(cmd, email, mailWrite, s, source, binding, app, dir)
+	}
+	msMgr := microsoft.NewManager(app.ClientID, o365AppTenant(app), app.EffectiveRedirectURI(), dir, logger)
 
 	preflighted, err := oauthPreflighted(cmd)
 	if err != nil {
 		return err
 	}
 	if !preflighted {
-		if err := authorizeO365(cmd, email, mailWrite); err != nil {
+		if err := authorizeO365(cmd, email, mailWrite, app, dir); err != nil {
 			return err
 		}
 	}
@@ -162,32 +278,7 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 		AuthMethod: imapclient.AuthXOAuth2,
 	}
 
-	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-
 	identifier := imapCfg.Identifier()
-
-	// If a Microsoft IMAP source with this email already exists (matched by
-	// display name AND XOAUTH2 config), reuse it and update its identifier +
-	// config in place. This handles re-authorization after a host change
-	// (e.g. personal vs org scope correction changes the IMAP hostname).
-	// We require the existing source to already be a Microsoft XOAUTH2 source
-	// so that a non-Microsoft IMAP source sharing the same display name is
-	// never silently repointed to Outlook XOAUTH2.
-	var source *store.Source
-	existing, err := s.GetSourcesByDisplayName(email)
-	if err != nil {
-		return fmt.Errorf("look up existing source: %w", err)
-	}
-	for _, src := range existing {
-		if src.SourceType == sourceTypeIMAP && isMicrosoftIMAPSource(src, email) {
-			source = src
-			break
-		}
-	}
 
 	if source != nil {
 		if err := s.UpdateSourceIdentifier(cmd.Context(), source.ID, identifier); err != nil {
@@ -198,6 +289,9 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("create source: %w", err)
 		}
+	}
+	if err := storeO365Binding(cmd.Context(), s, source, binding); err != nil {
+		return fmt.Errorf("store OAuth app: %w", err)
 	}
 	cfgJSON, err := imapCfg.ToJSON()
 	if err != nil {
@@ -243,30 +337,36 @@ func o365MailWrite(cmd *cobra.Command) (bool, error) {
 	return write, nil
 }
 
+func o365AppTenant(app config.MicrosoftConfig) string {
+	if o365TenantID != "" {
+		return o365TenantID
+	}
+	return app.EffectiveTenantID()
+}
+
 // authorizeO365 runs the Microsoft sign-in for the account kind: Graph mail
 // with --graph, IMAP otherwise.
-func authorizeO365(cmd *cobra.Command, email string, mailWrite bool) error {
+func authorizeO365(cmd *cobra.Command, email string, mailWrite bool, app config.MicrosoftConfig, dir string) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
-	cfg := state.cfg
 	logger := state.logger
-	tenant := microsoftTenantID(o365TenantID, cfg)
-	redirect := cfg.Microsoft.EffectiveRedirectURI()
+	tenant := o365AppTenant(app)
+	redirect := app.EffectiveRedirectURI()
 	fmt.Printf("Authorizing %s with Microsoft...\n", email)
 	var err error
 	if o365Graph {
-		mgr := microsoft.NewGraphMailManager(cfg.Microsoft.ClientID, tenant, redirect, cfg.TokensDir(), logger)
+		mgr := microsoft.NewGraphMailManager(app.ClientID, tenant, redirect, dir, logger)
 		if mailWrite {
-			mgr = microsoft.NewGraphMailWriteManager(cfg.Microsoft.ClientID, tenant, redirect, cfg.TokensDir(), logger)
+			mgr = microsoft.NewGraphMailWriteManager(app.ClientID, tenant, redirect, dir, logger)
 		}
 		if o365Headless {
 			mgr.UseDeviceCode()
 		}
 		err = mgr.Authorize(cmd.Context(), email)
 	} else {
-		mgr := microsoft.NewManager(cfg.Microsoft.ClientID, tenant, redirect, cfg.TokensDir(), logger)
+		mgr := microsoft.NewManager(app.ClientID, tenant, redirect, dir, logger)
 		if o365Headless {
 			mgr.UseDeviceCode()
 		}
@@ -283,7 +383,7 @@ func authorizeO365(cmd *cobra.Command, email string, mailWrite bool) error {
 
 // runAddO365GraphLocal creates an msmail source, the Graph mail counterpart of
 // the IMAP source that add-o365 makes by default.
-func runAddO365GraphLocal(cmd *cobra.Command, email string, mailWrite bool) error {
+func runAddO365GraphLocal(cmd *cobra.Command, email string, mailWrite bool, s *store.Store, source *store.Source, binding addAccountBinding, app config.MicrosoftConfig, dir string) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -293,20 +393,19 @@ func runAddO365GraphLocal(cmd *cobra.Command, email string, mailWrite bool) erro
 		return err
 	}
 	if !preflighted {
-		if err := authorizeO365(cmd, email, mailWrite); err != nil {
+		if err := authorizeO365(cmd, email, mailWrite, app, dir); err != nil {
 			return err
 		}
 	}
 
-	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
-	if err != nil {
-		return err
+	if source == nil {
+		source, err = s.GetOrCreateSource(sourceTypeMSMail, email)
+		if err != nil {
+			return fmt.Errorf("create source: %w", err)
+		}
 	}
-	defer cleanup()
-
-	source, err := s.GetOrCreateSource(sourceTypeMSMail, email)
-	if err != nil {
-		return fmt.Errorf("create source: %w", err)
+	if err := storeO365Binding(cmd.Context(), s, source, binding); err != nil {
+		return fmt.Errorf("store OAuth app: %w", err)
 	}
 	if err := updateSourceDisplayNameForRegistration(s, source.ID, email, state.logger); err != nil {
 		return fmt.Errorf("set display name: %w", err)
@@ -327,6 +426,10 @@ func runAddO365GraphLocal(cmd *cobra.Command, email string, mailWrite bool) erro
 	fmt.Println("You can now run:")
 	oauth.PrintHeadlessCommand(os.Stdout, "msgvault", "sync", "--", email)
 	return nil
+}
+
+func storeO365Binding(ctx context.Context, s *store.Store, source *store.Source, binding addAccountBinding) error {
+	return s.UpdateSourceOAuthApp(ctx, source.ID, sql.NullString{String: binding.resolvedApp, Valid: binding.resolvedApp != ""})
 }
 
 // isMicrosoftIMAPSource returns true only if src is an IMAP source already

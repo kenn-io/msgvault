@@ -6,13 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/circleback"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/discord"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/inline"
@@ -416,7 +419,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			)
 		}
 	case sourceTypeMSMail:
-		if err := newGraphMailManager(state).DeleteToken(source.Identifier); err != nil {
+		if err := removeMicrosoftMailTokens(cfg, source, source.Identifier, true, logger); err != nil {
 			fmt.Fprintf(os.Stderr,
 				"Warning: could not remove Microsoft Graph mail token: %v\n", err,
 			)
@@ -473,14 +476,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			if parseErr == nil {
 				switch imapCfg.EffectiveAuthMethod() {
 				case imaplib.AuthXOAuth2:
-					msMgr := microsoft.NewManager(
-						cfg.Microsoft.ClientID,
-						cfg.Microsoft.EffectiveTenantID(),
-						cfg.Microsoft.EffectiveRedirectURI(),
-						cfg.TokensDir(),
-						logger,
-					)
-					if err := msMgr.DeleteToken(imapCfg.Username); err != nil {
+					if err := removeMicrosoftMailTokens(cfg, source, imapCfg.Username, false, logger); err != nil {
 						fmt.Fprintf(os.Stderr,
 							"Warning: could not remove Microsoft token: %v\n", err,
 						)
@@ -723,4 +719,35 @@ func removeAccountSelector(cmd *cobra.Command, args []string) (sourceops.Selecto
 
 func init() {
 	rootCmd.AddCommand(newRemoveAccountCmd())
+}
+
+// removeMicrosoftMailTokens removes credentials left by any previous client.
+func removeMicrosoftMailTokens(cfg *config.Config, source *store.Source, email string, graph bool, logger *slog.Logger) error {
+	dirs := []string{cfg.TokensDir()}
+	if sourceOAuthApp(source) != "" {
+		dirs = nil
+		root := filepath.Join(cfg.TokensDir(), "microsoft-apps")
+		entries, err := os.ReadDir(root)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				dirs = append(dirs, filepath.Join(root, entry.Name()))
+			}
+		}
+	}
+	var result error
+	for _, dir := range dirs {
+		if graph {
+			result = errors.Join(result, microsoft.NewGraphMailManager("", "", "", dir, logger).DeleteToken(email))
+		} else {
+			app := cfg.Microsoft
+			if sourceOAuthApp(source) != "" {
+				app = config.MicrosoftConfig{}
+			}
+			result = errors.Join(result, microsoft.NewManager(app.ClientID, app.EffectiveTenantID(), app.EffectiveRedirectURI(), dir, logger).DeleteToken(email))
+		}
+	}
+	return result
 }

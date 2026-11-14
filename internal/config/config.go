@@ -875,9 +875,42 @@ func (o *OAuthConfig) HasAnyConfig() bool {
 
 // MicrosoftConfig holds Microsoft 365 / Azure AD OAuth configuration.
 type MicrosoftConfig struct {
+	ClientID    string                  `toml:"client_id"`
+	TenantID    string                  `toml:"tenant_id"`
+	RedirectURI string                  `toml:"redirect_uri"`
+	Apps        map[string]MicrosoftApp `toml:"apps"`
+}
+
+// MicrosoftApp holds credentials for one Microsoft app.
+type MicrosoftApp struct {
 	ClientID    string `toml:"client_id"`
 	TenantID    string `toml:"tenant_id"`
 	RedirectURI string `toml:"redirect_uri"`
+}
+
+// HasAnyConfig reports whether a Microsoft app has a client ID.
+func (c MicrosoftConfig) HasAnyConfig() bool {
+	if c.ClientID != "" {
+		return true
+	}
+	for _, app := range c.Apps {
+		if app.ClientID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// App resolves a named app or the default Microsoft configuration.
+func (c MicrosoftConfig) App(name string) (MicrosoftConfig, error) {
+	if name == "" {
+		return c, nil
+	}
+	app, ok := c.Apps[name]
+	if !ok || app.ClientID == "" {
+		return MicrosoftConfig{}, fmt.Errorf("[microsoft.apps.%s] must specify client_id", name)
+	}
+	return MicrosoftConfig{ClientID: app.ClientID, TenantID: app.TenantID, RedirectURI: app.RedirectURI}, nil
 }
 
 // EffectiveRedirectURI returns the redirect URI, defaulting to the

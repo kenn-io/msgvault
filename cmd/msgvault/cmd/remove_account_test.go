@@ -1966,3 +1966,38 @@ func TestRemoveAccountMatrixFencesMergeDuringLogout(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(history.MergedIntoSourceID, "the refused merge must not retire its source")
 }
+
+func TestRemoveMicrosoftMailTokensAcrossApps(t *testing.T) {
+	for _, graph := range []bool{false, true} {
+		t.Run(fmt.Sprintf("graph=%t", graph), func(t *testing.T) {
+			cfg := lifecycleTestConfig(t.TempDir())
+			cfg.Microsoft.Apps = map[string]config.MicrosoftApp{"orgb": {ClientID: "client-b"}}
+			dir1, err := microsoftTokensDir(cfg, "orgb")
+			require.NoError(t, err)
+			cfg.Microsoft.Apps["orgb"] = config.MicrosoftApp{ClientID: "client-c"}
+			dir2, err := microsoftTokensDir(cfg, "orgb")
+			require.NoError(t, err)
+			var paths []string
+			for _, dir := range []string{dir1, dir2, cfg.TokensDir()} {
+				require.NoError(t, os.MkdirAll(dir, 0o700))
+				var path string
+				if graph {
+					path = microsoft.NewGraphMailManager("", "", "", dir, nil).TokenPath("user@example.com")
+				} else {
+					path = microsoft.NewManager("", "", "", dir, nil).TokenPath("user@example.com")
+				}
+				require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
+				paths = append(paths, path)
+			}
+			delete(cfg.Microsoft.Apps, "orgb")
+			source := &store.Source{OAuthApp: sql.NullString{String: "orgb", Valid: true}}
+			require.NoError(t, removeMicrosoftMailTokens(cfg, source, "user@example.com", graph, testDiscardLogger()))
+			for _, path := range paths[:2] {
+				_, err := os.Stat(path)
+				assert.True(t, os.IsNotExist(err))
+			}
+			_, err = os.Stat(paths[2])
+			assert.NoError(t, err)
+		})
+	}
+}
