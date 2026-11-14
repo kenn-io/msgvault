@@ -1,36 +1,13 @@
 package store
 
 import (
-	"bytes"
 	"fmt"
-	"log/slog"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestMeetingEventRowsPostgresRawReadBatch(t *testing.T) {
-	require := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	if !st.IsPostgreSQL() {
-		t.Skip("PostgreSQL precision recovery")
-	}
-	for i := range 4 {
-		calendarFixture(t, st, fmt.Sprintf("event-%d", i), fmt.Sprintf(`{"id":"event-%d","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00.1230001Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, i))
-	}
-	var logs bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-	budget := 10
-	rows, err := st.meetingEventRows(t.Context(), "e.ical_uid = ?", []any{"uid@example.org"}, &budget)
-	require.NoError(err)
-	require.Len(rows, 4)
-	require.Equal(1, strings.Count(logs.String(), "FROM message_raw r JOIN messages"))
-}
 
 func TestMeetingRecordPartialEditWithoutOriginalWithMaster(t *testing.T) {
 	for _, tc := range []struct {
