@@ -64,6 +64,9 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 // expandCalendarRows supplies the same effective occurrences to listing and record reads.
 func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow, from, to time.Time, filterOverlap bool, budget *int) (CalendarOccurrencePage, error) {
 	page := CalendarOccurrencePage{Occurrences: []CalendarOccurrence{}, Unexpandable: []CalendarUnexpandable{}}
+	if err := s.restoreCalendarEvidence(ctx, rows); err != nil {
+		return page, err
+	}
 	type seriesKey struct {
 		source int64
 		id     string
@@ -99,7 +102,7 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 			attendees = []calevent.Attendee{}
 		}
 		ref := OccurrenceRef{MessageID: row.MessageID}
-		if seriesID != 0 && o.Original != (calrecur.Identity{}) {
+		if seriesID != 0 && o.Original != (calrecur.Identity{}) && (o.Original.AllDay || o.Original.Instant.Nanosecond() == 0) {
 			ref = OccurrenceRef{MessageID: seriesID, Identity: o.Original}
 		}
 		original := o.Original

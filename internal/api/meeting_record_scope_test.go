@@ -152,7 +152,7 @@ func TestParseMeetingLinkRef(t *testing.T) {
 	}
 }
 
-func TestMeetingRecordCalendarDetailsRequireGrant(t *testing.T) {
+func TestMeetingRecordMessageReadSourceScope(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	calendar, err := st.GetOrCreateSource("gcal", "calendar@example.com")
@@ -173,24 +173,26 @@ func TestMeetingRecordCalendarDetailsRequireGrant(t *testing.T) {
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(srv.agentGrants.Close)
-	sources := []agentgrant.SourceRef{{ID: calendar.ID, Type: calendar.SourceType, Identifier: calendar.Identifier}, {ID: notes.ID, Type: notes.SourceType, Identifier: notes.Identifier}}
+	calendarScope := agentgrant.SourceRef{ID: calendar.ID, Type: calendar.SourceType, Identifier: calendar.Identifier}
+	notesScope := agentgrant.SourceRef{ID: notes.ID, Type: notes.SourceType, Identifier: notes.Identifier}
 	for _, tc := range []struct {
-		name        string
-		permissions []agentgrant.Permission
-		ref         string
-		status      int
-		wantLinks   bool
+		name      string
+		sources   []agentgrant.SourceRef
+		ref       string
+		status    int
+		wantNotes []int64
+		wantEvent bool
 	}{
-		{"notes only", []agentgrant.Permission{agentgrant.PermissionMessageRead}, fmt.Sprintf("msg:%d", note), http.StatusOK, false},
-		{"bare event ID", []agentgrant.Permission{agentgrant.PermissionMessageRead}, fmt.Sprintf("msg:%d", indirect), http.StatusOK, false},
-		{"event without calendar grant", []agentgrant.Permission{agentgrant.PermissionMessageRead}, fmt.Sprintf("evt:%d", event), http.StatusForbidden, false},
-		{"availability grant", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionCalendarRead}, fmt.Sprintf("evt:%d", event), http.StatusForbidden, false},
-		{"calendar and messages", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionCalendarEventRead}, fmt.Sprintf("msg:%d", note), http.StatusOK, true},
-		{"event with calendar grant", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionCalendarEventRead}, fmt.Sprintf("evt:%d", event), http.StatusOK, true},
+		{"note with both sources", []agentgrant.SourceRef{notesScope, calendarScope}, fmt.Sprintf("msg:%d", note), http.StatusOK, []int64{note, peer, indirect, barePeer}, true},
+		{"event with both sources", []agentgrant.SourceRef{notesScope, calendarScope}, fmt.Sprintf("evt:%d", event), http.StatusOK, []int64{note, peer, indirect, barePeer}, true},
+		{"note with notes source", []agentgrant.SourceRef{notesScope}, fmt.Sprintf("msg:%d", note), http.StatusOK, []int64{note, peer}, false},
+		{"event outside scope", []agentgrant.SourceRef{notesScope}, fmt.Sprintf("evt:%d", event), http.StatusNotFound, nil, false},
+		{"note outside scope", []agentgrant.SourceRef{calendarScope}, fmt.Sprintf("msg:%d", note), http.StatusNotFound, nil, false},
+		{"event with calendar source", []agentgrant.SourceRef{calendarScope}, fmt.Sprintf("evt:%d", event), http.StatusOK, nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
-			_, token, _, err := srv.agentGrants.Issue(tc.name, tc.permissions, sources, time.Time{})
+			_, token, _, err := srv.agentGrants.Issue(tc.name, []agentgrant.Permission{agentgrant.PermissionMessageRead}, tc.sources, time.Time{})
 			require.NoError(err)
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/record?ref="+tc.ref, nil)
 			req.Header.Set(apiprotocol.AgentTokenHeader, token)
@@ -202,18 +204,12 @@ func TestMeetingRecordCalendarDetailsRequireGrant(t *testing.T) {
 			}
 			var record store.MeetingRecord
 			require.NoError(json.Unmarshal(w.Body.Bytes(), &record))
-			if tc.wantLinks {
-				assert.ElementsMatch([]int64{note, peer, indirect, barePeer}, record.MessageIDs)
+			assert.ElementsMatch(tc.wantNotes, record.MessageIDs)
+			if tc.wantEvent {
 				require.Len(record.Links, 1)
 				assert.Equal(fmt.Sprintf("evt:%d", event), record.Links[0].Ref)
 			} else {
-				if tc.ref == fmt.Sprintf("msg:%d", indirect) {
-					assert.Equal([]int64{indirect}, record.MessageIDs)
-				} else {
-					assert.ElementsMatch([]int64{note, peer}, record.MessageIDs)
-				}
 				assert.Empty(record.Links)
-				assert.Empty(record.Unexpandable)
 			}
 		})
 	}

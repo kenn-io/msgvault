@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
-	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/verification"
@@ -17,10 +16,6 @@ import (
 
 type MeetingRecordStore interface {
 	MeetingRecordContext(ctx context.Context, ref store.MeetingLinkRef) (store.MeetingRecord, error)
-}
-
-type MeetingNotesStore interface {
-	MeetingNotesContext(ctx context.Context, ref store.MeetingLinkRef) (store.MeetingRecord, error)
 }
 
 func (s *Server) registerMeetingRecordRoute(api huma.API) {
@@ -82,22 +77,7 @@ func (s *Server) handleMeetingRecord(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "meetings_unavailable", "Meeting links are unavailable")
 		return
 	}
-	var record store.MeetingRecord
-	grant := s.requestAuthentication(r).Grant
-	if grant != nil && !grant.HasPermission(agentgrant.PermissionCalendarEventRead) {
-		if ref.Kind == "evt" {
-			writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionCalendarEventRead))
-			return
-		}
-		notes, ok := s.store.(MeetingNotesStore)
-		if !ok {
-			writeError(w, 503, "meetings_unavailable", "Meeting links are unavailable")
-			return
-		}
-		record, err = notes.MeetingNotesContext(r.Context(), ref)
-	} else {
-		record, err = backend.MeetingRecordContext(r.Context(), ref)
-	}
+	record, err := backend.MeetingRecordContext(r.Context(), ref)
 	if err != nil {
 		s.writeMeetingLinkError(w, err)
 		return

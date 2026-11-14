@@ -367,3 +367,55 @@ func inheritSparseCalendarAttendees(own, master []calevent.Attendee, fields map[
 		})
 	})
 }
+
+// restoreCalendarEvidence retains timestamp precision that PostgreSQL projections cannot store.
+func (s *Store) restoreCalendarEvidence(ctx context.Context, rows []CalendarEventRow) error {
+	if !s.IsPostgreSQL() {
+		return nil
+	}
+	var candidates []int
+	for i, row := range rows {
+		if row.Event.ICalUID != "" || row.Event.Kind == calendarExceptionKind {
+			candidates = append(candidates, i)
+		}
+	}
+	for start := 0; start < len(candidates); start += 500 {
+		batch := candidates[start:min(start+500, len(candidates))]
+		args := make([]any, 0, len(batch))
+		indexes := make(map[int64]int, len(batch))
+		for _, i := range batch {
+			args = append(args, rows[i].MessageID)
+			indexes[rows[i].MessageID] = i
+		}
+		rawRows, err := s.db.QueryContext(ctx, `SELECT m.id, r.raw_data, r.compression, m.metadata, s.sync_config FROM messages m JOIN sources s ON s.id = m.source_id LEFT JOIN message_raw r ON r.message_id = m.id WHERE m.id IN (`+placeholders(len(args))+`)`, args...)
+		if err != nil {
+			return fmt.Errorf("read calendar evidence: %w", err)
+		}
+		for rawRows.Next() {
+			var id int64
+			var raw []byte
+			var compression, metadata, config sql.NullString
+			if err := rawRows.Scan(&id, &raw, &compression, &metadata, &config); err != nil {
+				_ = rawRows.Close()
+				return fmt.Errorf("scan calendar evidence: %w", err)
+			}
+			i := indexes[id]
+			delete(indexes, id)
+			event, ok := decodeCalendarProjection(raw, compression, []byte(metadata.String), calendarConfigZone(config))
+			if !ok || event.ProviderEventID != rows[i].Event.ProviderEventID || event.Kind != rows[i].Event.Kind || event.ICalUID != rows[i].Event.ICalUID {
+				rows[i].Event.ICalUID = ""
+				rows[i].Event.Original = nil
+				continue
+			}
+			rows[i].Event.Start, rows[i].Event.End, rows[i].Event.Original = event.Start, event.End, event.Original
+		}
+		if err := errors.Join(rawRows.Err(), rawRows.Close()); err != nil {
+			return fmt.Errorf("read calendar evidence: %w", err)
+		}
+		for _, i := range indexes {
+			rows[i].Event.ICalUID = ""
+			rows[i].Event.Original = nil
+		}
+	}
+	return nil
+}

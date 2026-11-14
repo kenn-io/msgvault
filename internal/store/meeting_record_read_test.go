@@ -64,10 +64,6 @@ func TestMeetingRecordRejectsFutureLinkProjection(t *testing.T) {
 					return err
 				},
 				func() error {
-					_, err := st.MeetingNotesContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: seed})
-					return err
-				},
-				func() error {
 					_, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event})
 					return err
 				},
@@ -81,7 +77,7 @@ func TestMeetingRecordRejectsFutureLinkProjection(t *testing.T) {
 			if tc.futureSeed {
 				_, err := st.db.Exec(`UPDATE meeting_details SET link_key = NULL WHERE message_id = ?`, seed)
 				require.NoError(err)
-				_, err = st.MeetingNotesContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: seed})
+				_, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: seed})
 				require.ErrorIs(err, ErrMeetingProjectionUnavailable)
 			}
 		})
@@ -689,6 +685,7 @@ func TestMeetingRecordDerivedGoogleAlias(t *testing.T) {
 func TestMeetingRecordExactFractionalAndOffsetTimes(t *testing.T) {
 	for _, tc := range []struct{ name, eventTime, noteTime, otherTime string }{
 		{"milliseconds", "2027-03-14T10:00:00.123Z", "2027-03-14T06:00:00.123-04:00", "2027-03-14T10:00:00.124Z"},
+		{"submicrosecond", "2027-03-14T10:00:00.1230001Z", "2027-03-14T06:00:00.1230001-04:00", "2027-03-14T10:00:00.1230009Z"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
