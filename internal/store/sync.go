@@ -1086,13 +1086,7 @@ func (s *Store) ListUnresolvedSyncItemErrors(ctx context.Context, sourceID int64
 		SELECT id, sync_run_id, source_message_id, phase, status,
 		       error_kind, error_message, created_at
 		FROM sync_run_items
-		WHERE id IN (
-			SELECT MAX(i.id)
-			FROM sync_run_items i
-			JOIN sync_runs r ON r.id = i.sync_run_id
-			WHERE r.source_id = ? AND r.id >= ? AND i.phase IN ('fetch', 'ingest')
-			GROUP BY i.source_message_id
-		) AND status = ?
+		WHERE id IN (`+latestSyncItemIDsQuery(false)+`) AND status = ?
 		ORDER BY id
 	`, sourceID, lowerBound, SyncRunItemStatusError)
 	if err != nil {
@@ -1754,14 +1748,21 @@ func (s *Store) GetLastSuccessfulSyncByType(ctx context.Context, sourceID int64,
 // idx_sync_runs_completed matches its filter and order, so the lookup stops at
 // the first row instead of sorting every completed run.
 func lastSuccessfulSyncQuery(filterByType bool) string {
+	return `
+		SELECT id, source_id, started_at, completed_at, status,
+		       messages_processed, messages_added, messages_updated, errors_count,
+		       error_message, cursor_before, cursor_after, request_fingerprint
+		` + lastSuccessfulSyncSelection(filterByType)
+}
+
+// lastSuccessfulSyncSelection shares the completed-run filter and ordering
+// with the in-transaction boundary lookup used by attachment statistics.
+func lastSuccessfulSyncSelection(filterByType bool) string {
 	whereType := ""
 	if filterByType {
 		whereType = " AND sync_type = ?"
 	}
 	return `
-		SELECT id, source_id, started_at, completed_at, status,
-		       messages_processed, messages_added, messages_updated, errors_count,
-		       error_message, cursor_before, cursor_after, request_fingerprint
 		FROM sync_runs
 		WHERE source_id = ? AND status = 'completed'` + whereType + `
 		ORDER BY completed_at DESC, id DESC

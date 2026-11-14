@@ -586,8 +586,8 @@ Embedded readers require an exact version match. Once an archive is migrated to
 a higher version, applications using an older `pkg/archive` must upgrade too,
 even if the schema change only added an index.
 
-Filename suggestions require archive schema version 6 and API schema 3.15,
-newer than the latest release. Version 6 creates empty projection tables;
+Filename suggestions require archive schema version 6 and API schema 3.15.
+Version 6 creates empty projection tables;
 background maintenance establishes readiness separately. Schema migration does
 not scan attachments or populate the index, and suggestion requests never
 perform setup or backfill. Embedded readers require completed version-6 setup.
