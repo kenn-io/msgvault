@@ -344,17 +344,8 @@ func TestMCPOperationNoContentETagAndConflictBody(t *testing.T) {
 	require.NotNil(t, receipt)
 	assert.Equal(t, `"revision-2"`, receipt.ETag)
 	assert.False(t, receipt.IsError)
-	conflict, err := readMCPOperationJSONWithOutput[generated.SettingsResponse](t.Context(), client, http.MethodPatch, "/api/v1/settings", nil, func(code string, body []byte) (any, bool) {
-		if code != "value_conflict" {
-			return nil, false
-		}
-		var value struct {
-			CurrentValue int `json:"current_value"`
-		}
-		require.NoError(t, json.Unmarshal(body, &value))
-		return map[string]any{"error": code, "current_value": value.CurrentValue}, true
-	}, http.StatusOK)
+	conflict, err := readMCPOperationJSONWithClassifier[generated.SettingsResponse](t.Context(), client, http.MethodPatch, "/api/v1/settings", nil, func(code string) bool { return code == "value_conflict" }, http.StatusOK)
 	require.NoError(t, err)
 	require.True(t, conflict.IsError)
-	assert.Equal(t, map[string]any{"error": "value_conflict", "current_value": 42}, conflict.Output)
+	assert.Equal(t, mcpOperationFailure{"value_conflict", false}, conflict.Output)
 }
