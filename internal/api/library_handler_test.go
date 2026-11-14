@@ -247,7 +247,6 @@ func TestLibraryHandlerVerificationRefusesUnclassifiedReads(t *testing.T) {
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodPost, fmt.Sprintf("/api/v1/saved-views/%d/run", view.ID)},
 		{http.MethodGet, fmt.Sprintf("/api/v1/conversations/%d", id)},
-		{http.MethodGet, "/api/v1/loops"},
 		{http.MethodGet, "/api/v1/cli/message/original?id=1"},
 		{http.MethodGet, "/api/v1/cli/message/raw?id=1"},
 		{http.MethodPost, "/api/v1/query/archive"},

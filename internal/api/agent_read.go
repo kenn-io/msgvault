@@ -51,7 +51,7 @@ var ownerVerificationOperations = map[string]bool{
 	"getSchedulerStatus": false, "triggerSync": false, "listSourceIdentities": false,
 	"getCacheBuildStatus": false, "createPerson": false, "patchPerson": false, "patchSettings": false,
 	"completeParticipants": false,
-	"markLoopDone":         false, "snoozeLoop": false, "reopenLoop": false,
+	"listLoops":            true, "markLoopDone": false, "snoozeLoop": false, "reopenLoop": false,
 	"getMessageTags": false, "updateMessageTags": false,
 	"getGmailIDsByFilter": false, "createCLIDeletionManifest": false,
 	"listDeletions": false, "getDeletion": false,
