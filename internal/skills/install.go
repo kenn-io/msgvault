@@ -197,7 +197,7 @@ func Uninstall(root string) ([]string, error) {
 		if err != nil {
 			return removed, fmt.Errorf("read skill %s: %w", path, err)
 		}
-		if !strings.Contains(string(content), Marker) {
+		if !generated(content) {
 			continue
 		}
 		if err := os.Remove(path); err != nil {

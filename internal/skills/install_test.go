@@ -70,12 +70,23 @@ func TestInstall_FreshAndUpdate(t *testing.T) {
 		assert.Contains(string(content), Marker)
 	}
 
-	// Re-install over marker-bearing files: updated, not skipped.
+	path := filepath.Join(root, testSkills()[0].Name, "SKILL.md")
+	old := time.Unix(1600000000, 0)
+	require.NoError(os.Chtimes(path, old, old))
+	_, err = Install(root, testSkills(), false)
+	require.NoError(err)
+	info, err := os.Stat(path)
+	require.NoError(err)
+	assert.Equal(old, info.ModTime())
+	require.NoError(os.WriteFile(path, []byte(Marker+" older"), 0o600))
 	results, err = Install(root, testSkills(), false)
 	require.NoError(err)
 	for _, r := range results {
 		assert.Equal(StatusUpdated, r.Status)
 	}
+	content, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Equal(testSkills()[0].Content, string(content))
 }
 
 func TestInstall_SkipsHandEditedUnlessForced(t *testing.T) {
@@ -201,19 +212,8 @@ func TestUninstall_GlobRootDoesNotEscape(t *testing.T) {
 		"skills under a sibling directory must be untouched")
 }
 
-func TestCheckAndRoot(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", "")
-	t.Setenv("CODEX_HOME", "")
-	home := t.TempDir()
-	root, ok := Root(home, "claude")
-	require.True(t, ok)
-	assert.Equal(t, filepath.Join(home, ".claude", "skills"), root)
-	codex, ok := Root(home, "codex")
-	require.True(t, ok)
-	assert.Equal(t, filepath.Join(home, ".codex", "skills"), codex)
-	_, ok = Root(home, "other")
-	assert.False(t, ok)
-
+func TestCheck(t *testing.T) {
+	root := t.TempDir()
 	list := testSkills()
 	results, err := Check(root, list)
 	require.NoError(t, err)
@@ -234,8 +234,17 @@ func TestCheckAndRoot(t *testing.T) {
 	assert.Equal(t, CheckModified, results[0].State)
 }
 
-func TestAgentRootsFromEnvironment(t *testing.T) {
+func TestAgentRoots(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("CODEX_HOME", "")
+	for agent, dir := range map[string]string{"claude": ".claude", "codex": ".codex"} {
+		root, ok := Root(home, agent)
+		require.True(t, ok)
+		assert.Equal(t, filepath.Join(home, dir, "skills"), root)
+	}
+	_, ok := Root(home, "other")
+	assert.False(t, ok)
 	claude := t.TempDir()
 	codex := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", claude)
@@ -248,27 +257,4 @@ func TestAgentRootsFromEnvironment(t *testing.T) {
 	agents, err := DetectAgents(home, nil)
 	require.NoError(t, err)
 	assert.Equal(t, []AgentDir{{Agent: "claude", Dir: filepath.Join(claude, "skills")}, {Agent: "codex", Dir: filepath.Join(codex, "skills")}}, agents)
-}
-
-func TestInstallPreservesCurrentFile(t *testing.T) {
-	root := t.TempDir()
-	list := testSkills()
-	_, err := Install(root, list, false)
-	require.NoError(t, err)
-	path := filepath.Join(root, list[0].Name, "SKILL.md")
-	old := time.Unix(1600000000, 0)
-	require.NoError(t, os.Chtimes(path, old, old))
-	before, err := os.Stat(path)
-	require.NoError(t, err)
-	content, err := os.ReadFile(path)
-	require.NoError(t, err)
-	_, err = Install(root, list, false)
-	require.NoError(t, err)
-	after, err := os.Stat(path)
-	require.NoError(t, err)
-	got, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, content, got)
-	assert.Equal(t, before.Mode(), after.Mode())
-	assert.Equal(t, before.ModTime(), after.ModTime())
 }

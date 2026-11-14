@@ -107,6 +107,10 @@ func TestSkillsCommandSkipsConfigLoad(t *testing.T) {
 	require.NoError(err)
 	assert.True(skipsConfigLoad(uninstallCmd))
 
+	agentSetup, _, err := rootCmd.Find([]string{"agent", "setup"})
+	require.NoError(err)
+	assert.True(skipsConfigLoad(agentSetup))
+
 	searchCmd, _, err := rootCmd.Find([]string{"search"})
 	require.NoError(err)
 	assert.False(skipsConfigLoad(searchCmd))

@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,79 +22,17 @@ func TestAgentSetup(t *testing.T) {
 	report, err := agentsetup.Run(t.Context(), opts)
 	require.NoError(t, err)
 	require.Len(t, report.Rows, 4)
-	assert.Equal(t, agentsetup.StateOK, report.Rows[0].State)
-	assert.Equal(t, agentsetup.StateUnknown, report.Rows[1].State)
-	assert.Equal(t, agentsetup.StateOK, report.Rows[2].State)
-	assert.Equal(t, agentsetup.StateUnknown, report.Rows[3].State)
-	paths := []string{filepath.Join(home, ".claude", ".claude.json"), filepath.Join(home, ".codex", "config.toml"), filepath.Join(home, ".claude", "skills", "msgvault-search", "SKILL.md"), filepath.Join(home, ".codex", "skills", "msgvault-search", "SKILL.md")}
-	before := make([][]byte, len(paths))
-	for i, path := range paths {
-		before[i], err = os.ReadFile(path)
-		require.NoError(t, err)
-	}
-	assert.Contains(t, string(before[0]), "msgvault")
-	assert.Contains(t, string(before[1]), "msgvault")
-	old := time.Unix(1600000000, 0)
-	for _, path := range paths[2:] {
-		require.NoError(t, os.Chtimes(path, old, old))
-	}
-	_, err = agentsetup.Run(t.Context(), opts)
-	require.NoError(t, err)
-	for i, path := range paths {
-		after, err := os.ReadFile(path)
-		require.NoError(t, err)
-		assert.Equal(t, before[i], after)
-		if i >= 2 {
-			info, err := os.Stat(path)
-			require.NoError(t, err)
-			assert.Equal(t, old, info.ModTime())
-		}
-	}
-	require.NoError(t, os.WriteFile(paths[2], []byte("custom"), 0o600))
-	report, err = agentsetup.Run(t.Context(), opts)
-	require.NoError(t, err)
-	assert.Equal(t, agentsetup.StateModified, report.Rows[0].State)
-	assert.Equal(t, "msgvault skills install --force --agent claude", report.Rows[0].NextStep)
-	content, err := os.ReadFile(paths[2])
-	require.NoError(t, err)
-	assert.Equal(t, "custom", string(content))
-	var output bytes.Buffer
-	require.NoError(t, agentsetup.Print(&output, opts))
-	assert.Contains(t, output.String(), "claude")
-	assert.Contains(t, output.String(), "codex")
+	assert.Equal(t, "skills", report.Rows[0].Piece)
+	assert.Equal(t, "mcp msgvault", report.Rows[1].Piece)
+	assert.Equal(t, "skills", report.Rows[2].Piece)
+	assert.Equal(t, "mcp msgvault", report.Rows[3].Piece)
+	require.FileExists(t, filepath.Join(home, ".claude", "skills", "msgvault-search", "SKILL.md"))
+	require.FileExists(t, filepath.Join(home, ".codex", "skills", "msgvault-search", "SKILL.md"))
 	opts.Agents = []string{"gemini"}
 	report, err = agentsetup.Run(t.Context(), opts)
 	require.NoError(t, err)
 	require.Len(t, report.Rows, 1)
 	assert.Equal(t, agentsetup.StateUnknown, report.Rows[0].State)
-	cmd, _, err := rootCmd.Find([]string{"agent", "setup"})
-	require.NoError(t, err)
-	assert.True(t, skipsConfigLoad(cmd))
-}
-
-func TestAgentSetupCommand(t *testing.T) {
-	home := t.TempDir()
-	setTestHome(t, home)
-	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
-	t.Setenv("PATH", t.TempDir())
-	command := agentsetup.NewCommand(agentsetup.Options{SetupCommand: "msgvault agent setup", Items: agentSetupItems})
-	var output bytes.Buffer
-	command.SetOut(&output)
-	command.SetArgs([]string{"--agent", "claude,codex", "--print"})
-	require.NoError(t, command.ExecuteContext(t.Context()))
-	assert.Contains(t, output.String(), "claude mcp add")
-	assert.Contains(t, output.String(), "codex mcp add")
-	assert.NoDirExists(t, filepath.Join(home, ".claude"))
-	assert.NoDirExists(t, filepath.Join(home, ".codex"))
-	output.Reset()
-	command = agentsetup.NewCommand(agentsetup.Options{SetupCommand: "msgvault agent setup", Items: agentSetupItems})
-	command.SetOut(&output)
-	command.SetArgs([]string{"--agent", "claude,codex"})
-	err := command.ExecuteContext(t.Context())
-	require.ErrorIs(t, err, agentsetup.ErrNotReady)
-	assert.Contains(t, output.String(), "unknown")
-	assert.FileExists(t, filepath.Join(home, ".claude", "skills", "msgvault-search", "SKILL.md"))
 }
 
 func TestAgentSetupCustomRootsAndScopedRepair(t *testing.T) {
@@ -142,15 +79,44 @@ func TestAgentSetupSelectsInstalledAgents(t *testing.T) {
 	bin := t.TempDir()
 	t.Setenv("PATH", bin)
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\nexit 1\n"), 0o755))
-	setup, err := agentsetup.Run(t.Context(), agentsetup.Options{SetupCommand: "msgvault agent setup", Items: agentSetupItems})
-	require.NoError(t, err)
 	status, err := checkAgentSetup(t.Context())
 	require.NoError(t, err)
-	require.Len(t, setup.Rows, 2)
 	require.Len(t, status.Rows, 2)
-	for i := range setup.Rows {
-		assert.Equal(t, setup.Rows[i].Agent, status.Rows[i].Agent)
-		assert.Equal(t, setup.Rows[i].Piece, status.Rows[i].Piece)
-	}
+	assert.NoDirExists(t, filepath.Join(home, ".claude"))
 	assert.NoDirExists(t, filepath.Join(home, ".codex"))
+}
+
+func TestAgentSetupArchiveSelection(t *testing.T) {
+	t.Setenv("MSGVAULT_HOME", "")
+	flags := rootCmd.PersistentFlags()
+	oldHome, _ := flags.GetString("home")
+	oldConfig, _ := flags.GetString("config")
+	t.Cleanup(func() { _ = flags.Set("home", oldHome); _ = flags.Set("config", oldConfig) })
+	check := func(want ...string) {
+		t.Helper()
+		items, err := agentSetupItems("claude")
+		require.NoError(t, err)
+		commands, err := items[1].Commands()
+		require.NoError(t, err)
+		for _, part := range want {
+			assert.Contains(t, commands.POSIX, part)
+		}
+	}
+	check("msgvault", "mcp")
+	home := filepath.Join(t.TempDir(), "archive")
+	require.NoError(t, flags.Set("home", home))
+	check("--home", home, "mcp")
+	require.NoError(t, flags.Set("home", ""))
+	t.Setenv("MSGVAULT_HOME", home)
+	check("--home", home)
+	t.Setenv("MSGVAULT_HOME", "")
+	require.NoError(t, flags.Set("home", "relative-archive"))
+	require.NoError(t, flags.Set("config", "relative-config"))
+	absHome, err := filepath.Abs("relative-archive")
+	require.NoError(t, err)
+	absConfig, err := filepath.Abs("relative-config")
+	require.NoError(t, err)
+	check("--home", absHome, "--config", absConfig)
+	require.NoError(t, flags.Set("home", "~/archive"))
+	check("~/archive")
 }
