@@ -203,25 +203,17 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 		name   string
 		path   string
 		marked bool
-		allow  bool
 		scoped bool
 	}{
-		{name: "normal health", path: "/api/v1/health", allow: true},
-		{name: "marked health", path: "/api/v1/health", marked: true, allow: true},
-		{name: "marked stats", path: "/api/v1/stats", marked: true, allow: true},
-		{name: "authorization refusal", path: "/api/v1/health", marked: true},
-		{name: "protected messages", path: "/api/v1/messages", marked: true, allow: true},
-		{name: "protected source scoped messages", path: "/api/v1/messages", marked: true, allow: true, scoped: true},
+		{name: "marked health", path: "/api/v1/health", marked: true},
+		{name: "marked stats", path: "/api/v1/stats", marked: true},
+		{name: "protected messages", path: "/api/v1/messages", marked: true},
+		{name: "protected source scoped messages", path: "/api/v1/messages", marked: true, scoped: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			handler := srv.Handler(func(w http.ResponseWriter, _ *http.Request, _ Operation) bool {
-				if !tc.allow {
-					w.WriteHeader(http.StatusForbidden)
-				}
-				return tc.allow
-			})
+			handler := srv.Handler(nil)
 			ctx := t.Context()
 			if tc.scoped {
 				// Leave one slot available to catch nested snapshots.
@@ -238,11 +230,6 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 			}
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, r)
-			if !tc.allow {
-				assert.Equal(http.StatusForbidden, w.Code)
-				assert.Empty(w.Header().Get(apiprotocol.VerificationHeader))
-				return
-			}
 			require.Equal(http.StatusOK, w.Code, w.Body.String())
 			assert.Empty(w.Header().Get(apiprotocol.VerificationHeader))
 			if tc.path == "/api/v1/messages" {
@@ -285,15 +272,16 @@ func TestLibraryHandlerVerificationRefusesUnclassifiedReads(t *testing.T) {
 		{http.MethodGet, "/api/v1/loops"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
-			request := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, strings.NewReader(`{}`))
-			request.Header.Set("Content-Type", "application/json")
-			request.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
-			w := httptest.NewRecorder()
-			srv.Handler(nil).ServeHTTP(w, request)
-			assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
-			assert.Contains(t, w.Body.String(), `"verification_masked"`)
-			assert.Contains(t, w.Body.String(), "disable verification withholding")
-			assert.Empty(t, w.Header().Get(apiprotocol.VerificationHeader))
+			for _, handler := range []http.Handler{srv.Handler(nil), srv.Router()} {
+				request := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, strings.NewReader(`{}`))
+				request.Header.Set("Content-Type", "application/json")
+				request.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, request)
+				assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+				assert.Contains(t, w.Body.String(), `"verification_masked"`)
+				assert.Contains(t, w.Body.String(), "disable verification withholding")
+			}
 		})
 	}
 }

@@ -667,15 +667,13 @@ func TestMCPStandaloneVerificationHandshake(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			var marked, unmarked atomic.Int32
+			var unmarked atomic.Int32
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/api/v1/health" {
 					http.NotFound(w, r)
 					return
 				}
-				if r.Header.Get("X-Msgvault-Verification") == "withhold" {
-					marked.Add(1)
-				} else {
+				if r.Header.Get("X-Msgvault-Verification") == "" {
 					unmarked.Add(1)
 				}
 				w.Header().Set("Content-Type", "application/json")
@@ -709,10 +707,7 @@ func TestMCPStandaloneVerificationHandshake(t *testing.T) {
 			}
 			assert.Equal(tc.wantServe, served)
 			if tc.reveal {
-				assert.Zero(marked.Load())
 				assert.Positive(unmarked.Load())
-			} else {
-				assert.Zero(marked.Load())
 			}
 		})
 	}

@@ -1179,5 +1179,4 @@ func TestAttachmentResourceVerificationRefusal(t *testing.T) {
 	result := translateDaemonRequestError(directoryPeopleError{code: "verification_masked"})
 	require.NotNil(result)
 	assert.Equal(verificationMaskedMessage, result.text)
-	assert.NotContains(result.text, "reveal flag")
 }

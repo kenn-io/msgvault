@@ -382,6 +382,9 @@ func runMCPCapabilityGate(t *testing.T, delegated bool) {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
+			oldReveal := mcpRevealVerification
+			mcpRevealVerification = !delegated && version != "failed"
+			t.Cleanup(func() { mcpRevealVerification = oldReveal })
 			fixture := newDraftReplyFixture(t)
 			var probing atomic.Bool
 			var healthCalls atomic.Int64
@@ -420,7 +423,7 @@ func runMCPCapabilityGate(t *testing.T, delegated bool) {
 				cmd.SetContext(ctx)
 				err := mcpCmd.RunE(cmd, nil)
 				if !delegated {
-					require.ErrorContains(err, "verify daemon withholding support")
+					require.ErrorContains(err, "check daemon verification support")
 					require.ErrorContains(err, "probe unavailable")
 				} else if version == "failed" {
 					require.ErrorContains(err, "check daemon compatibility")

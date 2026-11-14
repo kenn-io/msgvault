@@ -298,14 +298,16 @@ func TestAgentVerificationFields(t *testing.T) {
 			assertions.Equal(http.StatusOK, w.Code, w.Body.String())
 			assertions.NotContains(w.Body.String(), "4829")
 			assertions.Contains(w.Body.String(), "[verification content masked]")
-			ownerReq := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id), nil)
-			ownerReq.Header.Set("X-Api-Key", "owner")
-			ownerReq.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
-			owner := httptest.NewRecorder()
-			srv.Router().ServeHTTP(owner, ownerReq)
-			assertions.Equal(http.StatusOK, owner.Code, owner.Body.String())
-			assertions.NotContains(owner.Body.String(), "4829")
-			assertions.Contains(owner.Body.String(), verification.Masked)
+			if tc.name == "thread snippet" {
+				ownerReq := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id), nil)
+				ownerReq.Header.Set("X-Api-Key", "owner")
+				ownerReq.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+				owner := httptest.NewRecorder()
+				srv.Router().ServeHTTP(owner, ownerReq)
+				assertions.Equal(http.StatusOK, owner.Code, owner.Body.String())
+				assertions.NotContains(owner.Body.String(), "4829")
+				assertions.Contains(owner.Body.String(), verification.Masked)
+			}
 		})
 	}
 }

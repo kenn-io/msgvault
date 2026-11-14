@@ -1031,8 +1031,12 @@ func TestVerificationWithholdingRequests(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	var writeMarked, archiveMarked atomic.Bool
+	healthHeaders := make(chan string, 3)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		marked := r.Header.Get(apiprotocol.VerificationHeader) == apiprotocol.VerificationWithhold
+		if r.URL.Path == "/prefix/api/v1/health" {
+			healthHeaders <- r.Header.Get(apiprotocol.VerificationHeader)
+		}
 		if r.URL.Path == "/prefix/api/v1/query/archive" {
 			archiveMarked.Store(marked)
 		}
@@ -1061,6 +1065,10 @@ func TestVerificationWithholdingRequests(t *testing.T) {
 	require.NoError(response.Body.Close())
 	_, err = ordinary.Health(t.Context())
 	require.NoError(err)
+	require.Len(healthHeaders, 3)
+	assert.Equal(apiprotocol.VerificationWithhold, <-healthHeaders)
+	assert.Equal(apiprotocol.VerificationWithhold, <-healthHeaders)
+	assert.Empty(<-healthHeaders)
 	_, err = protected.RunSavedView(t.Context(), 42, 10, "", "")
 	require.Error(err)
 	var apiErr *APIError

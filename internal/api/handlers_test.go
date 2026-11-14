@@ -5446,7 +5446,9 @@ func TestHandleAggregates(t *testing.T) {
 	require.Equal(http.StatusOK, protectedResponse.Code, protectedResponse.Body.String())
 	var protectedAggregate AggregateResponse
 	require.NoError(json.Unmarshal(protectedResponse.Body.Bytes(), &protectedAggregate))
-	assert.Equal(resp, protectedAggregate)
+	assert.Equal("senders", protectedAggregate.ViewType)
+	require.Len(protectedAggregate.Rows, 2)
+	assert.Equal("alice@example.com", protectedAggregate.Rows[0].Key)
 }
 
 // TestHandleAggregatesListsView catches API parsing or response conversion

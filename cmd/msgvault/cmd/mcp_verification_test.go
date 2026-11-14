@@ -157,11 +157,11 @@ func TestOwnerMCPVerificationSavedView(t *testing.T) {
 			if reveal {
 				assert.False(t, result.IsError)
 				assert.Contains(t, text, "482913")
-			} else {
-				assert.True(t, result.IsError)
-				assert.NotContains(t, text, "482913")
-				assert.Contains(t, text, "verification content is withheld")
+				return
 			}
+			assert.True(t, result.IsError)
+			assert.NotContains(t, text, "482913")
+			assert.Contains(t, text, "verification content is withheld")
 			stats, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_stats", Arguments: map[string]any{}})
 			require.NoError(t, err)
 			assert.False(t, stats.IsError)
