@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	stdjson "encoding/json"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
@@ -385,15 +384,7 @@ func TestPersonRecordSupersedeLargeValue(t *testing.T) {
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "patch_person_record", Arguments: map[string]any{"person_id": id, "etag": current.ETag, "patch": map[string]any{"addresses": map[string]any{"supersede": []int64{profile.Addresses[0].Envelope.ID}}}}})
 	requirements.NoError(err)
 	requirements.False(result.IsError)
-	var raw struct {
-		Addresses []jsontext.Value `json:"addresses"`
-	}
-	requirements.NoError(json.Unmarshal(current.Data, &raw))
-	requirements.Len(raw.Addresses, 1)
-	sum := sha256.Sum256(raw.Addresses[0])
-	assertions.Contains(disclosure, fmt.Sprintf(`"sha256":"%x"`, sum))
-	assertions.Contains(disclosure, fmt.Sprintf(`"size":%d`, len(raw.Addresses[0])))
-	assertions.NotContains(disclosure, value)
+	assertions.GreaterOrEqual(strings.Index(disclosure, value), 0, "approval must disclose the full superseded value")
 
 	etag := loopToolOutput[mcpserver.StructuredPersonRecord](t, result).ETag
 	adds := make([]any, 16)

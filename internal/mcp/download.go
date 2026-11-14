@@ -51,7 +51,8 @@ type downloadCache struct {
 }
 
 func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkRequest, load func() (*downloadSnapshot, error)) (*downloadSnapshot, error) {
-	// Serialize snapshot loads so successive chunks reuse one fetch.
+	// ponytail: serialize snapshot loads; per-download locks if concurrent
+	// large exports need to avoid waiting behind another download.
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := ctx.Err(); err != nil {

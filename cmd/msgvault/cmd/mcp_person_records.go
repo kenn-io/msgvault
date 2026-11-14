@@ -316,16 +316,7 @@ func superseded(values []jsontext.Value, ids []int64, missing bool) ([]any, bool
 		meta := entry.Envelope
 		if meta.SupersededAt == nil && slices.Contains(ids, meta.ID) {
 			found[meta.ID] = true
-			data, err := json.Marshal(value, json.Deterministic(true))
-			if err != nil {
-				return nil, false, err
-			}
-			if len(data) > 256<<10 {
-				sum := sha256.Sum256(data)
-				selected = append(selected, map[string]any{"id": meta.ID, "size": len(data), "sha256": hex.EncodeToString(sum[:])})
-			} else {
-				selected = append(selected, value)
-			}
+			selected = append(selected, value)
 		}
 	}
 	for _, value := range ids {
