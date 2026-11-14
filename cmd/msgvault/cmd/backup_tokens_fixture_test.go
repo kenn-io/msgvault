@@ -54,16 +54,16 @@ func prepareBackupTokenRestore(t *testing.T) {
 	t.Helper()
 	oldRepo, oldTarget, oldOverwrite := backupRestoreRepo, backupRestoreTarget, backupRestoreOverwrite
 	oldForce, oldJobs := backupRestoreForceUnlock, backupRestoreJobs
-	oldLoose, oldIntegrity := backupRestoreLooseAttachments, backupRestoreIntegrityCheck
+	oldLoose, oldIntegrity, oldPermissions := backupRestoreLooseAttachments, backupRestoreIntegrityCheck, backupRestorePermissionsOnly
 	oldOut, oldErr, oldLogger := rootCmd.OutOrStdout(), rootCmd.ErrOrStderr(), slog.Default()
 	changed := make(map[string]bool)
-	for _, name := range []string{"repo", "target", "jobs", "overwrite"} {
+	for _, name := range []string{"repo", "target", "jobs", "overwrite", "permissions-only"} {
 		changed[name] = backupRestoreCmd.Flags().Lookup(name).Changed
 	}
 	t.Cleanup(func() {
 		backupRestoreRepo, backupRestoreTarget, backupRestoreOverwrite = oldRepo, oldTarget, oldOverwrite
 		backupRestoreForceUnlock, backupRestoreJobs = oldForce, oldJobs
-		backupRestoreLooseAttachments, backupRestoreIntegrityCheck = oldLoose, oldIntegrity
+		backupRestoreLooseAttachments, backupRestoreIntegrityCheck, backupRestorePermissionsOnly = oldLoose, oldIntegrity, oldPermissions
 		for name, wasChanged := range changed {
 			backupRestoreCmd.Flags().Lookup(name).Changed = wasChanged
 		}
@@ -77,7 +77,7 @@ func prepareBackupTokenRestore(t *testing.T) {
 func runBackupTokenRestore(t *testing.T, cfg *config.Config, repo *backup.Repo, target string, overwrite bool) error {
 	t.Helper()
 	backupRestoreOverwrite, backupRestoreForceUnlock = false, false
-	backupRestoreLooseAttachments, backupRestoreIntegrityCheck = false, false
+	backupRestoreLooseAttachments, backupRestoreIntegrityCheck, backupRestorePermissionsOnly = false, false, false
 	rootCmd.SetOut(io.Discard)
 	rootCmd.SetErr(io.Discard)
 	args := []string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", "--repo", repo.Root(), "--target", target, "--jobs", "1"}

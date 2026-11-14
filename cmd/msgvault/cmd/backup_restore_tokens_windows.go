@@ -4,73 +4,68 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"go.kenn.io/kit/backup"
+	"go.kenn.io/kit/pack"
 	"go.kenn.io/msgvault/internal/backupapp"
 	"go.kenn.io/msgvault/internal/providercredentials"
 )
 
-func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, target string, extrasFiles int) error {
-	if extrasFiles == 0 {
-		return nil
+func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, target string) (err error) {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	dir := filepath.Join(target, "tokens")
-	info, err := os.Lstat(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
+	lease, err := repo.AcquireSharedLock("secure restored tokens", false)
 	if err != nil {
-		return fmt.Errorf("inspect restored token directory: %w", err)
+		return err
 	}
-	if !info.IsDir() {
+	defer func() { err = errors.Join(err, lease.Release()) }()
+	manifest, err := repo.LoadManifest(snapshotID)
+	if err != nil {
+		return err
+	}
+	if !manifest.Options.IncludeTokens || manifest.Extras.Tree == "" {
 		return nil
 	}
-	snapshot, err := repo.OpenSnapshot(ctx, snapshotID, backupapp.New(Version).PackFileExtension())
+	id, err := pack.ParseBlobID(manifest.Extras.Tree)
 	if err != nil {
-		return fmt.Errorf("open restored snapshot: %w", err)
+		return err
 	}
-	defer snapshot.Close() //nolint:errcheck // membership lookup is authoritative
-	strict := false
+	index, err := repo.LoadBlobIndex()
+	if err != nil {
+		return err
+	}
+	raw, err := repo.ReadBlob(index, id, nil, backupapp.New(Version).PackFileExtension())
+	if err != nil {
+		return err
+	}
+	var tree backup.ExtrasTree
+	if err := json.Unmarshal(raw, &tree); err != nil {
+		return fmt.Errorf("read snapshot extras: %w", err)
+	}
 	var selected []string
-	err = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
+	for _, entry := range tree.Entries {
+		prefix, name, ok := strings.Cut(entry.Path, "/")
+		if !ok || !strings.EqualFold(prefix, "tokens") {
+			continue
 		}
-		if path == dir || entry.IsDir() {
-			return nil
+		if !fs.ValidPath(name) || strings.Contains(name, `\`) || !filepath.IsLocal(filepath.FromSlash(name)) {
+			return fmt.Errorf("invalid snapshot token path %q", entry.Path)
 		}
-		rel, err := filepath.Rel(dir, path)
-		if err != nil {
-			return err
-		}
-		_, err = snapshot.Extra("tokens/" + filepath.ToSlash(rel))
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("inspect restored token membership: %w", err)
-		}
-		if strings.EqualFold(rel, providercredentials.Filename) || strings.EqualFold(rel, providercredentials.ServerKeyFilename) {
-			strict = true
-		}
-		selected = append(selected, rel)
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("inspect restored tokens: %w", err)
+		selected = append(selected, filepath.FromSlash(name))
 	}
-	if !strict {
+	if len(selected) == 0 {
 		return nil
 	}
-	err = providercredentials.SecureRestored(dir, selected)
+	err = providercredentials.SecureRestored(filepath.Join(target, "tokens"), selected)
 	if errors.Is(err, providercredentials.ErrRestorePermissionsConflict) {
-		return fmt.Errorf("%w; credential permissions were not changed; resolve the conflict or move the omitted entry aside, then retry with --overwrite", err)
+		return fmt.Errorf("%w; credential permissions were not changed; resolve the conflict or move the omitted entry aside", err)
 	}
 	if err != nil {
 		return fmt.Errorf("%w; credentials may be unreadable and permissions may have changed", err)

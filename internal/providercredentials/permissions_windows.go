@@ -69,10 +69,14 @@ func (nativePermissions) secureFile(file *os.File) error {
 	if err := file.Chmod(0o600); err != nil {
 		return err
 	}
+	return secureFileACL(file.Name())
+}
+
+func secureFileACL(path string) error {
 	// os.OpenFile and os.CreateTemp do not request WRITE_DAC on Windows, so
 	// their handles cannot publish the owner-only ACL. Reopen the file through
 	// the already secured token directory with the exact security rights needed.
-	handle, err := openSecurityHandle(file.Name(), false, windows.READ_CONTROL|windows.WRITE_DAC)
+	handle, err := openSecurityHandle(path, false, windows.READ_CONTROL|windows.WRITE_DAC)
 	if err != nil {
 		return err
 	}

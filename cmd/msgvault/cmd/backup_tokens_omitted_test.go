@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/msgvault/internal/backupapp"
+	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/providercredentials"
 )
 
@@ -23,10 +24,12 @@ func TestBackupRestoreNestedTokensRemainUsable(t *testing.T) {
 	require.NoError(err)
 	_, err = providercredentials.Put(cfg.TokensDir(), empty.ETag, providercredentials.VectorEmbeddingsID, endpoint, providerKey)
 	require.NoError(err)
+	serverKey, err := providercredentials.EnsureServerKey(cfg.TokensDir())
+	require.NoError(err)
 
-	nested := filepath.Join(cfg.TokensDir(), "carddav-connections", "example", "carddav.json")
-	require.NoError(os.MkdirAll(filepath.Dir(nested), 0o700))
-	require.NoError(os.WriteFile(nested, []byte("synthetic-carddav"), 0o600))
+	nested := filepath.Join(cfg.TokensDir(), "carddav-connections", "example")
+	credential := carddav.Credential{Password: "synthetic-password", BaseURL: "https://carddav.example.test", Username: "person@example.test", ConnectionGeneration: 1}
+	require.NoError(carddav.SaveCredential(nested, credential))
 
 	repo := createBackupTokenSnapshot(t, cfg, dbPath, attachments)
 
@@ -35,11 +38,17 @@ func TestBackupRestoreNestedTokensRemainUsable(t *testing.T) {
 	fresh := filepath.Join(t.TempDir(), "fresh")
 	require.NoError(runBackupTokenRestore(t, cfg, repo, fresh, false))
 	freshTokens := filepath.Join(fresh, "tokens")
-	_, err = providercredentials.Read(freshTokens)
+	restored, err := providercredentials.Read(freshTokens)
 	require.NoError(err)
-	freshNested, err := os.ReadFile(filepath.Join(freshTokens, "carddav-connections", "example", "carddav.json"))
+	value, _, err := restored.Resolve(providercredentials.VectorEmbeddingsID, endpoint, "", nil)
 	require.NoError(err)
-	assert.Equal("synthetic-carddav", string(freshNested))
+	assert.Equal(providerKey, value)
+	key, err := providercredentials.ReadSecretFile(filepath.Join(freshTokens, providercredentials.ServerKeyFilename))
+	require.NoError(err)
+	assert.Equal(serverKey, key)
+	freshNested, err := carddav.LoadCredential(filepath.Join(freshTokens, "carddav-connections", "example"))
+	require.NoError(err)
+	assert.Equal(credential, freshNested)
 	for _, dir := range []string{filepath.Join(freshTokens, "carddav-connections"), filepath.Join(freshTokens, "carddav-connections", "example")} {
 		_, err := os.ReadDir(dir)
 		require.NoError(err)
@@ -69,4 +78,13 @@ func TestBackupRestoreConfigOnlyLeavesUnrelatedTokenPath(t *testing.T) {
 	data, err := os.ReadFile(tokenPath)
 	require.NoError(err)
 	require.Equal("unrelated", string(data))
+}
+
+func TestBackupRestorePermissionsOnlyRequiresSnapshot(t *testing.T) {
+	cfg, dbPath, attachments := backupTokenFixture(t)
+	repo := createBackupTokenSnapshot(t, cfg, dbPath, attachments)
+	prepareBackupTokenRestore(t)
+	rootCmd.SetArgs([]string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", "--repo", repo.Root(), "--target", filepath.Join(t.TempDir(), "target"), "--permissions-only"})
+	err := executeRootContext(t.Context(), rootCmd)
+	require.ErrorContains(t, err, "requires an explicit snapshot ID")
 }
