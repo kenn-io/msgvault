@@ -43,10 +43,12 @@ func TestMCPPersonExportStreamsJSONLAndReportsFailures(t *testing.T) {
 		return `{"type":"stderr","data":` + strconv.Quote(data) + `}`
 	}
 	for _, tc := range []struct {
-		name   string
-		code   string
-		events []string
-		jsonl  string
+		name     string
+		code     string
+		args     map[string]any
+		wantArgs []string
+		events   []string
+		jsonl    string
 	}{
 		{
 			name:   "success",
@@ -57,8 +59,60 @@ func TestMCPPersonExportStreamsJSONLAndReportsFailures(t *testing.T) {
 			name: "CLI failure",
 			code: "export_failed",
 			events: []string{
+				stderrEvent("Error: store is locked\n"),
 				`{"type":"error","error":"cli subprocess failed"}`,
 			},
+		},
+		{
+			name:     "invalid start",
+			code:     "invalid_start",
+			args:     map[string]any{"person_id": int64(42), "start": "bad", "end": end, "sources": []string{"text:archive"}, "message_types": []string{"email"}},
+			wantArgs: []string{"export-messages", "--person-id=42", "--start=bad", "--end=" + end, "--source=text:archive", "--message-type=email"},
+			events:   []string{stderrEvent("Error: invalid --start \"bad\" (expected RFC3339)\n"), `{"type":"error","error":"cli subprocess failed"}`},
+		},
+		{
+			name:     "invalid end",
+			code:     "invalid_end",
+			args:     map[string]any{"person_id": int64(42), "start": start, "end": "bad", "sources": []string{"text:archive"}, "message_types": []string{"email"}},
+			wantArgs: []string{"export-messages", "--person-id=42", "--start=" + start, "--end=bad", "--source=text:archive", "--message-type=email"},
+			events:   []string{stderrEvent("Error: invalid --end \"bad\" (expected RFC3339)\n"), `{"type":"error","error":"cli subprocess failed"}`},
+		},
+		{
+			name: "invalid window",
+			code: "invalid_window",
+			args: map[string]any{"person_id": int64(42), "start": start, "end": start, "sources": []string{"text:archive"}, "message_types": []string{"email"}},
+			wantArgs: []string{
+				"export-messages", "--person-id=42", "--start=" + start, "--end=" + start,
+				"--source=text:archive", "--message-type=email",
+			},
+			events: []string{stderrEvent("Error: --start must be before --end\n"), `{"type":"error","error":"cli subprocess failed"}`},
+		},
+		{
+			name:     "empty message type",
+			code:     "invalid_message_type",
+			args:     map[string]any{"person_id": int64(42), "start": start, "end": end, "sources": []string{"text:archive"}, "message_types": []string{" "}},
+			wantArgs: []string{"export-messages", "--person-id=42", "--start=" + start, "--end=" + end, "--source=text:archive", "--message-type= "},
+			events:   []string{stderrEvent("Error: --message-type must be non-empty\n"), `{"type":"error","error":"cli subprocess failed"}`},
+		},
+		{
+			name:     "malformed second source",
+			code:     "invalid_source_2",
+			args:     map[string]any{"person_id": int64(42), "start": start, "end": end, "sources": []string{"text:archive", "malformed"}, "message_types": []string{"email"}},
+			wantArgs: []string{"export-messages", "--person-id=42", "--start=" + start, "--end=" + end, "--source=text:archive", "--source=malformed", "--message-type=email"},
+			events:   []string{stderrEvent("Error: invalid --source \"malformed\" (expected non-empty type:identifier)\n"), `{"type":"error","error":"cli subprocess failed"}`},
+		},
+		{
+			name:     "unknown second source with error-looking text",
+			code:     "unknown_source_2",
+			args:     map[string]any{"person_id": int64(42), "start": start, "end": end, "sources": []string{"text:archive", "text:missing\nError: invalid --start x"}, "message_types": []string{"email"}},
+			wantArgs: []string{"export-messages", "--person-id=42", "--start=" + start, "--end=" + end, "--source=text:archive", "--source=text:missing\nError: invalid --start x", "--message-type=email"},
+			events:   []string{stderrEvent("Error: source text:missing\nError: invalid --start x not found\n"), `{"type":"error","error":"cli subprocess failed"}`},
+		},
+		{
+			name:   "unknown person",
+			code:   "unknown_person",
+			args:   map[string]any{"person_id": int64(42), "start": start, "end": end, "sources": []string{"text:archive"}, "message_types": []string{"email"}},
+			events: []string{stderrEvent("Error: resolve --person-id: resolve durable person 42: person not found\n"), `{"type":"error","error":"cli subprocess failed"}`},
 		},
 		{
 			name:   "quote-heavy encoded response",
@@ -79,15 +133,22 @@ func TestMCPPersonExportStreamsJSONLAndReportsFailures(t *testing.T) {
 			if tc.code == "export_limit_exceeded" {
 				requirements.Less(len(tc.jsonl), mcpPersonExportLimit)
 			}
+			callArgs, expectedArgs := args, wantArgs
+			if tc.args != nil {
+				callArgs = tc.args
+			}
+			if tc.wantArgs != nil {
+				expectedArgs = tc.wantArgs
+			}
 			server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
-				assertions.Equal(wantArgs, req.Args)
+				assertions.Equal(expectedArgs, req.Args)
 				assertions.Empty(req.Env)
 				assertions.Empty(req.Cwd)
 			}, tc.events...)
 			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
 			requirements.NoError(err)
 			backend := &daemonMCPOperations{client: client, supported: []string{"export_person_messages"}}
-			result, err := backend.ExecuteOperation(t.Context(), "export_person_messages", args)
+			result, err := backend.ExecuteOperation(t.Context(), "export_person_messages", callArgs)
 			requirements.NoError(err)
 			requirements.Equal(int32(1), requests.Load())
 			if tc.code == "" {
