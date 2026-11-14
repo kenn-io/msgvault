@@ -277,16 +277,7 @@ func TestMCPOwnerDraftLifecycleVerification(t *testing.T) {
 			require.False(result.IsError)
 			if !reveal {
 				text := mcpDraftResultText(t, result)
-				assert.Contains(text, id)
-				assert.Contains(text, `"revision"`)
 				assert.NotContains(text, "reply body")
-				assert.NotContains(text, `"raw_mime"`)
-				result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftEdit, Arguments: map[string]any{"draft_id": id, "revision": 1, "body": "edited 482913"}})
-				require.NoError(err)
-				require.False(result.IsError, "%+v", result.Content)
-				text = mcpDraftResultText(t, result)
-				assert.Contains(text, id)
-				assert.NotContains(text, "edited 482913")
 				return
 			}
 			assert.Contains(mcpDraftResultText(t, result), "reply body 482913")

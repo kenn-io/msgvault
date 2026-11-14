@@ -483,8 +483,8 @@ func TestRunArchiveSQLQueryPreservesRowsAndAcceptedBuild(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
 		assert.Equal("SELECT id FROM messages", request.SQL)
+		w.Header().Set("Content-Type", "application/json")
 		if request.Fresh {
 			w.WriteHeader(http.StatusAccepted)
 			_, err := w.Write([]byte(`{"status":"queued","job_id":"archive-build"}`))

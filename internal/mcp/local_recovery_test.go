@@ -67,7 +67,7 @@ func TestLocalRecoveryErrorsAreSafeAcrossMCPHandlers(t *testing.T) {
 	}
 }
 
-func TestRemoteDaemonUnavailableCodeKeepsExistingClassification(t *testing.T) {
+func TestRemoteAndVerificationDaemonRequestErrorClassification(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	remote := &daemonclient.APIError{Status: 503, Code: "daemon_unavailable", Message: "remote diagnostic"}

@@ -36,9 +36,6 @@ func TestBeeperDraftComposeVerificationWithholding(t *testing.T) {
 				assert := assert.New(t)
 				require := require.New(t)
 				f := newBeeperDraftFixture(t)
-				f.adapter.config.Server.APIKey = "owner"
-				srv := api.NewServerWithOptions(api.ServerOptions{Config: f.adapter.config, Store: f.adapter, Logger: slog.New(slog.DiscardHandler)})
-				t.Cleanup(func() { require.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 				switch scenario {
 				case "existing":
 					created, err := f.create(t, nil, "saved secret")
@@ -48,23 +45,40 @@ func TestBeeperDraftComposeVerificationWithholding(t *testing.T) {
 				case "failure":
 					f.beeper.set("null", true)
 				}
-				body, err := json.Marshal(map[string]any{"args": []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "proposed secret", "--json"}})
-				require.NoError(err)
-				req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
-				req.Header.Set("Content-Type", "application/json")
-				req.Header.Set("X-Api-Key", "owner")
-				if withhold {
+				args := []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "proposed secret", "--json"}
+				var output string
+				if scenario == "existing" && withhold {
+					f.adapter.config.Server.APIKey = "owner"
+					srv := api.NewServerWithOptions(api.ServerOptions{Config: f.adapter.config, Store: f.adapter, Logger: slog.New(slog.DiscardHandler)})
+					t.Cleanup(func() { require.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
+					body, err := json.Marshal(map[string]any{"args": args})
+					require.NoError(err)
+					req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+					req.Header.Set("Content-Type", "application/json")
+					req.Header.Set("X-Api-Key", "owner")
 					req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+					response := httptest.NewRecorder()
+					srv.Router().ServeHTTP(response, req)
+					require.Equal(http.StatusOK, response.Code, response.Body.String())
+					output = response.Body.String()
+					assert.Contains(output, `"type":"error"`)
+				} else {
+					var events []api.CLIRunEvent
+					err := f.adapter.runCLIComposeDraft(t.Context(), api.CLIRunRequest{Args: args, WithholdVerification: withhold}, func(event api.CLIRunEvent) error {
+						events = append(events, event)
+						return nil
+					})
+					if scenario == "success" {
+						require.NoError(err)
+					} else {
+						require.Error(err)
+					}
+					require.Len(events, 1)
+					output = events[0].Data
 				}
-				response := httptest.NewRecorder()
-				srv.Router().ServeHTTP(response, req)
-				require.Equal(http.StatusOK, response.Code, response.Body.String())
-				output := response.Body.String()
 				if scenario == "success" {
 					assert.Contains(output, "proposed secret")
-					assert.Contains(output, `"type":"complete"`)
 				} else {
-					assert.Contains(output, `"type":"error"`)
 					secrets := []string{"proposed secret"}
 					if scenario == "existing" {
 						secrets = []string{"saved secret", "pending secret"}

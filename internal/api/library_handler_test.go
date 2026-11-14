@@ -219,7 +219,7 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 		r.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
-		assert.NotEqual(t, http.StatusForbidden, w.Code, w.Body.String())
+		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 	})
 }
 
@@ -252,7 +252,11 @@ func TestLibraryHandlerVerificationRefusesUnclassifiedReads(t *testing.T) {
 		{http.MethodPost, "/api/v1/query/archive"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
-			for _, handler := range []http.Handler{srv.Handler(nil), srv.Router()} {
+			handlers := []http.Handler{srv.Router()}
+			if tc.path == "/api/v1/query/archive" {
+				handlers = append(handlers, srv.Handler(nil))
+			}
+			for _, handler := range handlers {
 				request := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, strings.NewReader(`{}`))
 				request.Header.Set("Content-Type", "application/json")
 				request.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)

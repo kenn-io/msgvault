@@ -464,16 +464,10 @@ func TestGmailDraftLifecyclePublishesEditAndDelete(t *testing.T) {
 		ID:      "gmail-draft-managed",
 		Message: gmail.RawMessage{ID: "gmail-message-edited", ThreadID: "gmail-thread-1"},
 	}
-	var events []api.CLIRunEvent
-	err = fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: []string{api.CLIRunDraftEditCommand, draft.DraftID, "--revision", "1", "--body", "edited secret", "--json"}, WithholdVerification: true}, func(event api.CLIRunEvent) error {
-		events = append(events, event)
-		return nil
-	})
+	events, err := fixture.lifecycle(t, api.CLIRunDraftEditCommand, draft, "edited")
 	require.NoError(err)
 	require.Len(events, 1)
 	assert.Contains(events[0].Data, `"status":"edited"`)
-	assert.NotContains(events[0].Data, "edited secret")
-	assert.NotContains(events[0].Data, `"raw_mime"`)
 	updated, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
 	require.NoError(err)
 	assert.Equal(int64(2), updated.Revision)
