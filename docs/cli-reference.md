@@ -3448,9 +3448,9 @@ categories are preferences even if renamed. Custom attributes without an end
 date are facts. Other time-bounded claims are events, and employment claims
 remain facts regardless of an end date. Preference identity takes precedence.
 
-Freshness uses the newest currently supported evidence: facts stay fresh for
+Freshness uses the newest currently supported evidence that is not future-dated: facts stay fresh for
 365 days, events for 7 days, and preferences for 90 days. A claim
-without supported evidence is stale. A claim expires exactly at `valid_until`,
+without eligible evidence is stale. A claim expires exactly at `valid_until`,
 regardless of evidence freshness. `latest_supported_at` reports the evidence
 time when available. These read fields do not change inference packets.
 
