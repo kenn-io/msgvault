@@ -5,7 +5,7 @@ description: Archive comments on a selected Facebook Page and link commenters to
 ---
 
 Connect a selected Facebook Page to search its returned posts, comments, and
-nested replies in msgvault. This unreleased integration reads public comment
+nested replies in msgvault. This integration reads public comment
 conversations. It does not publish replies or send private messages.
 
 ## Connect a Page
