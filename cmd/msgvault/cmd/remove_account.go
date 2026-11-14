@@ -732,24 +732,34 @@ func removeMicrosoftMailTokensIfUnused(s *store.Store, cfg *config.Config, email
 		return fmt.Errorf("check remaining Microsoft sources: %w", err)
 	}
 	for _, source := range sources {
-		if graph {
-			if strings.EqualFold(source.Identifier, email) {
-				return nil
+		used := strings.EqualFold(source.Identifier, email)
+		if !graph {
+			if used, err = imapSourceUsesMicrosoftToken(source, email); err != nil {
+				return err
 			}
-			continue
 		}
-		if !source.SyncConfig.Valid || source.SyncConfig.String == "" {
-			return fmt.Errorf("check remaining IMAP source %s: authentication configuration unavailable", source.Identifier)
-		}
-		imapCfg, err := imaplib.ConfigFromJSON(source.SyncConfig.String)
-		if err != nil {
-			return fmt.Errorf("check remaining IMAP source %s: %w", source.Identifier, err)
-		}
-		if imapCfg.EffectiveAuthMethod() == imaplib.AuthXOAuth2 && strings.EqualFold(imapCfg.Username, email) {
+		if used {
 			return nil
 		}
 	}
 	return removeMicrosoftMailTokens(cfg, email, graph, logger)
+}
+
+// imapSourceUsesMicrosoftToken reports whether an IMAP source authenticates as email with XOAUTH2.
+// A source with no stored configuration blocks removal only when its identifier names email.
+func imapSourceUsesMicrosoftToken(source *store.Source, email string) (bool, error) {
+	if !source.SyncConfig.Valid || source.SyncConfig.String == "" {
+		id, err := imaplib.ParseIdentifier(source.Identifier)
+		if err == nil && !strings.EqualFold(id.Username, email) {
+			return false, nil
+		}
+		return false, fmt.Errorf("check remaining IMAP source %s: authentication configuration unavailable", source.Identifier)
+	}
+	imapCfg, err := imaplib.ConfigFromJSON(source.SyncConfig.String)
+	if err != nil {
+		return false, fmt.Errorf("check remaining IMAP source %s: %w", source.Identifier, err)
+	}
+	return imapCfg.EffectiveAuthMethod() == imaplib.AuthXOAuth2 && strings.EqualFold(imapCfg.Username, email), nil
 }
 
 // removeMicrosoftMailTokens removes credentials left by any previous client.
