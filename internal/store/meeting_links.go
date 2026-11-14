@@ -52,7 +52,7 @@ func (s *Store) meetingEventRows(ctx context.Context, predicate string, args []a
 	for i := range rows {
 		source, ok := owners[rows[i].SourceID]
 		if !ok {
-			source, err = getSourceByIDFrom(ctx, s.meetingSQLReader(ctx), rows[i].SourceID)
+			source, err = s.GetSourceByIDContext(ctx, rows[i].SourceID)
 			if err != nil {
 				return nil, err
 			}

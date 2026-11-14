@@ -117,7 +117,7 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 				effective.Event.ICalUID = row.Event.ICalUID
 			}
 			if effective.Event.Status == "cancelled" {
-				effective, err = inheritCalendarCancellation(ctx, s.meetingSQLReader(ctx), effective, row)
+				effective, err = inheritCalendarCancellation(ctx, s.db, effective, row)
 				if err != nil {
 					return err
 				}

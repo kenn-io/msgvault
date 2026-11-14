@@ -4445,4 +4445,3 @@ CREATE TABLE IF NOT EXISTS meeting_copy_survivors (
     survivor_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_meeting_copy_survivors_survivor ON meeting_copy_survivors(survivor_message_id);
-CREATE INDEX IF NOT EXISTS idx_source_merge_messages_survivor ON source_merge_messages(survivor_message_id);
