@@ -23,9 +23,12 @@ type mcpPersonExportArgs struct {
 }
 
 func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map[string]any) (*mcpserver.OperationResult, error) {
+	refuse := func(code string) (*mcpserver.OperationResult, error) {
+		return operationFailure(code, false), nil
+	}
 	input, err := decodeMCPOperationArguments[mcpPersonExportArgs](args)
 	if err != nil {
-		return operationFailure("invalid_arguments", false), nil
+		return refuse("invalid_arguments")
 	}
 	argv := []string{
 		"export-messages",
@@ -69,10 +72,10 @@ func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map
 	if err != nil {
 		if _, cliRunError := errors.AsType[*daemonclient.CLIRunError](err); cliRunError {
 			if code := personExportRefusalCode(stderr, input.Sources); code != "" {
-				return operationFailure(code, false), nil
+				return refuse(code)
 			}
 		}
-		return operationFailure("export_failed", false), nil
+		return refuse("export_failed")
 	}
 	return &mcpserver.OperationResult{Output: mcpserver.PersonExport{JSONL: output.String()}}, nil
 }
