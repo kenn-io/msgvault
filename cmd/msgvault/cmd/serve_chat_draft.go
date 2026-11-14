@@ -153,6 +153,7 @@ func (a *storeAPIAdapter) runCLIChatDraftLifecycle(
 		if err := invalidChatDraftBody(intent.Body); err != nil {
 			return err
 		}
+		// A preview must reject stale revisions just as an edit would.
 		if draft.Revision != intent.Revision {
 			return draftReplyError("revision_mismatch", store.ErrChatDraftRevisionConflict)
 		}

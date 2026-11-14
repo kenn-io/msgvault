@@ -90,6 +90,20 @@ func TestDraftReplyStrictRefuses(t *testing.T) {
 	assertDraftRows(t, f.store)
 }
 
+func TestDraftReplyStrictRefusesPlaceholderAfterAttribution(t *testing.T) {
+	f := newDraftReplyFixture(t)
+	args := []string{"draft-reply", strconv.FormatInt(f.parentID, 10), "--from", testutil.IMAPTestUsername, "--body", "On Monday I wrote:\nFIRST_NAME", "--strict", "--json"}
+	events, err := lintRun(t, f.grantedAdapter(), nil, args...)
+	require.EqualError(t, err, "draft_lint_failed")
+	assert.Equal(t, "refused", lintObject(t, events)["status"])
+	assertDraftRows(t, f.store)
+
+	events, err = lintRun(t, f.grantedAdapter(), nil, append(args, "--validate-only")...)
+	require.NoError(t, err)
+	assert.Equal(t, false, lintObject(t, events)["valid"])
+	assertDraftRows(t, f.store)
+}
+
 func TestDraftLintRepeatedFindingsOutput(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

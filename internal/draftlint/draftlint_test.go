@@ -16,6 +16,8 @@ func TestCheck(t *testing.T) {
 		{name: "angle", body: "see <URL>", code: CodeUnresolvedPlaceholder, severity: "warn"},
 		{name: "single letter angle", body: "Use <A> or List<T>"},
 		{name: "brace", body: "use {id}", code: CodeUnresolvedPlaceholder, severity: "warn"},
+		{name: "todo", body: "TODO: review", code: CodeUnresolvedPlaceholder, severity: "warn"},
+		{name: "xxx", body: "XXX", code: CodeUnresolvedPlaceholder, severity: "warn"},
 		{name: "literal braces", body: "use {1,2}"},
 		{name: "empty", body: " \n", code: CodeEmptyBody, severity: "error"},
 		{name: "forward empty", kind: "forward"},
@@ -30,6 +32,7 @@ func TestCheck(t *testing.T) {
 			require.Len(t, r.Warnings, 1)
 			assert.Equal(t, tc.code, r.Warnings[0].Code)
 			assert.Equal(t, tc.severity, r.Warnings[0].Severity)
+			assert.Equal(t, tc.severity == "error", r.Blocking())
 		})
 	}
 }
@@ -42,6 +45,11 @@ func TestCheckSpansCountRunes(t *testing.T) {
 }
 
 func TestCheckIgnoresQuotedPlaceholders(t *testing.T) {
-	r := Check(Input{Channel: "email", Body: "Thanks\n> Hello FIRST_NAME\n"})
+	r := Check(Input{Channel: "email", Body: "Thanks\nOn Monday someone wrote:\n> Hello FIRST_NAME\n"})
+	assert.Empty(t, r.Warnings)
+	r = Check(Input{Channel: "email", Body: "On Monday someone wrote:\n> Hello FIRST_NAME\n\nThanks LAST_NAME"})
+	require.Len(t, r.Warnings, 1)
+	assert.Equal(t, &Span{52, 61}, r.Warnings[0].Span)
+	r = Check(Input{Channel: "email", Body: "Thanks\n--- Forwarded message ---\nFIRST_NAME"})
 	assert.Empty(t, r.Warnings)
 }
