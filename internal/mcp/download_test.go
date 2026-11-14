@@ -230,6 +230,7 @@ func TestDownloadSnapshotByteBudget(t *testing.T) {
 }
 
 func TestPersonDownloadSnapshotsSurviveRefresh(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	var cache downloadCache
 	defer cache.close()
 	key := downloadKey{operation: "get_person_record", identity: "1"}
@@ -239,28 +240,28 @@ func TestPersonDownloadSnapshotsSurviveRefresh(t *testing.T) {
 		return &downloadSnapshot{data: []byte(value), etag: value}, nil
 	}
 	first, err := cache.get(t.Context(), key, chunkRequest{length: 1}, load)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	continued, err := cache.get(t.Context(), key, chunkRequest{offset: 1, length: 1, digest: first.digest}, load)
-	require.NoError(t, err)
-	assert.Equal(t, first.etag, continued.etag)
-	assert.Equal(t, 1, reads)
+	requirements.NoError(err)
+	assertions.Equal(first.etag, continued.etag)
+	assertions.Equal(1, reads)
 	value = "second"
 	second, err := cache.get(t.Context(), key, chunkRequest{length: 1}, load)
-	require.NoError(t, err)
-	assert.Equal(t, "second", second.etag)
-	assert.Equal(t, 2, reads)
+	requirements.NoError(err)
+	assertions.Equal("second", second.etag)
+	assertions.Equal(2, reads)
 	attachmentKey := downloadKey{attachment: 1}
 	attachment, err := cache.get(t.Context(), attachmentKey, chunkRequest{length: 1}, func() (*downloadSnapshot, error) {
 		return &downloadSnapshot{data: []byte("attachment")}, nil
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	for personID := range maxDownloads {
 		_, err = cache.get(t.Context(), downloadKey{operation: "get_person_record", identity: strconv.Itoa(personID)}, chunkRequest{length: 1024}, func() (*downloadSnapshot, error) {
 			return &downloadSnapshot{data: []byte("small profile")}, nil
 		})
-		require.NoError(t, err)
+		requirements.NoError(err)
 	}
 	continued, err = cache.get(t.Context(), attachmentKey, chunkRequest{offset: 1, length: 1, digest: attachment.digest}, load)
-	require.NoError(t, err)
-	assert.Equal(t, attachment.data, continued.data)
+	requirements.NoError(err)
+	assertions.Equal(attachment.data, continued.data)
 }
