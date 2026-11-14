@@ -5,7 +5,7 @@ Start here:
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
+  msgvault export-messages --help
   msgvault person --help
   msgvault daemon status
   msgvault setup status --json
@@ -82,6 +82,7 @@ Add and sync sources:
   backfill-inline-media  Retry eligible Inline attachment downloads
   backfill-slack-media   Retry pending Slack file downloads
   backfill-teams-media   Re-fetch missing Teams inline images for imported messages
+  diagnose-acquisition   List Gmail acquisition failures
   list-folders           List IMAP folders (mailboxes) available for an account
   merge-account          Merge archived accounts
   muesli-hook            Sync the meeting named by a Muesli completion event
