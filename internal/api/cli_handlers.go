@@ -526,12 +526,18 @@ type CLIRepairMessageEvent struct {
 }
 
 type CLIRunRequest struct {
-	Args         []string          `json:"args"`
-	Env          map[string]string `json:"env,omitempty"`
-	Cwd          string            `json:"cwd,omitempty"`
-	GrantDecided bool              `json:"-"`
+	Args                 []string          `json:"args"`
+	Env                  map[string]string `json:"env,omitempty"`
+	Cwd                  string            `json:"cwd,omitempty"`
+	GrantDecided         bool              `json:"-"`
+	WithholdVerification bool              `json:"-"`
 	// Grant carries the authenticated agent grant when classified AuthModeDelegated. Never decoded from the wire.
 	Grant *agentgrant.Grant `json:"-"`
+}
+
+func (req CLIRunRequest) withVerificationWithheld(withhold bool) CLIRunRequest {
+	req.WithholdVerification = withhold
+	return req
 }
 
 type CLIAddCalendarPlanRequest struct {
@@ -1444,7 +1450,7 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeEvent := newCLINDJSONEventWriter[CLIRunEvent](w)
-	if err := runner.RunCLICommand(s.WithPublishedVectorConfig(r.Context()), req, writeEvent); err != nil {
+	if err := runner.RunCLICommand(s.WithPublishedVectorConfig(r.Context()), req.withVerificationWithheld(auth.Grant == nil && s.withholdsVerification(r)), writeEvent); err != nil {
 		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
 			s.logger.Error("failed to run CLI command", "command", req.Args[0], "error_code", coded.Code, "cause", coded.Err)
 		} else {

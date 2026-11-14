@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -14,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
@@ -21,6 +25,56 @@ import (
 )
 
 const beeperDraftTestChat = "!chat:beeper.local"
+
+func TestBeeperDraftComposeVerificationWithholding(t *testing.T) {
+	for _, scenario := range []string{"existing", "failure", "success"} {
+		for _, withhold := range []bool{true, false} {
+			t.Run(scenario+"/"+strconv.FormatBool(withhold), func(t *testing.T) {
+				f := newBeeperDraftFixture(t)
+				f.adapter.config.Server.APIKey = "owner"
+				srv := api.NewServerWithOptions(api.ServerOptions{Config: f.adapter.config, Store: f.adapter, Logger: slog.New(slog.DiscardHandler)})
+				t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+				if scenario == "existing" {
+					created, err := f.create(t, nil, "saved secret")
+					require.NoError(t, err)
+					_, err = f.store.ClaimBeeperDraftContext(t.Context(), created.DraftID, created.Revision, store.BeeperDraftOperationEdit, "pending secret")
+					require.NoError(t, err)
+				} else if scenario == "failure" {
+					f.beeper.set("null", true)
+				}
+				body, err := json.Marshal(map[string]any{"args": []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "proposed secret", "--json"}})
+				require.NoError(t, err)
+				req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("X-Api-Key", "owner")
+				if withhold {
+					req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+				}
+				response := httptest.NewRecorder()
+				srv.Router().ServeHTTP(response, req)
+				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+				output := response.Body.String()
+				if scenario == "success" {
+					assert.Contains(t, output, "proposed secret")
+					assert.Contains(t, output, `"type":"complete"`)
+				} else {
+					assert.Contains(t, output, `"type":"error"`)
+					secrets := []string{"proposed secret"}
+					if scenario == "existing" {
+						secrets = []string{"saved secret", "pending secret"}
+					}
+					for _, secret := range secrets {
+						if withhold {
+							assert.NotContains(t, output, secret)
+						} else {
+							assert.Contains(t, output, secret)
+						}
+					}
+				}
+			})
+		}
+	}
+}
 
 // fakeBeeperDrafts models Beeper Desktop's composer: setting text over a
 // draft is refused with 409, and accepted text comes back formatted.

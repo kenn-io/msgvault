@@ -45,7 +45,7 @@ func emitBeeperDraft(emit func(api.CLIRunEvent) error, stream string, intent dra
 	if draft.Pending != nil {
 		output.PendingOperation, output.CandidateContent = draft.Pending.Operation, draft.Pending.Text
 	}
-	if intent.MetadataOnly {
+	if intent.MetadataOnly && status != "created" {
 		output.Content, output.CandidateContent = nil, ""
 	}
 	if intent.JSON {
@@ -142,7 +142,7 @@ func validBeeperDraftBody(body string) error {
 
 // runBeeperDraftCreate writes a new draft into an empty Beeper chat composer.
 // --to names the chat.
-func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agentgrant.Grant, intent draftComposeIntent, source *store.Source, emit func(api.CLIRunEvent) error) error {
+func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agentgrant.Grant, intent draftComposeIntent, source *store.Source, withhold bool, emit func(api.CLIRunEvent) error) error {
 	if err := authorizeDelegatedDraftSource(grant, source); err != nil {
 		return err
 	}
@@ -166,8 +166,8 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 	defer func() { _ = execution.Release() }()
 	chatID := strings.TrimSpace(intent.To[0])
 	if existing, err := a.store.LiveBeeperDraftContext(ctx, source.ID, chatID); err == nil {
-		if grant != nil {
-			// Reading draft text needs draft.edit; creators get the ID.
+		if grant != nil || withhold {
+			// Creators without draft access receive only the ID.
 			existing.Text, existing.Pending = nil, nil
 		}
 		_ = emitBeeperDraft(emit, cliStreamStderr, draftLifecycleIntent{JSON: intent.JSON}, "draft_exists", existing)
@@ -189,7 +189,7 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 	if err != nil {
 		return draftReplyError("local_persistence_failed", err)
 	}
-	return a.writeBeeperDraft(ctx, client, source, draft, state, draftLifecycleIntent{JSON: intent.JSON}, "created", emit)
+	return a.writeBeeperDraft(ctx, client, source, draft, state, draftLifecycleIntent{JSON: intent.JSON, MetadataOnly: withhold}, "created", emit)
 }
 
 // runBeeperDraftLifecycle serves draft-get, draft-edit and draft-delete for
