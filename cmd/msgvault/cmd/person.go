@@ -739,10 +739,7 @@ func writeCLIGetPerson(cmd *cobra.Command, client *daemonclient.Client, person *
 		return writeCLIPerson(cmd, person)
 	}
 	supported, err := client.SupportsAPISchemaVersion(cmd.Context(), daemonclient.FirstAppearanceMinAPISchemaVersion)
-	if err != nil {
-		return writeCLIPerson(cmd, person)
-	}
-	if !supported {
+	if err != nil || !supported {
 		return writeCLIPerson(cmd, person)
 	}
 	response, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.GetPersonContactStateResp, error) {

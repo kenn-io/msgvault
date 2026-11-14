@@ -58,7 +58,7 @@ func ClassifyFirstContact(candidate ActivityCandidate, personID, envelopeSenderI
 // earliestFirstContactTx reads the earliest linked event in the current snapshot.
 func earliestFirstContactTx(ctx context.Context, tx *loggedTx, personID int64) (ActivityEvent, string, error) {
 	const eligible = ` FROM activity_event_persons aep JOIN activity_events ae ON ae.message_id = aep.message_id
- WHERE aep.person_id = ? AND NOT (aep.role = 'member' AND ae.ref_kind <> 'meeting' AND NOT EXISTS (SELECT 1 FROM message_recipients mr JOIN person_participants pp ON pp.participant_id = mr.participant_id WHERE mr.message_id = ae.message_id AND pp.person_id = aep.person_id))`
+ WHERE aep.person_id = ? AND NOT (aep.role = 'member' AND ae.ref_kind <> 'meeting')`
 	var event ActivityEvent
 	var refKind, firstDate string
 	err := tx.QueryRowContext(ctx, `SELECT aep.local_date`+eligible+` ORDER BY aep.local_date LIMIT 1`, personID).Scan(&firstDate)

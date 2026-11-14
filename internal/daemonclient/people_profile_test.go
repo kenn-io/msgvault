@@ -177,7 +177,7 @@ func TestPeopleBrowserGetPersonProfileComposesPersonRoutes(t *testing.T) {
 	assert.Equal([]string{"people"}, profile.Categories)
 }
 
-func TestPeopleBrowserGetPersonProfileDegradesAbsentSubResources(t *testing.T) {
+func TestPeopleBrowserGetPersonProfileDegradesFailedSubResources(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

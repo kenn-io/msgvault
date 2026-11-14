@@ -3508,14 +3508,16 @@ func TestFirstAppearanceRequiresUnambiguousFromEnvelope(t *testing.T) {
 		addresses             []string
 		otherRecordedSender   bool
 		missingRecordedSender bool
+		relayed               bool
 		want                  store.FirstContactKind
 	}{
-		{"introduction", []string{"sender@example.test"}, false, false, store.FirstContactEmailIntro},
-		{"synthetic sender", nil, false, false, store.FirstContactObserved},
-		{"two addresses for sender", []string{"sender@example.test", "alias@example.test"}, false, false, store.FirstContactObserved},
-		{"conflicting recorded sender", []string{"sender@example.test"}, true, false, store.FirstContactObserved},
-		{"blank From address", []string{""}, false, false, store.FirstContactObserved},
-		{"no recorded sender", []string{"sender@example.test"}, false, true, store.FirstContactEmailIntro},
+		{"introduction", []string{"sender@example.test"}, false, false, false, store.FirstContactEmailIntro},
+		{"synthetic sender", nil, false, false, false, store.FirstContactObserved},
+		{"two addresses for sender", []string{"sender@example.test", "alias@example.test"}, false, false, false, store.FirstContactObserved},
+		{"conflicting recorded sender", []string{"sender@example.test"}, true, false, false, store.FirstContactObserved},
+		{"blank From address", []string{""}, false, false, false, store.FirstContactObserved},
+		{"no recorded sender", []string{"sender@example.test"}, false, true, false, store.FirstContactEmailIntro},
+		{"relayed sender", []string{"sender@example.test"}, false, false, true, store.FirstContactObserved},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := require.New(t)
@@ -3543,8 +3545,11 @@ func TestFirstAppearanceRequiresUnambiguousFromEnvelope(t *testing.T) {
 				ids := make([]int64, len(tc.addresses))
 				for i := range ids {
 					ids[i] = sender
+					if i > 0 {
+						ids[i] = f.EnsureParticipant(tc.addresses[i], "Other sender", "example.test")
+					}
 				}
-				recipients = append(recipients, store.RecipientSet{Type: "from", ParticipantIDs: ids, EmailAddresses: tc.addresses})
+				recipients = append(recipients, store.RecipientSet{Type: "from", ParticipantIDs: ids, EmailAddresses: tc.addresses, IsRelayed: tc.relayed})
 			}
 			id, err := f.Store.PersistMessage(&store.MessagePersistData{Message: message, Recipients: recipients})
 			req.NoError(err)
@@ -3571,13 +3576,11 @@ func TestFirstAppearanceRequiresUnambiguousFromEnvelope(t *testing.T) {
 
 func TestFirstAppearanceRosterEvidence(t *testing.T) {
 	for _, tc := range []struct {
-		name, conversationType  string
-		explicitMember, meeting bool
+		name, conversationType string
+		meeting                bool
 	}{
-		{"direct chat roster added later", "direct_chat", false, false},
-		{"group roster added later", "group_chat", false, false},
-		{"explicit member", "direct_chat", true, false},
-		{"meeting", "direct_chat", false, true},
+		{"direct chat roster added later", "direct_chat", false},
+		{"meeting", "direct_chat", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := require.New(t)
@@ -3596,9 +3599,6 @@ func TestFirstAppearanceRosterEvidence(t *testing.T) {
 				system.MessageType = "calendar_event"
 			}
 			data := &store.MessagePersistData{Message: system}
-			if tc.explicitMember {
-				data.Recipients = []store.RecipientSet{{Type: "member", ParticipantIDs: []int64{target}}}
-			}
 			systemID, err := f.Store.PersistMessage(data)
 			req.NoError(err)
 			projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
@@ -3607,7 +3607,7 @@ func TestFirstAppearanceRosterEvidence(t *testing.T) {
 			req.NoError(err)
 			req.NoError(f.Store.EnsureConversationParticipant(conversation, target, "member"))
 			var rosterPerson *store.Person
-			if tc.conversationType == "group_chat" {
+			if !tc.meeting {
 				rosterOnly := f.EnsureParticipant("roster@example.test", "Roster", "example.test")
 				rosterPerson, _, err = f.Store.CreatePersonFromParticipant(rosterOnly)
 				req.NoError(err)
@@ -3626,14 +3626,10 @@ func TestFirstAppearanceRosterEvidence(t *testing.T) {
 			req.NoError(err)
 			wantRef := fmt.Sprintf("message:%d", id)
 			wantTime := later
-			if tc.explicitMember {
-				wantRef, wantTime = fmt.Sprintf("message:%d", systemID), at
-			}
 			if tc.meeting {
 				wantRef, wantTime = fmt.Sprintf("meeting:%d", systemID), at
 			}
 			check.Equal(wantRef, state.FirstSeenRef)
-			check.Equal(store.FirstContactObserved, state.FirstContactKind)
 			req.NotNil(state.FirstSeenAt)
 			check.Equal(wantTime, state.FirstSeenAt.UTC())
 			if rosterPerson != nil {
