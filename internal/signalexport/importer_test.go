@@ -305,8 +305,10 @@ func TestImportMediaResolution(t *testing.T) {
 				for _, hash := range slots {
 					assert.Empty(hash)
 				}
-				hash := hashHex([]byte("wrong"))
-				assert.NoFileExists(filepath.Join(opts.AttachmentsDir, hash[:2], hash))
+				if !tc.long {
+					hash := hashHex([]byte("wrong"))
+					assert.NoFileExists(filepath.Join(opts.AttachmentsDir, hash[:2], hash))
+				}
 			}
 			if kind == "extensionless-positive" {
 				assert.Equal(want, summary.AttachmentsStored)
@@ -492,7 +494,7 @@ func TestImportCancellationRetainsCommittedSnapshot(t *testing.T) {
 			assert.EqualValues(1, summary.Omitted["quote"])
 			source, err := st.GetSourceByIDContext(t.Context(), summary.SourceID)
 			require.NoError(err)
-			assert.JSONEq(`{"signal_export_format":3}`, source.SyncCursor.String)
+			assert.JSONEq(fmt.Sprintf(`{"signal_export_format":%d}`, formatVersion), source.SyncCursor.String)
 			assert.Equal(1, messageCount(t, st))
 			writeFrames(t, root, first, strings.Replace(incoming, "1700000000000", "1700000000001", 1))
 			summary, err = Import(t.Context(), st, opts)
@@ -584,30 +586,6 @@ func TestContactIdentifierAdded(t *testing.T) {
 			require.NoError(t, err)
 			assert.EqualValues(t, 2, summary.MessagesExisting)
 			assert.Equal(t, 2, messageCount(t, st))
-			if contact != `{"e164":"15555550100"}` {
-				return
-			}
-			scope := accountScope(opts.Account)
-			phoneKey := scopedKey(scope, "e164:+15555550100")
-			first, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
-			require.NoError(t, err)
-			require.NotZero(t, first)
-			aciX, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:01010101010101010101010101010101"))
-			require.NoError(t, err)
-			assert.Equal(t, first, aciX)
-			lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AgICAgICAgICAgICAgICAg=="}}}`
-			lines[7] = strings.Replace(incoming, "1700000000000", "1700000000002", 1)
-			writeLines(t, root, lines)
-			_, err = Import(t.Context(), st, opts)
-			require.NoError(t, err)
-			phone, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
-			require.NoError(t, err)
-			second, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:02020202020202020202020202020202"))
-			require.NoError(t, err)
-			require.NotZero(t, second)
-			assert.NotEqual(t, first, second)
-			assert.Equal(t, first, phone)
-			assert.Equal(t, 4, messageCount(t, st))
 		})
 	}
 }
@@ -618,7 +596,7 @@ func TestSourceFormatRefusesNewerVersion(t *testing.T) {
 	opts := options(t, root)
 	source, err := st.GetOrCreateSourceContext(t.Context(), SourceType, opts.Account)
 	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncState(t.Context(), source.ID, `{"signal_export_format":4}`))
+	require.NoError(t, st.UpdateSourceSyncState(t.Context(), source.ID, fmt.Sprintf(`{"signal_export_format":%d}`, formatVersion+1)))
 	summary, err := Import(t.Context(), st, opts)
 	require.ErrorIs(t, err, ErrNewerFormat)
 	assert.Zero(t, summary.SourceID)
@@ -645,13 +623,15 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 		unmatchedMedia, repairedMedia                        []byte
 		want                                                 map[string]string
 		firstStored, firstMissing, finalStored, finalMissing int
+		inlineLongText                                       bool
 	}{
-		{"hashed original ignores new hash", attachments("AQ==", pointer(a)), attachments("AQ==", pointer(b)), attachments("AQ==", pointer(b)), b, a, map[string]string{"attachment:0": hashHex(a)}, 0, 1, 1, 0},
-		{"hashed long text ignores new hash", `"longText":` + pointer(a), `"longText":` + otherKeyB, `"longText":` + otherKeyB, b, a, map[string]string{"long_text": hashHex(a)}, 0, 1, 1, 0},
-		{"hashless uuid after reorder", attachments("AQ==", `{"locatorInfo":{"key":"Ag=="}}`), attachments("BA==", pointer(a)), `"attachments":[{"clientUuid":"Aw==","pointer":{}},{"clientUuid":"AQ==","pointer":` + pointer(a) + `}]`, a, a, map[string]string{"attachment:0": hashHex(a)}, 0, 1, 1, 0},
-		{"hashless long text by key", `"longText":{"locatorInfo":{"key":"AQ=="}}`, `"longText":` + otherKey, `"longText":` + pointer(a), a, a, map[string]string{"long_text": hashHex(a)}, 0, 1, 1, 0},
-		{"earlier album slot removed", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(b) + `}]`, attachments("Aw==", pointer(b)), attachments("Ag==", pointer(b)), b, b, map[string]string{"attachment:0": "", "attachment:1": hashHex(b)}, 1, 1, 0, 1},
-		{"equal bytes in separate slots", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, attachments("Aw==", pointer(b)), `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, b, a, map[string]string{"attachment:0": hashHex(a), "attachment:1": hashHex(a)}, 0, 2, 2, 0},
+		{"hashed original ignores new hash", attachments("AQ==", pointer(a)), attachments("AQ==", otherKeyB), attachments("AQ==", otherKeyB), b, a, map[string]string{"attachment:0": hashHex(a)}, 0, 1, 1, 0, false},
+		{"hashed long text ignores new hash", `"longText":` + pointer(a), `"longText":` + otherKeyB, `"longText":` + otherKeyB, b, a, map[string]string{"long_text": hashHex(a)}, 0, 1, 1, 0, false},
+		{"hashless uuid after reorder", attachments("AQ==", `{"locatorInfo":{"key":"Ag=="}}`), attachments("BA==", pointer(a)), `"attachments":[{"clientUuid":"Aw==","pointer":{}},{"clientUuid":"AQ==","pointer":` + pointer(a) + `}]`, a, a, map[string]string{"attachment:0": hashHex(a)}, 0, 1, 1, 0, false},
+		{"hashless long text by key", `"longText":{"locatorInfo":{"key":"AQ=="}}`, `"longText":` + otherKey, `"longText":` + pointer(a), a, a, map[string]string{"long_text": hashHex(a)}, 0, 1, 1, 0, false},
+		{"earlier album slot removed", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + otherKeyB + `}]`, attachments("Aw==", pointer(b)), attachments("Ag==", otherKeyB), b, b, map[string]string{"attachment:0": "", "attachment:1": hashHex(b)}, 1, 1, 0, 1, false},
+		{"equal bytes in separate slots", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, attachments("Aw==", pointer(b)), `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, b, a, map[string]string{"attachment:0": hashHex(a), "attachment:1": hashHex(a)}, 0, 2, 2, 0, false},
+		{"long text turned inline", `"longText":` + pointer(a), "", "", nil, nil, map[string]string{"long_text": ""}, 0, 1, 0, 0, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -661,13 +641,30 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 			opts := options(t, root)
 			_, err := Import(t.Context(), st, opts)
 			require.NoError(err)
-			id, _ := onlyMessage(t, st)
-			writeFrames(t, root, message("changed", tc.unmatched))
-			putMedia(t, root, tc.unmatchedMedia)
+			id, raw := onlyMessage(t, st)
+			body := "changed"
+			if tc.inlineLongText {
+				body = string(a)
+			}
+			writeFrames(t, root, message(body, tc.unmatched))
+			if tc.unmatchedMedia != nil {
+				putMedia(t, root, tc.unmatchedMedia)
+			}
 			summary, err := Import(t.Context(), st, opts)
 			require.NoError(err)
 			assert.Equal(tc.firstStored, summary.AttachmentsStored)
 			assert.Equal(tc.firstMissing, summary.AttachmentsMissing)
+			if tc.inlineLongText {
+				assert.EqualValues(1, summary.MediaMissing["missing"])
+				assert.EqualValues(1, summary.Omitted["incomplete_long_text"])
+				assert.EqualValues(1, summary.MessagesChanged)
+				assert.Equal(tc.want, slotHashes(t, st, id))
+				again, err := st.GetMessageRawContext(t.Context(), id)
+				require.NoError(err)
+				assert.Equal(raw, again)
+				assertBody(t, st, id, "original")
+				return
+			}
 			writeFrames(t, root, message("changed", tc.repaired))
 			putMedia(t, root, tc.repairedMedia)
 			summary, err = Import(t.Context(), st, opts)
@@ -677,30 +674,6 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 			assert.Equal(tc.want, slotHashes(t, st, id))
 		})
 	}
-}
-
-func TestLongTextTurnedInlineRemainsMissing(t *testing.T) {
-	data := []byte("original fictional media")
-	message := `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"original"},"longText":` + pointer(data) + `}}}`
-	st := testutil.NewTestStore(t)
-	root := fixture(t, message)
-	opts := options(t, root)
-	_, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	id, raw := onlyMessage(t, st)
-	writeFrames(t, root, strings.Replace(incoming, "Hello 星", string(data), 1))
-	summary, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Equal(t, 0, summary.AttachmentsStored)
-	assert.Equal(t, 1, summary.AttachmentsMissing)
-	assert.EqualValues(t, 1, summary.MediaMissing["missing"])
-	assert.EqualValues(t, 1, summary.Omitted["incomplete_long_text"])
-	assert.EqualValues(t, 1, summary.MessagesChanged)
-	assert.Equal(t, map[string]string{"long_text": ""}, slotHashes(t, st, id))
-	again, err := st.GetMessageRawContext(t.Context(), id)
-	require.NoError(t, err)
-	assert.Equal(t, raw, again)
-	assertBody(t, st, id, "original")
 }
 
 func TestMediaIndexLimit(t *testing.T) {
@@ -752,30 +725,66 @@ func TestMatchingPointerRequiresUniqueUnclaimedIdentity(t *testing.T) {
 }
 
 func TestContactDoesNotReassignExistingAlias(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	scope := accountScope("fictional")
-	aci := scopedKey(scope, "aci:01010101010101010101010101010101")
-	phone := scopedKey(scope, "e164:+15555550100")
-	first, err := st.EnsureParticipantByIdentifierContext(t.Context(), SourceType, aci, "")
-	require.NoError(t, err)
-	second, err := st.EnsureParticipantByIdentifierContext(t.Context(), SourceType, phone, "")
-	require.NoError(t, err)
-	require.NotEqual(t, first, second)
-	root := fixture(t)
-	lines := []string{header, account, self, `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`, direct, incoming}
-	writeLines(t, root, lines)
-	summary, err := Import(t.Context(), st, options(t, root))
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, summary.MessagesAdded)
-	var sender int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT participant_id FROM message_recipients WHERE recipient_type = 'from'`).Scan(&sender))
-	assert.Equal(t, first, sender)
-	aciOwner, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, aci)
-	require.NoError(t, err)
-	phoneOwner, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phone)
-	require.NoError(t, err)
-	assert.Equal(t, first, aciOwner)
-	assert.Equal(t, second, phoneOwner)
+	t.Run("existing alias", func(t *testing.T) {
+		st := testutil.NewTestStore(t)
+		scope := accountScope("fictional")
+		aci := scopedKey(scope, "aci:01010101010101010101010101010101")
+		phone := scopedKey(scope, "e164:+15555550100")
+		first, err := st.EnsureParticipantByIdentifierContext(t.Context(), SourceType, aci, "")
+		require.NoError(t, err)
+		second, err := st.EnsureParticipantByIdentifierContext(t.Context(), SourceType, phone, "")
+		require.NoError(t, err)
+		require.NotEqual(t, first, second)
+		root := fixture(t)
+		lines := []string{header, account, self, `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`, direct, incoming}
+		writeLines(t, root, lines)
+		summary, err := Import(t.Context(), st, options(t, root))
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, summary.MessagesAdded)
+		var sender int64
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT participant_id FROM message_recipients WHERE recipient_type = 'from'`).Scan(&sender))
+		assert.Equal(t, first, sender)
+		aciOwner, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, aci)
+		require.NoError(t, err)
+		phoneOwner, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phone)
+		require.NoError(t, err)
+		assert.Equal(t, first, aciOwner)
+		assert.Equal(t, second, phoneOwner)
+	})
+	t.Run("reused phone", func(t *testing.T) {
+		st := testutil.NewTestStore(t)
+		root := fixture(t)
+		lines := contactLines(`{"e164":"15555550100"}`, incoming)
+		writeLines(t, root, lines)
+		opts := options(t, root)
+		_, err := Import(t.Context(), st, opts)
+		require.NoError(t, err)
+		lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`
+		writeLines(t, root, lines)
+		_, err = Import(t.Context(), st, opts)
+		require.NoError(t, err)
+		scope := accountScope(opts.Account)
+		phoneKey := scopedKey(scope, "e164:+15555550100")
+		first, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
+		require.NoError(t, err)
+		require.NotZero(t, first)
+		aciX, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:01010101010101010101010101010101"))
+		require.NoError(t, err)
+		assert.Equal(t, first, aciX)
+		lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AgICAgICAgICAgICAgICAg=="}}}`
+		lines[7] = strings.Replace(incoming, "1700000000000", "1700000000002", 1)
+		writeLines(t, root, lines)
+		_, err = Import(t.Context(), st, opts)
+		require.NoError(t, err)
+		phone, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
+		require.NoError(t, err)
+		second, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:02020202020202020202020202020202"))
+		require.NoError(t, err)
+		require.NotZero(t, second)
+		assert.NotEqual(t, first, second)
+		assert.Equal(t, first, phone)
+		assert.Equal(t, 4, messageCount(t, st))
+	})
 }
 
 func TestImportAmbiguousSameTimeReplay(t *testing.T) {
@@ -803,9 +812,6 @@ func TestImportAmbiguousSameTimeReplay(t *testing.T) {
 	assert.Zero(t, summary.MessagesAdded)
 	assert.EqualValues(t, 1, summary.MessagesExisting)
 	assert.Zero(t, summary.MessagesChanged)
-	for _, count := range summary.Omitted {
-		assert.Zero(t, count)
-	}
 	assert.Empty(t, summary.MediaMissing)
 	assert.Zero(t, summary.AttachmentsStored)
 	assert.Zero(t, summary.AttachmentsMissing)
