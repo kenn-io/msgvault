@@ -4203,8 +4203,9 @@ under `[activity]`.
 
 Not in the latest release yet.
 
-Compare a bounded page of search documents with the persisted message body and
-envelope, through the configured daemon. This command opens the archive read-only.
+Compare a bounded page of search documents with stored message text, subjects,
+senders and the recipient fields used for search, through the configured daemon.
+This command opens the archive read-only.
 It does not repair, migrate, rebuild, synchronize, or contact message providers.
 Daemon startup and scheduled work keep their normal lifecycle effects; use an
 isolated copy with scheduled work disabled for operator verification.

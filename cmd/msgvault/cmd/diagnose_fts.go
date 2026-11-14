@@ -17,8 +17,9 @@ func newDiagnoseFTSCmd() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "diagnose-fts",
 		Short: "Check a bounded page of stored search documents",
-		Long: `Compare search documents with the stored body and envelope, without changing
-the archive or contacting providers. Runs through the configured daemon.
+		Long: `Compare search documents with stored message text, subjects, senders and the
+recipient fields used for search. Leaves the archive unchanged and does not
+contact providers. Runs through the configured daemon.
 
 Each message is checked at one point in time. Pages may reflect different times.
 For stable archive-wide results, use an isolated copy with writes stopped.
