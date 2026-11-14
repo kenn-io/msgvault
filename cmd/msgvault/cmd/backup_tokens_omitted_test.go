@@ -63,12 +63,13 @@ func TestBackupRestoreConfigOnlyLeavesUnrelatedTokenPath(t *testing.T) {
 	require.NoError(os.WriteFile(configPath, []byte("# synthetic config\n"), 0o600))
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(err)
-	_, err = backup.Create(t.Context(), repo, backupapp.New("test"), backup.CreateOptions{
+	manifest, err := backup.Create(t.Context(), repo, backupapp.New("test"), backup.CreateOptions{
 		DBPath: dbPath, ContentDir: attachments, DataDir: cfg.Data.DataDir,
 		Extras:        backup.ExtrasSpec{Files: []backup.ExtrasFileSpec{{Path: configPath, RecordAs: "config.toml", Sensitive: true}}},
 		IncludeConfig: true, AllowPlaintextSecrets: true,
 	})
 	require.NoError(err)
+	require.NoError(secureRestoredTokens(t.Context(), repo, manifest.SnapshotID, "\x00"))
 	prepareBackupTokenRestore(t)
 	target := filepath.Join(t.TempDir(), "restored")
 	require.NoError(os.Mkdir(target, 0o700))

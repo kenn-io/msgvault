@@ -91,10 +91,11 @@ func restorePreflight(dir string, selected, ancestors map[string]struct{}, rootA
 		if err != nil {
 			return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
 		}
-		protected, err := protectedDACL(sd)
+		control, _, err := sd.Control()
 		if err != nil {
 			return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
 		}
+		protected := control&windows.SE_DACL_PROTECTED != 0
 		if entry.IsDir() {
 			if selectedAncestor && parentAffected && !protected {
 				if err := verifyHandleOwner(h); err != nil {
@@ -126,19 +127,7 @@ func restorePreflight(dir string, selected, ancestors map[string]struct{}, rootA
 	return directories, err
 }
 
-func protectedDACL(sd *windows.SECURITY_DESCRIPTOR) (bool, error) {
-	control, _, err := sd.Control()
-	if err != nil {
-		return false, fmt.Errorf("read token protection: %w", err)
-	}
-	return control&windows.SE_DACL_PROTECTED != 0, nil
-}
-
 func inheritedAccess(sd *windows.SECURITY_DESCRIPTOR) (bool, error) {
-	protected, err := protectedDACL(sd)
-	if err != nil || protected {
-		return false, err
-	}
 	acl, _, err := sd.DACL()
 	if err != nil {
 		return false, fmt.Errorf("read omitted token access: %w", err)
