@@ -9,18 +9,18 @@ import (
 )
 
 func TestRelationshipWritesHaveSeparateOptIn(t *testing.T) {
-	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"list_relationship_types", "get_person_network", "create_relationship_type"}}
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"list_relationship_types", "get_person_network", "create_person_relationship"}}
 	reads := toolsByName(t, rawListTools(t, opts, false))
 	assert.Contains(t, reads, "list_relationship_types")
 	assert.Contains(t, reads, "get_person_network")
-	assert.NotContains(t, toolsByName(t, rawListTools(t, opts, true)), "create_relationship_type")
+	assert.NotContains(t, toolsByName(t, rawListTools(t, opts, true)), "create_person_relationship")
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyRelationshipRecords}
-	assert.Contains(t, toolsByName(t, rawListTools(t, opts, true)), "create_relationship_type")
-	assert.NotContains(t, toolsByName(t, rawListTools(t, opts, false)), "create_relationship_type")
+	assert.Contains(t, toolsByName(t, rawListTools(t, opts, true)), "create_person_relationship")
+	assert.NotContains(t, toolsByName(t, rawListTools(t, opts, false)), "create_person_relationship")
 }
 
 func TestRelationshipSDKRejectsUnknownWriteFields(t *testing.T) {
-	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"update_person_relationship", "update_relationship_type", "get_person_network", "list_person_relationship_reviews"}, OperationWriteFamilies: []OperationFamily{OperationFamilyRelationshipRecords}}
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"update_person_relationship", "get_person_network"}, OperationWriteFamilies: []OperationFamily{OperationFamilyRelationshipRecords}}
 	tools := toolsByName(t, rawListTools(t, opts, true))
 	for _, name := range opts.OperationCapabilities {
 		schema, ok := tools[name]["inputSchema"].(map[string]any)
@@ -32,12 +32,10 @@ func TestRelationshipSDKRejectsUnknownWriteFields(t *testing.T) {
 		name string
 		args map[string]any
 	}{
-		{"update_person_relationship", map[string]any{"id": 1, "etag": "tag", "unexpected": true}},
-		{"update_person_relationship", map[string]any{"id": 1, "etag": "tag", "end_date": nil}},
-		{"update_relationship_type", map[string]any{"id": 1, "etag": "tag", "description": nil}},
-		{"update_person_relationship", map[string]any{"id": 1, "etag": "tag", "end_date": ""}},
+		{"update_person_relationship", map[string]any{"id": 1, "revision": 1, "unexpected": true}},
+		{"update_person_relationship", map[string]any{"id": 1, "revision": 1, "end_date": nil}},
+		{"update_person_relationship", map[string]any{"id": 1, "revision": 1, "end_date": ""}},
 		{"get_person_network", map[string]any{"person_id": 1, "depth": 4}},
-		{"list_person_relationship_reviews", map[string]any{"status": "x"}},
 	} {
 		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: tc.name, Arguments: tc.args})
 		require.NoError(t, err)

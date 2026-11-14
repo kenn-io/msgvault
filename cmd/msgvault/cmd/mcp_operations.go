@@ -18,6 +18,8 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+const invalidArguments = "invalid_arguments"
+
 type daemonMCPOperations struct {
 	now       func() time.Time
 	client    *daemonclient.Client
@@ -49,6 +51,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	if hasRoute("triggerSync", http.MethodPost, "/api/v1/sync/{account}", "source_type") && hasRoute("listSourceStatus", http.MethodGet, "/api/v1/sources/status", "source_type") {
 		backend.supported = append(backend.supported, "sync_source")
 	}
+	backend.supported = append(backend.supported, deletionReviewMCPCapabilities(hasRoute)...)
 	backend.supported = append(backend.supported, loopMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, relationshipRecordCapabilities(hasRoute, capabilities)...)
@@ -72,10 +75,13 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		}
 		return readMCPOperationJSON[generated.TriggerSyncResponse](ctx, b.client, http.MethodPost, "/api/v1/sync/{account}", &generated.TriggerSyncRequestOptions{PathParams: &generated.TriggerSyncPath{Account: account}, Query: &generated.TriggerSyncQuery{SourceType: &sourceType}}, http.StatusAccepted)
 	default:
-		if result, handled, err := b.executeRelationshipWrite(ctx, name, args); handled {
+		if result, handled, err := b.executeRelationshipRecord(ctx, name, args); handled {
 			return result, err
 		}
 		if result, handled, err := b.executePersonRecord(ctx, name, args); handled {
+			return result, err
+		}
+		if result, handled, err := b.executeDeletionReviewOperation(ctx, name, args); handled {
 			return result, err
 		}
 		if result, handled, err := b.executeLoopOperation(ctx, name, args); handled {
@@ -213,7 +219,7 @@ func readMCPOperationBytes(ctx context.Context, client *daemonclient.Client, met
 			return nil, nil, operationFailure(code, false), nil
 		}
 		switch code {
-		case "unauthorized", "not_found", "scheduler_unavailable", "source_not_schedulable", "store_unavailable", "missing_account", "sync_error", "operation_in_progress", "settings_conflict", "settings_edit_rejected", "if_match_required", "person_revision_conflict", "person_profile_not_found", "person_enrichment_dispatch_in_progress", "persons_unavailable", "cache_build_not_found", "cache_build_unavailable", "bad_request", "invalid_participant_id", "participant_not_found", "analytical_cache_unavailable", "query_resource_exhausted", "engine_unavailable":
+		case "invalid_relationship", "invalid_relationship_type", "invalid_partial_date", "invalid_status", "invalid_if_match", "relationship_revision_conflict", "relationship_type_not_found", "person_relationship_not_found", "person_not_found", "person_relationship_duplicate", "person_relationships_unavailable", "profile_values_unavailable", "profile_media_not_found", "profile_media_content_unavailable", "profile_value_not_found", "invalid_profile_value", "profile_patch_too_large", "person_category_duplicate", "service_alias_conflict", "server_busy", "unauthorized", "not_found", "scheduler_unavailable", "source_not_schedulable", "store_unavailable", "missing_account", "sync_error", "operation_in_progress", "settings_conflict", "settings_edit_rejected", "if_match_required", "person_revision_conflict", "person_profile_not_found", "person_enrichment_dispatch_in_progress", "persons_unavailable", "cache_build_not_found", "cache_build_unavailable", "bad_request", "invalid_participant_id", "participant_not_found", "analytical_cache_unavailable", "query_resource_exhausted", "engine_unavailable":
 			return nil, nil, operationFailure(code, false), nil
 		case "validation_failed":
 			// Settings credential cleanup can return this after the config commits.
@@ -223,4 +229,13 @@ func readMCPOperationBytes(ctx context.Context, client *daemonclient.Client, met
 		}
 	}
 	return data, response.Header, nil, nil
+}
+
+func disclosureRefusal(result *mcpserver.OperationResult) error {
+	if result != nil {
+		if failure, ok := result.Output.(operationFailureOutput); ok {
+			return &mcpserver.OperationRefusalError{Code: failure.Error}
+		}
+	}
+	return &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 }

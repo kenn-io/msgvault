@@ -639,7 +639,7 @@ func addMCPWriteFlags(cmd *cobra.Command, prefix string) {
 	flags.BoolVar(bind(&mcpAllowCalendarWrites), prefix+"allow-calendar-writes", false,
 		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
 	flags.BoolVar(bind(&mcpAllowRelationshipWrites), prefix+"allow-relationship-writes", false,
-		"Expose relationship type and declared relationship writes. Each call requires client confirmation.")
+		"Expose declared relationship writes. Each call requires client confirmation.")
 	flags.BoolVar(bind(&mcpAllowLoopWrites), prefix+"allow-loop-writes", false,
 		"Allow approved open-loop done, snooze, and reopen decisions")
 	flags.BoolVar(bind(&mcpAllowCuratedWrites), prefix+"allow-curated-writes", false,

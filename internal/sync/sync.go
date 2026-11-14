@@ -1151,14 +1151,13 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 					continue
 				}
 				s.logger.Warn("failed to ingest message", "id", raw.ID, "error", err)
-				if recErr := s.recordAcquisitionFailure(syncID, sourceMessageID, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
-					return nil, recErr
-				}
-				checkpoint.ErrorsCount++
-				_, committed := errors.AsType[*committedMessageError](err)
-				if !committed || (s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail) {
-					continue
-				}
+			}
+			_, acquired, recErr := s.recordIngestOutcome(syncID, sourceMessageID, err, checkpoint)
+			if recErr != nil {
+				return nil, recErr
+			}
+			if !acquired || (err != nil && s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail) {
+				continue
 			}
 
 			result.added++

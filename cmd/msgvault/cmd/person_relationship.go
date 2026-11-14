@@ -357,7 +357,7 @@ var personRelationshipEndCmd = &cobra.Command{
 		if current.JSON200 == nil {
 			return errors.New("relationship response was empty")
 		}
-		etag := fmt.Sprintf(`"person-relationship-%d-r%d"`, id, current.JSON200.Revision)
+		etag := personRelationshipETag(id, current.JSON200.Revision)
 		body := generated.PatchPersonRelationshipBody{EndDate: &until}
 		resp, err := daemonclient.APIResponse(client,
 			func(api *apiclient.Client) (*generated.PatchPersonRelationshipResp, error) {
@@ -395,7 +395,7 @@ var personRelationshipDeleteCmd = &cobra.Command{
 		if current.JSON200 == nil {
 			return errors.New("relationship response was empty")
 		}
-		etag := fmt.Sprintf(`"person-relationship-%d-r%d"`, id, current.JSON200.Revision)
+		etag := personRelationshipETag(id, current.JSON200.Revision)
 		if _, err := daemonclient.APIResponseWithStatuses(client, []int{http.StatusNoContent},
 			func(api *apiclient.Client) (*generated.DeletePersonRelationshipResp, error) {
 				return api.DeletePersonRelationshipWithResponse(cmd.Context(),
@@ -589,4 +589,8 @@ func init() {
 		"Include relationships that have ended")
 	personRelationshipReviewsCmd.Flags().StringVar(&relationshipReviewStatus, "status", "",
 		"Filter by review status: pending, accepted, or rejected")
+}
+
+func personRelationshipETag(id, revision int64) string {
+	return fmt.Sprintf(`"person-relationship-%d-r%d"`, id, revision)
 }

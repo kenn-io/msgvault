@@ -434,7 +434,7 @@ func newMCPServerWithPolicy(
 	}
 
 	for _, definition := range operationalCatalog(opts, allowWrites) {
-		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations), confirmation))
+		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations, opts.downloads), confirmation))
 	}
 
 	return s
