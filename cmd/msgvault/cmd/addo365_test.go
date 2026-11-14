@@ -143,7 +143,7 @@ func TestAddO365StoresAndChangesAppBinding(t *testing.T) {
 	}
 }
 
-func TestAddO365FailedRegistrationPreservesOldPair(t *testing.T) {
+func TestAddO365FailedRegistrationPreservesOldSource(t *testing.T) {
 	oldGraph, oldApp, oldIdentity := o365Graph, o365OAuthApp, noDefaultIdentityAddO365
 	t.Cleanup(func() { o365Graph, o365OAuthApp, noDefaultIdentityAddO365 = oldGraph, oldApp, oldIdentity })
 	cfg := lifecycleTestConfig(t.TempDir())

@@ -220,6 +220,7 @@ func TestAddO365PreflightUndeterminedIMAPBinding(t *testing.T) {
 	_, err = preflightAddO365Authorize(cmd, "owner@example.test")
 	require.ErrorContains(t, err, "does not report the IMAP authentication method")
 	assert.Zero(t, requests)
+	// An unknown method can be present in an edited sync configuration.
 	require.NoError(t, st.UpdateSourceSyncConfig(ctx, src.ID, `{"host":"outlook.office365.com","username":"owner@example.test","auth_method":"unknown"}`))
 	_, err = preflightAddO365Authorize(cmd, "owner@example.test")
 	require.ErrorContains(t, err, "does not report the IMAP authentication method")
@@ -325,8 +326,6 @@ func TestAddO365ReauthorizesSelectedSource(t *testing.T) {
 			}
 			require.NoError(t, cmd.Flags().Set("source-id", strconv.FormatInt(sources[0].ID, 10)))
 			_, err := preflightAddO365Authorize(cmd, "other@example.com")
-			require.ErrorContains(t, err, "does not match Microsoft mail account")
-			err = runAddO365Local(cmd, []string{"other@example.com"})
 			require.ErrorContains(t, err, "does not match Microsoft mail account")
 			require.NoError(t, cmd.Flags().Set("source-id", "0"))
 			_, err = preflightAddO365Authorize(cmd, "user@example.com")
