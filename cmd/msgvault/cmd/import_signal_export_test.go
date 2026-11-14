@@ -71,7 +71,7 @@ func TestImportSignalExportNewerFormat(t *testing.T) {
 	require.NoError(t, st.InitSchemaContext(t.Context()))
 	source, err := st.GetOrCreateSourceContext(t.Context(), "signal_export", "fictional")
 	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncState(t.Context(), source.ID, `{"signal_export_format":2}`))
+	require.NoError(t, st.UpdateSourceSyncState(t.Context(), source.ID, `{"signal_export_format":3}`))
 	require.NoError(t, st.Close())
 	root := "../../../internal/signalexport/testdata/native-v1"
 	cmd := &cobra.Command{Use: "import-signal-export"}
