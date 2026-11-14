@@ -172,6 +172,15 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 		return err
 	}
 	chatID := strings.TrimSpace(intent.To[0])
+	if intent.ValidateOnly {
+		conversations, err := a.store.ConversationMetadataBatchContext(ctx, source.ID, []string{chatID})
+		if err != nil {
+			return draftReplyError("draft_read_failed", err)
+		}
+		if _, ok := conversations[chatID]; !ok {
+			return draftReplyError("chat_not_found", errors.New("chat is not archived under the selected source"))
+		}
+	}
 	if err := a.checkLiveBeeperDraft(ctx, grant, source.ID, chatID, intent.JSON, emit); err != nil {
 		return err
 	}

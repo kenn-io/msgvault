@@ -558,3 +558,25 @@ func TestGmailDraftStrictPendingEditRecovery(t *testing.T) {
 		})
 	}
 }
+
+func TestBeeperDraftValidateOnlyRequiresArchivedChat(t *testing.T) {
+	for _, otherAccount := range []bool{false, true} {
+		t.Run(fmt.Sprintf("other_account=%t", otherAccount), func(t *testing.T) {
+			f := newBeeperDraftFixture(t)
+			chatID := "!missing:beeper.local"
+			if otherAccount {
+				other, err := f.store.GetOrCreateSource("beeper", "other-account")
+				require.NoError(t, err)
+				_, err = f.store.EnsureConversationWithType(other.ID, chatID, "channel", "Other chat")
+				require.NoError(t, err)
+			}
+			_, err := lintRun(t, f.adapter, nil, "draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", chatID, "--body", "Thanks", "--validate-only", "--json")
+			require.EqualError(t, err, "chat_not_found")
+			assert.ErrorContains(t, errors.Unwrap(err), "not archived under the selected source")
+			requests, patches := f.beeper.counts()
+			assert.Zero(t, requests)
+			assert.Zero(t, patches)
+			assertDraftRows(t, f.store)
+		})
+	}
+}

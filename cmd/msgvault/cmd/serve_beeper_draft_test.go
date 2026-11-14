@@ -105,6 +105,8 @@ func newBeeperDraftFixture(t *testing.T) beeperDraftFixture {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("beeper", "whatsapp")
 	require.NoError(t, err)
+	_, err = st.EnsureConversationWithType(source.ID, beeperDraftTestChat, "channel", "Chat")
+	require.NoError(t, err)
 	fake := &fakeBeeperDrafts{account: source.Identifier, draft: "null"}
 	server := httptest.NewServer(fake)
 	t.Cleanup(server.Close)
