@@ -236,17 +236,16 @@ func TestDownloadSnapshotLoadCoordination(t *testing.T) {
 			defer cache.close()
 			started, release := make(chan struct{}), make(chan struct{})
 			var reads atomic.Int64
-			load := func() (*downloadSnapshot, error) {
-				if reads.Add(1) == 1 {
-					close(started)
-				}
-				<-release
-				return &downloadSnapshot{data: []byte("snapshot")}, nil
-			}
 			results := make(chan error, 4)
 			for range 4 {
 				go func() {
-					_, err := cache.get(t.Context(), downloadKey{attachment: 1}, chunkRequest{}, load)
+					_, err := cache.get(t.Context(), downloadKey{attachment: 1}, chunkRequest{}, func() (*downloadSnapshot, error) {
+						if reads.Add(1) == 1 {
+							close(started)
+						}
+						<-release
+						return &downloadSnapshot{data: []byte("snapshot")}, nil
+					})
 					results <- err
 				}()
 			}

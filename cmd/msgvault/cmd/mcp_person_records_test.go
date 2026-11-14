@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -74,7 +75,7 @@ func TestPersonRecordDisclosure(t *testing.T) {
 			{map[string]any{"media": map[string]any{"add": []any{map[string]any{"media_kind": "photo", "data": base64.StdEncoding.EncodeToString(make([]byte, (8<<20)+1)), "envelope": map[string]any{"source": "user"}}}}}, "invalid_profile_value"},
 			{map[string]any{"names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": strings.Repeat("x", (12<<20)+1), "envelope": map[string]any{"source": "user"}}}}}, "profile_patch_too_large"},
 		} {
-			t.Run(fmt.Sprint(i), func(t *testing.T) {
+			t.Run(strconv.Itoa(i), func(t *testing.T) {
 				args := map[string]any{"person_id": id, "etag": "etag"}
 				if tc.patch != nil {
 					args["patch"] = tc.patch
