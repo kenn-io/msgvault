@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -19,52 +18,55 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func TestBackupRestoreCardDAVOnly(t *testing.T) {
-	cfg, dbPath, attachments := backupTokenFixture(t)
-	credential := carddav.Credential{Password: "synthetic-password", BaseURL: "https://carddav.example.test", Username: "person@example.test", ConnectionGeneration: 1}
-	dir := filepath.Join(cfg.TokensDir(), "carddav-connections", "work")
-	require.NoError(t, carddav.SaveCredential(dir, credential))
-	repo := createBackupTokenSnapshot(t, cfg, dbPath, attachments)
-	prepareBackupTokenRestore(t)
-	target := filepath.Join(t.TempDir(), "restored")
-	upper := filepath.Join(target, "tokens", "CARDDAV-CONNECTIONS", "WORK")
-	require.NoError(t, os.MkdirAll(upper, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(upper, "CARDDAV.JSON"), []byte("old"), 0o600))
-	require.NoError(t, runBackupTokenRestore(t, cfg, repo, target, true))
-	got, err := carddav.LoadCredential(filepath.Join(target, "tokens", "carddav-connections", "work"))
-	require.NoError(t, err)
-	assert.Equal(t, credential, got)
-}
+func TestBackupRestoreCredentialsRemainUsable(t *testing.T) {
+	t.Run("CardDAV only with case variant", func(t *testing.T) {
+		cfg, dbPath, attachments := backupTokenFixture(t)
+		credential := carddav.Credential{Password: "synthetic-password", BaseURL: "https://carddav.example.test", Username: "person@example.test", ConnectionGeneration: 1}
+		dir := filepath.Join(cfg.TokensDir(), "carddav-connections", "work")
+		require.NoError(t, carddav.SaveCredential(dir, credential))
+		repo := createBackupTokenSnapshot(t, cfg, dbPath, attachments)
+		prepareBackupTokenRestore(t)
+		target := filepath.Join(t.TempDir(), "restored")
+		upper := filepath.Join(target, "tokens", "CARDDAV-CONNECTIONS", "WORK")
+		require.NoError(t, os.MkdirAll(upper, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(upper, "CARDDAV.JSON"), []byte("old"), 0o600))
+		_, err := runBackupTokenRestore(t, cfg, repo, "--target", target, "--overwrite")
+		require.NoError(t, err)
+		got, err := carddav.LoadCredential(filepath.Join(target, "tokens", "carddav-connections", "work"))
+		require.NoError(t, err)
+		assert.Equal(t, credential, got)
+	})
+	t.Run("provider and server key", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		cfg, dbPath, attachments := backupTokenFixture(t)
 
-func TestBackupRestoreProviderAndServerKeyRemainUsable(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	cfg, dbPath, attachments := backupTokenFixture(t)
+		const endpoint = "https://provider.example.test/v1"
+		const providerKey = "synthetic-provider-key"
+		empty, err := providercredentials.Read(cfg.TokensDir())
+		require.NoError(err)
+		_, err = providercredentials.Put(cfg.TokensDir(), empty.ETag, providercredentials.VectorEmbeddingsID, endpoint, providerKey)
+		require.NoError(err)
+		serverKey, err := providercredentials.EnsureServerKey(cfg.TokensDir())
+		require.NoError(err)
 
-	const endpoint = "https://provider.example.test/v1"
-	const providerKey = "synthetic-provider-key"
-	empty, err := providercredentials.Read(cfg.TokensDir())
-	require.NoError(err)
-	_, err = providercredentials.Put(cfg.TokensDir(), empty.ETag, providercredentials.VectorEmbeddingsID, endpoint, providerKey)
-	require.NoError(err)
-	serverKey, err := providercredentials.EnsureServerKey(cfg.TokensDir())
-	require.NoError(err)
+		repo := createBackupTokenSnapshot(t, cfg, dbPath, attachments)
 
-	repo := createBackupTokenSnapshot(t, cfg, dbPath, attachments)
+		prepareBackupTokenRestore(t)
 
-	prepareBackupTokenRestore(t)
-
-	fresh := filepath.Join(t.TempDir(), "fresh")
-	require.NoError(runBackupTokenRestore(t, cfg, repo, fresh, false))
-	freshTokens := filepath.Join(fresh, "tokens")
-	restored, err := providercredentials.Read(freshTokens)
-	require.NoError(err)
-	value, _, err := restored.Resolve(providercredentials.VectorEmbeddingsID, endpoint, "", nil)
-	require.NoError(err)
-	assert.Equal(providerKey, value)
-	key, err := providercredentials.ReadSecretFile(filepath.Join(freshTokens, providercredentials.ServerKeyFilename))
-	require.NoError(err)
-	assert.Equal(serverKey, key)
+		fresh := filepath.Join(t.TempDir(), "fresh")
+		_, err = runBackupTokenRestore(t, cfg, repo, "--target", fresh)
+		require.NoError(err)
+		freshTokens := filepath.Join(fresh, "tokens")
+		restored, err := providercredentials.Read(freshTokens)
+		require.NoError(err)
+		value, _, err := restored.Resolve(providercredentials.VectorEmbeddingsID, endpoint, "", nil)
+		require.NoError(err)
+		assert.Equal(providerKey, value)
+		key, err := providercredentials.ReadSecretFile(filepath.Join(freshTokens, providercredentials.ServerKeyFilename))
+		require.NoError(err)
+		assert.Equal(serverKey, key)
+	})
 }
 
 func TestBackupRestoreConfigOnlySkipsTokensAndHonorsForceUnlock(t *testing.T) {
@@ -81,26 +83,16 @@ func TestBackupRestoreConfigOnlySkipsTokensAndHonorsForceUnlock(t *testing.T) {
 	target := t.TempDir()
 	tokens := filepath.Join(target, "tokens")
 	require.NoError(t, os.Mkdir(tokens, 0o700))
-	path, err := windows.UTF16PtrFromString(tokens)
-	require.NoError(t, err)
-	handle, err := windows.CreateFile(path, windows.READ_CONTROL|windows.WRITE_DAC, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
-	require.NoError(t, err)
-	before, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
-	require.NoError(t, err)
-	control, _, err := before.Control()
-	require.NoError(t, err)
-	flags := windows.DACL_SECURITY_INFORMATION | windows.UNPROTECTED_DACL_SECURITY_INFORMATION
-	if control&windows.SE_DACL_PROTECTED != 0 {
-		flags = windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION
-	}
-	t.Cleanup(func() {
-		assert.NoError(t, windows.SetKernelObjectSecurity(handle, windows.SECURITY_INFORMATION(flags), before))
-		assert.NoError(t, windows.CloseHandle(handle))
-	})
 	deny, err := windows.SecurityDescriptorFromString("D:P")
 	require.NoError(t, err)
-	require.NoError(t, windows.SetKernelObjectSecurity(handle, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, deny))
-	locked, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	empty, _, err := deny.DACL()
+	require.NoError(t, err)
+	require.NoError(t, windows.SetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, empty, nil))
+	t.Cleanup(func() {
+		// The owner keeps WRITE_DAC; a null DACL lets TempDir cleanup remove the directory.
+		assert.NoError(t, windows.SetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.UNPROTECTED_DACL_SECURITY_INFORMATION, nil, nil, nil, nil))
+	})
+	locked, err := windows.GetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	require.NoError(t, err)
 	_, err = os.ReadDir(tokens)
 	require.Error(t, err)
@@ -109,15 +101,13 @@ func TestBackupRestoreConfigOnlySkipsTokensAndHonorsForceUnlock(t *testing.T) {
 	lockInfo, err := json.Marshal(backup.LockInfo{Hostname: "backup.example.test", PID: 1234, Operation: "create", AcquiredAt: time.Now().UTC().Format(time.RFC3339Nano)})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(lock, lockInfo, 0o600))
-	args := []string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", manifest.SnapshotID, "--repo", repo.Root(), "--target", target, "--permissions-only"}
-	var output bytes.Buffer
-	rootCmd.SetOut(&output)
-	rootCmd.SetArgs(args)
-	require.ErrorIs(t, executeRootContext(t.Context(), rootCmd), backup.ErrRepoLocked)
-	rootCmd.SetArgs(append(args, "--force-unlock"))
-	require.NoError(t, executeRootContext(t.Context(), rootCmd))
-	assert.Contains(t, output.String(), "secured token files: 0 (snapshot contains no token files)")
-	after, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	args := []string{manifest.SnapshotID, "--target", target, "--permissions-only"}
+	_, err = runBackupTokenRestore(t, cfg, repo, args...)
+	require.ErrorIs(t, err, backup.ErrRepoLocked)
+	output, err := runBackupTokenRestore(t, cfg, repo, append(args, "--force-unlock")...)
+	require.NoError(t, err)
+	assert.Contains(t, output, "secured token files: 0")
+	after, err := windows.GetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	require.NoError(t, err)
 	assert.Equal(t, locked.String(), after.String())
 }

@@ -3,28 +3,27 @@ package cmd
 import (
 	"log/slog"
 	"testing"
+
+	"github.com/spf13/pflag"
 )
 
 func prepareBackupTokenRestore(t *testing.T) {
 	t.Helper()
-	oldRepo, oldTarget, oldOverwrite := backupRestoreRepo, backupRestoreTarget, backupRestoreOverwrite
-	oldForce, oldJobs := backupRestoreForceUnlock, backupRestoreJobs
-	oldLoose, oldIntegrity, oldPermissions := backupRestoreLooseAttachments, backupRestoreIntegrityCheck, backupRestorePermissionsOnly
 	oldOut, oldErr, oldLogger := rootCmd.OutOrStdout(), rootCmd.ErrOrStderr(), slog.Default()
-	changed := make(map[string]bool)
-	for _, name := range []string{"repo", "target", "jobs", "overwrite", "force-unlock", "integrity-check", "loose-attachments", "permissions-only"} {
-		changed[name] = backupRestoreCmd.Flags().Lookup(name).Changed
-	}
+	resetBackupRestoreFlags()
 	t.Cleanup(func() {
-		backupRestoreRepo, backupRestoreTarget, backupRestoreOverwrite = oldRepo, oldTarget, oldOverwrite
-		backupRestoreForceUnlock, backupRestoreJobs = oldForce, oldJobs
-		backupRestoreLooseAttachments, backupRestoreIntegrityCheck, backupRestorePermissionsOnly = oldLoose, oldIntegrity, oldPermissions
-		for name, wasChanged := range changed {
-			backupRestoreCmd.Flags().Lookup(name).Changed = wasChanged
-		}
+		resetBackupRestoreFlags()
 		rootCmd.SetOut(oldOut)
 		rootCmd.SetErr(oldErr)
 		rootCmd.SetArgs(nil)
 		slog.SetDefault(oldLogger)
+	})
+}
+
+// resetBackupRestoreFlags clears values and Changed marks that persist between in-process runs.
+func resetBackupRestoreFlags() {
+	backupRestoreCmd.Flags().VisitAll(func(flag *pflag.Flag) {
+		_ = flag.Value.Set(flag.DefValue)
+		flag.Changed = false
 	})
 }

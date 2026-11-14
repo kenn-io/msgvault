@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
@@ -55,16 +56,13 @@ func captureBackupTokenSnapshot(t *testing.T, repo *backup.Repo, cfg *config.Con
 	require.NoError(t, err)
 }
 
-func runBackupTokenRestore(t *testing.T, cfg *config.Config, repo *backup.Repo, target string, overwrite bool) error {
+func runBackupTokenRestore(t *testing.T, cfg *config.Config, repo *backup.Repo, args ...string) (string, error) {
 	t.Helper()
-	backupRestoreOverwrite, backupRestoreForceUnlock = false, false
-	backupRestoreLooseAttachments, backupRestoreIntegrityCheck, backupRestorePermissionsOnly = false, false, false
-	rootCmd.SetOut(io.Discard)
+	resetBackupRestoreFlags()
+	var output bytes.Buffer
+	rootCmd.SetOut(&output)
 	rootCmd.SetErr(io.Discard)
-	args := []string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", "--repo", repo.Root(), "--target", target, "--jobs", "1"}
-	if overwrite {
-		args = append(args, "--overwrite")
-	}
-	rootCmd.SetArgs(args)
-	return executeRootContext(t.Context(), rootCmd)
+	rootCmd.SetArgs(append([]string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", "--repo", repo.Root()}, args...))
+	err := executeRootContext(t.Context(), rootCmd)
+	return output.String(), err
 }

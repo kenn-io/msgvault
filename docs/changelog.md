@@ -8,8 +8,6 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- On Windows, restored token files remain readable. Retry a failed permission repair with `backup restore SNAPSHOT --target DIR --permissions-only`.
-
 - Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
 
 ## 0.24.0

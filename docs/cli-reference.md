@@ -2660,7 +2660,7 @@ msgvault backup create [flags]
 |---|---|
 | `--repo <dir>` | Backup repository directory |
 | `--include-config` | Include `config.toml` verbatim; may contain API keys |
-| `--include-tokens` | Include sensitive token files, provider credentials, and the server key |
+| `--include-tokens` | Include the tokens directory and `client_secret*.json` files |
 | `--allow-plaintext-secrets` | Allow config/tokens in an unencrypted repository |
 | `--tag <text>` | Optional label recorded on the snapshot manifest |
 | `--force-unlock` | Break a stale exclusive repository lock before creating |

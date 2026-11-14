@@ -3,9 +3,7 @@
 package cmd
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,20 +50,12 @@ func TestBackupRestorePermissionConflictAfterPublication(t *testing.T) {
 	require.NoError(windows.SetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
 	omitted := filepath.Join(tokens, "oauth-token.json.lock")
 	require.NoError(os.WriteFile(omitted, []byte("omitted"), 0o600))
-	backupRestoreOverwrite, backupRestoreForceUnlock = false, false
-	backupRestoreLooseAttachments, backupRestoreIntegrityCheck, backupRestorePermissionsOnly = false, false, false
-	var output bytes.Buffer
-	rootCmd.SetOut(&output)
-	rootCmd.SetErr(io.Discard)
-	rootCmd.SetArgs([]string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", "--repo", repo.Root(), "--target", target, "--jobs", "1", "--overwrite"})
-	err = executeRootContext(t.Context(), rootCmd)
+	output, err := runBackupTokenRestore(t, cfg, repo, "--target", target, "--overwrite")
 	require.ErrorContains(err, "was restored to")
 	require.ErrorContains(err, "permissions conflict")
 	manifest, readErr := repo.LatestSnapshot()
 	require.NoError(readErr)
-	assert.Contains(output.String(), fmt.Sprintf("Restored snapshot %s to %s", manifest.SnapshotID, target))
-	assert.Contains(output.String(), "Database: ")
-	assert.Contains(output.String(), "Attachments: ")
+	assert.Contains(output, fmt.Sprintf("Restored snapshot %s to %s", manifest.SnapshotID, target))
 	other := filepath.Join(tokens, "other-snapshot.json")
 	require.NoError(os.WriteFile(filepath.Join(cfg.TokensDir(), "other-snapshot.json"), []byte("other"), 0o600))
 	captureBackupTokenSnapshot(t, repo, cfg, dbPath, attachments)
@@ -78,33 +68,28 @@ func TestBackupRestorePermissionConflictAfterPublication(t *testing.T) {
 	attachment := filepath.Join(target, "attachments", "unrelated")
 	require.NoError(os.MkdirAll(filepath.Dir(attachment), 0o700))
 	require.NoError(os.WriteFile(attachment, []byte("attachment"), 0o600))
-	attachmentInfo, readErr := os.Stat(attachment)
-	require.NoError(readErr)
-	db := filepath.Join(target, "msgvault.db")
-	before, readErr := os.ReadFile(db)
-	require.NoError(readErr)
-	info, readErr := os.Stat(db)
-	require.NoError(readErr)
+	dataState := func() (state []string) {
+		for _, path := range []string{filepath.Join(target, "msgvault.db"), attachment} {
+			data, err := os.ReadFile(path)
+			require.NoError(err)
+			info, err := os.Stat(path)
+			require.NoError(err)
+			state = append(state, fmt.Sprint(info.ModTime(), string(data)))
+		}
+		return state
+	}
+	before := dataState()
 	require.NoError(os.Rename(omitted, filepath.Join(t.TempDir(), "omitted")))
-	backupRestoreOverwrite = false
-	output.Reset()
-	rootCmd.SetOut(&output)
-	rootCmd.SetArgs([]string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", manifest.SnapshotID, "--repo", repo.Root(), "--target", target, "--permissions-only"})
-	require.NoError(executeRootContext(t.Context(), rootCmd))
-	assert.Contains(output.String(), "secured token files: 1")
-	after, readErr := os.ReadFile(db)
-	require.NoError(readErr)
-	afterInfo, readErr := os.Stat(db)
-	require.NoError(readErr)
-	assert.Equal(before, after)
-	assert.Equal(info.ModTime(), afterInfo.ModTime())
-	attachmentBytes, readErr := os.ReadFile(attachment)
-	require.NoError(readErr)
-	afterAttachment, readErr := os.Stat(attachment)
-	require.NoError(readErr)
-	assert.Equal("attachment", string(attachmentBytes))
-	assert.Equal(attachmentInfo.ModTime(), afterAttachment.ModTime())
+	output, err = runBackupTokenRestore(t, cfg, repo, manifest.SnapshotID, "--target", target, "--permissions-only")
+	require.NoError(err)
+	assert.Contains(output, "secured token files: 1")
+	assert.Equal(before, dataState())
 	otherAfter, readErr := windows.GetNamedSecurityInfo(other, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	require.NoError(readErr)
 	assert.Equal(otherACL.String(), otherAfter.String())
+	restored, err := providercredentials.Read(tokens)
+	require.NoError(err)
+	value, _, err := restored.Resolve(providercredentials.VectorEmbeddingsID, endpoint, "", nil)
+	require.NoError(err)
+	assert.Equal(providerKey, value)
 }

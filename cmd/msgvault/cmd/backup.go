@@ -275,11 +275,7 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("securing restored credentials: %w", err)
 		}
-		if count == 0 {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "secured token files: 0 (snapshot contains no token files)")
-		} else {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "secured token files: %d\n", count)
-		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "secured token files: %d\n", count)
 		return nil
 	}
 	if backupRestoreAfterDaemonPreflight != nil {
