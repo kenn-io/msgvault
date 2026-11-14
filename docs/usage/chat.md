@@ -460,6 +460,8 @@ The MCP server exposes the following tools to connected AI clients:
 | `create_saved_view` | Create a persistent Saved View. Write-class. | `name` (string, required), `canonical_state` (object, required), `schema_version` (int, required; use `3` for local date bounds with numeric offsets, or `2` for UTC; schema `1` retains literal-pipe meaning), `description` (string) |
 | `update_saved_view` | Patch supplied Saved View fields using optimistic revision checking. Write-class. | `id` (int, required), `revision` (int, required), at least one of `name`, `description`, `canonical_state`, `schema_version` |
 | `delete_saved_view` | Delete a Saved View definition, not archive messages. Write-class and destructive. | `id` (int, required), `revision` (int, required) |
+| `list_deletions` | List staged deletion batches, optionally by status. | Optional `status`: `pending`, `in_progress`, `completed`, `failed`, or `cancelled` |
+| `get_deletion` | Read a staged batch lifecycle receipt. | Required `batch_id` |
 | `stage_deletion` | Stage every match its source can delete (creates manifest only); refuses above 100000 Gmail, Microsoft Graph, or IMAP matches | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
 | `find_contact_candidates` | Find durable people by saved or observed names; returns stable UIDs and explicit ambiguity. Available with daemon API schema 3.20.0 or newer. | `query` (required), `limit` (1–100, default 20), `after_id` |
 | `get_person_messaging_routes` | Resolve a selected UID to curated points, bound observations, unreviewed suggestions and exact archived routes, with status and evidence. | `person_uid` (required), `network`, `source_id`, `limit` (1–100 per section, default 20), `after_conversation_id`, `after_contact_point_id`, `after_observation_id`, `after_suggestion_id` |
@@ -1000,6 +1002,8 @@ and never grants permission to modify a profile. Only Notes marked with `user`
 provenance are user-authored; MCP writes use `enrichment` provenance.
 
 ## Staged Deletion via MCP
+
+Owner sessions can use `list_deletions` and `get_deletion` without enabling writes when the selected daemon advertises their routes. Delegated sessions cannot use these reads. Pass `batch_id` from `stage_deletion` or `id` from `list_deletions` to `get_deletion`. The lifecycle receipt can include failed and checkpoint IDs; it is not a selection preview. Lists or receipts over 1 MiB return `operation_response_limit_exceeded`; use the CLI or HTTP API to read them.
 
 When enabled for the transport, `stage_deletion` lets an AI assistant help you
 plan archive cleanup. It accepts either a Gmail-style query string or structured filters (sender, domain, label, date range), but not both at once. Query staging includes Gmail, Microsoft Graph, and IMAP mail. It stages every match its source can delete, or refuses without saving a batch. Chats and mail from other sources are left out of the search. Matches no longer in the archive or that cannot be deleted from their source, including archive-only mail and meetings, are skipped and counted in `skipped_count`. A query with matches but none deletable refuses without saving a batch. The 100,000 limit counts Gmail, Microsoft Graph, and IMAP matches, including skipped ones. Structured filters stage eligible Gmail and Microsoft Graph mail and do not report `skipped_count`. Narrow a larger selection with `before:`, `after:`, or `account` and stage each part.

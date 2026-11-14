@@ -58,7 +58,7 @@ func TestMCPCapabilitiesRequiresOwner(t *testing.T) {
 	assertions.NotContains(delegated.Body.String(), agentTokenTestAPIKey)
 }
 
-func TestMCPCapabilitiesDescribeRealLoopRoutes(t *testing.T) {
+func TestMCPCapabilitiesDescribeRealLoopAndDeletionRoutes(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Logger: testLogger()})
@@ -77,6 +77,8 @@ func TestMCPCapabilitiesDescribeRealLoopRoutes(t *testing.T) {
 		{"getPersonProfileHistory", http.MethodGet, "/api/v1/people/{id}/profile/history"},
 		{"getPersonProfileMediaContent", http.MethodGet, "/api/v1/people/{id}/profile/media/{media_id}/content"},
 		{"listLoops", http.MethodGet, "/api/v1/loops"},
+		{"listDeletions", http.MethodGet, "/api/v1/deletions"},
+		{"getDeletion", http.MethodGet, "/api/v1/deletions/{id}"},
 		{"markLoopDone", http.MethodPost, "/api/v1/loops/{message_id}/done"},
 		{"snoozeLoop", http.MethodPost, "/api/v1/loops/{message_id}/snooze"},
 		{"reopenLoop", http.MethodPost, "/api/v1/loops/{message_id}/reopen"},
@@ -85,6 +87,7 @@ func TestMCPCapabilitiesDescribeRealLoopRoutes(t *testing.T) {
 		assertions.Equal(tc.method, routes[tc.id].Method)
 		assertions.Equal(tc.path, routes[tc.id].Path)
 	}
+	assertions.Contains(routes["listDeletions"].QueryParameters, "status")
 	assertions.ElementsMatch([]string{"limit", "person_id"}, routes["listLoops"].QueryParameters)
 	assertions.Contains(routes["snoozeLoop"].RequestProperties, "until")
 	assertions.Contains(routes["markLoopDone"].QueryParameters, "question_message_ids")
