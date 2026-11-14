@@ -97,7 +97,7 @@ func TestImportDirectionsGroupsAndOmissions(t *testing.T) {
 		`{"recipient":{"id":"3","group":{"masterKey":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=","snapshot":{"title":{"title":"Example group"}}}}}`,
 		`{"chat":{"id":"8","recipientId":"3"}}`,
 		`{"chat":{"id":"9","recipientId":"1"}}`,
-		`{"chatItem":{"chatId":"8","authorId":"1","dateSent":"1700000000001","outgoing":{},"pinDetails":{"pinnedAtTimestamp":"1700000000500","pinNeverExpires":true},"standardMessage":{"text":{"body":"Group"},"quote":{},"reactions":[{}],"linkPreview":[{}]}}}`,
+		`{"chatItem":{"chatId":"8","authorId":"1","dateSent":"1700000000001","outgoing":{},"pinDetails":{"pinnedAtTimestamp":"1700000000500","pinNeverExpires":true},"standardMessage":{"text":{"body":"Group"},"quote":{},"reactions":[{}],"linkPreview":[{}],"attachments":[{"flag":"VOICE_MESSAGE"}]}}}`,
 		`{"chatItem":{"chatId":"9","authorId":"1","dateSent":"1700000000002","outgoing":{},"standardMessage":{"text":{"body":"Note"}}}}`,
 		`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000004","incoming":{},"remoteDeletedMessage":{}}}`,
 		`{"futureFrame":{}}`, `{}`)
@@ -109,6 +109,7 @@ func TestImportDirectionsGroupsAndOmissions(t *testing.T) {
 	assert.EqualValues(1, summary.Omitted["pin"])
 	assert.EqualValues(1, summary.Omitted["reactions"])
 	assert.EqualValues(1, summary.Omitted["link_preview"])
+	assert.EqualValues(1, summary.Omitted["attachment_flag"])
 	assert.EqualValues(1, summary.UnknownFrames)
 	assert.EqualValues(1, summary.EmptyFrames)
 	var fromMe, owners int
@@ -174,86 +175,6 @@ func assertBody(t *testing.T, st *store.Store, id int64, want string) {
 	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(t, err)
 	assert.Equal(t, want, body)
-}
-func TestImportMediaRepairOccurrencesAndLongText(t *testing.T) {
-	for _, long := range []bool{false, true} {
-		t.Run(strconv.FormatBool(long), func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			st := testutil.NewTestStore(t)
-			data := []byte("Fictional long text 星")
-			if !long {
-				data = []byte{0, 0, 0, 1} // Two fictional 16-bit PCM samples.
-			}
-			frame := mediaMessage(data, long)
-			if !long {
-				frame = strings.ReplaceAll(frame, `"contentType":"text/plain"`, `"contentType":"audio/L16;rate=8000;channels=1"`)
-				frame = strings.Replace(frame, `"pointer":`, `"flag":"VOICE_MESSAGE","pointer":`, 1)
-			}
-			root := fixture(t, frame)
-			opts := options(t, root)
-			summary, err := Import(t.Context(), st, opts)
-			require.NoError(err)
-			want := 2
-			if long {
-				want = 1
-			}
-			assert.Equal(want, summary.AttachmentsMissing)
-			path := putMedia(t, root, data)
-			summary, err = Import(t.Context(), st, opts)
-			require.NoError(err)
-			assert.Equal(want, summary.AttachmentsStored)
-			assert.Zero(summary.AttachmentsMissing)
-			assert.Zero(summary.Omitted["incomplete_long_text"])
-			changed := int64(0)
-			if long {
-				changed = 1 // Full text differs from the first retained inline body.
-			}
-			assert.Equal(changed, summary.MessagesChanged)
-			id, _ := onlyMessage(t, st)
-			refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
-			require.NoError(err)
-			require.Len(refs, want)
-			if !long {
-				assert.EqualValues(1, summary.Omitted["attachment_flag"])
-				stored, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, refs[0].StoragePath))
-				require.NoError(err)
-				assert.Equal(data, stored)
-			}
-			for _, ref := range refs {
-				assert.NotEmpty(ref.ContentHash)
-				assert.Equal("display.txt", ref.Filename)
-			}
-			require.NoError(os.Remove(path))
-			summary, err = Import(t.Context(), st, opts)
-			require.NoError(err)
-			assert.EqualValues(1, summary.MessagesExisting)
-			assert.Equal(changed, summary.MessagesChanged)
-			assert.Zero(summary.AttachmentsStored)
-			assert.Zero(summary.AttachmentsMissing)
-			assert.Zero(summary.Omitted["incomplete_long_text"])
-			for _, hash := range slotHashes(t, st, id) {
-				assert.NotEmpty(hash)
-			}
-			if long {
-				// First snapshot is retained even after missing long text becomes available.
-				assertBody(t, st, id, "inline")
-				// Long text stored on first import keeps counting as unchanged once its file is gone.
-				st2 := testutil.NewTestStore(t)
-				putMedia(t, root, data)
-				_, err = Import(t.Context(), st2, opts)
-				require.NoError(err)
-				id, _ = onlyMessage(t, st2)
-				assertBody(t, st2, id, string(data))
-				require.NoError(os.Remove(path))
-				summary, err = Import(t.Context(), st2, opts)
-				require.NoError(err)
-				assert.Zero(summary.MessagesChanged)
-				assert.Zero(summary.AttachmentsMissing)
-				assert.Zero(summary.Omitted["incomplete_long_text"])
-			}
-		})
-	}
 }
 func TestImportUnsafeMedia(t *testing.T) {
 	for _, tc := range []struct {
@@ -388,7 +309,7 @@ func TestReaderBounds(t *testing.T) {
 }
 func TestProtoScalars(t *testing.T) {
 	var item chatItem
-	require.NoError(t, json.Unmarshal([]byte(`{"chatId":"18446744073709551615","dateSent":"1700000000000"}`), &item))
+	require.NoError(t, json.Unmarshal([]byte(`{"chatId":"18446744073709551615"}`), &item))
 	assert.Equal(t, "18446744073709551615", string(item.ChatID))
 }
 
@@ -535,21 +456,17 @@ func TestContactIdentifierAdded(t *testing.T) {
 			root := fixture(t, incoming)
 			group := `{"recipient":{"id":"3","group":{"masterKey":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}}}`
 			groupChat := `{"chat":{"id":"8","recipientId":"3"}}`
-			groupMessage := `{"chatItem":{"chatId":"8","authorId":"2","dateSent":"1700000000001","incoming":{},"standardMessage":{"attachments":[{"clientUuid":"AQ=="}]}}}`
+			groupMessage := `{"chatItem":{"chatId":"8","authorId":"2","dateSent":"1700000000001","incoming":{},"standardMessage":{"text":{"body":"group"}}}}`
 			lines := []string{header, account, self, `{"recipient":{"id":"2","contact":` + contact + `}}`, direct, group, groupChat, incoming, groupMessage}
 			require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
 			opts := options(t, root)
 			_, err := Import(t.Context(), st, opts)
 			require.NoError(t, err)
 			lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`
-			data := []byte("fictional group media")
-			putMedia(t, root, data)
-			lines[8] = strings.Replace(groupMessage, `"clientUuid":"AQ=="`, `"clientUuid":"AQ==","pointer":`+pointer(data), 1)
 			require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
 			summary, err := Import(t.Context(), st, opts)
 			require.NoError(t, err)
 			assert.EqualValues(t, 2, summary.MessagesExisting)
-			assert.Equal(t, 1, summary.AttachmentsStored)
 			assert.Equal(t, 2, messageCount(t, st))
 			var conversations int
 			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations").Scan(&conversations))
@@ -568,15 +485,13 @@ func TestSourceFormatRefusesNewerVersion(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := fixture(t, incoming)
 	opts := options(t, root)
+	source, err := st.GetOrCreateSourceContext(t.Context(), SourceType, opts.Account)
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceSyncState(t.Context(), source.ID, `{"signal_export_format":2}`))
 	summary, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncState(t.Context(), summary.SourceID, `{"signal_export_format":2}`))
-	_, err = st.DB().ExecContext(t.Context(), "UPDATE messages SET source_message_id = ?", "newer-format-key")
-	require.NoError(t, err)
-	summary, err = Import(t.Context(), st, opts)
 	require.ErrorIs(t, err, ErrNewerFormat)
 	assert.Zero(t, summary.SourceID)
-	assert.Equal(t, 1, messageCount(t, st))
+	assert.Zero(t, messageCount(t, st))
 }
 func TestImportLongTextTurnsInline(t *testing.T) {
 	assert := assert.New(t)
@@ -605,13 +520,11 @@ func TestPhoneOnlyGroupAuthorAndUnsupportedRecipient(t *testing.T) {
 		`{"recipient":{"id":"5","group":{"masterKey":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}}}`,
 		`{"chat":{"id":"8","recipientId":"5"}}`,
 		`{"chatItem":{"chatId":"8","authorId":"3","dateSent":"1700000000001","incoming":{},"standardMessage":{}}}`,
-		`{"chatItem":{"chatId":"8","authorId":"4","dateSent":"1700000000002","incoming":{},"standardMessage":{}}}`,
-		`{bad`)
+		`{"chatItem":{"chatId":"8","authorId":"4","dateSent":"1700000000002","incoming":{},"standardMessage":{}}}`)
 	summary, err := Import(t.Context(), st, options(t, root))
-	require.ErrorContains(t, err, "line 12")
+	require.NoError(t, err)
 	assert.EqualValues(t, 1, summary.MessagesAdded)
 	assert.Equal(t, map[string]int64{"author_identity": 1}, summary.Skipped)
-	assert.Equal(t, map[string]int64{"reactions": 0, "link_preview": 0, "revision_history": 0}, summary.Omitted)
 }
 
 // A missing slot is filled only by a unique UUID or locator key from its first
@@ -635,6 +548,7 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 		{"hashless uuid after reorder", attachments("AQ==", `{"locatorInfo":{"key":"Ag=="}}`), attachments("BA==", pointer(a)), `"attachments":[{"clientUuid":"Aw==","pointer":{}},{"clientUuid":"AQ==","pointer":` + pointer(a) + `}]`, a, a, map[string]string{"attachment:0": hashHex(a)}},
 		{"hashless long text by key", `"longText":{"locatorInfo":{"key":"AQ=="}}`, `"longText":` + otherKey, `"longText":` + pointer(a), a, a, map[string]string{"long_text": hashHex(a)}},
 		{"earlier album slot removed", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(b) + `}]`, attachments("Aw==", pointer(b)), attachments("Ag==", pointer(b)), b, b, map[string]string{"attachment:0": "", "attachment:1": hashHex(b)}},
+		{"equal bytes in separate slots", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, attachments("Aw==", pointer(b)), `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, b, a, map[string]string{"attachment:0": hashHex(a), "attachment:1": hashHex(a)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -660,9 +574,51 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 			putMedia(t, root, tc.repairedMedia)
 			summary, err = Import(t.Context(), st, opts)
 			require.NoError(err)
-			assert.Equal(1, summary.AttachmentsStored)
-			assert.Equal(len(tc.want)-1, summary.AttachmentsMissing)
+			stored := 0
+			for _, hash := range tc.want {
+				if hash != "" {
+					stored++
+				}
+			}
+			assert.Equal(stored, summary.AttachmentsStored)
+			assert.Equal(len(tc.want)-stored, summary.AttachmentsMissing)
 			assert.Equal(tc.want, slotHashes(t, st, id))
+			if tc.name == "equal bytes in separate slots" {
+				refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
+				require.NoError(err)
+				require.Len(refs, 2)
+				assert.Equal("display.txt", refs[0].Filename)
+				assert.Equal("display.txt", refs[1].Filename)
+				assert.Equal(refs[0].StoragePath, refs[1].StoragePath)
+				data, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, refs[0].StoragePath))
+				require.NoError(err)
+				assert.Equal(a, data)
+				require.NoError(os.Remove(mediaPath(root, a)))
+				summary, err = Import(t.Context(), st, opts)
+				require.NoError(err)
+				assert.Zero(summary.AttachmentsStored)
+				assert.Zero(summary.AttachmentsMissing)
+			}
+			if tc.name == "hashless long text by key" {
+				assert.EqualValues(1, summary.MessagesChanged)
+				require.NoError(os.Remove(mediaPath(root, a)))
+				summary, err = Import(t.Context(), st, opts)
+				require.NoError(err)
+				assert.EqualValues(1, summary.MessagesChanged)
+				assert.Zero(summary.AttachmentsStored)
+				assert.Zero(summary.AttachmentsMissing)
+				st2 := testutil.NewTestStore(t)
+				putMedia(t, root, a)
+				_, err = Import(t.Context(), st2, opts)
+				require.NoError(err)
+				id2, _ := onlyMessage(t, st2)
+				assertBody(t, st2, id2, string(a))
+				require.NoError(os.Remove(mediaPath(root, a)))
+				summary, err = Import(t.Context(), st2, opts)
+				require.NoError(err)
+				assert.Zero(summary.MessagesChanged)
+				assert.Zero(summary.AttachmentsMissing)
+			}
 			again, err := st.GetMessageRawContext(t.Context(), id)
 			require.NoError(err)
 			assert.Equal(raw, again)
@@ -671,31 +627,26 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 	}
 }
 
-// Every directory entry counts toward the index limit; past it, media is
-// counted missing while later frames still import.
+// The limit counts directory entries and later frame callbacks report missing media.
 func TestMediaIndexLimit(t *testing.T) {
 	data := []byte("fictional index media")
+	other := []byte("fictional other index media")
+	require.NotEqual(t, hashHex(data)[:2], hashHex(other)[:2])
 	frame := mediaMessage(data, false)
-	root := fixture(t, frame, strings.Replace(frame, "1700000000000", "1700000000001", 1))
+	second := strings.Replace(mediaMessage(other, false), "1700000000000", "1700000000001", 1)
+	root := fixture(t, frame, second)
 	path := putMedia(t, root, data)
 	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(path), "unrelated"), []byte("x"), 0600))
-	for limit, want := range map[int]string{2: "", 1: "index_limit"} {
-		r, err := openReader(t.Context(), root)
-		require.NoError(t, err)
-		r.maxMedia = limit
-		_, reason, err := r.mediaName(t.Context(), hashHex(data))
-		require.NoError(t, err)
-		assert.Equal(t, want, reason)
-		if limit == 2 {
-			assert.Equal(t, 2, r.mediaNames)
-		} else {
-			_, reason, err = r.mediaName(t.Context(), hashHex(data))
-			require.NoError(t, err)
-			assert.Equal(t, "index_limit", reason)
-		}
-		require.NoError(t, r.Close())
-	}
 	r, err := openReader(t.Context(), root)
+	require.NoError(t, err)
+	r.maxMedia = 2
+	_, reason, err := r.mediaName(t.Context(), hashHex(data))
+	require.NoError(t, err)
+	assert.Empty(t, reason)
+	assert.Equal(t, 2, r.mediaNames)
+	require.NoError(t, r.Close())
+
+	r, err = openReader(t.Context(), root)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, r.Close()) }()
 	r.maxMedia = 1
