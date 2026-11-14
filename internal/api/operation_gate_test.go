@@ -645,6 +645,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 		{"export-messages", `{"args":["export-messages","--start","2026-07-20T00:00:00Z","--end","2026-07-21T00:00:00Z"]}`},
 		{"export-discord", `{"args":["export-discord"]}`},
 		{"list-folders", `{"args":["list-folders"]}`},
+		{"verify-attachments", `{"args":["verify-attachments","--limit=10","--json"]}`},
 		{"policy list", `{"args":["policy","list"]}`},
 		{"embeddings list", `{"args":["embeddings","list"]}`},
 		{"embeddings value flag before status", `{"args":["embeddings","--source","42","--json=true","status"]}`},

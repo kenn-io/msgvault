@@ -187,6 +187,7 @@ var topLevelCommandGroups = map[string]string{
 	"update":                  helpGroupOperations,
 	"update-account":          helpGroupSources,
 	"verify":                  helpGroupSources,
+	"verify-attachments":      helpGroupMaintenance,
 	"version":                 helpGroupOperations,
 }
 
