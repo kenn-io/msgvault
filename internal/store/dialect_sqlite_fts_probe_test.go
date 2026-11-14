@@ -132,6 +132,7 @@ func TestSQLiteFTSProbeQueryPlan(t *testing.T) {
 					ALTER TABLE messages ADD COLUMN conversation_id INTEGER;
 					CREATE TABLE conversations (id INTEGER PRIMARY KEY, title TEXT);
 					CREATE TABLE message_bodies (message_id INTEGER PRIMARY KEY, body_text TEXT);
+					CREATE TABLE voice_transcripts (message_id INTEGER, attachment_id INTEGER, vault_uid TEXT, source_id TEXT, source_version_id TEXT, content_version_id TEXT, transcript_text TEXT);
 					CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT, phone_number TEXT);
 					CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT, email_address TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE);
 					DROP TABLE messages_fts;

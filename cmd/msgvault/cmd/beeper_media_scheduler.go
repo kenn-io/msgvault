@@ -64,10 +64,13 @@ func configureBeeperMediaJob(
 	cfg config.DocbankIntegrationConfig,
 	logger *slog.Logger,
 ) error {
+	settingErr := withBeeperMediaGate(ctx, gate, beeperMediaGateLabel, func() error {
+		return st.SetVoiceTranscriptSearch(ctx, cfg.Enabled && cfg.VoiceTranscriptSearch)
+	})
 	// The mirror reports its own setup failure independently of the audio route.
 	_ = configureDocbankAttachmentJob(ctx, sched, gate, st, blobs, attachmentsDir, cfg, logger)
-	if !cfg.Enabled {
-		return removeBeeperMediaRoute(ctx, sched, gate, st)
+	if !cfg.Enabled || settingErr != nil {
+		return errors.Join(settingErr, removeBeeperMediaRoute(ctx, sched, gate, st))
 	}
 	err := addBeeperMediaRoute(ctx, sched, gate, st, blobs, spoolDir, cfg, logger)
 	if err != nil {
@@ -175,6 +178,9 @@ func addBeeperMediaRoute(
 	}
 	submitter := beeper.NewMediaSubmitter(st, blobs, submitClient, destination, spoolDir).
 		WithASRProfile(cfg.ASRProfile).WithOperationGate(beeperMediaGate(gate, beeperMediaGateLabel))
+	if cfg.VoiceTranscriptSearch {
+		submitter.WithVoiceTranscriptSearch(client)
+	}
 	return sched.AddJob(scheduler.Job{
 		Name:     beeperMediaSubmitJob,
 		Schedule: beeperMediaSubmitCron,

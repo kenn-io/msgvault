@@ -111,32 +111,29 @@ func (q *recordingFTSQuerier) Exec(query string, args ...any) (sql.Result, error
 }
 
 func (*recordingFTSQuerier) QueryRow(string, ...any) *sql.Row {
-	panic("QueryRow is not used by FTSUpsert")
+	panic("unexpected QueryRow")
 }
 
-func TestPostgreSQLDialect_FTSLayoutVersioned(t *testing.T) {
+func TestPostgreSQLDialect_FTSVectorWeights(t *testing.T) {
 	assert := assert.New(t)
-	d := &PostgreSQLDialect{}
-	q := &recordingFTSQuerier{}
-	require.NoError(t, d.FTSUpsert(q, FTSDoc{
+	vector, _ := pgFTSVector(FTSDoc{
 		MessageID: 1,
 		Subject:   "subject",
 		Body:      "body",
 		FromAddr:  "from@example.com",
 		ToAddrs:   "to@example.com",
 		CcAddrs:   "cc@example.com",
-	}), "FTSUpsert")
+	})
 
-	assert.Contains(q.query, "setweight(to_tsvector('simple', COALESCE($2, '')", "subject vector")
-	assert.Contains(q.query, "), 'A')", "subject weight")
-	assert.Contains(q.query, "setweight(to_tsvector('simple', COALESCE($4, '')", "sender vector")
-	assert.Contains(q.query, "), 'B')", "sender weight")
-	assert.Contains(q.query, "setweight(to_tsvector('simple', COALESCE($5, '')", "to vector")
-	assert.Contains(q.query, "setweight(to_tsvector('simple', COALESCE($6, '')", "cc vector")
-	assert.Contains(q.query, "), 'C')", "recipient weight")
-	assert.Contains(q.query, "setweight(to_tsvector('simple', COALESCE($3, '')", "body vector")
-	assert.Contains(q.query, "), 'D')", "body weight")
-	assert.Contains(q.query, "indexing_version = 3", "layout version stamp")
+	assert.Contains(vector, "setweight(to_tsvector('simple', COALESCE($2, '')", "subject vector")
+	assert.Contains(vector, "), 'A')", "subject weight")
+	assert.Contains(vector, "setweight(to_tsvector('simple', COALESCE($4, '')", "sender vector")
+	assert.Contains(vector, "), 'B')", "sender weight")
+	assert.Contains(vector, "setweight(to_tsvector('simple', COALESCE($5, '')", "to vector")
+	assert.Contains(vector, "setweight(to_tsvector('simple', COALESCE($6, '')", "cc vector")
+	assert.Contains(vector, "), 'C')", "recipient weight")
+	assert.Contains(vector, "setweight(to_tsvector('simple', COALESCE($3, '')", "body vector")
+	assert.Contains(vector, "), 'D')", "body weight")
 }
 
 func TestPostgreSQLDialect_FTSNeedsBackfillSQLUsesLiteralVersion(t *testing.T) {

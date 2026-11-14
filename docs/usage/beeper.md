@@ -345,9 +345,10 @@ What happens:
   stays `blocked` without further polling. Resolve it in Docbank, then restart
   the msgvault daemon to resume checking its state.
 
-Provider transcripts stay searchable through the normal message text. This
-route does not add search over Docbank's processed output yet. Check progress
-with a query:
+Provider transcripts stay searchable through the normal message text. Set
+`integrations.docbank.voice_transcript_search` to search generated transcripts.
+Restart the daemon after changing this setting. Turning it off removes generated
+transcripts from the search index. Check progress with a query:
 
 ```sql
 SELECT retention_state, error_code, COUNT(*)

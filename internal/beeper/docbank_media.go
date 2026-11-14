@@ -85,15 +85,17 @@ type MediaBatchResult struct {
 // MediaSubmitter discovers current stored media, persists source mappings and
 // performs at most one Docbank action per bounded pass.
 type MediaSubmitter struct {
-	store         *store.Store
-	blobs         *attachmentstore.Store
-	client        *docbankmedia.Client
-	destination   string
-	spoolDir      string
-	actionTimeout time.Duration
-	uploadRate    int64
-	asrProfile    string
-	gate          func(context.Context) (func(), bool)
+	store            *store.Store
+	blobs            *attachmentstore.Store
+	client           *docbankmedia.Client
+	destination      string
+	spoolDir         string
+	actionTimeout    time.Duration
+	uploadRate       int64
+	asrProfile       string
+	transcriptClient *docbankmedia.Client
+	transcriptAfter  int64
+	gate             func(context.Context) (func(), bool)
 }
 
 // WithASRProfile enables a configured Docbank processing profile for stored
@@ -102,6 +104,12 @@ func (w *MediaSubmitter) WithASRProfile(profile string) *MediaSubmitter {
 	if w != nil {
 		w.asrProfile = strings.TrimSpace(profile)
 	}
+	return w
+}
+
+// WithVoiceTranscriptSearch enables reading generated speech for keyword search.
+func (w *MediaSubmitter) WithVoiceTranscriptSearch(client *docbankmedia.Client) *MediaSubmitter {
+	w.transcriptClient = client
 	return w
 }
 
@@ -134,19 +142,28 @@ func (w *MediaSubmitter) RunBatch(ctx context.Context) (MediaBatchResult, error)
 		return MediaBatchResult{}, err
 	}
 	result, err := w.discover(ctx, archiveUID)
-	if err != nil || w.client == nil || w.blobs == nil {
+	if err != nil {
 		return result, endMediaPass(err)
+	}
+	finish := func(err error) (MediaBatchResult, error) {
+		if err == nil && w.transcriptClient != nil {
+			err = w.readVoiceTranscripts(ctx)
+		}
+		return result, endMediaPass(err)
+	}
+	if w.client == nil || w.blobs == nil {
+		return finish(nil)
 	}
 	operation, ok, err := w.store.NextBeeperMediaOperation(ctx, w.destination, time.Now().UTC())
 	if err != nil || !ok {
-		return result, endMediaPass(err)
+		return finish(err)
 	}
 	// ponytail: one remote action per pass (~1,440/day); batch once a measured backlog outgrows it.
 	retained, err := w.runOperation(ctx, archiveUID, operation)
 	if retained {
 		result.Retained++
 	}
-	return result, endMediaPass(err)
+	return finish(err)
 }
 
 // endMediaPass treats a busy gate as the end of the pass; the saved operation

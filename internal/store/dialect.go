@@ -19,12 +19,14 @@ const (
 // FTSDoc is the set of fields the dialect needs to upsert a message into
 // the full-text search index.
 type FTSDoc struct {
-	MessageID int64
-	Subject   string
-	Body      string
-	FromAddr  string
-	ToAddrs   string
-	CcAddrs   string
+	MessageID   int64
+	Subject     string
+	Body        string
+	FromAddr    string
+	ToAddrs     string
+	CcAddrs     string
+	voice       string
+	voiceLoaded bool
 }
 
 type ftsEnvelopeExpressions struct {

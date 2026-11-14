@@ -1514,6 +1514,7 @@ enabled = true
 url = "http://127.0.0.1:8080"     # your Docbank daemon; the port is an example
 api_key_env = "DOCBANK_API_KEY"   # daemon environment variable with the key
 all_sources_upload_consent = true # allow audio from every captured source to leave msgvault
+# voice_transcript_search = true  # include generated Beeper voice transcripts in keyword search
 # asr_profile = "asr"             # optional Docbank profile for audio without source text
 ```
 
@@ -1525,7 +1526,8 @@ all_sources_upload_consent = true # allow audio from every captured source to le
 | `api_key_env` | — | Name of the daemon environment variable that holds the Docbank API key. It is read for each request and sent as `X-Api-Key` |
 | `api_key` | — | Inline Docbank API key; takes priority over file and environment sources |
 | `api_key_file` | — | Owner-only Docbank key file, read for each request; takes priority over `api_key_env` |
-| `all_sources_upload_consent` | `false` | Allow stored audio and explicit source transcripts from every captured source, including future providers, to be sent to `url`. Without it the job only records local state |
+| `all_sources_upload_consent` | `false` | Allow stored audio and explicit source transcripts from every captured source, including future providers, to be sent to `url`. Without it, uploads stop. If `voice_transcript_search` remains enabled, the job can still read transcripts for previously retained recordings. |
+| `voice_transcript_search` | `false` | Include generated Beeper voice memo transcripts in keyword search. Restart the daemon after changing this setting. Disabling it removes saved transcripts from search. |
 | `asr_profile` | — | Optional Docbank processing profile for stored audio without usable source text. An empty value retains audio without requesting processing. Msgvault rejects `supplied-transcript`, which Docbank reserves for supplied transcript input. |
 | `reference_consent` | `false` | Send Loom/Cap links from every message source and native Teams recording pointers to `url` as references. This consent is separate from audio upload consent. |
 | `reference_origins` | `[]` | Exact origins for self-hosted Cap, such as `https://cap.example.test`. Include only scheme, host and optional port. Register each origin in Docbank too. |
