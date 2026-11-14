@@ -54,6 +54,7 @@ var ownerVerificationOperations = map[string]bool{
 	"markLoopDone":         false, "snoozeLoop": false, "reopenLoop": false,
 	"getMessageTags": false, "updateMessageTags": false,
 	"getGmailIDsByFilter": false, "createCLIDeletionManifest": false,
+	"listDeletions": false, "getDeletion": false,
 	"previewPersonTiers": false, "explainPersonTier": false, "mergePersons": false,
 	"approveCardDAVPublication": false, "syncCardDAV": false,
 	"getPersonByUID": false, "getPersonTracking": false, "getPersonContactState": false, "getOrganization": false,

@@ -68,6 +68,18 @@ func TestNullableObjectReferenceSchemas(t *testing.T) {
 	}
 }
 
+func TestOpenAPIVerificationHeader(t *testing.T) {
+	for _, doc := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		if !assert.NotNil(t, doc.Info) {
+			continue
+		}
+		assert.Contains(t, doc.Info.Description, "X-Msgvault-Verification: withhold")
+		assert.Contains(t, doc.Info.Description, "400")
+		assert.Contains(t, doc.Info.Description, "403")
+		assert.Contains(t, doc.Info.Description, "verification_masked")
+	}
+}
+
 func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)

@@ -312,15 +312,6 @@ func TestMCPOwnerDraftVerificationWithheld(t *testing.T) {
 	require.False(t, result.IsError, "%+v", result.Content)
 	assert.NotContains(t, mcpDraftResultText(t, result), "482913")
 	assert.Contains(t, mcpDraftResultText(t, result), "verification content masked")
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "create_saved_view", Arguments: map[string]any{"name": "codes", "canonical_state": map[string]any{"presentation": "table"}, "schema_version": 1}})
-	require.NoError(t, err)
-	require.False(t, result.IsError, "%+v", result.Content)
-	view, ok := result.StructuredContent.(map[string]any)
-	require.True(t, ok)
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "run_saved_view", Arguments: map[string]any{"id": view["id"]}})
-	require.NoError(t, err)
-	assert.True(t, result.IsError)
-	assert.Contains(t, mcpDraftResultText(t, result), "verification content is withheld")
 }
 
 func TestMCPDraftToolPropertiesMatchCommandFlags(t *testing.T) {

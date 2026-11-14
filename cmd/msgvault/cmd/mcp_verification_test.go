@@ -85,6 +85,18 @@ func TestOwnerMCPVerificationStageDeletion(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, manifests, 1)
 	assert.Equal(t, []string{"email-1"}, manifests[0].GmailIDs)
+	list, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_deletions", Arguments: map[string]any{"status": "pending"}})
+	require.NoError(t, err)
+	require.False(t, list.IsError, "%+v", list.Content)
+	data, err := json.Marshal(list.StructuredContent)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), manifests[0].ID)
+	receipt, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_deletion", Arguments: map[string]any{"batch_id": manifests[0].ID}})
+	require.NoError(t, err)
+	require.False(t, receipt.IsError, "%+v", receipt.Content)
+	data, err = json.Marshal(receipt.StructuredContent)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), manifests[0].ID)
 }
 
 func TestOwnerMCPVerificationPersonProfile(t *testing.T) {

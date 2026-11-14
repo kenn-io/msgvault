@@ -58,6 +58,15 @@ func TestMCPCapabilitiesRequiresOwner(t *testing.T) {
 	assertions.NotContains(delegated.Body.String(), agentTokenTestAPIKey)
 }
 
+func TestMCPCapabilitiesVerificationPolicy(t *testing.T) {
+	// These routes return message-derived text or perform administrative work.
+	withheld := map[string]bool{"listLoops": true, "enableLocalEmbeddings": true}
+	for _, route := range mcpRouteDescriptors(OpenAPIDocument()) {
+		_, admitted := ownerVerificationOperations[route.OperationID]
+		assert.True(t, admitted || withheld[route.OperationID], "advertised operation %s has no verification policy", route.OperationID)
+	}
+}
+
 func TestMCPCapabilitiesDescribeRealLoopAndDeletionRoutes(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

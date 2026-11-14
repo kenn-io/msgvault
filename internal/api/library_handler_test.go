@@ -297,6 +297,7 @@ func TestLibraryHandlerVerificationRefusesUnclassifiedReads(t *testing.T) {
 			srv.Handler(nil).ServeHTTP(w, request)
 			assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 			assert.Contains(t, w.Body.String(), `"verification_masked"`)
+			assert.Contains(t, w.Body.String(), "disable verification withholding")
 			assert.Empty(t, w.Header().Get(apiprotocol.VerificationHeader))
 		})
 	}

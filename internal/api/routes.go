@@ -162,6 +162,7 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 	configureHuma()
 
 	config := huma.DefaultConfig("msgvault API", APISchemaVersion)
+	config.Info.Description = "API v1 requests may set X-Msgvault-Verification: withhold to mask detected verification content. Other nonempty values receive 400. Operations that may expose verification content receive 403 with error code verification_masked while withholding."
 	config.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", prefixedSchemaName)
 	jsonFormat := huma.Format{
 		Marshal: marshalAPIJSON,
@@ -271,7 +272,7 @@ func (s *Server) ownerVerificationPolicy(ctx huma.Context, req *http.Request, ha
 	}
 	snapshot, admitted := ownerVerificationOperations[operation]
 	if !admitted {
-		return nil, newAPIHTTPError(http.StatusForbidden, "verification_masked", operation+" is unavailable while verification content is withheld; start MCP with --reveal-verification")
+		return nil, newAPIHTTPError(http.StatusForbidden, "verification_masked", operation+" is unavailable while verification content is withheld; disable verification withholding to allow it")
 	}
 	if !snapshot || hasSnapshot {
 		return noRelease, nil
