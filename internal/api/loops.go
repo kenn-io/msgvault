@@ -176,34 +176,8 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 	}
 	response := loopListResponse(result)
 	response.Commitments = loopCommitments(result.Commitments)
-	if cfg, ok := s.currentPeopleSweepConfig(); ok && cfg.Commitments.Enabled {
-		profile, profileErr := cfg.Profile()
-		active := false
-		if profileErr == nil {
-			active, err = loopStore.HasActivePersonCommitmentConsent(r.Context(), profile.Fingerprint)
-			if err != nil {
-				if !errors.Is(err, context.DeadlineExceeded) {
-					writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment consent")
-					return
-				}
-				response.CoverageIncomplete = true
-			}
-		}
-		if active {
-			since, complete, err := loopStore.PersonCommitmentDiscoveryContext(r.Context(), opts.PersonID, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
-			if err != nil {
-				if !errors.Is(err, context.DeadlineExceeded) {
-					writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment discovery")
-					return
-				}
-				response.CoverageIncomplete = true
-				complete = false
-			}
-			response.CommitmentsSince, response.CommitmentsComplete = since, &complete
-			if until, parseErr := time.Parse(time.DateOnly, profile.SourceUntil); parseErr == nil && until.Before(s.clockNow().UTC().Truncate(24*time.Hour)) {
-				response.CommitmentsUntil = &until
-			}
-		}
+	if !s.addCommitmentDiscovery(w, r, loopStore, opts.PersonID, &response) {
+		return
 	}
 	for _, l := range result.Loops {
 		item := LoopItem{
@@ -275,6 +249,44 @@ func (s *Server) fillLoopEvidence(st loops.Store, personID int64) {
 		s.loopEvidencePending = s.loopEvidencePending[1:]
 		s.importMu.Unlock()
 	}
+}
+
+// addCommitmentDiscovery reports the promise discovery window; a read that
+// times out leaves the reply loops in place and marks coverage incomplete.
+func (s *Server) addCommitmentDiscovery(w http.ResponseWriter, r *http.Request, loopStore loops.Store, personID int64, response *LoopListResponse) bool {
+	cfg, ok := s.currentPeopleSweepConfig()
+	if !ok || !cfg.Commitments.Enabled {
+		return true
+	}
+	profile, err := cfg.Profile()
+	if err != nil {
+		return true
+	}
+	active, err := loopStore.HasActivePersonCommitmentConsent(r.Context(), profile.Fingerprint)
+	if err != nil {
+		if !errors.Is(err, context.DeadlineExceeded) {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment consent")
+			return false
+		}
+		response.CoverageIncomplete = true
+	}
+	if !active {
+		return true
+	}
+	since, complete, err := loopStore.PersonCommitmentDiscoveryContext(r.Context(), personID, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
+	if err != nil {
+		if !errors.Is(err, context.DeadlineExceeded) {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment discovery")
+			return false
+		}
+		response.CoverageIncomplete = true
+		complete = false
+	}
+	response.CommitmentsSince, response.CommitmentsComplete = since, &complete
+	if until, parseErr := time.Parse(time.DateOnly, profile.SourceUntil); parseErr == nil && until.Before(s.clockNow().UTC().Truncate(24*time.Hour)) {
+		response.CommitmentsUntil = &until
+	}
+	return true
 }
 
 func loopListResponse(result loops.Result) LoopListResponse {

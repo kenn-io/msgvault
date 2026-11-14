@@ -214,11 +214,6 @@ func (s *Store) matchCommitmentTarget(ctx context.Context, personID int64, sourc
 }
 
 func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {
-	for _, source := range request.Commitment.Window.Sources {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`, request.Lease.PersonID, source.MessageID); err != nil {
-			return err
-		}
-	}
 	if err := s.applyCommitmentStatusesTx(ctx, tx, request, prepared); err != nil {
 		return err
 	}
@@ -232,6 +227,17 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 			if err != nil {
 				return fmt.Errorf("persist commitment decision: %w", err)
 			}
+		}
+	}
+	return s.finishCommitmentSweepTx(ctx, tx, request, prepared)
+}
+
+// finishCommitmentSweepTx clears the oversized messages this window retried,
+// then saves discovery progress after the fenced apply.
+func (s *Store) finishCommitmentSweepTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {
+	for _, source := range request.Commitment.Window.Sources {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`, request.Lease.PersonID, source.MessageID); err != nil {
+			return err
 		}
 	}
 	return s.saveCommitmentFrontierTx(ctx, tx, request, prepared)
