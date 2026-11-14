@@ -507,7 +507,7 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 	if err != nil {
 		return err
 	}
-	if intent.Operation == api.CLIRunDraftEditCommand && (draft.Pending == nil || intent.ValidateOnly) {
+	if intent.Operation == api.CLIRunDraftEditCommand {
 		if draft.Pending != nil && intent.ValidateOnly {
 			return draftReplyError("pending_operation", store.ErrIMAPDraftPending)
 		}

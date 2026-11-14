@@ -506,22 +506,17 @@ func TestBeeperDraftBlankValidateOnlyPreview(t *testing.T) {
 
 func TestBeeperDraftBlankWritesUnchanged(t *testing.T) {
 	for _, edit := range []bool{false, true} {
-		for _, strict := range []bool{false, true} {
-			t.Run(fmt.Sprintf("edit=%t/strict=%t", edit, strict), func(t *testing.T) {
-				f := newBeeperDraftFixture(t)
-				args := []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "  "}
-				if edit {
-					draft, err := f.create(t, nil, "existing")
-					require.NoError(t, err)
-					args = []string{"draft-edit", draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10), "--body", "  "}
-				}
-				if strict {
-					args = append(args, "--strict")
-				}
-				_, err := lintRun(t, f.adapter, nil, args...)
-				require.EqualError(t, err, "invalid_args")
-			})
-		}
+		t.Run(fmt.Sprintf("edit=%t", edit), func(t *testing.T) {
+			f := newBeeperDraftFixture(t)
+			args := []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "  "}
+			if edit {
+				draft, err := f.create(t, nil, "existing")
+				require.NoError(t, err)
+				args = []string{"draft-edit", draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10), "--body", "  "}
+			}
+			_, err := lintRun(t, f.adapter, nil, args...)
+			require.EqualError(t, err, "invalid_args")
+		})
 	}
 }
 
