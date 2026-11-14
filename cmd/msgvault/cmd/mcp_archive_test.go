@@ -298,6 +298,9 @@ func TestMCPArchiveLocalChatDrafts(t *testing.T) {
 	for _, delegated := range []bool{false, true} {
 		t.Run(map[bool]string{false: "owner", true: "delegated"}[delegated], func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
+			oldReveal := mcpRevealVerification
+			mcpRevealVerification = !delegated
+			t.Cleanup(func() { mcpRevealVerification = oldReveal })
 			ctx := withStoreResolverConfig(t, &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Remote: config.RemoteConfig{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true}})
 			if delegated {
 				ctx = mcpDraftAgentContext(t, server, source.ID, []string{"draft.create", "draft.edit"})
