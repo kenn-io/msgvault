@@ -10,13 +10,11 @@ type PersonExport struct {
 func personExportDefinitions() []operationalDefinition {
 	return []operationalDefinition{newOperationalDefinition(
 		"export_person_messages",
-		"Return native JSONL for one person's messages in a time window, up to 512 KiB. "+
+		"Return native JSONL for one person's messages in a time window. The encoded MCP response is limited to 512 KiB. "+
 			"A single message over the limit cannot be returned. Narrow the window when several messages exceed it. "+
 			"Dates must be RFC3339 and start must precede end. Sources use type:identifier. "+
 			"Blank message types are refused; unknown nonempty types match nothing. "+
-			"Exporter errors use invalid_start, invalid_end, invalid_window, invalid_message_type, "+
-			"invalid_source_N, unknown_source_N, unknown_person, or export_limit_exceeded. "+
-			"N is the source position, starting at 1.",
+			"CLI failures return export_failed; oversized responses return export_limit_exceeded.",
 		OperationFamilyRecords,
 		closedObject(map[string]*jsonschema.Schema{
 			"person_id":     safeIDSchema("Durable person ID"),

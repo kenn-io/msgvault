@@ -2,17 +2,21 @@ package cmd
 
 import (
 	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
-	"slices"
 	"strconv"
 	"strings"
 
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 )
 
 const mcpPersonExportLimit = 512 << 10
-const mcpPersonExportErrorTailLimit = 64 << 10
+
+// Reserve space for the JSON-RPC envelope around the encoded tool result.
+const mcpPersonExportResponseMargin = 4 << 10
 
 type mcpPersonExportArgs struct {
 	PersonID     int64    `json:"person_id"`
@@ -23,12 +27,9 @@ type mcpPersonExportArgs struct {
 }
 
 func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map[string]any) (*mcpserver.OperationResult, error) {
-	refuse := func(code string) (*mcpserver.OperationResult, error) {
-		return operationFailure(code, false), nil
-	}
 	input, err := decodeMCPOperationArguments[mcpPersonExportArgs](args)
 	if err != nil {
-		return refuse("invalid_arguments")
+		return operationFailure("invalid_arguments", false), nil //nolint:nilerr // Invalid arguments are fixed refusals.
 	}
 	argv := []string{
 		"export-messages",
@@ -43,16 +44,8 @@ func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map
 		argv = append(argv, "--message-type="+messageType)
 	}
 	var output strings.Builder
-	var stderr []byte
 	overflow := false
 	err = b.client.RunCLICommand(ctx, daemonclient.CLIRunRequest{Args: argv}, func(stream, data string) error {
-		if stream == cliStreamStderr {
-			stderr = append(stderr, data...)
-			if len(stderr) > mcpPersonExportErrorTailLimit {
-				stderr = stderr[len(stderr)-mcpPersonExportErrorTailLimit:]
-			}
-			return nil
-		}
 		if stream != cliStreamStdout {
 			return nil
 		}
@@ -70,52 +63,27 @@ func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map
 		return operationFailure(local.APIErrorCode(), false), nil
 	}
 	if err != nil {
-		if _, cliRunError := errors.AsType[*daemonclient.CLIRunError](err); cliRunError {
-			if code := personExportRefusalCode(stderr, input.Sources); code != "" {
-				return refuse(code)
-			}
-		}
-		return refuse("export_failed")
+		return operationFailure("export_failed", false), nil //nolint:nilerr // Export failures are fixed refusals.
 	}
-	return &mcpserver.OperationResult{Output: mcpserver.PersonExport{JSONL: output.String()}}, nil
-}
-
-func lastMCPPersonExportErrorLine(stderr []byte) string {
-	lines := strings.Split(string(stderr), "\n")
-	for i := range slices.Backward(lines) {
-		line := strings.TrimSuffix(lines[i], "\r")
-		if strings.HasPrefix(line, "Error: ") {
-			return line
-		}
+	personExport := mcpserver.PersonExport{JSONL: output.String()}
+	structured, err := json.Marshal(
+		personExport,
+		json.Deterministic(true),
+		jsontext.EscapeForHTML(true),
+		jsontext.EscapeForJS(true),
+	)
+	if err != nil {
+		return operationFailure("export_failed", false), nil //nolint:nilerr // Encoding failures are fixed refusals.
 	}
-	return ""
-}
-
-func personExportRefusalCode(stderr []byte, sources []string) string {
-	diagnostic := strings.TrimRight(string(stderr), "\r\n")
-	for i, source := range sources {
-		if strings.HasSuffix(diagnostic, "Error: source "+source+" not found") {
-			return "unknown_source_" + strconv.Itoa(i+1)
-		}
+	encoded, err := (&sdkmcp.CallToolResult{
+		Content:           []sdkmcp.Content{&sdkmcp.TextContent{Text: string(structured)}},
+		StructuredContent: jsontext.Value(structured),
+	}).MarshalJSON()
+	if err != nil {
+		return operationFailure("export_failed", false), nil //nolint:nilerr // Encoding failures are fixed refusals.
 	}
-	line := lastMCPPersonExportErrorLine(stderr)
-	switch {
-	case strings.HasPrefix(line, "Error: invalid --start "):
-		return "invalid_start"
-	case strings.HasPrefix(line, "Error: invalid --end "):
-		return "invalid_end"
-	case line == "Error: --start must be before --end":
-		return "invalid_window"
-	case line == "Error: --message-type must be non-empty":
-		return "invalid_message_type"
-	case strings.HasPrefix(line, "Error: resolve --person-id: resolve durable person ") &&
-		strings.HasSuffix(line, ": person not found"):
-		return "unknown_person"
+	if len(encoded) > mcpPersonExportLimit-mcpPersonExportResponseMargin {
+		return operationFailure("export_limit_exceeded", false), nil
 	}
-	for i, source := range sources {
-		if strings.HasPrefix(line, "Error: invalid --source "+strconv.Quote(source)+" ") {
-			return "invalid_source_" + strconv.Itoa(i+1)
-		}
-	}
-	return ""
+	return &mcpserver.OperationResult{Output: personExport}, nil
 }
