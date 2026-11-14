@@ -43,17 +43,13 @@ func assertRelationshipDisclosure(t *testing.T, disclosure string) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	var value struct {
-		Source struct {
-			DisplayName string `json:"display_name"`
-		} `json:"source"`
-		Target struct {
-			DisplayName string `json:"display_name"`
-		} `json:"target"`
+		Source       string `json:"source"`
+		Target       string `json:"target"`
 		Relationship string `json:"relationship"`
 	}
 	requirements.NoError(json.Unmarshal([]byte(disclosure), &value))
-	assertions.Equal("First Example", value.Source.DisplayName)
-	assertions.Equal("Second Example", value.Target.DisplayName)
+	assertions.Equal("First Example", value.Source)
+	assertions.Equal("Second Example", value.Target)
 	assertions.Equal("relative", value.Relationship)
 }
 
@@ -82,6 +78,8 @@ func TestMCPRelationshipRecords(t *testing.T) {
 	requirements.NotNil(updated.EndDate.Year)
 	assertions.Equal(int64(2020), *updated.EndDate.Year)
 	deleteArgs := map[string]any{"id": updated.ID, "revision": updated.Revision}
+	_, err = backend.OperationDisclosure(t.Context(), "delete_person_relationship", deleteArgs)
+	requirements.NoError(err)
 	result, err = backend.ExecuteOperation(t.Context(), "update_person_relationship", map[string]any{"id": updated.ID, "revision": updated.Revision, "notes": "changed"})
 	requirements.NoError(err)
 	current := operationOutput[generated.PersonRelationship](t, result)
@@ -132,6 +130,9 @@ func TestMCPRelationshipListAndNetworkReads(t *testing.T) {
 	network := loopToolOutput[generated.PersonNetwork](t, networkResult)
 	assertions.Equal(source, network.RootPersonID)
 	requirements.Len(network.Edges, 1)
+	missing, err := backend.ExecuteOperation(t.Context(), "get_person_network", map[string]any{"person_id": int64(999999)})
+	requirements.NoError(err)
+	assertLoopRefusal(t, missing, "person_profile_not_found", false)
 }
 
 func TestMCPRelationshipCapabilities(t *testing.T) {
@@ -162,11 +163,9 @@ func TestMCPRelationshipCapabilities(t *testing.T) {
 func TestMCPRelationshipLargeList(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	st, backend, root, target := relationshipFixture(t)
+	st, backend, root, _ := relationshipFixture(t)
 	notes := strings.Repeat("x", 4096)
-	_, err := st.AddPersonRelationshipContext(t.Context(), store.PersonRelationshipInput{SourcePersonID: root, TargetPersonID: target, TypeSlug: "parent", Notes: &notes, Source: store.ProvenanceUser, Actor: "user"})
-	requirements.NoError(err)
-	for i := range 259 {
+	for i := range 260 {
 		participant, err := st.EnsureParticipant(fmt.Sprintf("user-%d@example.com", i), "Example", "example.com")
 		requirements.NoError(err)
 		person, _, err := st.CreatePersonFromParticipant(participant)

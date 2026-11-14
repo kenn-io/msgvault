@@ -31,10 +31,7 @@ func relationshipRecordCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MC
 			if !mcpRequestPropertiesPresent(caps, route.id, route.properties...) || !hasRoute("getPersonProfile", http.MethodGet, "/api/v1/people/{id}") {
 				continue
 			}
-			if route.name == "create_person_relationship" && !hasRoute("listRelationshipTypes", http.MethodGet, "/api/v1/relationship-types") {
-				continue
-			}
-			if route.name != "create_person_relationship" && !hasRoute("getPersonRelationship", http.MethodGet, "/api/v1/person-relationships/{id}") {
+			if (route.name == "create_person_relationship" && !hasRoute("listRelationshipTypes", http.MethodGet, "/api/v1/relationship-types")) || (route.name != "create_person_relationship" && !hasRoute("getPersonRelationship", http.MethodGet, "/api/v1/person-relationships/{id}")) {
 				continue
 			}
 		}
@@ -57,23 +54,12 @@ type relationshipArguments struct {
 	Notes                *string `json:"notes,omitempty"`
 }
 
-func relationshipInput(name string, args map[string]any) (relationshipArguments, bool) {
-	input, err := decodeMCPOperationArguments[relationshipArguments](args)
-	if err != nil {
-		return input, false
-	}
-	if name == "update_person_relationship" && input.EndDate == nil && input.Notes == nil {
-		return input, false
-	}
-	return input, true
-}
-
 func (b *daemonMCPOperations) executeRelationshipRecord(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	if !slices.Contains([]string{"list_relationship_types", "list_person_relationships", "get_person_network", "create_person_relationship", "update_person_relationship", "delete_person_relationship"}, name) {
 		return nil, false, nil
 	}
-	input, ok := relationshipInput(name, args)
-	if !ok {
+	input, err := decodeMCPOperationArguments[relationshipArguments](args)
+	if err != nil {
 		return operationFailure(invalidArguments, false), true, nil
 	}
 	switch name {
@@ -109,8 +95,8 @@ func (b *daemonMCPOperations) relationshipDisclosure(ctx context.Context, name s
 	if !slices.Contains([]string{"create_person_relationship", "update_person_relationship", "delete_person_relationship"}, name) {
 		return "", false, nil
 	}
-	input, ok := relationshipInput(name, args)
-	if !ok {
+	input, err := decodeMCPOperationArguments[relationshipArguments](args)
+	if err != nil || (name == "update_person_relationship" && input.EndDate == nil && input.Notes == nil) {
 		return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 	}
 	var current any
@@ -161,17 +147,13 @@ func (b *daemonMCPOperations) relationshipDisclosure(ctx context.Context, name s
 		}
 		people[i] = person
 	}
-	type disclosedPerson struct {
-		ID          int64   `json:"id"`
-		DisplayName *string `json:"display_name"`
-	}
 	data, err := json.Marshal(struct {
-		Operation    string          `json:"operation"`
-		Current      any             `json:"current"`
-		Changes      map[string]any  `json:"changes"`
-		Source       disclosedPerson `json:"source"`
-		Target       disclosedPerson `json:"target"`
-		Relationship string          `json:"relationship"`
-	}{name, current, args, disclosedPerson{ID: people[0].ID, DisplayName: people[0].DisplayName}, disclosedPerson{ID: people[1].ID, DisplayName: people[1].DisplayName}, label}, json.Deterministic(true))
+		Operation    string         `json:"operation"`
+		Current      any            `json:"current"`
+		Changes      map[string]any `json:"changes"`
+		Source       *string        `json:"source"`
+		Target       *string        `json:"target"`
+		Relationship string         `json:"relationship"`
+	}{name, current, args, people[0].DisplayName, people[1].DisplayName, label}, json.Deterministic(true))
 	return string(data), true, err
 }
