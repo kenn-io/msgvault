@@ -703,13 +703,14 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 		return `"attachments":[{"clientUuid":"` + uuid + `","pointer":` + pointer + `}]`
 	}
 	otherKey := strings.Replace(pointer(a), `"key":"AQ=="`, `"key":"Ag=="`, 1)
+	otherKeyB := strings.Replace(pointer(b), `"key":"AQ=="`, `"key":"Ag=="`, 1)
 	for _, tc := range []struct {
 		name, first, unmatched, repaired string
 		unmatchedMedia, repairedMedia    []byte
 		want                             map[string]string
 	}{
 		{"hashed original ignores new hash", attachments("AQ==", pointer(a)), attachments("AQ==", pointer(b)), attachments("AQ==", pointer(b)), b, a, map[string]string{"attachment:0": hashHex(a)}},
-		{"hashed long text ignores new hash", `"longText":` + pointer(a), `"longText":` + pointer(b), `"longText":` + pointer(b), b, a, map[string]string{"long_text": hashHex(a)}},
+		{"hashed long text ignores new hash", `"longText":` + pointer(a), `"longText":` + otherKeyB, `"longText":` + otherKeyB, b, a, map[string]string{"long_text": hashHex(a)}},
 		{"hashless uuid after reorder", attachments("AQ==", `{"locatorInfo":{"key":"Ag=="}}`), attachments("BA==", pointer(a)), `"attachments":[{"clientUuid":"Aw==","pointer":{}},{"clientUuid":"AQ==","pointer":` + pointer(a) + `}]`, a, a, map[string]string{"attachment:0": hashHex(a)}},
 		{"hashless long text by key", `"longText":{"locatorInfo":{"key":"AQ=="}}`, `"longText":` + otherKey, `"longText":` + pointer(a), a, a, map[string]string{"long_text": hashHex(a)}},
 		{"earlier album slot removed", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(b) + `}]`, attachments("Aw==", pointer(b)), attachments("Ag==", pointer(b)), b, b, map[string]string{"attachment:0": "", "attachment:1": hashHex(b)}},

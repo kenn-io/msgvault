@@ -114,13 +114,7 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 				slots = append(slots, slot{key: key, p: p})
 			}
 			if old.Standard.LongText != nil {
-				p := old.Standard.LongText
-				if m.LongText == nil || len(p.Locator.Key) == 0 || !bytes.Equal(p.Locator.Key, m.LongText.Locator.Key) {
-					p = nil
-				} else if len(p.Locator.Hash) == 0 {
-					p = m.LongText
-				}
-				archived["long_text"] = p
+				archived["long_text"] = savedLongText(old.Standard.LongText, m.LongText)
 				slots = append(slots, slot{key: "long_text", p: m.LongText, long: true})
 			}
 		}
@@ -205,6 +199,18 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 		writes = append(writes, write)
 	}
 	return body, writes, knownChanged, nil
+}
+
+// savedLongText keeps the saved pointer's hash authoritative; a later pointer
+// fills a hashless one only when its locator key matches.
+func savedLongText(saved, later *filePointer) *filePointer {
+	switch {
+	case len(saved.Locator.Hash) != 0:
+		return saved
+	case later != nil && len(saved.Locator.Key) != 0 && bytes.Equal(saved.Locator.Key, later.Locator.Key):
+		return later
+	}
+	return nil
 }
 
 // matchingPointer accepts only a unique, unclaimed identity in the new export.
