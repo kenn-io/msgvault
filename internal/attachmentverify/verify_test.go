@@ -788,3 +788,50 @@ func TestProviderOmissionsPagination(t *testing.T) {
 	assert.Zero(last.ReferencesVerified)
 	assert.Zero(last.ReferencesAffected)
 }
+
+func TestCurrentProviderLocators(t *testing.T) {
+	// These locators are emitted by current importers and purge-excluded-media.
+	for _, locator := range []string{
+		"mxc://example.org/media",
+		"excluded:beeper:mxc://example.org/media",
+		"discord:pending:attachment-1",
+		"slack:pending:file-1",
+		"chatwoot:attachment:1",
+		"chatwoot:recording:1",
+		"chatwoot:part:0",
+		"imessage:1",
+	} {
+		for _, outcome := range []struct{ state, reason, want string }{
+			{"skipped", "policy_scope", attachmentverify.Omitted},
+			{"pending", "", attachmentverify.NotMaterialized},
+			{"failed", "fetch_failure", attachmentverify.NotMaterialized},
+			{"skipped", "", attachmentverify.NotMaterialized},
+		} {
+			t.Run(locator+"/"+outcome.state+"/"+outcome.reason, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				f := newFixture(t)
+				id, _ := f.row("", locator, 10)
+				_, err := f.st.DB().ExecContext(t.Context(), f.st.Rebind("UPDATE attachments SET attachment_state = ?, attachment_skip_reason = ? WHERE id = ?"), outcome.state, outcome.reason, id)
+				require.NoError(err)
+				report := f.run()
+				require.Len(report.References, 1)
+				assert.Equal(outcome.want, report.References[0].Status)
+				assert.Equal(id, report.NextAfterID)
+				assert.Zero(report.ContentsOpened)
+				assert.Zero(report.ReferencesVerified)
+				assert.Zero(report.ReferencesAffected)
+				if outcome.want == attachmentverify.Omitted {
+					assert.Equal("complete", report.State)
+				} else {
+					assert.Equal("inconclusive", report.State, "pending or failed materialization is not verified bytes")
+				}
+				// A nearby ordinary local path must never inherit marker semantics.
+				_, err = f.st.DB().ExecContext(t.Context(), f.st.Rebind("UPDATE attachments SET storage_path = ? WHERE id = ?"), "legacy/"+locator, id)
+				require.NoError(err)
+				local := f.run()
+				assert.Equal(attachmentverify.Inconclusive, local.References[0].Status)
+			})
+		}
+	}
+}

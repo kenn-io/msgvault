@@ -132,15 +132,15 @@ func Run(ctx context.Context, st *store.Store, blobs StreamStore, root string, o
 		case hash == "":
 			ref.Status, ref.Reason = NotMaterialized, "no retained content hash; bytes not verified"
 			// Only explicit policy skips with no local locator establish intentional omission.
-			if kind == "content" && (path == "" || remotePath(path)) && row.State == string(attachmentpolicy.StateSkipped) && policySkip(row.SkipReason) {
+			if kind == "content" && (path == "" || nonLocalLocator(path)) && row.State == string(attachmentpolicy.StateSkipped) && policySkip(row.SkipReason) {
 				ref.Status, ref.Reason = Omitted, "recorded policy omission"
 			}
-			if path != "" && !remotePath(path) {
+			if path != "" && !nonLocalLocator(path) {
 				ref.Status, ref.Reason = Inconclusive, "local path has no expected content hash"
 			}
 		case export.ValidateContentHash(hash) != nil:
 			ref.Status, ref.Reason = Inconclusive, "invalid expected SHA-256"
-		case remotePath(path):
+		case nonLocalLocator(path):
 			ref.Status, ref.Reason = NotMaterialized, "external locator; no local storage claim"
 		}
 		index := len(report.References)
@@ -231,10 +231,23 @@ func Run(ctx context.Context, st *store.Store, blobs StreamStore, root string, o
 	return report, nil
 }
 
-func remotePath(path string) bool {
+// nonLocalLocator recognizes current importer placeholders and exclusion
+// markers. Other paths still need an expected hash to verify retained bytes.
+func nonLocalLocator(path string) bool {
+	if store.IsURLStoragePath(path) {
+		return true
+	}
 	path = strings.ToLower(path)
-	return strings.HasPrefix(path, "https://") || strings.HasPrefix(path, "http://") ||
-		strings.HasPrefix(path, "inline:pending:") || strings.HasPrefix(path, "matrix:mxc://")
+	for _, prefix := range []string{
+		"mxc://", "matrix:mxc://", "inline:pending:", "discord:pending:",
+		"slack:pending:", "excluded:", "chatwoot:attachment:",
+		"chatwoot:recording:", "chatwoot:part:", "imessage:",
+	} {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // SQL drivers can report interruption before the caller observes ctx.Err().

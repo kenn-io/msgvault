@@ -3263,9 +3263,11 @@ occurrences. Each row contributes a content slot and, when present, a thumbnail
 slot. The command reads no message text or RAW MIME. It does not discover
 attachments whose SQL rows are absent.
 
-HTTP(S) locators and the importer markers `inline:pending:` and `matrix:mxc://`
-describe remote content. Without a retained hash, an explicit policy skip is an
-intentional omission; pending or failed downloads remain not materialized.
+HTTP(S)/MXC addresses, importer placeholders (`inline:pending:`, `matrix:mxc://`,
+`discord:pending:`, `slack:pending:`, `chatwoot:attachment:`, `chatwoot:recording:`,
+`chatwoot:part:`, `imessage:`), and `excluded:` markers do not name retained
+local files. Without a retained hash, an explicit policy skip is an intentional
+omission; pending or failed downloads remain not materialized.
 A local path without an expected hash remains inconclusive, including when the
 row records a policy skip.
 
