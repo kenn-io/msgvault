@@ -198,7 +198,7 @@ func personEditProjection(result *mcpserver.OperationResult, writes bool) *mcpse
 	}
 	person, ok := result.Output.(generated.Person)
 	if !ok || result.ETag == "" {
-		return operationFailure("invalid_operation_response", writes)
+		return invalidOperationResponse(writes)
 	}
 	result.Output = mcpserver.PersonEditContext{ETag: result.ETag, Person: person}
 	return result
@@ -212,7 +212,7 @@ func slackPolicyProjection(result *mcpserver.OperationResult, writes bool) *mcps
 	}
 	settings, ok := result.Output.(generated.SettingsResponse)
 	if !ok || result.ETag == "" {
-		return operationFailure("invalid_operation_response", writes)
+		return invalidOperationResponse(writes)
 	}
 	policy := mcpserver.SlackSyncPolicy{ETag: result.ETag, PendingRestart: settings.PendingRestart, Settings: []generated.Setting{}}
 	for _, setting := range settings.Settings {
