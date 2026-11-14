@@ -782,3 +782,22 @@ func TestReviewOmissionsForExpiredMetadata(t *testing.T) {
 		assert.EqualValues(t, 1, summary.Omitted["expires_in_ms"])
 	}
 }
+
+func TestImportIgnoresInvalidDirectionWhenCountingCollisions(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := fixture(t, incoming)
+	opts := options(t, root)
+	_, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	edited := strings.Replace(incoming, "Hello 星", "Edited", 1)
+	invalid := strings.Replace(incoming, `"incoming":{}`, `"outgoing":{}`, 1)
+	writeFrames(t, root, invalid, edited)
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, summary.Skipped["direction_conflict"])
+	assert.Zero(t, summary.Skipped["ambiguous_message"])
+	assert.EqualValues(t, 1, summary.MessagesExisting)
+	assert.EqualValues(t, 1, summary.MessagesChanged)
+	id, _ := onlyMessage(t, st)
+	assertBody(t, st, id, "Hello 星")
+}

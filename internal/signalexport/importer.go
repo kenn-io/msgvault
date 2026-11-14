@@ -88,29 +88,26 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 	}
 	// Count collisions before replay so an inserted earlier frame cannot consume
 	// a saved slot. The normal pass reports any input error and keeps progress.
-	counts := map[[32]byte]int{}
+	slots := newSlotCounter()
 	counter, err := openReader(ctx, opts.RootDir)
 	if err != nil {
 		return s, err
 	}
 	_ = counter.frames(ctx, func(m *chatItem, _ []byte, _ int) error {
-		ref, ok := counter.chats[m.ChatID]
-		if !ok || m.Standard == nil {
+		if m.Standard == nil {
 			return nil
 		}
-		conversation, author := counter.peers[ref], counter.peers[m.AuthorID]
-		date, ok := originalDate(m)
-		if !ok || conversation.key == "" || author.key == "" {
+		conversation, author, date, reason := eligibleMessage(counter, m)
+		if reason != "" {
 			return nil
 		}
 		tuple := slotTuple(scopedKey(scope, conversation.key), scopedKey(scope, author.key), date, originalReceived(m))
-		counts[tuple]++
+		slots.count(tuple)
 		return nil
 	})
 	if err := counter.Close(); err != nil {
 		return s, err
 	}
-	slots := newSlotCounter(counts)
 	selfConfirmed := false
 	var ownerID int64
 	err = r.frames(ctx, func(m *chatItem, raw []byte, line int) error {
@@ -124,38 +121,11 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 			}
 			return skip("unsupported_item")
 		}
-		ref, ok := r.chats[m.ChatID]
-		if !ok {
-			return skip("unresolved_chat")
-		}
-		conversation := r.peers[ref]
-		author := r.peers[m.AuthorID]
-		if conversation.key == "" {
-			return skip("recipient_identity")
-		}
-		if author.key == "" || author.kind == "group_chat" {
-			return skip("author_identity")
-		}
-		if r.self == "" {
-			return skip("self_identity")
+		conversation, author, date, reason := eligibleMessage(r, m)
+		if reason != "" {
+			return skip(reason)
 		}
 		fromMe := m.AuthorID == r.self
-		if (m.Incoming == nil) == (m.Outgoing == nil) || m.Directionless != nil {
-			return skip("unknown_direction")
-		}
-		if (m.Outgoing != nil) != fromMe {
-			return skip("direction_conflict")
-		}
-		if conversation.kind == "direct_chat" && !fromMe && m.AuthorID != ref {
-			return skip("direction_conflict")
-		}
-		date, ok := originalDate(m)
-		if !ok {
-			if len(m.Revisions) > 0 {
-				return skip("revision")
-			}
-			return skip("sent_time")
-		}
 		at, _ := sentTime(date)
 		owner := r.peers[r.self]
 		if !selfConfirmed {
@@ -228,7 +198,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 			ConversationKey string     `json:"conversation_key"`
 			AuthorKey       string     `json:"author_key"`
 			Roster          string     `json:"roster_coverage"`
-		}{r.header, line, m.ChatID, m.AuthorID, ref, convKey, authorKey, "partial_observed"})
+		}{r.header, line, m.ChatID, m.AuthorID, r.chats[m.ChatID], convKey, authorKey, "partial_observed"})
 		if err != nil {
 			return err
 		}
@@ -248,6 +218,39 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		return nil
 	})
 	return s, err
+}
+
+// eligibleMessage applies the same identity and direction rules in both passes.
+func eligibleMessage(r *reader, m *chatItem) (conversation, author peer, date decimal, reason string) {
+	ref, ok := r.chats[m.ChatID]
+	if !ok {
+		return peer{}, peer{}, "", "unresolved_chat"
+	}
+	conversation, author = r.peers[ref], r.peers[m.AuthorID]
+	if conversation.key == "" {
+		return conversation, author, "", "recipient_identity"
+	}
+	if author.key == "" || author.kind == "group_chat" {
+		return conversation, author, "", "author_identity"
+	}
+	if r.self == "" {
+		return conversation, author, "", "self_identity"
+	}
+	fromMe := m.AuthorID == r.self
+	if (m.Incoming == nil) == (m.Outgoing == nil) || m.Directionless != nil {
+		return conversation, author, "", "unknown_direction"
+	}
+	if (m.Outgoing != nil) != fromMe || (conversation.kind == "direct_chat" && !fromMe && m.AuthorID != ref) {
+		return conversation, author, "", "direction_conflict"
+	}
+	date, ok = originalDate(m)
+	if !ok {
+		if len(m.Revisions) > 0 {
+			return conversation, author, "", "revision"
+		}
+		return conversation, author, "", "sent_time"
+	}
+	return conversation, author, date, ""
 }
 
 func countOmissions(s *ImportSummary, m *chatItem) {

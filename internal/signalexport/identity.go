@@ -57,15 +57,24 @@ func messageKey(conversation, author string, date, received decimal, ordinal int
 	return string(b)
 }
 
-// slotCounter holds small map entries per distinct conversation, author, and time tuple.
+// slotCounter holds one small entry per distinct conversation, author, and time tuple.
 type slotCounter struct {
-	next      map[[sha256.Size]byte]int
-	ambiguous map[[sha256.Size]byte]bool
-	counts    map[[sha256.Size]byte]int
+	tuples map[[sha256.Size]byte]slotState
 }
 
-func newSlotCounter(counts map[[sha256.Size]byte]int) *slotCounter {
-	return &slotCounter{next: map[[sha256.Size]byte]int{}, ambiguous: map[[sha256.Size]byte]bool{}, counts: counts}
+type slotState struct {
+	count, next int
+	ambiguous   bool
+}
+
+func newSlotCounter() *slotCounter {
+	return &slotCounter{tuples: map[[sha256.Size]byte]slotState{}}
+}
+
+func (c *slotCounter) count(tuple [sha256.Size]byte) {
+	state := c.tuples[tuple]
+	state.count++
+	c.tuples[tuple] = state
 }
 
 func slotTuple(conversation, author string, date, received decimal) [sha256.Size]byte {
@@ -74,18 +83,20 @@ func slotTuple(conversation, author string, date, received decimal) [sha256.Size
 
 func (c *slotCounter) slot(ctx context.Context, st *store.Store, sourceID int64, conversation, author string, date, received decimal, current *standardMessage) (string, int64, bool, error) {
 	tuple := slotTuple(conversation, author, date, received)
-	n := c.next[tuple]
-	c.next[tuple]++
+	state := c.tuples[tuple]
+	n := state.next
+	state.next++
+	c.tuples[tuple] = state
 	key := messageKey(conversation, author, date, received, n)
 	next := messageKey(conversation, author, date, received, n+1)
 	ids, err := st.MessageExistsBatchContext(ctx, sourceID, []string{key, next})
 	if err != nil {
 		return "", 0, false, err
 	}
-	if c.ambiguous[tuple] {
+	if state.ambiguous {
 		return key, ids[key], true, nil
 	}
-	if c.counts[tuple] < 2 && n == 0 && ids[next] == 0 {
+	if state.count < 2 && n == 0 && ids[next] == 0 {
 		return key, ids[key], false, nil
 	}
 	ambiguous, err := ambiguousText(ctx, st, ids[key], current)
@@ -93,7 +104,8 @@ func (c *slotCounter) slot(ctx context.Context, st *store.Store, sourceID int64,
 		return "", 0, false, err
 	}
 	if ambiguous {
-		c.ambiguous[tuple] = true
+		state.ambiguous = true
+		c.tuples[tuple] = state
 	}
 	return key, ids[key], ambiguous, nil
 }
