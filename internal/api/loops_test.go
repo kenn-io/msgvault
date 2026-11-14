@@ -101,6 +101,8 @@ func TestListLoopsFilters(t *testing.T) {
 }
 
 func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
@@ -113,41 +115,41 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 	configureAPIProvider(cfg, provider)
 	cfg.People.Sweep.ApplyDefaults()
 	profile, err := cfg.People.Sweep.Profile()
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = f.Store.EnsurePersonInferenceProfile(t.Context(), profile)
-	require.NoError(t, err)
-	require.NoError(t, f.Store.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{ProfileFingerprint: profile.Fingerprint, CheckedAt: time.Now(), DriverVersion: profile.DriverVersion, OutputMode: profile.OutputMode, ModelVersion: profile.Model}))
+	require.NoError(err)
+	require.NoError(f.Store.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{ProfileFingerprint: profile.Fingerprint, CheckedAt: time.Now(), DriverVersion: profile.DriverVersion, OutputMode: profile.OutputMode, ModelVersion: profile.Model}))
 	participant := f.EnsureParticipant("alex@example.test", "Alex", "example.test")
 	person, _, err := f.Store.CreatePersonFromParticipant(participant)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = f.Store.SetPersonTrackingContext(t.Context(), person.ID, true)
-	require.NoError(t, err)
+	require.NoError(err)
 	server := NewServerWithOptions(ServerOptions{Config: cfg, Store: f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
 	read := func() LoopListResponse {
 		w := httptest.NewRecorder()
 		server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/loops?person_id=%d", person.ID), nil))
-		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		require.Equal(http.StatusOK, w.Code, w.Body.String())
 		var response LoopListResponse
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+		require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 		return response
 	}
 	response := read()
-	assert.Nil(t, response.CommitmentsSince)
-	assert.Nil(t, response.CommitmentsComplete)
-	assert.Empty(t, response.Commitments)
+	assert.Nil(response.CommitmentsSince)
+	assert.Nil(response.CommitmentsComplete)
+	assert.Empty(response.Commitments)
 	_, _, err = f.Store.GrantPersonCommitmentConsent(t.Context(), profile.Fingerprint, "test")
-	require.NoError(t, err)
+	require.NoError(err)
 	response = read()
-	assert.Nil(t, response.CommitmentsSince)
-	require.NotNil(t, response.CommitmentsComplete)
-	assert.False(t, *response.CommitmentsComplete)
-	require.NotNil(t, response.CommitmentsUntil)
-	assert.Equal(t, "2025-06-30", response.CommitmentsUntil.Format(time.DateOnly))
+	assert.Nil(response.CommitmentsSince)
+	require.NotNil(response.CommitmentsComplete)
+	assert.False(*response.CommitmentsComplete)
+	require.NotNil(response.CommitmentsUntil)
+	assert.Equal("2025-06-30", response.CommitmentsUntil.Format(time.DateOnly))
 	_, err = f.Store.RevokePersonCommitmentConsent(t.Context(), profile.Fingerprint, "test")
-	require.NoError(t, err)
+	require.NoError(err)
 	response = read()
-	assert.Nil(t, response.CommitmentsSince)
-	assert.Nil(t, response.CommitmentsComplete)
+	assert.Nil(response.CommitmentsSince)
+	assert.Nil(response.CommitmentsComplete)
 }
 
 func TestListLoopsReportsIncompleteCoverage(t *testing.T) {
@@ -537,17 +539,19 @@ func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, 
 }
 
 func TestListLoopsPagesCommitments(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := &pagingCommitmentStore{Store: f.Store}
 	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
 	w := httptest.NewRecorder()
 	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops?limit=1&commitment_offset=200&include_closed=true", nil))
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(http.StatusOK, w.Code, w.Body.String())
 	var response LoopListResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
-	require.Len(t, response.Commitments, 1)
-	assert.Equal(t, "c201", response.Commitments[0].ID)
-	assert.Equal(t, 200, st.offset)
-	require.NotNil(t, response.CommitmentsNextOffset)
-	assert.Equal(t, 201, *response.CommitmentsNextOffset)
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	require.Len(response.Commitments, 1)
+	assert.Equal("c201", response.Commitments[0].ID)
+	assert.Equal(200, st.offset)
+	require.NotNil(response.CommitmentsNextOffset)
+	assert.Equal(201, *response.CommitmentsNextOffset)
 }

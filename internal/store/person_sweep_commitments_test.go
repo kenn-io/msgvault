@@ -474,6 +474,7 @@ func TestCommitmentResweepPreservesDecisions(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			r, ctx := require.New(t), t.Context()
+			assert := assert.New(t)
 			f := newPersonSweepApplyFixture(t, name+"-promise", false)
 			_, persist := newCommitmentTestConversation(t, f)
 			const first, second, third = "I will send the draft.", "I will check the venue.", "I will call."
@@ -523,11 +524,11 @@ func TestCommitmentResweepPreservesDecisions(t *testing.T) {
 				states[item.Quote] = item.State
 			}
 			if split {
-				assert.Equal(t, LoopStateDone, states[combinedText])
-				assert.Equal(t, LoopStateOpen, states[third])
+				assert.Equal(LoopStateDone, states[combinedText])
+				assert.Equal(LoopStateOpen, states[third])
 			} else {
-				assert.Equal(t, LoopStateDone, states[first])
-				assert.Equal(t, LoopStateOpen, states[second])
+				assert.Equal(LoopStateDone, states[first])
+				assert.Equal(LoopStateOpen, states[second])
 			}
 		})
 	}
