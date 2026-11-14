@@ -5244,6 +5244,25 @@ func (s *Store) SetParticipantIdentifier(participantID int64, identifierType, id
 
 // SetParticipantIdentifierContext honors cancellation during SetParticipantIdentifier.
 func (s *Store) SetParticipantIdentifierContext(ctx context.Context, participantID int64, identifierType, identifierValue string) error {
+	return s.setParticipantIdentifierContext(ctx, participantID, identifierType, identifierValue, false)
+}
+
+// AddParticipantIdentifierIfAbsentContext preserves an existing identifier owner.
+func (s *Store) AddParticipantIdentifierIfAbsentContext(ctx context.Context, participantID int64, identifierType, identifierValue string) error {
+	return s.setParticipantIdentifierContext(ctx, participantID, identifierType, identifierValue, true)
+}
+
+// PrimaryParticipantIdentifierContext returns the participant's first identifier of this type.
+func (s *Store) PrimaryParticipantIdentifierContext(ctx context.Context, participantID int64, identifierType string) (string, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, `SELECT identifier_value FROM participant_identifiers WHERE participant_id = ? AND identifier_type = ? AND is_primary = TRUE ORDER BY id LIMIT 1`, participantID, identifierType).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return value, err
+}
+
+func (s *Store) setParticipantIdentifierContext(ctx context.Context, participantID int64, identifierType, identifierValue string, onlyAbsent bool) error {
 	identifierType = strings.TrimSpace(identifierType)
 	identifierValue = strings.TrimSpace(identifierValue)
 	if identifierType == "" || identifierValue == "" {
@@ -5256,7 +5275,7 @@ func (s *Store) SetParticipantIdentifierContext(ctx context.Context, participant
 		existingParticipantID, exists, err := participantIdentifierTargetTx(
 			ctx, tx, identifierType, identifierValue,
 		)
-		noop = exists && existingParticipantID == participantID
+		noop = exists && (onlyAbsent || existingParticipantID == participantID)
 		return err
 	}); err != nil || noop {
 		return err
@@ -5272,7 +5291,7 @@ func (s *Store) SetParticipantIdentifierContext(ctx context.Context, participant
 		existingParticipantID, exists, err := participantIdentifierTargetTx(
 			ctx, tx, identifierType, identifierValue,
 		)
-		if err != nil || (exists && existingParticipantID == participantID) {
+		if err != nil || (exists && (onlyAbsent || existingParticipantID == participantID)) {
 			return err
 		}
 		serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(

@@ -72,3 +72,27 @@ func TestImportSignalExportRequiresAccount(t *testing.T) {
 	command.SetArgs([]string{"export"})
 	require.ErrorContains(t, command.Execute(), "--account")
 }
+
+func TestImportSignalExportNewerFormat(t *testing.T) {
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Data.DataDir = t.TempDir()
+	ctx := withStoreResolverConfig(t, cfg)
+	st, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(t, err)
+	require.NoError(t, st.InitSchemaContext(t.Context()))
+	source, err := st.GetOrCreateSourceContext(t.Context(), "signal_export", "fictional")
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceSyncState(t.Context(), source.ID, `{"signal_export_format":2}`))
+	require.NoError(t, st.Close())
+	root := "../../../internal/signalexport/testdata/native-v1"
+	cmd := &cobra.Command{Use: "import-signal-export"}
+	cmd.SetContext(ctx)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	require.NoDirExists(t, cfg.AnalyticsDir())
+	err = runImportSignalExport(cmd, root, "fictional")
+	require.ErrorContains(t, err, "upgrade msgvault")
+	assert.NotContains(t, out.String(), "Re-run")
+	assert.NoDirExists(t, cfg.AnalyticsDir())
+}

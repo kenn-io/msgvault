@@ -61,6 +61,9 @@ func runImportSignalExport(cmd *cobra.Command, root, account string) error {
 		AttachmentsDir: state.cfg.AttachmentsDir(),
 		Logger:         state.logger,
 	})
+	if errors.Is(err, signalexport.ErrNewerFormat) {
+		return err
+	}
 	// The source label is a scope, not evidence of a contact address. Only the
 	// importer's actual Self frame can confirm an owner identifier.
 	err = errors.Join(err, runExportPostImportMigrations(ctx, cmd.OutOrStdout(), st, summary.SourceID, true, state))

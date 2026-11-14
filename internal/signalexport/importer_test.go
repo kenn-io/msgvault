@@ -482,13 +482,11 @@ func TestNativeFixtureOriginalTimeAndProvenance(t *testing.T) {
 	var metadata, rawFormat string
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT metadata FROM messages WHERE id = ?"), id).Scan(&metadata))
 	var provenance struct {
-		AdapterVersion int `json:"adapter_version"`
-		Header         struct {
+		Header struct {
 			BackupTimeMs string `json:"backupTimeMs"`
 		} `json:"header"`
 	}
 	require.NoError(json.Unmarshal([]byte(metadata), &provenance))
-	assert.Equal(1, provenance.AdapterVersion)
 	assert.Equal("1730000000000", provenance.Header.BackupTimeMs)
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT raw_format FROM message_raw WHERE message_id = ?"), id).Scan(&rawFormat))
 	assert.Equal("signal-export-jsonl", rawFormat)
@@ -696,6 +694,12 @@ func TestContactIdentifierAdded(t *testing.T) {
 			var conversations int
 			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations").Scan(&conversations))
 			assert.Equal(t, 2, conversations)
+			lines[3] = `{"recipient":{"id":"2","contact":{"aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`
+			require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+			summary, err = Import(t.Context(), st, opts)
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, summary.MessagesExisting)
+			assert.Equal(t, 2, messageCount(t, st))
 		})
 	}
 }
@@ -709,8 +713,9 @@ func TestSourceFormatRefusesNewerVersion(t *testing.T) {
 	require.NoError(t, st.UpdateSourceSyncState(t.Context(), summary.SourceID, `{"signal_export_format":2}`))
 	_, err = st.DB().ExecContext(t.Context(), "UPDATE messages SET source_message_id = ?", "newer-format-key")
 	require.NoError(t, err)
-	_, err = Import(t.Context(), st, opts)
-	require.ErrorContains(t, err, "saved Signal messages use a newer format; upgrade msgvault")
+	summary, err = Import(t.Context(), st, opts)
+	require.ErrorIs(t, err, ErrNewerFormat)
+	assert.Zero(t, summary.SourceID)
 	assert.Equal(t, 1, messageCount(t, st))
 }
 func TestImportRepairRemovedAlbumSlot(t *testing.T) {
@@ -887,4 +892,27 @@ func TestMatchingPointerRequiresUniqueUnclaimedIdentity(t *testing.T) {
 	assert.Nil(t, matchingPointer(old, []messageAttachment{old, old}, m, map[int]bool{}))
 	old.Pointer.Locator.Key = []byte{3}
 	assert.Nil(t, matchingPointer(old, []messageAttachment{old}, m, map[int]bool{}))
+}
+
+func TestContactDoesNotReassignExistingAlias(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	scope := accountScope("fictional")
+	aci := scopedKey(scope, "aci:01010101010101010101010101010101")
+	phone := scopedKey(scope, "e164:+15555550100")
+	first, err := st.EnsureParticipantByIdentifierContext(t.Context(), SourceType, aci, "")
+	require.NoError(t, err)
+	second, err := st.EnsureParticipantByIdentifierContext(t.Context(), SourceType, phone, "")
+	require.NoError(t, err)
+	require.NotEqual(t, first, second)
+	root := fixture(t, incoming)
+	lines := []string{header, account, self, `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`, direct, incoming}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+	_, err = Import(t.Context(), st, options(t, root))
+	require.NoError(t, err)
+	aciOwner, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, aci)
+	require.NoError(t, err)
+	phoneOwner, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phone)
+	require.NoError(t, err)
+	assert.Equal(t, first, aciOwner)
+	assert.Equal(t, second, phoneOwner)
 }

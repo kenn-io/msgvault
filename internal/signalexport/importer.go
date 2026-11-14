@@ -15,6 +15,8 @@ import (
 
 const formatVersion = 1
 
+var ErrNewerFormat = errors.New("saved Signal messages use a newer format; upgrade msgvault")
+
 type ImportOptions struct {
 	RootDir        string
 	Account        string
@@ -45,7 +47,6 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 	if err != nil {
 		return s, err
 	}
-	s.SourceID = source.ID
 	var state struct {
 		Format int `json:"signal_export_format"`
 	}
@@ -55,8 +56,9 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		}
 	}
 	if state.Format > formatVersion {
-		return s, errors.New("saved Signal messages use a newer format; upgrade msgvault")
+		return s, ErrNewerFormat
 	}
+	s.SourceID = source.ID
 	if state.Format != formatVersion {
 		if err := st.UpdateSourceSyncState(ctx, source.ID, fmt.Sprintf(`{"signal_export_format":%d}`, formatVersion)); err != nil {
 			return s, err
@@ -85,7 +87,18 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 	scope := accountScope(opts.Account)
 	// Store supplies participant reuse; no unbounded message/participant cache.
 	resolve := func(p peer) (int64, error) {
-		return st.EnsureParticipantByIdentifierContext(ctx, SourceType, scopedKey(scope, p.key), p.name)
+		participant, err := st.EnsureParticipantByIdentifierContext(ctx, SourceType, scopedKey(scope, p.key), p.name)
+		if err != nil {
+			return 0, err
+		}
+		for _, candidate := range []string{p.aci, p.phone} {
+			if candidate != "" {
+				if err := st.AddParticipantIdentifierIfAbsentContext(ctx, participant, SourceType, scopedKey(scope, candidate)); err != nil {
+					return 0, err
+				}
+			}
+		}
+		return participant, nil
 	}
 	resolveKey := func(id decimal) (peer, error) {
 		p := r.peers[id]
@@ -101,7 +114,17 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 				return p, err
 			}
 			if participant != 0 {
+				primary, err := st.PrimaryParticipantIdentifierContext(ctx, participant, SourceType)
+				if err != nil {
+					return p, err
+				}
 				p.key = candidate
+				if strings.HasPrefix(primary, "v1:"+scope+":") {
+					p.key = strings.TrimPrefix(primary, "v1:"+scope+":")
+				}
+				if _, err := resolve(p); err != nil {
+					return p, err
+				}
 				break
 			}
 		}
@@ -223,8 +246,6 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 			recipients = append(recipients, store.RecipientSet{Type: "to", ParticipantIDs: []int64{to}, DisplayNames: []string{name}})
 		}
 		meta, err := json.Marshal(struct {
-			AdapterVersion  int        `json:"adapter_version"`
-			MetadataVersion int        `json:"metadata_version"`
 			Header          backupInfo `json:"header"`
 			Line            int        `json:"source_line"`
 			ChatID          decimal    `json:"chat_id"`
@@ -233,7 +254,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 			ConversationKey string     `json:"conversation_key"`
 			AuthorKey       string     `json:"author_key"`
 			Roster          string     `json:"roster_coverage"`
-		}{formatVersion, formatVersion, r.header, line, m.ChatID, m.AuthorID, ref, convKey, authorKey, "partial_observed"})
+		}{r.header, line, m.ChatID, m.AuthorID, ref, convKey, authorKey, "partial_observed"})
 		if err != nil {
 			return err
 		}
