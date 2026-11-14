@@ -25,6 +25,10 @@ func (nativePermissions) prepareDirectory(path string) error {
 		return err
 	}
 	defer windows.CloseHandle(handle) //nolint:errcheck // ownership check is authoritative
+	return verifyHandleOwner(handle)
+}
+
+func verifyHandleOwner(handle windows.Handle) error {
 	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
 		return fmt.Errorf("read credential directory owner: %w", err)
@@ -65,10 +69,14 @@ func (nativePermissions) secureFile(file *os.File) error {
 	if err := file.Chmod(0o600); err != nil {
 		return err
 	}
+	return secureFileACL(file.Name())
+}
+
+func secureFileACL(path string) error {
 	// os.OpenFile and os.CreateTemp do not request WRITE_DAC on Windows, so
 	// their handles cannot publish the owner-only ACL. Reopen the file through
 	// the already secured token directory with the exact security rights needed.
-	handle, err := openSecurityHandle(file.Name(), false, windows.READ_CONTROL|windows.WRITE_DAC)
+	handle, err := openSecurityHandle(path, false, windows.READ_CONTROL|windows.WRITE_DAC)
 	if err != nil {
 		return err
 	}
@@ -216,7 +224,7 @@ func verifySecretFile(file *os.File) error {
 	return verifyOwnerOnlyHandle(windows.Handle(file.Fd()), true)
 }
 
-func withStoreLock(tokenDir string, fn func() error) error {
+func withDirectoryMutex(tokenDir string, fn func(windows.Handle) error) error {
 	// Directory ACL updates can propagate to a writer's unfinished candidate.
 	// Serialize repair and writes before opening the lock file, since creating
 	// that file may itself require repairing the directory's write access.
@@ -251,6 +259,16 @@ func withStoreLock(tokenDir string, fn func() error) error {
 		return fmt.Errorf("unexpected provider credential mutex wait result: %d", status)
 	}
 	defer windows.ReleaseMutex(mutex) //nolint:errcheck // lock result is authoritative
+	return fn(directory)
+}
+
+func withStoreLock(tokenDir string, fn func() error) error {
+	return withDirectoryMutex(tokenDir, func(directory windows.Handle) error {
+		return lockStore(tokenDir, directory, fn)
+	})
+}
+
+func lockStore(tokenDir string, directory windows.Handle, fn func() error) error {
 	if err := secureOwnerOnlyHandle(directory); err != nil {
 		return fmt.Errorf("secure provider credential directory: %w", err)
 	}
