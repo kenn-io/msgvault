@@ -134,7 +134,7 @@ func TestChatDraftDelegatedGrantIsSourceScoped(t *testing.T) {
 	assert.Len(unchanged, 1)
 }
 
-func TestChatDraftDeleteGrantRedactsBody(t *testing.T) {
+func TestChatDraftLifecycleRedactsBody(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("slack", "slack-account")

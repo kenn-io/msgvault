@@ -556,11 +556,11 @@ func TestOwnerVerificationVectorResults(t *testing.T) {
 
 func TestOwnerVerificationSnapshotAdmission(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
+	checks := assert.New(t)
 	st := testutil.NewTestStore(t)
 	_, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "code", "Your verification code is 482913", "Your verification code is 482913")
 	require.NoError(err)
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", RemoteClients: []config.RemoteClientConfig{{ClientID: "fixture-reader", APIKey: remoteClientTestReaderKey}}}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(func() { require.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	for range readSnapshotConcurrency {
 		srv.readSnapshotSlots <- struct{}{}
@@ -578,9 +578,21 @@ func TestOwnerVerificationSnapshotAdmission(t *testing.T) {
 	req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
-	assert.Equal(http.StatusServiceUnavailable, w.Code, w.Body.String())
-	assert.Contains(w.Body.String(), "agent_read_busy")
-	assert.Len(srv.readSnapshotSlots, readSnapshotConcurrency)
+	checks.Equal(http.StatusServiceUnavailable, w.Code, w.Body.String())
+	checks.Contains(w.Body.String(), "agent_read_busy")
+	checks.Len(srv.readSnapshotSlots, readSnapshotConcurrency)
+
+	t.Run("remote client rejected before snapshot", func(t *testing.T) {
+		assert := assert.New(t)
+		req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/messages", nil)
+		req.RemoteAddr = "127.0.0.1:4242"
+		req.Header.Set("X-Api-Key", remoteClientTestReaderKey)
+		req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		assert.Equal(http.StatusForbidden, w.Code, w.Body.String())
+		assert.Contains(w.Body.String(), `"error":"forbidden"`)
+	})
 
 	for range readSnapshotConcurrency {
 		<-srv.readSnapshotSlots
@@ -588,5 +600,5 @@ func TestOwnerVerificationSnapshotAdmission(t *testing.T) {
 	w = httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req.Clone(t.Context()))
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
-	assert.Empty(srv.readSnapshotSlots)
+	checks.Empty(srv.readSnapshotSlots)
 }
