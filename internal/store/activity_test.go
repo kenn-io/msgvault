@@ -3482,10 +3482,11 @@ func TestFirstSeenOrder(t *testing.T) {
 		times   []time.Time
 		dates   []string
 		offsets []int
+		zones   []string
 		winner  int
 	}{
-		{"equal timestamps", []time.Time{local.Add(12 * time.Hour), local.Add(12 * time.Hour)}, []string{"2026-07-01", "2026-07-01"}, []int{0, 0}, 0},
-		{"offset window", []time.Time{local.Add(37*time.Hour + 59*time.Minute), local.Add(34 * time.Hour)}, []string{"2026-07-01", "2026-07-03"}, []int{-840, 840}, 1},
+		{"equal timestamps", []time.Time{local.Add(12 * time.Hour), local.Add(12 * time.Hour)}, []string{"2026-07-01", "2026-07-01"}, []int{0, 0}, []string{"UTC", "UTC"}, 0},
+		{"offset window", []time.Time{local.Add(35*time.Hour + 59*time.Minute), local.Add(34 * time.Hour)}, []string{"2026-07-01", "2026-07-03"}, []int{-720, 840}, []string{"Etc/GMT+12", "Pacific/Kiritimati"}, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, personID := activityProjectionFixture(t)
@@ -3499,7 +3500,7 @@ func TestFirstSeenOrder(t *testing.T) {
 				projection := activityProjectionForMessage(t, f, id, personID, at)
 				projection.Event.LocalDate = tc.dates[i]
 				projection.Event.UTCOffsetMinutes = tc.offsets[i]
-				projection.Event.Persons[0].Evidence = store.EvidenceCoPresence
+				projection.Event.Timezone = tc.zones[i]
 				projections = append(projections, projection)
 			}
 			_, err := f.Store.ProjectActivityBatchContext(t.Context(), projections)
@@ -3511,41 +3512,7 @@ func TestFirstSeenOrder(t *testing.T) {
 	}
 }
 
-func TestFirstSeenIntroductionContactState(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
-	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
-	sender := f.EnsureParticipant("sender@example.test", "Sender", "example.test")
-	senderPerson, _, err := f.Store.CreatePersonFromParticipant(sender)
-	require.NoError(err)
-	_, err = f.Store.UpdatePersonDisplayNameContext(t.Context(), senderPerson.ID, senderPerson.Revision, new("Saved Sender"))
-	require.NoError(err)
-	target := f.EnsureParticipant("target@example.test", "Target", "example.test")
-	person, _, err := f.Store.CreatePersonFromParticipant(target)
-	require.NoError(err)
-	at := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
-	message := f.NewMessage().WithSourceMessageID("intro-store").WithSentAt(at).Build()
-	message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
-	id, err := f.Store.PersistMessage(&store.MessagePersistData{Message: message, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{sender}, DisplayNames: []string{"Sender"}, EmailAddresses: []string{"sender@example.test"}}}})
-	require.NoError(err)
-	require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{owner, target}, []string{"Owner", "Target"}))
-	projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
-	require.NoError(err)
-	_, err = projector.RunOnce(t.Context())
-	require.NoError(err)
-	state, err := f.Store.ContactStateContext(t.Context(), person.ID, at)
-	require.NoError(err)
-	assert.Equal(store.FirstContactEmailIntro, state.FirstContactKind)
-	require.NotNil(state.Introducer)
-	assert.Equal(sender, state.Introducer.ParticipantID)
-	assert.Equal("Saved Sender", state.Introducer.DisplayName)
-	require.NotNil(state.Introducer.PersonID)
-	assert.Equal(senderPerson.ID, *state.Introducer.PersonID)
-}
-
-func TestFirstAppearanceSkipsUntimedGroupMembers(t *testing.T) {
+func TestFirstAppearanceSkipsGroupRosterMembers(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -3606,6 +3573,7 @@ func TestFirstAppearanceRequiresUnambiguousFromEnvelope(t *testing.T) {
 		missingRecordedSender bool
 		want                  store.FirstContactKind
 	}{
+		{"introduction", []string{"sender@example.test"}, false, false, store.FirstContactEmailIntro},
 		{"synthetic sender", nil, false, false, store.FirstContactObserved},
 		{"two addresses for sender", []string{"sender@example.test", "alias@example.test"}, false, false, store.FirstContactObserved},
 		{"conflicting recorded sender", []string{"sender@example.test"}, true, false, store.FirstContactObserved},
@@ -3619,6 +3587,10 @@ func TestFirstAppearanceRequiresUnambiguousFromEnvelope(t *testing.T) {
 			req.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
 			owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
 			sender := f.EnsureParticipant("sender@example.test", "Sender", "example.test")
+			senderPerson, _, err := f.Store.CreatePersonFromParticipant(sender)
+			req.NoError(err)
+			_, err = f.Store.UpdatePersonDisplayNameContext(t.Context(), senderPerson.ID, senderPerson.Revision, new("Saved Sender"))
+			req.NoError(err)
 			target := f.EnsureParticipant("target@example.test", "Target", "example.test")
 			person, _, err := f.Store.CreatePersonFromParticipant(target)
 			req.NoError(err)
@@ -3650,6 +3622,9 @@ func TestFirstAppearanceRequiresUnambiguousFromEnvelope(t *testing.T) {
 			if tc.want == store.FirstContactEmailIntro {
 				req.NotNil(state.Introducer)
 				check.Equal(sender, state.Introducer.ParticipantID)
+				check.Equal("Saved Sender", state.Introducer.DisplayName)
+				req.NotNil(state.Introducer.PersonID)
+				check.Equal(senderPerson.ID, *state.Introducer.PersonID)
 			} else {
 				check.Nil(state.Introducer)
 			}

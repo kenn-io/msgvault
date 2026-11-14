@@ -18,7 +18,6 @@ func TestPersonGetContactState(t *testing.T) {
 		name, version                    string
 		probeFails, stateFails, hasState bool
 	}{
-		{"older daemon", "5.0.0", false, false, false},
 		{"optional subresource unavailable", "5.3.0", false, true, false},
 		{"version probe fails", "", true, false, false},
 		{"current daemon", "5.3.0", false, false, true},

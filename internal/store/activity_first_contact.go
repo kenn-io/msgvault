@@ -69,7 +69,7 @@ func earliestFirstContactTx(ctx context.Context, tx *loggedTx, personID int64) (
 	if err != nil {
 		return event, refKind, fmt.Errorf("parse first appearance date: %w", err)
 	}
-	// Offsets within ±14 hours limit the earliest timestamp to these three local dates.
+	// UTC−12 through UTC+14 place the earliest timestamp within three local dates.
 	endDate := date.AddDate(0, 0, 2).Format(time.DateOnly)
 	err = tx.QueryRowContext(ctx, `SELECT ae.message_id, ae.occurred_at, ae.conversation_id, ae.ref_kind`+eligible+` AND aep.local_date BETWEEN ? AND ? ORDER BY ae.occurred_at, ae.message_id LIMIT 1`, personID, firstDate, endDate).Scan(&event.MessageID, &event.OccurredAt, &event.ConversationID, &refKind)
 	return event, refKind, err
