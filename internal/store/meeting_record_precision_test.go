@@ -68,3 +68,35 @@ func TestMeetingRecordFractionalExceptionImportAndListing(t *testing.T) {
 		})
 	}
 }
+
+func TestMeetingRecordListingReferenceWithFractionalSibling(t *testing.T) {
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	calendarFixture(t, st, "master", `{"id":"series","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, "owner@example.com")
+	calendarFixture(t, st, "fractional", `{"id":"fractional","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00.0000001Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`, "owner@example.com")
+	_, edit := calendarFixture(t, st, "edit", `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-21T10:00:00Z"},"start":{"dateTime":"2027-03-21T12:00:00Z"},"end":{"dateTime":"2027-03-21T13:00:00Z"}}`, "owner@example.com")
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 8))
+	require.NoError(err)
+	var listed CalendarOccurrence
+	for _, occurrence := range page.Occurrences {
+		if occurrence.MessageID == edit {
+			listed = occurrence
+			break
+		}
+	}
+	require.NotEmpty(listed.Ref)
+	id, key, hasKey := strings.Cut(strings.TrimPrefix(listed.Ref, "evt:"), "@")
+	messageID, err := strconv.ParseInt(id, 10, 64)
+	require.NoError(err)
+	ref := MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: messageID}}
+	if hasKey {
+		_, ref.Identity, hasKey = calrecur.ParseInstanceID("event_" + key)
+		require.True(hasKey)
+	}
+	record, err := st.MeetingRecordContext(t.Context(), ref)
+	require.NoError(err)
+	require.Len(record.Links, 1)
+	require.Equal(edit, record.Links[0].MessageID)
+	require.Equal(listed.Ref, record.Links[0].Ref)
+}

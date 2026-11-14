@@ -101,13 +101,13 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 		if attendees == nil {
 			attendees = []calevent.Attendee{}
 		}
-		ref := OccurrenceRef{MessageID: row.MessageID}
-		if seriesID != 0 && o.Original != (calrecur.Identity{}) && (o.Original.AllDay || o.Original.Instant.Nanosecond() == 0) {
-			ref = OccurrenceRef{MessageID: seriesID, Identity: o.Original}
-		}
 		original := o.Original
 		if original == (calrecur.Identity{}) && e.Kind == calendarExceptionKind && e.Original != nil {
 			original = *e.Original
+		}
+		ref := OccurrenceRef{MessageID: row.MessageID}
+		if seriesID != 0 && original != (calrecur.Identity{}) && (original.AllDay || original.Instant.Nanosecond() == 0) {
+			ref = OccurrenceRef{MessageID: seriesID, Identity: original}
 		}
 		page.Occurrences = append(page.Occurrences, CalendarOccurrence{row: row, original: original, originalStart: originalStart, Ref: formatMeetingOccurrence(ref), MessageID: row.MessageID, SeriesMessageID: seriesID, SourceID: row.SourceID, Subject: row.Subject, Start: o.Start, End: o.End, AllDay: o.AllDay, StartDate: o.StartDate, EndDate: o.EndDate, Status: status, DeletedFromSource: row.DeletedFromSource, Attendees: attendees})
 	}
