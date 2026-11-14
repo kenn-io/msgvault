@@ -966,7 +966,8 @@ Candidate confirmations show the attribute and both values. Accepting a
 candidate makes an exact split unavailable. Split results include both people's
 new ETags and up to 500 ambiguous and unrestored row references per list. To
 read more, repeat the identical split with the same `idempotency_key` and the
-returned `next_row_offset` as `row_offset`. If an operation may have completed,
+returned `next_row_offset` as `row_offset`. Each page requires a new confirmation.
+If an operation may have completed,
 read the merge and person edit context before retrying.
 
 Enable only the writes intended for the assistant's session:

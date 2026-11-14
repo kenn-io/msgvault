@@ -63,11 +63,6 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	list := operationOutput[generated.PersonMergesResponse](t, result)
 	require.Len(list.Merges, 1)
 	assert.Equal(merged.Merge.ID, list.Merges[0].Merge.ID)
-	result, err = backend.ExecuteOperation(ctx, "get_person_merge", map[string]any{"merge_id": merged.Merge.ID})
-	require.NoError(err)
-	detail := operationOutput[mcpserver.MergeDetail](t, result)
-	assert.Equal(merged.Merge.ID, detail.Merge.ID)
-	assert.NotEmpty(detail.Rows)
 	etag := editETag(merged.Person.ID)
 	args := map[string]any{"person_id": survivor.ID, "candidate_id": merged.ReviewCandidates[0].ID, "merge_id": merged.Merge.ID, "decision": "reject", "etag": etag}
 	var refusal *mcpserver.OperationRefusalError
@@ -108,7 +103,9 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	}})
 	sdkDetail, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "get_person_merge", Arguments: map[string]any{"merge_id": merged.Merge.ID}})
 	require.NoError(err)
-	assert.NotEmpty(loopToolOutput[mcpserver.MergeDetail](t, sdkDetail).Rows)
+	detail := loopToolOutput[mcpserver.MergeDetail](t, sdkDetail)
+	assert.Equal(merged.Merge.ID, detail.Merge.ID)
+	assert.NotEmpty(detail.Rows)
 	sdkResult, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "decide_person_merge_candidate", Arguments: args})
 	require.NoError(err)
 	require.False(sdkResult.IsError)
@@ -230,10 +227,14 @@ func TestMCPMergeRecoveryLargeConfirmation(t *testing.T) {
 		_, _ = w.Write([]byte(`{"rows":[{"original_row_key":"` + strings.Repeat("x", 16<<20) + `"}]}`))
 	})
 	backend := &daemonMCPOperations{client: client, supported: []string{"get_person_merge", "split_person_merge"}}
-	disclosure, err := backend.OperationDisclosure(t.Context(), "split_person_merge", map[string]any{"person_id": 7, "merge_id": 1, "participant_ids": []int64{}, "etag": "x", "idempotency_key": "key"})
+	args := map[string]any{"person_id": 7, "merge_id": 1, "participant_ids": []int64{}, "etag": "x", "idempotency_key": "key"}
+	disclosure, err := backend.OperationDisclosure(t.Context(), "split_person_merge", args)
 	require.NoError(err)
 	assert.Contains(disclosure, "row_count")
 	assert.Less(len(disclosure), 10000)
+	result, err := backend.ExecuteOperation(t.Context(), "split_person_merge", args)
+	require.NoError(err)
+	assertLoopRefusal(t, result, "invalid_operation_response", true)
 }
 
 func TestMCPMergeRecoveryReadsOnlyCandidateHistory(t *testing.T) {
