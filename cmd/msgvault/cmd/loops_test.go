@@ -128,8 +128,8 @@ func TestLoopsRequireDaemonSchema(t *testing.T) {
 	}{
 		{"old_reply_loop_daemon", "3.23.0", "3.44.0", false},
 		{"compatible_reply_loop_daemon", "3.44.0", "", false},
-		{"old_closed_commitment_daemon", "5.3.0", "5.4.0", true},
-		{"compatible_closed_commitment_daemon", "5.4.0", "", true},
+		{"old_closed_commitment_daemon", "5.4.0", "5.5.0", true},
+		{"compatible_closed_commitment_daemon", "5.5.0", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, r := assert.New(t), require.New(t)
@@ -271,8 +271,8 @@ func TestLoopsCommitmentDecisionUsesItsDaemonSchema(t *testing.T) {
 		name, version, id, path, output string
 		unsupported                     bool
 	}{
-		{"older_commitment_daemon", "5.3.0", "c12", "", "", true},
-		{"commitment", "5.4.0", "c12", "/api/v1/loops/commitments/c12/decision", "c12 is done.\n", false},
+		{"older_commitment_daemon", "5.4.0", "c12", "", "", true},
+		{"commitment", "5.5.0", "c12", "/api/v1/loops/commitments/c12/decision", "c12 is done.\n", false},
 		{"existing_reply_loop", "3.44.0", "42", "/api/v1/loops/42/done", "Marked 42 done.\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -306,7 +306,7 @@ func TestLoopsCommitmentDecisionUsesItsDaemonSchema(t *testing.T) {
 			ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
 			output, err := runLoops(ctx, t, "done", tc.id)
 			if tc.unsupported {
-				r.ErrorContains(err, "require daemon API schema 5.4.0")
+				r.ErrorContains(err, "require daemon API schema 5.5.0")
 				a.Empty(posts)
 				return
 			}
