@@ -95,6 +95,7 @@ func (c *slotCounter) slot(ctx context.Context, st *store.Store, sourceID int64,
 	}
 	own := ids[key]
 	if n == 0 && ids[slotKey(1)] == 0 && (own == 0 || len(later) == 0) {
+		c.claimed[key] = true
 		return key, own, nil
 	}
 	want := attachmentIdentities(m)

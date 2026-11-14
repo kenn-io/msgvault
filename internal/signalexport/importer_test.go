@@ -136,6 +136,24 @@ func TestImportNullReceivedTime(t *testing.T) {
 	assertBody(t, st, id, "Hello 星")
 }
 
+func TestImportSameTimesAndAttachmentIdentity(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	first := `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{"dateReceived":"1700000000100"},"standardMessage":{"text":{"body":"first"},"attachments":[{"clientUuid":"AQ==","pointer":{"locatorInfo":{"key":"Ag=="}}}]}}}`
+	second := strings.Replace(first, `"body":"first"`, `"body":"second"`, 1)
+	root := fixture(t, first, second)
+	opts := options(t, root)
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, summary.MessagesAdded)
+	assert.Equal(t, 2, messageCount(t, st))
+	summary, err = Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, summary.MessagesExisting)
+	assert.Zero(t, summary.MessagesAdded)
+	assert.Zero(t, summary.MessagesChanged)
+	assert.Equal(t, 2, messageCount(t, st))
+}
+
 // Stable attachment identities let reordered messages repair their own slots, and
 // a new same-time message before an original never takes the original's row.
 func TestRepairWithSameTimesKeepsEachMessageSlot(t *testing.T) {

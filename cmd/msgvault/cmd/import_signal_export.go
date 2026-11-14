@@ -109,6 +109,36 @@ func signalExportReasonLabel(reason string) string {
 		return "file scan limit reached"
 	case "invalid_hash":
 		return "missing or invalid file hash"
+	case "contactMessage":
+		return "contact message"
+	case "stickerMessage":
+		return "sticker message"
+	case "remoteDeletedMessage":
+		return "remote deleted message"
+	case "updateMessage":
+		return "update message"
+	case "paymentNotification":
+		return "payment notification"
+	case "giftBadge":
+		return "gift badge"
+	case "viewOnceMessage":
+		return "view once message"
+	case "directStoryReplyMessage":
+		return "direct story reply message"
+	case "adminDeletedMessage":
+		return "admin deleted message"
+	case "adHocCall":
+		return "ad hoc call"
+	case "installedStickerPack":
+		return "installed sticker pack"
+	case "hiddenStickerPack":
+		return "hidden sticker pack"
+	case "favoriteStickerList":
+		return "favorite sticker list"
+	case "notificationProfile":
+		return "notification profile"
+	case "chatFolder":
+		return "chat folder"
 	}
 	return strings.ToLower(strings.ReplaceAll(reason, "_", " "))
 }
