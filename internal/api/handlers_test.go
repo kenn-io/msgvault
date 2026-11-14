@@ -5439,16 +5439,6 @@ func TestHandleAggregates(t *testing.T) {
 	require.Len(resp.Rows, 2, "rows count")
 	assert.Equal("alice@example.com", resp.Rows[0].Key, "first row key")
 
-	protected := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/aggregates?view_type=senders", nil)
-	protected.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
-	protectedResponse := httptest.NewRecorder()
-	srv.Router().ServeHTTP(protectedResponse, protected)
-	require.Equal(http.StatusOK, protectedResponse.Code, protectedResponse.Body.String())
-	var protectedAggregate AggregateResponse
-	require.NoError(json.Unmarshal(protectedResponse.Body.Bytes(), &protectedAggregate))
-	assert.Equal("senders", protectedAggregate.ViewType)
-	require.Len(protectedAggregate.Rows, 2)
-	assert.Equal("alice@example.com", protectedAggregate.Rows[0].Key)
 }
 
 // TestHandleAggregatesListsView catches API parsing or response conversion

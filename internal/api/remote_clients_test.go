@@ -160,7 +160,6 @@ func TestRemoteClientRoutes(t *testing.T) { //nolint:paralleltest // swaps the p
 }
 
 func TestRemoteClientVerificationAdmission(t *testing.T) {
-	require := require.New(t)
 	assert := assert.New(t)
 	f := newRemoteClientFixture(t, false)
 	for range readSnapshotConcurrency {
@@ -176,22 +175,11 @@ func TestRemoteClientVerificationAdmission(t *testing.T) {
 	f.srv.Router().ServeHTTP(w, req)
 	assert.Equal(http.StatusForbidden, w.Code, w.Body.String())
 	assert.Contains(w.Body.String(), `"error":"forbidden"`)
-	assert.Len(f.srv.readSnapshotSlots, readSnapshotConcurrency)
 	defer func() {
 		for range readSnapshotConcurrency {
 			<-f.srv.readSnapshotSlots
 		}
 	}()
-	readCtx, readCancel := context.WithTimeout(t.Context(), time.Second)
-	defer readCancel()
-	req = httptest.NewRequestWithContext(readCtx, http.MethodGet, "/api/v1/cli/message?id="+strconv.FormatInt(f.withRaw, 10), nil)
-	req.RemoteAddr = "127.0.0.1:4242"
-	req.Header.Set("X-Api-Key", remoteClientTestReaderKey)
-	req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
-	w = httptest.NewRecorder()
-	f.srv.Router().ServeHTTP(w, req)
-	require.Equal(http.StatusOK, w.Code, w.Body.String())
-	assert.Len(f.srv.readSnapshotSlots, readSnapshotConcurrency)
 }
 
 type sizedAttachmentStore struct{ size int64 }

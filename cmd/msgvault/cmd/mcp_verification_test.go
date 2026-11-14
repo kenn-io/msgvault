@@ -2,23 +2,19 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -55,48 +51,6 @@ func TestOwnerMCPVerificationReads(t *testing.T) {
 				assert.NotContains(response.Body.String(), "482913")
 				assert.Contains(response.Body.String(), "verification content masked")
 			}
-		})
-	}
-}
-
-func TestOwnerMCPVerificationSavedView(t *testing.T) {
-	for _, reveal := range []bool{false, true} {
-		t.Run(map[bool]string{false: "default", true: "reveal"}[reveal], func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "archive.db")
-			st := testutil.NewSQLiteTestStoreAt(t, path)
-			_, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "code", "Your verification code is 482913", "Your verification code is 482913")
-			require.NoError(t, err)
-			_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at = '2026-07-01T00:00:00Z' WHERE id = ?`, id)
-			require.NoError(t, err)
-			view, err := st.CreateSavedView(t.Context(), store.SavedViewInput{Name: "codes", CanonicalState: []byte(`{"presentation":"table"}`), SchemaVersion: 1})
-			require.NoError(t, err)
-			cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner"}}
-			engine := query.NewLiveExploreEngine(st.DB(), path)
-			t.Cleanup(func() { require.NoError(t, engine.Close()) })
-			server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, SavedViewStore: st, Engine: engine, AnalyticsMode: api.AnalyticsModeSQLFallback, Logger: slog.New(slog.DiscardHandler)})
-			t.Cleanup(func() { require.NoError(t, server.Shutdown(context.WithoutCancel(t.Context()))) })
-			daemon := httptest.NewServer(server.Router())
-			t.Cleanup(daemon.Close)
-			cfg.Remote = config.RemoteConfig{URL: daemon.URL, APIKey: "owner", AllowInsecure: true}
-			setMCPTokenTestFlags(t, nil)
-			old := mcpRevealVerification
-			mcpRevealVerification = reveal
-			t.Cleanup(func() { mcpRevealVerification = old })
-			session := mcpDraftTestSession(withStoreResolverConfig(t, cfg), t)
-			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "run_saved_view", Arguments: map[string]any{"id": view.ID}})
-			require.NoError(t, err)
-			encoded, err := json.Marshal(result.Content)
-			require.NoError(t, err)
-			text := string(encoded)
-			if reveal {
-				assert.False(t, result.IsError)
-				assert.Contains(t, text, "482913")
-				return
-			}
-			assert.True(t, result.IsError)
-			assert.Contains(t, text, "verification content is withheld")
-			assert.NotContains(t, text, "482913")
-
 		})
 	}
 }

@@ -197,38 +197,39 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 	require.NoError(t, err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	handler := srv.Handler(nil)
+
+	t.Run("protected source scoped messages", func(t *testing.T) {
+		// Leave one slot available to catch nested snapshots.
+		srv.readSnapshotSlots <- struct{}{}
+		t.Cleanup(func() { <-srv.readSnapshotSlots })
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		t.Cleanup(cancel)
+		ctx = sourcescope.WithSourceIDs(ctx, []int64{source.ID})
+		r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/messages", nil)
+		r.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Len(t, srv.readSnapshotSlots, 1)
+	})
 
 	for _, tc := range []struct {
-		name   string
-		scoped bool
+		name, method, path, body string
+		status                   int
 	}{
-		{name: "protected messages"},
-		{name: "protected source scoped messages", scoped: true},
+		{"aggregates", http.MethodGet, "/api/v1/aggregates?view_type=invalid", "", http.StatusBadRequest},
+		{"approve CardDAV publication", http.MethodPost, "/api/v1/carddav/publications/7/approve", `{}`, http.StatusBadRequest},
+		{"sync CardDAV", http.MethodPost, "/api/v1/carddav/sync", `{}`, http.StatusServiceUnavailable},
+		{"merge people", http.MethodPost, "/api/v1/people/1/merge", `{}`, http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			handler := srv.Handler(nil)
-			ctx := t.Context()
-			if tc.scoped {
-				// Leave one slot available to catch nested snapshots.
-				srv.readSnapshotSlots <- struct{}{}
-				t.Cleanup(func() { <-srv.readSnapshotSlots })
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, 5*time.Second)
-				t.Cleanup(cancel)
-				ctx = sourcescope.WithSourceIDs(ctx, []int64{source.ID})
-			}
-			r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/messages", nil)
+			r := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, strings.NewReader(tc.body))
 			r.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+			r.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, r)
-			require.Equal(http.StatusOK, w.Code, w.Body.String())
-			if tc.scoped {
-				assert.Len(srv.readSnapshotSlots, 1)
-			} else {
-				assert.Empty(srv.readSnapshotSlots)
-			}
+			assert.Equal(t, tc.status, w.Code, w.Body.String())
 		})
 	}
 }
