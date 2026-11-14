@@ -2366,6 +2366,7 @@ func (c ChoiceDescriptor) Validate() error {
 
 type CliAccountResponse struct {
 	Alias              *string          `json:"alias" validate:"required"`
+	AuthMethod         *string          `json:"auth_method,omitzero"`
 	DisplayName        string           `json:"display_name" validate:"required"`
 	Email              string           `json:"email" validate:"required"`
 	HistoryOnly        bool             `json:"history_only"`

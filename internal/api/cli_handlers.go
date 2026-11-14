@@ -30,6 +30,7 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/identityops"
+	imapclient "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/provideridentity"
@@ -877,6 +878,7 @@ type cliAccountResponse struct {
 	Type               string     `json:"type"`
 	DisplayName        string     `json:"display_name"`
 	OAuthApp           string     `json:"oauth_app,omitempty"`
+	AuthMethod         string     `json:"auth_method,omitempty"`
 	MessageCount       int64      `json:"message_count"`
 	SourceDeletedCount int64      `json:"source_deleted_count"`
 	LastSync           *time.Time `json:"last_sync"`
@@ -2837,6 +2839,11 @@ func newCLIAccountResponse(src *store.Source, count, sourceDeleted int64) cliAcc
 		Type:               src.SourceType,
 		MessageCount:       count,
 		SourceDeletedCount: sourceDeleted,
+	}
+	if src.SourceType == "imap" && src.SyncConfig.Valid {
+		if cfg, err := imapclient.ConfigFromJSON(src.SyncConfig.String); err == nil {
+			account.AuthMethod = string(cfg.EffectiveAuthMethod())
+		}
 	}
 	if src.DisplayName.Valid {
 		account.DisplayName = src.DisplayName.String
