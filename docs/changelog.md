@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- MCP write tools report `operation_receipt_unavailable` when a successful write's receipt is too large or unreadable; read current state before retrying.
+- MCP operation tools report `operation_receipt_unavailable` when a successful write's receipt is too large or unreadable; read current state before retrying.
 
 - Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
 

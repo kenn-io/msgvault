@@ -932,6 +932,10 @@ retries a write by itself. If a write reports
 
 ## Write controls
 
+If an MCP operation write returns `operation_receipt_unavailable`, the write
+may have completed but its receipt could not be read. Read the current state
+before retrying.
+
 Enable only the writes intended for the assistant's session:
 
 | Writes | Stdio | HTTP |
