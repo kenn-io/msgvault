@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -256,6 +257,9 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	if backupRestorePermissionsOnly {
 		if len(args) == 0 || args[0] == "" {
 			return errors.New("--permissions-only requires an explicit snapshot ID")
+		}
+		if runtime.GOOS != "windows" {
+			return errors.New("--permissions-only is available only on Windows")
 		}
 		if err := secureRestoredTokens(cmd.Context(), r, args[0], backupRestoreTarget); err != nil {
 			return fmt.Errorf("securing restored credentials: %w", err)
@@ -1095,7 +1099,7 @@ func init() {
 	backupRestoreCmd.Flags().StringVar(&backupRestoreRepo, "repo", "", "Backup repository directory")
 	backupRestoreCmd.Flags().StringVar(&backupRestoreTarget, "target", "", "Directory to restore into (required)")
 	_ = backupRestoreCmd.MarkFlagRequired("target")
-	backupRestoreCmd.Flags().BoolVar(&backupRestorePermissionsOnly, "permissions-only", false, "Retry credential permissions for a snapshot")
+	backupRestoreCmd.Flags().BoolVar(&backupRestorePermissionsOnly, "permissions-only", false, "Retry credential permissions for a snapshot (Windows only)")
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreOverwrite, "overwrite", false, "Allow restoring into a non-empty target directory")
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreForceUnlock, "force-unlock", false, "Break a stale exclusive repository lock before restoring")
 	backupRestoreCmd.Flags().IntVar(&backupRestoreJobs, "jobs", 0, "Concurrent pack readers (default: one per CPU; use 1 for serial reads on spinning disks or NAS shares)")

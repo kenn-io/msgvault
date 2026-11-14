@@ -84,7 +84,7 @@ Verification takes a shared lock, so multiple verifies can run concurrently, but
 
 For repositories on spinning disks or NAS shares, `--jobs 1` reads packs strictly one at a time instead of the default one-reader-per-CPU parallelism; `create` accepts the same flag for its attachment reads and changed-page packing.
 
-### `backup restore --target DIR [SNAPSHOT] [--overwrite] [--integrity-check] [--loose-attachments]`
+### `backup restore --target DIR [SNAPSHOT] [--overwrite] [--integrity-check] [--loose-attachments] [--permissions-only]`
 
 Materializes a snapshot (the latest by default) into `--target` as a complete archive home — `msgvault.db`, the attachment store, and any captured extras (deletions manifests, config, tokens) at their original relative paths with their recorded file modes. Point msgvault at the restored directory, or swap it into place, to use it.
 
