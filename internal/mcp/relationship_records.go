@@ -12,7 +12,8 @@ type RelationshipDeletion struct {
 }
 type PersonRelationshipsPage struct {
 	PersonRecordChunk `json:",inline"`
-	Relationships     *[]generated.PersonRelationshipView `json:"relationships,omitzero"`
+
+	Relationships *[]generated.PersonRelationshipView `json:"relationships,omitzero"`
 }
 
 func relationshipRecordDefinitions() []operationalDefinition {

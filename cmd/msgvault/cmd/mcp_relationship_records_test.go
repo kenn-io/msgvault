@@ -148,7 +148,8 @@ func TestMCPRelationshipStaleWrite(t *testing.T) {
 }
 
 func TestMCPRelationshipNetworkMissingPerson(t *testing.T) {
-	_, backend, _, _ := relationshipFixture(t)
+	st := testutil.NewTestStore(t)
+	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler)}))
 	result, err := backend.ExecuteOperation(t.Context(), "get_person_network", map[string]any{"person_id": int64(999999)})
 	require.NoError(t, err)
 	assertLoopRefusal(t, result, "person_profile_not_found", false)
