@@ -149,16 +149,18 @@ func TestMCPRecordWriteFlagsAreIndependent(t *testing.T) {
 		{"organization", mcpserver.OperationFamilyOrganizations},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			checks := assert.New(t)
+			must := require.New(t)
 			cmd := &cobra.Command{Use: "test"}
 			addMCPWriteFlags(cmd, "mcp-")
 			var opts mcpserver.ServeOptions
 			applyMCPWriteFlags(cmd, "mcp-", &opts)
-			assert.NotContains(t, opts.OperationWriteFamilies, tc.family)
-			require.NoError(t, cmd.Flags().Set("mcp-allow-"+tc.name+"-writes", "true"))
+			checks.NotContains(opts.OperationWriteFamilies, tc.family)
+			must.NoError(cmd.Flags().Set("mcp-allow-"+tc.name+"-writes", "true"))
 			opts = mcpserver.ServeOptions{}
 			applyMCPWriteFlags(cmd, "mcp-", &opts)
-			assert.Contains(t, opts.OperationWriteFamilies, tc.family)
-			assert.NotContains(t, opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
+			checks.Contains(opts.OperationWriteFamilies, tc.family)
+			checks.NotContains(opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
 		})
 	}
 }
