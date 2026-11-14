@@ -21,6 +21,11 @@ type MembershipObservation struct {
 	RawSHA256                [32]byte
 	RawSize                  int64
 	Flags                    []string
+	// ArchivedMessageID is the internal ID of the archived message a
+	// flag-only observation already points at. Relocation can rekey that
+	// message within the run, so its canonical source message ID is not a
+	// stable identity, but the internal ID is. Zero when unknown.
+	ArchivedMessageID int64
 }
 
 // ObservedMemberships returns a defensive snapshot of memberships fetched
@@ -53,6 +58,21 @@ func (c *Client) recordMembershipLocked(
 	if uid == 0 {
 		return
 	}
+	c.observedMemberships = append(c.observedMemberships, c.membershipObservationLocked(
+		mailbox, uid, canonicalSourceMessageID, rfc822MessageID, rawSHA256, rawSize, flags))
+}
+
+// membershipObservationLocked builds the observation recordMembershipLocked
+// appends, so a caller that knows more about the archived row can add it.
+func (c *Client) membershipObservationLocked(
+	mailbox string,
+	uid imap.UID,
+	canonicalSourceMessageID string,
+	rfc822MessageID string,
+	rawSHA256 [32]byte,
+	rawSize int64,
+	flags []imap.Flag,
+) MembershipObservation {
 	canonicalFlags := make([]string, len(flags))
 	for i, flag := range flags {
 		canonicalFlags[i] = string(flag)
@@ -62,7 +82,7 @@ func (c *Client) recordMembershipLocked(
 	if canonicalSourceMessageID == "" {
 		canonicalSourceMessageID = c.activeSourceAliases[sourceMessageID]
 	}
-	c.observedMemberships = append(c.observedMemberships, MembershipObservation{
+	return MembershipObservation{
 		Mailbox:                  mailbox,
 		UIDValidity:              c.selectedUIDValidity,
 		UID:                      uint32(uid),
@@ -72,7 +92,7 @@ func (c *Client) recordMembershipLocked(
 		RawSHA256:                rawSHA256,
 		RawSize:                  rawSize,
 		Flags:                    canonicalFlags,
-	})
+	}
 }
 
 // forgetMembershipLocked drops any observation of one mailbox UID recorded

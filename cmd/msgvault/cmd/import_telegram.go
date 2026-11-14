@@ -49,7 +49,7 @@ Examples:
 				return errors.New("--limit must be non-negative")
 			}
 			if !isDaemonCLISubprocess() {
-				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args, nil)
+				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args)
 			}
 			return runImportTelegram(cmd, args[0], opts)
 		},

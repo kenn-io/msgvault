@@ -120,9 +120,6 @@ import type {
   DiscoverRequest,
   DocbankAttachmentBackfillResponse,
   DocbankAttachmentStatus,
-  DocumentIndexStatusResponse,
-  DocumentSearchResponse,
-  DocumentVectorOperationsResponse,
   DomainSummary,
   EmbeddingStatus,
   Employment,
@@ -159,8 +156,6 @@ import type {
   GetConversationParams,
   GetConversationPathParameters,
   GetDeletionPathParameters,
-  GetDocumentIndexStatusParams,
-  GetDocumentVectorStatusParams,
   GetDomainPathParameters,
   GetEmbeddingStatusParams,
   GetEmploymentPathParameters,
@@ -242,6 +237,7 @@ import type {
   ListMessageRecordingsPathParameters,
   ListMessageTasksPathParameters,
   ListMessagesParams,
+  ListOpenKataIssuesParams,
   ListOperationRunsParams,
   ListOrganizationAttributesParams,
   ListOrganizationAttributesPathParameters,
@@ -296,6 +292,8 @@ import type {
   MergePersonRequest,
   MergePersonsPathParameters,
   MessageDetail,
+  MessageImportRequest,
+  MessageImportResponse,
   MessageListResponse,
   MessageRecordingsResponse,
   MessageTagChange,
@@ -423,7 +421,6 @@ import type {
   SchedulerStatusResponse,
   SearchCLIParams,
   SearchChatsParams,
-  SearchDocumentsParams,
   SearchFastResponse,
   SearchIntegrationTasksParams,
   SearchMediaParams,
@@ -1607,55 +1604,6 @@ export const getDeletion = (
   );
 };
 /**
- * @summary Search extracted document attachments
- */
-export const searchDocuments = (
-  params: SearchDocumentsParams,
-  options?: SecondParameter<typeof orvalFetch<DocumentSearchResponse>>,
-) => {
-  return orvalFetch<DocumentSearchResponse>(
-    { url: `/api/v1/documents/search`, method: "GET", params },
-    options,
-  );
-};
-/**
- * @summary Get extracted document index status
- */
-export const getDocumentIndexStatus = (
-  params: GetDocumentIndexStatusParams,
-  options?: SecondParameter<typeof orvalFetch<DocumentIndexStatusResponse>>,
-) => {
-  return orvalFetch<DocumentIndexStatusResponse>(
-    { url: `/api/v1/documents/status`, method: "GET", params },
-    options,
-  );
-};
-/**
- * @summary Get extracted document index status for the selected durable profile
- */
-export const getCurrentDocumentIndexStatus = (
-  options?: SecondParameter<typeof orvalFetch<DocumentIndexStatusResponse>>,
-) => {
-  return orvalFetch<DocumentIndexStatusResponse>(
-    { url: `/api/v1/documents/status/current`, method: "GET" },
-    options,
-  );
-};
-/**
- * @summary Get document vector generation, consent, usage, and failure status
- */
-export const getDocumentVectorStatus = (
-  params?: GetDocumentVectorStatusParams,
-  options?: SecondParameter<
-    typeof orvalFetch<DocumentVectorOperationsResponse>
-  >,
-) => {
-  return orvalFetch<DocumentVectorOperationsResponse>(
-    { url: `/api/v1/documents/vectors/status`, method: "GET", params },
-    options,
-  );
-};
-/**
  * @summary Get one analytical domain
  */
 export const getDomain = (
@@ -2039,6 +1987,23 @@ export const importMeeting = (
   );
 };
 /**
+ * @summary Import one message
+ */
+export const importMessage = (
+  messageImportRequest: MessageImportRequest,
+  options?: SecondParameter<typeof orvalFetch<MessageImportResponse>>,
+) => {
+  return orvalFetch<MessageImportResponse>(
+    {
+      url: `/api/v1/import/message`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: messageImportRequest,
+    },
+    options,
+  );
+};
+/**
  * @summary Import one recorder-local Muesli meeting
  */
 export const importMuesli = (
@@ -2216,6 +2181,18 @@ export const linkKataEvidence = (
   );
 };
 /**
+ * @summary List or search Kata issues in the configured project
+ */
+export const listOpenKataIssues = (
+  params?: ListOpenKataIssuesParams,
+  options?: SecondParameter<typeof orvalFetch<KataIssueListResponse>>,
+) => {
+  return orvalFetch<KataIssueListResponse>(
+    { url: `/api/v1/integrations/kata/open-issues`, method: "GET", params },
+    options,
+  );
+};
+/**
  * @summary Get Kata person agenda availability
  */
 export const getKataIntegrationStatus = (
@@ -2230,7 +2207,7 @@ export const getKataIntegrationStatus = (
  * @summary Search tasks in the configured project
  */
 export const searchIntegrationTasks = (
-  params: SearchIntegrationTasksParams,
+  params?: SearchIntegrationTasksParams,
   options?: SecondParameter<typeof orvalFetch<TaskSearchResponse>>,
 ) => {
   return orvalFetch<TaskSearchResponse>(
@@ -2336,7 +2313,7 @@ export const getMCPCapabilities = (
   );
 };
 /**
- * @summary Search recordings and attachments as visible messages
+ * @summary Search recording transcripts and mirrored attachment text as visible messages
  */
 export const searchMedia = (
   params: SearchMediaParams,
@@ -4010,7 +3987,7 @@ export const getSavedView = (
   );
 };
 /**
- * Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR.
+ * Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR, or 3 for local date offsets.
  * @summary Update a shared analytical Saved View
  */
 export const patchSavedView = (

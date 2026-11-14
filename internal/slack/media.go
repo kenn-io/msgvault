@@ -30,6 +30,11 @@ const defaultMaxMediaBytes = attachmentpolicy.DefaultChatMaxBytes
 // metadata-only link rows instead.
 const mediaHost = "files.slack.com"
 
+// maxMediaRedirects bounds the redirect chain a file download may follow.
+// Slack uses a single hop to its signed delivery host; the limit stops a
+// redirect loop from becoming an unbounded fetch.
+const maxMediaRedirects = 5
+
 // errOffHost reports a file URL that is not on files.slack.com.
 var errOffHost = errors.New("file URL not on files.slack.com")
 
@@ -77,8 +82,16 @@ func fetchableURL(rawURL string) (string, error) {
 }
 
 // DownloadFile fetches a files.slack.com URL with the bearer token, capped at
-// maxBytes. Redirects are refused entirely: a redirect off-host would carry
-// the token, and same-host redirects do not occur in practice.
+// maxBytes.
+//
+// Slack answers a file GET with a 302 to a pre-signed URL on a delivery host
+// (slack-files.com), so refusing every redirect leaves those files permanently
+// undownloadable. The redirect is followed, but the bearer token is stripped
+// from the hop: the signed target authenticates with its own query parameter
+// and needs no Authorization header, so the token never travels off
+// files.slack.com. This keeps the guarantee that motivated the original
+// refusal — the token reaches exactly one host — while letting the download
+// complete.
 func (c *Client) DownloadFile(ctx context.Context, rawURL string, maxBytes int64) ([]byte, error) {
 	fetchURL, err := fetchableURL(rawURL)
 	if err != nil {
@@ -92,7 +105,23 @@ func (c *Client) DownloadFile(ctx context.Context, rawURL string, maxBytes int64
 	client := &http.Client{
 		Timeout: attachmentpolicy.DownloadTimeout(maxBytes),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return fmt.Errorf("slack file GET: refusing redirect to %s", req.URL.Host)
+			if len(via) >= maxMediaRedirects {
+				return fmt.Errorf(
+					"slack file GET: stopped after %d redirects", maxMediaRedirects)
+			}
+			// A same-host hop keeps the token, and the signed target URL is
+			// itself a credential, so neither may travel in cleartext. Check
+			// the scheme before the host so no hop downgrades to http.
+			if req.URL.Scheme != "https" {
+				return fmt.Errorf(
+					"slack file GET: refusing non-HTTPS redirect to %s", req.URL.Host)
+			}
+			// Carrying the token to another host would hand it to whoever
+			// controls that host. The signed redirect target does not need it.
+			if !strings.EqualFold(req.URL.Host, mediaHost) {
+				req.Header.Del("Authorization")
+			}
+			return nil
 		},
 	}
 	if c.mediaTransport != nil {

@@ -18,7 +18,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/gmail"
 	imaplib "go.kenn.io/msgvault/internal/imap"
-	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/sync"
@@ -349,16 +348,13 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(ctx
 
 		switch imapCfg.EffectiveAuthMethod() {
 		case imaplib.AuthXOAuth2:
-			if cfg.Microsoft.ClientID == "" {
+			if sourceOAuthApp(src) == "" && cfg.Microsoft.ClientID == "" {
 				return nil, errors.New("microsoft OAuth not configured — add a [microsoft] section with client_id to config.toml")
 			}
-			msMgr := microsoft.NewManager(
-				cfg.Microsoft.ClientID,
-				cfg.Microsoft.EffectiveTenantID(),
-				cfg.Microsoft.EffectiveRedirectURI(),
-				cfg.TokensDir(),
-				logger,
-			)
+			msMgr, err := newMicrosoftIMAPManager(cfg, logger, src)
+			if err != nil {
+				return nil, err
+			}
 			tokenFn, err := msMgr.TokenSource(ctx, imapCfg.Username)
 			if err != nil {
 				return nil, fmt.Errorf("load Microsoft token: %w (run 'add-o365' first)", err)
@@ -437,6 +433,21 @@ func imapFolderStateOptions(
 	opts = append(opts, imaplib.WithSourceMessageAliasLoader(
 		func(mailbox string, uids []uint32) (map[string]string, error) {
 			return s.GetIMAPSourceMessageAliases(src.ID, mailbox, uids)
+		}), imaplib.WithStoredMembershipLoader(
+		func(ctx context.Context, mailbox string, uidValidity uint32, uids []uint32) (map[uint32]imaplib.StoredMembership, error) {
+			stored, err := s.GetIMAPStoredMemberships(ctx, src.ID, mailbox, uidValidity, uids)
+			if err != nil {
+				return nil, err
+			}
+			result := make(map[uint32]imaplib.StoredMembership, len(stored))
+			for uid, membership := range stored {
+				result[uid] = imaplib.StoredMembership{
+					MessageID:       membership.MessageID,
+					SourceMessageID: membership.SourceMessageID,
+					Flags:           membership.Flags,
+				}
+			}
+			return result, nil
 		}), imaplib.WithRelocationCandidateLoader(
 		func(ctx context.Context, lost []string) ([]imaplib.RelocationCandidate, error) {
 			candidates, err := s.GetIMAPRelocationCandidatesContext(ctx, src.ID, lost)
@@ -487,6 +498,9 @@ func applyIMAPMailboxDeltas(
 			if existing.CanonicalSourceMessageID == "" {
 				existing.CanonicalSourceMessageID = observation.CanonicalSourceMessageID
 			}
+			if existing.ArchivedMessageID == 0 {
+				existing.ArchivedMessageID = observation.ArchivedMessageID
+			}
 			if existing.RFC822MessageID == "" {
 				existing.RFC822MessageID = observation.RFC822MessageID
 			}
@@ -509,6 +523,7 @@ func applyIMAPMailboxDeltas(
 			RawSHA256:                observation.RawSHA256,
 			RawSize:                  observation.RawSize,
 			Flags:                    append([]string(nil), observation.Flags...),
+			ArchivedMessageID:        observation.ArchivedMessageID,
 		})
 	}
 	byMailbox := make(map[string][]store.IMAPMembershipObservation)
@@ -1013,16 +1028,13 @@ func imapSkipReason(src *store.Source, cfg *config.Config, logger *slog.Logger) 
 	}
 	switch imapCfg.EffectiveAuthMethod() {
 	case imaplib.AuthXOAuth2:
-		if cfg.Microsoft.ClientID == "" {
+		if sourceOAuthApp(src) == "" && cfg.Microsoft.ClientID == "" {
 			return fmt.Sprintf("Skipping %s (Microsoft OAuth not configured — add client_id to [microsoft] in config.toml)", src.Identifier), nil
 		}
-		msMgr := microsoft.NewManager(
-			cfg.Microsoft.ClientID,
-			cfg.Microsoft.EffectiveTenantID(),
-			cfg.Microsoft.EffectiveRedirectURI(),
-			cfg.TokensDir(),
-			repairLogger(logger),
-		)
+		msMgr, err := newMicrosoftIMAPManager(cfg, repairLogger(logger), src)
+		if err != nil {
+			return fmt.Sprintf("Skipping %s (%v)", src.Identifier, err), nil
+		}
 		if !msMgr.HasToken(imapCfg.Username) {
 			return fmt.Sprintf("Skipping %s (no Microsoft token — run 'add-o365' first)", src.Identifier), nil
 		}

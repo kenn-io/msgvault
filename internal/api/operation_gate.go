@@ -397,6 +397,7 @@ var operationGateExemptPaths = map[string]bool{
 	importJobsEndpointPath:             true,
 	localEmbeddingsEndpointPath:        true,
 	meetingImportEndpointPath:          true,
+	messageImportEndpointPath:          true,
 	muesliImportEndpointPath:           true,
 	muesliRecordingEndpointPath:        true,
 	"/api/v1/cli/add-calendar/plan":    true,
@@ -430,7 +431,7 @@ var operationGateExemptPaths = map[string]bool{
 // archive or persistent configuration state, so they must stay available
 // while a long archive operation holds the gate. Meeting actions, context,
 // and metrics are also non-Exploration read routes. Kata evidence preparation
-// only reads message bodies and extracted document text. Message tag reads and
+// only reads message bodies and Docbank renditions. Message tag reads and
 // previews bypass the gate here; their handler takes it for actual writes.
 const cardDAVAccountTestPath = "/api/v1/carddav/account/test"
 
@@ -626,7 +627,6 @@ var cliRunReadOnlyCommands = map[string]bool{
 	"show-deletion":     true,
 	"embeddings list":   true,
 	"embeddings status": true,
-	"documents search":  true,
 	// Tier previews only read.
 	"person tiers preview": true,
 	"person tiers explain": true,
@@ -648,6 +648,19 @@ var cliRunSelfGatedCommands = map[string]bool{
 // ungated generic CLI subprocess.
 func IsCLIRunEmbeddingsOptimize(args []string) bool {
 	return len(args) > 0 && cliRunCommandWords(args) == "embeddings optimize"
+}
+
+// IsCLIRunEmbeddingsBuild identifies commands coordinated by the daemon.
+func IsCLIRunEmbeddingsBuild(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch cliRunCommandWords(args) {
+	case "embeddings build", "embeddings resume", "build-embeddings":
+		return true
+	default:
+		return false
+	}
 }
 
 func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label string, skip bool, err error) {
@@ -675,7 +688,7 @@ func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label stri
 			return "", true, nil
 		}
 		command := cliRunCommandWords(req.Args)
-		if cliRunReadOnlyCommands[command] || cliRunSelfGatedCommands[command] || IsCLIRunEmbeddingsOptimize(req.Args) {
+		if cliRunReadOnlyCommands[command] || cliRunSelfGatedCommands[command] || IsCLIRunEmbeddingsOptimize(req.Args) || IsCLIRunEmbeddingsBuild(req.Args) {
 			return "", true, nil
 		}
 		if command != "" {
@@ -695,7 +708,6 @@ var cliRunCommandGroups = map[string]bool{
 	"policy":     true,
 	"embeddings": true,
 	"backup":     true,
-	"documents":  true,
 }
 
 // cliRunCommandWords extracts the command path while consuming supported flags and their values.

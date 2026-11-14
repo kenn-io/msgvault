@@ -2,7 +2,6 @@ package query
 
 import (
 	"context"
-	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -170,15 +169,6 @@ func assertAllResults(t *testing.T, results []MessageSummary, desc string, pred 
 	for _, r := range results {
 		assert.True(t, pred(r), "result id=%d did not satisfy %s", r.ID, desc)
 	}
-}
-
-// assertAnyResult verifies that at least one result satisfies the given predicate.
-func assertAnyResult(t *testing.T, results []MessageSummary, desc string, pred func(MessageSummary) bool) {
-	t.Helper()
-	if slices.ContainsFunc(results, pred) {
-		return
-	}
-	assert.Fail(t, "no result satisfied "+desc)
 }
 
 // newTestEnvWithEmptyBuckets creates a test DB with messages that have

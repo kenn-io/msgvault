@@ -208,6 +208,54 @@ func TestStore_GetLatestSync(t *testing.T) {
 	assert.Equal(store.SyncStatusCompleted, previous.Status, "Status")
 }
 
+func TestLastSuccessfulSyncLookupUsesCompletedIndex(t *testing.T) {
+	req := require.New(t)
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("EXPLAIN QUERY PLAN is SQLite-only")
+	}
+	// Incremental syncs read the newest completed run before every pass, so
+	// the lookup must walk an index in order instead of sorting the history.
+	_, err := f.Store.DB().ExecContext(t.Context(), `
+		WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000)
+		INSERT INTO sync_runs (source_id, sync_type, started_at, completed_at, status)
+		SELECT ?, 'incremental', datetime(i, 'unixepoch'), datetime(i + 5, 'unixepoch'),
+		       CASE WHEN i % 10 = 0 THEN 'failed' ELSE 'completed' END
+		FROM n
+	`, f.Source.ID)
+	req.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), `ANALYZE`)
+	req.NoError(err)
+
+	for _, tc := range []struct {
+		name string
+		args []any
+	}{
+		{name: "any type", args: []any{f.Source.ID}},
+		{name: "by type", args: []any{f.Source.ID, "incremental"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			query := store.LastSuccessfulSyncQueryForTest(len(tc.args) > 1)
+			rows, err := f.Store.DB().QueryContext(t.Context(), `EXPLAIN QUERY PLAN `+query, tc.args...)
+			require.NoError(err)
+			defer func() { _ = rows.Close() }()
+			var plan []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				require.NoError(rows.Scan(&id, &parent, &unused, &detail))
+				plan = append(plan, detail)
+			}
+			require.NoError(rows.Err())
+			joined := strings.Join(plan, "\n")
+			assert.Contains(joined, "idx_sync_runs_completed")
+			assert.NotContains(joined, "TEMP B-TREE")
+		})
+	}
+}
+
 func TestStore_StartSyncRejectsConcurrentRun(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1106,6 +1154,52 @@ func TestStore_SyncRunItems(t *testing.T) {
 	assert.Equal("ingest_error", items[0].ErrorKind, "ErrorKind")
 	assert.Equal("parse MIME: malformed header", items[0].ErrorMessage, "ErrorMessage")
 	assert.False(items[0].CreatedAt.IsZero(), "CreatedAt")
+}
+
+func TestRecordSyncRunItemContextRejectsDifferentRunWhileScopeIsLive(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	f := storetest.New(t)
+	otherRun := f.StartSync()
+	requirements.NoError(f.Store.FailSyncContext(t.Context(), otherRun, "previous worker stopped"))
+	runID := f.StartSync()
+	live := f.Store.ScopedToSync(f.Source.ID, runID)
+
+	active, err := f.Store.GetActiveSyncReadOnly(t.Context(), f.Source.ID)
+	requirements.NoError(err)
+	requirements.Equal(runID, active.ID)
+	requirements.Equal(store.SyncStatusRunning, active.Status)
+
+	item := store.SyncRunItem{
+		SyncRunID:       otherRun,
+		SourceMessageID: "scoped-run-message",
+		Phase:           "fetch",
+		Status:          store.SyncRunItemStatusResolved,
+		ErrorKind:       "acquired",
+	}
+	// Keep this scope live so the stale-worker fence cannot mask a missing
+	// check that the item's run matches the scoped run.
+	t.Run("different run", func(t *testing.T) {
+		require.ErrorIs(t, live.RecordSyncRunItemContext(t.Context(), item), store.ErrSyncRunSuperseded)
+	})
+	for _, id := range []int64{otherRun, runID} {
+		items, err := f.Store.ListSyncRunItemsContext(t.Context(), id, "", 10)
+		requirements.NoError(err)
+		checks.Empty(items, "rejected write must leave run %d unchanged", id)
+	}
+
+	// Changing only the target run must let the same scoped worker commit.
+	item.SyncRunID = runID
+	requirements.NoError(live.RecordSyncRunItemContext(t.Context(), item))
+	items, err := f.Store.ListSyncRunItemsContext(t.Context(), runID, "", 10)
+	requirements.NoError(err)
+	requirements.Len(items, 1)
+	checks.Positive(items[0].ID)
+	checks.Equal(item.SyncRunID, items[0].SyncRunID)
+	checks.Equal(item.SourceMessageID, items[0].SourceMessageID)
+	checks.Equal(item.Phase, items[0].Phase)
+	checks.Equal(item.Status, items[0].Status)
+	checks.Equal(item.ErrorKind, items[0].ErrorKind)
 }
 
 func TestStore_SyncRunItemsCascadeWithSyncRun(t *testing.T) {

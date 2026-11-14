@@ -268,9 +268,9 @@ func TestBuildUnsentTailKeepsSentAnchor(t *testing.T) {
 				require.NoError(err)
 				replaceRelationshipParquet(t, db, root, "participants", "SELECT * FROM draft_participants")
 				_, err = db.ExecContext(t.Context(), `CREATE TEMP TABLE draft_recipients AS
-					SELECT * FROM read_parquet(?) UNION ALL SELECT 2::BIGINT, 4::BIGINT, 'to'`, parquetDatasetGlob(root, "message_recipients"))
+					SELECT message_id, participant_id, recipient_type FROM read_parquet(?) UNION ALL SELECT 2::BIGINT, 4::BIGINT, 'to'`, parquetDatasetGlob(root, "message_recipients"))
 				require.NoError(err)
-				replaceRelationshipParquet(t, db, root, "message_recipients", "SELECT * FROM draft_recipients")
+				replaceRelationshipParquet(t, db, root, "message_recipients", "SELECT message_id, participant_id, recipient_type FROM draft_recipients")
 			}
 			_, err = Build(t.Context(), db, BuildOptions{
 				Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,

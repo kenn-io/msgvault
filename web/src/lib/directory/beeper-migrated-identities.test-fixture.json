@@ -1,0 +1,14 @@
+[
+  {
+    "participant_id": 2,
+    "type": "beeper",
+    "value": "beeper:14:garden-account:27:@legacy_member:beeper.local",
+    "display_value": "",
+    "service_slug": "whatsapp",
+    "service_label": "WhatsApp",
+    "scope_kind": "account",
+    "scope_value": "garden-account",
+    "participant_display_name": "Garden member",
+    "identity_key": "[\"whatsapp\",\"account\",\"garden-account\",\"beeper:beeper:14:garden-account:27:@legacy_member:beeper.local\"]"
+  }
+]

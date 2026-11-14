@@ -19,7 +19,7 @@ function fileRow(id: number, title: string) {
     occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_type: 'synthetic',
     source_identifier: 'archive@example.com', containing_title: title,
     filename: `deep-${id}.pdf`, mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 2048,
-    content_state: 'missing_blob', content_available: false
+    content_state: 'unverified', content_available: null
   };
 }
 
@@ -229,7 +229,9 @@ test.describe('compact toolbar', () => {
     await expect(page.getByRole('button', { name: 'Filter', exact: true })).toHaveAttribute('aria-expanded', 'true');
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'View', exact: true }).click();
+    await expect(page.getByRole('menu', { name: 'View' })).toBeVisible();
     await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(page.getByRole('combobox', { name: 'Show as: Table' })).toBeVisible();
     await page.getByRole('grid', { name: 'Messages results' }).focus();
     await page.keyboard.press('f');
     await expect(page.getByRole('button', { name: 'Filter', exact: true })).toHaveAttribute('aria-expanded', 'true');

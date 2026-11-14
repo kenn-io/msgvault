@@ -540,7 +540,7 @@ func TestRepairMessageCommandAuditUsesReadOnlyStoreAndExactJSON(t *testing.T) {
 	assert.Equal(syncer.AuditMismatch, result.Status)
 	assert.Equal(syncer.AuditMismatch, result.Fields[syncer.AuditFieldSubject])
 	assert.Equal(
-		`{"internal_id":`+jsonNumber(messageID)+`,"source_id":1,"source_message_id":"gmail-audit","status":"mismatch","fields":{"attachment_hashes":"match","attachment_part_keys":"match","bcc":"match","body_html":"inconclusive","body_text":"inconclusive","cc":"match","from":"mismatch","raw_mime":"match","rfc822_message_id":"inconclusive","subject":"mismatch","to":"mismatch"}}`+"\n",
+		`{"internal_id":`+jsonNumber(messageID)+`,"source_id":1,"source_message_id":"gmail-audit","status":"mismatch","fields":{"attachment_hashes":"match","attachment_part_keys":"match","bcc":"match","body_html":"match","body_text":"inconclusive","cc":"match","from":"mismatch","raw_mime":"match","rfc822_message_id":"match","subject":"mismatch","to":"mismatch"}}`+"\n",
 		output.String())
 }
 

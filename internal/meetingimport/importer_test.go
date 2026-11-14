@@ -780,18 +780,6 @@ func TestImporterCompletesSyncAndSafelyRetriesAfterCacheFailure(t *testing.T) {
 	assert.Equal(int64(0), completed.MessagesUpdated)
 }
 
-func TestImporterRefreshCacheDoesNotLogShutdownCancellation(t *testing.T) {
-	var logs bytes.Buffer
-	importer := NewImporter(nil, Hooks{
-		RefreshCache: func(context.Context, string) error {
-			return context.Canceled
-		},
-	}).WithLogger(slog.New(slog.NewTextHandler(&logs, nil)))
-
-	importer.refreshCache(t.Context(), "meeting_import:local-meetings", 1, "meeting:42")
-	assert.Empty(t, logs.String())
-}
-
 func TestImporterSourceHookFailureStopsBeforeSync(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -899,57 +887,6 @@ func TestImporterCancellationDuringParticipantResolutionRollsBackParticipants(t 
 	var messageCount int
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messageCount))
 	assert.Zero(messageCount)
-}
-
-func TestImporterCancellationAtCheckpointLeavesFailedSync(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	checkpointStarted := make(chan struct{})
-	releaseCheckpoint := make(chan struct{})
-	importer := NewImporter(st, Hooks{})
-	importer.beforeCheckpointForTest = func() {
-		close(checkpointStarted)
-		<-releaseCheckpoint
-	}
-
-	ctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
-	req := validImportRequest(t)
-	done := make(chan error, 1)
-	go func() {
-		_, importErr := importer.Import(ctx, req)
-		done <- importErr
-	}()
-
-	select {
-	case <-checkpointStarted:
-	case <-time.After(30 * time.Second):
-		require.FailNow("meeting import did not reach checkpoint")
-	}
-	cancel()
-	close(releaseCheckpoint)
-
-	select {
-	case err := <-done:
-		require.ErrorIs(err, context.Canceled)
-	case <-time.After(30 * time.Second):
-		require.FailNow("meeting import did not stop after cancellation")
-	}
-
-	var messageCount int
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messageCount))
-	assert.Equal(1, messageCount, "canonical message is committed before checkpointing")
-
-	sources, err := st.ListSources(SourceType)
-	require.NoError(err)
-	require.Len(sources, 1)
-	latest, err := st.GetLatestSync(sources[0].ID)
-	require.NoError(err)
-	assert.Equal(store.SyncStatusFailed, latest.Status)
-	assert.Equal(int64(1), latest.MessagesProcessed)
-	assert.Equal(int64(1), latest.MessagesAdded)
-	assert.Contains(latest.ErrorMessage.String, context.Canceled.Error())
 }
 
 func TestImporterRawFailureRollsBackCanonicalSnapshot(t *testing.T) {

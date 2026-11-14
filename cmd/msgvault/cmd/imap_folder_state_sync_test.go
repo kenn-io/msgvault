@@ -454,6 +454,89 @@ func TestIMAPFolderStateOptions_ForceRescanRetainsStatesAndEnumerates(t *testing
 		"forced enumeration must not skip an unchanged mailbox")
 }
 
+// imapMembershipFlagsJSON reads the saved flags of one membership row.
+func imapMembershipFlagsJSON(
+	t *testing.T, st *store.Store, sourceID int64, mailbox string, uid uint32,
+) string {
+	t.Helper()
+	var flags string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT flags FROM imap_message_memberships
+		WHERE source_id = ? AND mailbox = ? AND uid = ?
+	`), sourceID, mailbox, uid).Scan(&flags))
+	return flags
+}
+
+const imapMembershipStamp = "1999-01-01 00:00:00"
+
+// stampIMAPMemberships moves updated_at on every membership row to a fixed
+// past value, so imapMembershipsWritten can count the rows a later apply
+// inserted or updated.
+func stampIMAPMemberships(t *testing.T, st *store.Store, sourceID int64) {
+	t.Helper()
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
+		UPDATE imap_message_memberships SET updated_at = ? WHERE source_id = ?
+	`), imapMembershipStamp, sourceID)
+	require.NoError(t, err)
+}
+
+func imapMembershipsWritten(t *testing.T, st *store.Store, sourceID int64) int {
+	t.Helper()
+	var count int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COUNT(*) FROM imap_message_memberships
+		WHERE source_id = ? AND updated_at <> ?
+	`), sourceID, imapMembershipStamp).Scan(&count))
+	return count
+}
+
+// TestIMAPFolderStateOptions_RefreshesFlagChangeWithoutModSeq follows a reply
+// made from another mail client through the production wiring: the saved
+// state loader, the stored-membership loader, the listing and the durable
+// apply. The in-memory server reports no mod-sequence, like Proton Mail Bridge
+// or DavMail, so the flag change moves neither UIDNEXT nor the message count.
+func TestIMAPFolderStateOptions_RefreshesFlagChangeWithoutModSeq(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 2, "Archive": 1})
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("imap", "imap://flags@example.com")
+	require.NoError(err)
+
+	first := listedIMAPClient(t, addr)
+	seedObservedIMAPMessages(t, st, src, first)
+	require.NoError(saveIMAPFolderStates(ctx, st, src, first, completedIMAPSyncSummary(t, st, src), 0))
+	require.NoError(first.Close())
+	require.JSONEq(`[]`, imapMembershipFlagsJSON(t, st, src.ID, "INBOX", 2))
+
+	resync := func() {
+		t.Helper()
+		opts := imapFolderStateOptions(st, src, false, testConfigValue(), testDiscardLogger())
+		client := listedIMAPClient(t, addr, opts...)
+		resp, err := client.ListMessages(ctx, "", "")
+		require.NoError(err)
+		require.Empty(resp.Messages, "a flag change must not re-list any message")
+		require.NoError(saveIMAPFolderStates(ctx, st, src, client, completedIMAPSyncSummary(t, st, src), 0))
+		require.NoError(client.Close())
+	}
+
+	testutil.SetIMAPFlags(t, addr, "INBOX", 2, imapapi.FlagAnswered, imapapi.FlagSeen)
+	stampIMAPMemberships(t, st, src.ID)
+	resync()
+	assert.JSONEq(`["\\Answered","\\Seen"]`, imapMembershipFlagsJSON(t, st, src.ID, "INBOX", 2))
+	assert.Equal(1, imapMembershipsWritten(t, st, src.ID),
+		"only the row whose flags changed may be written")
+	assert.Equal(3, imapMembershipRowCount(t, st, src.ID))
+	assert.Zero(imapTombstonedMessageCount(t, st, src.ID))
+
+	stampIMAPMemberships(t, st, src.ID)
+	resync()
+	assert.Zero(imapMembershipsWritten(t, st, src.ID),
+		"a run with no flag change must not write any membership row")
+	assert.JSONEq(`["\\Answered","\\Seen"]`, imapMembershipFlagsJSON(t, st, src.ID, "INBOX", 2))
+}
+
 func TestSaveIMAPFolderStates_UnmappableObservationRollsBackCursor(t *testing.T) {
 	require := require.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1})

@@ -336,7 +336,8 @@ func TestDaemonCLIArgsFromCobraForwardsCommandFlagsAndPositionals(t *testing.T) 
 				"--label=archive",
 				"--source-type=hey",
 				"--yes",
-				"alice@example.com",
+				"--",
+				"-reader@example.org",
 				"/tmp/export.mbox",
 			}, got, "daemon args")
 			return nil
@@ -349,7 +350,8 @@ func TestDaemonCLIArgsFromCobraForwardsCommandFlagsAndPositionals(t *testing.T) 
 		"--label", "inbox,archive",
 		"--source-type", "hey",
 		"--yes",
-		"alice@example.com",
+		"--",
+		"-reader@example.org",
 		"/tmp/export.mbox",
 	})
 

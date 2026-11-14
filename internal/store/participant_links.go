@@ -362,7 +362,7 @@ func (s *Store) linkParticipantsContextGuarded(
 	a, b int64,
 	guard func(context.Context, *loggedTx) error,
 ) (revision int64, linked bool, err error) {
-	return s.linkParticipantsContextGuardedOwned(ctx, a, b, 0, true, guard, nil)
+	return s.linkParticipantsContextGuardedOwned(ctx, a, b, 0, guard, nil)
 }
 
 // linkParticipantsContextGuardedOwned is the guarded link transaction with an
@@ -373,7 +373,6 @@ func (s *Store) linkParticipantsContextGuarded(
 func (s *Store) linkParticipantsContextGuardedOwned(
 	ctx context.Context,
 	a, b, ownerCandidateID int64,
-	confirmMembership bool,
 	guard func(context.Context, *loggedTx) error,
 	afterLink func(context.Context, *loggedTx) error,
 ) (revision int64, linked bool, err error) {
@@ -391,6 +390,14 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 			if err := guard(ctx, tx); err != nil {
 				return err
 			}
+		}
+		confirmMembership := ownerCandidateID == 0
+		if ownerCandidateID != 0 {
+			var decidedBy string
+			if err := tx.QueryRowContext(ctx, `SELECT decided_by FROM identity_match_candidates WHERE id = ?`, ownerCandidateID).Scan(&decidedBy); err != nil {
+				return err
+			}
+			confirmMembership = decidedBy != string(AttributeOwnershipSystem)
 		}
 		if err := s.verifyParticipantsExistTxContext(ctx, tx, lo, hi); err != nil {
 			return err

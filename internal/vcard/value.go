@@ -279,11 +279,7 @@ func PropertyValue(version Version, property Property) (string, error) {
 	if !isText {
 		return property.RawValue, nil
 	}
-	raw, err := decodeLegacyRawValue(property)
-	if err != nil {
-		return "", err
-	}
-	return UnescapeText(raw)
+	return UnescapeText(property.RawValue)
 }
 
 // ContactPointValue decodes contact values and retains complete telephone URIs.

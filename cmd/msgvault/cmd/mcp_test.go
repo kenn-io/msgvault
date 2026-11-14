@@ -107,6 +107,8 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	savedAllowPersonMerges := mcpAllowPersonMerges
 	savedAllowCardDAVWrites := mcpAllowCardDAVWrites
 	savedAllowCalendarWrites := mcpAllowCalendarWrites
+	savedAllowLoops, savedAllowSources := mcpAllowLoopWrites, mcpAllowSourceWrites
+	savedConfirmSensitiveDrafts := mcpConfirmSensitiveDrafts
 	savedServeHTTP := serveMCPHTTPWithOptions
 	allowWritesFlag := mcpCmd.Flags().Lookup("http-allow-writes")
 	require.NotNil(allowWritesFlag, "mcp command must define --http-allow-writes")
@@ -114,8 +116,13 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	allowCalendarWritesFlag := mcpCmd.Flags().Lookup("allow-calendar-writes")
 	require.NotNil(allowCalendarWritesFlag, "mcp command must define --allow-calendar-writes")
 	require.NoError(allowCalendarWritesFlag.Value.Set("true"))
+	require.NoError(mcpCmd.Flags().Set("confirm-sensitive-drafts", "true"))
 	mcpHTTPAddr = "0.0.0.0:8081"
 	mcpHTTPAllowInsecure = true
+	loopWritesFlag := mcpCmd.Flags().Lookup("allow-loop-writes")
+	require.NotNil(loopWritesFlag)
+	require.NoError(loopWritesFlag.Value.Set("true"))
+	mcpAllowSourceWrites = false
 	mcpAllowProfileWrites = true
 	mcpAllowIdentityDecisions = true
 	mcpAllowIdentityScoring = true
@@ -132,6 +139,8 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 		mcpAllowPersonMerges = savedAllowPersonMerges
 		mcpAllowCardDAVWrites = savedAllowCardDAVWrites
 		mcpAllowCalendarWrites = savedAllowCalendarWrites
+		mcpAllowLoopWrites, mcpAllowSourceWrites = savedAllowLoops, savedAllowSources
+		mcpConfirmSensitiveDrafts = savedConfirmSensitiveDrafts
 		serveMCPHTTPWithOptions = savedServeHTTP
 	})
 
@@ -148,12 +157,14 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	err := mcpCmd.RunE(mcpCmd, nil)
 
 	require.ErrorIs(err, wantErr)
+	assert.ElementsMatch([]mcpserver.OperationFamily{mcpserver.OperationFamilyRecords, mcpserver.OperationFamilyLoops}, gotServeOpts.OperationWriteFamilies)
 	assert.True(gotServeOpts.AllowProfileWrites)
 	assert.True(gotServeOpts.AllowIdentityDecisions)
 	assert.True(gotServeOpts.AllowIdentityScoring)
 	assert.True(gotServeOpts.AllowPersonMerges)
 	assert.True(gotServeOpts.AllowCardDAVWrites)
 	assert.True(gotServeOpts.AllowCalendarWrites)
+	assert.True(gotServeOpts.ConfirmSensitiveDrafts)
 	assert.Equal(mcpserver.HTTPOptions{
 		Addr:               "0.0.0.0:8081",
 		DiscoveryDirectory: filepath.Join(home, "mcp"),

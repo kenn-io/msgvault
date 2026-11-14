@@ -56,7 +56,6 @@ const (
 	ToolFindSimilarMessages       = "find_similar_messages"
 	ToolSearchVisualAttachments   = "search_visual_attachments"
 	ToolSearchInMessage           = "search_in_message"
-	ToolSearchDocuments           = "search_document_attachments"
 	ToolSearchPersonFiles         = "search_person_files"
 	ToolSearchPeople              = "search_people"
 	ToolListDirectoryPeople       = "list_directory_people"
@@ -129,7 +128,6 @@ type ServeOptions struct {
 	HybridSearcher         HybridSearcher
 	SimilarSearcher        SimilarSearcher
 	DataDir                string
-	DocumentSearcher       DocumentSearcher
 	MediaSearcher          MediaSearcher
 	PersonFileSearcher     PersonFileSearcher
 	PeopleBackend          peoplebrowser.Backend
@@ -184,6 +182,8 @@ type ServeOptions struct {
 	Calendar CalendarBackend
 	// DelegatedOnly limits an agent-delegated caller to scoped reads, calendars and drafts.
 	DelegatedOnly bool
+	// ConfirmSensitiveDrafts requires client approval before writing flagged draft content.
+	ConfirmSensitiveDrafts bool
 	// GrantPermissions holds the agent grant's permissions. In DelegatedOnly
 	// mode, a read tool is listed only when the grant holds its permission.
 	GrantPermissions []string
@@ -348,6 +348,7 @@ var mcpSchemaCache = sdkmcp.NewSchemaCache()
 
 // newMCPServer builds an official MCP server from the operation catalog.
 func newMCPServer(opts ServeOptions, allowWrites bool) *sdkmcp.Server {
+	opts.DiscoverFamilies = nil
 	return newMCPServerWithPolicy(opts, allowWrites, newStdioInvocationPolicy())
 }
 
@@ -363,6 +364,7 @@ func newMCPServerWithPolicy(
 	}
 	capabilities := &sdkmcp.ServerCapabilities{Tools: &sdkmcp.ToolCapabilities{}}
 	instructions := archiveSafetyInstructions + " " + decisionMemoryInstructions + " Use returned web_url values when linking to archived messages."
+	instructions += " Agent guide: https://msgvault.io/docs/guides/agent-quickstart.md (msgvault quickstart --mcp)."
 	if !opts.DelegatedOnly {
 		capabilities.Resources = &sdkmcp.ResourceCapabilities{}
 	} else {
@@ -389,6 +391,7 @@ func newMCPServerWithPolicy(
 	h := &handlers{
 		embeddingStatus:      opts.EmbeddingStatus,
 		delegatedOnly:        opts.DelegatedOnly,
+		sensitiveConfirm:     opts.ConfirmSensitiveDrafts,
 		downloads:            opts.downloads,
 		engine:               opts.Engine,
 		archiveSQLQuerier:    opts.ArchiveSQLQuerier,
@@ -398,7 +401,6 @@ func newMCPServerWithPolicy(
 		hybridSearcher:       opts.HybridSearcher,
 		similarSearcher:      opts.SimilarSearcher,
 		dataDir:              opts.DataDir,
-		documentSearcher:     opts.DocumentSearcher,
 		mediaSearcher:        opts.MediaSearcher,
 		personFileSearcher:   opts.PersonFileSearcher,
 		peopleBackend:        opts.PeopleBackend,
@@ -422,17 +424,20 @@ func newMCPServerWithPolicy(
 		chatDiscoveryBackend: opts.ChatDiscoveryBackend,
 	}
 
-	for _, definition := range operationCatalog(opts, h) {
-		if !toolClassAllowed(definition.security, opts, allowWrites) {
-			continue
-		}
+	definitions := authorizedOperationCatalog(opts, allowWrites)
+	operations := operationalCatalog(opts, allowWrites)
+	h.toolDiscovery = toolDiscovery{definitions: definitions, discoverFamilies: opts.DiscoverFamilies}
+	for _, operation := range operations {
+		h.toolDiscovery.definitions = append(h.toolDiscovery.definitions, operation.definition)
+	}
+	for _, definition := range definitions {
 		sdkmcp.AddTool[map[string]any, any](s, definition.tool(), officialToolHandler(definition.bind(h), confirmation))
 	}
 	if !opts.DelegatedOnly {
 		registerAttachmentResources(s, h)
 	}
 
-	for _, definition := range operationalCatalog(opts, allowWrites) {
+	for _, definition := range operations {
 		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations), confirmation))
 	}
 
@@ -463,7 +468,7 @@ func ServeTransport(ctx context.Context, opts ServeOptions, transport sdkmcp.Tra
 	if opts.DiscoverFamilies != nil {
 		opts.Families = opts.DiscoverFamilies(ctx)
 	}
-	return newMCPServerWithPolicy(opts, true, newStdioInvocationPolicy()).Run(ctx, transport) //nolint:wrapcheck // ServeWithOptions adds transport-specific context.
+	return newMCPServer(opts, true).Run(ctx, transport) //nolint:wrapcheck // ServeWithOptions adds transport-specific context.
 }
 
 // ServeHTTPWithOptions creates an MCP server from opts and serves over

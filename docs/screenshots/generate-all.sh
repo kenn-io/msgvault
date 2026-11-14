@@ -42,11 +42,17 @@ REPO_RESOLVED="$(cd "$REPO" 2>/dev/null && pwd)" || {
 REPO="$REPO_RESOLVED"
 export MSGVAULT_REPO="$REPO"
 SCREENSHOT_VERSION="${MSGVAULT_DOCS_SCREENSHOT_VERSION:-$(git -C "$REPO" describe --tags --abbrev=0 2>/dev/null || printf 'dev')}"
+# Containers run as the caller so every generated file stays removable without root.
+DOCKER_USER="$(id -u):$(id -g)"
+UV_IMAGE="ghcr.io/astral-sh/uv:0.9.5-python3.12-bookworm-slim"
 
 # --- Step 1: Generate demo data ---
 if [[ "$SKIP_DATA" == false ]]; then
     echo "==> Generating demo data..."
-    (cd "$SCRIPT_DIR" && uv run generate_demo_data.py)
+    docker run --rm --user "$DOCKER_USER" \
+        -e HOME=/tmp -e UV_CACHE_DIR=/tmp/uv-cache \
+        -v "$SCRIPT_DIR:/work" -w /work \
+        "$UV_IMAGE" uv run generate_demo_data.py
     echo ""
 fi
 
@@ -59,21 +65,21 @@ if [[ "$SKIP_BUILD" == false ]]; then
     echo ""
 fi
 
-# --- Step 3: Build analytics cache inside container ---
+# --- Step 3: Bring the demo schema and search index current, then build the analytics cache ---
 echo "==> Building analytics cache..."
-docker run --rm \
+docker run --rm --user "$DOCKER_USER" -e HOME=/tmp \
     -v "$DEMO_DATA_DIR:/data" \
     -e "MSGVAULT_HOME=/data" \
     --entrypoint bash \
     "$IMAGE_NAME" \
-    -c 'MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID=$$ msgvault --local build-cache --full-rebuild; status=$?; exit "$status"'
+    -c 'msgvault --local init-db >/dev/null && msgvault --local rebuild-fts >/dev/null && MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID=$$ msgvault --local build-cache --full-rebuild; status=$?; exit "$status"'
 echo ""
 
 # --- Step 4: Generate screenshots ---
 mkdir -p "$OUTPUT_DIR"
 
 echo "==> Generating SVG screenshots..."
-docker run --rm \
+docker run --rm --user "$DOCKER_USER" -e HOME=/tmp \
     -v "$SCRIPT_DIR:/tapes" \
     -v "$DEMO_DATA_DIR:/data" \
     -v "$OUTPUT_DIR:/output" \

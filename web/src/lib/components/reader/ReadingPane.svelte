@@ -3,6 +3,7 @@
   import type {
     EntryRow,
     ExploreGroupDimension,
+    ExploreGroupOverview,
     ExplorePredicate
   } from '../../explore/models';
 
@@ -17,6 +18,7 @@
         count?: number;
         estimatedBytes?: number;
         latestAt?: string;
+        overview?: ExploreGroupOverview;
         /** Authority from this group detail result, never the outer list. */
         meetingScope?: MeetingExploreScope;
       };
@@ -26,6 +28,9 @@
 </script>
 
 <script lang="ts">
+  import { formatDate } from '../../util/format';
+  import GroupOverview from './GroupOverview.svelte';
+  import { groupedByLabel } from '../../explore/labels';
   import { messageTitle } from '../../archive/message-title';
   import { parseRecordingSelection } from '../../archive/recording-selection';
   import { Button, EmptyState, IconButton } from '@kenn-io/kit-ui';
@@ -40,7 +45,6 @@
   import { filtersForGroup } from '../../explore/group-context';
   import type { ExploreCacheUnavailable, ExploreFileFact, ExploreFilter } from '../../explore/models';
   import { isEmailMessageType } from '../../explore/models';
-  import { formatBytes } from '../../util/format';
   import IdentityBadge from '../explore/IdentityBadge.svelte';
   import MeetingPanel from '../meetings/MeetingPanel.svelte';
   import AttachmentRail from './AttachmentRail.svelte';
@@ -121,17 +125,15 @@
       if (row.attachment_count > 0) parts.push(`${row.attachment_count.toLocaleString()} ${row.attachment_count === 1 ? 'file' : 'files'}`);
       return parts.filter(Boolean).join(' · ');
     }
-    const parts = [`Grouped by ${selection.dimension}`];
-    if (selection.count !== undefined) parts.push(`${selection.count.toLocaleString()} items`);
-    if (selection.estimatedBytes !== undefined) parts.push(formatBytes(selection.estimatedBytes));
-    if (selection.latestAt) parts.push(`latest ${formatDate(selection.latestAt)}`);
-    return parts.join(' · ');
+    return groupedByLabel([selection.dimension]);
   });
 
   const filesPredicateFingerprint = $derived(JSON.stringify(predicate));
+  const filesSelectionKey = $derived(selection?.kind === 'group' ? JSON.stringify([selection.dimension, selection.key]) : '');
 
   $effect(() => {
-    const selected = selection;
+    void filesSelectionKey;
+    const selected = untrack(() => selection);
     void filesPredicateFingerprint;
     const currentPredicate = untrack(() => predicate);
     requestGeneration += 1;
@@ -183,18 +185,9 @@
   });
 
   onDestroy(() => { requestGeneration += 1; requestController?.abort(); });
-
-  function formatDate(value: string): string {
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.valueOf())
-      ? value
-      : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(parsed);
-  }
-
   function markDismissButton(button: HTMLButtonElement) {
     button.dataset.readerDismiss = '';
   }
-
 </script>
 
 <aside class="reading-pane" class:reading-pane--back={back} aria-label={`Reading pane: ${title}`}>
@@ -263,15 +256,19 @@
       </section>
     {:else}
       <div class="group-scroll" aria-label="Group details">
+        {#if selection.overview}<GroupOverview {selection} />{/if}
         {#if showFiles}
           {#if selection.meetingScope}
-            <MeetingPanel {client} scope={{ kind: 'explore', explore: selection.meetingScope }}
+            <MeetingPanel hideWhenEmpty {client} scope={{ kind: 'explore', explore: selection.meetingScope }}
               onReloadScope={onReloadMeetings} {onOpenMeeting} />
           {:else}
-            <p class="pane-status" role="status">Reload this group to load meeting activity with its current search scope.</p>
+            <div class="pane-status" role="status">
+              <p>Reload this group to load meeting activity with its current search scope.</p>
+              {#if onReloadMeetings}<Button label="Reload meeting activity" size="sm" surface="soft" onclick={onReloadMeetings} />{/if}
+            </div>
           {/if}
           <AttachmentRail files={files} totalCount={totalFiles} loading={filesLoading} error={filesError} />
-        {:else}
+        {:else if !selection.overview}
           <section class="pane-status">
             <p>No further detail is available for this group.</p>
           </section>
@@ -380,6 +377,12 @@
     min-height: 0;
     flex: 1;
     overflow: auto;
+  }
+
+  .group-scroll :global(.meeting-panel-card .panel-heading),
+  .group-scroll :global(.meeting-panel-card .overview-section),
+  .group-scroll :global(.meeting-panel-card .actions-section) {
+    padding-inline: calc(var(--pane-pad-x) - 1px);
   }
 
   .pane-status {

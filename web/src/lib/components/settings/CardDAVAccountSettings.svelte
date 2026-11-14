@@ -11,6 +11,8 @@
   import { shellQuote } from '../../settings/shell-quote';
   import type { CardDAVAccountValues } from '../../carddav/account-settings';
   import CronField from './CronField.svelte';
+  import InlineNotice from '../common/InlineNotice.svelte';
+  import { trackUnsavedForm } from '../../settings/unsaved-forms.svelte';
   type CardDAVAccountRequest = GeneratedCardDAVAccountRequest;
   type Action = 'test' | 'save' | 'authorize';
   let {
@@ -60,6 +62,20 @@
   let requestController: AbortController | undefined;
   let actionGeneration = 0;
   let disposed = false;
+  trackUnsavedForm({
+    dirty: () => password !== '' || provider !== persistedProvider || oauthApp !== persistedOAuthApp ||
+      baseURL !== persistedBaseURL || username !== persistedUsername || enabled !== persistedEnabled ||
+      schedule !== persistedSchedule,
+    discard: () => {
+      provider = persistedProvider;
+      oauthApp = persistedOAuthApp;
+      baseURL = persistedBaseURL;
+      username = persistedUsername;
+      enabled = persistedEnabled;
+      schedule = persistedSchedule;
+      password = '';
+    },
+  });
   $effect(() => {
     const snapshot = values;
     untrack(() => reconcileSettings(snapshot));
@@ -240,8 +256,8 @@
 {/snippet}
 
 <SettingsSection title="CardDAV account">
-  {#if error}<p class="error" role="alert">{error}</p>{/if}
-  {#if status}<p class="status" role="status">{status}</p>{/if}
+  {#if error}<InlineNotice message={error} />{/if}
+  {#if status}<InlineNotice tone="success" message={status} />{/if}
 
   <form
     onsubmit={(event) => {
@@ -345,9 +361,10 @@
     display: grid;
     gap: var(--space-5);
   }
+  /* The Layout scale: 16 between fields, 4 from a label to its field and from a field to its hint. */
   .fields {
     display: grid;
-    gap: var(--space-4);
+    gap: var(--space-pane);
   }
   .fields,
   .field {
@@ -355,50 +372,34 @@
   }
   .field {
     display: grid;
-    gap: var(--space-2);
+    gap: var(--space-tight);
   }
   .field__head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-3);
+    gap: var(--space-group);
   }
   form label:not(.field__label) {
     display: grid;
-    gap: var(--space-2);
+    gap: var(--space-tight);
     max-width: 26rem;
   }
   form label:not(.field__label),
   .field__label {
     color: var(--text-secondary);
-    font-size: var(--font-size-sm);
+    font-size: var(--type-meta-size);
+    line-height: var(--type-meta-line);
     font-weight: 500;
   }
   .field__hint {
     color: var(--text-muted);
-    font-size: var(--font-size-2xs);
-    line-height: 1.4;
+    font-size: var(--type-small-size);
+    line-height: var(--type-small-line);
   }
   .actions {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-3);
-  }
-  .error,
-  .status {
-    margin: 0;
-    padding: var(--space-3) var(--space-4);
-    border: 1px solid;
-    border-radius: var(--radius-md);
-  }
-  .error {
-    border-color: var(--status-error-ink);
-    background: var(--status-error-bg);
-    color: var(--status-error-ink);
-  }
-  .status {
-    border-color: var(--status-success-ink);
-    background: var(--status-success-bg);
-    color: var(--status-success-ink);
+    gap: var(--space-group);
   }
 </style>

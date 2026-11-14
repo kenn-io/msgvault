@@ -1335,10 +1335,13 @@ func TestGetCLIAccounts_Success(t *testing.T) {
 		assert.Equal("true", r.Header.Get(apiprotocol.AllowPendingCountsHeader))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
+			"stale": true,
+			"as_of": "2024-02-03T04:05:06Z",
 			"accounts": [{
 				"id": 7,
 				"email": "alice@example.com",
-				"type": "gmail",
+				"type": "imap",
+				"auth_method": "xoauth2",
 				"display_name": "Alice",
 				"alias": "archive",
 				"message_count": 1234,
@@ -1356,10 +1359,14 @@ func TestGetCLIAccounts_Success(t *testing.T) {
 	require.Len(accounts, 1, "accounts")
 	assert.Equal(int64(7), accounts[0].ID, "ID")
 	assert.Equal("alice@example.com", accounts[0].Email, "Email")
-	assert.Equal("gmail", accounts[0].Type, "Type")
+	assert.Equal("imap", accounts[0].Type, "Type")
+	assert.Equal("xoauth2", accounts[0].AuthMethod)
 	assert.Equal("Alice", accounts[0].DisplayName, "DisplayName")
 	assert.Equal("archive", accounts[0].Alias, "Alias")
 	assert.Equal(int64(1234), accounts[0].MessageCount, "MessageCount")
+	assert.True(accounts[0].Stale)
+	require.NotNil(accounts[0].AsOf)
+	assert.Equal("2024-02-03T04:05:06Z", accounts[0].AsOf.UTC().Format(time.RFC3339))
 	require.NotNil(accounts[0].LastSync, "LastSync")
 	assert.Equal("2024-01-02T03:04:05Z", accounts[0].LastSync.UTC().Format(time.RFC3339), "LastSync")
 }

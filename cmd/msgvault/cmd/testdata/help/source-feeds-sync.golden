@@ -1,0 +1,18 @@
+Fetch every followed feed, or the given ones, and archive each item the
+archive does not hold yet. Unchanged feeds are not downloaded again. A feed
+that fails is reported and the others still sync.
+
+Usage:
+  msgvault source feeds sync [url]... [flags]
+
+Examples:
+  msgvault source feeds sync
+  msgvault source feeds sync https://example.com/releases.atom
+
+Flags:
+      --build-cache      refresh analytics cache after this sync
+      --full             download every feed again, even when unchanged
+  -h, --help             help for sync
+      --no-build-cache   skip analytics cache refresh after this sync
+
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')

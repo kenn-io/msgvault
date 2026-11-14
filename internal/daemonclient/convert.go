@@ -507,8 +507,11 @@ func cliAccountsFromGenerated(resp *generated.ListCLIAccountsResponse) []CLIAcco
 			Type:               account.Type,
 			DisplayName:        account.DisplayName,
 			OAuthApp:           stringValue(account.OauthApp),
+			AuthMethod:         stringValue(account.AuthMethod),
 			MessageCount:       account.MessageCount,
 			SourceDeletedCount: account.SourceDeletedCount,
+			Stale:              boolValue(resp.Stale),
+			AsOf:               copyTime(resp.AsOf),
 			LastSync:           account.LastSync,
 			VirtualAccounts:    virtualAccountsFromGenerated(account.VirtualAccounts),
 		}

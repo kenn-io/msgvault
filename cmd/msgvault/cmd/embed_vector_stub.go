@@ -16,3 +16,7 @@ import (
 func runEmbed(_ *cobra.Command) error {
 	return errors.New("msgvault embeddings build requires a vector backend; rebuild with `go build -tags sqlite_vec` (SQLite vectors) or `-tags pgvector` (PostgreSQL vectors)")
 }
+
+func runEmbedWithOptions(cmd *cobra.Command, _ managedEmbedOptions) error {
+	return runEmbed(cmd)
+}

@@ -161,7 +161,7 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 			for personID := range matched[id] {
 				wanted[personID] = struct{}{}
 			}
-			if binding, ok := bindings[id]; ok {
+			if binding, ok := bindings[id]; ok && !binding.owned {
 				owners[binding.personID] = struct{}{}
 			}
 		}
@@ -202,7 +202,7 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 			if exists && binding.owned && (personID == 0 || binding.personID != personID) {
 				plan.remove = append(plan.remove, binding)
 			}
-			if !exists && personID != 0 && reason == "" && !cleanupOnly {
+			if (!exists || binding.owned && binding.personID != personID) && personID != 0 && reason == "" && !cleanupOnly {
 				plan.add = append(plan.add, cardDAVParticipantBinding{personID: personID, participantID: id, owned: true})
 			}
 		}

@@ -1,7 +1,11 @@
 import { stubOperationStatus } from './kit-ui';
 import { expect, test, type Page } from '@playwright/test';
-import { selectWorkspace } from './kit-ui';
+import { expectKitTheme, selectWorkspace } from './kit-ui';
 
+import { candidate, directoryPerson } from '../src/lib/directory/entity-data.test-support';
+import { person } from '../src/lib/directory/person-fixtures.test-support';
+import { emptyProfile } from '../src/lib/directory/profile-fixtures.test-support';
+import { meetingActions, meetingMetrics } from '../src/lib/meetings/fixtures.test-support';
 import { mockArchiveLayout, row } from './archive-layout';
 import { installDirectoryReviewArchive } from './e2e/fixtures/mixed-archive';
 import { installOperations } from './e2e/fixtures/operations';
@@ -138,7 +142,12 @@ for (const width of [1280, 420]) {
       await open.click();
       const label = page.locator('.context-chips .kit-chip__label').filter({ hasText: query });
       await expect(label).toBeVisible();
-      expect(await label.evaluate((element) => element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight)).toBe(true);
+      expect(await label.evaluate(element => {
+        const box = element.getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return Array.from(range.getClientRects()).every(rect => rect.left >= box.left && rect.right <= box.right && rect.top >= box.top && rect.bottom <= box.bottom);
+      })).toBe(true);
     });
   });
 }
@@ -191,6 +200,8 @@ for (const width of [1280, 390]) {
       const panel = page.getByRole('dialog', { name: 'Filter', exact: true });
       const font = width === 390 ? '16px' : '14px';
       if (workspace === 'Messages') {
+        await expect(panel.locator('.dates')).toHaveCSS('column-gap', '12px');
+        await expect(panel.locator('.dates label').first()).toHaveCSS('row-gap', '4px');
         for (const label of ['From', 'To']) {
           await expect(panel.getByLabel(label, { exact: true })).toHaveCSS('height', '32px');
           await expect(panel.getByLabel(label, { exact: true })).toHaveCSS('font-size', font);
@@ -245,17 +256,17 @@ for (const width of [1280, 390]) {
     await view.getByRole('button', { name: 'Archive search actions', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Edit description…' }).click();
     const dialog = page.getByRole('dialog', { name: 'Describe Archive search' });
-    await expect(dialog.locator('.kit-modal-header')).toHaveCSS('height', '44px');
+    await expect(dialog.locator('.dialog-header')).toHaveCSS('height', '44px');
     await expect(dialog.locator('.kit-modal-footer')).toHaveCSS('height', '44px');
-    const topInset = await dialog.locator('.kit-modal-body').evaluate(body => body.firstElementChild!.getBoundingClientRect().top - body.getBoundingClientRect().top);
+    const topInset = await dialog.locator('.dialog-content').evaluate(body => body.firstElementChild!.getBoundingClientRect().top - body.getBoundingClientRect().top);
     expect(topInset).toBe(12);
     const bounds = (await dialog.boundingBox())!;
     expect(bounds.x).toBeGreaterThanOrEqual(16);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(width - 16);
     await page.setViewportSize({ width, height: 160 });
-    const fixed = dialog.locator('.kit-modal-header, .kit-modal-footer');
+    const fixed = dialog.locator('.dialog-header, .kit-modal-footer');
     const positions = await fixed.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().top));
-    const body = dialog.locator('.kit-modal-body');
+    const body = dialog.locator('.dialog-content');
     expect(await body.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
     await body.evaluate(element => { element.scrollTop = element.scrollHeight; });
     expect(await body.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
@@ -309,6 +320,23 @@ test('Sources notice keeps Retry usable on a phone', async ({ page }) => {
   const retry = notice.getByRole('button', { name: 'Retry', exact: true });
   await expect(retry).toHaveCSS('height', '28px');
   await expect(retry).toBeInViewport({ ratio: 1 });
+});
+
+test('a person’s phone Messages toolbar keeps Filter and Sort on one line', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installDirectoryReviewArchive(page);
+  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
+  await page.getByRole('radio', { name: 'Messages', exact: true }).click();
+  const toolbar = page.getByRole('region', { name: 'Active analytical context' });
+  const filter = toolbar.getByRole('button', { name: 'Filter', exact: true });
+  const sort = toolbar.getByRole('combobox', { name: 'Sort: Newest first', exact: true });
+  await expect(sort).toBeVisible();
+  const filterBox = (await filter.boundingBox())!;
+  const sortBox = (await sort.boundingBox())!;
+  expect(sortBox.y).toBe(filterBox.y);
+  expect(sortBox.x + sortBox.width).toBeLessThanOrEqual(390);
+  await sort.click();
+  await expect(page.getByRole('option', { name: 'Newest first', exact: true })).toBeVisible();
 });
 
 test('loaded message sender, body, and attachment edges align with the reader', async ({ page }) => {
@@ -369,6 +397,21 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
   for (const chip of await chips.all()) {
     const shape = await chip.evaluate((element) => ({ radius: Number.parseFloat(getComputedStyle(element).borderTopLeftRadius), height: element.getBoundingClientRect().height }));
     expect.soft(shape.radius).toBeGreaterThanOrEqual(shape.height / 2);
+  }
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expectKitTheme(page, 'dark');
+  const borderColor = await page.evaluate(() => {
+    const reference = document.createElement('span');
+    reference.style.color = 'var(--border-muted)';
+    document.body.append(reference);
+    const color = getComputedStyle(reference).color;
+    reference.remove();
+    return color;
+  });
+  for (const chip of await chips.all()) {
+    await expect(chip).toHaveCSS('border-left-color', borderColor);
+    await expect(chip).toHaveCSS('box-shadow', 'none');
+    await expect(chip.getByRole('button')).toHaveCSS('box-shadow', 'none');
   }
   const longQuery = 'archive '.repeat(100).trim();
   await page.getByRole('searchbox', { name: 'Search messages' }).fill(longQuery);
@@ -449,17 +492,14 @@ test('selected rows keep their fill and accent on stripes and in the reader', as
   } }));
   await selectWorkspace(page, 'Messages');
   const grid = page.getByRole('grid', { name: 'Messages results' });
-  await grid.focus();
-  await page.keyboard.press('Space');
-  await expect(grid.locator('.data-row--selected')).toHaveCSS('box-shadow', /^rgb\([^)]+\) 3px 0px 0px 0px inset$/);
-  await page.keyboard.press('Space');
   await grid.getByRole('checkbox', { name: 'Select all loaded items' }).check();
   const selected = grid.locator('.data-row--selected');
   await expect(selected).toHaveCount(2);
   for (const selectedRow of await selected.all()) {
-    await expect(selectedRow).toHaveCSS('box-shadow', /^rgb\([^)]+\) 3px 0px 0px 0px inset$/);
+    await expect(selectedRow).toHaveCSS('border-bottom-color', 'rgba(0, 0, 0, 0)');
+    await expect(selectedRow).toHaveCSS('background-image', /^linear-gradient\(to right, .+ 3px, .+ 3px\)$/);
   }
-  const colors = () => selected.evaluateAll(rows => rows.map(row => getComputedStyle(row).backgroundColor));
+  const colors = () => selected.evaluateAll(rows => rows.map(row => getComputedStyle(row).backgroundImage));
   expect((await colors())[0]).toBe((await colors())[1]);
   await grid.getByText('Example 1', { exact: true }).click();
   await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
@@ -467,7 +507,7 @@ test('selected rows keep their fill and accent on stripes and in the reader', as
   await grid.focus();
   await page.keyboard.press('Space');
   await page.keyboard.press('Space');
-  await expect(grid.locator('.data-row--selected.data-row--inspected')).toHaveCSS('box-shadow', /^rgb\([^)]+\) 3px 0px 0px 0px inset$/);
+  await expect(grid.locator('.data-row--selected.data-row--inspected')).toHaveCSS('background-image', /^linear-gradient\(to right, .+ 3px, .+ 3px\)$/);
 });
 
 
@@ -582,12 +622,12 @@ test.describe('form picker focus', () => {
         await page.route('**/api/v1/organizations**', route => route.fulfill({ json: { organizations: [], total: 0, limit: 50, offset: 0 } }));
         await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
         await page.getByRole('radio', { name: 'Details', exact: true }).click();
-        await page.getByRole('button', { name: 'Add work', exact: true }).click();
+        await page.getByRole('button', { name: 'Add job…', exact: true }).click();
       }
       const trigger = page.getByRole('button', { name: new RegExp(`^${picker}:`) });
       const predecessor = picker === 'Time zone'
         ? page.getByRole('textbox', { name: 'Slack schedule', exact: true })
-        : page.getByRole('button', { name: 'New organization', exact: true });
+        : page.getByRole('textbox', { name: 'Job title', exact: true });
       await predecessor.focus();
       const restingBorder = await trigger.evaluate(element => getComputedStyle(element).borderColor);
       await page.keyboard.press(picker === 'Time zone' ? 'Tab' : 'Shift+Tab');
@@ -639,3 +679,100 @@ for (const width of [1280, 390]) {
     await expect.poll(() => editor.evaluate(element => element.querySelector('input')!.scrollLeft - element.querySelector('.cron__mirror')!.scrollLeft)).toBe(0);
   });
 }
+
+for (const width of [1280, 390]) {
+  test(`People centers names without details in 52px rows at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.route('**/api/v1/people/directory*', route => route.fulfill({ json: { people: [
+      directoryPerson(42, { display_name: 'Archive Person' }),
+      directoryPerson(43, { display_name: 'Example Contact', organizations: ['Example Org'] })
+    ] } }));
+    await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true })));
+    const grid = page.getByRole('grid', { name: 'People results' });
+    const single = grid.getByRole('row').filter({ hasText: 'Archive Person' });
+    const double = grid.getByRole('row').filter({ hasText: 'Example Contact' });
+    await expect(single).toBeVisible();
+    await expect(double.getByText('Example Org', { exact: true })).toBeVisible();
+    const geometry = await single.evaluate(element => {
+      const box = element.getBoundingClientRect();
+      const avatar = element.querySelector('.avatar-slot')!.getBoundingClientRect();
+      const name = element.querySelector('.name')!.getBoundingClientRect();
+      return { height: box.height, avatar: avatar.width, inset: avatar.left - box.left, gap: name.left - avatar.right,
+        center: Math.abs((name.top + name.bottom) / 2 - (avatar.top + avatar.bottom) / 2) };
+    });
+    expect(geometry).toEqual({ height: 52, avatar: 32, inset: 16, gap: 12, center: 0 });
+    expect((await double.boundingBox())!.height).toBe(52);
+  });
+}
+
+test('a People count chip keeps the sidebar icon centered when expanded and collapsed', async ({ page }) => {
+  await page.route('**/api/v1/identity/match-candidates**', route => route.fulfill({ json: {
+    candidates: [candidate(1), candidate(2), candidate(3)], limit: 500, offset: 0
+  } }));
+  await page.reload();
+  const people = page.getByRole('button', { name: 'People 3', exact: true });
+  await expect(people).toBeVisible();
+  for (const collapsed of [false, true]) {
+    if (collapsed) await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();
+    const offset = await people.evaluate(element => {
+      const box = element.getBoundingClientRect();
+      const icon = element.querySelector('svg')!.getBoundingClientRect();
+      return Math.abs((icon.top + icon.bottom) / 2 - (box.top + box.bottom) / 2);
+    });
+    expect(offset).toBeLessThanOrEqual(1);
+  }
+});
+
+test('brief sentences keep visible word spacing', async ({ page }) => {
+  const profile = person(7);
+  await page.route('**/api/v1/people/7', route => route.fulfill({ json: profile }));
+  await page.route('**/api/v1/people/7/profile', route => route.fulfill({ json: emptyProfile(profile) }));
+  await page.route('**/api/v1/people/7/brief-enrollment', route => route.fulfill({ json: {
+    person_id: 7, enrolled: true, enabled_at: row.occurred_at, actor: 'api'
+  } }));
+  await page.route('**/api/v1/people/7/brief', route => route.fulfill({ json: {
+    version: 1, status: 'current', generated_at: row.occurred_at,
+    rejected_at: null, rejected_reason: '', superseded_at: null,
+    rendered_text: 'First sentence. Second sentence.', dropped_item_count: 0, evidence: [],
+    sentences: [
+      { kind: 'highlight', index: 0, text: 'First sentence.', evidence_ordinals: [] },
+      { kind: 'highlight', index: 1, text: 'Second sentence.', evidence_ordinals: [] }
+    ]
+  } }));
+  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
+  const first = page.getByRole('button', { name: 'First sentence.', exact: true });
+  const second = page.getByRole('button', { name: 'Second sentence.', exact: true });
+  await expect(first).toBeVisible();
+  await expect(second).toBeVisible();
+  const left = (await first.boundingBox())!;
+  const right = (await second.boundingBox())!;
+  expect(right.y).toBe(left.y);
+  expect(right.x - left.x - left.width).toBeGreaterThanOrEqual(2);
+});
+
+test('the Server warning keeps its tone in the accessibility tree', async ({ page }) => {
+  await page.route('**/api/session', route => route.fulfill({ json: {
+    auth_mode: 'loopback', https: false, plain_http_warning: true
+  } }));
+  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'settings', settingsCategory: 'server' })));
+  const warning = page.getByRole('status').filter({ hasText: 'This connection uses plain HTTP.' });
+  await expect(warning).toBeVisible();
+  expect(await warning.ariaSnapshot()).toContain('Warning');
+});
+
+test.describe('meeting metrics on a phone', () => {
+  test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
+
+  test('duration explanation remains readable on touch', async ({ page }) => {
+    await page.route('**/api/v1/meetings/metrics', route => route.fulfill({ json: meetingMetrics() }));
+    await page.route('**/api/v1/meetings/actions', route => route.fulfill({ json: meetingActions() }));
+    await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({
+      workspace: 'everything', filters: [{ dimension: 'message_type', values: ['meeting_transcript'] }]
+    })));
+    await page.getByRole('button', { name: /Action items/ }).tap();
+    const dialog = page.getByRole('dialog', { name: 'Action items', exact: true });
+    await dialog.getByText('Meeting metrics', { exact: true }).tap();
+    await expect(dialog.getByText('Time includes provider duration, scheduled, and transcript span evidence where available. Unknown durations are excluded from the average.')).toBeVisible();
+  });
+});

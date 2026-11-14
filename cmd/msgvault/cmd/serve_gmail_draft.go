@@ -101,6 +101,8 @@ func validateGmailSendAs(entries []gmail.SendAs, from string) error {
 }
 
 type gmailDraftReplyOutput struct {
+	draftRecipientAdvisory
+
 	Status          string `json:"status"`
 	DraftID         string `json:"draft_id,omitempty"`
 	Revision        int64  `json:"revision,omitzero"`
@@ -213,6 +215,9 @@ func (a *storeAPIAdapter) runGmailReplyDraft(
 	result.DraftID = localDraft.DraftID
 	result.Revision = localDraft.Revision
 	result.MessageID = localDraft.CurrentMessageID
+	if intent.JSON {
+		result.draftRecipientAdvisory = a.draftRecipientAdvisory(ctx, result.MessageID, result.SourceID, target.grant)
+	}
 	outputErr := emitGmailDraftReplyOutput(emit, cliStreamStdout, intent.JSON, result)
 	finish(true)
 	if outputErr != nil {

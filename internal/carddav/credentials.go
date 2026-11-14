@@ -40,6 +40,7 @@ type Credential struct {
 	Password             string `json:"password,omitempty"`
 	Google               bool   `json:"google,omitzero"`
 	Microsoft            bool   `json:"microsoft,omitzero"`
+	ICloud               bool   `json:"icloud,omitzero"`
 	OAuthApp             string `json:"oauth_app,omitempty"`
 	BaseURL              string `json:"base_url,omitempty"`
 	Username             string `json:"username,omitempty"`
@@ -76,6 +77,9 @@ func (c Credential) OAuth() bool { return c.Google || c.Microsoft }
 
 // SaveCredential atomically publishes an identity-bound CardDAV credential.
 func SaveCredential(tokenDir string, credential Credential) error {
+	if err := credential.validateICloud(); err != nil {
+		return err
+	}
 	if (credential.Password == "" && !credential.OAuth()) || credential.BaseURL == "" || credential.Username == "" || credential.ConnectionGeneration <= 0 {
 		return errors.New("CardDAV credential requires a connection identity")
 	}
@@ -256,5 +260,19 @@ func loadCredentialWithPermissions(tokenDir string, permissions credentialPermis
 	if saved.Password == "" && !saved.OAuth() {
 		return Credential{}, errors.New("CardDAV token file contains an empty password")
 	}
+	if err := saved.validateICloud(); err != nil {
+		return Credential{}, err
+	}
 	return saved, nil
+}
+
+func (c Credential) validateICloud() error {
+	if !c.ICloud {
+		return nil
+	}
+	_, ok := ICloudPartitionRootOrigin(c.BaseURL)
+	if !ok || c.OAuth() || c.Password == "" {
+		return errors.New("iCloud credential requires a password bound to a contacts partition origin")
+	}
+	return nil
 }

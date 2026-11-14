@@ -1,26 +1,30 @@
+import { tick } from 'svelte';
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import type { DirectoryReadBundle } from '../../directory/models';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
+import { PersonTrackingController } from '../../directory/person-tracking-controller.svelte';
 import PersonRecordActions from './PersonRecordActions.svelte';
 
 const when = '2026-08-01T00:00:00Z';
+
+afterEach(() => vi.restoreAllMocks());
 
 function person() {
   return { id: 7, revision: 3, display_name: 'Test User', participant_ids: [], vcard_uid: 'person-7', created_at: when, updated_at: when };
 }
 
-function renderActions(fetchFn: typeof fetch, personETag: string | null = '"person-7-r3"') {
+function renderActions(fetchFn: typeof fetch, personETag: string | null = '"person-7-r3"', onSetUpTracking?: () => void, onAnnounce?: (text: string) => void) {
   const bundle = {
     person: person(),
     etags: { person: personETag ?? undefined }, errors: {}
   } satisfies DirectoryReadBundle;
   const client = createAPIClient(fetchFn);
   const controller = new DirectoryProfileController(client, 7, bundle);
-  render(PersonRecordActions, { client, controller, personID: 7 });
+  render(PersonRecordActions, { client, controller, personID: 7, onSetUpTracking, onAnnounce });
   return controller;
 }
 
@@ -30,6 +34,119 @@ async function choose(action: string): Promise<void> {
 }
 
 describe('PersonRecordActions', () => {
+  it.each(['failed', 'in flight', 'replaced'] as const)('keeps a %s tracking save when the menu reopens', async state => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const onAnnounce = vi.fn();
+    const writes: boolean[] = [];
+    let reads = 0;
+    let tracked = false;
+    let replaced = false;
+    if (state === 'replaced') {
+      const original = PersonTrackingController.prototype.setTracked;
+      vi.spyOn(PersonTrackingController.prototype, 'setTracked').mockImplementation(async function (this: PersonTrackingController, desired) {
+        const outcome = await original.call(this, desired);
+        await this.setPerson(9);
+        replaced = true;
+        return outcome;
+      });
+    }
+    renderActions(async input => {
+      const request = input as Request;
+      if (request.method === 'PUT') {
+        writes.push((await request.json()).tracked);
+        if (state === 'failed' && writes.length === 1) return Response.json({}, { status: 503 });
+        if (state !== 'failed') await held;
+        tracked = true;
+      } else reads++;
+      return Response.json({ person_id: Number(new URL(request.url).pathname.split('/').at(-2)), tracked, tracked_at: tracked ? when : null });
+    }, undefined, undefined, onAnnounce);
+    try {
+      await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+      const item = await screen.findByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
+      await waitFor(() => expect(item.textContent?.trim()).toBe('Keep this profile updated'));
+      await fireEvent.click(item);
+      if (state === 'failed') await waitFor(() => expect(item.textContent).toContain("Couldn't save"));
+      await fireEvent.keyDown(item, { key: 'Escape' });
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+      const readsBeforeReopen = reads;
+      await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+      const reopened = screen.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
+      if (state === 'failed') {
+        expect(reopened.textContent).toContain("Couldn't save");
+      } else {
+        expect(reopened.textContent).toContain('Turning on…');
+        await tick();
+        expect(reads).toBe(readsBeforeReopen);
+        release();
+        if (state === 'replaced') {
+          await waitFor(() => expect(replaced).toBe(true));
+          await act(async () => { await tick(); });
+          expect(onAnnounce).not.toHaveBeenCalled();
+        } else await waitFor(() => expect(onAnnounce).toHaveBeenCalledWith('Keeping this profile updated.'));
+      }
+    } finally { release(); }
+  });
+
+  it('reads the state again each time the menu opens', async () => {
+    let tracked = true;
+    const reads: string[] = [];
+    renderActions(async input => {
+      reads.push(new URL((input as Request).url).pathname);
+      return Response.json({ person_id: 7, tracked, tracked_at: tracked ? when : null });
+    });
+    await tick();
+    expect(reads).toEqual([]);
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    await waitFor(() => expect(screen.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ }).getAttribute('aria-checked')).toBe('true'));
+    await fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    // A split that hands the absorbed profile's enrollment back turns it off here.
+    expect(reads).toEqual(['/api/v1/people/7/tracking']);
+    tracked = false;
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    await waitFor(() => expect(screen.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ }).getAttribute('aria-checked')).toBe('false'));
+  });
+
+  it.each([false, true])('offers setup while preserving the ability to turn existing tracking off: %s', async initiallyTracked => {
+    const setUp = vi.fn(), writes: Request[] = [];
+    let tracked = initiallyTracked;
+    let reads = 0;
+    renderActions(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.method === 'GET' && ++reads === 1) return Response.json({}, { status: 503 });
+      if (request.method === 'PUT') { writes.push(request); tracked = (await request.json()).tracked; }
+      return Response.json({ person_id: 7, tracked, tracked_at: tracked ? when : null });
+    }), undefined, setUp);
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    const item = await screen.findByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
+    await waitFor(() => expect(item.textContent).toContain("Couldn't check"));
+    expect(screen.getByRole('menuitem', { name: 'Set up people lookups…' })).toBeDefined();
+    await fireEvent.click(item);
+    if (initiallyTracked) {
+      await waitFor(() => expect(item.getAttribute('aria-checked')).toBe('true'));
+      expect(screen.getByRole('menuitem', { name: 'Set up people lookups…' })).toBeDefined();
+      await fireEvent.click(item);
+      await waitFor(() => expect(writes).toHaveLength(1));
+      expect(setUp).not.toHaveBeenCalled();
+    }
+    const setupRow = await screen.findByRole('menuitem', { name: /Keep this profile updated/ });
+    expect(setupRow.textContent).toContain('Set up…');
+    expect(screen.queryByRole('menuitemcheckbox')).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Set up people lookups…' })).toBeNull();
+    await fireEvent.click(setupRow);
+    expect(setUp).toHaveBeenCalledOnce();
+  });
+
+  it('opens setup for an enrolled person while lookups are off', async () => {
+    const setUp = vi.fn();
+    renderActions(async () => Response.json({ person_id: 7, tracked: true, tracked_at: when }), undefined, setUp);
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    await waitFor(() => expect(screen.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ }).getAttribute('aria-checked')).toBe('true'));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Set up people lookups…' }));
+    expect(setUp).toHaveBeenCalledOnce();
+  });
+
   it('renames the selected person with the current strong ETag', async () => {
     const requests: Request[] = [];
     renderActions(vi.fn<typeof fetch>(async (input) => {
@@ -41,12 +158,12 @@ describe('PersonRecordActions', () => {
       });
     }));
 
-    await choose('Rename');
-    expect(screen.getByRole('group', { name: 'Rename person' })).toBeDefined();
+    await choose('Rename…');
+    expect(screen.getByRole('dialog', { name: 'Rename person' })).toBeDefined();
     await fireEvent.input(screen.getByRole('textbox', { name: 'Display name' }), { target: { value: 'Renamed User' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
-    await waitFor(() => expect(screen.queryByRole('group', { name: 'Rename person' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rename person' })).toBeNull());
     expect(requests).toHaveLength(1);
     expect(requests[0]!.method).toBe('PATCH');
     expect(requests[0]!.headers.get('If-Match')).toBe('"person-7-r3"');
@@ -71,15 +188,15 @@ describe('PersonRecordActions', () => {
       return Response.json(renamed, { headers: { ETag: '"person-7-r4"' } });
     }));
     try {
-      await choose('Rename');
+      await choose('Rename…');
       const input = screen.getByRole('textbox', { name: 'Display name' });
       await fireEvent.input(input, { target: { value: 'Renamed User' } });
-      await fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
       await waitFor(() => expect(controller.mutationPending).toBe(true));
       expect(input).toHaveProperty('disabled', true);
-      expect(screen.getByRole('button', { name: 'Cancel rename' })).toHaveProperty('disabled', true);
-      expect(screen.getByRole('button', { name: 'Renaming…' })).toHaveProperty('disabled', true);
+      expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
+      expect(screen.getByRole('button', { name: 'Saving…' })).toHaveProperty('disabled', true);
 
       resolveRename(Response.json(renamed, { headers: { ETag: '"person-7-r4"' } }));
       await waitFor(() => expect(controller.reloadPending).toBe(true));
@@ -87,7 +204,7 @@ describe('PersonRecordActions', () => {
       expect(input).toHaveProperty('disabled', true);
       expect(input).toHaveProperty('value', 'Renamed User');
       releaseReadback();
-      await waitFor(() => expect(screen.queryByRole('group', { name: 'Rename person' })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rename person' })).toBeNull());
     } finally {
       resolveRename(Response.json(renamed, { headers: { ETag: '"person-7-r4"' } }));
       releaseReadback();
@@ -100,16 +217,16 @@ describe('PersonRecordActions', () => {
     const requests: Request[] = [];
     renderActions(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
+      if (request.method !== 'GET' || !request.url.endsWith('/tracking')) requests.push(request);
       return new Response(null, { status: 204 });
     }));
 
-    await choose('Delete');
+    await choose('Delete…');
     expect(requests).toHaveLength(0);
-    expect(screen.getByRole('group', { name: 'Confirm deleting person' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete person' }));
+    expect(screen.getByRole('dialog', { name: 'Delete Test User?' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
-    await waitFor(() => expect(screen.queryByRole('group', { name: 'Confirm deleting person' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete Test User?' })).toBeNull());
     expect(requests).toHaveLength(1);
     expect(requests[0]!.method).toBe('DELETE');
     expect(requests[0]!.headers.get('If-Match')).toBe('"person-7-r3"');
@@ -120,12 +237,12 @@ describe('PersonRecordActions', () => {
     const pendingDelete = new Promise<Response>((resolve) => { resolveDelete = resolve; });
     const controller = renderActions(vi.fn<typeof fetch>(async () => pendingDelete));
 
-    await choose('Delete');
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete person' }));
+    await choose('Delete…');
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => expect(controller.mutationPending).toBe(true));
-    expect(screen.getByRole('button', { name: 'Cancel delete' })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('button', { name: 'Deleting…' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', true);
 
     resolveDelete(new Response(null, { status: 204 }));
     await waitFor(() => expect(controller.mutationPending).toBe(false));
@@ -135,12 +252,13 @@ describe('PersonRecordActions', () => {
     renderActions(vi.fn(), null);
 
     await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    expect(screen.getByRole('menuitem', { name: 'Rename' }).getAttribute('aria-disabled')).toBe('true');
-    expect(screen.getByRole('menuitem', { name: 'Delete' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('menuitem', { name: 'Rename…' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('menuitem', { name: 'Delete…' }).getAttribute('aria-disabled')).toBe('true');
     expect(screen.getByRole('menuitem', { name: 'History' }).getAttribute('aria-disabled')).toBeNull();
+    expect(screen.getByRole('menuitem', { name: 'Publish to address book…' }).getAttribute('aria-disabled')).toBeNull();
 
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
-    expect(screen.queryByRole('group', { name: 'Rename person' })).toBeNull();
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename…' }));
+    expect(screen.queryByRole('dialog', { name: 'Rename person' })).toBeNull();
   });
 
   it('opens history and returns focus to the More actions trigger when it closes', async () => {

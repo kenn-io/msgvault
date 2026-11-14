@@ -51,6 +51,17 @@ h3 {
   font-weight: 600;
 }
 
+/* Related fields use equal columns on desktop and stack on phones. */
+.form-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-pane) var(--space-box);
+}
+
+@media (max-width: 640px) {
+  .form-pair { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* The first block sits 12px plus --page-header-gap below the page title.
    Ordinary parents reserve --field-gap between blocks and block parents
    reserve 0; --page-header-parent-gap names the parent's gap so the margin

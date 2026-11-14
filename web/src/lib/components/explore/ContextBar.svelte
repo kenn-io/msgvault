@@ -144,7 +144,7 @@
       <ViewMenu {presentation} {presentationOptions} {groupOptions} {sort} {sortOptions} {selectPresentation} {selectGrouping} {selectSort} />
     </div>
     {:else if !lockedFilter || sort}
-    <div class="context-group">
+    <div class="context-group view-group">
     {#if !lockedFilter}
     <SelectDropdown
       value={presentation}
@@ -280,6 +280,22 @@
 
   .group-picker {
     width: 172px;
+  }
+
+  /* On a phone ViewMenu replaces the view group except in a scoped view, where the sort picker fills the rest of the Filter line. */
+  @media (max-width: 640px) {
+    .view-group {
+      flex: 1 1 auto;
+    }
+
+    .view-group > :global(*) {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+
+    .view-group :global(.kit-select-dropdown) {
+      min-width: 0;
+    }
   }
 
   .popover-extra {

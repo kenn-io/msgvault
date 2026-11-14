@@ -6,7 +6,7 @@
   import type { SourceStatus, Setting } from '../../api/generated/models';
   import { persistedValue, readOnlyValue } from '../../settings/catalog';
   import { scheduleSummary } from '../../settings/cron';
-  import { sourceFailure, sourceRunState, sourceTypeLabel, syncRunning, syncCommand, syncUnavailableLabel, SOURCE_SETTING_PREFIX } from '../../sources/labels';
+  import { isOnDemandSourceType, sourceDetails, sourceFailure, sourceRunState, sourceTypeLabel, syncRunning, syncCommand, syncUnavailableLabel, SOURCE_SETTING_PREFIX } from '../../sources/labels';
   import { operationStateChip } from '../../operations/labels';
   import { formatDateTime } from '../../util/format';
   import SidePanel from '../common/SidePanel.svelte';
@@ -32,6 +32,7 @@
   let controller: AbortController | undefined;
   const prefix = $derived(SOURCE_SETTING_PREFIX[source.source_type]);
   const title = $derived(source.display_name || source.identifier);
+  const details = $derived(sourceDetails(title, sourceTypeLabel(source.source_type), source.identifier));
   const failure = $derived(sourceFailure(source));
   const chip = $derived(operationStateChip(sourceRunState(source) ?? 'Never synced'));
   const lastGood = $derived(source.last_successful_sync?.completed_at);
@@ -67,7 +68,7 @@
 <SidePanel {title} {onclose}>
   <div class="panel">
     <div class="summary">
-      <span class="type">{[sourceTypeLabel(source.source_type), source.identifier !== title ? source.identifier : undefined].filter(Boolean).join(' · ')}</span>
+      {#if details.length > 0}<span class="type">{details.join(' · ')}</span>{/if}
       <div class="status">
         <Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>
         <span class="muted">{lastGood ? `Last good sync ${formatDateTime(lastGood)}` : 'No good sync yet'}</span>
@@ -76,7 +77,7 @@
     </div>
     {@render notice()}
     {#if failure}<section class="block" aria-label="Failure"><p class="failure">{failure}</p>{#if source.scheduler_last_error && source.scheduler_last_error !== failure}<p class="failure">{source.scheduler_last_error}</p>{/if}</section>{/if}
-    {#if source.source_type !== 'meeting_import' && !source.can_sync && !syncing}
+    {#if !isOnDemandSourceType(source.source_type) && !source.can_sync && !syncing}
       {@const command = syncCommand(source)}
       <section class="block" aria-label="Sync">
         <span class="muted">{source.scheduler_queued && !syncRunning(source) ? 'Sync queued' : syncUnavailableLabel(source.sync_unavailable_reason)}</span>
@@ -85,7 +86,7 @@
     {/if}
     <section class="block" aria-label="Schedule">
       <h3>Schedule</h3>
-      <span class="muted" title={source.scheduled ? source.schedule : undefined}>{source.scheduled ? source.schedule ? scheduleSummary(source.schedule) : 'Schedule unavailable' : source.source_type === 'meeting_import' ? 'On demand' : 'Not scheduled'}</span>
+      <span class="muted" title={source.scheduled ? source.schedule : undefined}>{source.scheduled ? source.schedule ? scheduleSummary(source.schedule) : 'Schedule unavailable' : isOnDemandSourceType(source.source_type) ? 'On demand' : 'Not scheduled'}</span>
       {#if source.scheduled && source.next_sync_at}<span class="muted">Next sync <time datetime={source.next_sync_at} title={formatDateTime(source.next_sync_at, 'long')}>{formatDateTime(source.next_sync_at)}</time></span>{/if}
     </section>
     {#if prefix}

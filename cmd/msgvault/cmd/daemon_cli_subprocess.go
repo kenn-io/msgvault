@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"go.kenn.io/kit/consolewindow"
+	"golang.org/x/text/encoding/unicode"
+	"golang.org/x/text/transform"
 )
 
 const daemonCLISubprocessEnv = "MSGVAULT_DAEMON_CLI_PARENT_PID"
@@ -209,6 +211,10 @@ func streamDaemonCLIPipe(
 	stream string,
 	emit func(stream, data string) error,
 ) error {
+	// The decoder holds a rune split across reads until the rest arrives, so
+	// every emitted chunk is valid UTF-8. Invalid bytes become U+FFFD, which
+	// the NDJSON event encoder would produce anyway.
+	r = transform.NewReader(r, unicode.UTF8.NewDecoder())
 	buf := make([]byte, 32*1024)
 	var firstErr error
 	for {

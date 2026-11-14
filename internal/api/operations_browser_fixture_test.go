@@ -40,8 +40,8 @@ func TestBrowserOperationFixtureUsesProductionPublicProjection(t *testing.T) {
 		JobRuns []OperationRunSummary `json:"job_runs"`
 	}
 	requirements.NoError(json.Unmarshal(raw, &fixture))
-	requirements.Len(fixture.Runs, 5)
-	requirements.Len(fixture.JobRuns, 8)
+	requirements.Len(fixture.Runs, 4)
+	requirements.Len(fixture.JobRuns, 6)
 	runs := slices.Concat(fixture.Runs, fixture.JobRuns)
 
 	archive := &operationArchiveStore{mockStore: &mockStore{}, uid: operationTestArchiveUID}

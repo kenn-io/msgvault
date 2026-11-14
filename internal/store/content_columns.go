@@ -81,6 +81,8 @@ var MessagesNonContentColumns = []string{
 	// ChangedMessage. The cache journal invalidates account filters.
 	"account_address",
 	"account_path",
+	// The pending marker of the derived email_link_keys; absent from the feed.
+	"email_linkage_outcome",
 	"draft_authored",      // attribution input: the row was once filed as a draft
 	"reply_to_message_id", // threading pointer; conversation_id is the routing key
 	"thread_position",     // ordering within a thread, derived
@@ -96,6 +98,7 @@ var MessagesNonContentColumns = []string{
 	"content_changed_at",  // itself
 	"embed_gen",           // embedding watermark -- the whole reason this list exists
 	"search_fts",          // PostgreSQL-only tsvector, maintained by the FTS path
+	"search_fts_fields",   // PostgreSQL-only derived search data
 }
 
 // contentChangedTriggerColumnList renders MessagesContentColumns for a

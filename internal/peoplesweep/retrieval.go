@@ -6,14 +6,12 @@ import (
 	"fmt"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 )
 
 type ContextArchive interface {
 	ListPersonSweepHistoricalCandidates(ctx context.Context, request HistoricalCandidateRequest) ([]int64, error)
 	SearchPersonSweepMessages(ctx context.Context, request ContextRequest) ([]EvidenceItem, error)
-	SearchPersonSweepDocuments(ctx context.Context, request DocumentContextRequest) ([]EvidenceItem, error)
 }
 
 type ContextRetriever interface {
@@ -77,7 +75,6 @@ func (r *contextRetriever) RetrievePersonSweepContext(ctx context.Context, reque
 	if err != nil {
 		return nil, fmt.Errorf("search person sweep messages: %w", err)
 	}
-	query := contextQuery(request)
 
 	type ranked struct {
 		item  EvidenceItem
@@ -138,17 +135,7 @@ func (r *contextRetriever) RetrievePersonSweepContext(ctx context.Context, reque
 		return results[i].order < results[j].order
 	})
 
-	var documents []EvidenceItem
-	if sweepClassAllowed(request.SourceClasses, SourceDocumentText) {
-		documents, err = r.archive.SearchPersonSweepDocuments(ctx, DocumentContextRequest{
-			PersonID: request.PersonID, CandidateMessageIDs: candidates,
-			Query: query, After: after, Before: before, Limit: limit,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("search person sweep documents: %w", err)
-		}
-	}
-	out := make([]EvidenceItem, 0, min(limit, len(results)+len(documents)))
+	out := make([]EvidenceItem, 0, min(limit, len(results)))
 	seen := make(map[string]struct{})
 	for _, entry := range results {
 		key := evidenceCoordinateKey(entry.item.Ref)
@@ -159,30 +146,6 @@ func (r *contextRetriever) RetrievePersonSweepContext(ctx context.Context, reque
 		out = append(out, entry.item)
 		if len(out) == limit {
 			return out, nil
-		}
-	}
-	for _, item := range documents {
-		if item.PersonID != request.PersonID {
-			return nil, fmt.Errorf("document result %d belongs to person %d, not requested person %d",
-				item.Ref.MessageID, item.PersonID, request.PersonID)
-		}
-		if err := ValidatePersonSweepEvidenceItem(item); err != nil {
-			return nil, fmt.Errorf("invalid person sweep document item: %w", err)
-		}
-		if _, ok := allowed[item.Ref.MessageID]; !ok {
-			return nil, fmt.Errorf("document result %d escaped person candidate scope", item.Ref.MessageID)
-		}
-		if !contextAllowsItem(item, request.SourceClasses, after, before) {
-			continue
-		}
-		key := evidenceCoordinateKey(item.Ref)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, item)
-		if len(out) == limit {
-			break
 		}
 	}
 	return out, nil
@@ -246,11 +209,6 @@ func contextAllowsItem(item EvidenceItem, classes []SourceClass, after, before *
 		return false
 	}
 	return true
-}
-
-func contextQuery(request ContextRequest) string {
-	parts := []string{request.Target.Description, request.Target.Slug, request.Target.Key}
-	return strings.TrimSpace(strings.Join(parts, " "))
 }
 
 func evidenceCoordinateKey(ref EvidenceRef) string {

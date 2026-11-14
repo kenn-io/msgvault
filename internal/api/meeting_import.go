@@ -2,13 +2,11 @@ package api
 
 import (
 	"context"
-	"errors"
-	"mime"
 	"net/http"
 	"slices"
-	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/apiimport"
 	"go.kenn.io/msgvault/internal/meetingimport"
 )
 
@@ -28,29 +26,31 @@ type MeetingImportResponse struct {
 const statusFieldName = "status"
 
 func (s *Server) registerMeetingImportRoute(api huma.API) {
-	op := rawAPIV1Operation(
-		"importMeeting",
-		http.MethodPost,
-		"/import/meeting",
-		"Import one meeting",
-	)
-	op.RequestBody = jsonRequestBodyFor[meetingimport.Request](api)
-	hardenMeetingImportSchemas(api.OpenAPI())
-	op.Responses = jsonResponsesFor[MeetingImportResponse](
-		api,
-		http.StatusOK,
-		http.StatusCreated,
-	)
-	op.Errors = []int{
-		http.StatusBadRequest,
-		http.StatusUnauthorized,
-		http.StatusRequestEntityTooLarge,
-		http.StatusUnsupportedMediaType,
-		http.StatusUnprocessableEntity,
-		http.StatusInternalServerError,
-		http.StatusServiceUnavailable,
-	}
-	registerRawHumaRoute(api, op, s.handleMeetingImport)
+	registerImportRoute(s, api, importEndpoint[meetingimport.Request, MeetingImportResponse]{
+		operationID:   "importMeeting",
+		path:          meetingImportEndpointPath,
+		summary:       "Import one meeting",
+		noun:          "Meeting",
+		hardenSchemas: hardenMeetingImportSchemas,
+		decode: func(r *http.Request) (meetingimport.Request, error) {
+			return meetingimport.DecodeRequest(r.Body, meetingimport.MaxRequestBytes)
+		},
+		validate: func(req meetingimport.Request) error {
+			_, err := req.Normalize()
+			return err
+		},
+		importer: func(s *Server) (func(context.Context, meetingimport.Request) (apiimport.Result, error), bool) {
+			importer, ok := s.store.(MeetingImporter)
+			if !ok || importer == nil {
+				return nil, false
+			}
+			return importer.ImportMeeting, true
+		},
+		logFields: func(req meetingimport.Request) []any {
+			return []any{"source", req.Source.Identifier, "external_id", req.Meeting.ExternalID}
+		},
+		respond: func(result apiimport.Result) MeetingImportResponse { return MeetingImportResponse(result) },
+	})
 }
 
 func hardenMeetingImportSchemas(doc *huma.OpenAPI) {
@@ -148,93 +148,4 @@ func hardenMeetingImportSchemas(doc *huma.OpenAPI) {
 		{AnyOf: contentRequired},
 		{Not: transcriptsExclusive},
 	}
-}
-
-func (s *Server) handleMeetingImport(w http.ResponseWriter, r *http.Request) {
-	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || mediaType != applicationJSONMediaType {
-		writeError(w, http.StatusUnsupportedMediaType, "unsupported_media_type",
-			"Content-Type must be application/json")
-		return
-	}
-
-	req, err := meetingimport.DecodeRequest(r.Body, meetingimport.MaxRequestBytes)
-	switch {
-	case errors.Is(err, meetingimport.ErrRequestTooLarge):
-		writeError(w, http.StatusRequestEntityTooLarge, "request_too_large",
-			"Meeting import request exceeds 16 MiB")
-		return
-	case errors.Is(err, meetingimport.ErrMalformedRequest):
-		writeError(w, http.StatusBadRequest, "bad_request", "Invalid meeting import JSON")
-		return
-	case err != nil:
-		writeError(w, http.StatusBadRequest, "bad_request", "Invalid meeting import request")
-		return
-	}
-	if _, err := req.Normalize(); err != nil {
-		// Validation messages name the field and the rule, never the value.
-		message := "Meeting import request failed validation"
-		if detail, ok := strings.CutPrefix(err.Error(), meetingimport.ErrValidation.Error()+": "); ok &&
-			errors.Is(err, meetingimport.ErrValidation) {
-			message += ": " + detail
-		}
-		writeError(w, http.StatusUnprocessableEntity, "validation_failed", message)
-		return
-	}
-
-	importer, ok := s.store.(MeetingImporter)
-	if !ok || importer == nil {
-		writeError(w, http.StatusServiceUnavailable, "service_unavailable",
-			"Meeting import is unavailable")
-		return
-	}
-
-	gateCtx, cancel := context.WithTimeout(r.Context(), operationGateWaitLimit)
-	defer cancel()
-	done, ok := s.beginLabeledOperationGateWork(
-		gateCtx,
-		operationGateLabelFromPath(meetingImportEndpointPath),
-	)
-	if !ok {
-		writeOperationGateBusy(w, r, s.operationGate)
-		return
-	}
-	defer done()
-
-	result, err := importer.ImportMeeting(r.Context(), req)
-	if err != nil {
-		if s.writeIfContextError(w, err) {
-			return
-		}
-		if errors.Is(err, meetingimport.ErrUnavailable) {
-			writeError(w, http.StatusServiceUnavailable, "service_unavailable",
-				"Meeting import is unavailable")
-			return
-		}
-		if errors.Is(err, meetingimport.ErrValidation) {
-			writeError(w, http.StatusUnprocessableEntity, "validation_failed",
-				"Meeting import request failed validation")
-			return
-		}
-		if s.logger != nil {
-			s.logger.Error("meeting import failed",
-				"source", req.Source.Identifier,
-				"external_id", req.Meeting.ExternalID,
-				"error_class", "internal")
-		}
-		writeError(w, http.StatusInternalServerError, "internal_error",
-			"Meeting import failed")
-		return
-	}
-
-	status := http.StatusOK
-	if result.Status == meetingimport.StatusCreated {
-		status = http.StatusCreated
-	}
-	writeJSON(w, status, MeetingImportResponse{
-		Status:          result.Status,
-		SourceID:        result.SourceID,
-		MessageID:       result.MessageID,
-		SourceMessageID: result.SourceMessageID,
-	})
 }

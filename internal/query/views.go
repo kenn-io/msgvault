@@ -553,12 +553,12 @@ func createConvenienceViews(ctx context.Context, db *sql.DB) error {
 
 // sqlAnalyticalEntriesParticipantLabel renders the canonical participant
 // label used by every analytical participant list: display name, then phone
-// number, then email address, then empty string. alias is the participants
+// number, then email address, then numeric X ID, then empty string. alias is the participants
 // table alias. Any query that rebuilds participant labels outside the
 // analytical_entries view (the explore/files page-enrichment fast paths)
 // must use this so labels cannot drift from the view's.
 func sqlAnalyticalEntriesParticipantLabel(alias string) string {
-	return "COALESCE(NULLIF(" + alias + ".display_name, ''), NULLIF(" + alias + ".phone_number, ''), " + alias + ".email_address, '')"
+	return "COALESCE(NULLIF(" + alias + ".display_name, ''), NULLIF(" + alias + ".phone_number, ''), NULLIF(" + alias + ".email_address, ''), " + xUserIDExpr(alias, "") + ", '')"
 }
 
 // buildNarrowAnalyticalEntriesCTE renders the scalar part of
@@ -576,9 +576,13 @@ func buildNarrowFileEntriesCTE(name string) string {
 }
 
 func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool) string {
+	return buildScalarAnalyticalEntriesCTEWithSource(name, includeAttachmentSummary, "s.account_email", "m.archive_only")
+}
+
+func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSummary bool, sourceIdentifier, archiveOnly string) string {
 	attachmentColumns := `
-		0::BIGINT AS attachment_count,
-		0::BIGINT AS attachment_size`
+		CAST(0 AS BIGINT) AS attachment_count,
+		CAST(0 AS BIGINT) AS attachment_size`
 	attachmentJoin := ""
 	if includeAttachmentSummary {
 		attachmentColumns = `
@@ -596,7 +600,7 @@ func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool)
 		m.id AS message_id,
 		m.source_id,
 		COALESCE(s.source_type, '') AS source_type,
-		COALESCE(s.account_email, '') AS source_identifier,
+		COALESCE(` + sourceIdentifier + `, '') AS source_identifier,
 		m.source_message_id,
 		m.conversation_id,
 		COALESCE(c.source_conversation_id, '') AS source_conversation_id,
@@ -605,16 +609,16 @@ func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool)
 		COALESCE(m.message_type, '') AS message_type,
 		m.list_id,
 		m.sender_id,
-		COALESCE(NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
-		COALESCE(NULLIF(sender.display_name, ''), NULLIF(sender.phone_number, ''), sender.email_address, '') AS sender_display,
-		COALESCE(sender.domain, '') AS sender_domain,
+		COALESCE(` + identityindex.RelayAddressSubquery("m.id", "message_recipients") + `, NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), ` + xUserIDExpr("sender", "") + `, '') AS sender_identifier,
+		` + sqlAnalyticalEntriesParticipantLabel("sender") + ` AS sender_display,
+		COALESCE(NULLIF(` + identityindex.SenderEnvelopeDomainExpr(identityindex.RelayAddressSubquery("m.id", "message_recipients")) + `, ''), sender.domain, '') AS sender_domain,
 		m.sent_at AS occurred_at,
 		COALESCE(m.subject, '') AS subject,
 		COALESCE(m.snippet, '') AS snippet,
 		m.is_from_me,
 		m.size_estimate,
 		m.deleted_at IS NOT NULL AS internally_deleted,
-		m.archive_only,
+		` + archiveOnly + ` AS archive_only,
 		m.deleted_from_source_at IS NOT NULL AS deleted_from_source,
 		COALESCE(m.has_attachments, false) AS has_attachments,` + attachmentColumns + `
 	FROM messages m
@@ -668,9 +672,9 @@ SELECT
     COALESCE(m.message_type, '') AS message_type,
     m.list_id,
     m.sender_id,
-    COALESCE(NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
-    COALESCE(NULLIF(sender.display_name, ''), NULLIF(sender.phone_number, ''), sender.email_address, '') AS sender_display,
-    COALESCE(sender.domain, '') AS sender_domain,
+    COALESCE(` + identityindex.RelayAddressSubquery("m.id", "message_recipients") + `, NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), ` + xUserIDExpr("sender", "") + `, '') AS sender_identifier,
+    ` + sqlAnalyticalEntriesParticipantLabel("sender") + ` AS sender_display,
+    COALESCE(NULLIF(` + identityindex.SenderEnvelopeDomainExpr(identityindex.RelayAddressSubquery("m.id", "message_recipients")) + `, ''), sender.domain, '') AS sender_domain,
     m.sent_at AS occurred_at,
     COALESCE(m.subject, '') AS subject,
     COALESCE(m.snippet, '') AS snippet,
@@ -704,7 +708,7 @@ LEFT JOIN (
 // sqlVMessages: messages with sender resolved via dual-path
 // (message_recipients for email, messages.sender_id for chat)
 // and labels as sorted JSON array.
-const sqlVMessages = `
+var sqlVMessages = `
 CREATE OR REPLACE VIEW v_messages AS
 SELECT
     m.id,
@@ -741,16 +745,16 @@ LEFT JOIN (
 `
 
 // sqlVSenders: per-sender aggregates.
-const sqlVSenders = `
+var sqlVSenders = `
 CREATE OR REPLACE VIEW v_senders AS
 SELECT
-    p.email_address AS from_email,
-    COALESCE(
-        NULLIF(TRIM(FIRST(mr.display_name)), ''),
-        NULLIF(TRIM(FIRST(p.display_name)), ''),
+    ` + identityindex.SenderAddressExpr("mr", "p") + ` AS from_email,
+    FIRST(CASE WHEN mr.is_relayed THEN mr.email_address ELSE COALESCE(
+        NULLIF(TRIM(mr.display_name), ''),
+        NULLIF(TRIM(p.display_name), ''),
         p.email_address
-    ) AS from_name,
-    p.domain AS from_domain,
+    ) END) AS from_name,
+    ` + identityindex.SenderDomainExpr("mr", "p") + ` AS from_domain,
     COUNT(*) AS message_count,
     SUM(m.size_estimate) AS total_size,
     COALESCE(SUM(att.attachment_size), 0) AS attachment_size,
@@ -769,22 +773,22 @@ LEFT JOIN (
     GROUP BY message_id
 ) att ON att.message_id = m.id
 WHERE mr.recipient_type = 'from'
-GROUP BY p.email_address, p.domain
+GROUP BY ` + identityindex.SenderAddressExpr("mr", "p") + `, ` + identityindex.SenderDomainExpr("mr", "p") + `
 `
 
 // sqlVDomains: per-domain aggregates.
-const sqlVDomains = `
+var sqlVDomains = `
 CREATE OR REPLACE VIEW v_domains AS
 SELECT
-    p.domain,
+    ` + identityindex.SenderDomainExpr("mr", "p") + ` AS domain,
     COUNT(*) AS message_count,
     SUM(m.size_estimate) AS total_size,
-    COUNT(DISTINCT p.email_address) AS sender_count
+    COUNT(DISTINCT ` + identityindex.SenderAddressExpr("mr", "p") + `) AS sender_count
 FROM message_recipients mr
 JOIN participants p ON p.id = mr.participant_id
 JOIN messages m ON m.id = mr.message_id
 WHERE mr.recipient_type = 'from'
-GROUP BY p.domain
+GROUP BY ` + identityindex.SenderDomainExpr("mr", "p") + `
 `
 
 // sqlVLabels: label name with message count and total size.
@@ -827,29 +831,29 @@ GROUP BY c.id, c.source_conversation_id, c.title, c.conversation_type
 
 // sqlMessageSenderJoins resolves a message's From recipient before its direct
 // sender. Separate fragments let page queries bound each input before aggregation.
-const sqlMessageSenderJoins = sqlMessageSenderJoinsStart + sqlMessageSenderJoinsMiddle + sqlMessageSenderJoinsEnd
+var sqlMessageSenderJoins = sqlMessageSenderJoinsStart + sqlMessageSenderJoinsMiddle + sqlMessageSenderJoinsEnd
 
-const sqlMessageSenderJoinsStart = `LEFT JOIN (
+var sqlMessageSenderJoinsStart = `LEFT JOIN (
     SELECT
         mr.message_id,
-        FIRST(p.email_address) AS from_email,
+        FIRST(` + identityindex.SenderAddressExpr("mr", "p") + `) AS from_email,
         FIRST(
-            COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')
+            ` + recipientNameExpr("mr", "p") + `
         ) AS from_name,
-        FIRST(p.domain) AS from_domain,
+        FIRST(` + identityindex.SenderDomainExpr("mr", "p") + `) AS from_domain,
         FIRST(COALESCE(p.phone_number, '')) AS from_phone
     FROM message_recipients mr
     JOIN participants p ON p.id = mr.participant_id
     WHERE mr.recipient_type = 'from'`
 
-const sqlMessageSenderJoinsMiddle = `
+var sqlMessageSenderJoinsMiddle = `
     GROUP BY mr.message_id
 ) ms ON ms.message_id = m.id
 LEFT JOIN (
     SELECT
         msg.id AS message_id,
         COALESCE(p.email_address, '') AS from_email,
-        COALESCE(p.display_name, '') AS from_name,
+        ` + directSenderNameExpr("p", "") + ` AS from_name,
         COALESCE(p.domain, '') AS from_domain,
         COALESCE(p.phone_number, '') AS from_phone
     FROM messages msg

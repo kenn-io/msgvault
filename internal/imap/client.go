@@ -143,6 +143,11 @@ type Client struct {
 	aliasLoader     func(mailbox string, uids []uint32) (map[string]string, error)
 	aliasLoadWarned bool // one failing load must not warn once per request
 
+	// storedMembershipLoader reads archived flags so a listing on a server
+	// without mod-sequences can refresh flags of messages it already holds.
+	// Nil disables the refresh.
+	storedMembershipLoader func(ctx context.Context, mailbox string, uidValidity uint32, uids []uint32) (map[uint32]StoredMembership, error)
+
 	// folderFilter overrides which mailboxes are included in the sync.
 	// Zero-valued (empty include and exclude) means "all mailboxes".
 	folderFilterInclude, folderFilterExclude []string
@@ -356,6 +361,30 @@ func (c *Client) connect(ctx context.Context) error {
 		}); err != nil {
 			_ = conn.Close()
 			return fmt.Errorf("IMAP login: %w", err)
+		}
+	}
+
+	// go-imap sends UTF-8 mailbox names when IMAP4rev2 is advertised. A
+	// server advertising both revisions still uses rev1 mailbox syntax until
+	// ENABLE IMAP4rev2 (RFC 9051 section 6.1.1), so negotiate it before any
+	// mailbox command. Otherwise LIST succeeds but STATUS/SELECT of non-ASCII
+	// names can fail, preventing a complete incremental baseline.
+	if caps := conn.Caps(); caps.Has(imap.CapIMAP4rev1) && caps.Has(imap.CapIMAP4rev2) {
+		if err := waitAuthenticationContext(ctx, conn, func() error {
+			if err := c.waitCommand(ctx); err != nil {
+				return err
+			}
+			data, err := conn.Enable(imap.CapIMAP4rev2).Wait()
+			if err != nil {
+				return fmt.Errorf("ENABLE IMAP4rev2: %w", err)
+			}
+			if data == nil || !data.Caps.Has(imap.CapIMAP4rev2) {
+				return errors.New("server did not enable IMAP4rev2")
+			}
+			return nil
+		}); err != nil {
+			_ = conn.Close()
+			return fmt.Errorf("enable IMAP4rev2 mailbox encoding: %w", err)
 		}
 	}
 
@@ -1427,6 +1456,9 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 							Incremental: true,
 						})
 						unchangedFolders++
+						// Flag changes move neither UIDNEXT nor the message
+						// count, so "unchanged" here says nothing about flags.
+						c.refreshKnownFlagsLocked(ctx, mailbox, status, scan)
 						return true
 					}
 				}
@@ -1493,6 +1525,9 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 				VanishedUIDs: append([]imap.UID(nil), scan.vanished...),
 				Reset:        reset,
 			})
+			if planned && !reset {
+				c.refreshKnownFlagsLocked(ctx, mailbox, trackState, scan)
+			}
 		}
 		c.logger.Debug("listed mailbox", "mailbox", mailbox, "count", len(uids))
 		return true

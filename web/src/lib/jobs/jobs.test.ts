@@ -5,23 +5,23 @@ import { collectJobs, jobsHealth } from './jobs';
 import { jobLane as lane, jobRun, sourceStatus, syncRunStatus } from './fixtures.test-support';
 import canonical from '../../../tests/e2e/fixtures/operations-public.json';
 const activeRun = canonical.runs.find(run => run.kind === 'visual_embedding') as import('../api/generated/models').OperationRunSummary;
-const partial = canonical.runs.find(run => run.kind === 'document_extraction') as import('../api/generated/models').OperationRunSummary;
+const partial = { ...jobRun('person_sweep'), state: 'partial' } as import('../api/generated/models').OperationRunSummary;
 
 describe('jobs', () => {
   it('includes a failed job with its daemon error and history target', () => {
-    const [job] = collectJobs([], [lane('document_extraction')]);
+    const [job] = collectJobs([], [lane('person_embedding')]);
     expect(job?.detail).toBe('Upstream operation failed.');
     expect(job?.state).toBe('failed');
-    expect(job?.target).toEqual({ kind: 'history', operationKind: 'document_extraction', operationRunID: jobRun('document_extraction').id });
+    expect(job?.target).toEqual({ kind: 'history', operationKind: 'person_embedding', operationRunID: jobRun('person_embedding').id });
   });
   it('routes running and queued jobs to related status or settings', () => {
     const jobs = collectJobs([], [
-      lane('document_extraction', { active: { ...jobRun('document_extraction'), state: 'running', finished_at: undefined, error: undefined } }),
+      lane('visual_embedding', { active: { ...jobRun('visual_embedding'), state: 'running', finished_at: undefined, error: undefined } }),
       lane('message_embedding', { active: { ...jobRun('message_embedding'), state: 'running', finished_at: undefined, error: undefined } }),
       lane('person_enrichment', { active: { ...jobRun('person_enrichment'), state: 'queued', finished_at: undefined, error: undefined } }),
     ]);
     expect(jobs.map(job => job.target)).toEqual([
-      { kind: 'status', authority: 'getDocumentIndexStatus' },
+      { kind: 'status', authority: 'getVisualAttachmentStatus' },
       { kind: 'setting', target: { settingsCategory: 'search', settingsAuthority: 'semantic_search' } },
       { kind: 'setting', target: { settingsCategory: 'enrichment', settingsAuthority: '' } },
     ]);
@@ -47,8 +47,8 @@ describe('jobs', () => {
 it.each([
   { name: 'old failed import with item errors', source: { latest_sync: syncRunStatus({ status: 'failed', started_at: '2020-01-01T00:00:00Z', completed_at: '2020-01-01T00:00:04Z', errors_count: 2, item_errors: ['Invalid MIME header\nParser details', 'Missing attachment'].map((error_message, index) => ({ error_message, created_at: '2020-01-01T00:00:04Z', error_kind: 'parse_failed', phase: 'parse', source_message_id: `synthetic-${index}` })) }) }, lanes: [], expected: [['failed', 'Invalid MIME header']] },
   { name: 'failed import shows the main error before item errors', source: { latest_sync: syncRunStatus({ status: 'failed', error_message: 'Import failed\nImport details', item_errors: [{ error_message: 'Missing attachment', created_at: '2020-01-01T00:00:04Z', error_kind: 'parse_failed', phase: 'parse', source_message_id: 'synthetic-1' }] }) }, lanes: [], expected: [['failed', 'Import failed']] },
-  { name: 'completed sync and partial lane warnings', source: { latest_sync: syncRunStatus({ errors_count: 2 }) }, lanes: [lane('document_extraction', { latest: partial })], expected: [] },
-  { name: 'disabled lane with a stale failure', lanes: [lane('document_extraction', { configured: false })], expected: [] },
+  { name: 'completed sync and partial lane warnings', source: { latest_sync: syncRunStatus({ errors_count: 2 }) }, lanes: [lane('person_sweep', { latest: partial })], expected: [] },
+  { name: 'disabled lane with a stale failure', lanes: [lane('person_embedding', { configured: false })], expected: [] },
   { name: 'disabled lane still running', lanes: [lane('visual_embedding', { configured: false, active: activeRun })], expected: [['running', '']] },
   { name: 'queued source with completed sync', source: { scheduler_queued: true, sync_unavailable_reason: 'sync_already_running', latest_sync: syncRunStatus() }, lanes: [], expected: [['queued', '']] },
   { name: 'failed source with a queued retry', source: { scheduler_queued: true, latest_sync: syncRunStatus({ status: 'failed', error_message: 'Mailbox unavailable' }) }, lanes: [], expected: [['failed', 'Mailbox unavailable']] },

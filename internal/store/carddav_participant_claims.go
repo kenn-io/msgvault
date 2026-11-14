@@ -64,11 +64,17 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 		}
 		envelope, err := vcard.ParseResourceEnvelope(body)
 		if err != nil {
-			return nil, 0, fmt.Errorf("decode CardDAV resource %d for participant binding: %w", resourceID, err)
+			continue
 		}
-		scanned++
+		cardClaims := map[cardDAVParticipantAddress]struct{}{}
+		valid := true
 		for _, occurrence := range envelope.PropertyTree {
 			property := occurrence.Property
+			property.RawValue, err = vcard.DecodeLegacyRawValue(property)
+			if err != nil {
+				valid = false
+				break
+			}
 			var kind ContactAddressKind
 			switch strings.ToUpper(property.Name) {
 			case "EMAIL":
@@ -80,7 +86,8 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 			}
 			value, uri, err := vcard.ContactPointValue(envelope.RenderMetadata.StoredVersion, property)
 			if err != nil {
-				return nil, 0, fmt.Errorf("decode CardDAV resource %d contact point: %w", resourceID, err)
+				valid = false
+				break
 			}
 			if kind == ContactAddressPhone && uri != "" {
 				value = uri
@@ -89,6 +96,13 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 			if !ok {
 				continue
 			}
+			cardClaims[key] = struct{}{}
+		}
+		if !valid {
+			continue
+		}
+		scanned++
+		for key := range cardClaims {
 			if claims[key] == nil {
 				claims[key] = cardDAVPersonSet{}
 			}

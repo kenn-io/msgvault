@@ -69,6 +69,12 @@ func (s *Store) BeginReadSnapshotContext(ctx context.Context) (context.Context, 
 	return context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: s.db.DB, tx: tx}), release, nil
 }
 
+// WithReadSnapshotContext binds a caller-owned read transaction to archive reads.
+// The caller remains responsible for rolling the transaction back.
+func WithReadSnapshotContext(ctx context.Context, db *sql.DB, tx *sql.Tx) context.Context {
+	return context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: db, tx: &loggedTx{Tx: tx}})
+}
+
 // WithoutReadSnapshotContext preserves request lifetime and values for physical reads.
 func WithoutReadSnapshotContext(ctx context.Context) context.Context {
 	return context.WithValue(ctx, readSnapshotKey{}, struct{}{})

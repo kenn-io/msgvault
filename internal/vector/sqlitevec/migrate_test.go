@@ -4,6 +4,7 @@ package sqlitevec
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -34,6 +35,32 @@ func TestMigrate_FreshAndIdempotent(t *testing.T) {
 
 	// Idempotent: running again must not error.
 	require.NoError(t, Migrate(ctx, db, 768), "second migrate")
+}
+
+func TestMigrate_ReclaimsRetiredDocumentVectors(t *testing.T) {
+	db := openTestDB(t, filepath.Join(t.TempDir(), "vectors.db"))
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err := db.ExecContext(t.Context(), schemaSQL)
+	require.NoError(t, err)
+	retiredSchema, err := os.ReadFile("testdata/retired_document_vectors.sql")
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), string(retiredSchema))
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO document_vector_embeddings (token, generation_id, dimension)
+		VALUES ('retired-4', 1, 4), ('retired-8', 2, 8);
+		CREATE VIRTUAL TABLE document_vectors_vec_d4 USING vec0(generation_id INTEGER PARTITION KEY, document_vector_id INTEGER PRIMARY KEY, embedding FLOAT[4] distance_metric=cosine);
+		CREATE VIRTUAL TABLE document_vectors_vec_d8 USING vec0(generation_id INTEGER PARTITION KEY, document_vector_id INTEGER PRIMARY KEY, embedding FLOAT[8] distance_metric=cosine);
+		INSERT INTO document_vectors_vec_d4(generation_id, document_vector_id, embedding) VALUES (1, 1, '[1,0,0,0]');
+		INSERT INTO document_vectors_vec_d8(generation_id, document_vector_id, embedding) VALUES (2, 2, '[1,0,0,0,0,0,0,0]')`)
+	require.NoError(t, err)
+
+	for range 2 {
+		require.NoError(t, Migrate(t.Context(), db, 4))
+		var remaining int
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sqlite_master
+			WHERE name = 'document_vector_embeddings' OR name GLOB 'document_vectors_vec_d*'`).Scan(&remaining))
+		assert.Zero(t, remaining, "retired vectors and their shadow tables are reclaimed")
+	}
 }
 
 func TestMigrate_EmbeddingTriggersMaintainCountAndRevision(t *testing.T) {

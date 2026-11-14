@@ -104,5 +104,5 @@ func (r *UploadHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		receiptHash = strings.Repeat("0", 64)
 	}
 	//nolint:gosec // test server echoes a synthetic hash header
-	_, _ = fmt.Fprintf(w, `{"status":%q,"computed_hash":%q,"computed_size":%d,"node":{"id":%d,"parent_id":7,"kind":"file","name":%q,"blob_hash":%q,"size":%d,"current_version_id":"version"}}`, status, receiptHash, len(body), node, part.FileName(), receiptHash, len(body))
+	_, _ = fmt.Fprintf(w, `{"status":%q,"computed_hash":%q,"computed_size":%d,"node":{"id":%d,"parent_id":7,"kind":"file","name":%q,"blob_hash":%q,"size":%d,"current_version_id":"version-%d"}}`, status, receiptHash, len(body), node, part.FileName(), receiptHash, len(body), node)
 }

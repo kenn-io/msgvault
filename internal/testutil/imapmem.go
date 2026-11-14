@@ -666,3 +666,26 @@ func ExpungeIMAPMessage(t *testing.T, addr, mailbox string, uid imap.UID) {
 	}, nil).Close())
 	require.NoError(t, client.Expunge().Close())
 }
+
+// SetIMAPFlags replaces the flags of one UID on a server returned by
+// StartIMAPMemServer, the way a mail client marks a message read or answered.
+// UIDNEXT and the STATUS MESSAGES count stay put, so a cursor without CONDSTORE
+// sees no change.
+func SetIMAPFlags(t *testing.T, addr, mailbox string, uid imap.UID, flags ...imap.Flag) {
+	t.Helper()
+	client, err := imapclient.DialInsecure(addr, nil)
+	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
+
+	require.NoError(t, client.Login(IMAPTestUsername, IMAPTestPassword).Wait())
+	_, err = client.Select(mailbox, nil).Wait()
+	require.NoError(t, err)
+
+	var uidSet imap.UIDSet
+	uidSet.AddNum(uid)
+	require.NoError(t, client.Store(uidSet, &imap.StoreFlags{
+		Op:     imap.StoreFlagsSet,
+		Silent: true,
+		Flags:  flags,
+	}, nil).Close())
+}

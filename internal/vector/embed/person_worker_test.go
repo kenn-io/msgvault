@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -845,6 +848,58 @@ func TestPersonWorkerPersistsPartialPrefixAndRetriesOnlyRemainder(t *testing.T) 
 	revisions, listErr = backend.ListPersonRevisions(t.Context(), 11)
 	must.NoError(listErr)
 	check.Equal(map[int64]string{1: "rev-1", 2: "rev-2", 3: "rev-3"}, revisions)
+}
+
+func TestPersonWorkerKeepsCompletedPeopleAfterLearnedLimitAndYield(t *testing.T) {
+	check, must := assert.New(t), require.New(t)
+	requests := make(chan []string, 10)
+	var yield atomic.Bool
+	ctx, requestYield := jobctx.WithPreemption(t.Context())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		request := decodeRequest(t, r)
+		requests <- request.Input
+		if len(request.Input) > 4 {
+			<-r.Context().Done()
+			return
+		}
+		if yield.Swap(false) {
+			requestYield()
+		}
+		vectors := make([][]float32, len(request.Input))
+		for i := range vectors {
+			vectors[i] = []float32{1}
+		}
+		writeEmbeddings(t, w, vectors)
+	}))
+	t.Cleanup(server.Close)
+	client := NewClient(Config{Endpoint: server.URL, Model: "m", Dimension: 1, Timeout: 100 * time.Millisecond, MaxRetries: 1, Builtin: true}) //nolint:kennlint // deadlinetest: learn a smaller limit from a timed-out request
+	inputs := []string{"one", "two", "three", "four", "five", "six", "seven", "eight"}
+	_, err := client.Embed(t.Context(), inputs)
+	must.NoError(err)
+	for range 3 {
+		<-requests
+	}
+
+	source := newPersonWorkerSource()
+	for i, input := range inputs {
+		source.put(personDocument(int64(i+1), "rev", input))
+	}
+	backend := newPersonWorkerBackend()
+	worker := newTestPersonWorker(source, backend, client, 8)
+	yield.Store(true)
+	_, err = worker.RunOnce(ctx, 11, testEmbeddingPassScope())
+	must.NoError(err)
+	revisions, err := backend.ListPersonRevisions(t.Context(), 11)
+	must.NoError(err)
+	check.Equal(map[int64]string{1: "rev", 2: "rev", 3: "rev", 4: "rev"}, revisions)
+	check.Equal(inputs[:4], <-requests)
+
+	_, err = worker.RunOnce(t.Context(), 11, testEmbeddingPassScope())
+	must.NoError(err)
+	check.Equal(inputs[4:], <-requests)
+	revisions, err = backend.ListPersonRevisions(t.Context(), 11)
+	must.NoError(err)
+	check.Len(revisions, 8)
 }
 
 // TestPersonWorkerPartialErrorCountsReturnedFencedDocuments catches result

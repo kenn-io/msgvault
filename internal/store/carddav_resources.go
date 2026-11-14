@@ -2071,7 +2071,7 @@ func (s *Store) deleteUntouchedCardDAVImportedPersonTx(
 	var hasMemberships bool
 	err := tx.QueryRowContext(ctx, `SELECT revision,
   (SELECT COUNT(*) FROM carddav_resources WHERE person_id = persons.id),
-  EXISTS (SELECT 1 FROM person_participants WHERE person_id = persons.id)
+  EXISTS (SELECT 1 FROM person_participants WHERE person_id = persons.id AND carddav_owned = FALSE)
   FROM persons WHERE id = ?`, *resource.PersonID).Scan(&revision, &otherMappings, &hasMemberships)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
@@ -2082,6 +2082,33 @@ func (s *Store) deleteUntouchedCardDAVImportedPersonTx(
 	// Membership removal must pass through revision and enrichment bookkeeping,
 	// rather than disappear through the profile's foreign-key cascade.
 	if revision != *resource.PersonRevisionAtBind || otherMappings != 0 || hasMemberships {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT participant_id FROM person_participants WHERE person_id = ? AND carddav_owned = TRUE`, *resource.PersonID)
+	if err != nil {
+		return err
+	}
+	plan := &cardDAVParticipantBindingPlan{}
+	for rows.Next() {
+		var participantID int64
+		if err := rows.Scan(&participantID); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		plan.remove = append(plan.remove, cardDAVParticipantBinding{personID: *resource.PersonID, participantID: participantID, owned: true})
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	if err := s.applyCardDAVParticipantBindingsTx(ctx, tx, plan); err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT revision, EXISTS (SELECT 1 FROM person_participants WHERE person_id = persons.id) FROM persons WHERE id = ?`, *resource.PersonID).Scan(&revision, &hasMemberships); err != nil {
+		return err
+	}
+	if hasMemberships {
 		return nil
 	}
 	if err := s.deleteIdentityMatchCandidatesForPersonTx(ctx, tx, *resource.PersonID); err != nil {

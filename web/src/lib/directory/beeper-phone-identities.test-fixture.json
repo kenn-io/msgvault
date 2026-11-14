@@ -1,0 +1,26 @@
+[
+  {
+    "participant_id": 2,
+    "type": "phone",
+    "value": "+1 (202) 555-0123",
+    "display_value": "",
+    "service_slug": "phone",
+    "service_label": "",
+    "scope_kind": "",
+    "scope_value": "",
+    "participant_display_name": "Reader",
+    "identity_key": "[\"phone\",\"\",\"\",\"+12025550123\"]"
+  },
+  {
+    "participant_id": 2,
+    "type": "email",
+    "value": "Reader@Example.org",
+    "display_value": "",
+    "service_slug": "email",
+    "service_label": "",
+    "scope_kind": "",
+    "scope_value": "",
+    "participant_display_name": "Reader",
+    "identity_key": "[\"email\",\"\",\"\",\"reader@example.org\"]"
+  }
+]

@@ -536,7 +536,8 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 		}
 
 		fmt.Printf("Account %s authorized via service account.\n", email)
-		fmt.Println("Next step: msgvault sync-full", email)
+		fmt.Println("Next step:")
+		oauth.PrintHeadlessCommand(os.Stdout, "msgvault", "sync-full", "--", email)
 		return nil
 	}
 
@@ -631,14 +632,15 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 			confirmDefaultIdentity(storeCtx, cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
 		}
 		if err := runPostSourceCreateMigrationsForInvocation(storeCtx, s, state); err != nil {
-			return fmt.Errorf("post-source-create migrations: %w", err)
+			return fmt.Errorf("account saved, but couldn't finish setup: %w", err)
 		}
 		if bindingChanged {
 			fmt.Printf("Account %s: OAuth app binding updated to %q.\n", email, resolvedApp)
 		} else {
 			fmt.Printf("Account %s is already authorized.\n", email)
 		}
-		fmt.Println("Next step: msgvault sync-full", email)
+		fmt.Println("Next step:")
+		oauth.PrintHeadlessCommand(os.Stdout, "msgvault", "sync-full", "--", email)
 		return nil
 	}
 
@@ -690,11 +692,12 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 		confirmDefaultIdentity(storeCtx, cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
 	}
 	if err := runPostSourceCreateMigrationsForInvocation(storeCtx, s, state); err != nil {
-		return fmt.Errorf("post-source-create migrations: %w", err)
+		return fmt.Errorf("account saved, but couldn't finish setup: %w", err)
 	}
 
 	fmt.Printf("\nAccount %s authorized successfully!\n", email)
-	fmt.Println("You can now run: msgvault sync-full", email)
+	fmt.Println("You can now run:")
+	oauth.PrintHeadlessCommand(os.Stdout, "msgvault", "sync-full", "--", email)
 
 	return nil
 }

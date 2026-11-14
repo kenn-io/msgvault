@@ -346,7 +346,7 @@ func runMCPCapabilityGate(t *testing.T, delegated bool) {
 			var healthCalls atomic.Int64
 			server := mcpDraftTestDaemon(t, fixture.grantedAdapter(), func(next http.Handler) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if probing.Load() && r.URL.Path == "/api/v1/health" && (healthCalls.Add(1) > 1 || delegated && version == "3.0.0") {
+					if probing.Load() && r.URL.Path == "/api/v1/health" && healthCalls.Add(1) > 1 {
 						w.Header().Set("Content-Type", "application/json")
 						if version == "failed" {
 							w.WriteHeader(http.StatusServiceUnavailable)

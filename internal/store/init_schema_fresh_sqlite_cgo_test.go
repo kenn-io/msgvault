@@ -30,7 +30,7 @@ func freshSchemaRows(t *testing.T, s *Store) map[string][][]any {
 		"migrations": "SELECT name, version FROM applied_migrations ORDER BY name",
 		"version":    "SELECT value FROM archive_metadata WHERE key = 'schema_version'",
 	}
-	for _, table := range []string{"communication_services", "attribute_definitions", "relationship_types", "collections", "embedding_change_clock", "source_maintenance_lock", "carddav_discovery_lock", "person_sweep_change_clock", "operation_history_state", "document_index_state"} {
+	for _, table := range []string{"communication_services", "attribute_definitions", "relationship_types", "collections", "embedding_change_clock", "source_maintenance_lock", "carddav_discovery_lock", "person_sweep_change_clock", "operation_history_state"} {
 		columns, err := s.db.QueryContext(t.Context(), "PRAGMA table_info("+table+")")
 		require.NoError(t, err)
 		var names []string
@@ -71,7 +71,7 @@ func freshSchemaRows(t *testing.T, s *Store) map[string][][]any {
 func referenceFreshSchema(t *testing.T) map[string][][]any {
 	t.Helper()
 	s := freshObservedStore(t, filepath.Join(t.TempDir(), "reference.db"), nil)
-	require.NoError(t, s.initSchemaContext(t.Context(), 0))
+	require.NoError(t, s.initSchemaContext(t.Context()))
 	s.optimizeSQLiteBestEffort(t.Context(), "schema initialization", false)
 	return freshSchemaRows(t, s)
 }

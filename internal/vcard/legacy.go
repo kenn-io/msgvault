@@ -106,6 +106,11 @@ func decodeLegacyText(property Property) (string, error) {
 // decoding while preserving vCard syntax escapes and structured delimiters.
 // Callers that need a TEXT value can apply UnescapeText afterwards; canonical
 // v4 rendering must keep those delimiters in values such as N and ADR.
+// DecodeLegacyRawValue decodes legacy transfer and character-set encodings.
+func DecodeLegacyRawValue(property Property) (string, error) {
+	return decodeLegacyRawValue(property)
+}
+
 func decodeLegacyRawValue(property Property) (string, error) {
 	raw, quotedPrintable, err := decodeLegacyTransfer(property)
 	if err != nil {

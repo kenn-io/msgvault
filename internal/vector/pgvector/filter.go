@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -61,6 +63,16 @@ func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
 		}
 		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
 	}
+	for _, term := range f.SenderTerms {
+		predicate, _, senderArgs := search.SenderLookup(term, (&store.PostgreSQLDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
+		for _, arg := range senderArgs {
+			predicate = strings.Replace(predicate, "?", bind(arg), 1)
+		}
+		clauses = append(clauses, predicate)
+	}
+	if f.SenderDomain != "" {
+		clauses = append(clauses, search.SenderDomainCondition(bind(f.SenderDomain)))
+	}
 	for _, group := range f.SenderGroups {
 		if len(group) == 0 {
 			continue
@@ -79,12 +91,13 @@ func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
 		}
 		ids := bind(int64Array(group))
 		clauses = append(clauses, fmt.Sprintf(
-			`(m.sender_id = ANY(%[1]s::bigint[]) OR EXISTS (
+			`((m.sender_id = ANY(%[1]s::bigint[]) AND %[2]s) OR EXISTS (
 				SELECT 1 FROM message_recipients mr
 				 WHERE mr.message_id = m.id
 				   AND mr.recipient_type = 'from'
+				   AND NOT mr.is_relayed
 				   AND mr.participant_id = ANY(%[1]s::bigint[])
-			))`, ids))
+			))`, ids, identityindex.RelayAbsentExpr("m.id", "message_recipients")))
 	}
 	for _, group := range f.RecipientAnyGroups {
 		if len(group) == 0 {

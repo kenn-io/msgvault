@@ -395,3 +395,15 @@ func SetPersonTierRowPage(n int) func() {
 	personTierRowPage = n
 	return func() { personTierRowPage = old }
 }
+
+// LastSuccessfulSyncQueryForTest is the newest-completed-run lookup each
+// incremental sync runs.
+func LastSuccessfulSyncQueryForTest(filterByType bool) string {
+	return lastSuccessfulSyncQuery(filterByType)
+}
+
+// ApplyAcceptedIdentityMatchSnapshotForTest applies a previously read candidate.
+func (s *Store) ApplyAcceptedIdentityMatchSnapshotForTest(ctx context.Context, candidate *IdentityMatchCandidate, actor string) error {
+	_, _, _, err := s.applyAcceptedIdentityMatchCandidateContext(ctx, candidate, actor)
+	return err
+}

@@ -257,6 +257,56 @@ func TestImportAppleTextMessages(t *testing.T) {
 	assertStoreCount(t, st.DB(), "message_raw", 4)
 }
 
+func TestImportAppleSkipsInactiveGroupMembers(t *testing.T) {
+	require := require.New(t)
+
+	chatDBPath := createAppleChatFixture(t)
+	createAppleLIDFixture(t, filepath.Dir(chatDBPath))
+	execAppleFixture(t, chatDBPath, `
+		ALTER TABLE ZWAGROUPMEMBER ADD COLUMN ZISACTIVE INTEGER;
+		UPDATE ZWAGROUPMEMBER SET ZISACTIVE = 1 WHERE Z_PK = 10;
+		INSERT INTO ZWAGROUPMEMBER
+			(Z_PK, ZCHATSESSION, ZMEMBERJID, ZCONTACTNAME, ZFIRSTNAME, ZISADMIN, ZISACTIVE)
+		VALUES
+			(12, 2, '15555550105@s.whatsapp.net', 'Never Joined', 'Never', 0, 0),
+			(13, 2, '15555550106@s.whatsapp.net', 'Unknown State', 'Unknown', 0, NULL);
+	`)
+
+	st := testutil.NewTestStore(t)
+	importer := NewImporter(st, nil)
+	_, err := importer.Import(t.Context(), chatDBPath, ImportOptions{
+		Phone: "+15555550100", DisplayName: "Test Owner", BatchSize: 2,
+	})
+	require.NoError(err)
+
+	members := map[string]bool{}
+	rows, err := st.DB().QueryContext(t.Context(), `
+		SELECT p.phone_number
+		FROM conversation_participants cp
+		JOIN conversations c ON c.id = cp.conversation_id
+		JOIN participants p ON p.id = cp.participant_id
+		WHERE c.source_conversation_id = '120363000000000000@g.us'
+	`)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	for rows.Next() {
+		var phone string
+		require.NoError(rows.Scan(&phone))
+		members[phone] = true
+	}
+	require.NoError(rows.Err())
+
+	require.True(members["+15555550103"], "active member is kept")
+	require.True(members["+15555550106"], "a NULL ZISACTIVE is treated as active")
+	require.False(members["+15555550105"], "inactive roster row is not a member")
+
+	var phantom int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
+		SELECT COUNT(*) FROM participants WHERE phone_number = '+15555550105'
+	`).Scan(&phantom))
+	require.Zero(phantom, "no participant is created for an inactive roster row")
+}
+
 func TestImportAppleType7TextMessages(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

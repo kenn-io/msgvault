@@ -93,6 +93,69 @@ func TestSnapshotCacheSlowComputeServesPreviousValue(t *testing.T) {
 	})
 }
 
+func TestSnapshotCacheStaleWaitPolicy(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		lifetimeCtx, cancelLifetime := context.WithCancel(t.Context())
+		defer cancelLifetime()
+		cache := snapshotCache[int]{staleWait: 500 * time.Millisecond}
+		started := time.Now()
+		value, asOf, stale, err := cache.getVersion(t.Context(), lifetimeCtx, "k", "", 2*time.Second, true,
+			func(context.Context) (int, error) { time.Sleep(time.Second); return 1, nil })
+		require.NoError(err)
+		assert.Equal(time.Second, time.Since(started), "cold reads retain the original budget")
+		assert.Equal(1, value)
+		assert.False(stale)
+		started = time.Now()
+		value, previousAsOf, stale, err := cache.get(t.Context(), lifetimeCtx, "k", 2*time.Second,
+			func(ctx context.Context) (int, error) { <-ctx.Done(); return 0, ctx.Err() })
+		require.NoError(err)
+		assert.Equal(500*time.Millisecond, time.Since(started))
+		assert.Equal(1, value)
+		assert.Equal(asOf, previousAsOf)
+		assert.True(stale)
+
+		var catalog snapshotCache[int]
+		value, asOf, stale, err = catalog.getVersion(t.Context(), lifetimeCtx, "catalog", "1", 2*time.Second, true,
+			func(context.Context) (int, error) { return 1, nil })
+		require.NoError(err)
+		assert.Equal(1, value)
+		assert.False(stale)
+
+		started = time.Now()
+		value, previousAsOf, stale, err = catalog.getVersion(t.Context(), lifetimeCtx, "catalog", "1", 2*time.Second, true,
+			func(ctx context.Context) (int, error) { <-ctx.Done(); return 0, ctx.Err() })
+		require.NoError(err)
+		assert.Zero(time.Since(started), "matching optional reads reuse the snapshot immediately")
+		assert.Equal(1, value)
+		assert.Equal(asOf, previousAsOf)
+		assert.True(stale)
+
+		started = time.Now()
+		_, _, stale, err = catalog.getVersion(t.Context(), lifetimeCtx, "catalog", "1", 2*time.Second, false,
+			func(ctx context.Context) (int, error) { <-ctx.Done(); return 0, ctx.Err() })
+		require.NoError(err)
+		assert.Equal(2*time.Second, time.Since(started), "strict reads keep the original wait")
+		assert.True(stale)
+
+		started = time.Now()
+		value, _, stale, err = catalog.getVersion(t.Context(), lifetimeCtx, "catalog", "2", 2*time.Second, true,
+			func(ctx context.Context) (int, error) {
+				select {
+				case <-time.After(100 * time.Millisecond):
+					return 2, nil
+				case <-ctx.Done():
+					return 0, ctx.Err()
+				}
+			})
+		require.NoError(err)
+		assert.Equal(100*time.Millisecond, time.Since(started), "changed versions wait for their own refresh")
+		assert.Equal(2, value)
+		assert.False(stale)
+	})
+}
+
 func TestSnapshotCacheCanceledRefreshWaitDoesNotServeStaleValue(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)
@@ -300,15 +363,15 @@ func TestSnapshotCacheOlderVersionNeverReplacesNewerValue(t *testing.T) {
 		}
 
 		// A slow read at version 1 is still running when version 2 arrives.
-		_, _, _, err := cache.getVersion(t.Context(), t.Context(), "", "1", time.Second, read("v1", 10*time.Second))
+		_, _, _, err := cache.getVersion(t.Context(), t.Context(), "", "1", time.Second, false, read("v1", 10*time.Second))
 		require.ErrorIs(err, errSnapshotWaitTimeout)
-		value, _, _, err := cache.getVersion(t.Context(), t.Context(), "", "2", time.Second, read("v2", 0))
+		value, _, _, err := cache.getVersion(t.Context(), t.Context(), "", "2", time.Second, false, read("v2", 0))
 		require.NoError(err)
 		assert.Equal("v2", value)
 
 		time.Sleep(10 * time.Second)
 		synctest.Wait()
-		value, _, stale, err := cache.getVersion(t.Context(), t.Context(), "", "2", time.Second, read("v3", time.Hour))
+		value, _, stale, err := cache.getVersion(t.Context(), t.Context(), "", "2", time.Second, false, read("v3", time.Hour))
 		require.NoError(err)
 		assert.Equal("v2", value, "the late version-1 read did not replace the newer value")
 		assert.False(stale)

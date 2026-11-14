@@ -574,6 +574,32 @@ tenant_id = "your-org-tenant-id"
 
 When `tenant_id` is omitted (or set to `"common"`), both personal Microsoft accounts and organizational accounts can authorize.
 
+### Mailboxes in multiple organizations
+
+Register an app in each organization and configure them separately:
+
+```toml
+[microsoft]
+client_id = "org-a-client-id"
+tenant_id = "org-a-tenant-id"
+
+[microsoft.apps.orgb]
+client_id = "org-b-client-id"
+tenant_id = "org-b-tenant-id"
+```
+
+Restart the daemon after changing Microsoft app settings so scheduled syncs use the updated configuration.
+
+```bash
+msgvault add-o365 user@org-a.example
+msgvault add-o365 user@org-b.example --oauth-app orgb
+msgvault add-o365 user@org-b.example --graph --oauth-app orgb --headless
+```
+
+Each named app uses `common` and `http://localhost:8089/callback/microsoft` when its tenant and redirect URI are omitted. Set these fields on the named app if it needs different values. Re-run `add-o365` without `--oauth-app` to recover a lost token; msgvault remembers the source's app. Pass another app name to switch, or `--oauth-app ""` to switch to `[microsoft]`. Named app tokens are stored under `tokens/microsoft-apps/` in directories keyed by client ID. Switching apps or changing a named app's `client_id` leaves its previous token on disk until you remove the account or delete the token. Teams, contacts, and the Web add-source template use `[microsoft]`.
+
+After changing the default `[microsoft].client_id`, re-run `add-o365` for each mailbox using the default app.
+
 ### Add Your Account
 
 ```bash
@@ -639,7 +665,7 @@ full Teams workflow.
 ### Microsoft Graph Mail Sync
 
 If IMAP is turned off for a mailbox, `add-o365 --graph` syncs it through the
-Microsoft Graph mail API. It uses the same `[microsoft] client_id` and redirect
+Microsoft Graph mail API. It uses the selected Microsoft app and redirect
 URI. Add the **Microsoft Graph** delegated permission `Mail.Read` to the app
 registration, then authorize and sync:
 
