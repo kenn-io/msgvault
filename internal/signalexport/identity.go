@@ -31,11 +31,18 @@ func recipientPeer(r recipient) peer {
 		if name == "" {
 			name = strings.TrimSpace(c.SystemGiven + " " + c.SystemFamily)
 		}
-		key := "aci:" + hex.EncodeToString(c.ACI)
-		if c.E164 != "" && c.E164 != "0" {
-			key = "e164:+" + string(c.E164)
+		p := peer{name: name, kind: "direct_chat"}
+		if len(c.ACI) == 16 {
+			p.aci = "aci:" + hex.EncodeToString(c.ACI)
 		}
-		return peer{key: key, name: name, kind: "direct_chat"}
+		if c.E164 != "" && c.E164 != "0" {
+			p.phone = "e164:+" + string(c.E164)
+		}
+		p.key = p.aci
+		if p.key == "" {
+			p.key = p.phone
+		}
+		return p
 	}
 	if g := r.Group; g != nil && len(g.MasterKey) == 32 {
 		h := sha256.Sum256(g.MasterKey)

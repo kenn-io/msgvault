@@ -106,18 +106,18 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 			for i, a := range old.Standard.Attachments {
 				key := fmt.Sprintf("attachment:%d", i)
 				p := a.Pointer
-				if p != nil {
-					match := matchingPointer(a, m, claimed)
-					if len(p.Locator.Hash) == 0 {
-						p = match
-					}
+				match := matchingPointer(a, old.Standard.Attachments, m, claimed)
+				if match == nil || p == nil || len(p.Locator.Hash) == 0 {
+					p = match
 				}
 				archived[key] = p
 				slots = append(slots, slot{key: key, p: p})
 			}
 			if old.Standard.LongText != nil {
 				p := old.Standard.LongText
-				if len(p.Locator.Hash) == 0 && m.LongText != nil && len(p.Locator.Key) > 0 && bytes.Equal(p.Locator.Key, m.LongText.Locator.Key) {
+				if m.LongText == nil || len(p.Locator.Key) == 0 || !bytes.Equal(p.Locator.Key, m.LongText.Locator.Key) {
+					p = nil
+				} else if len(p.Locator.Hash) == 0 {
 					p = m.LongText
 				}
 				archived["long_text"] = p
@@ -213,7 +213,7 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 }
 
 // matchingPointer accepts only a unique, unclaimed identity in the new export.
-func matchingPointer(old messageAttachment, m *standardMessage, claimed map[int]bool) *filePointer {
+func matchingPointer(old messageAttachment, originals []messageAttachment, m *standardMessage, claimed map[int]bool) *filePointer {
 	for _, identity := range []func(messageAttachment) []byte{
 		func(a messageAttachment) []byte { return a.ClientUUID },
 		func(a messageAttachment) []byte {
@@ -225,6 +225,15 @@ func matchingPointer(old messageAttachment, m *standardMessage, claimed map[int]
 	} {
 		value := identity(old)
 		if len(value) == 0 {
+			continue
+		}
+		originalCount := 0
+		for _, attachment := range originals {
+			if bytes.Equal(value, identity(attachment)) {
+				originalCount++
+			}
+		}
+		if originalCount != 1 {
 			continue
 		}
 		match, count := -1, 0

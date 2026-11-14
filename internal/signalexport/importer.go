@@ -13,10 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-const (
-	adapterVersion  = 1
-	metadataVersion = 1
-)
+const formatVersion = 1
 
 type ImportOptions struct {
 	RootDir        string
@@ -49,6 +46,22 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		return s, err
 	}
 	s.SourceID = source.ID
+	var state struct {
+		Format int `json:"signal_export_format"`
+	}
+	if source.SyncCursor.Valid && source.SyncCursor.String != "" {
+		if err := json.Unmarshal([]byte(source.SyncCursor.String), &state); err != nil {
+			return s, fmt.Errorf("read saved Signal format: %w", err)
+		}
+	}
+	if state.Format > formatVersion {
+		return s, errors.New("saved Signal messages use a newer format; upgrade msgvault")
+	}
+	if state.Format != formatVersion {
+		if err := st.UpdateSourceSyncState(ctx, source.ID, fmt.Sprintf(`{"signal_export_format":%d}`, formatVersion)); err != nil {
+			return s, err
+		}
+	}
 	syncID, err := st.StartSyncContext(ctx, source.ID, "import-signal-export")
 	if err != nil {
 		return s, err
@@ -74,6 +87,28 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 	resolve := func(p peer) (int64, error) {
 		return st.EnsureParticipantByIdentifierContext(ctx, SourceType, scopedKey(scope, p.key), p.name)
 	}
+	resolveKey := func(id decimal) (peer, error) {
+		p := r.peers[id]
+		if p.resolved || (p.aci == "" && p.phone == "") {
+			return p, nil
+		}
+		for _, candidate := range []string{p.aci, p.phone} {
+			if candidate == "" {
+				continue
+			}
+			participant, _, err := st.ParticipantByIdentifierContext(ctx, SourceType, scopedKey(scope, candidate))
+			if err != nil {
+				return p, err
+			}
+			if participant != 0 {
+				p.key = candidate
+				break
+			}
+		}
+		p.resolved = true
+		r.peers[id] = p
+		return p, nil
+	}
 	selfConfirmed := false
 	var ownerID int64
 	err = r.frames(ctx, func(m *chatItem, raw []byte, line int) error {
@@ -91,8 +126,14 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		if !ok {
 			return skip("unresolved_chat")
 		}
-		conversation := r.peers[ref]
-		author := r.peers[m.AuthorID]
+		conversation, err := resolveKey(ref)
+		if err != nil {
+			return err
+		}
+		author, err := resolveKey(m.AuthorID)
+		if err != nil {
+			return err
+		}
 		if conversation.key == "" {
 			return skip("recipient_identity")
 		}
@@ -139,42 +180,8 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 			return err
 		}
 		id := ids[key]
-		if id != 0 {
-			metadata, err := st.GetMessageMetadataContext(ctx, id)
-			if err != nil {
-				return err
-			}
-			if metadata.Valid {
-				var versions struct {
-					Adapter  int `json:"adapter_version"`
-					Metadata int `json:"metadata_version"`
-				}
-				if err := json.Unmarshal([]byte(metadata.String), &versions); err != nil {
-					return fmt.Errorf("read saved Signal metadata: %w", err)
-				}
-				if versions.Adapter > adapterVersion || versions.Metadata > metadataVersion {
-					return errors.New("saved Signal messages use a newer format; upgrade msgvault")
-				}
-			}
-		}
 		standard := m.Standard
-		if standard.Quote != nil {
-			s.Omitted["quote"]++
-		}
-		s.Omitted["reactions"] += int64(len(standard.Reactions))
-		s.Omitted["link_preview"] += int64(len(standard.LinkPreview))
-		for _, attachment := range standard.Attachments {
-			if attachment.Flag != nil && attachment.Flag != "NONE" {
-				s.Omitted["attachment_flag"]++
-			}
-		}
-		if standard.Text != nil {
-			s.Omitted["formatting"] += int64(len(standard.Text.Ranges))
-		}
-		if m.Pin != nil {
-			s.Omitted["pin"]++
-		}
-		s.Omitted["revision_history"] += int64(len(m.Revisions))
+		countOmissions(s, m)
 		body, writes, knownChanged, err := mediaWrites(ctx, st, r, id, standard, opts, s)
 		if err != nil {
 			return err
@@ -226,7 +233,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 			ConversationKey string     `json:"conversation_key"`
 			AuthorKey       string     `json:"author_key"`
 			Roster          string     `json:"roster_coverage"`
-		}{adapterVersion, metadataVersion, r.header, line, m.ChatID, m.AuthorID, ref, convKey, authorKey, "partial_observed"})
+		}{formatVersion, formatVersion, r.header, line, m.ChatID, m.AuthorID, ref, convKey, authorKey, "partial_observed"})
 		if err != nil {
 			return err
 		}
@@ -249,4 +256,25 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		return nil
 	})
 	return s, err
+}
+
+func countOmissions(s *ImportSummary, m *chatItem) {
+	standard := m.Standard
+	if standard.Quote != nil {
+		s.Omitted["quote"]++
+	}
+	s.Omitted["reactions"] += int64(len(standard.Reactions))
+	s.Omitted["link_preview"] += int64(len(standard.LinkPreview))
+	for _, attachment := range standard.Attachments {
+		if attachment.Flag != nil && attachment.Flag != "NONE" {
+			s.Omitted["attachment_flag"]++
+		}
+	}
+	if standard.Text != nil {
+		s.Omitted["formatting"] += int64(len(standard.Text.Ranges))
+	}
+	if m.Pin != nil {
+		s.Omitted["pin"]++
+	}
+	s.Omitted["revision_history"] += int64(len(m.Revisions))
 }

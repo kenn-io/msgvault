@@ -103,10 +103,6 @@ var signalReasonWordBoundary = regexp.MustCompile(`([a-z0-9])([A-Z])`)
 
 func signalExportReasonLabel(reason string) string {
 	switch reason {
-	case "remoteDeletedMessage":
-		return "deleted messages"
-	case "adminDeletedMessage":
-		return "messages deleted by an admin"
 	case "recipient_identity":
 		return "unsupported chat recipient"
 	case "author_identity":
@@ -125,8 +121,6 @@ func signalExportReasonLabel(reason string) string {
 		return "media directory entry limit reached"
 	case "invalid_hash":
 		return "missing or invalid file hash"
-	case "hash_mismatch":
-		return "file hash mismatch"
 	case "unsafe_or_nonregular":
 		return "unsafe path or non-regular file"
 	}

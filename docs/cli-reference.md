@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-14"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -2531,6 +2531,7 @@ transcripts are supported; JSON transcripts are experimental. Attachment URLs
 are stored as links. Re-running is safe and resumes an interrupted import. See
 [Discord packages](usage/discord.md#import-a-personal-data-package) for
 requirements and limits.
+
 ## import-signal-export
 
 Import standard messages and available media from a native Signal readable
@@ -2541,10 +2542,8 @@ msgvault import-signal-export <export-dir> --account <stable-label>
 ```
 
 `--account` is required. Reuse it for later exports of the same account.
-Re-imports add history and repair missing media while preserving first archived
-snapshots. Contacts use their phone number when available. Missing media without a saved hash requires a matching client UUID or locator key. The importer examines up to 262,144 media directory entries and counts media beyond that limit as missing. Newer saved formats require an upgrade. Coverage and omission counts are printed even after partial failure;
-rerun after an interruption. See [Signal readable exports](usage/text-messages.md#import-signal-export)
-for layout, limits, identity, edit behavior and coverage boundaries.
+See [Signal readable exports](usage/text-messages.md#import-signal-export)
+for coverage, identity, and limits.
 
 ---
 

@@ -21,6 +21,8 @@ const ambiguousMedia = "\x00"
 
 type peer struct {
 	key, name, kind string
+	aci, phone      string
+	resolved        bool
 }
 type reader struct {
 	media                  map[string]map[string]string
@@ -208,6 +210,12 @@ func (r *reader) frame(b []byte, visit func(*chatItem, []byte, int) error) error
 			}
 			p := recipientPeer(rec)
 			if old, ok := r.peers[rec.ID]; ok {
+				old.resolved = false
+				if old.aci != "" {
+					old.key = old.aci
+				} else if old.phone != "" {
+					old.key = old.phone
+				}
 				if old != p {
 					return errors.New("conflicting recipient definition")
 				}
@@ -222,7 +230,7 @@ func (r *reader) frame(b []byte, visit func(*chatItem, []byte, int) error) error
 				}
 				r.self = rec.ID
 			}
-			if err := r.budget(len(p.key) + len(p.name) + len(p.kind) + len(rec.ID)); err != nil {
+			if err := r.budget(len(p.key) + len(p.name) + len(p.kind) + len(p.aci) + len(p.phone) + len(rec.ID)); err != nil {
 				return err
 			}
 			r.peers[rec.ID] = p

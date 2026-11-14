@@ -3,7 +3,6 @@ package signalexport
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json/v2"
@@ -118,10 +117,10 @@ func TestImportDirectionsGroupsAndOmissions(t *testing.T) {
 }
 func pointer(data []byte) string {
 	hash := sha256.Sum256(data)
-	return fmt.Sprintf(`{"contentType":"text/plain","fileName":"../../display.txt","locatorInfo":{"plaintextHash":%q,"localKey":"AQ=="}}`, base64.StdEncoding.EncodeToString(hash[:]))
+	return fmt.Sprintf(`{"contentType":"text/plain","fileName":"../../display.txt","locatorInfo":{"plaintextHash":%q,"key":"AQ=="}}`, base64.StdEncoding.EncodeToString(hash[:]))
 }
 func mediaMessage(data []byte, long bool) string {
-	standard := fmt.Sprintf(`{"attachments":[{"pointer":%s},{"pointer":%s}]}`, pointer(data), pointer(data))
+	standard := fmt.Sprintf(`{"attachments":[{"clientUuid":"AQ==","pointer":%s},{"clientUuid":"Ag==","pointer":%s}]}`, pointer(data), pointer(data))
 	if long {
 		standard = fmt.Sprintf(`{"text":{"body":"inline"},"longText":%s}`, pointer(data))
 	}
@@ -444,6 +443,9 @@ func TestImportCancellationRetainsCommittedSnapshot(t *testing.T) {
 			}
 			assert.EqualValues(1, summary.MessagesAdded)
 			assert.Equal(1, messageCount(t, st))
+			source, err := st.GetOrCreateSourceContext(t.Context(), SourceType, opts.Account)
+			require.NoError(err)
+			assert.JSONEq(`{"signal_export_format":1}`, source.SyncCursor.String)
 			writeFrames(t, root, incoming, strings.Replace(incoming, "1700000000000", "1700000000001", 1))
 			summary, err = Import(t.Context(), st, opts)
 			require.NoError(err)
@@ -557,7 +559,7 @@ func TestImportRepairUsesFirstMediaPointers(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			frame := func(data []byte) string {
-				standard := fmt.Sprintf(`{"text":{"body":"inline"},"attachments":[{"pointer":%s}]}`, pointer(data))
+				standard := fmt.Sprintf(`{"text":{"body":"inline"},"attachments":[{"clientUuid":"AQ==","pointer":%s}]}`, pointer(data))
 				if long {
 					standard = fmt.Sprintf(`{"text":{"body":"inline"},"longText":%s}`, pointer(data))
 				}
@@ -665,25 +667,48 @@ func TestRepairNewHashByStableIdentity(t *testing.T) {
 	assert.Equal(t, "original", body)
 }
 
-func TestPhoneOnlyAndNewerMetadata(t *testing.T) {
+func TestContactIdentifierAdded(t *testing.T) {
+	for _, contact := range []string{
+		`{"aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}`,
+		`{"e164":"15555550100"}`,
+	} {
+		t.Run(contact, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			root := fixture(t, incoming)
+			group := `{"recipient":{"id":"3","group":{"masterKey":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}}}`
+			groupChat := `{"chat":{"id":"8","recipientId":"3"}}`
+			groupMessage := `{"chatItem":{"chatId":"8","authorId":"2","dateSent":"1700000000001","incoming":{},"standardMessage":{"attachments":[{"clientUuid":"AQ=="}]}}}`
+			lines := []string{header, account, self, `{"recipient":{"id":"2","contact":` + contact + `}}`, direct, group, groupChat, incoming, groupMessage}
+			require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+			opts := options(t, root)
+			_, err := Import(t.Context(), st, opts)
+			require.NoError(t, err)
+			lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`
+			data := []byte("fictional group media")
+			putMedia(t, root, data)
+			lines[8] = strings.Replace(groupMessage, `"clientUuid":"AQ=="`, `"clientUuid":"AQ==","pointer":`+pointer(data), 1)
+			require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+			summary, err := Import(t.Context(), st, opts)
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, summary.MessagesExisting)
+			assert.Equal(t, 1, summary.AttachmentsStored)
+			assert.Equal(t, 2, messageCount(t, st))
+			var conversations int
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations").Scan(&conversations))
+			assert.Equal(t, 2, conversations)
+		})
+	}
+}
+
+func TestSourceFormatRefusesNewerVersion(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := fixture(t, incoming)
-	lines := []string{header, account, self, `{"recipient":{"id":"2","contact":{"e164":"15555550100"}}}`, direct, incoming}
-	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
 	opts := options(t, root)
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(t, err)
-	assert.EqualValues(t, 1, summary.MessagesAdded)
-	assert.Empty(t, summary.Skipped)
-	lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`
-	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
-	summary, err = Import(t.Context(), st, opts)
+	require.NoError(t, st.UpdateSourceSyncState(t.Context(), summary.SourceID, `{"signal_export_format":2}`))
+	_, err = st.DB().ExecContext(t.Context(), "UPDATE messages SET source_message_id = ?", "newer-format-key")
 	require.NoError(t, err)
-	assert.EqualValues(t, 1, summary.MessagesExisting)
-	assert.Equal(t, 1, messageCount(t, st))
-	var id int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
-	require.NoError(t, st.SetMessageMetadata(id, sql.NullString{String: `{"adapter_version":2}`, Valid: true}))
 	_, err = Import(t.Context(), st, opts)
 	require.ErrorContains(t, err, "saved Signal messages use a newer format; upgrade msgvault")
 	assert.Equal(t, 1, messageCount(t, st))
@@ -696,7 +721,7 @@ func TestImportRepairRemovedAlbumSlot(t *testing.T) {
 		return fmt.Sprintf(`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"album"},"attachments":[%s]}}}`, attachments)
 	}
 	st := testutil.NewTestStore(t)
-	root := fixture(t, frame(fmt.Sprintf(`{"pointer":%s},{"pointer":%s}`, pointer(a), pointer(b))))
+	root := fixture(t, frame(fmt.Sprintf(`{"clientUuid":"AQ==","pointer":%s},{"clientUuid":"Ag==","pointer":%s}`, pointer(a), pointer(b))))
 	opts := options(t, root)
 	_, err := Import(t.Context(), st, opts)
 	require.NoError(err)
@@ -705,11 +730,11 @@ func TestImportRepairRemovedAlbumSlot(t *testing.T) {
 	raw, err := st.GetMessageRawContext(t.Context(), id)
 	require.NoError(err)
 	putMedia(t, root, b)
-	writeFrames(t, root, frame(fmt.Sprintf(`{"pointer":%s}`, pointer(b))))
+	writeFrames(t, root, frame(fmt.Sprintf(`{"clientUuid":"Ag==","pointer":%s}`, pointer(b))))
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(err)
 	assert.Equal(1, summary.AttachmentsStored)
-	assert.EqualValues(1, summary.MediaMissing["missing"])
+	assert.EqualValues(1, summary.MediaMissing["invalid_hash"])
 	refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
 	require.NoError(err)
 	require.Len(refs, 2)
@@ -743,7 +768,7 @@ func TestImportLongTextTurnsInline(t *testing.T) {
 	writeFrames(t, root, strings.Replace(incoming, "Hello 星", "short and the rest", 1))
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(err)
-	assert.EqualValues(1, summary.MediaMissing["missing"])
+	assert.EqualValues(1, summary.MediaMissing["invalid_hash"])
 	assert.EqualValues(1, summary.Omitted["incomplete_long_text"])
 	assert.EqualValues(1, summary.MessagesChanged)
 	var id int64
@@ -788,7 +813,7 @@ func TestRepairLongTextWithoutOriginalHash(t *testing.T) {
 	require.NoError(t, err)
 	data := []byte("long fictional text")
 	putMedia(t, root, data)
-	p := strings.Replace(pointer(data), `"localKey":"AQ=="`, `"key":"AQ=="`, 1)
+	p := strings.Replace(pointer(data), `"key":"AQ=="`, `"key":"AQ=="`, 1)
 	writeFrames(t, root, `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"inline"},"longText":`+p+`}}}`)
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(t, err)
@@ -857,8 +882,9 @@ func TestMatchingPointerRequiresUniqueUnclaimedIdentity(t *testing.T) {
 	two.Pointer.Locator.Key = []byte{2}
 	m := &standardMessage{Attachments: []messageAttachment{one, two}}
 	claimed := map[int]bool{}
-	assert.Same(t, two.Pointer, matchingPointer(old, m, claimed))
-	assert.Nil(t, matchingPointer(old, m, claimed))
+	assert.Same(t, two.Pointer, matchingPointer(old, []messageAttachment{old}, m, claimed))
+	assert.Nil(t, matchingPointer(old, []messageAttachment{old}, m, claimed))
+	assert.Nil(t, matchingPointer(old, []messageAttachment{old, old}, m, map[int]bool{}))
 	old.Pointer.Locator.Key = []byte{3}
-	assert.Nil(t, matchingPointer(old, m, map[int]bool{}))
+	assert.Nil(t, matchingPointer(old, []messageAttachment{old}, m, map[int]bool{}))
 }
