@@ -21,6 +21,7 @@ func TestClaimFreshness(t *testing.T) {
 		{"finite employment", personfacts.TargetRef{Kind: personfacts.TargetEmployment}, &until, personfacts.KindFact, 365},
 		{"event", personfacts.TargetRef{Kind: personfacts.TargetAttribute, Key: "custom-event"}, &until, personfacts.KindEvent, 7},
 		{"custom", personfacts.TargetRef{Kind: personfacts.TargetAttribute, Key: "custom-favorites-food"}, nil, personfacts.KindFact, 365},
+		{"contact_frequency", personfacts.TargetRef{Kind: personfacts.TargetAttribute, Key: AttributeUniversalIDContactFrequency}, &until, personfacts.KindPreference, 90},
 		{"primary_channel", personfacts.TargetRef{Kind: personfacts.TargetAttribute, Key: "59e9a7d3-4904-4d0e-97d1-d0680e1e9e55"}, &until, personfacts.KindPreference, 90},          // gitleaks:allow -- public seeded attribute UUID
 		{"ask_me_about", personfacts.TargetRef{Kind: personfacts.TargetAttribute, Key: "93c658a1-2346-4a6e-98c2-abfa29209334"}, &until, personfacts.KindPreference, 90},             // gitleaks:allow -- public seeded attribute UUID
 		{"interests_fun_now", personfacts.TargetRef{Kind: personfacts.TargetAttribute, Key: "e8c815d5-3568-429b-a93b-00220b0a1b43"}, &until, personfacts.KindPreference, 90},        // gitleaks:allow -- public seeded attribute UUID

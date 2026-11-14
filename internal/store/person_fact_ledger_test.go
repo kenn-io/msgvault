@@ -717,32 +717,6 @@ func persistPersonFactLedgerGeneration(
 	return stored
 }
 
-func TestContactFrequencyClaimFreshness(t *testing.T) {
-	r, a := require.New(t), assert.New(t)
-	st, personID := newPersonFactLedgerStore(t)
-	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), true)
-	r.NoError(err)
-	var target personfacts.TargetDescriptor
-	for _, candidate := range catalog.Targets {
-		if candidate.Key == AttributeUniversalIDContactFrequency {
-			target = candidate
-			break
-		}
-	}
-	r.Equal(AttributeUniversalIDContactFrequency, target.Key)
-	claim := personFactLedgerClaim(personID, target.Key, `30`, "contact-frequency")
-	claim.Target = target
-	claim.Evidence[0].EventTime = time.Now().Add(-100 * 24 * time.Hour)
-	prepared := preparePersonFactLedgerGeneration(t, personID, "contact-frequency", []personfacts.ProposedClaim{claim}, nil)
-	persistPersonFactLedgerGeneration(t, st, prepared, nil)
-
-	claims, err := st.ListPersonFactClaimsContext(t.Context(), personID, personfacts.ClaimFilter{Limit: 1})
-	r.NoError(err)
-	r.Len(claims, 1)
-	a.Equal(personfacts.KindPreference, claims[0].Freshness.Kind)
-	a.Equal(personfacts.StatusStale, claims[0].Freshness.Status)
-}
-
 func TestClaimFreshnessUsesSupportedEvidence(t *testing.T) {
 	local := time.Local
 	time.Local = time.FixedZone("test", -12*60*60)
@@ -768,6 +742,8 @@ func TestClaimFreshnessUsesSupportedEvidence(t *testing.T) {
 	r.NoError(err)
 	r.Len(page, 1)
 	r.NotNil(page[0].Freshness.LatestSupportedAt)
+	a.Equal(personfacts.KindFact, page[0].Freshness.Kind)
+	a.Equal(personfacts.StatusFresh, page[0].Freshness.Status)
 	a.WithinDuration(recent, *page[0].Freshness.LatestSupportedAt, time.Microsecond)
 	var newest personfacts.Evidence
 	for _, e := range stored.Evidence {
@@ -784,5 +760,6 @@ func TestClaimFreshnessUsesSupportedEvidence(t *testing.T) {
 	r.NoError(err)
 	r.Len(page, 1)
 	r.NotNil(page[0].Freshness.LatestSupportedAt)
+	a.Equal(personfacts.StatusStale, page[0].Freshness.Status)
 	a.WithinDuration(old, *page[0].Freshness.LatestSupportedAt, time.Microsecond)
 }
