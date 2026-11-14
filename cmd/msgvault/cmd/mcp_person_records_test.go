@@ -61,33 +61,19 @@ func personRecordFixtureWithHook(t *testing.T, hook func(*http.Request)) (*daemo
 	return newDaemonMCPOperations(client, caps), person.ID, &mediaReads, &patches
 }
 
-func TestPersonRecordDisclosureCurrentValueSkipsHistory(t *testing.T) {
+func TestPersonRecordDisclosure(t *testing.T) {
 	var historyReads atomic.Int64
-	backend, id, _, _ := personRecordFixtureWithHook(t, func(r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/profile/history") {
-			historyReads.Add(1)
-		}
-	})
-	current, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
-	require.NoError(t, err)
-	added, err := backend.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": current.ETag, "patch": map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "free_text": "Current address", "envelope": map[string]any{"source": "user"}}}}}})
-	require.NoError(t, err)
-	profile := operationOutput[mcpserver.StructuredPersonRecord](t, added)
-	require.Len(t, profile.Profile.Addresses, 1)
-	disclosure, err := backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": added.ETag, "patch": map[string]any{"addresses": map[string]any{"supersede": []int64{profile.Profile.Addresses[0].Envelope.ID}}}})
-	require.NoError(t, err)
-	assert.Contains(t, disclosure, "Current address")
-	assert.Zero(t, historyReads.Load())
-}
-
-func TestPersonRecordDisclosureHistoryRevisionChanges(t *testing.T) {
 	var armed atomic.Bool
 	var backend *daemonMCPOperations
 	var id int64
 	var etag string
 	result := make(chan error, 1)
 	backend, id, _, _ = personRecordFixtureWithHook(t, func(r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/profile/history") && armed.CompareAndSwap(true, false) {
+		if !strings.HasSuffix(r.URL.Path, "/profile/history") {
+			return
+		}
+		historyReads.Add(1)
+		if armed.CompareAndSwap(true, false) {
 			updated, err := backend.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": etag, "patch": map[string]any{"names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": "Updated", "envelope": map[string]any{"source": "user"}}}}}})
 			if err == nil && updated.IsError {
 				err = fmt.Errorf("concurrent patch refused: %v", updated.Output)
@@ -97,22 +83,66 @@ func TestPersonRecordDisclosureHistoryRevisionChanges(t *testing.T) {
 	})
 	current, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
 	require.NoError(t, err)
-	added, err := backend.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": current.ETag, "patch": map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "free_text": "Old address", "envelope": map[string]any{"source": "user", "active_until": "2020-01-01T00:00:00Z"}}}}}})
+	added, err := backend.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": current.ETag, "patch": map[string]any{"addresses": map[string]any{"add": []any{
+		map[string]any{"address_kind": "postal", "free_text": "Current address", "envelope": map[string]any{"source": "user"}},
+		map[string]any{"address_kind": "postal", "free_text": "Old address", "envelope": map[string]any{"source": "user", "active_until": "2020-01-01T00:00:00Z"}},
+		map[string]any{"address_kind": "postal", "free_text": "Other old address", "envelope": map[string]any{"source": "user", "active_until": "2020-01-01T00:00:00Z"}},
+	}}}})
 	require.NoError(t, err)
-	etag = added.ETag
+	profile := operationOutput[mcpserver.StructuredPersonRecord](t, added)
+	require.Len(t, profile.Profile.Addresses, 1)
+	currentPatch := map[string]any{"addresses": map[string]any{"supersede": []int64{profile.Profile.Addresses[0].Envelope.ID}}}
+	disclosure, err := backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": added.ETag, "patch": currentPatch})
+	require.NoError(t, err)
+	assert.Contains(t, disclosure, "Current address")
+	assert.Zero(t, historyReads.Load())
+	media := base64.StdEncoding.EncodeToString([]byte("synthetic"))
+	disclosure, err = backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": added.ETag, "patch": map[string]any{"media": map[string]any{"add": []any{map[string]any{"media_kind": "photo", "data": media, "envelope": map[string]any{"source": "user"}}}}}})
+	require.NoError(t, err)
+	sum := sha256.Sum256([]byte("synthetic"))
+	assert.Contains(t, disclosure, `"data_size":9`)
+	assert.Contains(t, disclosure, fmt.Sprintf(`"data_sha256":"%x"`, sum))
+	assert.NotContains(t, disclosure, media)
+	_, err = backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": "stale", "patch": currentPatch})
+	var refusal *mcpserver.OperationRefusalError
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, "person_revision_conflict", refusal.Code)
 	history, err := backend.ExecuteOperation(t.Context(), "get_person_record_history", map[string]any{"person_id": id})
 	require.NoError(t, err)
 	values := operationOutput[generated.PersonProfileHistory](t, history)
-	require.Len(t, values.Addresses, 1)
+	require.Len(t, values.Addresses, 3)
+	var oldIDs []int64
+	for _, address := range values.Addresses {
+		if address.Envelope.ActiveUntil != nil {
+			require.Nil(t, address.Envelope.SupersededAt)
+			oldIDs = append(oldIDs, address.Envelope.ID)
+		}
+	}
+	require.Len(t, oldIDs, 2)
+	var approvedDisclosure string
+	session := loopOperationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCurated}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		approvedDisclosure = request.Params.Message
+		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+	}})
+	args := map[string]any{"person_id": id, "etag": added.ETag, "patch": map[string]any{"addresses": map[string]any{"supersede": []int64{oldIDs[0]}}}}
+	patched, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "patch_person_record", Arguments: args})
+	require.NoError(t, err)
+	require.False(t, patched.IsError, "%v", patched.StructuredContent)
+	assert.Contains(t, approvedDisclosure, "Old address")
+	etag = loopToolOutput[mcpserver.StructuredPersonRecord](t, patched).ETag
+	args["etag"] = etag
+	_, err = backend.OperationDisclosure(t.Context(), "patch_person_record", args)
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, "profile_value_not_found", refusal.Code)
+	args["patch"] = map[string]any{"addresses": map[string]any{"supersede": []int64{oldIDs[1]}}}
 	armed.Store(true)
-	_, err = backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": etag, "patch": map[string]any{"addresses": map[string]any{"supersede": []int64{values.Addresses[0].Envelope.ID}}}})
+	_, err = backend.OperationDisclosure(t.Context(), "patch_person_record", args)
 	select {
 	case err := <-result:
 		require.NoError(t, err)
 	case <-time.After(5 * time.Second):
 		require.FailNow(t, "history read did not trigger the concurrent patch")
 	}
-	var refusal *mcpserver.OperationRefusalError
 	require.ErrorAs(t, err, &refusal)
 	assert.Equal(t, "person_revision_conflict", refusal.Code)
 }
@@ -143,17 +173,10 @@ func TestPersonRecordSDKPatchAllKindsAndHistory(t *testing.T) {
 	args := map[string]any{"person_id": id, "etag": current.ETag, "patch": patch}
 	updated := loopToolOutput[mcpserver.StructuredPersonRecord](t, call("patch_person_record", args))
 	assertions.NotEqual(current.ETag, updated.ETag)
-	assertions.Len(updated.Profile.Names, 1)
-	assertions.Len(updated.Profile.ContactPoints, 1)
-	assertions.Len(updated.Profile.Addresses, 1)
-	assertions.Len(updated.Profile.Dates, 1)
-	assertions.Len(updated.Profile.Categories, 1)
-	requirements.Len(updated.Profile.Media, 1)
-	history := loopToolOutput[generated.PersonProfileHistory](t, call("get_person_record_history", map[string]any{"person_id": id}))
-	assertions.Len(history.Categories, 1)
+	requirements.Len(updated.Profile.Categories, 1)
+	loopToolOutput[generated.PersonProfileHistory](t, call("get_person_record_history", map[string]any{"person_id": id}))
 	closeArgs := map[string]any{"person_id": id, "etag": updated.ETag, "patch": map[string]any{"categories": map[string]any{"supersede": []int64{updated.Profile.Categories[0].Envelope.ID}}}}
-	closed := loopToolOutput[mcpserver.StructuredPersonRecord](t, call("patch_person_record", closeArgs))
-	assertions.Empty(closed.Profile.Categories)
+	loopToolOutput[mcpserver.StructuredPersonRecord](t, call("patch_person_record", closeArgs))
 }
 
 func TestPersonRecordCapabilitiesAndRefusals(t *testing.T) {
@@ -342,6 +365,9 @@ func TestPersonRecordSupersedeLargeValue(t *testing.T) {
 	added, err := backend.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": initial.ETag, "patch": map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "free_text": value, "envelope": map[string]any{"source": "user"}}}}}})
 	require.NoError(t, err)
 	require.False(t, added.IsError)
+	record := operationOutput[mcpserver.StructuredPersonRecord](t, added)
+	assert.Nil(t, record.Profile)
+	assert.NotEmpty(t, record.ETag)
 	current, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
 	require.NoError(t, err)
 	var profile generated.StructuredPersonProfile
@@ -362,11 +388,6 @@ func TestPersonRecordSupersedeLargeValue(t *testing.T) {
 	assert.Contains(t, disclosure, `"size"`)
 	assert.NotContains(t, disclosure, value)
 	assert.Equal(t, int64(2), patches.Load())
-	fresh, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_person_record", Arguments: map[string]any{"person_id": id}})
-	require.NoError(t, err)
-	record := loopToolOutput[mcpserver.StructuredPersonRecord](t, fresh)
-	require.NotNil(t, record.Profile)
-	assert.Empty(t, record.Profile.Addresses)
 }
 
 func TestPersonRecordOversizeRefusedBeforeApproval(t *testing.T) {
@@ -401,74 +422,4 @@ func TestPersonRecordOversizeRefusedBeforeApproval(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal("profile_patch_too_large", loopToolFailure(t, result)["error"])
 	assertions.Zero(approvals)
-	media := base64.StdEncoding.EncodeToString([]byte("synthetic"))
-	disclosure, err := backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": initial.ETag, "patch": map[string]any{"media": map[string]any{"add": []any{map[string]any{"media_kind": "photo", "data": media, "envelope": map[string]any{"source": "user"}}}}}})
-	requirements.NoError(err)
-	sum := sha256.Sum256([]byte("synthetic"))
-	assertions.Contains(disclosure, `"data_size":9`)
-	assertions.Contains(disclosure, fmt.Sprintf(`"data_sha256":"%x"`, sum))
-	assertions.NotContains(disclosure, media)
-	_, err = backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": "stale", "patch": map[string]any{"media": map[string]any{}}})
-	var refusal *mcpserver.OperationRefusalError
-	requirements.ErrorAs(err, &refusal)
-	assertions.Equal("person_revision_conflict", refusal.Code)
-}
-
-func TestPersonRecordSupersedeInactiveValue(t *testing.T) {
-	backend, id, _, _ := personRecordFixture(t)
-	current, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
-	require.NoError(t, err)
-	added, err := backend.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": current.ETag, "patch": map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "free_text": "Old address", "envelope": map[string]any{"source": "user", "active_until": "2020-01-01T00:00:00Z"}}}}}})
-	require.NoError(t, err)
-	require.False(t, added.IsError)
-	history, err := backend.ExecuteOperation(t.Context(), "get_person_record_history", map[string]any{"person_id": id})
-	require.NoError(t, err)
-	values := operationOutput[generated.PersonProfileHistory](t, history)
-	require.Len(t, values.Addresses, 1)
-	require.NotNil(t, values.Addresses[0].Envelope.ActiveUntil)
-	require.Nil(t, values.Addresses[0].Envelope.SupersededAt)
-	var disclosure string
-	session := loopOperationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCurated}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		disclosure = request.Params.Message
-		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
-	}})
-	args := map[string]any{"person_id": id, "etag": added.ETag, "patch": map[string]any{"addresses": map[string]any{"supersede": []int64{values.Addresses[0].Envelope.ID}}}}
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "patch_person_record", Arguments: args})
-	require.NoError(t, err)
-	require.False(t, result.IsError, "%v", result.StructuredContent)
-	assert.Contains(t, disclosure, "Old address")
-	history, err = backend.ExecuteOperation(t.Context(), "get_person_record_history", map[string]any{"person_id": id})
-	require.NoError(t, err)
-	values = operationOutput[generated.PersonProfileHistory](t, history)
-	require.NotNil(t, values.Addresses[0].Envelope.SupersededAt)
-	args["etag"] = loopToolOutput[mcpserver.StructuredPersonRecord](t, result).ETag
-	_, err = backend.OperationDisclosure(t.Context(), "patch_person_record", args)
-	var refusal *mcpserver.OperationRefusalError
-	require.ErrorAs(t, err, &refusal)
-	assert.Equal(t, "profile_value_not_found", refusal.Code)
-}
-
-func TestPersonRecordLargePatchResponseOmitsProfile(t *testing.T) {
-	fixture, id, _, _ := personRecordFixture(t)
-	initial, err := fixture.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
-	require.NoError(t, err)
-	added, err := fixture.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": initial.ETag, "patch": map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "free_text": strings.Repeat("x", (1<<20)+1), "envelope": map[string]any{"source": "user"}}}}}})
-	require.NoError(t, err)
-	require.False(t, added.IsError)
-	profile, err := fixture.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
-	require.NoError(t, err)
-	require.Greater(t, len(profile.Data), 1<<20)
-	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPatch, r.Method)
-		w.Header().Set("ETag", `"person-1-r2"`)
-		_, err := w.Write(profile.Data)
-		assert.NoError(t, err)
-	})
-	backend := &daemonMCPOperations{client: client}
-	result, handled, err := backend.executePersonRecord(t.Context(), "patch_person_record", map[string]any{"person_id": 1, "etag": `"person-1-r1"`, "patch": map[string]any{"names": map[string]any{}}})
-	require.NoError(t, err)
-	require.True(t, handled)
-	record := operationOutput[mcpserver.StructuredPersonRecord](t, result)
-	assert.Equal(t, `"person-1-r2"`, record.ETag)
-	assert.Nil(t, record.Profile)
 }

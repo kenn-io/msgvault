@@ -97,10 +97,7 @@ func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkReque
 		return nil, errDownloadExpired
 	}
 	if key.operation != "" {
-		if existing := c.entries[key]; existing != nil {
-			if time.Now().Before(existing.expires) && existing.digest == entry.digest && existing.etag == entry.etag {
-				return existing, nil
-			}
+		if c.entries[key] != nil {
 			c.remove(key)
 		}
 		if req.offset == 0 && int64(len(entry.data)) <= req.length {

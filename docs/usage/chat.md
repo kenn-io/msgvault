@@ -939,12 +939,7 @@ retries a write by itself. If a write reports
 
 On unreleased `main`, owner sessions can read a structured person record with
 `get_person_record`, including its exact ETag, and inspect its history with
-`get_person_record_history`. Profiles over 1 MiB return the first
-base64 chunk and a whole-object `sha256`. Pass the returned hash and each next
-offset until complete, then decode and join the chunks to recover the JSON.
-Profile chunks also carry their ETag. `get_person_record_media` returns stored
-inline media in base64 chunks with its content type and whole-object SHA-256.
-Start at offset zero and pass the hash with each subsequent offset; URI-only values have no stored content.
+`get_person_record_history`.
 History over 1 MiB returns `operation_response_limit_exceeded`.
 These tools require native daemon support. With curated writes enabled,
 `patch_person_record` applies adds and supersedes atomically using the exact

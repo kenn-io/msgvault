@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -28,15 +29,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
-
-type smallProfileBackend struct{}
-
-func (smallProfileBackend) ExecuteOperation(_ context.Context, _ string, _ map[string]any) (*OperationResult, error) {
-	return &OperationResult{ETag: `"person-1-r1"`, Data: []byte(`{"person":{"id":1,"revision":1,"created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-01T00:00:00Z","participant_ids":[],"vcard_uid":"x"},"names":[],"contact_points":[],"addresses":[],"dates":[],"categories":[],"media":[]}`)}, nil
-}
-func (smallProfileBackend) OperationDisclosure(context.Context, string, map[string]any) (string, error) {
-	return "", nil
-}
 
 func TestChunkDownloadsThroughDaemon(t *testing.T) {
 	checks := assert.New(t)
@@ -67,7 +59,7 @@ func TestChunkDownloadsThroughDaemon(t *testing.T) {
 	client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, AllowInsecure: true, HTTPClient: daemon.Client()})
 	must.NoError(err)
 	t.Cleanup(func() { checks.NoError(client.Close()) })
-	server := newMCPHTTPServer(ServeOptions{Engine: daemonclient.NewEngineAdapter(client), AttachmentReader: client, Operations: smallProfileBackend{}, OperationCapabilities: []string{"get_person_record"}}, HTTPOptions{})
+	server := newMCPHTTPServer(ServeOptions{Engine: daemonclient.NewEngineAdapter(client), AttachmentReader: client}, HTTPOptions{})
 	t.Cleanup(func() { checks.NoError(server.Shutdown(context.WithoutCancel(t.Context()))) })
 	chunk := func(t *testing.T, name string, args map[string]any) exportChunkResp {
 		t.Helper()
@@ -134,13 +126,6 @@ func TestChunkDownloadsThroughDaemon(t *testing.T) {
 			checks.Equal(data[offset:offset+(1<<20)], part)
 			checks.Equal(int64(80<<20), got.Size)
 			checks.Equal(digest, got.SHA256)
-			if offset == 0 {
-				for personID := 1; personID <= 8; personID++ {
-					response, raw := task4RawRequest(t, server.Handler, "tools/call", map[string]any{"name": "get_person_record", "arguments": map[string]any{"person_id": personID}}, nil)
-					must.Empty(response.Error, "%s", raw)
-					must.NotEqual(true, response.Result["isError"], "%s", raw)
-				}
-			}
 		}
 		checks.Equal(int64(1), attachmentReads.Load())
 		response, raw := task4RawRequest(t, server.Handler, "tools/call", map[string]any{"name": ToolGetAttachment, "arguments": map[string]any{"attachment_id": attachmentID}}, nil)
@@ -264,6 +249,18 @@ func TestPersonDownloadSnapshotsSurviveRefresh(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "second", second.etag)
 	assert.Equal(t, 2, reads)
-	_, err = cache.get(t.Context(), key, chunkRequest{offset: 1, length: 1, digest: first.digest}, load)
-	require.ErrorIs(t, err, errDownloadExpired)
+	attachmentKey := downloadKey{attachment: 1}
+	attachment, err := cache.get(t.Context(), attachmentKey, chunkRequest{length: 1}, func() (*downloadSnapshot, error) {
+		return &downloadSnapshot{data: []byte("attachment")}, nil
+	})
+	require.NoError(t, err)
+	for personID := range maxDownloads {
+		_, err = cache.get(t.Context(), downloadKey{operation: "get_person_record", identity: strconv.Itoa(personID)}, chunkRequest{length: 1024}, func() (*downloadSnapshot, error) {
+			return &downloadSnapshot{data: []byte("small profile")}, nil
+		})
+		require.NoError(t, err)
+	}
+	continued, err = cache.get(t.Context(), attachmentKey, chunkRequest{offset: 1, length: 1, digest: attachment.digest}, load)
+	require.NoError(t, err)
+	assert.Equal(t, attachment.data, continued.data)
 }
