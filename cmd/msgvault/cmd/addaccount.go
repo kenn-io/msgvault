@@ -12,7 +12,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -327,9 +326,7 @@ func preflightAddAccountAuthorize(cmd *cobra.Command, email string) (bool, error
 		// Tokens live on the remote host; authorization must happen there.
 		return false, nil
 	}
-	storedApp, sourceExists, _, _, err := lookupAccountBinding(cmd.Context(), func(account daemonclient.CLIAccount) (bool, bool) {
-		return account.Type == sourceTypeGmail && account.Email == email, false
-	})
+	storedApp, sourceExists, err := lookupGmailAccountBinding(cmd.Context(), email)
 	if err != nil {
 		return false, err
 	}
@@ -389,32 +386,25 @@ func preflightAddAccountAuthorize(cmd *cobra.Command, email string) (bool, error
 	return true, nil
 }
 
-// lookupAccountBinding fetches the stored oauth_app binding for email
+// lookupGmailAccountBinding fetches the stored oauth_app binding for email
 // through the daemon's read API, mirroring findGmailSource for callers
 // without direct database access.
-func lookupAccountBinding(ctx context.Context, match func(daemonclient.CLIAccount) (bool, bool)) (sql.NullString, bool, bool, string, error) {
+func lookupGmailAccountBinding(ctx context.Context, email string) (sql.NullString, bool, error) {
 	st, _, err := OpenHTTPStore(ctx)
 	if err != nil {
-		return sql.NullString{}, false, false, "", err
+		return sql.NullString{}, false, err
 	}
 	defer func() { _ = st.Close() }()
 	accounts, _, err := st.GetCLIAccounts(ctx)
 	if err != nil {
-		return sql.NullString{}, false, false, "", fmt.Errorf("look up existing source: %w", err)
+		return sql.NullString{}, false, fmt.Errorf("look up existing source: %w", err)
 	}
-	undetermined := false
-	var matched *daemonclient.CLIAccount
 	for _, account := range accounts {
-		found, unknown := match(account)
-		if found && matched == nil {
-			matched = &account
+		if account.Type == sourceTypeGmail && account.Email == email {
+			return sql.NullString{String: account.OAuthApp, Valid: account.OAuthApp != ""}, true, nil
 		}
-		undetermined = undetermined || unknown
 	}
-	if matched != nil {
-		return sql.NullString{String: matched.OAuthApp, Valid: matched.OAuthApp != ""}, true, false, matched.Identifier, nil
-	}
-	return sql.NullString{}, false, undetermined, "", nil
+	return sql.NullString{}, false, nil
 }
 
 func runAddAccountLocal(cmd *cobra.Command, args []string) error {

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"golang.org/x/oauth2"
@@ -100,27 +101,6 @@ func TestAddO365RejectsOutlookPasswordSourceBeforeConsent(t *testing.T) {
 	assert.Zero(t, requests)
 }
 
-func TestAddO365RejectsAmbiguousSourcesBeforeConsent(t *testing.T) {
-	previousGraph, previousHeadless, previousApp := o365Graph, o365Headless, o365OAuthApp
-	t.Cleanup(func() { o365Graph, o365Headless, o365OAuthApp = previousGraph, previousHeadless, previousApp })
-	dir := t.TempDir()
-	cfg := lifecycleTestConfig(dir)
-	cfg.Microsoft.ClientID = "client"
-	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
-	for _, host := range []string{"outlook.office.com", "outlook.office365.com"} {
-		src, err := st.GetOrCreateSource(sourceTypeIMAP, "imaps://user@example.com@"+host+":993")
-		require.NoError(t, err)
-		require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, `{"username":"user@example.com","auth_method":"xoauth2"}`))
-	}
-	startStoreAPIDaemon(t, dir, st, nil)
-	cmd := newAddO365LocalCmd()
-	cmd.SetContext(withStoreResolverConfig(t, cfg))
-	_, err := preflightAddO365Authorize(cmd, "user@example.com")
-	require.ErrorContains(t, err, "multiple Microsoft mail sources")
-	err = runAddO365Local(cmd, []string{"user@example.com"})
-	require.ErrorContains(t, err, "multiple Microsoft mail sources")
-}
-
 func TestAddO365IgnoresMergedSourceBeforeConsent(t *testing.T) {
 	previousGraph, previousHeadless, previousApp := o365Graph, o365Headless, o365OAuthApp
 	t.Cleanup(func() { o365Graph, o365Headless, o365OAuthApp = previousGraph, previousHeadless, previousApp })
@@ -147,6 +127,18 @@ func TestAddO365IgnoresMergedSourceBeforeConsent(t *testing.T) {
 	require.ErrorIs(t, err, consentErr)
 	err = runAddO365Local(cmd, []string{"user@example.com"})
 	require.ErrorIs(t, err, consentErr)
+	require.NoError(t, os.MkdirAll(cfg.TokensDir(), 0o700))
+	path := microsoft.NewManager("", "", "", cfg.TokensDir(), nil).TokenPath("user@example.com")
+	require.NoError(t, os.WriteFile(path, []byte(`{"access_token":"token"}`), 0o600))
+	require.NoError(t, cmd.Flags().Set("oauth-preflighted", "true"))
+	require.NoError(t, cmd.Flags().Set("no-default-identity", "true"))
+	require.NoError(t, runAddO365Local(cmd, []string{"user@example.com"}))
+	active, err := st.GetSourceByID(sources[1].ID)
+	require.NoError(t, err)
+	assert.Contains(t, active.SyncConfig.String, `"auth_method":"xoauth2"`)
+	retired, err := st.GetSourceByID(sources[0].ID)
+	require.NoError(t, err)
+	assert.Equal(t, sources[1].ID, retired.MergedIntoSourceID)
 }
 
 func TestAddO365ConsentUsesExplicitApp(t *testing.T) {
@@ -171,18 +163,24 @@ func TestAddO365ConsentUsesExplicitApp(t *testing.T) {
 			startStoreAPIDaemon(t, dir, st, nil)
 			requestErr := errors.New("consent failed")
 			ctx := withStoreResolverConfig(t, cfg)
+			expectedClient := "client-b"
 			ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: testTransport(func(req *http.Request) (*http.Response, error) {
 				require.NoError(t, req.ParseForm())
-				assert.Equal(t, "client-c", req.Form.Get("client_id"))
+				assert.Equal(t, expectedClient, req.Form.Get("client_id"))
 				return nil, requestErr
 			})})
 			cmd := newAddO365LocalCmd()
 			cmd.SetContext(ctx)
 			require.NoError(t, cmd.Flags().Set("headless", "true"))
-			require.NoError(t, cmd.Flags().Set("oauth-app", "other"))
 			if graph {
 				require.NoError(t, cmd.Flags().Set("graph", "true"))
 			}
+			_, err = preflightAddO365Authorize(cmd, "USER@example.com")
+			require.ErrorIs(t, err, requestErr)
+			err = runAddO365Local(cmd, []string{"USER@example.com"})
+			require.ErrorIs(t, err, requestErr)
+			expectedClient = "client-c"
+			require.NoError(t, cmd.Flags().Set("oauth-app", "other"))
 			_, err = preflightAddO365Authorize(cmd, "USER@example.com")
 			require.ErrorIs(t, err, requestErr)
 		})
@@ -221,6 +219,6 @@ func TestAddO365PreflightUndeterminedIMAPBinding(t *testing.T) {
 	assert.Zero(t, requests)
 	require.NoError(t, cmd.Flags().Set("oauth-app", "orgb"))
 	_, err = preflightAddO365Authorize(cmd, "owner@example.test")
-	require.ErrorIs(t, err, requestErr)
-	assert.Equal(t, 1, requests)
+	require.ErrorContains(t, err, "does not report the IMAP authentication method")
+	assert.Zero(t, requests)
 }

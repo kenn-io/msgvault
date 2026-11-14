@@ -268,11 +268,6 @@ func TestServeOAuthValidationAllowsMicrosoftOnly(t *testing.T) {
 	}))
 }
 
-func TestServeOAuthValidationAllowsNamedMicrosoftApp(t *testing.T) {
-	assert.True(t, hasServeOAuthConfig(&config.Config{Microsoft: config.MicrosoftConfig{Apps: map[string]config.MicrosoftApp{"orgb": {ClientID: "client-b"}}}}))
-	assert.False(t, hasServeOAuthConfig(&config.Config{Microsoft: config.MicrosoftConfig{Apps: map[string]config.MicrosoftApp{"orgb": {}}}}))
-}
-
 func TestServeOAuthValidationReportsNoProviders(t *testing.T) {
 	assert.False(t, hasServeOAuthConfig(&config.Config{}))
 }

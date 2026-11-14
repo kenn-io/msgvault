@@ -888,19 +888,6 @@ type MicrosoftApp struct {
 	RedirectURI string `toml:"redirect_uri"`
 }
 
-// HasAnyConfig reports whether a Microsoft app has a client ID.
-func (c *MicrosoftConfig) HasAnyConfig() bool {
-	if c.ClientID != "" {
-		return true
-	}
-	for _, app := range c.Apps {
-		if app.ClientID != "" {
-			return true
-		}
-	}
-	return false
-}
-
 // App resolves a named app or the default Microsoft configuration.
 func (c *MicrosoftConfig) App(name string) (MicrosoftConfig, error) {
 	if name == "" {

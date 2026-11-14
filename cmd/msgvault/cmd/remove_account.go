@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -419,7 +418,15 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			)
 		}
 	case sourceTypeMSMail:
-		if err := removeMicrosoftMailTokensIfUnused(s, cfg, source.Identifier, true, logger); err != nil {
+		mgr, err := newGraphMailManager(state, source)
+		if err == nil {
+			var used bool
+			used, err = microsoftMailTokenInUse(s, cfg, source.Identifier, filepath.Dir(mgr.TokenPath(source.Identifier)), true)
+			if err == nil && !used {
+				err = mgr.DeleteToken(source.Identifier)
+			}
+		}
+		if err != nil {
 			fmt.Fprintf(os.Stderr,
 				"Warning: could not remove Microsoft Graph mail token: %v\n", err,
 			)
@@ -476,7 +483,15 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			if parseErr == nil {
 				switch imapCfg.EffectiveAuthMethod() {
 				case imaplib.AuthXOAuth2:
-					if err := removeMicrosoftMailTokensIfUnused(s, cfg, imapCfg.Username, false, logger); err != nil {
+					mgr, err := newMicrosoftIMAPManager(cfg, logger, source)
+					if err == nil {
+						var used bool
+						used, err = microsoftMailTokenInUse(s, cfg, imapCfg.Username, filepath.Dir(mgr.TokenPath(imapCfg.Username)), false)
+						if err == nil && !used {
+							err = mgr.DeleteToken(imapCfg.Username)
+						}
+					}
+					if err != nil {
 						fmt.Fprintf(os.Stderr,
 							"Warning: could not remove Microsoft token: %v\n", err,
 						)
@@ -721,101 +736,44 @@ func init() {
 	rootCmd.AddCommand(newRemoveAccountCmd())
 }
 
-// removeMicrosoftMailTokensIfUnused retains credentials shared by another source.
-func removeMicrosoftMailTokensIfUnused(s *store.Store, cfg *config.Config, email string, graph bool, logger *slog.Logger) error {
+func microsoftMailTokenInUse(s *store.Store, cfg *config.Config, email, dir string, graph bool) (bool, error) {
 	typ := sourceTypeIMAP
 	if graph {
 		typ = sourceTypeMSMail
 	}
 	sources, err := s.ListSources(typ)
 	if err != nil {
-		return fmt.Errorf("check remaining Microsoft sources: %w", err)
+		return false, fmt.Errorf("check remaining Microsoft sources: %w", err)
 	}
 	for _, source := range sources {
 		if source.MergedIntoSourceID != 0 {
 			continue
 		}
-		used := strings.EqualFold(source.Identifier, email)
+		username := source.Identifier
 		if !graph {
-			if used, err = imapSourceUsesMicrosoftToken(source, email); err != nil {
-				return err
+			imapCfg, err := imaplib.ConfigFromJSON(source.SyncConfig.String)
+			if !source.SyncConfig.Valid || err != nil {
+				parsed, parseErr := imaplib.ParseIdentifier(source.Identifier)
+				if parseErr == nil && !strings.EqualFold(parsed.Username, email) {
+					continue
+				}
+				return false, fmt.Errorf("cannot read IMAP authentication configuration for %s", source.Identifier)
 			}
-		}
-		if used {
-			return nil
-		}
-	}
-	return removeMicrosoftMailTokens(cfg, email, graph, logger)
-}
-
-// imapSourceUsesMicrosoftToken reports whether an IMAP source authenticates as email with XOAUTH2.
-// A source with no stored configuration blocks removal only when its identifier names email.
-func imapSourceUsesMicrosoftToken(source *store.Source, email string) (bool, error) {
-	if !source.SyncConfig.Valid || source.SyncConfig.String == "" {
-		id, err := imaplib.ParseIdentifier(source.Identifier)
-		if err == nil && !strings.EqualFold(id.Username, email) {
-			return false, nil
-		}
-		return false, fmt.Errorf("check remaining IMAP source %s: authentication configuration unavailable", source.Identifier)
-	}
-	imapCfg, err := imaplib.ConfigFromJSON(source.SyncConfig.String)
-	if err != nil {
-		return false, fmt.Errorf("check remaining IMAP source %s: %w", source.Identifier, err)
-	}
-	return imapCfg.EffectiveAuthMethod() == imaplib.AuthXOAuth2 && strings.EqualFold(imapCfg.Username, email), nil
-}
-
-// removeMicrosoftMailTokens removes credentials left by any previous client.
-func removeMicrosoftMailTokens(cfg *config.Config, email string, graph bool, logger *slog.Logger) error {
-	dirs := map[string]config.MicrosoftConfig{cfg.TokensDir(): cfg.Microsoft}
-	root := filepath.Join(cfg.TokensDir(), "microsoft-apps")
-	entries, err := os.ReadDir(root)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			dirs[filepath.Join(root, entry.Name())] = config.MicrosoftConfig{}
-		}
-	}
-	for name := range cfg.Microsoft.Apps {
-		app, dir, err := microsoftMailApp(cfg, name)
-		if err == nil {
-			if _, ok := dirs[dir]; ok {
-				dirs[dir] = app
-			}
-		}
-	}
-	var result error
-	for dir, app := range dirs {
-		imapMgr := microsoft.NewManager(app.ClientID, app.EffectiveTenantID(), app.EffectiveRedirectURI(), dir, logger)
-		graphMgr := microsoft.NewGraphMailManager("", "", "", dir, logger)
-		prefix, path := "microsoft_", imapMgr.TokenPath(email)
-		if graph {
-			prefix, path = "msmail_", graphMgr.TokenPath(email)
-		}
-		entries, err := os.ReadDir(dir)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			result = errors.Join(result, err)
-			continue
-		}
-		for _, entry := range entries {
-			name := entry.Name()
-			if entry.IsDir() || !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".json") || !strings.EqualFold(name, filepath.Base(path)) {
+			if imapCfg.EffectiveAuthMethod() != imaplib.AuthXOAuth2 {
 				continue
 			}
-			variant := strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".json")
-			if graph && graphMgr.TokenPath(variant) == filepath.Join(dir, name) {
-				result = errors.Join(result, graphMgr.DeleteToken(variant))
-			} else if !graph && imapMgr.TokenPath(variant) == filepath.Join(dir, name) {
-				result = errors.Join(result, imapMgr.DeleteToken(variant))
-			} else {
-				result = errors.Join(result, os.Remove(filepath.Join(dir, name)))
-			}
+			username = imapCfg.Username
+		}
+		if !strings.EqualFold(username, email) {
+			continue
+		}
+		_, otherDir, err := microsoftMailApp(cfg, sourceOAuthApp(source))
+		if err != nil {
+			return false, err
+		}
+		if strings.EqualFold(filepath.Clean(dir), filepath.Clean(otherDir)) {
+			return true, nil
 		}
 	}
-	return result
+	return false, nil
 }

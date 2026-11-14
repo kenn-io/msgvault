@@ -1879,7 +1879,7 @@ func hasServeOAuthConfig(c *config.Config) bool {
 	if c == nil {
 		return false
 	}
-	return c.OAuth.HasAnyConfig() || c.Microsoft.HasAnyConfig()
+	return c.OAuth.HasAnyConfig() || c.Microsoft.ClientID != ""
 }
 
 func effectiveDaemonIdleTimeout(c *config.Config, logger *slog.Logger) time.Duration {

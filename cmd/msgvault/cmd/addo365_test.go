@@ -14,31 +14,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/store"
 )
-
-func TestSelectO365AccountRejectsAmbiguousMailboxes(t *testing.T) {
-	accounts := []daemonclient.CLIAccount{
-		{Type: sourceTypeIMAP, Identifier: "imaps://user@example.com@outlook.office.com:993", AuthMethod: "xoauth2", OAuthApp: "a"},
-		{Type: sourceTypeIMAP, Identifier: "imaps://user@example.com@outlook.office365.com:993", AuthMethod: "xoauth2", OAuthApp: "b"},
-	}
-	for range 2 {
-		_, _, err := selectO365Account(accounts, "USER@example.com", false)
-		require.ErrorContains(t, err, accounts[0].Identifier)
-		require.ErrorContains(t, err, accounts[1].Identifier)
-		accounts[0], accounts[1] = accounts[1], accounts[0]
-	}
-	accounts[0].MergedIntoSourceID = 42
-	selected, _, err := selectO365Account(accounts, "user@example.com", false)
-	require.NoError(t, err)
-	require.NotNil(t, selected)
-	assert.Equal(t, accounts[1].Identifier, selected.Identifier)
-	accounts[1].MergedIntoSourceID = 42
-	_, _, err = selectO365Account(accounts, "user@example.com", false)
-	require.ErrorContains(t, err, "retired")
-}
 
 func TestMicrosoftMailAppsRefreshOwnTokens(t *testing.T) {
 	cfg := lifecycleTestConfig(t.TempDir())
@@ -120,6 +98,14 @@ func TestAddO365StoresAndChangesAppBinding(t *testing.T) {
 			state := testInvocationWithConfig(cfg)
 			ctx := withInvocation(t.Context(), state)
 			email := "user@example.com"
+			if !graph {
+				s, cleanup, err := openWritableStoreAndInitForIngestInvocation(ctx, state)
+				require.NoError(t, err)
+				other, err := s.GetOrCreateSource(sourceTypeIMAP, "imaps://user@example.com@other.example:993")
+				require.NoError(t, err)
+				require.NoError(t, s.UpdateSourceSyncConfig(ctx, other.ID, `{"host":"other.example","username":"user@example.com","auth_method":"xoauth2"}`))
+				cleanup()
+			}
 			for _, tc := range []struct {
 				flag *string
 				want string
@@ -151,6 +137,11 @@ func TestAddO365StoresAndChangesAppBinding(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, sources, 1)
 				assert.Equal(t, tc.want, sourceOAuthApp(sources[0]))
+				if !graph {
+					other, err := s.GetSourceByIdentifier(ctx, "imaps://user@example.com@other.example:993")
+					require.NoError(t, err)
+					assert.Contains(t, other.SyncConfig.String, "other.example")
+				}
 				cleanup()
 			}
 		})
@@ -212,9 +203,6 @@ func TestAddO365FailedRegistrationPreservesOldPair(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, identifier, saved.Identifier)
 			assert.Empty(t, sourceOAuthApp(saved))
-			if !graph {
-				assert.JSONEq(t, oldConfig, saved.SyncConfig.String)
-			}
 			contents, err := os.ReadFile(oldPath)
 			require.NoError(t, err)
 			assert.JSONEq(t, oldToken, string(contents))
