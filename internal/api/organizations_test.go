@@ -421,7 +421,6 @@ func TestOrganizationHTTPAttributesListAndSet(t *testing.T) {
 		[]byte(`{"definition_slug":"industry_focus","value":{"type":"text","text":"archival software"},"source":"user"}`), "")
 	require.Equal(http.StatusCreated, setResponse.Code)
 	assert.Equal("industry_focus", definition.Slug)
-
 	listResponse := organizationRequest(t, srv, http.MethodGet, attributesPath, nil, "")
 	require.Equal(http.StatusOK, listResponse.Code)
 	var listed OrganizationAttributesResponse

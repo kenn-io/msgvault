@@ -728,3 +728,36 @@ func employmentPinEventCount(t *testing.T, st *store.Store, personID int64) int6
 	require.NoError(t, err)
 	return count
 }
+
+func TestReplaceEmploymentChecksPrimaryRevision(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	person := mustPromotedPerson(ctx, t, st, "worker@example.com", "worker")
+	org := mustOrganization(t, st, "Example Org")
+	first, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: org.ID, Title: new("First"), Source: store.ProvenanceUser})
+	require.NoError(err)
+	second, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: org.ID, Title: new("Second"), IsPrimary: new(false), Source: store.ProvenanceUser})
+	require.NoError(err)
+	updated, err := st.UpdateEmploymentContext(ctx, first.ID, first.Revision, store.EmploymentInput{PersonID: person.ID, OrganizationID: org.ID, Title: new("Updated"), Source: store.ProvenanceUser})
+	require.NoError(err)
+	input := store.EmploymentInput{PersonID: person.ID, OrganizationID: org.ID, Title: new("Second"), IsPrimary: new(true), Source: store.ProvenanceUser, ExpectedPrimary: &store.EmploymentRevision{ID: first.ID, Revision: first.Revision}}
+	_, err = st.UpdateEmploymentContext(ctx, second.ID, second.Revision, input)
+	require.ErrorIs(err, store.ErrEmploymentPrimaryConflict)
+	input.ExpectedPrimary.ID = second.ID
+	input.ExpectedPrimary.Revision = updated.Revision
+	_, err = st.UpdateEmploymentContext(ctx, second.ID, second.Revision, input)
+	require.ErrorIs(err, store.ErrEmploymentPrimaryConflict)
+	stillPrimary, err := st.GetEmploymentContext(ctx, first.ID)
+	require.NoError(err)
+	assert.True(stillPrimary.IsPrimary)
+	input.ExpectedPrimary.ID = first.ID
+	promoted, err := st.UpdateEmploymentContext(ctx, second.ID, second.Revision, input)
+	require.NoError(err)
+	assert.True(promoted.IsPrimary)
+	demoted, err := st.GetEmploymentContext(ctx, first.ID)
+	require.NoError(err)
+	assert.False(demoted.IsPrimary)
+	assert.Equal(updated.Revision+1, demoted.Revision)
+}

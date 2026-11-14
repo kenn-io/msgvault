@@ -223,6 +223,17 @@ func TestOrganizationAttributeDryRunCASAndMultiOrdinal(t *testing.T) {
 	require.Len(current, 2)
 	assert.Equal(first.Value.ID, current[0].ID)
 	assert.Equal(second.Value.ID, current[1].ID)
+
+	inputValue := store.OrganizationAttributeValueInput{OrganizationID: organization.ID, DefinitionSlug: "specialties", Ordinal: new(int64(0)), Value: textAttributeValue("new"), Source: store.ProvenanceUser, ExpectedValueID: new(int64)}
+	_, err = st.SetOrganizationAttributeValueContext(ctx, inputValue)
+	require.ErrorIs(err, store.ErrAttributeValueConflict)
+	inputValue.ExpectedValueID = new(int64)
+	inputValue.Ordinal = new(int64(2))
+	third, err := st.SetOrganizationAttributeValueContext(ctx, inputValue)
+	require.NoError(err)
+	assert.Equal(int64(2), third.Value.Ordinal)
+	_, err = st.SetOrganizationAttributeValueContext(ctx, inputValue)
+	require.ErrorIs(err, store.ErrAttributeValueConflict)
 }
 
 func TestOrganizationMultiAttributeAppendsAfterSupersede(t *testing.T) {

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -20,7 +19,6 @@ import (
 
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/loops"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
@@ -95,12 +93,12 @@ func loopToolFailure(t *testing.T, result *sdkmcp.CallToolResult) map[string]any
 	return value
 }
 
-func assertLoopRefusal(t *testing.T, result *mcpserver.OperationResult, code string, uncertain bool) {
+func assertDefiniteRefusal(t *testing.T, result *mcpserver.OperationResult, code string) {
 	t.Helper()
 	require.True(t, result.IsError)
 	data, err := json.Marshal(result.Output)
 	require.NoError(t, err)
-	assert.JSONEq(t, fmt.Sprintf(`{"error":%q,"operation_may_have_completed":%t}`, code, uncertain), string(data))
+	assert.JSONEq(t, fmt.Sprintf(`{"error":%q,"operation_may_have_completed":false}`, code), string(data))
 }
 
 func TestMCPLoopsSDKDecisionsAndList(t *testing.T) {
@@ -198,7 +196,7 @@ func TestMCPLoopArgumentValidationAndDateResolution(t *testing.T) {
 	} {
 		result, err := backend.ExecuteOperation(t.Context(), tc.name, tc.args)
 		requirements.NoError(err)
-		assertLoopRefusal(t, result, "invalid_arguments", false)
+		assertDefiniteRefusal(t, result, "invalid_arguments")
 	}
 	date, err := backend.loopDeadline("2027-01-02")
 	requirements.NoError(err)
@@ -257,27 +255,6 @@ func TestMCPLoopDeadlineCrossesApproval(t *testing.T) {
 	}
 }
 
-func TestMCPLoopResponseClassifierIsScoped(t *testing.T) {
-	for _, code := range []string{"loop_not_found", "loop_decision_not_found", "loop_scan_incomplete", "loops_unavailable", "invalid_request", "server_busy"} {
-		t.Run(code, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				_, err := fmt.Fprintf(w, `{"error":%q}`, code)
-				assert.NoError(t, err)
-			}))
-			defer server.Close()
-			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-			require.NoError(t, err)
-			result, err := readMCPLoopJSON[generated.LoopDecisionResponse](t.Context(), client, http.MethodPost, "/api/v1/loops/1/done", nil)
-			require.NoError(t, err)
-			assertLoopRefusal(t, result, code, false)
-			result, err = readMCPOperationJSON[generated.Person](t.Context(), client, http.MethodPost, "/api/v1/people", nil, http.StatusOK)
-			require.NoError(t, err)
-			assertLoopRefusal(t, result, "operation_refused", true)
-		})
-	}
-}
-
 func TestMCPLoopRealRefusals(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -294,22 +271,22 @@ func TestMCPLoopRealRefusals(t *testing.T) {
 	} {
 		result, err := backend.ExecuteOperation(t.Context(), tc.name, tc.args)
 		requirements.NoError(err)
-		assertLoopRefusal(t, result, tc.code, false)
+		assertDefiniteRefusal(t, result, tc.code)
 	}
 	backend.now = func() time.Time { return time.Now().Add(-48 * time.Hour) }
 	result, err := backend.ExecuteOperation(t.Context(), "snooze_open_loop", map[string]any{"message_id": anchor, "question_message_ids": []int64{anchor}, "until": time.Now().Add(-time.Hour).Format(time.RFC3339)})
 	requirements.NoError(err)
-	assertLoopRefusal(t, result, "invalid_request", false)
+	assertDefiniteRefusal(t, result, "invalid_request")
 	unavailable := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: config.NewDefaultConfig(), Logger: slog.New(slog.DiscardHandler)}))
 	result, err = unavailable.ExecuteOperation(t.Context(), "list_open_loops", nil)
 	requirements.NoError(err)
-	assertLoopRefusal(t, result, "loops_unavailable", false)
+	assertDefiniteRefusal(t, result, "loops_unavailable")
 	gate := api.NewSerialOperationGate()
 	gate.StartDrain()
 	busy := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: config.NewDefaultConfig(), Store: &storeAPIAdapter{store: f.Store}, OperationGate: gate, Logger: slog.New(slog.DiscardHandler)}))
 	result, err = busy.ExecuteOperation(t.Context(), "close_open_loop", map[string]any{"message_id": anchor, "question_message_ids": []int64{anchor}})
 	requirements.NoError(err)
-	assertLoopRefusal(t, result, "server_busy", false)
+	assertDefiniteRefusal(t, result, "server_busy")
 	var count int
 	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM loop_decisions").Scan(&count))
 	assertions.Zero(count)

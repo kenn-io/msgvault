@@ -149,7 +149,7 @@ func (h *handlers) exportEML(ctx context.Context, req toolRequest) (*toolResult,
 		return toolErrorResult(err.Error()), nil
 	}
 	snapshot, err := h.downloads.get(ctx, downloadKey{message: ref}, chunkReq, func() (*downloadSnapshot, error) {
-		original, err := reader.ReadOriginalMessage(ctx, ref, maxDownloadBytes)
+		original, err := reader.ReadOriginalMessage(ctx, ref, MaxDownloadBytes)
 		if err != nil {
 			return nil, err
 		}

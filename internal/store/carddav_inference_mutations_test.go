@@ -633,3 +633,18 @@ func TestInferenceExportSupportedSystemRetirement(t *testing.T) {
 		}
 	}
 }
+
+func TestInferenceExportRevisionWhenDeclaredEmploymentDemotesInferredPrimary(t *testing.T) {
+	must := require.New(t)
+	st, id, _ := newPersonFactProjectionStore(t)
+	org, err := st.CreateOrganizationContext(t.Context(), OrganizationInput{Name: "Example Org", Kind: OrganizationKindCompany})
+	must.NoError(err)
+	inferred, err := st.AddEmploymentContext(t.Context(), EmploymentInput{PersonID: id, OrganizationID: org.ID, Title: new("Inferred"), Source: ProvenanceExtraction})
+	must.NoError(err)
+	declared, err := st.AddEmploymentContext(t.Context(), EmploymentInput{PersonID: id, OrganizationID: org.ID, Title: new("Declared"), Source: ProvenanceUser, IsPrimary: new(false)})
+	must.NoError(err)
+	before := inferenceRevision(t, st, id)
+	_, err = st.UpdateEmploymentContext(t.Context(), declared.ID, declared.Revision, EmploymentInput{PersonID: id, OrganizationID: org.ID, Title: new("Declared"), Source: ProvenanceUser, IsPrimary: new(true), ExpectedPrimary: &EmploymentRevision{ID: inferred.ID, Revision: inferred.Revision}})
+	must.NoError(err)
+	assert.Equal(t, before+1, inferenceRevision(t, st, id))
+}

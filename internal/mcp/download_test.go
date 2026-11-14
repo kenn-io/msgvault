@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -215,7 +216,7 @@ func TestDownloadSnapshotByteBudget(t *testing.T) {
 	must := require.New(t)
 	var cache downloadCache
 	defer cache.close()
-	data := make([]byte, maxDownloadBytes/2+1)
+	data := make([]byte, MaxDownloadBytes/2+1)
 	load := func() (*downloadSnapshot, error) {
 		return &downloadSnapshot{data: data}, nil
 	}
@@ -226,4 +227,187 @@ func TestDownloadSnapshotByteBudget(t *testing.T) {
 	_, err = cache.get(t.Context(), downloadKey{attachment: 1}, chunkRequest{offset: 1, digest: first.digest}, load)
 	must.ErrorIs(err, errDownloadExpired, "byte budget evicts before the entry limit")
 	checks.Equal(len(data), cache.bytes)
+}
+
+func TestDownloadSnapshotLoadCoordination(t *testing.T) {
+	t.Run("successful leader", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			var cache downloadCache
+			defer cache.close()
+			started, release := make(chan struct{}), make(chan struct{})
+			var reads atomic.Int64
+			results := make(chan error, 4)
+			for range 4 {
+				go func() {
+					_, err := cache.get(t.Context(), downloadKey{attachment: 1}, chunkRequest{}, func() (*downloadSnapshot, error) {
+						if reads.Add(1) == 1 {
+							close(started)
+						}
+						<-release
+						return &downloadSnapshot{data: []byte("snapshot")}, nil
+					})
+					results <- err
+				}()
+			}
+			<-started
+			synctest.Wait()
+			close(release)
+			for range 4 {
+				require.NoError(t, <-results)
+			}
+			assert.Equal(t, int64(1), reads.Load())
+		})
+	})
+	t.Run("canceled leader", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			var cache downloadCache
+			defer cache.close()
+			key := downloadKey{attachment: 1}
+			leaderCtx, cancelLeader := context.WithCancel(t.Context())
+			waiterCtx, cancelWaiter := context.WithCancel(t.Context())
+			defer cancelLeader()
+			defer cancelWaiter()
+			started := make(chan struct{})
+			leader := make(chan error, 1)
+			go func() {
+				_, err := cache.get(leaderCtx, key, chunkRequest{}, func() (*downloadSnapshot, error) {
+					close(started)
+					<-leaderCtx.Done()
+					return nil, leaderCtx.Err()
+				})
+				leader <- err
+			}()
+			<-started
+			canceled := make(chan error, 1)
+			go func() {
+				_, err := cache.get(waiterCtx, key, chunkRequest{}, func() (*downloadSnapshot, error) {
+					return nil, errors.New("canceled waiter loaded")
+				})
+				canceled <- err
+			}()
+			live := make(chan error, 1)
+			go func() {
+				_, err := cache.get(t.Context(), key, chunkRequest{}, func() (*downloadSnapshot, error) {
+					return &downloadSnapshot{data: []byte("retry")}, nil
+				})
+				live <- err
+			}()
+			synctest.Wait()
+			cancelWaiter()
+			require.ErrorIs(t, <-canceled, context.Canceled)
+			cancelLeader()
+			require.ErrorIs(t, <-leader, context.Canceled)
+			require.NoError(t, <-live)
+		})
+	})
+	t.Run("close during load", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			var cache downloadCache
+			started, release := make(chan struct{}), make(chan struct{})
+			result := make(chan error, 1)
+			go func() {
+				_, err := cache.get(t.Context(), downloadKey{attachment: 1}, chunkRequest{}, func() (*downloadSnapshot, error) {
+					close(started)
+					<-release
+					return &downloadSnapshot{data: []byte("slow")}, nil
+				})
+				result <- err
+			}()
+			<-started
+			closed := make(chan struct{})
+			go func() { cache.close(); close(closed) }()
+			select {
+			case <-closed:
+			case <-time.After(5 * time.Second):
+				close(release)
+				<-closed
+				<-result
+				require.FailNow(t, "closing cache waited for the slow load")
+			}
+			close(release)
+			require.ErrorIs(t, <-result, errDownloadExpired)
+		})
+	})
+	t.Run("profile refresh", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			var cache downloadCache
+			defer cache.close()
+			key := downloadKey{operation: "get_person_record", identity: "1"}
+			started, release := make(chan struct{}), make(chan struct{})
+			old := make(chan error, 1)
+			go func() {
+				_, err := cache.get(t.Context(), key, chunkRequest{length: 1}, func() (*downloadSnapshot, error) {
+					close(started)
+					<-release
+					return &downloadSnapshot{data: []byte("old")}, nil
+				})
+				old <- err
+			}()
+			<-started
+			type result struct {
+				snapshot *downloadSnapshot
+				err      error
+			}
+			updated := make(chan result, 1)
+			loadNew := func() (*downloadSnapshot, error) { return &downloadSnapshot{data: []byte("new")}, nil }
+			go func() {
+				current, err := cache.get(t.Context(), key, chunkRequest{length: 1}, loadNew)
+				updated <- result{current, err}
+			}()
+			var current result
+			select {
+			case current = <-updated:
+			case <-time.After(5 * time.Second):
+				close(release)
+				<-updated
+				<-old
+				require.FailNow(t, "profile refresh waited for an earlier load")
+			}
+			close(release)
+			require.NoError(t, <-old)
+			require.NoError(t, current.err)
+			assert.Equal(t, []byte("new"), current.snapshot.data)
+		})
+	})
+}
+
+func TestPersonDownloadSnapshotReuseRefreshAndSmallResults(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		var cache downloadCache
+		defer cache.close()
+		key := downloadKey{operation: "get_person_record", identity: "1"}
+		value, reads := "first", 0
+		load := func() (*downloadSnapshot, error) {
+			reads++
+			return &downloadSnapshot{data: []byte(value), etag: value}, nil
+		}
+		first, err := cache.get(t.Context(), key, chunkRequest{length: 1}, load)
+		requirements.NoError(err)
+		_, err = cache.get(t.Context(), key, chunkRequest{offset: 1, length: 1, digest: first.digest}, load)
+		requirements.NoError(err)
+		assertions.Equal(1, reads)
+		value = "second"
+		_, err = cache.get(t.Context(), key, chunkRequest{length: 1, digest: first.digest}, load)
+		requirements.ErrorIs(err, errDownloadExpired)
+		second, err := cache.get(t.Context(), key, chunkRequest{length: 1}, load)
+		requirements.NoError(err)
+		assertions.Equal("second", second.etag)
+		assertions.Equal(3, reads)
+		attachmentKey := downloadKey{attachment: 1}
+		attachment, err := cache.get(t.Context(), attachmentKey, chunkRequest{length: 1}, func() (*downloadSnapshot, error) {
+			return &downloadSnapshot{data: []byte("attachment")}, nil
+		})
+		requirements.NoError(err)
+		time.Sleep(time.Second)
+		for personID := range maxDownloads {
+			_, err = cache.get(t.Context(), downloadKey{operation: "get_person_record", identity: strconv.Itoa(personID)}, chunkRequest{length: 1024}, func() (*downloadSnapshot, error) {
+				return &downloadSnapshot{data: []byte("small profile")}, nil
+			})
+			requirements.NoError(err)
+		}
+		continued, err := cache.get(t.Context(), attachmentKey, chunkRequest{offset: 1, length: 1, digest: attachment.digest}, load)
+		requirements.NoError(err)
+		assertions.Equal(attachment.data, continued.data)
+	})
 }
