@@ -66,7 +66,7 @@ func preflightAddO365Authorize(cmd *cobra.Command, email string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("look up existing source: %w", err)
 	}
-	account, undetermined, err := selectO365Account(accounts, email, o365Graph)
+	account, undetermined, err := selectO365AccountForCommand(cmd, accounts, email, o365Graph)
 	if err != nil {
 		return "", err
 	}
@@ -108,11 +108,82 @@ func preflightAddO365Authorize(cmd *cobra.Command, email string) (string, error)
 	return email, nil
 }
 
+func selectO365AccountForCommand(cmd *cobra.Command, accounts []daemonclient.CLIAccount, email string, graph bool) (*daemonclient.CLIAccount, bool, error) {
+	if !cmd.Flags().Changed("source-id") {
+		return selectO365Account(accounts, email, graph)
+	}
+	id, err := cmd.Flags().GetInt64("source-id")
+	if err != nil {
+		return nil, false, fmt.Errorf("read --source-id: %w", err)
+	}
+	if id <= 0 {
+		return nil, false, errors.New("source ID must be positive")
+	}
+	for _, account := range accounts {
+		if account.ID != id {
+			continue
+		}
+		match, unknown := matchesO365Account(account, email, graph)
+		if !match && !unknown && (graph || !isO365PasswordConflict(account, email)) {
+			return nil, false, fmt.Errorf("source %d does not match Microsoft mail account %s", id, email)
+		}
+		return selectO365Account([]daemonclient.CLIAccount{account}, email, graph)
+	}
+	return nil, false, fmt.Errorf("source %d does not match Microsoft mail account %s", id, email)
+}
+
+func preferExactO365Accounts(accounts []daemonclient.CLIAccount, email string, graph bool) []daemonclient.CLIAccount {
+	var exact bool
+	for _, account := range accounts {
+		match, _ := matchesO365Account(account, email, graph)
+		if account.MergedIntoSourceID == 0 && match && o365AccountMailbox(account, graph) == email {
+			exact = true
+			break
+		}
+	}
+	if !exact {
+		return accounts
+	}
+	filtered := make([]daemonclient.CLIAccount, 0, len(accounts))
+	for _, account := range accounts {
+		match, _ := matchesO365Account(account, email, graph)
+		if match && o365AccountMailbox(account, graph) != email {
+			continue
+		}
+		filtered = append(filtered, account)
+	}
+	return filtered
+}
+
+func o365AccountMailbox(account daemonclient.CLIAccount, graph bool) string {
+	if graph {
+		return account.Identifier
+	}
+	cfg, _ := imapclient.ParseIdentifier(account.Identifier)
+	return cfg.Username
+}
+
+func o365IMAPHostForSource(host, email string, source *store.Source, sources []*store.Source) string {
+	if source == nil {
+		return host
+	}
+	identifier := (&imapclient.Config{Host: host, Port: 993, TLS: true, Username: email}).Identifier()
+	for _, other := range sources {
+		if other.ID != source.ID && other.Identifier == identifier {
+			cfg, err := imapclient.ParseIdentifier(source.Identifier)
+			if err == nil {
+				return cfg.Host
+			}
+		}
+	}
+	return host
+}
+
 func selectO365Account(accounts []daemonclient.CLIAccount, email string, graph bool) (*daemonclient.CLIAccount, bool, error) {
 	var selected *daemonclient.CLIAccount
 	unknown := false
 	retired := false
-	for _, account := range accounts {
+	for _, account := range preferExactO365Accounts(accounts, email, graph) {
 		if account.MergedIntoSourceID != 0 {
 			match, undetermined := matchesO365Account(account, email, graph)
 			retired = retired || match || undetermined || (!graph && isO365PasswordConflict(account, email))
@@ -124,7 +195,7 @@ func selectO365Account(accounts []daemonclient.CLIAccount, email string, graph b
 		match, undetermined := matchesO365Account(account, email, graph)
 		if match {
 			if selected != nil {
-				return nil, false, fmt.Errorf("multiple Microsoft mail sources match %s; resolve the duplicate sources before authorization", email)
+				return nil, false, fmt.Errorf("multiple Microsoft mail sources match %s; find its ID with list-accounts --json and choose it with --source-id", email)
 			}
 			selected = &account
 		}
@@ -199,8 +270,13 @@ Examples:
 		"Microsoft sign-in name and browser login hint when it differs from the mailbox address (IMAP only)")
 	cmd.MarkFlagsMutuallyExclusive("graph", "sign-in")
 	cmd.Flags().Bool("mail-write", false, "With --graph, authorize category editing and remote deletion")
-	registerOAuthPreflightedFlag(cmd)
+	registerO365Flags(cmd)
 	return cmd
+}
+
+func registerO365Flags(cmd *cobra.Command) {
+	cmd.Flags().Int64("source-id", 0, "Existing source ID to reauthorize")
+	registerOAuthPreflightedFlag(cmd)
 }
 
 func runAddO365Local(cmd *cobra.Command, args []string) error {
@@ -239,7 +315,7 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 		}
 		accounts = append(accounts, account)
 	}
-	account, unknown, err := selectO365Account(accounts, email, o365Graph)
+	account, unknown, err := selectO365AccountForCommand(cmd, accounts, email, o365Graph)
 	if err != nil {
 		return err
 	}
@@ -305,7 +381,7 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 	}
 
 	imapCfg := &imapclient.Config{
-		Host:       imapHost,
+		Host:       o365IMAPHostForSource(imapHost, email, source, existing),
 		Port:       993,
 		TLS:        true,
 		Username:   email,

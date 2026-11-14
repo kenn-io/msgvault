@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -261,11 +262,112 @@ func TestAddO365RejectsAmbiguousSourcesBeforeConsent(t *testing.T) {
 			if graph {
 				require.NoError(t, cmd.Flags().Set("graph", "true"))
 			}
-			_, err := preflightAddO365Authorize(cmd, "user@example.com")
+			_, err := preflightAddO365Authorize(cmd, "UsEr@example.com")
 			require.ErrorContains(t, err, "multiple Microsoft mail sources")
-			err = runAddO365Local(cmd, []string{"user@example.com"})
+			err = runAddO365Local(cmd, []string{"UsEr@example.com"})
 			require.ErrorContains(t, err, "multiple Microsoft mail sources")
 			assert.Zero(t, requests)
+		})
+	}
+}
+
+func TestAddO365ReauthorizesSelectedSource(t *testing.T) {
+	for _, graph := range []bool{false, true} {
+		t.Run(fmt.Sprintf("graph=%t", graph), func(t *testing.T) {
+			oldGraph, oldHeadless, oldApp, oldIdentity := o365Graph, o365Headless, o365OAuthApp, noDefaultIdentityAddO365
+			t.Cleanup(func() {
+				o365Graph, o365Headless, o365OAuthApp, noDefaultIdentityAddO365 = oldGraph, oldHeadless, oldApp, oldIdentity
+			})
+			dir := t.TempDir()
+			cfg := lifecycleTestConfig(dir)
+			cfg.Microsoft.Apps = map[string]config.MicrosoftApp{"first": {ClientID: "client-a"}, "second": {ClientID: "client-b"}, "new": {ClientID: "client-new"}}
+			st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
+			identifiers := []string{"user@example.com", "USER@example.com"}
+			if !graph {
+				identifiers = []string{"imaps://user@example.com@outlook.office.com:993", "imaps://user@example.com@outlook.office365.com:993"}
+			}
+			var sources []*store.Source
+			for i, identifier := range identifiers {
+				typ := sourceTypeMSMail
+				if !graph {
+					typ = sourceTypeIMAP
+				}
+				src, err := st.GetOrCreateSource(typ, identifier)
+				require.NoError(t, err)
+				require.NoError(t, st.UpdateSourceOAuthApp(t.Context(), src.ID, sql.NullString{String: []string{"first", "second"}[i], Valid: true}))
+				if !graph {
+					require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, `{"username":"user@example.com","auth_method":"xoauth2"}`))
+				}
+				sources = append(sources, src)
+			}
+			startStoreAPIDaemon(t, dir, st, nil)
+			consentErr := errors.New("consent reached")
+			client := ""
+			ctx := context.WithValue(withStoreResolverConfig(t, cfg), oauth2.HTTPClient, &http.Client{Transport: testTransport(func(req *http.Request) (*http.Response, error) {
+				require.NoError(t, req.ParseForm())
+				assert.Equal(t, client, req.Form.Get("client_id"))
+				return nil, consentErr
+			})})
+			cmd := newAddO365LocalCmd()
+			cmd.SetContext(ctx)
+			require.NoError(t, cmd.Flags().Set("headless", "true"))
+			if graph {
+				require.NoError(t, cmd.Flags().Set("graph", "true"))
+			}
+			if graph {
+				client = "client-b"
+				_, err := preflightAddO365Authorize(cmd, "USER@example.com")
+				require.ErrorIs(t, err, consentErr)
+			}
+			for i, src := range sources {
+				client = []string{"client-a", "client-b"}[i]
+				require.NoError(t, cmd.Flags().Set("source-id", strconv.FormatInt(src.ID, 10)))
+				_, err := preflightAddO365Authorize(cmd, "user@example.com")
+				require.ErrorIs(t, err, consentErr)
+			}
+			require.NoError(t, cmd.Flags().Set("source-id", strconv.FormatInt(sources[0].ID, 10)))
+			_, err := preflightAddO365Authorize(cmd, "other@example.com")
+			require.ErrorContains(t, err, "does not match Microsoft mail account")
+			err = runAddO365Local(cmd, []string{"other@example.com"})
+			require.ErrorContains(t, err, "does not match Microsoft mail account")
+			require.NoError(t, cmd.Flags().Set("source-id", "0"))
+			_, err = preflightAddO365Authorize(cmd, "user@example.com")
+			require.ErrorContains(t, err, "source ID must be positive")
+			require.NoError(t, cmd.Flags().Set("source-id", strconv.FormatInt(sources[0].ID, 10)))
+			require.NoError(t, cmd.Flags().Set("oauth-app", "new"))
+			require.NoError(t, cmd.Flags().Set("oauth-preflighted", "true"))
+			require.NoError(t, cmd.Flags().Set("no-default-identity", "true"))
+			_, tokenDir, err := microsoftMailApp(cfg, "new")
+			require.NoError(t, err)
+			require.NoError(t, os.MkdirAll(tokenDir, 0o700))
+			path := microsoft.NewManager("", "", "", tokenDir, nil).TokenPath("user@example.com")
+			if graph {
+				path = microsoft.NewGraphMailManager("", "", "", tokenDir, nil).TokenPath("user@example.com")
+			}
+			require.NoError(t, os.WriteFile(path, []byte(`{"access_token":"token"}`), 0o600))
+			require.NoError(t, runAddO365Local(cmd, []string{"user@example.com"}))
+			first, err := st.GetSourceByID(sources[0].ID)
+			require.NoError(t, err)
+			second, err := st.GetSourceByID(sources[1].ID)
+			require.NoError(t, err)
+			assert.Equal(t, identifiers[0], first.Identifier)
+			assert.Equal(t, "new", sourceOAuthApp(first))
+			assert.Equal(t, identifiers[1], second.Identifier)
+			assert.Equal(t, "second", sourceOAuthApp(second))
+			require.NoError(t, cmd.Flags().Set("source-id", strconv.FormatInt(sources[1].ID, 10)))
+			if graph {
+				path = microsoft.NewGraphMailManager("", "", "", tokenDir, nil).TokenPath("USER@example.com")
+				require.NoError(t, os.WriteFile(path, []byte(`{"access_token":"token"}`), 0o600))
+			}
+			require.NoError(t, runAddO365Local(cmd, []string{"user@example.com"}))
+			first, err = st.GetSourceByID(sources[0].ID)
+			require.NoError(t, err)
+			second, err = st.GetSourceByID(sources[1].ID)
+			require.NoError(t, err)
+			assert.Equal(t, identifiers[0], first.Identifier)
+			assert.Equal(t, "new", sourceOAuthApp(first))
+			assert.Equal(t, identifiers[1], second.Identifier)
+			assert.Equal(t, "new", sourceOAuthApp(second))
 		})
 	}
 }

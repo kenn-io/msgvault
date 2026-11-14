@@ -748,6 +748,7 @@ Requires a `[microsoft]` section with `client_id` in `config.toml`. See the [OAu
 | Flag | Default | Description |
 |---|---|---|
 | `--oauth-app` | | Named `[microsoft.apps.<name>]` app. Omit to retain the source binding; pass an empty value to use `[microsoft]` |
+| `--source-id` | | Reauthorize an existing source by ID when multiple sources match the mailbox; find IDs with `list-accounts --json` |
 | `--tenant` | `common` | Azure AD tenant ID (restricts which accounts can authorize) |
 | `--headless` | `false` | Sign in with a device code instead of a local browser |
 | `--no-default-identity` | `false` | Do not auto-confirm the email address as this account's "me" identity. Saved across syncs and re-authorization; only explicit `--no-default-identity=false` clears the choice. See [saved identity choice](#saved-default-identity-choice) |
