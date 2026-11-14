@@ -61,8 +61,8 @@ describe('FactLedger', () => {
     expect(screen.getByText('allowed evidence excerpt')).toBeDefined();
 
     await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
-    expect(screen.getByText('fact')).toBeDefined();
-    expect(screen.getByText('fresh')).toBeDefined();
+    expect(screen.getByText('Kind').nextElementSibling?.textContent).toBe('fact');
+    expect(screen.getByText('Status').nextElementSibling?.textContent).toBe('fresh');
     expect(rendered.container.innerHTML).not.toContain('allowed sensitive value');
     await fireEvent.click(screen.getByRole('button', { name: 'Reveal sensitive fact value' }));
     expect(screen.getByText('allowed sensitive value')).toBeDefined();

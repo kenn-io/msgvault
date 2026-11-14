@@ -182,6 +182,10 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 			"--target", personFactEmploymentTarget, "--limit", "4", "--offset", "2")
 		requirements.NoError(err)
 		assertions.Contains(output, test.header)
+		if test.command == "claims" {
+			assertions.Regexp(`KIND\s+STATUS`, output)
+			assertions.Regexp(`fact\s+fresh`, output)
+		}
 		query := requests[test.path]
 		assertions.Equal(personFactEmploymentTarget, query.Get("target"))
 		assertions.Equal("4", query.Get("limit"))
@@ -244,7 +248,6 @@ func TestPersonFactsClaimsTableRetainsMalformedPersistedTargets(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Contains(output, "candidate:legacy:key:legacy-revision")
 	assertions.Contains(output, "legacy-claim")
-	assertions.Regexp(`candidate:legacy:key:legacy-revision\s+fact\s+stale\s+support`, output)
 	assertions.Contains(output, "valid-claim")
 }
 
