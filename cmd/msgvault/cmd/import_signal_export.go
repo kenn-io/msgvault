@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/signalexport"
@@ -94,39 +95,33 @@ func runImportSignalExport(cmd *cobra.Command, root, account string) error {
 }
 
 var signalExportReasonLabels = map[string]string{
-	"sms":                     "SMS metadata",
-	"expire_start_date":       "expiry start dates",
-	"expires_in_ms":           "expiry durations",
-	"ambiguous_message":       "ambiguous messages",
-	"recipient_identity":      "unsupported chat recipient",
-	"author_identity":         "unsupported message author",
-	"self_identity":           "missing account identity",
-	"revision":                "invalid edit history",
-	"missing":                 "file not found",
-	"index_limit":             "file scan limit reached",
-	"invalid_hash":            "missing or invalid file hash",
-	"contactMessage":          "contact cards",
-	"stickerMessage":          "stickers",
-	"remoteDeletedMessage":    "deleted messages",
-	"updateMessage":           "chat updates",
-	"paymentNotification":     "payments",
-	"giftBadge":               "gifts",
-	"viewOnceMessage":         "view-once messages",
-	"directStoryReplyMessage": "story replies",
-	"adminDeletedMessage":     "messages deleted by admins",
-	"adHocCall":               "calls",
-	"installedStickerPack":    "installed sticker packs",
-	"hiddenStickerPack":       "hidden sticker packs",
-	"favoriteStickerList":     "favorite stickers",
-	"notificationProfile":     "notification profiles",
-	"chatFolder":              "chat folders",
+	"sms":                  "SMS metadata",
+	"expire_start_date":    "expiry start dates",
+	"expires_in_ms":        "expiry durations",
+	"recipient_identity":   "unsupported chat recipient",
+	"author_identity":      "unsupported message author",
+	"self_identity":        "missing account identity",
+	"revision":             "invalid edit history",
+	"missing":              "file not found",
+	"index_limit":          "file scan limit reached",
+	"invalid_hash":         "missing or invalid file hash",
+	"remoteDeletedMessage": "deleted messages",
+	"updateMessage":        "chat updates",
+	"adHocCall":            "calls",
 }
 
 func signalExportReasonLabel(reason string) string {
 	if label, ok := signalExportReasonLabels[reason]; ok {
 		return label
 	}
-	return strings.ToLower(strings.ReplaceAll(reason, "_", " "))
+	var label strings.Builder
+	for _, c := range strings.ReplaceAll(reason, "_", " ") {
+		if unicode.IsUpper(c) {
+			label.WriteByte(' ')
+		}
+		label.WriteRune(unicode.ToLower(c))
+	}
+	return label.String()
 }
 
 func init() {
