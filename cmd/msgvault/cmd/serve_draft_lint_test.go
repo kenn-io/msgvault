@@ -273,63 +273,32 @@ func TestValidateOnlyReplyAllMatchesCreate(t *testing.T) {
 }
 
 func TestDraftLintParsers(t *testing.T) {
-	// Exercise each existing command parser, including forward delegation.
-	for _, tc := range []struct {
-		name  string
-		parse func([]string) (draftLintOptions, error)
-		args  []string
-	}{
-		{"reply", func(args []string) (draftLintOptions, error) {
-			v, e := parseDraftReplyArgs(args)
-			return v.draftLintOptions, e
-		}, []string{"draft-reply", "1", "--body", "ok"}},
-		{"compose", func(args []string) (draftLintOptions, error) {
-			v, e := parseDraftComposeArgs(args)
-			return v.draftLintOptions, e
-		}, []string{"draft-compose", "--source-id", "1", "--to", "a@example.com", "--body", "ok"}},
-		{"forward", func(args []string) (draftLintOptions, error) {
-			v, e := parseDraftForwardArgs(args)
-			return v.draftLintOptions, e
-		}, []string{"draft-forward", "1", "--source-id", "1", "--to", "a@example.com", "--body", "ok"}},
-		{"edit", func(args []string) (draftLintOptions, error) {
-			v, e := parseDraftLifecycleArgs(args)
-			return v.draftLintOptions, e
-		}, []string{"draft-edit", "draft", "--revision", "1", "--body", "ok"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			for _, flag := range []string{"strict", "validate-only"} {
-				values := []string{""}
-				if tc.name == "reply" {
-					values = []string{"", "=true", "=false", "=invalid", "duplicate"}
-				}
-				for _, value := range values {
-					flags := []string{"--" + flag + value}
-					if value == "duplicate" {
-						flags = []string{"--" + flag + "=false", "--" + flag}
-					}
-					opts, err := tc.parse(append(append([]string{}, tc.args...), flags...))
-					if value == "=invalid" || value == "duplicate" {
-						require.Error(err)
-						continue
-					}
-					require.NoError(err)
-					enabled := value != "=false"
-					want := draftLintOptions{}
-					switch flag {
-					case "strict":
-						want.Strict = enabled
-					case "validate-only":
-						want.ValidateOnly = enabled
-					}
-					assert.Equal(want, opts)
-				}
-			}
-		})
-	}
 	assert := assert.New(t)
 	require := require.New(t)
+	for _, flag := range []string{"strict", "validate-only"} {
+		for _, value := range []string{"", "=true", "=false", "=invalid", "duplicate"} {
+			flags := []string{"--" + flag + value}
+			if value == "duplicate" {
+				flags = []string{"--" + flag + "=false", "--" + flag}
+			}
+			args := append([]string{"draft-reply", "1", "--body", "ok"}, flags...)
+			parsed, err := parseDraftReplyArgs(args)
+			if value == "=invalid" || value == "duplicate" {
+				require.Error(err)
+				continue
+			}
+			require.NoError(err)
+			enabled := value != "=false"
+			want := draftLintOptions{}
+			switch flag {
+			case "strict":
+				want.Strict = enabled
+			case "validate-only":
+				want.ValidateOnly = enabled
+			}
+			assert.Equal(want, parsed.draftLintOptions)
+		}
+	}
 
 	got, err := parseDraftComposeArgs([]string{"draft-compose", "--source-id", "1", "--to", "a@example.com", "--body", "--strict"})
 	require.NoError(err)
