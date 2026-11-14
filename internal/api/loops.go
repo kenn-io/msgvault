@@ -11,6 +11,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/loops"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -175,9 +176,9 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if reader, ok := s.store.(interface {
-			PersonCommitmentDiscoveryContext(ctx context.Context, personID int64) (*time.Time, bool, error)
+			PersonCommitmentDiscoveryContext(ctx context.Context, personID int64, scopeFingerprint string) (*time.Time, bool, error)
 		}); ok && active {
-			since, complete, err := reader.PersonCommitmentDiscoveryContext(r.Context(), opts.PersonID)
+			since, complete, err := reader.PersonCommitmentDiscoveryContext(r.Context(), opts.PersonID, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment discovery")
 				return

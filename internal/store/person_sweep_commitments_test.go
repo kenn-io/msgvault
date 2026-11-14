@@ -187,6 +187,27 @@ func TestCommitmentListPrioritizesFreshBeforeLimit(t *testing.T) {
 	r.Equal(personfacts.StatusStale, future.Freshness)
 }
 
+func TestCommitmentListPagesSubmillisecondTimes(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "promise-page-times", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	for i := range 40 {
+		persist(fmt.Sprintf("promise-%d", i), fmt.Sprintf("I will send report %d.", i), -time.Hour+time.Duration(i)*time.Microsecond)
+	}
+	applyCommitmentTestSources(t, f, cfg.Commitments)
+	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 40, false)
+	r.NoError(err)
+	r.Len(items, 40)
+	seen := make(map[int64]bool)
+	for _, item := range items {
+		r.False(seen[item.ID], "a commitment must occur only once")
+		seen[item.ID] = true
+	}
+}
+
 func newCommitmentTestConversation(t *testing.T, f personSweepApplyFixture) (int64, func(string, string, time.Duration) int64) {
 	t.Helper()
 	r, ctx, st := require.New(t), t.Context(), f.store
@@ -288,7 +309,7 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 			r, a, ctx := require.New(t), assert.New(t), t.Context()
 			f := newPersonSweepApplyFixture(t, "commitment-byte-boundary", false)
 			_, persist := newCommitmentTestConversation(t, f)
-			large := persist("large", strings.Repeat("x", 2100)+" I will call.", -2*time.Hour)
+			large := persist("large", strings.Repeat("x", 90<<10)+" I will call.", -2*time.Hour)
 			small := persist("small", "I will call.", -time.Hour)
 			second := persist("second", "I will write.", -time.Hour)
 			if !journal {
@@ -314,7 +335,7 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 			r.NoError(err)
 			r.Len(items, 1)
 			a.Equal(small, items[0].AnchorMessageID)
-			_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID)
+			_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 			r.NoError(err)
 			a.False(complete)
 			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
@@ -334,10 +355,10 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 			r.NoError(err)
 			_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, empty))
 			r.NoError(err)
-			_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID)
+			_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 			r.NoError(err)
 			a.False(complete)
-			cfg.Commitments.MaxBytes = 2200
+			cfg.Commitments.MaxBytes = 100 << 10
 			laterNow := personFactLedgerNow.Add(31 * 24 * time.Hour)
 			cfg.Commitments.MaxItems = 10
 			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, laterNow, "UTC")
@@ -347,13 +368,16 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 			var largeSource string
 			for _, source := range window.Sources {
 				if source.MessageID == large {
-					a.True(source.MatchesQuote("I will call.", 2101, 2113))
+					a.True(source.MatchesQuote("I will call.", 92161, 92173))
 					largeSource = source.ID
 				}
 			}
 			r.NotEmpty(largeSource)
 			f = nextCommitmentTestAttempt(t, f, "-larger")
-			empty, err = peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":"I will call.","start":2101,"end":2113,"summary":"Call","due_on":null}]}`, largeSource)), window)
+			fits, err := peoplesweep.CommitmentInputFits(window)
+			r.NoError(err)
+			a.True(fits)
+			empty, err = peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":"I will call.","start":92161,"end":92173,"summary":"Call","due_on":null}]}`, largeSource)), window)
 			r.NoError(err)
 			request = commitmentApplyRequest(t, f, window, cfg.Commitments, empty)
 			request.Generation.ResolvedAt = laterNow
@@ -362,7 +386,7 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 			items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 5, false)
 			r.NoError(err)
 			r.Len(items, 2)
-			since, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID)
+			since, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 			r.NoError(err)
 			r.NotNil(since)
 			a.Equal(laterNow.Add(-cfg.Commitments.Window), *since)
@@ -378,9 +402,35 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 			request.Generation.ResolvedAt = laterNow
 			_, err = f.store.ApplyPersonSweep(ctx, request)
 			r.NoError(err)
-			_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID)
+			_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 			r.NoError(err)
 			a.False(complete)
+		})
+	}
+}
+
+func TestCommitmentDiscoverySkipsMessageOverMaximum(t *testing.T) {
+	for _, journal := range []bool{false, true} {
+		t.Run(fmt.Sprintf("journal=%t", journal), func(t *testing.T) {
+			r, ctx := require.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "commitment-cap", false)
+			_, persist := newCommitmentTestConversation(t, f)
+			persist("large", strings.Repeat("x", 140<<10), -2*time.Hour)
+			small := persist("small", "I will call.", -time.Hour)
+			if !journal {
+				_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`DELETE FROM person_sweep_changes WHERE person_id = ?`), f.personID)
+				r.NoError(err)
+			}
+			cfg := peoplesweep.Config{}
+			cfg.ApplyDefaults()
+			cfg.Commitments.Enabled = true
+			cfg.Commitments.MaxBytes = 120 << 10
+			profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+			r.NoError(err)
+			r.Len(window.Sources, 1)
+			r.Equal(small, window.Sources[0].MessageID)
+			r.Equal(int64(-2), window.BackfillMessageID)
 		})
 	}
 }

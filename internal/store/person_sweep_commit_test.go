@@ -56,6 +56,11 @@ func newPersonSweepApplyFixtureWithBudget(
 ) personSweepApplyFixture {
 	t.Helper()
 	st, personID, targets := newPersonFactProjectionStore(t)
+	return newPersonSweepApplyFixtureForStore(t, st, personID, targets, suffix, provider, budget)
+}
+
+func newPersonSweepApplyFixtureForStore(t *testing.T, st *Store, personID int64, targets map[string]personfacts.TargetDescriptor, suffix string, provider bool, budget peoplesweep.BudgetConfig) personSweepApplyFixture {
+	t.Helper()
 	program := strings.Repeat("a", 64)
 	profile := strings.Repeat("b", 64)
 	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), false)

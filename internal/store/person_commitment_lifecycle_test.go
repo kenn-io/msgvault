@@ -11,6 +11,54 @@ import (
 	"go.kenn.io/msgvault/internal/personfacts"
 )
 
+func TestCommitmentSurvivesDelayedEditProcessing(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "delayed-edit", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	id := persist("promise", "I will send the draft.", -time.Hour)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	applyCommitmentTestSources(t, f, cfg.Commitments)
+	before, err := st.LatestPersonSweepChangeSequence(ctx)
+	r.NoError(err)
+	_, err = st.db.ExecContext(ctx, st.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "I will send the report.", id)
+	r.NoError(err)
+	journal, err := st.ScanPersonSweepChanges(ctx, f.personID, before, 100)
+	r.NoError(err)
+	r.NotEmpty(journal)
+	f = nextCommitmentTestAttempt(t, f, "-rediscover")
+	applyCommitmentTestSources(t, f, cfg.Commitments)
+	changes, err := st.BuildPersonSweepEvidenceStatusChanges(ctx, f.personID, journal)
+	r.NoError(err)
+	evidence, err := st.ListPersonFactEvidenceContext(ctx, f.personID, personfacts.EvidenceFilter{Limit: 10})
+	r.NoError(err)
+	r.Len(evidence, 2)
+	var current personfacts.Evidence
+	for _, item := range evidence {
+		if item.Input.Excerpt == "I will send the report." {
+			current = item
+		}
+	}
+	r.NotZero(current.ID)
+	for _, change := range changes {
+		if change.SourceVersion == current.Input.SourceVersion && change.EvidenceKey == current.Key {
+			a.True(change.Supported)
+		}
+	}
+	f = nextCommitmentTestAttempt(t, f, "-ordinary")
+	request := f.request
+	request.Generation.Policy.AllowSensitive = true
+	request.Generation.EvidenceStatusChanges = changes
+	_, err = st.ApplyPersonSweepStatusOnly(ctx, peoplesweep.StatusOnlyApplyRequest{AttemptID: request.AttemptID, Lease: request.Lease, Generation: request.Generation, CompletedAt: request.CompletedAt})
+	r.NoError(err)
+	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	a.Equal("I will send the report.", items[0].Quote)
+}
+
 func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testing.T) {
 	for _, owner := range []bool{false, true} {
 		for _, mutation := range []struct {

@@ -842,15 +842,16 @@ func (s *Store) BuildPersonSweepEvidenceStatusChanges(ctx context.Context, perso
 			supported, reason, ok := personSweepStatusEffect(change.EvidenceEffect)
 			if ok {
 				key := evidenceVersion{stored.Key, stored.Input.SourceVersion}
-				if supported {
+				if supported || commitment {
 					alignment, alignErr := s.reactivatePersonSweepEvidence(ctx, stored.Input, commitment)
 					if errors.Is(alignErr, peoplesweep.ErrSourceTextUnavailable) {
-						continue
-					}
-					if alignErr != nil {
+						if supported {
+							continue
+						}
+					} else if alignErr != nil {
 						return nil, fmt.Errorf("verify reactivated person sweep evidence %s: %w", stored.Key, alignErr)
 					}
-					if !alignment.Accepted {
+					if supported != alignment.Accepted {
 						continue
 					}
 				}

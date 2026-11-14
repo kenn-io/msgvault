@@ -433,7 +433,7 @@ direct conversations within the active provider's source and date scope.
 | `min_interval` | `24h` | Minimum time between successful passes for a person. |
 | `window` | `720h` | Recent message or archive-arrival window. |
 | `max_items` | `60` | Maximum messages in a call, up to 2000. |
-| `max_bytes` | `65536` | Maximum UTF-8 message-text bytes in a call. A longer message waits until you raise this limit. |
+| `max_bytes` | `65536` | Maximum JSON-encoded message-text bytes in a call, up to `122880`. Messages over the limit are skipped and retried if you raise it. |
 | `max_output_tokens` | `2048` | Output cap within the shared per-person budget. |
 
 See [Open loops](usage/open-loops.md#see-cited-commitments) for consent and

@@ -62,6 +62,14 @@ func (a *storeAPIAdapter) ListPersonCommitmentsContext(ctx context.Context, pers
 	return a.store.ListPersonCommitmentsContext(ctx, personID, now, limit, includeClosed)
 }
 
+func (a *storeAPIAdapter) HasActivePersonCommitmentConsent(ctx context.Context, fingerprint string) (bool, error) {
+	return a.store.HasActivePersonCommitmentConsent(ctx, fingerprint)
+}
+
+func (a *storeAPIAdapter) PersonCommitmentDiscoveryContext(ctx context.Context, personID int64, scopeFingerprint string) (*time.Time, bool, error) {
+	return a.store.PersonCommitmentDiscoveryContext(ctx, personID, scopeFingerprint)
+}
+
 func (a *storeAPIAdapter) DecidePersonCommitmentContext(ctx context.Context, id int64, state string, until *time.Time, now time.Time) (store.PersonCommitment, error) {
 	return a.store.DecidePersonCommitmentContext(ctx, id, state, until, now)
 }

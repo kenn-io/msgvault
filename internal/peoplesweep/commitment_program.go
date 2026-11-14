@@ -52,6 +52,15 @@ func CommitmentInputFits(window CommitmentWindow) (bool, error) {
 	return len(input) <= maxStructuredInputBytes, err
 }
 
+// CommitmentSourceBytes measures the message text as encoded for the provider.
+func CommitmentSourceBytes(text string) (int, error) {
+	encoded, err := json.Marshal(text)
+	if err != nil {
+		return 0, err
+	}
+	return len(encoded) - 2, nil
+}
+
 // CommitmentScopeFingerprint binds frontier progress to source eligibility and
 // batch sizing. Changing these inputs restarts bounded discovery and paging.
 func CommitmentScopeFingerprint(profile ProviderProfile, cfg CommitmentConfig) string {
@@ -82,8 +91,8 @@ func (c *CommitmentConfig) Validate(budget BudgetConfig) error {
 	if !c.Enabled {
 		return nil
 	}
-	if c.MinInterval <= 0 || c.Window <= 0 || c.MaxItems <= 0 || c.MaxItems > 2000 || c.MaxBytes <= 0 || c.MaxOutputTokens <= 0 || c.MaxOutputTokens > budget.MaxOutputTokensPerPerson {
-		return errors.New("[people.sweep.commitments] limits must be positive and fit the per-person budget (max_items <= 2000)")
+	if c.MinInterval <= 0 || c.Window <= 0 || c.MaxItems <= 0 || c.MaxItems > 2000 || c.MaxBytes <= 0 || c.MaxBytes > 120<<10 || c.MaxOutputTokens <= 0 || c.MaxOutputTokens > budget.MaxOutputTokensPerPerson {
+		return errors.New("[people.sweep.commitments] limits must be positive and fit the per-person budget (max_items <= 2000, max_bytes <= 122880)")
 	}
 	return nil
 }

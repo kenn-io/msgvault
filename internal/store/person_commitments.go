@@ -162,7 +162,11 @@ func (s *Store) loadCommitmentCandidates(ctx context.Context, personID int64, no
 		args = append(args, s.dialect.TimestampParam(now.Add(-90*24*time.Hour)), s.dialect.TimestampParam(now))
 		if after.ID != 0 {
 			query += ` AND (` + key + `, id) > (` + s.loopTimeKey("?") + `, ?)`
-			args = append(args, s.dialect.TimestampParam(after.PromisedAt), after.ID)
+			cursor := s.dialect.TimestampParam(after.PromisedAt)
+			if !s.IsPostgreSQL() {
+				cursor = after.PromisedAt.UTC().Format(time.RFC3339Nano)
+			}
+			args = append(args, cursor, after.ID)
 		}
 		query += ` ORDER BY ` + key + `, id`
 		query += ` LIMIT ?`
@@ -326,8 +330,9 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 }
 
 // PersonCommitmentDiscoveryContext returns the saved discovery window and progress.
-func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID int64) (*time.Time, bool, error) {
+func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID int64, scopeFingerprint string) (*time.Time, bool, error) {
 	query := `SELECT f.discovery_since, f.backfill_message_id,
+		COALESCE(f.scope_fingerprint, ''),
 		EXISTS(SELECT 1 FROM person_sweep_changes c WHERE c.person_id = t.person_id
 			AND c.sequence > CASE WHEN COALESCE(f.observed_sequence, 0) > f.through_sequence THEN f.observed_sequence ELSE f.through_sequence END)
 		FROM person_tracking t LEFT JOIN person_commitment_frontiers f ON f.person_id = t.person_id`
@@ -346,8 +351,9 @@ func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID i
 	for rows.Next() {
 		var at nullableTimestamp
 		var backfill sql.NullInt64
+		var scope string
 		var pending bool
-		if err := rows.Scan(&at, &backfill, &pending); err != nil {
+		if err := rows.Scan(&at, &backfill, &scope, &pending); err != nil {
 			return nil, false, err
 		}
 		if !at.Valid {
@@ -358,7 +364,7 @@ func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID i
 			value := at.Time
 			since = &value
 		}
-		complete = complete && backfill.Valid && backfill.Int64 == -1 && !pending
+		complete = complete && scope == scopeFingerprint && backfill.Valid && backfill.Int64 == -1 && !pending
 	}
 	return since, complete && since != nil, rows.Err()
 }
@@ -563,11 +569,15 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 	}()
 	seen, used := map[int64]bool{}, 0
 	add := func(source peoplesweep.CommitmentSource) (bool, error) {
-		if len(source.Text) > cfg.MaxBytes {
+		sourceBytes, err := peoplesweep.CommitmentSourceBytes(source.Text)
+		if err != nil {
+			return false, err
+		}
+		if sourceBytes > cfg.MaxBytes {
 			gap = true
 			return true, nil
 		}
-		if len(window.Sources) >= cfg.MaxItems || used+len(source.Text) > cfg.MaxBytes {
+		if len(window.Sources) >= cfg.MaxItems || used+sourceBytes > cfg.MaxBytes {
 			return false, nil
 		}
 		var beyond bool
@@ -594,7 +604,7 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			return !fitsAlone, err
 		}
 		seen[source.MessageID] = true
-		used += len(source.Text)
+		used += sourceBytes
 		return true, nil
 	}
 	changes, err := s.ScanPersonSweepChanges(ctx, personID, previous, maxPersonSweepChangeScan)

@@ -609,6 +609,16 @@ func copyData(ctx context.Context, db *sql.DB, tx *sql.Tx, rowCount int, options
 			`person_id IN (SELECT id FROM persons)`); err != nil {
 			return nil, fmt.Errorf("copy person tracking: %w", err)
 		}
+		hasCommitments, err := sourceTableExists(ctx, tx, "person_commitments")
+		if err != nil {
+			return nil, fmt.Errorf("inspect person commitments: %w", err)
+		}
+		if hasCommitments {
+			if _, err := copyByName(ctx, tx, "person_commitments",
+				`person_id IN (SELECT id FROM persons)`); err != nil {
+				return nil, fmt.Errorf("copy person commitments: %w", err)
+			}
+		}
 		if options.IncludeVCardResources {
 			if err := copyVCardResourceEnvelopes(ctx, tx); err != nil {
 				return nil, err

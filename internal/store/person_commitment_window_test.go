@@ -99,3 +99,25 @@ func TestCommitmentWindowBoundsEscapedEmailInput(t *testing.T) {
 	a.True(fits)
 	a.Equal(window.Sources[len(window.Sources)-1].MessageID, window.BackfillMessageID)
 }
+
+func TestCommitmentWindowCountsMaskedTextAsEncodedBytes(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	f := storetest.New(t)
+	r.NoError(f.Store.AddAccountIdentity(f.Source.ID, loopOwner, "manual"))
+	participant := f.EnsureParticipant(loopAlex, "", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(participant)
+	r.NoError(err)
+	large := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will call.\n> " + strings.Repeat("q", 30000), SentAt: loopAgo(2 * time.Hour)})
+	shorter := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will reply.\n> " + strings.Repeat("q", 15000), SentAt: loopAgo(time.Hour)})
+	cfg := peoplesweep.CommitmentConfig{Enabled: true, Window: 30 * loopDay, MaxItems: 60, MaxBytes: 100 << 10}
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	window, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow, "UTC")
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	a.Equal(shorter, window.Sources[0].MessageID)
+	a.NotEqual(large, window.Sources[0].MessageID)
+	fits, err := peoplesweep.CommitmentInputFits(window)
+	r.NoError(err)
+	a.True(fits)
+	a.Equal(int64(-2), window.BackfillMessageID)
+}

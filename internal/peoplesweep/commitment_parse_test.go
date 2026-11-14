@@ -78,3 +78,17 @@ func TestCommitmentRequestSendsPromptFieldsAndFullSourceText(t *testing.T) {
 	r.NoError(err)
 	a.Contains(request.InputText, strings.Repeat("x", 2001)+"PRIVATE TAIL")
 }
+
+func TestCommitmentSourceBytesAndLimit(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	size, err := CommitmentSourceBytes("a\x00\n\"")
+	r.NoError(err)
+	a.Equal(11, size)
+	cfg := Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	cfg.Commitments.MaxBytes = 120 << 10
+	a.NoError(cfg.Commitments.Validate(cfg.Budgets))
+	cfg.Commitments.MaxBytes++
+	a.Error(cfg.Commitments.Validate(cfg.Budgets))
+}

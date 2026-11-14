@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
@@ -1972,6 +1973,81 @@ func TestCopySubset_AllRows(t *testing.T) {
 	require.NoError(t, err, "CopySubset")
 
 	assert.Equal(t, int64(5), result.Messages, "Messages (all available)")
+}
+
+func TestCopySubsetRediscoveryPreservesCommitmentDecisions(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "subset-source", false)
+	if f.store.IsPostgreSQL() {
+		t.Skip("subset copies SQLite archives")
+	}
+	_, persist := newCommitmentTestConversation(t, f)
+	ownerMessage := persist("owner", "", -3*time.Hour)
+	_, err := f.store.db.ExecContext(ctx, `UPDATE messages SET sender_id = (SELECT id FROM participants WHERE email_address = 'owner@example.test') WHERE id = ?`, ownerMessage)
+	r.NoError(err)
+	persist("done", "I will send the report.", -2*time.Hour)
+	persist("snoozed", "I will send the draft.", -time.Hour)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	applyCommitmentTestSources(t, f, cfg.Commitments)
+	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, false)
+	r.NoError(err)
+	r.Len(items, 2)
+	until := personFactLedgerNow.Add(24 * time.Hour)
+	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, personFactLedgerNow)
+	r.NoError(err)
+	_, err = f.store.DecidePersonCommitmentContext(ctx, items[1].ID, LoopStateSnoozed, &until, personFactLedgerNow)
+	r.NoError(err)
+	var seq int
+	var name, sourcePath string
+	r.NoError(f.store.db.QueryRowContext(ctx, `PRAGMA database_list`).Scan(&seq, &name, &sourcePath))
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubsetWithOptions(ctx, sourcePath, destinationDir, 3, CopySubsetOptions{IncludeIdentity: true, IncludeProfiles: true})
+	r.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	r.NoError(err)
+	t.Cleanup(func() { _ = destination.Close() })
+	for _, table := range []string{"person_commitment_frontiers", "person_fact_evidence", "person_inference_profiles"} {
+		var count int
+		r.NoError(destination.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&count))
+		r.Zero(count)
+	}
+	_, err = destination.EnsurePersonSweepWork(ctx, f.personID, true)
+	r.NoError(err)
+	d := newPersonSweepApplyFixtureForStore(t, destination, f.personID, nil, "subset-destination", false, personSweepApplyBudget())
+	profile := d.request.Generation.Policy.ProviderPolicyFingerprint
+	_, err = destination.db.ExecContext(ctx, `UPDATE person_inference_profiles SET allow_sensitive = TRUE, allowed_sources = '["conversation_text"]', source_since = '2026-01-01' WHERE fingerprint = ?`, profile)
+	r.NoError(err)
+	_, _, err = destination.GrantPersonCommitmentConsent(ctx, profile, "test")
+	r.NoError(err)
+	_, live, err := destination.currentCommitmentSource(ctx, f.personID, items[0].AnchorMessageID)
+	r.NoError(err)
+	r.True(live)
+	applyCommitmentTestSources(t, d, cfg.Commitments)
+	got, err := destination.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, true)
+	r.NoError(err)
+	r.Len(got, 2)
+	r.Equal(items[0].ID, got[0].ID)
+	r.Equal(LoopStateDone, got[0].State)
+	r.Equal(items[1].ID, got[1].ID)
+	r.Equal(LoopStateSnoozed, got[1].State)
+	r.NotNil(got[1].SnoozedUntil)
+	r.True(got[1].SnoozedUntil.Equal(until))
+}
+
+func TestCopySubsetProfilesBeforeCommitments(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	sourcePath := createTestSourceDB(t, t.TempDir(), 5)
+	source, err := Open(sourcePath)
+	r.NoError(err)
+	_, _, err = source.CreatePersonFromParticipant(2)
+	r.NoError(err)
+	_, err = source.db.ExecContext(ctx, `DROP TABLE person_commitments`)
+	r.NoError(err)
+	r.NoError(source.Close())
+	_, err = CopySubsetWithOptions(ctx, sourcePath, filepath.Join(t.TempDir(), "subset"), 5, CopySubsetOptions{IncludeProfiles: true})
+	r.NoError(err)
 }
 
 func TestCopySubset_PreservesPersonProfiles(t *testing.T) {
