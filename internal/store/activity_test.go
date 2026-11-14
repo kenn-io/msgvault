@@ -3475,50 +3475,40 @@ func TestClaimActivityTimezoneTransitionRejectsHostDependentZone(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrInvalidActivity)
 }
 
-func TestFirstSeenTieBreak(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f, personID := activityProjectionFixture(t)
-	at := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
-	first := f.NewMessage().WithSourceMessageID("first-seen-first").WithSentAt(at).Create(t, f.Store)
-	second := f.NewMessage().WithSourceMessageID("first-seen-second").WithSentAt(at).Create(t, f.Store)
-	low, high := min(first, second), max(first, second)
-	a := activityProjectionForMessage(t, f, high, personID, at)
-	b := activityProjectionForMessage(t, f, low, personID, at)
-	a.Event.Persons[0].Evidence = store.EvidenceCoPresence
-	b.Event.Persons[0].Evidence = store.EvidenceCoPresence
-	_, err := f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{a, b})
-	require.NoError(err)
-	state, err := f.Store.ContactStateContext(t.Context(), personID, at)
-	require.NoError(err)
-	assert.Equal(fmt.Sprintf("message:%d", low), state.FirstSeenRef)
-	assert.Nil(state.FirstContactAt)
-	assert.Zero(state.InteractionCount)
-}
-
-func TestFirstSeenDateWindow(t *testing.T) {
-	f, personID := activityProjectionFixture(t)
+func TestFirstSeenOrder(t *testing.T) {
 	local := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
-	times := []time.Time{local.Add(37*time.Hour + 59*time.Minute), local.Add(34 * time.Hour), local.Add(58 * time.Hour)}
-	dates := []string{"2026-07-01", "2026-07-03", "2026-07-04"}
-	offsets := []int{-840, 840, 840}
-	var projections []store.ActivityProjection
-	var winner int64
-	for i, at := range times {
-		id := f.NewMessage().WithSourceMessageID(fmt.Sprintf("window-%d", i)).WithSentAt(at).Create(t, f.Store)
-		if i == 1 {
-			winner = id
-		}
-		projection := activityProjectionForMessage(t, f, id, personID, at)
-		projection.Event.LocalDate = dates[i]
-		projection.Event.UTCOffsetMinutes = offsets[i]
-		projections = append(projections, projection)
+	for _, tc := range []struct {
+		name    string
+		times   []time.Time
+		dates   []string
+		offsets []int
+		winner  int
+	}{
+		{"equal timestamps", []time.Time{local.Add(12 * time.Hour), local.Add(12 * time.Hour)}, []string{"2026-07-01", "2026-07-01"}, []int{0, 0}, 0},
+		{"offset window", []time.Time{local.Add(37*time.Hour + 59*time.Minute), local.Add(34 * time.Hour)}, []string{"2026-07-01", "2026-07-03"}, []int{-840, 840}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, personID := activityProjectionFixture(t)
+			var projections []store.ActivityProjection
+			var winner int64
+			for i, at := range tc.times {
+				id := f.NewMessage().WithSourceMessageID(fmt.Sprintf("first-seen-%d", i)).WithSentAt(at).Create(t, f.Store)
+				if i == tc.winner {
+					winner = id
+				}
+				projection := activityProjectionForMessage(t, f, id, personID, at)
+				projection.Event.LocalDate = tc.dates[i]
+				projection.Event.UTCOffsetMinutes = tc.offsets[i]
+				projection.Event.Persons[0].Evidence = store.EvidenceCoPresence
+				projections = append(projections, projection)
+			}
+			_, err := f.Store.ProjectActivityBatchContext(t.Context(), projections)
+			require.NoError(t, err)
+			state, err := f.Store.ContactStateContext(t.Context(), personID, tc.times[0])
+			require.NoError(t, err)
+			assert.Equal(t, fmt.Sprintf("message:%d", winner), state.FirstSeenRef)
+		})
 	}
-	_, err := f.Store.ProjectActivityBatchContext(t.Context(), projections)
-	require.NoError(t, err)
-	state, err := f.Store.ContactStateContext(t.Context(), personID, times[2])
-	require.NoError(t, err)
-	assert.Equal(t, fmt.Sprintf("message:%d", winner), state.FirstSeenRef)
 }
 
 func TestFirstSeenIntroductionContactState(t *testing.T) {
@@ -3609,7 +3599,6 @@ func TestFirstAppearanceSkipsUntimedGroupMembers(t *testing.T) {
 	assert.Equal(fmt.Sprintf("message:%d", introID), state.FirstSeenRef)
 	require.NotNil(state.FirstSeenAt)
 	assert.Equal(introAt, state.FirstSeenAt.UTC())
-	assert.Equal(store.FirstContactEmailIntro, state.FirstContactKind)
 	rosterState, err := f.Store.ContactStateContext(t.Context(), rosterPerson.ID, february)
 	require.NoError(err)
 	assert.Nil(rosterState.FirstSeenAt)

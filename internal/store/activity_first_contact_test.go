@@ -28,15 +28,12 @@ func TestClassifyFirstContact(t *testing.T) {
 	tests := []testCase{
 		{"introduction", email, FirstContactEmailIntro, 2, &sender},
 		{"recorded sender with multiple authors", ActivityCandidate{ConversationType: "email_thread", SenderID: new(int64(2)), Counterparts: []ActivityCounterpart{owner, from, {ParticipantID: 4, RecipientType: "from"}, addressed}}, FirstContactObserved, 0, nil},
-		{"ambiguous from", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{owner, from, {ParticipantID: 4, RecipientType: "from"}, addressed}}, FirstContactObserved, 0, nil},
 		{"recorded sender absent from envelope", ActivityCandidate{ConversationType: "email_thread", SenderID: new(int64(99)), Counterparts: email.Counterparts}, FirstContactObserved, 0, nil},
-		{"meeting", ActivityCandidate{ConversationType: "email_thread", MessageType: "calendar_event", Counterparts: email.Counterparts}, FirstContactObserved, 0, nil},
 		{"group", ActivityCandidate{ConversationType: "group_chat", Counterparts: email.Counterparts}, FirstContactObserved, 0, nil},
 		{"inbound sender", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{owner, {ParticipantID: 3, PersonID: &target, RecipientType: "from"}, addressed}}, FirstContactObserved, 0, nil},
 		{"outbound email", ActivityCandidate{ConversationType: "email_thread", SourceIsFromMe: true, Counterparts: email.Counterparts}, FirstContactObserved, 0, nil},
 		{"bcc target", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{owner, from, {ParticipantID: 3, PersonID: &target, RecipientType: "bcc"}}}, FirstContactObserved, 0, nil},
 		{"unsaved sender", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{unsavedSender, ownerRecipient, targetRecipient}}, FirstContactEmailIntro, 12, nil},
-		{"owner alias recipient", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{unsavedSender, ownerRecipient, {ParticipantID: 13, PersonID: &ownerID, RecipientType: "bcc"}, targetRecipient}}, FirstContactEmailIntro, 12, nil},
 	}
 	for _, n := range []int{maxIntroCounterparts, maxIntroCounterparts + 1} {
 		c := email

@@ -13,14 +13,15 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 )
 
-func TestPersonGetReturnsPersonWithoutContactState(t *testing.T) {
+func TestPersonGetContactState(t *testing.T) {
 	for _, scenario := range []struct {
-		name, version          string
-		probeFails, stateFails bool
+		name, version                    string
+		probeFails, stateFails, hasState bool
 	}{
-		{"older daemon", "5.0.0", false, false},
-		{"optional subresource unavailable", "5.3.0", false, true},
-		{"version probe fails", "", true, false},
+		{"older daemon", "5.0.0", false, false, false},
+		{"optional subresource unavailable", "5.3.0", false, true, false},
+		{"version probe fails", "", true, false, false},
+		{"current daemon", "5.3.0", false, false, true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			check := assert.New(t)
@@ -40,8 +41,12 @@ func TestPersonGetReturnsPersonWithoutContactState(t *testing.T) {
 					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"` + scenario.version + `"}`))
 				case "/api/v1/people/7/contact-state":
 					stateRequested = true
-					check.True(scenario.stateFails, "contact state requires a successful capability probe")
-					http.Error(w, "unavailable", http.StatusInternalServerError)
+					if scenario.stateFails {
+						http.Error(w, "unavailable", http.StatusInternalServerError)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"person_id":7,"interaction_count":0,"cadence_status":"unknown","stale":false,"computed_at":"0001-01-01T00:00:00Z"}`))
 				default:
 					http.NotFound(w, r)
 				}
@@ -60,8 +65,12 @@ func TestPersonGetReturnsPersonWithoutContactState(t *testing.T) {
 			var person map[string]any
 			req.NoError(json.Unmarshal(got.Bytes(), &person))
 			check.InDelta(7, person["id"], 0)
-			check.NotContains(person, "contact_state")
-			check.Equal(scenario.stateFails, stateRequested)
+			if scenario.hasState {
+				check.Contains(person, "contact_state")
+			} else {
+				check.NotContains(person, "contact_state")
+			}
+			check.Equal(scenario.stateFails || scenario.hasState, stateRequested)
 		})
 	}
 }
