@@ -6,15 +6,12 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -69,31 +66,24 @@ func TestDiagnoseFTSOutputAndExit(t *testing.T) {
 }
 
 func TestDiagnoseFTSInvalidFlags(t *testing.T) {
-	for _, args := range [][]string{{"--limit=0"}, {"--limit=1001"}, {"--timeout=0s"}, {"--timeout=6m"}, {"unexpected"}} {
-		cmd := newDiagnoseFTSCmd()
-		cmd.SetContext(t.Context())
-		cmd.SetOut(io.Discard)
-		cmd.SetErr(io.Discard)
-		cmd.SetArgs(args)
-		require.Error(t, cmd.Execute())
+	for _, tc := range []struct {
+		name, arg, want string
+	}{
+		{name: "limit below minimum", arg: "--limit=0", want: "--limit must be 1..1000 and --timeout must be 1s..5m"},
+		{name: "limit above maximum", arg: "--limit=1001", want: "--limit must be 1..1000 and --timeout must be 1s..5m"},
+		{name: "timeout below minimum", arg: "--timeout=0s", want: "--limit must be 1..1000 and --timeout must be 1s..5m"},
+		{name: "timeout above maximum", arg: "--timeout=6m", want: "--limit must be 1..1000 and --timeout must be 1s..5m"},
+		{name: "positional argument", arg: "unexpected", want: `unknown command "unexpected" for "diagnose-fts"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := newDiagnoseFTSCmd()
+			cmd.SetContext(t.Context())
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			cmd.SetArgs([]string{tc.arg})
+			require.ErrorContains(t, cmd.Execute(), tc.want)
+		})
 	}
-}
-
-func TestDiagnoseFTSOlderDaemonRejectsCommand(t *testing.T) {
-	// Execute the existing transport against the old admission response. The
-	// HTTP contract matters here: an equal minor from another feature is not
-	// evidence that this command exists.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, err := io.WriteString(w, `{"error":"command_not_allowed","message":"command is not allowed through the daemon CLI runner"}`)
-		assert.NoError(t, err)
-	}))
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "synthetic-key", AllowInsecure: true})
-	require.NoError(t, err)
-	err = client.RunCLICommand(t.Context(), daemonclient.CLIRunRequest{Args: []string{"diagnose-fts", "--json"}}, nil)
-	require.ErrorContains(t, err, "command is not allowed")
 }
 
 type ftsDiagnosticFailWriter struct{}

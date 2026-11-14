@@ -224,3 +224,77 @@ func TestPGFTSDiagnosticVersionAuxiliaryAndOverflow(t *testing.T) {
 		})
 	}
 }
+
+func TestFTSDiagnosticSQLiteEmbeddedNUL(t *testing.T) {
+	for _, field := range []string{"body", "subject", "from", "to", "cc"} {
+		for _, tc := range []struct {
+			name, value, indexed, outcome, reason string
+		}{
+			{name: "matching", value: "alpha\x00omega", indexed: "alpha\x00omega", outcome: "ok"},
+			{name: "leading NUL", value: "\x00omega", indexed: "\x00omega", outcome: "ok"},
+			{name: "truncated", value: "alpha\x00omega", indexed: "alpha", outcome: "defects"},
+			{name: "UTF-8 below byte limit", value: strings.Repeat("α", 499_980) + "\x00x", indexed: strings.Repeat("α", 499_980) + "\x00x", outcome: "ok"},
+			{name: "byte limit after NUL", value: "alpha\x00" + strings.Repeat("α", 500_001), indexed: "alpha", outcome: "incomplete", reason: "input_limit"},
+		} {
+			t.Run(field+"/"+tc.name, func(t *testing.T) {
+				a, r := assert.New(t), require.New(t)
+				f := storetest.New(t)
+				if f.Store.IsPostgreSQL() {
+					t.Skip("PostgreSQL TEXT cannot contain embedded NUL")
+				}
+				id := f.CreateMessage("synthetic-nul")
+				indexed := map[string]string{field: tc.indexed}
+				switch field {
+				case "body":
+					r.NoError(f.Store.UpsertMessageBodyContext(t.Context(), id, sql.NullString{String: tc.value, Valid: true}, sql.NullString{}))
+				case "subject":
+					_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = ? WHERE id = ?`, tc.value, id)
+					r.NoError(err)
+				default:
+					participant := f.EnsureParticipant("synthetic@example.test", "Synthetic", "example.test")
+					r.NoError(f.Store.ReplaceMessageRecipientsContext(t.Context(), id, field, []int64{participant}, nil))
+					// Model historical retained text without changing an indexing writer.
+					_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE message_recipients SET email_address = ? WHERE message_id = ?`, tc.value, id)
+					r.NoError(err)
+				}
+				r.NoError(f.Store.UpsertFTSContext(t.Context(), id, indexed["subject"], indexed["body"], indexed["from"], indexed["to"], indexed["cc"]))
+				got, err := f.Store.DiagnoseFTSContext(t.Context(), store.FTSDiagnosticOptions{})
+				r.NoError(err)
+				r.Len(got.Entries, 1)
+				a.Equal(tc.outcome, got.Outcome)
+				a.Equal(tc.reason, got.Entries[0].Reason)
+				switch tc.outcome {
+				case "ok":
+					a.Equal(1, got.Matched)
+					a.False(got.Entries[0].EmptyDocument)
+				case "defects":
+					a.Equal([]string{"document_mismatch"}, got.Entries[0].Issues)
+				case "incomplete":
+					a.Equal(1, got.Inconclusive)
+					a.Zero(got.Matched)
+				}
+			})
+		}
+	}
+}
+
+func TestFTSDiagnosticSQLiteRecipientNULPreflight(t *testing.T) {
+	a, r := assert.New(t), require.New(t)
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL TEXT cannot contain embedded NUL")
+	}
+	id := f.CreateMessage("synthetic-recipient-nul")
+	participant := f.EnsureParticipant("synthetic@example.test", "Synthetic", "example.test")
+	// Bcc is outside the FTS envelope, so only the preflight can enforce this bound.
+	r.NoError(f.Store.ReplaceMessageRecipientsContext(t.Context(), id, "bcc", []int64{participant}, nil))
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE message_recipients SET display_name = ? WHERE message_id = ?`, "prefix\x00"+strings.Repeat("x", 1_000_001), id)
+	r.NoError(err)
+	r.NoError(f.Store.IndexStoredMessageContext(t.Context(), id))
+	got, err := f.Store.DiagnoseFTSContext(t.Context(), store.FTSDiagnosticOptions{})
+	r.NoError(err)
+	r.Len(got.Entries, 1)
+	a.Equal("incomplete", got.Outcome)
+	a.Equal("input_limit", got.Entries[0].Reason)
+	a.Equal(1, got.Inconclusive)
+}

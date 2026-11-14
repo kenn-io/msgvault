@@ -4251,9 +4251,11 @@ identity. These checks compare stored representations; they do not verify
 physical postings, tokenizer implementation, MIME extraction or original bytes.
 Existing database integrity checks cover a different dimension.
 
-Inputs are limited to 1,000,000 bytes per document field, 256 recipients and
-1,000,000 characters across the recipient address/name inputs. SQL bounds text
-before transfer. Inputs exceeding those limits yield `inconclusive` with
+Inputs are limited to 1,000,000 bytes per document field and 256 recipients.
+The recipient address/name preflight allows 1,000,000 bytes on SQLite or
+1,000,000 characters on PostgreSQL. SQLite reads and measures bytes so embedded
+NUL characters cannot hide a suffix. SQL bounds text before transfer. Inputs
+exceeding those limits yield `inconclusive` with
 `input_limit`; a truncated comparison never establishes a match. Missing body
 rows use the empty-body rule of stored-message indexing. Caller-supplied index
 documents can intentionally differ from this stored-data rule: a mismatch
