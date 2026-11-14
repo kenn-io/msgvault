@@ -67,6 +67,18 @@ func TestAttributeValueJSONSQLiteMigration(t *testing.T) {
 			require.NoError(err)
 		}
 	}
+	// Deleted values may still be referenced by a merge journal.
+	for _, table := range []string{"person_attribute_values", "organization_attribute_values"} {
+		owner := "person_id"
+		if table == "organization_attribute_values" {
+			owner = "organization_id"
+		}
+		_, err = conn.ExecContext(t.Context(), `INSERT INTO `+table+` (id, `+owner+`, definition_id, ordinal, value_json, source)
+			SELECT 100, `+owner+`, definition_id, 99, value_json, source FROM `+table+` LIMIT 1`)
+		require.NoError(err)
+		_, err = conn.ExecContext(t.Context(), `DELETE FROM `+table+` WHERE id = 100`)
+		require.NoError(err)
+	}
 	_, err = conn.ExecContext(t.Context(), `UPDATE organization_attribute_values SET value_json = CAST(value_json AS BLOB) WHERE organization_id = ?`, organization.ID)
 	require.NoError(err)
 	for _, tc := range []struct {
@@ -94,6 +106,20 @@ func TestAttributeValueJSONSQLiteMigration(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchemaContext(t.Context()))
 	require.NoError(st.InitSchemaContext(t.Context()))
+	for _, table := range []string{"person_attribute_values", "organization_attribute_values"} {
+		owner := "person_id"
+		if table == "organization_attribute_values" {
+			owner = "organization_id"
+		}
+		result, err := st.db.ExecContext(t.Context(), `INSERT INTO `+table+` (`+owner+`, definition_id, ordinal, value_json, source)
+			SELECT `+owner+`, definition_id, 99, value_json, source FROM `+table+` LIMIT 1`)
+		require.NoError(err)
+		id, err := result.LastInsertId()
+		require.NoError(err)
+		assert.Greater(id, int64(100), table)
+		_, err = st.db.ExecContext(t.Context(), `DELETE FROM `+table+` WHERE id = ?`, id)
+		require.NoError(err)
+	}
 	var storage string
 	var value int
 	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT typeof(value_json), json_extract(value_json, '$') FROM person_attribute_values WHERE id = ?`, first.Value.ID).Scan(&storage, &value))

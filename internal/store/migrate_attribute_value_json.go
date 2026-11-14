@@ -61,6 +61,10 @@ func (s *Store) migrateAttributeValueJSONSQLite(ctx context.Context) (err error)
 		if strings.Contains(definition, "value_json        TEXT") {
 			continue
 		}
+		var sequence int64
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = ?), 0)`, table).Scan(&sequence); err != nil {
+			return fmt.Errorf("inspect %s sequence: %w", table, err)
+		}
 		indexes, err := func() ([]string, error) {
 			rows, err := tx.QueryContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL`, table)
 			if err != nil {
@@ -96,6 +100,12 @@ func (s *Store) migrateAttributeValueJSONSQLite(ctx context.Context) (err error)
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				return fmt.Errorf("rebuild %s: %w", table, err)
 			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO sqlite_sequence(name, seq) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = ?)`, table, sequence, table); err != nil {
+			return fmt.Errorf("restore %s sequence: %w", table, err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = ?`, sequence, table); err != nil {
+			return fmt.Errorf("restore %s sequence: %w", table, err)
 		}
 		for _, index := range indexes {
 			if _, err := tx.ExecContext(ctx, index); err != nil {
