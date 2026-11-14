@@ -201,6 +201,14 @@ func (s *Store) GetCollectionByNameContext(
 	ctx context.Context,
 	name string,
 ) (*CollectionWithSources, error) {
+	c, err := s.collectionByNameContext(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	return s.hydrateCollectionContext(ctx, c)
+}
+
+func (s *Store) collectionByNameContext(ctx context.Context, name string) (*Collection, error) {
 	// A scoped caller sees only collections with an authorized member, so a
 	// collection of other sources reads the same as a missing one.
 	authorized, authorizedArgs := sourceScopeClause(ctx, "cs.source_id")
@@ -219,7 +227,7 @@ func (s *Store) GetCollectionByNameContext(
 		}
 		return nil, err
 	}
-	return s.hydrateCollectionContext(ctx, c)
+	return c, nil
 }
 
 // ListCollections returns every collection with source IDs and
@@ -381,32 +389,10 @@ func (s *Store) hydrateCollectionContext(
 	ctx context.Context,
 	c *Collection,
 ) (*CollectionWithSources, error) {
-	authorized, authorizedArgs := sourceScopeClause(ctx, "source_id")
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT source_id FROM collection_sources
-		 WHERE collection_id = ?`+authorized+`
-		 ORDER BY source_id`,
-		append([]any{c.ID}, authorizedArgs...)...,
-	)
+	sourceIDs, err := s.collectionSourceIDsContext(ctx, c)
 	if err != nil {
-		return nil, fmt.Errorf("load sources for %s: %w", c.Name, err)
-	}
-	var sourceIDs []int64
-	for rows.Next() {
-		var sid int64
-		if err := rows.Scan(&sid); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		sourceIDs = append(sourceIDs, sid)
-	}
-	// Idiomatic ordering: check rows.Err() before closing so the
-	// iteration error is observed against an open rows handle.
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
 		return nil, err
 	}
-	_ = rows.Close()
 
 	var count, sourceDeleted int64
 	if len(sourceIDs) > 0 {
@@ -487,4 +473,52 @@ func uniqueInt64s(in []int64) []int64 {
 		out = append(out, v)
 	}
 	return out
+}
+
+// GetCollectionSourceIDs returns the current members of a named collection.
+func (s *Store) GetCollectionSourceIDs(name string) ([]int64, error) {
+	return s.GetCollectionSourceIDsContext(context.Background(), name)
+}
+
+func (s *Store) GetCollectionSourceIDsContext(ctx context.Context, name string) ([]int64, error) {
+	c, err := s.collectionByNameContext(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := s.collectionSourceIDsContext(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	return append([]int64{}, ids...), nil
+}
+
+func (s *Store) collectionSourceIDsContext(ctx context.Context, c *Collection) ([]int64, error) {
+	authorized, authorizedArgs := sourceScopeClause(ctx, "source_id")
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT source_id FROM collection_sources
+		 WHERE collection_id = ?`+authorized+`
+		 ORDER BY source_id`,
+		append([]any{c.ID}, authorizedArgs...)...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load sources for %s: %w", c.Name, err)
+	}
+	var sourceIDs []int64
+	for rows.Next() {
+		var sid int64
+		if err := rows.Scan(&sid); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		sourceIDs = append(sourceIDs, sid)
+	}
+	// Idiomatic ordering: check rows.Err() before closing so the
+	// iteration error is observed against an open rows handle.
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	_ = rows.Close()
+
+	return sourceIDs, nil
 }

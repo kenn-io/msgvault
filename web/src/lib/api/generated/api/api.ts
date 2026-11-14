@@ -70,6 +70,7 @@ import type {
   ClearPersonAttributePathParameters,
   CliAccountsResponse,
   CliCollectionEnvelope,
+  CliCollectionMembersResponse,
   CliCollectionsResponse,
   CliInitDBResponse,
   CliMessageResponse,
@@ -141,6 +142,7 @@ import type {
   GetAttachmentPathParameters,
   GetAttributeDefinitionPathParameters,
   GetCLIAttachmentParams,
+  GetCLICollectionMembersParams,
   GetCLICollectionParams,
   GetCLIMessageOriginalParams,
   GetCLIMessageParams,
@@ -1118,6 +1120,18 @@ export const getCLICollection = (
 ) => {
   return orvalFetch<CliCollectionEnvelope>(
     { url: `/api/v1/cli/collection`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Get collection source IDs
+ */
+export const getCLICollectionMembers = (
+  params: GetCLICollectionMembersParams,
+  options?: SecondParameter<typeof orvalFetch<CliCollectionMembersResponse>>,
+) => {
+  return orvalFetch<CliCollectionMembersResponse>(
+    { url: `/api/v1/cli/collection/members`, method: "GET", params },
     options,
   );
 };

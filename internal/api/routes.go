@@ -495,6 +495,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	)
 	registerAPIV1RawHumaJSONRoute[cliCollectionsResponse](apiV1, "listCLICollections", http.MethodGet, "/cli/collections", "List collections for CLI output", s.handleCLICollections)
 	registerAPIV1RawHumaJSONRoute[cliCollectionEnvelope](apiV1, "getCLICollection", http.MethodGet, "/cli/collection", "Get one collection for CLI output", s.handleCLICollection)
+	registerAPIV1RawHumaJSONRoute[cliCollectionMembersResponse](apiV1, "getCLICollectionMembers", http.MethodGet, "/cli/collection/members", "Get collection source IDs", s.handleCLICollectionMembers)
 	s.registerCLIAccountHumaRoutes(apiV1)
 	s.registerCLICollectionHumaRoutes(apiV1)
 	s.registerCLIIdentityHumaRoutes(apiV1)
@@ -918,7 +919,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		}
 	case "getCLIAttachment":
 		return []*huma.Param{queryStringParam("content_hash", "Attachment SHA-256 content hash", true)}
-	case "getCLICollection":
+	case "getCLICollection", "getCLICollectionMembers":
 		return []*huma.Param{queryStringParam("name", "Collection name", true)}
 	case "buildCLICache":
 		return []*huma.Param{queryBooleanParam("full_rebuild", "Rebuild all cache files from scratch")}

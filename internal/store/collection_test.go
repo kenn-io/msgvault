@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -178,4 +179,30 @@ func TestCollection_DefaultAllIncremental(t *testing.T) {
 	coll, err = st.GetCollectionByName("All")
 	require.NoError(err, "GetCollectionByName after add")
 	assert.Len(t, coll.SourceIDs, initialCount+1)
+}
+
+func TestCollectionSourceIDs(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	other, err := st.GetOrCreateSource("imap", "other@example.test")
+	require.NoError(err)
+	_, err = st.CreateCollection("work", "", []int64{f.Source.ID})
+	require.NoError(err)
+	ids, err := st.GetCollectionSourceIDsContext(t.Context(), "work")
+	require.NoError(err)
+	require.Equal([]int64{f.Source.ID}, ids)
+	require.NoError(st.AddSourcesToCollection("work", []int64{other.ID}))
+	ids, err = st.GetCollectionSourceIDsContext(sourcescope.WithSourceIDs(t.Context(), []int64{other.ID}), "work")
+	require.NoError(err)
+	require.Equal([]int64{other.ID}, ids)
+	require.NoError(st.RemoveSourcesFromCollection("work", []int64{f.Source.ID, other.ID}))
+	ids, err = st.GetCollectionSourceIDsContext(t.Context(), "work")
+	require.NoError(err)
+	require.NotNil(ids)
+	require.Empty(ids)
+	_, err = st.GetCollectionSourceIDsContext(sourcescope.WithSourceIDs(t.Context(), []int64{other.ID}), "work")
+	require.ErrorIs(err, store.ErrCollectionNotFound)
+	_, err = st.GetCollectionSourceIDsContext(t.Context(), "missing")
+	require.ErrorIs(err, store.ErrCollectionNotFound)
 }

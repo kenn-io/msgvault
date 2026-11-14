@@ -917,8 +917,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		sourceIDs := scope.sourceIDs()
 		if len(sourceIDs) == 0 {
-			writeError(w, http.StatusBadRequest, "empty_scope", cliEmptyScopeMessage(account, collection))
-			return
+			if collection == "" || (mode != "vector" && mode != exploreSearchModeHybrid) {
+				writeError(w, http.StatusBadRequest, "empty_scope", cliEmptyScopeMessage(account, collection))
+				return
+			}
+			parsedQuery.ConversationIDs = []int64{} // An empty scope matches no conversations.
 		}
 		parsedQuery.AccountIDs = append(parsedQuery.AccountIDs, sourceIDs...)
 	}

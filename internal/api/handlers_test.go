@@ -7521,10 +7521,23 @@ func TestHandleSearch_VectorRejectsInvalidTimePeriod(t *testing.T) {
 	assert.Contains(errResp.Message, "YYYY, YYYY-MM, or YYYY-MM-DD", "accepted formats")
 }
 
+type searchCollectionLookupStore struct {
+	*mockStore
+
+	fullLookups int
+}
+
+func (s *searchCollectionLookupStore) GetCollectionByName(name string) (*store.CollectionWithSources, error) {
+	s.fullLookups++
+	return s.mockStore.GetCollectionByName(name)
+}
+
 func TestHandleSearch_VectorCollectionParamReachesFilter(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		messages: []APIMessage{{ID: 42, Subject: "Lunch"}},
+	assertions := assert.New(t)
+	st := &searchCollectionLookupStore{mockStore: &mockStore{
+		messages:        []APIMessage{{ID: 42, Subject: "Lunch"}},
+		sourcesByLookup: map[string][]*store.Source{"account": {{ID: 99, Identifier: "account"}}},
 		collections: map[string]*store.CollectionWithSources{
 			"Important": {
 				Collection: store.Collection{
@@ -7534,7 +7547,7 @@ func TestHandleSearch_VectorCollectionParamReachesFilter(t *testing.T) {
 				SourceIDs: []int64{77, 88},
 			},
 		},
-	}
+	}}
 	backend := &fakeVectorBackend{
 		active: &vector.Generation{
 			ID: 1, Model: "fake", Dimension: 4,
@@ -7547,7 +7560,7 @@ func TestHandleSearch_VectorCollectionParamReachesFilter(t *testing.T) {
 	})
 	srv := NewServerWithOptions(ServerOptions{
 		Config:       &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:        store,
+		Store:        st,
 		HybridEngine: engine,
 		Backend:      backend,
 		Logger:       testLogger(),
@@ -7560,6 +7573,20 @@ func TestHandleSearch_VectorCollectionParamReachesFilter(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 	assert.Equal(t, []int64{77, 88}, backend.searchFilter.SourceIDs, "SourceIDs")
+	assertions.Zero(st.fullLookups)
+	for _, tc := range []struct {
+		name    string
+		status  int
+		message string
+	}{
+		{"account", http.StatusBadRequest, "is an account, not a collection"},
+		{"missing", http.StatusBadRequest, "no collection named"},
+	} {
+		rec := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search?q=lunch&mode=vector&collection="+tc.name, nil))
+		assertions.Equal(tc.status, rec.Code)
+		assertions.Contains(rec.Body.String(), tc.message)
+	}
 }
 
 // TestHandleSearch_HybridResponseItemShape regression-guards the
@@ -9575,4 +9602,58 @@ func TestAppleSourceStatusReusesLoadedSources(t *testing.T) {
 		require.Equal(http.StatusOK, w.Code)
 		assert.Equal(int32(1), st.sourceLists.Load())
 	}
+}
+
+func TestCLICollectionMembers(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "members@example.test")
+	require.NoError(err)
+	_, err = st.CreateCollection("work", "", []int64{source.ID})
+	require.NoError(err)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+	for _, tc := range []struct {
+		query  string
+		status int
+		name   string
+		ids    []int64
+	}{
+		{"?name=work", http.StatusOK, "work", []int64{source.ID}},
+		{"?name=missing", http.StatusNotFound, "", nil},
+		{"", http.StatusBadRequest, "", nil},
+	} {
+		rec := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/collection/members"+tc.query, nil))
+		assert.Equal(tc.status, rec.Code)
+		if tc.status == http.StatusOK {
+			var got cliCollectionMembersResponse
+			require.NoError(json.NewDecoder(rec.Body).Decode(&got))
+			assert.Equal(tc.name, got.Name)
+			assert.Equal(tc.ids, got.SourceIDs)
+		}
+	}
+}
+
+func TestSemanticEmptyCollectionReadinessAndFilter(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "empty@example.test")
+	require.NoError(err)
+	_, err = st.CreateCollection("empty", "", []int64{source.ID})
+	require.NoError(err)
+	require.NoError(st.RemoveSourcesFromCollection("empty", []int64{source.ID}))
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+	rec := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search?q=fixture&mode=hybrid&collection=empty", nil))
+	assert.Equal(http.StatusServiceUnavailable, rec.Code)
+	assert.Contains(rec.Body.String(), "vector_not_enabled")
+	backend := &fakeVectorBackend{active: &vector.Generation{ID: 1, Fingerprint: "ready", State: vector.GenerationActive}}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{ExpectedFingerprint: "ready"})
+	srv = NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, HybridEngine: engine, Backend: backend, Logger: testLogger()})
+	rec = httptest.NewRecorder()
+	srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search?q=fixture&mode=vector&collection=empty", nil))
+	assert.Equal(http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal([]int64{-1}, backend.searchFilter.ConversationIDs)
 }

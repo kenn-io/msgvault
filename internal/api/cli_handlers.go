@@ -47,6 +47,7 @@ type CLIStore interface {
 	GetSourcesByIdentifierOrDisplayName(query string) ([]*store.Source, error)
 	GetSourcesByTypeAndAccount(sourceType, accountEmail string) ([]*store.Source, error)
 	GetCollectionByName(name string) (*store.CollectionWithSources, error)
+	GetCollectionSourceIDs(name string) ([]int64, error)
 	ListCollections() ([]*store.CollectionWithSources, error)
 	CreateCollection(name, description string, sourceIDs []int64) (*store.Collection, error)
 	AddSourcesToCollection(name string, sourceIDs []int64) error
@@ -82,6 +83,7 @@ type ContextCLIStore interface {
 	GetSourcesByIdentifierOrDisplayNameContext(ctx context.Context, query string) ([]*store.Source, error)
 	GetSourcesByTypeAndAccountContext(ctx context.Context, sourceType, accountEmail string) ([]*store.Source, error)
 	GetCollectionByNameContext(ctx context.Context, name string) (*store.CollectionWithSources, error)
+	GetCollectionSourceIDsContext(ctx context.Context, name string) ([]int64, error)
 	ListCollectionsContext(ctx context.Context) ([]*store.CollectionWithSources, error)
 	CreateCollectionContext(
 		ctx context.Context,
@@ -167,6 +169,10 @@ func (s *requestCLIStore) GetSourcesByTypeAndAccount(
 
 func (s *requestCLIStore) GetCollectionByName(name string) (*store.CollectionWithSources, error) {
 	return s.contextStore.GetCollectionByNameContext(s.ctx, name)
+}
+
+func (s *requestCLIStore) GetCollectionSourceIDs(name string) ([]int64, error) {
+	return s.contextStore.GetCollectionSourceIDsContext(s.ctx, name)
 }
 
 func (s *requestCLIStore) ListCollections() ([]*store.CollectionWithSources, error) {
@@ -2942,6 +2948,35 @@ func (s *Server) handleCLICollection(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, cliCollectionEnvelope{Collection: item})
 }
 
+type cliCollectionMembersResponse struct {
+	Name      string  `json:"name"`
+	SourceIDs []int64 `json:"source_ids"`
+}
+
+func (s *Server) handleCLICollectionMembers(w http.ResponseWriter, r *http.Request) {
+	cliStore, apiErr := s.cliStore()
+	if apiErr != nil {
+		writeAPIHTTPError(w, apiErr)
+		return
+	}
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "missing_name", "Collection name is required")
+		return
+	}
+	ids, err := bindCLIStoreContext(r.Context(), cliStore).GetCollectionSourceIDs(name)
+	if errors.Is(err, store.ErrCollectionNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "Collection not found")
+		return
+	}
+	if err != nil {
+		s.logger.Error("failed to get collection members", "name", name, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve collection")
+		return
+	}
+	writeJSON(w, http.StatusOK, cliCollectionMembersResponse{Name: name, SourceIDs: ids})
+}
+
 func (s *Server) createCLICollection(
 	ctx context.Context,
 	req collectionops.CreateRequest,
@@ -3883,9 +3918,17 @@ func resolveCLIAccountScope(ctx context.Context, st CLIStore, input string) (cli
 }
 
 func resolveCLICollectionScope(st CLIStore, input string) (cliScope, error) {
+	ids, err := st.GetCollectionSourceIDs(input)
+	if err != nil {
+		return resolveMissingCLICollectionScope(st, input, err)
+	}
+	return cliScope{Account: collectionops.Scope{Input: input}, Collection: &store.CollectionWithSources{Name: input, SourceIDs: ids}}, nil
+}
+
+func resolveMissingCLICollectionScope(st CLIStore, input string, lookupErr error) (cliScope, error) {
+	if !errors.Is(lookupErr, store.ErrCollectionNotFound) {
+		return cliScope{}, opserr.Internal(fmt.Errorf("look up collection %q: %w", input, lookupErr))
+	}
 	collScope, err := collectionops.ResolveCollection(st, input)
-	return cliScope{
-		Account:    collectionops.Scope{Input: collScope.Input},
-		Collection: collScope.Collection,
-	}, err
+	return cliScope{Account: collectionops.Scope{Input: collScope.Input}, Collection: collScope.Collection}, err
 }

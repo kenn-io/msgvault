@@ -68,6 +68,7 @@ func (e *Engine) QueryArchiveSQL(ctx context.Context, sql string, fresh bool) (*
 var _ query.Engine = (*Engine)(nil)
 var _ query.TextEngine = (*Engine)(nil)
 var _ query.CollectionScopeLister = (*Engine)(nil)
+var _ query.CollectionScopeGetter = (*Engine)(nil)
 var _ query.MessageBodySearcher = (*Engine)(nil)
 var _ query.SemanticMessageSearcher = (*Engine)(nil)
 var _ query.DeletionTargetSearchResolver = (*Engine)(nil)
@@ -1534,7 +1535,7 @@ func (e *Engine) ListCollectionScopes(ctx context.Context) ([]query.CollectionSc
 	}
 	scopes := make([]query.CollectionScope, 0, len(collections))
 	for _, collection := range collections {
-		if collection.Name == store.DefaultCollectionName {
+		if !selectableCollection(collection.Name) {
 			continue
 		}
 		scopes = append(scopes, query.CollectionScope{
@@ -1543,6 +1544,19 @@ func (e *Engine) ListCollectionScopes(ctx context.Context) ([]query.CollectionSc
 		})
 	}
 	return scopes, nil
+}
+
+func selectableCollection(name string) bool { return name != store.DefaultCollectionName }
+
+func (e *Engine) GetCollectionScope(ctx context.Context, name string) (query.CollectionScope, error) {
+	if !selectableCollection(name) {
+		return query.CollectionScope{}, store.ErrCollectionNotFound
+	}
+	collection, err := e.store.GetCLICollectionMembers(ctx, name)
+	if err != nil {
+		return query.CollectionScope{}, err
+	}
+	return query.CollectionScope{Name: collection.Name, SourceIDs: append([]int64{}, collection.SourceIds...)}, nil
 }
 
 func (e *Engine) ListConversations(ctx context.Context, filter query.TextFilter) ([]query.ConversationRow, error) {

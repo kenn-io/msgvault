@@ -2459,6 +2459,15 @@ func (c CliCollectionEnvelope) Validate() error {
 	return errors
 }
 
+type CliCollectionMembersResponse struct {
+	Name      string  `json:"name" validate:"required"`
+	SourceIds []int64 `json:"source_ids" validate:"required"`
+}
+
+func (c CliCollectionMembersResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type CliCollectionResponse struct {
 	CreatedAt          time.Time                     `json:"created_at" validate:"required"`
 	Description        *string                       `json:"description,omitzero"`
