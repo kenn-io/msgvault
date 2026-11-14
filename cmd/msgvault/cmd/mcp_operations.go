@@ -148,11 +148,20 @@ func mcpSyncArguments(args map[string]any) (string, string, error) {
 	return account, sourceType, nil
 }
 
+type mcpOperationFailure struct {
+	Error                     string `json:"error"`
+	OperationMayHaveCompleted bool   `json:"operation_may_have_completed"`
+}
+
 func operationFailure(code string, uncertain bool) *mcpserver.OperationResult {
-	return &mcpserver.OperationResult{IsError: true, Output: struct {
-		Error                     string `json:"error"`
-		OperationMayHaveCompleted bool   `json:"operation_may_have_completed"`
-	}{code, uncertain}}
+	return &mcpserver.OperationResult{IsError: true, Output: mcpOperationFailure{code, uncertain}}
+}
+
+func invalidOperationResponse(writes bool) *mcpserver.OperationResult {
+	if writes {
+		return operationFailure("operation_receipt_unavailable", true)
+	}
+	return operationFailure("invalid_operation_response", false)
 }
 
 // The fixed route/request chosen by an adapter uses existing authentication and
@@ -174,9 +183,15 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
 	if err != nil {
+		if writes && slices.Contains(success, response.StatusCode) {
+			return operationFailure("operation_receipt_unavailable", true), err
+		}
 		return operationFailure("operation_response_failed", writes), err
 	}
 	if len(data) > 1<<20 {
+		if writes && slices.Contains(success, response.StatusCode) {
+			return operationFailure("operation_receipt_unavailable", true), nil
+		}
 		return operationFailure("operation_response_limit_exceeded", writes), nil
 	}
 	if !slices.Contains(success, response.StatusCode) {
@@ -200,7 +215,7 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 	}
 	var output T
 	if err := json.Unmarshal(data, &output); err != nil {
-		return operationFailure("invalid_operation_response", writes), err
+		return invalidOperationResponse(writes), err
 	}
 	return &mcpserver.OperationResult{Output: output, ETag: response.Header.Get("ETag")}, nil
 }

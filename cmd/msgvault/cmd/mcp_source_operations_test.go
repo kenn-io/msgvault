@@ -330,45 +330,83 @@ func (w missingETagResponseWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
-func TestMCPPersonCommittedRenameWithMissingETagRemainsUncertain(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	st := testutil.NewTestStore(t)
-	participant, err := st.EnsureParticipant("contact@example.com", "Observed Example", "example.com")
-	requirements.NoError(err)
-	person, _, err := st.CreatePersonFromParticipant(participant)
-	requirements.NoError(err)
-	fixture := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)})
-	router := fixture.Router()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch {
-			router.ServeHTTP(missingETagResponseWriter{w}, r)
-			return
-		}
-		router.ServeHTTP(w, r)
-	}))
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-	requirements.NoError(err)
-	capabilities, err := client.MCPCapabilities(t.Context())
-	requirements.NoError(err)
-	backend := newDaemonMCPOperations(client, capabilities)
-	result, err := backend.ExecuteOperation(t.Context(), "get_person_edit_context", map[string]any{"person_id": person.ID})
-	requirements.NoError(err)
-	edit := operationOutput[mcpserver.PersonEditContext](t, result)
-	result, err = backend.ExecuteOperation(t.Context(), "set_person_display_name", map[string]any{"person_id": person.ID, "etag": edit.ETag, "display_name": "Committed Example"})
-	requirements.NoError(err)
-	requirements.True(result.IsError)
-	data, err := json.Marshal(result.Output)
-	requirements.NoError(err)
-	var receipt struct {
-		Uncertain bool `json:"operation_may_have_completed"`
+func TestMCPCommittedWriteWithMissingETagRemainsUncertain(t *testing.T) {
+	for _, kind := range []string{"person", "slack"} {
+		t.Run(kind, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			var router http.Handler
+			var personID int64
+			var verify func()
+			if kind == "person" {
+				st := testutil.NewTestStore(t)
+				participant, err := st.EnsureParticipant("contact@example.com", "Observed Example", "example.com")
+				requirements.NoError(err)
+				person, _, err := st.CreatePersonFromParticipant(participant)
+				requirements.NoError(err)
+				personID = person.ID
+				router = api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}).Router()
+				verify = func() {
+					current, err := st.GetPerson(person.ID)
+					requirements.NoError(err)
+					assertions.Equal(new("Committed Example"), current.DisplayName)
+				}
+			} else {
+				path := filepath.Join(t.TempDir(), "config.toml")
+				requirements.NoError(os.WriteFile(path, []byte("[slack]\ndms = true\n"), 0o600))
+				cfg, err := config.Load(path, "")
+				requirements.NoError(err)
+				router = api.NewServer(cfg, nil, nil, slog.New(slog.DiscardHandler)).Router()
+				verify = func() {
+					reloaded, err := config.Load(path, "")
+					requirements.NoError(err)
+					assertions.False(reloaded.Slack.DMsEnabled())
+				}
+			}
+			// A remote daemon's intermediary can strip the ETag after a write commits.
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPatch {
+					router.ServeHTTP(missingETagResponseWriter{w}, r)
+					return
+				}
+				router.ServeHTTP(w, r)
+			}))
+			t.Cleanup(server.Close)
+			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+			requirements.NoError(err)
+			capabilities, err := client.MCPCapabilities(t.Context())
+			requirements.NoError(err)
+			backend := newDaemonMCPOperations(client, capabilities)
+			var result *mcpserver.OperationResult
+			if kind == "person" {
+				result, err = backend.ExecuteOperation(t.Context(), "get_person_edit_context", map[string]any{"person_id": personID})
+				requirements.NoError(err)
+				edit := operationOutput[mcpserver.PersonEditContext](t, result)
+				result, err = backend.ExecuteOperation(t.Context(), "set_person_display_name", map[string]any{"person_id": personID, "etag": edit.ETag, "display_name": "Committed Example"})
+			} else {
+				result, err = backend.ExecuteOperation(t.Context(), "get_slack_sync_policy", nil)
+				requirements.NoError(err)
+				policy := operationOutput[mcpserver.SlackSyncPolicy](t, result)
+				result, err = backend.ExecuteOperation(t.Context(), "update_slack_sync_policy", map[string]any{"etag": policy.ETag, "dms": false})
+			}
+			requirements.NoError(err)
+			requirements.True(result.IsError)
+			data, err := json.Marshal(result.Output)
+			requirements.NoError(err)
+			if kind == "person" {
+				var receipt struct {
+					Error     string `json:"error"`
+					Uncertain bool   `json:"operation_may_have_completed"`
+				}
+				requirements.NoError(json.Unmarshal(data, &receipt))
+				assertions.Equal("operation_receipt_unavailable", receipt.Error)
+				assertions.True(receipt.Uncertain)
+			} else {
+				assertions.JSONEq(`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
+			}
+			verify()
+		})
 	}
-	requirements.NoError(json.Unmarshal(data, &receipt))
-	assertions.True(receipt.Uncertain)
-	current, err := st.GetPerson(person.ID)
-	requirements.NoError(err)
-	assertions.Equal(new("Committed Example"), current.DisplayName)
 }
 
 func TestMCPCacheBuildStatusKeepsUnknownJobRefusal(t *testing.T) {

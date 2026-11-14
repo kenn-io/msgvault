@@ -930,6 +930,14 @@ one second, then make a new call, which needs approval again. MCP never
 retries a write by itself. If a write reports
 `operation_may_have_completed: true`, list the loops again before retrying.
 
+## Write responses
+
+If an MCP operation write returns `operation_receipt_unavailable`, the write
+may have completed but its receipt could not be read. Before retrying, use the
+matching read tool, such as `get_person_edit_context` for a display name or
+`get_slack_sync_policy` for Slack settings. For `sync_source`, check
+`list_source_status` and `get_source_scheduler_status` for progress.
+
 ## Write controls
 
 Enable only the writes intended for the assistant's session:
