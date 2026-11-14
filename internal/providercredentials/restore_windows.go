@@ -32,11 +32,6 @@ func SecureRestored(dir string, restored []string) error {
 		if err := verifyHandleOwner(directory); err != nil {
 			return fmt.Errorf("inspect restored token directory: %w", err)
 		}
-		for _, name := range restored {
-			if err := secureFileACL(filepath.Join(dir, name)); err != nil {
-				return fmt.Errorf("secure restored token %q: %w", name, err)
-			}
-		}
 		var changed []string
 		for _, name := range ancestors {
 			h, err := openSecurityHandle(filepath.Join(dir, name), true, windows.READ_CONTROL)
@@ -49,6 +44,11 @@ func SecureRestored(dir string, restored []string) error {
 			}
 			if err != nil && !containsPath(changed, name) {
 				changed = append(changed, name)
+			}
+		}
+		for _, name := range restored {
+			if err := secureFileACL(filepath.Join(dir, name)); err != nil {
+				return fmt.Errorf("secure restored token %q: %w", name, err)
 			}
 		}
 		rootChanged := verifyOwnerOnlyHandle(directory, false) != nil

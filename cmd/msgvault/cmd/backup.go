@@ -326,7 +326,7 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 }
 
 func securePostRestoreTokens(ctx context.Context, repo *backup.Repo, snapshotID, target string) (int, error) {
-	return secureRestoredTokens(ctx, repo, snapshotID, target, backupRestoreForceUnlock)
+	return secureRestoredTokens(ctx, repo, snapshotID, target, false)
 }
 
 func removeSQLiteVectorBackendPath(path string) error {

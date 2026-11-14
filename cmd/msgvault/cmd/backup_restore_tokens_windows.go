@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/pack"
@@ -17,7 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/providercredentials"
 )
 
-func escapeRestoreArg(arg string) string { return syscall.EscapeArg(arg) }
+func escapeRestoreArg(arg string) string { return "'" + strings.ReplaceAll(arg, "'", "''") + "'" }
 
 func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, target string, forceUnlock bool) (count int, err error) {
 	if err := ctx.Err(); err != nil {

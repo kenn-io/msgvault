@@ -364,7 +364,7 @@ func TestSecureRestoredRejectsIntermediateJunctionBeforeChangingOutsideACL(t *te
 	require.NoError(err, "%s", output)
 	t.Cleanup(func() { require.NoError(os.Remove(junction)) })
 	err = SecureRestored(root, []string{filepath.Join("junction", "nested", "credential.json")})
-	assert.Error(t, err)
+	require.Error(err)
 	assert.Equal(t, before, restoredTestDescriptor(t, file, false))
 }
 
@@ -592,10 +592,12 @@ func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
 	t.Run("unrelated inherited entries do not block repair", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "tokens")
 		require.NoError(t, os.Mkdir(dir, 0700))
-		root := shareRestoredTestDirectory(t, dir, windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE)
+		owner := providerCredentialTestAccess(currentWindowsProviderCredentialSID(t), windows.GENERIC_ALL, windows.TRUSTEE_IS_USER)
+		owner.Inheritance = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
+		root := setProviderCredentialTestACL(t, dir, []windows.EXPLICIT_ACCESS{owner}, true)
+		require.NoError(t, verifyOwnerOnlyHandle(root, false))
 		omitted := filepath.Join(dir, "omitted")
 		require.NoError(t, os.WriteFile(omitted, []byte("omitted"), 0600))
-		require.NoError(t, secureOwnerOnlyHandle(root))
 		selectedDir := filepath.Join(dir, "selected")
 		require.NoError(t, os.Mkdir(selectedDir, 0700))
 		shareRestoredTestDirectory(t, selectedDir, windows.NO_INHERITANCE)

@@ -135,7 +135,7 @@ func TestPostRestoreRepairDoesNotForceUnlock(t *testing.T) {
 	require.NoError(err)
 	backupRestoreForceUnlock = true
 	_, err = securePostRestoreTokens(t.Context(), repo, manifest.SnapshotID, target)
-	assert.ErrorIs(err, backup.ErrRepoLocked)
+	require.ErrorIs(err, backup.ErrRepoLocked)
 	assert.FileExists(repo.Path("locks", "exclusive.json"))
 	require.NoError(lock.Release())
 	lock, err = repo.AcquireExclusiveLock("create", false)
