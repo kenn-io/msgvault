@@ -157,6 +157,13 @@ func operationFailure(code string, uncertain bool) *mcpserver.OperationResult {
 	return &mcpserver.OperationResult{IsError: true, Output: mcpOperationFailure{code, uncertain}}
 }
 
+func invalidOperationResponse(writes bool) *mcpserver.OperationResult {
+	if writes {
+		return operationFailure("operation_receipt_unavailable", true)
+	}
+	return operationFailure("invalid_operation_response", false)
+}
+
 // The fixed route/request chosen by an adapter uses existing authentication and
 // cancellation without the daemon client's busy retry loop. Mutations with an
 // unclassified/interrupted response retain uncertain completion explicitly.
@@ -208,10 +215,7 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 	}
 	var output T
 	if err := json.Unmarshal(data, &output); err != nil {
-		if writes {
-			return operationFailure("operation_receipt_unavailable", true), err
-		}
-		return operationFailure("invalid_operation_response", writes), err
+		return invalidOperationResponse(writes), err
 	}
 	return &mcpserver.OperationResult{Output: output, ETag: response.Header.Get("ETag")}, nil
 }

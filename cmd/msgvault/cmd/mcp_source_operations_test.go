@@ -362,13 +362,48 @@ func TestMCPPersonCommittedRenameWithMissingETagRemainsUncertain(t *testing.T) {
 	data, err := json.Marshal(result.Output)
 	requirements.NoError(err)
 	var receipt struct {
-		Uncertain bool `json:"operation_may_have_completed"`
+		Error     string `json:"error"`
+		Uncertain bool   `json:"operation_may_have_completed"`
 	}
 	requirements.NoError(json.Unmarshal(data, &receipt))
+	assertions.Equal("operation_receipt_unavailable", receipt.Error)
 	assertions.True(receipt.Uncertain)
 	current, err := st.GetPerson(person.ID)
 	requirements.NoError(err)
 	assertions.Equal(new("Committed Example"), current.DisplayName)
+}
+
+func TestMCPSlackPolicyCommittedWriteWithMissingETagRemainsUncertain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte("[slack]\ndms = true\n"), 0o600))
+	cfg, err := config.Load(path, "")
+	require.NoError(t, err)
+	router := api.NewServer(cfg, nil, nil, slog.New(slog.DiscardHandler)).Router()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			router.ServeHTTP(missingETagResponseWriter{w}, r)
+			return
+		}
+		router.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+	require.NoError(t, err)
+	capabilities, err := client.MCPCapabilities(t.Context())
+	require.NoError(t, err)
+	backend := newDaemonMCPOperations(client, capabilities)
+	result, err := backend.ExecuteOperation(t.Context(), "get_slack_sync_policy", nil)
+	require.NoError(t, err)
+	policy := operationOutput[mcpserver.SlackSyncPolicy](t, result)
+	result, err = backend.ExecuteOperation(t.Context(), "update_slack_sync_policy", map[string]any{"etag": policy.ETag, "dms": false})
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	data, err := json.Marshal(result.Output)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
+	reloaded, err := config.Load(path, "")
+	require.NoError(t, err)
+	assert.False(t, reloaded.Slack.DMsEnabled())
 }
 
 func TestMCPCacheBuildStatusKeepsUnknownJobRefusal(t *testing.T) {
