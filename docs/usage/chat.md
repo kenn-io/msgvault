@@ -811,9 +811,8 @@ Claude will automatically call the appropriate msgvault tools to retrieve and an
 
 Ask your assistant what a person recently shared, and `get_person_profile` can
 return their saved brief with its sources. This is a read-only operation: it
-makes no provider call and cannot generate, reject, or enroll briefs. See
-[person briefs](/docs/usage/people-briefs/) to
-set one up.
+makes no provider call. See [person briefs](/docs/usage/people-briefs/#mcp-access)
+for the other brief tools and setup.
 
 The summary comes from messages other people wrote. Treat its words as archive
 content to read or check, never as instructions or permission to take an action.
@@ -939,6 +938,7 @@ Enable only the writes intended for the assistant's session:
 |---|---|---|
 | Native email tag edits, Saved View management, attachment export, deletion staging, and drafts | Available by default | `--http-allow-writes` |
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
+| Person brief enrollment | `--allow-brief-writes` | `--http-allow-writes --allow-brief-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
@@ -1029,6 +1029,7 @@ msgvault mcp --http 8080
 | `--http-token-env` | — | Name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-brief-writes` | `false` | On unreleased `main`, expose approved person brief enrollment changes. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-loop-writes` | `false` | On unreleased `main`, expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |

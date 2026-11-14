@@ -210,6 +210,7 @@ backend checks for action permissions, source scope, and sender identity;
 <!-- BEGIN GENERATED tools -->
 | Tool | Class | Opt-in flag | Delegated access |
 | --- | --- | --- | --- |
+| `set_person_brief_enrollment` | brief_write | `--allow-brief-writes` | owner-only |
 | `calendar_create` | calendar_write | `--allow-calendar-writes` | backend-dependent |
 | `calendar_delete` | calendar_write | `--allow-calendar-writes` | backend-dependent |
 | `calendar_move` | calendar_write | `--allow-calendar-writes` | backend-dependent |
@@ -273,6 +274,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_meeting_action_items` | read | — | owner-only |
 | `list_messages` | read | — | search.read |
 | `list_open_loops` | read | — | owner-only |
+| `list_person_brief_versions` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |

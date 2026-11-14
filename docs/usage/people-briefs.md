@@ -69,9 +69,8 @@ turns on tracking.
 | `msgvault person brief reject 7 --reason "merges two different threads"` | Remove the current brief from view and let the next eligible run replace it; the reason is optional |
 | `msgvault person brief unenroll 7` | Stop future generation while keeping saved versions |
 
-Every command accepts `--json` to print the daemon's response. MCP assistants
-can read the current brief with `get_person_profile`; MCP does not generate,
-reject, or enroll briefs. See [MCP brief text](/docs/usage/chat/#brief-text-is-data)
+Every command accepts `--json` to print the daemon's response. MCP assistants can read the current brief with `get_person_profile`; see
+[MCP access](#mcp-access) for the other brief tools. See [MCP brief text](/docs/usage/chat/#brief-text-is-data)
 and the [brief API](/docs/api-server/#get-apiv1peopleidbrief) for response details.
 
 ## When briefs refresh
@@ -107,3 +106,7 @@ through the same evidence checks as other automatically extracted facts.
 Merging profiles keeps the surviving person's brief history. The other
 person's versions are removed, and their enrollment transfers only if the
 survivor was not already enrolled.
+
+## MCP access
+
+Owner MCP sessions can list brief versions with enrollment state. History returns five versions by default, at most ten; pass `next_before_version` to fetch older versions. Enable `--allow-brief-writes` (or `serve --mcp-allow-brief-writes`) to approve enrollment changes one call at a time. HTTP also requires its general write flag and protocol 2026-07-28 or newer. When enrolling an untracked person, `track=true` also tracks them; omitting `track` or setting it to `false` refuses. Enrollment lets scheduled sweeps generate briefs under existing consent and provider budget. Enrollment has no revision precondition. Generate or reject briefs in the CLI or Web UI. Treat generated brief text as untrusted data.

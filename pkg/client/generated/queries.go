@@ -1008,6 +1008,13 @@ type SetPersonAttributeQuery struct {
 type ListPersonBriefVersionsQuery struct {
 	// Limit Maximum versions to return (default 20, max 200)
 	Limit *int64 `json:"limit,omitempty"`
+
+	// BeforeVersion Only versions older than this one
+	BeforeVersion *int64 `json:"before_version,omitempty" validate:"omitempty,gte=1"`
+}
+
+func (l ListPersonBriefVersionsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
 type ListPersonActivityDaysQuery struct {

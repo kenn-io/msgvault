@@ -7,9 +7,11 @@ import (
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 // getPersonProfileResponse answers "who is this", "when did we last talk",
@@ -459,9 +461,8 @@ func personProfileAddressResponse(addresses []peoplebrowser.PersonAddressSummary
 	}
 }
 
-// personProfileBriefResponse projects the current brief onto the tool result.
-// It stays a read: there is no MCP write for briefs, and only get_person_profile
-// carries one. Every model-generated string goes under untrusted_text after
+// personProfileBriefResponse projects a brief onto the tool result. MCP does not
+// generate or reject briefs. Every model-generated string goes under untrusted_text after
 // the same control-character stripping the TUI applies, so a sender who got
 // escape sequences into the brief cannot drive a terminal-backed client
 // either; the citations are projected separately from the daemon's typed
@@ -523,4 +524,27 @@ func personProfileBriefEvidenceResponse(evidence []peoplebrowser.PersonBriefEvid
 		})
 	}
 	return response
+}
+
+// PersonBriefVersion retains native lifecycle metadata alongside the safe prose projection.
+type PersonBriefVersion struct {
+	Brief          *personProfileBrief `json:"brief"`
+	RejectedReason string              `json:"rejected_reason,omitempty"`
+	Status         string              `json:"status"`
+	RejectedAt     *time.Time          `json:"rejected_at"`
+	SupersededAt   *time.Time          `json:"superseded_at"`
+}
+
+// PersonBriefVersionFromGenerated applies the profile's untrusted-text projection.
+func PersonBriefVersionFromGenerated(row generated.PersonBrief) PersonBriefVersion {
+	return PersonBriefVersion{Brief: personProfileBriefResponse(daemonclient.PersonBriefFromGenerated(row)), Status: row.Status, RejectedReason: textutil.SanitizeTerminal(row.RejectedReason), RejectedAt: row.RejectedAt, SupersededAt: row.SupersededAt}
+}
+
+// PersonBriefVersionsFromGenerated projects native history onto the catalog schema.
+func PersonBriefVersionsFromGenerated(rows []generated.PersonBrief) PersonBriefVersions {
+	versions := make([]PersonBriefVersion, 0, len(rows))
+	for _, row := range rows {
+		versions = append(versions, PersonBriefVersionFromGenerated(row))
+	}
+	return PersonBriefVersions{Versions: versions}
 }

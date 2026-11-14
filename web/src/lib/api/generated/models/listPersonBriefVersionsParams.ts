@@ -7,4 +7,9 @@ export type ListPersonBriefVersionsParams = {
    * Maximum versions to return (default 20, max 200)
    */
   limit?: number;
+  /**
+   * Only versions older than this one
+   * @minimum 1
+   */
+  before_version?: number;
 };

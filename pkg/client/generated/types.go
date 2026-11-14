@@ -11079,6 +11079,7 @@ func (p PersonBriefSentence) Validate() error {
 }
 
 type PersonBriefVersionsResponse struct {
+	HasMore  bool          `json:"has_more"`
 	Versions []PersonBrief `json:"versions" validate:"required"`
 }
 

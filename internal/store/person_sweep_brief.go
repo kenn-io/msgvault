@@ -78,7 +78,7 @@ func (s *Store) PersonSweepBriefEligibility(
 	if eligibility.Version == 0 {
 		return eligibility, true, nil
 	}
-	versions, err := s.ListPersonBriefVersionsContext(ctx, personID, 1)
+	versions, err := s.ListPersonBriefVersionsContext(ctx, personID, 0, 1)
 	if err != nil {
 		return peoplesweep.BriefEligibility{}, false, err
 	}
