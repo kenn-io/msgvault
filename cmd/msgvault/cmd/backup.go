@@ -253,15 +253,11 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	if err := refuseRestoreIntoLiveDaemonHome(backupRestoreTarget, cfg); err != nil {
 		return err
 	}
-	var snapshotID string
-	if len(args) > 0 {
-		snapshotID = args[0]
-	}
 	if backupRestorePermissionsOnly {
-		if snapshotID == "" {
+		if len(args) == 0 || args[0] == "" {
 			return errors.New("--permissions-only requires an explicit snapshot ID")
 		}
-		if err := secureRestoredTokens(cmd.Context(), r, snapshotID, backupRestoreTarget); err != nil {
+		if err := secureRestoredTokens(cmd.Context(), r, args[0], backupRestoreTarget); err != nil {
 			return fmt.Errorf("securing restored credentials: %w", err)
 		}
 		return nil
@@ -278,6 +274,10 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 	var targetCoordinatorOption backup.RestoreTargetCoordinator
 	if targetCoordinator != nil {
 		targetCoordinatorOption = targetCoordinator
+	}
+	var snapshotID string
+	if len(args) > 0 {
+		snapshotID = args[0]
 	}
 	renderer := newBackupProgressRenderer(cmd.OutOrStdout(), progressModeAuto)
 	defer renderer.finish()

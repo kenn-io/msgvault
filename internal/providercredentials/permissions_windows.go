@@ -31,11 +31,11 @@ func (nativePermissions) prepareDirectory(path string) error {
 func verifyHandleOwner(handle windows.Handle) error {
 	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
-		return fmt.Errorf("read credential object owner: %w", err)
+		return fmt.Errorf("read credential directory owner: %w", err)
 	}
 	owner, _, err := descriptor.Owner()
 	if err != nil || owner == nil {
-		return errors.New("credential object owner is unavailable")
+		return errors.New("credential directory owner is unavailable")
 	}
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
@@ -264,25 +264,29 @@ func withDirectoryMutex(tokenDir string, fn func(windows.Handle) error) error {
 
 func withStoreLock(tokenDir string, fn func() error) error {
 	return withDirectoryMutex(tokenDir, func(directory windows.Handle) error {
-		if err := secureOwnerOnlyHandle(directory); err != nil {
-			return fmt.Errorf("secure provider credential directory: %w", err)
-		}
-
-		path := filepath.Join(tokenDir, ".provider-credentials.lock")
-		file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
-		if err != nil {
-			return fmt.Errorf("open provider credential lock: %w", err)
-		}
-		defer file.Close() //nolint:errcheck // lock result is authoritative
-		if err := (nativePermissions{}).secureFile(file); err != nil {
-			return fmt.Errorf("secure provider credential lock: %w", err)
-		}
-		var overlapped windows.Overlapped
-		if err := windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK,
-			0, 1, 0, &overlapped); err != nil {
-			return fmt.Errorf("lock provider credential store: %w", err)
-		}
-		defer windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, &overlapped) //nolint:errcheck
-		return fn()
+		return lockStore(tokenDir, directory, fn)
 	})
+}
+
+func lockStore(tokenDir string, directory windows.Handle, fn func() error) error {
+	if err := secureOwnerOnlyHandle(directory); err != nil {
+		return fmt.Errorf("secure provider credential directory: %w", err)
+	}
+
+	path := filepath.Join(tokenDir, ".provider-credentials.lock")
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("open provider credential lock: %w", err)
+	}
+	defer file.Close() //nolint:errcheck // lock result is authoritative
+	if err := (nativePermissions{}).secureFile(file); err != nil {
+		return fmt.Errorf("secure provider credential lock: %w", err)
+	}
+	var overlapped windows.Overlapped
+	if err := windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK,
+		0, 1, 0, &overlapped); err != nil {
+		return fmt.Errorf("lock provider credential store: %w", err)
+	}
+	defer windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, &overlapped) //nolint:errcheck
+	return fn()
 }
