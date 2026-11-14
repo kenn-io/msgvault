@@ -229,6 +229,86 @@ func TestDownloadSnapshotByteBudget(t *testing.T) {
 	checks.Equal(len(data), cache.bytes)
 }
 
+func TestDownloadSnapshotSlowLoadDoesNotBlockOtherDownloads(t *testing.T) {
+	var cache downloadCache
+	defer cache.close()
+	load := func() (*downloadSnapshot, error) { return &downloadSnapshot{data: []byte("cached")}, nil }
+	key := downloadKey{attachment: 1}
+	first, err := cache.get(t.Context(), key, chunkRequest{}, load)
+	require.NoError(t, err)
+	started, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = cache.get(t.Context(), downloadKey{operation: "get_person_record", identity: "slow"}, chunkRequest{}, func() (*downloadSnapshot, error) {
+			close(started)
+			<-release
+			return &downloadSnapshot{data: []byte("slow")}, nil
+		})
+	}()
+	<-started
+	result := make(chan error, 1)
+	go func() {
+		_, err := cache.get(t.Context(), key, chunkRequest{offset: 1, digest: first.digest}, load)
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		assert.NoError(t, err)
+	case <-time.After(time.Second):
+		assert.Fail(t, "cached download waited for an unrelated load")
+		close(release)
+		<-result
+		<-done
+		return
+	}
+	close(release)
+	<-done
+}
+
+func TestDownloadSnapshotConcurrentLoadsAndClose(t *testing.T) {
+	for _, closeCache := range []bool{false, true} {
+		t.Run(strconv.FormatBool(closeCache), func(t *testing.T) {
+			var cache downloadCache
+			defer cache.close()
+			key := downloadKey{attachment: 1}
+			started, release := make(chan struct{}), make(chan struct{})
+			type result struct {
+				snapshot *downloadSnapshot
+				err      error
+			}
+			results := make(chan result, 1)
+			go func() {
+				snapshot, err := cache.get(t.Context(), key, chunkRequest{}, func() (*downloadSnapshot, error) {
+					close(started)
+					<-release
+					return &downloadSnapshot{data: []byte("slow")}, nil
+				})
+				results <- result{snapshot, err}
+			}()
+			<-started
+			var first *downloadSnapshot
+			if closeCache {
+				cache.close()
+			} else {
+				var err error
+				first, err = cache.get(t.Context(), key, chunkRequest{}, func() (*downloadSnapshot, error) {
+					return &downloadSnapshot{data: []byte("fast")}, nil
+				})
+				require.NoError(t, err)
+			}
+			close(release)
+			got := <-results
+			if closeCache {
+				require.ErrorIs(t, got.err, errDownloadExpired)
+			} else {
+				require.NoError(t, got.err)
+				assert.Same(t, first, got.snapshot)
+				assert.Equal(t, len("fast"), cache.bytes)
+			}
+		})
+	}
+}
+
 func TestPersonDownloadSnapshotReuseRefreshAndSmallResults(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	var cache downloadCache
