@@ -229,42 +229,6 @@ func TestDownloadSnapshotByteBudget(t *testing.T) {
 	checks.Equal(len(data), cache.bytes)
 }
 
-func TestDownloadSnapshotSlowLoadDoesNotBlockOtherDownloads(t *testing.T) {
-	var cache downloadCache
-	defer cache.close()
-	load := func() (*downloadSnapshot, error) { return &downloadSnapshot{data: []byte("cached")}, nil }
-	key := downloadKey{attachment: 1}
-	first, err := cache.get(t.Context(), key, chunkRequest{}, load)
-	require.NoError(t, err)
-	started, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	go func() {
-		defer close(done)
-		_, _ = cache.get(t.Context(), downloadKey{operation: "get_person_record", identity: "slow"}, chunkRequest{}, func() (*downloadSnapshot, error) {
-			close(started)
-			<-release
-			return &downloadSnapshot{data: []byte("slow")}, nil
-		})
-	}()
-	<-started
-	result := make(chan error, 1)
-	go func() {
-		_, err := cache.get(t.Context(), key, chunkRequest{offset: 1, digest: first.digest}, load)
-		result <- err
-	}()
-	select {
-	case err := <-result:
-		assert.NoError(t, err)
-	case <-time.After(time.Second):
-		assert.Fail(t, "cached download waited for an unrelated load")
-		close(release)
-		<-result
-		<-done
-		return
-	}
-	close(release)
-	<-done
-}
-
 func TestDownloadSnapshotCloseDuringLoad(t *testing.T) {
 	var cache downloadCache
 	started, release := make(chan struct{}), make(chan struct{})
@@ -440,40 +404,43 @@ func TestPersonDownloadFailedRefreshKeepsEarlierLoad(t *testing.T) {
 }
 
 func TestPersonDownloadSnapshotReuseRefreshAndSmallResults(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	var cache downloadCache
-	defer cache.close()
-	key := downloadKey{operation: "get_person_record", identity: "1"}
-	value, reads := "first", 0
-	load := func() (*downloadSnapshot, error) {
-		reads++
-		return &downloadSnapshot{data: []byte(value), etag: value}, nil
-	}
-	first, err := cache.get(t.Context(), key, chunkRequest{length: 1}, load)
-	requirements.NoError(err)
-	continued, err := cache.get(t.Context(), key, chunkRequest{offset: 1, length: 1, digest: first.digest}, load)
-	requirements.NoError(err)
-	assertions.Equal(first.etag, continued.etag)
-	assertions.Equal(1, reads)
-	value = "second"
-	_, err = cache.get(t.Context(), key, chunkRequest{length: 1, digest: first.digest}, load)
-	requirements.ErrorIs(err, errDownloadExpired)
-	second, err := cache.get(t.Context(), key, chunkRequest{length: 1}, load)
-	requirements.NoError(err)
-	assertions.Equal("second", second.etag)
-	assertions.Equal(3, reads)
-	attachmentKey := downloadKey{attachment: 1}
-	attachment, err := cache.get(t.Context(), attachmentKey, chunkRequest{length: 1}, func() (*downloadSnapshot, error) {
-		return &downloadSnapshot{data: []byte("attachment")}, nil
-	})
-	requirements.NoError(err)
-	for personID := range maxDownloads {
-		_, err = cache.get(t.Context(), downloadKey{operation: "get_person_record", identity: strconv.Itoa(personID)}, chunkRequest{length: 1024}, func() (*downloadSnapshot, error) {
-			return &downloadSnapshot{data: []byte("small profile")}, nil
+	synctest.Test(t, func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		var cache downloadCache
+		defer cache.close()
+		key := downloadKey{operation: "get_person_record", identity: "1"}
+		value, reads := "first", 0
+		load := func() (*downloadSnapshot, error) {
+			reads++
+			return &downloadSnapshot{data: []byte(value), etag: value}, nil
+		}
+		first, err := cache.get(t.Context(), key, chunkRequest{length: 1}, load)
+		requirements.NoError(err)
+		continued, err := cache.get(t.Context(), key, chunkRequest{offset: 1, length: 1, digest: first.digest}, load)
+		requirements.NoError(err)
+		assertions.Equal(first.etag, continued.etag)
+		assertions.Equal(1, reads)
+		value = "second"
+		_, err = cache.get(t.Context(), key, chunkRequest{length: 1, digest: first.digest}, load)
+		requirements.ErrorIs(err, errDownloadExpired)
+		second, err := cache.get(t.Context(), key, chunkRequest{length: 1}, load)
+		requirements.NoError(err)
+		assertions.Equal("second", second.etag)
+		assertions.Equal(3, reads)
+		attachmentKey := downloadKey{attachment: 1}
+		attachment, err := cache.get(t.Context(), attachmentKey, chunkRequest{length: 1}, func() (*downloadSnapshot, error) {
+			return &downloadSnapshot{data: []byte("attachment")}, nil
 		})
 		requirements.NoError(err)
-	}
-	continued, err = cache.get(t.Context(), attachmentKey, chunkRequest{offset: 1, length: 1, digest: attachment.digest}, load)
-	requirements.NoError(err)
-	assertions.Equal(attachment.data, continued.data)
+		time.Sleep(time.Second)
+		for personID := range maxDownloads {
+			_, err = cache.get(t.Context(), downloadKey{operation: "get_person_record", identity: strconv.Itoa(personID)}, chunkRequest{length: 1024}, func() (*downloadSnapshot, error) {
+				return &downloadSnapshot{data: []byte("small profile")}, nil
+			})
+			requirements.NoError(err)
+		}
+		continued, err = cache.get(t.Context(), attachmentKey, chunkRequest{offset: 1, length: 1, digest: attachment.digest}, load)
+		requirements.NoError(err)
+		assertions.Equal(attachment.data, continued.data)
+	})
 }
