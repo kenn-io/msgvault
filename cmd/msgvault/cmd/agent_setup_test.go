@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,6 +29,18 @@ func TestAgentSetup(t *testing.T) {
 	assert.Equal(t, "mcp msgvault", report.Rows[3].Piece)
 	require.FileExists(t, filepath.Join(home, ".claude", "skills", "msgvault-search", "SKILL.md"))
 	require.FileExists(t, filepath.Join(home, ".codex", "skills", "msgvault-search", "SKILL.md"))
+	paths := []string{filepath.Join(home, ".claude", "skills", "msgvault-search", "SKILL.md"), filepath.Join(home, ".codex", "skills", "msgvault-search", "SKILL.md")}
+	old := time.Unix(1600000000, 0)
+	for _, path := range paths {
+		require.NoError(t, os.Chtimes(path, old, old))
+	}
+	_, err = agentsetup.Run(t.Context(), opts)
+	require.NoError(t, err)
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, old, info.ModTime())
+	}
 	opts.Agents = []string{"gemini"}
 	report, err = agentsetup.Run(t.Context(), opts)
 	require.NoError(t, err)
@@ -84,6 +97,13 @@ func TestAgentSetupSelectsInstalledAgents(t *testing.T) {
 	require.Len(t, status.Rows, 2)
 	assert.NoDirExists(t, filepath.Join(home, ".claude"))
 	assert.NoDirExists(t, filepath.Join(home, ".codex"))
+	setup, err := agentsetup.Run(t.Context(), agentsetup.Options{SetupCommand: "msgvault agent setup", Items: agentSetupItems})
+	require.NoError(t, err)
+	require.Len(t, setup.Rows, len(status.Rows))
+	for i := range setup.Rows {
+		assert.Equal(t, setup.Rows[i].Agent, status.Rows[i].Agent)
+		assert.Equal(t, setup.Rows[i].Piece, status.Rows[i].Piece)
+	}
 }
 
 func TestAgentSetupArchiveSelection(t *testing.T) {
@@ -92,7 +112,7 @@ func TestAgentSetupArchiveSelection(t *testing.T) {
 	oldHome, _ := flags.GetString("home")
 	oldConfig, _ := flags.GetString("config")
 	t.Cleanup(func() { _ = flags.Set("home", oldHome); _ = flags.Set("config", oldConfig) })
-	check := func(want ...string) {
+	check := func(want ...string) string {
 		t.Helper()
 		items, err := agentSetupItems("claude")
 		require.NoError(t, err)
@@ -101,20 +121,27 @@ func TestAgentSetupArchiveSelection(t *testing.T) {
 		for _, part := range want {
 			assert.Contains(t, commands.POSIX, part)
 		}
+		return commands.POSIX
 	}
-	check("msgvault", "mcp")
+	cmd := check("msgvault", "mcp")
+	assert.NotContains(t, cmd, "--home")
+	assert.NotContains(t, cmd, "--env")
 	home := filepath.Join(t.TempDir(), "archive")
 	require.NoError(t, flags.Set("home", home))
 	check("--home", home, "mcp")
 	require.NoError(t, flags.Set("home", ""))
 	t.Setenv("MSGVAULT_HOME", home)
-	check("--home", home)
+	cmd = check("--env", "MSGVAULT_HOME="+home)
+	assert.NotContains(t, cmd, "--home")
+	require.NoError(t, flags.Set("config", "relative-config"))
+	absConfig, err := filepath.Abs("relative-config")
+	require.NoError(t, err)
+	cmd = check("--env", "MSGVAULT_HOME="+home, "--config", absConfig)
+	assert.NotContains(t, cmd, "--home")
 	t.Setenv("MSGVAULT_HOME", "")
 	require.NoError(t, flags.Set("home", "relative-archive"))
 	require.NoError(t, flags.Set("config", "relative-config"))
 	absHome, err := filepath.Abs("relative-archive")
-	require.NoError(t, err)
-	absConfig, err := filepath.Abs("relative-config")
 	require.NoError(t, err)
 	check("--home", absHome, "--config", absConfig)
 	require.NoError(t, flags.Set("home", "~/archive"))

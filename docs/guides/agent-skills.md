@@ -25,8 +25,6 @@ direction before archive mutations such as sync, import, dedup or deletion.
 
 ## Install
 
-Run `msgvault agent setup` to install skills and connect MCP for Claude Code and Codex. To install skills alone, run:
-
 ```bash
 msgvault skills install
 ```

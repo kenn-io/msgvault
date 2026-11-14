@@ -58,22 +58,29 @@ type CheckResult struct {
 	State CheckState
 }
 
+func checkSkill(path string, sk Skill) (CheckState, error) {
+	content, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return CheckMissing, nil
+	case err != nil:
+		return "", fmt.Errorf("read skill %s: %w", path, err)
+	case !generated(content):
+		return CheckModified, nil
+	case !bytes.Equal(content, []byte(sk.Content)):
+		return CheckOutdated, nil
+	default:
+		return CheckCurrent, nil
+	}
+}
+
 // Check compares installed skills with the rendered files.
 func Check(root string, list []Skill) ([]CheckResult, error) {
 	results := make([]CheckResult, 0, len(list))
 	for _, sk := range list {
-		path := filepath.Join(root, sk.Name, skillFileName)
-		content, err := os.ReadFile(path)
-		state := CheckCurrent
-		switch {
-		case errors.Is(err, os.ErrNotExist):
-			state = CheckMissing
-		case err != nil:
-			return results, fmt.Errorf("read skill %s: %w", path, err)
-		case !generated(content):
-			state = CheckModified
-		case !bytes.Equal(content, []byte(sk.Content)):
-			state = CheckOutdated
+		state, err := checkSkill(filepath.Join(root, sk.Name, skillFileName), sk)
+		if err != nil {
+			return results, err
 		}
 		results = append(results, CheckResult{Skill: sk.Name, State: state})
 	}
@@ -142,20 +149,22 @@ func Install(root string, list []Skill, force bool) ([]InstallResult, error) {
 	for _, sk := range list {
 		dir := filepath.Join(root, sk.Name)
 		path := filepath.Join(dir, skillFileName)
-		status := StatusInstalled
-		existing, err := os.ReadFile(path)
-		switch {
-		case err == nil && bytes.Equal(existing, []byte(sk.Content)):
-			results = append(results, InstallResult{Skill: sk.Name, Path: path, Status: StatusUpdated})
+		state, err := checkSkill(path, sk)
+		if err != nil {
+			return results, err
+		}
+		status := StatusUpdated
+		switch state {
+		case CheckCurrent:
+			results = append(results, InstallResult{Skill: sk.Name, Path: path, Status: status})
 			continue
-		case err == nil && !force && !generated(existing):
-			results = append(results,
-				InstallResult{Skill: sk.Name, Path: path, Status: StatusSkipped})
-			continue
-		case err == nil:
-			status = StatusUpdated
-		case !errors.Is(err, os.ErrNotExist):
-			return results, fmt.Errorf("read existing skill %s: %w", path, err)
+		case CheckModified:
+			if !force {
+				results = append(results, InstallResult{Skill: sk.Name, Path: path, Status: StatusSkipped})
+				continue
+			}
+		case CheckMissing:
+			status = StatusInstalled
 		}
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return results, fmt.Errorf("create skill directory %s: %w", dir, err)
