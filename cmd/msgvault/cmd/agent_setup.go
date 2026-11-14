@@ -38,11 +38,11 @@ func agentSetupItems(agent string) ([]agentsetup.Item, error) {
 		status := agentsetup.Status{State: agentsetup.StateOK}
 		for _, result := range results {
 			switch result.State {
-			case "modified":
+			case skills.CheckModified:
 				return agentsetup.Status{State: agentsetup.StateModified, Reason: result.Skill + " has no msgvault marker", NextStep: "msgvault skills install --force --agent " + agent}, nil
-			case "missing":
+			case skills.CheckMissing:
 				status.State = agentsetup.StateMissing
-			case "outdated":
+			case skills.CheckOutdated:
 				if status.State == agentsetup.StateOK {
 					status.State = agentsetup.StateOutdated
 				}
@@ -54,7 +54,7 @@ func agentSetupItems(agent string) ([]agentsetup.Item, error) {
 }
 
 func checkAgentSetup(ctx context.Context) (agentsetup.Report, error) {
-	return agentsetup.Run(ctx, agentsetup.Options{Agents: []string{"claude", "codex"}, CheckOnly: true, SetupCommand: "msgvault agent setup", Items: agentSetupItems})
+	return agentsetup.Run(ctx, agentsetup.Options{CheckOnly: true, SetupCommand: "msgvault agent setup", Items: agentSetupItems})
 }
 
 func init() {

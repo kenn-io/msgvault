@@ -40,10 +40,22 @@ func Root(home, agent string) (string, bool) {
 	return "", false
 }
 
+// CheckState describes the installed state of a skill.
+type CheckState string
+
+const (
+	CheckCurrent  CheckState = "current"
+	CheckMissing  CheckState = "missing"
+	CheckModified CheckState = "modified"
+	CheckOutdated CheckState = "outdated"
+)
+
+func generated(content []byte) bool { return bytes.Contains(content, []byte(Marker)) }
+
 // CheckResult describes the state of one skill.
 type CheckResult struct {
 	Skill string
-	State string
+	State CheckState
 }
 
 // Check compares installed skills with the rendered files.
@@ -52,16 +64,16 @@ func Check(root string, list []Skill) ([]CheckResult, error) {
 	for _, sk := range list {
 		path := filepath.Join(root, sk.Name, skillFileName)
 		content, err := os.ReadFile(path)
-		state := "current"
+		state := CheckCurrent
 		switch {
 		case errors.Is(err, os.ErrNotExist):
-			state = "missing"
+			state = CheckMissing
 		case err != nil:
 			return results, fmt.Errorf("read skill %s: %w", path, err)
-		case !bytes.Contains(content, []byte(Marker)):
-			state = "modified"
+		case !generated(content):
+			state = CheckModified
 		case !bytes.Equal(content, []byte(sk.Content)):
-			state = "outdated"
+			state = CheckOutdated
 		}
 		results = append(results, CheckResult{Skill: sk.Name, State: state})
 	}
@@ -133,7 +145,10 @@ func Install(root string, list []Skill, force bool) ([]InstallResult, error) {
 		status := StatusInstalled
 		existing, err := os.ReadFile(path)
 		switch {
-		case err == nil && !force && !strings.Contains(string(existing), Marker):
+		case err == nil && bytes.Equal(existing, []byte(sk.Content)):
+			results = append(results, InstallResult{Skill: sk.Name, Path: path, Status: StatusUpdated})
+			continue
+		case err == nil && !force && !generated(existing):
 			results = append(results,
 				InstallResult{Skill: sk.Name, Path: path, Status: StatusSkipped})
 			continue

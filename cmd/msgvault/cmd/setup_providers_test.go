@@ -1500,6 +1500,49 @@ func TestSetupStatusAgentError(t *testing.T) {
 	command.SetErr(&errOutput)
 	command.SetArgs([]string{"--json"})
 	require.NoError(t, command.ExecuteContext(t.Context()))
-	assert.Equal(t, "check agents: agent check failed\n", errOutput.String())
+	assert.Equal(t, "checking agents: Codex may start msgvault mcp and the daemon, which can create files under the msgvault home\ncheck agents: agent check failed\n", errOutput.String())
 	assert.NotContains(t, output.String(), `"agents"`)
+}
+
+func TestSetupStatusAgentNotice(t *testing.T) {
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+	const notice = "checking agents: Codex may start msgvault mcp and the daemon, which can create files under the msgvault home\n"
+	for _, jsonOutput := range []bool{false, true} {
+		var output, errOutput bytes.Buffer
+		command := newSetupStatusCommand(setupStatusDeps{
+			config: func() *config.Config { return fixture.load(t) },
+			environment: func(*cobra.Command, *config.Config) setupEnvironment {
+				return setupEnvironment{lookupEnv: fixture.lookupEnv, fileExists: defaultFileExists}
+			},
+			agents: func(context.Context) (agentsetup.Report, error) {
+				assert.Equal(t, notice, errOutput.String())
+				return agentsetup.Report{}, nil
+			},
+		})
+		command.SetOut(&output)
+		command.SetErr(&errOutput)
+		command.SetArgs([]string{})
+		if jsonOutput {
+			command.SetArgs([]string{"--json"})
+		}
+		require.NoError(t, command.ExecuteContext(t.Context()))
+		assert.Equal(t, notice, errOutput.String())
+		assert.NotContains(t, output.String(), notice)
+		if jsonOutput {
+			var report laneReport
+			require.NoError(t, json.Unmarshal(output.Bytes(), &report))
+		}
+	}
+	var errOutput bytes.Buffer
+	command := newSetupStatusCommand(setupStatusDeps{
+		config: func() *config.Config { return fixture.load(t) },
+		environment: func(*cobra.Command, *config.Config) setupEnvironment {
+			return setupEnvironment{lookupEnv: fixture.lookupEnv, fileExists: defaultFileExists}
+		},
+	})
+	command.SetOut(io.Discard)
+	command.SetErr(&errOutput)
+	command.SetArgs([]string{})
+	require.NoError(t, command.ExecuteContext(t.Context()))
+	assert.Empty(t, errOutput.String())
 }

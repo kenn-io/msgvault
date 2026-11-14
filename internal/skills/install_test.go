@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -216,21 +217,21 @@ func TestCheckAndRoot(t *testing.T) {
 	list := testSkills()
 	results, err := Check(root, list)
 	require.NoError(t, err)
-	assert.Equal(t, "missing", results[0].State)
+	assert.Equal(t, CheckMissing, results[0].State)
 	_, err = Install(root, list, false)
 	require.NoError(t, err)
 	results, err = Check(root, list)
 	require.NoError(t, err)
-	assert.Equal(t, "current", results[0].State)
+	assert.Equal(t, CheckCurrent, results[0].State)
 	path := filepath.Join(root, list[0].Name, "SKILL.md")
 	require.NoError(t, os.WriteFile(path, []byte(Marker+" older"), 0o600))
 	results, err = Check(root, list)
 	require.NoError(t, err)
-	assert.Equal(t, "outdated", results[0].State)
+	assert.Equal(t, CheckOutdated, results[0].State)
 	require.NoError(t, os.WriteFile(path, []byte("custom"), 0o600))
 	results, err = Check(root, list)
 	require.NoError(t, err)
-	assert.Equal(t, "modified", results[0].State)
+	assert.Equal(t, CheckModified, results[0].State)
 }
 
 func TestAgentRootsFromEnvironment(t *testing.T) {
@@ -247,4 +248,27 @@ func TestAgentRootsFromEnvironment(t *testing.T) {
 	agents, err := DetectAgents(home, nil)
 	require.NoError(t, err)
 	assert.Equal(t, []AgentDir{{Agent: "claude", Dir: filepath.Join(claude, "skills")}, {Agent: "codex", Dir: filepath.Join(codex, "skills")}}, agents)
+}
+
+func TestInstallPreservesCurrentFile(t *testing.T) {
+	root := t.TempDir()
+	list := testSkills()
+	_, err := Install(root, list, false)
+	require.NoError(t, err)
+	path := filepath.Join(root, list[0].Name, "SKILL.md")
+	old := time.Unix(1600000000, 0)
+	require.NoError(t, os.Chtimes(path, old, old))
+	before, err := os.Stat(path)
+	require.NoError(t, err)
+	content, err := os.ReadFile(path)
+	require.NoError(t, err)
+	_, err = Install(root, list, false)
+	require.NoError(t, err)
+	after, err := os.Stat(path)
+	require.NoError(t, err)
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, content, got)
+	assert.Equal(t, before.Mode(), after.Mode())
+	assert.Equal(t, before.ModTime(), after.ModTime())
 }
