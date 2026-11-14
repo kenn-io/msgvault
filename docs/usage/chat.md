@@ -1023,7 +1023,7 @@ before retrying.
 On unreleased `main`, owner sessions can read person attributes and definitions. Notes edits go
 through `update_person_notes`; attribute writes default to enrichment by `mcp`. Set and clear show
 the value being replaced, and the write fails if it changes or an empty slot is filled. JSON numbers
-keep their spelling, except values PostgreSQL stored before this change; HTTP protocol `2026-07-28`
+keep their spelling, except values SQLite or PostgreSQL stored before this change; HTTP protocol `2026-07-28`
 and newer rejects numbers outside the float64 range, such as `1e400`. Listings and previews over
 1 MiB are refused; use `slug` or `history: false` to narrow a listing.
 
