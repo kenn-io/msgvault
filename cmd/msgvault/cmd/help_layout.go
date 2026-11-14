@@ -81,6 +81,7 @@ var topLevelCommandGroups = map[string]string{
 	"delete-staged":            helpGroupDelete,
 	"diagnose-acquisition":     helpGroupSources,
 	"diagnose-gmail-inventory": helpGroupSources,
+	"diagnose-fts":             helpGroupIndex,
 	"docbank":                  helpGroupOperations,
 	"draft-compose":            helpGroupWrite,
 	"draft-delete":             helpGroupWrite,

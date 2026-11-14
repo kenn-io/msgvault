@@ -1772,6 +1772,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"cancel-deletion",
 		"create-subset",
 		"deduplicate",
+		"diagnose-fts",
 		"delete-staged",
 		"embeddings",
 		"export-discord",

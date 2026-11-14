@@ -630,6 +630,7 @@ var cliRunReadOnlyCommands = map[string]bool{
 	"show-deletion":            true,
 	"embeddings list":          true,
 	"embeddings status":        true,
+	"diagnose-fts":             true,
 	// Tier previews only read.
 	"person tiers preview": true,
 	"person tiers explain": true,

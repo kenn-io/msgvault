@@ -445,7 +445,8 @@ import (
 // listings no longer return stale, as_of, or counts_pending.
 // 5.29.0 fails backup freeze begin with backup_readers_busy when daemon archive readers do not stop.
 // 5.30.0 allows Kit and Vertex visual embedding settings.
-const APISchemaVersion = "5.30.0"
+// 5.31.0 adds the bounded read-only FTS diagnostic to the daemon CLI runner.
+const APISchemaVersion = "5.31.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
