@@ -1433,7 +1433,7 @@ func describePersonFactFreshness(target personfacts.TargetRef, validUntil, lates
 // revisions can change without reclassifying historical claims.
 func seededPreference(key string) bool {
 	switch key {
-	case AttributeUniversalIDPrimaryChannel, // primary_channel
+	case AttributeUniversalIDPrimaryChannel, AttributeUniversalIDContactFrequency,
 		AttributeUniversalIDAskMeAbout,            // ask_me_about
 		AttributeUniversalIDInterestsFunNow,       // interests_fun_now
 		AttributeUniversalIDInterestsFunGrowingUp, // interests_fun_growing_up
