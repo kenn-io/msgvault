@@ -359,6 +359,12 @@ durable reason explaining how it arose; do not infer its history from the
 vector alone. The terminal check tests only an empty vector and current
 version, not a separately persisted overflow cause.
 
+The read-only [FTS diagnostic](../cli-reference.md#diagnose-fts) compares bounded
+pages with the stored-message document rule, including the v3 auxiliary fields.
+It reports missing, obsolete and differing entries, and inconclusive comparisons.
+Its per-message snapshots and resume cursor do not freeze an archive across pages
+or verify physical postings. Backfill readiness remains a cheaper, narrower probe.
+
 #### How can indexing resume?
 
 `BackfillFTSContext` fills absent SQLite entries and PostgreSQL entries whose
