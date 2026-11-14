@@ -361,7 +361,7 @@ func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID i
 			value := at.Time
 			since = &value
 		}
-		complete = complete && backfill.Valid && backfill.Int64 < 0
+		complete = complete && backfill.Valid && backfill.Int64 == -1
 	}
 	return since, complete && since != nil, rows.Err()
 }
@@ -386,7 +386,7 @@ func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now ti
 	if now.Before(processed.Time.Add(interval)) {
 		return false, nil
 	}
-	if backfill >= 0 {
+	if backfill >= 0 || backfill < -2 {
 		return true, nil
 	}
 	if observed.Valid {
@@ -551,13 +551,32 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 
 func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, inProfile func(time.Time) bool) (int64, error) {
 	personID, through := window.PersonID, window.ThroughSequence
+	// -1 means complete, -2 means complete with an oversized gap, and lower
+	// values encode the backfill position while such a gap remains.
+	gap := window.BackfillMessageID <= -2
+	if window.BackfillMessageID < -2 {
+		window.BackfillMessageID = -(window.BackfillMessageID + 3)
+	}
+	defer func() {
+		if gap {
+			if window.BackfillMessageID < 0 {
+				window.BackfillMessageID = -2
+			} else {
+				window.BackfillMessageID = -window.BackfillMessageID - 3
+			}
+		}
+	}()
 	backfillEnd := max(0, window.BackfillMessageID)
 	seen, used := map[int64]bool{}, 0
 	add := func(source peoplesweep.CommitmentSource) (bool, error) {
 		if seen[source.MessageID] {
 			return true, nil
 		}
-		if !inProfile(source.EventTime) || len(source.Text) > cfg.MaxBytes {
+		if !inProfile(source.EventTime) {
+			return true, nil
+		}
+		if len(source.Text) > cfg.MaxBytes {
+			gap = true
 			return true, nil
 		}
 		if len(window.Sources) >= cfg.MaxItems || used+len(source.Text) > cfg.MaxBytes {
@@ -581,6 +600,9 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			single := *window
 			single.Sources = []peoplesweep.CommitmentSource{source}
 			fitsAlone, err := peoplesweep.CommitmentInputFits(single)
+			if !fitsAlone && err == nil {
+				gap = true
+			}
 			return !fitsAlone, err
 		}
 		seen[source.MessageID] = true

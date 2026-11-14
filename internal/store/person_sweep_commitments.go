@@ -301,7 +301,7 @@ func validatePersonSweepApplyCommitment(request peoplesweep.ApplyRequest) error 
 	window := result.Window
 	if !request.Generation.Policy.AllowSensitive || !result.Config.Enabled ||
 		window.PersonID != request.Lease.PersonID || !window.Now.Equal(request.Generation.ResolvedAt) ||
-		window.BackfillMessageID < -1 || window.ThroughSequence < 0 || window.SnapshotSequence < window.ThroughSequence ||
+		window.ThroughSequence < 0 || window.SnapshotSequence < window.ThroughSequence ||
 		len(window.Sources) > result.Config.MaxItems {
 		return errors.New("commitment result does not match the attempt")
 	}

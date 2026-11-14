@@ -1471,6 +1471,9 @@ func hydratePersonFactFreshnessTx(ctx context.Context, tx *loggedTx, claims []pe
 // describePersonFactFreshness uses the newest currently supported evidence, not the date
 // of extraction. Expiry takes precedence, including at the exact boundary.
 func describePersonFactFreshness(target personfacts.TargetRef, validUntil, latestSupported *time.Time, now time.Time) personfacts.Freshness {
+	if latestSupported != nil && latestSupported.After(now) {
+		latestSupported = nil
+	}
 	kind := personfacts.KindFact
 	days := 365
 	switch {
