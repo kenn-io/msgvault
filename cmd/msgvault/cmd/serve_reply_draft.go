@@ -492,7 +492,7 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	if err != nil {
 		return draftReplyError("invalid_reply_metadata", err)
 	}
-	if target.source.SourceType == "gmail" {
+	if target.source.SourceType == sourceTypeGmail {
 		if err := gmailDraftScopeGate(ctx, a.config, target.source, oauth.ScopesGmailDraftWrite, oauth.ScopesGmailSendAsList); err != nil {
 			return err
 		}

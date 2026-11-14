@@ -57,7 +57,7 @@ func assertDraftRows(t *testing.T, st *store.Store) {
 	}
 }
 func TestDraftReplyStrictRefuses(t *testing.T) {
-	for _, provider := range []string{"imap", "gmail"} {
+	for _, provider := range []string{"imap", sourceTypeGmail} {
 		t.Run(provider, func(t *testing.T) {
 			var a *storeAPIAdapter
 			var st *store.Store
@@ -347,7 +347,7 @@ func TestValidateOnlyEditWritesNothing(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, before, after)
 	})
-	t.Run("gmail", func(t *testing.T) {
+	t.Run(sourceTypeGmail, func(t *testing.T) {
 		f := newGmailDraftTestFixture(t)
 		draft := f.seedDraft(t)
 		before := f.client.getCalls
