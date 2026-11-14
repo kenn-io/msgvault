@@ -176,7 +176,6 @@ func TestMCPEmploymentApprovedPrimaryIsGuarded(t *testing.T) {
 	result, err := b.ExecuteOperation(t.Context(), "replace_employment", args)
 	require.NoError(err)
 	assertDefiniteRefusal(t, result, "employment_primary_conflict")
-
 }
 
 func legacyOperationSession(t *testing.T, b *daemonMCPOperations, family mcpserver.OperationFamily, handler func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error)) *sdkmcp.ClientSession {
