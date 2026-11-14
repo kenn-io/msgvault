@@ -69,12 +69,12 @@ func (b *daemonMCPOperations) executePersonFactOperation(ctx context.Context, na
 		r, e := b.listPersonFactClaims(ctx, a)
 		return r, true, e
 	case "list_person_fact_pins":
-		visible, failure, err := b.personFactVisibleTargets(ctx)
-		if failure != nil || err != nil {
-			return failure, true, err
-		}
 		r, e := readMCPOperationJSONWithClassifier[generated.PersonFactPinsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-pins", &generated.ListPersonFactPinsRequestOptions{PathParams: &generated.ListPersonFactPinsPath{ID: a.PersonID}}, factClassify, http.StatusOK)
 		if e == nil && !r.IsError {
+			visible, failure, err := b.personFactVisibleTargets(ctx)
+			if failure != nil || err != nil {
+				return failure, true, err
+			}
 			out, _ := r.Output.(generated.PersonFactPinsResponse)
 			out.Pins = slices.DeleteFunc(out.Pins, func(p generated.PinState) bool { return !visible[[2]string{p.Target.Kind, p.Target.Key}] })
 			r.Output = out

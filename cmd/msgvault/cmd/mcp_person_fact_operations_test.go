@@ -312,3 +312,48 @@ func TestPersonFactCapabilitiesRequireExactContracts(t *testing.T) {
 	assert.NotContains(t, newDaemonMCPOperations(backend.client, caps).capabilities(), "list_person_fact_claims")
 	assert.NotContains(t, newDaemonMCPOperations(backend.client, caps).capabilities(), "set_person_fact_pin")
 }
+
+func TestPersonFactPinBecomesSensitiveBetweenReads(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	var st *store.Store
+	var definition *store.AttributeDefinition
+	changed := make(chan error, 1)
+	backend, fixtureStore, id, publicTarget := factFixture(t, func(r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/fact-pins") {
+			_, err := st.UpdateAttributeDefinitionContext(r.Context(), definition.ID, definition.Revision, store.AttributeDefinitionUpdate{IsSensitive: new(true)})
+			select {
+			case changed <- err:
+			default:
+			}
+		}
+	})
+	st = fixtureStore
+	var err error
+	definition, err = st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: "test-pin-sensitive-change", ObjectType: store.AttributeObjectPerson, Slug: "pin_sensitive_change", Label: "Pin sensitive change", Description: new("A synthetic fact"), ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, APIMutable: true, IsDeletable: true})
+	requirements.NoError(err)
+	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), false)
+	requirements.NoError(err)
+	var target personfacts.TargetDescriptor
+	for _, item := range catalog.Targets {
+		if item.Key == definition.UniversalID {
+			target = item
+		}
+	}
+	requirements.NotEmpty(target.Key)
+	_, err = st.SetPersonFactPinContext(t.Context(), id, personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}, true, "fixture")
+	requirements.NoError(err)
+	_, err = st.SetPersonFactPinContext(t.Context(), id, personfacts.TargetRef{Kind: publicTarget.Kind, Key: publicTarget.Key, Revision: publicTarget.Revision}, true, "fixture")
+	requirements.NoError(err)
+	result, err := backend.ExecuteOperation(t.Context(), "list_person_fact_pins", map[string]any{"person_id": id})
+	requirements.NoError(err)
+	select {
+	case err := <-changed:
+		requirements.NoError(err)
+	default:
+		requirements.FailNow("pins request was not observed")
+	}
+	output := operationOutput[generated.PersonFactPinsResponse](t, result)
+	assertions.True(slices.ContainsFunc(output.Pins, func(pin generated.PinState) bool { return pin.Target.Key == publicTarget.Key && pin.Pinned }))
+	assertions.False(slices.ContainsFunc(output.Pins, func(pin generated.PinState) bool { return pin.Target.Key == target.Key }), "newly sensitive pin must be omitted")
+}
