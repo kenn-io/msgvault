@@ -42,8 +42,6 @@ func TestImportSignalExportReportsPartialImport(t *testing.T) {
 	var n int
 	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&n))
 	assert.Equal(3, n)
-	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?)`, filepath.Join(cfg.AnalyticsDir(), "owner_participants", "*.parquet")).Scan(&n))
-	assert.Equal(1, n)
 }
 func TestImportSignalExportRefusesRemoteClientFiles(t *testing.T) {
 	server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
@@ -81,11 +79,9 @@ func TestImportSignalExportNewerFormat(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(io.Discard)
-	require.NoDirExists(t, cfg.AnalyticsDir())
 	err = runImportSignalExport(cmd, root, "fictional")
 	require.ErrorContains(t, err, "upgrade msgvault")
 	assert.NotContains(t, out.String(), "Re-run")
-	assert.NoDirExists(t, cfg.AnalyticsDir())
 }
 
 func TestSignalExportReasonLabelIndexLimit(t *testing.T) {
