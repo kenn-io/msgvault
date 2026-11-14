@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	stdjson "encoding/json"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -357,12 +358,14 @@ func TestPersonRecordLargeProfileRecoveryAndDisclosure(t *testing.T) {
 }
 
 func TestPersonRecordSupersedeLargeValue(t *testing.T) {
-	backend, id, _, _ := personRecordFixture(t)
+	backend, id, _, patches := personRecordFixture(t)
 	initial, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
 	require.NoError(t, err)
 	value := strings.Repeat("x", 2<<20)
 	var disclosure string
+	approvals := 0
 	session := loopOperationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCurated}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		approvals++
 		disclosure = request.Params.Message
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
@@ -389,6 +392,33 @@ func TestPersonRecordSupersedeLargeValue(t *testing.T) {
 	assert.Contains(t, disclosure, fmt.Sprintf(`"sha256":"%x"`, sum))
 	assert.Contains(t, disclosure, fmt.Sprintf(`"size":%d`, len(raw.Addresses[0])))
 	assert.NotContains(t, disclosure, value)
+
+	etag := loopToolOutput[mcpserver.StructuredPersonRecord](t, result).ETag
+	adds := make([]any, 16)
+	for i := range adds {
+		adds[i] = map[string]any{"address_kind": "postal", "free_text": strings.Repeat("y", 125000), "envelope": map[string]any{"source": "user"}}
+	}
+	seeded, err := backend.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": etag, "patch": map[string]any{"addresses": map[string]any{"add": adds}}})
+	require.NoError(t, err)
+	require.False(t, seeded.IsError)
+	current, err = backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(current.Data, &profile))
+	require.Len(t, profile.Addresses, 16)
+	ids := make([]int64, 0, 16)
+	for _, address := range profile.Addresses {
+		ids = append(ids, address.Envelope.ID)
+	}
+	patch := map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "free_text": strings.Repeat("z", 12000000), "envelope": map[string]any{"source": "user"}}}, "supersede": ids}}
+	encoded, err := stdjson.Marshal(patch)
+	require.NoError(t, err)
+	require.Less(t, len(encoded), 12<<20)
+	beforeApprovals, beforePatches := approvals, patches.Load()
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "patch_person_record", Arguments: map[string]any{"person_id": id, "etag": current.ETag, "patch": patch}})
+	require.NoError(t, err)
+	assert.Equal(t, "operation_response_limit_exceeded", loopToolFailure(t, result)["error"])
+	assert.Equal(t, beforeApprovals, approvals)
+	assert.Equal(t, beforePatches, patches.Load())
 }
 
 func TestPersonRecordOversizeRefusedBeforeApproval(t *testing.T) {
