@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -50,7 +51,7 @@ func (s *Store) migrateAttributeValueJSONSQLite(ctx context.Context) (err error)
 	defer func() { _ = tx.Rollback() }()
 	schema, err := schemaFS.ReadFile("schema.sql")
 	if err != nil {
-		return err
+		return fmt.Errorf("read attribute schema: %w", err)
 	}
 	for _, table := range []string{"person_attribute_values", "organization_attribute_values"} {
 		var definition string
@@ -60,26 +61,27 @@ func (s *Store) migrateAttributeValueJSONSQLite(ctx context.Context) (err error)
 		if strings.Contains(definition, "value_json        TEXT") {
 			continue
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL`, table)
-		if err != nil {
-			return err
-		}
-		var indexes []string
-		for rows.Next() {
-			var sql string
-			if err := rows.Scan(&sql); err != nil {
-				_ = rows.Close()
-				return err
+		indexes, err := func() ([]string, error) {
+			rows, err := tx.QueryContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL`, table)
+			if err != nil {
+				return nil, err
 			}
-			indexes = append(indexes, sql)
+			defer func() { _ = rows.Close() }()
+			var indexes []string
+			for rows.Next() {
+				var sql string
+				if err := rows.Scan(&sql); err != nil {
+					return nil, err
+				}
+				indexes = append(indexes, sql)
+			}
+			return indexes, rows.Err()
+		}()
+		if err != nil {
+			return fmt.Errorf("inspect %s indexes: %w", table, err)
 		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		_ = rows.Close()
 		prefix := "CREATE TABLE IF NOT EXISTS " + table + " ("
-		start := strings.Index(string(schema), prefix)
+		start := bytes.Index(schema, []byte(prefix))
 		if start < 0 {
 			return fmt.Errorf("missing schema for %s", table)
 		}

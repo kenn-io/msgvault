@@ -339,7 +339,7 @@ func exactAttributeToolHandler(definition operationalDefinition, backend Operati
 		}
 		raw, ok := output.(jsontext.Value)
 		if !ok {
-			return nil, fmt.Errorf("invalid attribute output")
+			return nil, errors.New("invalid attribute output")
 		}
 		result.StructuredContent = raw
 		if result.Content == nil {
@@ -368,17 +368,17 @@ func attributeValidationValue(value any) any {
 		}
 		return n
 	case map[string]any:
-		copy := make(map[string]any, len(value))
+		converted := make(map[string]any, len(value))
 		for key, item := range value {
-			copy[key] = attributeValidationValue(item)
+			converted[key] = attributeValidationValue(item)
 		}
-		return copy
+		return converted
 	case []any:
-		copy := make([]any, len(value))
+		converted := make([]any, len(value))
 		for i, item := range value {
-			copy[i] = attributeValidationValue(item)
+			converted[i] = attributeValidationValue(item)
 		}
-		return copy
+		return converted
 	default:
 		return value
 	}

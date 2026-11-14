@@ -15,6 +15,9 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+const attributeSourceKey = "source"
+const attributeInvalidArguments = "invalid_arguments"
+
 func recordAttributeMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCapabilities) []string {
 	var names []string
 	for _, r := range []struct {
@@ -23,7 +26,7 @@ func recordAttributeMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MC
 	}{
 		{"list_attribute_definitions", "listAttributeDefinitions", http.MethodGet, "/api/v1/attribute-definitions", "", []string{"object_type", "include_hidden"}, nil},
 		{"list_person_attributes", "listPersonAttributes", http.MethodGet, "/api/v1/people/{id}/attributes", "", []string{"history", "slug", "universal_id"}, nil},
-		{"set_person_attribute", "setPersonAttribute", http.MethodPut, "/api/v1/people/{id}/attributes/{slug}", "list_person_attributes", []string{"dry_run"}, []string{"value", "ordinal", "expected_value_id", "expected_empty", "source", "source_ref", "confidence", "actor", "active_from", "active_until"}},
+		{"set_person_attribute", "setPersonAttribute", http.MethodPut, "/api/v1/people/{id}/attributes/{slug}", "list_person_attributes", []string{"dry_run"}, []string{"value", "ordinal", "expected_value_id", "expected_empty", attributeSourceKey, "source_ref", "confidence", "actor", "active_from", "active_until"}},
 		{"clear_person_attribute", "clearPersonAttribute", http.MethodDelete, "/api/v1/people/{id}/attributes/{slug}", "list_person_attributes", []string{"ordinal", "expected_value_id", "dry_run"}, nil},
 		{"get_attribute_definition", "getAttributeDefinition", http.MethodGet, "/api/v1/attribute-definitions/{id}", "", nil, nil},
 		{"create_attribute_definition", "createAttributeDefinition", http.MethodPost, "/api/v1/attribute-definitions", "", nil, []string{"object_type", "slug", "label", "description", "value_type", "field_type", "record_target", "cardinality", "display_order", "is_required", "is_searchable", "is_sensitive", "is_audited", "options", "vcard_property"}},
@@ -154,7 +157,7 @@ func (b *daemonMCPOperations) executeRecordAttributeOperation(ctx context.Contex
 	}
 	method, path, options, ok := attributeRequest(name, args)
 	if !ok {
-		return operationFailure("invalid_arguments", false), true, nil
+		return operationFailure(attributeInvalidArguments, false), true, nil
 	}
 	var result *mcpserver.OperationResult
 	var err error
@@ -208,7 +211,7 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 	}
 	_, _, options, ok := attributeRequest(name, args)
 	if !ok {
-		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+		return "", true, &mcpserver.OperationRefusalError{Code: attributeInvalidArguments}
 	}
 	var current any
 	if name == "set_person_attribute" || name == "clear_person_attribute" {
@@ -227,8 +230,12 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 			}
 		}
 		if name == "set_person_attribute" {
-			body := options.(*generated.SetPersonAttributeRequestOptions).Body
-			args["source"] = string(*body.Source)
+			request, ok := options.(*generated.SetPersonAttributeRequestOptions)
+			if !ok || request.Body == nil || request.Body.Source == nil || request.Body.Actor == nil {
+				return "", true, &mcpserver.OperationRefusalError{Code: attributeInvalidArguments}
+			}
+			body := request.Body
+			args[attributeSourceKey] = string(*body.Source)
 			args["actor"] = *body.Actor
 		}
 		previewArgs := maps.Clone(args)
@@ -246,7 +253,7 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 		unguarded := args["expected_value_id"] == nil && args["expected_empty"] != true
 		if v := preview.Superseded; v != nil {
 			ordinal = v.Ordinal
-			superseded = map[string]any{"id": v.ID, "ordinal": v.Ordinal, "value": v.Value, "source": v.Source, "source_ref": v.SourceRef, "actor": v.Actor, "confidence": v.Confidence, "active_from": v.ActiveFrom, "created_at": v.CreatedAt}
+			superseded = map[string]any{"id": v.ID, "ordinal": v.Ordinal, "value": v.Value, attributeSourceKey: v.Source, "source_ref": v.SourceRef, "actor": v.Actor, "confidence": v.Confidence, "active_from": v.ActiveFrom, "created_at": v.CreatedAt}
 			if unguarded {
 				args["expected_value_id"] = v.ID
 			}
@@ -264,7 +271,7 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 	if name == "patch_attribute_definition" || name == "delete_attribute_definition" {
 		input, err := decodeMCPOperationArguments[attributeDefinitionArgs](args)
 		if err != nil {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return "", true, &mcpserver.OperationRefusalError{Code: attributeInvalidArguments}
 		}
 		result, _, err := b.executeRecordAttributeOperation(ctx, "get_attribute_definition", map[string]any{"definition_id": input.ID})
 		if err != nil || result == nil || result.IsError {
