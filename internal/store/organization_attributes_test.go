@@ -223,6 +223,20 @@ func TestOrganizationAttributeDryRunCASAndMultiOrdinal(t *testing.T) {
 	require.Len(current, 2)
 	assert.Equal(first.Value.ID, current[0].ID)
 	assert.Equal(second.Value.ID, current[1].ID)
+
+	inputValue := store.OrganizationAttributeValueInput{OrganizationID: organization.ID, DefinitionSlug: "specialties", Ordinal: new(int64(0)), Value: textAttributeValue("new"), Source: store.ProvenanceUser, ExpectedValueID: new(int64)}
+	_, err = st.SetOrganizationAttributeValueContext(ctx, inputValue)
+	require.ErrorIs(err, store.ErrAttributeValueConflict)
+	inputValue.ExpectedValueID = new(int64(-1))
+	_, err = st.SetOrganizationAttributeValueContext(ctx, inputValue)
+	require.ErrorIs(err, store.ErrAttributeValueInvalid)
+	inputValue.ExpectedValueID = new(int64)
+	inputValue.Ordinal = new(int64(2))
+	third, err := st.SetOrganizationAttributeValueContext(ctx, inputValue)
+	require.NoError(err)
+	assert.Equal(int64(2), third.Value.Ordinal)
+	_, err = st.SetOrganizationAttributeValueContext(ctx, inputValue)
+	require.ErrorIs(err, store.ErrAttributeValueConflict)
 }
 
 func TestOrganizationMultiAttributeAppendsAfterSupersede(t *testing.T) {
@@ -609,35 +623,4 @@ func TestOrganizationAttributeCreatedAtUsesColumnDefault(t *testing.T) {
 	})
 	require.NoError(err)
 	require.Zero(write.Value.CreatedAt.Nanosecond())
-}
-
-func TestOrganizationAttributeExpectedValue(t *testing.T) {
-	must := require.New(t)
-	st := testutil.NewTestStore(t)
-	org := mustAttributeOrganization(t, st)
-	mustOrganizationAttributeDefinition(t, st, "industry")
-	input := store.OrganizationAttributeValueInput{OrganizationID: org.ID, DefinitionSlug: "industry", Value: textAttributeValue("one"), Source: store.ProvenanceUser, ExpectedValueID: new(int64)}
-	_, err := st.SetOrganizationAttributeValueContext(t.Context(), input)
-	must.NoError(err)
-	_, err = st.SetOrganizationAttributeValueContext(t.Context(), input)
-	must.ErrorIs(err, store.ErrAttributeValueConflict)
-	input.ExpectedValueID = new(int64(-1))
-	_, err = st.SetOrganizationAttributeValueContext(t.Context(), input)
-	must.ErrorIs(err, store.ErrAttributeValueInvalid)
-
-	definition := organizationTextDefinition("specialties")
-	definition.Cardinality = store.AttributeCardinalityMulti
-	_, err = st.CreateAttributeDefinitionContext(t.Context(), definition)
-	must.NoError(err)
-	input.DefinitionSlug = "specialties"
-	input.ExpectedValueID = new(int64)
-	input.Ordinal = new(int64(0))
-	_, err = st.SetOrganizationAttributeValueContext(t.Context(), input)
-	must.NoError(err)
-	input.Ordinal = new(int64(1))
-	second, err := st.SetOrganizationAttributeValueContext(t.Context(), input)
-	must.NoError(err)
-	must.Equal(int64(1), second.Value.Ordinal)
-	_, err = st.SetOrganizationAttributeValueContext(t.Context(), input)
-	must.ErrorIs(err, store.ErrAttributeValueConflict)
 }

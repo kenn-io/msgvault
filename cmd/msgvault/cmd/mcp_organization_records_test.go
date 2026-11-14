@@ -62,6 +62,8 @@ func TestOrganizationReadsUseNativeStore(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	org, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example Company", Kind: store.OrganizationKindCompany})
 	must.NoError(err)
+	_, err = st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Unrelated Company", Kind: store.OrganizationKindCompany})
+	must.NoError(err)
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
 	result, err := backend.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": org.ID})
 	must.NoError(err)
@@ -71,7 +73,9 @@ func TestOrganizationReadsUseNativeStore(t *testing.T) {
 	checks.NotEmpty(result.ETag)
 	found, err := backend.ExecuteOperation(t.Context(), "list_organizations", map[string]any{"q": "Example"})
 	must.NoError(err)
-	checks.Len(operationOutput[generated.OrganizationsResponse](t, found).Organizations, 1)
+	organizations := operationOutput[generated.OrganizationsResponse](t, found).Organizations
+	must.Len(organizations, 1)
+	checks.Equal(org.ID, organizations[0].ID)
 }
 
 func TestOrganizationWritesUseRevisions(t *testing.T) {
@@ -103,7 +107,7 @@ func TestOrganizationWritesUseRevisions(t *testing.T) {
 	checks.True(operationOutput[mcpserver.OrganizationDeleted](t, deleted).Deleted)
 }
 
-func TestOrganizationAttributeApprovalAndMedia(t *testing.T) {
+func TestOrganizationAttributeDisclosureAndInvalidMedia(t *testing.T) {
 	must := require.New(t)
 	st := testutil.NewTestStore(t)
 	_, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: "test-org-industry", ObjectType: store.AttributeObjectOrganization, Slug: "industry", Label: "Industry", ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, APIMutable: true, UICreatable: true, UIEditable: true, IsDeletable: true})
@@ -220,20 +224,37 @@ func TestOrganizationSDKRequiresConfirmation(t *testing.T) {
 }
 
 func TestApprovalMatrixOrganization(t *testing.T) {
-	exerciseApprovalMatrix(t, func(t *testing.T) approvalCase {
-		t.Helper()
-		st := testutil.NewTestStore(t)
-		_, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: "test-org-matrix", ObjectType: store.AttributeObjectOrganization, Slug: "industry", Label: "Industry", ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, APIMutable: true, UICreatable: true, UIEditable: true, IsDeletable: true})
-		require.NoError(t, err)
-		org, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example"})
-		require.NoError(t, err)
-		b := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
-		args := map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "industry", "source": "user", "value": map[string]any{"type": "text", "text": "Approved"}, "expected_value_id": 0, "ordinal": 0}}
-		return approvalCase{b, mcpserver.OperationFamilyOrganizations, "set_organization_attribute", args, func() {
-			value := "Concurrent"
-			_, err := st.SetOrganizationAttributeValueContext(t.Context(), store.OrganizationAttributeValueInput{OrganizationID: org.ID, DefinitionSlug: "industry", Source: store.ProvenanceUser, Value: store.AttributeValue{Type: store.AttributeValueText, Text: &value}})
+	t.Run("set attribute", func(t *testing.T) {
+		exerciseApprovalMatrix(t, func(t *testing.T) approvalCase {
+			t.Helper()
+			st := testutil.NewTestStore(t)
+			_, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: "test-org-matrix", ObjectType: store.AttributeObjectOrganization, Slug: "industry", Label: "Industry", ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, APIMutable: true, UICreatable: true, UIEditable: true, IsDeletable: true})
 			require.NoError(t, err)
-		}}
+			org, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example"})
+			require.NoError(t, err)
+			b := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
+			args := map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "industry", "source": "user", "value": map[string]any{"type": "text", "text": "Approved"}, "expected_value_id": 0, "ordinal": 0}}
+			return approvalCase{b, mcpserver.OperationFamilyOrganizations, "set_organization_attribute", args, func() {
+				value := "Concurrent"
+				_, err := st.SetOrganizationAttributeValueContext(t.Context(), store.OrganizationAttributeValueInput{OrganizationID: org.ID, DefinitionSlug: "industry", Source: store.ProvenanceUser, Value: store.AttributeValue{Type: store.AttributeValueText, Text: &value}})
+				require.NoError(t, err)
+			}}
+		})
+	})
+	t.Run("delete organization", func(t *testing.T) {
+		exerciseApprovalMatrix(t, func(t *testing.T) approvalCase {
+			st := testutil.NewTestStore(t)
+			org, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Original", Kind: store.OrganizationKindCompany})
+			require.NoError(t, err)
+			b := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
+			read, err := b.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": org.ID})
+			require.NoError(t, err)
+			return approvalCase{b, mcpserver.OperationFamilyOrganizations, "delete_organization", map[string]any{"organization_id": org.ID, "etag": read.ETag}, func() {
+				result, err := b.ExecuteOperation(t.Context(), "update_organization", map[string]any{"organization_id": org.ID, "etag": read.ETag, "body": map[string]any{"name": "Concurrent", "kind": "company"}})
+				require.NoError(t, err)
+				require.False(t, result.IsError)
+			}}
+		})
 	})
 }
 
@@ -253,6 +274,12 @@ func TestOrganizationLargeAttributeReplacementReceipt(t *testing.T) {
 		assert.Contains(t, request.Params.Message, strings.Repeat("a", 600<<10))
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	})
+	dryRun, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_organization_attribute", Arguments: map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "large", "source": "user", "ordinal": 0, "expected_value_id": first.Value.ID, "dry_run": true, "value": map[string]any{"type": "json", "json": map[string]any{"data": "Preview"}}}}})
+	must.NoError(err)
+	preview := loopToolOutput[map[string]any](t, dryRun)
+	must.Equal(true, preview["dry_run"])
+	must.NotContains(preview, "value_id")
+	must.NotContains(preview, "superseded_id")
 	newValue := strings.Repeat("b", 600<<10)
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_organization_attribute", Arguments: map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "large", "source": "user", "ordinal": 0, "expected_value_id": first.Value.ID, "value": map[string]any{"type": "json", "json": map[string]any{"data": newValue}}}}})
 	must.NoError(err)
@@ -269,57 +296,6 @@ func TestOrganizationLargeAttributeReplacementReceipt(t *testing.T) {
 	must.Contains(string(data), newValue)
 }
 
-func TestOrganizationAttributeDryRunReceipt(t *testing.T) {
-	must := require.New(t)
-	st := testutil.NewTestStore(t)
-	_, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: "test-dry-run", ObjectType: store.AttributeObjectOrganization, Slug: "industry", Label: "Industry", ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, APIMutable: true, UICreatable: true, UIEditable: true, IsDeletable: true})
-	must.NoError(err)
-	org, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example"})
-	must.NoError(err)
-	value := "Original"
-	first, err := st.SetOrganizationAttributeValueContext(t.Context(), store.OrganizationAttributeValueInput{OrganizationID: org.ID, DefinitionSlug: "industry", Source: store.ProvenanceUser, Ordinal: new(int64(0)), Value: store.AttributeValue{Type: store.AttributeValueText, Text: &value}})
-	must.NoError(err)
-	b := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
-	session := legacyOperationSession(t, b, mcpserver.OperationFamilyOrganizations, func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
-	})
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_organization_attribute", Arguments: map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "industry", "source": "user", "ordinal": 0, "expected_value_id": first.Value.ID, "dry_run": true, "value": map[string]any{"type": "text", "text": "Preview"}}}})
-	must.NoError(err)
-	receipt := loopToolOutput[map[string]any](t, result)
-	must.Equal(true, receipt["dry_run"])
-	must.NotContains(receipt, "value_id")
-	must.NotContains(receipt, "superseded_id")
-	values, err := st.ListOrganizationAttributeValuesContext(t.Context(), org.ID, store.OrganizationAttributeQuery{})
-	must.NoError(err)
-	must.Len(values, 1)
-	must.Equal("Original", *values[0].Value.Text)
-}
-
-func TestOrganizationWritesRejectChangesDuringApproval(t *testing.T) {
-	must := require.New(t)
-	st := testutil.NewTestStore(t)
-	org, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Original", Kind: store.OrganizationKindCompany})
-	must.NoError(err)
-	b := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
-	read, err := b.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": org.ID})
-	must.NoError(err)
-	session := legacyOperationSession(t, b, mcpserver.OperationFamilyOrganizations, func(ctx context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		changed, err := b.ExecuteOperation(ctx, "update_organization", map[string]any{"organization_id": org.ID, "etag": read.ETag, "body": map[string]any{"name": "Concurrent", "kind": "company"}})
-		if err != nil {
-			return nil, err
-		}
-		assert.False(t, changed.IsError)
-		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
-	})
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "delete_organization", Arguments: map[string]any{"organization_id": org.ID, "etag": read.ETag}})
-	must.NoError(err)
-	must.True(result.IsError)
-	must.Equal("operation_context_changed", loopToolFailure(t, result)["error"])
-	current, err := st.GetOrganizationContext(t.Context(), org.ID)
-	must.NoError(err)
-	must.Equal("Concurrent", current.Name)
-}
-
 func TestOrganizationAttributeNegativeExpectedIDIsDefinite(t *testing.T) {
 	must := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -332,9 +308,10 @@ func TestOrganizationAttributeNegativeExpectedIDIsDefinite(t *testing.T) {
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	})
 	body := map[string]any{"definition_slug": "industry", "source": "user", "expected_value_id": 0, "value": map[string]any{"type": "text", "text": "Example"}}
-	missing, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_organization_attribute", Arguments: map[string]any{"organization_id": org.ID, "body": body}})
-	must.NoError(err)
-	must.True(missing.IsError)
+	_, err = b.OperationDisclosure(t.Context(), "set_organization_attribute", map[string]any{"organization_id": org.ID, "body": body})
+	var refusal *mcpserver.OperationRefusalError
+	must.ErrorAs(err, &refusal)
+	must.Equal("invalid_arguments", refusal.Code)
 	must.Zero(approvals)
 	body["ordinal"] = 0
 	body["expected_value_id"] = -1

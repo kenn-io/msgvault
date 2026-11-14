@@ -103,8 +103,8 @@ func exerciseApprovalMatrix(t *testing.T, makeCase func(*testing.T) approvalCase
 				}
 				must.Equal(state != "stable", result.IsError, "%v", result.Content)
 				if mode == "legacy" && state == "changed" {
-					codes := map[mcpserver.OperationFamily]string{mcpserver.OperationFamilySources: "source_not_schedulable", mcpserver.OperationFamilyRecords: "person_revision_conflict", mcpserver.OperationFamilyCurated: "person_revision_conflict", mcpserver.OperationFamilyEmployment: "operation_context_changed", mcpserver.OperationFamilyOrganizations: "attribute_value_conflict"}
-					must.Equal(codes[c.family], loopToolFailure(t, result)["error"])
+					codes := map[string]string{"sync_source": "source_not_schedulable", "set_person_display_name": "person_revision_conflict", "patch_person_record": "person_revision_conflict", "replace_employment": "operation_context_changed", "set_organization_attribute": "attribute_value_conflict", "delete_organization": "operation_context_changed"}
+					must.Equal(codes[c.name], loopToolFailure(t, result)["error"])
 				}
 				if state == "stable" {
 					must.Equal(int32(1), writes.Load())
