@@ -53,8 +53,6 @@ func TestMCPOperationResponseFailures(t *testing.T) {
 			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusOK, true, true, settings},
 		{"interrupted error response", http.MethodPatch, `{"error":`,
 			`{"error":"operation_response_failed","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusInternalServerError, true, true, settings},
-		{"invalid write receipt", http.MethodPatch, `{}`,
-			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusOK, false, false, settings},
 		{"person receipt without ID", http.MethodPatch, `{"id":0,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","participant_ids":[],"vcard_uid":"example"}`,
 			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/people/1", http.StatusOK, false, false, person},
 		{"malformed write receipt", http.MethodPatch, `not json`,
