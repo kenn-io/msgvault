@@ -60,7 +60,7 @@ func accountScope(account string) string {
 func scopedKey(scope, key string) string { return "v1:" + scope + ":" + key }
 func messageKey(conversation, author string, date, received decimal, ordinal int) string {
 	// A JSON array avoids delimiter ambiguity and versions the identity format.
-	b, _ := json.Marshal([]string{"v3", conversation, author, string(date), string(received), strconv.Itoa(ordinal)})
+	b, _ := json.Marshal([]string{"v" + strconv.Itoa(formatVersion), conversation, author, string(date), string(received), strconv.Itoa(ordinal)})
 	return string(b)
 }
 

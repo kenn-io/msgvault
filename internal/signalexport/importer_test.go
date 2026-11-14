@@ -35,7 +35,11 @@ func fixture(t *testing.T, frames ...string) string {
 }
 func writeFrames(t *testing.T, root string, frames ...string) {
 	t.Helper()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(append([]string{header, account, self, contact, direct}, frames...), "\n")+"\n"), 0600))
+	writeLines(t, root, append([]string{header, account, self, contact, direct}, frames...))
+}
+func writeLines(t *testing.T, root string, lines []string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0600))
 }
 func options(t *testing.T, root string) ImportOptions {
 	t.Helper()
@@ -65,7 +69,7 @@ func TestImportSnapshotsAndScope(t *testing.T) {
 	// Every local ID changes, and an edit changes the top-level time.
 	edited := `{"chatItem":{"chatId":"70","authorId":"20","dateSent":"1700000005000","incoming":{"dateReceived":"1700000005100"},"revisions":[{"chatId":"70","authorId":"20","dateSent":"1700000000000","incoming":{"dateReceived":"1700000000100"},"standardMessage":{"text":{"body":"Hello 星"}}}],"standardMessage":{"text":{"body":"edited"}}}}`
 	lines := []string{header, account, strings.Replace(self, `"1"`, `"10"`, 1), strings.Replace(contact, `"2"`, `"20"`, 1), `{"chat":{"id":"70","recipientId":"20"}}`, edited}
-	require.NoError(os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+	writeLines(t, root, lines)
 	second, err := Import(t.Context(), st, opts)
 	require.NoError(err)
 	assert.EqualValues(0, second.MessagesAdded)
@@ -94,8 +98,6 @@ func TestImportDistinctMessagesAtSameMillisecond(t *testing.T) {
 	later := func(frame, body string) string {
 		return strings.Replace(strings.Replace(frame, body, "Another message", 1), "1700000000100", "1700000000200", 1)
 	}
-	between := strings.Replace(incoming, "1700000000000", "1700000000001", 1)
-	repeat := strings.Replace(first, "Hello 星", "Repeat", 1)
 	for _, tc := range []struct {
 		name             string
 		frames, replay   []string
@@ -103,7 +105,6 @@ func TestImportDistinctMessagesAtSameMillisecond(t *testing.T) {
 	}{
 		{"incoming receive times", []string{first, later(first, "Hello 星")}, []string{later(first, "Hello 星")}, 0, 0},
 		{"outgoing receive times", []string{outgoing, later(outgoing, "First message")}, []string{later(outgoing, "First message")}, 0, 0},
-		{"same-time messages separated by another", []string{first, between, repeat}, []string{repeat, between, first}, 0, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
@@ -452,7 +453,7 @@ func TestImportIdentityTimeAndDirectionSkips(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			root := fixture(t)
 			lines := []string{header, account, self, `{"recipient":{"id":"2",` + strings.TrimPrefix(recipient, "{") + `}`, direct, incoming}
-			require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+			writeLines(t, root, lines)
 			s, err := Import(t.Context(), st, options(t, root))
 			require.NoError(t, err)
 			assert.Equal(t, map[string]int64{"recipient_identity": 1}, s.Skipped)
@@ -472,7 +473,8 @@ func TestImportCancellationRetainsCommittedSnapshot(t *testing.T) {
 			if kind == "parse failure at line 7" {
 				second = `{"chatItem":`
 			}
-			root := fixture(t, incoming, second)
+			first := strings.Replace(incoming, `"standardMessage":{`, `"standardMessage":{"quote":{},`, 1)
+			root := fixture(t, first, second)
 			opts := options(t, root)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -499,8 +501,12 @@ func TestImportCancellationRetainsCommittedSnapshot(t *testing.T) {
 				return
 			}
 			assert.EqualValues(1, summary.MessagesAdded)
+			assert.EqualValues(1, summary.Omitted["quote"])
+			source, err := st.GetSourceByIDContext(t.Context(), summary.SourceID)
+			require.NoError(err)
+			assert.JSONEq(`{"signal_export_format":3}`, source.SyncCursor.String)
 			assert.Equal(1, messageCount(t, st))
-			writeFrames(t, root, incoming, strings.Replace(incoming, "1700000000000", "1700000000001", 1))
+			writeFrames(t, root, first, strings.Replace(incoming, "1700000000000", "1700000000001", 1))
 			summary, err = Import(t.Context(), st, opts)
 			require.NoError(err)
 			assert.EqualValues(1, summary.MessagesAdded)
@@ -555,6 +561,13 @@ func TestNativeFixtureProvenance(t *testing.T) {
 	assert.EqualValues(1, total)
 }
 
+func contactLines(contact, message string) []string {
+	group := `{"recipient":{"id":"3","group":{"masterKey":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}}}`
+	groupChat := `{"chat":{"id":"8","recipientId":"3"}}`
+	groupMessage := `{"chatItem":{"chatId":"8","authorId":"2","dateSent":"1700000000001","incoming":{},"standardMessage":{"text":{"body":"group"}}}}`
+	return []string{header, account, self, `{"recipient":{"id":"2","contact":` + contact + `}}`, direct, group, groupChat, message, groupMessage}
+}
+
 func TestContactIdentifierAdded(t *testing.T) {
 	for _, contact := range []string{
 		`{"aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}`,
@@ -563,25 +576,31 @@ func TestContactIdentifierAdded(t *testing.T) {
 		t.Run(contact, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			root := fixture(t, incoming)
-			group := `{"recipient":{"id":"3","group":{"masterKey":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}}}`
-			groupChat := `{"chat":{"id":"8","recipientId":"3"}}`
-			groupMessage := `{"chatItem":{"chatId":"8","authorId":"2","dateSent":"1700000000001","incoming":{},"standardMessage":{"text":{"body":"group"}}}}`
-			lines := []string{header, account, self, `{"recipient":{"id":"2","contact":` + contact + `}}`, direct, group, groupChat, incoming, groupMessage}
-			require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+			data := []byte("contact media")
+			withMedia := strings.Replace(incoming, `"text":`, `"attachments":[{"clientUuid":"AQ==","pointer":{"locatorInfo":{"key":"AQ=="}}}],"text":`, 1)
+			lines := contactLines(contact, withMedia)
+			writeLines(t, root, lines)
 			opts := options(t, root)
 			_, err := Import(t.Context(), st, opts)
 			require.NoError(t, err)
+			var id int64
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages ORDER BY id LIMIT 1").Scan(&id))
+			assert.Equal(t, map[string]string{"attachment:0": ""}, slotHashes(t, st, id))
+			putMedia(t, root, data)
+			lines[7] = strings.Replace(withMedia, `{"locatorInfo":{"key":"AQ=="}}`, pointer(data), 1)
 			lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`
-			require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+			writeLines(t, root, lines)
 			summary, err := Import(t.Context(), st, opts)
 			require.NoError(t, err)
 			assert.EqualValues(t, 2, summary.MessagesExisting)
+			assert.Equal(t, 1, summary.AttachmentsStored)
+			assert.Equal(t, map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, id))
 			assert.Equal(t, 2, messageCount(t, st))
 			var conversations int
 			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations").Scan(&conversations))
 			assert.Equal(t, 2, conversations)
 			lines[3] = `{"recipient":{"id":"2","contact":{"aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`
-			require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+			writeLines(t, root, lines)
 			summary, err = Import(t.Context(), st, opts)
 			require.NoError(t, err)
 			assert.EqualValues(t, 2, summary.MessagesExisting)
@@ -594,15 +613,12 @@ func TestContactReusedPhoneKeepsOriginalOwner(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := fixture(t, incoming)
 	opts := options(t, root)
-	group := `{"recipient":{"id":"3","group":{"masterKey":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}}}`
-	groupChat := `{"chat":{"id":"8","recipientId":"3"}}`
-	groupMessage := `{"chatItem":{"chatId":"8","authorId":"2","dateSent":"1700000000001","incoming":{},"standardMessage":{"text":{"body":"group"}}}}`
-	lines := []string{header, account, self, `{"recipient":{"id":"2","contact":{"e164":"15555550100"}}}`, direct, group, groupChat, incoming, groupMessage}
-	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+	lines := contactLines(`{"e164":"15555550100"}`, incoming)
+	writeLines(t, root, lines)
 	_, err := Import(t.Context(), st, opts)
 	require.NoError(t, err)
 	lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`
-	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+	writeLines(t, root, lines)
 	_, err = Import(t.Context(), st, opts)
 	require.NoError(t, err)
 	scope := accountScope(opts.Account)
@@ -615,7 +631,7 @@ func TestContactReusedPhoneKeepsOriginalOwner(t *testing.T) {
 	assert.Equal(t, first, aciX)
 	lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AgICAgICAgICAgICAgICAg=="}}}`
 	lines[7] = strings.Replace(incoming, "1700000000000", "1700000000002", 1)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+	writeLines(t, root, lines)
 	_, err = Import(t.Context(), st, opts)
 	require.NoError(t, err)
 	phone, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
@@ -783,7 +799,7 @@ func TestContactDoesNotReassignExistingAlias(t *testing.T) {
 	require.NotEqual(t, first, second)
 	root := fixture(t)
 	lines := []string{header, account, self, `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`, direct, incoming}
-	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+	writeLines(t, root, lines)
 	summary, err := Import(t.Context(), st, options(t, root))
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, summary.MessagesAdded)
@@ -800,15 +816,17 @@ func TestContactDoesNotReassignExistingAlias(t *testing.T) {
 
 func TestImportAmbiguousSameTimeReplay(t *testing.T) {
 	data := []byte("fictional attachment")
-	message := func(body string) string {
-		return `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"` + body + `"},"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(data) + `}]}}}`
+	message := func(body, pointer string) string {
+		return `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"` + body + `"},"attachments":[{"clientUuid":"AQ==","pointer":` + pointer + `}]}}}`
 	}
+	missing := `{"locatorInfo":{"key":"AQ=="}}`
+	between := strings.Replace(incoming, "1700000000000", "1700000000001", 1)
 	st := testutil.NewTestStore(t)
-	root := fixture(t, message("A"), message("B"))
+	root := fixture(t, message("A", missing), between, message("B", missing))
 	opts := options(t, root)
 	first, err := Import(t.Context(), st, opts)
 	require.NoError(t, err)
-	assert.EqualValues(t, 2, first.MessagesAdded)
+	assert.EqualValues(t, 3, first.MessagesAdded)
 	assert.Equal(t, 2, first.AttachmentsMissing)
 	rows, err := st.DB().QueryContext(t.Context(), "SELECT id FROM messages ORDER BY id")
 	require.NoError(t, err)
@@ -821,85 +839,41 @@ func TestImportAmbiguousSameTimeReplay(t *testing.T) {
 	}
 	require.NoError(t, rows.Err())
 	require.NoError(t, rows.Close())
-	require.Len(t, ids, 2)
+	require.Len(t, ids, 3)
+	ids = []int64{ids[0], ids[2]}
 	rawA, err := st.GetMessageRawContext(t.Context(), ids[0])
 	require.NoError(t, err)
 	rawB, err := st.GetMessageRawContext(t.Context(), ids[1])
 	require.NoError(t, err)
 	putMedia(t, root, data)
-	writeFrames(t, root, message("B"), message("C"))
+	writeFrames(t, root, message("B", pointer(data)), between, message("C", pointer(data)))
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, summary.Skipped["ambiguous_message"])
 	assert.Zero(t, summary.MessagesAdded)
-	assert.Zero(t, summary.MessagesExisting)
+	assert.EqualValues(t, 1, summary.MessagesExisting)
 	assert.Zero(t, summary.MessagesChanged)
-	assert.Empty(t, summary.Omitted)
+	assert.Equal(t, map[string]int64{"formatting": 0, "link_preview": 0, "reactions": 0, "revision_history": 0}, summary.Omitted)
 	assert.Empty(t, summary.MediaMissing)
 	assert.Zero(t, summary.AttachmentsStored)
 	assert.Zero(t, summary.AttachmentsMissing)
-	assert.Equal(t, 2, messageCount(t, st))
-	assertBody(t, st, ids[0], "A")
-	assertBody(t, st, ids[1], "B")
-	afterA, err := st.GetMessageRawContext(t.Context(), ids[0])
-	require.NoError(t, err)
-	afterB, err := st.GetMessageRawContext(t.Context(), ids[1])
-	require.NoError(t, err)
-	assert.Equal(t, rawA, afterA)
-	assert.Equal(t, rawB, afterB)
-	assert.Equal(t, map[string]string{"attachment:0": ""}, slotHashes(t, st, ids[0]))
-	assert.Equal(t, map[string]string{"attachment:0": ""}, slotHashes(t, st, ids[1]))
+	assert.Equal(t, 3, messageCount(t, st))
+	for _, id := range ids {
+		assert.Equal(t, map[string]string{"attachment:0": ""}, slotHashes(t, st, id))
+	}
 	files, err := os.ReadDir(opts.AttachmentsDir)
 	require.NoError(t, err)
 	assert.Empty(t, files)
 
-	writeFrames(t, root, message("A"), message("B"))
+	writeFrames(t, root, message("A", pointer(data)), between, message("B", pointer(data)))
 	summary, err = Import(t.Context(), st, opts)
 	require.NoError(t, err)
-	assert.EqualValues(t, 2, summary.MessagesExisting)
+	assert.EqualValues(t, 3, summary.MessagesExisting)
 	assert.Zero(t, summary.Skipped["ambiguous_message"])
 	assert.Equal(t, 2, summary.AttachmentsStored)
-	assert.Equal(t, map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, ids[0]))
-	assert.Equal(t, map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, ids[1]))
-}
-
-func TestImportSameTimeMediaRepair(t *testing.T) {
-	data := []byte("fictional attachment")
-	message := func(body, pointer string) string {
-		return `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"` + body + `"},"attachments":[{"clientUuid":"AQ==","pointer":` + pointer + `}]}}}`
+	for _, id := range ids {
+		assert.Equal(t, map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, id))
 	}
-	st := testutil.NewTestStore(t)
-	root := fixture(t, message("A", `{"locatorInfo":{"key":"AQ=="}}`), message("B", `{"locatorInfo":{"key":"AQ=="}}`))
-	opts := options(t, root)
-	first, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.EqualValues(t, 2, first.MessagesAdded)
-	assert.Equal(t, 2, first.AttachmentsMissing)
-	rows, err := st.DB().QueryContext(t.Context(), "SELECT id FROM messages ORDER BY id")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		require.NoError(t, rows.Scan(&id))
-		ids = append(ids, id)
-	}
-	require.NoError(t, rows.Err())
-	require.NoError(t, rows.Close())
-	require.Len(t, ids, 2)
-	rawA, err := st.GetMessageRawContext(t.Context(), ids[0])
-	require.NoError(t, err)
-	rawB, err := st.GetMessageRawContext(t.Context(), ids[1])
-	require.NoError(t, err)
-	putMedia(t, root, data)
-	writeFrames(t, root, message("A", pointer(data)), message("B", pointer(data)))
-	summary, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.EqualValues(t, 2, summary.MessagesExisting)
-	assert.Zero(t, summary.Skipped["ambiguous_message"])
-	assert.Equal(t, 2, summary.AttachmentsStored)
-	assert.Equal(t, map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, ids[0]))
-	assert.Equal(t, map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, ids[1]))
 	afterA, err := st.GetMessageRawContext(t.Context(), ids[0])
 	require.NoError(t, err)
 	afterB, err := st.GetMessageRawContext(t.Context(), ids[1])
