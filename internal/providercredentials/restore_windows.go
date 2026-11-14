@@ -106,7 +106,7 @@ func restorePreflight(dir, changed string, selected, ancestors []string) error {
 			return fmt.Errorf("inspect tokens/%s: %w", rel, err)
 		}
 		if containsPath(ancestors, rel) {
-			return fs.SkipDir
+			return nil
 		}
 		if entry.IsDir() && control&windows.SE_DACL_PROTECTED != 0 {
 			return fs.SkipDir
@@ -117,9 +117,6 @@ func restorePreflight(dir, changed string, selected, ancestors []string) error {
 		}
 		if inherited {
 			return fmt.Errorf("%w: tokens/%s", ErrRestorePermissionsConflict, rel)
-		}
-		if entry.IsDir() {
-			return fs.SkipDir
 		}
 		return nil
 	})

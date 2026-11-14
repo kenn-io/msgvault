@@ -485,6 +485,16 @@ func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
 		defer windows.CloseHandle(nested) //nolint:errcheck
 		requirements.NoError(verifyOwnerOnlyHandle(nested, false))
 	})
+	t.Run("preflight checks omitted entries under selected ancestors", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "tokens")
+		require.NoError(t, os.Mkdir(dir, 0700))
+		shareRestoredTestDirectory(t, dir, windows.GENERIC_READ, windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE)
+		nested := filepath.Join(dir, "nested")
+		require.NoError(t, os.Mkdir(nested, 0700))
+		require.NoError(t, os.WriteFile(filepath.Join(nested, "selected"), []byte("selected"), 0600))
+		require.NoError(t, os.WriteFile(filepath.Join(nested, "omitted"), []byte("omitted"), 0600))
+		require.ErrorIs(t, restorePreflight(dir, ".", []string{filepath.Join("nested", "selected")}, []string{"nested"}), ErrRestorePermissionsConflict)
+	})
 	t.Run("kelvin sign does not match k", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "tokens")
 		require.NoError(t, os.Mkdir(dir, 0700))
