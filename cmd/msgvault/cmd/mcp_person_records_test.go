@@ -86,6 +86,10 @@ func TestPersonRecordDisclosure(t *testing.T) {
 				assert.Equal(t, tc.code, refusal.Code)
 			})
 		}
+		_, err := backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": int64(999999), "etag": "tag", "patch": map[string]any{"names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": "Example", "envelope": map[string]any{"source": "user"}}}}}})
+		var refusal *mcpserver.OperationRefusalError
+		require.ErrorAs(t, err, &refusal)
+		assert.Equal(t, "person_profile_not_found", refusal.Code)
 	})
 	t.Run("full value", func(t *testing.T) {
 		backend, id := personRecordFixture(t)

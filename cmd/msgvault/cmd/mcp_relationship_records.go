@@ -15,26 +15,17 @@ import (
 func relationshipRecordCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCapabilities) []string {
 	var names []string
 	for _, route := range []struct {
-		name, id, path string
-		query          []string
-	}{
-		{"list_relationship_types", "listRelationshipTypes", "/api/v1/relationship-types", nil},
-		{"list_person_relationships", "listPersonRelationships", "/api/v1/people/{id}/relationships", []string{"include_ended"}},
-		{"get_person_network", "getPersonNetwork", "/api/v1/people/{id}/network", []string{"depth", "include_ended"}},
-	} {
-		if hasRoute(route.id, http.MethodGet, route.path, route.query...) {
-			names = append(names, route.name)
-		}
-	}
-	for _, route := range []struct {
 		name, id, method, path string
-		properties             []string
+		query, properties      []string
 	}{
-		{"create_person_relationship", "createPersonRelationship", http.MethodPost, "/api/v1/person-relationships", []string{"source_person_id", "target_person_id", "relationship_type_slug", "start_date", "end_date", "notes"}},
-		{"update_person_relationship", "patchPersonRelationship", http.MethodPatch, "/api/v1/person-relationships/{id}", []string{"end_date", "notes"}},
-		{"delete_person_relationship", "deletePersonRelationship", http.MethodDelete, "/api/v1/person-relationships/{id}", nil},
+		{"list_relationship_types", "listRelationshipTypes", http.MethodGet, "/api/v1/relationship-types", nil, nil},
+		{"list_person_relationships", "listPersonRelationships", http.MethodGet, "/api/v1/people/{id}/relationships", []string{"include_ended"}, nil},
+		{"get_person_network", "getPersonNetwork", http.MethodGet, "/api/v1/people/{id}/network", []string{"depth", "include_ended"}, nil},
+		{"create_person_relationship", "createPersonRelationship", http.MethodPost, "/api/v1/person-relationships", nil, []string{"source_person_id", "target_person_id", "relationship_type_slug", "start_date", "end_date", "notes"}},
+		{"update_person_relationship", "patchPersonRelationship", http.MethodPatch, "/api/v1/person-relationships/{id}", nil, []string{"end_date", "notes"}},
+		{"delete_person_relationship", "deletePersonRelationship", http.MethodDelete, "/api/v1/person-relationships/{id}", nil, nil},
 	} {
-		if hasRoute(route.id, route.method, route.path) && mcpRequestPropertiesPresent(caps, route.id, route.properties...) && hasRoute("getPersonProfile", http.MethodGet, "/api/v1/people/{id}") && (route.name == "create_person_relationship" && hasRoute("listRelationshipTypes", http.MethodGet, "/api/v1/relationship-types") || route.name != "create_person_relationship" && hasRoute("getPersonRelationship", http.MethodGet, "/api/v1/person-relationships/{id}")) {
+		if hasRoute(route.id, route.method, route.path, route.query...) && (route.method == http.MethodGet || mcpRequestPropertiesPresent(caps, route.id, route.properties...) && hasRoute("getPersonProfile", http.MethodGet, "/api/v1/people/{id}") && (route.name == "create_person_relationship" && hasRoute("listRelationshipTypes", http.MethodGet, "/api/v1/relationship-types") || route.name != "create_person_relationship" && hasRoute("getPersonRelationship", http.MethodGet, "/api/v1/person-relationships/{id}"))) {
 			names = append(names, route.name)
 		}
 	}
@@ -128,12 +119,9 @@ func (b *daemonMCPOperations) relationshipDisclosure(ctx context.Context, name s
 		if err != nil {
 			return "", true, err
 		}
-		if result == nil || result.IsError {
-			return "", true, disclosureRefusal(result)
-		}
 		record, ok := result.Output.(generated.PersonRelationship)
 		if !ok {
-			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+			return "", true, disclosureRefusal(result)
 		}
 		if record.Revision != input.Revision {
 			return "", true, &mcpserver.OperationRefusalError{Code: "relationship_revision_conflict"}
@@ -145,12 +133,9 @@ func (b *daemonMCPOperations) relationshipDisclosure(ctx context.Context, name s
 		if err != nil {
 			return "", true, err
 		}
-		if result == nil || result.IsError {
-			return "", true, disclosureRefusal(result)
-		}
 		types, ok := result.Output.(generated.RelationshipTypesResponse)
 		if !ok {
-			return "", true, disclosureRefusal(nil)
+			return "", true, disclosureRefusal(result)
 		}
 		for _, typ := range types.RelationshipTypes {
 			if typ.Slug == input.RelationshipTypeSlug {
@@ -168,12 +153,9 @@ func (b *daemonMCPOperations) relationshipDisclosure(ctx context.Context, name s
 		if err != nil {
 			return "", true, err
 		}
-		if result == nil || result.IsError {
-			return "", true, disclosureRefusal(result)
-		}
 		person, ok := result.Output.(generated.Person)
 		if !ok {
-			return "", true, disclosureRefusal(nil)
+			return "", true, disclosureRefusal(result)
 		}
 		people[i] = person
 	}
