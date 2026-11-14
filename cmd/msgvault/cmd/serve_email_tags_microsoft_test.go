@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"log/slog"
 	"net/http"
@@ -81,5 +82,10 @@ func TestDaemonMessageTagsMicrosoftSharedPath(t *testing.T) {
 	msg, err := st.GetMessage(mid)
 	require.NoError(err)
 	assert.ElementsMatch([]string{"Inbox", "Category: Other", "Category: Next"}, msg.Labels)
+	assert.Equal(int32(1), writes.Load())
+	require.NoError(st.UpdateSourceOAuthApp(t.Context(), source.ID, sql.NullString{String: "missing", Valid: true}))
+	_, err = a.MessageTags(t.Context(), mid, &emailtags.MessageTagChange{Add: []string{"Another"}}, "", nil)
+	require.ErrorAs(err, &failure)
+	assert.Equal("provider_unavailable", failure.Code)
 	assert.Equal(int32(1), writes.Load())
 }
