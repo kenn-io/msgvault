@@ -229,7 +229,7 @@ func TestDownloadSnapshotByteBudget(t *testing.T) {
 	checks.Equal(len(data), cache.bytes)
 }
 
-func TestPersonDownloadSnapshotsSurviveRefresh(t *testing.T) {
+func TestPersonDownloadSnapshotReuseRefreshAndSmallResults(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	var cache downloadCache
 	defer cache.close()
@@ -246,10 +246,12 @@ func TestPersonDownloadSnapshotsSurviveRefresh(t *testing.T) {
 	assertions.Equal(first.etag, continued.etag)
 	assertions.Equal(1, reads)
 	value = "second"
+	_, err = cache.get(t.Context(), key, chunkRequest{length: 1, digest: first.digest}, load)
+	requirements.ErrorIs(err, errDownloadExpired)
 	second, err := cache.get(t.Context(), key, chunkRequest{length: 1}, load)
 	requirements.NoError(err)
 	assertions.Equal("second", second.etag)
-	assertions.Equal(2, reads)
+	assertions.Equal(3, reads)
 	attachmentKey := downloadKey{attachment: 1}
 	attachment, err := cache.get(t.Context(), attachmentKey, chunkRequest{length: 1}, func() (*downloadSnapshot, error) {
 		return &downloadSnapshot{data: []byte("attachment")}, nil
