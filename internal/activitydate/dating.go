@@ -1,6 +1,5 @@
-// Package activity dates archived communication events, classifies who they
-// are evidence about, and projects them into the durable activity spine.
-package activity
+// Package activitydate dates archived communication without archive dependencies.
+package activitydate
 
 import (
 	"errors"

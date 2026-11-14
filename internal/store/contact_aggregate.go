@@ -1,0 +1,153 @@
+package store
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"strings"
+	"time"
+)
+
+func activityFactSubjectClause(subject ActivitySubject) (string, []any, error) {
+	if subject.PersonID > 0 && len(subject.ParticipantIDs) == 0 {
+		return "f.person_id=?", []any{subject.PersonID}, nil
+	}
+	if subject.PersonID != 0 || len(subject.ParticipantIDs) == 0 {
+		return "", nil, fmt.Errorf("%w: a contact subject is required", ErrInvalidActivityRequest)
+	}
+	for _, id := range subject.ParticipantIDs {
+		if id <= 0 {
+			return "", nil, fmt.Errorf("%w: invalid contact participant", ErrInvalidActivityRequest)
+		}
+	}
+	predicate, args := messageExportInClause("f.participant_id", subject.ParticipantIDs)
+	return predicate, args, nil
+}
+
+func (s *Store) MessageContactAggregateContext(ctx context.Context, q ContactQuery) (ContactAggregate, error) {
+	var result ContactAggregate
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		snapshotCtx := context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: s.db.DB, tx: tx})
+		var err error
+		result, err = s.messageContactAggregateContext(snapshotCtx, q)
+		return err
+	})
+	return result, err
+}
+
+func (s *Store) messageContactAggregateContext(ctx context.Context, q ContactQuery) (ContactAggregate, error) {
+	result := ContactAggregate{Channels: []ActivityChannel{}}
+	if q.Now.IsZero() {
+		return result, fmt.Errorf("%w: contact clock is required", ErrInvalidActivityRequest)
+	}
+	if _, _, err := activityFactSubjectClause(q.Subject); err != nil {
+		return result, err
+	}
+	filters, err := s.normalizedActivityFilters(ctx, q.Filters)
+	if err != nil {
+		return result, err
+	}
+	filters.IncludeNoise = false
+	cte, args, err := s.activityReadCTE(ctx, activityReadWindow{Subject: q.Subject, Until: &q.Now}, filters)
+	if err != nil {
+		return result, err
+	}
+	loc := q.Location
+	if loc == nil {
+		loc = time.UTC
+	}
+	now := q.Now.In(loc)
+	monthEnd := now.Format("2006-01")
+	firstMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -11, 0)
+	monthStart := firstMonth.Format("2006-01")
+	gap := `julianday(occurred_at)-julianday(previous_at)>=7`
+	if s.IsPostgreSQL() {
+		gap = `EXTRACT(EPOCH FROM (occurred_at-previous_at))>=604800`
+	}
+	// Build civil month boundaries in the caller's zone, including its DST
+	// transitions. Comparing instants works identically on both databases.
+	months := make([]string, 12)
+	boundaries := make([]time.Time, 13)
+	for i := range boundaries {
+		civil := firstMonth.AddDate(0, i, 0)
+		start := time.Date(civil.Year(), civil.Month(), 1, 0, 0, 0, 0, loc)
+		// A skipped midnight can normalize into the previous month. The
+		// transition ends that zone interval and starts the requested month.
+		if start.Year() != civil.Year() || start.Month() != civil.Month() {
+			_, start = start.ZoneBounds()
+		}
+		boundaries[i] = start.UTC()
+	}
+	for i := range months {
+		months[i] = "(?,?,?)"
+		if s.IsPostgreSQL() {
+			months[i] = "(?,CAST(? AS TIMESTAMPTZ),CAST(? AS TIMESTAMPTZ))"
+		}
+		args = append(args, firstMonth.AddDate(0, i, 0).Format("2006-01"), boundaries[i], boundaries[i+1])
+	}
+	initiation := `(previous_at IS NULL OR ` + gap + `)`
+	query := cte + `, contact_messages AS (
+ SELECT * FROM representatives WHERE ref_kind='message' AND counted=1
+ ), contact_months(month,start_at,end_at) AS (VALUES ` + strings.Join(months, ",") + `), exchanges AS (
+ SELECT *,LAG(occurred_at) OVER(ORDER BY occurred_at,message_id) AS previous_at FROM contact_messages
+ ) SELECT channel,COALESCE(bucket.month,''),MIN(occurred_at),MAX(occurred_at),
+ MAX(CASE WHEN direction='inbound' THEN occurred_at END),MAX(CASE WHEN direction='outbound' THEN occurred_at END),COUNT(*),
+ SUM(CASE WHEN direction='inbound' AND ` + initiation + ` THEN 1 ELSE 0 END),
+ SUM(CASE WHEN direction='outbound' AND ` + initiation + ` THEN 1 ELSE 0 END)
+ FROM exchanges LEFT JOIN contact_months bucket ON occurred_at>=bucket.start_at AND occurred_at<bucket.end_at
+ GROUP BY channel,bucket.month ORDER BY channel,bucket.month`
+	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
+	if err != nil {
+		return result, fmt.Errorf("aggregate message contact: %w", err)
+	}
+	channels := map[ActivityChannel]bool{}
+	for rows.Next() {
+		var channel ActivityChannel
+		var month string
+		var first, last, in, out nullableTimestamp
+		var count, contact, owner int
+		if err = rows.Scan(&channel, &month, &first, &last, &in, &out, &count, &contact, &owner); err != nil {
+			_ = rows.Close()
+			return result, fmt.Errorf("scan message contact: %w", err)
+		}
+		mergeActivityTime(&result.FirstAt, nullableTimePointer(first), true)
+		mergeActivityTime(&result.LastAt, nullableTimePointer(last), false)
+		mergeActivityTime(&result.LastInboundAt, nullableTimePointer(in), false)
+		mergeActivityTime(&result.LastOutboundAt, nullableTimePointer(out), false)
+		result.Count += count
+		result.InitiatedByContact += contact
+		result.InitiatedByOwner += owner
+		channels[channel] = true
+		if month >= monthStart && month <= monthEnd {
+			yearMonth, parseErr := time.Parse("2006-01", month)
+			if parseErr != nil {
+				_ = rows.Close()
+				return result, fmt.Errorf("read activity month: %w", parseErr)
+			}
+			index := 11 - ((now.Year()-yearMonth.Year())*12 + int(now.Month()-yearMonth.Month()))
+			if index >= 0 && index < 12 {
+				result.Monthly[index] += count
+			}
+		}
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return result, fmt.Errorf("iterate message contact: %w", err)
+	}
+	for channel := range channels {
+		result.Channels = append(result.Channels, channel)
+	}
+	slices.Sort(result.Channels)
+	return result, nil
+}
+
+func mergeActivityTime(target **time.Time, value *time.Time, earliest bool) {
+	if value == nil {
+		return
+	}
+	if *target == nil || (earliest && value.Before(**target)) || (!earliest && value.After(**target)) {
+		instant := *value
+		*target = &instant
+	}
+}

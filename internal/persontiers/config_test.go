@@ -39,6 +39,7 @@ func TestConfigValidation(t *testing.T) {
 			tc.change(&c)
 			err := c.Validate()
 			require.Error(t, err)
+			require.ErrorIs(t, err, ErrInvalidConfig)
 			assert.ErrorContains(t, err, tc.contains)
 		})
 	}
