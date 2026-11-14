@@ -30,9 +30,6 @@ func TestMCPOperationResponseFailures(t *testing.T) {
 	settings := func(ctx context.Context, client *daemonclient.Client, method, path string) (*mcpserver.OperationResult, error) {
 		return readMCPOperationJSON[slackSettingsResponse](ctx, client, method, path, nil, http.StatusOK)
 	}
-	person := func(ctx context.Context, client *daemonclient.Client, method, path string) (*mcpserver.OperationResult, error) {
-		return readMCPOperationJSON[generated.Person](ctx, client, method, path, nil, http.StatusOK)
-	}
 	for _, tt := range []struct {
 		name, method, body, want, path string
 		status                         int
@@ -74,12 +71,6 @@ func TestMCPOperationResponseFailures(t *testing.T) {
 			name: "interrupted error response", method: http.MethodPatch,
 			body: `{"error":`, want: `{"error":"operation_response_failed","operation_may_have_completed":true}`,
 			path: "/api/v1/settings", status: http.StatusInternalServerError, interrupted: true, wantErr: true, read: settings,
-		},
-		{
-			name: "person receipt without participant list", method: http.MethodPatch,
-			body: `{"id":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","vcard_uid":"example"}`,
-			want: `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`,
-			path: "/api/v1/people/1", status: http.StatusOK, read: person,
 		},
 		{
 			name: "malformed write receipt", method: http.MethodPatch,

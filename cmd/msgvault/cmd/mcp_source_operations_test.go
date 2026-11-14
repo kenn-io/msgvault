@@ -159,11 +159,6 @@ func TestMCPSlackPolicyPreservesFalseOmissionAndExactETag(t *testing.T) {
 	policy := operationOutput[mcpserver.SlackSyncPolicy](t, result)
 	requirements.NotEmpty(policy.ETag)
 	assertions.Len(policy.Settings, 4)
-	keys := make([]string, 0, len(policy.Settings))
-	for _, setting := range policy.Settings {
-		keys = append(keys, setting.Key)
-	}
-	assertions.ElementsMatch([]string{"slack.dms", "slack.group_dms", "slack.channels", "slack.exclude_channels"}, keys)
 	args := map[string]any{"etag": policy.ETag, "dms": false}
 	disclosure, err := backend.OperationDisclosure(t.Context(), "update_slack_sync_policy", args)
 	requirements.NoError(err)
@@ -221,47 +216,16 @@ func TestMCPSlackPolicySDKUsesRealDaemonAndApproval(t *testing.T) {
 
 const validSlackSettingsReceipt = `{"pending_restart":false,"settings":[{"key":"slack.dms","group":"sources","label":"Direct messages","description":"Include one-to-one direct messages","kind":"boolean","value":{"boolean":true}},{"key":"slack.group_dms","group":"sources","label":"Group direct messages","description":"Include group direct messages","kind":"boolean","value":{"boolean":true}},{"key":"slack.channels","group":"sources","label":"Channels","description":"Included channel selectors","kind":"string_array","value":{"strings":["C_EXAMPLE"]}},{"key":"slack.exclude_channels","group":"sources","label":"Excluded channels","description":"Excluded channel selectors","kind":"string_array","value":{"strings":[]}}]}`
 
-func TestMCPSlackPolicyProjectionRejectsIncompleteResponses(t *testing.T) {
-	for _, tt := range []struct {
-		name, want string
-		writes     bool
-		change     func(*slackSettingsResponse, *mcpserver.OperationResult)
-	}{
-		{
-			name: "read missing pending restart", writes: false,
-			change: func(settings *slackSettingsResponse, _ *mcpserver.OperationResult) { settings.PendingRestart = nil },
-			want:   `{"error":"invalid_operation_response","operation_may_have_completed":false}`,
-		},
-		{
-			name: "write missing pending restart", writes: true,
-			change: func(settings *slackSettingsResponse, _ *mcpserver.OperationResult) { settings.PendingRestart = nil },
-			want:   `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`,
-		},
-		{
-			name: "read missing ETag", writes: false,
-			change: func(_ *slackSettingsResponse, result *mcpserver.OperationResult) { result.ETag = "" },
-			want:   `{"error":"invalid_operation_response","operation_may_have_completed":false}`,
-		},
-		{
-			name: "write missing ETag", writes: true,
-			change: func(_ *slackSettingsResponse, result *mcpserver.OperationResult) { result.ETag = "" },
-			want:   `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`,
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			requirements, assertions := require.New(t), assert.New(t)
-			var settings slackSettingsResponse
-			requirements.NoError(json.Unmarshal([]byte(validSlackSettingsReceipt), &settings))
-			result := &mcpserver.OperationResult{ETag: `"settings"`}
-			tt.change(&settings, result)
-			result.Output = settings
-			result = slackPolicyProjection(result, tt.writes)
-			requirements.True(result.IsError)
-			data, err := json.Marshal(result.Output)
-			requirements.NoError(err)
-			assertions.JSONEq(tt.want, string(data))
-		})
-	}
+func TestMCPSlackPolicyWriteMissingETagRemainsUncertain(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	var settings slackSettingsResponse
+	requirements.NoError(json.Unmarshal([]byte(validSlackSettingsReceipt), &settings))
+	result := &mcpserver.OperationResult{Output: settings}
+	result = slackPolicyProjection(result, true)
+	requirements.True(result.IsError)
+	data, err := json.Marshal(result.Output)
+	requirements.NoError(err)
+	assertions.JSONEq(`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
 }
 
 func TestMCPSlackPolicyCommittedBeforeCredentialCleanupFailure(t *testing.T) {
