@@ -16,6 +16,7 @@ type MeetingSuggestion struct {
 	TitleOriginID   int64 `json:"-"`
 	TitleWithheld   bool  `json:"-"`
 	eventEndpoint   meetingDecisionEndpoint
+	allDay          bool
 	Ref             string    `json:"ref" doc:"Calendar event reference; the suggestion when the seed is a note"`
 	MemberMessageID int64     `json:"member_message_id" doc:"Meeting note ID; the suggestion when the seed is an event"`
 	Title           string    `json:"title" doc:"Title of the suggested event or note"`
@@ -60,12 +61,16 @@ func rankMeetingSuggestion(member suggestMember, event CalendarOccurrence) (Meet
 	result := MeetingSuggestion{Ref: event.Ref, MemberMessageID: member.ID, OverlapMinutes: int((end.Sub(start)-1)/time.Minute) + 1}
 	seen := map[string]bool{}
 	for _, attendee := range event.Attendees {
+		if attendee.IsCopySelf && attendee.RSVP == "declined" {
+			return MeetingSuggestion{}, false
+		}
 		email := strings.ToLower(strings.TrimSpace(attendee.Email))
 		if attendee.Role != "room" && !attendee.IsCopySelf && attendee.RSVP != "declined" && email != "" && member.Emails[email] && !seen[email] {
 			seen[email] = true
 			result.SharedAttendees++
 		}
 	}
+	result.allDay = event.AllDay
 	tokens := uniqueChatTokens(member.Title)
 	for _, token := range uniqueChatTokens(event.Subject) {
 		if slices.Contains(tokens, token) {
@@ -200,7 +205,7 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		if !s.IsPostgreSQL() {
 			startExpr = "julianday(" + startExpr + ")"
 			endExpr = startExpr + " + (" + duration + ") / 86400.0"
-			startBound, endBound = "julianday(?)", "julianday(?)"
+			startBound, endBound = "julianday(?) + 1.0 / 86400", "julianday(?) - 1.0 / 86400"
 		}
 		values := []any{*seed.End, *seed.Start}
 		values = append(values, args...)
@@ -295,6 +300,12 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 	slices.SortFunc(candidates, func(a, b MeetingSuggestion) int {
 		if a.SharedAttendees != b.SharedAttendees {
 			return b.SharedAttendees - a.SharedAttendees
+		}
+		if a.allDay != b.allDay {
+			if a.allDay {
+				return 1
+			}
+			return -1
 		}
 		if a.OverlapMinutes != b.OverlapMinutes {
 			return b.OverlapMinutes - a.OverlapMinutes

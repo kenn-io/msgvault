@@ -404,7 +404,6 @@ func TestMeetingSuggestionsIgnoreSelfAndDeclinedForRanking(t *testing.T) {
 	for _, tc := range []struct{ name, attendee string }{
 		{"self", `{"email":"owner@example.com","self":true}`},
 		{"declined", `{"email":"owner@example.com","responseStatus":"declined"}`},
-		{"declined self", `{"email":"owner@example.com","self":true,"responseStatus":"declined"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := require.New(t)
@@ -429,4 +428,39 @@ func TestMeetingSuggestionsIgnoreSelfAndDeclinedForRanking(t *testing.T) {
 			r.Zero(page.Suggestions[1].SharedAttendees)
 		})
 	}
+}
+
+func TestMeetingSuggestionsSubsecondOverlap(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "fraction-event", `{"id":"fraction","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T10:30:00.0001Z"}}`)
+	data, note := projectionFixture(t, st, "fraction-note", "meeting_json", `{}`)
+	data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, 30, 0, 0, time.UTC), Valid: true}
+	_, err := st.UpsertMessage(data.Message)
+	r.NoError(err)
+	for _, ref := range []MeetingLinkRef{{Kind: "msg", MessageID: note}, {Kind: "evt", MessageID: event}} {
+		page, err := st.SuggestMeetingLinksContext(t.Context(), ref, 10, nil)
+		r.NoError(err)
+		r.Len(page.Suggestions, 1)
+	}
+}
+
+func TestMeetingSuggestionsDeclinedAndAllDay(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, allDay := calendarFixture(t, st, "holiday", `{"id":"holiday","start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"}}`)
+	_, declined := calendarFixture(t, st, "declined", `{"id":"declined","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"attendees":[{"email":"owner@example.com","self":true,"responseStatus":"declined"}]}`, "owner@example.com")
+	_, timed := calendarFixture(t, st, "timed", `{"id":"timed","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	data, note := projectionFixture(t, st, "day-note", "meeting_json", `{}`)
+	data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Valid: true}
+	_, err := st.UpsertMessage(data.Message)
+	r.NoError(err)
+	page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10, nil)
+	r.NoError(err)
+	r.Len(page.Suggestions, 2)
+	r.Equal(fmt.Sprintf("evt:%d", timed), page.Suggestions[0].Ref)
+	r.Equal(fmt.Sprintf("evt:%d", allDay), page.Suggestions[1].Ref)
+	page, err = st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: declined}, 10, nil)
+	r.NoError(err)
+	r.Empty(page.Suggestions)
 }
