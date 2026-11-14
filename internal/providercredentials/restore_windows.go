@@ -44,7 +44,9 @@ func SecureRestored(dir string, restored []string) error {
 				return fmt.Errorf("inspect restored token directory %q: %w", name, err)
 			}
 			err = verifyOwnerOnlyHandle(h, false)
-			windows.CloseHandle(h) //nolint:errcheck
+			if closeErr := windows.CloseHandle(h); closeErr != nil {
+				return fmt.Errorf("close restored token directory %q: %w", name, closeErr)
+			}
 			if err != nil && !containsPath(changed, name) {
 				changed = append(changed, name)
 			}
@@ -67,7 +69,9 @@ func SecureRestored(dir string, restored []string) error {
 				return fmt.Errorf("secure restored token directory %q: %w", name, err)
 			}
 			err = secureOwnerOnlyHandle(h)
-			windows.CloseHandle(h) //nolint:errcheck
+			if closeErr := windows.CloseHandle(h); closeErr != nil {
+				return fmt.Errorf("close restored token directory %q: %w", name, errors.Join(err, closeErr))
+			}
 			if err != nil {
 				return fmt.Errorf("secure restored token directory %q: %w", name, err)
 			}
@@ -139,6 +143,7 @@ func containsPath(names []string, name string) bool {
 		if err != nil {
 			continue
 		}
+		// #nosec G103 -- CompareStringOrdinal reads these null-terminated UTF-16 strings synchronously.
 		result, _, _ := compareStringOrdinal.Call(uintptr(unsafe.Pointer(candidate16)), ^uintptr(0), uintptr(unsafe.Pointer(name16)), ^uintptr(0), 1)
 		if result == 2 {
 			return true

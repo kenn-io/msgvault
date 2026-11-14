@@ -433,10 +433,10 @@ func restoredTestDescriptor(t *testing.T, path string, directory bool) string {
 }
 
 // shareRestoredTestDirectory grants Everyone access beside the owner, as an existing token tree might.
-func shareRestoredTestDirectory(t *testing.T, dir string, everyone windows.ACCESS_MASK, inheritance uint32) windows.Handle {
+func shareRestoredTestDirectory(t *testing.T, dir string, inheritance uint32) windows.Handle {
 	t.Helper()
 	owner := providerCredentialTestAccess(currentWindowsProviderCredentialSID(t), windows.GENERIC_ALL, windows.TRUSTEE_IS_USER)
-	other := providerCredentialTestAccess(windowsProviderCredentialSID(t), everyone, windows.TRUSTEE_IS_WELL_KNOWN_GROUP)
+	other := providerCredentialTestAccess(windowsProviderCredentialSID(t), windows.GENERIC_READ, windows.TRUSTEE_IS_WELL_KNOWN_GROUP)
 	owner.Inheritance, other.Inheritance = inheritance, inheritance
 	return setProviderCredentialTestACL(t, dir, []windows.EXPLICIT_ACCESS{owner, other}, true)
 }
@@ -448,7 +448,7 @@ func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
 		path := filepath.Join(dir, "omitted")
 		require.NoError(t, os.WriteFile(path, []byte("fixture"), 0600))
 		before := restoredTestDescriptor(t, path, false)
-		root := shareRestoredTestDirectory(t, dir, windows.GENERIC_READ, windows.NO_INHERITANCE)
+		root := shareRestoredTestDirectory(t, dir, windows.NO_INHERITANCE)
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "selected"), []byte("selected"), 0600))
 		require.NoError(t, SecureRestored(dir, []string{"selected"}))
 		require.NoError(t, verifyOwnerOnlyHandle(root, false))
@@ -459,7 +459,7 @@ func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
 		assertions := assert.New(t)
 		dir := filepath.Join(t.TempDir(), "tokens")
 		requirements.NoError(os.Mkdir(dir, 0700))
-		shareRestoredTestDirectory(t, dir, windows.GENERIC_READ, windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE)
+		shareRestoredTestDirectory(t, dir, windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE)
 		selected := filepath.Join(dir, "NESTED", "SELECTED")
 		omitted := filepath.Join(dir, "omitted")
 		requirements.NoError(os.Mkdir(filepath.Dir(selected), 0700))
@@ -488,7 +488,7 @@ func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
 	t.Run("omitted beneath selected ancestor with inherited access", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "tokens")
 		require.NoError(t, os.Mkdir(dir, 0700))
-		shareRestoredTestDirectory(t, dir, windows.GENERIC_READ, windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE)
+		shareRestoredTestDirectory(t, dir, windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE)
 		nested := filepath.Join(dir, "nested")
 		require.NoError(t, os.Mkdir(nested, 0700))
 		require.NoError(t, os.WriteFile(filepath.Join(nested, "selected"), []byte("selected"), 0600))
@@ -498,10 +498,10 @@ func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
 	t.Run("protected selected ancestor preserves inherited omitted access", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "tokens")
 		require.NoError(t, os.Mkdir(dir, 0700))
-		root := shareRestoredTestDirectory(t, dir, windows.GENERIC_READ, windows.NO_INHERITANCE)
+		root := shareRestoredTestDirectory(t, dir, windows.NO_INHERITANCE)
 		nested := filepath.Join(dir, "nested")
 		require.NoError(t, os.Mkdir(nested, 0700))
-		owner := providerCredentialTestAccess(currentWindowsProviderCredentialSID(t), windows.GENERIC_ALL, windows.TRUSTEE_IS_USER)
+		owner := providerCredentialTestAccess(currentWindowsProviderCredentialSID(t), fileutil.FileAllAccess, windows.TRUSTEE_IS_USER)
 		owner.Inheritance = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
 		ancestor := setProviderCredentialTestACL(t, nested, []windows.EXPLICIT_ACCESS{owner}, true)
 		require.NoError(t, verifyOwnerOnlyHandle(ancestor, false))
@@ -524,7 +524,7 @@ func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
 	t.Run("unselected explicit directory preserves inherited child access", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "tokens")
 		require.NoError(t, os.Mkdir(dir, 0700))
-		root := shareRestoredTestDirectory(t, dir, windows.GENERIC_READ, windows.NO_INHERITANCE)
+		root := shareRestoredTestDirectory(t, dir, windows.NO_INHERITANCE)
 		otherDir := filepath.Join(dir, "other")
 		require.NoError(t, os.Mkdir(otherDir, 0700))
 		owner := providerCredentialTestAccess(currentWindowsProviderCredentialSID(t), windows.GENERIC_ALL, windows.TRUSTEE_IS_USER)
@@ -556,7 +556,7 @@ func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
 	t.Run("kelvin sign does not match k", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "tokens")
 		require.NoError(t, os.Mkdir(dir, 0700))
-		shareRestoredTestDirectory(t, dir, windows.GENERIC_READ, windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE)
+		shareRestoredTestDirectory(t, dir, windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE)
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "K.json"), []byte("selected"), 0600))
 		omitted, err := os.OpenFile(filepath.Join(dir, "k.json"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if os.IsExist(err) {
@@ -573,7 +573,7 @@ func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
 		otherDir := filepath.Join(dir, "other")
 		require.NoError(t, os.Mkdir(selectedDir, 0700))
 		require.NoError(t, os.Mkdir(otherDir, 0700))
-		shareRestoredTestDirectory(t, selectedDir, windows.GENERIC_READ, windows.NO_INHERITANCE)
+		shareRestoredTestDirectory(t, selectedDir, windows.NO_INHERITANCE)
 		owner := providerCredentialTestAccess(currentWindowsProviderCredentialSID(t), windows.GENERIC_ALL, windows.TRUSTEE_IS_USER)
 		owner.Inheritance = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
 		other := setProviderCredentialTestACL(t, otherDir, []windows.EXPLICIT_ACCESS{owner}, false)
