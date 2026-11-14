@@ -197,7 +197,7 @@ type SetOrganizationAttributeBody struct {
 	SourceRef       *string              `json:"source_ref,omitzero" nullable:"true"`
 	Confidence      *float64             `json:"confidence,omitzero" nullable:"true"`
 	Actor           *string              `json:"actor,omitzero" nullable:"true"`
-	ExpectedValueID *int64               `json:"expected_value_id,omitzero" nullable:"true"`
+	ExpectedValueID *int64               `json:"expected_value_id,omitzero" nullable:"true" doc:"Expected current value ID; zero requires an empty slot"`
 	DryRun          bool                 `json:"dry_run,omitzero"`
 }
 

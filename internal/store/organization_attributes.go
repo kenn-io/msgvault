@@ -104,6 +104,9 @@ func (s *Store) ListOrganizationAttributeValuesContext(
 func (s *Store) SetOrganizationAttributeValueContext(
 	ctx context.Context, input OrganizationAttributeValueInput,
 ) (*OrganizationAttributeWrite, error) {
+	if input.ExpectedValueID != nil && *input.ExpectedValueID < 0 {
+		return nil, ErrAttributeValueInvalid
+	}
 	if err := validateProvenance(input.Source, input.Confidence); err != nil {
 		return nil, err
 	}

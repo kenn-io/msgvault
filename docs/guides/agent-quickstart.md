@@ -244,10 +244,8 @@ backend checks for action permissions, source scope, and sender identity;
 | `close_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `reopen_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `snooze_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
-| `clear_organization_attribute` | organization_write | `--allow-organization-writes` | owner-only |
 | `create_organization` | organization_write | `--allow-organization-writes` | owner-only |
 | `delete_organization` | organization_write | `--allow-organization-writes` | owner-only |
-| `merge_organization` | organization_write | `--allow-organization-writes` | owner-only |
 | `replace_organization_profile` | organization_write | `--allow-organization-writes` | owner-only |
 | `set_organization_attribute` | organization_write | `--allow-organization-writes` | owner-only |
 | `update_organization` | organization_write | `--allow-organization-writes` | owner-only |
@@ -281,8 +279,6 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_message` | read | — | message.read |
 | `get_message_tags` | read | — | owner-only |
 | `get_organization` | read | — | owner-only |
-| `get_organization_history` | read | — | owner-only |
-| `get_organization_media` | read | — | owner-only |
 | `get_participant_identity` | read | — | owner-only |
 | `get_person_agenda` | read | — | owner-only |
 | `get_person_edit_context` | read | — | owner-only |
@@ -308,6 +304,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_open_loops` | read | — | owner-only |
 | `list_organization_employments` | read | — | owner-only |
 | `list_person_employments` | read | — | owner-only |
+| `list_organizations` | read | — | owner-only |
 | `list_organization_attributes` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |

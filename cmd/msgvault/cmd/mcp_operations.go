@@ -182,11 +182,7 @@ func operationFailure(code string, uncertain bool) *mcpserver.OperationResult {
 // cancellation without the daemon client's busy retry loop. Mutations with an
 // unclassified/interrupted response retain uncertain completion explicitly.
 func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, success ...int) (*mcpserver.OperationResult, error) {
-return readMCPOperationJSONLimit[T](ctx, client, method, path, options, 1<<20, success...)
-}
-
-func readMCPOperationJSONLimit[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, limit int64, success ...int) (*mcpserver.OperationResult, error) {
-	data, headers, failure, err := readMCPOperationBytes(ctx, client, method, path, options, limit, success...)
+	data, headers, failure, err := readMCPOperationBytes(ctx, client, method, path, options, 1<<20, success...)
 	if failure != nil {
 		return failure, err
 	}

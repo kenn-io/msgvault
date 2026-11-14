@@ -4,21 +4,13 @@ import (
 	"context"
 	"encoding/json/v2"
 	"net/http"
-	"net/url"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
-	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
-
-// Active profile responses may include normalized and synthesized copies of
-// request text plus metadata for up to 200 rows. Three times the native request
-// limit provides room for those copies; merged history can still exceed it.
-const organizationProfileResponseLimit = 3 * api.MaxOrganizationProfileRequestBytes
 
 const organizationSourceField = "source"
 
@@ -28,11 +20,11 @@ func organizationMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCa
 		name, id, path string
 		query          []string
 	}{
+		{"list_organizations", "listOrganizations", "/api/v1/organizations", []string{"q", "include_retired", "limit", "offset"}},
 		{"get_organization", "getOrganization", "/api/v1/organizations/{id}", nil},
-		{"get_organization_history", "getOrganizationHistory", "/api/v1/organizations/{id}/history", nil},
 		{"list_organization_attributes", "listOrganizationAttributes", "/api/v1/organizations/{id}/attributes", []string{"definition_slug", "include_superseded"}},
 	} {
-		if hasRoute(r.id, http.MethodGet, r.path, r.query...) {
+		if hasRoute(r.id, http.MethodGet, r.path, r.query...) && (r.name != "get_organization" || hasRoute("getOrganizationHistory", http.MethodGet, "/api/v1/organizations/{id}/history")) {
 			names = append(names, r.name)
 		}
 	}
@@ -41,16 +33,13 @@ func organizationMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCa
 		name, id, method, path string
 		query, properties      []string
 	}{
-		{"get_organization_media", "getOrganizationProfileMediaContent", http.MethodGet, "/api/v1/organizations/{id}/profile/media/{media_id}/content", nil, nil},
 		{"create_organization", "createOrganization", http.MethodPost, "/api/v1/organizations", nil, []string{"name", "kind", "primary_domain", "description"}},
 		{"update_organization", "patchOrganization", http.MethodPatch, "/api/v1/organizations/{id}", nil, []string{"name", "kind", "primary_domain", "description", "retired"}},
 		{"delete_organization", "deleteOrganization", http.MethodDelete, "/api/v1/organizations/{id}", nil, nil},
-		{"merge_organization", "mergeOrganization", http.MethodPost, "/api/v1/organizations/{id}/merge", nil, []string{"losing_organization_id", "losing_revision"}},
 		{"replace_organization_profile", "putOrganizationProfile", http.MethodPut, "/api/v1/organizations/{id}/profile", nil, []string{"names", "identifiers", "addresses", "contact_points", "media", "categories"}},
 		{"set_organization_attribute", "setOrganizationAttribute", http.MethodPost, "/api/v1/organizations/{id}/attributes", nil, []string{"definition_slug", "value", organizationSourceField, "ordinal", "expected_value_id", "dry_run"}},
-		{"clear_organization_attribute", "clearOrganizationAttribute", http.MethodDelete, "/api/v1/organizations/{id}/attributes/{slug}", []string{"ordinal", "expected_value_id", "dry_run"}, nil},
 	} {
-		if hasRoute(r.id, r.method, r.path, r.query...) && (len(r.properties) == 0 || mcpRequestPropertiesPresent(caps, r.id, r.properties...)) && (r.name == "get_organization_media" || r.name == "create_organization" || hasRoute("getOrganization", http.MethodGet, "/api/v1/organizations/{id}")) {
+		if (r.name != "set_organization_attribute" || hasRoute("listOrganizationAttributes", http.MethodGet, "/api/v1/organizations/{id}/attributes", "definition_slug", "include_superseded")) && hasRoute(r.id, r.method, r.path, r.query...) && (len(r.properties) == 0 || mcpRequestPropertiesPresent(caps, r.id, r.properties...)) && (r.name == "create_organization" || (hasRoute("getOrganization", http.MethodGet, "/api/v1/organizations/{id}") && hasRoute("getOrganizationHistory", http.MethodGet, "/api/v1/organizations/{id}/history"))) {
 			names = append(names, r.name)
 		}
 	}
@@ -58,6 +47,10 @@ func organizationMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCa
 }
 
 type organizationReadArguments struct {
+	Q                 *string `json:"q,omitempty"`
+	IncludeRetired    *bool   `json:"include_retired,omitempty"`
+	Limit             *int64  `json:"limit,omitempty"`
+	Offset            *int64  `json:"offset,omitempty"`
 	OrganizationID    int64   `json:"organization_id"`
 	DefinitionSlug    *string `json:"definition_slug,omitempty"`
 	IncludeSuperseded *bool   `json:"include_superseded,omitempty"`
@@ -65,38 +58,48 @@ type organizationReadArguments struct {
 
 func (b *daemonMCPOperations) executeOrganizationOperation(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	switch name {
-	case "get_organization", "get_organization_history", "list_organization_attributes":
+	case "get_organization", "list_organizations", "list_organization_attributes":
 	default:
 		return b.executeOrganizationWriteOrMedia(ctx, name, args)
 	}
 	input, err := decodeMCPOperationArguments[organizationReadArguments](args)
-	if err != nil || !validLoopID(input.OrganizationID) {
+	if err != nil || (name != "list_organizations" && !validLoopID(input.OrganizationID)) {
 		return operationFailure(invalidArguments, false), true, nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
 	}
 	var result *mcpserver.OperationResult
 	switch name {
+	case "list_organizations":
+		result, err = readMCPOperationJSON[generated.OrganizationsResponse](ctx, b.client, http.MethodGet, "/api/v1/organizations", &generated.ListOrganizationsRequestOptions{Query: &generated.ListOrganizationsQuery{Q: input.Q, IncludeRetired: input.IncludeRetired, Limit: input.Limit, Offset: input.Offset}}, http.StatusOK)
 	case "get_organization":
-		result, err = readMCPOperationJSONLimit[generated.OrganizationProfile](ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}", &generated.GetOrganizationRequestOptions{PathParams: &generated.GetOrganizationPath{ID: input.OrganizationID}}, organizationProfileResponseLimit, http.StatusOK)
-	case "get_organization_history":
-		result, err = readMCPOperationJSON[generated.OrganizationProfile](ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/history", &generated.GetOrganizationHistoryRequestOptions{PathParams: &generated.GetOrganizationHistoryPath{ID: input.OrganizationID}}, http.StatusOK)
+		path := "/api/v1/organizations/{id}"
+		var opts runtime.RequestOptions = &generated.GetOrganizationRequestOptions{PathParams: &generated.GetOrganizationPath{ID: input.OrganizationID}}
+		if input.IncludeSuperseded != nil && *input.IncludeSuperseded {
+			path = "/api/v1/organizations/{id}/history"
+			opts = &generated.GetOrganizationHistoryRequestOptions{PathParams: &generated.GetOrganizationHistoryPath{ID: input.OrganizationID}}
+		}
+		data, headers, failure, readErr := readMCPOperationBytes(ctx, b.client, http.MethodGet, path, opts, mcpserver.MaxDownloadBytes, http.StatusOK)
+		if failure != nil {
+			return failure, true, readErr
+		}
+		if headers.Get("ETag") == "" {
+			return operationFailure("invalid_operation_response", false), true, nil
+		}
+		return &mcpserver.OperationResult{Data: data, ETag: headers.Get("ETag")}, true, nil
 	case "list_organization_attributes":
 		result, err = readMCPOperationJSON[generated.OrganizationAttributesResponse](ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/attributes", &generated.ListOrganizationAttributesRequestOptions{PathParams: &generated.ListOrganizationAttributesPath{ID: input.OrganizationID}, Query: &generated.ListOrganizationAttributesQuery{DefinitionSlug: input.DefinitionSlug, IncludeSuperseded: input.IncludeSuperseded}}, http.StatusOK)
 	}
-	if result != nil && !result.IsError && name != "list_organization_attributes" {
-		result = etagProjection(result, false, organizationRecord)
-	}
+
 	return result, true, err
 }
 
 func organizationRecord(etag string, profile generated.OrganizationProfile) mcpserver.OrganizationRecord {
-	return mcpserver.OrganizationRecord{ETag: etag, Profile: profile}
+	return mcpserver.OrganizationRecord{ETag: etag, Profile: &profile}
 }
 
 type organizationRequest struct {
 	method, path string
 	options      runtime.RequestOptions
 	id           int64
-	losing       int64
 }
 
 func organizationWriteRequest(name string, args map[string]any) (organizationRequest, bool, bool) {
@@ -110,27 +113,19 @@ func organizationWriteRequest(name string, args map[string]any) (organizationReq
 	case "update_organization":
 		a, err := decodeMCPOperationArguments[mcpserver.OrganizationUpdateArgs](args)
 		valid = err == nil && args["body"] != nil
-		r = organizationRequest{http.MethodPatch, "/api/v1/organizations/{id}", &generated.PatchOrganizationRequestOptions{PathParams: &generated.PatchOrganizationPath{ID: a.OrganizationID}, Header: &generated.PatchOrganizationHeaders{IfMatch: a.ETag}, Body: &a.Body}, a.OrganizationID, 0}
+		r = organizationRequest{http.MethodPatch, "/api/v1/organizations/{id}", &generated.PatchOrganizationRequestOptions{PathParams: &generated.PatchOrganizationPath{ID: a.OrganizationID}, Header: &generated.PatchOrganizationHeaders{IfMatch: a.ETag}, Body: &a.Body}, a.OrganizationID}
 	case "delete_organization":
 		a, err := decodeMCPOperationArguments[mcpserver.OrganizationDeleteArgs](args)
 		valid = err == nil
-		r = organizationRequest{http.MethodDelete, "/api/v1/organizations/{id}", &generated.DeleteOrganizationRequestOptions{PathParams: &generated.DeleteOrganizationPath{ID: a.OrganizationID}, Header: &generated.DeleteOrganizationHeaders{IfMatch: a.ETag}}, a.OrganizationID, 0}
-	case "merge_organization":
-		a, err := decodeMCPOperationArguments[mcpserver.OrganizationMergeArgs](args)
-		valid = err == nil && args["body"] != nil
-		r = organizationRequest{http.MethodPost, "/api/v1/organizations/{id}/merge", &generated.MergeOrganizationRequestOptions{PathParams: &generated.MergeOrganizationPath{ID: a.OrganizationID}, Header: &generated.MergeOrganizationHeaders{IfMatch: a.ETag}, Body: &a.Body}, a.OrganizationID, a.Body.LosingOrganizationID}
+		r = organizationRequest{http.MethodDelete, "/api/v1/organizations/{id}", &generated.DeleteOrganizationRequestOptions{PathParams: &generated.DeleteOrganizationPath{ID: a.OrganizationID}, Header: &generated.DeleteOrganizationHeaders{IfMatch: a.ETag}}, a.OrganizationID}
 	case "replace_organization_profile":
 		a, err := decodeMCPOperationArguments[mcpserver.OrganizationProfileArgs](args)
 		valid = err == nil && args["body"] != nil
-		r = organizationRequest{http.MethodPut, "/api/v1/organizations/{id}/profile", &generated.PutOrganizationProfileRequestOptions{PathParams: &generated.PutOrganizationProfilePath{ID: a.OrganizationID}, Header: &generated.PutOrganizationProfileHeaders{IfMatch: a.ETag}, Body: &a.Body}, a.OrganizationID, 0}
+		r = organizationRequest{http.MethodPut, "/api/v1/organizations/{id}/profile", &generated.PutOrganizationProfileRequestOptions{PathParams: &generated.PutOrganizationProfilePath{ID: a.OrganizationID}, Header: &generated.PutOrganizationProfileHeaders{IfMatch: a.ETag}, Body: &a.Body}, a.OrganizationID}
 	case "set_organization_attribute":
 		a, err := decodeMCPOperationArguments[mcpserver.OrganizationSetAttributeArgs](args)
-		valid = err == nil && args["body"] != nil
-		r = organizationRequest{http.MethodPost, "/api/v1/organizations/{id}/attributes", &generated.SetOrganizationAttributeRequestOptions{PathParams: &generated.SetOrganizationAttributePath{ID: a.OrganizationID}, Body: &a.Body}, a.OrganizationID, 0}
-	case "clear_organization_attribute":
-		a, err := decodeMCPOperationArguments[mcpserver.OrganizationClearAttributeArgs](args)
-		valid = err == nil
-		r = organizationRequest{http.MethodDelete, "/api/v1/organizations/{id}/attributes/{slug}", &generated.ClearOrganizationAttributeRequestOptions{PathParams: &generated.ClearOrganizationAttributePath{ID: a.OrganizationID, Slug: url.PathEscape(a.Slug)}, Query: &generated.ClearOrganizationAttributeQuery{Ordinal: a.Ordinal, ExpectedValueID: a.ExpectedValueID, DryRun: a.DryRun}}, a.OrganizationID, 0}
+		valid = err == nil && args["body"] != nil && a.Body.ExpectedValueID != nil && *a.Body.ExpectedValueID >= 0
+		r = organizationRequest{http.MethodPost, "/api/v1/organizations/{id}/attributes", &generated.SetOrganizationAttributeRequestOptions{PathParams: &generated.SetOrganizationAttributePath{ID: a.OrganizationID}, Body: &a.Body}, a.OrganizationID}
 	default:
 		return r, false, false
 	}
@@ -140,19 +135,7 @@ func organizationWriteRequest(name string, args map[string]any) (organizationReq
 	return r, true, valid
 }
 
-func organizationRefusal(code string) bool {
-	switch code {
-	case invalidArguments, "server_busy", "organization_not_found", "organization_revision_conflict", "organization_has_employments", "organization_merge_conflict", "organization_profile_too_large", "invalid_organization", "invalid_source", "invalid_attribute_slug", "invalid_attribute_definition", "attribute_definition_not_found", "attribute_definition_inactive", "attribute_definition_not_writable", "invalid_attribute_value", "attribute_value_not_found", "attribute_value_conflict", "invalid_person_id", "profile_media_not_found", "profile_media_content_unavailable", "invalid_if_match", "invalid_ordinal", "invalid_expected_value_id", "organizations_unavailable":
-		return true
-	}
-	return false
-}
-
 func (b *daemonMCPOperations) executeOrganizationWriteOrMedia(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
-	if name == "get_organization_media" {
-		result, err := b.organizationMedia(ctx, args)
-		return result, true, err
-	}
 	r, handled, valid := organizationWriteRequest(name, args)
 	if !handled {
 		return nil, false, nil
@@ -167,13 +150,28 @@ func (b *daemonMCPOperations) executeOrganizationWriteOrMedia(ctx context.Contex
 		}
 		return &mcpserver.OperationResult{Output: mcpserver.OrganizationDeleted{Deleted: true}}, true, nil
 	}
-	if name == "set_organization_attribute" || name == "clear_organization_attribute" {
+	if name == "set_organization_attribute" {
 		result, err := readMCPOperationJSON[generated.OrganizationAttributeWrite](ctx, b.client, r.method, r.path, r.options, http.StatusOK, http.StatusCreated)
 		return result, true, err
 	}
 	if name == "replace_organization_profile" {
-		result, err := readMCPOperationJSONLimit[generated.OrganizationProfile](ctx, b.client, r.method, r.path, r.options, organizationProfileResponseLimit, http.StatusOK)
-		result = etagProjection(result, true, organizationRecord)
+		data, headers, failure, err := readMCPOperationBytes(ctx, b.client, r.method, r.path, r.options, mcpserver.MaxDownloadBytes, http.StatusOK)
+		if failure != nil {
+			return failure, true, err
+		}
+		etag := headers.Get("ETag")
+		if etag == "" {
+			return operationFailure("invalid_operation_response", true), true, nil
+		}
+		record := mcpserver.OrganizationRecord{ETag: etag}
+		if len(data) <= 1<<20 {
+			var profile generated.OrganizationProfile
+			if err := json.Unmarshal(data, &profile); err != nil {
+				return operationFailure("invalid_operation_response", true), true, err
+			}
+			record.Profile = &profile
+		}
+		result := &mcpserver.OperationResult{Output: record, ETag: etag}
 		return result, true, err
 	}
 	result, err := readMCPOperationJSON[generated.Organization](ctx, b.client, r.method, r.path, r.options, http.StatusOK, http.StatusCreated)
@@ -181,30 +179,6 @@ func (b *daemonMCPOperations) executeOrganizationWriteOrMedia(ctx context.Contex
 		return mcpserver.OrganizationMutation{ETag: etag, Organization: org}
 	})
 	return result, true, err
-}
-
-type organizationMediaArguments struct {
-	OrganizationID int64   `json:"organization_id"`
-	MediaID        int64   `json:"media_id"`
-	Offset         *int64  `json:"offset,omitempty"`
-	Length         *int64  `json:"length,omitempty"`
-	SHA256         *string `json:"sha256,omitempty"`
-}
-
-func (b *daemonMCPOperations) organizationMedia(ctx context.Context, args map[string]any) (*mcpserver.OperationResult, error) {
-	a, err := decodeMCPOperationArguments[organizationMediaArguments](args)
-	if err != nil || !validLoopID(a.OrganizationID) || !validLoopID(a.MediaID) {
-		return operationFailure(invalidArguments, false), nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
-	}
-	data, headers, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/profile/media/{media_id}/content", &generated.GetOrganizationProfileMediaContentRequestOptions{PathParams: &generated.GetOrganizationProfileMediaContentPath{ID: a.OrganizationID, MediaID: a.MediaID}}, store.MaxPersonMediaBytes, http.StatusOK)
-	if failure != nil {
-		return failure, err
-	}
-	chunk, err := mcpserver.PersonMediaChunk(data, headers.Get("Content-Type"), args)
-	if err != nil {
-		return operationFailure(invalidArguments, false), nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
-	}
-	return &mcpserver.OperationResult{Output: chunk}, nil
 }
 
 func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Context, name string, args map[string]any) (string, bool, error) {
@@ -216,7 +190,6 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 		return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 	}
 	var current any
-	var losing any
 	var preview any
 	if r.id != 0 {
 		result, _, err := b.executeOrganizationOperation(ctx, "get_organization", map[string]any{"organization_id": r.id})
@@ -224,27 +197,28 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 			result = nil
 		}
 		if err != nil || result == nil || result.IsError {
-			return "", true, operationContext(result, "", "", organizationRefusal)
+			return "", true, operationContext(result, "", "", nativeDefiniteRefusal)
 		}
-		current = result.Output
+		var profile generated.OrganizationProfile
+		if err := json.Unmarshal(result.Data, &profile); err != nil {
+			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+		}
+		current = organizationRecord(result.ETag, profile)
 	}
-	if name == "set_organization_attribute" || name == "clear_organization_attribute" {
+	if name == "set_organization_attribute" {
 		switch options := r.options.(type) {
 		case *generated.SetOrganizationAttributeRequestOptions:
 			body := *options.Body
 			body.DryRun = new(true)
 			options.Body = &body
-		case *generated.ClearOrganizationAttributeRequestOptions:
-			query := *options.Query
-			query.DryRun = new(true)
-			options.Query = &query
+
 		}
 		result, err := readMCPOperationJSON[generated.OrganizationAttributeWrite](ctx, b.client, r.method, r.path, r.options, http.StatusOK, http.StatusCreated)
 		if err != nil {
 			result = nil
 		}
 		if err != nil || result == nil || result.IsError {
-			return "", true, operationContext(result, "", "", organizationRefusal)
+			return "", true, operationContext(result, "", "", nativeDefiniteRefusal)
 		}
 		write, ok := result.Output.(generated.OrganizationAttributeWrite)
 		if !ok {
@@ -261,16 +235,6 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 		}
 		preview = map[string]any{"ordinal": ordinal, "superseded": superseded}
 	}
-	if name == "merge_organization" {
-		result, _, err := b.executeOrganizationOperation(ctx, "get_organization", map[string]any{"organization_id": r.losing})
-		if err != nil {
-			result = nil
-		}
-		if err != nil || result == nil || result.IsError {
-			return "", true, operationContext(result, "", "", organizationRefusal)
-		}
-		losing = result.Output
-	}
 	// Copy arguments for display; confirmation and execution retain the originals.
 	raw, err := json.Marshal(args, json.Deterministic(true))
 	if err != nil {
@@ -286,22 +250,22 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 				if row, ok := item.(map[string]any); ok {
 					if data, ok := row["data"].(string); ok {
 						size, digest, err := summarizeInlineMedia(data)
-						if err == nil {
-							row["data"] = map[string]any{"bytes": size, "sha256": digest}
+						if err != nil {
+							return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 						}
+						row["data"] = map[string]any{"bytes": size, "sha256": digest}
 					}
 				}
 			}
 		}
 	}
-	effect := map[string]string{"create_organization": "create an organization", "update_organization": "replace mutable fields; omitted fields are cleared except retired", "delete_organization": "delete the organization only if it has no employment records", "merge_organization": "merge the losing organization, moving employment and superseding its active profile and attributes", "replace_organization_profile": "replace all profile collections; omitted collections are cleared", "set_organization_attribute": "set the named typed attribute", "clear_organization_attribute": "supersede the named typed attribute"}[name]
+	effect := map[string]string{"create_organization": "create an organization", "update_organization": "replace mutable fields; omitted fields are cleared except retired", "delete_organization": "delete the organization only if it has no employment records", "replace_organization_profile": "replace all profile collections; omitted collections are cleared", "set_organization_attribute": "set the named typed attribute"}[name]
 	disclosure, err := json.Marshal(struct {
 		Operation string         `json:"operation"`
 		Current   any            `json:"current,omitempty"`
-		Losing    any            `json:"losing,omitempty"`
 		Preview   any            `json:"preview,omitempty"`
 		Changes   map[string]any `json:"changes"`
 		Effect    string         `json:"effect"`
-	}{name, current, losing, preview, changes, effect}, json.Deterministic(true))
+	}{name, current, preview, changes, effect}, json.Deterministic(true))
 	return string(disclosure), true, err
 }

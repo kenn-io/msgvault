@@ -15261,12 +15261,14 @@ func (s SessionStatus) Validate() error {
 }
 
 type SetOrganizationAttributeBody struct {
-	ActiveFrom      *time.Time                         `json:"active_from,omitempty"`
-	ActiveUntil     *time.Time                         `json:"active_until,omitempty"`
-	Actor           *string                            `json:"actor,omitzero"`
-	Confidence      *float64                           `json:"confidence,omitempty"`
-	DefinitionSlug  string                             `json:"definition_slug" validate:"required"`
-	DryRun          *bool                              `json:"dry_run,omitempty"`
+	ActiveFrom     *time.Time `json:"active_from,omitempty"`
+	ActiveUntil    *time.Time `json:"active_until,omitempty"`
+	Actor          *string    `json:"actor,omitzero"`
+	Confidence     *float64   `json:"confidence,omitempty"`
+	DefinitionSlug string     `json:"definition_slug" validate:"required"`
+	DryRun         *bool      `json:"dry_run,omitempty"`
+
+	// ExpectedValueID Expected current value ID; zero requires an empty slot
 	ExpectedValueID *int64                             `json:"expected_value_id,omitempty"`
 	Ordinal         *int64                             `json:"ordinal,omitempty"`
 	Source          SetOrganizationAttributeBodySource `json:"source" validate:"required"`

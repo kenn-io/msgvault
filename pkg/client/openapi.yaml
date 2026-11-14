@@ -15064,6 +15064,7 @@ components:
         dry_run:
           type: boolean
         expected_value_id:
+          description: Expected current value ID; zero requires an empty slot
           format: int64
           nullable: true
           type: integer
@@ -16924,7 +16925,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.4.0
+  version: 5.5.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
