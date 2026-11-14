@@ -27,7 +27,7 @@ directories (~/.claude/skills and ~/.codex/skills). CLAUDE_CONFIG_DIR
 and CODEX_HOME override those agent directories. Use --dir for an explicit directory.
 
 Previously installed skills are updated in place. Files without the
-msgvault generation marker and skills from a newer msgvault are skipped
+msgvault generation marker (e.g. hand-edited copies) are skipped
 unless --force is given.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -106,7 +106,7 @@ func runSkillsInstall(out io.Writer, agents []string, dir string, force bool) er
 		for _, r := range results {
 			if r.Status == skills.StatusSkipped {
 				_, _ = fmt.Fprintf(out,
-					"%s: skipped %s (hand-edited or from a newer msgvault; use --force to overwrite)\n",
+					"%s: skipped %s (no msgvault marker; hand-edited? use --force to overwrite)\n",
 					root.Agent, r.Path)
 				continue
 			}

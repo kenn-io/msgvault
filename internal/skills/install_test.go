@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,39 +54,6 @@ func testSkills() []Skill {
 	}
 }
 
-func TestInstallKeepsNewerSkill(t *testing.T) {
-	root := t.TempDir()
-	list := []Skill{{Name: "msgvault-search", Content: "<!-- " + Marker + " v1.0.0 -->\n"}}
-	path := filepath.Join(root, "msgvault-search", "SKILL.md")
-	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-	newer := "<!-- " + Marker + " v99.0.0 -->\n"
-	require.NoError(t, os.WriteFile(path, []byte(newer), 0o600))
-	results, err := Install(root, list, false)
-	require.NoError(t, err)
-	assert.Equal(t, StatusSkipped, results[0].Status)
-	content, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, newer, string(content))
-	result, err := Check(root, list)
-	require.NoError(t, err)
-	assert.Equal(t, CheckNewer, result.State)
-	assert.Equal(t, "msgvault-search", result.Skill)
-	_, err = Install(root, list, true)
-	require.NoError(t, err)
-	content, err = os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, list[0].Content, string(content))
-}
-
-func TestSkillUnorderableVersions(t *testing.T) {
-	for _, test := range []struct{ installed, target string }{{"1.2.3-4-gabc", "1.0.0"}, {"99.0.0", "1.0.0-4-gabc"}} {
-		t.Run(test.installed+"_"+test.target, func(t *testing.T) {
-			content := []byte("<!-- " + Marker + " v" + test.installed + " -->\n")
-			assert.Equal(t, CheckOutdated, differentState(content, Skill{Content: "<!-- " + Marker + " v" + test.target + " -->\n"}))
-		})
-	}
-}
-
 func TestInstall_FreshAndUpdate(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -103,22 +69,12 @@ func TestInstall_FreshAndUpdate(t *testing.T) {
 		assert.Contains(string(content), Marker)
 	}
 
-	path := filepath.Join(root, testSkills()[0].Name, "SKILL.md")
-	old := time.Unix(1600000000, 0)
-	require.NoError(os.Chtimes(path, old, old))
-	_, err = Install(root, testSkills(), false)
-	require.NoError(err)
-	info, err := os.Stat(path)
-	require.NoError(err)
-	assert.Equal(old, info.ModTime())
-	require.NoError(os.WriteFile(path, []byte(Marker+" older"), 0o600))
+	// Re-install over marker-bearing files: updated, not skipped.
 	results, err = Install(root, testSkills(), false)
 	require.NoError(err)
-	assert.Equal(StatusUpdated, results[0].Status)
-	assert.Equal(StatusUnchanged, results[1].Status)
-	content, err := os.ReadFile(path)
-	require.NoError(err)
-	assert.Equal(testSkills()[0].Content, string(content))
+	for _, r := range results {
+		assert.Equal(StatusUpdated, r.Status)
+	}
 }
 
 func TestInstall_SkipsHandEditedUnlessForced(t *testing.T) {
@@ -138,7 +94,7 @@ func TestInstall_SkipsHandEditedUnlessForced(t *testing.T) {
 		byName[r.Skill] = r
 	}
 	assert.Equal(StatusSkipped, byName["msgvault-search"].Status)
-	assert.Equal(StatusUnchanged, byName["msgvault-analytics"].Status)
+	assert.Equal(StatusUpdated, byName["msgvault-analytics"].Status)
 	content, err := os.ReadFile(edited)
 	require.NoError(err)
 	assert.Equal("my custom skill\n", string(content),
@@ -146,8 +102,9 @@ func TestInstall_SkipsHandEditedUnlessForced(t *testing.T) {
 
 	results, err = Install(root, testSkills(), true)
 	require.NoError(err)
-	assert.Equal(StatusUpdated, results[0].Status)
-	assert.Equal(StatusUnchanged, results[1].Status)
+	for _, r := range results {
+		assert.Equal(StatusUpdated, r.Status, "--force overwrites")
+	}
 }
 
 func TestUninstall_RemovesOnlyMarkerDirs(t *testing.T) {

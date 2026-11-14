@@ -88,7 +88,6 @@ It checks Claude Code and Codex; Codex may start the msgvault daemon to check MC
 			}
 			report := buildLaneReport(loaded, bound.environment(command, loaded))
 			if bound.agents != nil {
-				_, _ = fmt.Fprintln(command.ErrOrStderr(), "checking agents: Codex may start msgvault mcp and the daemon, which can create files under the msgvault home")
 				agents, err := bound.agents(command.Context())
 				if ctxErr := command.Context().Err(); ctxErr != nil {
 					return ctxErr

@@ -1453,29 +1453,22 @@ func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
 }
 
 func TestSetupStatusAgents(t *testing.T) {
-	for _, name := range []string{"text", "json", "error", "interrupted", "archive"} {
+	for _, name := range []string{"text", "json", "error", "interrupted"} {
 		t.Run(name, func(t *testing.T) {
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
 			row := agentsetup.Row{Agent: "claude", AgentName: "Claude Code", Piece: "skills", State: agentsetup.StateOK}
-			var output, errOutput bytes.Buffer
-			const notice = "checking agents: Codex may start msgvault mcp and the daemon, which can create files under the msgvault home\n"
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			home := filepath.Join(t.TempDir(), "archive with space")
-			if name == "archive" {
-				flags := rootCmd.PersistentFlags()
-				oldHome, _ := flags.GetString("home")
-				t.Cleanup(func() { _ = flags.Set("home", oldHome) })
-				require.NoError(t, flags.Set("home", home))
+			if name == "text" {
 				row.Status = agentsetup.Status{State: agentsetup.StateMissing, NextStep: "msgvault agent setup --agent claude"}
 			}
+			var output, errOutput bytes.Buffer
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
 			command := newSetupStatusCommand(setupStatusDeps{
 				config: func() *config.Config { return fixture.load(t) },
 				environment: func(*cobra.Command, *config.Config) setupEnvironment {
 					return setupEnvironment{lookupEnv: fixture.lookupEnv, fileExists: defaultFileExists}
 				},
 				agents: func(context.Context) (agentsetup.Report, error) {
-					assert.Equal(t, notice, errOutput.String())
 					switch name {
 					case "error":
 						return agentsetup.Report{}, errors.New("agent check failed")
@@ -1502,11 +1495,12 @@ func TestSetupStatusAgents(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			assert.NotContains(t, output.String(), notice)
 			switch name {
 			case "text":
 				text := output.String()
 				assert.Contains(t, text, "Claude Code")
+				assert.Contains(t, text, "msgvault agent setup --agent claude")
+				assert.NotContains(t, text, "afterwards")
 				assert.Less(t, strings.Index(text, "MCP tools live"), strings.Index(text, "Agents:"))
 				assert.Less(t, strings.Index(text, "Agents:"), strings.Index(text, "Config:"))
 			case "json":
@@ -1516,8 +1510,6 @@ func TestSetupStatusAgents(t *testing.T) {
 			case "error":
 				assert.Contains(t, errOutput.String(), "check agents: agent check failed\n")
 				assert.NotContains(t, output.String(), `"agents"`)
-			case "archive":
-				assert.Contains(t, output.String(), "msgvault agent setup --home '"+home+"' --check")
 			}
 		})
 	}

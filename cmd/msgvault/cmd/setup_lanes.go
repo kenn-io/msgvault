@@ -609,7 +609,7 @@ func writeLaneReport(w io.Writer, report laneReport, jsonOutput bool) error {
 	_, _ = fmt.Fprintf(w, "MCP tools live with this configuration: %s\n", strings.Join(report.MCPTools, ", "))
 	if len(report.Agents) > 0 {
 		_, _ = fmt.Fprintln(w, "\nAgents:")
-		if err := (agentsetup.Report{Rows: report.Agents}).WriteText(w, agentSetupCommand()+" --check"); err != nil {
+		if err := (agentsetup.Report{Rows: report.Agents}).WriteText(w, ""); err != nil {
 			return fmt.Errorf("write agent report: %w", err)
 		}
 	}

@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"go.kenn.io/msgvault/internal/update"
 )
 
 const skillFileName = "SKILL.md"
@@ -50,27 +48,9 @@ const (
 	CheckMissing  CheckState = "missing"
 	CheckModified CheckState = "modified"
 	CheckOutdated CheckState = "outdated"
-	CheckNewer    CheckState = "newer"
 )
 
 func generated(content []byte) bool { return bytes.Contains(content, []byte(Marker)) }
-
-func markerVersion(content []byte) string {
-	_, version, ok := strings.Cut(string(content), Marker+" v")
-	if !ok {
-		return ""
-	}
-	version, _, _ = strings.Cut(version, " ")
-	return version
-}
-
-func differentState(content []byte, sk Skill) CheckState {
-	installed, target := markerVersion(content), markerVersion([]byte(sk.Content))
-	if !update.IsDevBuildVersion(installed) && !update.IsDevBuildVersion(target) && update.IsNewer(installed, target) {
-		return CheckNewer
-	}
-	return CheckOutdated
-}
 
 // CheckResult describes the state of one skill.
 type CheckResult struct {
@@ -88,7 +68,7 @@ func checkSkill(path string, sk Skill) (CheckState, error) {
 	case !generated(content):
 		return CheckModified, nil
 	case !bytes.Equal(content, []byte(sk.Content)):
-		return differentState(content, sk), nil
+		return CheckOutdated, nil
 	default:
 		return CheckCurrent, nil
 	}
@@ -97,7 +77,7 @@ func checkSkill(path string, sk Skill) (CheckState, error) {
 // Check compares installed skills with the rendered files.
 func Check(root string, list []Skill) (CheckResult, error) {
 	result := CheckResult{State: CheckCurrent}
-	rank := map[CheckState]int{CheckCurrent: 0, CheckOutdated: 1, CheckMissing: 2, CheckModified: 3, CheckNewer: 3}
+	rank := map[CheckState]int{CheckCurrent: 0, CheckOutdated: 1, CheckMissing: 2, CheckModified: 3}
 	for _, sk := range list {
 		state, err := checkSkill(filepath.Join(root, sk.Name, skillFileName), sk)
 		if err != nil {
@@ -155,7 +135,6 @@ const (
 	StatusInstalled InstallStatus = "installed"
 	StatusUpdated   InstallStatus = "updated"
 	StatusSkipped   InstallStatus = "skipped"
-	StatusUnchanged InstallStatus = "unchanged"
 )
 
 // InstallResult reports the outcome for one skill.
@@ -173,24 +152,17 @@ func Install(root string, list []Skill, force bool) ([]InstallResult, error) {
 	for _, sk := range list {
 		dir := filepath.Join(root, sk.Name)
 		path := filepath.Join(dir, skillFileName)
-		state, err := checkSkill(path, sk)
-		if err != nil {
-			return results, err
-		}
-		status := StatusUpdated
-		switch state {
-		case CheckCurrent:
-			results = append(results, InstallResult{Skill: sk.Name, Path: path, Status: StatusUnchanged})
+		status := StatusInstalled
+		existing, err := os.ReadFile(path)
+		switch {
+		case err == nil && !force && !generated(existing):
+			results = append(results,
+				InstallResult{Skill: sk.Name, Path: path, Status: StatusSkipped})
 			continue
-		case CheckModified, CheckNewer:
-			if !force {
-				results = append(results, InstallResult{Skill: sk.Name, Path: path, Status: StatusSkipped})
-				continue
-			}
-		case CheckMissing:
-			status = StatusInstalled
-		case CheckOutdated:
+		case err == nil:
 			status = StatusUpdated
+		case !errors.Is(err, os.ErrNotExist):
+			return results, fmt.Errorf("read existing skill %s: %w", path, err)
 		}
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return results, fmt.Errorf("create skill directory %s: %w", dir, err)
