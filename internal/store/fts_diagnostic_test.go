@@ -74,7 +74,8 @@ func TestFTSDiagnosticDocuments(t *testing.T) {
 				a.Equal("defects", got.Outcome)
 				a.Contains(got.Entries[0].Issues, tc.issue)
 				a.Equal(1, got.Defects)
-				// Existing readiness probes do not compare current documents.
+				// Backfill finds a missing entry, but does not detect wrong
+				// contents in an entry that is already present.
 				needs, err := f.Store.NeedsFTSBackfillContext(t.Context())
 				r.NoError(err)
 				a.Equal(tc.issue == "missing", needs)
@@ -91,6 +92,24 @@ func TestFTSDiagnosticDocuments(t *testing.T) {
 			a.Equal(before, after, "diagnosis performs no writes")
 		})
 	}
+}
+
+func TestFTSDiagnosticVoiceTranscript(t *testing.T) {
+	f := newBeeperMediaFixture(t)
+	st := f.Store
+	audio := addBeeperAudio(t, st, f.Source.ID, f.ConvID, "voice", strings.Repeat("a", 64))
+	retainAudio(t, st, audio.mapping("destination", "revision", ""), "occurrence")
+	require.NoError(t, st.SetVoiceTranscriptSearch(t.Context(), true))
+	mappings, err := st.VoiceTranscriptMappings(t.Context(), "destination", 0, 8)
+	require.NoError(t, err)
+	require.Len(t, mappings, 1)
+	require.NoError(t, st.SaveVoiceTranscript(t.Context(), mappings[0], "dinner Thursday"))
+
+	got, err := st.DiagnoseFTSContext(t.Context(), store.FTSDiagnosticOptions{})
+	require.NoError(t, err)
+	require.Len(t, got.Entries, 1)
+	assert.Equal(t, "matched", got.Entries[0].State)
+	assert.False(t, got.Entries[0].EmptyDocument)
 }
 
 func TestFTSDiagnosticPagination(t *testing.T) {
@@ -286,7 +305,8 @@ func TestFTSDiagnosticSQLiteRecipientNULPreflight(t *testing.T) {
 	}
 	id := f.CreateMessage("synthetic-recipient-nul")
 	participant := f.EnsureParticipant("synthetic@example.test", "Synthetic", "example.test")
-	// Bcc is outside the FTS envelope, so only the preflight can enforce this bound.
+	// Bcc is not part of the compared search document. Only the recipient
+	// precheck can catch this oversized value.
 	r.NoError(f.Store.ReplaceMessageRecipientsContext(t.Context(), id, "bcc", []int64{participant}, nil))
 	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE message_recipients SET display_name = ? WHERE message_id = ?`, "prefix\x00"+strings.Repeat("x", 1_000_001), id)
 	r.NoError(err)

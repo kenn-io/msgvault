@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// The diagnostic bounds both the number of point reads and each input to the
-// existing stored-envelope rule. It never truncates a comparison into a match.
+// Limit the text and recipient data used for one comparison. Oversized input
+// stays unverified: comparing a truncated prefix could report a false match.
 const (
 	ftsDiagnosticChars      = 1_000_000
 	ftsDiagnosticRecipients = 256
@@ -32,13 +32,15 @@ type FTSDiagnosticEntry struct {
 	EmptyDocument bool     `json:"empty_document"`
 }
 
-// FTSDiagnosticReport describes one page. Complete means the selected ID
-// interval was exhausted. Outcome is incomplete if any comparison is
-// inconclusive, even when selection itself completed.
+// FTSDiagnosticReport describes one page. Complete means there are no more
+// messages in the selected ID range; it says nothing about whether documents
+// match. An inconclusive comparison keeps Outcome incomplete even when Complete
+// is true.
 type FTSDiagnosticReport struct {
 	Backend string `json:"backend"`
-	// IndexingVersion is zero (not applicable) for SQLite and the current format
-	// version for PostgreSQL. It does not describe whether an entry is present.
+	// IndexingVersion is the expected format, not a per-message version. Zero
+	// means not applicable for SQLite; PostgreSQL uses its current format. This
+	// field does not establish whether any search entry is present or valid.
 	IndexingVersion int                  `json:"indexing_version,omitempty"`
 	ThroughID       int64                `json:"through_id"`
 	NextCursor      string               `json:"next_cursor,omitempty"`
@@ -52,6 +54,9 @@ type FTSDiagnosticReport struct {
 	Entries         []FTSDiagnosticEntry `json:"entries"`
 }
 
+// ftsDiagnosticCursor records the completed prefix of a fixed message ID range.
+// Its archive, backend and format checks prevent accidental reuse on a different
+// archive or indexing format. It is a continuation value, not authorization.
 type ftsDiagnosticCursor struct {
 	Format  int    `json:"format"`
 	Archive string `json:"archive"`
@@ -61,11 +66,12 @@ type ftsDiagnosticCursor struct {
 	Through int64  `json:"through"`
 }
 
-// DiagnoseFTSContext compares a bounded page with the document that
-// IndexStoredMessageContext would build. Each message gets a read-only,
-// repeatable-read snapshot. Pages and different messages are observations at
-// different times, not a frozen archive. Only a completed observation advances
-// the cursor; cancellation or a SQL failure leaves the interrupted row eligible.
+// DiagnoseFTSContext compares each search document with the one that
+// IndexStoredMessageContext would build from stored message data. Metadata,
+// content and search data for one message share a read-only transaction, so a
+// concurrent update cannot mix old and new values. Different messages and pages
+// can see later writes. The cursor advances only after recording a result; a
+// canceled or failed read leaves the same message eligible for the next request.
 func (s *Store) DiagnoseFTSContext(ctx context.Context, opts FTSDiagnosticOptions) (FTSDiagnosticReport, error) {
 	r := FTSDiagnosticReport{Backend: "sqlite", Outcome: "incomplete", Entries: []FTSDiagnosticEntry{}}
 	if s.IsPostgreSQL() {
@@ -181,6 +187,8 @@ func (s *Store) DiagnoseFTSContext(ctx context.Context, opts FTSDiagnosticOption
 		if entry.State == "matched" {
 			r.Matched++
 		}
+		// Record the result before advancing. A failed or canceled read above
+		// must leave this message eligible when the operator resumes.
 		c.After = id
 	}
 	if err := ctx.Err(); err != nil {
@@ -195,8 +203,10 @@ func (s *Store) DiagnoseFTSContext(ctx context.Context, opts FTSDiagnosticOption
 
 func (s *Store) diagnoseFTSMessage(ctx context.Context, id int64) (FTSDiagnosticEntry, error) {
 	e := FTSDiagnosticEntry{MessageID: id, State: "inconclusive", Issues: []string{}}
-	// Own the transaction instead of joining any caller snapshot: a failed
-	// PostgreSQL vector comparison must not poison another message's reads.
+	pg := s.IsPostgreSQL()
+	// Give each message its own read-only transaction. This keeps its reads
+	// consistent and lets a failed PostgreSQL comparison roll back without
+	// leaving the next message's transaction in an error state.
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return e, err
@@ -206,7 +216,7 @@ func (s *Store) diagnoseFTSMessage(ctx context.Context, id int64) (FTSDiagnostic
 	var present bool
 	var version sql.NullInt64
 	query := `SELECT EXISTS(SELECT 1 FROM messages_fts WHERE rowid = m.id), NULL FROM messages m WHERE m.id = ?`
-	if s.IsPostgreSQL() {
+	if pg {
 		query = `SELECT search_fts IS NOT NULL, indexing_version FROM messages WHERE id = ?`
 	}
 	err = q.QueryRow(query, id).Scan(&present, &version)
@@ -220,7 +230,7 @@ func (s *Store) diagnoseFTSMessage(ctx context.Context, id int64) (FTSDiagnostic
 	if !present {
 		e.Issues = append(e.Issues, "missing")
 	}
-	if s.IsPostgreSQL() && (!version.Valid || version.Int64 != CurrentFTSIndexingVersion) {
+	if pg && (!version.Valid || version.Int64 != CurrentFTSIndexingVersion) {
 		e.Issues = append(e.Issues, "obsolete_version")
 	}
 	if !present {
@@ -228,13 +238,15 @@ func (s *Store) diagnoseFTSMessage(ctx context.Context, id int64) (FTSDiagnostic
 		return e, nil
 	}
 
-	// Cap recipient work before the shared aggregate rule. Count only a bounded
-	// indexed prefix, and inspect lengths rather than transferring private text.
+	// Count at most one recipient beyond the limit before combining recipient
+	// fields. Check lengths in SQL so oversized recipient data does not have to
+	// leave the database.
 	var count, chars int64
 	lengths := []string{"mr.email_address", "mr.display_name", "p.email_address", "p.phone_number"}
 	for i, col := range lengths {
-		if !s.IsPostgreSQL() {
-			// SQLite length(TEXT) stops at NUL; count all retained bytes.
+		if !pg {
+			// SQLite stops counting TEXT at a zero byte. Count the stored bytes
+			// instead, so a suffix cannot escape the recipient limit.
 			col = "CAST(" + col + " AS BLOB)"
 		}
 		lengths[i] = "COALESCE(length(" + col + "),0)"
@@ -251,53 +263,63 @@ func (s *Store) diagnoseFTSMessage(ctx context.Context, id int64) (FTSDiagnostic
 		return e, nil
 	}
 	aggregate := "GROUP_CONCAT"
-	if s.IsPostgreSQL() {
+	if pg {
 		aggregate = "STRING_AGG"
 	}
 	envelope := storedFTSEnvelopeSQL(aggregate)
 	doc := FTSDoc{MessageID: id}
-	// Slice SQLite bytes so embedded NUL cannot hide retained text. Reading one
-	// byte beyond the limit also rejects a UTF-8 rune cut at the boundary.
+	// SQLite text functions can stop at a zero byte. Read bytes so embedded
+	// zeros do not hide the suffix. One extra byte lets the size check reject
+	// oversized text instead of comparing a truncated prefix.
 	boundedText := func(expr string) string {
-		if !s.IsPostgreSQL() {
+		if !pg {
 			return fmt.Sprintf("COALESCE(CAST(substr(CAST((%s) AS BLOB), 1, %d) AS TEXT), '')", expr, ftsDiagnosticChars+1)
 		}
 		return fmt.Sprintf("substr((%s), 1, %d)", expr, ftsDiagnosticChars+1)
 	}
-	// No body scan or list join: one primary-key read, bounded before transfer.
+	// Read only this message's body by primary key. Apply the size limit in SQL
+	// so the read neither scans other bodies nor transfers an unbounded value.
 	err = q.QueryRow(`SELECT `+boundedText("COALESCE(body_text, '')")+` FROM message_bodies WHERE message_id = ?`, id).Scan(&doc.Body)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return e, err
 	}
-	columns := []string{envelope.subject, envelope.fromAddr, envelope.toAddrs, envelope.ccAddrs}
+	columns := []string{envelope.subject, envelope.fromAddr, envelope.toAddrs, envelope.ccAddrs, voiceSearchSQL(pg, "m.id")}
 	for i, col := range columns {
 		columns[i] = boundedText(col)
 	}
 	query = "SELECT " + strings.Join(columns, ", ") + " FROM messages m WHERE m.id = ?"
-	if err := q.QueryRow(query, id).Scan(&doc.Subject, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs); err != nil {
+	if err := q.QueryRow(query, id).Scan(&doc.Subject, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs, &doc.voice); err != nil {
 		return e, err
 	}
-	for _, value := range []string{doc.Body, doc.Subject, doc.FromAddr, doc.ToAddrs, doc.CcAddrs} {
-		// PostgreSQL substr counts characters; this byte check is conservative for UTF-8.
+	for _, value := range []string{doc.Body, doc.Subject, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, doc.voice} {
+		// PostgreSQL substr counts characters, but this check counts bytes.
+		// Multibyte text can therefore reach the limit sooner.
 		if len(value) > ftsDiagnosticChars {
 			e.Reason = "input_limit"
 			return e, nil
 		}
 	}
 	emptyDoc := doc
-	if s.IsPostgreSQL() {
+	if pg {
 		emptyDoc, _ = preparePostgresFTSDoc(doc)
 	}
-	e.EmptyDocument = emptyDoc.Subject == "" && emptyDoc.Body == "" && emptyDoc.FromAddr == "" && emptyDoc.ToAddrs == "" && emptyDoc.CcAddrs == ""
+	e.EmptyDocument = emptyDoc.Subject == "" && emptyDoc.Body == "" && emptyDoc.FromAddr == "" &&
+		emptyDoc.ToAddrs == "" && emptyDoc.CcAddrs == "" && emptyDoc.voice == ""
 	var content, auxiliary bool
-	if s.IsPostgreSQL() {
+	if pg {
 		vector, args := pgFTSVector(doc)
-		err = q.QueryRow(`SELECT COALESCE(search_fts = (`+vector+`), FALSE), search_fts_fields IS NOT DISTINCT FROM $7::text[] FROM messages WHERE id = $1`, args...).Scan(&content, &auxiliary)
+		err = q.QueryRow(`SELECT COALESCE(search_fts = (`+vector+`), FALSE), search_fts_fields IS NOT DISTINCT FROM $8::text[] FROM messages WHERE id = $1`, args...).Scan(&content, &auxiliary)
 	} else {
+		// SQLite's writer appends voice transcripts to the Cc field.
+		if doc.voice != "" {
+			doc.CcAddrs += "\n" + doc.voice
+		}
 		err = q.QueryRow(`SELECT COALESCE(subject,'') = ? AND COALESCE(body,'') = ? AND COALESCE(from_addr,'') = ? AND COALESCE(to_addr,'') = ? AND COALESCE(cc_addr,'') = ?, COALESCE(message_id = ?, FALSE) FROM messages_fts WHERE rowid = ?`,
 			doc.Subject, doc.Body, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, id, id).Scan(&content, &auxiliary)
 	}
 	if s.dialect.IsFTSValueTooLargeError(err) {
+		// If even the expected search data is too large, we cannot establish
+		// a match or infer why the stored representation looks the way it does.
 		e.Reason = "expected_vector_overflow"
 		return e, nil
 	}
@@ -309,7 +331,7 @@ func (s *Store) diagnoseFTSMessage(ctx context.Context, id int64) (FTSDiagnostic
 	}
 	if !auxiliary {
 		issue := "identity_mismatch"
-		if s.IsPostgreSQL() {
+		if pg {
 			issue = "auxiliary_mismatch"
 		}
 		e.Issues = append(e.Issues, issue)

@@ -344,24 +344,25 @@ owns file obligations and settlement separately.
 #### What is compared in the current format?
 
 `CurrentFTSIndexingVersion` is **3** for PostgreSQL. `preparePostgresFTSDoc`
-prepares subject, body, sender, To and Cc separately: it bounds each input to
-700,000 bytes without splitting a UTF-8 rune, then 600,000 runes, normalizes
-Unicode letters and numbers into lowercase space-separated tokens, and caps
-bytes again. These limits reduce overflow risk; they do not guarantee that the
-combined vector fits PostgreSQL's 1,048,575-byte limit.
+prepares subject, body, sender, To, Cc and saved voice transcripts separately.
+It bounds each input to 700,000 bytes without splitting a UTF-8 rune, then
+600,000 runes, normalizes Unicode letters and numbers into lowercase
+space-separated tokens, and caps bytes again. The combined vector can still
+exceed PostgreSQL's 1,048,575-byte limit.
 
 `pgFTSVectorFields` builds weighted `simple` vectors with separator lexemes
-between fields. `search_fts_fields` stores the five prepared texts, in order
-subject, sender, To, Cc, body, only when the preparation counts more than
-16,000 positions (including four separators) or more than 255 occurrences of
+between fields. `search_fts_fields` stores the prepared subject, sender, To, Cc,
+body and voice transcripts in that order when preparation counts more than
+16,000 positions (including five separators) or more than 255 occurrences of
 one token. Search uses those fields to verify phrases when vector positions
 can saturate. Unsaturated documents store NULL there.
 
 PostgreSQL `FTSMatches` constructs that same expected vector and compares the
 vector, `search_fts_fields` with NULL-safe equality, and the current version.
 It can fail while constructing the expected vector, before any upsert. SQLite
-compares the five stored FTS5 text columns to the supplied document; it has no
-PostgreSQL version or auxiliary fields. Both dialects return false for an
+compares the five stored FTS5 text columns to the supplied document and includes
+saved voice transcripts in the Cc column. It has no PostgreSQL version or
+auxiliary fields. Both dialects return false for an
 absent entry. `IndexStoredMessageContext` leaves a matching entry unwritten
 and can create a missing one.
 
@@ -373,11 +374,14 @@ durable reason explaining how it arose; do not infer its history from the
 vector alone. The terminal check tests only an empty vector and current
 version, not a separately persisted overflow cause.
 
-The read-only [FTS diagnostic](../cli-reference.md#diagnose-fts) compares bounded
-pages with the stored-message document rule, including the v3 auxiliary fields.
+The read-only [FTS diagnostic](../cli-reference.md#diagnose-fts) compares saved
+search documents with stored message text, subjects, senders, recipient search
+fields and saved voice transcripts. It also checks the extra data PostgreSQL v3
+uses for phrase searches.
 It reports missing, obsolete and differing entries, and inconclusive comparisons.
-Its per-message snapshots and resume cursor do not freeze an archive across pages
-or verify physical postings. Backfill readiness remains a cheaper, narrower probe.
+Each message is checked at one point in time; different messages and pages can
+reflect later writes. These checks do not verify the underlying search index
+structures. Backfill checks remain cheaper and narrower.
 
 #### How can indexing resume?
 
