@@ -129,18 +129,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		resolved[id] = p
 		return p, nil
 	}
-	// Stored rows exist only after an earlier import, so a first import skips the scan.
-	var hints *identityHints
-	stored, err := st.CountMessagesForSourceContext(ctx, source.ID)
-	if err != nil {
-		return s, err
-	}
-	if stored > 0 {
-		if hints, err = scanIdentities(ctx, opts.RootDir); err != nil {
-			return s, err
-		}
-	}
-	slots := newSlotCounter(hints)
+	slots := newSlotCounter()
 	selfConfirmed := false
 	var ownerID int64
 	err = r.frames(ctx, func(m *chatItem, raw []byte, line int) error {
@@ -206,7 +195,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		}
 		convKey := scopedKey(scope, conversation.key)
 		authorKey := scopedKey(scope, author.key)
-		key, id, err := slots.slot(ctx, st, source.ID, convKey, authorKey, date, originalReceived(m), m, line)
+		key, id, err := slots.slot(ctx, st, source.ID, convKey, authorKey, date, originalReceived(m))
 		if err != nil {
 			return err
 		}

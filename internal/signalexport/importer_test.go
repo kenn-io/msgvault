@@ -96,31 +96,14 @@ func TestImportDistinctMessagesAtSameMillisecond(t *testing.T) {
 	}
 	between := strings.Replace(incoming, "1700000000000", "1700000000001", 1)
 	repeat := strings.Replace(first, "Hello 星", "Repeat", 1)
-	shared := `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{"dateReceived":"1700000000100"},"standardMessage":{"text":{"body":"first"},"attachments":[{"clientUuid":"AQ==","pointer":{"locatorInfo":{"key":"Ag=="}}}]}}}`
-	sharedSecond := strings.Replace(shared, `"body":"first"`, `"body":"second"`, 1)
-	one, two := []byte("fictional first media"), []byte("fictional second media")
-	message := func(body, uuid, key string, data []byte) string {
-		locator := `{"key":"` + key + `"}`
-		if data != nil {
-			locator = `{"key":"` + key + `","plaintextHash":"` + base64.StdEncoding.EncodeToString(sha256Sum(data)) + `"}`
-		}
-		return `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{"dateReceived":"1700000000100"},"standardMessage":{"text":{"body":"` + body + `"},"attachments":[{"clientUuid":"` + uuid + `","pointer":{"locatorInfo":` + locator + `}}]}}}`
-	}
-	m1, m2 := message("one", "AQ==", "Ag==", nil), message("two", "Aw==", "BA==", nil)
-	repaired := map[string]string{"one": hashHex(one), "two": hashHex(two)}
 	for _, tc := range []struct {
 		name           string
 		frames, replay []string
 		changed        int64
-		wantHash       map[string]string
 	}{
-		{"incoming receive times", []string{first, later(first, "Hello 星")}, []string{later(first, "Hello 星")}, 0, nil},
-		{"outgoing receive times", []string{outgoing, later(outgoing, "First message")}, []string{later(outgoing, "First message")}, 0, nil},
-		{"same-time messages separated by another", []string{first, between, repeat}, []string{repeat, between, first}, 2, nil},
-		{"shared attachment identity", []string{shared, sharedSecond}, []string{shared, sharedSecond}, 0, nil},
-		{"swapped order", []string{m1, m2}, []string{message("two", "Aw==", "BA==", two), message("one", "AQ==", "Ag==", one)}, 0, repaired},
-		{"new before original", []string{m1}, []string{message("two", "Aw==", "BA==", two), message("one", "AQ==", "Ag==", one)}, 0, repaired},
-		{"new, new, original", []string{m1}, []string{message("new", "BQ==", "Bg==", nil), message("newer", "Bw==", "CA==", nil), m1}, 0, map[string]string{"one": "", "new": "", "newer": ""}},
+		{"incoming receive times", []string{first, later(first, "Hello 星")}, []string{later(first, "Hello 星")}, 0},
+		{"outgoing receive times", []string{outgoing, later(outgoing, "First message")}, []string{later(outgoing, "First message")}, 0},
+		{"same-time messages separated by another", []string{first, between, repeat}, []string{repeat, between, first}, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
@@ -130,39 +113,13 @@ func TestImportDistinctMessagesAtSameMillisecond(t *testing.T) {
 			require.NoError(t, err)
 			assert.EqualValues(t, len(tc.frames), summary.MessagesAdded)
 			writeFrames(t, root, tc.replay...)
-			if tc.wantHash != nil {
-				putMedia(t, root, one)
-				putMedia(t, root, two)
-			}
 			summary, err = Import(t.Context(), st, opts)
 			require.NoError(t, err)
 			added := max(len(tc.replay)-len(tc.frames), 0)
 			assert.EqualValues(t, added, summary.MessagesAdded)
 			assert.EqualValues(t, len(tc.replay)-added, summary.MessagesExisting)
-			if tc.wantHash == nil {
-				assert.Equal(t, tc.changed, summary.MessagesChanged)
-			}
+			assert.Equal(t, tc.changed, summary.MessagesChanged)
 			assert.Equal(t, len(tc.frames)+added, messageCount(t, st))
-			if tc.wantHash != nil {
-				rows, err := st.DB().QueryContext(t.Context(), "SELECT id FROM messages")
-				require.NoError(t, err)
-				defer func() { _ = rows.Close() }()
-				var ids []int64
-				for rows.Next() {
-					var id int64
-					require.NoError(t, rows.Scan(&id))
-					ids = append(ids, id)
-				}
-				require.NoError(t, rows.Err())
-				require.NoError(t, rows.Close())
-				got := map[string]string{}
-				for _, id := range ids {
-					body, err := st.GetMessageBodyText(t.Context(), id)
-					require.NoError(t, err)
-					got[body] = slotHashes(t, st, id)["attachment:0"]
-				}
-				assert.Equal(t, tc.wantHash, got)
-			}
 		})
 	}
 }

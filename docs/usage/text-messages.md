@@ -587,7 +587,7 @@ Contacts keep their existing account-scoped identity when an ACI or phone number
 Run the command again to add history and retry missing media. Existing text
 and raw messages retain their first archived snapshot. Missing media can be
 repaired when a later export uniquely identifies the original attachment.
-Signal gives messages no ID, so messages from one chat with the same author, send time, and receive time are told apart by their order in the export. If that order changes, a message with attachment identities (client UUID, else locator key) keeps its own row. To do this, a rerun against an account with saved messages first scans the export for those identities, holding at most 262,144 of them in memory; frames past that limit rely on order. Where identities are missing, repeated within a message, or shared by several messages, order decides, and a changed attachment may leave its media missing rather than move to another message.
+Messages from one chat with the same author, send time, and receive time are told apart by export order. If that order changes, or messages are removed from the archive, a repeated message can be duplicated or its media left missing.
 Committed messages remain after an interrupted or failed import.
 
 The importer accepts version 1 exports. Limits are 16 MiB per JSONL record,

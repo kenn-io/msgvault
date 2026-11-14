@@ -16,7 +16,7 @@ func newImportSignalExportCmd() *cobra.Command {
 	var account string
 	cmd := &cobra.Command{
 		Use:   "import-signal-export <export-dir>",
-		Short: "Import a native Signal readable export",
+		Short: "Import a Signal readable export",
 		Long: `Import standard messages and available local media from a native Signal
 readable directory (metadata.json version 1, main.jsonl, optional files/).
 
