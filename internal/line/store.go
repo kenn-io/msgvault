@@ -526,7 +526,7 @@ func findJoinTable(ctx context.Context, db *sql.DB, table, left, right string) (
 	rows, err := db.QueryContext(ctx, `SELECT m.name, c.name FROM sqlite_master m, pragma_table_info(m.name) c
 		WHERE m.type = 'table' AND m.name GLOB 'Z_[0-9]*' ORDER BY m.name, c.cid`)
 	if err != nil {
-		return joinTable{}, fmt.Errorf("line: read store tables: %w", err)
+		return joinTable{}, fmt.Errorf("line: read members: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	found := map[string]*joinTable{}
@@ -559,7 +559,7 @@ func findJoinTable(ctx context.Context, db *sql.DB, table, left, right string) (
 	for _, name := range names {
 		if jt := found[name]; jt.left != "" && jt.right != "" {
 			if match.table != "" {
-				return joinTable{}, fmt.Errorf("line: the store has more than one %s table", table)
+				return joinTable{}, errors.New("line: ambiguous member lists")
 			}
 			match = *jt
 		}
