@@ -49,7 +49,7 @@ func calendarRows(t *testing.T, st *Store, ids ...int64) []CalendarEventRow {
 	for i, id := range ids {
 		args[i] = id
 	}
-	rows, err := queryCalendarEventRowsWithinBudget(ctx, st.db, "e.message_id IN ("+placeholders(len(ids))+")", args, len(ids))
+	rows, err := queryCalendarEventRowsWithinBudget(ctx, st.meetingSQLReader(ctx), "e.message_id IN ("+placeholders(len(ids))+")", args, len(ids))
 	require.NoError(t, err)
 	return rows
 }
@@ -331,4 +331,20 @@ func TestCalendarRecurrenceEndComparesAsInstant(t *testing.T) {
 			assert.Equal(t, tc.want, count)
 		})
 	}
+}
+
+func TestMeetingEventRowsUseSourceConfigFromSnapshot(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	data, id := calendarFixture(t, st, "snapshot-owner", calendarRaw, "old@example.com")
+	tx, err := st.db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(t.Context(), `UPDATE sources SET sync_config=? WHERE id=?`, `{"calendar_id":"new@example.com"}`, data.Message.SourceID)
+	require.NoError(t, err)
+	ctx := withWritableSnapshot(t.Context(), st.db.DB, tx)
+	budget := 10
+	rows, err := st.meetingEventRows(ctx, `e.message_id=?`, []any{id}, &budget)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "new@example.com", rows[0].CalendarID)
 }

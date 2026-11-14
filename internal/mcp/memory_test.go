@@ -93,6 +93,7 @@ func daemonProxyMemoryOptions() ServeOptions {
 		SavedViews:           struct{ savedview.Service }{},
 		Meetings:             struct{ MeetingBackend }{},
 		MeetingRecords:       true,
+		MeetingDecisions:     true,
 		Calendar:             struct{ CalendarBackend }{},
 		MessageTags:          struct{ MessageTagBackend }{},
 		ArchiveSQLQuerier:    struct{ ArchiveSQLQuerier }{},

@@ -575,6 +575,12 @@ func (s *Store) MergeDuplicates(
 			if err := s.copyLoopDecisionTx(ctx, tx, dupID, survivorID); err != nil {
 				return err
 			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_copy_survivors(message_id, survivor_message_id) SELECT id, ? FROM messages WHERE id=? AND message_type IN ('calendar_event', 'meeting_transcript') ON CONFLICT (message_id) DO UPDATE SET survivor_message_id=excluded.survivor_message_id`, survivorID, dupID); err != nil {
+				return err
+			}
+		}
+		if err := s.copyMeetingDecisionsTx(ctx, tx, duplicateIDs, survivorID); err != nil {
+			return err
 		}
 		if result.RawMIMEBackfilled > 0 {
 			if _, err := s.refreshEmailLinkageTx(ctx, tx, survivorID, emailLinkageInput{}); err != nil {

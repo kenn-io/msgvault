@@ -6,6 +6,8 @@ import type {
   GetMeetingRecordParams,
   MeetingActionsRequest,
   MeetingContextRequest,
+  MeetingDecisionRequest,
+  MeetingLinkDecisionResult,
   MeetingMetricsRequest,
   MeetingRecord,
   Metrics,
@@ -46,6 +48,23 @@ export const getMeetingContext = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: meetingContextRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Link or split archived meeting copies
+ */
+export const decideMeetingLink = (
+  meetingDecisionRequest: MeetingDecisionRequest,
+  options?: SecondParameter<typeof orvalFetch<MeetingLinkDecisionResult>>,
+) => {
+  return orvalFetch<MeetingLinkDecisionResult>(
+    {
+      url: `/api/v1/meetings/links/decisions`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: meetingDecisionRequest,
     },
     options,
   );

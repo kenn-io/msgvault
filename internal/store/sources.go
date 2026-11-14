@@ -24,7 +24,13 @@ func (s *Store) GetSourceByID(id int64) (*Source, error) {
 
 // GetSourceByIDContext is the request-aware form of GetSourceByID.
 func (s *Store) GetSourceByIDContext(ctx context.Context, id int64) (*Source, error) {
-	row := s.db.QueryRowContext(ctx, `
+	return getSourceByIDFrom(ctx, s.db, id)
+}
+
+func getSourceByIDFrom(ctx context.Context, reader interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, id int64) (*Source, error) {
+	row := reader.QueryRowContext(ctx, `
 		SELECT `+sourceCatalogColumns+`
 		FROM sources
 		WHERE id = ?

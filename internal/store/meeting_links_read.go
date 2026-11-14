@@ -84,6 +84,38 @@ func meetingUIDKeys(uid string, at time.Time) []meetingLinkKey {
 	return []meetingLinkKey{canonicalMeetingKey("ical_uid", "", uid, &at)}
 }
 
+func meetingKeyMatch(key meetingLinkKey, matches []CalendarOccurrence) (ambiguous, allowNotes bool) {
+	identities := map[string]bool{}
+	for _, o := range matches {
+		if o.original.AllDay {
+			identities["date:"+o.original.Date] = true
+		} else if o.original != (calrecur.Identity{}) {
+			identities["time:"+o.original.Instant.UTC().Format(time.RFC3339Nano)] = true
+		} else if o.AllDay && !o.Start.IsZero() {
+			identities["date:"+o.StartDate] = true
+		} else if !o.Start.IsZero() {
+			identities["time:"+o.Start.UTC().Format(time.RFC3339Nano)] = true
+		}
+	}
+	_, _, instance := calrecur.ParseInstanceID(key[2])
+	return len(identities) > 1, key[0] != "google_event_id" || instance || len(identities) == 1 || len(identities) == 0 && len(matches) > 0
+}
+
+// meetingMatchGroup selects the copies and notes proved by one matching key.
+func meetingMatchGroup(key meetingLinkKey, matches []CalendarOccurrence, notes []int64, ambiguousNotes bool) ([]CalendarOccurrence, []int64) {
+	ambiguous, allowNotes := meetingKeyMatch(key, matches)
+	if ambiguous {
+		if allowNotes && ambiguousNotes {
+			return nil, notes
+		}
+		return nil, nil
+	}
+	if !allowNotes {
+		notes = nil
+	}
+	return matches, notes
+}
+
 // meetingBound reports an unavailable time as nil.
 func meetingBound(at time.Time) *time.Time {
 	if at.IsZero() {
@@ -311,17 +343,25 @@ func (s *Store) meetingNoteKeys(ctx context.Context, keys []string, budget *int)
 	return out, nil
 }
 
-func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (MeetingRecord, error) {
+func (s *Store) MeetingNotesContext(ctx context.Context, ref MeetingLinkRef) (MeetingRecord, error) {
+	budget := calrecur.RequestReadBudget
+	return s.meetingAutomaticRecord(ctx, ref, &budget, true)
+}
+
+func (s *Store) meetingAutomaticRecordContext(ctx context.Context, ref MeetingLinkRef, budget *int) (MeetingRecord, error) {
+	return s.meetingAutomaticRecord(ctx, ref, budget, false)
+}
+
+func (s *Store) meetingAutomaticRecord(ctx context.Context, ref MeetingLinkRef, budget *int, notesOnly bool) (MeetingRecord, error) {
 	record := MeetingRecord{Links: []MeetingLink{}, MessageIDs: []int64{}, Unexpandable: []CalendarUnexpandable{}}
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
 		return record, err
 	}
 	defer release()
-	budget := calrecur.RequestReadBudget
 	var keys []meetingLinkKey
 	var seed CalendarOccurrence
-	if ref.Kind == "msg" {
+	if ref.Kind == meetingRefMessage {
 		var raw sql.NullString
 		scope, args := sourceScopeClause(ctx, "m.source_id")
 		err = s.db.QueryRowContext(ctx, `SELECT k.link_key FROM messages m LEFT JOIN meeting_details k ON k.message_id=m.id WHERE m.id=? AND m.message_type='meeting_transcript' AND m.deleted_at IS NULL`+scope, append([]any{ref.MessageID}, args...)...).Scan(&raw)
@@ -337,7 +377,7 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			keys = append(keys, key)
 		}
 	} else {
-		rows, err := s.meetingEventRows(ctx, `e.message_id = ?`, []any{ref.MessageID}, &budget)
+		rows, err := s.meetingEventRows(ctx, `e.message_id = ?`, []any{ref.MessageID}, budget)
 		if err != nil {
 			return record, err
 		}
@@ -366,7 +406,7 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			seed, diagnostic = untimedMeetingCopy(row)
 			record.Unexpandable = append(record.Unexpandable, diagnostic)
 		} else {
-			page, err := s.meetingExpand(ctx, rows, at, &budget)
+			page, err := s.meetingExpand(ctx, rows, at, budget)
 			if err != nil {
 				return record, err
 			}
@@ -381,6 +421,25 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 				}
 			}
 		}
+		if seed.Ref == "" && row.Event.Kind == calendarSeriesKind && len(record.Unexpandable) > 0 {
+			edits, err := s.meetingEventRows(ctx, `m.source_id = ? AND e.series_provider_id = ? AND e.kind = 'exception'`, []any{row.SourceID, row.Event.ProviderEventID}, budget)
+			if err != nil {
+				return record, err
+			}
+			for _, edit := range edits {
+				if edit.Event.Original == nil || edit.Event.Original.Key() != ref.Identity.Key() {
+					continue
+				}
+				page, err := s.expandCalendarRows(ctx, []CalendarEventRow{edit}, at, at.Add(time.Second), false, budget)
+				if err != nil {
+					return record, err
+				}
+				if len(page.Occurrences) > 0 {
+					seed = page.Occurrences[0]
+					break
+				}
+			}
+		}
 		if seed.Ref == "" {
 			if row.Event.Kind != calendarSeriesKind || !slices.ContainsFunc(record.Unexpandable, func(item CalendarUnexpandable) bool { return item.MessageID == ref.MessageID }) {
 				return record, sql.ErrNoRows
@@ -388,6 +447,18 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 		} else {
 			keys = occurrenceKeys(seed)
 		}
+	}
+	if notesOnly {
+		if len(keys) > 0 && (keys[0][0] != "google_event_id" || isMeetingInstanceKey(keys[0])) {
+			notes, err := s.meetingNoteKeys(ctx, []string{keys[0].text()}, budget)
+			if err != nil {
+				return record, err
+			}
+			record.MessageIDs = append(record.MessageIDs, notes[keys[0].text()]...)
+			slices.Sort(record.MessageIDs)
+			record.MessageIDs = slices.Compact(record.MessageIDs)
+		}
+		return record, nil
 	}
 	var copies []CalendarOccurrence
 	if seed.Ref != "" {
@@ -409,76 +480,17 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 		if len(pending) == 0 {
 			break
 		}
-		notes, err := s.meetingNoteKeys(ctx, texts, &budget)
+		notes, err := s.meetingNoteKeys(ctx, texts, budget)
 		if err != nil {
 			return record, err
 		}
-		matches, err := s.meetingOccurrencesForKeys(ctx, pending, &budget, &record.Unexpandable)
+		matches, err := s.meetingOccurrencesForKeys(ctx, pending, budget, &record.Unexpandable)
 		if err != nil {
 			return record, err
 		}
 		for _, key := range pending {
-			matched := matches[key]
-			identities := map[string]bool{}
-			ends := map[string]map[string]bool{}
-			endOnly := map[string]bool{}
-			for _, o := range matched {
-				end := ""
-				if !o.End.IsZero() {
-					if o.EndDate != "" {
-						end = "end-date:" + o.EndDate
-					} else {
-						end = "end-time:" + o.End.UTC().Format(time.RFC3339Nano)
-					}
-				}
-				if o.original == (calrecur.Identity{}) && o.Start.IsZero() {
-					if end != "" {
-						endOnly[end] = true
-					}
-					continue
-				}
-				var identity string
-				if o.original.AllDay {
-					identity = "date:" + o.original.Date
-				} else if o.original == (calrecur.Identity{}) && o.AllDay {
-					identity = "date:" + o.StartDate
-				} else {
-					original := o.Start
-					if o.original != (calrecur.Identity{}) {
-						original = o.original.Instant
-					}
-					identity = "time:" + original.UTC().Format(time.RFC3339Nano)
-				}
-				identities[identity] = true
-				if end != "" {
-					if ends[end] == nil {
-						ends[end] = map[string]bool{}
-					}
-					ends[end][identity] = true
-				}
-			}
-			// An end-only copy shares an identity only when its end identifies one occurrence.
-			for end := range endOnly {
-				if len(ends[end]) != 1 {
-					identities[end] = true
-				}
-			}
-			_, _, instance := calrecur.ParseInstanceID(key[2])
-			if key[0] == "google_event_id" && !instance && len(identities) == 0 {
-				// A bare ID without an occurrence time cannot identify a meeting.
-				continue
-			}
-			allowNotes := key[0] != "google_event_id" || instance || len(identities) == 1
-			if len(identities) > 1 {
-				// Notes with exact keys remain peers even if calendar matches are ambiguous.
-				if allowNotes && ref.Kind == "msg" && len(copies) == 0 {
-					record.MessageIDs = append(record.MessageIDs, notes[key.text()]...)
-				}
-				continue
-			}
-			if allowNotes {
-				record.MessageIDs = append(record.MessageIDs, notes[key.text()]...)
-			}
+			matched, members := meetingMatchGroup(key, matches[key], notes[key.text()], ref.Kind == meetingRefMessage && len(copies) == 0)
+			record.MessageIDs = append(record.MessageIDs, members...)
 			copies = append(copies, matched...)
 			for _, occurrence := range matched {
 				keys = append(keys, occurrenceKeys(occurrence)...)

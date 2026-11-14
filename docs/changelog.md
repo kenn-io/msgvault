@@ -18,6 +18,9 @@ All notable changes to msgvault, grouped by release.
 
 - Account matching recovers after identity changes. Explore refreshes pending counts and lets you retry matching for each source.
 - MCP operation tools report `operation_receipt_unavailable` when a successful write's receipt is too large or unusable. This replaces `operation_response_limit_exceeded`, `operation_response_failed`, and `invalid_operation_response` for those write receipts. Read current state before retrying.
+
+- Join or separate archived meeting copies with `meetings link` and `meetings unlink`, the API, or MCP. Choices survive sync and rebuilds. `meetings reset-link` restores automatic matching. Requires HTTP API schema 5.10.0; existing archives upgrade to schema 46.
+
 - Open linked calendar copies and notes with `msgvault meetings links`,
   `GET /api/v1/meetings/record`, or MCP `get_meeting_record`. Copy an
   occurrence reference from `msgvault calendar events` to select a specific

@@ -52,6 +52,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 		noDrafts     bool
 	}{
 		{"mbox", "get_meeting_record", false}, {"ics", "get_meeting_record", false}, {"gcal", "get_meeting_record", false},
+		{"mbox", "link_meeting", false}, {"ics", "link_meeting", false}, {"gcal", "link_meeting", false},
 		{"granola", "get_meeting_context", false}, {"chatwoot", "get_meeting_context", false},
 		{"circleback", "get_meeting_context", false}, {"pocket", "get_meeting_context", false},
 		{"muesli", "get_meeting_context", false}, {"notion_meetings", "get_meeting_context", false},

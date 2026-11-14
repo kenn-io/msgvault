@@ -136,6 +136,29 @@ func TestCalendarSeriesIndexRecreated(t *testing.T) {
 	require.Equal(1, count)
 }
 
+func TestSchemaVersionMeetingDecisionsPreviousUpgrade(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+	_, err := f.Store.DB().ExecContext(ctx, `DROP TABLE meeting_copy_survivors`)
+	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, `DROP TABLE meeting_link_decisions`)
+	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, `UPDATE archive_metadata SET value = '45' WHERE key = 'schema_version'`)
+	require.NoError(err)
+	require.Error(f.Store.ValidateSchemaContext(ctx))
+	require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx))
+	var count int
+	require.NoError(f.Store.DB().QueryRowContext(ctx, `SELECT count(*) FROM meeting_link_decisions`).Scan(&count))
+	require.Zero(count)
+	require.NoError(f.Store.DB().QueryRowContext(ctx, `SELECT count(*) FROM meeting_copy_survivors`).Scan(&count))
+	require.Zero(count)
+	version, err := f.Store.SchemaVersionContext(ctx)
+	require.NoError(err)
+	require.Equal(store.SchemaVersion, version)
+	require.NoError(f.Store.ValidateSchemaContext(ctx))
+}
+
 func TestSchemaVersionDocbankUpgrade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
