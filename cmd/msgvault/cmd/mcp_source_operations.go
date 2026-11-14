@@ -237,10 +237,10 @@ func slackPolicyProjection(result *mcpserver.OperationResult, writes bool) *mcps
 		return result
 	}
 	settings, ok := result.Output.(slackSettingsResponse)
-	if !ok || result.ETag == "" || (writes && settings.PendingRestart == nil) {
+	if !ok || result.ETag == "" || settings.PendingRestart == nil {
 		return invalidOperationResponse(writes)
 	}
-	policy := mcpserver.SlackSyncPolicy{ETag: result.ETag, PendingRestart: settings.PendingRestart != nil && *settings.PendingRestart, Settings: []generated.Setting{}}
+	policy := mcpserver.SlackSyncPolicy{ETag: result.ETag, PendingRestart: *settings.PendingRestart, Settings: []generated.Setting{}}
 	found := make(map[string]struct{}, len(slackSelectionKinds))
 	for _, setting := range settings.Settings {
 		expectedKind, selected := slackSelectionKinds[setting.Key]
