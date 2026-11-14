@@ -16,10 +16,18 @@ func TestAttributeValueJSONSQLiteMigration(t *testing.T) {
 	}
 	st, person, _ := newPersonFactProjectionStore(t)
 	def := AttributeDefinitionInput{UniversalID: "test-json-sqlite-migration", ObjectType: AttributeObjectPerson, Slug: "json_sqlite_migration", Label: "JSON migration", ValueType: AttributeValueJSON, FieldType: AttributeFieldJSON, Cardinality: AttributeCardinalitySingle, Ownership: AttributeOwnershipUser, APIMutable: true, IsDeletable: true}
-	_, err := st.CreateAttributeDefinitionContext(t.Context(), def)
+	definition, err := st.CreateAttributeDefinitionContext(t.Context(), def)
 	require.NoError(t, err)
 	input := PersonAttributeValueInput{PersonID: person, DefinitionSlug: def.Slug, Value: AttributeValue{Type: AttributeValueJSON, JSON: jsontext.Value("3456")}, Source: ProvenanceUser}
-	_, err = st.SetPersonAttributeValueContext(t.Context(), input)
+	first, err := st.SetPersonAttributeValueContext(t.Context(), input)
+	require.NoError(t, err)
+	participant, err := st.EnsureParticipant("bob@example.com", "Bob", "example.com")
+	require.NoError(t, err)
+	absorbed, _, err := st.CreatePersonFromParticipant(participant)
+	require.NoError(t, err)
+	input.PersonID = absorbed.ID
+	input.Value.JSON = jsontext.Value(`{"kind":"example"}`)
+	second, err := st.SetPersonAttributeValueContext(t.Context(), input)
 	require.NoError(t, err)
 	organization, err := st.CreateOrganizationContext(t.Context(), OrganizationInput{Name: "Example Org"})
 	require.NoError(t, err)
@@ -30,6 +38,19 @@ func TestAttributeValueJSONSQLiteMigration(t *testing.T) {
 	require.NoError(t, err)
 	_, err = st.SetOrganizationAttributeValueContext(t.Context(), OrganizationAttributeValueInput{OrganizationID: organization.ID, DefinitionSlug: orgDef.Slug, Value: AttributeValue{Type: AttributeValueJSON, JSON: jsontext.Value("7890")}, Source: ProvenanceUser})
 	require.NoError(t, err)
+	merge, err := st.db.ExecContext(t.Context(), `INSERT INTO person_merges
+		(idempotency_key, request_hash, survivor_person_id_at_merge, absorbed_person_id, current_person_id,
+		 survivor_uid, absorbed_uid, survivor_revision_before, absorbed_revision_before, survivor_revision_after,
+		 actor, snapshot_version, snapshot_blob, snapshot_sha256)
+		VALUES ('migration-test', ?, ?, ?, ?, 'survivor', 'absorbed', 1, 1, 2, 'test', 1, X'00', ?)`,
+		strings.Repeat("a", 64), person, absorbed.ID, person, strings.Repeat("b", 64))
+	require.NoError(t, err)
+	mergeID, err := merge.LastInsertId()
+	require.NoError(t, err)
+	_, err = st.db.ExecContext(t.Context(), `INSERT INTO person_merge_review_candidates
+		(merge_id, survivor_person_id, definition_id, survivor_value_id, absorbed_value_id, resolution_value_id)
+		VALUES (?, ?, ?, ?, ?, ?)`, mergeID, person, definition.ID, first.Value.ID, second.Value.ID, second.Value.ID)
+	require.NoError(t, err)
 	conn, err := st.db.Conn(t.Context())
 	require.NoError(t, err)
 	_, err = conn.ExecContext(t.Context(), `PRAGMA foreign_keys = OFF`)
@@ -39,24 +60,59 @@ func TestAttributeValueJSONSQLiteMigration(t *testing.T) {
 		require.NoError(t, conn.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master WHERE name = ?`, table).Scan(&ddl))
 		ddl = strings.Replace(ddl, table+" (", table+"_old (", 1)
 		ddl = strings.Replace(ddl, "value_json        TEXT", "value_json        JSON", 1)
-		for _, sql := range []string{ddl, `INSERT INTO ` + table + `_old SELECT * FROM ` + table, `UPDATE ` + table + `_old SET value_json = CAST(value_json AS BLOB) WHERE value_json IS NOT NULL`, `DROP TABLE ` + table, `ALTER TABLE ` + table + `_old RENAME TO ` + table} {
+		for _, sql := range []string{ddl, `INSERT INTO ` + table + `_old SELECT * FROM ` + table, `DROP TABLE ` + table, `ALTER TABLE ` + table + `_old RENAME TO ` + table} {
 			_, err = conn.ExecContext(t.Context(), sql)
 			require.NoError(t, err)
 		}
 	}
+	_, err = conn.ExecContext(t.Context(), `UPDATE organization_attribute_values SET value_json = CAST(value_json AS BLOB) WHERE organization_id = ?`, organization.ID)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		query string
+		id    int64
+		want  string
+	}{
+		{`SELECT typeof(value_json) FROM person_attribute_values WHERE id = ?`, first.Value.ID, "integer"},
+		{`SELECT typeof(value_json) FROM person_attribute_values WHERE id = ?`, second.Value.ID, "text"},
+		{`SELECT typeof(value_json) FROM organization_attribute_values WHERE organization_id = ?`, organization.ID, "blob"},
+	} {
+		var storage string
+		require.NoError(t, conn.QueryRowContext(t.Context(), tc.query, tc.id).Scan(&storage))
+		assert.Equal(t, tc.want, storage)
+	}
+	_, err = conn.ExecContext(t.Context(), `DELETE FROM applied_migrations WHERE name = 'attribute_value_json'`)
+	require.NoError(t, err)
 	_, err = conn.ExecContext(t.Context(), `PRAGMA foreign_keys = ON`)
 	require.NoError(t, err)
 	require.NoError(t, conn.Close())
-	require.NoError(t, st.migrateAttributeValueJSONSQLite(t.Context()))
-	require.NoError(t, st.migrateAttributeValueJSONSQLite(t.Context()))
+	path := st.dbPath
+	require.NoError(t, st.Close())
+	st, err = OpenForTest(t.Context(), path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(t, st.InitSchemaContext(t.Context()))
+	require.NoError(t, st.InitSchemaContext(t.Context()))
 	var storage string
 	var value int
-	require.NoError(t, st.db.QueryRowContext(t.Context(), `SELECT typeof(value_json), json_extract(value_json, '$') FROM person_attribute_values WHERE person_id = ?`, person).Scan(&storage, &value))
+	require.NoError(t, st.db.QueryRowContext(t.Context(), `SELECT typeof(value_json), json_extract(value_json, '$') FROM person_attribute_values WHERE id = ?`, first.Value.ID).Scan(&storage, &value))
 	assert.Equal(t, "text", storage)
 	assert.Equal(t, 3456, value)
 	require.NoError(t, st.db.QueryRowContext(t.Context(), `SELECT typeof(value_json), json_extract(value_json, '$') FROM organization_attribute_values WHERE organization_id = ?`, organization.ID).Scan(&storage, &value))
 	assert.Equal(t, "text", storage)
 	assert.Equal(t, 7890, value)
+	var kind string
+	require.NoError(t, st.db.QueryRowContext(t.Context(), `SELECT typeof(value_json), json_extract(value_json, '$.kind') FROM person_attribute_values WHERE id = ?`, second.Value.ID).Scan(&storage, &kind))
+	assert.Equal(t, "text", storage)
+	assert.Equal(t, "example", kind)
+	var survivorID, absorbedID, resolutionID int64
+	require.NoError(t, st.db.QueryRowContext(t.Context(), `SELECT survivor_value_id, absorbed_value_id, resolution_value_id FROM person_merge_review_candidates WHERE merge_id = ?`, mergeID).Scan(&survivorID, &absorbedID, &resolutionID))
+	assert.Equal(t, first.Value.ID, survivorID)
+	assert.Equal(t, second.Value.ID, absorbedID)
+	assert.Equal(t, second.Value.ID, resolutionID)
+	var violations int
+	require.NoError(t, st.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM pragma_foreign_key_check('person_merge_review_candidates')`).Scan(&violations))
+	assert.Zero(t, violations)
+	input.PersonID = person
 	input.Value.JSON = jsontext.Value("1e2")
 	_, err = st.SetPersonAttributeValueContext(t.Context(), input)
 	require.NoError(t, err)
