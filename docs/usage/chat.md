@@ -228,6 +228,10 @@ these tools do not complete tasks or infer new ones.
 
 The `mcp` command starts a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes your archive as a set of tools. This lets AI assistants like Claude Desktop search, read, and analyze archived email, chats, calendar events, and meeting notes directly.
 
+### Claude Code and Codex
+
+Run `msgvault agent setup` to install skills and register the MCP server for Claude Code and Codex. Use `msgvault agent setup --check` to check readiness or `msgvault agent setup --print` to print manual MCP commands.
+
 ### Tools available for your archive
 
 MCP lists calendar, meeting, chat, Slack, and draft tools when the archive has a source that supports them. CardDAV tools need a configured connection. Kata tools, including `get_person_agenda`, need `[integrations.kata]` enabled with an endpoint. An mbox-only archive retains search, messages, attachments, people, and Saved Views. Reconnect after adding a source or integration to refresh the list, including on the native daemon endpoints. Each discovery read has its own 10-second deadline. A failed read hides its families; successful reads keep theirs available. Family discovery controls tool listings; HTTP calls use the daemon's existing authorization and consent checks.

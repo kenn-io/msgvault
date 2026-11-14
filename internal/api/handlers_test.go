@@ -9576,3 +9576,39 @@ func TestAppleSourceStatusReusesLoadedSources(t *testing.T) {
 		assert.Equal(int32(1), st.sourceLists.Load())
 	}
 }
+
+func TestCLIAccountsIncludeIMAPAuthMethod(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	for _, tc := range []struct{ kind, identifier, syncConfig string }{
+		{"imap", "imaps://user@example.com@outlook.office365.com:993", `{"host":"outlook.office365.com","username":"user@example.com","auth_method":"xoauth2"}`},
+		{"imap", "imaps://other@example.com@outlook.office365.com:993", `{"host":"outlook.office365.com","username":"other@example.com"}`},
+		{"gmail", "gmail@example.com", ""},
+	} {
+		src, err := st.GetOrCreateSource(tc.kind, tc.identifier)
+		require.NoError(t, err)
+		if tc.syncConfig != "" {
+			require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, tc.syncConfig))
+		}
+	}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: st, Logger: testLogger()})
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Accounts []struct {
+			Identifier string  `json:"identifier"`
+			AuthMethod *string `json:"auth_method"`
+		} `json:"accounts"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	methods := map[string]*string{}
+	for _, account := range resp.Accounts {
+		methods[account.Identifier] = account.AuthMethod
+	}
+	require.Len(t, methods, 3)
+	require.NotNil(t, methods["imaps://user@example.com@outlook.office365.com:993"])
+	assert.Equal(t, "xoauth2", *methods["imaps://user@example.com@outlook.office365.com:993"])
+	require.NotNil(t, methods["imaps://other@example.com@outlook.office365.com:993"])
+	assert.Equal(t, "password", *methods["imaps://other@example.com@outlook.office365.com:993"])
+	assert.Nil(t, methods["gmail@example.com"])
+}

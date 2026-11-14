@@ -53,6 +53,7 @@ var topLevelCommandGroups = map[string]string{
 	"add-teams":               helpGroupSources,
 	"add-twenty":              helpGroupSources,
 	"add-twilio":              helpGroupSources,
+	"agent":                   helpGroupOperations,
 	"agent-token":             helpGroupOperations,
 	"archive-remote-images":   helpGroupSources,
 	"attribute-definition":    helpGroupPeople,

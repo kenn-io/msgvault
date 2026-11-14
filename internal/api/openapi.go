@@ -416,8 +416,9 @@ import (
 // 5.0.0 makes file list and suggestion content availability nullable when storage has not been checked.
 // 5.1.0 adds keyed group overviews, time-group item totals, saved view schema 3, and saved view run timezones.
 // 5.2.0 adds open Kata issue search and optional task search queries.
-// 5.3.0 adds owner-only bounded physical attachment verification through the CLI runner.
-const APISchemaVersion = "5.3.0"
+// 5.3.0 adds the IMAP authentication method to CLI accounts.
+// 5.4.0 adds owner-only bounded physical attachment verification through the CLI runner.
+const APISchemaVersion = "5.4.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

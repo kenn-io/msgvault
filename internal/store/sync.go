@@ -1832,28 +1832,9 @@ func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identi
 		return nil, fmt.Errorf("get source: %w", err)
 	}
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := lockSourceMaintenance(ctx, tx); err != nil {
-			return err
-		}
-		var shadowed bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source_settings ss WHERE ss.alias_key = ?
-   AND NOT EXISTS (SELECT 1 FROM sources existing WHERE existing.id = ss.source_id AND existing.source_type = ? AND existing.identifier = ?))`,
-			strings.ToLower(identifier), sourceType, identifier).Scan(&shadowed); err != nil {
-			return err
-		}
-		if shadowed {
-			return fmt.Errorf("%w: provider identifier conflicts with an archive alias", ErrSourceSettingsInvalid)
-		}
-		now := s.dialect.Now()
-		row := tx.QueryRowContext(ctx, fmt.Sprintf(`INSERT INTO sources (source_type, identifier, created_at, updated_at)
-   VALUES (?, ?, %s, %s) ON CONFLICT (source_type, identifier) DO UPDATE SET identifier = sources.identifier
-   RETURNING `+sourceCatalogColumns, now, now), sourceType, identifier)
 		var err error
-		source, err = scanSource(row)
-		if err != nil {
-			return fmt.Errorf("upsert source: %w", err)
-		}
-		return requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, source.ID)
+		source, err = s.getOrCreateSourceTx(ctx, tx, sourceType, identifier)
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -1886,6 +1867,32 @@ func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identi
 		)
 	}
 
+	return source, nil
+}
+
+func (s *Store) getOrCreateSourceTx(ctx context.Context, tx *loggedTx, sourceType, identifier string) (*Source, error) {
+	if err := lockSourceMaintenance(ctx, tx); err != nil {
+		return nil, err
+	}
+	var shadowed bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source_settings ss WHERE ss.alias_key = ?
+   AND NOT EXISTS (SELECT 1 FROM sources existing WHERE existing.id = ss.source_id AND existing.source_type = ? AND existing.identifier = ?))`, strings.ToLower(identifier), sourceType, identifier).Scan(&shadowed); err != nil {
+		return nil, err
+	}
+	if shadowed {
+		return nil, fmt.Errorf("%w: provider identifier conflicts with an archive alias", ErrSourceSettingsInvalid)
+	}
+	now := s.dialect.Now()
+	row := tx.QueryRowContext(ctx, fmt.Sprintf(`INSERT INTO sources (source_type, identifier, created_at, updated_at)
+   VALUES (?, ?, %s, %s) ON CONFLICT (source_type, identifier) DO UPDATE SET identifier = sources.identifier
+   RETURNING `+sourceCatalogColumns, now, now), sourceType, identifier)
+	source, err := scanSource(row)
+	if err != nil {
+		return nil, fmt.Errorf("upsert source: %w", err)
+	}
+	if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, source.ID); err != nil {
+		return nil, err
+	}
 	return source, nil
 }
 
@@ -2048,53 +2055,57 @@ func (s *Store) UpdateSourceIdentifier(ctx context.Context, sourceID int64, iden
 	var pending []int64
 	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
 		pending = nil
-		if reset := s.dialect.MaintenanceTimeoutResetSQL(); reset != "" {
-			if _, err := tx.ExecContext(ctx, reset); err != nil {
-				return fmt.Errorf("disable maintenance statement timeout: %w", err)
-			}
-		}
-		if err := lockSourceMaintenance(ctx, tx); err != nil {
-			return err
-		}
-		if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, sourceID); err != nil {
-			return err
-		}
-		var shadowed bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source_settings WHERE alias_key = ? AND source_id <> ?)`, strings.ToLower(identifier), sourceID).Scan(&shadowed); err != nil {
-			return fmt.Errorf("check identifier alias conflict: %w", err)
-		}
-		if shadowed {
-			return fmt.Errorf("%w: provider identifier conflicts with an archive alias", ErrSourceSettingsInvalid)
-		}
-		var sourceType, oldIdentifier string
-		err := tx.QueryRowContext(ctx,
-			`SELECT source_type, COALESCE(identifier, '') FROM sources WHERE id = ?`, sourceID,
-		).Scan(&sourceType, &oldIdentifier)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("read source %d identifier: %w", sourceID, err)
-		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
-			UPDATE sources
-			SET identifier = ?, updated_at = %s
-			WHERE id = ?
-		`, s.dialect.Now()), identifier, sourceID); err != nil {
-			return err
-		}
-		oldSink, newSink := accountSink(sourceType, oldIdentifier), accountSink(sourceType, identifier)
-		if oldSink == newSink {
-			return nil
-		}
-		pending, err = s.markAccountAttributionPendingForAddressesTx(ctx, tx, sourceID, []string{oldSink, newSink})
-		return err
+		return s.updateSourceIdentifierTx(ctx, tx, sourceID, identifier, &pending)
 	})
 	if err != nil {
 		return err
 	}
 	s.deriveAccountAttributionAfterCommit(ctx, sourceID, pending)
 	return nil
+}
+
+func (s *Store) updateSourceIdentifierTx(ctx context.Context, tx *loggedTx, sourceID int64, identifier string, pending *[]int64) error {
+	if reset := s.dialect.MaintenanceTimeoutResetSQL(); reset != "" {
+		if _, err := tx.ExecContext(ctx, reset); err != nil {
+			return fmt.Errorf("disable maintenance statement timeout: %w", err)
+		}
+	}
+	if err := lockSourceMaintenance(ctx, tx); err != nil {
+		return err
+	}
+	if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, sourceID); err != nil {
+		return err
+	}
+	var shadowed bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source_settings WHERE alias_key = ? AND source_id <> ?)`, strings.ToLower(identifier), sourceID).Scan(&shadowed); err != nil {
+		return fmt.Errorf("check identifier alias conflict: %w", err)
+	}
+	if shadowed {
+		return fmt.Errorf("%w: provider identifier conflicts with an archive alias", ErrSourceSettingsInvalid)
+	}
+	var sourceType, oldIdentifier string
+	err := tx.QueryRowContext(ctx,
+		`SELECT source_type, COALESCE(identifier, '') FROM sources WHERE id = ?`, sourceID,
+	).Scan(&sourceType, &oldIdentifier)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read source %d identifier: %w", sourceID, err)
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		UPDATE sources
+		SET identifier = ?, updated_at = %s
+		WHERE id = ?
+	`, s.dialect.Now()), identifier, sourceID); err != nil {
+		return err
+	}
+	oldSink, newSink := accountSink(sourceType, oldIdentifier), accountSink(sourceType, identifier)
+	if oldSink == newSink {
+		return nil
+	}
+	*pending, err = s.markAccountAttributionPendingForAddressesTx(ctx, tx, sourceID, []string{oldSink, newSink})
+	return err
 }
 
 // GetSourceByIdentifier returns a source by its identifier (email address).
