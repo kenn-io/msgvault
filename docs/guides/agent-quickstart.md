@@ -231,6 +231,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `calendar_update` | calendar_write | `--allow-calendar-writes` | backend-dependent |
 | `approve_carddav_publication` | carddav_write | `--allow-carddav-writes` | owner-only |
 | `sync_carddav` | carddav_write | `--allow-carddav-writes` | owner-only |
+| `patch_person_record` | curated_write | `--allow-curated-writes` | owner-only |
 | `accept_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `reject_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `score_identity_matches` | identity_scoring | `--allow-identity-scoring` | owner-only |
@@ -239,6 +240,8 @@ backend checks for action permissions, source scope, and sender identity;
 | `close_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `reopen_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `snooze_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
+| `decide_person_merge_candidate` | merge_recovery_write | `--allow-merge-recovery-writes` | owner-only |
+| `split_person_merge` | merge_recovery_write | `--allow-merge-recovery-writes` | owner-only |
 | `merge_person` | person_merge | `--allow-person-merges` | owner-only |
 | `promote_person` | profile_write | `--allow-profile-writes` | owner-only |
 | `set_person_display_name` | profile_write | `--allow-profile-writes` | owner-only |
@@ -270,10 +273,14 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_participant_identity` | read | — | owner-only |
 | `get_person_agenda` | read | — | owner-only |
 | `get_person_edit_context` | read | — | owner-only |
+| `get_person_merge` | read | — | owner-only |
 | `get_person_merge_context` | read | — | owner-only |
 | `get_person_messaging_routes` | read | — | owner-only |
 | `get_person_notes` | read | — | owner-only |
 | `get_person_profile` | read | — | owner-only |
+| `get_person_record` | read | — | owner-only |
+| `get_person_record_history` | read | — | owner-only |
+| `get_person_record_media` | read | — | owner-only |
 | `get_person_relationship` | read | — | owner-only |
 | `get_saved_view` | read | — | owner-only |
 | `get_slack_sync_policy` | read | — | owner-only |
@@ -287,6 +294,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_meeting_action_items` | read | — | owner-only |
 | `list_messages` | read | — | search.read |
 | `list_open_loops` | read | — | owner-only |
+| `list_person_merges` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |

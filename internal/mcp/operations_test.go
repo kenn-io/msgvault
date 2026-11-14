@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http/httptest"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -153,4 +154,35 @@ func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
 	}
 	opts.DelegatedOnly = true
 	assertions.Empty(operationalCatalog(opts, true))
+}
+
+func TestMergeRecoveryCatalogRequiresWriteOptIn(t *testing.T) {
+	reads := []string{"list_person_merges", "get_person_merge"}
+	all := append(slices.Clone(reads), "decide_person_merge_candidate", "split_person_merge")
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: all}
+	names := func(allowWrites bool) []string {
+		var result []string
+		for _, definition := range operationalCatalog(opts, allowWrites) {
+			result = append(result, definition.definition.name)
+		}
+		return result
+	}
+	assert.ElementsMatch(t, reads, names(true))
+	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyMergeRecovery}
+	assert.ElementsMatch(t, all, names(true))
+	assert.ElementsMatch(t, reads, names(false))
+}
+
+func TestPersonRecordCatalogRequiresCuratedWriteOptIn(t *testing.T) {
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"get_person_record", "get_person_record_history", "get_person_record_media", "patch_person_record"}}
+	names := func(opts ServeOptions, allowWrites bool) []string {
+		var result []string
+		for _, definition := range operationalCatalog(opts, allowWrites) {
+			result = append(result, definition.definition.name)
+		}
+		return result
+	}
+	assert.ElementsMatch(t, []string{"get_person_record", "get_person_record_history", "get_person_record_media"}, names(opts, true))
+	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyCurated}
+	assert.Contains(t, names(opts, true), "patch_person_record")
 }
