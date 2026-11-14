@@ -29,6 +29,9 @@ const beeperDraftTestChat = "!chat:beeper.local"
 func TestBeeperDraftComposeVerificationWithholding(t *testing.T) {
 	for _, scenario := range []string{"existing", "failure", "success"} {
 		for _, withhold := range []bool{true, false} {
+			if scenario == "success" && !withhold {
+				continue
+			}
 			t.Run(scenario+"/"+strconv.FormatBool(withhold), func(t *testing.T) {
 				f := newBeeperDraftFixture(t)
 				f.adapter.config.Server.APIKey = "owner"

@@ -2154,10 +2154,6 @@ func (s *Server) handleArchiveQuery(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSQLQuery(w http.ResponseWriter, r *http.Request, archiveOnly bool) {
-	if s.withholdsVerification(r) {
-		writeError(w, http.StatusForbidden, "verification_masked", "Archive SQL requires verification access")
-		return
-	}
 	var req QueryRequest
 	dec := jsontext.NewDecoder(r.Body)
 	if err := json.UnmarshalDecode(dec, &req); err != nil {

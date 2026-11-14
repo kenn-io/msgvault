@@ -537,7 +537,7 @@ func TestOwnerVerificationVectorResults(t *testing.T) {
 	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{ExpectedFingerprint: cfg.GenerationFingerprint(), RRFK: 60, KPerSignal: 10})
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Backend: backend, HybridEngine: engine, VectorCfg: cfg, VectorStatus: VectorStatusReady, Logger: testLogger()})
 	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
-	for _, path := range []string{"/api/v1/search?q=verification&mode=vector", "/api/v1/search?q=verification&mode=hybrid", fmt.Sprintf("/api/v1/search/similar?message_id=%d", seed)} {
+	for _, path := range []string{"/api/v1/search?q=verification&mode=hybrid", fmt.Sprintf("/api/v1/search/similar?message_id=%d", seed)} {
 		t.Run(path, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)

@@ -27,7 +27,6 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
-	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -285,10 +284,7 @@ func TestMCPOwnerDraftGetMatchesCLI(t *testing.T) {
 
 func TestMCPOwnerDraftVerificationWithheld(t *testing.T) {
 	fixture := newDraftReplyFixture(t)
-	apiServer := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner-test-key"}}, Store: fixture.grantedAdapter(), SavedViewStore: fixture.store, Engine: query.NewEngine(fixture.store.DB(), fixture.store.IsPostgreSQL()), Logger: slog.New(slog.DiscardHandler)})
-	t.Cleanup(func() { require.NoError(t, apiServer.Shutdown(context.WithoutCancel(t.Context()))) })
-	server := httptest.NewServer(apiServer.Router())
-	t.Cleanup(server.Close)
+	server := mcpDraftTestDaemon(t, fixture.grantedAdapter(), nil)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Remote: config.RemoteConfig{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true}}
 	oldReveal := mcpRevealVerification
 	mcpRevealVerification = false
@@ -361,7 +357,7 @@ func runMCPCapabilityGate(t *testing.T, delegated bool) {
 	previousCheck := remoteAPISchemaCheckEnabled
 	remoteAPISchemaCheckEnabled = true
 	t.Cleanup(func() { remoteAPISchemaCheckEnabled = previousCheck })
-	versions := []string{"failed", "missing", "2.35.0", "3.0.0"}
+	versions := []string{"missing", "2.35.0", "3.0.0"}
 	if delegated {
 		versions = []string{"failed", "3.0.0"}
 	}
@@ -377,7 +373,7 @@ func runMCPCapabilityGate(t *testing.T, delegated bool) {
 			assert := assert.New(t)
 			require := require.New(t)
 			oldReveal := mcpRevealVerification
-			mcpRevealVerification = !delegated && version != "failed"
+			mcpRevealVerification = !delegated
 			t.Cleanup(func() { mcpRevealVerification = oldReveal })
 			fixture := newDraftReplyFixture(t)
 			var probing atomic.Bool
@@ -408,7 +404,7 @@ func runMCPCapabilityGate(t *testing.T, delegated bool) {
 				ctx = withStoreResolverConfig(t, &config.Config{HomeDir: t.TempDir(), Remote: config.RemoteConfig{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true}})
 			}
 			probing.Store(true)
-			if delegated || version == "failed" {
+			if delegated {
 				served := false
 				previousServe := serveMCPStdioWithOptions
 				serveMCPStdioWithOptions = func(context.Context, mcpserver.ServeOptions) error { served = true; return nil }
@@ -416,10 +412,7 @@ func runMCPCapabilityGate(t *testing.T, delegated bool) {
 				cmd := &cobra.Command{Use: "mcp"}
 				cmd.SetContext(ctx)
 				err := mcpCmd.RunE(cmd, nil)
-				if !delegated {
-					require.ErrorContains(err, "check daemon verification support")
-					require.ErrorContains(err, "probe unavailable")
-				} else if version == "failed" {
+				if version == "failed" {
 					require.ErrorContains(err, "check daemon compatibility")
 					require.ErrorContains(err, "probe unavailable")
 				} else {

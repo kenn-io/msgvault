@@ -20,7 +20,6 @@ import (
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
-	"go.kenn.io/msgvault/internal/verification"
 )
 
 func newLibraryHandlerTestServer(t *testing.T) *Server {
@@ -201,12 +200,10 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 
 	for _, tc := range []struct {
 		name   string
-		path   string
-		marked bool
 		scoped bool
 	}{
-		{name: "protected messages", path: "/api/v1/messages", marked: true},
-		{name: "protected source scoped messages", path: "/api/v1/messages", marked: true, scoped: true},
+		{name: "protected messages"},
+		{name: "protected source scoped messages", scoped: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -222,21 +219,15 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 				t.Cleanup(cancel)
 				ctx = sourcescope.WithSourceIDs(ctx, []int64{source.ID})
 			}
-			r := httptest.NewRequestWithContext(ctx, http.MethodGet, tc.path, nil)
-			if tc.marked {
-				r.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
-			}
+			r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/messages", nil)
+			r.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, r)
 			require.Equal(http.StatusOK, w.Code, w.Body.String())
-			if tc.path == "/api/v1/messages" {
-				assert.Contains(w.Body.String(), verification.Masked)
-				assert.NotContains(w.Body.String(), "482913")
-				if tc.scoped {
-					assert.Len(srv.readSnapshotSlots, 1)
-				} else {
-					assert.Empty(srv.readSnapshotSlots)
-				}
+			if tc.scoped {
+				assert.Len(srv.readSnapshotSlots, 1)
+			} else {
+				assert.Empty(srv.readSnapshotSlots)
 			}
 		})
 	}

@@ -3505,10 +3505,6 @@ func (s *Server) handleCLIMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCLIMessageRaw(w http.ResponseWriter, r *http.Request) {
-	if s.withholdsVerification(r) {
-		writeError(w, http.StatusForbidden, "verification_masked", "Original MIME requires verification access")
-		return
-	}
 	if s.queryEngineForContext(r.Context()) == nil {
 		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", "Query engine not available")
 		return

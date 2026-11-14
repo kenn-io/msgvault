@@ -305,7 +305,7 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 		Mode:  "hybrid",
 	})
 	var coded interface{ APIErrorCode() string }
-	assert.ErrorAs(err, &coded)
+	require.ErrorAs(t, err, &coded)
 	assert.Equal("vector_initializing", coded.APIErrorCode())
 	path := <-requests
 	assert.Equal("/api/v1/mcp/capabilities", path, "startup probes optional operations")
@@ -652,11 +652,13 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 
 func TestMCPStandaloneVerificationHandshake(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		reveal    bool
-		wantServe bool
+		name         string
+		reveal       bool
+		probeFailure bool
+		wantServe    bool
 	}{
 		{name: "old daemon fails closed"},
+		{name: "probe failure", probeFailure: true},
 		{name: "old daemon with reveal", reveal: true, wantServe: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -672,6 +674,11 @@ func TestMCPStandaloneVerificationHandshake(t *testing.T) {
 					marked.Add(1)
 				}
 				w.Header().Set("Content-Type", "application/json")
+				if tc.probeFailure {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = w.Write([]byte(`{"error":"unavailable","message":"probe unavailable"}`))
+					return
+				}
 				_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "5.0.0"})
 			}))
 			t.Cleanup(daemon.Close)
@@ -697,6 +704,9 @@ func TestMCPStandaloneVerificationHandshake(t *testing.T) {
 			err := mcpCmd.RunE(mcpCmd, nil)
 			if tc.wantServe {
 				require.ErrorIs(err, stopped)
+			} else if tc.probeFailure {
+				require.ErrorContains(err, "check daemon verification support")
+				require.ErrorContains(err, "probe unavailable")
 			} else {
 				require.ErrorContains(err, "requires daemon API schema 5.3.0")
 			}

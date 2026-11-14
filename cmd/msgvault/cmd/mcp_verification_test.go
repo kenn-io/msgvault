@@ -94,6 +94,7 @@ func TestOwnerMCPVerificationSavedView(t *testing.T) {
 				return
 			}
 			assert.True(t, result.IsError)
+			assert.Contains(t, text, "verification content is withheld")
 			assert.NotContains(t, text, "482913")
 
 		})

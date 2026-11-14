@@ -48,10 +48,6 @@ func cliMessageRefFromRequest(r *http.Request) (query.MessageRef, error) {
 }
 
 func (s *Server) handleCLIMessageOriginal(w http.ResponseWriter, r *http.Request) {
-	if s.withholdsVerification(r) {
-		writeError(w, http.StatusForbidden, "verification_masked", "Original MIME requires verification access")
-		return
-	}
 	reader, ok := s.originalMessageReader(w, r)
 	if !ok {
 		return
