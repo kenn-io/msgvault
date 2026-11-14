@@ -93,6 +93,11 @@
     if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h`;
     return `${Math.floor(seconds / 60)}m`;
   }
+
+  function dueLabel(day: string): string {
+    const formatted = formatDay(day);
+    return day.slice(0, 4) === String(new Date().getFullYear()) ? formatted.replace(/, \d{4}$/, '') : formatted;
+  }
 </script>
 
 <DetailSection title="Open loops">
@@ -127,7 +132,7 @@
             {#each group.items as promise (promise.id)}
               <li class="promise">
                 <a href={`/messages/${promise.promise.message_id}`} title={promise.promise.text}>{promise.promise.text}</a>
-                <span class="promise-meta muted">{#if promise.freshness === 'stale'}<span class="stale">Stale evidence</span>{/if}{#if promise.due_on}<span>Due {formatDay(promise.due_on)}</span>{/if}<span>{ageLabel(promise.promised_at)}</span></span>
+                <span class="promise-meta muted">{#if promise.freshness === 'stale'}<span class="stale">Stale evidence</span><span aria-hidden="true">·</span>{/if}{#if promise.due_on}<span>Due {dueLabel(promise.due_on)}</span><span aria-hidden="true">·</span>{/if}<span>{ageLabel(promise.promised_at)}</span></span>
               </li>
             {/each}
           </ul>
@@ -155,7 +160,9 @@
   h4, p, ul { margin: 0; }
   h4 { color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 500; }
   .group { display: grid; gap: var(--space-1); }
-  .group + .group, .discovery { margin-top: var(--space-2); }
+  .group + .group { margin-top: var(--space-2); }
+  .discovery { margin-top: var(--space-4); }
+  .discovery code { font-size: 0.9em; background: var(--bg-inset); border-radius: var(--radius-sm); }
   ul { display: grid; gap: var(--space-1); padding: 0; list-style: none; }
   li { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); min-width: 0; }
   a { min-width: 0; overflow: hidden; color: var(--link-ink); text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
