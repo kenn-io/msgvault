@@ -10,30 +10,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestAttributeCatalogAvailabilityAndIndependentWriteGate(t *testing.T) {
-	writes := []string{"set_person_attribute", "clear_person_attribute", "create_attribute_definition", "patch_attribute_definition", "delete_attribute_definition"}
-	reads := []string{"list_person_attributes", "list_attribute_definitions", "get_attribute_definition"}
-	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: append(slices.Clone(reads), writes...)}
-	for _, families := range [][]OperationFamily{nil, {OperationFamilyRecords}, {OperationFamilyAttributes}} {
-		opts.OperationWriteFamilies = families
-		tools := toolsByName(t, rawListTools(t, opts, true))
-		for _, name := range reads {
-			assert.Contains(t, tools, name)
-		}
-		for _, name := range writes {
-			if slices.Contains(families, OperationFamilyAttributes) {
-				assert.Contains(t, tools, name)
-			} else {
-				assert.NotContains(t, tools, name)
-			}
-		}
-	}
-}
-
 func TestAttributeToolContract(t *testing.T) {
-	names := []string{"set_person_attribute", "create_attribute_definition", "patch_attribute_definition", "clear_person_attribute", "delete_attribute_definition"}
-	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: names, OperationWriteFamilies: []OperationFamily{OperationFamilyAttributes}}
+	reads := []string{"list_person_attributes", "list_attribute_definitions", "get_attribute_definition"}
+	writes := []string{"set_person_attribute", "create_attribute_definition", "patch_attribute_definition", "clear_person_attribute", "delete_attribute_definition"}
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: append(slices.Clone(reads), writes...), OperationWriteFamilies: []OperationFamily{OperationFamilyRecords}}
 	tools := toolsByName(t, rawListTools(t, opts, true))
+	for _, name := range opts.OperationCapabilities {
+		assert.Equal(t, slices.Contains(reads, name), tools[name] != nil, name)
+	}
+	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyAttributes}
+	tools = toolsByName(t, rawListTools(t, opts, true))
 	data, err := os.ReadFile("../../api/openapi.yaml")
 	require.NoError(t, err)
 	var doc struct {
@@ -68,6 +54,8 @@ func TestAttributeToolContract(t *testing.T) {
 		}
 		assert.ElementsMatch(t, native, properties)
 	}
+	patch := tools["patch_attribute_definition"]["inputSchema"].(map[string]any)["properties"].(map[string]any)["changes"].(map[string]any)["properties"].(map[string]any)["description"].(map[string]any)
+	assert.ElementsMatch(t, []any{map[string]any{"type": "string"}, map[string]any{"type": "null"}}, patch["anyOf"])
 	for _, name := range []string{"clear_person_attribute", "patch_attribute_definition", "delete_attribute_definition"} {
 		require.NotNil(t, tools[name], name)
 		assert.Equal(t, true, tools[name]["annotations"].(map[string]any)["destructiveHint"], name)

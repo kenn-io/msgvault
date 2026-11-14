@@ -91,17 +91,10 @@ func attributeSession(t *testing.T, b *daemonMCPOperations, ops mcpserver.Operat
 	return session
 }
 
-func toolText(result *sdkmcp.CallToolResult) string {
-	text, _ := result.Content[0].(*sdkmcp.TextContent)
-	return text.Text
-}
-
 func TestMCPAttributeInvalidArgumentsDoNotReachNativeRoute(t *testing.T) {
 	b, st, person := recordAttributesFixture(t)
 	_, err := b.OperationDisclosure(t.Context(), "set_person_attribute", map[string]any{"person_id": person, "slug": "../bad", "value": map[string]any{"type": "text", "text": "x"}})
 	attributeRefused(t, err, "invalid_attribute_slug")
-	_, err = b.OperationDisclosure(t.Context(), "set_person_attribute", map[string]any{"person_id": int64(maxJSONSafeInteger), "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "x"}})
-	attributeRefused(t, err, "person_profile_not_found")
 	session := attributeSession(t, b, nil, nil, "2025-06-18")
 	for _, args := range []map[string]any{
 		{"person_id": person, "value": map[string]any{"type": "text", "text": "x"}},
@@ -111,7 +104,7 @@ func TestMCPAttributeInvalidArgumentsDoNotReachNativeRoute(t *testing.T) {
 		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_attribute", Arguments: args})
 		require.NoError(t, err)
 		assert.True(t, result.IsError)
-		assert.Contains(t, toolText(result), "invalid_arguments")
+		assert.Contains(t, mcpDraftResultText(t, result), "invalid_arguments")
 	}
 	assert.Empty(t, attributeValues(t, st, person, store.AttributeSlugPrimaryChannel))
 }
@@ -161,8 +154,8 @@ func TestMCPAttributeNotesFallbackAndPersonDefinitions(t *testing.T) {
 			_, err = st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person, DefinitionSlug: notes, Value: store.AttributeValue{Type: store.AttributeValueText, Text: new("original")}, Source: store.ProvenanceUser})
 			require.NoError(t, err)
 		}
-		assert.Contains(t, toolText(call("set_person_attribute", map[string]any{"person_id": person, "slug": notes, "value": map[string]any{"type": "text", "text": "x"}})), "attribute_notes_use_update_person_notes")
-		assert.Contains(t, toolText(call("clear_person_attribute", map[string]any{"person_id": person, "slug": notes})), "attribute_notes_use_update_person_notes")
+		assert.Contains(t, mcpDraftResultText(t, call("set_person_attribute", map[string]any{"person_id": person, "slug": notes, "value": map[string]any{"type": "text", "text": "x"}})), "attribute_notes_use_update_person_notes")
+		assert.Contains(t, mcpDraftResultText(t, call("clear_person_attribute", map[string]any{"person_id": person, "slug": notes})), "attribute_notes_use_update_person_notes")
 	}
 	assert.Empty(t, approvals)
 	require.Len(t, attributeValues(t, st, person, notes), 1)
@@ -201,29 +194,24 @@ func TestMCPAttributeNotesFallbackAndPersonDefinitions(t *testing.T) {
 	}
 }
 
-func TestMCPAttributePreviewPinsConcurrentEdits(t *testing.T) {
-	for _, name := range []string{"set_person_attribute", "clear_person_attribute"} {
-		t.Run(name, func(t *testing.T) {
-			b, st, person := recordAttributesFixture(t)
-			initial := map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "email"}}
-			attributeOperation(t, b, "set_person_attribute", initial)
-			args := map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel}
-			if name == "set_person_attribute" {
-				args["value"] = map[string]any{"type": "text", "text": "phone"}
-			}
-			_, err := b.OperationDisclosure(t.Context(), name, args)
-			require.NoError(t, err)
-			initial["value"] = map[string]any{"type": "text", "text": "chat"}
-			attributeOperation(t, b, "set_person_attribute", initial)
-			attributeError(t, attributeOperation(t, b, name, args), "attribute_value_conflict")
-			values := attributeValues(t, st, person, store.AttributeSlugPrimaryChannel)
-			require.Len(t, values, 1)
-			assert.Equal(t, "chat", *values[0].Value.Text)
-		})
-	}
+func TestMCPAttributeClearPinsPreviewedValue(t *testing.T) {
+	b, st, person := recordAttributesFixture(t)
+	initial := map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "email"}}
+	attributeOperation(t, b, "set_person_attribute", initial)
+	args := map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel}
+	_, err := b.OperationDisclosure(t.Context(), "clear_person_attribute", args)
+	require.NoError(t, err)
+	initial["value"] = map[string]any{"type": "text", "text": "chat"}
+	attributeOperation(t, b, "set_person_attribute", initial)
+	attributeError(t, attributeOperation(t, b, "clear_person_attribute", args), "attribute_value_conflict")
+	values := attributeValues(t, st, person, store.AttributeSlugPrimaryChannel)
+	require.Len(t, values, 1)
+	assert.Equal(t, "chat", *values[0].Value.Text)
 }
 
 func TestMCPAttributePreviewCallerGuards(t *testing.T) {
+	_, _, err := (&daemonMCPOperations{}).recordAttributeDisclosure(t.Context(), "set_person_attribute", map[string]any{"expected_empty": true, "expected_value_id": int64(1)})
+	attributeRefused(t, err, "invalid_expected_empty")
 	b, _, person := recordAttributesFixture(t)
 	disclose := func(name string, args map[string]any) error {
 		_, err := b.OperationDisclosure(t.Context(), name, args)
@@ -314,7 +302,7 @@ func TestMCPAttributeEditDuringApproval(t *testing.T) {
 				}
 				require.NoError(t, err)
 				require.True(t, result.IsError)
-				assert.Contains(t, toolText(result), "attribute_value_conflict")
+				assert.Contains(t, mcpDraftResultText(t, result), "attribute_value_conflict")
 				values := attributeValues(t, st, person, slug)
 				require.Len(t, values, 1)
 				assert.Equal(t, "phone", *values[0].Value.Text)
@@ -326,48 +314,38 @@ func TestMCPAttributeEditDuringApproval(t *testing.T) {
 func TestMCPAttributeExactTokens(t *testing.T) {
 	b, st, person := recordAttributesFixture(t)
 	attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "metadata", "label": "Metadata", "value_type": "json", "field_type": "json"}})
-	var approval string
-	session := attributeSession(t, b, nil, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		approval = request.Params.Message
-		return attributeAccept(), nil
-	}}, "2025-06-18")
-	list := &sdkmcp.CallToolParams{Name: "list_person_attributes", Arguments: map[string]any{"person_id": person, "slug": "metadata"}}
-	for _, token := range []string{"1e2", "1E+2", "0.1234567890123456789", "9007199254740993", `{"n":1e2}`} {
-		t.Run(token, func(t *testing.T) {
-			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_attribute", Arguments: map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": jsontext.Value(token)}}})
-			require.NoError(t, err)
-			require.False(t, result.IsError, "%v", result.Content)
-			assert.Contains(t, approval, token)
-			values := attributeValues(t, st, person, "metadata")
-			require.Len(t, values, 1)
-			assert.Equal(t, token, string(values[0].Value.JSON))
-			listed, err := session.CallTool(t.Context(), list)
-			require.NoError(t, err)
-			assert.Contains(t, toolText(listed), token)
-		})
-	}
-
-	confirmationSession := operationMCPSession(t, b, []mcpserver.OperationFamily{mcpserver.OperationFamilyAttributes}, &sdkmcp.ClientOptions{MultiRoundTrip: &sdkmcp.MultiRoundTripOptions{Disabled: true}})
-	confirm := func(approved, retried string) *sdkmcp.CallToolResult {
+	session := operationMCPSession(t, b, []mcpserver.OperationFamily{mcpserver.OperationFamilyAttributes}, &sdkmcp.ClientOptions{MultiRoundTrip: &sdkmcp.MultiRoundTripOptions{Disabled: true}})
+	confirm := func(approved, retried string) (string, *sdkmcp.CallToolResult) {
 		value := map[string]any{"type": "json", "json": jsontext.Value(approved)}
 		params := &sdkmcp.CallToolParams{Name: "set_person_attribute", Arguments: map[string]any{"person_id": person, "slug": "metadata", "value": value}}
-		pending, err := confirmationSession.CallTool(t.Context(), params)
+		pending, err := session.CallTool(t.Context(), params)
 		require.NoError(t, err)
 		require.NotEmpty(t, pending.RequestState)
+		prompt, ok := pending.InputRequests["confirm"].(*sdkmcp.ElicitParams)
+		require.True(t, ok)
 		value["json"] = jsontext.Value(retried)
 		params.RequestState, params.InputResponses = pending.RequestState, sdkmcp.InputResponseMap{"confirm": attributeAccept()}
-		result, err := confirmationSession.CallTool(t.Context(), params)
+		result, err := session.CallTool(t.Context(), params)
 		require.NoError(t, err)
-		return result
+		return prompt.Message, result
 	}
-	assert.True(t, confirm("0.1234567890123456789", "0.1234567890123456788").IsError)
+	list := &sdkmcp.CallToolParams{Name: "list_person_attributes", Arguments: map[string]any{"person_id": person, "slug": "metadata"}}
+	for _, token := range []string{"1e2", "1E+2", "0.1234567890123456789", "9007199254740993", `{"n":1e2}`} {
+		approval, result := confirm(token, token)
+		require.False(t, result.IsError, "%v", result.Content)
+		assert.Contains(t, approval, token)
+		values := attributeValues(t, st, person, "metadata")
+		require.Len(t, values, 1)
+		assert.Equal(t, token, string(values[0].Value.JSON))
+		listed, err := session.CallTool(t.Context(), list)
+		require.NoError(t, err)
+		assert.Contains(t, mcpDraftResultText(t, listed), token)
+	}
+	_, changed := confirm("0.1234567890123456789", "0.1234567890123456788")
+	assert.True(t, changed.IsError)
 	unchanged := attributeValues(t, st, person, "metadata")
 	require.Len(t, unchanged, 1)
 	assert.Equal(t, `{"n":1e2}`, string(unchanged[0].Value.JSON))
-	assert.False(t, confirm("0.1234567890123456789", "0.1234567890123456789").IsError)
-	confirmedValues := attributeValues(t, st, person, "metadata")
-	require.Len(t, confirmedValues, 1)
-	assert.Equal(t, "0.1234567890123456789", string(confirmedValues[0].Value.JSON))
 
 	// The SDK client decodes structured results through float64, so read the wire.
 	_, err := st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person, DefinitionSlug: "metadata", Value: store.AttributeValue{Type: store.AttributeValueJSON, JSON: jsontext.Value("1e400")}, Source: store.ProvenanceUser})

@@ -932,13 +932,12 @@ retries a write by itself. If a write reports
 
 ## Write controls
 
-On unreleased `main`, owner sessions can read and, with `--allow-attribute-writes`, edit person
-attributes and definitions. Notes go through `update_person_notes`; writes default to enrichment by
-`mcp`. JSON number tokens keep their spelling through approval and storage, except values PostgreSQL
-stored before this change. HTTP protocol `2026-07-28` and newer rejects numbers outside the float64
-range, such as `1e400`. Set and clear preview the replaced value; the write fails if it changes or an
-empty slot is filled. Listings and previews over 1 MiB are refused; use `slug` or `history: false`
-to narrow a listing.
+On unreleased `main`, owner sessions can read person attributes and definitions. Notes edits go
+through `update_person_notes`; attribute writes default to enrichment by `mcp`. Set and clear show
+the value being replaced, and the write fails if it changes or an empty slot is filled. JSON numbers
+keep their spelling, except values PostgreSQL stored before this change; HTTP protocol `2026-07-28`
+and newer rejects numbers outside the float64 range, such as `1e400`. Listings and previews over
+1 MiB are refused; use `slug` or `history: false` to narrow a listing.
 
 Enable only the writes intended for the assistant's session:
 

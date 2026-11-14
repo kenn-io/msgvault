@@ -59,8 +59,7 @@ type attributeClearArgs struct {
 	DryRun          *bool  `json:"dry_run,omitempty"`
 }
 type attributeDefinitionsArgs struct {
-	ObjectType    *string `json:"object_type,omitempty"`
-	IncludeHidden *bool   `json:"include_hidden,omitempty"`
+	IncludeHidden *bool `json:"include_hidden,omitempty"`
 }
 type attributeDefinitionArgs struct {
 	ID         int64                                       `json:"definition_id"`
@@ -264,21 +263,21 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 		}
 		var ordinal int64
 		var superseded any
+		unguarded := args["expected_value_id"] == nil && args["expected_empty"] != true
 		if v := preview.Superseded; v != nil {
-			if args["expected_value_id"] == nil && args["expected_empty"] != true {
-				args["expected_value_id"] = v.ID
-			}
 			ordinal = v.Ordinal
 			superseded = map[string]any{"id": v.ID, "ordinal": v.Ordinal, "value": v.Value, "source": v.Source, "source_ref": v.SourceRef, "actor": v.Actor, "confidence": v.Confidence, "active_from": v.ActiveFrom, "created_at": v.CreatedAt}
+			if unguarded {
+				args["expected_value_id"] = v.ID
+			}
+		} else if name == "set_person_attribute" && unguarded {
+			args["expected_empty"] = true
 		}
 		if preview.Value != nil {
 			ordinal = preview.Value.Ordinal
 		}
 		if args["ordinal"] == nil {
 			args["ordinal"] = ordinal
-		}
-		if name == "set_person_attribute" && preview.Superseded == nil && args["expected_value_id"] == nil && args["expected_empty"] != true {
-			args["expected_empty"] = true
 		}
 		current = map[string]any{"ordinal": ordinal, "superseded": superseded}
 	}
