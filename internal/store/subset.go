@@ -2327,13 +2327,12 @@ func copySubsetCommitmentDecisions(ctx context.Context, tx *sql.Tx) error {
 	if err != nil || !present {
 		return err
 	}
-	// A subset does not copy the inference ledger. Preserve only decisions
-	// whose person and cited message are both present, pending revalidation.
-	const columns = `id, person_id, target_key, anchor_message_id, direction, quote, quote_start, quote_end,
-		summary, due_on, promised_at, expires_at, owner_state, snoozed_until, reopened_at`
+	// The subset omits the inference ledger, so its fulfilment references cannot
+	// be retained. Keep owner decisions for people included in the subset.
+	const columns = `id, person_id, target_key, owner_state, snoozed_until, reopened_at`
 	_, err = tx.ExecContext(ctx, `INSERT INTO person_commitments (`+columns+`)
 		SELECT `+columns+` FROM src.person_commitments
-		WHERE person_id IN (SELECT id FROM persons) AND anchor_message_id IN (SELECT id FROM messages)`)
+		WHERE person_id IN (SELECT id FROM persons)`)
 	return err
 }
 
