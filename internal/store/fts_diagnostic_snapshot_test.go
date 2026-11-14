@@ -82,7 +82,11 @@ func seedFTSDiagnosticGateMessage(t *testing.T, st *Store) int64 {
 
 func TestFTSDiagnosticConcurrentWriteUsesOneSnapshot(t *testing.T) {
 	a, r := assert.New(t), require.New(t)
-	st, gate := newFTSDiagnosticGateStore(t, "FROM message_bodies WHERE")
+	marker := "FROM messages_fts WHERE rowid = ?"
+	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		marker = "search_fts_fields IS NOT DISTINCT"
+	}
+	st, gate := newFTSDiagnosticGateStore(t, marker)
 	id := seedFTSDiagnosticGateMessage(t, st)
 	ctx, cancel := context.WithTimeout(context.WithValue(t.Context(), gmailAuditSnapshotGateKey{}, gate), 15*time.Second)
 	defer cancel()
@@ -95,10 +99,10 @@ func TestFTSDiagnosticConcurrentWriteUsesOneSnapshot(t *testing.T) {
 	select {
 	case <-gate.paused:
 	case <-ctx.Done():
-		r.FailNow("diagnostic did not reach body read")
+		r.FailNow("diagnostic did not reach document comparison")
 	}
-	// The metadata read already established the message snapshot. A complete
-	// rewrite and its FTS update commit while the diagnostic is paused.
+	// The expected body has already been read. Rewrite and reindex before the
+	// indexed document read: without one snapshot, old and new would differ.
 	r.NoError(st.UpsertMessageBodyContext(t.Context(), id, sql.NullString{String: "new orchard", Valid: true}, sql.NullString{}))
 	r.NoError(st.IndexStoredMessageContext(t.Context(), id))
 	gate.resume()
@@ -115,7 +119,7 @@ func TestFTSDiagnosticConcurrentWriteUsesOneSnapshot(t *testing.T) {
 }
 
 func TestFTSDiagnosticCancellationBoundaries(t *testing.T) {
-	for _, boundary := range []string{"ORDER BY id LIMIT", "indexing_version FROM messages", "FROM message_recipients mr LEFT", "FROM message_bodies WHERE", "substr((COALESCE(m.subject", "FROM messages_fts WHERE rowid = ?"} {
+	for _, boundary := range []string{"ORDER BY id LIMIT", "indexing_version FROM messages", "FROM message_recipients mr LEFT", "FROM message_bodies WHERE", "COALESCE(m.subject", "FROM messages_fts WHERE rowid = ?"} {
 		t.Run(boundary, func(t *testing.T) {
 			a, r := assert.New(t), require.New(t)
 			marker := boundary
