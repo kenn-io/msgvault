@@ -10,6 +10,7 @@ import (
 
 const maxIntroCounterparts = 4
 
+// FirstContactKind describes the evidence for a person's first appearance.
 type FirstContactKind string
 
 const (
@@ -17,6 +18,7 @@ const (
 	FirstContactObserved   FirstContactKind = "observed"
 )
 
+// FirstContactIntroducer identifies the sender of an introduction email.
 type FirstContactIntroducer struct {
 	ParticipantID int64  `json:"participant_id"`
 	DisplayName   string `json:"display_name"`
@@ -58,7 +60,7 @@ func ClassifyFirstContact(candidate ActivityCandidate, personID, envelopeSenderI
 // earliestFirstContactTx reads the earliest linked event in the current snapshot.
 func earliestFirstContactTx(ctx context.Context, tx *loggedTx, personID int64) (ActivityEvent, string, error) {
 	const eligible = ` FROM activity_event_persons aep JOIN activity_events ae ON ae.message_id = aep.message_id
- WHERE aep.person_id = ? AND NOT (aep.role = 'member' AND ae.ref_kind <> 'meeting')`
+ WHERE aep.person_id = ? AND aep.role <> 'member'`
 	var event ActivityEvent
 	var refKind, firstDate string
 	err := tx.QueryRowContext(ctx, `SELECT aep.local_date`+eligible+` ORDER BY aep.local_date LIMIT 1`, personID).Scan(&firstDate)

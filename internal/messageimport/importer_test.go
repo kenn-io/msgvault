@@ -7,15 +7,49 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestImporterCalendarTypeDoesNotBackdateRosterMember(t *testing.T) {
+	req := require.New(t)
+	st := testutil.NewTestStore(t)
+	importer := NewImporter(st, Hooks{})
+	first := validRequest(t)
+	first.Message.MessageType = "calendar_event"
+	first.Message.ExternalID = "first"
+	first.Message.Sender = MessageImportSender{Name: "First", Email: "first@example.test"}
+	first.Message.SentAt = "2026-01-01T12:00:00Z"
+	_, err := importer.Import(t.Context(), first)
+	req.NoError(err)
+	second := first
+	second.Message.ExternalID = "second"
+	second.Message.Sender = MessageImportSender{Name: "Second", Email: "second@example.test"}
+	second.Message.SentAt = "2026-01-02T12:00:00Z"
+	result, err := importer.Import(t.Context(), second)
+	req.NoError(err)
+	var senderID int64
+	req.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), result.MessageID).Scan(&senderID))
+	person, _, err := st.CreatePersonFromParticipant(senderID)
+	req.NoError(err)
+	projector, err := activity.NewProjector(st, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
+	req.NoError(err)
+	_, err = projector.RunOnce(t.Context())
+	req.NoError(err)
+	state, err := st.ContactStateContext(t.Context(), person.ID, time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC))
+	req.NoError(err)
+	assert.Equal(t, fmt.Sprintf("meeting:%d", result.MessageID), state.FirstSeenRef)
+	req.NotNil(state.FirstSeenAt)
+	assert.Equal(t, time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC), state.FirstSeenAt.UTC())
+}
 
 func TestImporterCreatesMessageAndSyncRun(t *testing.T) {
 	assert := assert.New(t)

@@ -3599,6 +3599,9 @@ func TestFirstAppearanceRosterEvidence(t *testing.T) {
 				system.MessageType = "calendar_event"
 			}
 			data := &store.MessagePersistData{Message: system}
+			if tc.meeting {
+				data.Recipients = []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{target}}}
+			}
 			systemID, err := f.Store.PersistMessage(data)
 			req.NoError(err)
 			projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
