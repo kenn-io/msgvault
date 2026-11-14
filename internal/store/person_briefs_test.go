@@ -193,12 +193,52 @@ func TestPersonBriefVersionsAreImmutableAndSupersede(t *testing.T) {
 	current, err := f.store.GetPersonBriefContext(t.Context(), f.personID, 0)
 	require.NoError(err)
 	assert.Equal(second.ID, current.ID)
+}
 
-	versions, err := f.store.ListPersonBriefVersionsContext(t.Context(), f.personID, 10)
+func TestPersonBriefVersionPaging(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newPersonBriefFixture(t, "version-paging")
+	for i := 1; i <= 2; i++ {
+		f.applyBrief(t, f.briefInsert(int64(i*1000), personBriefNow.Add(time.Duration(i)*time.Hour)))
+	}
+	versions, err := f.store.ListPersonBriefVersionsContext(t.Context(), f.personID, 0, 10)
 	require.NoError(err)
 	require.Len(versions, 2)
 	assert.Equal(2, versions[0].Version)
 	assert.Equal(1, versions[1].Version)
+	for i := 3; i <= 7; i++ {
+		f.applyBrief(t, f.briefInsert(int64(i*1000), personBriefNow.Add(time.Duration(i)*time.Hour)))
+	}
+	participant, err := f.store.EnsureParticipant("other@example.test", "Other", "example.test")
+	require.NoError(err)
+	other, _, err := f.store.CreatePersonFromParticipant(participant)
+	require.NoError(err)
+	_, err = f.store.SetPersonTrackingContext(t.Context(), other.ID, true)
+	require.NoError(err)
+	prepared := preparePersonFactLedgerGeneration(t, other.ID, "brief-other", []personfacts.ProposedClaim{
+		personFactLedgerClaim(other.ID, "other-target", `"value"`, "other-evidence"),
+	}, nil)
+	stored := persistPersonFactLedgerGeneration(t, f.store, prepared, nil)
+	otherFixture := personBriefFixture{store: f.store, personID: other.ID, generationID: stored.Generation.ID, evidenceIDs: []int64{stored.Evidence[0].ID}}
+	for i := 1; i <= 4; i++ {
+		otherFixture.applyBrief(t, otherFixture.briefInsert(int64(i*1000), personBriefNow.Add(time.Duration(i)*time.Hour)))
+	}
+	versions, err = f.store.ListPersonBriefVersionsContext(t.Context(), f.personID, 5, 3)
+	require.NoError(err)
+	require.Len(versions, 3)
+	assert.Equal(4, versions[0].Version)
+	assert.Equal(3, versions[1].Version)
+	assert.Equal(2, versions[2].Version)
+	more, err := f.store.HasOlderPersonBriefVersionContext(t.Context(), f.personID, 2)
+	require.NoError(err)
+	assert.True(more)
+	more, err = f.store.HasOlderPersonBriefVersionContext(t.Context(), f.personID, 1)
+	require.NoError(err)
+	assert.False(more)
+	more, err = f.store.HasOlderPersonBriefVersionContext(t.Context(), other.ID+1000000, 5)
+	require.NoError(err)
+	assert.False(more)
 }
 
 func TestPersonBriefKeepsOneCurrentVersionPerPerson(t *testing.T) {
@@ -369,7 +409,7 @@ func TestPersonBriefReadsReportMissingVersions(t *testing.T) {
 
 	// A person with no versions lists an empty history rather than failing:
 	// only a request for a specific missing version is an error.
-	versions, err := f.store.ListPersonBriefVersionsContext(t.Context(), f.personID, 10)
+	versions, err := f.store.ListPersonBriefVersionsContext(t.Context(), f.personID, 0, 10)
 	require.NoError(err)
 	assert.Empty(versions)
 }

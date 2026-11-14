@@ -33,8 +33,9 @@ type PersonBriefStore interface {
 		ctx context.Context, personID int64, version int,
 	) (*store.PersonBrief, error)
 	ListPersonBriefVersionsContext(
-		ctx context.Context, personID int64, limit int,
+		ctx context.Context, personID int64, beforeVersion, limit int,
 	) ([]store.PersonBrief, error)
+	HasOlderPersonBriefVersionContext(ctx context.Context, personID int64, beforeVersion int) (bool, error)
 	ListPersonBriefEvidenceContext(
 		ctx context.Context, briefID int64,
 	) ([]store.PersonBriefEvidencePointer, error)
@@ -104,6 +105,7 @@ type PersonBrief struct {
 // PersonBriefVersionsResponse is the newest-first version history.
 type PersonBriefVersionsResponse struct {
 	Versions []PersonBrief `json:"versions"`
+	HasMore  bool          `json:"has_more"`
 }
 
 // RejectPersonBriefRequest records the owner's verdict on the current version.
@@ -133,8 +135,11 @@ func (s *Server) registerPersonBriefRoutes(api huma.API) {
 	versions := rawAPIV1Operation("listPersonBriefVersions", http.MethodGet,
 		"/people/{id}/brief/versions", "List a person's brief version history")
 	addPersonIDParameter(&versions)
+	before := queryIntegerParam("before_version", "Only versions older than this one")
+	minimum := float64(1)
+	before.Schema.Minimum = &minimum
 	versions.Parameters = append(versions.Parameters,
-		queryIntegerParam(limitParam, "Maximum versions to return (default 20, max 200)"))
+		queryIntegerParam(limitParam, "Maximum versions to return (default 20, max 200)"), before)
 	versions.Responses = jsonResponsesFor[PersonBriefVersionsResponse](api)
 	addErrorResponses(api, versions.Responses, http.StatusBadRequest,
 		http.StatusNotFound, http.StatusServiceUnavailable)
@@ -212,12 +217,24 @@ func (s *Server) handleListPersonBriefVersions(w http.ResponseWriter, r *http.Re
 		}
 		limit = requested
 	}
-	rows, err := briefs.ListPersonBriefVersionsContext(r.Context(), personID, limit)
+	beforeVersion, _, err := queryInt(r, "before_version")
+	if err != nil || r.URL.Query().Has("before_version") && beforeVersion < 1 {
+		writeError(w, http.StatusBadRequest, "invalid_before_version", "before_version must be positive")
+		return
+	}
+	rows, err := briefs.ListPersonBriefVersionsContext(r.Context(), personID, beforeVersion, limit)
 	if err != nil {
 		s.writePersonBriefError(w, err)
 		return
 	}
 	response := PersonBriefVersionsResponse{Versions: make([]PersonBrief, 0, len(rows))}
+	if len(rows) == limit {
+		response.HasMore, err = briefs.HasOlderPersonBriefVersionContext(r.Context(), personID, rows[len(rows)-1].Version)
+		if err != nil {
+			s.writePersonBriefError(w, err)
+			return
+		}
+	}
 	for _, row := range rows {
 		version, ok := s.personBriefDTO(w, r, briefs, row)
 		if !ok {

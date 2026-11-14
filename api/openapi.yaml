@@ -11371,12 +11371,15 @@ components:
     PersonBriefVersionsResponse:
       additionalProperties: true
       properties:
+        has_more:
+          type: boolean
         versions:
           items:
             $ref: "#/components/schemas/PersonBrief"
           type: array
       required:
         - versions
+        - has_more
       type: object
     PersonCategory:
       additionalProperties: true
@@ -17197,7 +17200,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.2.0
+  version: 5.3.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -28806,6 +28809,13 @@ paths:
           name: limit
           schema:
             format: int64
+            type: integer
+        - description: Only versions older than this one
+          in: query
+          name: before_version
+          schema:
+            format: int64
+            minimum: 1
             type: integer
       responses:
         "200":

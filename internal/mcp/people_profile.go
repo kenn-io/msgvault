@@ -102,10 +102,9 @@ const (
 
 // personProfileBriefText is the quarantined prose of one brief version.
 type personProfileBriefText struct {
-	RejectedReason string                       `json:"rejected_reason,omitempty"`
-	RenderedText   string                       `json:"rendered_text"`
-	Sentences      []personProfileBriefSentence `json:"sentences"`
-	Items          []personProfileBriefItemText `json:"items"`
+	RenderedText string                       `json:"rendered_text"`
+	Sentences    []personProfileBriefSentence `json:"sentences"`
+	Items        []personProfileBriefItemText `json:"items"`
 }
 
 // personProfileBriefSentence is one rendered sentence. Index is the item's
@@ -462,8 +461,8 @@ func personProfileAddressResponse(addresses []peoplebrowser.PersonAddressSummary
 	}
 }
 
-// personProfileBriefResponse projects a brief onto the tool result. Every
-// model-generated string goes under untrusted_text after
+// personProfileBriefResponse projects a brief onto the tool result. MCP does not
+// generate or reject briefs. Every model-generated string goes under untrusted_text after
 // the same control-character stripping the TUI applies, so a sender who got
 // escape sequences into the brief cannot drive a terminal-backed client
 // either; the citations are projected separately from the daemon's typed
@@ -478,10 +477,9 @@ func personProfileBriefResponse(brief *peoplebrowser.PersonBrief) *personProfile
 		ContentTrust:     personProfileBriefContentTrust,
 		Handling:         personProfileBriefHandling,
 		UntrustedText: personProfileBriefText{
-			RenderedText:   textutil.SanitizeTerminal(brief.RenderedText),
-			RejectedReason: textutil.SanitizeTerminal(brief.RejectedReason),
-			Sentences:      make([]personProfileBriefSentence, 0, len(brief.Sentences)),
-			Items:          make([]personProfileBriefItemText, 0, len(brief.Items)),
+			RenderedText: textutil.SanitizeTerminal(brief.RenderedText),
+			Sentences:    make([]personProfileBriefSentence, 0, len(brief.Sentences)),
+			Items:        make([]personProfileBriefItemText, 0, len(brief.Items)),
 		},
 		Citations: make([]personProfileBriefCitation, 0, len(brief.Items)),
 		Evidence:  personProfileBriefEvidenceResponse(brief.Evidence),
@@ -530,15 +528,16 @@ func personProfileBriefEvidenceResponse(evidence []peoplebrowser.PersonBriefEvid
 
 // PersonBriefVersion retains native lifecycle metadata alongside the safe prose projection.
 type PersonBriefVersion struct {
-	Brief        *personProfileBrief `json:"brief"`
-	Status       string              `json:"status"`
-	RejectedAt   *time.Time          `json:"rejected_at"`
-	SupersededAt *time.Time          `json:"superseded_at"`
+	Brief          *personProfileBrief `json:"brief"`
+	RejectedReason string              `json:"rejected_reason,omitempty"`
+	Status         string              `json:"status"`
+	RejectedAt     *time.Time          `json:"rejected_at"`
+	SupersededAt   *time.Time          `json:"superseded_at"`
 }
 
 // PersonBriefVersionFromGenerated applies the profile's untrusted-text projection.
 func PersonBriefVersionFromGenerated(row generated.PersonBrief) PersonBriefVersion {
-	return PersonBriefVersion{Brief: personProfileBriefResponse(daemonclient.PersonBriefFromGenerated(row)), Status: row.Status, RejectedAt: row.RejectedAt, SupersededAt: row.SupersededAt}
+	return PersonBriefVersion{Brief: personProfileBriefResponse(daemonclient.PersonBriefFromGenerated(row)), Status: row.Status, RejectedReason: textutil.SanitizeTerminal(row.RejectedReason), RejectedAt: row.RejectedAt, SupersededAt: row.SupersededAt}
 }
 
 // PersonBriefVersionsFromGenerated projects native history onto the catalog schema.

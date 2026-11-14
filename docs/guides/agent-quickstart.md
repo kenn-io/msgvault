@@ -210,8 +210,6 @@ backend checks for action permissions, source scope, and sender identity;
 <!-- BEGIN GENERATED tools -->
 | Tool | Class | Opt-in flag | Delegated access |
 | --- | --- | --- | --- |
-| `generate_person_brief` | brief_write | `--allow-brief-writes` | owner-only |
-| `reject_person_brief` | brief_write | `--allow-brief-writes` | owner-only |
 | `set_person_brief_enrollment` | brief_write | `--allow-brief-writes` | owner-only |
 | `calendar_create` | calendar_write | `--allow-calendar-writes` | backend-dependent |
 | `calendar_delete` | calendar_write | `--allow-calendar-writes` | backend-dependent |
@@ -258,7 +256,6 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_message_tags` | read | — | owner-only |
 | `get_participant_identity` | read | — | owner-only |
 | `get_person_agenda` | read | — | owner-only |
-| `get_person_brief_enrollment` | read | — | owner-only |
 | `get_person_edit_context` | read | — | owner-only |
 | `get_person_merge_context` | read | — | owner-only |
 | `get_person_messaging_routes` | read | — | owner-only |

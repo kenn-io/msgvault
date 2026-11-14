@@ -458,6 +458,22 @@ func TestPersonBriefHTTPListsVersionsNewestFirst(t *testing.T) {
 	requirements.NoError(json.Unmarshal(bounded.Body.Bytes(), &versions))
 	requirements.Len(versions.Versions, 1)
 	assertions.Equal(2, versions.Versions[0].Version)
+	assertions.True(versions.HasMore)
+
+	older := doRequest(t, f.server.Router(), http.MethodGet,
+		personBriefPath(f.personID, "/versions?limit=1&before_version=2"), nil, nil)
+	requirements.Equal(http.StatusOK, older.Code, older.Body.String())
+	requirements.NoError(json.Unmarshal(older.Body.Bytes(), &versions))
+	requirements.Len(versions.Versions, 1)
+	assertions.Equal(1, versions.Versions[0].Version)
+	assertions.False(versions.HasMore)
+	invalidCursor := doRequest(t, f.server.Router(), http.MethodGet,
+		personBriefPath(f.personID, "/versions?before_version=0"), nil, nil)
+	assertions.Equal(http.StatusBadRequest, invalidCursor.Code)
+	emptyCursor := doRequest(t, f.server.Router(), http.MethodGet,
+		personBriefPath(f.personID, "/versions?before_version="), nil, nil)
+	assertions.Equal(http.StatusBadRequest, emptyCursor.Code)
+	assertions.Contains(emptyCursor.Body.String(), "invalid_before_version")
 
 	rejected := doRequest(t, f.server.Router(), http.MethodGet,
 		personBriefPath(f.personID, "/versions?limit=0"), nil, nil)

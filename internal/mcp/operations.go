@@ -74,7 +74,7 @@ func operationalCatalog(opts ServeOptions, allowWrites bool) []operationalDefini
 
 func newOperationalDefinition(name, description string, family OperationFamily, input, output *jsonschema.Schema, writes bool) operationalDefinition {
 	definition := toolDefinition{name: name, description: description, inputSchema: input, outputSchema: operationalOutputSchema(output), annotations: toolAnnotations(!writes)}
-	openWorld := writes && (family == OperationFamilySources || family == OperationFamilyBriefs)
+	openWorld := writes && family == OperationFamilySources
 	definition.annotations.OpenWorldHint = &openWorld
 	return operationalDefinition{definition: definition, family: family, writes: writes}
 }

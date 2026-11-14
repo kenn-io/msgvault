@@ -54,7 +54,7 @@ func TestPostgreSQLPersonBriefKeepsOneCurrentVersionUnderConcurrentRegeneration(
 		SELECT COUNT(*) FROM person_briefs WHERE person_id = ? AND status = ?`),
 		f.personID, PersonBriefStatusCurrent).Scan(&currentRows))
 	checks.Equal(1, currentRows)
-	versions, err := f.store.ListPersonBriefVersionsContext(t.Context(), f.personID, 10)
+	versions, err := f.store.ListPersonBriefVersionsContext(t.Context(), f.personID, 0, 10)
 	requirements.NoError(err)
 	checks.Len(versions, 1+successes, "only committed regenerations add a version")
 }

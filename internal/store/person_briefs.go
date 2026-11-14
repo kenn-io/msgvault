@@ -334,16 +334,21 @@ func (s *Store) GetPersonBriefContext(
 
 // ListPersonBriefVersionsContext returns a bounded newest-first version history.
 func (s *Store) ListPersonBriefVersionsContext(
-	ctx context.Context, personID int64, limit int,
+	ctx context.Context, personID int64, beforeVersion, limit int,
 ) ([]PersonBrief, error) {
 	if limit < 1 || limit > maxPersonBriefVersionList {
 		return nil, fmt.Errorf("list person brief versions: limit must be between 1 and %d",
 			maxPersonBriefVersionList)
 	}
-	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT `+personBriefColumns+`
-		FROM person_briefs WHERE person_id = ?
-		ORDER BY version DESC
-		LIMIT ?`), personID, limit)
+	query := `SELECT ` + personBriefColumns + ` FROM person_briefs WHERE person_id = ?`
+	args := []any{personID}
+	if beforeVersion > 0 {
+		query += ` AND version < ?`
+		args = append(args, beforeVersion)
+	}
+	query += ` ORDER BY version DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list person brief versions: %w", err)
 	}
@@ -360,6 +365,16 @@ func (s *Store) ListPersonBriefVersionsContext(
 		return nil, fmt.Errorf("iterate person brief versions: %w", err)
 	}
 	return briefs, nil
+}
+
+// HasOlderPersonBriefVersionContext reports whether a person has an older version.
+func (s *Store) HasOlderPersonBriefVersionContext(ctx context.Context, personID int64, beforeVersion int) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS (SELECT 1 FROM person_briefs WHERE person_id = ? AND version < ?)`), personID, beforeVersion).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check older person brief version: %w", err)
+	}
+	return exists, nil
 }
 
 // ListPersonBriefEvidenceContext returns the version's cited archive items in

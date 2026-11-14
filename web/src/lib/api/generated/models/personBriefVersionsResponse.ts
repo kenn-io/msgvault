@@ -4,6 +4,7 @@
 import type { PersonBrief } from "./personBrief";
 
 export interface PersonBriefVersionsResponse {
+  has_more: boolean;
   versions: PersonBrief[];
   [key: string]: unknown;
 }

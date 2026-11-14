@@ -3299,9 +3299,13 @@ func (a *storeAPIAdapter) GetPersonBriefContext(
 }
 
 func (a *storeAPIAdapter) ListPersonBriefVersionsContext(
-	ctx context.Context, personID int64, limit int,
+	ctx context.Context, personID int64, beforeVersion, limit int,
 ) ([]store.PersonBrief, error) {
-	return a.store.ListPersonBriefVersionsContext(ctx, personID, limit)
+	return a.store.ListPersonBriefVersionsContext(ctx, personID, beforeVersion, limit)
+}
+
+func (a *storeAPIAdapter) HasOlderPersonBriefVersionContext(ctx context.Context, personID int64, beforeVersion int) (bool, error) {
+	return a.store.HasOlderPersonBriefVersionContext(ctx, personID, beforeVersion)
 }
 
 func (a *storeAPIAdapter) ListPersonBriefEvidenceContext(
