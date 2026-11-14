@@ -338,10 +338,9 @@ func (s *Store) applyPersonSweepWithAligner(
 			return err
 		}
 
-		hasOrdinaryCalls := slices.ContainsFunc(request.Batches, func(batch peoplesweep.CompletedBatch) bool {
+		if slices.ContainsFunc(request.Batches, func(batch peoplesweep.CompletedBatch) bool {
 			return !personSweepCommitmentPurpose(batch.Purpose)
-		})
-		if hasOrdinaryCalls {
+		}) {
 			active, err := s.hasActivePersonInferenceConsentTx(
 				ctx, tx, request.Generation.Policy.ProviderPolicyFingerprint)
 			if err != nil {
@@ -395,10 +394,9 @@ func (s *Store) applyPersonSweepWithAligner(
 			if err != nil {
 				return err
 			}
-			switch {
-			case !active:
+			if !active {
 				request.CommitmentFailureClass = peoplesweep.FailurePolicy
-			default:
+			} else {
 				current, err := s.commitmentWindowCurrentTx(ctx, tx, request, commitment)
 				if err != nil {
 					return err
@@ -465,7 +463,8 @@ func (s *Store) applyPersonSweepWithAligner(
 			Lease: request.Lease, ProgramFingerprint: request.Generation.ProgramFingerprint,
 			CatalogFingerprint: request.Generation.CatalogFingerprint,
 			DeferredCursorWork: request.DeferredCursorWork, BriefFailureClass: request.BriefFailureClass,
-			BriefRetryAt:           request.BriefRetryAt,
+			BriefRetryAt: request.BriefRetryAt,
+
 			CommitmentFailureClass: request.CommitmentFailureClass, CommitmentRetryAt: request.CommitmentRetryAt,
 		})
 		if err != nil {
@@ -965,12 +964,13 @@ func personSweepCursorApplyOrder(mode peoplesweep.GenerationCursorMode) int {
 // personSweepWorkCompletion releases a claim independently of whether it
 // produced an inference generation.
 type personSweepWorkCompletion struct {
-	Lease                  peoplesweep.Lease
-	ProgramFingerprint     string
-	CatalogFingerprint     string
-	DeferredCursorWork     bool
-	BriefFailureClass      peoplesweep.FailureClass
-	BriefRetryAt           time.Time
+	Lease              peoplesweep.Lease
+	ProgramFingerprint string
+	CatalogFingerprint string
+	DeferredCursorWork bool
+	BriefFailureClass  peoplesweep.FailureClass
+	BriefRetryAt       time.Time
+
 	CommitmentFailureClass peoplesweep.FailureClass
 	CommitmentRetryAt      time.Time
 }

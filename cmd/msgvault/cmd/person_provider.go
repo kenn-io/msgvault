@@ -35,6 +35,9 @@ const (
 
 type personProviderStore interface {
 	EnsurePersonInferenceProfile(ctx context.Context, profile peoplesweep.ProviderProfile) (bool, error)
+	GrantPersonCommitmentConsent(ctx context.Context, fingerprint, actor string) (*store.ProviderConsent, bool, error)
+	RevokePersonCommitmentConsent(ctx context.Context, fingerprint, actor string) (bool, error)
+	HasActivePersonCommitmentConsent(ctx context.Context, fingerprint string) (bool, error)
 	ListPersonInferenceProfiles(ctx context.Context) ([]peoplesweep.ProviderProfile, error)
 	GrantPersonInferenceConsent(ctx context.Context, fingerprint, actor string) (*store.ProviderConsent, bool, error)
 	RevokePersonInferenceConsent(ctx context.Context, fingerprint, actor string) (bool, error)
@@ -1209,16 +1212,10 @@ func runPersonCommitmentConsent(command *cobra.Command, deps personProviderComma
 		return err
 	}
 	defer cleanup()
-	granter, ok := st.(interface {
-		GrantPersonCommitmentConsent(ctx context.Context, fingerprint, actor string) (*store.ProviderConsent, bool, error)
-	})
-	if !ok {
-		return errors.New("commitment consent is unavailable")
-	}
 	if _, err := st.EnsurePersonInferenceProfile(command.Context(), profile); err != nil {
 		return err
 	}
-	if _, _, err := granter.GrantPersonCommitmentConsent(command.Context(), profile.Fingerprint, personProviderConsentActor); err != nil {
+	if _, _, err := st.GrantPersonCommitmentConsent(command.Context(), profile.Fingerprint, personProviderConsentActor); err != nil {
 		return err
 	}
 	if jsonOutput {
@@ -1228,8 +1225,7 @@ func runPersonCommitmentConsent(command *cobra.Command, deps personProviderComma
 		}
 		return writeJSONOutput(command, output)
 	}
-	_, err = fmt.Fprintln(command.OutOrStdout(), "Commitment consent active.")
-	if err != nil {
+	if _, err := fmt.Fprintln(command.OutOrStdout(), "Commitment consent active."); err != nil {
 		return fmt.Errorf("write commitment consent active: %w", err)
 	}
 	return nil
@@ -1640,21 +1636,14 @@ func runPersonCommitmentRevoke(command *cobra.Command, deps personProviderComman
 		return err
 	}
 	defer cleanup()
-	revoker, ok := st.(interface {
-		RevokePersonCommitmentConsent(ctx context.Context, fingerprint, actor string) (bool, error)
-	})
-	if !ok {
-		return errors.New("commitment consent is unavailable")
-	}
-	revoked, err := revoker.RevokePersonCommitmentConsent(command.Context(), profile.Fingerprint, personProviderConsentActor)
+	revoked, err := st.RevokePersonCommitmentConsent(command.Context(), profile.Fingerprint, personProviderConsentActor)
 	if err != nil {
 		return err
 	}
 	if jsonOutput {
 		return writeJSONOutput(command, map[string]any{"purpose": "people_commitments", "fingerprint": profile.Fingerprint, "revoked": revoked})
 	}
-	_, err = fmt.Fprintf(command.OutOrStdout(), "Commitment consent revoked (%s).\n", profile.Fingerprint)
-	if err != nil {
+	if _, err := fmt.Fprintf(command.OutOrStdout(), "Commitment consent revoked (%s).\n", profile.Fingerprint); err != nil {
 		return fmt.Errorf("write commitment consent revoked: %w", err)
 	}
 	return nil
@@ -2112,15 +2101,11 @@ func personProviderStatusFor(
 		return personProviderStatusOutput{}, errors.New("people inference consent status is empty")
 	}
 	output := personProviderStatusOutput{Profile: profile, Check: check, Consent: *status}
-	if commitments, ok := st.(interface {
-		HasActivePersonCommitmentConsent(ctx context.Context, fingerprint string) (bool, error)
-	}); ok {
-		active, err := commitments.HasActivePersonCommitmentConsent(ctx, profile.Fingerprint)
-		if err != nil {
-			return personProviderStatusOutput{}, err
-		}
-		output.CommitmentsConsent = &active
+	active, err := st.HasActivePersonCommitmentConsent(ctx, profile.Fingerprint)
+	if err != nil {
+		return personProviderStatusOutput{}, err
 	}
+	output.CommitmentsConsent = &active
 	return output, nil
 }
 

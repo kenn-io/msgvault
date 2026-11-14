@@ -233,10 +233,13 @@ type StartAttempt struct {
 // repair call on the same batch ordinal; the person brief spends a brief call
 // and at most one brief_repair call on its own, later, batch ordinal.
 const (
-	ProviderCallPurposePrimary          = "primary"
-	ProviderCallPurposeRepair           = "repair"
-	ProviderCallPurposeBrief            = "brief"
-	ProviderCallPurposeBriefRepair      = "brief_repair"
+	ProviderCallPurposePrimary     = "primary"
+	ProviderCallPurposeRepair      = "repair"
+	ProviderCallPurposeBrief       = "brief"
+	ProviderCallPurposeBriefRepair = "brief_repair"
+)
+
+const (
 	ProviderCallPurposeCommitment       = "commitment"
 	ProviderCallPurposeCommitmentRepair = "commitment_repair"
 )

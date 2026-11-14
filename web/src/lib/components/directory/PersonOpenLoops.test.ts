@@ -93,6 +93,10 @@ describe("PersonOpenLoops", () => {
     expect(screen.getByText("max_bytes").tagName).toBe("CODE");
     expect(screen.getByText("[people.sweep.commitments]").tagName).toBe("CODE");
     expect(screen.getByText("7+ open")).toBeDefined();
+    expect(screen.queryByRole("button", { name: /^(done|snooze)$/i })).toBeNull();
+    const request = fetcher.mock.calls[0]?.[0];
+    const url = new URL(request instanceof Request ? request.url : String(request), "http://localhost");
+    expect(url.searchParams.has("include_closed")).toBe(false);
   });
 
   it.each([

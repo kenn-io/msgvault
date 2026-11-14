@@ -22,8 +22,6 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 			{"edited_extraction", "UPDATE message_bodies SET body_text = 'Changed source' WHERE message_id = ?", personfacts.EvidenceStatusSourceEdited, true},
 			{"deleted", "UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?", personfacts.EvidenceStatusSourceDeleted, false},
 			{"purged", "DELETE FROM messages WHERE id = ?", personfacts.EvidenceStatusSourceDeleted, false},
-			{"deleted_before_extraction", "UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?", personfacts.EvidenceStatusSourceDeleted, false},
-			{"deleted_via_frontier_maintenance", "UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?", personfacts.EvidenceStatusSourceDeleted, false},
 		} {
 			if owner && mutation.reason != personfacts.EvidenceStatusSourceEdited {
 				continue
@@ -48,61 +46,6 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 				cfg := peoplesweep.Config{}
 				cfg.ApplyDefaults()
 				cfg.Commitments.Enabled = true
-				commitmentProfile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
-				if mutation.name == "deleted_before_extraction" {
-					window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, commitmentProfile, cfg.Commitments, personFactLedgerNow, "UTC")
-					r.NoError(err)
-					r.Len(window.Sources, 1)
-					_, err = st.db.ExecContext(ctx, st.Rebind(mutation.query), id)
-					r.NoError(err)
-					deleted, err := st.LoadPersonCommitmentWindow(ctx, f.personID, commitmentProfile, cfg.Commitments, personFactLedgerNow, "UTC")
-					r.NoError(err)
-					a.Empty(deleted.Sources)
-					request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
-						Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send draft", End: int64(len(quote))}},
-					})
-					result, err := st.ApplyPersonSweep(ctx, request)
-					r.NoError(err)
-					a.Equal(peoplesweep.FailureArchiveGap, result.CommitmentFailureClass)
-					claims, err := st.ListPersonFactClaimsContext(ctx, f.personID, personfacts.ClaimFilter{Limit: 10})
-					r.NoError(err)
-					a.Empty(claims)
-					return
-				}
-				if mutation.name == "deleted_via_frontier_maintenance" {
-					ids := []int64{id}
-					for n := range 2 {
-						ids = append(ids, persist(fmt.Sprintf("promise-%d", n), fmt.Sprintf("I will send report %d.", n), -time.Hour))
-					}
-					applyCommitmentTestSources(t, f, cfg.Commitments)
-					for _, messageID := range ids {
-						_, err := st.db.ExecContext(ctx, st.Rebind(mutation.query), messageID)
-						r.NoError(err)
-					}
-					now := f.request.CompletedAt.Add(cfg.Commitments.MinInterval)
-					due, err := st.PersonCommitmentsDue(ctx, f.personID, now, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(commitmentProfile, cfg.Commitments))
-					r.NoError(err)
-					r.True(due)
-					f = nextCommitmentTestAttempt(t, f, "-observed")
-					f.request.Generation.ResolvedAt, f.request.CompletedAt = now, now.Add(time.Minute)
-					window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, commitmentProfile, cfg.Commitments, now, "UTC")
-					r.NoError(err)
-					r.Empty(window.Sources)
-					request := f.request
-					request.CommitmentOnly = true
-					request.Budget = personSweepApplyBudget()
-					request.Generation.Policy.AllowSensitive = true
-					request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
-					_, err = st.ApplyPersonSweep(ctx, request)
-					r.NoError(err)
-					evidence, err := st.ListPersonFactEvidenceContext(ctx, f.personID, personfacts.EvidenceFilter{Limit: 10})
-					r.NoError(err)
-					r.Len(evidence, 3)
-					for _, item := range evidence {
-						a.False(item.Supported)
-					}
-					return
-				}
 				applyCommitmentTestSources(t, f, cfg.Commitments)
 				tombstones, err := st.personSweepTombstones(ctx, f.personID, peoplesweep.ArchiveChange{PersonID: f.personID, SourceID: sourceID, MessageID: id, SourceLane: peoplesweep.SourceConversationText, EvidenceEffect: peoplesweep.EvidenceEffectSourceEdited})
 				r.NoError(err)
@@ -199,6 +142,90 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 				a.Len(loops, 1)
 			})
 		}
+	}
+}
+
+func TestCommitmentSourceDeletedBeforeExtraction(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "commitment-evidence", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	profile := f.request.Generation.Policy.ProviderPolicyFingerprint
+	_, err := st.RevokePersonInferenceConsent(ctx, profile, "test")
+	r.NoError(err)
+	_, _, err = st.GrantPersonCommitmentConsent(ctx, profile, "test")
+	r.NoError(err)
+	const quote = "I will send the draft."
+	id := persist("promise", quote, -time.Hour)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	commitmentProfile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, commitmentProfile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), id)
+	r.NoError(err)
+	deleted, err := st.LoadPersonCommitmentWindow(ctx, f.personID, commitmentProfile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	a.Empty(deleted.Sources)
+	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+		Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send draft", End: int64(len(quote))}},
+	})
+	result, err := st.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	a.Equal(peoplesweep.FailureArchiveGap, result.CommitmentFailureClass)
+	claims, err := st.ListPersonFactClaimsContext(ctx, f.personID, personfacts.ClaimFilter{Limit: 10})
+	r.NoError(err)
+	a.Empty(claims)
+}
+
+func TestCommitmentFrontierMaintenanceInvalidatesDeletedEvidence(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "commitment-evidence", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	profile := f.request.Generation.Policy.ProviderPolicyFingerprint
+	_, err := st.RevokePersonInferenceConsent(ctx, profile, "test")
+	r.NoError(err)
+	_, _, err = st.GrantPersonCommitmentConsent(ctx, profile, "test")
+	r.NoError(err)
+	const quote = "I will send the draft."
+	id := persist("promise", quote, -time.Hour)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	commitmentProfile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	ids := []int64{id}
+	for n := range 2 {
+		ids = append(ids, persist(fmt.Sprintf("promise-%d", n), fmt.Sprintf("I will send report %d.", n), -time.Hour))
+	}
+	applyCommitmentTestSources(t, f, cfg.Commitments)
+	for _, messageID := range ids {
+		_, err := st.db.ExecContext(ctx, st.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), messageID)
+		r.NoError(err)
+	}
+	now := f.request.CompletedAt.Add(cfg.Commitments.MinInterval)
+	due, err := st.PersonCommitmentsDue(ctx, f.personID, now, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(commitmentProfile, cfg.Commitments))
+	r.NoError(err)
+	r.True(due)
+	f = nextCommitmentTestAttempt(t, f, "-observed")
+	f.request.Generation.ResolvedAt, f.request.CompletedAt = now, now.Add(time.Minute)
+	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, commitmentProfile, cfg.Commitments, now, "UTC")
+	r.NoError(err)
+	r.Empty(window.Sources)
+	request := f.request
+	request.CommitmentOnly = true
+	request.Budget = personSweepApplyBudget()
+	request.Generation.Policy.AllowSensitive = true
+	request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
+	_, err = st.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	evidence, err := st.ListPersonFactEvidenceContext(ctx, f.personID, personfacts.EvidenceFilter{Limit: 10})
+	r.NoError(err)
+	r.Len(evidence, 3)
+	for _, item := range evidence {
+		a.False(item.Supported)
 	}
 }
 
