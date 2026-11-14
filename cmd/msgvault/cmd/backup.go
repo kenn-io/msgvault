@@ -260,17 +260,17 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("--%s cannot be used with --permissions-only", name)
 			}
 		}
-	}
-	if err := refuseRestoreIntoLiveDaemonHome(backupRestoreTarget, cfg); err != nil {
-		return err
-	}
-	if backupRestorePermissionsOnly {
 		if len(args) == 0 || args[0] == "" {
 			return errors.New("--permissions-only requires an explicit snapshot ID")
 		}
 		if runtime.GOOS != "windows" {
 			return errors.New("--permissions-only is available only on Windows")
 		}
+	}
+	if err := refuseRestoreIntoLiveDaemonHome(backupRestoreTarget, cfg); err != nil {
+		return err
+	}
+	if backupRestorePermissionsOnly {
 		count, err := secureRestoredTokens(cmd.Context(), r, args[0], backupRestoreTarget, backupRestoreForceUnlock)
 		if err != nil {
 			return fmt.Errorf("securing restored credentials: %w", err)

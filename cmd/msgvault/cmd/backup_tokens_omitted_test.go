@@ -61,6 +61,15 @@ func TestBackupRestoreRejectsIncompatibleFlagsBeforeLiveDaemon(t *testing.T) {
 	err = runBackupRestore(cmd, []string{"snapshot"})
 	require.ErrorContains(t, err, "--overwrite cannot be used with --permissions-only")
 	cmd.Flags().Lookup("overwrite").Changed = false
+	err = runBackupRestore(cmd, nil)
+	require.ErrorContains(t, err, "requires an explicit snapshot ID")
 	err = runBackupRestore(cmd, []string{"snapshot"})
-	require.ErrorContains(t, err, "running daemon")
+	if runtime.GOOS == "windows" {
+		require.ErrorContains(t, err, "running daemon")
+	} else {
+		require.ErrorContains(t, err, "available only on Windows")
+		backupRestorePermissionsOnly = false
+		err = runBackupRestore(cmd, []string{"snapshot"})
+		require.ErrorContains(t, err, "running daemon")
+	}
 }
