@@ -565,75 +565,38 @@ recording the source account as a default identity.
 
 ## import-signal-export
 
-Import a native Signal readable directory containing `metadata.json` with
-numeric version `1`, `main.jsonl`, and optional `files/` media:
+Import a Signal readable export directory containing `metadata.json`, `main.jsonl`,
+and optional `files/` media:
 
 ```bash
 msgvault import-signal-export /path/to/signal-export --account personal
 ```
 
-Choose a readable chat-history export in Signal, then copy its complete
-export directory to the machine running the msgvault daemon. Keep media in its
-original `files/` layout. Point msgvault at the directory containing
-`metadata.json` and `main.jsonl`.
+Use the same `--account` label for later exports of the same account. Copy the
+complete export directory to the machine running the msgvault daemon and keep
+media in its original `files/` layout.
 
-Signal Desktop's [export menu](https://github.com/signalapp/Signal-Desktop/blob/9173731aaaccec8444066aec0e0c78725d7e457b/ts/components/Preferences.dom.tsx) is under Settings → Chats → Export chat history. Signal Android also has an [export menu](https://github.com/signalapp/Signal-Android/issues/14754#issuecomment-4992437447). This importer has not been tested against an export from a released Signal app.
+Signal Desktop's [export menu](https://github.com/signalapp/Signal-Desktop/blob/9173731aaaccec8444066aec0e0c78725d7e457b/ts/components/Preferences.dom.tsx) is under Settings → Chats → Export chat history. Signal Android also has an [export menu](https://github.com/signalapp/Signal-Android/issues/14754#issuecomment-4992437447). This importer has not been tested against an export from a released Signal app, and cross-platform compatibility has not been verified.
 
-Use the same `--account` label for every export of one account, even if you
-move or rename the directory. Choose different labels for different accounts.
-The label scopes identities; it does not assert an owner phone or address.
-Only the native Self record confirms an owner identifier.
+The importer handles standard text and available local attachments in direct
+chats, groups, and notes to self. It counts unsupported records and omitted
+features, including reactions and formatting. Disappearing and view-once
+messages may be absent from the export.
+Contacts keep their existing account-scoped identity when an ACI or phone number is added. New contacts use their ACI when available, otherwise their phone number. PNI-only and name-only contacts are skipped.
 
-The adapter imports incoming and outgoing standard text and local attachments
-in direct chats, groups and notes to self. Contacts keep their existing account-scoped identity when an ACI or phone number is added. New contacts use their ACI when available, otherwise their phone number; groups need a master key, which is hashed for identity. PNI-only and name-only recipients are skipped. Group membership records reflect observed senders and
-the owner, rather than projecting the current group roster into history.
+Run the command again to add history and retry missing media. Existing text
+and raw messages retain their first archived snapshot. Missing media can be
+repaired when a later export uniquely identifies the original attachment.
+Signal gives messages no ID, so messages from one chat with the same author, send time, and receive time are told apart by their order in the export. If that order changes, a message with attachment identities (client UUID, else locator key) keeps its own row. To do this, a rerun against an account with saved messages first scans the export for those identities, holding at most 262,144 of them in memory; frames past that limit rely on order. Where identities are missing, repeated within a message, or shared by several messages, order decides, and a changed attachment may leave its media missing rather than move to another message.
+Committed messages remain after an interrupted or failed import.
 
-Re-running replays the file: it adds missing history and repairs media slots
-that lack bytes. A later export must uniquely match a missing slot by its client UUID or locator key; position alone cannot identify it. The original hash, when present, remains authoritative. Existing text, raw input, metadata and timestamps keep the
-first archived snapshot. Changed-existing counts compare the incoming text
-with that first retained body, so the same difference is reported on later
-imports too. This includes full long text recovered after an initial import
-retained only inline text. Records absent
-from later exports and deletion tombstones never delete archive rows. After
-failure or interruption, rerun with the same account label; committed messages
-survive. Counts are printed even after partial failure.
+The importer accepts version 1 exports. Limits are 16 MiB per JSONL record,
+64 KiB for metadata, 100,000 recipient and chat entries, 64 MiB of lookup
+strings, 256 MiB per media file, and 16 MiB per long-text file. It scans up to
+262,144 media directory entries per run; remaining media is counted as missing
+while message import continues. Missing, unsafe, oversized, ambiguous, and
+hash-mismatched media is counted. A newer saved message format requires a
+msgvault upgrade before replay.
 
-Message identity uses the stable conversation, author and original sent
-milliseconds. For edits, the oldest retained revision supplies the original
-time; the current text is imported on the first visit. Signal's top-level
-edited timestamp is retained in raw input. If a later export drops the oldest
-revision, identity stability cannot be guaranteed.
-
-Media is read only from `files/<first-two-hash-digits>/<plaintext-hash>` with
-an optional extension. The adapter checks the plaintext SHA-256, uses contained
-regular files, and never fetches URLs or decrypts files. Display filenames do
-not select paths. Equal bytes in separate attachment slots stay separate
-occurrences. In the researched sources, Signal inlines long text it has
-downloaded and otherwise exports a long-text pointer without its file. An
-available long-text file supplies searchable text only on first import;
-otherwise the inline text is kept with an incomplete-text count.
-
-Limits are 16 MiB per JSONL record, 64 KiB for metadata, 100,000 combined
-recipient/chat lookup entries, 64 MiB of retained lookup strings, 256 MiB per
-media file, and 16 MiB per long-text file. The importer examines up to 262,144 media directory entries per run. Media beyond that limit is counted as missing while messages continue to import. A newer saved message format requires a msgvault upgrade before replay. Malformed input, unsupported versions,
-conflicting definitions or exceeded limits stop the import with line/context;
-previously committed messages remain. Missing, unsafe, oversized, ambiguous or
-hash-mismatched media is counted and can be retried. Archive storage failures
-stop the import.
-
-Coverage is reported by reason. Unsupported items include updates/calls,
-contacts, stickers, stories, polls, payments, view-once items and deletion
-tombstones. Unknown direction or missing stable identity/time causes a skip.
-Quotes, reactions, formatting, link previews, pins, revision history and
-attachment flags (voice note, GIF, borderless) are not rendered; supported
-text and exact raw ChatItem JSON are retained. Mention ranges count under
-formatting; the body keeps Signal's placeholder character and the mentioned
-person is not resolved. Empty and unknown frames are counted separately.
-Signal omits disappearing messages from readable exports and strips view-once
-media, so these files do not promise complete history.
-
-The tested format is the researched Desktop native-v1 layout, using
-[independently authored fictional fixtures and pinned format sources](https://github.com/kenn-io/msgvault/blob/main/internal/signalexport/testdata/README.md).
-Released-app exports and cross-platform runtime compatibility have not been
-verified. See [the CLI reference](../cli-reference.md#import-signal-export)
-for command syntax.
+The format is based on [fictional fixtures and pinned format sources](https://github.com/kenn-io/msgvault/blob/main/internal/signalexport/testdata/README.md).
+See [the CLI reference](../cli-reference.md#import-signal-export) for command syntax.

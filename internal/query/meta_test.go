@@ -10,7 +10,7 @@ import (
 )
 
 func TestMetaCommentsVisibleAsTextConversations(t *testing.T) {
-	for _, kind := range []string{"facebook_comments", "instagram_comments"} {
+	for _, kind := range []string{"facebook_comments", "instagram_comments", "signal"} {
 		t.Run(kind, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			tdb := dbtest.NewTestDB(t, "../store/schema.sql")

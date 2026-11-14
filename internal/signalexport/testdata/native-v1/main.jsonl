@@ -6,6 +6,6 @@
 {"chat":{"id":"7","recipientId":"2"}}
 {"chat":{"id":"8","recipientId":"3"}}
 {"chat":{"id":"9","recipientId":"1"}}
-{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"Hello 星 from a fictional workshop"},"attachments":[{"pointer":{"contentType":"text/plain","fileName":"example.txt","locatorInfo":{"plaintextHash":"QOI4zrd8+RgFO1dncjMtdLD2fgR01Om9H6+2K+ClB7k=","localKey":"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM="}}}]}}}
+{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"Hello 星 from a fictional workshop"},"attachments":[{"pointer":{"contentType":"text/plain","fileName":"example.txt","locatorInfo":{"key":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=","plaintextHash":"QOI4zrd8+RgFO1dncjMtdLD2fgR01Om9H6+2K+ClB7k=","localKey":"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM="}}}]}}}
 {"chatItem":{"chatId":"8","authorId":"1","dateSent":"1700000000001","outgoing":{},"standardMessage":{"text":{"body":"Fictional group note"}}}}
 {"chatItem":{"chatId":"9","authorId":"1","dateSent":"1700000000002","outgoing":{},"standardMessage":{"text":{"body":"Fictional note to self"}}}}

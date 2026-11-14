@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
-	"go.kenn.io/msgvault/internal/signalexport"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textimport"
 )
@@ -287,23 +286,4 @@ func TestIntegration(t *testing.T) {
 	statsS1, err := te.GetTextStats(ctx, query.TextStatsOptions{SourceID: &src1.ID})
 	require.NoError(err, "GetTextStats(src1)")
 	assert.Equal(int64(4), statsS1.MessageCount, "GetTextStats(src1).MessageCount")
-}
-
-func TestSignalExportTextConsumers(t *testing.T) {
-	require := require.New(t)
-	ctx := t.Context()
-	dbPath := filepath.Join(t.TempDir(), "signal.db")
-	st, err := store.Open(dbPath)
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
-	_, err = signalexport.Import(ctx, st, signalexport.ImportOptions{RootDir: "../signalexport/testdata/native-v1", Account: "fictional", AttachmentsDir: t.TempDir()})
-	require.NoError(err)
-	engine := query.NewSQLiteEngine(st.DB())
-	conversations, err := engine.ListConversations(ctx, query.TextFilter{})
-	require.NoError(err)
-	require.Len(conversations, 3)
-	for _, conversation := range conversations {
-		assert.EqualValues(t, 1, conversation.MessageCount)
-	}
 }

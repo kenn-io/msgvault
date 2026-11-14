@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -21,11 +20,8 @@ func newImportSignalExportCmd() *cobra.Command {
 		Long: `Import standard messages and available local media from a native Signal
 readable directory (metadata.json version 1, main.jsonl, optional files/).
 
-No owner phone or account ID is included.
-Re-running adds missing history and retries missing media. First archived
-text and raw messages remain unchanged, including after edits. Unsupported
-items, nested features and missing media are counted. No history completeness
-or runtime cross-platform compatibility is claimed.
+Re-running adds missing history and retries missing media; first archived
+text is kept. Unsupported items and missing media are counted.
 
 Example:
   msgvault import-signal-export ./signal-export --account personal`,
@@ -97,8 +93,6 @@ func runImportSignalExport(cmd *cobra.Command, root, account string) error {
 	return nil
 }
 
-var signalReasonWordBoundary = regexp.MustCompile(`([a-z0-9])([A-Z])`)
-
 func signalExportReasonLabel(reason string) string {
 	switch reason {
 	case "recipient_identity":
@@ -116,8 +110,7 @@ func signalExportReasonLabel(reason string) string {
 	case "invalid_hash":
 		return "missing or invalid file hash"
 	}
-	words := signalReasonWordBoundary.ReplaceAllString(reason, "${1} ${2}")
-	return strings.ToLower(strings.ReplaceAll(words, "_", " "))
+	return strings.ToLower(strings.ReplaceAll(reason, "_", " "))
 }
 
 func init() {

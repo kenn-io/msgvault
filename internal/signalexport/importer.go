@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-const formatVersion = 2
+const formatVersion = 3
 
 var ErrNewerFormat = errors.New("saved Signal messages use a newer format; upgrade msgvault")
 
@@ -91,10 +91,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		}
 		for _, candidate := range []string{p.aci, p.phone} {
 			if candidate != "" {
-				if err := st.AddParticipantIdentifierIfAbsentContext(ctx, participant, SourceType, scopedKey(scope, candidate)); err != nil {
-					if errors.Is(err, store.ErrParticipantIdentifierConflict) {
-						return 0, fmt.Errorf("signal contact identifiers belong to different participants: %w", err)
-					}
+				if err := addAlias(ctx, st, scope, participant, p, candidate); err != nil {
 					return 0, err
 				}
 			}
@@ -132,6 +129,18 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		resolved[id] = p
 		return p, nil
 	}
+	// Stored rows exist only after an earlier import, so a first import skips the scan.
+	var hints *identityHints
+	stored, err := st.CountMessagesForSourceContext(ctx, source.ID)
+	if err != nil {
+		return s, err
+	}
+	if stored > 0 {
+		if hints, err = scanIdentities(ctx, opts.RootDir); err != nil {
+			return s, err
+		}
+	}
+	slots := newSlotCounter(hints)
 	selfConfirmed := false
 	var ownerID int64
 	err = r.frames(ctx, func(m *chatItem, raw []byte, line int) error {
@@ -197,12 +206,10 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		}
 		convKey := scopedKey(scope, conversation.key)
 		authorKey := scopedKey(scope, author.key)
-		key := messageKey(convKey, authorKey, date, originalReceived(m))
-		ids, err := st.MessageExistsBatchContext(ctx, source.ID, []string{key})
+		key, id, err := slots.slot(ctx, st, source.ID, convKey, authorKey, date, originalReceived(m), m, line)
 		if err != nil {
 			return err
 		}
-		id := ids[key]
 		standard := m.Standard
 		countOmissions(s, m)
 		body, writes, knownChanged, err := mediaWrites(ctx, st, r, id, standard, opts, s)
@@ -291,6 +298,19 @@ func knownKey(ctx context.Context, st *store.Store, scope, candidate string) (st
 		key = candidate
 	}
 	return key, true, nil
+}
+
+// addAlias attaches candidate to participant. An established ACI participant
+// stays authoritative: a phone already held by another participant is left there.
+func addAlias(ctx context.Context, st *store.Store, scope string, participant int64, p peer, candidate string) error {
+	err := st.AddParticipantIdentifierIfAbsentContext(ctx, participant, SourceType, scopedKey(scope, candidate))
+	if !errors.Is(err, store.ErrParticipantIdentifierConflict) {
+		return err
+	}
+	if p.aci != "" && candidate == p.phone {
+		return nil
+	}
+	return fmt.Errorf("signal contact identifiers belong to different participants: %w", err)
 }
 
 // withoutReusedPhone drops a phone number held by a participant with another ACI.
