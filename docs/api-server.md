@@ -620,7 +620,8 @@ Start a Gmail or IMAP history backfill and poll its progress without keeping an
 HTTP request open. These endpoints use the daemon's existing account
 credentials and full-sync path. They do not accept uploaded archive files.
 See [the importing guide](/docs/usage/importing/#historical-import-jobs) for a
-step-by-step example.
+step-by-step example. For the assistant workflow, see
+[MCP source status and sync](/docs/usage/chat/#source-status-and-sync).
 
 ### Start an import {#post-apiv1imports}
 

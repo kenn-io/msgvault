@@ -456,7 +456,8 @@ Jobs accept optional `limit` and `noresume` fields. Gmail jobs also accept a
 Gmail `query`; IMAP jobs reject that field. An account with an active sync
 rejects another import with `409 sync_already_active`. See the
 [API reference](/docs/api-server/#historical-import-jobs) for the request,
-response, and restart behavior.
+response, and restart behavior. To start and follow a job through an assistant,
+see [MCP source status and sync](/docs/usage/chat/#source-status-and-sync).
 
 For a foreground CLI workflow, use `sync-full` with the same date bounds:
 

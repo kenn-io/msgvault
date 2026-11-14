@@ -25,14 +25,20 @@ func (operationalTestBackend) OperationDisclosure(context.Context, string, map[s
 
 func TestOperationalCatalogUsesFixedNamesAndWriteGates(t *testing.T) {
 	assertions := assert.New(t)
-	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"get_source_scheduler_status", "sync_source", "arbitrary_command"}}
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"get_source_scheduler_status", "sync_source", "get_import_job", "create_import_job", "arbitrary_command"}}
 	tools := toolsByName(t, rawListTools(t, opts, true))
 	assertions.Contains(tools, "get_source_scheduler_status")
 	assertions.NotContains(tools, "sync_source")
+	assertions.Contains(tools, "get_import_job")
+	assertions.NotContains(tools, "create_import_job")
 	assertions.NotContains(tools, "arbitrary_command")
-	opts.OperationWriteFamilies = []OperationFamily{OperationFamilySources}
+	opts.OperationWriteFamilies = []OperationFamily{OperationFamilySources, OperationFamilyImports}
 	assertions.Contains(toolsByName(t, rawListTools(t, opts, true)), "sync_source")
 	assertions.NotContains(toolsByName(t, rawListTools(t, opts, false)), "sync_source")
+	assertions.Contains(toolsByName(t, rawListTools(t, opts, true)), "create_import_job")
+	readOnly := toolsByName(t, rawListTools(t, opts, false))
+	assertions.Contains(readOnly, "get_import_job")
+	assertions.NotContains(readOnly, "create_import_job")
 	opts.DelegatedOnly = true
 	assertions.Empty(rawListTools(t, opts, true))
 }
