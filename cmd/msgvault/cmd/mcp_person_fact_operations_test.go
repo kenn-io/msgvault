@@ -58,7 +58,15 @@ func factBackend(t *testing.T, st *store.Store, observe ...func(*http.Request)) 
 func TestPersonFactDisclosureAndPin(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	backend, st, id, _ := factFixture(t)
+	pinQuery := make(chan string, 1)
+	backend, st, id, _ := factFixture(t, func(r *http.Request) {
+		if r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/fact-pins/") {
+			select {
+			case pinQuery <- r.URL.Query().Get("visible_only"):
+			default:
+			}
+		}
+	})
 	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), true)
 	requirements.NoError(err)
 	var target personfacts.TargetDescriptor
@@ -85,6 +93,12 @@ func TestPersonFactDisclosureAndPin(t *testing.T) {
 	result, err := backend.ExecuteOperation(t.Context(), "set_person_fact_pin", args)
 	requirements.NoError(err)
 	requirements.False(result.IsError)
+	select {
+	case value := <-pinQuery:
+		assertions.Equal("true", value)
+	default:
+		assertions.Fail("pin request was not sent")
+	}
 	pins, err := st.ListPersonFactPinsContext(t.Context(), id)
 	requirements.NoError(err)
 	assertions.True(slices.ContainsFunc(pins, func(pin personfacts.PinState) bool {
@@ -294,6 +308,7 @@ func TestPersonFactCapabilitiesRequireExactContracts(t *testing.T) {
 	backend := factBackend(t, testutil.NewSQLiteTestStore(t))
 	caps, err := backend.client.MCPCapabilities(t.Context())
 	requirements.NoError(err)
+	assert.Contains(t, newDaemonMCPOperations(backend.client, caps).capabilities(), "set_person_fact_pin")
 	for i := range caps.Routes {
 		r := &caps.Routes[i]
 		if r.OperationID == "listPersonFactEvidence" {
@@ -301,4 +316,11 @@ func TestPersonFactCapabilitiesRequireExactContracts(t *testing.T) {
 		}
 	}
 	assert.NotContains(t, newDaemonMCPOperations(backend.client, caps).capabilities(), "list_person_fact_claims")
+	for i := range caps.Routes {
+		r := &caps.Routes[i]
+		if r.OperationID == "setPersonFactPin" {
+			r.QueryParameters = slices.DeleteFunc(r.QueryParameters, func(v string) bool { return v == "visible_only" })
+		}
+	}
+	assert.NotContains(t, newDaemonMCPOperations(backend.client, caps).capabilities(), "set_person_fact_pin")
 }

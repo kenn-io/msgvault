@@ -20,11 +20,11 @@ func personFactMCPCapabilities(has mcpRouteCheck) []string {
 	}{
 		{"list_person_fact_claims", "listPersonFactClaims", "GET", "/api/v1/people/{id}/fact-claims", []string{"target", "limit", "offset"}},
 		{"list_person_fact_pins", "listPersonFactPins", "GET", "/api/v1/people/{id}/fact-pins", nil},
-		{"set_person_fact_pin", "setPersonFactPin", "PUT", "/api/v1/people/{id}/fact-pins/{kind}/{key}", nil},
+		{"set_person_fact_pin", "setPersonFactPin", "PUT", "/api/v1/people/{id}/fact-pins/{kind}/{key}", []string{"visible_only"}},
 		{"set_person_tracking", "setPersonTracking", "PUT", "/api/v1/people/{id}/tracking", nil},
 	} {
 		if has(r.id, r.method, r.path, r.query...) &&
-			(r.name == "set_person_tracking" || has("listPersonFactTargets", "GET", "/api/v1/person-fact-targets")) &&
+			(r.name == "set_person_tracking" || r.name == "set_person_fact_pin" || has("listPersonFactTargets", "GET", "/api/v1/person-fact-targets")) &&
 			(r.name != "list_person_fact_claims" || (has("listPersonFactEvidence", "GET", "/api/v1/people/{id}/fact-evidence", "target", "limit", "offset", "visible_only") &&
 				has("listPersonFactDecisions", "GET", "/api/v1/people/{id}/fact-decisions", "target", "limit", "offset"))) {
 			names = append(names, r.name)
@@ -84,14 +84,7 @@ func (b *daemonMCPOperations) executePersonFactOperation(ctx context.Context, na
 		}
 		return r, true, e
 	case "set_person_fact_pin":
-		visible, failure, err := b.personFactVisibleTargets(ctx)
-		if failure != nil || err != nil {
-			return failure, true, err
-		}
-		if !visible[[2]string{a.Kind, a.Key}] {
-			return operationFailure("invalid_fact_target", false), true, nil
-		}
-		r, e := readMCPOperationJSONWithClassifier[generated.PersonFactPinWrite](ctx, b.client, http.MethodPut, "/api/v1/people/{id}/fact-pins/{kind}/{key}", &generated.SetPersonFactPinRequestOptions{PathParams: &generated.SetPersonFactPinPath{ID: a.PersonID, Kind: generated.SetPersonFactPinPathKind(a.Kind), Key: url.PathEscape(a.Key)}, Body: &generated.SetPersonFactPinBody{Pinned: a.Pinned}}, factClassify, http.StatusOK)
+		r, e := readMCPOperationJSONWithClassifier[generated.PersonFactPinWrite](ctx, b.client, http.MethodPut, "/api/v1/people/{id}/fact-pins/{kind}/{key}", &generated.SetPersonFactPinRequestOptions{PathParams: &generated.SetPersonFactPinPath{ID: a.PersonID, Kind: generated.SetPersonFactPinPathKind(a.Kind), Key: url.PathEscape(a.Key)}, Query: &generated.SetPersonFactPinQuery{VisibleOnly: new(true)}, Body: &generated.SetPersonFactPinBody{Pinned: a.Pinned}}, factClassify, http.StatusOK)
 		return r, true, e
 	case "set_person_tracking":
 		r, e := readMCPOperationJSONWithClassifier[generated.PersonTracking](ctx, b.client, http.MethodPut, "/api/v1/people/{id}/tracking", &generated.SetPersonTrackingRequestOptions{PathParams: &generated.SetPersonTrackingPath{ID: a.PersonID}, Body: &generated.SetPersonTrackingBody{Tracked: a.Tracked}}, factClassify, http.StatusOK)

@@ -238,6 +238,78 @@ func TestPersonFactPinHTTPUsesAPIActorAndReturnsOnlyFinalProjectionReferences(t 
 	assertions.Equal(http.StatusBadRequest, unknownField.Code, unknownField.Body.String())
 }
 
+func TestPersonFactPinHTTPVisibleOnlyRejectsSensitivityChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		beforeCatalog bool
+		visibleOnly   bool
+		status        int
+	}{
+		{"already sensitive", true, true, http.StatusBadRequest},
+		{"changed after catalog", false, true, http.StatusConflict},
+		{"native sensitive pin", true, false, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			_, wrapped := newIdentityLinkTestServer(t)
+			participant := wrapped.mustParticipant(t, "pin@example.test", "pin", "example.test")
+			person, _, err := wrapped.CreatePersonFromParticipant(participant)
+			requirements.NoError(err)
+			_, err = wrapped.SetPersonTrackingContext(t.Context(), person.ID, true)
+			requirements.NoError(err)
+			catalog, err := wrapped.BuildPersonFactCatalogContext(t.Context(), false)
+			requirements.NoError(err)
+			var target personfacts.TargetDescriptor
+			for _, item := range catalog.Targets {
+				if item.Slug == store.AttributeSlugPrimaryChannel {
+					target = item
+				}
+			}
+			requirements.NotEmpty(target.Key)
+			changing := &personFactSensitivityChangingStore{stubIdentityCacheStore: wrapped, changeAfterCatalog: !tc.beforeCatalog}
+			if tc.beforeCatalog {
+				requirements.NoError(changing.makeSensitive(t.Context()))
+			}
+			srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, changing, nil, testLogger())
+			path := fmt.Sprintf("/api/v1/people/%d/fact-pins/%s/%s", person.ID, target.Kind, target.Key)
+			if tc.visibleOnly {
+				path += "?visible_only=true"
+			}
+			response := doRequest(t, srv.Router(), http.MethodPut, path, []byte(`{"pinned":true}`), nil)
+			assertions.Equal(tc.status, response.Code, response.Body.String())
+			pins, err := wrapped.ListPersonFactPinsContext(t.Context(), person.ID)
+			requirements.NoError(err)
+			var pinned bool
+			for _, pin := range pins {
+				if pin.Target.Key == target.Key {
+					pinned = pin.Pinned
+				}
+			}
+			assertions.Equal(tc.status == http.StatusOK, pinned)
+		})
+	}
+}
+
+type personFactSensitivityChangingStore struct {
+	*stubIdentityCacheStore
+
+	changeAfterCatalog bool
+}
+
+func (s *personFactSensitivityChangingStore) makeSensitive(ctx context.Context) error {
+	_, err := s.DB().ExecContext(ctx, s.Rebind(`UPDATE attribute_definitions SET is_sensitive = TRUE WHERE slug = ?`), store.AttributeSlugPrimaryChannel)
+	return err
+}
+
+func (s *personFactSensitivityChangingStore) BuildPersonFactCatalogContext(ctx context.Context, includeSensitive bool) (personfacts.Catalog, error) {
+	catalog, err := s.stubIdentityCacheStore.BuildPersonFactCatalogContext(ctx, includeSensitive)
+	if err == nil && s.changeAfterCatalog {
+		err = s.makeSensitive(ctx)
+	}
+	return catalog, err
+}
+
 func TestPersonFactHTTPMapsInvalidMissingConflictAndUnavailable(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

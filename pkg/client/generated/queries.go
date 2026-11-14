@@ -1127,6 +1127,11 @@ type ListPersonFactEvidenceStatusEventsQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type SetPersonFactPinQuery struct {
+	// VisibleOnly Reject sensitive and retired targets
+	VisibleOnly *bool `json:"visible_only,omitempty"`
+}
+
 type ListPersonMergesQuery struct {
 	// Limit Maximum results
 	Limit *int64 `json:"limit,omitempty"`

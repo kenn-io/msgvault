@@ -29514,6 +29514,11 @@ paths:
           required: true
           schema:
             type: string
+        - description: Reject sensitive and retired targets
+          in: query
+          name: visible_only
+          schema:
+            type: boolean
       requestBody:
         content:
           application/json:

@@ -432,6 +432,7 @@ import type {
   SetPersonAttributePathParameters,
   SetPersonAttributeRequest,
   SetPersonBriefEnrollmentPathParameters,
+  SetPersonFactPinParams,
   SetPersonFactPinPathParameters,
   SetPersonFactPinRequest,
   SetPersonTrackingPathParameters,
@@ -3402,6 +3403,7 @@ export const listPersonFactPins = (
 export const setPersonFactPin = (
   { id, kind, key }: SetPersonFactPinPathParameters,
   setPersonFactPinRequest: SetPersonFactPinRequest,
+  params?: SetPersonFactPinParams,
   options?: SecondParameter<typeof orvalFetch<PersonFactPinWrite>>,
 ) => {
   return orvalFetch<PersonFactPinWrite>(
@@ -3410,6 +3412,7 @@ export const setPersonFactPin = (
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       data: setPersonFactPinRequest,
+      params,
     },
     options,
   );

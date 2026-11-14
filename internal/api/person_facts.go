@@ -221,6 +221,7 @@ func (s *Server) registerPersonFactRoutes(api huma.API) {
 		&huma.Param{Name: "key", In: personFactPathParameterLocation, Required: true,
 			Description: "Exact person fact target key",
 			Schema:      &huma.Schema{Type: huma.TypeString}},
+		queryBooleanParam("visible_only", "Reject sensitive and retired targets"),
 	)
 	setPin.RequestBody = jsonRequestBodyFor[SetPersonFactPinRequest](api)
 	setPin.Responses = jsonResponsesFor[PersonFactPinWrite](api)
@@ -424,7 +425,12 @@ func (s *Server) handleSetPersonFactPin(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "bad_request", "pinned must be a boolean")
 		return
 	}
-	catalog, err := facts.BuildPersonFactCatalogContext(r.Context(), true)
+	visibleOnly, _, err := queryBool(r, "visible_only")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
+	catalog, err := facts.BuildPersonFactCatalogContext(r.Context(), !visibleOnly)
 	if err != nil {
 		s.writePersonFactError(w, err)
 		return
