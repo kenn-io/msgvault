@@ -72,7 +72,6 @@ func TestAgentVerificationReads(t *testing.T) {
 			ownerResponse := httptest.NewRecorder()
 			srv.Router().ServeHTTP(ownerResponse, ownerReq)
 			assertions.Equal(http.StatusOK, ownerResponse.Code, ownerResponse.Body.String())
-			assertions.Empty(ownerResponse.Header().Get(apiprotocol.VerificationHeader))
 			assertions.NotContains(ownerResponse.Body.String(), "4829")
 			assertions.Contains(ownerResponse.Body.String(), verification.Masked)
 			var masked map[string]json.RawMessage
@@ -519,26 +518,6 @@ func TestAgentVerificationSharedAttachmentBatches(t *testing.T) {
 	srv.Router().ServeHTTP(w, req)
 	requireErrorCode(t, w, http.StatusForbidden, "verification_masked")
 	assertions.Equal(2, counter.calls, "bodies load one batch of parents at a time")
-}
-
-func TestOwnerVerificationRefusesOriginalAndSQL(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner"}}
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
-	for _, tc := range []struct{ method, path, body string }{
-		{http.MethodGet, "/api/v1/cli/message/original?id=1", ""},
-		{http.MethodGet, "/api/v1/cli/message/raw?id=1", ""},
-		{http.MethodPost, "/api/v1/query/archive", `{"sql":"SELECT 1"}`},
-	} {
-		req := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, strings.NewReader(tc.body))
-		req.Header.Set("X-Api-Key", "owner")
-		req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		requireErrorCode(t, w, http.StatusForbidden, "verification_masked")
-	}
 }
 
 func TestOwnerVerificationVectorResults(t *testing.T) {

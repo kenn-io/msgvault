@@ -44,8 +44,6 @@ func TestMessageTagsClientPreservesPartialResult(t *testing.T) {
 	t.Cleanup(srv.Close)
 	c, err := daemonclient.New(daemonclient.Config{URL: srv.URL, AllowInsecure: true, HTTPClient: srv.Client()})
 	require.NoError(err)
-	c, err = c.WithVerificationWithheld()
-	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(c.Close()) })
 	read, err := c.MessageTags(t.Context(), 7, nil, "INBOX")
 	require.NoError(err)

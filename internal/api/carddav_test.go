@@ -1401,10 +1401,13 @@ func TestCardDAVPublicationPreviewAndApprovalRoutes(t *testing.T) {
 	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
 	assert.JSONEq(`{"person_id":7,"address_book":{"id":2,"name":"Personal"},"kind":"conflict","vcard":"BEGIN:VCARD\r\nEND:VCARD\r\n","approval_token":"token-1","review_required":true,"conflict_id":3}`, resp.Body.String())
 
-	resp = cardDAVRouteResponse(t, service, http.MethodPost, "/api/v1/carddav/publications/7/approve", `{"approval_token":"token-1"}`, true)
-	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
-	assert.Equal("token-1", approved)
-	assert.JSONEq(`{"person_id":7,"state":"conflict","desired":true,"conflict_id":3}`, resp.Body.String())
+	for _, withhold := range []bool{false, true} {
+		approved = ""
+		resp = cardDAVRouteResponse(t, service, http.MethodPost, "/api/v1/carddav/publications/7/approve", `{"approval_token":"token-1"}`, withhold)
+		require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+		assert.Equal("token-1", approved)
+		assert.JSONEq(`{"person_id":7,"state":"conflict","desired":true,"conflict_id":3}`, resp.Body.String())
+	}
 
 	resp = cardDAVRouteResponse(t, service, http.MethodPost, "/api/v1/carddav/publications/7/approve", `{"approval_token":""}`)
 	assert.Equal(http.StatusBadRequest, resp.Code, resp.Body.String())
@@ -1660,11 +1663,13 @@ func (f *cardDAVSyncOptionsFixture) Sync(_ context.Context, options carddav.Sync
 
 func TestCardDAVSyncRouteMarksRunManual(t *testing.T) {
 	t.Parallel()
-	service := &cardDAVSyncOptionsFixture{}
-	resp := cardDAVRouteResponse(t, service, http.MethodPost, "/api/v1/carddav/sync", `{"full":true}`, true)
-	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
-	assert.True(t, service.options.Full)
-	assert.Equal(t, store.CardDAVSyncTriggerManual, service.options.Trigger)
+	for _, withhold := range []bool{false, true} {
+		service := &cardDAVSyncOptionsFixture{}
+		resp := cardDAVRouteResponse(t, service, http.MethodPost, "/api/v1/carddav/sync", `{"full":true}`, withhold)
+		require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+		assert.True(t, service.options.Full)
+		assert.Equal(t, store.CardDAVSyncTriggerManual, service.options.Trigger)
+	}
 }
 
 func TestCardDAVPublicationStateRouteRequiresAuthAndReturnsState(t *testing.T) {

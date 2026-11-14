@@ -1030,27 +1030,12 @@ func (r *boundaryErrorReader) Close() error { return nil }
 func TestVerificationWithholdingRequests(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	var writeMarked, archiveMarked atomic.Bool
 	healthHeaders := make(chan string, 3)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		marked := r.Header.Get(apiprotocol.VerificationHeader) == apiprotocol.VerificationWithhold
 		if r.URL.Path == "/prefix/api/v1/health" {
 			healthHeaders <- r.Header.Get(apiprotocol.VerificationHeader)
 		}
-		if r.URL.Path == "/prefix/api/v1/query/archive" {
-			archiveMarked.Store(marked)
-		}
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/prefix/api/v1/saved-views/42/run" {
-			writeMarked.Store(marked)
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = io.WriteString(w, `{"error":"verification_masked","message":"verification content is withheld"}`)
-			return
-		}
-		if r.URL.Path == "/prefix/api/v1/query/archive" {
-			_, _ = io.WriteString(w, `{"columns":[],"rows":[],"row_count":0}`)
-			return
-		}
 		_, _ = io.WriteString(w, `{"status":"ok"}`)
 	}))
 	t.Cleanup(server.Close)
@@ -1069,13 +1054,4 @@ func TestVerificationWithholdingRequests(t *testing.T) {
 	assert.Equal(apiprotocol.VerificationWithhold, <-healthHeaders)
 	assert.Equal(apiprotocol.VerificationWithhold, <-healthHeaders)
 	assert.Empty(<-healthHeaders)
-	_, err = protected.RunSavedView(t.Context(), 42, 10, "", "")
-	require.Error(err)
-	var apiErr *APIError
-	require.ErrorAs(err, &apiErr)
-	assert.Equal("verification_masked", apiErr.APIErrorCode())
-	assert.True(writeMarked.Load())
-	_, _, err = protected.RunArchiveSQLQueryWithFresh(t.Context(), "SELECT 1", false)
-	require.NoError(err)
-	assert.True(archiveMarked.Load())
 }

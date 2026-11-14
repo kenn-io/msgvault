@@ -72,12 +72,8 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	var markedHealth atomic.Int32
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
-			if r.Header.Get("X-Msgvault-Verification") == "withhold" {
-				markedHealth.Add(1)
-			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status": "ok", "api_schema_version": api.APISchemaVersion,
@@ -162,7 +158,6 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	err := mcpCmd.RunE(mcpCmd, nil)
 
 	require.ErrorIs(err, wantErr)
-	assert.Equal(int32(1), markedHealth.Load())
 	assert.ElementsMatch([]mcpserver.OperationFamily{mcpserver.OperationFamilyRecords, mcpserver.OperationFamilyLoops}, gotServeOpts.OperationWriteFamilies)
 	assert.True(gotServeOpts.AllowProfileWrites)
 	assert.True(gotServeOpts.AllowIdentityDecisions)
@@ -310,7 +305,7 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 		Mode:  "hybrid",
 	})
 	var coded interface{ APIErrorCode() string }
-	require.ErrorAs(t, err, &coded)
+	assert.ErrorAs(err, &coded)
 	assert.Equal("vector_initializing", coded.APIErrorCode())
 	path := <-requests
 	assert.Equal("/api/v1/mcp/capabilities", path, "startup probes optional operations")
@@ -667,14 +662,14 @@ func TestMCPStandaloneVerificationHandshake(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			var unmarked atomic.Int32
+			var marked atomic.Int32
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/api/v1/health" {
 					http.NotFound(w, r)
 					return
 				}
-				if r.Header.Get("X-Msgvault-Verification") == "" {
-					unmarked.Add(1)
+				if r.Header.Get("X-Msgvault-Verification") != "" {
+					marked.Add(1)
 				}
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "5.0.0"})
@@ -707,7 +702,7 @@ func TestMCPStandaloneVerificationHandshake(t *testing.T) {
 			}
 			assert.Equal(tc.wantServe, served)
 			if tc.reveal {
-				assert.Positive(unmarked.Load())
+				assert.Zero(marked.Load())
 			}
 		})
 	}

@@ -56,121 +56,125 @@ func (s *corruptPersonMergeSnapshotStore) GetPersonMergeSnapshotContext(
 
 func TestPersonMergeHTTPMergeInspectDecideAndSplit(t *testing.T) {
 	t.Parallel()
-	require := require.New(t)
-	assert := assert.New(t)
-	ctx := t.Context()
-	srv, st := newIdentityLinkTestServer(t)
-	survivorParticipant := st.mustParticipant(t,
-		"merge-api-survivor@example.com", "Merge Survivor", "example.com")
-	absorbedParticipant := st.mustParticipant(t,
-		"merge-api-absorbed@example.com", "Merge Absorbed", "example.com")
-	survivor, _, err := st.CreatePersonFromParticipant(survivorParticipant)
-	require.NoError(err)
-	absorbed, _, err := st.CreatePersonFromParticipant(absorbedParticipant)
-	require.NoError(err)
-	for personID, value := range map[int64]string{
-		survivor.ID: "email", absorbed.ID: "chat",
-	} {
-		_, err = st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
-			PersonID: personID, DefinitionSlug: store.AttributeSlugPrimaryChannel,
-			Value:  store.AttributeValue{Type: store.AttributeValueText, Text: &value},
-			Source: store.ProvenanceUser,
+	for _, withhold := range []bool{false, true} {
+		t.Run(fmt.Sprint(withhold), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			ctx := t.Context()
+			srv, st := newIdentityLinkTestServer(t)
+			survivorParticipant := st.mustParticipant(t,
+				"merge-api-survivor@example.com", "Merge Survivor", "example.com")
+			absorbedParticipant := st.mustParticipant(t,
+				"merge-api-absorbed@example.com", "Merge Absorbed", "example.com")
+			survivor, _, err := st.CreatePersonFromParticipant(survivorParticipant)
+			require.NoError(err)
+			absorbed, _, err := st.CreatePersonFromParticipant(absorbedParticipant)
+			require.NoError(err)
+			for personID, value := range map[int64]string{
+				survivor.ID: "email", absorbed.ID: "chat",
+			} {
+				_, err = st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
+					PersonID: personID, DefinitionSlug: store.AttributeSlugPrimaryChannel,
+					Value:  store.AttributeValue{Type: store.AttributeValueText, Text: &value},
+					Source: store.ProvenanceUser,
+				})
+				require.NoError(err)
+			}
+			survivor, err = st.GetPersonContext(ctx, survivor.ID)
+			require.NoError(err)
+			absorbed, err = st.GetPersonContext(ctx, absorbed.ID)
+			require.NoError(err)
+
+			headers := map[string]string{"If-Match": fmt.Sprintf(`%s, %s`, personETag(*survivor), personETag(*absorbed)), "Idempotency-Key": "merge-api-operation"}
+			if withhold {
+				headers[apiprotocol.VerificationHeader] = apiprotocol.VerificationWithhold
+			}
+			mergedResponse := personMergeAPIRequest(t, srv, http.MethodPost,
+				fmt.Sprintf("/api/v1/people/%d/merge", survivor.ID),
+				fmt.Appendf(nil, `{"absorbed_person_id":%d}`, absorbed.ID),
+				headers)
+			require.Equal(http.StatusOK, mergedResponse.Code, mergedResponse.Body.String())
+			var merged struct {
+				store.PersonMergeResult
+
+				IdentityRevision int64  `json:"identity_revision"`
+				CacheState       string `json:"cache_state"`
+			}
+			require.NoError(json.Unmarshal(mergedResponse.Body.Bytes(), &merged))
+			assert.Equal(survivor.ID, merged.Person.ID)
+			require.Len(merged.ReviewCandidates, 1)
+			assert.Positive(merged.IdentityRevision)
+			assert.Equal(identityCacheStateReady, merged.CacheState)
+			assert.Equal(1, st.refreshCalls)
+			assert.Equal(personETag(merged.Person), mergedResponse.Header().Get("ETag"))
+			assert.Equal("no-store", mergedResponse.Header().Get("Cache-Control"))
+
+			listResponse := personMergeAPIRequest(t, srv, http.MethodGet,
+				fmt.Sprintf("/api/v1/people/%d/merges", survivor.ID), nil, nil)
+			require.Equal(http.StatusOK, listResponse.Code, listResponse.Body.String())
+			var listed struct {
+				Merges []store.PersonMergeSummary `json:"merges"`
+			}
+			require.NoError(json.Unmarshal(listResponse.Body.Bytes(), &listed))
+			require.Len(listed.Merges, 1)
+			assert.Equal(merged.Merge.ID, listed.Merges[0].Merge.ID)
+			require.NotEmpty(listed.Merges[0].Labels.Profiles)
+
+			detailResponse := personMergeAPIRequest(t, srv, http.MethodGet,
+				fmt.Sprintf("/api/v1/person-merges/%d", merged.Merge.ID), nil, nil)
+			require.Equal(http.StatusOK, detailResponse.Code, detailResponse.Body.String())
+			var detail store.PersonMergeDetail
+			require.NoError(json.Unmarshal(detailResponse.Body.Bytes(), &detail))
+			assert.Equal(merged.Merge.ID, detail.Merge.ID)
+			assert.NotEmpty(detail.Rows)
+			require.NotEmpty(detail.Labels.Profiles)
+
+			snapshotResponse := personMergeAPIRequest(t, srv, http.MethodGet,
+				fmt.Sprintf("/api/v1/person-merges/%d/snapshot", merged.Merge.ID), nil, nil)
+			require.Equal(http.StatusOK, snapshotResponse.Code, snapshotResponse.Body.String())
+			assert.Equal("no-store", snapshotResponse.Header().Get("Cache-Control"))
+			assert.Equal("application/json", snapshotResponse.Header().Get("Content-Type"))
+			var snapshot store.PersonMergeSnapshotResponse
+			require.NoError(json.Unmarshal(snapshotResponse.Body.Bytes(), &snapshot))
+			assert.Equal(merged.Merge.SnapshotSHA256, snapshot.SHA256)
+			assert.NotEmpty(snapshot.JSON)
+
+			decisionResponse := personMergeAPIRequest(t, srv, http.MethodPost,
+				fmt.Sprintf("/api/v1/person-merge-candidates/%d/decision", merged.ReviewCandidates[0].ID),
+				fmt.Appendf(nil, `{"person_id":%d,"decision":"reject"}`, merged.Person.ID),
+				map[string]string{"If-Match": personETag(merged.Person)})
+			require.Equal(http.StatusOK, decisionResponse.Code, decisionResponse.Body.String())
+			var decided store.PersonMergeReviewCandidate
+			require.NoError(json.Unmarshal(decisionResponse.Body.Bytes(), &decided))
+			assert.Equal("rejected", decided.State)
+			assert.NotEqual(personETag(merged.Person), decisionResponse.Header().Get("ETag"))
+
+			current, err := st.GetPersonContext(ctx, merged.Person.ID)
+			require.NoError(err)
+			st.refreshErr = errors.New("cache refresh failed")
+			splitResponse := personMergeAPIRequest(t, srv, http.MethodPost,
+				fmt.Sprintf("/api/v1/people/%d/split", current.ID),
+				fmt.Appendf(nil, `{"merge_id":%d,"participant_ids":[%d]}`,
+					merged.Merge.ID, absorbedParticipant),
+				map[string]string{
+					"If-Match": personETag(*current), "Idempotency-Key": "split-api-operation",
+				})
+			require.Equal(http.StatusOK, splitResponse.Code, splitResponse.Body.String())
+			var split struct {
+				store.PersonSplitResult
+
+				IdentityRevision int64  `json:"identity_revision"`
+				CacheState       string `json:"cache_state"`
+			}
+			require.NoError(json.Unmarshal(splitResponse.Body.Bytes(), &split))
+			assert.True(split.ExactReversal)
+			assert.Greater(split.IdentityRevision, merged.IdentityRevision)
+			assert.Equal(identityCacheStateStale, split.CacheState)
+			assert.Equal(2, st.refreshCalls)
+			assert.Equal(personETag(split.SourcePerson), splitResponse.Header().Get("ETag"))
+			assert.Equal(personETag(split.NewPerson), splitResponse.Header().Get(newPersonETagHeaderName))
 		})
-		require.NoError(err)
 	}
-	survivor, err = st.GetPersonContext(ctx, survivor.ID)
-	require.NoError(err)
-	absorbed, err = st.GetPersonContext(ctx, absorbed.ID)
-	require.NoError(err)
-
-	mergedResponse := personMergeAPIRequest(t, srv, http.MethodPost,
-		fmt.Sprintf("/api/v1/people/%d/merge", survivor.ID),
-		fmt.Appendf(nil, `{"absorbed_person_id":%d}`, absorbed.ID),
-		map[string]string{
-			"If-Match":                     fmt.Sprintf(`%s, %s`, personETag(*survivor), personETag(*absorbed)),
-			"Idempotency-Key":              "merge-api-operation",
-			apiprotocol.VerificationHeader: apiprotocol.VerificationWithhold,
-		})
-	require.Equal(http.StatusOK, mergedResponse.Code, mergedResponse.Body.String())
-	var merged struct {
-		store.PersonMergeResult
-
-		IdentityRevision int64  `json:"identity_revision"`
-		CacheState       string `json:"cache_state"`
-	}
-	require.NoError(json.Unmarshal(mergedResponse.Body.Bytes(), &merged))
-	assert.Equal(survivor.ID, merged.Person.ID)
-	require.Len(merged.ReviewCandidates, 1)
-	assert.Positive(merged.IdentityRevision)
-	assert.Equal(identityCacheStateReady, merged.CacheState)
-	assert.Equal(1, st.refreshCalls)
-	assert.Equal(personETag(merged.Person), mergedResponse.Header().Get("ETag"))
-	assert.Equal("no-store", mergedResponse.Header().Get("Cache-Control"))
-
-	listResponse := personMergeAPIRequest(t, srv, http.MethodGet,
-		fmt.Sprintf("/api/v1/people/%d/merges", survivor.ID), nil, nil)
-	require.Equal(http.StatusOK, listResponse.Code, listResponse.Body.String())
-	var listed struct {
-		Merges []store.PersonMergeSummary `json:"merges"`
-	}
-	require.NoError(json.Unmarshal(listResponse.Body.Bytes(), &listed))
-	require.Len(listed.Merges, 1)
-	assert.Equal(merged.Merge.ID, listed.Merges[0].Merge.ID)
-	require.NotEmpty(listed.Merges[0].Labels.Profiles)
-
-	detailResponse := personMergeAPIRequest(t, srv, http.MethodGet,
-		fmt.Sprintf("/api/v1/person-merges/%d", merged.Merge.ID), nil, nil)
-	require.Equal(http.StatusOK, detailResponse.Code, detailResponse.Body.String())
-	var detail store.PersonMergeDetail
-	require.NoError(json.Unmarshal(detailResponse.Body.Bytes(), &detail))
-	assert.Equal(merged.Merge.ID, detail.Merge.ID)
-	assert.NotEmpty(detail.Rows)
-	require.NotEmpty(detail.Labels.Profiles)
-
-	snapshotResponse := personMergeAPIRequest(t, srv, http.MethodGet,
-		fmt.Sprintf("/api/v1/person-merges/%d/snapshot", merged.Merge.ID), nil, nil)
-	require.Equal(http.StatusOK, snapshotResponse.Code, snapshotResponse.Body.String())
-	assert.Equal("no-store", snapshotResponse.Header().Get("Cache-Control"))
-	assert.Equal("application/json", snapshotResponse.Header().Get("Content-Type"))
-	var snapshot store.PersonMergeSnapshotResponse
-	require.NoError(json.Unmarshal(snapshotResponse.Body.Bytes(), &snapshot))
-	assert.Equal(merged.Merge.SnapshotSHA256, snapshot.SHA256)
-	assert.NotEmpty(snapshot.JSON)
-
-	decisionResponse := personMergeAPIRequest(t, srv, http.MethodPost,
-		fmt.Sprintf("/api/v1/person-merge-candidates/%d/decision", merged.ReviewCandidates[0].ID),
-		fmt.Appendf(nil, `{"person_id":%d,"decision":"reject"}`, merged.Person.ID),
-		map[string]string{"If-Match": personETag(merged.Person)})
-	require.Equal(http.StatusOK, decisionResponse.Code, decisionResponse.Body.String())
-	var decided store.PersonMergeReviewCandidate
-	require.NoError(json.Unmarshal(decisionResponse.Body.Bytes(), &decided))
-	assert.Equal("rejected", decided.State)
-	assert.NotEqual(personETag(merged.Person), decisionResponse.Header().Get("ETag"))
-
-	current, err := st.GetPersonContext(ctx, merged.Person.ID)
-	require.NoError(err)
-	st.refreshErr = errors.New("cache refresh failed")
-	splitResponse := personMergeAPIRequest(t, srv, http.MethodPost,
-		fmt.Sprintf("/api/v1/people/%d/split", current.ID),
-		fmt.Appendf(nil, `{"merge_id":%d,"participant_ids":[%d]}`,
-			merged.Merge.ID, absorbedParticipant),
-		map[string]string{
-			"If-Match": personETag(*current), "Idempotency-Key": "split-api-operation",
-		})
-	require.Equal(http.StatusOK, splitResponse.Code, splitResponse.Body.String())
-	var split struct {
-		store.PersonSplitResult
-
-		IdentityRevision int64  `json:"identity_revision"`
-		CacheState       string `json:"cache_state"`
-	}
-	require.NoError(json.Unmarshal(splitResponse.Body.Bytes(), &split))
-	assert.True(split.ExactReversal)
-	assert.Greater(split.IdentityRevision, merged.IdentityRevision)
-	assert.Equal(identityCacheStateStale, split.CacheState)
-	assert.Equal(2, st.refreshCalls)
-	assert.Equal(personETag(split.SourcePerson), splitResponse.Header().Get("ETag"))
-	assert.Equal(personETag(split.NewPerson), splitResponse.Header().Get(newPersonETagHeaderName))
 }
 
 func TestPersonMergeHTTPCandidateDecisionUsesAtomicRevision(t *testing.T) {

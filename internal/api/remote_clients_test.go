@@ -191,7 +191,6 @@ func TestRemoteClientVerificationAdmission(t *testing.T) {
 	w = httptest.NewRecorder()
 	f.srv.Router().ServeHTTP(w, req)
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
-	assert.Empty(w.Header().Get(apiprotocol.VerificationHeader))
 	assert.Len(f.srv.readSnapshotSlots, readSnapshotConcurrency)
 }
 

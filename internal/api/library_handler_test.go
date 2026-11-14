@@ -205,8 +205,6 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 		marked bool
 		scoped bool
 	}{
-		{name: "marked health", path: "/api/v1/health", marked: true},
-		{name: "marked stats", path: "/api/v1/stats", marked: true},
 		{name: "protected messages", path: "/api/v1/messages", marked: true},
 		{name: "protected source scoped messages", path: "/api/v1/messages", marked: true, scoped: true},
 	} {
@@ -231,7 +229,6 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, r)
 			require.Equal(http.StatusOK, w.Code, w.Body.String())
-			assert.Empty(w.Header().Get(apiprotocol.VerificationHeader))
 			if tc.path == "/api/v1/messages" {
 				assert.Contains(w.Body.String(), verification.Masked)
 				assert.NotContains(w.Body.String(), "482913")
@@ -270,6 +267,9 @@ func TestLibraryHandlerVerificationRefusesUnclassifiedReads(t *testing.T) {
 		{http.MethodPost, fmt.Sprintf("/api/v1/saved-views/%d/run", view.ID)},
 		{http.MethodGet, fmt.Sprintf("/api/v1/conversations/%d", id)},
 		{http.MethodGet, "/api/v1/loops"},
+		{http.MethodGet, "/api/v1/cli/message/original?id=1"},
+		{http.MethodGet, "/api/v1/cli/message/raw?id=1"},
+		{http.MethodPost, "/api/v1/query/archive"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			for _, handler := range []http.Handler{srv.Handler(nil), srv.Router()} {

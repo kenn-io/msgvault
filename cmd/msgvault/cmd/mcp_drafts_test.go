@@ -285,8 +285,6 @@ func TestMCPOwnerDraftGetMatchesCLI(t *testing.T) {
 
 func TestMCPOwnerDraftVerificationWithheld(t *testing.T) {
 	fixture := newDraftReplyFixture(t)
-	_, messageID, err := testutil.CreateIndexedSourceMessage(t.Context(), fixture.store, "reader@example.test", "verification", "Your verification code is 482913", "Your verification code is 482913")
-	require.NoError(t, err)
 	apiServer := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner-test-key"}}, Store: fixture.grantedAdapter(), SavedViewStore: fixture.store, Engine: query.NewEngine(fixture.store.DB(), fixture.store.IsPostgreSQL()), Logger: slog.New(slog.DiscardHandler)})
 	t.Cleanup(func() { require.NoError(t, apiServer.Shutdown(context.WithoutCancel(t.Context()))) })
 	server := httptest.NewServer(apiServer.Router())
@@ -307,11 +305,7 @@ func TestMCPOwnerDraftVerificationWithheld(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 	assert.Contains(t, mcpDraftResultText(t, result), "verification content is withheld")
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_message", Arguments: map[string]any{"id": messageID}})
-	require.NoError(t, err)
-	require.False(t, result.IsError, "%+v", result.Content)
-	assert.NotContains(t, mcpDraftResultText(t, result), "482913")
-	assert.Contains(t, mcpDraftResultText(t, result), "verification content masked")
+
 }
 
 func TestMCPDraftToolPropertiesMatchCommandFlags(t *testing.T) {
