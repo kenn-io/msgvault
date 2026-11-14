@@ -3443,7 +3443,7 @@ grant consent to a provider or enroll a person in briefs.
 
 On unreleased main, claim reads include `kind` (`fact`, `event`, `preference`)
 and `status` (`fresh`, `stale`, or `expired`). Kind comes from the claim's saved
-identity. The shipped primary channel, “ask me about,” interest, and favorites
+identity. The shipped primary channel, contact frequency, “ask me about,” interest, and favorites
 categories are preferences even if renamed. Custom attributes without an end
 date are facts. Other time-bounded claims are events, and employment claims
 remain facts regardless of an end date. Preference identity takes precedence.
