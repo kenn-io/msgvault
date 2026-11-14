@@ -3,14 +3,12 @@ package cmd
 import (
 	"bytes"
 	"context"
-	stdjson "encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -49,26 +47,11 @@ func approvalReadProxy(t *testing.T, backend *daemonMCPOperations) (*atomic.Bool
 			return
 		}
 		if armed.Load() && r.Method != http.MethodGet {
-			preview := false
-			if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/attributes") {
-				body, err := io.ReadAll(r.Body)
-				if err != nil {
-					assert.NoError(t, err)
-					http.Error(w, "invalid body", http.StatusBadRequest)
-					return
-				}
-				r.Body = io.NopCloser(bytes.NewReader(body))
-				var request struct {
-					DryRun bool `json:"dry_run"`
-				}
-				if err := stdjson.Unmarshal(body, &request); err != nil {
-					assert.NoError(t, err)
-					http.Error(w, "invalid body", http.StatusBadRequest)
-					return
-				}
-				preview = request.DryRun
-			}
-			if !preview {
+			// Attribute disclosures post native dry runs; count only real writes.
+			body, err := io.ReadAll(r.Body)
+			assert.NoError(t, err)
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			if !bytes.Contains(body, []byte(`"dry_run":true`)) {
 				writes.Add(1)
 			}
 		}
