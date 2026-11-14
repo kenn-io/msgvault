@@ -21,7 +21,7 @@ func mergeRecoveryCapabilities(has mcpRouteCheck, caps *apiprotocol.MCPCapabilit
 		return names
 	}
 	names = append(names, "get_person_merge")
-	if has("listPersonAttributes", http.MethodGet, "/api/v1/people/{id}/attributes", "history") && has("decidePersonMergeCandidate", http.MethodPost, "/api/v1/person-merge-candidates/{candidate_id}/decision") && mcpRequestPropertiesPresent(caps, "decidePersonMergeCandidate", "person_id", "decision") {
+	if has("listPersonAttributes", http.MethodGet, "/api/v1/people/{id}/attributes", "history", "slug") && has("decidePersonMergeCandidate", http.MethodPost, "/api/v1/person-merge-candidates/{candidate_id}/decision") && mcpRequestPropertiesPresent(caps, "decidePersonMergeCandidate", "person_id", "decision") {
 		names = append(names, "decide_person_merge_candidate")
 	}
 	if has("splitPersonMerge", http.MethodPost, "/api/v1/people/{id}/split") && mcpRequestPropertiesPresent(caps, "splitPersonMerge", "merge_id", "participant_ids") {
@@ -166,7 +166,8 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 	shown := struct {
 		Operation     string                    `json:"operation"`
 		Attribute     string                    `json:"attribute,omitempty"`
-		CurrentValue  *generated.AttributeValue `json:"current_value,omitempty"`
+		CurrentValue  *generated.AttributeValue `json:"current_value"`
+		SurvivorValue *generated.AttributeValue `json:"survivor_value,omitempty"`
 		AbsorbedValue *generated.AttributeValue `json:"absorbed_value,omitempty"`
 		Lineage       any                       `json:"lineage,omitempty"`
 		Changes       map[string]any            `json:"changes"`
@@ -184,28 +185,6 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 			return "", true, &mcpserver.OperationRefusalError{Code: "person_merge_candidate_not_found"}
 		}
 		candidate := merge.ReviewCandidates[i]
-		attrs, err := readMCPOperationJSON[generated.PersonAttributesResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/attributes", &generated.ListPersonAttributesRequestOptions{PathParams: &generated.ListPersonAttributesPath{ID: decision.PersonID}, Query: &generated.ListPersonAttributesQuery{History: new(true)}}, http.StatusOK)
-		response, ok := attrs.Output.(generated.PersonAttributesResponse)
-		if !ok {
-			return "", true, mergeContextRefusal(attrs, err)
-		}
-		for _, group := range response.Attributes {
-			if group.Definition.ID != candidate.DefinitionID {
-				continue
-			}
-			shown.Attribute = group.Definition.Label
-			for _, v := range append(group.Current, group.History...) {
-				if v.ID == candidate.SurvivorValueID {
-					shown.CurrentValue = &v.Value
-				}
-				if v.ID == candidate.AbsorbedValueID {
-					shown.AbsorbedValue = &v.Value
-				}
-			}
-		}
-		if shown.Attribute == "" || shown.CurrentValue == nil || shown.AbsorbedValue == nil {
-			return "", true, &mcpserver.OperationRefusalError{Code: "person_merge_candidate_state_changed"}
-		}
 		shown.Lineage = candidate
 		wanted := "rejected"
 		shown.Effect = "Keep the current value."
@@ -214,7 +193,50 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 			shown.Effect = "Replace the current value with the absorbed value; exact split becomes unavailable."
 		}
 		if candidate.State == wanted {
-			shown.Effect += " This decision has already been recorded; the daemon will replay it."
+			shown.Effect = "This decision has already been recorded; the daemon will replay it."
+		} else {
+			options := &generated.ListPersonAttributesRequestOptions{PathParams: &generated.ListPersonAttributesPath{ID: decision.PersonID}}
+			attrs, err := readMCPOperationJSON[generated.PersonAttributesResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/attributes", options, http.StatusOK)
+			response, ok := attrs.Output.(generated.PersonAttributesResponse)
+			if !ok {
+				return "", true, mergeContextRefusal(attrs, err)
+			}
+			var slug string
+			for _, group := range response.Attributes {
+				if group.Definition.ID == candidate.DefinitionID {
+					slug = group.Definition.Slug
+					break
+				}
+			}
+			if slug == "" {
+				return "", true, &mcpserver.OperationRefusalError{Code: "person_merge_candidate_state_changed"}
+			}
+			options.Query = &generated.ListPersonAttributesQuery{History: new(true), Slug: &slug}
+			attrs, err = readMCPOperationJSON[generated.PersonAttributesResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/attributes", options, http.StatusOK)
+			response, ok = attrs.Output.(generated.PersonAttributesResponse)
+			if !ok {
+				return "", true, mergeContextRefusal(attrs, err)
+			}
+			for _, group := range response.Attributes {
+				if group.Definition.ID != candidate.DefinitionID {
+					continue
+				}
+				shown.Attribute = group.Definition.Label
+				if len(group.Current) > 0 {
+					shown.CurrentValue = &group.Current[0].Value
+				}
+				for _, v := range append(group.Current, group.History...) {
+					if v.ID == candidate.SurvivorValueID {
+						shown.SurvivorValue = &v.Value
+					}
+					if v.ID == candidate.AbsorbedValueID {
+						shown.AbsorbedValue = &v.Value
+					}
+				}
+			}
+			if shown.Attribute == "" || shown.SurvivorValue == nil || shown.AbsorbedValue == nil {
+				return "", true, &mcpserver.OperationRefusalError{Code: "person_merge_candidate_state_changed"}
+			}
 		}
 	}
 	data, err := json.Marshal(shown, json.Deterministic(true))
