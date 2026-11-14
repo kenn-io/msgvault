@@ -37,10 +37,31 @@ func SecureRestored(dir string, restored []string) error {
 				return fmt.Errorf("secure restored token %q: %w", name, err)
 			}
 		}
-		if err := restorePreflight(dir, restored, ancestors); err != nil {
-			return err
-		}
+		var changed []string
 		for _, name := range ancestors {
+			h, err := openSecurityHandle(filepath.Join(dir, name), true, windows.READ_CONTROL)
+			if err != nil {
+				return fmt.Errorf("inspect restored token directory %q: %w", name, err)
+			}
+			err = verifyOwnerOnlyHandle(h, false)
+			windows.CloseHandle(h) //nolint:errcheck
+			if err != nil && !containsPath(changed, name) {
+				changed = append(changed, name)
+			}
+		}
+		rootChanged := verifyOwnerOnlyHandle(directory, false) != nil
+		if rootChanged {
+			changed = append(changed, ".")
+		}
+		for _, name := range changed {
+			if err := restorePreflight(dir, name, restored, ancestors); err != nil {
+				return err
+			}
+		}
+		for _, name := range changed {
+			if name == "." {
+				return secureOwnerOnlyHandle(directory)
+			}
 			h, err := openSecurityHandle(filepath.Join(dir, name), true, windows.READ_CONTROL|windows.WRITE_DAC)
 			if err != nil {
 				return fmt.Errorf("secure restored token directory %q: %w", name, err)
@@ -51,16 +72,17 @@ func SecureRestored(dir string, restored []string) error {
 				return fmt.Errorf("secure restored token directory %q: %w", name, err)
 			}
 		}
-		return secureOwnerOnlyHandle(directory)
+		return nil
 	})
 }
 
-func restorePreflight(dir string, selected, ancestors []string) error {
-	return filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
+func restorePreflight(dir, changed string, selected, ancestors []string) error {
+	root := filepath.Join(dir, changed)
+	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return fmt.Errorf("inspect tokens: %w", walkErr)
 		}
-		if path == dir {
+		if path == root {
 			return nil
 		}
 		rel, err := filepath.Rel(dir, path)
@@ -84,7 +106,7 @@ func restorePreflight(dir string, selected, ancestors []string) error {
 			return fmt.Errorf("inspect tokens/%s: %w", rel, err)
 		}
 		if containsPath(ancestors, rel) {
-			return nil
+			return fs.SkipDir
 		}
 		if entry.IsDir() && control&windows.SE_DACL_PROTECTED != 0 {
 			return fs.SkipDir
@@ -95,6 +117,9 @@ func restorePreflight(dir string, selected, ancestors []string) error {
 		}
 		if inherited {
 			return fmt.Errorf("%w: tokens/%s", ErrRestorePermissionsConflict, rel)
+		}
+		if entry.IsDir() {
+			return fs.SkipDir
 		}
 		return nil
 	})
