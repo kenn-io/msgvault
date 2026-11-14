@@ -193,6 +193,9 @@ type Dialect interface {
 
 	// FTSMatches reports whether the stored search document for
 	// doc.MessageID is exactly what FTSUpsert would write for doc.
+	// PostgreSQL compares the prepared vector, auxiliary fields and version;
+	// SQLite compares stored FTS5 text. An absent entry returns false, nil.
+	// Building the expected document can fail, including with overflow.
 	FTSMatches(q querier, doc FTSDoc) (bool, error)
 
 	// FTSSearchClause returns SQL fragments for full-text search using ?
