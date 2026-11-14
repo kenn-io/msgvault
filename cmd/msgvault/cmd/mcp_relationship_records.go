@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -90,29 +89,20 @@ func (b *daemonMCPOperations) executeRelationshipRecord(ctx context.Context, nam
 	case "get_person_network":
 		result, err := readMCPOperationJSON[generated.PersonNetwork](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/network", &generated.GetPersonNetworkRequestOptions{PathParams: &generated.GetPersonNetworkPath{ID: input.PersonID}, Query: &generated.GetPersonNetworkQuery{Depth: input.Depth, IncludeEnded: input.IncludeEnded}}, http.StatusOK)
 		return result, true, err
-	}
-	var method, path string
-	var options runtime.RequestOptions
-	switch name {
 	case "create_person_relationship":
-		method, path = http.MethodPost, "/api/v1/person-relationships"
-		options = &generated.CreatePersonRelationshipRequestOptions{Body: &generated.CreatePersonRelationshipBody{SourcePersonID: input.SourcePersonID, TargetPersonID: input.TargetPersonID, RelationshipTypeSlug: input.RelationshipTypeSlug, StartDate: input.StartDate, EndDate: input.EndDate, Notes: input.Notes}}
+		result, err := readMCPOperationJSON[generated.PersonRelationship](ctx, b.client, http.MethodPost, "/api/v1/person-relationships", &generated.CreatePersonRelationshipRequestOptions{Body: &generated.CreatePersonRelationshipBody{SourcePersonID: input.SourcePersonID, TargetPersonID: input.TargetPersonID, RelationshipTypeSlug: input.RelationshipTypeSlug, StartDate: input.StartDate, EndDate: input.EndDate, Notes: input.Notes}}, http.StatusCreated)
+		return result, true, err
 	case "update_person_relationship":
-		method, path = http.MethodPatch, "/api/v1/person-relationships/{id}"
-		options = &generated.PatchPersonRelationshipRequestOptions{PathParams: &generated.PatchPersonRelationshipPath{ID: input.ID}, Header: &generated.PatchPersonRelationshipHeaders{IfMatch: personRelationshipETag(input.ID, input.Revision)}, Body: &generated.PatchPersonRelationshipBody{EndDate: input.EndDate, Notes: input.Notes}}
+		result, err := readMCPOperationJSON[generated.PersonRelationship](ctx, b.client, http.MethodPatch, "/api/v1/person-relationships/{id}", &generated.PatchPersonRelationshipRequestOptions{PathParams: &generated.PatchPersonRelationshipPath{ID: input.ID}, Header: &generated.PatchPersonRelationshipHeaders{IfMatch: personRelationshipETag(input.ID, input.Revision)}, Body: &generated.PatchPersonRelationshipBody{EndDate: input.EndDate, Notes: input.Notes}}, http.StatusOK)
+		return result, true, err
 	case "delete_person_relationship":
-		method, path = http.MethodDelete, "/api/v1/person-relationships/{id}"
-		options = &generated.DeletePersonRelationshipRequestOptions{PathParams: &generated.DeletePersonRelationshipPath{ID: input.ID}, Header: &generated.DeletePersonRelationshipHeaders{IfMatch: personRelationshipETag(input.ID, input.Revision)}}
-	}
-	if method == http.MethodDelete {
-		_, _, failure, err := readMCPOperationBytes(ctx, b.client, method, path, options, 1<<20, nil, http.StatusNoContent)
+		_, _, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodDelete, "/api/v1/person-relationships/{id}", &generated.DeletePersonRelationshipRequestOptions{PathParams: &generated.DeletePersonRelationshipPath{ID: input.ID}, Header: &generated.DeletePersonRelationshipHeaders{IfMatch: personRelationshipETag(input.ID, input.Revision)}}, 1<<20, nil, http.StatusNoContent)
 		if failure != nil || err != nil {
 			return failure, true, err
 		}
 		return &mcpserver.OperationResult{Output: mcpserver.RelationshipDeletion{Deleted: true}}, true, nil
 	}
-	result, err := readMCPOperationJSON[generated.PersonRelationship](ctx, b.client, method, path, options, http.StatusOK, http.StatusCreated)
-	return result, true, err
+	return nil, false, nil
 }
 
 func (b *daemonMCPOperations) relationshipDisclosure(ctx context.Context, name string, args map[string]any) (string, bool, error) {

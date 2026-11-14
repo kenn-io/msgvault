@@ -7,6 +7,8 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+const OperationFamilyRelationshipRecords OperationFamily = "relationship_records"
+
 type RelationshipDeletion struct {
 	Deleted bool `json:"deleted"`
 }
