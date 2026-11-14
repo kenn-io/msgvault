@@ -92,10 +92,6 @@ func (b *daemonMCPOperations) executeOrganizationOperation(ctx context.Context, 
 	return result, true, err
 }
 
-func organizationRecord(etag string, profile generated.OrganizationProfile) mcpserver.OrganizationRecord {
-	return mcpserver.OrganizationRecord{ETag: etag, Profile: &profile}
-}
-
 type organizationRequest struct {
 	method, path string
 	options      runtime.RequestOptions
@@ -197,13 +193,13 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 			result = nil
 		}
 		if err != nil || result == nil || result.IsError {
-			return "", true, operationContext(result, "", "", nativeDefiniteRefusal)
+			return "", true, operationReadFailure(result, nativeDefiniteRefusal)
 		}
 		var profile generated.OrganizationProfile
 		if err := json.Unmarshal(result.Data, &profile); err != nil {
 			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 		}
-		current = organizationRecord(result.ETag, profile)
+		current = mcpserver.OrganizationRecord{ETag: result.ETag, Profile: &profile}
 	}
 	if name == "set_organization_attribute" {
 		switch options := r.options.(type) {
@@ -218,7 +214,7 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 			result = nil
 		}
 		if err != nil || result == nil || result.IsError {
-			return "", true, operationContext(result, "", "", nativeDefiniteRefusal)
+			return "", true, operationReadFailure(result, nativeDefiniteRefusal)
 		}
 		write, ok := result.Output.(generated.OrganizationAttributeWrite)
 		if !ok {

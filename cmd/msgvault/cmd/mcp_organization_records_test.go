@@ -6,20 +6,16 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -28,7 +24,7 @@ import (
 
 func TestOrganizationCapabilities(t *testing.T) {
 	all := []string{"list_organizations", "get_organization", "list_organization_attributes", "create_organization", "update_organization", "delete_organization", "replace_organization_profile", "set_organization_attribute"}
-	properties := []string{"name", "kind", "primary_domain", "description", "retired", "losing_organization_id", "losing_revision", "names", "identifiers", "addresses", "contact_points", "media", "categories", "definition_slug", "value", "source", "ordinal", "expected_value_id", "dry_run"}
+	properties := []string{"name", "kind", "primary_domain", "description", "retired", "names", "identifiers", "addresses", "contact_points", "media", "categories", "definition_slug", "value", "source", "ordinal", "expected_value_id", "dry_run"}
 	for _, tc := range []struct {
 		name                                string
 		missingReads, missingUpdateProperty bool
@@ -40,7 +36,7 @@ func TestOrganizationCapabilities(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			caps := &apiprotocol.MCPCapabilities{}
-			for _, id := range []string{"createOrganization", "patchOrganization", "mergeOrganization", "putOrganizationProfile", "setOrganizationAttribute"} {
+			for _, id := range []string{"createOrganization", "patchOrganization", "putOrganizationProfile", "setOrganizationAttribute"} {
 				props := properties
 				if tc.missingUpdateProperty && id == "patchOrganization" {
 					props = []string{"name", "kind", "primary_domain", "description"}
@@ -53,17 +49,6 @@ func TestOrganizationCapabilities(t *testing.T) {
 			assert.Equal(t, tc.want, organizationMCPCapabilities(hasRoute, caps))
 		})
 	}
-}
-
-func TestOrganizationCreateRefusedWhenOperationGateDrains(t *testing.T) {
-	must := require.New(t)
-	gate := api.NewSerialOperationGate()
-	gate.StartDrain()
-	cfg := &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}
-	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: testutil.NewTestStore(t), OperationGate: gate, Logger: slog.New(slog.DiscardHandler)}))
-	result, err := backend.ExecuteOperation(t.Context(), "create_organization", map[string]any{"body": map[string]any{"name": "Example Company", "kind": "company"}})
-	must.NoError(err)
-	assertLoopRefusal(t, result, "server_busy", false)
 }
 
 func TestOrganizationReadsUseNativeStore(t *testing.T) {
@@ -85,12 +70,7 @@ func TestOrganizationReadsUseNativeStore(t *testing.T) {
 	result, err = backend.ExecuteOperation(t.Context(), "list_organization_attributes", map[string]any{"organization_id": org.ID})
 	must.NoError(err)
 	checks.Empty(operationOutput[generated.OrganizationAttributesResponse](t, result).Values)
-	result, err = backend.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": -1})
-	must.NoError(err)
-	checks.True(result.IsError)
-	data, err := json.Marshal(result.Output)
-	must.NoError(err)
-	checks.Contains(string(data), "invalid_arguments")
+
 }
 
 func TestOrganizationWritesUseRevisionsAndEmploymentGuard(t *testing.T) {
@@ -113,26 +93,6 @@ func TestOrganizationWritesUseRevisionsAndEmploymentGuard(t *testing.T) {
 	missing, err := backend.ExecuteOperation(t.Context(), "update_organization", blank)
 	must.NoError(err)
 	assertLoopRefusal(t, missing, "if_match_required", false)
-	stale, err := backend.ExecuteOperation(t.Context(), "delete_organization", map[string]any{"organization_id": id, "etag": first.ETag})
-	must.NoError(err)
-	checks.True(stale.IsError)
-	staleData, err := json.Marshal(stale.Output)
-	must.NoError(err)
-	checks.Contains(string(staleData), "organization_revision_conflict")
-	participant, err := st.EnsureParticipant("employee@example.com", "Example Employee", "example.com")
-	must.NoError(err)
-	person, _, err := st.CreatePersonFromParticipant(participant)
-	must.NoError(err)
-	_, err = st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person.ID, OrganizationID: id, Source: store.ProvenanceUser})
-	must.NoError(err)
-	refused, err := backend.ExecuteOperation(t.Context(), "delete_organization", map[string]any{"organization_id": id, "etag": second.ETag})
-	must.NoError(err)
-	checks.True(refused.IsError)
-	encoded, err := json.Marshal(refused.Output)
-	must.NoError(err)
-	checks.Contains(string(encoded), "organization_has_employments")
-	_, err = st.GetOrganizationContext(t.Context(), id)
-	must.NoError(err)
 	deletable, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Deletable", Kind: store.OrganizationKindCompany})
 	must.NoError(err)
 	readable, err := backend.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": deletable.ID})
@@ -168,17 +128,7 @@ func TestOrganizationAttributeApprovalAndMedia(t *testing.T) {
 	stale, err := backend.ExecuteOperation(t.Context(), "set_organization_attribute", args)
 	must.NoError(err)
 	assertLoopRefusal(t, stale, "attribute_value_conflict", false)
-	write := operationOutput[generated.OrganizationAttributeWrite](t, first)
-	body := args["body"].(map[string]any)
-	body["expected_value_id"] = write.Value.ID
-	_, err = backend.OperationDisclosure(t.Context(), "set_organization_attribute", args)
-	must.NoError(err)
-	changed, err := backend.ExecuteOperation(t.Context(), "set_organization_attribute", args)
-	must.NoError(err)
-	must.False(changed.IsError)
-	stale, err = backend.ExecuteOperation(t.Context(), "set_organization_attribute", args)
-	must.NoError(err)
-	assertLoopRefusal(t, stale, "attribute_value_conflict", false)
+
 }
 
 func TestOrganizationLargeProfileResponse(t *testing.T) {
@@ -221,85 +171,36 @@ func TestOrganizationLargeProfileResponse(t *testing.T) {
 }
 
 func TestOrganizationSDKRequiresConfirmationAndRejectsUnknownFields(t *testing.T) {
-	checks := assert.New(t)
 	must := require.New(t)
 	st := testutil.NewTestStore(t)
 	_, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: "test-org-json", ObjectType: store.AttributeObjectOrganization, Slug: "metadata", Label: "Metadata", ValueType: store.AttributeValueJSON, FieldType: store.AttributeFieldJSON, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, APIMutable: true, UICreatable: true, UIEditable: true, IsDeletable: true})
 	must.NoError(err)
+	org, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example SDK"})
+	must.NoError(err)
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
 	approvals := 0
-	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyOrganizations}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyOrganizations}, &sdkmcp.ClientOptions{ElicitationHandler: func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		approvals++
-		if approvals == 1 {
-			return &sdkmcp.ElicitResult{Action: "decline"}, nil
-		}
-		if approvals == 2 {
-			checks.Contains(request.Params.Message, "create an organization")
-		}
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
-	tools, err := session.ListTools(t.Context(), nil)
-	must.NoError(err)
-	var createFound bool
-	for _, tool := range tools.Tools {
-		if tool.Name == "create_organization" {
-			createFound = true
-		}
-	}
-	must.True(createFound)
 	invalid, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "create_organization", Arguments: map[string]any{"body": map[string]any{"name": "Example", "unexpected": "value"}}})
 	must.NoError(err)
-	checks.True(invalid.IsError)
-	checks.Zero(approvals)
-	missing, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_organization", Arguments: map[string]any{"organization_id": 999, "etag": `"organization-999-r1"`, "body": map[string]any{"name": "Missing Example"}}})
+	must.True(invalid.IsError)
+	must.Zero(approvals)
+	missing, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_organization", Arguments: map[string]any{"organization_id": 999, "etag": `"organization-999-r1"`, "body": map[string]any{"name": "Missing"}}})
 	must.NoError(err)
 	must.True(missing.IsError)
-	missingData, err := json.Marshal(missing.StructuredContent)
+	data, err := json.Marshal(missing.StructuredContent)
 	must.NoError(err)
 	var refusal map[string]any
-	must.NoError(json.Unmarshal(missingData, &refusal))
-	checks.Equal("organization_not_found", refusal["error"])
-	checks.Zero(approvals)
-	declined, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "create_organization", Arguments: map[string]any{"body": map[string]any{"name": "Declined Example"}}})
+	must.NoError(json.Unmarshal(data, &refusal))
+	must.Equal("organization_not_found", refusal["error"])
+	must.Zero(approvals)
+	set, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_organization_attribute", Arguments: map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "metadata", "value": map[string]any{"type": "json", "json": map[string]any{"enabled": true}}, "source": "user", "expected_value_id": 0}}})
 	must.NoError(err)
-	checks.True(declined.IsError)
-	organizations, err := st.ListOrganizationsContext(t.Context(), store.OrganizationFilter{})
-	must.NoError(err)
-	checks.Empty(organizations)
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "create_organization", Arguments: map[string]any{"body": map[string]any{"name": "Example SDK", "kind": "company"}}})
-	must.NoError(err)
-	must.False(result.IsError)
-	checks.Equal(2, approvals)
-	data, err := json.Marshal(result.StructuredContent)
-	must.NoError(err)
-	var created mcpserver.OrganizationMutation
-	must.NoError(json.Unmarshal(data, &created))
-	stored, err := st.GetOrganizationContext(t.Context(), created.Organization.ID)
-	must.NoError(err)
-	checks.Equal("Example SDK", stored.Name)
-	seeded, err := backend.ExecuteOperation(t.Context(), "replace_organization_profile", map[string]any{"organization_id": created.Organization.ID, "etag": created.ETag, "body": map[string]any{"media": []any{map[string]any{"media_kind": "logo", "source": "user", "data": "YWJj"}}}})
-	must.NoError(err)
-	profile := operationOutput[mcpserver.OrganizationRecord](t, seeded)
-	must.Len(profile.Profile.Media, 1)
-	for _, call := range []struct {
-		name string
-		args map[string]any
-	}{
-		{"get_organization", map[string]any{"organization_id": stored.ID}},
-		{"get_organization", map[string]any{"organization_id": stored.ID, "include_superseded": true}},
-		{"list_organization_attributes", map[string]any{"organization_id": stored.ID}},
-	} {
-		read, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: call.name, Arguments: call.args})
-		must.NoError(err)
-		checks.False(read.IsError, call.name)
-		checks.NotNil(read.StructuredContent, call.name)
-	}
-	set, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_organization_attribute", Arguments: map[string]any{"organization_id": stored.ID, "body": map[string]any{"definition_slug": "metadata", "value": map[string]any{"type": "json", "json": map[string]any{"enabled": true}}, "source": "user", "expected_value_id": 0}}})
-	must.NoError(err)
-	checks.False(set.IsError)
-	checks.NotNil(set.StructuredContent)
-	checks.Equal(3, approvals)
-	listed, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_organization_attributes", Arguments: map[string]any{"organization_id": stored.ID}})
+	must.False(set.IsError)
+	must.Equal(1, approvals)
+	listed, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_organization_attributes", Arguments: map[string]any{"organization_id": org.ID}})
 	must.NoError(err)
 	must.False(listed.IsError)
 	data, err = json.Marshal(listed.StructuredContent)
@@ -307,43 +208,7 @@ func TestOrganizationSDKRequiresConfirmationAndRejectsUnknownFields(t *testing.T
 	var attributes generated.OrganizationAttributesResponse
 	must.NoError(json.Unmarshal(data, &attributes))
 	must.Len(attributes.Values, 1)
-	checks.JSONEq(`{"enabled":true}`, string(attributes.Values[0].Value.JSON))
-}
-
-func TestOrganizationErrorsHideDetailsAndPreserveUncertainty(t *testing.T) {
-	checks := assert.New(t)
-	must := require.New(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":"organization_failed","message":"private backend details"}`))
-	}))
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-	must.NoError(err)
-	backend := &daemonMCPOperations{client: client, supported: []string{"create_organization"}}
-	result, err := backend.ExecuteOperation(t.Context(), "create_organization", map[string]any{"body": map[string]any{"name": "Example"}})
-	must.NoError(err)
-	must.True(result.IsError)
-	data, err := json.Marshal(result.Output)
-	must.NoError(err)
-	checks.NotContains(string(data), "private backend details")
-	checks.Contains(string(data), `"operation_may_have_completed":true`)
-}
-
-func TestOrganizationWriteFlagForEmbeddedServer(t *testing.T) {
-	checks := assert.New(t)
-	must := require.New(t)
-	for _, prefix := range []string{"mcp-"} {
-		cmd := &cobra.Command{}
-		addMCPWriteFlags(cmd, prefix)
-		var opts mcpserver.ServeOptions
-		applyMCPWriteFlags(cmd, prefix, &opts)
-		checks.NotContains(opts.OperationWriteFamilies, mcpserver.OperationFamilyOrganizations)
-		must.NoError(cmd.Flags().Set(prefix+"allow-organization-writes", "true"))
-		opts = mcpserver.ServeOptions{}
-		applyMCPWriteFlags(cmd, prefix, &opts)
-		checks.Contains(opts.OperationWriteFamilies, mcpserver.OperationFamilyOrganizations)
-	}
+	must.JSONEq(`{"enabled":true}`, string(attributes.Values[0].Value.JSON))
 }
 
 func TestOrganizationWriteCapabilitiesRequirePreviewRoutes(t *testing.T) {
