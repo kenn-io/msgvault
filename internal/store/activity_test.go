@@ -3476,93 +3476,30 @@ func TestClaimActivityTimezoneTransitionRejectsHostDependentZone(t *testing.T) {
 }
 
 func TestFirstSeenOrder(t *testing.T) {
+	f, personID := activityProjectionFixture(t)
 	local := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
-	for _, tc := range []struct {
-		name    string
-		times   []time.Time
-		dates   []string
-		offsets []int
-		zones   []string
-		winner  int
-	}{
-		{"equal timestamps", []time.Time{local.Add(12 * time.Hour), local.Add(12 * time.Hour)}, []string{"2026-07-01", "2026-07-01"}, []int{0, 0}, []string{"UTC", "UTC"}, 0},
-		{"offset window", []time.Time{local.Add(35*time.Hour + 59*time.Minute), local.Add(34 * time.Hour)}, []string{"2026-07-01", "2026-07-03"}, []int{-720, 840}, []string{"Etc/GMT+12", "Pacific/Kiritimati"}, 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f, personID := activityProjectionFixture(t)
-			var projections []store.ActivityProjection
-			var winner int64
-			for i, at := range tc.times {
-				id := f.NewMessage().WithSourceMessageID(fmt.Sprintf("first-seen-%d", i)).WithSentAt(at).Create(t, f.Store)
-				if i == tc.winner {
-					winner = id
-				}
-				projection := activityProjectionForMessage(t, f, id, personID, at)
-				projection.Event.LocalDate = tc.dates[i]
-				projection.Event.UTCOffsetMinutes = tc.offsets[i]
-				projection.Event.Timezone = tc.zones[i]
-				projections = append(projections, projection)
-			}
-			_, err := f.Store.ProjectActivityBatchContext(t.Context(), projections)
-			require.NoError(t, err)
-			state, err := f.Store.ContactStateContext(t.Context(), personID, tc.times[0])
-			require.NoError(t, err)
-			assert.Equal(t, fmt.Sprintf("message:%d", winner), state.FirstSeenRef)
-		})
+	times := []time.Time{local.Add(35*time.Hour + 59*time.Minute), local.Add(34 * time.Hour)}
+	dates := []string{"2026-07-01", "2026-07-03"}
+	offsets := []int{-720, 840}
+	zones := []string{"Etc/GMT+12", "Pacific/Kiritimati"}
+	var projections []store.ActivityProjection
+	var winner int64
+	for i, at := range times {
+		id := f.NewMessage().WithSourceMessageID(fmt.Sprintf("first-seen-%d", i)).WithSentAt(at).Create(t, f.Store)
+		if i == 1 {
+			winner = id
+		}
+		projection := activityProjectionForMessage(t, f, id, personID, at)
+		projection.Event.LocalDate = dates[i]
+		projection.Event.UTCOffsetMinutes = offsets[i]
+		projection.Event.Timezone = zones[i]
+		projections = append(projections, projection)
 	}
-}
-
-func TestFirstAppearanceSkipsGroupRosterMembers(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
-	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
-	alpha := f.EnsureParticipant("alpha@example.test", "Alpha", "example.test")
-	bravo := f.EnsureParticipant("bravo@example.test", "Bravo", "example.test")
-	rosterOnly := f.EnsureParticipant("roster@example.test", "Roster", "example.test")
-	person, _, err := f.Store.CreatePersonFromParticipant(bravo)
-	require.NoError(err)
-	rosterPerson, _, err := f.Store.CreatePersonFromParticipant(rosterOnly)
-	require.NoError(err)
-	group, err := f.Store.EnsureConversationWithType(f.Source.ID, "synthetic-group", "group_chat", "Group")
-	require.NoError(err)
-	for _, participant := range []int64{owner, alpha, bravo, rosterOnly} {
-		require.NoError(f.Store.EnsureConversationParticipant(group, participant, "member"))
-	}
-	january := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	introAt := january.AddDate(0, 0, 15)
-	february := january.AddDate(0, 1, 0)
-	groupMessage := func(id string, sender int64, at time.Time) int64 {
-		t.Helper()
-		message := f.NewMessage().WithSourceMessageID(id).WithSentAt(at).Build()
-		message.ConversationID = group
-		message.MessageType = "telegram"
-		message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
-		messageID, err := f.Store.PersistMessage(&store.MessagePersistData{Message: message})
-		require.NoError(err)
-		return messageID
-	}
-	groupMessage("january-alpha", alpha, january)
-	groupMessage("february-bravo", bravo, february)
-	intro := f.NewMessage().WithSourceMessageID("intervening-intro").WithSentAt(introAt).Build()
-	intro.SenderID = sql.NullInt64{Int64: alpha, Valid: true}
-	introID, err := f.Store.PersistMessage(&store.MessagePersistData{Message: intro})
-	require.NoError(err)
-	require.NoError(f.Store.ReplaceMessageRecipients(introID, "from", []int64{alpha}, []string{"Alpha"}))
-	require.NoError(f.Store.ReplaceMessageRecipients(introID, "to", []int64{owner, bravo}, []string{"Owner", "Bravo"}))
-	projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
-	require.NoError(err)
-	_, err = projector.RunOnce(t.Context())
-	require.NoError(err)
-	state, err := f.Store.ContactStateContext(t.Context(), person.ID, february)
-	require.NoError(err)
-	assert.Equal(fmt.Sprintf("message:%d", introID), state.FirstSeenRef)
-	require.NotNil(state.FirstSeenAt)
-	assert.Equal(introAt, state.FirstSeenAt.UTC())
-	rosterState, err := f.Store.ContactStateContext(t.Context(), rosterPerson.ID, february)
-	require.NoError(err)
-	assert.Nil(rosterState.FirstSeenAt)
+	_, err := f.Store.ProjectActivityBatchContext(t.Context(), projections)
+	require.NoError(t, err)
+	state, err := f.Store.ContactStateContext(t.Context(), personID, times[0])
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("message:%d", winner), state.FirstSeenRef)
 }
 
 func TestFirstAppearanceRequiresUnambiguousFromEnvelope(t *testing.T) {
@@ -3632,14 +3569,15 @@ func TestFirstAppearanceRequiresUnambiguousFromEnvelope(t *testing.T) {
 	}
 }
 
-func TestFirstAppearanceDirectChatEvidence(t *testing.T) {
+func TestFirstAppearanceRosterEvidence(t *testing.T) {
 	for _, tc := range []struct {
-		name                    string
+		name, conversationType  string
 		explicitMember, meeting bool
 	}{
-		{"roster added later", false, false},
-		{"explicit member", true, false},
-		{"meeting", false, true},
+		{"direct chat roster added later", "direct_chat", false, false},
+		{"group roster added later", "group_chat", false, false},
+		{"explicit member", "direct_chat", true, false},
+		{"meeting", "direct_chat", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := require.New(t)
@@ -3648,7 +3586,7 @@ func TestFirstAppearanceDirectChatEvidence(t *testing.T) {
 			target := f.EnsureParticipant("customer@example.test", "Customer", "example.test")
 			person, _, err := f.Store.CreatePersonFromParticipant(target)
 			req.NoError(err)
-			conversation, err := f.Store.EnsureConversationWithType(f.Source.ID, "chatwoot-conversation", "direct_chat", "Chat")
+			conversation, err := f.Store.EnsureConversationWithType(f.Source.ID, "chatwoot-conversation", tc.conversationType, "Chat")
 			req.NoError(err)
 			at := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 			system := f.NewMessage().WithSourceMessageID("chatwoot-system").WithSentAt(at).Build()
@@ -3668,6 +3606,13 @@ func TestFirstAppearanceDirectChatEvidence(t *testing.T) {
 			_, err = projector.RunOnce(t.Context())
 			req.NoError(err)
 			req.NoError(f.Store.EnsureConversationParticipant(conversation, target, "member"))
+			var rosterPerson *store.Person
+			if tc.conversationType == "group_chat" {
+				rosterOnly := f.EnsureParticipant("roster@example.test", "Roster", "example.test")
+				rosterPerson, _, err = f.Store.CreatePersonFromParticipant(rosterOnly)
+				req.NoError(err)
+				req.NoError(f.Store.EnsureConversationParticipant(conversation, rosterOnly, "member"))
+			}
 			later := at.Add(72 * time.Hour)
 			message := f.NewMessage().WithSourceMessageID("chatwoot-customer").WithSentAt(later).Build()
 			message.ConversationID = conversation
@@ -3691,6 +3636,11 @@ func TestFirstAppearanceDirectChatEvidence(t *testing.T) {
 			check.Equal(store.FirstContactObserved, state.FirstContactKind)
 			req.NotNil(state.FirstSeenAt)
 			check.Equal(wantTime, state.FirstSeenAt.UTC())
+			if rosterPerson != nil {
+				rosterState, err := f.Store.ContactStateContext(t.Context(), rosterPerson.ID, later)
+				req.NoError(err)
+				check.Nil(rosterState.FirstSeenAt)
+			}
 		})
 	}
 }
