@@ -46,6 +46,8 @@ func TestMCPOperationResponseFailures(t *testing.T) {
 			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, http.StatusOK, true, true},
 		{"interrupted error response", http.MethodPatch, `{"error":`,
 			`{"error":"operation_response_failed","operation_may_have_completed":true}`, http.StatusInternalServerError, true, true},
+		{"invalid write receipt", http.MethodPatch, `{}`,
+			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, http.StatusOK, false, false},
 		{"malformed write receipt", http.MethodPatch, `not json`,
 			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, http.StatusOK, false, true},
 		{"oversized read", http.MethodGet, strings.Repeat("x", (1<<20)+1),
@@ -79,6 +81,18 @@ func TestMCPOperationResponseFailures(t *testing.T) {
 			assertions.JSONEq(tt.want, string(encoded))
 		})
 	}
+	t.Run("person receipt without ID", func(t *testing.T) {
+		requirements, assertions := require.New(t), assert.New(t)
+		client := newMCPDaemonClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"id":0,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","participant_ids":[],"vcard_uid":"example"}`))
+		})
+		result, err := readMCPOperationJSON[generated.Person](t.Context(), client, http.MethodPatch, "/api/v1/people/1", nil, http.StatusOK)
+		requirements.NoError(err)
+		requirements.True(result.IsError)
+		data, err := json.Marshal(result.Output)
+		requirements.NoError(err)
+		assertions.JSONEq(`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
+	})
 }
 
 func TestDaemonMCPLaunchDiscoversRealOperationalTools(t *testing.T) {
