@@ -5,11 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	jsonv1 "encoding/json"
 	"encoding/json/v2"
 	"net/http"
 	"slices"
 
+	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
@@ -141,7 +141,8 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	if count > store.MaxPersonProfilePatchOperations {
 		return "", true, &mcpserver.OperationRefusalError{Code: "profile_patch_too_large"}
 	}
-	encodedPatch, err := jsonv1.Marshal(input.Patch)
+	// The generated client's runtime uses v1 JSON for request bodies.
+	encodedPatch, err := runtime.MarshalJSON(input.Patch)
 	if err != nil {
 		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 	}
