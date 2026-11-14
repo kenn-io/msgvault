@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
@@ -735,4 +737,22 @@ func (s *Store) applyCommitmentStatusesTx(ctx context.Context, tx *loggedTx, req
 	}
 	_, err = s.applyPreparedPersonFactGenerationTx(ctx, tx, prepared)
 	return err
+}
+
+// Only unchanged authored words at their current range or a unique moved
+// location retain a promise's owner decisions and fulfilment.
+func locateCommitmentQuote(source peoplesweep.CommitmentSource, c PersonCommitment) (PersonCommitment, bool) {
+	if c.ID == 0 || c.Quote == "" {
+		return c, false
+	}
+	if source.MatchesQuote(c.Quote, c.Start, c.End) {
+		return c, true
+	}
+	at := strings.Index(source.Text, c.Quote)
+	if at < 0 || strings.Contains(source.Text[at+1:], c.Quote) {
+		return c, false
+	}
+	start := source.Start + int64(utf8.RuneCountInString(source.Text[:at]))
+	c.Start, c.End = start, start+int64(utf8.RuneCountInString(c.Quote))
+	return c, source.MatchesQuote(c.Quote, c.Start, c.End)
 }

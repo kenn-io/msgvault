@@ -241,7 +241,7 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 		TableName: "person_sweep_attempts", KeyColumn: "id", Snapshot: false,
 		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
-	// Commitment decisions transfer to the survivor without rewriting immutable claims.
+	// Commitment state remains scoped to the person and cascades on deletion.
 	"person_commitments": {
 		TableName: "person_commitments", KeyColumn: "id", Snapshot: false,
 		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
