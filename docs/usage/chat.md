@@ -930,11 +930,13 @@ one second, then make a new call, which needs approval again. MCP never
 retries a write by itself. If a write reports
 `operation_may_have_completed: true`, list the loops again before retrying.
 
-## Write controls
+## Write responses
 
 If an MCP operation write returns `operation_receipt_unavailable`, the write
 may have completed but its receipt could not be read. Read the current state
 before retrying.
+
+## Write controls
 
 Enable only the writes intended for the assistant's session:
 
