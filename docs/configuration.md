@@ -1371,6 +1371,7 @@ media = true                      # download attachment bytes
 media_scope = "all"               # all, direct, or none
 media_max_participants = 20       # skip media from larger rooms; 0 = no cap
 max_media_mb = 250                # per-file download cap (MiB)
+whatsapp_bridge_db = ""           # mautrix-whatsapp database; empty = off
 
 # [matrix.accounts_config."@archive:example.org"]
 # media = false
@@ -1388,6 +1389,7 @@ max_media_mb = 250                # per-file download cap (MiB)
 | `media_max_participants` | `20` | Skip media from rooms above this many joined members; `0` = no cap |
 | `max_media_mb` | `250` | Per-file download cap in MiB |
 | `accounts_config` | — | Per-user-ID `media` and `max_media_mb` overrides |
+| `whatsapp_bridge_db` | — | SQLite database of a local mautrix-whatsapp bridge; its portal rooms are archived into native `whatsapp` sources instead of as Matrix rooms (see [Matrix](/docs/usage/matrix/#whatsapp-through-mautrix-whatsapp)) |
 
 ### `[beeper]`
 

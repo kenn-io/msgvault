@@ -1845,6 +1845,11 @@ type MatrixConfig struct {
 	MediaScope           string                        `toml:"media_scope"`
 	MediaMaxParticipants int                           `toml:"media_max_participants"`
 	AccountsConfig       map[string]MediaAccountConfig `toml:"accounts_config"`
+	// WhatsAppBridgeDB is the SQLite database of a mautrix-whatsapp bridge
+	// that the Matrix account uses. Its portal rooms are archived into
+	// native whatsapp sources, one per bridge login, instead of as Matrix
+	// rooms. Empty disables it.
+	WhatsAppBridgeDB string `toml:"whatsapp_bridge_db"`
 }
 
 // SlackConfig configures Slack workspace archive sources ([slack] table).
