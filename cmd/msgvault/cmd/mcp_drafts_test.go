@@ -283,6 +283,8 @@ func TestMCPOwnerDraftGetMatchesCLI(t *testing.T) {
 }
 
 func TestMCPOwnerDraftVerificationWithheld(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	fixture := newDraftReplyFixture(t)
 	server := mcpDraftTestDaemon(t, fixture.grantedAdapter(), nil)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Remote: config.RemoteConfig{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true}}
@@ -291,16 +293,16 @@ func TestMCPOwnerDraftVerificationWithheld(t *testing.T) {
 	t.Cleanup(func() { mcpRevealVerification = oldReveal })
 	session := mcpDraftTestSession(withStoreResolverConfig(t, cfg), t)
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftReply, Arguments: map[string]any{"message_id": fixture.parentID, "from": testutil.IMAPTestUsername, "body": "reply body"}})
-	require.NoError(t, err)
-	require.False(t, result.IsError, "%+v", result.Content)
+	require.NoError(err)
+	require.False(result.IsError, "%+v", result.Content)
 	structured, ok := result.StructuredContent.(map[string]any)
-	require.True(t, ok)
+	require.True(ok)
 	id, ok := structured["draft_id"].(string)
-	require.True(t, ok)
+	require.True(ok)
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: mcpserver.ToolDraftGet, Arguments: map[string]any{"draft_id": id}})
-	require.NoError(t, err)
-	assert.True(t, result.IsError)
-	assert.Contains(t, mcpDraftResultText(t, result), "verification content is withheld")
+	require.NoError(err)
+	assert.True(result.IsError)
+	assert.Contains(mcpDraftResultText(t, result), "verification content is withheld")
 }
 
 func TestMCPDraftToolPropertiesMatchCommandFlags(t *testing.T) {
