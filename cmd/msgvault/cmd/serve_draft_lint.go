@@ -25,11 +25,12 @@ func addDraftLintFlags(command *cobra.Command) {
 }
 
 func setDraftLintFlag(options *draftLintOptions, seen map[string]bool, name, value string, hasValue bool) error {
-	if seen[name] || hasValue && value != "true" && value != "false" {
+	const boolTrue = "true"
+	if seen[name] || hasValue && value != boolTrue && value != "false" {
 		return draftReplyError("invalid_args", fmt.Errorf("--%s accepts one boolean value", name))
 	}
 	seen[name] = true
-	enabled := !hasValue || value == "true"
+	enabled := !hasValue || value == boolTrue
 	switch name {
 	case "strict":
 		options.Strict = enabled

@@ -24,6 +24,7 @@ func lintRun(t *testing.T, a *storeAPIAdapter, grant *agentgrant.Grant, args ...
 	t.Helper()
 	var events []api.CLIRunEvent
 	req := api.CLIRunRequest{Args: args, Grant: grant}
+	//nolint:unparam // The event callback contract requires an error return.
 	var emit = func(e api.CLIRunEvent) error { events = append(events, e); return nil }
 	switch args[0] {
 	case "draft-reply":
@@ -124,10 +125,12 @@ func TestDraftReplyLintAndProvenanceWarnings(t *testing.T) {
 			}
 			found := false
 			for _, w := range warnings {
-				if w.(map[string]any)["code"] == "recipient_provenance" {
+				warning, ok := w.(map[string]any)
+				require.True(t, ok)
+				if warning["code"] == "recipient_provenance" {
 					found = true
-					assert.Equal(t, "warn", w.(map[string]any)["severity"])
-					assert.Equal(t, "to", w.(map[string]any)["field"])
+					assert.Equal(t, "warn", warning["severity"])
+					assert.Equal(t, "to", warning["field"])
 				}
 			}
 			assert.True(t, found)
@@ -572,7 +575,7 @@ func TestBeeperDraftValidateOnlyRequiresArchivedChat(t *testing.T) {
 			}
 			_, err := lintRun(t, f.adapter, nil, "draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", chatID, "--body", "Thanks", "--validate-only", "--json")
 			require.EqualError(t, err, "chat_not_found")
-			assert.ErrorContains(t, errors.Unwrap(err), "not archived under the selected source")
+			require.ErrorContains(t, errors.Unwrap(err), "not archived under the selected source")
 			requests, patches := f.beeper.counts()
 			assert.Zero(t, requests)
 			assert.Zero(t, patches)
