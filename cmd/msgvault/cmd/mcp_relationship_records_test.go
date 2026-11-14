@@ -57,7 +57,7 @@ func TestMCPRelationshipRecords(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st, backend, source, target := relationshipFixture(t)
-	createArgs := map[string]any{"source_person_id": source, "target_person_id": target, "relationship_type_slug": "kin", "notes": "synthetic"}
+	createArgs := map[string]any{"source_person_id": source, "target_person_id": target, "relationship_type_slug": " kin ", "notes": "synthetic"}
 	disclosure, err := backend.OperationDisclosure(t.Context(), "create_person_relationship", createArgs)
 	requirements.NoError(err)
 	assertRelationshipDisclosure(t, disclosure)

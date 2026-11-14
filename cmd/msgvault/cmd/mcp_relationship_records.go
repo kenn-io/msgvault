@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"slices"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
@@ -131,7 +132,7 @@ func (b *daemonMCPOperations) relationshipDisclosure(ctx context.Context, name s
 			return "", true, disclosureRefusal(result)
 		}
 		for _, typ := range types.RelationshipTypes {
-			if typ.Slug == input.RelationshipTypeSlug {
+			if typ.Slug == strings.TrimSpace(input.RelationshipTypeSlug) {
 				label = typ.ForwardLabel
 				break
 			}
