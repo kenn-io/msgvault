@@ -70,6 +70,25 @@ separately. SQLite is the default and stores the archive at `~/.msgvault/msgvaul
 | `has_attachments` | BOOLEAN | Attachment flag |
 | `deleted_at` | DATETIME | Soft-delete timestamp |
 | `deleted_from_source_at` | DATETIME | Records removal from the source; content may remain archived |
+| `reply_to_message_id` | INTEGER FK, nullable | The archived message this one replies to, always in the same source |
+
+An email's parent is the message whose `rfc822_message_id` equals the first
+Message-ID in its `In-Reply-To` header. Every email ingest path records that ID
+in `metadata` as `email_in_reply_to`, and a stored ID is kept even when a later
+sync replaces the email's metadata. Linking sets `reply_to_message_id` only
+when exactly one visible email in the same source has that ID, and never
+replaces an existing link. After each sync or import, msgvault checks the
+emails whose `content_changed_at` moved since the previous pass: changed replies
+look up their parent, and older replies in the conversations of those emails are
+checked too. So a parent that arrives after its reply is linked, and so is a
+parent that a repair records on an older message. A repair or dedup's
+Message-ID backfill that gives an email its Message-ID links the waiting replies
+in its conversation. When archive GC removes one copy of a parent, the replies
+waiting in the conversation of the remaining copy are linked. A late parent
+filed in a different conversation from its reply stays unlinked. The first sync
+or import of a source after upgrading reads `In-Reply-To` from the stored MIME
+headers of each email, including emails dedup hid, and links the whole source
+once; a source merge repeats that pass.
 
 The Store derives `account_address` and `account_path` in the same transaction
 as every message write that changes their inputs: raw MIME, recipients, and

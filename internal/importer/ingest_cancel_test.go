@@ -2,6 +2,8 @@ package importer
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json/v2"
 	"log/slog"
 	"path/filepath"
 	"testing"
@@ -23,6 +25,7 @@ func TestIngestRawMessage_CanceledAfterMessageCommitFinishesAttachmentAndSearch(
 		From("Sender Example <sender@example.test>").
 		To("owner@example.test").
 		Subject("Cancel after commit").
+		Header("In-Reply-To", "<parent@example.test>").
 		Body("postcommitimportneedle body.").
 		WithAttachment("report.bin", "application/octet-stream", []byte("attachment bytes")).
 		Bytes()
@@ -43,18 +46,27 @@ func TestIngestRawMessage_CanceledAfterMessageCommitFinishesAttachmentAndSearch(
 		nil, "source-msg-cancel", "fakehash",
 		raw, time.Time{}, slog.New(slog.DiscardHandler),
 		nil)
-	require.ErrorIs(err, context.Canceled, "reply-header write still observes the cancellation")
+	require.ErrorIs(err, context.Canceled, "the import still observes the cancellation")
 	require.True(canceled(), "cancellation landed after the message commit")
 
 	var messageID int64
 	var hasAttachments bool
 	var attachmentCount int
+	var metadata sql.NullString
 	require.NoError(db.QueryRowContext(t.Context(), `
-		SELECT id, has_attachments, attachment_count FROM messages
+		SELECT id, has_attachments, attachment_count, metadata FROM messages
 		WHERE source_message_id = ?`, "source-msg-cancel",
-	).Scan(&messageID, &hasAttachments, &attachmentCount))
+	).Scan(&messageID, &hasAttachments, &attachmentCount, &metadata))
 	assert.True(hasAttachments, "has_attachments")
 	assert.Equal(1, attachmentCount, "attachment_count")
+	// A resumed import skips this message because its raw MIME is stored, so
+	// the reply parent must commit with it.
+	require.True(metadata.Valid, "metadata")
+	var fields struct {
+		Parent string `json:"email_in_reply_to"`
+	}
+	require.NoError(json.Unmarshal([]byte(metadata.String), &fields))
+	assert.Equal("parent@example.test", fields.Parent)
 
 	var storedAttachments int
 	require.NoError(db.QueryRowContext(t.Context(),

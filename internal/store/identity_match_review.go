@@ -14,9 +14,10 @@ import (
 
 var ErrIdentityMatchReviewStale = errors.New("identity match review snapshot is stale")
 
-// identityMatchReviewQuerier is shared by ordinary reads and the transaction
-// holding the identity mutation lock. The same fingerprint code runs in both.
-type identityMatchReviewQuerier interface {
+// storeQuerier is satisfied by both the store connection and a transaction,
+// so read helpers such as identity fingerprints and email reply resolution
+// run unchanged inside or outside a locked write.
+type storeQuerier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*loggedRows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
@@ -103,7 +104,7 @@ func (s *Store) ListIdentityMatchReviewsContext(
 }
 
 func loadIdentityMatchEvidencePageContext(
-	ctx context.Context, q identityMatchReviewQuerier, candidates []IdentityMatchCandidate,
+	ctx context.Context, q storeQuerier, candidates []IdentityMatchCandidate,
 ) error {
 	if len(candidates) == 0 {
 		return nil
@@ -134,7 +135,7 @@ func loadIdentityMatchEvidencePageContext(
 }
 
 func populateIdentityMatchReviewContext(
-	ctx context.Context, q identityMatchReviewQuerier, candidate *IdentityMatchCandidate,
+	ctx context.Context, q storeQuerier, candidate *IdentityMatchCandidate,
 ) error {
 	if err := populateIdentityMatchReviewDetailsContext(ctx, q, candidate); err != nil {
 		return err
@@ -148,7 +149,7 @@ func populateIdentityMatchReviewContext(
 }
 
 func populateIdentityMatchReviewDetailsContext(
-	ctx context.Context, q identityMatchReviewQuerier, candidate *IdentityMatchCandidate,
+	ctx context.Context, q storeQuerier, candidate *IdentityMatchCandidate,
 ) error {
 	if err := loadIdentityMatchSourceSupportContext(ctx, q, candidate); err != nil {
 		return err
@@ -196,7 +197,7 @@ func applyIdentityMatchReviewBindingBlocker(candidate *IdentityMatchCandidate) {
 // review fingerprints. Listing a full review page should not issue a dozen
 // network round trips per candidate, especially for remote PostgreSQL stores.
 func populateIdentityMatchReviewTokensContext(
-	ctx context.Context, q identityMatchReviewQuerier, candidates []IdentityMatchCandidate,
+	ctx context.Context, q storeQuerier, candidates []IdentityMatchCandidate,
 ) error {
 	if len(candidates) == 0 {
 		return nil
@@ -283,7 +284,7 @@ type identityMatchFingerprintData struct {
 }
 
 func loadIdentityMatchFingerprintDataContext(
-	ctx context.Context, q identityMatchReviewQuerier, candidates []IdentityMatchCandidate,
+	ctx context.Context, q storeQuerier, candidates []IdentityMatchCandidate,
 ) (*identityMatchFingerprintData, error) {
 	data := &identityMatchFingerprintData{}
 	var err error
@@ -437,7 +438,7 @@ func (data *identityMatchFingerprintData) fingerprint(candidate *IdentityMatchCa
 }
 
 func identityMatchFingerprintRowsByKey(
-	ctx context.Context, q identityMatchReviewQuerier, queryTemplate string, ids []int64,
+	ctx context.Context, q storeQuerier, queryTemplate string, ids []int64,
 ) (map[int64][][]any, error) {
 	result := make(map[int64][][]any, len(ids))
 	if len(ids) == 0 {
@@ -453,7 +454,7 @@ func identityMatchFingerprintRowsByKey(
 }
 
 func identityMatchFingerprintRows(
-	ctx context.Context, q identityMatchReviewQuerier, query string, args []any,
+	ctx context.Context, q storeQuerier, query string, args []any,
 ) (map[int64][][]any, error) {
 	result := make(map[int64][][]any)
 	rows, err := q.QueryContext(ctx, query, args...)
@@ -541,7 +542,7 @@ func identityMatchFingerprintBool(value any) (bool, bool) {
 }
 
 func identityMatchFingerprintParticipantComponents(
-	ctx context.Context, q identityMatchReviewQuerier, participantIDs []int64,
+	ctx context.Context, q storeQuerier, participantIDs []int64,
 ) (map[int64][][]any, map[int64][][]any, map[int64][][]any, error) {
 	componentMembers := make(map[int64][][]any, len(participantIDs))
 	bindings := make(map[int64][][]any, len(participantIDs))
@@ -613,7 +614,7 @@ SELECT p.id, p.revision, EXISTS (
 	WHERE pp.person_id = p.id AND pp.participant_id IN (SELECT id FROM component)
 ) ORDER BY p.id`
 
-func identityMatchClusterPersonContext(ctx context.Context, q identityMatchReviewQuerier, participantID int64) (*IdentityMatchPersonBinding, error) {
+func identityMatchClusterPersonContext(ctx context.Context, q storeQuerier, participantID int64) (*IdentityMatchPersonBinding, error) {
 	rows, err := q.QueryContext(ctx, identityMatchClusterBindingsSQL, participantID)
 	if err != nil {
 		return nil, fmt.Errorf("read match cluster binding: %w", err)
@@ -637,7 +638,7 @@ func identityMatchClusterPersonContext(ctx context.Context, q identityMatchRevie
 }
 
 func loadIdentityMatchSourceSupportContext(
-	ctx context.Context, q identityMatchReviewQuerier, candidate *IdentityMatchCandidate,
+	ctx context.Context, q storeQuerier, candidate *IdentityMatchCandidate,
 ) error {
 	rows, err := q.QueryContext(ctx, `SELECT source_id, is_conservative
 		FROM identity_match_candidate_sources WHERE candidate_id = ? ORDER BY source_id`, candidate.ID)
@@ -690,7 +691,7 @@ func loadIdentityMatchSourceSupportContext(
 // not: an accepted decision necessarily changes the candidate's state, but
 // its evidence and endpoint context must remain the same until link creation.
 func identityMatchFingerprintContext(
-	ctx context.Context, q identityMatchReviewQuerier,
+	ctx context.Context, q storeQuerier,
 	c *IdentityMatchCandidate, includeDecision bool,
 ) (string, error) {
 	data, err := loadIdentityMatchFingerprintDataContext(ctx, q, []IdentityMatchCandidate{*c})

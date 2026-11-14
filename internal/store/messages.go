@@ -116,6 +116,10 @@ type MessagePersistData struct {
 	MIMEAttachmentReplacement *[]AttachmentWrite
 	FTS                       *FTSDoc
 	SyncRunItem               *SyncRunItem
+	// EmailInReplyTo is the parent Message-ID an email names. The persist
+	// transaction adds it to metadata as email_in_reply_to when metadata
+	// holds no parent yet, after any Metadata replacement.
+	EmailInReplyTo string
 }
 
 // MessageIdentityGuard binds repair persistence to the exact archive row that
@@ -996,6 +1000,10 @@ func (s *Store) SetMessageMetadataContext(ctx context.Context, messageID int64, 
 			return err
 		}
 		if err := s.requireSyncMessageSourceTx(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
+			return err
+		}
+		metadata, err := s.keepEmailReplyParentTx(ctx, tx, messageID, metadata)
+		if err != nil {
 			return err
 		}
 		if err := setMessageMetadataWith(boundQuerier{ctx: ctx, q: tx}, s.dialect, messageID, metadata); err != nil {
@@ -2284,6 +2292,11 @@ func (s *Store) PersistRepairMessageWithParticipantsContext(
 			data.Message.RFC822MessageID, messageID); err != nil {
 			return fmt.Errorf("replace repair message RFC Message-ID: %w", err)
 		}
+		if data.Message.MessageType == MessageTypeEmail && data.Message.RFC822MessageID.String != "" {
+			if err := s.linkEmailRepliesToParentTx(ctx, tx, expected.SourceID, messageID); err != nil {
+				return err
+			}
+		}
 		return s.persistAttachmentSnapshotWith(q, messageID, data.MIMEAttachmentReplacement)
 	}
 	messageID, err := s.persistMessageWithParticipantsTransaction(
@@ -2501,8 +2514,17 @@ func (s *Store) persistMessageWith(
 		}
 	}
 	if data.Metadata != nil {
-		if err := setMessageMetadataWith(q, s.dialect, messageID, *data.Metadata); err != nil {
+		metadata, err := s.keepEmailReplyParentTx(ctx, tx, messageID, *data.Metadata)
+		if err != nil {
+			return 0, err
+		}
+		if err := setMessageMetadataWith(q, s.dialect, messageID, metadata); err != nil {
 			return 0, fmt.Errorf("set metadata: %w", err)
+		}
+	}
+	if data.EmailInReplyTo != "" && message.MessageType == MessageTypeEmail {
+		if _, err := s.addEmailReplyFactTx(ctx, tx, message.SourceID, messageID, data.EmailInReplyTo); err != nil {
+			return 0, err
 		}
 	}
 

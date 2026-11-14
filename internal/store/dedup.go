@@ -101,6 +101,12 @@ type DedupedBatchCount struct {
 	Count int64
 }
 
+// rfc822IDBackfillWrite names a message the backfill gave a Message-ID.
+type rfc822IDBackfillWrite struct {
+	MessageID int64
+	SourceID  int64
+}
+
 type rfc822IDBackfillItem struct {
 	MessageID       int64
 	SourceID        int64
@@ -1116,19 +1122,27 @@ func (s *Store) ApplyRFC822IDBackfill(
 		retErr = finishRFC822IDBackfillTransaction(ctx, conn, committed, retErr)
 	}()
 
-	applied, digest, err := s.applyRFC822IDBackfillRows(ctx, conn, sourceIDs)
+	written, digest, err := s.applyRFC822IDBackfillRows(ctx, conn, sourceIDs)
 	if err != nil {
 		return 0, err
 	}
 	if err := validateAppliedRFC822IDBackfill(plan, digest); err != nil {
 		return 0, err
 	}
+	// Replies are linked only after every ID is written: two copies of a
+	// parent that gain the same ID must leave their replies ambiguous.
+	tx := connTx{conn: conn, rebind: s.dialect.Rebind}
+	for _, item := range written {
+		if err := s.linkEmailRepliesToParentTx(ctx, tx, item.SourceID, item.MessageID); err != nil {
+			return 0, fmt.Errorf("link email replies to RFC822 ID backfill message %d: %w", item.MessageID, err)
+		}
+	}
 
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return 0, fmt.Errorf("commit RFC822 ID backfill transaction: %w", err)
 	}
 	committed = true
-	updated = applied
+	updated = int64(len(written))
 	reportRFC822IDBackfillProgress(progress, plan.Candidates)
 	return updated, nil
 }
@@ -1161,10 +1175,12 @@ func validateRFC822IDBackfillPlan(plan RFC822IDBackfillPlan) error {
 	return nil
 }
 
+// applyRFC822IDBackfillRows writes every planned ID and returns the messages
+// it wrote.
 func (s *Store) applyRFC822IDBackfillRows(
 	ctx context.Context, conn *sql.Conn, sourceIDs []int64,
-) (int64, *rfc822IDBackfillDigest, error) {
-	applied := int64(0)
+) ([]rfc822IDBackfillWrite, *rfc822IDBackfillDigest, error) {
+	var written []rfc822IDBackfillWrite
 	lastID := int64(0)
 	digest := newRFC822IDBackfillDigest()
 	for {
@@ -1172,19 +1188,17 @@ func (s *Store) applyRFC822IDBackfillRows(
 		//nolint:rowserrcheck // The bounded-page reader owns rows and checks Err.
 		rows, err := conn.QueryContext(ctx, query, args...)
 		if err != nil {
-			return 0, digest, fmt.Errorf("fetch RFC822 ID backfill apply batch: %w", err)
+			return nil, digest, fmt.Errorf("fetch RFC822 ID backfill apply batch: %w", err)
 		}
 		batch, err := readRFC822IDBackfillBatch(rows, s.IsPostgreSQL())
 		if err != nil {
-			return 0, digest, err
+			return nil, digest, err
 		}
-		batchApplied, err := s.applyRFC822IDBackfillBatch(ctx, conn, batch, digest)
-		if err != nil {
-			return 0, digest, err
+		if written, err = s.applyRFC822IDBackfillBatch(ctx, conn, batch, digest, written); err != nil {
+			return nil, digest, err
 		}
-		applied += batchApplied
 		if batch.candidates == 0 {
-			return applied, digest, nil
+			return written, digest, nil
 		}
 		lastID = batch.lastID
 	}
@@ -1195,14 +1209,16 @@ func (s *Store) applyRFC822IDBackfillBatch(
 	conn *sql.Conn,
 	batch rfc822IDBackfillBatch,
 	digest *rfc822IDBackfillDigest,
-) (int64, error) {
+	written []rfc822IDBackfillWrite,
+) ([]rfc822IDBackfillWrite, error) {
 	for _, item := range batch.items {
 		digest.Add(item)
 		if err := s.updateRFC822IDBackfillItem(ctx, conn, item); err != nil {
-			return 0, err
+			return nil, err
 		}
+		written = append(written, rfc822IDBackfillWrite{MessageID: item.MessageID, SourceID: item.SourceID})
 	}
-	return int64(len(batch.items)), nil
+	return written, nil
 }
 
 func (s *Store) updateRFC822IDBackfillItem(

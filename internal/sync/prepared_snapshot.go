@@ -68,8 +68,9 @@ func buildPreparedSnapshot(
 		from = store.RelayedFromRecipient(prepared.from[0], message.SenderID.Int64)
 	}
 	return &store.MessagePersistData{
-		Message:  &message,
-		Metadata: prepared.metadata,
+		Message:        &message,
+		Metadata:       prepared.metadata,
+		EmailInReplyTo: prepared.emailInReplyTo,
 		Conversation: &store.ConversationPersistData{
 			SourceConversationID: prepared.threadID,
 			ConversationType:     prepared.conversationType,

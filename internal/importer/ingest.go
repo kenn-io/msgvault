@@ -213,14 +213,16 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		recipientSets[0] = store.RelayedFromRecipient(parsed.From[0], senderID.Int64)
 	}
 
-	// Persist atomically
+	// Persist atomically. The reply parent commits with the raw MIME: a
+	// resumed import skips messages whose raw MIME is stored.
 	messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
-		Message:    rec,
-		BodyText:   sql.NullString{String: bodyText, Valid: bodyText != ""},
-		BodyHTML:   sql.NullString{String: bodyHTML, Valid: bodyHTML != ""},
-		RawMIME:    raw,
-		Recipients: recipientSets,
-		LabelIDs:   labelIDs,
+		Message:        rec,
+		EmailInReplyTo: mime.ReplyParentID(parsed.InReplyTo),
+		BodyText:       sql.NullString{String: bodyText, Valid: bodyText != ""},
+		BodyHTML:       sql.NullString{String: bodyHTML, Valid: bodyHTML != ""},
+		RawMIME:        raw,
+		Recipients:     recipientSets,
+		LabelIDs:       labelIDs,
 	})
 	if err != nil {
 		return err
@@ -294,14 +296,12 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		}
 	}
 
-	if err := st.RecordEmailHeadersContext(ctx, sourceID, messageID, "", parsed.InReplyTo); err != nil {
-		return fmt.Errorf("record email reply header: %w", err)
-	}
-
 	if strict {
 		return errors.Join(emlxRetryable(completionErr), ctx.Err())
 	}
-	return nil
+	// The message is complete, but the caller should still stop on a
+	// cancellation that arrived during the post-commit work.
+	return ctx.Err()
 }
 
 func normalizeMessageID(id string) string {

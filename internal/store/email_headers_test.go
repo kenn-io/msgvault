@@ -142,8 +142,8 @@ func TestEmailReplyResolutionResumesCommittedPages(t *testing.T) {
 	})
 	requirements.ErrorIs(err, context.Canceled)
 	assertions.Equal(children[199], cursor)
-	parent := f.CreateMessage("late-parent")
-	requirements.NoError(st.RecordEmailHeadersContext(t.Context(), f.Source.ID, parent, "parent@example.test", ""))
+	// Filed in another conversation, so only the source-wide resolver links it.
+	createThreadEmail(t, f, "late-parent", "thread-elsewhere", "parent@example.test")
 	requirements.NoError(st.ResolveEmailReplyParentsContext(t.Context(), f.Source.ID, cursor, nil))
 	var linked int
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE reply_to_message_id IS NOT NULL`).Scan(&linked))
@@ -198,9 +198,10 @@ func TestEmailHeadersFenceSupersededSync(t *testing.T) {
 	f := storetest.New(t)
 	st := f.Store
 	id := f.CreateMessage("child")
-	parent := f.CreateMessage("parent")
 	requirements.NoError(st.RecordEmailHeadersContext(t.Context(), f.Source.ID, id, "", "parent@example.test"))
-	requirements.NoError(st.RecordEmailHeadersContext(t.Context(), f.Source.ID, parent, "parent@example.test", ""))
+	// Filed in another conversation so archiving it leaves the reply for the
+	// stale resolver to link.
+	createThreadEmail(t, f, "parent", "thread-elsewhere", "parent@example.test")
 	oldRun, err := st.StartSync(f.Source.ID, "import-emlx")
 	requirements.NoError(err)
 	stale := st.ScopedToSync(f.Source.ID, oldRun)

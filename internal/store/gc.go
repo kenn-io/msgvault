@@ -185,6 +185,14 @@ func (s *Store) ExecuteGCContext(
 			return fmt.Errorf("clear retries for messages deleted at source: %w", err)
 		}
 
+		// Purging one of two copies of a parent can leave the other unique, and
+		// no remaining row changes, so incremental reply linking would miss it.
+		purgedParents, err := s.emailMessageIDKeysTx(ctx, tx,
+			`deleted_from_source_at IS NOT NULL AND NOT (`+managedDraftRetainedMessageSQL+`)`)
+		if err != nil {
+			return err
+		}
+
 		result, err := q.Exec(`
 		DELETE FROM messages
 		WHERE deleted_from_source_at IS NOT NULL
@@ -203,6 +211,9 @@ func (s *Store) ExecuteGCContext(
 				expected.SourceDeleted,
 				deleted,
 			)
+		}
+		if err := s.linkEmailRepliesToMessageIDsTx(ctx, tx, purgedParents); err != nil {
+			return fmt.Errorf("link email replies after archive GC: %w", err)
 		}
 		for _, conversationID := range affectedConversationIDs {
 			if err := s.recomputeConversationStatsWith(
