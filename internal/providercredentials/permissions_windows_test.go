@@ -609,3 +609,53 @@ func TestSecureRestoredRepairsProtectedSelectedDirectory(t *testing.T) {
 	require.NoError(t, SecureRestored(dir, []string{path}))
 	require.NoError(t, verifyOwnerOnlyHandle(handle, false))
 }
+
+func TestSecureRestoredRejectsDistinctUnicodeOmittedFile(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tokens")
+	require.NoError(t, os.Mkdir(dir, 0o700))
+	user := currentWindowsProviderCredentialSID(t)
+	owner := providerCredentialTestAccess(user, windows.GENERIC_ALL, windows.TRUSTEE_IS_USER)
+	owner.Inheritance = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
+	everyone := providerCredentialTestAccess(windowsProviderCredentialSID(t, "S-1-1-0"), windows.GENERIC_ALL, windows.TRUSTEE_IS_WELL_KNOWN_GROUP)
+	everyone.Inheritance = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
+	root := setProviderCredentialTestACL(t, dir, []windows.EXPLICIT_ACCESS{owner, everyone}, true)
+	selected := filepath.Join(dir, "İ.json")
+	omitted := filepath.Join(dir, "i.json")
+	require.NoError(t, os.WriteFile(selected, []byte("selected"), 0o600))
+	require.NoError(t, os.WriteFile(omitted, []byte("omitted"), 0o600))
+	selectedInfo, err := os.Stat(selected)
+	require.NoError(t, err)
+	omittedInfo, err := os.Stat(omitted)
+	require.NoError(t, err)
+	if os.SameFile(selectedInfo, omittedInfo) {
+		t.Skip("filesystem treats the Unicode names as the same file")
+	}
+	selectedHandle, err := openSecurityHandle(selected, false, windows.READ_CONTROL)
+	require.NoError(t, err)
+	defer windows.CloseHandle(selectedHandle) //nolint:errcheck
+	omittedHandle, err := openSecurityHandle(omitted, false, windows.READ_CONTROL)
+	require.NoError(t, err)
+	defer windows.CloseHandle(omittedHandle) //nolint:errcheck
+	rootBefore, err := windows.GetSecurityInfo(root, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	require.NoError(t, err)
+	selectedBefore, err := windows.GetSecurityInfo(selectedHandle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	require.NoError(t, err)
+	omittedBefore, err := windows.GetSecurityInfo(omittedHandle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	require.NoError(t, err)
+	inherited, err := inheritedAccess(omittedBefore)
+	require.NoError(t, err)
+	require.True(t, inherited)
+	require.ErrorIs(t, SecureRestored(dir, []string{"İ.json"}), ErrRestorePermissionsConflict)
+	rootAfter, err := windows.GetSecurityInfo(root, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	require.NoError(t, err)
+	selectedAfter, err := windows.GetSecurityInfo(selectedHandle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	require.NoError(t, err)
+	omittedAfter, err := windows.GetSecurityInfo(omittedHandle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	require.NoError(t, err)
+	assert.Equal(t, rootBefore.String(), rootAfter.String())
+	assert.Equal(t, selectedBefore.String(), selectedAfter.String())
+	assert.Equal(t, omittedBefore.String(), omittedAfter.String())
+	data, err := os.ReadFile(omitted)
+	require.NoError(t, err)
+	assert.Equal(t, "omitted", string(data))
+}

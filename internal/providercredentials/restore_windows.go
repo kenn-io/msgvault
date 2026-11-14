@@ -8,7 +8,8 @@ import (
 	"io/fs"
 	"path/filepath"
 	"slices"
-	"strings"
+	"sort"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -18,13 +19,19 @@ var ErrRestorePermissionsConflict = errors.New("restored token permissions confl
 
 // SecureRestored protects snapshot-selected token files while preserving omitted entries.
 func SecureRestored(dir string, restored []string) error {
-	selected := make(map[string]struct{}, len(restored))
-	ancestors := make(map[string]struct{})
+	var ancestorNames []string
 	for _, name := range restored {
-		selected[strings.ToLower(name)] = struct{}{}
 		for parent := filepath.Dir(name); parent != "."; parent = filepath.Dir(parent) {
-			ancestors[strings.ToLower(parent)] = struct{}{}
+			ancestorNames = append(ancestorNames, parent)
 		}
+	}
+	selected, err := newOrdinalPaths(restored)
+	if err != nil {
+		return err
+	}
+	ancestors, err := newOrdinalPaths(ancestorNames)
+	if err != nil {
+		return err
 	}
 	return withDirectoryMutex(dir, func(directory windows.Handle) error {
 		if err := verifyHandleOwner(directory); err != nil {
@@ -52,7 +59,7 @@ func SecureRestored(dir string, restored []string) error {
 	})
 }
 
-func restorePreflight(dir string, selected, ancestors map[string]struct{}, rootAffected bool) ([]string, error) {
+func restorePreflight(dir string, selected, ancestors ordinalPaths, rootAffected bool) ([]string, error) {
 	var directories []string
 	affected := map[string]bool{".": rootAffected}
 	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -66,10 +73,15 @@ func restorePreflight(dir string, selected, ancestors map[string]struct{}, rootA
 		if err != nil {
 			return fmt.Errorf("%w: inspect tokens: %w", ErrRestorePermissionsConflict, err)
 		}
-		key := strings.ToLower(rel)
-		parentAffected := affected[strings.ToLower(filepath.Dir(rel))]
-		_, selectedFile := selected[key]
-		_, selectedAncestor := ancestors[key]
+		parentAffected := affected[filepath.Dir(rel)]
+		selectedFile, err := selected.contains(rel)
+		if err != nil {
+			return fmt.Errorf("%w: compare tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
+		}
+		selectedAncestor, err := ancestors.contains(rel)
+		if err != nil {
+			return fmt.Errorf("%w: compare tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
+		}
 		if !parentAffected && !selectedFile && !selectedAncestor {
 			if entry.IsDir() {
 				return fs.SkipDir
@@ -99,10 +111,10 @@ func restorePreflight(dir string, selected, ancestors map[string]struct{}, rootA
 					return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
 				}
 				directories = append(directories, rel)
-				affected[key] = true
+				affected[rel] = true
 				return nil
 			}
-			affected[key] = parentAffected && !protected
+			affected[rel] = parentAffected && !protected
 			if protected && !selectedAncestor {
 				return fs.SkipDir
 			}
@@ -122,6 +134,62 @@ func restorePreflight(dir string, selected, ancestors map[string]struct{}, rootA
 		return nil
 	})
 	return directories, err
+}
+
+var compareStringOrdinal = windows.NewLazySystemDLL("kernel32.dll").NewProc("CompareStringOrdinal")
+
+type ordinalPaths [][]uint16
+
+func compareOrdinal(left, right []uint16) (int, error) {
+	// #nosec G103 -- CompareStringOrdinal reads both UTF-16 buffers during the call.
+	result, _, err := compareStringOrdinal.Call(
+		uintptr(unsafe.Pointer(&left[0])), uintptr(len(left)-1),
+		uintptr(unsafe.Pointer(&right[0])), uintptr(len(right)-1), 1,
+	)
+	if result == 0 {
+		return 0, fmt.Errorf("compare Windows paths: %w", err)
+	}
+	return int(result) - 2, nil
+}
+
+func newOrdinalPaths(names []string) (ordinalPaths, error) {
+	paths := make(ordinalPaths, 0, len(names))
+	for _, name := range names {
+		path, err := windows.UTF16FromString(name)
+		if err != nil {
+			return nil, fmt.Errorf("encode Windows path: %w", err)
+		}
+		paths = append(paths, path)
+	}
+	var compareErr error
+	sort.Slice(paths, func(i, j int) bool {
+		order, err := compareOrdinal(paths[i], paths[j])
+		if err != nil {
+			compareErr = err
+		}
+		return order < 0
+	})
+	return paths, compareErr
+}
+
+func (paths ordinalPaths) contains(name string) (bool, error) {
+	path, err := windows.UTF16FromString(name)
+	if err != nil {
+		return false, fmt.Errorf("encode Windows path: %w", err)
+	}
+	var compareErr error
+	index := sort.Search(len(paths), func(i int) bool {
+		order, err := compareOrdinal(paths[i], path)
+		if err != nil {
+			compareErr = err
+		}
+		return order >= 0
+	})
+	if compareErr != nil || index == len(paths) {
+		return false, compareErr
+	}
+	order, err := compareOrdinal(paths[index], path)
+	return order == 0 && err == nil, err
 }
 
 func inheritedAccess(sd *windows.SECURITY_DESCRIPTOR) (bool, error) {
