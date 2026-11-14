@@ -3003,6 +3003,10 @@ components:
             - done
             - snoozed
           type: string
+          x-enum-names:
+            - CommitmentDecisionRequestStateOpen
+            - CommitmentDecisionRequestStateDone
+            - CommitmentDecisionRequestStateSnoozed
         until:
           format: date-time
           type: string
@@ -3017,10 +3021,6 @@ components:
           format: date-time
           type: string
         state:
-          enum:
-            - open
-            - done
-            - snoozed
           type: string
       required:
         - id
@@ -7272,7 +7272,6 @@ components:
             - owed_to
           type: string
         due_on:
-          format: date
           type: string
         freshness:
           enum:
@@ -7298,6 +7297,10 @@ components:
             - done
             - snoozed
           type: string
+          x-enum-names:
+            - LoopCommitmentStateOpen
+            - LoopCommitmentStateDone
+            - LoopCommitmentStateSnoozed
         summary:
           type: string
       required:

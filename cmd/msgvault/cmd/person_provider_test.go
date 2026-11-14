@@ -899,6 +899,30 @@ func TestPersonProviderRevokeIsIdempotent(t *testing.T) {
 	assert.Equal(firstStatus.Consent.LastRevoked.ID, secondStatus.Consent.LastRevoked.ID)
 }
 
+func TestPersonProviderCommitmentConsentDisclosesAndReportsStatus(t *testing.T) {
+	must, check := require.New(t), assert.New(t)
+	cfg := personProviderTestConfig()
+	provider := cfg.Providers["default"]
+	provider.AllowSensitive = true
+	cfg.Providers["default"] = provider
+	profile, err := cfg.Profile()
+	must.NoError(err)
+	st := testutil.NewSQLiteTestStore(t)
+	deps := localPersonProviderDeps(cfg, st, nil)
+	disclosure, err := executePersonProviderCommand(t, deps, "consent", "--commitments")
+	must.ErrorContains(err, "--yes")
+	check.Contains(disclosure, profile.Endpoint)
+	check.Contains(disclosure, "written by you and the other person")
+	output, err := executePersonProviderCommand(t, deps, "consent", "--commitments", "--yes", "--json")
+	must.NoError(err)
+	var status personProviderStatusOutput
+	must.NoError(json.Unmarshal([]byte(output), &status))
+	must.NotNil(status.CommitmentsConsent)
+	check.True(*status.CommitmentsConsent)
+	check.False(status.Consent.Active)
+	check.Equal(profile.Fingerprint, status.Profile.Fingerprint)
+}
+
 func TestPersonProviderRevokesOnlyCommitmentConsent(t *testing.T) {
 	must, check := require.New(t), assert.New(t)
 	ctx := t.Context()

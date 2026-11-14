@@ -542,11 +542,15 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 	window.SnapshotSequence = through
 	var previous int64
 	var scope string
+	var since nullableTimestamp
 	err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT CASE WHEN observed_sequence > through_sequence THEN observed_sequence ELSE through_sequence END,
-  backfill_message_id, scope_fingerprint FROM person_commitment_frontiers WHERE person_id = ?`), personID).
-		Scan(&previous, &window.BackfillMessageID, &scope)
+  backfill_message_id, scope_fingerprint, discovery_since FROM person_commitment_frontiers WHERE person_id = ?`), personID).
+		Scan(&previous, &window.BackfillMessageID, &scope, &since)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return window, err
+	}
+	if window.BackfillMessageID != -1 && since.Valid && since.Time.Before(now.Add(-cfg.Window)) {
+		window.SelectionAt = since.Time.Add(cfg.Window)
 	}
 	if scope != window.ScopeFingerprint {
 		previous, window.BackfillMessageID = 0, 0

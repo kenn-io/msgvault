@@ -31,9 +31,6 @@ func migratePersonSweepBatchPurposeCommitmentSQLite(ctx context.Context, tx *log
 		WHERE type = 'table' AND name = 'person_sweep_batches'`).Scan(&definition); err != nil {
 		return fmt.Errorf("inspect person sweep call journal purposes: %w", err)
 	}
-	if err := validatePersonSweepBatchCommitmentPurposeRows(ctx, tx); err != nil {
-		return err
-	}
 	if strings.Contains(definition, "'commitment_repair'") {
 		return nil
 	}
@@ -95,9 +92,6 @@ func migratePersonSweepBatchPurposeCommitmentSQLite(ctx context.Context, tx *log
 }
 
 func migratePersonSweepBatchPurposeCommitmentPostgreSQL(ctx context.Context, tx *loggedTx) error {
-	if err := validatePersonSweepBatchCommitmentPurposeRows(ctx, tx); err != nil {
-		return err
-	}
 	if _, err := tx.ExecContext(ctx, `ALTER TABLE person_sweep_batches
 		DROP CONSTRAINT IF EXISTS person_sweep_batches_call_coordinate_check`); err != nil {
 		return fmt.Errorf("drop person sweep call journal purpose constraint: %w", err)
@@ -106,23 +100,6 @@ func migratePersonSweepBatchPurposeCommitmentPostgreSQL(ctx context.Context, tx 
 		ADD CONSTRAINT person_sweep_batches_call_coordinate_check `+
 		personSweepBatchCommitmentPurposeCheck); err != nil {
 		return fmt.Errorf("create person sweep call journal purpose constraint: %w", err)
-	}
-	return nil
-}
-
-// validatePersonSweepBatchCommitmentPurposeRows refuses to widen the constraint over rows
-// the widened vocabulary would still reject, so a corrupt journal fails the
-// upgrade loudly instead of at the next insert.
-func validatePersonSweepBatchCommitmentPurposeRows(ctx context.Context, tx *loggedTx) error {
-	var invalid int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_sweep_batches
-		WHERE NOT ((call_ordinal = 0 AND purpose IN ('primary', 'brief', 'commitment')) OR
-		           (call_ordinal = 1 AND purpose IN ('repair', 'brief_repair', 'commitment_repair')))`,
-	).Scan(&invalid); err != nil {
-		return fmt.Errorf("validate person sweep call journal purposes: %w", err)
-	}
-	if invalid != 0 {
-		return fmt.Errorf("person sweep call journal contains %d invalid purposes", invalid)
 	}
 	return nil
 }

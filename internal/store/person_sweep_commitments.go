@@ -84,14 +84,6 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		err := s.prepareCommitmentStatuses(ctx, request, prepared, nil)
 		return prepared, err
 	}
-	output, err := json.Marshal(result.Output)
-	if err != nil {
-		return nil, err
-	}
-	parsed, err := peoplesweep.ParseCommitments(output, window)
-	if err != nil {
-		return nil, err
-	}
 	sources := make(map[string]peoplesweep.CommitmentSource, len(window.Sources))
 	for _, source := range window.Sources {
 		sources[source.ID] = source
@@ -116,7 +108,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 	generation.EvidenceStatusChanges = nil
 	aligner := make(commitmentEvidenceAligner)
 	matched := make(map[string]bool)
-	for _, promise := range parsed.Promises {
+	for _, promise := range result.Output.Promises {
 		source, err := verify(promise.SourceID)
 		if err != nil {
 			return nil, err
@@ -176,6 +168,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		prepared.promises = append(prepared.promises, preparedCommitmentPromise{promise: promise})
 	}
 	if len(generation.Claims) != 0 {
+		var err error
 		prepared.generation, err = personfacts.PreparePersonFactGeneration(ctx, generation, aligner)
 		if err != nil {
 			return nil, err
@@ -233,6 +226,9 @@ func (s *Store) saveCommitmentFrontierTx(ctx context.Context, tx *loggedTx, requ
 		}
 	}
 	since := prepared.selectionAt.Add(-request.Commitment.Config.Window)
+	if backfill == -1 {
+		since = request.Commitment.Window.Now.Add(-request.Commitment.Config.Window)
+	}
 	var profileSince string
 	if err := tx.QueryRowContext(ctx, `SELECT source_since FROM person_inference_profiles WHERE fingerprint = ?`, request.Generation.Policy.ProviderPolicyFingerprint).Scan(&profileSince); err != nil {
 		return err

@@ -923,8 +923,7 @@ CREATE TABLE IF NOT EXISTS person_sweep_attempts (
     latency_milliseconds        INTEGER NOT NULL DEFAULT 0 CHECK (latency_milliseconds >= 0),
     retry_at                    TEXT,
     started_at                  TEXT NOT NULL,
-    completed_at                TEXT,
-    commitment_failure_class    TEXT NOT NULL DEFAULT ''
+    completed_at                TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_person_sweep_attempts_person_started
@@ -4393,7 +4392,7 @@ CREATE INDEX IF NOT EXISTS idx_docbank_processing_due
  WHERE next_action_at IS NOT NULL;
 
 -- Separately consented promise lifecycle. Owner state outlives an invalidated
--- current claim (including absorbed person history during a person merge).
+-- current claim.
 CREATE TABLE IF NOT EXISTS person_commitments (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,

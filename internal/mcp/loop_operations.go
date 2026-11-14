@@ -2,9 +2,7 @@ package mcp
 
 import (
 	"encoding/json/jsontext"
-	"reflect"
 
-	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"github.com/google/jsonschema-go/jsonschema"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -14,7 +12,7 @@ func loopOperationalDefinitions() []operationalDefinition {
 		newOperationalDefinition("list_open_loops", "List unanswered questions and cited commitments. coverage_incomplete means call again to continue checking retained evidence; truncated means narrow by person_id because there is no cursor; skipped_unparseable means an unreadable original may contain a reply that settled a listed loop. These evidence warnings do not measure source freshness.", OperationFamilyLoops, closedObject(map[string]*jsonschema.Schema{
 			"person_id": safeIDSchema("Only questions with this durable person ID"),
 			"limit":     {Type: "integer", Minimum: new(float64(1)), Maximum: new(float64(200)), Default: jsontext.Value("50")},
-		}), loopListOutputSchema(), false),
+		}), outputSchemaFor[generated.LoopListResponse](), false),
 		newOperationalDefinition("close_open_loop", "Mark done exactly the listed questions after rechecking the anchor's evidence. Questions that appeared after the list stay open. Requires approval.", OperationFamilyLoops, closedObject(map[string]*jsonschema.Schema{
 			"message_id":           safeIDSchema("Exact anchor_message_id from a list or decision receipt"),
 			"question_message_ids": listedQuestionsSchema(),
@@ -26,20 +24,6 @@ func loopOperationalDefinitions() []operationalDefinition {
 		}, "message_id", "question_message_ids", "until"), outputSchemaFor[generated.LoopDecisionResponse](), true),
 		newOperationalDefinition("reopen_open_loop", "Clear the saved decision on one exact question. Use its anchor_message_id from a previous list or decision receipt because hidden questions are absent from the current list. Requires approval.", OperationFamilyLoops, closedObject(map[string]*jsonschema.Schema{"message_id": safeIDSchema("Exact anchor_message_id from a previous list or decision receipt")}, "message_id"), outputSchemaFor[generated.LoopDecisionResponse](), true),
 	}
-}
-
-func loopListOutputSchema() *jsonschema.Schema {
-	// The generated calendar date marshals as a string even though it embeds time.Time.
-	schema, err := jsonschema.For[generated.LoopListResponse](&jsonschema.ForOptions{
-		TypeSchemas: map[reflect.Type]*jsonschema.Schema{
-			reflect.TypeFor[runtime.Date](): {Type: "string", Format: "date"},
-		},
-	})
-	if err != nil {
-		panic(err)
-	}
-	schema.Schema = schema202012
-	return schema
 }
 
 func listedQuestionsSchema() *jsonschema.Schema {

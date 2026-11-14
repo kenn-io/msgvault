@@ -144,7 +144,6 @@ func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
 	dueOn := commitments.Items.Properties["due_on"]
 	requirements.NotNil(dueOn)
 	assertions.Contains(dueOn.Types, "string")
-	assertions.Equal("date", dueOn.Format)
 	second := operationalCatalog(opts, true)
 	for i, definition := range first {
 		assertions.Equal(names[i], definition.definition.name)

@@ -1700,7 +1700,7 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 		if err := s.migratePersonSweepBatchPurposeCommitment(ctx); err != nil {
 			return err
 		}
-		return s.migratePersonCommitmentFailure(ctx)
+		return nil
 	}); err != nil {
 		return fmt.Errorf("migrate commitments: %w", err)
 	}

@@ -1195,16 +1195,9 @@ func runPersonCommitmentConsent(command *cobra.Command, deps personProviderComma
 		return errors.New("commitment extraction requires allowing sensitive conversation text in the provider profile")
 	}
 	if !confirmed || !jsonOutput {
-		until := profile.SourceUntil
-		if until == "" {
-			until = "present"
-		}
 		w := command.OutOrStdout()
-		if _, err := fmt.Fprintf(w, "Commitment extraction sends exact text written by you and the other person in verified direct conversations to %s (%s).\n"+
-			"Profile %s, source dates %s through %s, retention=%s, training=%s.\n"+
-			"A request sends up to %d messages within the profile scope.\n",
-			profile.Endpoint, profile.Model, profile.Fingerprint, profile.SourceSince, until, profile.RetentionPosture, profile.TrainingPosture,
-			cfg.Commitments.MaxItems); err != nil {
+		printPersonProviderDisclosure(w, profile)
+		if _, err := fmt.Fprintln(w, "Commitment extraction sends exact text written by you and the other person in verified direct conversations."); err != nil {
 			return fmt.Errorf("write commitment policy disclosure: %w", err)
 		}
 	}
@@ -1229,7 +1222,11 @@ func runPersonCommitmentConsent(command *cobra.Command, deps personProviderComma
 		return err
 	}
 	if jsonOutput {
-		return writeJSONOutput(command, map[string]any{"purpose": "people_commitments", "fingerprint": profile.Fingerprint, accountStateActive: true})
+		output, err := personProviderStatusFor(command.Context(), st, profile)
+		if err != nil {
+			return err
+		}
+		return writeJSONOutput(command, output)
 	}
 	_, err = fmt.Fprintln(command.OutOrStdout(), "Commitment consent active.")
 	if err != nil {

@@ -72,13 +72,15 @@ type ApplyRequest struct {
 	Budget             BudgetConfig
 	CursorAdvances     []CursorAdvance
 	DeferredCursorWork bool
-	// Brief is the version this attempt generated, or nil when the attempt ran
-	// no brief call or the call produced nothing storable.
+
 	Commitment             *CommitmentResult
 	CommitmentFailureClass FailureClass
 	CommitmentRetryAt      time.Time
 	CommitmentOnly         bool
-	Brief                  *BriefResult
+
+	// Brief is the version this attempt generated, or nil when the attempt ran
+	// no brief call or the call produced nothing storable.
+	Brief *BriefResult
 	// BriefFailureClass records why a brief call produced no version while the
 	// attempt itself succeeded. It is empty when no brief was attempted or the
 	// brief succeeded, and it licenses the apply to reconcile a brief
@@ -393,21 +395,23 @@ type PersonRunResult struct {
 	BriefVersion int
 	// BriefFailureClass is why a brief call produced no version while the
 	// attempt succeeded. Empty when no brief ran or the brief was stored.
-	BriefFailureClass      FailureClass
+	BriefFailureClass FailureClass
+	CursorAdvances    []CursorAdvance
+	Usage             Usage
+
 	CommitmentFailureClass FailureClass
-	CursorAdvances         []CursorAdvance
-	Usage                  Usage
 }
 
 type Worker struct {
 	Timezone string
-	Config   Config
-	Store    WorkStore
-	Source   AssemblySource
-	Context  ContextRetriever
-	Sink     ClaimSink
-	Runner   StructuredRunner
-	Catalog  CatalogSource
+
+	Config  Config
+	Store   WorkStore
+	Source  AssemblySource
+	Context ContextRetriever
+	Sink    ClaimSink
+	Runner  StructuredRunner
+	Catalog CatalogSource
 	// Brief and Archive carry the person brief step. Both nil turns the step
 	// off entirely, which is what a caller that predates the brief gets.
 	Brief    BriefStore

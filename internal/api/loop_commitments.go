@@ -30,7 +30,7 @@ type LoopCommitment struct {
 	Freshness    string          `json:"freshness" enum:"fresh,stale"`
 	State        string          `json:"state" enum:"open,done,snoozed"`
 	SnoozedUntil *time.Time      `json:"snoozed_until,omitempty"`
-	DueOn        *string         `json:"due_on,omitempty" format:"date"`
+	DueOn        *string         `json:"due_on,omitempty"`
 }
 
 type CommitmentDecisionRequest struct {
@@ -40,7 +40,7 @@ type CommitmentDecisionRequest struct {
 
 type CommitmentDecisionResponse struct {
 	ID           string     `json:"id"`
-	State        string     `json:"state" enum:"open,done,snoozed"`
+	State        string     `json:"state"`
 	SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
 }
 

@@ -2945,25 +2945,13 @@ func (c CommitmentDecisionRequest) Validate() error {
 }
 
 type CommitmentDecisionResponse struct {
-	ID           string                          `json:"id" validate:"required"`
-	SnoozedUntil *time.Time                      `json:"snoozed_until,omitempty"`
-	State        CommitmentDecisionResponseState `json:"state" validate:"required"`
+	ID           string     `json:"id" validate:"required"`
+	SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
+	State        string     `json:"state" validate:"required"`
 }
 
 func (c CommitmentDecisionResponse) Validate() error {
-	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(c.ID, "required"); err != nil {
-		errors = errors.Append("ID", err)
-	}
-	if v, ok := any(c.State).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("State", err)
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
 type CommitmentQuote struct {
@@ -7188,7 +7176,7 @@ func (l LocalEmbeddingsStatus) Validate() error {
 type LoopCommitment struct {
 	ClaimID      int64                   `json:"claim_id"`
 	Direction    LoopCommitmentDirection `json:"direction" validate:"required"`
-	DueOn        *runtime.Date           `json:"due_on,omitempty"`
+	DueOn        *string                 `json:"due_on,omitzero"`
 	Freshness    LoopCommitmentFreshness `json:"freshness" validate:"required"`
 	ID           string                  `json:"id" validate:"required"`
 	PersonID     int64                   `json:"person_id"`
@@ -7204,13 +7192,6 @@ func (l LoopCommitment) Validate() error {
 	if v, ok := any(l.Direction).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Direction", err)
-		}
-	}
-	if l.DueOn != nil {
-		if v, ok := any(l.DueOn).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append("DueOn", err)
-			}
 		}
 	}
 	if v, ok := any(l.Freshness).(runtime.Validator); ok {

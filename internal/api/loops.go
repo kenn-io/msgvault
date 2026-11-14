@@ -38,14 +38,15 @@ type LoopItem struct {
 
 // LoopListResponse lists open loops oldest first.
 type LoopListResponse struct {
+	Items              []LoopItem `json:"items"`
+	Truncated          bool       `json:"truncated" doc:"True when more loops are open than limit returned"`
+	CoverageIncomplete bool       `json:"coverage_incomplete" doc:"True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue"`
+	// SkippedUnparseable counts stored originals the list could not parse. A reply in one of them may have settled a loop that still lists.
+	SkippedUnparseable int `json:"skipped_unparseable" doc:"Stored originals that failed to parse and were passed over; a reply in one may have settled a listed loop"`
+
 	Commitments         []LoopCommitment `json:"commitments,omitempty"`
 	CommitmentsSince    *time.Time       `json:"commitments_since,omitempty"`
 	CommitmentsComplete *bool            `json:"commitments_complete,omitempty"`
-	Items               []LoopItem       `json:"items"`
-	Truncated           bool             `json:"truncated" doc:"True when more loops are open than limit returned"`
-	CoverageIncomplete  bool             `json:"coverage_incomplete" doc:"True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue"`
-	// SkippedUnparseable counts stored originals the list could not parse. A reply in one of them may have settled a loop that still lists.
-	SkippedUnparseable int `json:"skipped_unparseable" doc:"Stored originals that failed to parse and were passed over; a reply in one may have settled a listed loop"`
 }
 
 // LoopDecisionResponse is the result of a done, snooze, or reopen action.
