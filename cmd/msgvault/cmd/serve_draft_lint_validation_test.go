@@ -12,33 +12,36 @@ import (
 )
 
 func TestDraftQuotedMailboxValidation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	f := newDraftReplyFixture(t)
 	a := f.grantedAdapter()
 	args := []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--from", testutil.IMAPTestUsername, "--to", `"alex smith"@example.com`, "--cc", `"pat smith"@example.com`, "--bcc", `"sam smith"@example.com`, "--subject", "Hello", "--body", "Thanks", "--strict", "--validate-only"}
 	events, err := lintRun(t, a, nil, append(args, "--json")...)
-	require.NoError(t, err)
+	require.NoError(err)
 	got := lintObject(t, events)
-	assert.Equal(t, true, got["valid"])
+	assert.Equal(true, got["valid"])
 	recipients, ok := got["recipients"].(map[string]any)
-	require.True(t, ok)
+	require.True(ok)
 	for _, field := range []string{"to", "cc", "bcc"} {
 		values, ok := recipients[field].([]any)
-		require.True(t, ok)
-		require.Len(t, values, 1)
+		require.True(ok)
+		require.Len(values, 1)
 		address, ok := values[0].(string)
-		require.True(t, ok)
+		require.True(ok)
 		_, err := mail.ParseAddress(address)
-		require.NoError(t, err)
+		require.NoError(err)
 	}
 	events, err = lintRun(t, a, nil, args...)
-	require.NoError(t, err)
-	require.NotEmpty(t, events)
+	require.NoError(err)
+	require.NotEmpty(events)
 	for _, recipient := range []struct{ field, address string }{
 		{"to", `"alex smith"@example.com`},
 		{"cc", `"pat smith"@example.com`},
 		{"bcc", `"sam smith"@example.com`},
 	} {
-		assert.Contains(t, events[0].Data, recipient.field+": "+recipient.address+"\n")
+		assert.Contains(events[0].Data, recipient.field+": "+recipient.address+"\n")
 	}
 }
 func TestDraftInheritedSubjectStrict(t *testing.T) {

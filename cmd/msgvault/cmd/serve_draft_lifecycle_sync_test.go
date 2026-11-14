@@ -210,6 +210,9 @@ func TestDelegatedGmailEditPreviewConcurrentArchiveRefresh(t *testing.T) {
 		{"other@example.test", false},
 	} {
 		t.Run(tc.sender, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
 			f := newGmailDraftTestFixture(t)
 			draft := f.seedDraft(t)
 			grant := delegatedGmailDraftGrant(f, []agentgrant.Permission{agentgrant.PermissionDraftEdit}, f.source.SourceType, f.source.Identifier)
@@ -222,7 +225,7 @@ func TestDelegatedGmailEditPreviewConcurrentArchiveRefresh(t *testing.T) {
 				Handler: slog.DiscardHandler,
 				afterRead: func() {
 					if refreshed.CompareAndSwap(false, true) {
-						require.NoError(t, f.store.UpsertMessageRawWithFormatContext(t.Context(), draft.CurrentMessageID, []byte(raw), "mime"))
+						require.NoError(f.store.UpsertMessageRawWithFormatContext(t.Context(), draft.CurrentMessageID, []byte(raw), "mime"))
 					}
 				},
 			}))
@@ -236,23 +239,23 @@ func TestDelegatedGmailEditPreviewConcurrentArchiveRefresh(t *testing.T) {
 				events = append(events, event)
 				return nil
 			})
-			require.True(t, refreshed.Load())
+			require.True(refreshed.Load())
 			if tc.allowed {
-				require.NoError(t, err)
+				require.NoError(err)
 				output := lintObject(t, events)
-				assert.Equal(t, "validated", output["status"])
+				assert.Equal("validated", output["status"])
 				recipients, ok := output["recipients"].(map[string]any)
-				require.True(t, ok)
-				assert.Equal(t, []any{"changed@example.test"}, recipients["to"])
+				require.True(ok)
+				assert.Equal([]any{"changed@example.test"}, recipients["to"])
 			} else {
-				require.EqualError(t, err, "not_permitted")
-				assert.Empty(t, events)
+				require.EqualError(err, "not_permitted")
+				assert.Empty(events)
 			}
-			assert.Zero(t, f.client.getCalls)
-			assert.Zero(t, f.client.updateCalls)
+			assert.Zero(f.client.getCalls)
+			assert.Zero(f.client.updateCalls)
 			latest, err := f.store.GetGmailDraftContext(t.Context(), draft.DraftID)
-			require.NoError(t, err)
-			assert.Equal(t, draft, latest)
+			require.NoError(err)
+			assert.Equal(draft, latest)
 		})
 	}
 }

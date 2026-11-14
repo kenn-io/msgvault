@@ -343,6 +343,9 @@ func TestDraftToolResultShapes(t *testing.T) {
 func TestDraftToolLintFlagsPassed(t *testing.T) {
 	for _, command := range []string{"draft-reply", "draft-compose", "draft-forward", "draft-edit"} {
 		t.Run(command, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
 			args := map[string]any{"body": "ok", "strict": true, "allow_placeholders": true, "validate_only": true}
 			if command == "draft-reply" || command == "draft-forward" {
 				args["message_id"] = 7
@@ -354,40 +357,45 @@ func TestDraftToolLintFlagsPassed(t *testing.T) {
 			runner := &draftTestRunner{result: DraftCommandResult{Stdout: `{"status":"validated","valid":true}`}}
 			session := draftConfirmationSession(t, ServeOptions{Drafts: runner, DraftCommands: []string{command}})
 			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: strings.ReplaceAll(command, "-", "_"), Arguments: args})
-			require.NoError(t, err)
-			require.False(t, result.IsError)
-			assert.Equal(t, []string{"true"}, runner.request.Flags["strict"])
-			assert.Equal(t, []string{"true"}, runner.request.Flags["allow-placeholders"])
-			assert.Equal(t, []string{"true"}, runner.request.Flags["validate-only"])
+			require.NoError(err)
+			require.False(result.IsError)
+			assert.Equal([]string{"true"}, runner.request.Flags["strict"])
+			assert.Equal([]string{"true"}, runner.request.Flags["allow-placeholders"])
+			assert.Equal([]string{"true"}, runner.request.Flags["validate-only"])
 		})
 	}
 }
 
 func TestDraftValidateOnlySensitiveContent(t *testing.T) {
+	require := require.New(t)
+
 	runner := &draftTestRunner{result: DraftCommandResult{Stdout: `{"status":"validated","valid":true}`}}
 	session := draftConfirmationSession(t, ServeOptions{Drafts: runner, DraftCommands: []string{"draft-compose"}, ConfirmSensitiveDrafts: true})
 	args := map[string]any{"body": "4111111111111111", "validate_only": true}
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolDraftCompose, Arguments: args})
-	require.NoError(t, err)
-	require.False(t, result.NeedsInput())
-	require.False(t, result.IsError)
+	require.NoError(err)
+	require.False(result.NeedsInput())
+	require.False(result.IsError)
 	content, ok := result.StructuredContent.(map[string]any)
-	require.True(t, ok)
-	require.Len(t, content["sensitive_content"], 1)
+	require.True(ok)
+	require.Len(content["sensitive_content"], 1)
 }
 
 func TestDraftStrictRefusalIncludesSensitiveContent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	runner := &draftTestRunner{err: &DraftCommandError{Message: "draft_lint_failed", Stderr: `{"status":"refused","error":"draft_lint_failed","warnings":[{"code":"unresolved_placeholder"}]}`}}
 	session := draftConfirmationSession(t, ServeOptions{Drafts: runner, DraftCommands: []string{"draft-compose"}})
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolDraftCompose, Arguments: map[string]any{"body": "FIRST_NAME 4111111111111111", "strict": true}})
-	require.NoError(t, err)
-	require.True(t, result.IsError)
-	require.Len(t, result.Content, 1)
+	require.NoError(err)
+	require.True(result.IsError)
+	require.Len(result.Content, 1)
 	content, ok := result.Content[0].(*sdkmcp.TextContent)
-	require.True(t, ok)
+	require.True(ok)
 	prefix, payload, ok := strings.Cut(content.Text, "\n")
-	require.True(t, ok)
-	assert.Equal(t, "draft_lint_failed", prefix)
+	require.True(ok)
+	assert.Equal("draft_lint_failed", prefix)
 	var refusal struct {
 		Error    string `json:"error"`
 		Warnings []struct {
@@ -398,12 +406,12 @@ func TestDraftStrictRefusalIncludesSensitiveContent(t *testing.T) {
 			Hint string `json:"hint"`
 		} `json:"sensitive_content"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(payload), &refusal))
-	assert.Equal(t, "draft_lint_failed", refusal.Error)
-	require.Len(t, refusal.Warnings, 1)
-	assert.Equal(t, "unresolved_placeholder", refusal.Warnings[0].Code)
-	require.Len(t, refusal.Sensitive, 1)
-	assert.Equal(t, "payment_card", refusal.Sensitive[0].Kind)
-	assert.Equal(t, "ending 1111", refusal.Sensitive[0].Hint)
-	assert.NotContains(t, content.Text, "4111111111111111")
+	require.NoError(json.Unmarshal([]byte(payload), &refusal))
+	assert.Equal("draft_lint_failed", refusal.Error)
+	require.Len(refusal.Warnings, 1)
+	assert.Equal("unresolved_placeholder", refusal.Warnings[0].Code)
+	require.Len(refusal.Sensitive, 1)
+	assert.Equal("payment_card", refusal.Sensitive[0].Kind)
+	assert.Equal("ending 1111", refusal.Sensitive[0].Hint)
+	assert.NotContains(content.Text, "4111111111111111")
 }

@@ -39,17 +39,19 @@ func TestCheck(t *testing.T) {
 		{name: "clean", channel: "chat", body: "Thanks"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+
 			r := Check(Input{Kind: tc.kind, Channel: tc.channel, Body: tc.body, To: tc.to, Cc: tc.cc, Bcc: tc.bcc, AttachmentCount: tc.attachments, BuiltSize: tc.size, AllowPlaceholders: tc.allow})
 			if tc.code == "" {
-				assert.Nil(t, r.Warnings)
+				assert.Nil(r.Warnings)
 				return
 			}
 			require.Len(t, r.Warnings, 1)
 			w := r.Warnings[0]
-			assert.Equal(t, tc.code, w.Code)
-			assert.Equal(t, tc.severity, w.Severity)
+			assert.Equal(tc.code, w.Code)
+			assert.Equal(tc.severity, w.Severity)
 			if tc.field != "" {
-				assert.Equal(t, tc.field, w.Field)
+				assert.Equal(tc.field, w.Field)
 			}
 		})
 	}
@@ -66,18 +68,21 @@ func TestCheckSpanAndExcerpt(t *testing.T) {
 		{"monotonic cursors", "界\xff\a " + strings.Repeat("FIRST_NAME 界 ", 3) + "\a", "", []Span{{4, 14}, {17, 27}, {30, 40}, {1, 2}, {2, 3}, {43, 44}}, []string{"FIRST_NAME", "FIRST_NAME", "FIRST_NAME"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
 			result := Check(Input{Channel: "chat", Body: tc.body})
-			require.Len(t, result.Warnings, len(tc.spans))
+			require.Len(result.Warnings, len(tc.spans))
 			for i, warning := range result.Warnings {
-				require.NotNil(t, warning.Span)
-				assert.Equal(t, &tc.spans[i], warning.Span)
+				require.NotNil(warning.Span)
+				assert.Equal(&tc.spans[i], warning.Span)
 				if i < len(tc.tokens) {
-					assert.Equal(t, tc.tokens[i], string([]rune(tc.body)[warning.Span.Start:warning.Span.End]))
-					assert.Contains(t, warning.Excerpt, tc.tokens[i])
-					assert.LessOrEqual(t, len([]rune(warning.Excerpt)), 80)
+					assert.Equal(tc.tokens[i], string([]rune(tc.body)[warning.Span.Start:warning.Span.End]))
+					assert.Contains(warning.Excerpt, tc.tokens[i])
+					assert.LessOrEqual(len([]rune(warning.Excerpt)), 80)
 				}
 				if tc.excerpt != "" {
-					assert.Equal(t, tc.excerpt, warning.Excerpt)
+					assert.Equal(tc.excerpt, warning.Excerpt)
 				}
 			}
 		})
@@ -87,18 +92,20 @@ func TestCheckSpanAndExcerpt(t *testing.T) {
 func TestCheckCallerAuthoredSubject(t *testing.T) {
 	for _, kind := range []string{"compose", "reply"} {
 		t.Run(kind, func(t *testing.T) {
+			assert := assert.New(t)
+
 			got := Check(Input{Kind: kind, Channel: "email", Subject: "TODO: x\a password: abcdef123456", Body: "Thanks", To: []string{"alex@example.com"}})
 			if kind == "compose" {
-				assert.True(t, got.Blocking())
+				assert.True(got.Blocking())
 				require.Len(t, got.Warnings, 2)
 				var codes []string
 				for _, warning := range got.Warnings {
 					codes = append(codes, warning.Code)
-					assert.Equal(t, "subject", warning.Field)
+					assert.Equal("subject", warning.Field)
 				}
-				assert.ElementsMatch(t, []string{CodeUnresolvedPlaceholder, CodeControlCharacters}, codes)
+				assert.ElementsMatch([]string{CodeUnresolvedPlaceholder, CodeControlCharacters}, codes)
 			} else {
-				assert.Empty(t, got.Warnings)
+				assert.Empty(got.Warnings)
 			}
 		})
 	}
@@ -113,11 +120,13 @@ func TestCheckRedactsSensitiveExcerpt(t *testing.T) {
 		{"subject", Input{Channel: "email", Kind: "compose", Subject: "TODO: card 4111111111111111", Body: "Thanks", To: []string{"a@example.com"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+
 			result := Check(tc.in)
 			require.Len(t, result.Warnings, 1)
-			assert.Equal(t, CodeUnresolvedPlaceholder, result.Warnings[0].Code)
-			assert.NotContains(t, result.Warnings[0].Excerpt, "4111111111111111")
-			assert.Contains(t, result.Warnings[0].Excerpt, "****************")
+			assert.Equal(CodeUnresolvedPlaceholder, result.Warnings[0].Code)
+			assert.NotContains(result.Warnings[0].Excerpt, "4111111111111111")
+			assert.Contains(result.Warnings[0].Excerpt, "****************")
 		})
 	}
 }
