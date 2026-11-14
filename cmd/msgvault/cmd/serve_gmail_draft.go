@@ -205,6 +205,7 @@ func (a *storeAPIAdapter) runGmailReplyDraft(
 	)
 	if err != nil {
 		result.Status = gmailDraftStatusLocalFailed
+		appendDraftLint(&result.draftRecipientAdvisory, target.lint)
 		_ = emitGmailDraftReplyOutput(emit, cliStreamStderr, intent.JSON, result)
 		finish(true)
 		return draftReplyError(gmailDraftStatusLocalFailed, err)
@@ -269,7 +270,7 @@ func emitGmailDraftReplyOutput(
 			textutil.SanitizeTerminal(output.Status),
 			textutil.SanitizeTerminal(output.RFC822MessageID),
 			textutil.SanitizeTerminal(output.OperationRef),
-		)}); err != nil {
+		) + draftLintText(draftlint.Result{Warnings: output.Warnings})}); err != nil {
 			return err
 		}
 		return nil

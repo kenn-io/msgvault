@@ -181,7 +181,7 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 			return draftReplyError("chat_not_found", errors.New("chat is not archived under the selected source"))
 		}
 	}
-	if intent.Strict || intent.ValidateOnly {
+	if intent.ValidateOnly {
 		if err := a.checkLiveBeeperDraft(ctx, grant, source.ID, chatID, intent.JSON, emit); err != nil {
 			return err
 		}

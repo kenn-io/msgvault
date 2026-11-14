@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -106,6 +107,46 @@ func TestDraftLintRepeatedFindingsOutput(t *testing.T) {
 	warnings, ok := got["warnings"].([]any)
 	require.True(ok)
 	assert.Len(warnings, 4)
+}
+
+func TestDraftCreateLocalFailureReportsLint(t *testing.T) {
+	for _, provider := range []string{"imap", "gmail"} {
+		for _, asJSON := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/json=%t", provider, asJSON), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				var events []api.CLIRunEvent
+				var err error
+				if provider == "imap" {
+					f := newDraftReplyFixture(t)
+					conversation, createErr := f.store.EnsureConversation(t.Context(), f.source.ID, "stale", "Stale")
+					require.NoError(createErr)
+					_, createErr = f.store.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: f.source.ID, SourceMessageID: "Drafts|1", ConversationID: conversation, MessageType: store.MessageTypeEmail, Subject: sql.NullString{String: "Stale", Valid: true}}, BodyText: sql.NullString{String: "stale", Valid: true}, RawMIME: []byte("Subject: Stale\r\n\r\nstale\r\n")})
+					require.NoError(createErr)
+					args := []string{"--body", "FIRST_NAME"}
+					if asJSON {
+						args = append(args, "--json")
+					}
+					events, err = f.run(t, f.grantedAdapter(), args...)
+					require.EqualError(err, "remote_accepted_local_failed")
+				} else {
+					f := newSQLiteGmailDraftTestFixture(t)
+					_, createErr := f.store.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_gmail_create BEFORE INSERT ON gmail_drafts BEGIN SELECT RAISE(FAIL, 'injected failure'); END`)
+					require.NoError(createErr)
+					events, err = f.create(t, "FIRST_NAME", asJSON)
+					require.EqualError(err, "remote_accepted_local_failed")
+					assert.Equal(1, f.client.createCalls)
+				}
+				require.Len(events, 1)
+				assert.Equal(cliStreamStderr, events[0].Type)
+				if asJSON {
+					assert.Contains(events[0].Data, `"code":"unresolved_placeholder"`)
+				} else {
+					assert.Contains(events[0].Data, "error: The text contains a template placeholder.")
+				}
+			})
+		}
+	}
 }
 func TestDraftReplyLintAndProvenanceWarnings(t *testing.T) {
 	assert := assert.New(t)

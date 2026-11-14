@@ -98,7 +98,7 @@ func (a *storeAPIAdapter) runCLIChatDraftCreate(
 		authorized = err == nil
 		return err
 	}
-	if intent.ValidateOnly || intent.Strict {
+	if intent.ValidateOnly {
 		if _, err := a.store.ResolveChatDraftContext(ctx, intent.ConversationID, intent.ReplyTo, authorize); err != nil {
 			if authorized {
 				grant = nil

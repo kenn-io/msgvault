@@ -607,6 +607,7 @@ func (a *storeAPIAdapter) createDraft(
 	})
 	if err != nil {
 		result.Status = draftReplyStatusLocalFailed
+		appendDraftLint(&result.draftRecipientAdvisory, target.lint)
 		_ = emitDraftReplyOutput(emit, cliStreamStderr, asJSON, result)
 		return draftReplyError(draftReplyStatusLocalFailed, err)
 	}
@@ -765,7 +766,7 @@ func emitDraftReplyOutput(emit func(api.CLIRunEvent) error, stream string, asJSO
 	default:
 		text = fmt.Sprintf("remote accepted; local persistence failed, inspect operation %s\n", result.OperationRef)
 	}
-	if !asJSON && result.Status == draftReplyStatusCreated {
+	if !asJSON && (result.Status == draftReplyStatusCreated || result.Status == draftReplyStatusLocalFailed) {
 		text += draftLintText(draftlint.Result{Warnings: result.Warnings})
 	}
 	return emit(api.CLIRunEvent{Type: stream, Data: text})
