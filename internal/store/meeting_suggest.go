@@ -26,8 +26,8 @@ type MeetingSuggestion struct {
 }
 
 func (s *Store) suggestionIntervalExpressions() (start, duration string) {
-	start = "CASE WHEN d.scheduled_duration_seconds > 0 OR d.duration_seconds IS NULL OR d.duration_seconds <= 0 THEN COALESCE(d.scheduled_start, m.sent_at, m.received_at, m.internal_date) ELSE COALESCE(m.sent_at, m.received_at, m.internal_date, d.scheduled_start) END"
-	duration = "CASE WHEN d.scheduled_duration_seconds > 0 THEN d.scheduled_duration_seconds WHEN d.duration_seconds > 0 THEN d.duration_seconds ELSE 1800 END"
+	start = "COALESCE(m.sent_at, m.received_at, m.internal_date)"
+	duration = "CASE WHEN d.duration_seconds > 0 THEN d.duration_seconds ELSE 1800 END"
 	return start, duration
 }
 
@@ -61,7 +61,7 @@ func rankMeetingSuggestion(member suggestMember, event CalendarOccurrence) (Meet
 	seen := map[string]bool{}
 	for _, attendee := range event.Attendees {
 		email := strings.ToLower(strings.TrimSpace(attendee.Email))
-		if attendee.Role != "room" && email != "" && member.Emails[email] && !seen[email] {
+		if attendee.Role != "room" && !attendee.IsCopySelf && attendee.RSVP != "declined" && email != "" && member.Emails[email] && !seen[email] {
 			seen[email] = true
 			result.SharedAttendees++
 		}
