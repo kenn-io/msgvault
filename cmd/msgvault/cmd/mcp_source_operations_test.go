@@ -226,6 +226,54 @@ channels = ["C_EXAMPLE"]
 
 const slackSettingsWithoutPendingRestart = `{"settings":[{"key":"slack.dms","group":"sources","label":"Direct messages","description":"Include one-to-one direct messages","kind":"boolean","value":{"boolean":true}},{"key":"slack.group_dms","group":"sources","label":"Group direct messages","description":"Include group direct messages","kind":"boolean","value":{"boolean":true}},{"key":"slack.channels","group":"sources","label":"Channels","description":"Included channel selectors","kind":"string_array","value":{"strings":["C_EXAMPLE"]}},{"key":"slack.exclude_channels","group":"sources","label":"Excluded channels","description":"Excluded channel selectors","kind":"string_array","value":{"strings":[]}}]}`
 
+func TestMCPSlackPolicyAcceptsPartialReads(t *testing.T) {
+	for _, tt := range []struct {
+		name, body string
+		wantKeys   []string
+	}{
+		{"missing pending restart", slackSettingsWithoutPendingRestart, []string{"slack.dms", "slack.group_dms", "slack.channels", "slack.exclude_channels"}},
+		{"missing Slack keys", `{"pending_restart":false,"settings":[{"key":"slack.dms","group":"sources","label":"Direct messages","description":"Include one-to-one direct messages","kind":"boolean","value":{"boolean":true}}]}`, []string{"slack.dms"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, http.MethodGet, r.Method)
+				assert.Equal(t, "/api/v1/settings", r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("ETag", `"settings"`)
+				_, _ = w.Write([]byte(tt.body))
+			})
+			backend := &daemonMCPOperations{client: client, supported: []string{"get_slack_sync_policy"}}
+			result, err := backend.ExecuteOperation(t.Context(), "get_slack_sync_policy", nil)
+			require.NoError(t, err)
+			policy := operationOutput[mcpserver.SlackSyncPolicy](t, result)
+			assert.Equal(t, `"settings"`, policy.ETag)
+			assert.False(t, policy.PendingRestart)
+			var keys []string
+			for _, setting := range policy.Settings {
+				keys = append(keys, setting.Key)
+			}
+			assert.ElementsMatch(t, tt.wantKeys, keys)
+		})
+	}
+}
+
+func TestMCPSyncSourceEmptyReceiptIsUncertain(t *testing.T) {
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/v1/sync/example", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{}`))
+	})
+	backend := &daemonMCPOperations{client: client, supported: []string{"sync_source"}}
+	result, err := backend.ExecuteOperation(t.Context(), "sync_source", map[string]any{"account": "example", "source_type": "gmail"})
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	data, err := json.Marshal(result.Output)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
+}
+
 func TestMCPSlackPolicyProjectionRejectsIncompleteReceipts(t *testing.T) {
 	for _, tt := range []struct {
 		name, method, want string
@@ -233,7 +281,6 @@ func TestMCPSlackPolicyProjectionRejectsIncompleteReceipts(t *testing.T) {
 		pendingRestart     bool
 		unusableSetting    bool
 	}{
-		{"read missing pending restart", http.MethodGet, `{"error":"invalid_operation_response","operation_may_have_completed":false}`, false, true, false, false},
 		{"write missing pending restart", http.MethodPatch, `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, true, true, false, false},
 		{"write missing ETag", http.MethodPatch, `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, true, false, true, false},
 		{"read unusable setting", http.MethodGet, `{"error":"invalid_operation_response","operation_may_have_completed":false}`, false, true, true, true},
