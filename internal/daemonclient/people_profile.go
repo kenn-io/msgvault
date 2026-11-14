@@ -73,8 +73,7 @@ func (b *PeopleBrowser) GetPersonProfile(
 					PathParams: &generated.GetPersonContactStatePath{ID: personID},
 				})
 		})
-	switch {
-	case err == nil:
+	if err == nil {
 		// A missing projection is an HTTP 200 response with zero ComputedAt.
 		if !state.JSON200.ComputedAt.IsZero() || state.JSON200.FirstSeenAt != nil {
 			profile.ContactState = contactStateFromGenerated(*state.JSON200)

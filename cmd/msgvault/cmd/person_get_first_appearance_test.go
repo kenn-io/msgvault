@@ -23,6 +23,8 @@ func TestPersonGetReturnsPersonWithoutContactState(t *testing.T) {
 		{"version probe fails", "", true, false},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
+			check := assert.New(t)
+			req := require.New(t)
 			var stateRequested bool
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
@@ -38,7 +40,7 @@ func TestPersonGetReturnsPersonWithoutContactState(t *testing.T) {
 					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"` + scenario.version + `"}`))
 				case "/api/v1/people/7/contact-state":
 					stateRequested = true
-					assert.True(t, scenario.stateFails, "contact state requires a successful capability probe")
+					check.True(scenario.stateFails, "contact state requires a successful capability probe")
 					http.Error(w, "unavailable", http.StatusInternalServerError)
 				default:
 					http.NotFound(w, r)
@@ -54,12 +56,12 @@ func TestPersonGetReturnsPersonWithoutContactState(t *testing.T) {
 			var got bytes.Buffer
 			get.SetOut(&got)
 			get.SetArgs([]string{"7"})
-			require.NoError(t, get.ExecuteContext(ctx))
+			req.NoError(get.ExecuteContext(ctx))
 			var person map[string]any
-			require.NoError(t, json.Unmarshal(got.Bytes(), &person))
-			assert.InDelta(t, 7, person["id"], 0)
-			assert.NotContains(t, person, "contact_state")
-			assert.Equal(t, scenario.stateFails, stateRequested)
+			req.NoError(json.Unmarshal(got.Bytes(), &person))
+			check.InDelta(7, person["id"], 0)
+			check.NotContains(person, "contact_state")
+			check.Equal(scenario.stateFails, stateRequested)
 		})
 	}
 }
