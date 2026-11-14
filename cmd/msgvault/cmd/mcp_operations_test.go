@@ -41,7 +41,7 @@ func TestMCPOperationFailureCompletion(t *testing.T) {
 			`{"error":"operation_refused","operation_may_have_completed":false}`, http.StatusPreconditionFailed},
 		{"read validation failure", http.MethodGet, `{"error":"validation_failed"}`,
 			`{"error":"validation_failed","operation_may_have_completed":false}`, http.StatusUnprocessableEntity},
-		{"oversized JSON", http.MethodGet, `{"data":"` + strings.Repeat("x", 1<<20) + `"}`, `{"error":"operation_response_limit_exceeded","operation_may_have_completed":false}`, http.StatusOK},
+		{"oversized JSON", http.MethodPost, `{"data":"` + strings.Repeat("x", 1<<20) + `"}`, `{"error":"operation_response_limit_exceeded","operation_may_have_completed":true}`, http.StatusOK},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
