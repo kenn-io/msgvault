@@ -137,6 +137,9 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	if p := input.Patch.Media; p != nil {
 		count += len(p.Add) + len(p.Supersede)
 	}
+	if count == 0 {
+		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_profile_value"}
+	}
 	if count > store.MaxPersonProfilePatchOperations {
 		return "", true, &mcpserver.OperationRefusalError{Code: "profile_patch_too_large"}
 	}

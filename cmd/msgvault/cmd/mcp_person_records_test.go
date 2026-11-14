@@ -392,7 +392,7 @@ func TestPersonRecordSupersedeLargeValue(t *testing.T) {
 
 func TestPersonRecordOversizeRefusedBeforeApproval(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
-	backend, id, _, _ := personRecordFixture(t)
+	backend, id, _, patches := personRecordFixture(t)
 	approvals := 0
 	session := loopOperationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCurated}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		approvals++
@@ -404,10 +404,16 @@ func TestPersonRecordOversizeRefusedBeforeApproval(t *testing.T) {
 	}
 	initial, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
 	requirements.NoError(err)
+	empty, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "patch_person_record", Arguments: map[string]any{"person_id": id, "etag": initial.ETag, "patch": map[string]any{}}})
+	requirements.NoError(err)
+	assertions.Equal("invalid_profile_value", loopToolFailure(t, empty)["error"])
+	assertions.Zero(approvals)
+	assertions.Zero(patches.Load())
 	for _, tc := range []struct {
 		patch map[string]any
 		code  string
 	}{
+		{map[string]any{"names": map[string]any{"add": []any{}}}, "invalid_profile_value"},
 		{map[string]any{"names": map[string]any{"add": adds}}, "profile_patch_too_large"},
 		{map[string]any{"names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": strings.Repeat("x", 12<<20), "envelope": map[string]any{"source": "user"}}}}}, "profile_patch_too_large"},
 		{map[string]any{"media": map[string]any{"add": []any{map[string]any{"media_kind": "photo", "data": base64.StdEncoding.EncodeToString(make([]byte, (8<<20)+1)), "envelope": map[string]any{"source": "user"}}}}}, "invalid_profile_value"},
