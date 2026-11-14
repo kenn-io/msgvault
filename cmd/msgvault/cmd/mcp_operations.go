@@ -217,5 +217,8 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 	if err := json.Unmarshal(data, &output); err != nil {
 		return invalidOperationResponse(writes), err
 	}
+	if person, ok := any(output).(generated.Person); writes && ok && person.ID <= 0 {
+		return invalidOperationResponse(true), nil
+	}
 	return &mcpserver.OperationResult{Output: output, ETag: response.Header.Get("ETag")}, nil
 }

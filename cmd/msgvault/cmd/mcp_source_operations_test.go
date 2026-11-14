@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -330,15 +331,22 @@ func (w missingETagResponseWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
-func TestMCPCommittedWriteWithMissingETagRemainsUncertain(t *testing.T) {
-	for _, kind := range []string{"person", "slack"} {
+type emptyReceiptResponseWriter struct{ http.ResponseWriter }
+
+func (w emptyReceiptResponseWriter) Write(data []byte) (int, error) {
+	_, err := w.ResponseWriter.Write([]byte(`{}`))
+	return len(data), err
+}
+
+func TestMCPCommittedWriteWithUnusableReceiptRemainsUncertain(t *testing.T) {
+	for _, kind := range []string{"person", "slack", "person empty receipt", "slack empty receipt"} {
 		t.Run(kind, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			var router http.Handler
 			var personID int64
 			var verify func()
-			if kind == "person" {
+			if strings.HasPrefix(kind, "person") {
 				st := testutil.NewTestStore(t)
 				participant, err := st.EnsureParticipant("contact@example.com", "Observed Example", "example.com")
 				requirements.NoError(err)
@@ -363,9 +371,13 @@ func TestMCPCommittedWriteWithMissingETagRemainsUncertain(t *testing.T) {
 					assertions.False(reloaded.Slack.DMsEnabled())
 				}
 			}
-			// A remote daemon's intermediary can strip the ETag after a write commits.
+			// A remote daemon's intermediary can damage the receipt after a write commits.
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodPatch {
+					if strings.HasSuffix(kind, "empty receipt") {
+						router.ServeHTTP(emptyReceiptResponseWriter{w}, r)
+						return
+					}
 					router.ServeHTTP(missingETagResponseWriter{w}, r)
 					return
 				}
@@ -378,7 +390,7 @@ func TestMCPCommittedWriteWithMissingETagRemainsUncertain(t *testing.T) {
 			requirements.NoError(err)
 			backend := newDaemonMCPOperations(client, capabilities)
 			var result *mcpserver.OperationResult
-			if kind == "person" {
+			if strings.HasPrefix(kind, "person") {
 				result, err = backend.ExecuteOperation(t.Context(), "get_person_edit_context", map[string]any{"person_id": personID})
 				requirements.NoError(err)
 				edit := operationOutput[mcpserver.PersonEditContext](t, result)
@@ -393,7 +405,7 @@ func TestMCPCommittedWriteWithMissingETagRemainsUncertain(t *testing.T) {
 			requirements.True(result.IsError)
 			data, err := json.Marshal(result.Output)
 			requirements.NoError(err)
-			if kind == "person" {
+			if strings.HasPrefix(kind, "person") {
 				var receipt struct {
 					Error     string `json:"error"`
 					Uncertain bool   `json:"operation_may_have_completed"`

@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- MCP operation tools report `operation_receipt_unavailable` when a successful write's receipt is too large or unreadable. This replaces `operation_response_limit_exceeded`, `operation_response_failed`, and `invalid_operation_response` for those receipts. Read current state before retrying.
+- MCP operation tools report `operation_receipt_unavailable` when a successful write's receipt is too large or unusable. This replaces `operation_response_limit_exceeded`, `operation_response_failed`, and `invalid_operation_response` for those write receipts. Read current state before retrying.
 
 - Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
 

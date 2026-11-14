@@ -934,9 +934,11 @@ retries a write by itself. If a write reports
 
 If an MCP operation write returns `operation_receipt_unavailable`, the write
 may have completed but its receipt could not be read. Before retrying, use the
-matching read tool, such as `get_person_edit_context` for a display name or
-`get_slack_sync_policy` for Slack settings. For `sync_source`, check
-`list_source_status` and `get_source_scheduler_status` for progress.
+matching read tool: `get_person_edit_context` for a display name,
+`get_slack_sync_policy` for Slack settings, or `list_open_loops` for a loop
+decision. For a named `promote_person` call, use `get_participant_identity` or
+`search_people` to find the person. For `sync_source`, check `list_source_status`
+and `get_source_scheduler_status` for progress.
 
 ## Write controls
 
