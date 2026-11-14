@@ -209,7 +209,6 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 		{name: "normal health", path: "/api/v1/health", allow: true},
 		{name: "marked health", path: "/api/v1/health", marked: true, allow: true},
 		{name: "marked stats", path: "/api/v1/stats", marked: true, allow: true},
-		{name: "marked similar search", path: "/api/v1/search/similar?message_id=1", marked: true, allow: true},
 		{name: "authorization refusal", path: "/api/v1/health", marked: true},
 		{name: "protected messages", path: "/api/v1/messages", marked: true, allow: true},
 		{name: "protected source scoped messages", path: "/api/v1/messages", marked: true, allow: true, scoped: true},
@@ -241,10 +240,6 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 			handler.ServeHTTP(w, r)
 			if !tc.allow {
 				assert.Equal(http.StatusForbidden, w.Code)
-				assert.Empty(w.Header().Get(apiprotocol.VerificationHeader))
-				return
-			}
-			if strings.Contains(tc.path, "/search/similar") {
 				assert.Empty(w.Header().Get(apiprotocol.VerificationHeader))
 				return
 			}

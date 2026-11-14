@@ -57,6 +57,8 @@ func TestMCPPersonTierToolsReadTheDaemon(t *testing.T) {
 	t.Cleanup(daemon.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, AllowInsecure: true, HTTPClient: daemon.Client()})
 	require.NoError(err)
+	client, err = client.WithVerificationWithheld()
+	require.NoError(err)
 	opts := ServeOptions{Engine: &querytest.MockEngine{}, PersonTierBackend: client}
 
 	tools := toolsByName(t, rawListTools(t, opts, false))

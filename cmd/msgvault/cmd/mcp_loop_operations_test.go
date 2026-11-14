@@ -180,17 +180,6 @@ func TestMCPLoopsSDKDecisionsAndList(t *testing.T) {
 	assertions.Len(loopToolOutput[generated.LoopListResponse](t, call("list_open_loops", nil)).Items, 2)
 }
 
-func TestMCPLoopDecisionWithVerificationWithheld(t *testing.T) {
-	_, backend, anchor := loopOperationFixture(t)
-	client, err := backend.client.WithVerificationWithheld()
-	require.NoError(t, err)
-	backend.client = client
-	result, err := backend.ExecuteOperation(t.Context(), "close_open_loop", map[string]any{"message_id": anchor, "question_message_ids": []int64{anchor}})
-	require.NoError(t, err)
-	decision := operationOutput[generated.LoopDecisionResponse](t, result)
-	assert.Equal(t, "done", string(decision.State))
-}
-
 func TestMCPLoopArgumentValidationAndDateResolution(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

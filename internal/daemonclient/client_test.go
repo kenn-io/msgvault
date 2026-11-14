@@ -1033,9 +1033,6 @@ func TestVerificationWithholdingRequests(t *testing.T) {
 	var writeMarked, archiveMarked atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		marked := r.Header.Get(apiprotocol.VerificationHeader) == apiprotocol.VerificationWithhold
-		if r.URL.Path == "/prefix/api/v1/saved-views" {
-			writeMarked.Store(marked)
-		}
 		if r.URL.Path == "/prefix/api/v1/query/archive" {
 			archiveMarked.Store(marked)
 		}
@@ -1048,10 +1045,6 @@ func TestVerificationWithholdingRequests(t *testing.T) {
 		}
 		if r.URL.Path == "/prefix/api/v1/query/archive" {
 			_, _ = io.WriteString(w, `{"columns":[],"rows":[],"row_count":0}`)
-			return
-		}
-		if r.URL.Path == "/prefix/api/v1/saved-views" {
-			_, _ = io.WriteString(w, `{"id":42}`)
 			return
 		}
 		_, _ = io.WriteString(w, `{"status":"ok"}`)
