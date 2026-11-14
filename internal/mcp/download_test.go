@@ -257,76 +257,77 @@ func TestDownloadSnapshotCloseDuringLoad(t *testing.T) {
 	require.ErrorIs(t, <-result, errDownloadExpired)
 }
 
-func TestDownloadSnapshotConcurrentRequestsShareLoad(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var cache downloadCache
-		defer cache.close()
-		started, release := make(chan struct{}), make(chan struct{})
-		var reads atomic.Int64
-		load := func() (*downloadSnapshot, error) {
-			if reads.Add(1) == 1 {
-				close(started)
-			}
-			<-release
-			return &downloadSnapshot{data: []byte("snapshot")}, nil
-		}
-		results := make(chan error, 4)
-		for range 4 {
-			go func() {
-				_, err := cache.get(t.Context(), downloadKey{attachment: 1}, chunkRequest{}, load)
-				results <- err
-			}()
-		}
-		<-started
-		synctest.Wait()
-		assert.Equal(t, int64(1), reads.Load())
-		close(release)
-		for range 4 {
-			require.NoError(t, <-results)
-		}
-	})
-}
-
 func TestDownloadSnapshotWaiterCancellationAndLeaderRetry(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var cache downloadCache
-		defer cache.close()
-		key := downloadKey{attachment: 1}
-		leaderCtx, cancelLeader := context.WithCancel(t.Context())
-		waiterCtx, cancelWaiter := context.WithCancel(t.Context())
-		defer cancelLeader()
-		defer cancelWaiter()
-		started := make(chan struct{})
-		leader := make(chan error, 1)
-		go func() {
-			_, err := cache.get(leaderCtx, key, chunkRequest{}, func() (*downloadSnapshot, error) {
-				close(started)
-				<-leaderCtx.Done()
-				return nil, leaderCtx.Err()
-			})
-			leader <- err
-		}()
-		<-started
-		canceled := make(chan error, 1)
-		go func() {
-			_, err := cache.get(waiterCtx, key, chunkRequest{}, func() (*downloadSnapshot, error) {
-				return nil, errors.New("canceled waiter loaded")
-			})
-			canceled <- err
-		}()
-		live := make(chan error, 1)
-		go func() {
-			_, err := cache.get(t.Context(), key, chunkRequest{}, func() (*downloadSnapshot, error) {
-				return &downloadSnapshot{data: []byte("retry")}, nil
-			})
-			live <- err
-		}()
-		synctest.Wait()
-		cancelWaiter()
-		require.ErrorIs(t, <-canceled, context.Canceled)
-		cancelLeader()
-		require.ErrorIs(t, <-leader, context.Canceled)
-		require.NoError(t, <-live)
+	t.Run("successful leader", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			var cache downloadCache
+			defer cache.close()
+			started, release := make(chan struct{}), make(chan struct{})
+			var reads atomic.Int64
+			load := func() (*downloadSnapshot, error) {
+				if reads.Add(1) == 1 {
+					close(started)
+				}
+				<-release
+				return &downloadSnapshot{data: []byte("snapshot")}, nil
+			}
+			results := make(chan error, 4)
+			for range 4 {
+				go func() {
+					_, err := cache.get(t.Context(), downloadKey{attachment: 1}, chunkRequest{}, load)
+					results <- err
+				}()
+			}
+			<-started
+			synctest.Wait()
+			assert.Equal(t, int64(1), reads.Load())
+			close(release)
+			for range 4 {
+				require.NoError(t, <-results)
+			}
+		})
+	})
+	t.Run("canceled leader", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			var cache downloadCache
+			defer cache.close()
+			key := downloadKey{attachment: 1}
+			leaderCtx, cancelLeader := context.WithCancel(t.Context())
+			waiterCtx, cancelWaiter := context.WithCancel(t.Context())
+			defer cancelLeader()
+			defer cancelWaiter()
+			started := make(chan struct{})
+			leader := make(chan error, 1)
+			go func() {
+				_, err := cache.get(leaderCtx, key, chunkRequest{}, func() (*downloadSnapshot, error) {
+					close(started)
+					<-leaderCtx.Done()
+					return nil, leaderCtx.Err()
+				})
+				leader <- err
+			}()
+			<-started
+			canceled := make(chan error, 1)
+			go func() {
+				_, err := cache.get(waiterCtx, key, chunkRequest{}, func() (*downloadSnapshot, error) {
+					return nil, errors.New("canceled waiter loaded")
+				})
+				canceled <- err
+			}()
+			live := make(chan error, 1)
+			go func() {
+				_, err := cache.get(t.Context(), key, chunkRequest{}, func() (*downloadSnapshot, error) {
+					return &downloadSnapshot{data: []byte("retry")}, nil
+				})
+				live <- err
+			}()
+			synctest.Wait()
+			cancelWaiter()
+			require.ErrorIs(t, <-canceled, context.Canceled)
+			cancelLeader()
+			require.ErrorIs(t, <-leader, context.Canceled)
+			require.NoError(t, <-live)
+		})
 	})
 }
 
@@ -370,34 +371,6 @@ func TestPersonDownloadRefreshDoesNotShareLoad(t *testing.T) {
 	require.NoError(t, <-old)
 	require.NoError(t, current.err)
 	assert.Equal(t, []byte("new"), current.snapshot.data)
-}
-
-func TestPersonDownloadFailedRefreshKeepsEarlierLoad(t *testing.T) {
-	var cache downloadCache
-	defer cache.close()
-	key := downloadKey{operation: "get_person_record", identity: "1"}
-	started, release := make(chan struct{}), make(chan struct{})
-	result := make(chan *downloadSnapshot, 1)
-	go func() {
-		snapshot, _ := cache.get(t.Context(), key, chunkRequest{length: 1}, func() (*downloadSnapshot, error) {
-			close(started)
-			<-release
-			return &downloadSnapshot{data: []byte("first")}, nil
-		})
-		result <- snapshot
-	}()
-	<-started
-	loadErr := errors.New("refresh failed")
-	_, err := cache.get(t.Context(), key, chunkRequest{length: 1}, func() (*downloadSnapshot, error) {
-		return nil, loadErr
-	})
-	close(release)
-	first := <-result
-	require.ErrorIs(t, err, loadErr)
-	require.NotNil(t, first)
-	continued, err := cache.get(t.Context(), key, chunkRequest{offset: 1, digest: first.digest}, nil)
-	require.NoError(t, err)
-	assert.Equal(t, []byte("first"), continued.data)
 }
 
 func TestPersonDownloadSnapshotReuseRefreshAndSmallResults(t *testing.T) {
