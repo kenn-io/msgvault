@@ -145,28 +145,7 @@ func TestMCPSlackPolicyPreservesFalseOmissionAndExactETag(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	path := filepath.Join(t.TempDir(), "config.toml")
-	requirements.NoError(os.WriteFile(path, []byte(`[slack]
-dms = true
-group_dms = true
-channels = ["C_EXAMPLE"]
-
-[people.enrichment]
-enabled = false
-
-[[people.enrichment.providers]]
-name = "exa-primary"
-kind = "exa"
-enabled = false
-endpoint = "https://provider.example/search?token=example-credential"
-api_key_env = "EXA_KEY"
-allowed_identifiers = ["name"]
-target_keys = ["attribute:bio"]
-retention_posture = "zero_retention"
-training_posture = "no_training"
-refresh_interval = "24h"
-max_requests_per_run = 10
-max_requests_per_day = 100
-`), 0o600))
+	requirements.NoError(os.WriteFile(path, []byte("[slack]\ndms = true\ngroup_dms = true\nchannels = [\"C_EXAMPLE\"]\n"), 0o600))
 	cfg, err := config.Load(path, "")
 	requirements.NoError(err)
 	backend := sourceOperationFixture(t, api.NewServer(cfg, nil, nil, slog.New(slog.DiscardHandler)))
@@ -204,7 +183,17 @@ func TestMCPSlackPolicySDKUsesRealDaemonAndApproval(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	path := filepath.Join(t.TempDir(), "config.toml")
-	requirements.NoError(os.WriteFile(path, []byte("[slack]\ndms = true\n"), 0o600))
+	requirements.NoError(os.WriteFile(path, []byte(`[slack]
+dms = true
+group_dms = true
+channels = ["C_EXAMPLE"]
+
+[people.enrichment]
+enabled = false
+
+[[people.enrichment.providers]]
+name = "minimal"
+`), 0o600))
 	cfg, err := config.Load(path, "")
 	requirements.NoError(err)
 	backend := sourceOperationFixture(t, api.NewServer(cfg, nil, nil, slog.New(slog.DiscardHandler)))
@@ -221,9 +210,55 @@ func TestMCPSlackPolicySDKUsesRealDaemonAndApproval(t *testing.T) {
 	requirements.NoError(err)
 	var policy mcpserver.SlackSyncPolicy
 	requirements.NoError(json.Unmarshal(data, &policy))
+	keys := make([]string, 0, len(policy.Settings))
+	for _, setting := range policy.Settings {
+		keys = append(keys, setting.Key)
+		requirements.NotNil(setting.Value)
+		requirements.NotNil(setting.Value.SettingValue_OneOf)
+		switch setting.Key {
+		case "slack.dms", "slack.group_dms":
+			assertions.Equal(generated.Boolean, setting.Kind)
+			value, err := setting.Value.SettingValue_OneOf.AsSettingValue_OneOf_3()
+			requirements.NoError(err)
+			assertions.True(value.Boolean)
+		case "slack.channels":
+			assertions.Equal(generated.StringArray, setting.Kind)
+			value, err := setting.Value.SettingValue_OneOf.AsSettingValue_OneOf_4()
+			requirements.NoError(err)
+			assertions.Equal([]string{"C_EXAMPLE"}, value.Strings)
+		case "slack.exclude_channels":
+			assertions.Equal(generated.StringArray, setting.Kind)
+			value, err := setting.Value.SettingValue_OneOf.AsSettingValue_OneOf_4()
+			requirements.NoError(err)
+			assertions.Empty(value.Strings)
+		}
+	}
+	assertions.ElementsMatch([]string{"slack.dms", "slack.group_dms", "slack.channels", "slack.exclude_channels"}, keys)
+	unusableSettings := slices.Clone(policy.Settings)
+	unusableSettings[0].Value = nil
+	projection := slackPolicyProjection(&mcpserver.OperationResult{
+		Output: slackSettingsResponse{PendingRestart: policy.PendingRestart, Settings: unusableSettings}, ETag: policy.ETag,
+	}, false)
+	assertions.True(projection.IsError)
+	data, err = json.Marshal(projection.Output)
+	requirements.NoError(err)
+	assertions.JSONEq(`{"error":"invalid_operation_response","operation_may_have_completed":false}`, string(data))
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_slack_sync_policy", Arguments: map[string]any{"etag": policy.ETag, "dms": false}})
 	requirements.NoError(err)
 	assertions.False(result.IsError)
+	data, err = json.Marshal(result.StructuredContent)
+	requirements.NoError(err)
+	var updated mcpserver.SlackSyncPolicy
+	requirements.NoError(json.Unmarshal(data, &updated))
+	for _, setting := range updated.Settings {
+		if setting.Key == "slack.dms" {
+			requirements.NotNil(setting.Value)
+			requirements.NotNil(setting.Value.SettingValue_OneOf)
+			value, err := setting.Value.SettingValue_OneOf.AsSettingValue_OneOf_3()
+			requirements.NoError(err)
+			assertions.False(value.Boolean)
+		}
+	}
 	assertions.Equal(1, approved)
 	reloaded, err := config.Load(path, "")
 	requirements.NoError(err)

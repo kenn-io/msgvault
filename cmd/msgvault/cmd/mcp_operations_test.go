@@ -28,7 +28,8 @@ import (
 func TestMCPOperationResponseFailures(t *testing.T) {
 	t.Parallel()
 	settings := func(ctx context.Context, client *daemonclient.Client, method, path string) (*mcpserver.OperationResult, error) {
-		return readMCPOperationJSON[generated.SettingsResponse](ctx, client, method, path, nil, http.StatusOK)
+		result, err := readMCPOperationJSON[slackSettingsResponse](ctx, client, method, path, nil, http.StatusOK)
+		return slackPolicyProjection(result, true), err
 	}
 	person := func(ctx context.Context, client *daemonclient.Client, method, path string) (*mcpserver.OperationResult, error) {
 		return readMCPOperationJSON[generated.Person](ctx, client, method, path, nil, http.StatusOK)
@@ -66,6 +67,10 @@ func TestMCPOperationResponseFailures(t *testing.T) {
 			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/people/1", http.StatusOK, false, false, person},
 		{"empty loop decision write receipt", http.MethodPost, `{}`,
 			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/loops/1/done", http.StatusOK, false, false, loopDecision},
+		{"loop decision receipt without anchor ID", http.MethodPost, `{"state":"done"}`,
+			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/loops/1/done", http.StatusOK, false, false, loopDecision},
+		{"loop decision receipt with zero anchor ID", http.MethodPost, `{"anchor_message_id":0,"state":"done"}`,
+			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/loops/1/done", http.StatusOK, false, false, loopDecision},
 		{"malformed write receipt", http.MethodPatch, `not json`,
 			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusOK, false, true, settings},
 		{"oversized read", http.MethodGet, strings.Repeat("x", (1<<20)+1),
@@ -80,6 +85,7 @@ func TestMCPOperationResponseFailures(t *testing.T) {
 				assertions.Equal(tt.method, r.Method)
 				assertions.Equal(tt.path, r.URL.Path)
 				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("ETag", `"settings"`)
 				if tt.interrupted {
 					w.Header().Set("Content-Length", "100")
 				}

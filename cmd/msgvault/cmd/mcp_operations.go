@@ -223,5 +223,8 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 	if person, ok := any(output).(generated.Person); ok && person.ID <= 0 {
 		return invalidOperationResponse(writes), nil
 	}
+	if decision, ok := any(output).(generated.LoopDecisionResponse); ok && decision.AnchorMessageID <= 0 {
+		return invalidOperationResponse(writes), nil
+	}
 	return &mcpserver.OperationResult{Output: output, ETag: response.Header.Get("ETag")}, nil
 }
