@@ -131,44 +131,27 @@ func TestPersonRecordDisclosure(t *testing.T) {
 		assert.Contains(t, disclosure, fmt.Sprintf(`"data_sha256":"%x"`, sum))
 		assert.NotContains(t, disclosure, media)
 	})
-	t.Run("history supersede", func(t *testing.T) {
-		backend, id := personRecordFixture(t)
-		current, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
-		require.NoError(t, err)
-		added, err := backend.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": current.ETag, "patch": map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "free_text": "Old address", "envelope": map[string]any{"source": "user", "active_until": "2020-01-01T00:00:00Z"}}}}}})
-		require.NoError(t, err)
-		history, err := backend.ExecuteOperation(t.Context(), "get_person_record_history", map[string]any{"person_id": id})
-		require.NoError(t, err)
-		values := operationOutput[generated.PersonProfileHistory](t, history)
-		require.Len(t, values.Addresses, 1)
-		require.Nil(t, values.Addresses[0].Envelope.SupersededAt)
-		args := map[string]any{"person_id": id, "etag": added.ETag, "patch": map[string]any{"addresses": map[string]any{"supersede": []int64{values.Addresses[0].Envelope.ID}}}}
-		disclosure, err := backend.OperationDisclosure(t.Context(), "patch_person_record", args)
-		require.NoError(t, err)
-		assert.Contains(t, disclosure, "Old address")
-		assert.Contains(t, disclosure, `"active_until":"2020-01-01T00:00:00Z"`)
-		patched, err := backend.ExecuteOperation(t.Context(), "patch_person_record", args)
-		require.NoError(t, err)
-		require.False(t, patched.IsError)
-		args["etag"] = patched.ETag
-		_, err = backend.OperationDisclosure(t.Context(), "patch_person_record", args)
-		var refusal *mcpserver.OperationRefusalError
-		require.ErrorAs(t, err, &refusal)
-		assert.Equal(t, "profile_value_not_found", refusal.Code)
-	})
-	t.Run("concurrent revision", func(t *testing.T) {
+	t.Run("history supersede and concurrent revision", func(t *testing.T) {
 		var armed atomic.Bool
 		var backend *daemonMCPOperations
 		var id int64
 		var etag string
-		result := make(chan error, 1)
+		type patchResult struct {
+			etag string
+			err  error
+		}
+		result := make(chan patchResult, 1)
 		backend, id = personRecordFixtureWithHook(t, func(r *http.Request) {
 			if strings.HasSuffix(r.URL.Path, "/profile/history") && armed.CompareAndSwap(true, false) {
 				updated, err := backend.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": etag, "patch": map[string]any{"names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": "Updated", "envelope": map[string]any{"source": "user"}}}}}})
 				if err == nil && updated.IsError {
 					err = fmt.Errorf("concurrent patch refused: %v", updated.Output)
 				}
-				result <- err
+				var newETag string
+				if updated != nil {
+					newETag = updated.ETag
+				}
+				result <- patchResult{newETag, err}
 			}
 		})
 		current, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
@@ -185,14 +168,27 @@ func TestPersonRecordDisclosure(t *testing.T) {
 		armed.Store(true)
 		_, err = backend.OperationDisclosure(t.Context(), "patch_person_record", args)
 		select {
-		case err := <-result:
-			require.NoError(t, err)
+		case updated := <-result:
+			require.NoError(t, updated.err)
+			etag = updated.etag
 		case <-time.After(5 * time.Second):
 			require.FailNow(t, "history read did not trigger the concurrent patch")
 		}
 		var refusal *mcpserver.OperationRefusalError
 		require.ErrorAs(t, err, &refusal)
 		assert.Equal(t, "person_revision_conflict", refusal.Code)
+		args["etag"] = etag
+		disclosure, err := backend.OperationDisclosure(t.Context(), "patch_person_record", args)
+		require.NoError(t, err)
+		assert.Contains(t, disclosure, "Old address")
+		assert.Contains(t, disclosure, `"active_until":"2020-01-01T00:00:00Z"`)
+		patched, err := backend.ExecuteOperation(t.Context(), "patch_person_record", args)
+		require.NoError(t, err)
+		require.False(t, patched.IsError)
+		args["etag"] = patched.ETag
+		_, err = backend.OperationDisclosure(t.Context(), "patch_person_record", args)
+		require.ErrorAs(t, err, &refusal)
+		assert.Equal(t, "profile_value_not_found", refusal.Code)
 	})
 	t.Run("disclosure limit", func(t *testing.T) {
 		backend, id := personRecordFixture(t)

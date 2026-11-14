@@ -301,74 +301,74 @@ func TestDownloadSnapshotLoadCoordination(t *testing.T) {
 			require.NoError(t, <-live)
 		})
 	})
-}
-
-func TestDownloadSnapshotIndependentOperations(t *testing.T) {
 	t.Run("close during load", func(t *testing.T) {
-		var cache downloadCache
-		started, release := make(chan struct{}), make(chan struct{})
-		result := make(chan error, 1)
-		go func() {
-			_, err := cache.get(t.Context(), downloadKey{attachment: 1}, chunkRequest{}, func() (*downloadSnapshot, error) {
-				close(started)
-				<-release
-				return &downloadSnapshot{data: []byte("slow")}, nil
-			})
-			result <- err
-		}()
-		<-started
-		closed := make(chan struct{})
-		go func() { cache.close(); close(closed) }()
-		select {
-		case <-closed:
-		case <-time.After(5 * time.Second):
+		synctest.Test(t, func(t *testing.T) {
+			var cache downloadCache
+			started, release := make(chan struct{}), make(chan struct{})
+			result := make(chan error, 1)
+			go func() {
+				_, err := cache.get(t.Context(), downloadKey{attachment: 1}, chunkRequest{}, func() (*downloadSnapshot, error) {
+					close(started)
+					<-release
+					return &downloadSnapshot{data: []byte("slow")}, nil
+				})
+				result <- err
+			}()
+			<-started
+			closed := make(chan struct{})
+			go func() { cache.close(); close(closed) }()
+			select {
+			case <-closed:
+			case <-time.After(5 * time.Second):
+				close(release)
+				<-closed
+				<-result
+				require.FailNow(t, "closing cache waited for the slow load")
+			}
 			close(release)
-			<-closed
-			<-result
-			require.FailNow(t, "closing cache waited for the slow load")
-		}
-		close(release)
-		require.ErrorIs(t, <-result, errDownloadExpired)
+			require.ErrorIs(t, <-result, errDownloadExpired)
+		})
 	})
 	t.Run("profile refresh", func(t *testing.T) {
-		var cache downloadCache
-		defer cache.close()
-		key := downloadKey{operation: "get_person_record", identity: "1"}
-		started, release := make(chan struct{}), make(chan struct{})
-		old := make(chan error, 1)
-		go func() {
-			_, err := cache.get(t.Context(), key, chunkRequest{length: 1}, func() (*downloadSnapshot, error) {
-				close(started)
-				<-release
-				return &downloadSnapshot{data: []byte("old")}, nil
-			})
-			old <- err
-		}()
-		<-started
-		type result struct {
-			snapshot *downloadSnapshot
-			err      error
-		}
-		updated := make(chan result, 1)
-		loadNew := func() (*downloadSnapshot, error) { return &downloadSnapshot{data: []byte("new")}, nil }
-		go func() {
-			current, err := cache.get(t.Context(), key, chunkRequest{length: 1}, loadNew)
-			updated <- result{current, err}
-		}()
-		var current result
-		select {
-		case current = <-updated:
-		case <-time.After(5 * time.Second):
+		synctest.Test(t, func(t *testing.T) {
+			var cache downloadCache
+			defer cache.close()
+			key := downloadKey{operation: "get_person_record", identity: "1"}
+			started, release := make(chan struct{}), make(chan struct{})
+			old := make(chan error, 1)
+			go func() {
+				_, err := cache.get(t.Context(), key, chunkRequest{length: 1}, func() (*downloadSnapshot, error) {
+					close(started)
+					<-release
+					return &downloadSnapshot{data: []byte("old")}, nil
+				})
+				old <- err
+			}()
+			<-started
+			type result struct {
+				snapshot *downloadSnapshot
+				err      error
+			}
+			updated := make(chan result, 1)
+			loadNew := func() (*downloadSnapshot, error) { return &downloadSnapshot{data: []byte("new")}, nil }
+			go func() {
+				current, err := cache.get(t.Context(), key, chunkRequest{length: 1}, loadNew)
+				updated <- result{current, err}
+			}()
+			var current result
+			select {
+			case current = <-updated:
+			case <-time.After(5 * time.Second):
+				close(release)
+				<-updated
+				<-old
+				require.FailNow(t, "profile refresh waited for an earlier load")
+			}
 			close(release)
-			<-updated
-			<-old
-			require.FailNow(t, "profile refresh waited for an earlier load")
-		}
-		close(release)
-		require.NoError(t, <-old)
-		require.NoError(t, current.err)
-		assert.Equal(t, []byte("new"), current.snapshot.data)
-
+			require.NoError(t, <-old)
+			require.NoError(t, current.err)
+			assert.Equal(t, []byte("new"), current.snapshot.data)
+		})
 	})
 }
 
