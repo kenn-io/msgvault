@@ -219,7 +219,6 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 
 // employmentDisclosureContext reads the record an operation acts on.
 func (b *daemonMCPOperations) employmentDisclosureContext(ctx context.Context, name string, id int64) (*mcpserver.EmploymentRecord, error) {
-	unavailable := &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 	result, _, err := b.executeEmploymentOperation(ctx, "get_employment", map[string]any{"employment_id": id})
 	if err != nil {
 		return nil, err
@@ -231,7 +230,7 @@ func (b *daemonMCPOperations) employmentDisclosureContext(ctx context.Context, n
 	}
 	current, ok := result.Output.(mcpserver.EmploymentRecord)
 	if !ok {
-		return nil, unavailable
+		return nil, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 	}
 	if name != "replace_employment" && name != "delete_employment" {
 		current.Employment.Description = nil

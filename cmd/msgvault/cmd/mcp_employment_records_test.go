@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json/v2"
 	"log/slog"
 	"slices"
 	"strings"
@@ -57,12 +56,7 @@ func TestMCPEmploymentLifecycleNativeStore(t *testing.T) {
 	require.NotEqual(got.ETag, replaced.ETag)
 	require.NotNil(replaced.Employment.Title)
 	assert.Equal("Engineer", *replaced.Employment.Title)
-	stale := call("end_employment", map[string]any{"employment_id": got.Employment.ID, "etag": got.ETag, "end_date": "2024"})
-	require.True(stale.IsError)
-	data, err := json.Marshal(stale.Output)
-	require.NoError(err)
-	assert.Contains(string(data), "employment_revision_conflict")
-	assert.Contains(string(data), `"operation_may_have_completed":false`)
+	assertLoopRefusal(t, call("end_employment", map[string]any{"employment_id": got.Employment.ID, "etag": got.ETag, "end_date": "2024"}), "employment_revision_conflict", false)
 	body["is_primary"] = true
 	primary := operationOutput[mcpserver.EmploymentRecord](t, call("replace_employment", map[string]any{"employment_id": got.Employment.ID, "etag": replaced.ETag, "employment": body}))
 	assert.True(primary.Employment.IsPrimary)
@@ -82,7 +76,7 @@ func TestMCPEmploymentLifecycleNativeStore(t *testing.T) {
 	}
 	deleted := call("delete_employment", map[string]any{"employment_id": got.Employment.ID, "etag": ended.ETag})
 	assert.False(deleted.IsError)
-	_, err = st.GetEmploymentContext(t.Context(), got.Employment.ID)
+	_, err := st.GetEmploymentContext(t.Context(), got.Employment.ID)
 	assert.ErrorIs(err, store.ErrEmploymentNotFound)
 }
 
@@ -184,10 +178,7 @@ func TestMCPEmploymentApprovedPrimaryIsGuarded(t *testing.T) {
 	require.NoError(err)
 	result, err := b.ExecuteOperation(t.Context(), "replace_employment", args)
 	require.NoError(err)
-	require.True(result.IsError)
-	data, err := json.Marshal(result.Output)
-	require.NoError(err)
-	assert.Contains(string(data), "employment_primary_conflict")
+	assertLoopRefusal(t, result, "employment_primary_conflict", false)
 	current, err := st.GetEmploymentContext(t.Context(), third.ID)
 	require.NoError(err)
 	assert.True(current.IsPrimary)

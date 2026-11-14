@@ -761,10 +761,8 @@ func TestReplaceEmploymentChecksPrimaryRevision(t *testing.T) {
 	assert.False(demoted.IsPrimary)
 	assert.Equal(updated.Revision+1, demoted.Revision)
 	other := mustPromotedPerson(ctx, t, st, "second@example.test", "Second")
-	primary := promoted
-	guard := &store.EmploymentRevision{ID: primary.ID, Revision: primary.Revision}
-	create := store.EmploymentInput{PersonID: person.ID, OrganizationID: org.ID, Title: new("New"), Source: store.ProvenanceUser, IsPrimary: new(true), ExpectedPrimary: guard}
-	_, err = st.EndEmploymentContext(ctx, primary.ID, primary.Revision, store.PartialDate{Year: new(2024)})
+	create := store.EmploymentInput{PersonID: person.ID, OrganizationID: org.ID, Title: new("New"), Source: store.ProvenanceUser, IsPrimary: new(true), ExpectedPrimary: &store.EmploymentRevision{ID: promoted.ID, Revision: promoted.Revision}}
+	_, err = st.EndEmploymentContext(ctx, promoted.ID, promoted.Revision, store.PartialDate{Year: new(2024)})
 	require.NoError(err)
 	_, err = st.AddEmploymentContext(ctx, create)
 	require.ErrorIs(err, store.ErrEmploymentPrimaryConflict)

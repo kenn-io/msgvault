@@ -71,7 +71,7 @@ func TestMCPDeletionReviewRefusals(t *testing.T) {
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: store, config: cfg}, Logger: slog.New(slog.DiscardHandler)}))
 	result, err := backend.ExecuteOperation(t.Context(), "list_deletions", map[string]any{"status": "bogus"})
 	require.NoError(err)
-	assertLoopRefusal(t, result, "invalid_status")
+	assertLoopRefusal(t, result, "invalid_status", false)
 }
 
 func TestMCPDeletionReviewStatusDiscovery(t *testing.T) {
@@ -98,6 +98,6 @@ func TestMCPDeletionReviewUnsafeIDs(t *testing.T) {
 	backend := &daemonMCPOperations{client: client, supported: []string{"get_deletion"}}
 	result, err := backend.ExecuteOperation(t.Context(), "get_deletion", map[string]any{"batch_id": "a?b"})
 	require.NoError(err)
-	assertLoopRefusal(t, result, "invalid_manifest_id")
+	assertLoopRefusal(t, result, "invalid_manifest_id", false)
 	assert.Zero(calls.Load())
 }

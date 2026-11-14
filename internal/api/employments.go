@@ -31,21 +31,23 @@ type EmploymentStore interface {
 // EmploymentBody is the full mutable field set. Partial dates are inbound
 // truncated ISO 8601 strings while responses expose their known components.
 type EmploymentBody struct {
-	PersonID        int64                     `json:"person_id"`
-	OrganizationID  int64                     `json:"organization_id"`
-	Title           *string                   `json:"title,omitzero" nullable:"true"`
-	Role            *string                   `json:"role,omitzero" nullable:"true"`
-	Department      *string                   `json:"department,omitzero" nullable:"true"`
-	Location        *string                   `json:"location,omitzero" nullable:"true"`
-	AddressID       *int64                    `json:"address_id,omitzero" nullable:"true"`
-	Description     *string                   `json:"description,omitzero" nullable:"true"`
-	StartDate       *string                   `json:"start_date,omitzero" nullable:"true"`
-	EndDate         *string                   `json:"end_date,omitzero" nullable:"true"`
-	IsCurrent       *bool                     `json:"is_current,omitzero" nullable:"true"`
-	IsPrimary       *bool                     `json:"is_primary,omitzero" nullable:"true"`
-	Source          string                    `json:"source" enum:"user,carddav_import,vcard_import,archive_observation,extraction,enrichment,system"`
-	SourceRef       *string                   `json:"source_ref,omitzero" nullable:"true"`
-	Confidence      *float64                  `json:"confidence,omitzero" nullable:"true"`
+	PersonID       int64    `json:"person_id"`
+	OrganizationID int64    `json:"organization_id"`
+	Title          *string  `json:"title,omitzero" nullable:"true"`
+	Role           *string  `json:"role,omitzero" nullable:"true"`
+	Department     *string  `json:"department,omitzero" nullable:"true"`
+	Location       *string  `json:"location,omitzero" nullable:"true"`
+	AddressID      *int64   `json:"address_id,omitzero" nullable:"true"`
+	Description    *string  `json:"description,omitzero" nullable:"true"`
+	StartDate      *string  `json:"start_date,omitzero" nullable:"true"`
+	EndDate        *string  `json:"end_date,omitzero" nullable:"true"`
+	IsCurrent      *bool    `json:"is_current,omitzero" nullable:"true"`
+	IsPrimary      *bool    `json:"is_primary,omitzero" nullable:"true"`
+	Source         string   `json:"source" enum:"user,carddav_import,vcard_import,archive_observation,extraction,enrichment,system"`
+	SourceRef      *string  `json:"source_ref,omitzero" nullable:"true"`
+	Confidence     *float64 `json:"confidence,omitzero" nullable:"true"`
+
+	// ExpectedPrimary is a write precondition, not a stored field.
 	ExpectedPrimary *store.EmploymentRevision `json:"expected_primary,omitzero" nullable:"false" doc:"Approved primary employment and revision"`
 }
 

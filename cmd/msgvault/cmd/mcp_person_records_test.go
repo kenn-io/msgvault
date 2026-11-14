@@ -299,7 +299,7 @@ func TestPersonRecordRefusals(t *testing.T) {
 	} {
 		result, err := backend.ExecuteOperation(t.Context(), tc.name, tc.args)
 		requirements.NoError(err)
-		assertLoopRefusal(t, result, tc.code)
+		assertLoopRefusal(t, result, tc.code, false)
 	}
 }
 
