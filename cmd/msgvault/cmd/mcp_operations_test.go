@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -36,8 +37,14 @@ func TestMCPOperationFailureCompletion(t *testing.T) {
 			`{"error":"operation_refused","operation_may_have_completed":true}`, http.StatusInternalServerError},
 		{"known pre-commit conflict", http.MethodPatch, `{"error":"settings_conflict"}`,
 			`{"error":"settings_conflict","operation_may_have_completed":false}`, http.StatusPreconditionFailed},
+		{"large pre-commit conflict", http.MethodPatch, `{"error":"settings_conflict","message":"` + strings.Repeat("x", 64<<10) + `"}`,
+			`{"error":"settings_conflict","operation_may_have_completed":false}`, http.StatusPreconditionFailed},
 		{"read failure", http.MethodGet, `{"error":"credential_conflict"}`,
 			`{"error":"operation_refused","operation_may_have_completed":false}`, http.StatusPreconditionFailed},
+		{"oversized successful write receipt", http.MethodPatch, `{"data":"` + strings.Repeat("x", 1<<20) + `"}`,
+			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, http.StatusOK},
+		{"oversized read", http.MethodGet, strings.Repeat("x", (1<<20)+1),
+			`{"error":"operation_response_limit_exceeded","operation_may_have_completed":false}`, http.StatusOK},
 		{"read validation failure", http.MethodGet, `{"error":"validation_failed"}`,
 			`{"error":"validation_failed","operation_may_have_completed":false}`, http.StatusUnprocessableEntity},
 	} {
@@ -320,4 +327,34 @@ func TestMCPOperationsLocalRecoveryFailure(t *testing.T) {
 			assert.JSONEq(`{"error":"daemon_unavailable","operation_may_have_completed":false}`, string(data))
 		})
 	}
+}
+
+func TestMCPOperationNoContentETagAndConflictBody(t *testing.T) {
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			w.Header().Set("ETag", `"revision-2"`)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"value_conflict","current_value":42}`))
+	})
+	receipt, err := readMCPOperationJSON[generated.SettingsResponse](t.Context(), client, http.MethodDelete, "/api/v1/settings", nil, http.StatusNoContent)
+	require.NoError(t, err)
+	require.NotNil(t, receipt)
+	assert.Equal(t, `"revision-2"`, receipt.ETag)
+	assert.False(t, receipt.IsError)
+	conflict, err := readMCPOperationJSONWithOutput[generated.SettingsResponse](t.Context(), client, http.MethodPatch, "/api/v1/settings", nil, func(code string, body []byte) (any, bool) {
+		if code != "value_conflict" {
+			return nil, false
+		}
+		var value struct {
+			CurrentValue int `json:"current_value"`
+		}
+		require.NoError(t, json.Unmarshal(body, &value))
+		return map[string]any{"error": code, "current_value": value.CurrentValue}, true
+	}, http.StatusOK)
+	require.NoError(t, err)
+	require.True(t, conflict.IsError)
+	assert.Equal(t, map[string]any{"error": "value_conflict", "current_value": 42}, conflict.Output)
 }

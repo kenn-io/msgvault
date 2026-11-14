@@ -235,6 +235,12 @@ func (c *Client) DoGeneratedRequestWithContext(
 	return c.doGeneratedRequestWithHTTPClient(ctx, method, path, options, c.httpClient, maxErrorBodyBytes)
 }
 
+// DoGeneratedRequestWithErrorLimit is DoGeneratedRequestWithContext with a
+// caller-chosen bound on error response bodies.
+func (c *Client) DoGeneratedRequestWithErrorLimit(ctx context.Context, method, path string, options runtime.RequestOptions, errorBodyLimit int64) (*http.Response, error) {
+	return c.doGeneratedRequestWithHTTPClient(ctx, method, path, options, c.httpClient, errorBodyLimit)
+}
+
 // DoGeneratedStreamingRequestWithContext is like DoGeneratedRequestWithContext
 // but disables http.Client.Timeout so long-running NDJSON streams are not cut
 // off by an absolute body-read deadline.

@@ -162,11 +162,20 @@ func mcpSyncArguments(args map[string]any) (string, string, error) {
 	return account, sourceType, nil
 }
 
+type mcpOperationFailure struct {
+	Error                     string `json:"error"`
+	OperationMayHaveCompleted bool   `json:"operation_may_have_completed"`
+}
+
 func operationFailure(code string, uncertain bool) *mcpserver.OperationResult {
-	return &mcpserver.OperationResult{IsError: true, Output: struct {
-		Error                     string `json:"error"`
-		OperationMayHaveCompleted bool   `json:"operation_may_have_completed"`
-	}{code, uncertain}}
+	return &mcpserver.OperationResult{IsError: true, Output: mcpOperationFailure{code, uncertain}}
+}
+
+func invalidOperationResponse(writes bool) *mcpserver.OperationResult {
+	if writes {
+		return operationFailure("operation_receipt_unavailable", true)
+	}
+	return operationFailure("invalid_operation_response", false)
 }
 
 // The fixed route/request chosen by an adapter uses existing authentication and
@@ -177,15 +186,75 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 }
 
 func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, success ...int) (*mcpserver.OperationResult, error) {
-	data, headers, failure, err := readMCPOperationBytes(ctx, client, method, path, options, 1<<20, classify, success...)
-	if failure != nil {
-		return failure, err
+	var adapted func(string, []byte) (any, bool)
+	if classify != nil {
+		adapted = func(code string, _ []byte) (any, bool) { return nil, classify(code) }
+	}
+	return readMCPOperationJSONWithOutput[T](ctx, client, method, path, options, adapted, success...)
+}
+
+func readMCPOperationJSONWithOutput[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string, []byte) (any, bool), success ...int) (*mcpserver.OperationResult, error) {
+	writes := method != http.MethodGet
+	response, err := client.DoGeneratedRequestWithErrorLimit(ctx, method, path, options, (1<<20)+1)
+	if err != nil {
+		if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
+			return operationFailure(local.APIErrorCode(), false), err
+		}
+		return operationFailure("operation_failed", writes), err
+	}
+	defer func() { _ = response.Body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	if err != nil {
+		if writes && slices.Contains(success, response.StatusCode) {
+			return operationFailure("operation_receipt_unavailable", true), err
+		}
+		return operationFailure("operation_response_failed", writes), err
+	}
+	if len(data) > 1<<20 {
+		if writes && slices.Contains(success, response.StatusCode) {
+			return operationFailure("operation_receipt_unavailable", true), nil
+		}
+		return operationFailure("operation_response_limit_exceeded", writes), nil
+	}
+	if !slices.Contains(success, response.StatusCode) {
+		var failure struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(data, &failure)
+		code := failure.Error
+		if classify != nil {
+			if output, ok := classify(code, data); ok {
+				if output == nil {
+					output = mcpOperationFailure{code, false}
+				}
+				return &mcpserver.OperationResult{IsError: true, Output: output}, nil
+			}
+		}
+		switch code {
+		case "unauthorized", "not_found", "scheduler_unavailable", "source_not_schedulable", "store_unavailable", "missing_account", "sync_error", "operation_in_progress", "settings_conflict", "settings_edit_rejected", "if_match_required", "person_revision_conflict", "person_profile_not_found", "person_enrichment_dispatch_in_progress", "persons_unavailable", "cache_build_not_found", "cache_build_unavailable", "bad_request", "invalid_participant_id", "participant_not_found", "analytical_cache_unavailable", "query_resource_exhausted", "engine_unavailable":
+			return operationFailure(code, false), nil
+		case "validation_failed":
+			// Settings credential cleanup can return this after the config commits.
+			return operationFailure(code, writes), nil
+		default:
+			return operationFailure("operation_refused", writes), nil
+		}
+	}
+	if response.StatusCode == http.StatusNoContent {
+		return &mcpserver.OperationResult{ETag: response.Header.Get("ETag")}, nil
 	}
 	var output T
 	if err := json.Unmarshal(data, &output); err != nil {
-		return operationFailure("invalid_operation_response", method != http.MethodGet), err
+		return invalidOperationResponse(writes), err
 	}
-	return &mcpserver.OperationResult{Output: output, ETag: headers.Get("ETag")}, nil
+	if writes {
+		if validator, ok := any(output).(runtime.Validator); ok {
+			if err := validator.Validate(); err != nil {
+				return invalidOperationResponse(true), nil
+			}
+		}
+	}
+	return &mcpserver.OperationResult{Output: output, ETag: response.Header.Get("ETag")}, nil
 }
 
 func readMCPOperationBytes(ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, limit int64, classify func(string) bool, success ...int) ([]byte, http.Header, *mcpserver.OperationResult, error) {
