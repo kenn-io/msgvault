@@ -51,6 +51,8 @@ export interface FactEvidenceRow {
 }
 export interface FactClaimRow {
   rowToken: string;
+  kind: RawClaim['kind'];
+  status: RawClaim['status'];
   submittedValue: string;
   normalizedValue: string | null;
   relation: string;
@@ -601,6 +603,8 @@ function projectEvidence(row: RawEvidence, index: number): FactEvidenceRow {
 function projectClaim(row: RawClaim, index: number): FactClaimRow {
   return {
     rowToken: `claim-${index}`,
+    kind: row.kind,
+    status: row.status,
     submittedValue: row.submitted_value,
     normalizedValue: row.normalized_value ?? null,
     relation: row.relation,

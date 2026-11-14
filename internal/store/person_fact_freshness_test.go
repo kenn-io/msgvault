@@ -31,14 +31,15 @@ func TestClaimFreshness(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			a := assert.New(t)
 			freshTime := now.Add(-time.Duration(tt.days) * 24 * time.Hour).Add(time.Nanosecond)
 			metadata := describePersonFactFreshness(tt.target, tt.until, &freshTime, now)
-			assert.Equal(t, tt.kind, metadata.Kind)
-			assert.Equal(t, personfacts.StatusFresh, metadata.Status)
+			a.Equal(tt.kind, metadata.Kind)
+			a.Equal(personfacts.StatusFresh, metadata.Status)
 			boundary := freshTime.Add(-time.Nanosecond)
-			assert.Equal(t, personfacts.StatusStale, describePersonFactFreshness(tt.target, tt.until, &boundary, now).Status)
-			assert.Equal(t, personfacts.StatusStale, describePersonFactFreshness(tt.target, tt.until, nil, now).Status)
-			assert.Equal(t, personfacts.StatusExpired, describePersonFactFreshness(tt.target, &now, &freshTime, now).Status)
+			a.Equal(personfacts.StatusStale, describePersonFactFreshness(tt.target, tt.until, &boundary, now).Status)
+			a.Equal(personfacts.StatusStale, describePersonFactFreshness(tt.target, tt.until, nil, now).Status)
+			a.Equal(personfacts.StatusExpired, describePersonFactFreshness(tt.target, &now, &freshTime, now).Status)
 		})
 	}
 }
