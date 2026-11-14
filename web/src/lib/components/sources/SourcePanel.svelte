@@ -6,7 +6,7 @@
   import type { SourceStatus, Setting } from '../../api/generated/models';
   import { persistedValue, readOnlyValue } from '../../settings/catalog';
   import { scheduleSummary } from '../../settings/cron';
-  import { isOnDemandSourceType, sourceFailure, sourceRunState, sourceTypeLabel, syncRunning, syncCommand, syncUnavailableLabel, SOURCE_SETTING_PREFIX } from '../../sources/labels';
+  import { isOnDemandSourceType, sourceDetails, sourceFailure, sourceRunState, sourceTypeLabel, syncRunning, syncCommand, syncUnavailableLabel, SOURCE_SETTING_PREFIX } from '../../sources/labels';
   import { operationStateChip } from '../../operations/labels';
   import { formatDateTime } from '../../util/format';
   import SidePanel from '../common/SidePanel.svelte';
@@ -32,6 +32,7 @@
   let controller: AbortController | undefined;
   const prefix = $derived(SOURCE_SETTING_PREFIX[source.source_type]);
   const title = $derived(source.display_name || source.identifier);
+  const details = $derived(sourceDetails(title, sourceTypeLabel(source.source_type), source.identifier));
   const failure = $derived(sourceFailure(source));
   const chip = $derived(operationStateChip(sourceRunState(source) ?? 'Never synced'));
   const lastGood = $derived(source.last_successful_sync?.completed_at);
@@ -67,7 +68,7 @@
 <SidePanel {title} {onclose}>
   <div class="panel">
     <div class="summary">
-      <span class="type">{[sourceTypeLabel(source.source_type), source.identifier !== title ? source.identifier : undefined].filter(Boolean).join(' · ')}</span>
+      {#if details.length > 0}<span class="type">{details.join(' · ')}</span>{/if}
       <div class="status">
         <Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>
         <span class="muted">{lastGood ? `Last good sync ${formatDateTime(lastGood)}` : 'No good sync yet'}</span>

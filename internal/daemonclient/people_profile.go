@@ -22,7 +22,7 @@ var _ peoplebrowser.ProfileUIDReader = (*PeopleBrowser)(nil)
 const PersonUIDLookupMinAPISchemaVersion = "3.10.0"
 
 // FirstAppearanceMinAPISchemaVersion is the first schema exposing first appearance.
-const FirstAppearanceMinAPISchemaVersion = "5.2.0"
+const FirstAppearanceMinAPISchemaVersion = "5.3.0"
 
 // maxProfileOrganizationLookups bounds the per-organization name resolution
 // a single profile read may perform beyond the primary-employment projection.
@@ -62,7 +62,7 @@ func (b *PeopleBrowser) GetPersonProfile(
 	case err == nil:
 		tracked := tracking.JSON200.Tracked
 		profile.Tracked = &tracked
-	case !AbsentAPIResource(err):
+	case !absentAPIResource(err):
 		return nil, err
 	}
 
@@ -79,14 +79,12 @@ func (b *PeopleBrowser) GetPersonProfile(
 		if !state.JSON200.ComputedAt.IsZero() || state.JSON200.FirstSeenAt != nil {
 			profile.ContactState = contactStateFromGenerated(*state.JSON200)
 		}
-	case !AbsentAPIResource(err):
-		return nil, err
 	}
 
 	profile.Brief, err = b.GetPersonBrief(ctx, personID)
 	switch {
 	case err == nil:
-	case AbsentAPIResource(err):
+	case absentAPIResource(err):
 		// A daemon without the brief store degrades like the other optional
 		// sub-resources; a missing version already came back as a nil brief.
 		profile.Brief = nil
@@ -98,7 +96,7 @@ func (b *PeopleBrowser) GetPersonProfile(
 	switch {
 	case err == nil:
 		profile.Attributes = attributes.Groups
-	case !AbsentAPIResource(err):
+	case !absentAPIResource(err):
 		return nil, err
 	}
 
@@ -121,7 +119,7 @@ func (b *PeopleBrowser) GetPersonProfile(
 		for _, view := range relationships.JSON200.Relationships {
 			profile.Relationships = append(profile.Relationships, relationshipSummaryFromGenerated(view))
 		}
-	case !AbsentAPIResource(err):
+	case !absentAPIResource(err):
 		return nil, err
 	}
 
@@ -135,7 +133,7 @@ func (b *PeopleBrowser) GetPersonProfile(
 	switch {
 	case err == nil:
 		applyStructuredProfile(profile, *structured.JSON200)
-	case !AbsentAPIResource(err):
+	case !absentAPIResource(err):
 		return nil, err
 	}
 	return profile, nil
@@ -188,7 +186,7 @@ func (b *PeopleBrowser) currentEmployments(
 				})
 		})
 	if err != nil {
-		if AbsentAPIResource(err) {
+		if absentAPIResource(err) {
 			return []peoplebrowser.PersonEmployment{}, nil
 		}
 		return nil, err
@@ -237,10 +235,10 @@ func (b *PeopleBrowser) organizationName(ctx context.Context, organizationID int
 	return resp.JSON200.Organization.Name
 }
 
-// AbsentAPIResource reports a daemon answer that means "nothing to show" for
+// absentAPIResource reports a daemon answer that means "nothing to show" for
 // an optional sub-resource: not found, or a feature store the daemon has not
 // enabled.
-func AbsentAPIResource(err error) bool {
+func absentAPIResource(err error) bool {
 	var apiErr *APIError
 	return errors.As(err, &apiErr) &&
 		(apiErr.Status == http.StatusNotFound || apiErr.Status == http.StatusServiceUnavailable)

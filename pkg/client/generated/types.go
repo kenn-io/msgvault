@@ -7054,7 +7054,7 @@ func (k KataIssueCreateRequest) Validate() error {
 type KataIssueListResponse struct {
 	Issues []KataIssueReceipt `json:"issues" validate:"required"`
 
-	// Truncated The list may omit issues that cite this source: more matched than were returned, or some issues could not be checked
+	// Truncated The list may omit matching issues: more matched than were returned, or some citations could not be checked
 	Truncated bool `json:"truncated"`
 }
 
@@ -16501,6 +16501,9 @@ func (t TaskLinkTask) Validate() error {
 
 type TaskSearchResponse struct {
 	Tasks []TaskSummary `json:"tasks" validate:"required"`
+
+	// Truncated More tasks matched than were returned
+	Truncated bool `json:"truncated"`
 }
 
 func (t TaskSearchResponse) Validate() error {

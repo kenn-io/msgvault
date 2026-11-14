@@ -29,7 +29,7 @@ Connect AI assistants through the [native MCP endpoints](usage/chat.md#native-da
 
 ### Filename suggestions
 
-Newer than the latest release, API schema 3.15 adds
+API schema 3.15 adds
 `POST /api/v1/files/suggest` and `POST /api/v1/people/{id}/files/suggest`.
 They suggest attachment filenames without changing existing file or message
 search. Both are read-only operations under existing owner authentication;
@@ -166,9 +166,11 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.2.0**.
+it is separate from the binary release version. The current schema is **5.3.0**.
 
-Schema 5.2.0 adds first-appearance evidence to person contact state.
+Schema 5.3.0 adds first-appearance evidence to person contact state.
+
+Schema 5.2.0 adds open Kata issue search and optional task search queries.
 
 Schema 5.1.0 adds time-zone-aware Month and Year grouping, group overviews, and item totals for time groups.
 
@@ -1965,7 +1967,7 @@ Recording search requires Docbank's source-selected search contract: `media_sour
 
 Schema 3.27.0 adds optional `attachments` with `results`, `truncated`, and optional `error` containing `error` and `message`. Each result has `message_id`, `conversation_id`, `attachment_id`, `filename`, `containing_title`, optional `occurred_at`, and a plain `excerpt`. It searches delivered mirror versions using text Docbank has extracted. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. A Docbank result limit or occurrence limit sets `truncated`, meaning more may match. Docbank may include filename-only candidates in its limit even when all extracted-text matches fit. Visibility and Person scope apply to both lists. The limit applies independently to each list. An empty attachment list without an error means no match in extracted text and says nothing about files whose text Docbank hasn't extracted.
 
-Schema 4.2.0 (newer `main`, after v0.23.0) accepts `mode=semantic` and
+Schema 4.2.0 accepts `mode=semantic` and
 `mode=hybrid` for attachment text. `attachments` adds `requested_mode`,
 `actual_mode`, `coverage`, `partial`, and `degradations`. `actual_mode` is
 `unavailable` when no search ran or remote retrieval failed. Coverage describes

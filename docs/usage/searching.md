@@ -7,14 +7,14 @@ description: Find archived messages by words, meaning, account, conversation, or
 Use `msgvault search` to find archived email, chats, calendar events, and
 meeting transcripts. Keyword search works without an embedding provider.
 Combine words with filters to narrow the result, then use `msgvault show-message <id>`
-to read a message. On newer `main` builds, `show` is an alias; use
+to read a message. `show` is an alias; use
 `show <id> --body-only --strip-quoted` for a shorter reading view.
 
 | What you want to find | Where to search |
 |---|---|
 | Words in a message or its subject | `msgvault search "quarterly report"` |
 | A topic, even with different wording | [Vector or hybrid message search](/docs/usage/vector-search/) |
-| Text Docbank extracted from a mirrored attachment | [Docbank document search](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased) |
+| Text Docbank extracted from a mirrored attachment | [Docbank document search](https://msgvault.io/docs/configuration/#search-document-text-through-docbank) |
 | An image or video by its visual content | [Visual attachment search](/docs/usage/vector-search/#visual-attachment-search) |
 | A person by their curated profile | [Semantic person search](/docs/usage/people/#find-a-person-by-what-you-remember) |
 | An attachment with a misspelled filename | [Opt-in filename suggestions](#filename-suggestions) |
@@ -24,7 +24,7 @@ Those have separate indexes and setup steps.
 
 ## Filename suggestions
 
-Newer than the latest release, person file lookup can suggest a filename when
+Person file lookup can suggest a filename when
 you remember its spelling approximately:
 
 ```bash
@@ -112,7 +112,7 @@ msgvault supports a local subset of Gmail-like search syntax.
 | `received:` | Exact address that received inbound mail | `received:work@example.org` |
 | `account:` | Exact account of received mail, sent mail, or a calendar event | `account:work@example.org` |
 | `has:attachment` | Has attachments | `has:attachment` |
-| `filename:` (newer `main`) | Attachment filename literal substring | `filename:"budget plan.pdf"` |
+| `filename:` | Attachment filename literal substring | `filename:"budget plan.pdf"` |
 | `before:` | Before date | `before:2024-06-01` |
 | `after:` | After date | `after:2024-01-01` |
 | `older_than:` | Relative date | `older_than:7d`, `2w`, `1m`, `1y` |
@@ -322,13 +322,13 @@ msgvault search "dinner" --message-type sms --message-type mms
 ```
 
 Valid values are `email`, `google_chat`, `calendar_event`, `meeting_transcript`,
-`beeper`, `chatwoot`, `sms`, `mms`, `rcs`, `whatsapp`, `imessage`, `teams`, `discord`, `slack`, `fbmessenger`, `telegram`,
+`beeper`, `chatwoot`, `sms`, `mms`, `rcs`, `whatsapp`, `imessage`, `teams`, `discord`, `slack`, `fbmessenger`, `telegram`, `feed_item`,
 `synctech_sms_call`, `google_voice_text`, `google_voice_call`, and
 `google_voice_voicemail`. `message_type:email` also includes legacy rows whose
 type is empty because older msgvault versions created them before the column
 existed.
 Messages from the [message import API](/docs/usage/message-import/) carry the
-type their sender chose, such as `feed_item`, so `--message-type` accepts any
+type their sender chose, such as `bookmark`, so `--message-type` accepts any
 type of lowercase letters, digits, and underscores and rejects other values.
 
 The same message-type scoping is available in HTTP search via the
@@ -349,17 +349,17 @@ msgvault search from:alice@example.com --json
 
 `msgvault media search "quarterly numbers"` finds matching recording transcripts as their visible messages. A shared recording returns each live message occurrence. Add `--person 7 --direction from_person` to search recordings from one person, or `--json` for IDs, origin, plain excerpts, timing, coverage and optional `filename`, `containing_title` and `occurred_at` fields.
 
-Media search uses lexical retrieval through the configured Docbank integration. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Recording retrieval supports lexical mode. On newer `main` builds, semantic and hybrid modes search attachments and return `recordings_error=media_search_mode_unavailable`. An empty recording result proves no match only with complete coverage and `partial=false`. Recording search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. For browser recording search and its Person filter, see [Messages search](../web-ui.md#recording-matches).
+Media search uses lexical retrieval through the configured Docbank integration. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Recording retrieval supports lexical mode. Semantic and hybrid modes search attachments and return `recordings_error=media_search_mode_unavailable`. An empty recording result proves no match only with complete coverage and `partial=false`. Recording search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. For browser recording search and its Person filter, see [Messages search](../web-ui.md#recording-matches).
 
 ## Search mirrored attachment text
 
 Media search also returns a separate `attachments` list of matches in text Docbank has extracted from mirrored attachments. Docbank detects document formats from file contents, so PDFs with a generic or empty MIME type and text formats such as JSONL count toward the search scope. The scope includes mirrored files except those declared as audio or video. Docbank searches the text it can extract from those files, including image OCR and generated image-understanding renditions. Generated descriptions and possible meme meaning remain model interpretations; they do not establish the sender's beliefs, endorsement, or intent. Configure and consent to the appropriate image processing profile in Docbank first. Each matching file links to every visible message that holds it. An empty attachment list means no match in extracted text; files awaiting extraction may still contain the words. More than 4096 mirrored files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. Set `document_profile` in the [attachment mirror configuration](../configuration.md#mirror-stored-attachments-to-docbank) to request text extraction in Docbank. Add a Person filter to narrow the scope. Attachment errors and truncation appear beside that list. Truncation means more may match, including when Docbank limits filename-only candidates. `--limit` applies to each list independently.
 
-On newer `main` builds, use `msgvault media search "project approval" --mode semantic`
+Use `msgvault media search "project approval" --mode semantic`
 for meaning or `--mode hybrid` for meaning and keywords. Set
 [`attachment_search_profile`](../configuration.md#mirror-stored-attachments-to-docbank)
 to an existing Docbank profile with processed and embedded files. Docbank owns
-conversion, embeddings, ranking, and query-provider consent. v0.23.0 supports only lexical retrieval.
+conversion, embeddings, ranking, and query-provider consent.
 Matches found only by semantic retrieval can have an empty excerpt; their message and file IDs still identify the carrying attachment.
 
 See the [API contract](../api-server.md#media-transcript-search) for attachment mode, delivered-version coverage, fallback, errors and batching.
@@ -368,7 +368,7 @@ Use `media search` for text Docbank has extracted from mirrored attachments.
 
 ## Read matches and conversations
 
-On newer `main` builds, `--snippet` adds a context column without changing the
+`--snippet` adds a context column without changing the
 default table. SQLite uses a full-text index excerpt where available; other
 backends and semantic searches use the stored message preview. Snippets are
 bounded on Unicode character boundaries. JSON keeps `snippet` as the stored
@@ -414,10 +414,10 @@ msgvault search 'project approval from:sender@example.com newer_than:90d' --mode
 msgvault search 'planning the next release after:2026-01-01' --mode vector --sort date
 ```
 
-`after:` and `newer_than:` narrow candidates before semantic ranking. On newer
-`main` builds, `--sort date` displays the retrieved vector/hybrid page newest
+`after:` and `newer_than:` narrow candidates before semantic ranking.
+`--sort date` displays the retrieved vector/hybrid page newest
 first; it does not select the newest messages from the entire archive. Increase
 `--limit` to consider more ranked hits. Leaving `--sort` unset preserves ranking.
 
 When a first-page FTS query with free text finds nothing and hybrid is usable,
-newer `main` builds suggest `--mode hybrid` on stderr. JSON stdout stays parseable.
+search suggests `--mode hybrid` on stderr. JSON stdout stays parseable.

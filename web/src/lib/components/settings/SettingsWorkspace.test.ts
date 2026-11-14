@@ -160,15 +160,58 @@ it('shows the restart cue before saving only while a restart-required draft is p
   render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'advanced' });
   await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');
   const footer = screen.getByText('1 unsaved change').parentElement!;
-  expect(within(footer).queryByText('Restart msgvault to apply these changes.')).toBeNull();
+  expect(within(footer).queryByText('Restart required after saving.')).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
   await fireEvent.click(await screen.findByRole('switch', { name: 'Keep logs' }));
-  expect(within(footer).getByText('Restart msgvault to apply these changes.')).toBeDefined();
+  expect(within(footer).getByText('Restart required after saving.')).toBeDefined();
   expect(within(footer).getByText('2 unsaved changes.')).toBeDefined();
   expect(seen.some(request => request.method === 'PATCH')).toBe(false);
   await fireEvent.click(screen.getByRole('switch', { name: 'Keep logs' }));
-  expect(within(footer).queryByText('Restart msgvault to apply these changes.')).toBeNull();
+  expect(within(footer).queryByText('Restart required after saving.')).toBeNull();
   expect(within(footer).getByText('1 unsaved change')).toBeDefined();
+});
+
+it('shows restart guidance after saving a restart-required setting', async () => {
+  const doc = settingsDoc();
+  doc.settings.push(setting('log.enabled', 'server', 'boolean', false, { restart_required: true }));
+  const { client, operationsController, onStatusChange } = fixture(doc);
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'server' });
+  await fireEvent.click(await screen.findByRole('switch', { name: 'Keep logs' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await screen.findByText(/Restart pending/);
+});
+
+it.each([
+  [true, false, 'server'],
+  [false, true, 'server'],
+  [true, true, 'enrichment'],
+  [false, false, 'enrichment']
+])('renders restart guidance for settings %s and inference %s in %s', async (settingsPending, inferencePending, category) => {
+  const { client, operationsController, onStatusChange, seen } = fixture(settingsDoc({ pending_restart: settingsPending }), request => {
+    if (new URL(request.url).pathname.includes('/settings/people-inference')) {
+      return Response.json({ profiles: [], configured_enabled: true, running_enabled: true, running_name: 'previous', pending_restart: inferencePending }, { headers: { ETag: '"p1"' } });
+    }
+  });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category });
+  await waitFor(() => expect(seen.some(request => request.path.includes('/settings/people-inference'))).toBe(true));
+  if (inferencePending && category === 'enrichment') await screen.findByText(/running daemon still uses/);
+  if (!settingsPending && !inferencePending) {
+    await screen.findByText('Add a profile');
+    expect(screen.queryByText('msgvault daemon restart')).toBeNull();
+    return;
+  }
+  const command = await screen.findByText('msgvault daemon restart');
+  const notice = command.closest('[role="status"]')!;
+  expect(screen.getAllByText('msgvault daemon restart')).toHaveLength(1);
+  expect(notice.getAttribute('data-tone')).toBe('warning');
+  if (settingsPending && !inferencePending) {
+    expect(notice.textContent).toContain('Restart pending.');
+    expect(notice.textContent).toContain('computer running msgvault');
+    expect(notice.textContent).toContain('--home');
+    expect(notice.textContent).toContain('--config');
+    expect(notice.textContent).toContain('restart its service');
+    expect(notice.textContent).toContain('stop and rerun your foreground msgvault serve with the same flags.');
+  }
 });
 
 it('warns before leaving with drafts, keeps them on Stay, and discards before continuing', async () => {

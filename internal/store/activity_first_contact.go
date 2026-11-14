@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 )
 
 const maxIntroCounterparts = 4
@@ -12,12 +13,8 @@ const maxIntroCounterparts = 4
 type FirstContactKind string
 
 const (
-	FirstContactEmailIntro      FirstContactKind = "email_intro"
-	FirstContactOwnerOutreach   FirstContactKind = "owner_outreach"
-	FirstContactInboundOutreach FirstContactKind = "inbound_outreach"
-	FirstContactGroupShared     FirstContactKind = "group_shared"
-	FirstContactMeeting         FirstContactKind = "meeting"
-	FirstContactObserved        FirstContactKind = "observed"
+	FirstContactEmailIntro FirstContactKind = "email_intro"
+	FirstContactObserved   FirstContactKind = "observed"
 )
 
 type FirstContactIntroducer struct {
@@ -28,30 +25,16 @@ type FirstContactIntroducer struct {
 
 // ClassifyFirstContact describes a person's earliest linked event using current identities.
 func ClassifyFirstContact(candidate ActivityCandidate, personID int64, maxDirectCounterparts int) (FirstContactKind, *FirstContactIntroducer) {
-	if IsMeetingMessageType(candidate.MessageType) {
-		return FirstContactMeeting, nil
-	}
-	counterparts := collapseActivityCounterparts(candidate.Counterparts)
-	ownerLinked := activityOwnerLinked(counterparts)
-	classification := ClassifyActivityCandidate(candidate, maxDirectCounterparts)
-	if classification.Direction == DirectionObserved {
+	if IsMeetingMessageType(candidate.MessageType) || candidate.ConversationType != "email_thread" || ClassifyActivityCandidate(candidate, maxDirectCounterparts).Direction != DirectionInbound {
 		return FirstContactObserved, nil
 	}
-	switch candidate.ConversationType {
-	case "group_chat", "channel":
-		return FirstContactGroupShared, nil
-	}
-	email := candidate.ConversationType == "email_thread"
-	direct := candidate.ConversationType == string(MessageExportConversationDirectChat)
-	if !email && !direct {
-		return FirstContactObserved, nil
-	}
+	ownerLinked := activityOwnerLinked(candidate.Counterparts)
 	var sender *ActivityCounterpart
 	fromCount := 0
-	addressed, introAddressed := false, false
+	addressed := false
 	others := map[audienceKey]struct{}{}
-	for i := range counterparts {
-		c := &counterparts[i]
+	for i := range candidate.Counterparts {
+		c := &candidate.Counterparts[i]
 		isTarget := c.PersonID != nil && *c.PersonID == personID
 		if c.RecipientType == recipientTypeFrom {
 			fromCount++
@@ -60,46 +43,38 @@ func ClassifyFirstContact(candidate ActivityCandidate, personID int64, maxDirect
 			}
 			continue
 		}
-		recipient := c.RecipientType == "to" || c.RecipientType == "cc" || c.RecipientType == "bcc" || (direct && c.RecipientType == "member")
-		if isTarget && recipient {
+		if isTarget && (c.RecipientType == "to" || c.RecipientType == "cc") {
 			addressed = true
-			if c.RecipientType == "to" || c.RecipientType == "cc" {
-				introAddressed = true
-			}
 		}
-		if recipient && !isTarget && !ownerLinked(*c) {
+		if (c.RecipientType == "to" || c.RecipientType == "cc" || c.RecipientType == "bcc") && !isTarget && !ownerLinked(*c) {
 			others[activityAudienceKey(*c)] = struct{}{}
 		}
 	}
 	if candidate.SenderID == nil && fromCount != 1 {
 		sender = nil
 	}
-	targetSender := sender != nil && sender.PersonID != nil && *sender.PersonID == personID
-	introducer := func(c *ActivityCounterpart) *FirstContactIntroducer {
-		return &FirstContactIntroducer{ParticipantID: c.ParticipantID, PersonID: c.PersonID}
-	}
-	if email && classification.Direction == DirectionInbound && sender != nil && !ownerLinked(*sender) && !targetSender && introAddressed && len(others) <= maxIntroCounterparts {
-		return FirstContactEmailIntro, introducer(sender)
-	}
-	if classification.Direction == DirectionOutbound && addressed && !classification.Broadcast {
-		if sender != nil && ownerLinked(*sender) {
-			return FirstContactOwnerOutreach, introducer(sender)
-		}
-		return FirstContactOwnerOutreach, nil
-	}
-	if classification.Direction == DirectionInbound && targetSender && !classification.Broadcast {
-		return FirstContactInboundOutreach, nil
+	if sender != nil && !ownerLinked(*sender) && (sender.PersonID == nil || *sender.PersonID != personID) && addressed && len(others) <= maxIntroCounterparts {
+		return FirstContactEmailIntro, &FirstContactIntroducer{ParticipantID: sender.ParticipantID, PersonID: sender.PersonID}
 	}
 	return FirstContactObserved, nil
 }
 
 // earliestFirstContactTx reads the earliest linked event in the current snapshot.
-func earliestFirstContactTx(ctx context.Context, tx *loggedTx, personID int64) (ActivityEvent, sql.NullString, error) {
+func earliestFirstContactTx(ctx context.Context, tx *loggedTx, personID int64) (ActivityEvent, string, error) {
+	const eligible = ` FROM activity_event_persons aep JOIN activity_events ae ON ae.message_id = aep.message_id
+ WHERE aep.person_id = ? AND NOT (aep.role = 'member' AND ae.ref_kind <> 'meeting' AND EXISTS (SELECT 1 FROM conversations c WHERE c.id = ae.conversation_id AND c.conversation_type IN ('group_chat', 'channel')))`
 	var event ActivityEvent
-	var refKind sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT ae.message_id, ae.occurred_at, ae.conversation_id, ae.ref_kind
- FROM activity_event_persons aep JOIN activity_events ae ON ae.message_id = aep.message_id
- WHERE aep.person_id = ? AND NOT (aep.role = 'member' AND COALESCE(ae.ref_kind, '') <> 'meeting' AND EXISTS (SELECT 1 FROM conversations c WHERE c.id = ae.conversation_id AND c.conversation_type IN ('group_chat', 'channel'))) ORDER BY ae.occurred_at, ae.message_id LIMIT 1`, personID).Scan(&event.MessageID, &event.OccurredAt, &event.ConversationID, &refKind)
+	var refKind, firstDate string
+	err := tx.QueryRowContext(ctx, `SELECT aep.local_date`+eligible+` ORDER BY aep.local_date LIMIT 1`, personID).Scan(&firstDate)
+	if err != nil {
+		return event, refKind, err
+	}
+	date, err := time.Parse(time.DateOnly, firstDate)
+	if err != nil {
+		return event, refKind, fmt.Errorf("parse first appearance date: %w", err)
+	}
+	endDate := date.AddDate(0, 0, 2).Format(time.DateOnly)
+	err = tx.QueryRowContext(ctx, `SELECT ae.message_id, ae.occurred_at, ae.conversation_id, ae.ref_kind`+eligible+` AND aep.local_date BETWEEN ? AND ? ORDER BY ae.occurred_at, ae.message_id LIMIT 1`, personID, firstDate, endDate).Scan(&event.MessageID, &event.OccurredAt, &event.ConversationID, &refKind)
 	return event, refKind, err
 }
 
@@ -114,7 +89,7 @@ func (s *Store) populateFirstContactTx(ctx context.Context, tx *loggedTx, state 
 	messageID := event.MessageID
 	occurredAt := sql.NullTime{Time: event.OccurredAt, Valid: true}
 	state.FirstSeenAt = utcNullTimePointer(occurredAt)
-	state.FirstSeenRef = activityStoredRef(refKind, sql.NullInt64{Int64: messageID, Valid: true})
+	state.FirstSeenRef = activityStoredRef(sql.NullString{String: refKind, Valid: true}, sql.NullInt64{Int64: messageID, Valid: true})
 	candidates, err := s.loadActivityCandidatesByIDQueryerContext(ctx, tx, []int64{messageID})
 	if err != nil {
 		return fmt.Errorf("load first-contact candidate: %w", err)

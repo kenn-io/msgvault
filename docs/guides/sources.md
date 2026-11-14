@@ -36,16 +36,17 @@ also a separate opt-in because downloading an image can activate email tracking.
 | Slack | [Slack sync](../usage/slack.md) | Channels you have joined, group DMs, DMs, threads, and available files |
 | Slackdump export | [Slackdump import](../usage/slack.md) | Local directory or ZIP; no Slack token needed |
 | Microsoft Teams | [Teams sync](../usage/teams.md) | Chats, self-chat, channels, replies, and available media |
-| Discord | [Discord sync and packages](../usage/discord.md) | Bot-accessible guild history; on `main`, official packages import sent-only messages, including DMs, into a separate account source |
+| Discord | [Discord sync and packages](../usage/discord.md) | Bot-accessible guild history; official packages import sent-only messages, including DMs, into a separate account source |
 | Chatwoot | [Chatwoot sync](chatwoot.md) | Shared inboxes, contact and employee messages, media, and linked call meetings |
-| Facebook Page comments | [Page comment sync](../usage/facebook-comments.md) | Selected Page token and app/Page IDs; returned organic, visitor, and ad-post comment conversations; unreleased |
-| Instagram comments | [Professional account sync](../usage/instagram-comments.md) | Selected Page token and linked professional account; returned media comments and replies; unreleased |
+| Facebook Page comments | [Page comment sync](../usage/facebook-comments.md) | Selected Page token and app/Page IDs; returned organic, visitor, and ad-post comment conversations |
+| Instagram comments | [Professional account sync](../usage/instagram-comments.md) | Selected Page token and linked professional account; returned media comments and replies |
 | Beeper Desktop | [Beeper sync](../usage/beeper.md) | History and media exposed by the running local Beeper API |
 | Inline | [Inline sync](../usage/inline.md) | All accessible chats, including hidden, archived, and child threads; optional exact chat filter; requires a complete catalog from the connected backend |
 | Matrix | [Matrix sync](../usage/matrix.md) | Joined-room history on any homeserver, with encrypted messages recovered from the account's key backup |
-| WhatsApp, iMessage, iMazing CSV, Google Voice, Messenger, Telegram, X DMs (unreleased on `main`) | [Text message imports](../usage/text-messages.md) | Supported backups or exports, with your identity supplied where required |
+| WhatsApp, iMessage, iMazing CSV, Google Voice, Messenger, Telegram, X DMs | [Text message imports](../usage/text-messages.md) | Supported backups or exports, with your identity supplied where required |
 | SMS Backup & Restore | [Android SMS and call logs](../usage/text-messages.md) | Local XML/ZIP or scheduled imports from a configured Drive folder |
-| Another source, such as feed items or tool notifications | [Messages from any source](../usage/message-import.md) | Provider-neutral ingestion keyed by source and external message ID |
+| RSS, Atom, or JSON feeds | [Feeds](../usage/feeds.md) | Followed feeds fetched on a schedule; each item archived once |
+| Another source, such as tool notifications | [Messages from any source](../usage/message-import.md) | Provider-neutral ingestion keyed by source and external message ID |
 
 Some chat providers apply size and room-participant limits to media. A message can be archived
 without all its media. Review [media policy](../configuration.md#media-policy)

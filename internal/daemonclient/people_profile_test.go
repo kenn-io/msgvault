@@ -1,6 +1,7 @@
 package daemonclient
 
 import (
+	"fmt"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -220,6 +221,32 @@ func TestPeopleBrowserGetPersonProfileDegradesAbsentSubResources(t *testing.T) {
 	assert.Nil(profile.Addresses)
 	assert.Nil(profile.Dates)
 	assert.Nil(profile.Categories)
+}
+
+func TestPeopleBrowserProfileSurvivesContactStateFailure(t *testing.T) {
+	for _, body := range []string{"", "{"} {
+		t.Run(fmt.Sprintf("body-%q", body), func(t *testing.T) {
+			engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/people/51":
+					writePeopleBrowserJSON(t, w, http.StatusOK, `{"id":51,"participant_ids":[],"vcard_uid":"person-51","revision":1,"created_at":"2026-08-20T12:30:00Z","updated_at":"2026-08-20T12:30:00Z"}`)
+				case "/api/v1/people/51/contact-state":
+					if body == "" {
+						http.Error(w, "unavailable", http.StatusInternalServerError)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(body))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			profile, err := engine.GetPersonProfile(t.Context(), 51)
+			require.NoError(t, err)
+			assert.Equal(t, int64(51), profile.Person.ID)
+			assert.Nil(t, profile.ContactState)
+		})
+	}
 }
 
 func TestPeopleBrowserGetPersonProfileUncomputedContactState(t *testing.T) {

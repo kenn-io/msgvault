@@ -734,7 +734,7 @@ func getCLIPersonByUID(
 }
 
 func writeCLIGetPerson(cmd *cobra.Command, client *daemonclient.Client, person *generated.Person) error {
-	if !personJSON || person == nil {
+	if !personJSON {
 		return writeCLIPerson(cmd, person)
 	}
 	supported, err := client.SupportsAPISchemaVersion(cmd.Context(), daemonclient.FirstAppearanceMinAPISchemaVersion)
@@ -748,13 +748,7 @@ func writeCLIGetPerson(cmd *cobra.Command, client *daemonclient.Client, person *
 		return api.GetPersonContactStateWithResponse(cmd.Context(), &generated.GetPersonContactStateRequestOptions{PathParams: &generated.GetPersonContactStatePath{ID: person.ID}})
 	})
 	if err != nil {
-		if daemonclient.AbsentAPIResource(err) {
-			return writeCLIPerson(cmd, person)
-		}
-		return fmt.Errorf("read person contact state: %w", err)
-	}
-	if response.JSON200 == nil {
-		return errors.New("person contact state response was empty")
+		return writeCLIPerson(cmd, person)
 	}
 	return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), struct {
 		*generated.Person `json:",inline"`

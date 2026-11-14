@@ -3576,6 +3576,31 @@ func firstSeenDateChangesRecomputeWinner(t *testing.T) {
 	assert.Zero(t, state.InteractionCount)
 }
 
+func TestFirstSeenDateWindow(t *testing.T) {
+	f, personID := activityProjectionFixture(t)
+	local := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	times := []time.Time{local.Add(37*time.Hour + 59*time.Minute), local.Add(34 * time.Hour), local.Add(58 * time.Hour)}
+	dates := []string{"2026-07-01", "2026-07-03", "2026-07-04"}
+	offsets := []int{-840, 840, 840}
+	var projections []store.ActivityProjection
+	var winner int64
+	for i, at := range times {
+		id := f.NewMessage().WithSourceMessageID(fmt.Sprintf("window-%d", i)).WithSentAt(at).Create(t, f.Store)
+		if i == 1 {
+			winner = id
+		}
+		projection := activityProjectionForMessage(t, f, id, personID, at)
+		projection.Event.LocalDate = dates[i]
+		projection.Event.UTCOffsetMinutes = offsets[i]
+		projections = append(projections, projection)
+	}
+	_, err := f.Store.ProjectActivityBatchContext(t.Context(), projections)
+	require.NoError(t, err)
+	state, err := f.Store.ContactStateContext(t.Context(), personID, times[2])
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("message:%d", winner), state.FirstSeenRef)
+}
+
 func TestFirstSeenIntroductionContactState(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -3680,10 +3705,10 @@ func TestFirstAppearanceRealLoaderKinds(t *testing.T) {
 		fromOwner                       bool
 		want                            store.FirstContactKind
 	}{
-		{"owner direct chat", "direct_chat", "telegram", true, store.FirstContactOwnerOutreach},
-		{"inbound direct chat", "direct_chat", "telegram", false, store.FirstContactInboundOutreach},
-		{"group sender", "group_chat", "telegram", false, store.FirstContactGroupShared},
-		{"meeting", "email_thread", "calendar_event", false, store.FirstContactMeeting},
+		{"owner direct chat", "direct_chat", "telegram", true, store.FirstContactObserved},
+		{"inbound direct chat", "direct_chat", "telegram", false, store.FirstContactObserved},
+		{"group sender", "group_chat", "telegram", false, store.FirstContactObserved},
+		{"meeting", "email_thread", "calendar_event", false, store.FirstContactObserved},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)

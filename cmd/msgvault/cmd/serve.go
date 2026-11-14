@@ -706,6 +706,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if cfg.Feeds.Enabled && cfg.Feeds.Schedule == "" {
+		logger.Warn("feeds are enabled but have no schedule; set [feeds].schedule to fetch them automatically")
+	}
+	if cfg.Feeds.Enabled && cfg.Feeds.Schedule != "" {
+		if err := sched.AddJob(scheduler.Job{
+			Name: api.FeedsJobName, Schedule: cfg.Feeds.Schedule, Preemptible: true,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runConfiguredFeedSync(ctx, s)
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule feed sync", "error", err)
+		} else {
+			logger.Info("scheduled feed sync", "schedule", cfg.Feeds.Schedule)
+		}
+	}
+
 	for _, source := range cfg.Chatwoot {
 		if source.Enabled && source.Schedule == "" {
 			logger.Warn("chatwoot profile is enabled but has no schedule", "profile", source.Identifier,
@@ -1123,11 +1139,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 			apiServer, sched, blobStore,
 		)
 		mcpInitDone = startServeMCP(ctx, cmd, apiServer, state)
-		apiServer.SetLocalEmbeddings(&localEmbeddingsController{
+		localController := &localEmbeddingsController{
 			state: state, store: s, dbPath: dbPath, handle: vectorInit, server: apiServer, scheduler: sched,
 			gate: operationGate, runner: storeAdapter, openers: []visual.StreamOpener{blobStore},
-			inspect: embedlocal.Inspect, install: embedlocal.Install,
-		})
+			inspect: embedlocal.Inspect, install: embedlocal.Install, choice: embedlocal.ChoiceRecorded,
+		}
+		apiServer.SetLocalEmbeddings(localController)
+		apiServer.StartLocalEmbeddings(localController.Start)
 		telemetryHeartbeatDone := make(chan struct{})
 		go func() {
 			defer close(telemetryHeartbeatDone)

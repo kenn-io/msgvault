@@ -61,7 +61,7 @@ appearance; a sender or explicitly addressed person does. If only roster
 evidence exists, no first appearance is shown. `first_seen_at` and
 `first_seen_ref` describe that appearance;
 `first_contact_at` and interaction counts still describe direct contact.
-The HTTP contact-state route, assembled profiles, MCP `get_person_profile`, and `person get --json` carry the same fields. `person get` includes them when daemon API schema 5.2.0 or newer is available; older daemons still return the person. The Web UI and TUI do not yet show first appearance.
+The HTTP contact-state route, assembled profiles, MCP `get_person_profile`, and `person get --json` carry the same fields. `person get` includes them when daemon API schema 5.3.0 or newer is available; older daemons and failed history reads still return the person. The Web UI and TUI do not yet show first appearance.
 
 After an import, the activity projection must catch up before first appearance
 reflects the new messages; results marked `stale` are provisional. Projection
@@ -72,13 +72,7 @@ empty activity schedule disables automatic projection. See
 `first_contact_kind` describes the envelope evidence, not a verified introduction: `email_intro` is an inbound email
 from a third party with you among the recipients, the person in To or Cc, and
 at most four other non-owner recipients (counting linked aliases once per saved
-person); `owner_outreach` is your addressed, non-broadcast email or direct
-chat; `inbound_outreach` is a non-broadcast direct email or chat sent by the person;
-`group_shared` is a group or channel message involving you; `meeting` is a meeting; and
-`observed` covers other evidence, including messages without your identity and
-legacy conversations of type `chat`, whose direct or group context is unknown.
-When known, `introducer` identifies the sender of an introduction email or
-your sending identity. Group inviter evidence is not yet used. These fields
+person); `observed` covers other evidence. `introducer` identifies the sender of an introduction email when known. These fields
 reflect archived evidence and currently linked identities, not a claim about
 when you met offline.
 

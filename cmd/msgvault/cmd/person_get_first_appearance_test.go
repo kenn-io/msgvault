@@ -75,7 +75,7 @@ func TestPersonGetFirstAppearanceRealProjection(t *testing.T) {
 	_, err = projector.RunOnce(t.Context())
 	req.NoError(err)
 	srv := api.NewServer(&config.Config{}, &storeAPIAdapter{store: f.Store}, nil, slog.New(slog.DiscardHandler))
-	var oldDaemon, failState atomic.Bool
+	var oldDaemon, failState, malformedState, emptyState atomic.Bool
 	router := srv.Router()
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if oldDaemon.Load() && r.URL.Path == "/api/v1/health" {
@@ -85,6 +85,15 @@ func TestPersonGetFirstAppearanceRealProjection(t *testing.T) {
 		}
 		if failState.Load() && r.URL.Path == fmt.Sprintf("/api/v1/people/%d/contact-state", person.ID) {
 			http.Error(w, "unavailable", http.StatusInternalServerError)
+			return
+		}
+		if emptyState.Load() && r.URL.Path == fmt.Sprintf("/api/v1/people/%d/contact-state", person.ID) {
+			w.Header().Set("Content-Type", "application/json")
+			return
+		}
+		if malformedState.Load() && r.URL.Path == fmt.Sprintf("/api/v1/people/%d/contact-state", person.ID) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("{"))
 			return
 		}
 		router.ServeHTTP(w, r)
@@ -128,14 +137,16 @@ func TestPersonGetFirstAppearanceRealProjection(t *testing.T) {
 		}
 	}
 	for _, scenario := range []struct {
-		name      string
-		old, fail bool
-	}{{"older daemon", true, false}, {"optional subresource unavailable", false, true}} {
+		name                        string
+		old, fail, malformed, empty bool
+	}{{"older daemon", true, false, false, false}, {"optional subresource unavailable", false, true, false, false}, {"malformed contact state", false, false, true, false}, {"empty contact state", false, false, false, true}} {
 		t.Run(scenario.name, func(t *testing.T) {
 			check := assert.New(t)
 			req := require.New(t)
 			oldDaemon.Store(scenario.old)
 			failState.Store(scenario.fail)
+			malformedState.Store(scenario.malformed)
+			emptyState.Store(scenario.empty)
 			for _, args := range [][]string{{strconv.FormatInt(person.ID, 10)}, {"--vcard-uid", person.VCardUID}} {
 				get := &cobra.Command{Use: personGetCmd.Use, Args: personGetCmd.Args, RunE: personGetCmd.RunE}
 				get.Flags().String("vcard-uid", "", "")
@@ -143,10 +154,6 @@ func TestPersonGetFirstAppearanceRealProjection(t *testing.T) {
 				get.SetOut(&got)
 				get.SetArgs(args)
 				err := get.ExecuteContext(ctx)
-				if scenario.fail {
-					req.ErrorContains(err, "read person contact state")
-					continue
-				}
 				req.NoError(err)
 				var profile map[string]any
 				req.NoError(json.Unmarshal(got.Bytes(), &profile))
