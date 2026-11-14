@@ -7523,22 +7523,12 @@ func TestHandleSearch_VectorRejectsInvalidTimePeriod(t *testing.T) {
 
 type searchCollectionLookupStore struct {
 	*mockStore
-	fullLookups   int
-	memberLookups int
+	fullLookups int
 }
 
 func (s *searchCollectionLookupStore) GetCollectionByName(name string) (*store.CollectionWithSources, error) {
 	s.fullLookups++
 	return s.mockStore.GetCollectionByName(name)
-}
-
-func (s *searchCollectionLookupStore) GetCollectionSourceIDs(name string) ([]int64, error) {
-	s.memberLookups++
-	coll, ok := s.collections[name]
-	if !ok {
-		return nil, store.ErrCollectionNotFound
-	}
-	return coll.SourceIDs, nil
 }
 
 func TestHandleSearch_VectorCollectionParamReachesFilter(t *testing.T) {
@@ -7583,7 +7573,6 @@ func TestHandleSearch_VectorCollectionParamReachesFilter(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 	assert.Equal(t, []int64{77, 88}, backend.searchFilter.SourceIDs, "SourceIDs")
 	assertions.Zero(st.fullLookups)
-	assertions.Equal(1, st.memberLookups)
 	for _, tc := range []struct {
 		name    string
 		status  int
@@ -9645,7 +9634,7 @@ func TestCLICollectionMembers(t *testing.T) {
 	}
 }
 
-func TestSemanticEmptyCollectionReportsUnavailable(t *testing.T) {
+func TestSemanticEmptyCollectionReadinessAndFilter(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)

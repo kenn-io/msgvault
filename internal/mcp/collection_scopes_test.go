@@ -72,7 +72,28 @@ func TestCollectionScopesFilterRealMessageReads(t *testing.T) {
 	require.ErrorContains(err, "collection name is required")
 	_, err = h.resolveReadSelection(t.Context(), "", map[string]any{"collection": "missing"})
 	require.ErrorContains(err, "collection not found")
+	for _, tc := range []struct {
+		id         int64
+		collection string
+		denied     bool
+	}{{first, "one", false}, {second, "one", true}, {first, "empty", true}} {
+		got := callToolDirect(t, ToolGetMessage, h.getMessage, map[string]any{"id": float64(tc.id), "collection": tc.collection})
+		assertions.Equal(tc.denied, got.isError)
+		if tc.denied {
+			assertions.Contains(resultText(t, got), "message not found")
+		}
+	}
+	body := runToolExpectError(t, ToolSearchMessageBodies, h.searchMessageBodies, map[string]any{"query": "fixture", "collection": "both"})
+	assertions.Contains(resultText(t, body), "collection contains multiple sources")
+	empty := runTool[aggregateResponse](t, ToolAggregate, h.aggregate, map[string]any{"group_by": "time", "collection": "empty"})
+	assertions.Empty(empty.Data)
 	assertions.Zero(e.listCalls)
+	listed := runTool[messageCollectionsResponse](t, ToolListMessageCollections, h.listMessageCollections, map[string]any{})
+	assertions.ElementsMatch([]messageCollection{
+		{Name: "one", SourceIDs: []int64{f.Source.ID}},
+		{Name: "empty", SourceIDs: []int64{}},
+		{Name: "both", SourceIDs: []int64{f.Source.ID, other.ID}},
+	}, listed.Collections)
 }
 
 func TestCollectionCatalogAvailability(t *testing.T) {
@@ -119,7 +140,7 @@ func TestCollectionCatalogAvailability(t *testing.T) {
 func TestSemanticCollectionForwardedToHybridSearcher(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	e := &collectionTestEngine{Engine: &querytest.MockEngine{}, collections: []query.CollectionScope{{Name: "one", SourceIDs: []int64{42}}, {Name: "empty", SourceIDs: []int64{}}, {Name: "many", SourceIDs: []int64{42, 43}}}}
+	e := &collectionTestEngine{Engine: &querytest.MockEngine{}, collections: []query.CollectionScope{{Name: "empty", SourceIDs: []int64{}}, {Name: "many", SourceIDs: []int64{42, 43}}}}
 	h := newTestHandlers(e)
 	calls := 0
 	h.hybridSearcher = hybridSearcherFunc(func(_ context.Context, req HybridSearchRequest) (*HybridSearchResult, error) {
