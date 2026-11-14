@@ -36,11 +36,12 @@ type recipient struct {
 	ID      decimal   `json:"id"`
 	Self    *struct{} `json:"self"`
 	Contact *struct {
-		ACI          []byte `json:"aci"`
-		Given        string `json:"profileGivenName"`
-		Family       string `json:"profileFamilyName"`
-		SystemGiven  string `json:"systemGivenName"`
-		SystemFamily string `json:"systemFamilyName"`
+		ACI          []byte  `json:"aci"`
+		E164         decimal `json:"e164"`
+		Given        string  `json:"profileGivenName"`
+		Family       string  `json:"profileFamilyName"`
+		SystemGiven  string  `json:"systemGivenName"`
+		SystemFamily string  `json:"systemFamilyName"`
 	} `json:"contact"`
 	Group *struct {
 		MasterKey []byte `json:"masterKey"`
@@ -81,9 +82,11 @@ type standardMessage struct {
 	LinkPreview []any        `json:"linkPreview"`
 }
 type filePointer struct {
+	ClientUUID  []byte `json:"clientUuid"`
 	ContentType string `json:"contentType"`
 	FileName    string `json:"fileName"`
 	Locator     struct {
 		Hash []byte `json:"plaintextHash"`
+		Key  []byte `json:"key"`
 	} `json:"locatorInfo"`
 }

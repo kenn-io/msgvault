@@ -13,6 +13,11 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
+const (
+	adapterVersion  = 1
+	metadataVersion = 1
+)
+
 type ImportOptions struct {
 	RootDir        string
 	Account        string
@@ -134,6 +139,24 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 			return err
 		}
 		id := ids[key]
+		if id != 0 {
+			metadata, err := st.GetMessageMetadataContext(ctx, id)
+			if err != nil {
+				return err
+			}
+			if metadata.Valid {
+				var versions struct {
+					Adapter  int `json:"adapter_version"`
+					Metadata int `json:"metadata_version"`
+				}
+				if err := json.Unmarshal([]byte(metadata.String), &versions); err != nil {
+					return fmt.Errorf("read saved Signal metadata: %w", err)
+				}
+				if versions.Adapter > adapterVersion || versions.Metadata > metadataVersion {
+					return errors.New("saved Signal messages use a newer format; upgrade msgvault")
+				}
+			}
+		}
 		standard := m.Standard
 		if standard.Quote != nil {
 			s.Omitted["quote"]++
@@ -203,7 +226,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 			ConversationKey string     `json:"conversation_key"`
 			AuthorKey       string     `json:"author_key"`
 			Roster          string     `json:"roster_coverage"`
-		}{1, 1, r.header, line, m.ChatID, m.AuthorID, ref, convKey, authorKey, "partial_observed"})
+		}{adapterVersion, metadataVersion, r.header, line, m.ChatID, m.AuthorID, ref, convKey, authorKey, "partial_observed"})
 		if err != nil {
 			return err
 		}

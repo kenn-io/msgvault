@@ -68,17 +68,14 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 	if m.Text != nil {
 		body = m.Text.Body
 	}
-	existing := map[string]store.AttachmentRef{}
+	mediaSlots, err := export.LoadMediaSlots(ctx, st, messageID)
+	if err != nil {
+		return "", nil, false, err
+	}
+	existing := mediaSlots.Existing
 	needRaw := false
-	if messageID != 0 {
-		refs, err := st.MessageMIMEAttachmentsContext(ctx, messageID)
-		if err != nil {
-			return "", nil, false, err
-		}
-		for _, ref := range refs {
-			existing[ref.SourcePartKey] = ref
-			needRaw = needRaw || ref.ContentHash == ""
-		}
+	for _, ref := range existing {
+		needRaw = needRaw || ref.ContentHash == ""
 	}
 	type slot struct {
 		key  string
@@ -104,25 +101,30 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 			return "", nil, false, fmt.Errorf("read saved attachment details: %w", err)
 		}
 		if old.Standard != nil {
+			slots = nil
+			claimed := map[int]bool{}
 			for i, a := range old.Standard.Attachments {
 				key := fmt.Sprintf("attachment:%d", i)
-				archived[key] = a.Pointer
-				if ref, ok := existing[key]; ok && ref.ContentHash == "" && i >= len(m.Attachments) {
-					slots = append(slots, slot{key: key})
+				p := a.Pointer
+				if p != nil {
+					match := matchingPointer(p, m, claimed)
+					if len(p.Locator.Hash) == 0 {
+						p = match
+					}
 				}
+				archived[key] = p
+				slots = append(slots, slot{key: key, p: p})
 			}
 			if old.Standard.LongText != nil {
 				archived["long_text"] = old.Standard.LongText
-				if ref, ok := existing["long_text"]; ok && ref.ContentHash == "" && m.LongText == nil {
-					slots = append(slots, slot{key: "long_text", long: true})
-				}
+				slots = append(slots, slot{key: "long_text", p: m.LongText, long: true})
 			}
 		}
 	}
 	var writes []store.AttachmentWrite
 	for _, slot := range slots {
 		prev, found := existing[slot.key]
-		if messageID != 0 && (!found || prev.ContentHash != "") && !slot.long {
+		if !mediaSlots.Pending(slot.key) && !slot.long {
 			continue
 		}
 
@@ -195,7 +197,7 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 			if slot.long {
 				s.Omitted["incomplete_long_text"]++
 			}
-			if messageID != 0 {
+			if !mediaSlots.Keep(write) {
 				continue
 			}
 		} else {
@@ -204,4 +206,28 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 		writes = append(writes, write)
 	}
 	return body, writes, knownChanged, nil
+}
+
+// matchingPointer accepts only a unique, unclaimed identity in the new export.
+func matchingPointer(old *filePointer, m *standardMessage, claimed map[int]bool) *filePointer {
+	for _, identity := range []func(*filePointer) []byte{
+		func(p *filePointer) []byte { return p.ClientUUID },
+		func(p *filePointer) []byte { return p.Locator.Key },
+	} {
+		value := identity(old)
+		if len(value) == 0 {
+			continue
+		}
+		match, count := -1, 0
+		for i, attachment := range m.Attachments {
+			if attachment.Pointer != nil && bytes.Equal(value, identity(attachment.Pointer)) {
+				match, count = i, count+1
+			}
+		}
+		if count == 1 && !claimed[match] {
+			claimed[match] = true
+			return m.Attachments[match].Pointer
+		}
+	}
+	return nil
 }

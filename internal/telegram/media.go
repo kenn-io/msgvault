@@ -29,26 +29,17 @@ func mediaWrites(ctx context.Context, st *store.Store, messageID int64, m *Messa
 	if m.Photo == "" && m.File == "" && m.Thumbnail == "" && m.ContactVCard == "" {
 		return nil, nil
 	}
-	existing := map[string]store.AttachmentRef{}
-	if messageID != 0 {
-		refs, err := st.MessageMIMEAttachmentsContext(ctx, messageID)
-		if err != nil {
-			return nil, err
-		}
-		for _, ref := range refs {
-			existing[ref.SourcePartKey] = ref
-		}
+	slots, err := export.LoadMediaSlots(ctx, st, messageID)
+	if err != nil {
+		return nil, err
 	}
 	var writes []store.AttachmentWrite
 	for _, slot := range []struct{ key, path string }{{"photo", m.Photo}, {"file", m.File}, {"thumbnail", m.Thumbnail}, {"contact_vcard", m.ContactVCard}} {
 		if slot.path == "" {
 			continue
 		}
-		if messageID != 0 {
-			previous, ok := existing[slot.key]
-			if !ok || previous.ContentHash != "" {
-				continue
-			}
+		if !slots.Pending(slot.key) {
+			continue
 		}
 		write := store.AttachmentWrite{SourcePartKey: slot.key, MediaType: m.MediaType, Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics}
 		if write.MediaType == "" {
@@ -65,7 +56,7 @@ func mediaWrites(ctx context.Context, st *store.Store, messageID int64, m *Messa
 		}
 		if isMediaWarning(slot.path) || invalidPath {
 			summary.AttachmentsMissing++
-			if messageID == 0 {
+			if slots.Keep(write) {
 				write.Filename = slot.key
 				writes = append(writes, write)
 			}
@@ -104,7 +95,7 @@ func mediaWrites(ctx context.Context, st *store.Store, messageID int64, m *Messa
 		}
 		if write.ContentHash == "" {
 			summary.AttachmentsMissing++
-			if messageID != 0 {
+			if !slots.Keep(write) {
 				continue
 			}
 		} else {

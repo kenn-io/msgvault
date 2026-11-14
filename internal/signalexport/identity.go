@@ -26,12 +26,16 @@ func recipientPeer(r recipient) peer {
 	if r.Self != nil {
 		return peer{key: "self", kind: "direct_chat"}
 	}
-	if c := r.Contact; c != nil && len(c.ACI) == 16 {
+	if c := r.Contact; c != nil && (len(c.ACI) == 16 || (c.E164 != "" && c.E164 != "0")) {
 		name := strings.TrimSpace(c.Given + " " + c.Family)
 		if name == "" {
 			name = strings.TrimSpace(c.SystemGiven + " " + c.SystemFamily)
 		}
-		return peer{key: "aci:" + hex.EncodeToString(c.ACI), name: name, kind: "direct_chat"}
+		key := "e164:+" + string(c.E164)
+		if len(c.ACI) == 16 {
+			key = "aci:" + hex.EncodeToString(c.ACI)
+		}
+		return peer{key: key, name: name, kind: "direct_chat"}
 	}
 	if g := r.Group; g != nil && len(g.MasterKey) == 32 {
 		h := sha256.Sum256(g.MasterKey)
