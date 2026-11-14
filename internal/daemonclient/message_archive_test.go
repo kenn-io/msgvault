@@ -49,7 +49,10 @@ func TestBeeperArchiveClientVersionAndPayload(t *testing.T) {
 				}
 				posts++
 				var payload map[string]bool
-				require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+				if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload)) {
+					http.Error(w, "invalid fixture request", http.StatusBadRequest)
+					return
+				}
 				assert.True(t, payload["whole_chat"])
 				assert.False(t, payload["archived"])
 				_, err := w.Write([]byte(`{"message_id":7,"chat_id":"fixture-chat","archived":false,"verified":true}`))

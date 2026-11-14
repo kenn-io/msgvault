@@ -58,7 +58,10 @@ func TestBeeperArchive(t *testing.T) {
 				if r.Method == http.MethodPost {
 					assert.Equal(t, "/v1/chats/"+chatID+"/archive", r.URL.Path)
 					var payload map[string]bool
-					require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+					if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload)) {
+						http.Error(w, "invalid fixture request", http.StatusBadRequest)
+						return
+					}
 					assert.Equal(t, map[string]bool{"archived": tc.desired}, payload)
 					if !tc.ignoreWrite {
 						archived = payload["archived"]

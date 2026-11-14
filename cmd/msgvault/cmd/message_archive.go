@@ -57,7 +57,10 @@ func newMessageArchiveCommand(archived bool, backend messageArchiveBackend) *cob
 			}
 			if result.ChatID != "" {
 				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Beeper chat %q: archived=%t changed=%t dry_run=%t\n", result.ChatID, result.Archived, result.Changed, result.DryRun)
-				return err
+				if err != nil {
+					return fmt.Errorf("write Beeper archive result: %w", err)
+				}
+				return nil
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Message %d: archived=%t changed=%t dry_run=%t\n", id, result.Archived, result.Changed, result.DryRun)
 			if err != nil {
