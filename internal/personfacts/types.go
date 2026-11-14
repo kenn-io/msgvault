@@ -12,6 +12,7 @@ type ValueType string
 type Cardinality string
 
 const (
+	TargetCommitment  TargetKind  = "commitment"
 	TargetAttribute   TargetKind  = "attribute"
 	TargetEmployment  TargetKind  = "employment"
 	ValueText         ValueType   = "text"
@@ -21,6 +22,7 @@ const (
 	ValueDate         ValueType   = "date"
 	ValueTimestamp    ValueType   = "timestamp"
 	ValueEmployment   ValueType   = "employment"
+	ValueCommitment   ValueType   = "commitment"
 	ValueOrganization ValueType   = "organization"
 	ValuePartialDate  ValueType   = "partial-date"
 	CardinalitySingle Cardinality = "single"
@@ -140,6 +142,7 @@ const (
 	RelationContradict               ClaimRelation        = "contradict"
 	RelationSupersede                ClaimRelation        = "supersede"
 	RelationInvalid                  ClaimRelation        = "invalid"
+	OriginCommitment                 ClaimOrigin          = "commitment"
 	OriginExtraction                 ClaimOrigin          = "extraction"
 	OriginEnrichment                 ClaimOrigin          = "enrichment"
 	OriginBrief                      ClaimOrigin          = "brief"
@@ -206,6 +209,12 @@ type PartialDateValue struct {
 	Year  int `json:"year"`
 	Month int `json:"month,omitzero"`
 	Day   int `json:"day,omitzero"`
+}
+
+type CommitmentValue struct {
+	Direction string  `json:"direction"`
+	Summary   string  `json:"summary"`
+	DueOn     *string `json:"due_on"`
 }
 
 type EmploymentValue struct {
@@ -363,6 +372,7 @@ type Generation struct {
 }
 
 type Claim struct {
+	Freshness      Freshness `json:"-"`
 	ID             int64
 	PersonID       int64
 	GenerationID   int64

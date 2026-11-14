@@ -42,12 +42,19 @@ type personSweepCommandDeps struct {
 	proxy              func(*cobra.Command, []string, map[string]string) error
 }
 
+type personSweepCommitmentFailure struct {
+	PersonID int64                    `json:"person_id"`
+	Class    peoplesweep.FailureClass `json:"commitment_failure_class"`
+}
+
 type personSweepRunOutput struct {
 	RunID           string                 `json:"run_id"`
 	PeopleAttempted int                    `json:"people_attempted"`
 	PeopleSucceeded int                    `json:"people_succeeded"`
 	ProjectedWrites int                    `json:"projected_writes"`
 	Usage           personSweepUsageOutput `json:"usage"`
+
+	CommitmentFailures []personSweepCommitmentFailure `json:"commitment_failures,omitempty"`
 }
 
 type personSweepUsageOutput struct {
@@ -330,6 +337,13 @@ func writePersonSweepRun(w io.Writer, result peoplesweep.RunResult, jsonOutput b
 	output := personSweepRunOutput{RunID: result.RunID, PeopleAttempted: result.PeopleAttempted,
 		PeopleSucceeded: result.PeopleSucceeded, ProjectedWrites: result.ProjectedWrites,
 		Usage: personSweepUsage(result.Usage)}
+	for _, person := range result.People {
+		if person.CommitmentFailureClass != "" {
+			output.CommitmentFailures = append(output.CommitmentFailures, personSweepCommitmentFailure{
+				PersonID: person.PersonID, Class: person.CommitmentFailureClass,
+			})
+		}
+	}
 	if jsonOutput {
 		return json.MarshalEncode(jsontext.NewEncoder(w), output, json.Deterministic(true))
 	}
@@ -337,6 +351,11 @@ func writePersonSweepRun(w io.Writer, result peoplesweep.RunResult, jsonOutput b
 		output.RunID, output.PeopleAttempted, output.PeopleSucceeded, output.ProjectedWrites)
 	if err != nil {
 		return fmt.Errorf("write person sweep run: %w", err)
+	}
+	for _, failure := range output.CommitmentFailures {
+		if _, err := fmt.Fprintf(w, "Person %d commitment failure: %s\n", failure.PersonID, failure.Class); err != nil {
+			return fmt.Errorf("write person sweep run: %w", err)
+		}
 	}
 	return nil
 }

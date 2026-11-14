@@ -29,7 +29,7 @@ function payload(path: string, marker = 'safe') {
   }] };
   if (path.endsWith('/fact-claims')) return { claims: [{
     id: 4, claim_key: 'private-claim-key', generation_id: 5, evidence_ids: [1], target: { kind: 'attribute', key: 'work:email', revision },
-    submitted_value: `allowed value ${marker}`, normalized_value: `allowed normalized ${marker}`, relation: 'equals', origin: 'observed',
+    submitted_value: `allowed value ${marker}`, normalized_value: `allowed normalized ${marker}`, relation: 'equals', origin: 'observed', kind: 'preference', status: 'stale',
     valid_from: '2026-01-01T00:00:00Z', valid_until: null, confidence: { reported_score: 80 }, created_at: '2026-08-03T00:00:00Z',
     program_fingerprint: 'private-program-fingerprint', program_id: 'private-program', program_version: 'private-program-version',
     value_fingerprint: 'private-value-fingerprint'
@@ -104,6 +104,7 @@ describe('FactLedgerController', () => {
     await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
     expect(controller.evidence.rows[0]?.excerpt).toBe('allowed excerpt fresh');
     expect(controller.claims.rows[0]?.submittedValue).toBe('allowed value fresh');
+    expect(controller.claims.rows[0]).toMatchObject({ kind: 'preference', status: 'stale' });
   });
 
   it('keeps independent successful lanes usable and retries only the failed lane with bounded errors', async () => {

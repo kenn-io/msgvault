@@ -417,7 +417,9 @@ import (
 // 5.1.0 adds keyed group overviews, time-group item totals, saved view schema 3, and saved view run timezones.
 // 5.2.0 adds open Kata issue search and optional task search queries.
 // 5.3.0 adds the IMAP authentication method to CLI accounts.
-const APISchemaVersion = "5.3.0"
+// 5.4.0 adds person fact kinds and evidence freshness.
+// 5.5.0 adds cited commitments and their decisions.
+const APISchemaVersion = "5.5.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1385,6 +1387,8 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 	}
 	for schemaName, properties := range map[string]map[string][]any{
+		"CommitmentDecisionRequest": {"state": qualifiedEnumNames("CommitmentDecisionRequestState", []string{"open", "done", "snoozed"})},
+		"LoopCommitment":            {"state": qualifiedEnumNames("LoopCommitmentState", []string{"open", "done", "snoozed"})},
 		"CreateAttributeDefinitionRequest": {
 			"cardinality": {"Single", "Multi"},
 		},

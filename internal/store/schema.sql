@@ -967,8 +967,8 @@ CREATE TABLE IF NOT EXISTS person_sweep_batches (
     created_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at                TEXT,
     CONSTRAINT person_sweep_batches_call_coordinate_check CHECK (
-        (call_ordinal = 0 AND purpose IN ('primary', 'brief')) OR
-        (call_ordinal = 1 AND purpose IN ('repair', 'brief_repair'))
+        (call_ordinal = 0 AND purpose IN ('primary', 'brief', 'commitment')) OR
+        (call_ordinal = 1 AND purpose IN ('repair', 'brief_repair', 'commitment_repair'))
     ),
     PRIMARY KEY (attempt_id, batch_ordinal, call_ordinal)
 );
@@ -1001,7 +1001,7 @@ CREATE TABLE IF NOT EXISTS person_fact_claims (
     valid_from            DATETIME,
     valid_until           DATETIME,
     origin                TEXT NOT NULL CONSTRAINT person_fact_claims_origin_check
-                              CHECK (origin IN ('extraction', 'enrichment', 'brief', 'system', 'invalid')),
+                              CHECK (origin IN ('extraction', 'enrichment', 'brief', 'commitment', 'system', 'invalid')),
     confidence_json       JSON NOT NULL,
     rejection_action      TEXT CHECK (rejection_action IN (
                               'applied', 'retained', 'superseded', 'invalid', 'identity-rejected',
@@ -4390,3 +4390,23 @@ CREATE TABLE IF NOT EXISTS docbank_attachment_processing (
 CREATE INDEX IF NOT EXISTS idx_docbank_processing_due
  ON docbank_attachment_processing(destination_key, fingerprint, next_action_at, content_hash)
  WHERE next_action_at IS NOT NULL;
+
+-- Separately consented promise lifecycle. Owner state outlives an invalidated
+-- current claim.
+CREATE TABLE IF NOT EXISTS person_commitments (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+ target_key TEXT NOT NULL,
+ owner_state TEXT NOT NULL DEFAULT 'open' CHECK (owner_state IN ('open','done','snoozed')),
+ snoozed_until DATETIME,
+ UNIQUE(person_id,target_key)
+);
+CREATE TABLE IF NOT EXISTS person_commitment_frontiers (
+ person_id INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+ through_sequence INTEGER NOT NULL,
+ processed_at DATETIME NOT NULL,
+ observed_sequence INTEGER,
+ backfill_message_id INTEGER NOT NULL DEFAULT 0,
+ scope_fingerprint TEXT NOT NULL DEFAULT '',
+ discovery_since DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

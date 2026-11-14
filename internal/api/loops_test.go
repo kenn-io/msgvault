@@ -14,6 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/loops"
+	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -56,6 +58,21 @@ func (l *loopFixture) list(t *testing.T, query string) LoopListResponse {
 	return out
 }
 
+func TestCommitmentDecisionMapsMalformedAndUnknownIDs(t *testing.T) {
+	a := assert.New(t)
+	fixture := newLoopFixture(t)
+	for _, tc := range []struct {
+		id, request string
+		status      int
+	}{
+		{"12", `{"state":"done"}`, http.StatusBadRequest},
+		{"c12", `{"state":"done"}`, http.StatusNotFound},
+	} {
+		response := fixture.do(t, http.MethodPost, "/api/v1/loops/commitments/"+tc.id+"/decision", tc.request)
+		a.Equal(tc.status, response.Code, response.Body.String())
+	}
+}
+
 func TestListLoopsFilters(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -78,6 +95,53 @@ func TestListLoopsFilters(t *testing.T) {
 	truncated := l.list(t, "?limit=1")
 	assert.Len(truncated.Items, 1)
 	assert.True(truncated.Truncated)
+}
+
+func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
+	f := storetest.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.People.Sweep.Enabled = true
+	cfg.People.Sweep.Commitments.Enabled = true
+	provider := completeAPIProvider("EXAMPLE_KEY", "example-model")
+	provider.AllowSensitive = true
+	provider.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceConversationText}
+	configureAPIProvider(cfg, provider)
+	cfg.People.Sweep.ApplyDefaults()
+	profile, err := cfg.People.Sweep.Profile()
+	require.NoError(t, err)
+	_, err = f.Store.EnsurePersonInferenceProfile(t.Context(), profile)
+	require.NoError(t, err)
+	require.NoError(t, f.Store.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{ProfileFingerprint: profile.Fingerprint, CheckedAt: time.Now(), DriverVersion: profile.DriverVersion, OutputMode: profile.OutputMode, ModelVersion: profile.Model}))
+	participant := f.EnsureParticipant("alex@example.test", "Alex", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(participant)
+	require.NoError(t, err)
+	_, err = f.Store.SetPersonTrackingContext(t.Context(), person.ID, true)
+	require.NoError(t, err)
+	server := NewServerWithOptions(ServerOptions{Config: cfg, Store: f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
+	read := func() LoopListResponse {
+		w := httptest.NewRecorder()
+		server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/loops?person_id=%d", person.ID), nil))
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var response LoopListResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+		return response
+	}
+	response := read()
+	assert.Nil(t, response.CommitmentsSince)
+	assert.Nil(t, response.CommitmentsComplete)
+	assert.Empty(t, response.Commitments)
+	_, _, err = f.Store.GrantPersonCommitmentConsent(t.Context(), profile.Fingerprint, "test")
+	require.NoError(t, err)
+	response = read()
+	assert.Nil(t, response.CommitmentsSince)
+	require.NotNil(t, response.CommitmentsComplete)
+	assert.False(t, *response.CommitmentsComplete)
+	_, err = f.Store.RevokePersonCommitmentConsent(t.Context(), profile.Fingerprint, "test")
+	require.NoError(t, err)
+	response = read()
+	assert.Nil(t, response.CommitmentsSince)
+	assert.Nil(t, response.CommitmentsComplete)
 }
 
 func TestListLoopsReportsIncompleteCoverage(t *testing.T) {

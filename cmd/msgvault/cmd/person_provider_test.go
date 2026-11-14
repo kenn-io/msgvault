@@ -899,6 +899,57 @@ func TestPersonProviderRevokeIsIdempotent(t *testing.T) {
 	assert.Equal(firstStatus.Consent.LastRevoked.ID, secondStatus.Consent.LastRevoked.ID)
 }
 
+func TestPersonProviderCommitmentConsentDisclosesAndReportsStatus(t *testing.T) {
+	must, check := require.New(t), assert.New(t)
+	cfg := personProviderTestConfig()
+	provider := cfg.Providers["default"]
+	provider.AllowSensitive = true
+	cfg.Providers["default"] = provider
+	profile, err := cfg.Profile()
+	must.NoError(err)
+	st := testutil.NewSQLiteTestStore(t)
+	deps := localPersonProviderDeps(cfg, st, nil)
+	disclosure, err := executePersonProviderCommand(t, deps, "consent", "--commitments")
+	must.ErrorContains(err, "--yes")
+	check.Contains(disclosure, profile.Endpoint)
+	check.Contains(disclosure, "written by you and the other person")
+	check.Contains(disclosure, fmt.Sprintf("up to %d bytes of message text per request", cfg.Commitments.MaxBytes))
+	check.Contains(disclosure, "full message after quoted history is removed or masked")
+	output, err := executePersonProviderCommand(t, deps, "consent", "--commitments", "--yes", "--json")
+	must.NoError(err)
+	var status personProviderStatusOutput
+	must.NoError(json.Unmarshal([]byte(output), &status))
+	must.NotNil(status.CommitmentsConsent)
+	check.True(*status.CommitmentsConsent)
+	check.False(status.Consent.Active)
+	check.Equal(profile.Fingerprint, status.Profile.Fingerprint)
+}
+
+func TestPersonProviderRevokesOnlyCommitmentConsent(t *testing.T) {
+	must, check := require.New(t), assert.New(t)
+	ctx := t.Context()
+	cfg := personProviderTestConfig()
+	profile, err := cfg.Profile()
+	must.NoError(err)
+	st := testutil.NewSQLiteTestStore(t)
+	_, err = st.EnsurePersonInferenceProfile(ctx, profile)
+	must.NoError(err)
+	_, _, err = st.GrantPersonInferenceConsent(ctx, profile.Fingerprint, "test")
+	must.NoError(err)
+	_, _, err = st.GrantPersonCommitmentConsent(ctx, profile.Fingerprint, "test")
+	must.NoError(err)
+	deps := localPersonProviderDeps(cfg, st, nil)
+	output, err := executePersonProviderCommand(t, deps, "revoke", "--commitments", "--json")
+	must.NoError(err)
+	check.Contains(output, `"revoked":true`)
+	commitments, err := st.HasActivePersonCommitmentConsent(ctx, profile.Fingerprint)
+	must.NoError(err)
+	ordinary, err := st.HasActivePersonInferenceConsent(ctx, profile.Fingerprint)
+	must.NoError(err)
+	check.False(commitments)
+	check.True(ordinary)
+}
+
 func TestPersonProviderListsAndRevokesAllGrantsWhenConfigIsDisabled(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

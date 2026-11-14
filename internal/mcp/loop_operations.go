@@ -9,7 +9,7 @@ import (
 
 func loopOperationalDefinitions() []operationalDefinition {
 	return []operationalDefinition{
-		newOperationalDefinition("list_open_loops", "List unanswered reply_owed and awaiting_reply questions. coverage_incomplete means call again to continue checking retained evidence; truncated means narrow by person_id because there is no cursor; skipped_unparseable means an unreadable original may contain a reply that settled a listed loop. These evidence warnings do not measure source freshness.", OperationFamilyLoops, closedObject(map[string]*jsonschema.Schema{
+		newOperationalDefinition("list_open_loops", "List unanswered questions and cited commitments. coverage_incomplete means call again to continue checking retained evidence; truncated means narrow by person_id because there is no cursor; skipped_unparseable means an unreadable original may contain a reply that settled a listed loop. These evidence warnings do not measure source freshness.", OperationFamilyLoops, closedObject(map[string]*jsonschema.Schema{
 			"person_id": safeIDSchema("Only questions with this durable person ID"),
 			"limit":     {Type: "integer", Minimum: new(float64(1)), Maximum: new(float64(200)), Default: jsontext.Value("50")},
 		}), outputSchemaFor[generated.LoopListResponse](), false),

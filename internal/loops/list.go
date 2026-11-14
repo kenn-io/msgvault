@@ -18,6 +18,8 @@ import (
 type Options struct {
 	PersonID int64
 	Limit    int
+
+	IncludeClosed bool
 }
 
 // Result is the oldest-first slice of open loops. Truncated is set when more
@@ -27,6 +29,7 @@ type Options struct {
 // uncached messages; the loops come from the conversations read in full.
 type Result struct {
 	Loops              []Loop
+	Commitments        []store.PersonCommitment
 	Truncated          bool
 	SkippedUnparseable int
 	CoverageIncomplete bool
@@ -69,6 +72,15 @@ type Store interface {
 	MarkLoopDoneContext(ctx context.Context, anchorID int64, questions []store.LoopMessage) (store.LoopDecision, error)
 	SnoozeLoopContext(ctx context.Context, anchorID int64, until time.Time, questions []store.LoopMessage) (store.LoopDecision, error)
 	ClearLoopDecisionContext(ctx context.Context, messageID int64) (bool, error)
+}
+
+// CommitmentReader is the optional cited-promise lane on an archive.
+type CommitmentReader interface {
+	ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int, includeClosed bool) ([]store.PersonCommitment, error)
+}
+
+type CommitmentDecider interface {
+	DecidePersonCommitmentContext(ctx context.Context, id int64, state string, until *time.Time, now time.Time) (store.PersonCommitment, error)
 }
 
 type storeReader struct {
@@ -150,6 +162,22 @@ func graceElapsed(kind string, asked, now time.Time) bool {
 	return !now.Before(asked.Add(after))
 }
 
+// requestStop classifies a phase failure against the request context. A
+// deadline is incomplete coverage, a caller that left gets the context error,
+// and any other error passes through while the request is live.
+func requestStop(ctx context.Context, err error) (bool, error) {
+	if err != nil && ctx.Err() != nil {
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return false, ctx.Err()
+		}
+		err = ErrEvidenceIncomplete
+	}
+	if errors.Is(err, ErrEvidenceIncomplete) {
+		return true, nil
+	}
+	return false, err
+}
+
 // List returns unanswered questions. Decisions apply only to marked questions.
 func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, error) {
 	if opts.Limit <= 0 {
@@ -172,21 +200,30 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 			kept = kept[:min(len(kept), opts.Limit+1)]
 			return nil
 		})
-	if err != nil && ctx.Err() != nil {
-		// A request deadline returns the conversations checked in full, as
-		// when the evidence budget runs out. A caller that left gets the error.
-		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return Result{}, ctx.Err()
-		}
-		err = ErrEvidenceIncomplete
-	}
-	incomplete := errors.Is(err, ErrEvidenceIncomplete)
-	if err != nil && !incomplete {
+	incomplete, err := requestStop(ctx, err)
+	if err != nil {
 		return Result{}, err
 	}
 	result := Result{Loops: kept, SkippedUnparseable: unparsed, CoverageIncomplete: incomplete}
 	if len(kept) > opts.Limit {
 		result.Loops, result.Truncated = kept[:opts.Limit], true
+	}
+	if reader, ok := st.(CommitmentReader); ok {
+		var commitments []store.PersonCommitment
+		err := ctx.Err()
+		if err == nil {
+			commitments, err = reader.ListPersonCommitmentsContext(ctx, opts.PersonID, now, min(opts.Limit, MaxLimit)+1, opts.IncludeClosed)
+		}
+		stopped, err := requestStop(ctx, err)
+		if err != nil {
+			return Result{}, err
+		}
+		result.CoverageIncomplete = result.CoverageIncomplete || stopped
+		if len(commitments) > opts.Limit {
+			commitments = commitments[:opts.Limit]
+			result.Truncated = true
+		}
+		result.Commitments = commitments
 	}
 	return result, nil
 }

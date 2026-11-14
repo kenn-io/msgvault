@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { render, screen, within } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 import { tick } from "svelte";
 import { createAPIClient } from "../../api/client";
@@ -68,13 +68,47 @@ describe("PersonOpenLoops", () => {
     expect(url.searchParams.get("limit")).toBe("5");
   });
 
-  it("shows a plus when more loops are open than the card lists", async () => {
-    const { client } = clientFor(
-      [loop(1), loop(2), loop(3), loop(4), loop(5)],
-      true,
-    );
-    render(PersonOpenLoops, { client, personID: 7 });
-    expect(await screen.findByText("5+ open")).toBeDefined();
+  it("shows cited promises and their discovery window", async () => {
+    const year = new Date().getFullYear();
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({
+      items: [loop(42), loop(43), loop(44), loop(45), loop(46)],
+      truncated: true,
+      commitments_since: "2026-10-01T00:00:00Z",
+      commitments_complete: false,
+      commitments: [
+        { id: "c12", claim_id: 12, person_id: 7, summary: "Send the draft", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: 52, start: 0, end: 22, text: "I will send the draft." }, promised_at: "2026-10-12T12:00:00Z", due_on: `${year}-11-15` },
+        { id: "c13", claim_id: 13, person_id: 7, summary: "Check the venue", state: "open", direction: "owed_to", freshness: "stale", promise: { message_id: 53, start: 0, end: 23, text: "I will check the venue." }, promised_at: "2026-10-12T12:00:00Z", due_on: `${year + 1}-11-15` },
+      ],
+    }));
+    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
+    const cite = await screen.findByRole("link", { name: "I will send the draft." });
+    expect(cite.getAttribute("href")).toBe("/messages/52");
+    expect(screen.getByRole("heading", { name: "Promises you made" })).toBeDefined();
+    expect(screen.getByRole("heading", { name: "Promises to you" })).toBeDefined();
+    expect(cite.closest("li")!.textContent).toMatch(/Due Nov 15\s*·\s*\d+[mhd]/);
+    const stale = screen.getByRole("link", { name: "I will check the venue." });
+    expect(within(stale.closest("li")!).getByText("Stale evidence")).toBeDefined();
+    expect(stale.closest("li")!.textContent).toMatch(new RegExp(`Stale evidence\\s*·\\s*Due Nov 15, ${year + 1}\\s*·\\s*\\d+[mhd]`));
+    expect(screen.getByText(/discovery since.*incomplete/)).toBeDefined();
+    expect(screen.getByText("max_bytes").tagName).toBe("CODE");
+    expect(screen.getByText("[people.sweep.commitments]").tagName).toBe("CODE");
+    expect(screen.getByText("7+ open")).toBeDefined();
+    expect(screen.queryByRole("button", { name: /^(done|snooze)$/i })).toBeNull();
+    const request = fetcher.mock.calls[0]?.[0];
+    const url = new URL(request instanceof Request ? request.url : String(request), "http://localhost");
+    expect(url.searchParams.has("include_closed")).toBe(false);
+  });
+
+  it.each([
+    { since: undefined, complete: false, message: /Promise discovery has not started/ },
+    { since: "2026-10-01T00:00:00Z", complete: true, message: /No promises found since/ },
+  ])("reports an empty discovery state", async ({ since, complete, message }) => {
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({
+      items: [], commitments: [], commitments_since: since, commitments_complete: complete,
+    }));
+    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
+    expect(await screen.findByText(message)).toBeDefined();
+    expect(screen.queryByText("Nothing open with this person.")).toBeNull();
   });
 
   it("says how many messages could not be read, with or without loops", async () => {

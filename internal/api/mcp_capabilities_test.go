@@ -84,7 +84,7 @@ func TestMCPCapabilitiesDescribeRealLoopAndDeletionRoutes(t *testing.T) {
 		assertions.Equal(tc.path, routes[tc.id].Path)
 	}
 	assertions.Contains(routes["listDeletions"].QueryParameters, "status")
-	assertions.ElementsMatch([]string{"limit", "person_id"}, routes["listLoops"].QueryParameters)
+	assertions.ElementsMatch([]string{"include_closed", "limit", "person_id"}, routes["listLoops"].QueryParameters)
 	assertions.Contains(routes["snoozeLoop"].RequestProperties, "until")
 	assertions.Contains(routes["markLoopDone"].QueryParameters, "question_message_ids")
 	assertions.Contains(routes["snoozeLoop"].QueryParameters, "question_message_ids")

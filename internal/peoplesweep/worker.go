@@ -72,6 +72,12 @@ type ApplyRequest struct {
 	Budget             BudgetConfig
 	CursorAdvances     []CursorAdvance
 	DeferredCursorWork bool
+
+	Commitment             *CommitmentResult
+	CommitmentFailureClass FailureClass
+	CommitmentRetryAt      time.Time
+	CommitmentOnly         bool
+
 	// Brief is the version this attempt generated, or nil when the attempt ran
 	// no brief call or the call produced nothing storable.
 	Brief *BriefResult
@@ -116,6 +122,7 @@ type ApplyResult struct {
 	Mutations  ApplyMutationMetadata
 	// AttemptProjectedWrites includes writes committed by an earlier status phase.
 	AttemptProjectedWrites int
+	CommitmentFailureClass FailureClass
 }
 
 type sequenceCursorCoordinate struct {
@@ -379,6 +386,7 @@ type RunResult struct {
 	People []PersonRunResult
 }
 type PersonRunResult struct {
+	commitmentOnly  bool
 	PersonID        int64
 	AttemptID       string
 	ProjectedWrites int
@@ -390,9 +398,13 @@ type PersonRunResult struct {
 	BriefFailureClass FailureClass
 	CursorAdvances    []CursorAdvance
 	Usage             Usage
+
+	CommitmentFailureClass FailureClass
 }
 
 type Worker struct {
+	Timezone string
+
 	Config  Config
 	Store   WorkStore
 	Source  AssemblySource
@@ -528,12 +540,19 @@ func (w *Worker) Run(ctx context.Context, request RunRequest) (RunResult, error)
 			}
 			continue
 		}
+		if (person.commitmentOnly || person.CommitmentFailureClass != "") && request.PersonID == 0 {
+			// Preserve ordinary work and leave optional failures for a later run.
+			deferredPeople = append(deferredPeople, lease.PersonID)
+		}
 		result.PeopleSucceeded++
 		result.People = append(result.People, person)
 		result.ProjectedWrites += person.ProjectedWrites
 		result.Usage, err = addUsage(result.Usage, person.Usage)
 		if err != nil {
 			firstErr = err
+			break
+		}
+		if person.commitmentOnly && request.PersonID > 0 {
 			break
 		}
 	}
@@ -584,6 +603,17 @@ func (w *Worker) runPerson(
 	catalog personfacts.Catalog,
 	resolvedAt time.Time,
 ) (PersonRunResult, error) {
+	commitmentPlanned, err := w.commitmentDue(ctx, lease.PersonID, profile, resolvedAt)
+	if err != nil {
+		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
+	}
+	ordinaryAllowed, err := w.ordinaryInferenceAllowed(ctx)
+	if err != nil {
+		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
+	}
+	if !ordinaryAllowed {
+		briefMode = BriefModeSkip
+	}
 	plan, err := w.planPersonBrief(ctx, lease.PersonID, briefMode, profile, resolvedAt)
 	if err != nil {
 		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
@@ -637,9 +667,10 @@ func (w *Worker) runPerson(
 	}
 	// forcedBackstop records that the assembly below came from the brief's
 	// fallback, so the batch-narrowing loop rebuilds it the same way.
+	commitmentOnly := (!ordinaryAllowed && len(progress.Seeds) > 0) || (commitmentPlanned && !plan.run && len(progress.CursorEnvelope) == 0)
 	forcedBackstop := false
 	discoveryLimit := 0
-	if len(progress.CursorEnvelope) == 0 && plan.run {
+	if len(progress.CursorEnvelope) == 0 && (plan.run || commitmentPlanned) {
 		// A person whose sweep is fully caught up has no cursor progress to
 		// bind a generation to, and every generation must name a source range.
 		// Re-reading one bounded backstop page gives the attempt a real range
@@ -712,7 +743,24 @@ func (w *Worker) runPerson(
 		lease = applied
 		return nil
 	}
-	if hasEvidenceRetraction(progress.EvidenceStatusChanges) && len(progress.Seeds) > 0 &&
+	if !ordinaryAllowed && !commitmentPlanned && len(progress.CursorEnvelope) == 0 {
+		if err := w.Store.CompleteIdlePersonSweep(ctx, lease, ProgramFingerprint(), catalog.Fingerprint); err != nil {
+			return PersonRunResult{}, failAttemptOrClaim(err)
+		}
+		return PersonRunResult{PersonID: lease.PersonID}, nil
+	}
+	if commitmentOnly && !commitmentPlanned {
+		if err := startAttempt(progress.CursorEnvelope); err != nil {
+			return PersonRunResult{}, err
+		}
+		if len(progress.EvidenceStatusChanges) > 0 {
+			if err := applyStatusOnly(progress.CursorEnvelope, progress.EvidenceStatusChanges); err != nil {
+				return PersonRunResult{}, err
+			}
+		}
+		return PersonRunResult{}, w.deferAttempt(ctx, lease, attemptID, resolvedAt)
+	}
+	if !commitmentOnly && hasEvidenceRetraction(progress.EvidenceStatusChanges) && len(progress.Seeds) > 0 &&
 		len(catalog.Targets) > 0 {
 		statusesAlreadyApplied, err = w.Sink.PersonSweepEvidenceStatusesApplied(
 			ctx, lease.PersonID, progress.EvidenceStatusChanges)
@@ -744,7 +792,7 @@ func (w *Worker) runPerson(
 			statusesAlreadyApplied = true
 		}
 	}
-	if !statusOnlyBeforePacket {
+	if !commitmentOnly && !statusOnlyBeforePacket {
 		assembly, err = buildPacket(cursors, progress, forcedBackstop)
 		if err != nil && !errors.Is(err, ErrNoChangedSeed) {
 			return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
@@ -815,7 +863,7 @@ func (w *Worker) runPerson(
 		}
 	}
 	if len(assembly.CursorEnvelope) == 0 {
-		if !plan.run {
+		if !plan.run && !commitmentPlanned {
 			// A queued brief can become ineligible while waiting to retry. With
 			// extraction caught up, finish the idle claim without an inference
 			// attempt. The store preserves work that arrived during assembly.
@@ -1063,6 +1111,23 @@ func (w *Worker) runPerson(
 		}
 	}
 
+	var commitment *CommitmentResult
+	var commitmentFailure FailureClass
+	if commitmentPlanned {
+		ordinal := len(assembly.Batches)
+		for _, reservation := range reservations {
+			ordinal = max(ordinal, reservation.Request.BatchOrdinal+1)
+		}
+		var fatal error
+		commitment, commitmentFailure, lease, fatal = w.runCommitmentCall(ctx, briefCall{
+			runID: runID, attemptID: attemptID, lease: lease, profile: profile,
+			catalog: catalog, resolvedAt: resolvedAt, batchOrdinal: ordinal,
+		}, accounting, &reservations)
+		if fatal != nil {
+			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations, accounting.completedUsage, fatal, resolvedAt)
+		}
+	}
+
 	provider, model := string(profile.Protocol), profile.Model
 	providerVersion, modelVersion := accounting.providerVersion, accounting.modelVersion
 	if len(accounting.completedBatches) == 0 {
@@ -1089,25 +1154,28 @@ func (w *Worker) runPerson(
 	}
 	lease = *renewed
 	completedAt := w.now()
-	var briefRetryAt time.Time
+	var briefRetryAt, commitmentRetryAt time.Time
+	retryAt := completedAt.Add(personSweepRetryDelay(attemptID, lease.AttemptCount, 0, w.Config.RetryBase, w.Config.RetryMax))
 	if briefFailure != "" {
-		briefRetryAt = completedAt.Add(personSweepRetryDelay(attemptID, lease.AttemptCount, 0,
-			w.Config.RetryBase, w.Config.RetryMax))
+		briefRetryAt = retryAt
+	}
+	if commitmentFailure != "" {
+		commitmentRetryAt = retryAt
 	}
 	apply, applyErr := w.Sink.ApplyPersonSweep(ctx, ApplyRequest{Lease: lease, RunID: runID,
 		AttemptID: attemptID, Generation: generation, CursorEnvelope: assembly.CursorEnvelope,
 		Batches: accounting.completedBatches, Usage: accounting.totalUsage,
 		Budget: w.Config.Budgets, CursorAdvances: advances,
-		DeferredCursorWork: deferredCursorWork, Brief: brief, BriefFailureClass: briefFailure,
+		DeferredCursorWork: deferredCursorWork, Commitment: commitment, CommitmentFailureClass: commitmentFailure, CommitmentRetryAt: commitmentRetryAt, CommitmentOnly: commitmentOnly, Brief: brief, BriefFailureClass: briefFailure,
 		BriefRetryAt: briefRetryAt, CompletedAt: completedAt})
 	if applyErr != nil {
 		return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
 			accounting.completedUsage, applyErr, resolvedAt)
 	}
 	return PersonRunResult{PersonID: lease.PersonID, AttemptID: attemptID,
-		ProjectedWrites: apply.AttemptProjectedWrites, BriefVersion: apply.Mutations.BriefVersion,
-		BriefFailureClass: briefFailure,
-		CursorAdvances:    advances, Usage: accounting.totalUsage}, nil
+		commitmentOnly: commitmentOnly, ProjectedWrites: apply.AttemptProjectedWrites, BriefVersion: apply.Mutations.BriefVersion,
+		BriefFailureClass: briefFailure, CommitmentFailureClass: apply.CommitmentFailureClass,
+		CursorAdvances: advances, Usage: accounting.totalUsage}, nil
 }
 
 func hasEvidenceRetraction(changes []personfacts.EvidenceStatusChange) bool {
@@ -1195,11 +1263,24 @@ func (w *Worker) ready(ctx context.Context) (ProviderProfile, personfacts.Catalo
 	return profile, catalog, w.now(), nil
 }
 
+func (w *Worker) ordinaryInferenceAllowed(ctx context.Context) (bool, error) {
+	if authority, ok := w.Runner.(interface {
+		OrdinaryInferenceAllowed(context.Context) (bool, error)
+	}); ok && w.Config.Commitments.Enabled {
+		return authority.OrdinaryInferenceAllowed(ctx)
+	}
+	return true, nil
+}
+
 func (w *Worker) now() time.Time { return w.Clock().UTC() }
 
 func (w *Worker) reconcile(ctx context.Context, profile ProviderProfile,
 	catalog personfacts.Catalog, now time.Time, request RunRequest,
 ) error {
+	ordinaryAllowed, err := w.ordinaryInferenceAllowed(ctx)
+	if err != nil {
+		return err
+	}
 	after := int64(0)
 	for {
 		page, err := w.Store.ReconcilePersonSweepWorkContext(ctx, GapRequest{
@@ -1217,7 +1298,7 @@ func (w *Worker) reconcile(ctx context.Context, profile ProviderProfile,
 		// Brief cadence and enrollment can become due without an extraction
 		// cursor gap. Reuse this tracked-person page to publish eligible work,
 		// leaving the bounded backstop fallback to the person actually claimed.
-		if w.Config.Brief.IsEnabled() && w.Brief != nil && w.Archive != nil &&
+		if ordinaryAllowed && w.Config.Brief.IsEnabled() && w.Brief != nil && w.Archive != nil &&
 			request.Brief.normalized() != BriefModeSkip && !w.forcedSinglePersonBrief(request) {
 			for _, personID := range page.PersonIDs {
 				if request.PersonID > 0 && personID != request.PersonID {
@@ -1244,6 +1325,22 @@ func (w *Worker) reconcile(ctx context.Context, profile ProviderProfile,
 					// for everyone else in the run.
 					if _, err := w.Brief.EnsurePersonSweepWork(ctx, personID, false); err != nil {
 						return fmt.Errorf("publish person %d brief work: %w", personID, err)
+					}
+				}
+			}
+		}
+		if store, ok := w.Store.(CommitmentStore); ok && w.Config.Commitments.Enabled {
+			for _, personID := range page.PersonIDs {
+				if request.PersonID > 0 && personID != request.PersonID {
+					continue
+				}
+				due, err := w.commitmentDue(ctx, personID, profile, now)
+				if err != nil {
+					return err
+				}
+				if due {
+					if _, err := store.EnsurePersonSweepWork(ctx, personID, false); err != nil {
+						return err
 					}
 				}
 			}

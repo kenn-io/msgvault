@@ -35,6 +35,9 @@ const (
 
 type personProviderStore interface {
 	EnsurePersonInferenceProfile(ctx context.Context, profile peoplesweep.ProviderProfile) (bool, error)
+	GrantPersonCommitmentConsent(ctx context.Context, fingerprint, actor string) (*store.ProviderConsent, bool, error)
+	RevokePersonCommitmentConsent(ctx context.Context, fingerprint, actor string) (bool, error)
+	HasActivePersonCommitmentConsent(ctx context.Context, fingerprint string) (bool, error)
 	ListPersonInferenceProfiles(ctx context.Context) ([]peoplesweep.ProviderProfile, error)
 	GrantPersonInferenceConsent(ctx context.Context, fingerprint, actor string) (*store.ProviderConsent, bool, error)
 	RevokePersonInferenceConsent(ctx context.Context, fingerprint, actor string) (bool, error)
@@ -97,6 +100,7 @@ type personProviderStatusOutput struct {
 	Profile             peoplesweep.ProviderProfile         `json:"profile"`
 	Check               *store.PersonInferenceCheck         `json:"check,omitzero"`
 	Consent             store.ProviderConsentStatus         `json:"consent"`
+	CommitmentsConsent  *bool                               `json:"commitments_consent_active,omitempty"`
 	StaleProgramCheck   bool                                `json:"stale_program_check,omitzero"`
 	StaleProgramConsent bool                                `json:"stale_program_consent,omitzero"`
 	CodexIsolation      *personProviderCodexIsolationStatus `json:"codex_isolation,omitzero"`
@@ -1146,12 +1150,15 @@ func removePersonProviderWithDaemon(ctx context.Context, name, ifMatch string) e
 func newPersonProviderConsentCommand(deps personProviderCommandDeps) *cobra.Command {
 	var confirmed bool
 	var jsonOutput bool
-	var semanticEmbeddings bool
+	var semanticEmbeddings, commitments bool
 	command := &cobra.Command{
 		Use:   "consent [name]",
 		Short: "Consent to the exact people inference policy",
 		Args:  optionalPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			if commitments && semanticEmbeddings {
+				return errors.New("--commitments and --semantic-embeddings select different grants")
+			}
 			deps := personProviderDepsForContext(command.Context(), deps)
 			if !deps.isDaemonSubprocess() {
 				return deps.proxy(command, args, nil)
@@ -1167,6 +1174,9 @@ func newPersonProviderConsentCommand(deps personProviderCommandDeps) *cobra.Comm
 					return err
 				}
 			}
+			if commitments {
+				return runPersonCommitmentConsent(command, runDeps, confirmed, jsonOutput)
+			}
 			return runPersonProviderConsent(command, runDeps, confirmed, jsonOutput, semanticEmbeddings)
 		},
 	}
@@ -1174,13 +1184,57 @@ func newPersonProviderConsentCommand(deps personProviderCommandDeps) *cobra.Comm
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
 	command.Flags().BoolVar(&semanticEmbeddings, "semantic-embeddings", false,
 		"Select the curated-person semantic embedding policy")
+	command.Flags().BoolVar(&commitments, "commitments", false, "Disclose and grant the two-sided conversation commitment policy")
 	return command
+}
+
+func runPersonCommitmentConsent(command *cobra.Command, deps personProviderCommandDeps, confirmed, jsonOutput bool) error {
+	cfg := deps.config()
+	profile, err := cfg.Profile()
+	if err != nil {
+		return err
+	}
+	if !profile.AllowSensitive || !slices.Contains(profile.AllowedSources, peoplesweep.SourceConversationText) {
+		return errors.New("commitment extraction requires allowing sensitive conversation text in the provider profile")
+	}
+	if !confirmed || !jsonOutput {
+		w := command.OutOrStdout()
+		printPersonProviderDisclosure(w, profile)
+		if _, err := fmt.Fprintf(w, "Commitment extraction sends text written by you and the other person in verified direct conversations. It sends the full message after quoted history is removed or masked, up to %d bytes of message text per request. Oversized messages are skipped.\n", cfg.Commitments.MaxBytes); err != nil {
+			return fmt.Errorf("write commitment policy disclosure: %w", err)
+		}
+	}
+	if !confirmed {
+		return errors.New("commitment consent requires --yes after reviewing the provider disclosure")
+	}
+	st, cleanup, err := deps.openStore()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if _, err := st.EnsurePersonInferenceProfile(command.Context(), profile); err != nil {
+		return err
+	}
+	if _, _, err := st.GrantPersonCommitmentConsent(command.Context(), profile.Fingerprint, personProviderConsentActor); err != nil {
+		return err
+	}
+	if jsonOutput {
+		output, err := personProviderStatusFor(command.Context(), st, profile)
+		if err != nil {
+			return err
+		}
+		return writeJSONOutput(command, output)
+	}
+	if _, err := fmt.Fprintln(command.OutOrStdout(), "Commitment consent active."); err != nil {
+		return fmt.Errorf("write commitment consent active: %w", err)
+	}
+	return nil
 }
 
 func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Command {
 	var all bool
 	var jsonOutput bool
-	var semanticEmbeddings bool
+	var semanticEmbeddings, commitments bool
 	var ifFingerprint string
 	var fingerprint string
 	command := &cobra.Command{
@@ -1189,6 +1243,9 @@ func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Comma
 		Args:  optionalPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			deps := personProviderDepsForContext(command.Context(), deps)
+			if commitments && (all || semanticEmbeddings || fingerprint != "" || ifFingerprint != "") {
+				return errors.New("--commitments selects one provider's commitment grant and cannot be combined with other revoke selectors")
+			}
 			if fingerprint != "" {
 				if err := validatePersonProviderFingerprint(fingerprint); err != nil {
 					return err
@@ -1236,6 +1293,9 @@ func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Comma
 			if fingerprint != "" {
 				return errors.New("--fingerprint requires one named people provider revoke")
 			}
+			if commitments {
+				return runPersonCommitmentRevoke(command, runDeps, jsonOutput)
+			}
 			return runPersonProviderRevoke(command, runDeps, all, jsonOutput, semanticEmbeddings, ifFingerprint != "")
 		},
 	}
@@ -1243,6 +1303,7 @@ func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Comma
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
 	command.Flags().BoolVar(&semanticEmbeddings, "semantic-embeddings", false,
 		"Select the curated-person semantic embedding policy")
+	command.Flags().BoolVar(&commitments, "commitments", false, "Revoke the two-sided commitment policy")
 	command.Flags().StringVar(&ifFingerprint, personProviderIfFingerprintFlag, "",
 		"Require an exact provider fingerprint")
 	_ = command.Flags().MarkHidden(personProviderIfFingerprintFlag)
@@ -1566,6 +1627,25 @@ func runPersonProviderRevoke(
 		return writePersonProviderStatus(command.OutOrStdout(), output, true)
 	}
 	_, _ = fmt.Fprintf(command.OutOrStdout(), "Consent revoked for %s\n", profile.Fingerprint)
+	return nil
+}
+
+func runPersonCommitmentRevoke(command *cobra.Command, deps personProviderCommandDeps, jsonOutput bool) error {
+	profile, st, cleanup, err := openPersonProviderProfile(deps)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	revoked, err := st.RevokePersonCommitmentConsent(command.Context(), profile.Fingerprint, personProviderConsentActor)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return writeJSONOutput(command, map[string]any{"purpose": "people_commitments", "fingerprint": profile.Fingerprint, "revoked": revoked})
+	}
+	if _, err := fmt.Fprintf(command.OutOrStdout(), "Commitment consent revoked (%s).\n", profile.Fingerprint); err != nil {
+		return fmt.Errorf("write commitment consent revoked: %w", err)
+	}
 	return nil
 }
 
@@ -2020,7 +2100,13 @@ func personProviderStatusFor(
 	if status == nil {
 		return personProviderStatusOutput{}, errors.New("people inference consent status is empty")
 	}
-	return personProviderStatusOutput{Profile: profile, Check: check, Consent: *status}, nil
+	output := personProviderStatusOutput{Profile: profile, Check: check, Consent: *status}
+	active, err := st.HasActivePersonCommitmentConsent(ctx, profile.Fingerprint)
+	if err != nil {
+		return personProviderStatusOutput{}, err
+	}
+	output.CommitmentsConsent = &active
+	return output, nil
 }
 
 func personProviderStaleProgramState(
@@ -2100,6 +2186,13 @@ func writePersonProviderStatus(
 		state = "revoked"
 	}
 	_, _ = fmt.Fprintf(w, "Consent: %s\n", state)
+	if output.CommitmentsConsent != nil {
+		state := "inactive"
+		if *output.CommitmentsConsent {
+			state = accountStateActive
+		}
+		_, _ = fmt.Fprintf(w, "Commitment consent: %s\n", state)
+	}
 	if output.StaleProgramConsent {
 		_, _ = fmt.Fprintf(w, "Consent: a matching grant uses a different extraction program; run msgvault person provider reverify %s --yes\n", output.Name)
 	}

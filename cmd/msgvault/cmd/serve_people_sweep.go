@@ -101,7 +101,7 @@ func newProductionPersonSweepWorker(
 	}
 	sweepConfig := cfg.People.Sweep
 	return &peoplesweep.Worker{
-		Config: sweepConfig, Store: st, Source: st,
+		Config: sweepConfig, Timezone: cfg.Activity.Timezone, Store: st, Source: st,
 		Context: peoplesweep.NewContextRetriever(st), Sink: st,
 		Runner: runner, Catalog: st, Brief: st, Archive: st,
 		Clock: time.Now, NewID: uuid.NewString,

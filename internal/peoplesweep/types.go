@@ -239,6 +239,11 @@ const (
 	ProviderCallPurposeBriefRepair = "brief_repair"
 )
 
+const (
+	ProviderCallPurposeCommitment       = "commitment"
+	ProviderCallPurposeCommitmentRepair = "commitment_repair"
+)
+
 type ProviderCallCoordinate struct {
 	BatchOrdinal int    `json:"batch_ordinal"`
 	CallOrdinal  int    `json:"call_ordinal"`

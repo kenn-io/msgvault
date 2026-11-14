@@ -768,6 +768,8 @@ export async function installDirectoryReviewArchive(page: Page) {
                 target,
                 submitted_value: 'Allowed synthetic sensitive value.',
                 normalized_value: 'Allowed normalized sensitive value.',
+                kind: 'preference',
+                status: 'stale',
                 relation: 'equals',
                 origin: 'observed',
                 valid_from: '2026-01-01T00:00:00Z',

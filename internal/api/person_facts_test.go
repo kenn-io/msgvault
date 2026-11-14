@@ -115,7 +115,13 @@ func TestPersonFactHistoryHTTPIsBoundedNewestFirstNonNullAndNoStore(t *testing.T
 	}
 	requirements.NoError(json.Unmarshal(claims.Body.Bytes(), &claimBody))
 	requirements.Len(claimBody.Claims, 1)
+	storedClaims, err := st.ListPersonFactClaimsContext(t.Context(), personID, personfacts.ClaimFilter{Limit: 1})
+	requirements.NoError(err)
+	requirements.Len(storedClaims, 1)
 	assertions.Equal("fixture-program", claimBody.Claims[0]["program_id"])
+	assertions.Equal(string(storedClaims[0].Freshness.Kind), claimBody.Claims[0]["kind"])
+	assertions.Equal(string(storedClaims[0].Freshness.Status), claimBody.Claims[0]["status"])
+	assertions.NotEmpty(claimBody.Claims[0]["latest_supported_at"])
 	assertions.Equal("v1", claimBody.Claims[0]["program_version"])
 	assertions.Equal(strings.Repeat("a", 64), claimBody.Claims[0]["program_fingerprint"])
 }

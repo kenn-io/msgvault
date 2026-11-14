@@ -3,15 +3,19 @@
   import InlineNotice from '../common/InlineNotice.svelte';
   import { Button } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
-  import { formatContactDate } from '../../directory/labels';
+  import { formatContactDate, formatDay } from '../../directory/labels';
   import { listLoops } from '../../api/generated/api/api';
-  import type { LoopItem } from '../../api/generated/models';
+  import type { LoopCommitment, LoopItem } from '../../api/generated/models';
 
   // refreshKey changes when the person's identities change, so the list reloads.
   interface Props { client: APIClient; personID: number; refreshKey?: string }
   let { client, personID, refreshKey }: Props = $props();
   const limit = 5;
   let items = $state<LoopItem[]>([]);
+  let commitments = $state<LoopCommitment[]>([]);
+  let commitmentsSince = $state<string | undefined>();
+  let commitmentsComplete = $state<boolean | undefined>();
+  const openCount = $derived(items.length + commitments.length);
   let loading = $state(true);
   let checkingMore = $state(false);
   let checkMoreFailed = $state(false);
@@ -35,6 +39,9 @@
       } else {
         loading = true;
         items = [];
+        commitments = [];
+        commitmentsSince = undefined;
+        commitmentsComplete = undefined;
         truncated = false;
         coverageIncomplete = false;
         unreadable = 0;
@@ -48,6 +55,9 @@
         if (controller.signal.aborted) return;
         if (!result.data) throw new Error('Open loops are unavailable.');
         items = result.data.items ?? [];
+        commitments = result.data.commitments ?? [];
+        commitmentsSince = result.data.commitments_since;
+        commitmentsComplete = result.data.commitments_complete;
         truncated = Boolean(result.data.truncated);
         coverageIncomplete = Boolean(result.data.coverage_incomplete);
         unreadable = result.data.skipped_unparseable ?? 0;
@@ -72,21 +82,32 @@
     { kind: 'awaiting_reply', label: 'Waiting on them', items: items.filter((loop) => loop.kind !== 'reply_owed') },
   ]);
 
+  const promiseGroups = $derived([
+    { key: 'by', label: 'Promises you made', items: commitments.filter((item) => item.direction === 'owed_by') },
+    { key: 'to', label: 'Promises to you', items: commitments.filter((item) => item.direction === 'owed_to') },
+  ]);
+
   function ageLabel(since: string): string {
     const seconds = Math.max(0, (Date.now() - Date.parse(since)) / 1000);
     if (seconds >= 86400) return `${Math.floor(seconds / 86400)}d`;
     if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h`;
     return `${Math.floor(seconds / 60)}m`;
   }
+
+  function dueLabel(day: string): string {
+    const formatted = formatDay(day);
+    return day.slice(0, 4) === String(new Date().getFullYear()) ? formatted.replace(/, \d{4}$/, '') : formatted;
+  }
 </script>
 
 <DetailSection title="Open loops">
-  {#snippet control()}{#if !loading && !failed && items.length > 0}<span class="muted">{items.length}{truncated ? '+' : ''} open</span>{/if}{/snippet}
+  {#snippet control()}{#if !loading && !failed && openCount > 0}<span class="muted">{openCount}{truncated ? '+' : ''} open</span>{/if}{/snippet}
   <div class="open-loops">
   {#if loading}<p class="muted" role="status">Loading…</p>
   {:else if failed}<InlineNotice message="Couldn't load open loops." />
-  {:else if items.length === 0 && coverageIncomplete}<p class="muted">No open loops found. Some messages haven't been checked yet.</p>
-  {:else if items.length === 0}<p class="muted">Nothing open with this person.</p>
+  {:else if commitmentsComplete === false && !commitmentsSince && items.length === 0 && commitments.length === 0}<p class="muted">Promise discovery has not started.</p>
+  {:else if items.length === 0 && commitments.length === 0 && coverageIncomplete && !commitmentsSince}<p class="muted">No open loops found. Some messages haven't been checked yet.</p>
+  {:else if items.length === 0 && commitments.length === 0 && !commitmentsSince}<p class="muted">Nothing open with this person.</p>
   {:else}
     {#each groups as group (group.kind)}
       {#if group.items.length > 0}
@@ -103,6 +124,24 @@
         </div>
       {/if}
     {/each}
+    {#each promiseGroups as group (group.key)}
+      {#if group.items.length > 0}
+        <div class="group">
+          <h4>{group.label}</h4>
+          <ul>
+            {#each group.items as promise (promise.id)}
+              <li class="promise">
+                <a href={`/messages/${promise.promise.message_id}`} title={promise.promise.text}>{promise.promise.text}</a>
+                <span class="promise-meta muted">{#if promise.freshness === 'stale'}<span class="stale">Stale evidence</span><span aria-hidden="true">·</span>{/if}{#if promise.due_on}<span>Due {dueLabel(promise.due_on)}</span><span aria-hidden="true">·</span>{/if}<span>{ageLabel(promise.promised_at)}</span></span>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+    {/each}
+    {#if commitmentsSince && !commitmentsComplete}<p class="muted discovery">Promise discovery since {formatContactDate(commitmentsSince)} is incomplete. If messages are too large, increase <code>max_bytes</code> in <code>[people.sweep.commitments]</code> to retry.</p>
+    {:else if commitmentsComplete === false && !commitmentsSince}<p class="muted">Promise discovery has not started.</p>
+    {:else if commitmentsSince && commitments.length === 0}<p class="muted">No promises found since {formatContactDate(commitmentsSince)}.</p>{/if}
   {/if}
   {#if !loading && !failed && unreadable > 0}
     <p class="muted">
@@ -121,11 +160,15 @@
   h4, p, ul { margin: 0; }
   h4 { color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 500; }
   .group { display: grid; gap: var(--space-1); }
+  .discovery { margin-top: var(--space-4); }
+  .discovery code { font-size: 0.9em; background: var(--bg-inset); border-radius: var(--radius-sm); }
   ul { display: grid; gap: var(--space-1); padding: 0; list-style: none; }
   li { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); min-width: 0; }
   a { min-width: 0; overflow: hidden; color: var(--link-ink); text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
   a:hover { text-decoration: underline; }
   li > span { flex: none; }
+  .promise-meta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+  .stale { color: var(--status-warning-ink); }
   .muted { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   [role="alert"] { color: var(--text-danger); }
 </style>

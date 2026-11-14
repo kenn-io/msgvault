@@ -43,6 +43,10 @@ type LoopListResponse struct {
 	CoverageIncomplete bool       `json:"coverage_incomplete" doc:"True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue"`
 	// SkippedUnparseable counts stored originals the list could not parse. A reply in one of them may have settled a loop that still lists.
 	SkippedUnparseable int `json:"skipped_unparseable" doc:"Stored originals that failed to parse and were passed over; a reply in one may have settled a listed loop"`
+
+	Commitments         []LoopCommitment `json:"commitments,omitempty"`
+	CommitmentsSince    *time.Time       `json:"commitments_since,omitempty"`
+	CommitmentsComplete *bool            `json:"commitments_complete,omitempty"`
 }
 
 // LoopDecisionResponse is the result of a done, snooze, or reopen action.
@@ -64,6 +68,7 @@ func (s *Server) registerLoopRoutes(api huma.API) {
 	addActivityErrorResponses(api, list.Responses, list.Errors...)
 	list.Parameters = loopListParameters()
 	registerRawHumaRoute(api, list, s.handleListLoops)
+	s.registerCommitmentDecision(api)
 
 	for _, action := range []struct {
 		id, path, summary string
@@ -104,6 +109,7 @@ func loopListParameters() []*huma.Param {
 	}
 	return []*huma.Param{
 		queryIntegerParam("person_id", "Only loops with this person"),
+		{Name: "include_closed", In: "query", Description: "Include done and snoozed commitments", Schema: &huma.Schema{Type: huma.TypeBoolean}},
 		bounded("limit", "Maximum loops to return", loops.DefaultLimit, loops.MaxLimit),
 	}
 }
@@ -135,8 +141,16 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if err == nil {
+		if values, supplied := r.URL.Query()["include_closed"]; supplied {
+			opts.IncludeClosed, err = strconv.ParseBool(values[0])
+			if len(values) != 1 {
+				err = store.ErrInvalidActivityRequest
+			}
+		}
+	}
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "person_id and limit must be valid")
+		writeError(w, http.StatusBadRequest, "invalid_request", "person_id, limit and include_closed must be valid")
 		return
 	}
 	evidence := &gatedLoopEvidence{Store: loopStore, gate: s.operationGate}
@@ -146,6 +160,31 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := loopListResponse(result)
+	response.Commitments = loopCommitments(result.Commitments)
+	if cfg, ok := s.currentPeopleSweepConfig(); ok && cfg.Commitments.Enabled {
+		profile, profileErr := cfg.Profile()
+		consent, canCheckConsent := s.store.(interface {
+			HasActivePersonCommitmentConsent(context.Context, string) (bool, error)
+		})
+		active := false
+		if profileErr == nil && canCheckConsent {
+			active, err = consent.HasActivePersonCommitmentConsent(r.Context(), profile.Fingerprint)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment consent")
+				return
+			}
+		}
+		if reader, ok := s.store.(interface {
+			PersonCommitmentDiscoveryContext(context.Context, int64) (*time.Time, bool, error)
+		}); ok && active {
+			since, complete, err := reader.PersonCommitmentDiscoveryContext(r.Context(), opts.PersonID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment discovery")
+				return
+			}
+			response.CommitmentsSince, response.CommitmentsComplete = since, &complete
+		}
+	}
 	for _, l := range result.Loops {
 		item := LoopItem{
 			Kind: l.Kind, AnchorMessageID: l.Anchor.ID, QuestionMessageIDs: loopQuestionIDs(l),
@@ -315,4 +354,12 @@ func (g *gatedLoopEvidence) SaveLoopMessageEvidenceContext(ctx context.Context, 
 	}
 	defer release()
 	return g.Store.SaveLoopMessageEvidenceContext(ctx, id, version, token, e)
+}
+
+func (g *gatedLoopEvidence) ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int, includeClosed bool) ([]store.PersonCommitment, error) {
+	reader, ok := g.Store.(loops.CommitmentReader)
+	if !ok {
+		return nil, nil
+	}
+	return reader.ListPersonCommitmentsContext(ctx, personID, now, limit, includeClosed)
 }
