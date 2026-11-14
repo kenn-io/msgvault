@@ -173,7 +173,7 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 
 func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, success ...int) (*mcpserver.OperationResult, error) {
 	writes := method != http.MethodGet
-	response, err := client.DoGeneratedRequestWithErrorLimit(ctx, method, path, options, (1<<20)+1)
+	response, err := client.DoGeneratedRequestWithErrorLimit(ctx, method, path, options, 1<<20)
 	if err != nil {
 		if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
 			return operationFailure(local.APIErrorCode(), false), err

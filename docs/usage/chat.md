@@ -939,6 +939,10 @@ keep their spelling, except values PostgreSQL stored before this change; HTTP pr
 and newer rejects numbers outside the float64 range, such as `1e400`. Listings and previews over
 1 MiB are refused; use `slug` or `history: false` to narrow a listing.
 
+If an MCP operation write returns `operation_receipt_unavailable`, the write
+may have completed but its receipt could not be read. Read the current state
+before retrying.
+
 Enable only the writes intended for the assistant's session:
 
 | Writes | Stdio | HTTP |
