@@ -15,7 +15,10 @@ export interface SetOrganizationAttributeBody {
   confidence?: number | null;
   definition_slug: string;
   dry_run?: boolean;
-  /** @nullable */
+  /**
+   * Expected current value ID; zero requires an empty slot
+   * @nullable
+   */
   expected_value_id?: number | null;
   /** @nullable */
   ordinal?: number | null;

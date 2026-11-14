@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
@@ -51,12 +52,20 @@ func approvalReadProxy(t *testing.T, backend *daemonMCPOperations) (*atomic.Bool
 			preview := false
 			if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/attributes") {
 				body, err := io.ReadAll(r.Body)
-				require.NoError(t, err)
+				if err != nil {
+					assert.NoError(t, err)
+					http.Error(w, "invalid body", http.StatusBadRequest)
+					return
+				}
 				r.Body = io.NopCloser(bytes.NewReader(body))
 				var request struct {
 					DryRun bool `json:"dry_run"`
 				}
-				require.NoError(t, stdjson.Unmarshal(body, &request))
+				if err := stdjson.Unmarshal(body, &request); err != nil {
+					assert.NoError(t, err)
+					http.Error(w, "invalid body", http.StatusBadRequest)
+					return
+				}
 				preview = request.DryRun
 			}
 			if !preview {

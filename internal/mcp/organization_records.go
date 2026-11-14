@@ -8,13 +8,15 @@ import (
 
 type OrganizationRecord struct {
 	PersonRecordChunk `json:",inline"`
-	ETag              string                         `json:"etag"`
-	Profile           *generated.OrganizationProfile `json:"profile,omitzero"`
+
+	ETag    string                         `json:"etag"`
+	Profile *generated.OrganizationProfile `json:"profile,omitzero"`
 }
 
 type OrganizationAttributesResult struct {
 	PersonRecordChunk `json:",inline"`
-	Values            []generated.OrganizationAttributeValue `json:"values,omitzero"`
+
+	Values []generated.OrganizationAttributeValue `json:"values,omitzero"`
 }
 
 func organizationOperationalDefinitions() []operationalDefinition {

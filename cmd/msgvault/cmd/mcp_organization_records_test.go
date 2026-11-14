@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -93,7 +94,7 @@ func TestOrganizationWritesUseRevisions(t *testing.T) {
 	must.NoError(err)
 	missing, err := backend.ExecuteOperation(t.Context(), "update_organization", blank)
 	must.NoError(err)
-	assertLoopRefusal(t, missing, "if_match_required", false)
+	assertLoopRefusal(t, missing, "if_match_required")
 	deletable, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Deletable", Kind: store.OrganizationKindCompany})
 	must.NoError(err)
 	readable, err := backend.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": deletable.ID})
@@ -234,6 +235,7 @@ func TestOrganizationSDKRequiresConfirmation(t *testing.T) {
 
 func TestApprovalMatrixOrganization(t *testing.T) {
 	exerciseApprovalMatrix(t, func(t *testing.T) approvalCase {
+		t.Helper()
 		st := testutil.NewTestStore(t)
 		_, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: "test-org-matrix", ObjectType: store.AttributeObjectOrganization, Slug: "industry", Label: "Industry", ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, APIMutable: true, UICreatable: true, UIEditable: true, IsDeletable: true})
 		require.NoError(t, err)
@@ -283,7 +285,7 @@ func TestOrganizationLargeAttributeReplacementReceipt(t *testing.T) {
 
 func TestOrganizationAttributeDryRunReceipt(t *testing.T) {
 	for _, occupied := range []bool{false, true} {
-		t.Run(fmt.Sprint(occupied), func(t *testing.T) {
+		t.Run(strconv.FormatBool(occupied), func(t *testing.T) {
 			must := require.New(t)
 			st := testutil.NewTestStore(t)
 			_, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: "test-dry-run", ObjectType: store.AttributeObjectOrganization, Slug: "industry", Label: "Industry", ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, APIMutable: true, UICreatable: true, UIEditable: true, IsDeletable: true})
@@ -333,7 +335,9 @@ func TestOrganizationWritesRejectChangesDuringApproval(t *testing.T) {
 	must.NoError(err)
 	session := legacyOperationSession(t, b, mcpserver.OperationFamilyOrganizations, func(ctx context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		changed, err := b.ExecuteOperation(ctx, "update_organization", map[string]any{"organization_id": org.ID, "etag": read.ETag, "body": map[string]any{"name": "Concurrent", "kind": "company"}})
-		assert.NoError(t, err)
+		if err != nil {
+			return nil, err
+		}
 		assert.False(t, changed.IsError)
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	})
