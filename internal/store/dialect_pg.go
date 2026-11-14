@@ -374,8 +374,9 @@ func (d *PostgreSQLDialect) InsertOrIgnoreSuffix() string {
 // empirically). The 600000-char cap makes the error unlikely for typical
 // (mostly-ASCII, repetitive) bodies, but does not make it impossible.
 //
-// Dense tokens can still exceed the limit. The write and backfill paths
-// mark such messages unsearchable and continue.
+// Dense tokens can still exceed the limit. Atomic message persistence, email
+// repair and backfill mark recognized overflows unsearchable; direct indexing
+// entries propagate the error.
 const maxFTSBodyChars = 600000
 
 // maxFTSBodyBytes bounds each input before PostgreSQL builds the vector.

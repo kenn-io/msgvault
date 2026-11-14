@@ -261,9 +261,128 @@ not interchangeable with disposable analytics or semantic indexes.
 
 ### Full-Text Index
 
-SQLite uses an FTS5 virtual table named `messages_fts`. PostgreSQL uses a `search_fts` `tsvector` column on `messages` with a GIN index.
+SQLite uses the `messages_fts` FTS5 virtual table. PostgreSQL stores a
+`search_fts` `tsvector` on `messages`, with a GIN index. Both power
+`msgvault search`; [Search Ranking Across Backends](search-ranking.md) owns
+ranking and query differences.
 
-Both power `msgvault search`, but the rankers differ. See [Search Ranking Across Backends](/docs/architecture/search-ranking/).
+#### Which indexing entry should a caller use?
+
+Choose the entry by its commit and error contract. A saved message does not
+guarantee a searchable entry. The Store returns errors; each caller decides
+whether to fail its operation, count an error, or log a warning.
+
+| Entry and typical production callers | Transaction and error contract |
+|---|---|
+| `PersistMessageContext` with `MessagePersistData.FTS`: Gmail/IMAP Syncer, Discord and message-import writers | Indexes inside the message transaction through `upsertFTSOrUnsearchable`. Recognized PostgreSQL overflow permits a terminal unsearchable entry; other errors roll back the transaction. Omitting `FTS` does not create a search entry. |
+| `UpdateArchivedEmailTextContext`: retained-MIME email repair and Heal through `internal/rederive` | Compares first, then locks and repairs derived text and search together using the same savepoint policy. A comparison overflow can match an existing terminal entry; other comparison errors propagate. |
+| `UpsertFTSContext`: mail-file, Beeper, Slack, Teams, WhatsApp, Facebook Messenger and Synctech SMS importers; calendar sync | Writes the supplied `FTSDoc` directly, without comparing it first. Returns indexing errors, including overflow. It neither saves the message nor records a terminal overflow state. |
+| `IndexStoredMessageContext`: Google Voice and iMessage imports | Loads the stored body and envelope, calls `FTSMatches`, and writes only a mismatching entry. Load, comparison and upsert errors propagate, including overflow during comparison. It has no terminal overflow policy. |
+| `UpdateMessageDerivedText`: Beeper repair | Updates body, snippet and FTS in one transaction using the direct dialect writer. Every FTS error rolls back that repair, including overflow. Previously committed provider data remains. |
+
+The two standalone entries, `UpsertFTSContext` and
+`IndexStoredMessageContext`, use `withSyncMessageWriteContext`: PostgreSQL and
+sync-scoped views open a transaction with the maintenance gate and message
+ownership checks; unscoped SQLite writes directly. These transactions do not
+include a caller's earlier message commit and do not use `derived_fts`.
+Sync-scoped views still check generation and ownership when FTS is unavailable.
+The entries otherwise skip indexing when FTS is unavailable.
+
+Google Voice and iMessage log an indexing error and continue after saving the
+message. Several direct-upsert callers also continue: Beeper and Teams count
+errors, while calendar sync and Facebook Messenger log warnings. Slack
+propagates cancellation and deadline errors. Mail-file ingestion logs errors
+and, in strict mode, also returns an incomplete-ingestion error. These are
+caller policies, not a best-effort guarantee of either Store API.
+
+Use atomic persistence when search must participate in the message commit
+under the recognized-overflow policy. Use the standalone entries to index
+already saved data, handling their errors explicitly. Use
+`IndexStoredMessageContext` when the stored body and envelope are the desired
+document; use `UpsertFTSContext` when the caller supplies the search fields.
+Use the corresponding repair API for derived text rather than treating every
+repair as having the email repair contract.
+
+#### What does recognized overflow mean?
+
+`upsertFTSOrUnsearchable` requires an existing transaction. It creates
+`SAVEPOINT derived_fts` on both backends before attempting the dialect write.
+PostgreSQL's `IsFTSValueTooLargeError` recognizes SQLSTATE `54000`; it does not
+inspect the error message. SQLite's classifier always returns false.
+
+On a recognized error, the helper rolls back to the savepoint so PostgreSQL's
+failed statement does not leave the outer transaction aborted. It then sets
+`search_fts = ''::tsvector`, `search_fts_fields = NULL`, and
+`indexing_version = CurrentFTSIndexingVersion`, unless the vector is already
+empty at that version. It logs a warning and releases the savepoint. Other
+SQL errors, including failure to write the terminal state, propagate and cause
+the enclosing persistence or repair transaction to roll back.
+
+Terminal means ordinary backfill will not select this entry again at the
+current indexing version. It does not mean the message was discarded, its
+attachments are complete, or explicit reindexing can never succeed. The
+helper still attempts indexing on a later write; its `changed` result is
+false if overflow finds an already terminal entry. A successful outer commit
+can therefore preserve the original and derived text while text search finds
+nothing. The [Gmail durability protocol](#gmail-durability-protocol)
+owns file obligations and settlement separately.
+
+#### What is compared in the current format?
+
+`CurrentFTSIndexingVersion` is **3** for PostgreSQL. `preparePostgresFTSDoc`
+prepares subject, body, sender, To and Cc separately: it bounds each input to
+700,000 bytes without splitting a UTF-8 rune, then 600,000 runes, normalizes
+Unicode letters and numbers into lowercase space-separated tokens, and caps
+bytes again. These limits reduce overflow risk; they do not guarantee that the
+combined vector fits PostgreSQL's 1,048,575-byte limit.
+
+`pgFTSVectorFields` builds weighted `simple` vectors with separator lexemes
+between fields. `search_fts_fields` stores the five prepared texts, in order
+subject, sender, To, Cc, body, only when the preparation counts more than
+16,000 positions (including four separators) or more than 255 occurrences of
+one token. Search uses those fields to verify phrases when vector positions
+can saturate. Unsaturated documents store NULL there.
+
+PostgreSQL `FTSMatches` constructs that same expected vector and compares the
+vector, `search_fts_fields` with NULL-safe equality, and the current version.
+It can fail while constructing the expected vector, before any upsert. SQLite
+compares the five stored FTS5 text columns to the supplied document; it has no
+PostgreSQL version or auxiliary fields. Both dialects return false for an
+absent entry. `IndexStoredMessageContext` leaves a matching entry unwritten
+and can create a missing one.
+
+Missing entries, different versions, mismatching documents, and SQL comparison
+errors are distinct outcomes. A document with no searchable text is also
+distinct from overflow: v3's vector builder still inserts separator lexemes
+when the prepared fields contain no tokens. An empty vector records no
+durable reason explaining how it arose; do not infer its history from the
+vector alone. The terminal check tests only an empty vector and current
+version, not a separately persisted overflow cause.
+
+#### How can indexing resume?
+
+`BackfillFTSContext` fills absent SQLite entries and PostgreSQL entries whose
+vector is NULL or whose version differs from the current one. Each ID-range
+batch commits independently. PostgreSQL reads and locks stored message data,
+uses the same preparation as direct upserts, and retries a failed batch row
+by row only for recognized overflow. An overflowing row is marked terminal;
+any other error stops the pass. Already committed batches survive failure.
+The daemon's search-index owner can run this backfill after an upgrade.
+
+Backfill is not a freshness comparison: a current non-NULL vector with wrong
+auxiliary fields is not selected just for that mismatch. A version change
+makes terminal entries eligible again. A changed body invalidates its search
+entry; an explicit upsert, stored-message indexing, or email repair can also
+retry it. `RebuildFTSContext`, exposed by `msgvault rebuild-fts`, resets the
+index before backfilling, including terminal entries at the same version.
+Rebuilding does not make an oversized document indexable.
+
+Reindexing reads retained data rather than fetching a provider copy. Stored
+envelope reconstruction is shared by comparison, email repair and backfill;
+the PostgreSQL backfill also recovers Beeper sender names from retained JSON.
+It cannot preserve arbitrary search-only terms that a caller supplied but
+never stored. Index availability, version and non-NULL state alone do not
+prove coverage or freshness.
 
 ### Relationships
 
@@ -476,7 +595,8 @@ complete.
     following `upsertFTSOrUnsearchable`. If PostgreSQL reports that the
     document is too large to index, the transaction can still commit with the
     message marked unsearchable. Any other indexing error rolls the
-    transaction back.
+    transaction back. The [full-text index contract](#full-text-index) owns
+    the entry-point policies and terminal-state details.
 
 3. **The export package writes the bytes, and the Store records which message
     they belong to.** After the commit, `storeAttachment` calls
