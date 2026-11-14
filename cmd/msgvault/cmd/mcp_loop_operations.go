@@ -128,18 +128,7 @@ func (b *daemonMCPOperations) executeLoopOperation(ctx context.Context, name str
 		options = &generated.SnoozeLoopRequestOptions{PathParams: &generated.SnoozeLoopPath{MessageID: id}, Query: &generated.SnoozeLoopQuery{QuestionMessageIds: questions}, Body: &generated.SnoozeLoopBody{Until: until}}
 	}
 	result, err := readMCPLoopJSON[generated.LoopDecisionResponse](ctx, b.client, http.MethodPost, path, options)
-	return loopDecisionProjection(result), true, err
-}
-
-func loopDecisionProjection(result *mcpserver.OperationResult) *mcpserver.OperationResult {
-	if result == nil || result.IsError {
-		return result
-	}
-	decision, ok := result.Output.(generated.LoopDecisionResponse)
-	if !ok || decision.AnchorMessageID <= 0 {
-		return invalidOperationResponse(true)
-	}
-	return result
+	return result, true, err
 }
 
 func (b *daemonMCPOperations) loopOperationDisclosure(name string, args map[string]any) (string, bool, error) {

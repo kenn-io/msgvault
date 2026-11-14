@@ -39,28 +39,64 @@ func TestMCPOperationResponseFailures(t *testing.T) {
 		interrupted, wantErr           bool
 		read                           func(context.Context, *daemonclient.Client, string, string) (*mcpserver.OperationResult, error)
 	}{
-		{"post-commit credential conflict", http.MethodPatch, `{"error":"credential_conflict"}`,
-			`{"error":"operation_refused","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusPreconditionFailed, false, false, settings},
-		{"unclassified server failure", http.MethodPost, `{"error":"settings_write_failed"}`,
-			`{"error":"operation_refused","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusInternalServerError, false, false, settings},
-		{"known pre-commit conflict", http.MethodPatch, `{"error":"settings_conflict"}`,
-			`{"error":"settings_conflict","operation_may_have_completed":false}`, "/api/v1/settings", http.StatusPreconditionFailed, false, false, settings},
-		{"read failure", http.MethodGet, `{"error":"credential_conflict"}`,
-			`{"error":"operation_refused","operation_may_have_completed":false}`, "/api/v1/settings", http.StatusPreconditionFailed, false, false, settings},
-		{"oversized successful write receipt", http.MethodPatch, `{"data":"` + strings.Repeat("x", 1<<20) + `"}`,
-			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusOK, false, false, settings},
-		{"interrupted write receipt", http.MethodPatch, `{"partial":`,
-			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusOK, true, true, settings},
-		{"interrupted error response", http.MethodPatch, `{"error":`,
-			`{"error":"operation_response_failed","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusInternalServerError, true, true, settings},
-		{"person receipt without participant list", http.MethodPatch, `{"id":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","vcard_uid":"example"}`,
-			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/people/1", http.StatusOK, false, false, person},
-		{"malformed write receipt", http.MethodPatch, `not json`,
-			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusOK, false, true, settings},
-		{"oversized read", http.MethodGet, strings.Repeat("x", (1<<20)+1),
-			`{"error":"operation_response_limit_exceeded","operation_may_have_completed":false}`, "/api/v1/settings", http.StatusOK, false, false, settings},
-		{"read validation failure", http.MethodGet, `{"error":"validation_failed"}`,
-			`{"error":"validation_failed","operation_may_have_completed":false}`, "/api/v1/settings", http.StatusUnprocessableEntity, false, false, settings},
+		{
+			name: "post-commit credential conflict", method: http.MethodPatch,
+			body: `{"error":"credential_conflict"}`, want: `{"error":"operation_refused","operation_may_have_completed":true}`,
+			path: "/api/v1/settings", status: http.StatusPreconditionFailed, read: settings,
+		},
+		{
+			name: "unclassified server failure", method: http.MethodPost,
+			body: `{"error":"settings_write_failed"}`, want: `{"error":"operation_refused","operation_may_have_completed":true}`,
+			path: "/api/v1/settings", status: http.StatusInternalServerError, read: settings,
+		},
+		{
+			name: "known pre-commit conflict", method: http.MethodPatch,
+			body: `{"error":"settings_conflict"}`, want: `{"error":"settings_conflict","operation_may_have_completed":false}`,
+			path: "/api/v1/settings", status: http.StatusPreconditionFailed, read: settings,
+		},
+		{
+			name: "read failure", method: http.MethodGet,
+			body: `{"error":"credential_conflict"}`, want: `{"error":"operation_refused","operation_may_have_completed":false}`,
+			path: "/api/v1/settings", status: http.StatusPreconditionFailed, read: settings,
+		},
+		{
+			name: "oversized successful write receipt", method: http.MethodPatch,
+			body: `{"data":"` + strings.Repeat("x", 1<<20) + `"}`,
+			want: `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`,
+			path: "/api/v1/settings", status: http.StatusOK, read: settings,
+		},
+		{
+			name: "interrupted write receipt", method: http.MethodPatch,
+			body: `{"partial":`, want: `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`,
+			path: "/api/v1/settings", status: http.StatusOK, interrupted: true, wantErr: true, read: settings,
+		},
+		{
+			name: "interrupted error response", method: http.MethodPatch,
+			body: `{"error":`, want: `{"error":"operation_response_failed","operation_may_have_completed":true}`,
+			path: "/api/v1/settings", status: http.StatusInternalServerError, interrupted: true, wantErr: true, read: settings,
+		},
+		{
+			name: "person receipt without participant list", method: http.MethodPatch,
+			body: `{"id":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","vcard_uid":"example"}`,
+			want: `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`,
+			path: "/api/v1/people/1", status: http.StatusOK, read: person,
+		},
+		{
+			name: "malformed write receipt", method: http.MethodPatch,
+			body: `not json`, want: `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`,
+			path: "/api/v1/settings", status: http.StatusOK, wantErr: true, read: settings,
+		},
+		{
+			name: "oversized read", method: http.MethodGet,
+			body: strings.Repeat("x", (1<<20)+1),
+			want: `{"error":"operation_response_limit_exceeded","operation_may_have_completed":false}`,
+			path: "/api/v1/settings", status: http.StatusOK, read: settings,
+		},
+		{
+			name: "read validation failure", method: http.MethodGet,
+			body: `{"error":"validation_failed"}`, want: `{"error":"validation_failed","operation_may_have_completed":false}`,
+			path: "/api/v1/settings", status: http.StatusUnprocessableEntity, read: settings,
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()

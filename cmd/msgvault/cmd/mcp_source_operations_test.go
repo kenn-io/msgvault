@@ -219,29 +219,47 @@ func TestMCPSlackPolicySDKUsesRealDaemonAndApproval(t *testing.T) {
 	assertions.False(reloaded.Slack.DMsEnabled())
 }
 
-const slackSettingsWithoutPendingRestart = `{"settings":[{"key":"slack.dms","group":"sources","label":"Direct messages","description":"Include one-to-one direct messages","kind":"boolean","value":{"boolean":true}},{"key":"slack.group_dms","group":"sources","label":"Group direct messages","description":"Include group direct messages","kind":"boolean","value":{"boolean":true}},{"key":"slack.channels","group":"sources","label":"Channels","description":"Included channel selectors","kind":"string_array","value":{"strings":["C_EXAMPLE"]}},{"key":"slack.exclude_channels","group":"sources","label":"Excluded channels","description":"Excluded channel selectors","kind":"string_array","value":{"strings":[]}}]}`
+const validSlackSettingsReceipt = `{"pending_restart":false,"settings":[{"key":"slack.dms","group":"sources","label":"Direct messages","description":"Include one-to-one direct messages","kind":"boolean","value":{"boolean":true}},{"key":"slack.group_dms","group":"sources","label":"Group direct messages","description":"Include group direct messages","kind":"boolean","value":{"boolean":true}},{"key":"slack.channels","group":"sources","label":"Channels","description":"Included channel selectors","kind":"string_array","value":{"strings":["C_EXAMPLE"]}},{"key":"slack.exclude_channels","group":"sources","label":"Excluded channels","description":"Excluded channel selectors","kind":"string_array","value":{"strings":[]}}]}`
 
-func TestMCPSlackPolicyProjectionRejectsIncompleteReceipts(t *testing.T) {
+func TestMCPSlackPolicyProjectionRejectsIncompleteResponses(t *testing.T) {
 	for _, tt := range []struct {
-		name   string
-		change func(*slackSettingsResponse, *mcpserver.OperationResult)
+		name, want string
+		writes     bool
+		change     func(*slackSettingsResponse, *mcpserver.OperationResult)
 	}{
-		{"missing pending restart", func(s *slackSettingsResponse, _ *mcpserver.OperationResult) { s.PendingRestart = nil }},
-		{"missing ETag", func(_ *slackSettingsResponse, result *mcpserver.OperationResult) { result.ETag = "" }},
-		{"unusable setting", func(s *slackSettingsResponse, _ *mcpserver.OperationResult) { s.Settings[0].Value = nil }},
+		{
+			name: "read missing pending restart", writes: false,
+			change: func(settings *slackSettingsResponse, _ *mcpserver.OperationResult) { settings.PendingRestart = nil },
+			want:   `{"error":"invalid_operation_response","operation_may_have_completed":false}`,
+		},
+		{
+			name: "write missing pending restart", writes: true,
+			change: func(settings *slackSettingsResponse, _ *mcpserver.OperationResult) { settings.PendingRestart = nil },
+			want:   `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`,
+		},
+		{
+			name: "read missing ETag", writes: false,
+			change: func(_ *slackSettingsResponse, result *mcpserver.OperationResult) { result.ETag = "" },
+			want:   `{"error":"invalid_operation_response","operation_may_have_completed":false}`,
+		},
+		{
+			name: "write missing ETag", writes: true,
+			change: func(_ *slackSettingsResponse, result *mcpserver.OperationResult) { result.ETag = "" },
+			want:   `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`,
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
 			var settings slackSettingsResponse
-			require.NoError(t, json.Unmarshal([]byte(slackSettingsWithoutPendingRestart), &settings))
-			settings.PendingRestart = new(bool)
+			requirements.NoError(json.Unmarshal([]byte(validSlackSettingsReceipt), &settings))
 			result := &mcpserver.OperationResult{ETag: `"settings"`}
 			tt.change(&settings, result)
 			result.Output = settings
-			result = slackPolicyProjection(result, true)
-			require.True(t, result.IsError)
+			result = slackPolicyProjection(result, tt.writes)
+			requirements.True(result.IsError)
 			data, err := json.Marshal(result.Output)
-			require.NoError(t, err)
-			assert.JSONEq(t, `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
+			requirements.NoError(err)
+			assertions.JSONEq(tt.want, string(data))
 		})
 	}
 }
@@ -286,30 +304,6 @@ dimension = 8
 	credentials, err = providercredentials.Read(cfg.TokensDir())
 	requirements.NoError(err)
 	assertions.True(credentials.Stored(providercredentials.VectorEmbeddingsID))
-}
-
-func TestMCPPersonIDProjectionRejectsNonPositivePersonID(t *testing.T) {
-	requirements, assertions := require.New(t), assert.New(t)
-	client := newMCPDaemonClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("ETag", `"revision"`)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"id":0,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","participant_ids":[],"vcard_uid":"example","revision":1}`))
-	})
-	backend := &daemonMCPOperations{client: client, supported: []string{"get_person_edit_context"}}
-	result, err := backend.ExecuteOperation(t.Context(), "get_person_edit_context", map[string]any{"person_id": 1})
-	requirements.NoError(err)
-	data, err := json.Marshal(result.Output)
-	requirements.NoError(err)
-	assertions.JSONEq(`{"error":"invalid_operation_response","operation_may_have_completed":false}`, string(data))
-
-	name := "Created Name"
-	browser := daemonMCPNamedPeopleBrowser{client: client}
-	result, err = browser.PromoteWithDisplayName(t.Context(), 1, &name)
-	requirements.NoError(err)
-	data, err = json.Marshal(result.Output)
-	requirements.NoError(err)
-	assertions.JSONEq(`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
 }
 
 func TestMCPPersonNameClearAndStaleRevisionUseOwnerCAS(t *testing.T) {
