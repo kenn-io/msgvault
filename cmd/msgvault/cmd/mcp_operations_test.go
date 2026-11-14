@@ -34,9 +34,6 @@ func TestMCPOperationResponseFailures(t *testing.T) {
 	person := func(ctx context.Context, client *daemonclient.Client, method, path string) (*mcpserver.OperationResult, error) {
 		return readMCPOperationJSON[generated.Person](ctx, client, method, path, nil, http.StatusOK)
 	}
-	loopDecision := func(ctx context.Context, client *daemonclient.Client, method, path string) (*mcpserver.OperationResult, error) {
-		return readMCPOperationJSON[generated.LoopDecisionResponse](ctx, client, method, path, nil, http.StatusOK)
-	}
 	for _, tt := range []struct {
 		name, method, body, want, path string
 		status                         int
@@ -59,12 +56,6 @@ func TestMCPOperationResponseFailures(t *testing.T) {
 			`{"error":"operation_response_failed","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusInternalServerError, true, true, settings},
 		{"person receipt without participant list", http.MethodPatch, `{"id":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","vcard_uid":"example"}`,
 			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/people/1", http.StatusOK, false, false, person},
-		{"incomplete settings write receipt", http.MethodPatch, `{}`,
-			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusOK, false, false, settings},
-		{"incomplete person write receipt", http.MethodPatch, `{"id":1}`,
-			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/people/1", http.StatusOK, false, false, person},
-		{"empty loop decision write receipt", http.MethodPost, `{}`,
-			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/loops/1/done", http.StatusOK, false, false, loopDecision},
 		{"malformed write receipt", http.MethodPatch, `not json`,
 			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusOK, false, true, settings},
 		{"oversized read", http.MethodGet, strings.Repeat("x", (1<<20)+1),

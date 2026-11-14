@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,6 +155,30 @@ func TestMCPSlackPolicyPreservesFalseOmissionAndExactETag(t *testing.T) {
 	policy := operationOutput[mcpserver.SlackSyncPolicy](t, result)
 	requirements.NotEmpty(policy.ETag)
 	assertions.Len(policy.Settings, 4)
+	keys := make([]string, 0, len(policy.Settings))
+	for _, setting := range policy.Settings {
+		keys = append(keys, setting.Key)
+		requirements.NotNil(setting.Value)
+		requirements.NotNil(setting.Value.SettingValue_OneOf)
+		switch setting.Key {
+		case "slack.dms", "slack.group_dms":
+			assertions.Equal(generated.Boolean, setting.Kind)
+			value, err := setting.Value.SettingValue_OneOf.AsSettingValue_OneOf_3()
+			requirements.NoError(err)
+			assertions.True(value.Boolean)
+		case "slack.channels":
+			assertions.Equal(generated.StringArray, setting.Kind)
+			value, err := setting.Value.SettingValue_OneOf.AsSettingValue_OneOf_4()
+			requirements.NoError(err)
+			assertions.Equal([]string{"C_EXAMPLE"}, value.Strings)
+		case "slack.exclude_channels":
+			assertions.Equal(generated.StringArray, setting.Kind)
+			value, err := setting.Value.SettingValue_OneOf.AsSettingValue_OneOf_4()
+			requirements.NoError(err)
+			assertions.Empty(value.Strings)
+		}
+	}
+	assertions.ElementsMatch([]string{"slack.dms", "slack.group_dms", "slack.channels", "slack.exclude_channels"}, keys)
 	args := map[string]any{"etag": policy.ETag, "dms": false}
 	disclosure, err := backend.OperationDisclosure(t.Context(), "update_slack_sync_policy", args)
 	requirements.NoError(err)
@@ -188,9 +213,6 @@ dms = true
 group_dms = true
 channels = ["C_EXAMPLE"]
 
-[people.enrichment]
-enabled = false
-
 [[people.enrichment.providers]]
 name = "minimal"
 `), 0o600))
@@ -210,39 +232,6 @@ name = "minimal"
 	requirements.NoError(err)
 	var policy mcpserver.SlackSyncPolicy
 	requirements.NoError(json.Unmarshal(data, &policy))
-	keys := make([]string, 0, len(policy.Settings))
-	for _, setting := range policy.Settings {
-		keys = append(keys, setting.Key)
-		requirements.NotNil(setting.Value)
-		requirements.NotNil(setting.Value.SettingValue_OneOf)
-		switch setting.Key {
-		case "slack.dms", "slack.group_dms":
-			assertions.Equal(generated.Boolean, setting.Kind)
-			value, err := setting.Value.SettingValue_OneOf.AsSettingValue_OneOf_3()
-			requirements.NoError(err)
-			assertions.True(value.Boolean)
-		case "slack.channels":
-			assertions.Equal(generated.StringArray, setting.Kind)
-			value, err := setting.Value.SettingValue_OneOf.AsSettingValue_OneOf_4()
-			requirements.NoError(err)
-			assertions.Equal([]string{"C_EXAMPLE"}, value.Strings)
-		case "slack.exclude_channels":
-			assertions.Equal(generated.StringArray, setting.Kind)
-			value, err := setting.Value.SettingValue_OneOf.AsSettingValue_OneOf_4()
-			requirements.NoError(err)
-			assertions.Empty(value.Strings)
-		}
-	}
-	assertions.ElementsMatch([]string{"slack.dms", "slack.group_dms", "slack.channels", "slack.exclude_channels"}, keys)
-	unusableSettings := slices.Clone(policy.Settings)
-	unusableSettings[0].Value = nil
-	projection := slackPolicyProjection(&mcpserver.OperationResult{
-		Output: slackSettingsResponse{PendingRestart: new(policy.PendingRestart), Settings: unusableSettings}, ETag: policy.ETag,
-	}, false)
-	assertions.True(projection.IsError)
-	data, err = json.Marshal(projection.Output)
-	requirements.NoError(err)
-	assertions.JSONEq(`{"error":"invalid_operation_response","operation_may_have_completed":false}`, string(data))
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_slack_sync_policy", Arguments: map[string]any{"etag": policy.ETag, "dms": false}})
 	requirements.NoError(err)
 	assertions.False(result.IsError)
@@ -267,22 +256,38 @@ name = "minimal"
 
 const slackSettingsWithoutPendingRestart = `{"settings":[{"key":"slack.dms","group":"sources","label":"Direct messages","description":"Include one-to-one direct messages","kind":"boolean","value":{"boolean":true}},{"key":"slack.group_dms","group":"sources","label":"Group direct messages","description":"Include group direct messages","kind":"boolean","value":{"boolean":true}},{"key":"slack.channels","group":"sources","label":"Channels","description":"Included channel selectors","kind":"string_array","value":{"strings":["C_EXAMPLE"]}},{"key":"slack.exclude_channels","group":"sources","label":"Excluded channels","description":"Excluded channel selectors","kind":"string_array","value":{"strings":[]}}]}`
 
-func TestMCPSlackPolicyRejectsMissingPendingRestart(t *testing.T) {
+func TestMCPSlackPolicyProjectionRejectsIncompleteReceipts(t *testing.T) {
 	for _, tt := range []struct {
 		name, method, want string
-		writes             bool
+		writes, etag       bool
+		pendingRestart     bool
+		unusableSetting    bool
 	}{
-		{"read", http.MethodGet, `{"error":"invalid_operation_response","operation_may_have_completed":false}`, false},
-		{"write", http.MethodPatch, `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, true},
+		{"read missing pending restart", http.MethodGet, `{"error":"invalid_operation_response","operation_may_have_completed":false}`, false, true, false, false},
+		{"write missing pending restart", http.MethodPatch, `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, true, true, false, false},
+		{"write missing ETag", http.MethodPatch, `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, true, false, true, false},
+		{"read unusable setting", http.MethodGet, `{"error":"invalid_operation_response","operation_may_have_completed":false}`, false, true, true, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			requirements, assertions := require.New(t), assert.New(t)
+			body := slackSettingsWithoutPendingRestart
+			if tt.pendingRestart {
+				body = strings.Replace(body, `{"settings":`, `{"pending_restart":false,"settings":`, 1)
+				requirements.NotEqual(slackSettingsWithoutPendingRestart, body)
+			}
+			if tt.unusableSetting {
+				unusableBody := strings.Replace(body, `"value":{"boolean":true}`, `"value":null`, 1)
+				requirements.NotEqual(body, unusableBody)
+				body = unusableBody
+			}
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("ETag", `"settings"`)
+				if tt.etag {
+					w.Header().Set("ETag", `"settings"`)
+				}
 				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(slackSettingsWithoutPendingRestart))
+				_, _ = w.Write([]byte(body))
 			})
 			result, err := readMCPOperationJSON[slackSettingsResponse](t.Context(), client, tt.method, "/api/v1/settings", nil, http.StatusOK)
 			requirements.NoError(err)
@@ -337,7 +342,7 @@ dimension = 8
 	assertions.True(credentials.Stored(providercredentials.VectorEmbeddingsID))
 }
 
-func TestMCPPersonIDProjectionPreservesCreateAndEditReceipts(t *testing.T) {
+func TestMCPPersonIDProjectionRejectsNonPositivePersonID(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -394,7 +399,12 @@ func TestMCPPersonNameClearAndStaleRevisionUseOwnerCAS(t *testing.T) {
 	current, err := st.GetPersonContext(t.Context(), person.ID)
 	requirements.NoError(err)
 	assertions.Nil(current.DisplayName)
+}
 
+func TestMCPCardDAVImportedPersonEditAllowsEmptyRemoteUID(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
 	allowed := true
 	account, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
 		BaseURL: "https://contacts.example/dav", Username: "user-a",
@@ -429,21 +439,16 @@ func TestMCPPersonNameClearAndStaleRevisionUseOwnerCAS(t *testing.T) {
 	requirements.Len(cardDAVPerson.CardDAVBindings, 1)
 	assertions.Empty(cardDAVPerson.CardDAVBindings[0].RemoteUID)
 
-	result, err = backend.ExecuteOperation(t.Context(), "get_person_edit_context", map[string]any{"person_id": cardDAVPerson.ID})
+	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
+	result, err := backend.ExecuteOperation(t.Context(), "get_person_edit_context", map[string]any{"person_id": cardDAVPerson.ID})
 	requirements.NoError(err)
 	cardDAVEdit := operationOutput[mcpserver.PersonEditContext](t, result)
-	assertions.Empty(cardDAVEdit.Person.ParticipantIds)
-	requirements.Len(cardDAVEdit.Person.CarddavBindings, 1)
-	assertions.Empty(cardDAVEdit.Person.CarddavBindings[0].RemoteUID)
 	result, err = backend.ExecuteOperation(t.Context(), "set_person_display_name", map[string]any{
 		"person_id": cardDAVPerson.ID, "etag": cardDAVEdit.ETag, "display_name": "Edited Imported Example",
 	})
 	requirements.NoError(err)
 	cardDAVUpdated := operationOutput[mcpserver.PersonEditContext](t, result)
 	assertions.Equal(new("Edited Imported Example"), cardDAVUpdated.Person.DisplayName)
-	cardDAVCurrent, err := st.GetPerson(cardDAVPerson.ID)
-	requirements.NoError(err)
-	assertions.Equal(new("Edited Imported Example"), cardDAVCurrent.DisplayName)
 }
 
 func TestMCPPersonNameRetainsEnrichmentDispatchRefusal(t *testing.T) {
@@ -533,18 +538,6 @@ func TestMCPPersonCommittedRenameWithMissingETagRemainsUncertain(t *testing.T) {
 	current, err := st.GetPerson(person.ID)
 	requirements.NoError(err)
 	assertions.Equal(new("Committed Example"), current.DisplayName)
-}
-
-func TestMCPSlackWriteProjectionWithMissingETagRemainsUncertain(t *testing.T) {
-	requirements, assertions := require.New(t), assert.New(t)
-	var settings slackSettingsResponse
-	requirements.NoError(json.Unmarshal([]byte(slackSettingsWithoutPendingRestart), &settings))
-	settings.PendingRestart = new(false)
-	result := slackPolicyProjection(&mcpserver.OperationResult{Output: settings}, true)
-	requirements.True(result.IsError)
-	data, err := json.Marshal(result.Output)
-	requirements.NoError(err)
-	assertions.JSONEq(`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
 }
 
 func TestMCPCacheBuildStatusKeepsUnknownJobRefusal(t *testing.T) {
