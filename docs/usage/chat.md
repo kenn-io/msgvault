@@ -947,8 +947,6 @@ Inline profile reads omit fields unknown to the MCP server. Chunked profile read
 preserve the daemon's response, including unknown fields.
 Follow the [chunk download steps](#export-original-emails), using the same person
 ID and, for media, the same media ID for each chunk.
-On `download_expired`, discard the partial data and restart at offset 0 without
-`sha256`.
 
 With curated writes enabled,
 `patch_person_record` applies adds and supersedes atomically using the exact
