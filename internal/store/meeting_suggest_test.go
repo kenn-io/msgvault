@@ -432,18 +432,23 @@ func TestMeetingSuggestionsBudgetAfterFirstResult(t *testing.T) {
 	_, err := st.UpsertMessage(data.Message)
 	r.NoError(err)
 	ref := MeetingLinkRef{Kind: "msg", MessageID: note}
-	var oneCandidateBudget int
-	for budget := 1; budget <= calrecur.RequestReadBudget; budget++ {
-		page, err := st.suggestMeetingLinksContext(t.Context(), ref, 1, nil, budget)
+	low, high := 1, calrecur.RequestReadBudget+1
+	for low < high {
+		budget := low + (high-low)/2
+		_, err := st.suggestMeetingLinksContext(t.Context(), ref, 1, nil, budget)
 		if err == nil {
-			r.Len(page.Suggestions, 1)
-			oneCandidateBudget = budget
-			break
+			high = budget
+		} else {
+			r.ErrorIs(err, ErrQueryTooBroad)
+			low = budget + 1
 		}
-		r.ErrorIs(err, ErrQueryTooBroad)
 	}
-	r.NotZero(oneCandidateBudget)
-	page, err := st.suggestMeetingLinksContext(t.Context(), ref, 2, nil, oneCandidateBudget)
+	oneCandidateBudget := low
+	r.LessOrEqual(oneCandidateBudget, calrecur.RequestReadBudget)
+	page, err := st.suggestMeetingLinksContext(t.Context(), ref, 1, nil, oneCandidateBudget)
+	r.NoError(err)
+	r.Len(page.Suggestions, 1)
+	page, err = st.suggestMeetingLinksContext(t.Context(), ref, 2, nil, oneCandidateBudget)
 	r.Len(page.Suggestions, 1)
 	r.ErrorIs(err, ErrQueryTooBroad)
 }
