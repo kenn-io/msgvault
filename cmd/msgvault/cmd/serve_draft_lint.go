@@ -87,8 +87,15 @@ func emitDraftLintRefusal(emit func(api.CLIRunEvent) error, result draftlint.Res
 }
 func draftLintText(result draftlint.Result) string {
 	var b strings.Builder
+	seen := make(map[[2]string]bool)
 	for _, w := range result.Warnings {
-		fmt.Fprintf(&b, "%s: %s\n", w.Severity, textutil.SanitizeTerminal(w.Message))
+		message := textutil.SanitizeTerminal(w.Message)
+		key := [2]string{w.Severity, message}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		fmt.Fprintf(&b, "%s: %s\n", w.Severity, message)
 	}
 	return b.String()
 }

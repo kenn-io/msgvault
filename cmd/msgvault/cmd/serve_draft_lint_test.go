@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/draftlint"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	msgmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -84,6 +86,26 @@ func TestDraftReplyStrictRefuses(t *testing.T) {
 	assert.NotContains(events[0].Data, `{"`)
 	assert.Zero(calls)
 	assertDraftRows(t, f.store)
+}
+
+func TestDraftLintRepeatedFindingsOutput(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	in := draftlint.Input{Channel: "chat", Body: "FIRST_NAME LAST_NAME <URL> \x01\x02"}
+	result := draftlint.Check(in)
+	var events []api.CLIRunEvent
+	emit := func(event api.CLIRunEvent) error { events = append(events, event); return nil }
+	require.NoError(emitValidatedDraft(emit, result, in, false))
+	require.Len(events, 1)
+	assert.Equal(1, strings.Count(events[0].Data, "error: The text contains a template placeholder."))
+	assert.Equal(1, strings.Count(events[0].Data, "warn: The text contains a template placeholder."))
+	assert.Equal(1, strings.Count(events[0].Data, "error: The text contains a control or replacement character."))
+	events = nil
+	require.NoError(emitValidatedDraft(emit, result, in, true))
+	got := lintObject(t, events)
+	warnings, ok := got["warnings"].([]any)
+	require.True(ok)
+	assert.Len(warnings, 5)
 }
 func TestDraftReplyLintAndProvenanceWarnings(t *testing.T) {
 	for _, allow := range []bool{false, true} {

@@ -527,6 +527,11 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		kind := "edit"
 		if imaplib.IsGeneratedForward(replacement.Raw) {
 			kind = "forward"
+			if intent.ValidateOnly {
+				if _, err := a.forwardDraftAttachmentWrites(ctx, draft.CurrentMessageID, replacement); err != nil {
+					return draftReplyError("invalid_draft", err)
+				}
+			}
 		}
 		lint, done, lintErr := a.gateDraftLint(ctx, emailDraftLintInput(kind, intent.Body, replacement), intent.draftLintOptions, intent.JSON, emit)
 		if done || lintErr != nil {
