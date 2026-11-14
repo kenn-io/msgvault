@@ -11692,6 +11692,8 @@ components:
           nullable: true
           type: string
       required:
+        - kind
+        - status
         - id
         - generation_id
         - claim_key

@@ -11908,6 +11908,8 @@ components:
             - string
             - "null"
       required:
+        - kind
+        - status
         - id
         - generation_id
         - claim_key

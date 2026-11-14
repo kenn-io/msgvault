@@ -1395,7 +1395,7 @@ func hydratePersonFactFreshnessTx(ctx context.Context, tx *loggedTx, claims []pe
 		if value, ok := latest[claims[i].ID]; ok {
 			timestamp = &value
 		}
-		claims[i].Freshness = personfacts.DescribeFreshness(claims[i].Target, claims[i].ValidUntil, timestamp, now)
+		claims[i].Freshness = describePersonFactFreshness(claims[i].Target, claims[i].ValidUntil, timestamp, now)
 	}
 	return nil
 }
@@ -1407,4 +1407,39 @@ func latestPersonFactEvidenceStatusSQL(person, key, version string) string {
  JOIN person_fact_generations generation ON generation.id = status.generation_id
  WHERE status.person_id = %s AND status.evidence_key = %s AND status.source_version = %s
  ORDER BY generation.resolved_at DESC, status.id DESC LIMIT 1`, person, key, version)
+}
+
+// describePersonFactFreshness uses the newest currently supported evidence, not the date
+// of extraction. Expiry takes precedence, including at the exact boundary.
+func describePersonFactFreshness(target personfacts.TargetRef, validUntil, latestSupported *time.Time, now time.Time) personfacts.Freshness {
+	kind := personfacts.KindFact
+	days := 365
+	switch {
+	case target.Kind == personfacts.TargetAttribute && seededPreference(target.Key):
+		kind, days = personfacts.KindPreference, 90
+	case validUntil != nil && target.Kind != personfacts.TargetEmployment:
+		kind, days = personfacts.KindEvent, 7
+	}
+	result := personfacts.Freshness{Kind: kind, Status: personfacts.StatusStale, LatestSupportedAt: latestSupported}
+	if validUntil != nil && !now.Before(*validUntil) {
+		result.Status = personfacts.StatusExpired
+	} else if latestSupported != nil && now.Before(latestSupported.Add(time.Duration(days)*24*time.Hour)) {
+		result.Status = personfacts.StatusFresh
+	}
+	return result
+}
+
+// These IDs belong to the shipped preference categories. Names, slugs and
+// revisions can change without reclassifying historical claims.
+func seededPreference(key string) bool {
+	switch key {
+	case AttributeUniversalIDPrimaryChannel, // primary_channel
+		AttributeUniversalIDAskMeAbout,            // ask_me_about
+		AttributeUniversalIDInterestsFunNow,       // interests_fun_now
+		AttributeUniversalIDInterestsFunGrowingUp, // interests_fun_growing_up
+		AttributeUniversalIDFavoritesFood,         // favorites_food
+		AttributeUniversalIDFavoritesPlace:        // favorites_place
+		return true
+	}
+	return false
 }
