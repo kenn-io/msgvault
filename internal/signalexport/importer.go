@@ -93,7 +93,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 			if candidate != "" {
 				if err := st.AddParticipantIdentifierIfAbsentContext(ctx, participant, SourceType, scopedKey(scope, candidate)); err != nil {
 					if errors.Is(err, store.ErrParticipantIdentifierConflict) {
-						return 0, fmt.Errorf("Signal contact identifiers belong to different participants: %w", err)
+						return 0, fmt.Errorf("signal contact identifiers belong to different participants: %w", err)
 					}
 					return 0, err
 				}
@@ -124,8 +124,8 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 					return p, err
 				}
 				p.key = candidate
-				if strings.HasPrefix(primary, "v1:"+scope+":") {
-					p.key = strings.TrimPrefix(primary, "v1:"+scope+":")
+				if key, ok := strings.CutPrefix(primary, "v1:"+scope+":"); ok {
+					p.key = key
 				}
 				if _, err := resolve(p); err != nil {
 					return p, err

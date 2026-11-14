@@ -2,7 +2,6 @@ package signalexport
 
 import (
 	"bufio"
-	"cmp"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -141,10 +140,13 @@ func decodeObject(b []byte) (map[string]jsontext.Value, error) {
 // next returns a line that is valid until the following call.
 func (r *reader) next() ([]byte, error) {
 	if !r.lines.Scan() {
-		if err := r.lines.Err(); errors.Is(err, bufio.ErrTooLong) {
-			return nil, fmt.Errorf("signal line %d: record limit (16 MiB)", r.line+1)
+		if err := r.lines.Err(); err != nil {
+			if errors.Is(err, bufio.ErrTooLong) {
+				return nil, fmt.Errorf("signal line %d: record limit (16 MiB)", r.line+1)
+			}
+			return nil, fmt.Errorf("read Signal input: %w", err)
 		}
-		return nil, cmp.Or(r.lines.Err(), io.EOF)
+		return nil, io.EOF
 	}
 	r.line++
 	return r.lines.Bytes(), nil
