@@ -80,10 +80,10 @@ func TestInstallKeepsNewerSkill(t *testing.T) {
 }
 
 func TestSkillUnorderableVersions(t *testing.T) {
-	for _, version := range []string{"dev", "", "1.2.3-4-gabc"} {
-		t.Run(version, func(t *testing.T) {
-			content := []byte("<!-- " + Marker + " v" + version + " -->\n")
-			assert.Equal(t, CheckOutdated, differentState(content, Skill{Content: "<!-- " + Marker + " v1.0.0 -->\n"}))
+	for _, test := range []struct{ installed, target string }{{"1.2.3-4-gabc", "1.0.0"}, {"99.0.0", "1.0.0-4-gabc"}} {
+		t.Run(test.installed+"_"+test.target, func(t *testing.T) {
+			content := []byte("<!-- " + Marker + " v" + test.installed + " -->\n")
+			assert.Equal(t, CheckOutdated, differentState(content, Skill{Content: "<!-- " + Marker + " v" + test.target + " -->\n"}))
 		})
 	}
 }

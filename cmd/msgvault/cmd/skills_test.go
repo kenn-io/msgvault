@@ -21,6 +21,8 @@ func setTestHome(t *testing.T, home string) {
 	t.Helper()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("CODEX_HOME", "")
 }
 
 func TestRunSkillsInstall_DetectsAgents(t *testing.T) {
