@@ -61,3 +61,18 @@ func TestAttributeToolContract(t *testing.T) {
 		assert.Equal(t, true, tools[name]["annotations"].(map[string]any)["destructiveHint"], name)
 	}
 }
+
+func TestAttributeToolRejectsArgumentsOutsideSchema(t *testing.T) {
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"create_attribute_definition", "list_person_attributes"}, OperationWriteFamilies: []OperationFamily{OperationFamilyAttributes}}
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"create_attribute_definition", map[string]any{"definition": map[string]any{"object_type": "organization", "slug": "test", "label": "Test", "value_type": "text", "field_type": "text", "cardinality": "single"}}},
+		{"list_person_attributes", map[string]any{"person_id": "1"}},
+		{"list_person_attributes", map[string]any{"person_id": 1, "unexpected": true}},
+	} {
+		result := rawCallTool(t, opts, tc.name, tc.args)
+		assert.Equal(t, true, result["isError"], tc.name)
+	}
+}

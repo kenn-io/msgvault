@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 // attributeOwner names one subject's value table and the checks that differ
@@ -416,10 +414,6 @@ func (s *Store) insertAttributeValueTx(
 	var jsonValue any
 	if len(input.Value.JSON) > 0 {
 		jsonValue = string(input.Value.JSON)
-		if s.dialect.DriverName() == sqliteutil.DriverName() {
-			// JSON columns have numeric affinity in SQLite; bytes retain number tokens.
-			jsonValue = []byte(input.Value.JSON)
-		}
 	}
 	var activeUntil any
 	if input.ActiveUntil != nil {

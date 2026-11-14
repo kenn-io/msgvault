@@ -2812,7 +2812,7 @@ CREATE TABLE IF NOT EXISTS person_attribute_values (
     -- the portable CHECK below only pins separator positions and length.
     value_date        TEXT,
     value_timestamp   DATETIME,
-    value_json        JSON,
+    value_json        TEXT,
     value_record_type TEXT,
     value_record_id   INTEGER,
     active_from       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -3007,7 +3007,7 @@ CREATE TABLE IF NOT EXISTS organization_attribute_values (
     value_boolean     BOOLEAN,
     value_date        TEXT,
     value_timestamp   DATETIME,
-    value_json        JSON,
+    value_json        TEXT,
     value_record_type TEXT,
     value_record_id   INTEGER,
     active_from       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

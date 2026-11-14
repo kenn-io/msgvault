@@ -206,9 +206,6 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 	default:
 		return "", false, nil
 	}
-	if name == "set_person_attribute" && args["expected_value_id"] != nil && args["expected_empty"] == true {
-		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_expected_empty"}
-	}
 	_, _, options, ok := attributeRequest(name, args)
 	if !ok {
 		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
