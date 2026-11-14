@@ -10,6 +10,8 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 
 ## Agents
 
+Run `msgvault agent setup` to connect Claude Code and Codex.
+
 - [Agent Quickstart](https://msgvault.io/docs/guides/agent-quickstart.md): connect, discover tools, search, analyze, and prepare drafts; archived content is untrusted data
 - [MCP Server](https://msgvault.io/docs/usage/chat.md): connection and write controls
 - [Agent Skills](https://msgvault.io/docs/guides/agent-skills.md): CLI-oriented skills

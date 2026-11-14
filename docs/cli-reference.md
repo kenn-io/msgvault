@@ -4694,6 +4694,12 @@ canonical UID as the scalar `msgvault.person` metadata value and
 
 ---
 
+## agent setup
+
+Run `msgvault agent setup` to install skills and connect the MCP server for Claude Code and Codex. Use `--agent claude,codex` to select agents, `--check` to inspect readiness, `--json` for structured output, or `--print` for manual MCP commands.
+
+Setup registers `msgvault mcp`; the agent starts it with its own environment.
+
 ## skills
 
 Install or remove the bundled msgvault agent skills:
@@ -4703,11 +4709,12 @@ msgvault skills install
 msgvault skills uninstall
 ```
 
-Install detects Claude Code and Codex from `~/.claude` and `~/.codex`, then
+Install detects Claude Code and Codex by their agent directories, then
 writes the `msgvault-search`, `msgvault-attachments`, and
 `msgvault-analytics` skills to their user-level skill directories. Existing
 generated copies are updated in place; files without msgvault's generation
-marker are preserved unless `--force` is supplied.
+marker are preserved unless `--force` is supplied. `CLAUDE_CONFIG_DIR`
+and `CODEX_HOME` override the default agent directories.
 
 | Install flag | Description |
 |---|---|
@@ -4884,6 +4891,8 @@ The command edits the config file on this machine and refuses to run against a
 configured remote daemon; run it on the daemon host or pass `--local`.
 
 ### setup status
+
+Status also asks Claude Code and Codex about msgvault. Codex may start `msgvault mcp` and the daemon, which can create files under the msgvault home.
 
 Report the setup state of each feature (text search, semantic people search,
 visual attachments, people sweep, activity

@@ -11,6 +11,8 @@ import (
 )
 
 func TestDetectAgents(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("CODEX_HOME", "")
 	home := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(home, ".claude"), 0o755))
 	require.NoError(t, os.Mkdir(filepath.Join(home, ".codex"), 0o755))
@@ -42,6 +44,16 @@ func TestDetectAgents(t *testing.T) {
 		got, err := DetectAgents(t.TempDir(), nil)
 		require.NoError(t, err)
 		assert.Empty(t, got)
+	})
+
+	t.Run("environment directories", func(t *testing.T) {
+		claude := t.TempDir()
+		codex := t.TempDir()
+		t.Setenv("CLAUDE_CONFIG_DIR", claude)
+		t.Setenv("CODEX_HOME", codex)
+		agents, err := DetectAgents(home, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []AgentDir{{Agent: "claude", Dir: filepath.Join(claude, "skills")}, {Agent: "codex", Dir: filepath.Join(codex, "skills")}}, agents)
 	})
 }
 
@@ -196,4 +208,48 @@ func TestUninstall_GlobRootDoesNotEscape(t *testing.T) {
 	assert.FileExists(
 		filepath.Join(neighbor, "msgvault-search", "SKILL.md"),
 		"skills under a sibling directory must be untouched")
+}
+
+func TestCheck(t *testing.T) {
+	root := t.TempDir()
+	list := testSkills()
+	results, err := Check(root, list)
+	require.NoError(t, err)
+	assert.Equal(t, CheckMissing, results.State)
+	_, err = Install(root, list, false)
+	require.NoError(t, err)
+	results, err = Check(root, list)
+	require.NoError(t, err)
+	assert.Equal(t, CheckCurrent, results.State)
+	path := filepath.Join(root, list[0].Name, "SKILL.md")
+	require.NoError(t, os.WriteFile(path, []byte(Marker+" older"), 0o600))
+	results, err = Check(root, list)
+	require.NoError(t, err)
+	assert.Equal(t, CheckOutdated, results.State)
+	require.NoError(t, os.WriteFile(path, []byte("custom"), 0o600))
+	results, err = Check(root, list)
+	require.NoError(t, err)
+	assert.Equal(t, CheckModified, results.State)
+}
+
+func TestAgentRoots(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("CODEX_HOME", "")
+	for agent, dir := range map[string]string{"claude": ".claude", "codex": ".codex"} {
+		root, ok := Root(home, agent)
+		require.True(t, ok)
+		assert.Equal(t, filepath.Join(home, dir, "skills"), root)
+	}
+	_, ok := Root(home, "other")
+	assert.False(t, ok)
+	claude := t.TempDir()
+	codex := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claude)
+	t.Setenv("CODEX_HOME", codex)
+	for agent, dir := range map[string]string{"claude": claude, "codex": codex} {
+		root, ok := Root(home, agent)
+		require.True(t, ok)
+		assert.Equal(t, filepath.Join(dir, "skills"), root)
+	}
 }
