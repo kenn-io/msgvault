@@ -234,6 +234,15 @@ func (g GetCLICollectionQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type GetCLICollectionMembersQuery struct {
+	// Name Collection name
+	Name string `json:"name" validate:"required"`
+}
+
+func (g GetCLICollectionMembersQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type ListCLIIdentitiesQuery struct {
 	// Account Restrict to a single account
 	Account *string `json:"account,omitempty"`

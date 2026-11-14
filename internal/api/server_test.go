@@ -554,6 +554,14 @@ func (m *mockStore) GetSourcesByTypeAndAccount(string, string) ([]*store.Source,
 	return nil, nil
 }
 
+func (m *mockStore) GetCollectionSourceIDs(name string) ([]int64, error) {
+	c, err := m.GetCollectionByName(name)
+	if err != nil {
+		return nil, err
+	}
+	return c.SourceIDs, nil
+}
+
 func (m *mockStore) GetCollectionByName(name string) (*store.CollectionWithSources, error) {
 	if m.collections != nil {
 		if coll, ok := m.collections[name]; ok {

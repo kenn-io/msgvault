@@ -34,6 +34,12 @@ func (e *collectionTestEngine) GetCollectionScope(_ context.Context, name string
 	return query.CollectionScope{}, store.ErrCollectionNotFound
 }
 
+type listOnlyCollectionEngine struct{ query.Engine }
+
+func (*listOnlyCollectionEngine) ListCollectionScopes(context.Context) ([]query.CollectionScope, error) {
+	return nil, nil
+}
+
 func TestCollectionScopesFilterRealMessageReads(t *testing.T) {
 	assertions := assert.New(t)
 	require := require.New(t)
@@ -89,6 +95,7 @@ func TestCollectionCatalogAvailability(t *testing.T) {
 		{"owner", ServeOptions{Engine: e, CollectionScopesAvailable: true, HybridSearcher: searcher}, true, false},
 		{"older daemon", ServeOptions{Engine: e, HybridSearcher: searcher}, false, false},
 		{"no lister", ServeOptions{Engine: &querytest.MockEngine{}, CollectionScopesAvailable: true, HybridSearcher: searcher}, false, false},
+		{"no getter", ServeOptions{Engine: &listOnlyCollectionEngine{Engine: query.NewSQLiteEngine(nil)}, CollectionScopesAvailable: true, HybridSearcher: searcher}, false, false},
 		{"delegated", ServeOptions{Engine: e, CollectionScopesAvailable: true, HybridSearcher: searcher, DelegatedOnly: true, GrantPermissions: []string{string(agentgrant.PermissionSearchRead), string(agentgrant.PermissionMessageRead)}}, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

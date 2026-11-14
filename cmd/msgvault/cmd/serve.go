@@ -2996,6 +2996,14 @@ func (a *storeAPIAdapter) GetCollectionByNameContext(
 	return a.store.GetCollectionByNameContext(ctx, name)
 }
 
+func (a *storeAPIAdapter) GetCollectionSourceIDs(name string) ([]int64, error) {
+	return a.store.GetCollectionSourceIDs(name)
+}
+
+func (a *storeAPIAdapter) GetCollectionSourceIDsContext(ctx context.Context, name string) ([]int64, error) {
+	return a.store.GetCollectionSourceIDsContext(ctx, name)
+}
+
 func (a *storeAPIAdapter) ListCollections() ([]*store.CollectionWithSources, error) {
 	return a.store.ListCollections()
 }

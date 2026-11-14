@@ -1204,6 +1204,16 @@ func (c *Client) GetCLICollection(ctx context.Context, name string) (*CLICollect
 	return &collection, nil
 }
 
+func (c *Client) GetCLICollectionMembers(ctx context.Context, name string) (*generated.CliCollectionMembersResponse, error) {
+	resp, err := APIResponseWithNotFound(c, func(client *apiclient.Client) (*generated.GetCLICollectionMembersResp, error) {
+		return client.GetCLICollectionMembersWithResponse(ctx, &generated.GetCLICollectionMembersRequestOptions{Query: &generated.GetCLICollectionMembersQuery{Name: name}})
+	}, func(*generated.GetCLICollectionMembersResp) error { return store.ErrCollectionNotFound })
+	if err != nil {
+		return nil, err
+	}
+	return resp.JSON200, nil
+}
+
 func (c *Client) CreateCLICollection(
 	ctx context.Context,
 	req CLICollectionCreateRequest,

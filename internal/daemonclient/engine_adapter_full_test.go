@@ -2507,8 +2507,10 @@ func TestEngineListCollectionScopesProjectsUserCollections(t *testing.T) {
 func TestEngineGetCollectionScope(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
+	calls := 0
 	client := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("/api/v1/cli/collection", r.URL.Path)
+		calls++
+		assert.Equal("/api/v1/cli/collection/members", r.URL.Path)
 		name := r.URL.Query().Get("name")
 		if name == "missing" {
 			http.Error(w, "not found", http.StatusNotFound)
@@ -2518,7 +2520,7 @@ func TestEngineGetCollectionScope(t *testing.T) {
 		if name == "work" {
 			ids = []int64{2, 1}
 		}
-		writeJSONResponse(t, w, map[string]any{"collection": map[string]any{"name": name, "created_at": "2026-01-01T00:00:00Z", "source_ids": ids}})
+		writeJSONResponse(t, w, map[string]any{"name": name, "source_ids": ids})
 	})
 	engine := NewEngineAdapter(client)
 	found, err := engine.GetCollectionScope(t.Context(), "work")
@@ -2530,6 +2532,9 @@ func TestEngineGetCollectionScope(t *testing.T) {
 	assert.Empty(empty.SourceIDs)
 	_, err = engine.GetCollectionScope(t.Context(), "missing")
 	require.ErrorIs(err, store.ErrCollectionNotFound)
+	_, err = engine.GetCollectionScope(t.Context(), store.DefaultCollectionName)
+	require.ErrorIs(err, store.ErrCollectionNotFound)
+	assert.Equal(3, calls)
 }
 
 func TestEngineAggregateForwardsAndConfirmsCollectionSourceIDs(t *testing.T) {

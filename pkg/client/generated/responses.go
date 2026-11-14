@@ -473,6 +473,10 @@ type GetCLICollectionResponse = CliCollectionEnvelope
 
 type GetCLICollectionErrorResponse = ErrorResponse
 
+type GetCLICollectionMembersResponse = CliCollectionMembersResponse
+
+type GetCLICollectionMembersErrorResponse = ErrorResponse
+
 type ListCLICollectionsResponse = CliCollectionsResponse
 
 type ListCLICollectionsErrorResponse = ErrorResponse
@@ -4749,6 +4753,14 @@ type GetCLICollectionResp struct {
 	StatusCode   int
 	JSON200      *GetCLICollectionResponse
 	JSONDefault  *GetCLICollectionErrorResponse
+}
+
+type GetCLICollectionMembersResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetCLICollectionMembersResponse
+	JSONDefault  *GetCLICollectionMembersErrorResponse
 }
 
 type ListCLICollectionsResp struct {

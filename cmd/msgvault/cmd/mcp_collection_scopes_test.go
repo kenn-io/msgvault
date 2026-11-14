@@ -12,13 +12,18 @@ func TestCollectionScopeDiscoveryRequiresExactRoute(t *testing.T) {
 	assert.False(mcpCollectionScopesAvailable(nil))
 	assert.False(mcpCollectionScopesAvailable(&apiprotocol.MCPCapabilities{}))
 	route := apiprotocol.MCPRouteDescriptor{OperationID: "listCLICollections", Method: "GET", Path: "/api/v1/cli/collections"}
-	assert.True(mcpCollectionScopesAvailable(&apiprotocol.MCPCapabilities{Routes: []apiprotocol.MCPRouteDescriptor{route}}))
-	route.Method = "POST"
+	members := apiprotocol.MCPRouteDescriptor{OperationID: "getCLICollectionMembers", Method: "GET", Path: "/api/v1/cli/collection/members", QueryParameters: []string{"name"}}
 	assert.False(mcpCollectionScopesAvailable(&apiprotocol.MCPCapabilities{Routes: []apiprotocol.MCPRouteDescriptor{route}}))
+	assert.True(mcpCollectionScopesAvailable(&apiprotocol.MCPCapabilities{Routes: []apiprotocol.MCPRouteDescriptor{route, members}}))
+	members.QueryParameters = nil
+	assert.False(mcpCollectionScopesAvailable(&apiprotocol.MCPCapabilities{Routes: []apiprotocol.MCPRouteDescriptor{route, members}}))
+	members.QueryParameters = []string{"name"}
+	route.Method = "POST"
+	assert.False(mcpCollectionScopesAvailable(&apiprotocol.MCPCapabilities{Routes: []apiprotocol.MCPRouteDescriptor{route, members}}))
 	route.Method = "GET"
 	route.OperationID = "other"
-	assert.False(mcpCollectionScopesAvailable(&apiprotocol.MCPCapabilities{Routes: []apiprotocol.MCPRouteDescriptor{route}}))
+	assert.False(mcpCollectionScopesAvailable(&apiprotocol.MCPCapabilities{Routes: []apiprotocol.MCPRouteDescriptor{route, members}}))
 	route.OperationID = "listCLICollections"
 	route.Path = "/api/v1/cli/other"
-	assert.False(mcpCollectionScopesAvailable(&apiprotocol.MCPCapabilities{Routes: []apiprotocol.MCPRouteDescriptor{route}}))
+	assert.False(mcpCollectionScopesAvailable(&apiprotocol.MCPCapabilities{Routes: []apiprotocol.MCPRouteDescriptor{route, members}}))
 }

@@ -37,7 +37,7 @@ View never deletes archive messages.
 
 ## Message collections
 
-On unreleased `main`, owner clients can call `list_message_collections` when the daemon advertises collection discovery. Pass a collection name to `search_metadata`, `search_messages`, `search_message_bodies`, `semantic_search_messages`, `get_message`, `list_messages`, or `aggregate` to restrict that read to its current sources. Do not combine `collection` with `account`; an empty `collection` value is refused. An empty collection matches no messages. Body search requires at most one source; a collection with multiple sources is refused. Semantic search includes every source in a collection. Other reads, including similar-message, thread, domain and in-message searches, do not accept a collection scope.
+On unreleased `main`, owner clients can call `list_message_collections` when the daemon advertises collection discovery and membership lookup. Pass a collection name to `search_metadata`, `search_messages`, `search_message_bodies`, `semantic_search_messages`, `get_message`, `list_messages`, or `aggregate` to restrict that read to its current sources. Do not combine `collection` with `account`; an empty `collection` value is refused. An empty collection matches no messages. Body search requires at most one source; a collection with multiple sources is refused. Semantic search includes every source in a collection. Other reads, including similar-message, thread, domain and in-message searches, do not accept a collection scope.
 
 ## Calendar control
 

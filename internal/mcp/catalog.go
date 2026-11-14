@@ -131,8 +131,9 @@ func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*t
 
 func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 	_, collections := opts.Engine.(query.CollectionScopeLister)
+	_, getter := opts.Engine.(query.CollectionScopeGetter)
 	return catalogCapabilities{
-		collections:     collections && opts.CollectionScopesAvailable && !opts.DelegatedOnly,
+		collections:     collections && getter && opts.CollectionScopesAvailable && !opts.DelegatedOnly,
 		sqlQuery:        opts.ArchiveSQLQuerier != nil,
 		semanticSearch:  opts.HybridEngine != nil || opts.HybridSearcher != nil,
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,

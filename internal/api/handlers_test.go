@@ -9576,3 +9576,40 @@ func TestAppleSourceStatusReusesLoadedSources(t *testing.T) {
 		assert.Equal(int32(1), st.sourceLists.Load())
 	}
 }
+
+func TestCLICollectionMembers(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "members@example.test")
+	require.NoError(err)
+	_, err = st.CreateCollection("work", "", []int64{source.ID})
+	require.NoError(err)
+	_, err = st.CreateCollection("empty", "", []int64{source.ID})
+	require.NoError(err)
+	require.NoError(st.RemoveSourcesFromCollection("empty", []int64{source.ID}))
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
+	for _, tc := range []struct {
+		query  string
+		status int
+		name   string
+		ids    []int64
+	}{
+		{"?name=work", http.StatusOK, "work", []int64{source.ID}},
+		{"?name=empty", http.StatusOK, "empty", []int64{}},
+		{"?name=missing", http.StatusNotFound, "", nil},
+		{"", http.StatusBadRequest, "", nil},
+	} {
+		rec := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/collection/members"+tc.query, nil))
+		assert.Equal(tc.status, rec.Code)
+		if tc.status == http.StatusOK {
+			var got cliCollectionMembersResponse
+			require.NoError(json.NewDecoder(rec.Body).Decode(&got))
+			assert.Equal(tc.name, got.Name)
+			assert.Equal(tc.ids, got.SourceIDs)
+		}
+	}
+	assert.True(remoteClientOperationAllowed("getCLICollectionMembers", false))
+	assert.NotContains(agentReadPermissions, "getCLICollectionMembers")
+}

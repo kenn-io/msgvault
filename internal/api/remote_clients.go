@@ -14,7 +14,7 @@ func remoteClientOperationAllowed(operationID string, collectionsWrite bool) boo
 	switch operationID {
 	case "getHealth", "getCLIStats", "searchCLI", "listCLIAccounts", "getCLICacheStats",
 		"getCLIMessage", "getCLIMessageOriginal", "getCLIMessageThread", "getCLIMessageRaw",
-		"getCLIAttachment", "listCLICollections", "getCLICollection", "listCLIIdentities":
+		"getCLIAttachment", "listCLICollections", "getCLICollection", "getCLICollectionMembers", "listCLIIdentities":
 		return true
 	case "createCLICollection", "addCLICollectionSources", "removeCLICollectionSources", "deleteCLICollection":
 		return collectionsWrite
