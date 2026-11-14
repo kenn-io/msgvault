@@ -87,3 +87,7 @@ func TestImportSignalExportNewerFormat(t *testing.T) {
 	assert.NotContains(t, out.String(), "Re-run")
 	assert.NoDirExists(t, cfg.AnalyticsDir())
 }
+
+func TestSignalExportReasonLabelIndexLimit(t *testing.T) {
+	assert.Equal(t, "file scan limit reached", signalExportReasonLabel("index_limit"))
+}

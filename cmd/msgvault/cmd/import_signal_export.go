@@ -111,6 +111,8 @@ func signalExportReasonLabel(reason string) string {
 		return "invalid edit history"
 	case "missing":
 		return "file not found"
+	case "index_limit":
+		return "file scan limit reached"
 	case "invalid_hash":
 		return "missing or invalid file hash"
 	}
