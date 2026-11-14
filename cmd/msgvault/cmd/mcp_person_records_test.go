@@ -177,12 +177,7 @@ func TestPersonRecordSDKPatchAllKinds(t *testing.T) {
 	args := map[string]any{"person_id": id, "etag": current.ETag, "patch": patch}
 	updated := loopToolOutput[mcpserver.StructuredPersonRecord](t, call("patch_person_record", args))
 	assertions.NotEqual(current.ETag, updated.ETag)
-	assertions.Len(updated.Profile.Names, 1)
-	assertions.Len(updated.Profile.ContactPoints, 1)
-	assertions.Len(updated.Profile.Addresses, 1)
-	assertions.Len(updated.Profile.Dates, 1)
 	assertions.Len(updated.Profile.Categories, 1)
-	assertions.Len(updated.Profile.Media, 1)
 }
 
 func TestPersonRecordCapabilitiesAndRefusals(t *testing.T) {

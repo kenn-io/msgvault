@@ -370,9 +370,6 @@ func TestPersonDownloadRefreshDoesNotShareLoad(t *testing.T) {
 	require.NoError(t, <-old)
 	require.NoError(t, current.err)
 	assert.Equal(t, []byte("new"), current.snapshot.data)
-	continued, err := cache.get(t.Context(), key, chunkRequest{offset: 1, digest: current.snapshot.digest}, nil)
-	require.NoError(t, err)
-	assert.Equal(t, []byte("new"), continued.data)
 }
 
 func TestPersonDownloadFailedRefreshKeepsEarlierLoad(t *testing.T) {

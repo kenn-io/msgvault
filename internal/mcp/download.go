@@ -41,19 +41,12 @@ type downloadSnapshot struct {
 	timer      *time.Timer
 }
 
-type downloadRefresh struct {
-	active  int
-	next    uint64
-	applied uint64
-}
-
 // downloadCache retains at most 256 MiB across eight downloads. A digest pins
 // continuations to their initial bytes until a fresh read replaces the snapshot.
 type downloadCache struct {
 	mu      sync.Mutex
 	entries map[downloadKey]*downloadSnapshot
 	loading map[downloadKey]chan struct{}
-	refresh map[downloadKey]*downloadRefresh
 	bytes   int
 	closed  bool
 }
@@ -119,27 +112,6 @@ retry:
 			close(pending)
 		}()
 	}
-	var refresh *downloadRefresh
-	var sequence uint64
-	if key.operation != "" {
-		if c.refresh == nil {
-			c.refresh = make(map[downloadKey]*downloadRefresh)
-		}
-		refresh = c.refresh[key]
-		if refresh == nil {
-			refresh = &downloadRefresh{}
-			c.refresh[key] = refresh
-		}
-		refresh.active++
-		refresh.next++
-		sequence = refresh.next
-		defer func() {
-			refresh.active--
-			if refresh.active == 0 {
-				delete(c.refresh, key)
-			}
-		}()
-	}
 	entry, err := func() (*downloadSnapshot, error) {
 		c.mu.Unlock()
 		defer c.mu.Lock()
@@ -170,11 +142,6 @@ retry:
 		return nil, errDownloadExpired
 	}
 	if key.operation != "" {
-		// A later successful refresh owns the cache if this read finished last.
-		if sequence < refresh.applied {
-			return entry, nil
-		}
-		refresh.applied = sequence
 		if c.entries[key] != nil {
 			c.remove(key)
 		}
