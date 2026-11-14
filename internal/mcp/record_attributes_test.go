@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"slices"
 	"sync/atomic"
@@ -81,7 +82,7 @@ func TestAttributeToolContract(t *testing.T) {
 
 func TestAttributeToolRejectsArgumentsOutsideSchema(t *testing.T) {
 	spy := &attributeValidationSpy{}
-	opts := ServeOptions{Operations: spy, OperationCapabilities: []string{"create_attribute_definition", "list_person_attributes"}, OperationWriteFamilies: []OperationFamily{OperationFamilyAttributes}}
+	opts := ServeOptions{Operations: spy, OperationCapabilities: []string{"create_attribute_definition", "list_person_attributes", "clear_person_attribute"}, OperationWriteFamilies: []OperationFamily{OperationFamilyAttributes}}
 	for _, tc := range []struct {
 		name string
 		args map[string]any
@@ -89,6 +90,12 @@ func TestAttributeToolRejectsArgumentsOutsideSchema(t *testing.T) {
 		{"create_attribute_definition", map[string]any{"definition": map[string]any{"object_type": "organization", "slug": "test", "label": "Test", "value_type": "text", "field_type": "text", "cardinality": "single"}}},
 		{"list_person_attributes", map[string]any{"person_id": "1"}},
 		{"list_person_attributes", map[string]any{"person_id": 1, "unexpected": true}},
+		{"list_person_attributes", map[string]any{"person_id": json.Number("1.0000000000000001")}},
+		{"list_person_attributes", map[string]any{"person_id": 0}},
+		{"list_person_attributes", map[string]any{"person_id": json.Number("9007199254740992")}},
+		{"clear_person_attribute", map[string]any{"person_id": 1, "slug": "example", "ordinal": -1}},
+		{"clear_person_attribute", map[string]any{"person_id": 1, "slug": "example", "ordinal": json.Number("1.0000000000000001")}},
+		{"clear_person_attribute", map[string]any{"person_id": 1, "slug": "example", "expected_value_id": 0}},
 	} {
 		result := rawCallTool(t, opts, tc.name, tc.args)
 		assert.Equal(t, true, result["isError"], tc.name)
