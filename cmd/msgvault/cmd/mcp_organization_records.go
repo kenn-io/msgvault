@@ -31,6 +31,8 @@ func organizationMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCa
 		}
 	}
 
+	hasReadState := hasRoute("getOrganization", http.MethodGet, "/api/v1/organizations/{id}") && hasRoute("getOrganizationHistory", http.MethodGet, "/api/v1/organizations/{id}/history")
+	hasAttributeRead := hasRoute("listOrganizationAttributes", http.MethodGet, "/api/v1/organizations/{id}/attributes", "definition_slug", "include_superseded")
 	for _, r := range []struct {
 		name, id, method, path string
 		query, properties      []string
@@ -41,7 +43,7 @@ func organizationMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCa
 		{"replace_organization_profile", "putOrganizationProfile", http.MethodPut, "/api/v1/organizations/{id}/profile", nil, []string{"names", "identifiers", "addresses", "contact_points", "media", "categories"}},
 		{"set_organization_attribute", "setOrganizationAttribute", http.MethodPost, "/api/v1/organizations/{id}/attributes", nil, []string{"definition_slug", "value", organizationSourceField, "ordinal", "expected_value_id", "dry_run"}},
 	} {
-		if (r.name != "set_organization_attribute" || hasRoute("listOrganizationAttributes", http.MethodGet, "/api/v1/organizations/{id}/attributes", "definition_slug", "include_superseded")) && hasRoute(r.id, r.method, r.path, r.query...) && (len(r.properties) == 0 || mcpRequestPropertiesPresent(caps, r.id, r.properties...)) && (r.name == "create_organization" || (hasRoute("getOrganization", http.MethodGet, "/api/v1/organizations/{id}") && hasRoute("getOrganizationHistory", http.MethodGet, "/api/v1/organizations/{id}/history"))) {
+		if (r.name != "set_organization_attribute" || hasAttributeRead) && hasRoute(r.id, r.method, r.path, r.query...) && (len(r.properties) == 0 || mcpRequestPropertiesPresent(caps, r.id, r.properties...)) && (r.name == "create_organization" || hasReadState) {
 			names = append(names, r.name)
 		}
 	}
