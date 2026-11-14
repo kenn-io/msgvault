@@ -264,6 +264,22 @@ func TestCommandSyncReadFailurePreservesSuccessfulAccount(t *testing.T) {
 }
 
 func TestCommandDraftScopeGateUsesCheckedSnapshot(t *testing.T) {
+	for _, tc := range []struct {
+		name, scope string
+		allowed     bool
+	}{{"draft write denied", oauth.ScopeGmailReadonly, false}, {"send-as list denied", oauth.ScopeGmailCompose, false}, {"both allowed", oauth.ScopeGmailModify, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, state := setupCommandOAuth(t)
+			putCommandToken(t, state, "reader@example.com", []string{tc.scope})
+			source := &store.Source{SourceType: "gmail", Identifier: "reader@example.com"}
+			err := gmailDraftScopeGate(withInvocation(t.Context(), state), state.cfg, source, oauth.ScopesGmailDraftWrite, oauth.ScopesGmailSendAsList)
+			if tc.allowed {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
 	for _, mode := range []string{"read-once", "fail", "empty-object"} {
 		t.Run(mode, func(t *testing.T) {
 			_, state := setupCommandOAuth(t)

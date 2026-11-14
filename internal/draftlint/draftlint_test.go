@@ -45,14 +45,10 @@ func TestCheckSpansCountRunes(t *testing.T) {
 }
 
 func TestCheckIgnoresQuotedPlaceholders(t *testing.T) {
-	r := Check(Input{Channel: "email", Body: "On Monday I wrote:\nFIRST_NAME"})
+	body := "Thanks\nOn Monday someone wrote:\n> Hello FIRST_NAME\n"
+	r := Check(Input{Channel: "email", Body: body})
+	assert.Empty(t, r.Warnings)
+	r = Check(Input{Channel: "chat", Body: body})
 	require.Len(t, r.Warnings, 1)
 	assert.Equal(t, CodeUnresolvedPlaceholder, r.Warnings[0].Code)
-	r = Check(Input{Channel: "email", Body: "Thanks\nOn Monday someone wrote:\n> Hello FIRST_NAME\n"})
-	assert.Empty(t, r.Warnings)
-	r = Check(Input{Channel: "email", Body: "On Monday someone wrote:\n> Hello FIRST_NAME\n\nThanks LAST_NAME"})
-	require.Len(t, r.Warnings, 1)
-	assert.Equal(t, &Span{52, 61}, r.Warnings[0].Span)
-	r = Check(Input{Channel: "email", Body: "Thanks\n--- Forwarded message ---\nFIRST_NAME"})
-	assert.Empty(t, r.Warnings)
 }

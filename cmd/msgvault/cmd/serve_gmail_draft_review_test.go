@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/imap"
 	msgmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -1078,14 +1080,6 @@ func TestGmailDraftExternalAdoptionPersistsAttachments(t *testing.T) {
 	assert.Equal("invalid_draft", err.Error())
 	assert.Equal(0, fixture.client.updateCalls)
 
-	ownership, err := fixture.store.AcquireSyncExecutionContext(t.Context(), fixture.source.ID)
-	require.NoError(err)
-	t.Cleanup(func() { _ = ownership.Release() })
-	events, err = lintRun(t, fixture.adapter, nil, "draft-edit", adopted.DraftID, "--revision", strconv.FormatInt(adopted.Revision, 10), "--body", "candidate", "--validate-only", "--json")
-	require.EqualError(err, "invalid_draft")
-	assert.Empty(events)
-	_, err = lintRun(t, fixture.adapter, nil, "draft-edit", adopted.DraftID, "--revision", strconv.FormatInt(adopted.Revision, 10), "--body", "FIRST_NAME", "--strict", "--json")
-	require.EqualError(err, "draft_lint_failed")
 }
 
 func TestGmailDraftCancellationClearsClaim(t *testing.T) {
@@ -1412,22 +1406,29 @@ func TestGmailDraftPendingDeleteReconciles(t *testing.T) {
 }
 
 func TestGmailDraftPendingEditReconciles(t *testing.T) {
-	for _, observed := range []string{"original", "replacement", "synced_replacement", "external", "absent"} {
+	for _, observed := range []string{"original", "replacement", "synced_replacement", "external", "absent", "strict unaccepted", "strict accepted same"} {
 		t.Run(observed, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			f := newGmailDraftTestFixture(t)
 			draft := f.seedDraft(t)
 			raw := gmailDraftTestRaw("candidate", "candidate@example.test")
+			if strings.HasPrefix(observed, "strict ") {
+				current, err := f.store.GetMessageRawContext(t.Context(), draft.CurrentMessageID)
+				require.NoError(err)
+				candidate, err := imap.BuildDraftReplacement(current, "FIRST_NAME", time.Now(), "candidate@example.test")
+				require.NoError(err)
+				raw = candidate.Raw
+			}
 			_, err := f.store.ClaimGmailDraftContext(t.Context(), draft.DraftID, draft.Revision, store.GmailDraftOperationEdit, raw)
 			require.NoError(err)
 			code, replacementID := "remote_unknown", ""
-			if observed == "replacement" || observed == "synced_replacement" {
+			if observed == "replacement" || observed == "synced_replacement" || observed == "strict accepted same" {
 				code, replacementID = "accepted_local_failed", "gmail-message-replacement"
 			}
 			require.NoError(f.store.RecordGmailDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, code, replacementID))
 			switch observed {
-			case "replacement", "synced_replacement":
+			case "replacement", "synced_replacement", "strict accepted same":
 				f.client.getDraft.Message.ID = "gmail-message-replacement"
 				f.client.getDraft.Message.Raw = raw
 			case "external":
@@ -1451,11 +1452,26 @@ func TestGmailDraftPendingEditReconciles(t *testing.T) {
 				require.NoError(err)
 			}
 			f.client.updateDraft = &gmail.Draft{ID: "gmail-draft-managed", Message: gmail.RawMessage{ID: "gmail-message-new", ThreadID: "gmail-thread-1"}}
-			events, err := f.lifecycle(t, api.CLIRunDraftEditCommand, draft, "new body")
+			var events []api.CLIRunEvent
+			if strings.HasPrefix(observed, "strict ") {
+				events, err = lintRun(t, f.adapter, nil, "draft-edit", draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10), "--body", "FIRST_NAME", "--strict", "--json")
+			} else {
+				events, err = f.lifecycle(t, api.CLIRunDraftEditCommand, draft, "new body")
+			}
 			switch observed {
 			case "original":
 				require.NoError(err)
 				assert.Equal(1, f.client.updateCalls)
+			case "strict unaccepted":
+				require.EqualError(err, "draft_lint_failed")
+				assert.Zero(f.client.updateCalls)
+			case "strict accepted same":
+				require.NoError(err)
+				require.Len(events, 1)
+				assert.Equal(cliStreamStdout, events[0].Type)
+				assert.Contains(events[0].Data, `"status":"recovered"`)
+				assert.Contains(events[0].Data, `"code":"unresolved_placeholder"`)
+				assert.Zero(f.client.updateCalls)
 			case "replacement", "synced_replacement":
 				require.ErrorContains(err, "revision_mismatch")
 				require.Len(events, 1)

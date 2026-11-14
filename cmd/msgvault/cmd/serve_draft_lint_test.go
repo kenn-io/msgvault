@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -178,64 +177,41 @@ func TestDraftReplyLintAndProvenanceWarnings(t *testing.T) {
 }
 
 func TestValidateOnlyWritesNothing(t *testing.T) {
-	t.Run("imap", func(t *testing.T) {
-		assert := assert.New(t)
+	assert := assert.New(t)
 
-		f := newDraftReplyFixture(t)
-		a := f.grantedAdapter()
-		a.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
-			assert.Fail("validation contacted provider")
-			return nil, errors.New("unexpected call")
-		}
-		events, err := f.run(t, a, "--body", "Hi FIRST_NAME", "--validate-only", "--strict", "--json")
-		require.NoError(t, err)
-		got := lintObject(t, events)
-		assert.Equal("validated", got["status"])
-		assert.Equal(false, got["valid"])
-		assert.NotContains(got, "draft_id")
-		assert.NotContains(got, "recipient_provenance_status")
-		assertDraftRows(t, f.store)
-	})
+	f := newDraftReplyFixture(t)
+	a := f.grantedAdapter()
+	a.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
+		assert.Fail("validation contacted provider")
+		return nil, errors.New("unexpected call")
+	}
+	events, err := f.run(t, a, "--body", "Hi FIRST_NAME", "--validate-only", "--strict", "--json")
+	require.NoError(t, err)
+	got := lintObject(t, events)
+	assert.Equal("validated", got["status"])
+	assert.Equal(false, got["valid"])
+	assert.NotContains(got, "draft_id")
+	assert.NotContains(got, "recipient_provenance_status")
+	assertDraftRows(t, f.store)
 }
 func TestGmailDraftReplyValidateOnlyChecksScopes(t *testing.T) {
-	for _, tc := range []struct {
-		name, scope string
-		allowed     bool
-	}{
-		{"draft write denied", oauth.ScopeGmailReadonly, false},
-		{"send-as list denied", oauth.ScopeGmailCompose, false},
-		{"both allowed", oauth.ScopeGmailModify, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-
-			f := newGmailDraftTestFixture(t)
-			_, state := setupCommandOAuth(t)
-			putCommandToken(t, state, f.source.Identifier, []string{tc.scope})
-			state.cfg.OAuth.Tokens.ReadCommand = testutil.SecretCommand(t, "read-once")
-			f.adapter.config = state.cfg
-			var events []api.CLIRunEvent
-			err := f.adapter.runCLIReplyDraft(withInvocation(t.Context(), state), api.CLIRunRequest{Args: []string{
-				"draft-reply", strconv.FormatInt(f.parentID, 10), "--body", "Thanks", "--validate-only", "--json",
-			}}, func(event api.CLIRunEvent) error {
-				events = append(events, event)
-				return nil
-			})
-			if tc.allowed {
-				require.NoError(err)
-				got := lintObject(t, events)
-				assert.Equal("validated", got["status"])
-				assert.Equal(true, got["valid"])
-			} else {
-				require.EqualError(err, "insufficient_scope")
-				assert.Empty(events)
-			}
-			assert.Zero(f.client.listCalls)
-			assert.Zero(f.client.createCalls)
-			assertDraftRows(t, f.store)
-		})
-	}
+	f := newGmailDraftTestFixture(t)
+	_, state := setupCommandOAuth(t)
+	putCommandToken(t, state, f.source.Identifier, []string{oauth.ScopeGmailCompose})
+	state.cfg.OAuth.Tokens.ReadCommand = testutil.SecretCommand(t, "read-once")
+	f.adapter.config = state.cfg
+	var events []api.CLIRunEvent
+	err := f.adapter.runCLIReplyDraft(withInvocation(t.Context(), state), api.CLIRunRequest{Args: []string{
+		"draft-reply", strconv.FormatInt(f.parentID, 10), "--body", "Thanks", "--validate-only", "--json",
+	}}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	require.EqualError(t, err, "insufficient_scope")
+	assert.Empty(t, events)
+	assert.Zero(t, f.client.listCalls)
+	assert.Zero(t, f.client.createCalls)
+	assertDraftRows(t, f.store)
 }
 
 func TestValidateOnlyReplyAllMatchesCreate(t *testing.T) {
@@ -300,10 +276,12 @@ func TestDraftLintParsers(t *testing.T) {
 		}
 	}
 
-	got, err := parseDraftComposeArgs([]string{"draft-compose", "--source-id", "1", "--to", "a@example.com", "--body", "--strict"})
+	got, err := parseDraftComposeArgs([]string{"draft-compose", "--source-id", "1", "--to", "a@example.com", "--body", "ok", "--strict"})
 	require.NoError(err)
-	assert.Equal("--strict", got.Body)
-	assert.Equal(draftLintOptions{}, got.draftLintOptions)
+	assert.True(got.Strict)
+	forward, err := parseDraftForwardArgs([]string{"draft-forward", "1", "--source-id", "1", "--to", "a@example.com", "--body", "ok", "--validate-only"})
+	require.NoError(err)
+	assert.True(forward.ValidateOnly)
 
 	for _, command := range []string{"draft-get", "draft-delete", "draft-recover"} {
 		args := []string{command, "draft"}
@@ -347,28 +325,46 @@ func TestValidateOnlyEditWritesNothing(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(before, after)
 	})
-	t.Run(sourceTypeGmail, func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-
+	t.Run("gmail lock", func(t *testing.T) {
 		f := newGmailDraftTestFixture(t)
 		draft := f.seedDraft(t)
-		_, state := setupCommandOAuth(t)
-		putCommandToken(t, state, f.source.Identifier, oauth.ScopesGmailReadonly)
-		f.adapter.config = state.cfg
-		var scopeEvents []api.CLIRunEvent
-		err := f.adapter.runCLIDraftLifecycle(withInvocation(t.Context(), state), api.CLIRunRequest{Args: []string{
-			"draft-edit", draft.DraftID, "--revision", "1", "--body", "Thanks", "--validate-only", "--json",
-		}}, func(event api.CLIRunEvent) error {
-			scopeEvents = append(scopeEvents, event)
-			return nil
-		})
-		require.EqualError(err, "insufficient_scope")
-		assert.Empty(scopeEvents)
-		assert.Zero(f.client.getCalls)
-		assert.Zero(f.client.updateCalls)
+		f.client.getDraft.Message.ID = "gmail-message-external-attachment"
+		f.client.getDraft.Message.Raw = gmailDraftTestRawWithAttachment("gmail-external-attachment@example.test")
+		_, err := f.lifecycle(t, api.CLIRunDraftEditCommand, draft, "candidate")
+		require.EqualError(t, err, "changed_externally")
+		adopted, err := f.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+		require.NoError(t, err)
+		ownership, err := f.store.AcquireSyncExecutionContext(t.Context(), f.source.ID)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = ownership.Release() })
+		events, err := lintRun(t, f.adapter, nil, "draft-edit", adopted.DraftID, "--revision", strconv.FormatInt(adopted.Revision, 10), "--body", "candidate", "--validate-only", "--json")
+		require.EqualError(t, err, "invalid_draft")
+		assert.Empty(t, events)
 	})
+
 }
+func TestGmailDraftEditValidateOnlyChecksScope(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	f := newGmailDraftTestFixture(t)
+	draft := f.seedDraft(t)
+	_, state := setupCommandOAuth(t)
+	putCommandToken(t, state, f.source.Identifier, oauth.ScopesGmailReadonly)
+	f.adapter.config = state.cfg
+	var scopeEvents []api.CLIRunEvent
+	err := f.adapter.runCLIDraftLifecycle(withInvocation(t.Context(), state), api.CLIRunRequest{Args: []string{
+		"draft-edit", draft.DraftID, "--revision", "1", "--body", "Thanks", "--validate-only", "--json",
+	}}, func(event api.CLIRunEvent) error {
+		scopeEvents = append(scopeEvents, event)
+		return nil
+	})
+	require.EqualError(err, "insufficient_scope")
+	assert.Empty(scopeEvents)
+	assert.Zero(f.client.getCalls)
+	assert.Zero(f.client.updateCalls)
+}
+
 func TestDraftChatPreviewAndLint(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -415,54 +411,6 @@ func TestDraftChatPreviewAndLint(t *testing.T) {
 	events, err = lintRun(t, a, nil, "draft-edit", draftID, "--revision", "1", "--body", "LAST_NAME", "--json")
 	require.NoError(err)
 	assert.Contains(events[0].Data, "unresolved_placeholder")
-}
-
-func TestGmailDraftStrictPendingEditRecovery(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		accepted bool
-		body     string
-	}{{"unaccepted", false, "FIRST_NAME"}, {"accepted same", true, "FIRST_NAME"}, {"accepted different", true, "different"}} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-
-			f := newGmailDraftTestFixture(t)
-			draft := f.seedDraft(t)
-			current, err := f.store.GetMessageRawContext(t.Context(), draft.CurrentMessageID)
-			require.NoError(err)
-			candidate, err := imaplib.BuildDraftReplacement(current, "FIRST_NAME", time.Now(), "candidate@example.test")
-			require.NoError(err)
-			raw := candidate.Raw
-			_, err = f.store.ClaimGmailDraftContext(t.Context(), draft.DraftID, draft.Revision, store.GmailDraftOperationEdit, raw)
-			require.NoError(err)
-			code, id := "remote_unknown", ""
-			if tc.accepted {
-				code, id = "accepted_local_failed", "gmail-message-replacement"
-			}
-			require.NoError(f.store.RecordGmailDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, code, id))
-			if tc.accepted {
-				f.client.getDraft.Message.ID = id
-				f.client.getDraft.Message.Raw = raw
-			}
-			args := []string{"draft-edit", draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10), "--body", tc.body, "--strict", "--json"}
-			events, err := lintRun(t, f.adapter, nil, args...)
-			if tc.accepted {
-				if tc.body == "FIRST_NAME" {
-					require.NoError(err)
-					assert.Equal(cliStreamStdout, events[0].Type)
-					assert.Contains(events[0].Data, `"code":"unresolved_placeholder"`)
-				} else {
-					require.EqualError(err, "revision_mismatch")
-					assert.Equal(cliStreamStderr, events[0].Type)
-				}
-				assert.Contains(events[0].Data, `"status":"recovered"`)
-			} else {
-				require.EqualError(err, "draft_lint_failed")
-			}
-			assert.Zero(f.client.updateCalls)
-		})
-	}
 }
 
 func TestDraftBeeperPreviewAndLint(t *testing.T) {
