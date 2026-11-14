@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 // attributeOwner names one subject's value table and the checks that differ
@@ -59,6 +61,7 @@ type attributeValueInput struct {
 	Confidence      *float64
 	Actor           *string
 	ExpectedValueID *int64
+	ExpectedEmpty   bool
 }
 
 func (o attributeOwner) columns() string {
@@ -267,7 +270,7 @@ func (s *Store) setAttributeValueTx(
 	if err != nil {
 		return nil, err
 	}
-	if input.ExpectedValueID != nil && (!hasCurrent || current.ID != *input.ExpectedValueID) {
+	if (input.ExpectedEmpty && hasCurrent) || (input.ExpectedValueID != nil && (!hasCurrent || current.ID != *input.ExpectedValueID)) {
 		return nil, owner.conflict(current)
 	}
 	write := &attributeValueWrite{}
@@ -413,6 +416,10 @@ func (s *Store) insertAttributeValueTx(
 	var jsonValue any
 	if len(input.Value.JSON) > 0 {
 		jsonValue = string(input.Value.JSON)
+		if s.dialect.DriverName() == sqliteutil.DriverName() {
+			// JSON columns have numeric affinity in SQLite; bytes retain number tokens.
+			jsonValue = []byte(input.Value.JSON)
+		}
 	}
 	var activeUntil any
 	if input.ActiveUntil != nil {
@@ -441,7 +448,7 @@ func (s *Store) insertAttributeValueTx(
 		    active_from, active_until, source, source_ref, confidence, actor%s
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, %s, ?, ?, ?, ?, ?, ?, ?, ?%s)
 		RETURNING id
-	`, owner.table, owner.column, createdAtColumn, s.dialect.JSONBindExpr(), createdAtBind),
+	`, owner.table, owner.column, createdAtColumn, s.dialect.JSONTextBindExpr(), createdAtBind),
 		args...,
 	).Scan(&insertedID); err != nil {
 		return nil, fmt.Errorf("insert attribute value for %s: %w", definition.Slug, err)

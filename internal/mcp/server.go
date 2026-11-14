@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/jsonexact"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -311,6 +314,29 @@ func officialToolHandler(
 	}
 }
 
+func exactAttributeToolHandler(definition operationalDefinition, backend OperationBackend, confirmation confirmationConfig) sdkmcp.ToolHandler {
+	handler := officialToolHandler(definition.bind(backend), confirmation)
+	return func(ctx context.Context, request *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+		var args map[string]any
+		if err := json.Unmarshal(request.Params.Arguments, &args, jsonexact.PreserveNumbers); err != nil {
+			return nil, err
+		}
+		result, output, err := handler(ctx, request, args)
+		if err != nil || output == nil {
+			return result, err
+		}
+		raw, ok := output.(jsontext.Value)
+		if !ok {
+			return nil, fmt.Errorf("invalid attribute output")
+		}
+		result.StructuredContent = raw
+		if result.Content == nil {
+			result.Content = []sdkmcp.Content{&sdkmcp.TextContent{Text: string(raw)}}
+		}
+		return result, nil
+	}
+}
+
 func mapInternalError(err error) error {
 	if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
 		return &jsonrpc.Error{
@@ -434,7 +460,11 @@ func newMCPServerWithPolicy(
 	}
 
 	for _, definition := range operationalCatalog(opts, allowWrites) {
-		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations), confirmation))
+		if definition.family == OperationFamilyAttributes {
+			s.AddTool(definition.definition.tool(), exactAttributeToolHandler(definition, opts.Operations, confirmation))
+		} else {
+			sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations), confirmation))
+		}
 	}
 
 	return s

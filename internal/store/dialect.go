@@ -458,6 +458,7 @@ type Dialect interface {
 	// from text; without ?::JSONB the bind raises
 	// "column is of type jsonb but expression is of type text".
 	JSONBindExpr() string
+	JSONTextBindExpr() string
 
 	// JSONIsDistinctExpr returns a null-safe comparison between a JSON column
 	// and one bound JSON value. PostgreSQL compares parsed JSONB values rather

@@ -42,6 +42,7 @@ type PersonAttributeValueInput struct {
 	Confidence      *float64
 	Actor           *string
 	ExpectedValueID *int64
+	ExpectedEmpty   bool
 	DryRun          bool
 }
 
@@ -91,7 +92,7 @@ func personAttributeInput(input PersonAttributeValueInput) attributeValueInput {
 	return attributeValueInput{
 		OwnerID: input.PersonID, Ordinal: input.Ordinal, Value: input.Value,
 		ActiveUntil: input.ActiveUntil, Source: input.Source, SourceRef: input.SourceRef,
-		Confidence: input.Confidence, Actor: input.Actor, ExpectedValueID: input.ExpectedValueID,
+		Confidence: input.Confidence, Actor: input.Actor, ExpectedValueID: input.ExpectedValueID, ExpectedEmpty: input.ExpectedEmpty,
 	}
 }
 

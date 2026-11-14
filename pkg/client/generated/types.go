@@ -15286,6 +15286,7 @@ type SetPersonAttributeRequest struct {
 	ActiveUntil     *time.Time                       `json:"active_until,omitempty"`
 	Actor           *string                          `json:"actor,omitzero"`
 	Confidence      *float64                         `json:"confidence,omitempty"`
+	ExpectedEmpty   *bool                            `json:"expected_empty,omitempty"`
 	ExpectedValueID *int64                           `json:"expected_value_id,omitempty"`
 	Ordinal         *int64                           `json:"ordinal,omitempty"`
 	Source          *SetPersonAttributeRequestSource `json:"source,omitempty"`

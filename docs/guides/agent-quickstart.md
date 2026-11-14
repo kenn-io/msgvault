@@ -222,6 +222,11 @@ backend checks for action permissions, source scope, and sender identity;
 <!-- BEGIN GENERATED tools -->
 | Tool | Class | Opt-in flag | Delegated access |
 | --- | --- | --- | --- |
+| `clear_person_attribute` | attribute_write | `--allow-attribute-writes` | owner-only |
+| `create_attribute_definition` | attribute_write | `--allow-attribute-writes` | owner-only |
+| `delete_attribute_definition` | attribute_write | `--allow-attribute-writes` | owner-only |
+| `patch_attribute_definition` | attribute_write | `--allow-attribute-writes` | owner-only |
+| `set_person_attribute` | attribute_write | `--allow-attribute-writes` | owner-only |
 | `calendar_create` | calendar_write | `--allow-calendar-writes` | backend-dependent |
 | `calendar_delete` | calendar_write | `--allow-calendar-writes` | backend-dependent |
 | `calendar_move` | calendar_write | `--allow-calendar-writes` | backend-dependent |
@@ -253,6 +258,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `find_kata_issues` | read | — | owner-only |
 | `find_similar_messages` | read | — | owner-only |
 | `get_attachment` | read | — | attachment.read |
+| `get_attribute_definition` | read | — | owner-only |
 | `get_cache_build_status` | read | — | owner-only |
 | `get_carddav_publication` | read | — | owner-only |
 | `get_carddav_sync_status` | read | — | owner-only |
@@ -278,6 +284,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_source_identities` | read | — | owner-only |
 | `get_source_scheduler_status` | read | — | owner-only |
 | `get_stats` | read | — | stats.read |
+| `list_attribute_definitions` | read | — | owner-only |
 | `list_deletions` | read | — | owner-only |
 | `list_directory_people` | read | — | owner-only |
 | `list_identity_judgments` | read | — | owner-only |
@@ -285,6 +292,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_meeting_action_items` | read | — | owner-only |
 | `list_messages` | read | — | search.read |
 | `list_open_loops` | read | — | owner-only |
+| `list_person_attributes` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |
