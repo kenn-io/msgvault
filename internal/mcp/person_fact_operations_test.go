@@ -29,7 +29,8 @@ func TestPersonFactCatalogGatesAnnotationsAndTargetSchema(t *testing.T) {
 		annotations, ok := tools[name]["annotations"].(map[string]any)
 		require.True(t, ok)
 		assertions.Equal(true, annotations["destructiveHint"], name)
+		if name == "set_person_tracking" {
+			assertions.Equal(true, annotations["openWorldHint"])
+		}
 	}
-	annotations := tools["set_person_tracking"]["annotations"].(map[string]any)
-	assertions.Equal(true, annotations["openWorldHint"])
 }

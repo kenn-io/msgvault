@@ -168,6 +168,7 @@ func (s *Server) registerPersonFactRoutes(api huma.API) {
 
 	evidence := personFactHistoryOperation("listPersonFactEvidence", "/people/{id}/fact-evidence",
 		"List immutable person fact evidence")
+	evidence.Parameters = append(evidence.Parameters, queryBooleanParam("visible_only", "Exclude evidence linked to sensitive or retired targets"))
 	evidence.Responses = jsonResponsesFor[PersonFactEvidenceResponse](api)
 	addErrorResponses(api, evidence.Responses, http.StatusBadRequest, http.StatusNotFound,
 		http.StatusServiceUnavailable)
@@ -270,8 +271,22 @@ func (s *Server) handleListPersonFactEvidence(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	visibleOnly, _, err := queryBool(r, "visible_only")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
+	var visible []personfacts.TargetDescriptor
+	if visibleOnly {
+		catalog, err := facts.BuildPersonFactCatalogContext(r.Context(), false)
+		if err != nil {
+			s.writePersonFactError(w, err)
+			return
+		}
+		visible = append([]personfacts.TargetDescriptor{}, catalog.Targets...)
+	}
 	rows, err := facts.ListPersonFactEvidenceContext(r.Context(), personID,
-		personfacts.EvidenceFilter{Target: filter.target, Limit: filter.limit, Offset: filter.offset})
+		personfacts.EvidenceFilter{Target: filter.target, VisibleTargets: visible, Limit: filter.limit, Offset: filter.offset})
 	if err != nil {
 		s.writePersonFactError(w, err)
 		return

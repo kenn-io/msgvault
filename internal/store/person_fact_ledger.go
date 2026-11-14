@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/personfacts"
@@ -503,6 +504,37 @@ func (s *Store) ListPersonFactEvidenceContext(
 			personfacts.EvidenceFilter{Target: filter.Target, Limit: limit, Offset: offset})
 		if err != nil {
 			return err
+		}
+		if filter.VisibleTargets != nil && len(evidence) > 0 {
+			visible := make(map[[2]string]bool, len(filter.VisibleTargets))
+			for _, target := range filter.VisibleTargets {
+				visible[[2]string{string(target.Kind), target.Key}] = true
+			}
+			query := `SELECT ce.evidence_id, c.target_kind, c.target_key FROM person_fact_claim_evidence ce JOIN person_fact_claims c ON c.id = ce.claim_id WHERE ce.evidence_id IN (` + strings.Repeat("?,", len(evidence)-1) + "?)"
+			args := make([]any, len(evidence))
+			for i, item := range evidence {
+				args[i] = item.ID
+			}
+			rows, err := tx.QueryContext(ctx, query, args...)
+			if err != nil {
+				return fmt.Errorf("check evidence targets: %w", err)
+			}
+			defer func() { _ = rows.Close() }()
+			hidden := map[int64]bool{}
+			for rows.Next() {
+				var id int64
+				var kind, key string
+				if err := rows.Scan(&id, &kind, &key); err != nil {
+					return fmt.Errorf("scan evidence target: %w", err)
+				}
+				if !visible[[2]string{kind, key}] {
+					hidden[id] = true
+				}
+			}
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("iterate evidence targets: %w", err)
+			}
+			evidence = slices.DeleteFunc(evidence, func(item personfacts.Evidence) bool { return hidden[item.ID] })
 		}
 		return s.hydratePersonFactEvidenceStatusTx(ctx, tx, evidence)
 	})
