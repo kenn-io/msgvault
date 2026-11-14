@@ -62,15 +62,18 @@ type receiveInfo struct {
 	DateReceived *decimal `json:"dateReceived"`
 }
 type chatItem struct {
-	ChatID        decimal          `json:"chatId"`
-	AuthorID      decimal          `json:"authorId"`
-	DateSent      string           `json:"dateSent"`
-	Incoming      *receiveInfo     `json:"incoming"`
-	Outgoing      *receiveInfo     `json:"outgoing"`
-	Directionless *struct{}        `json:"directionless"`
-	Pin           any              `json:"pinDetails"`
-	Revisions     []chatItem       `json:"revisions"`
-	Standard      *standardMessage `json:"standardMessage"`
+	ChatID          decimal          `json:"chatId"`
+	AuthorID        decimal          `json:"authorId"`
+	DateSent        string           `json:"dateSent"`
+	Incoming        *receiveInfo     `json:"incoming"`
+	Outgoing        *receiveInfo     `json:"outgoing"`
+	Directionless   *struct{}        `json:"directionless"`
+	SMS             bool             `json:"sms"`
+	ExpireStartDate *decimal         `json:"expireStartDate"`
+	ExpiresInMs     *decimal         `json:"expiresInMs"`
+	Pin             any              `json:"pinDetails"`
+	Revisions       []chatItem       `json:"revisions"`
+	Standard        *standardMessage `json:"standardMessage"`
 }
 type standardMessage struct {
 	Text *struct {

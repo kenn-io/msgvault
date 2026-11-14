@@ -29,24 +29,14 @@ func recipientPeer(r recipient) peer {
 	if r.Self != nil {
 		return peer{key: "self", kind: "direct_chat"}
 	}
-	if c := r.Contact; c != nil && (len(c.ACI) == 16 || (c.E164 != "" && c.E164 != "0")) {
+	if c := r.Contact; c != nil && len(c.ACI) == 16 {
 		name := strings.TrimSpace(c.Given + " " + c.Family)
 		if name == "" {
 			name = strings.TrimSpace(c.SystemGiven + " " + c.SystemFamily)
 		}
-		p := peer{name: name, kind: "direct_chat"}
-		if len(c.ACI) == 16 {
-			p.aci = "aci:" + hex.EncodeToString(c.ACI)
-		}
-		if c.E164 != "" && c.E164 != "0" {
-			p.phone = "e164:+" + string(c.E164)
-			if p.name == "" {
-				p.name = "+" + string(c.E164)
-			}
-		}
-		p.key = p.aci
-		if p.key == "" {
-			p.key = p.phone
+		p := peer{key: "aci:" + hex.EncodeToString(c.ACI), name: name, kind: "direct_chat"}
+		if p.name == "" && c.E164 != "" && c.E164 != "0" {
+			p.name = "+" + string(c.E164)
 		}
 		return p
 	}
@@ -67,17 +57,23 @@ func messageKey(conversation, author string, date, received decimal, ordinal int
 	return string(b)
 }
 
-// slotCounter numbers frames sharing a conversation, author, and both times.
+// slotCounter holds small map entries per distinct conversation, author, and time tuple.
 type slotCounter struct {
-	next map[[sha256.Size]byte]int
+	next      map[[sha256.Size]byte]int
+	ambiguous map[[sha256.Size]byte]bool
+	counts    map[[sha256.Size]byte]int
 }
 
-func newSlotCounter() *slotCounter {
-	return &slotCounter{next: map[[sha256.Size]byte]int{}}
+func newSlotCounter(counts map[[sha256.Size]byte]int) *slotCounter {
+	return &slotCounter{next: map[[sha256.Size]byte]int{}, ambiguous: map[[sha256.Size]byte]bool{}, counts: counts}
 }
 
-func (c *slotCounter) slot(ctx context.Context, st *store.Store, sourceID int64, conversation, author string, date, received decimal) (string, int64, bool, error) {
-	tuple := sha256.Sum256([]byte(messageKey(conversation, author, date, received, 0)))
+func slotTuple(conversation, author string, date, received decimal) [sha256.Size]byte {
+	return sha256.Sum256([]byte(messageKey(conversation, author, date, received, 0)))
+}
+
+func (c *slotCounter) slot(ctx context.Context, st *store.Store, sourceID int64, conversation, author string, date, received decimal, current *standardMessage) (string, int64, bool, error) {
+	tuple := slotTuple(conversation, author, date, received)
 	n := c.next[tuple]
 	c.next[tuple]++
 	key := messageKey(conversation, author, date, received, n)
@@ -86,10 +82,23 @@ func (c *slotCounter) slot(ctx context.Context, st *store.Store, sourceID int64,
 	if err != nil {
 		return "", 0, false, err
 	}
-	return key, ids[key], n > 0 || ids[next] != 0, nil
+	if c.ambiguous[tuple] {
+		return key, ids[key], true, nil
+	}
+	if c.counts[tuple] < 2 && n == 0 && ids[next] == 0 {
+		return key, ids[key], false, nil
+	}
+	ambiguous, err := ambiguousText(ctx, st, ids[key], current)
+	if err != nil {
+		return "", 0, false, err
+	}
+	if ambiguous {
+		c.ambiguous[tuple] = true
+	}
+	return key, ids[key], ambiguous, nil
 }
-func ambiguousText(ctx context.Context, st *store.Store, id int64, repeated bool, current *standardMessage) (bool, error) {
-	if id == 0 || !repeated {
+func ambiguousText(ctx context.Context, st *store.Store, id int64, current *standardMessage) (bool, error) {
+	if id == 0 {
 		return false, nil
 	}
 	saved, err := st.GetMessageRawContext(ctx, id)

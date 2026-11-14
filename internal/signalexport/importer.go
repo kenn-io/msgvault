@@ -83,53 +83,34 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		}
 	}()
 	scope := accountScope(opts.Account)
-	// Store supplies participant reuse; no unbounded message/participant cache.
 	resolve := func(p peer) (int64, error) {
-		participant, err := st.EnsureParticipantByIdentifierContext(ctx, SourceType, scopedKey(scope, p.key), p.name)
-		if err != nil {
-			return 0, err
-		}
-		for _, candidate := range []string{p.aci, p.phone} {
-			if candidate != "" {
-				if err := addAlias(ctx, st, scope, participant, p, candidate); err != nil {
-					return 0, err
-				}
-			}
-		}
-		return participant, nil
+		return st.EnsureParticipantByIdentifierContext(ctx, SourceType, scopedKey(scope, p.key), p.name)
 	}
-	resolved := map[decimal]peer{} // only reader recipients, so bounded by its entry limit
-	resolveKey := func(id decimal) (peer, error) {
-		if p, ok := resolved[id]; ok {
-			return p, nil
-		}
-		p, err := withoutReusedPhone(ctx, st, scope, r.peers[id])
-		if err != nil {
-			return p, err
-		}
-		if p.aci == "" && p.phone == "" {
-			return p, nil
-		}
-		for _, candidate := range []string{p.aci, p.phone} {
-			if candidate == "" {
-				continue
-			}
-			key, found, err := knownKey(ctx, st, scope, candidate)
-			if err != nil {
-				return p, err
-			}
-			if found {
-				p.key = key
-				if _, err := resolve(p); err != nil {
-					return p, err
-				}
-				break
-			}
-		}
-		resolved[id] = p
-		return p, nil
+	// Count collisions before replay so an inserted earlier frame cannot consume
+	// a saved slot. The normal pass reports any input error and keeps progress.
+	counts := map[[32]byte]int{}
+	counter, err := openReader(ctx, opts.RootDir)
+	if err != nil {
+		return s, err
 	}
-	slots := newSlotCounter()
+	_ = counter.frames(ctx, func(m *chatItem, _ []byte, _ int) error {
+		ref, ok := counter.chats[m.ChatID]
+		if !ok || m.Standard == nil {
+			return nil
+		}
+		conversation, author := counter.peers[ref], counter.peers[m.AuthorID]
+		date, ok := originalDate(m)
+		if !ok || conversation.key == "" || author.key == "" {
+			return nil
+		}
+		tuple := slotTuple(scopedKey(scope, conversation.key), scopedKey(scope, author.key), date, originalReceived(m))
+		counts[tuple]++
+		return nil
+	})
+	if err := counter.Close(); err != nil {
+		return s, err
+	}
+	slots := newSlotCounter(counts)
 	selfConfirmed := false
 	var ownerID int64
 	err = r.frames(ctx, func(m *chatItem, raw []byte, line int) error {
@@ -147,14 +128,8 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		if !ok {
 			return skip("unresolved_chat")
 		}
-		conversation, err := resolveKey(ref)
-		if err != nil {
-			return err
-		}
-		author, err := resolveKey(m.AuthorID)
-		if err != nil {
-			return err
-		}
+		conversation := r.peers[ref]
+		author := r.peers[m.AuthorID]
 		if conversation.key == "" {
 			return skip("recipient_identity")
 		}
@@ -195,11 +170,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		}
 		convKey := scopedKey(scope, conversation.key)
 		authorKey := scopedKey(scope, author.key)
-		key, id, repeated, err := slots.slot(ctx, st, source.ID, convKey, authorKey, date, originalReceived(m))
-		if err != nil {
-			return err
-		}
-		ambiguous, err := ambiguousText(ctx, st, id, repeated, m.Standard)
+		key, id, ambiguous, err := slots.slot(ctx, st, source.ID, convKey, authorKey, date, originalReceived(m), m.Standard)
 		if err != nil {
 			return err
 		}
@@ -279,53 +250,17 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 	return s, err
 }
 
-// knownKey returns the primary key of the participant that already holds candidate.
-func knownKey(ctx context.Context, st *store.Store, scope, candidate string) (string, bool, error) {
-	participant, _, err := st.ParticipantByIdentifierContext(ctx, SourceType, scopedKey(scope, candidate))
-	if err != nil || participant == 0 {
-		return "", false, err
-	}
-	primary, err := st.PrimaryParticipantIdentifierContext(ctx, participant, SourceType)
-	if err != nil {
-		return "", false, err
-	}
-	key, ok := strings.CutPrefix(primary, "v1:"+scope+":")
-	if !ok {
-		key = candidate
-	}
-	return key, true, nil
-}
-
-// addAlias attaches candidate to participant. An established ACI participant
-// stays authoritative: a phone already held by another participant is left there.
-func addAlias(ctx context.Context, st *store.Store, scope string, participant int64, p peer, candidate string) error {
-	err := st.AddParticipantIdentifierIfAbsentContext(ctx, participant, SourceType, scopedKey(scope, candidate))
-	if !errors.Is(err, store.ErrParticipantIdentifierConflict) {
-		return err
-	}
-	if p.aci != "" && candidate == p.phone {
-		return nil
-	}
-	return fmt.Errorf("signal contact identifiers belong to different participants: %w", err)
-}
-
-// withoutReusedPhone drops a phone number held by a participant with another ACI.
-func withoutReusedPhone(ctx context.Context, st *store.Store, scope string, p peer) (peer, error) {
-	if p.aci == "" || p.phone == "" {
-		return p, nil
-	}
-	var others int
-	err := st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM participant_identifiers phone JOIN participant_identifiers aci ON aci.participant_id = phone.participant_id
-		WHERE phone.identifier_type = ? AND phone.identifier_value = ? AND aci.identifier_type = ? AND aci.identifier_value LIKE ? AND aci.identifier_value <> ?`),
-		SourceType, scopedKey(scope, p.phone), SourceType, scopedKey(scope, "aci:")+"%", scopedKey(scope, p.aci)).Scan(&others)
-	if others > 0 {
-		p.phone = ""
-	}
-	return p, err
-}
-
 func countOmissions(s *ImportSummary, m *chatItem) {
 	standard := m.Standard
+	if m.SMS {
+		s.Omitted["sms"]++
+	}
+	if m.ExpireStartDate != nil {
+		s.Omitted["expire_start_date"]++
+	}
+	if m.ExpiresInMs != nil {
+		s.Omitted["expires_in_ms"]++
+	}
 	if standard.Quote != nil {
 		s.Omitted["quote"]++
 	}

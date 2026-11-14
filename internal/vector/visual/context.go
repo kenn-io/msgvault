@@ -82,7 +82,7 @@ func normalizedMessageContext(context MessageContext, maxChars int) (string, boo
 
 func messageTypeLabel(messageType string) string {
 	switch strings.ToLower(strings.TrimSpace(messageType)) {
-	case "slack", "inline", "discord", "beeper", "teams", "imessage", "whatsapp", "telegram", "signal", "x_dm", "matrix", "chat":
+	case "slack", "inline", "discord", "beeper", "teams", "imessage", "whatsapp", "telegram", "x_dm", "matrix", "chat":
 		return "Message type: chat message"
 	case "mms":
 		return "Message type: multimedia message"

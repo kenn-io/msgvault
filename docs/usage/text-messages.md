@@ -582,12 +582,12 @@ The importer handles standard text and available local attachments in direct
 chats, groups, and notes to self. It counts unsupported records and omitted
 features, including reactions and formatting. Disappearing and view-once
 messages may be absent from the export.
-Contacts keep their existing account-scoped identity when an ACI or phone number is added. New contacts use their ACI when available, otherwise their phone number. PNI-only and name-only contacts are skipped.
+Contacts are identified by ACI. Phone-only and PNI-only contacts are skipped and counted; a later export that carries an ACI imports them.
 
 Run the command again to add history and retry missing media. Existing text
 and raw messages retain their first archived snapshot. Missing media can be
 repaired when a later export uniquely identifies the original attachment.
-Messages from one chat with the same author, send time, and receive time are told apart by export order. On a later import, a message whose inline text differs from its saved snapshot is skipped as an ambiguous message when another saved message shares those details. Identical inline text, or a single saved message, cannot reveal a change in order, so a message can still be duplicated or left out.
+Messages from one chat with the same author, send time, and receive time are told apart by export order. On replay, when a time tuple has multiple messages, differing inline text makes that message and the remaining messages with those details ambiguous, so they are skipped. Identical inline text cannot reveal a change in order, so a message can still be duplicated or left out.
 Committed messages remain after an interrupted or failed import.
 
 The importer accepts version 1 exports. Limits are 16 MiB per JSONL record,
