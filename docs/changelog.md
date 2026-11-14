@@ -9,7 +9,7 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - MCP operation tools report `operation_receipt_unavailable` when a successful write's receipt is too large or unreadable. This replaces `operation_response_limit_exceeded`, `operation_response_failed`, and `invalid_operation_response` for those receipts. Read current state before retrying.
-
+- Let owner MCP clients read person attributes and definitions, and enable attribute edits with `--allow-attribute-writes`. The owner approves the previewed value, and the write refuses if that value or empty slot changes before saving. The tools require an updated daemon. Existing archives migrate attribute JSON on writable open; upgrade applications using embedded archive readers alongside the daemon.
 - Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
 
 ## 0.24.0

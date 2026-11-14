@@ -940,12 +940,20 @@ matching read tool, such as `get_person_edit_context` for a display name or
 
 ## Write controls
 
+On unreleased `main`, owner sessions can read person attributes and definitions. Notes edits go
+through `update_person_notes`; attribute writes default to enrichment by `mcp`. Set and clear show
+the value being replaced, and the write fails if it changes or an empty slot is filled. JSON numbers
+keep their spelling, except values PostgreSQL stored before this change; HTTP protocol `2026-07-28`
+and newer rejects numbers outside the float64 range, such as `1e400`. Listings and previews over
+1 MiB are refused; use `slug` or `history: false` to narrow a listing.
+
 Enable only the writes intended for the assistant's session:
 
 | Writes | Stdio | HTTP |
 |---|---|---|
 | Native email tag edits, Saved View management, attachment export, deletion staging, and drafts | Available by default | `--http-allow-writes` |
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
+| Person attributes and attribute definitions | `--allow-attribute-writes` | `--http-allow-writes --allow-attribute-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
@@ -1036,6 +1044,7 @@ msgvault mcp --http 8080
 | `--http-token-env` | — | Name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-attribute-writes` | `false` | On unreleased `main`, expose person attribute and definition writes that require client confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-loop-writes` | `false` | Expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |

@@ -1835,6 +1835,9 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 			}
 		}
 	}
+	if err := s.runOnceMigration(ctx, "attribute_value_json", 1, false, s.migrateAttributeValueJSON); err != nil {
+		return err
+	}
 	if err := s.runOnceMigration(ctx, migrationCardDAVMultipleAccounts, 1, false, s.ensureCardDAVMultiAccountSchema); err != nil {
 		return fmt.Errorf("migrate CardDAV connections: %w", err)
 	}

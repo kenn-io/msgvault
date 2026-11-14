@@ -52,6 +52,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	backend.supported = append(backend.supported, deletionReviewMCPCapabilities(hasRoute)...)
 	backend.supported = append(backend.supported, loopMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, recordAttributeMCPCapabilities(hasRoute, capabilities)...)
 	return backend
 }
 
@@ -71,6 +72,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		}
 		return readMCPOperationJSON[generated.TriggerSyncResponse](ctx, b.client, http.MethodPost, "/api/v1/sync/{account}", &generated.TriggerSyncRequestOptions{PathParams: &generated.TriggerSyncPath{Account: account}, Query: &generated.TriggerSyncQuery{SourceType: &sourceType}}, http.StatusAccepted)
 	default:
+		if result, handled, err := b.executeRecordAttributeOperation(ctx, name, args); handled {
+			return result, err
+		}
 		if result, handled, err := b.executeDeletionReviewOperation(ctx, name, args); handled {
 			return result, err
 		}
@@ -86,6 +90,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 
 func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name string, args map[string]any) (string, error) {
 	if slices.Contains(b.supported, name) {
+		if disclosure, handled, err := b.recordAttributeDisclosure(ctx, name, args); handled {
+			return disclosure, err
+		}
 		if disclosure, handled, err := b.loopOperationDisclosure(name, args); handled {
 			return disclosure, err
 		}
@@ -173,7 +180,7 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 
 func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, success ...int) (*mcpserver.OperationResult, error) {
 	writes := method != http.MethodGet
-	response, err := client.DoGeneratedRequestWithContext(ctx, method, path, options)
+	response, err := client.DoGeneratedRequestWithErrorLimit(ctx, method, path, options, 1<<20)
 	if err != nil {
 		if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
 			return operationFailure(local.APIErrorCode(), false), err
@@ -212,6 +219,9 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 		default:
 			return operationFailure("operation_refused", writes), nil
 		}
+	}
+	if response.StatusCode == http.StatusNoContent {
+		return &mcpserver.OperationResult{ETag: response.Header.Get("ETag")}, nil
 	}
 	var output T
 	if err := json.Unmarshal(data, &output); err != nil {

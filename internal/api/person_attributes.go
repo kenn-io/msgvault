@@ -64,6 +64,7 @@ type SetPersonAttributeRequest struct {
 	ActiveFrom      *time.Time           `json:"active_from,omitempty"`
 	ActiveUntil     *time.Time           `json:"active_until,omitempty"`
 	ExpectedValueID *int64               `json:"expected_value_id,omitzero" nullable:"false"`
+	ExpectedEmpty   bool                 `json:"expected_empty,omitempty"`
 }
 
 // AppendPersonNoteRequest carries one note fragment and its provenance.
@@ -267,6 +268,10 @@ func (s *Server) handleSetPersonAttribute(w http.ResponseWriter, r *http.Request
 	if !decodeAttributeRequest(w, r, &request) {
 		return
 	}
+	if request.ExpectedEmpty && request.ExpectedValueID != nil {
+		writeError(w, http.StatusBadRequest, "invalid_expected_empty", "expected_empty cannot be combined with expected_value_id")
+		return
+	}
 	if request.ExpectedValueID != nil && *request.ExpectedValueID < 1 {
 		writeError(w, http.StatusBadRequest, "invalid_expected_value_id",
 			"expected_value_id must be a positive integer")
@@ -282,7 +287,7 @@ func (s *Server) handleSetPersonAttribute(w http.ResponseWriter, r *http.Request
 			Value: request.Value, ActiveFrom: request.ActiveFrom,
 			ActiveUntil: request.ActiveUntil, Source: source, SourceRef: request.SourceRef,
 			Confidence: request.Confidence, Actor: request.Actor,
-			ExpectedValueID: request.ExpectedValueID, DryRun: dryRun,
+			ExpectedValueID: request.ExpectedValueID, ExpectedEmpty: request.ExpectedEmpty, DryRun: dryRun,
 		})
 	if err != nil {
 		s.writeAttributeError(w, err)
