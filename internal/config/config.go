@@ -889,7 +889,7 @@ type MicrosoftApp struct {
 }
 
 // HasAnyConfig reports whether a Microsoft app has a client ID.
-func (c MicrosoftConfig) HasAnyConfig() bool {
+func (c *MicrosoftConfig) HasAnyConfig() bool {
 	if c.ClientID != "" {
 		return true
 	}
@@ -902,9 +902,9 @@ func (c MicrosoftConfig) HasAnyConfig() bool {
 }
 
 // App resolves a named app or the default Microsoft configuration.
-func (c MicrosoftConfig) App(name string) (MicrosoftConfig, error) {
+func (c *MicrosoftConfig) App(name string) (MicrosoftConfig, error) {
 	if name == "" {
-		return c, nil
+		return *c, nil
 	}
 	app, ok := c.Apps[name]
 	if !ok || app.ClientID == "" {

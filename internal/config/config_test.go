@@ -2692,7 +2692,7 @@ func TestMicrosoftNamedApps(t *testing.T) {
 	assert.Equal(t, "common", app.EffectiveTenantID())
 	assert.Equal(t, "http://localhost:8089/callback/microsoft", app.EffectiveRedirectURI())
 	_, err = cfg.App("missing")
-	assert.ErrorContains(t, err, "[microsoft.apps.missing]")
+	require.ErrorContains(t, err, "[microsoft.apps.missing]")
 	_, err = cfg.App("empty")
-	assert.ErrorContains(t, err, "[microsoft.apps.empty]")
+	require.ErrorContains(t, err, "[microsoft.apps.empty]")
 }

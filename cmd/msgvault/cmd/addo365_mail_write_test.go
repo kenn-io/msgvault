@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"golang.org/x/oauth2"
 )
@@ -120,6 +121,34 @@ func TestAddO365RejectsAmbiguousSourcesBeforeConsent(t *testing.T) {
 	require.ErrorContains(t, err, "multiple Microsoft mail sources")
 }
 
+func TestAddO365IgnoresMergedSourceBeforeConsent(t *testing.T) {
+	previousGraph, previousHeadless, previousApp := o365Graph, o365Headless, o365OAuthApp
+	t.Cleanup(func() { o365Graph, o365Headless, o365OAuthApp = previousGraph, previousHeadless, previousApp })
+	dir := t.TempDir()
+	cfg := lifecycleTestConfig(dir)
+	cfg.Microsoft.ClientID = "client"
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
+	var sources []*store.Source
+	for _, host := range []string{"outlook.office.com", "outlook.office365.com"} {
+		src, err := st.GetOrCreateSource(sourceTypeIMAP, "imaps://user@example.com@"+host+":993")
+		require.NoError(t, err)
+		require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, `{"username":"user@example.com","auth_method":"xoauth2"}`))
+		sources = append(sources, src)
+	}
+	_, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: sources[0].ID, IntoSourceID: sources[1].ID})
+	require.NoError(t, err)
+	startStoreAPIDaemon(t, dir, st, nil)
+	consentErr := errors.New("consent reached")
+	ctx := context.WithValue(withStoreResolverConfig(t, cfg), oauth2.HTTPClient, &http.Client{Transport: testTransport(func(*http.Request) (*http.Response, error) { return nil, consentErr })})
+	cmd := newAddO365LocalCmd()
+	cmd.SetContext(ctx)
+	require.NoError(t, cmd.Flags().Set("headless", "true"))
+	_, err = preflightAddO365Authorize(cmd, "user@example.com")
+	require.ErrorIs(t, err, consentErr)
+	err = runAddO365Local(cmd, []string{"user@example.com"})
+	require.ErrorIs(t, err, consentErr)
+}
+
 func TestAddO365ConsentUsesExplicitApp(t *testing.T) {
 	for _, graph := range []bool{false, true} {
 		t.Run(fmt.Sprintf("graph=%t", graph), func(t *testing.T) {
@@ -177,7 +206,7 @@ func TestAddO365PreflightUndeterminedIMAPBinding(t *testing.T) {
 	requests := 0
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: testTransport(func(req *http.Request) (*http.Response, error) {
 		requests++
-		assert.NoError(t, req.ParseForm())
+		require.NoError(t, req.ParseForm())
 		assert.Equal(t, "orgb-client", req.Form.Get("client_id"))
 		return nil, requestErr
 	})})

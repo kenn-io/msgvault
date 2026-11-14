@@ -1999,6 +1999,55 @@ func TestRemoveMicrosoftMailTokensAcrossApps(t *testing.T) {
 	}
 }
 
+func TestRemoveMicrosoftMailTokensCleansAddressCaseVariants(t *testing.T) {
+	for _, graph := range []bool{false, true} {
+		t.Run(fmt.Sprintf("graph=%t", graph), func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := lifecycleTestConfig(dir)
+			st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
+			cfg.Microsoft.Apps = map[string]config.MicrosoftApp{"orgb": {ClientID: "client-b"}}
+			_, named, err := microsoftMailApp(cfg, "orgb")
+			require.NoError(t, err)
+			var paths []string
+			var preserved []string
+			for _, dir := range []string{cfg.TokensDir(), named} {
+				require.NoError(t, os.MkdirAll(dir, 0o700))
+				for _, email := range []string{"user@example.com", "USER@example.com"} {
+					var path string
+					if graph {
+						path = microsoft.NewGraphMailManager("", "", "", dir, nil).TokenPath(email)
+					} else {
+						path = microsoft.NewManager("", "", "", dir, nil).TokenPath(email)
+					}
+					require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
+					paths = append(paths, path)
+				}
+				var other, protocol string
+				if graph {
+					other = microsoft.NewGraphMailManager("", "", "", dir, nil).TokenPath("other@example.com")
+					protocol = microsoft.NewManager("", "", "", dir, nil).TokenPath("USER@example.com")
+				} else {
+					other = microsoft.NewManager("", "", "", dir, nil).TokenPath("other@example.com")
+					protocol = microsoft.NewGraphMailManager("", "", "", dir, nil).TokenPath("USER@example.com")
+				}
+				for _, path := range []string{other, protocol} {
+					require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
+					preserved = append(preserved, path)
+				}
+			}
+			require.NoError(t, removeMicrosoftMailTokensIfUnused(st, cfg, "user@example.com", graph, testDiscardLogger()))
+			for _, path := range paths {
+				_, err := os.Stat(path)
+				assert.True(t, os.IsNotExist(err), "%s", path)
+			}
+			for _, path := range preserved {
+				_, err := os.Stat(path)
+				assert.NoError(t, err, "%s", path)
+			}
+		})
+	}
+}
+
 func TestRemoveMicrosoftMailTokensKeepsSharedMailbox(t *testing.T) {
 	for _, graph := range []bool{false, true} {
 		t.Run(fmt.Sprintf("graph=%t", graph), func(t *testing.T) {

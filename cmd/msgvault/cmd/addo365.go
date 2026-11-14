@@ -101,7 +101,7 @@ func preflightAddO365Authorize(cmd *cobra.Command, email string) (string, error)
 		return "", err
 	}
 	if err := cmd.Flags().Set("oauth-app", binding.resolvedApp); err != nil {
-		return "", err
+		return "", fmt.Errorf("set --oauth-app after authorization: %w", err)
 	}
 	if err := cmd.Flags().Set(oauthPreflightedFlag, "true"); err != nil {
 		return "", fmt.Errorf("set --%s after authorization: %w", oauthPreflightedFlag, err)
@@ -112,7 +112,13 @@ func preflightAddO365Authorize(cmd *cobra.Command, email string) (string, error)
 func selectO365Account(accounts []daemonclient.CLIAccount, email string, graph bool) (*daemonclient.CLIAccount, bool, error) {
 	var matches []daemonclient.CLIAccount
 	unknown := false
+	retired := false
 	for _, account := range accounts {
+		if account.MergedIntoSourceID != 0 {
+			match, undetermined := matchesO365Account(account, email, graph)
+			retired = retired || match || undetermined || (!graph && isO365PasswordConflict(account, email))
+			continue
+		}
 		if !graph && isO365PasswordConflict(account, email) {
 			return nil, false, fmt.Errorf("an Outlook IMAP account for %s already uses password authentication; remove or change that account before adding Microsoft OAuth", email)
 		}
@@ -131,6 +137,9 @@ func selectO365Account(accounts []daemonclient.CLIAccount, email string, graph b
 	}
 	if len(matches) == 1 {
 		return &matches[0], unknown, nil
+	}
+	if retired {
+		return nil, false, fmt.Errorf("microsoft mail source for %s is retired: %w", email, store.ErrSourceRetired)
 	}
 	return nil, unknown, nil
 }
@@ -233,7 +242,7 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 	}
 	accounts := make([]daemonclient.CLIAccount, 0, len(existing))
 	for _, src := range existing {
-		account := daemonclient.CLIAccount{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier, OAuthApp: sourceOAuthApp(src)}
+		account := daemonclient.CLIAccount{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier, OAuthApp: sourceOAuthApp(src), MergedIntoSourceID: src.MergedIntoSourceID}
 		if src.SyncConfig.Valid {
 			if imapCfg, parseErr := imapclient.ConfigFromJSON(src.SyncConfig.String); parseErr == nil {
 				account.AuthMethod = string(imapCfg.EffectiveAuthMethod())

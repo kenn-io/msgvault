@@ -732,6 +732,9 @@ func removeMicrosoftMailTokensIfUnused(s *store.Store, cfg *config.Config, email
 		return fmt.Errorf("check remaining Microsoft sources: %w", err)
 	}
 	for _, source := range sources {
+		if source.MergedIntoSourceID != 0 {
+			continue
+		}
 		used := strings.EqualFold(source.Identifier, email)
 		if !graph {
 			if used, err = imapSourceUsesMicrosoftToken(source, email); err != nil {
@@ -785,10 +788,33 @@ func removeMicrosoftMailTokens(cfg *config.Config, email string, graph bool, log
 	}
 	var result error
 	for dir, app := range dirs {
+		imapMgr := microsoft.NewManager(app.ClientID, app.EffectiveTenantID(), app.EffectiveRedirectURI(), dir, logger)
+		graphMgr := microsoft.NewGraphMailManager("", "", "", dir, logger)
+		prefix, path := "microsoft_", imapMgr.TokenPath(email)
 		if graph {
-			result = errors.Join(result, microsoft.NewGraphMailManager("", "", "", dir, logger).DeleteToken(email))
-		} else {
-			result = errors.Join(result, microsoft.NewManager(app.ClientID, app.EffectiveTenantID(), app.EffectiveRedirectURI(), dir, logger).DeleteToken(email))
+			prefix, path = "msmail_", graphMgr.TokenPath(email)
+		}
+		entries, err := os.ReadDir(dir)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			result = errors.Join(result, err)
+			continue
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() || !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".json") || !strings.EqualFold(name, filepath.Base(path)) {
+				continue
+			}
+			variant := strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".json")
+			if graph && graphMgr.TokenPath(variant) == filepath.Join(dir, name) {
+				result = errors.Join(result, graphMgr.DeleteToken(variant))
+			} else if !graph && imapMgr.TokenPath(variant) == filepath.Join(dir, name) {
+				result = errors.Join(result, imapMgr.DeleteToken(variant))
+			} else {
+				result = errors.Join(result, os.Remove(filepath.Join(dir, name)))
+			}
 		}
 	}
 	return result
