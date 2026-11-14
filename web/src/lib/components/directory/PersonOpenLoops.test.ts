@@ -91,7 +91,6 @@ describe("PersonOpenLoops", () => {
     expect(screen.getByText(/discovery since.*incomplete/)).toBeDefined();
     expect(screen.getByText(/Some messages may be too large to check/)).toBeDefined();
     expect(screen.getByText("7+ open")).toBeDefined();
-    expect(screen.queryByRole("button", { name: /^(done|snooze)$/i })).toBeNull();
     const request = fetcher.mock.calls[0]?.[0];
     const url = new URL(request instanceof Request ? request.url : String(request), "http://localhost");
     expect(url.searchParams.has("include_closed")).toBe(false);

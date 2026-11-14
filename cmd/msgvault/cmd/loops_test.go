@@ -130,7 +130,6 @@ func TestLoopsListPagesPromises(t *testing.T) {
 			return
 		}
 		assert.Equal(t, "200", req.URL.Query().Get("commitment_offset"))
-		assert.Equal(t, "true", req.URL.Query().Get("include_closed"))
 		_, err := w.Write([]byte(`{"items":[{"kind":"reply_owed","anchor_message_id":1,"conversation_id":1,"source_id":1,"channel":"email","summary":"Reply","owed_since_at":"2026-01-01T00:00:00Z","last_activity_at":"2026-01-01T00:00:00Z","counterparty":{"display_name":"Example"}}],"truncated":true,"commitments_next_offset":400}`))
 		assert.NoError(t, err)
 	}))

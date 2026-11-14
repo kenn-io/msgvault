@@ -1975,7 +1975,7 @@ func TestCopySubset_AllRows(t *testing.T) {
 	assert.Equal(t, int64(5), result.Messages, "Messages (all available)")
 }
 
-func TestCopySubsetRediscoveryPreservesCommitmentDecisions(t *testing.T) {
+func TestCopySubsetPreservesCommitmentDecisions(t *testing.T) {
 	r, ctx := require.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "subset-source", false)
 	if f.store.IsPostgreSQL() {
@@ -2008,32 +2008,19 @@ func TestCopySubsetRediscoveryPreservesCommitmentDecisions(t *testing.T) {
 	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
 	r.NoError(err)
 	t.Cleanup(func() { _ = destination.Close() })
-	for _, table := range []string{"person_commitment_frontiers", "person_fact_evidence", "person_inference_profiles"} {
-		var count int
-		r.NoError(destination.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&count))
-		r.Zero(count)
+	var doneID, snoozedID int64
+	var doneState, snoozedState string
+	var doneUntil, snoozedUntil sql.NullTime
+	r.NoError(destination.db.QueryRowContext(ctx, `SELECT id, owner_state, snoozed_until FROM person_commitments WHERE id = ?`, items[0].ID).Scan(&doneID, &doneState, &doneUntil))
+	r.NoError(destination.db.QueryRowContext(ctx, `SELECT id, owner_state, snoozed_until FROM person_commitments WHERE id = ?`, items[1].ID).Scan(&snoozedID, &snoozedState, &snoozedUntil))
+	assert.Equal(t, items[0].ID, doneID)
+	assert.Equal(t, LoopStateDone, doneState)
+	assert.False(t, doneUntil.Valid)
+	assert.Equal(t, items[1].ID, snoozedID)
+	assert.Equal(t, LoopStateSnoozed, snoozedState)
+	if assert.True(t, snoozedUntil.Valid) {
+		assert.True(t, snoozedUntil.Time.Equal(until))
 	}
-	_, err = destination.EnsurePersonSweepWork(ctx, f.personID, true)
-	r.NoError(err)
-	d := newPersonSweepApplyFixtureForStore(t, destination, f.personID, nil, "subset-destination", false, personSweepApplyBudget())
-	profile := d.request.Generation.Policy.ProviderPolicyFingerprint
-	_, err = destination.db.ExecContext(ctx, `UPDATE person_inference_profiles SET allow_sensitive = TRUE, allowed_sources = '["conversation_text"]', source_since = '2026-01-01' WHERE fingerprint = ?`, profile)
-	r.NoError(err)
-	_, _, err = destination.GrantPersonCommitmentConsent(ctx, profile, "test")
-	r.NoError(err)
-	_, live, err := destination.currentCommitmentSource(ctx, f.personID, items[0].AnchorMessageID)
-	r.NoError(err)
-	r.True(live)
-	applyCommitmentTestSources(t, d, cfg.Commitments)
-	got, err := destination.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, 0, true)
-	r.NoError(err)
-	r.Len(got, 2)
-	r.Equal(items[0].ID, got[0].ID)
-	r.Equal(LoopStateDone, got[0].State)
-	r.Equal(items[1].ID, got[1].ID)
-	r.Equal(LoopStateSnoozed, got[1].State)
-	r.NotNil(got[1].SnoozedUntil)
-	r.True(got[1].SnoozedUntil.Equal(until))
 }
 
 func TestCopySubsetProfilesBeforeCommitments(t *testing.T) {

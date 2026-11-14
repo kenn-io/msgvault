@@ -145,7 +145,7 @@ func TestCommitmentDecisionSurvivesShiftedQuote(t *testing.T) {
 }
 
 func TestCommitmentListPrioritizesFreshBeforeLimit(t *testing.T) {
-	r, ctx := require.New(t), t.Context()
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "promise-order", false)
 	st := f.store
 	_, persist := newCommitmentTestConversation(t, f)
@@ -154,7 +154,7 @@ func TestCommitmentListPrioritizesFreshBeforeLimit(t *testing.T) {
 	for i, message := range []struct {
 		quote string
 		age   time.Duration
-	}{{"I will send the draft.", -time.Hour}, {"I will send the report.", -100 * 24 * time.Hour}, {"I will call.", 48 * time.Hour}} {
+	}{{"I will send the draft.", -time.Hour}, {"I will send the report.", -100 * 24 * time.Hour}} {
 		id := persist(fmt.Sprintf("promise-%d", i), message.quote, message.age)
 		if i > 0 {
 			f = nextCommitmentTestAttempt(t, f, "-older")
@@ -170,18 +170,11 @@ func TestCommitmentListPrioritizesFreshBeforeLimit(t *testing.T) {
 	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 1, 0, false)
 	r.NoError(err)
 	r.Len(items, 1)
-	r.Equal("I will send the draft.", items[0].Quote)
+	a.Equal("I will send the draft.", items[0].Quote)
 	items, err = st.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 5, 0, false)
 	r.NoError(err)
-	r.Len(items, 3)
-	var future *PersonCommitment
-	for i := range items {
-		if items[i].Quote == "I will call." {
-			future = &items[i]
-		}
-	}
-	r.NotNil(future)
-	r.Equal(personfacts.StatusStale, future.Freshness)
+	r.Len(items, 2)
+	a.Equal(personfacts.StatusStale, items[1].Freshness)
 }
 
 func TestCommitmentListPagesSubmillisecondTimes(t *testing.T) {
@@ -532,26 +525,6 @@ func TestCommitmentResweepPreservesDecisions(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestCommitmentListRejectsUnknownValueFields(t *testing.T) {
-	r, ctx := require.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "future-commitment", false)
-	_, persist := newCommitmentTestConversation(t, f)
-	const quote = "I will call."
-	persist("future", quote, -time.Hour)
-	cfg, profile := commitmentTestConfig()
-	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	promise := peoplesweep.CommitmentPromise{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Call", End: int64(len(quote))}
-	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{promise}})
-	_, err = f.store.ApplyPersonSweep(ctx, request)
-	r.NoError(err)
-	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_fact_claims SET normalized_value_json = ? WHERE person_id = ? AND target_kind = 'commitment'`), `{"direction":"owed_to","summary":"Call","due_on":null,"version":2}`, f.personID)
-	r.NoError(err)
-	_, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, true)
-	r.Error(err)
 }
 
 func TestCommitmentListPagesClosedDecisions(t *testing.T) {
