@@ -684,7 +684,7 @@ func TestImportLongTextTurnsInline(t *testing.T) {
 	writeFrames(t, root, strings.Replace(incoming, "Hello 星", "short and the rest", 1))
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(err)
-	assert.EqualValues(1, summary.MediaMissing["invalid_hash"])
+	assert.EqualValues(1, summary.MediaMissing["missing"])
 	assert.EqualValues(1, summary.Omitted["incomplete_long_text"])
 	assert.EqualValues(1, summary.MessagesChanged)
 	id, _ := onlyMessage(t, st)
