@@ -25,7 +25,7 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func TestMCPOperationFailureCompletion(t *testing.T) {
+func TestMCPOperationResponseFailures(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
 		name, method, body, want string
