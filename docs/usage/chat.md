@@ -936,11 +936,20 @@ retries a write by itself. If a write reports
 
 ## Write controls
 
-On unreleased `main`, owner sessions can read a structured person record with
-`get_person_record`, including its exact ETag, and inspect its history with
-`get_person_record_history`.
-History over 1 MiB returns `operation_response_limit_exceeded`.
-These tools require native daemon support. With curated writes enabled,
+On unreleased `main`, owner sessions can use `get_person_record`,
+`get_person_record_history`, and `get_person_record_media` to read all structured
+profile values, including sensitive values and stored media. These reads require
+daemon API schema 5.3.0 or newer and no write opt-in. The record includes its
+exact ETag. History over 1 MiB returns `operation_response_limit_exceeded`.
+
+Profiles over 1 MiB return a first chunk automatically; media returns chunks.
+Decode and append `data_base64`, then request `offset + length` with the first
+chunk's `sha256`, the same person ID, and, for media, the same media ID. Repeat
+until `complete` is true.
+On `download_expired`, discard the partial data and restart at offset 0 without
+`sha256`.
+
+With curated writes enabled,
 `patch_person_record` applies adds and supersedes atomically using the exact
 ETag. Each call requires explicit client confirmation; the client is responsible
 for obtaining user approval. The disclosure supplies media byte size and SHA-256
