@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
-	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -86,7 +85,7 @@ func (c *slotCounter) slot(ctx context.Context, st *store.Store, sourceID int64,
 	}
 	return key, ids[key], n > 0 || ids[next] != 0, nil
 }
-func ambiguousSnapshot(ctx context.Context, st *store.Store, id int64, repeated bool, raw []byte) (bool, error) {
+func ambiguousText(ctx context.Context, st *store.Store, id int64, repeated bool, current *standardMessage) (bool, error) {
 	if id == 0 || !repeated {
 		return false, nil
 	}
@@ -94,14 +93,17 @@ func ambiguousSnapshot(ctx context.Context, st *store.Store, id int64, repeated 
 	if err != nil {
 		return false, err
 	}
-	var old, current any
+	var old chatItem
 	if err := json.Unmarshal(saved, &old); err != nil {
 		return false, err
 	}
-	if err := json.Unmarshal(raw, &current); err != nil {
-		return false, err
+	text := func(m *standardMessage) string {
+		if m != nil && m.Text != nil {
+			return m.Text.Body
+		}
+		return ""
 	}
-	return !reflect.DeepEqual(old, current), nil
+	return text(old.Standard) != text(current), nil
 }
 func originalReceived(m *chatItem) decimal {
 	// An edit keeps the first revision's receive time, like its send time.

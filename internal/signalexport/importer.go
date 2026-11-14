@@ -199,7 +199,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		if err != nil {
 			return err
 		}
-		ambiguous, err := ambiguousSnapshot(ctx, st, id, repeated, raw)
+		ambiguous, err := ambiguousText(ctx, st, id, repeated, m.Standard)
 		if err != nil {
 			return err
 		}

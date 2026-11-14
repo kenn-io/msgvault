@@ -861,3 +861,49 @@ func TestImportAmbiguousSameTimeReplay(t *testing.T) {
 	assert.Equal(t, map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, ids[0]))
 	assert.Equal(t, map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, ids[1]))
 }
+
+func TestImportSameTimeMediaRepair(t *testing.T) {
+	data := []byte("fictional attachment")
+	message := func(body, pointer string) string {
+		return `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"` + body + `"},"attachments":[{"clientUuid":"AQ==","pointer":` + pointer + `}]}}}`
+	}
+	st := testutil.NewTestStore(t)
+	root := fixture(t, message("A", `{"locatorInfo":{"key":"AQ=="}}`), message("B", `{"locatorInfo":{"key":"AQ=="}}`))
+	opts := options(t, root)
+	first, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, first.MessagesAdded)
+	assert.Equal(t, 2, first.AttachmentsMissing)
+	rows, err := st.DB().QueryContext(t.Context(), "SELECT id FROM messages ORDER BY id")
+	require.NoError(t, err)
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		require.NoError(t, rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+	require.Len(t, ids, 2)
+	rawA, err := st.GetMessageRawContext(t.Context(), ids[0])
+	require.NoError(t, err)
+	rawB, err := st.GetMessageRawContext(t.Context(), ids[1])
+	require.NoError(t, err)
+	putMedia(t, root, data)
+	writeFrames(t, root, message("A", pointer(data)), message("B", pointer(data)))
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, summary.MessagesExisting)
+	assert.Zero(t, summary.Skipped["ambiguous_message"])
+	assert.Equal(t, 2, summary.AttachmentsStored)
+	assert.Equal(t, map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, ids[0]))
+	assert.Equal(t, map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, ids[1]))
+	afterA, err := st.GetMessageRawContext(t.Context(), ids[0])
+	require.NoError(t, err)
+	afterB, err := st.GetMessageRawContext(t.Context(), ids[1])
+	require.NoError(t, err)
+	assert.Equal(t, rawA, afterA)
+	assert.Equal(t, rawB, afterB)
+	assertBody(t, st, ids[0], "A")
+	assertBody(t, st, ids[1], "B")
+}
