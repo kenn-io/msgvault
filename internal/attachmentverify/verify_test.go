@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -909,6 +910,49 @@ func TestSlackdumpImportOutcomes(t *testing.T) {
 				assert.Equal("inconclusive", report.State)
 				assert.Equal(3, report.Counts[attachmentverify.NotMaterialized])
 				assert.Zero(report.ContentsOpened)
+			}
+		})
+	}
+}
+
+func TestStorageErrorsKeepJSONReportEncodable(t *testing.T) {
+	for _, tc := range []struct{ name, message string }{
+		{"ASCII", "close failed"},
+		{"short Unicode", "close failed for synthetic-界.bin"},
+		{"long Unicode", strings.Repeat("界", 200)},
+		{"invalid path bytes", "synthetic-" + string([]byte{0xff, 0xfe}) + ".bin"},
+		{"long invalid path bytes", strings.Repeat(string([]byte{0xff})+"界", 200)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newFixture(t)
+			data := []byte("synthetic readable content with a storage close error")
+			hash := pack.ComputeBlobID(data).String()
+			path := hash[:2] + "/" + hash
+			id, _ := f.row(hash, path, len(data))
+			f.write(path, data)
+			closed := false
+			reader := boundaryStore{real: f.blobs, wrap: func(r io.ReadCloser) io.ReadCloser {
+				return consumptionFault{ReadCloser: r, closeErr: errors.New(tc.message), closed: &closed}
+			}}
+			report, err := attachmentverify.Run(t.Context(), f.st, reader, f.root, options())
+			require.NoError(err)
+			require.Len(report.References, 1)
+			assert.True(closed)
+			assert.Equal(attachmentverify.Inconclusive, report.References[0].Status)
+			assert.Equal(id, report.NextAfterID)
+			reason := report.References[0].Reason
+			assert.LessOrEqual(len(reason), 512, "the error detail budget is measured in bytes")
+			assert.True(utf8.ValidString(reason), "a storage error must not make the report unencodable")
+			encoded, err := json.Marshal(report)
+			require.NoError(err, "the CLI uses this encoder before emitting any results")
+			var decoded attachmentverify.Report
+			require.NoError(json.Unmarshal(encoded, &decoded))
+			assert.Equal(id, decoded.NextAfterID)
+			assert.Equal(report.References, decoded.References)
+			if tc.name == "ASCII" || tc.name == "short Unicode" {
+				assert.Contains(reason, tc.message, "short valid errors should retain their explanation")
 			}
 		})
 	}

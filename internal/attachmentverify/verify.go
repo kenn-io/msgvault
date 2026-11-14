@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/kit/packstore"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
@@ -404,9 +405,17 @@ func (r contextReader) Read(p []byte) (int, error) {
 }
 
 func boundedError(err error) string {
-	message := fmt.Sprintf("read or close could not establish integrity: %v", err)
-	if len(message) > 512 {
-		return message[:512]
+	const maxReasonBytes = 512
+	// Storage errors can contain arbitrary path bytes. Keep the reason valid
+	// UTF-8 so JSON encoding cannot discard the report and its resume cursor.
+	message := strings.ToValidUTF8(fmt.Sprintf("read or close could not establish integrity: %v", err), "\uFFFD")
+	if len(message) <= maxReasonBytes {
+		return message
 	}
-	return message
+	end := maxReasonBytes
+	// Preserve the byte budget without cutting through a multibyte character.
+	for !utf8.RuneStart(message[end]) {
+		end--
+	}
+	return message[:end]
 }
