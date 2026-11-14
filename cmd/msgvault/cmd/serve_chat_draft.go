@@ -98,14 +98,14 @@ func (a *storeAPIAdapter) runCLIChatDraftCreate(
 		authorized = err == nil
 		return err
 	}
-	destination, err := a.store.ResolveChatDraftContext(ctx, intent.ConversationID, intent.ReplyTo, authorize)
+	_, err := a.store.ResolveChatDraftContext(ctx, intent.ConversationID, intent.ReplyTo, authorize)
 	if err != nil {
 		if authorized {
 			grant = nil
 		}
 		return chatDraftStoreError(err, grant)
 	}
-	lint, done, err := a.gateDraftLint(ctx, draftlint.Input{Kind: "compose", Channel: "chat", Body: intent.Body}, destination.SourceID, grant, intent.draftLintOptions, intent.JSON, emit)
+	lint, done, err := a.gateDraftLint(ctx, draftlint.Input{Kind: "compose", Channel: "chat", Body: intent.Body}, intent.draftLintOptions, intent.JSON, emit)
 	if done || err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ func (a *storeAPIAdapter) runCLIChatDraftLifecycle(
 		if draft.Revision != intent.Revision {
 			return draftReplyError("revision_mismatch", store.ErrChatDraftRevisionConflict)
 		}
-		lint, done, lintErr := a.gateDraftLint(ctx, draftlint.Input{Kind: "edit", Channel: "chat", Body: intent.Body}, draft.SourceID, grant, intent.draftLintOptions, intent.JSON, emit)
+		lint, done, lintErr := a.gateDraftLint(ctx, draftlint.Input{Kind: "edit", Channel: "chat", Body: intent.Body}, intent.draftLintOptions, intent.JSON, emit)
 		if done || lintErr != nil {
 			return lintErr
 		}

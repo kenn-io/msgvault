@@ -131,7 +131,7 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 			}
 		}
 		findings := draftSensitiveFindings(args)
-		if h.sensitiveConfirm && len(findings) > 0 {
+		if validateOnly, _ := args["validate_only"].(bool); h.sensitiveConfirm && len(findings) > 0 && !validateOnly {
 			if err := req.confirmUserAction(ctx, sensitiveDraftConfirmationMessage(req.toolName, findings)); err != nil {
 				return confirmationToolError(err)
 			}

@@ -165,7 +165,7 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 	if len(intent.To) != 1 || len(intent.Cc)+len(intent.Bcc) != 0 || intent.Subject != "" || intent.From != "" {
 		return draftReplyError("invalid_args", errors.New("a Beeper draft takes one --to chat ID, --body, and no other fields"))
 	}
-	if err := validBeeperDraftBody(intent.Body); err != nil {
+	if err := validBeeperDraftBody(intent.Body); err != nil && (!intent.ValidateOnly || strings.TrimSpace(intent.Body) != "") {
 		return err
 	}
 	if err := authorizeDraftPolicy("beeper", a.beeperDraftPolicy, source.ID, source.SourceType); err != nil {
@@ -175,7 +175,7 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 	if err := a.checkLiveBeeperDraft(ctx, grant, source.ID, chatID, intent.JSON, emit); err != nil {
 		return err
 	}
-	lint, done, err := a.gateDraftLint(ctx, draftlint.Input{Kind: "compose", Channel: "chat", Body: intent.Body}, source.ID, grant, intent.draftLintOptions, intent.JSON, emit)
+	lint, done, err := a.gateDraftLint(ctx, draftlint.Input{Kind: "compose", Channel: "chat", Body: intent.Body}, intent.draftLintOptions, intent.JSON, emit)
 	if done || err != nil {
 		return err
 	}
@@ -249,7 +249,7 @@ func (a *storeAPIAdapter) runBeeperDraftLifecycle(ctx context.Context, intent dr
 		return draftReplyError("draft_discarded", errors.New("discarded drafts cannot be edited"))
 	}
 	if intent.Operation == api.CLIRunDraftEditCommand {
-		if err := validBeeperDraftBody(intent.Body); err != nil {
+		if err := validBeeperDraftBody(intent.Body); err != nil && (!intent.ValidateOnly || strings.TrimSpace(intent.Body) != "") {
 			return err
 		}
 	}
@@ -264,7 +264,7 @@ func (a *storeAPIAdapter) runBeeperDraftLifecycle(ctx context.Context, intent dr
 		if draft.Pending != nil && intent.ValidateOnly {
 			return draftReplyError("pending_operation", store.ErrBeeperDraftPending)
 		}
-		lint, done, lintErr := a.gateDraftLint(ctx, draftlint.Input{Kind: "edit", Channel: "chat", Body: intent.Body}, source.ID, grant, intent.draftLintOptions, intent.JSON, emit)
+		lint, done, lintErr := a.gateDraftLint(ctx, draftlint.Input{Kind: "edit", Channel: "chat", Body: intent.Body}, intent.draftLintOptions, intent.JSON, emit)
 		if done || lintErr != nil {
 			return lintErr
 		}

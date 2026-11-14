@@ -106,7 +106,7 @@ Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get
 
 Successful draft creation and edit receipts include `sensitive_content` when the submitted subject or body contains a likely `payment_card`, `iban`, `us_ssn`, `api_key`, or `password`. Each entry has a `kind` and an optional `hint` showing the last four characters of a card or IBAN, or the first four characters of a prefixed key. The `quoted: true` label identifies sensitive content in parts of the body that msgvault recognizes as quoted history. The quote rules cover `>` lines and their reply attribution, keeping an unmarked answer below the block authored. A reply attribution without a `>` block, a dashed forwarded or original-message separator, or an Outlook `From:`/`Sent:` header marks history through the end of the body. The label neither proves authorship nor changes confirmation, and the approval prompt repeats it. Review these values before sending. The draft is still written unchanged.
 
-`msgvault mcp --confirm-sensitive-drafts` requires client approval before creating or editing a draft with detected sensitive content. For native daemon endpoints, use `msgvault serve --mcp-allow-writes --mcp-confirm-sensitive-drafts`. This option is off by default. Clients without elicitation support, and HTTP clients using a protocol older than `2026-07-28`, cannot write flagged drafts when it is enabled. The option grants no tools; standalone HTTP writes still require `--http-allow-writes`.
+`msgvault mcp --confirm-sensitive-drafts` requires client approval before creating or editing a draft with detected sensitive content. For native daemon endpoints, use `msgvault serve --mcp-allow-writes --mcp-confirm-sensitive-drafts`. Validation previews report sensitive content without asking for approval. This option is off by default. Clients without elicitation support, and HTTP clients using a protocol older than `2026-07-28`, cannot write flagged drafts when it is enabled. The option grants no tools; standalone HTTP writes still require `--http-allow-writes`.
 
 Cards need 13 to 19 digits that pass the checksum, with a first digit of 2 to 6 or 8. IBANs need a registered country length and a valid checksum. Unlabelled keys are recognized only for common provider prefixes. A labelled value needs at least eight characters with a letter and a digit or one of `!@#$%^&*+/=~`; a quoted multi-word passphrase also counts under a password label. Labels and values must be on the same line, separated by `:` or `=`; `Bearer` values also count. An absent finding does not mean the content is safe. Stored drafts, server-appended history, and attachments are outside this scan.
 
@@ -126,6 +126,28 @@ For a delegated Claude Desktop session, use these arguments with the daemon URL 
 ```
 
 For an HTTP loopback daemon URL, add `--agent-allow-insecure` before `mcp`. Delegated MCP serves over stdio; `--http` returns a usage error. Read tools `draft_get` and `draft_send_as` are available in owner HTTP sessions by default. Draft writes require `--http-allow-writes`.
+
+### Draft lint and validation
+
+Draft creation and edits check submitted text and the computed envelope. Findings appear in `warnings` with a code, severity, message, and, where applicable, a field, code-point span, and excerpt. Clean receipts omit warnings. Compose checks the submitted subject; reply, forward, and edit check the submitted body.
+
+| Code | Severity | Channels |
+|---|---|---|
+| `empty_body` | error | All; forwards may have an empty note |
+| `quoted_only_body` | error | Email |
+| `unresolved_placeholder` | error; `<UPPER>` and `{name}` are warnings | All |
+| `control_characters` | error | All |
+| `attachment_mentioned_missing` | warn | Email |
+| `empty_subject` | warn | Email compose |
+| `empty_to` | warn | Email |
+| `oversize` | warn | Email; built message exceeds 500 KB |
+| `recipient_provenance` | warn | Email creation |
+
+Set `strict: true` (CLI `--strict`) to refuse writes when lint reports an error. Set `allow_placeholders: true` (`--allow-placeholders`) to report all placeholders as warnings.
+
+Set `validate_only: true` (`--validate-only`) to compute the envelope and lint without a provider call or write. The result includes `status: "validated"`, `valid`, `warnings`, `recipients`, and `recipient_changes`. Email recipients contain `to`, `cc`, and `bcc` arrays; chat and Beeper return `recipients: null`. `recipient_changes` is currently empty. Validation succeeds even when `valid` is false, and uses the command's existing permissions and destination checks. Recipient provenance is computed after creation and is absent from previews and refusals.
+
+Quoted history and fenced code do not trigger placeholder or missing-attachment findings. Fenced code still counts as body text. MCP sensitive-content findings also inspect quoted text and show a masked hint.
 
 ### Recipient evidence on new drafts
 

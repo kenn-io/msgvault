@@ -496,7 +496,7 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 			return err
 		}
 	}
-	lint, done, err := a.gateDraftLint(ctx, emailDraftLintInput("reply", intent.Body, reply), target.source.ID, req.Grant, intent.draftLintOptions, intent.JSON, emit)
+	lint, done, err := a.gateDraftLint(ctx, emailDraftLintInput("reply", intent.Body, reply), intent.draftLintOptions, intent.JSON, emit)
 	if done || err != nil {
 		return err
 	}
@@ -766,7 +766,7 @@ func emitDraftReplyOutput(emit func(api.CLIRunEvent) error, stream string, asJSO
 		text = fmt.Sprintf("remote accepted; local persistence failed, inspect operation %s\n", result.OperationRef)
 	}
 	if !asJSON && result.Status == draftReplyStatusCreated {
-		text += draftLintText(draftlint.Result{Warnings: result.Warnings, Skipped: result.LintSkipped})
+		text += draftLintText(draftlint.Result{Warnings: result.Warnings})
 	}
 	return emit(api.CLIRunEvent{Type: stream, Data: text})
 }

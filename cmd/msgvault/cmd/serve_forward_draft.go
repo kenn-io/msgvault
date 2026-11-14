@@ -144,7 +144,7 @@ func (a *storeAPIAdapter) runCLIForwardDraft(
 				Reason: "unrepresentable_attachment", Detail: err.Error(),
 			}})
 		}
-		lint, done, err := a.gateDraftLint(ctx, emailDraftLintInput("forward", intent.Body, draft), target.source.ID, nil, intent.draftLintOptions, intent.JSON, emit)
+		lint, done, err := a.gateDraftLint(ctx, emailDraftLintInput("forward", intent.Body, draft), intent.draftLintOptions, intent.JSON, emit)
 		if done || err != nil {
 			return err
 		}

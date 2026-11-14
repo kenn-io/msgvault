@@ -883,7 +883,7 @@ func TestDraftLifecycleCleanup(t *testing.T) {
 			errCh := make(chan error, 1)
 			args := []string{operation, fixture.draft.DraftID, "--revision", "1", "--json"}
 			if operation == api.CLIRunDraftEditCommand {
-				args = append(args, "--body", "candidate\nline two")
+				args = append(args, "--body", "FIRST_NAME\nline two")
 			}
 			go func() {
 				events, err := runReviewLifecycle(t, fixture.adapter, args...)
@@ -917,7 +917,7 @@ func TestDraftLifecycleCleanup(t *testing.T) {
 			if operation == api.CLIRunDraftEditCommand {
 				_, err = runReviewLifecycle(t, fixture.adapter, append(retryArgs, "--body", "different")...)
 				requirements.ErrorContains(err, "pending_operation")
-				retryArgs = append(retryArgs, "--body", "candidate\r\nline two")
+				retryArgs = append(retryArgs, "--body", "FIRST_NAME\r\nline two", "--strict")
 			}
 			staleArgs := append([]string(nil), retryArgs...)
 			staleArgs[3] = "1"

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"testing"
@@ -23,7 +24,7 @@ func lintRun(t *testing.T, a *storeAPIAdapter, grant *agentgrant.Grant, args ...
 	t.Helper()
 	var events []api.CLIRunEvent
 	req := api.CLIRunRequest{Args: args, Grant: grant}
-	emit := func(e api.CLIRunEvent) error { events = append(events, e); return nil }
+	var emit func(api.CLIRunEvent) error = func(e api.CLIRunEvent) error { events = append(events, e); return nil }
 	switch args[0] {
 	case "draft-reply":
 		return eventsWithError(&events, func() error { return a.runCLIReplyDraft(t.Context(), req, emit) })
@@ -46,12 +47,12 @@ func lintObject(t *testing.T, events []api.CLIRunEvent) map[string]any {
 	require.NoError(t, json.Unmarshal([]byte(events[0].Data), &got))
 	return got
 }
-func assertDraftRows(t *testing.T, st *store.Store, want int) {
+func assertDraftRows(t *testing.T, st *store.Store) {
 	t.Helper()
 	for _, table := range []string{"imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts", "attachments"} {
 		var n int
 		require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&n))
-		assert.Equal(t, want, n, table)
+		assert.Zero(t, n, table)
 	}
 }
 func TestDraftReplyStrictRefuses(t *testing.T) {
@@ -60,7 +61,7 @@ func TestDraftReplyStrictRefuses(t *testing.T) {
 			var a *storeAPIAdapter
 			var st *store.Store
 			var id int64
-			from := "owner@example.test"
+			var from string
 			calls := 0
 			providerCreates := func() int { return calls }
 			if provider == "imap" {
@@ -68,7 +69,7 @@ func TestDraftReplyStrictRefuses(t *testing.T) {
 				a, st, id, from = f.grantedAdapter(), f.store, f.parentID, testutil.IMAPTestUsername
 				a.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
 					calls++
-					return nil, fmt.Errorf("unexpected provider call")
+					return nil, errors.New("unexpected provider call")
 				}
 			} else {
 				f := newGmailDraftTestFixture(t)
@@ -86,14 +87,13 @@ func TestDraftReplyStrictRefuses(t *testing.T) {
 				require.NotEmpty(t, events)
 				assert.Contains(t, events[0].Data, "Refused.")
 				assert.Contains(t, events[0].Data, "error: The text contains a template placeholder.")
-				assert.Contains(t, events[0].Data, "Greeting check skipped.")
-				for _, code := range []string{"draft_lint_failed", "unresolved_placeholder", "greeting_name_mismatch"} {
+				for _, code := range []string{"draft_lint_failed", "unresolved_placeholder"} {
 					assert.NotContains(t, events[0].Data, code)
 				}
 				assert.NotContains(t, events[0].Data, `{"`)
 			}
 			assert.Zero(t, providerCreates())
-			assertDraftRows(t, st, 0)
+			assertDraftRows(t, st)
 		})
 	}
 }
@@ -131,64 +131,13 @@ func TestDraftReplyLintAndProvenanceWarnings(t *testing.T) {
 	}
 }
 
-func TestDraftReplyGreetingLint(t *testing.T) {
-	f := newDraftReplyFixture(t)
-	id, err := f.store.EnsureParticipant("sender@example.com", "Sender", "example.com")
-	require.NoError(t, err)
-	person, _, err := f.store.CreatePersonFromParticipantContext(t.Context(), id)
-	require.NoError(t, err)
-	given := "Pat"
-	_, err = f.store.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{NameKind: store.PersonNameStructured, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}, GivenName: &given})
-	require.NoError(t, err)
-	for _, tc := range []struct {
-		name    string
-		canRead bool
-	}{
-		{"delegated mismatch", true},
-		{"delegated write only", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			grant := &agentgrant.Grant{
-				Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
-				Sources:     []agentgrant.SourceRef{{ID: f.source.ID, Type: f.source.SourceType, Identifier: f.source.Identifier, SenderKeys: []string{store.NormalizeIdentifierForCompare(testutil.IMAPTestUsername)}}},
-			}
-			if tc.canRead {
-				grant.Permissions = append(grant.Permissions, agentgrant.PermissionMessageRead)
-			}
-			events, err := f.runAs(t, f.grantedAdapter(), grant, "--body", "Hi Alex,", "--json")
-			require.NoError(t, err)
-			var got draftReplyOutput
-			require.NoError(t, json.Unmarshal([]byte(events[0].Data), &got))
-			if tc.canRead {
-				require.Len(t, got.Warnings, 1)
-				assert.Equal(t, "greeting_name_mismatch", got.Warnings[0].Code)
-				assert.Empty(t, got.LintSkipped)
-			} else {
-				assert.Empty(t, got.Warnings)
-				assert.Equal(t, []string{"greeting_name_mismatch"}, got.LintSkipped)
-			}
-		})
-	}
-	t.Run("clean receipt", func(t *testing.T) {
-		events, err := f.run(t, f.grantedAdapter(), "--body", "Thanks", "--json")
-		require.NoError(t, err)
-		got := lintObject(t, events)
-		assert.NotContains(t, got, "lint_skipped")
-		if warnings, ok := got["warnings"]; ok {
-			for _, warning := range warnings.([]any) {
-				assert.Equal(t, "recipient_provenance", warning.(map[string]any)["code"])
-			}
-		}
-	})
-}
-
 func TestValidateOnlyWritesNothing(t *testing.T) {
 	t.Run("imap", func(t *testing.T) {
 		f := newDraftReplyFixture(t)
 		a := f.grantedAdapter()
 		a.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
 			assert.Fail(t, "validation contacted provider")
-			return nil, fmt.Errorf("unexpected call")
+			return nil, errors.New("unexpected call")
 		}
 		events, err := f.run(t, a, "--body", "Hi FIRST_NAME", "--validate-only", "--strict", "--json")
 		require.NoError(t, err)
@@ -197,7 +146,7 @@ func TestValidateOnlyWritesNothing(t *testing.T) {
 		assert.Equal(t, false, got["valid"])
 		assert.NotContains(t, got, "draft_id")
 		assert.NotContains(t, got, "recipient_provenance_status")
-		assertDraftRows(t, f.store, 0)
+		assertDraftRows(t, f.store)
 	})
 	t.Run("chat", func(t *testing.T) {
 		st := testutil.NewTestStore(t)
@@ -210,8 +159,7 @@ func TestValidateOnlyWritesNothing(t *testing.T) {
 		require.NoError(t, err)
 		got := lintObject(t, events)
 		assert.Nil(t, got["recipients"])
-		assert.Equal(t, []any{"greeting_name_mismatch"}, got["lint_skipped"])
-		assertDraftRows(t, st, 0)
+		assertDraftRows(t, st)
 	})
 	t.Run("beeper", func(t *testing.T) {
 		f := newBeeperDraftFixture(t)
@@ -220,7 +168,7 @@ func TestValidateOnlyWritesNothing(t *testing.T) {
 		requests, patches := f.beeper.counts()
 		assert.Zero(t, requests)
 		assert.Zero(t, patches)
-		assertDraftRows(t, f.store, 0)
+		assertDraftRows(t, f.store)
 	})
 }
 func TestGmailDraftReplyValidateOnlyChecksScopes(t *testing.T) {
@@ -256,7 +204,7 @@ func TestGmailDraftReplyValidateOnlyChecksScopes(t *testing.T) {
 			}
 			assert.Zero(t, f.client.listCalls)
 			assert.Zero(t, f.client.createCalls)
-			assertDraftRows(t, f.store, 0)
+			assertDraftRows(t, f.store)
 		})
 	}
 }
@@ -378,7 +326,7 @@ func TestValidateOnlyEditWritesNothing(t *testing.T) {
 		require.NoError(t, err)
 		a.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
 			assert.Fail(t, "edit validation contacted provider")
-			return nil, fmt.Errorf("unexpected call")
+			return nil, errors.New("unexpected call")
 		}
 		events, err = lintRun(t, a, nil, "draft-edit", created.DraftID, "--revision", "1", "--body", "Hi FIRST_NAME", "--validate-only", "--json")
 		require.NoError(t, err)
@@ -469,7 +417,7 @@ func TestDraftForwardValidateAndStrict(t *testing.T) {
 	calls := 0
 	a.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
 		calls++
-		return nil, fmt.Errorf("unexpected provider call")
+		return nil, errors.New("unexpected provider call")
 	}
 	args := []string{"draft-forward", strconv.FormatInt(f.parentID, 10), "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", "a@example.com", "--body", "FIRST_NAME", "--json"}
 	events, err := lintRun(t, a, nil, append(args, "--validate-only")...)
@@ -477,7 +425,7 @@ func TestDraftForwardValidateAndStrict(t *testing.T) {
 	assert.Equal(t, false, lintObject(t, events)["valid"])
 	_, err = lintRun(t, a, nil, append(args, "--strict")...)
 	require.EqualError(t, err, "draft_lint_failed")
-	assertDraftRows(t, f.store, 0)
+	assertDraftRows(t, f.store)
 	assert.Zero(t, calls)
 }
 
@@ -491,7 +439,7 @@ func TestDraftChatAndBeeperReportLint(t *testing.T) {
 		a := &storeAPIAdapter{store: st}
 		_, err = lintRun(t, a, nil, "draft-compose", "--conversation", strconv.FormatInt(id, 10), "--body", "Hi FIRST_NAME", "--strict", "--json")
 		require.EqualError(t, err, "draft_lint_failed")
-		assertDraftRows(t, st, 0)
+		assertDraftRows(t, st)
 		events, err := lintRun(t, a, nil, "draft-compose", "--conversation", strconv.FormatInt(id, 10), "--body", "FIRST_NAME", "--json")
 		require.NoError(t, err)
 		created := lintObject(t, events)
@@ -513,7 +461,7 @@ func TestDraftChatAndBeeperReportLint(t *testing.T) {
 		requests, patches := f.beeper.counts()
 		assert.Zero(t, requests)
 		assert.Zero(t, patches)
-		assertDraftRows(t, f.store, 0)
+		assertDraftRows(t, f.store)
 		created, err := f.run(t, nil, "draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "FIRST_NAME")
 		require.NoError(t, err)
 		require.NotEmpty(t, created.Warnings)
@@ -524,4 +472,85 @@ func TestDraftChatAndBeeperReportLint(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), after.Revision)
 	})
+}
+
+func TestBeeperDraftBlankValidateOnlyPreview(t *testing.T) {
+	for _, edit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("edit=%t", edit), func(t *testing.T) {
+			f := newBeeperDraftFixture(t)
+			args := []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat}
+			if edit {
+				draft, err := f.create(t, nil, "existing")
+				require.NoError(t, err)
+				args = []string{"draft-edit", draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10)}
+			}
+			beforeRequests, beforePatches := f.beeper.counts()
+			events, err := lintRun(t, f.adapter, nil, append(args, "--body", "  ", "--validate-only", "--json")...)
+			require.NoError(t, err)
+			got := lintObject(t, events)
+			assert.Equal(t, false, got["valid"])
+			warnings := got["warnings"].([]any)
+			require.Len(t, warnings, 1)
+			assert.Equal(t, "empty_body", warnings[0].(map[string]any)["code"])
+			_, err = lintRun(t, f.adapter, nil, append(args, "--body", "\x00", "--validate-only", "--json")...)
+			require.EqualError(t, err, "invalid_args")
+			requests, patches := f.beeper.counts()
+			assert.Equal(t, beforeRequests, requests)
+			assert.Equal(t, beforePatches, patches)
+		})
+	}
+}
+
+func TestBeeperDraftBlankWritesUnchanged(t *testing.T) {
+	for _, edit := range []bool{false, true} {
+		for _, strict := range []bool{false, true} {
+			t.Run(fmt.Sprintf("edit=%t/strict=%t", edit, strict), func(t *testing.T) {
+				f := newBeeperDraftFixture(t)
+				args := []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "  "}
+				if edit {
+					draft, err := f.create(t, nil, "existing")
+					require.NoError(t, err)
+					args = []string{"draft-edit", draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10), "--body", "  "}
+				}
+				if strict {
+					args = append(args, "--strict")
+				}
+				_, err := lintRun(t, f.adapter, nil, args...)
+				require.EqualError(t, err, "invalid_args")
+			})
+		}
+	}
+}
+
+func TestGmailDraftStrictPendingEditRecovery(t *testing.T) {
+	for _, accepted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("accepted=%t", accepted), func(t *testing.T) {
+			f := newGmailDraftTestFixture(t)
+			draft := f.seedDraft(t)
+			raw := gmailDraftTestRaw("FIRST_NAME", "candidate@example.test")
+			_, err := f.store.ClaimGmailDraftContext(t.Context(), draft.DraftID, draft.Revision, store.GmailDraftOperationEdit, raw)
+			require.NoError(t, err)
+			code, id := "remote_unknown", ""
+			if accepted {
+				code, id = "accepted_local_failed", "gmail-message-replacement"
+			}
+			require.NoError(t, f.store.RecordGmailDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, code, id))
+			if accepted {
+				f.client.getDraft.Message.ID = id
+				f.client.getDraft.Message.Raw = raw
+			}
+			args := []string{"draft-edit", draft.DraftID, "--revision", strconv.FormatInt(draft.Revision, 10), "--body", "FIRST_NAME", "--strict", "--json"}
+			events, err := lintRun(t, f.adapter, nil, args...)
+			if accepted {
+				require.EqualError(t, err, "revision_mismatch")
+				assert.Contains(t, events[0].Data, `"status":"recovered"`)
+				latest, loadErr := f.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+				require.NoError(t, loadErr)
+				args[3] = strconv.FormatInt(latest.Revision, 10)
+				_, err = lintRun(t, f.adapter, nil, args...)
+			}
+			require.EqualError(t, err, "draft_lint_failed")
+			assert.Zero(t, f.client.updateCalls)
+		})
+	}
 }

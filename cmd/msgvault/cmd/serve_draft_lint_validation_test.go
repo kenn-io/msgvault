@@ -23,8 +23,10 @@ func TestDraftQuotedMailboxValidation(t *testing.T) {
 	for _, field := range []string{"to", "cc", "bcc"} {
 		values := recipients[field].([]any)
 		require.Len(t, values, 1)
-		_, err := mail.ParseAddress(values[0].(string))
-		assert.NoError(t, err)
+		address, ok := values[0].(string)
+		require.True(t, ok)
+		_, err := mail.ParseAddress(address)
+		require.NoError(t, err)
 	}
 	events, err = lintRun(t, a, nil, args...)
 	require.NoError(t, err)

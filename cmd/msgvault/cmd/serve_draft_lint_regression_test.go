@@ -1,9 +1,7 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
-	"log/slog"
 	"strconv"
 	"testing"
 
@@ -20,7 +18,8 @@ func TestDraftForwardEmptyNoteEdit(t *testing.T) {
 	a := f.grantedAdapter()
 	events, err := lintRun(t, a, nil, "draft-forward", strconv.FormatInt(f.parentID, 10), "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", "alex@example.com", "--body", "original", "--json")
 	require.NoError(t, err)
-	id := lintObject(t, events)["draft_id"].(string)
+	id, ok := lintObject(t, events)["draft_id"].(string)
+	require.True(t, ok)
 	args := []string{"draft-edit", id, "--revision", "1", "--body", "", "--strict", "--json"}
 	_, err = lintRun(t, a, nil, args...)
 	require.NoError(t, err)
@@ -45,7 +44,7 @@ func TestDraftChatAuthorizedInvalidReply(t *testing.T) {
 		_, err := lintRun(t, a, grant, "draft-compose", "--conversation", strconv.FormatInt(conversation, 10), "--reply-to", "99999", "--body", "Thanks", "--validate-only")
 		require.EqualError(t, err, want)
 	}
-	assertDraftRows(t, st, 0)
+	assertDraftRows(t, st)
 }
 func TestDraftBeeperValidateLocalDuplicate(t *testing.T) {
 	f := newBeeperDraftFixture(t)
@@ -64,47 +63,6 @@ func TestDraftBeeperValidateLocalDuplicate(t *testing.T) {
 	assert.Zero(t, patches)
 }
 
-func TestDraftLintNameLookupDiagnostics(t *testing.T) {
-	readGrant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionMessageRead}}
-	writeGrant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}}
-	for _, tc := range []struct {
-		name, body string
-		grant      *agentgrant.Grant
-		skip, log  bool
-	}{
-		{"source read failure", "Hi Alex,", readGrant, true, true},
-		{"name read failure", "Hi Alex,", nil, true, true},
-		{"write only", "Hi Alex,", writeGrant, true, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			st := testutil.NewTestStore(t)
-			// A closed archive makes a real dependency failure deterministic.
-			require.NoError(t, st.Close())
-			var logs bytes.Buffer
-			a := &storeAPIAdapter{store: st, logger: slog.New(slog.NewJSONHandler(&logs, nil))}
-			in := draftlint.Input{Kind: "reply", Channel: "email", Body: tc.body, To: []string{"alex@example.com"}}
-			result := a.lintDraft(t.Context(), in, 1, tc.grant)
-			assert.Empty(t, result.Warnings)
-			if tc.skip {
-				assert.Equal(t, []string{draftlint.CodeGreetingNameMismatch}, result.Skipped)
-			} else {
-				assert.Empty(t, result.Skipped)
-			}
-			if tc.log {
-				assert.Contains(t, logs.String(), `"msg":"draft greeting name lookup failed"`)
-				assert.Contains(t, logs.String(), `"error_class":"archive_read_failed"`)
-				assert.NotContains(t, logs.String(), "alex@example.com")
-				assert.NotContains(t, logs.String(), "database is closed")
-				// Nil-logger adapters still return an advisory skip on failure.
-				a.logger = nil
-				assert.Equal(t, result, a.lintDraft(t.Context(), in, 1, tc.grant))
-			} else {
-				assert.Empty(t, logs.String())
-			}
-		})
-	}
-}
-
 func TestDraftLintCancelledGate(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	a := &storeAPIAdapter{store: st}
@@ -112,7 +70,7 @@ func TestDraftLintCancelledGate(t *testing.T) {
 	cancel()
 	for _, options := range []draftLintOptions{{ValidateOnly: true}, {}} {
 		var events []api.CLIRunEvent
-		_, done, err := a.gateDraftLint(ctx, draftlint.Input{Kind: "reply", Channel: "email", Body: "Hi Alex,", To: []string{"alex@example.com"}}, 1, nil, options, true, func(event api.CLIRunEvent) error {
+		_, done, err := a.gateDraftLint(ctx, draftlint.Input{Kind: "reply", Channel: "email", Body: "Hi Alex,", To: []string{"alex@example.com"}}, options, true, func(event api.CLIRunEvent) error {
 			events = append(events, event)
 			return nil
 		})

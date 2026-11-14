@@ -22,6 +22,7 @@ import (
 
 type draftLifecycleIntent struct {
 	draftLintOptions
+
 	lint         draftlint.Result
 	Operation    string
 	DraftID      string
@@ -57,6 +58,7 @@ type draftLifecycleObservation struct {
 
 type draftLifecycleOutput struct {
 	draftRecipientAdvisory
+
 	Status               string                     `json:"status"`
 	DraftID              string                     `json:"draft_id"`
 	Revision             int64                      `json:"revision"`
@@ -505,7 +507,7 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 	if err != nil {
 		return err
 	}
-	if intent.Operation == api.CLIRunDraftEditCommand {
+	if intent.Operation == api.CLIRunDraftEditCommand && (draft.Pending == nil || intent.ValidateOnly) {
 		if draft.Pending != nil && intent.ValidateOnly {
 			return draftReplyError("pending_operation", store.ErrIMAPDraftPending)
 		}
@@ -526,7 +528,7 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		if imaplib.IsGeneratedForward(replacement.Raw) {
 			kind = "forward"
 		}
-		lint, done, lintErr := a.gateDraftLint(ctx, emailDraftLintInput(kind, intent.Body, replacement), source.ID, req.Grant, intent.draftLintOptions, intent.JSON, emit)
+		lint, done, lintErr := a.gateDraftLint(ctx, emailDraftLintInput(kind, intent.Body, replacement), intent.draftLintOptions, intent.JSON, emit)
 		if done || lintErr != nil {
 			return lintErr
 		}

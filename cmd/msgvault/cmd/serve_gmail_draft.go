@@ -262,7 +262,7 @@ func emitGmailDraftReplyOutput(
 			"created Gmail draft message %d (%s), operation %s, draft %s revision %d\n",
 			output.MessageID, textutil.SanitizeTerminal(output.GmailMessageID),
 			textutil.SanitizeTerminal(output.OperationRef), textutil.SanitizeTerminal(output.DraftID), output.Revision,
-		) + draftLintText(draftlint.Result{Warnings: output.Warnings, Skipped: output.LintSkipped})})
+		) + draftLintText(draftlint.Result{Warnings: output.Warnings})})
 	}
 	if output.RFC822MessageID != "" {
 		if err := emit(api.CLIRunEvent{Type: stream, Data: fmt.Sprintf(
@@ -895,7 +895,8 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 	if err := gmailDraftScopeGate(ctx, a.config, source, oauth.ScopesGmailDraftWrite); err != nil {
 		return err
 	}
-	if intent.Operation == api.CLIRunDraftEditCommand {
+	pendingEdit := draft.Pending != nil && intent.Operation == api.CLIRunDraftEditCommand
+	if intent.Operation == api.CLIRunDraftEditCommand && (draft.Pending == nil || intent.ValidateOnly) {
 		if draft.Pending != nil && intent.ValidateOnly {
 			return draftReplyError("pending_operation", store.ErrGmailDraftPending)
 		}
@@ -915,7 +916,7 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		} else if intent.ValidateOnly {
 			return draftReplyError("invalid_draft", buildErr)
 		}
-		lint, done, lintErr := a.gateDraftLint(ctx, in, source.ID, grant, intent.draftLintOptions, intent.JSON, emit)
+		lint, done, lintErr := a.gateDraftLint(ctx, in, intent.draftLintOptions, intent.JSON, emit)
 		if done || lintErr != nil {
 			return lintErr
 		}
@@ -1066,6 +1067,13 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		replacement, buildErr := imaplib.BuildDraftReplacement(currentRaw, intent.Body, time.Now(), "")
 		if buildErr != nil {
 			return draftReplyError("invalid_draft", buildErr)
+		}
+		if pendingEdit {
+			lint, done, lintErr := a.gateDraftLint(ctx, emailDraftLintInput("edit", intent.Body, replacement), intent.draftLintOptions, intent.JSON, emit)
+			if done || lintErr != nil {
+				return lintErr
+			}
+			intent.lint = lint
 		}
 		return a.runGmailDraftEdit(ctx, intent, draft, source, client, replacement, finish, refresh, emit)
 	}

@@ -19,13 +19,12 @@ type draftValidateOutput struct {
 	Status           string              `json:"status"`
 	Valid            bool                `json:"valid"`
 	Warnings         []draftlint.Warning `json:"warnings"`
-	LintSkipped      []string            `json:"lint_skipped"`
 	Recipients       *draftRecipients    `json:"recipients"`
 	RecipientChanges []any               `json:"recipient_changes"`
 }
 
 func validatedDraftOutput(result draftlint.Result, recipients *draftRecipients) draftValidateOutput {
-	return draftValidateOutput{Status: "validated", Valid: !result.Blocking(), Warnings: result.Warnings, LintSkipped: result.Skipped, Recipients: recipients, RecipientChanges: []any{}}
+	return draftValidateOutput{Status: "validated", Valid: !result.Blocking(), Warnings: result.Warnings, Recipients: recipients, RecipientChanges: []any{}}
 }
 func emitValidatedDraft(emit func(api.CLIRunEvent) error, result draftlint.Result, in draftlint.Input, asJSON bool) error {
 	var recipients *draftRecipients

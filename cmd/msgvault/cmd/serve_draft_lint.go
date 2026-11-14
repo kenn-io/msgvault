@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"net/mail"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/draftlint"
 	imaplib "go.kenn.io/msgvault/internal/imap"
@@ -43,40 +41,6 @@ func setDraftLintFlag(options *draftLintOptions, seen map[string]bool, name, val
 	return nil
 }
 
-type draftNameResolver struct {
-	adapter  *storeAPIAdapter
-	sourceID int64
-	grant    *agentgrant.Grant
-}
-
-func (r draftNameResolver) CuratedNames(ctx context.Context, addresses []string) ([]draftlint.Name, error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	var names []draftlint.Name
-	var err error
-	readable, status := r.adapter.draftReadableSources(ctx, r.sourceID, r.grant)
-	switch status {
-	case "checked":
-		names, err = r.adapter.store.CuratedNamesForAddressesContext(ctx, addresses, readable)
-	case "unavailable":
-		err = errors.New("draft recipient source lookup failed")
-	}
-	if err != nil {
-		logger := r.adapter.logger
-		if logger == nil {
-			logger = loggerFromContext(ctx)
-		}
-		logger.Warn("draft greeting name lookup failed", "error_class", "archive_read_failed")
-	}
-	return names, err
-}
-func (a *storeAPIAdapter) lintDraft(ctx context.Context, in draftlint.Input, sourceID int64, grant *agentgrant.Grant) draftlint.Result {
-	var resolver draftlint.NameResolver
-	if in.Channel == "email" {
-		resolver = draftNameResolver{adapter: a, sourceID: sourceID, grant: grant}
-	}
-	return draftlint.Check(ctx, in, resolver)
-}
 func emailDraftLintInput(kind, body string, draft imaplib.ReplyDraft) draftlint.Input {
 	in := draftlint.Input{Kind: kind, Channel: "email", Subject: draft.Parsed.Subject, Body: body, BuiltSize: len(draft.Raw), AttachmentCount: len(draft.Parsed.Attachments)}
 	for _, address := range draft.Parsed.To {
@@ -125,21 +89,17 @@ func draftLintText(result draftlint.Result) string {
 	for _, w := range result.Warnings {
 		fmt.Fprintf(&b, "%s: %s\n", w.Severity, textutil.SanitizeTerminal(w.Message))
 	}
-	if len(result.Skipped) > 0 {
-		b.WriteString("Greeting check skipped.\n")
-	}
 	return b.String()
 }
 func appendDraftLint(advisory *draftRecipientAdvisory, result draftlint.Result) {
 	advisory.Warnings = append(append([]draftlint.Warning(nil), result.Warnings...), advisory.Warnings...)
-	advisory.LintSkipped = result.Skipped
 }
 
 // gateDraftLint is shared by create and edit paths and runs before locks,
 // claims, provider calls, attachment catalog writes, or recovery transitions.
-func (a *storeAPIAdapter) gateDraftLint(ctx context.Context, in draftlint.Input, sourceID int64, grant *agentgrant.Grant, options draftLintOptions, asJSON bool, emit func(api.CLIRunEvent) error) (draftlint.Result, bool, error) {
+func (a *storeAPIAdapter) gateDraftLint(ctx context.Context, in draftlint.Input, options draftLintOptions, asJSON bool, emit func(api.CLIRunEvent) error) (draftlint.Result, bool, error) {
 	in.AllowPlaceholders = options.AllowPlaceholders
-	result := a.lintDraft(ctx, in, sourceID, grant)
+	result := draftlint.Check(in)
 	if err := ctx.Err(); err != nil {
 		return result, true, draftReplyError("cancelled", err)
 	}

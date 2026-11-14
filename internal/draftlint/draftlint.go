@@ -1,8 +1,6 @@
 // Package draftlint checks submitted draft text and computed envelopes.
 package draftlint
 
-import "context"
-
 type Span struct {
 	Start int `json:"start"`
 	End   int `json:"end"`
@@ -24,16 +22,8 @@ type Input struct {
 	AttachmentCount, BuiltSize   int
 	AllowPlaceholders            bool
 }
-type Name struct {
-	Text  string
-	Given bool
-}
-type NameResolver interface {
-	CuratedNames(context.Context, []string) ([]Name, error)
-}
 type Result struct {
 	Warnings []Warning
-	Skipped  []string
 }
 
 func (r Result) Blocking() bool {
@@ -51,10 +41,8 @@ const (
 	CodeUnresolvedPlaceholder      = "unresolved_placeholder"
 	CodeControlCharacters          = "control_characters"
 	CodeAttachmentMentionedMissing = "attachment_mentioned_missing"
-	CodeGreetingNameMismatch       = "greeting_name_mismatch"
 	CodeEmptySubject               = "empty_subject"
 	CodeEmptyTo                    = "empty_to"
 	CodeOversize                   = "oversize"
-	CodeSensitiveContent           = "sensitive_content"
 	CodeRecipientProvenance        = "recipient_provenance"
 )

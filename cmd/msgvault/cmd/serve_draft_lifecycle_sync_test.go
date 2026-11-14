@@ -170,7 +170,9 @@ func TestDelegatedDraftLifecycleConcurrentIMAPSync(t *testing.T) {
 				if tc.validateOnly {
 					output := lintObject(t, events)
 					assert.Equal("validated", output["status"])
-					assert.Equal([]any{"changed@example.test"}, output["recipients"].(map[string]any)["to"])
+					recipients, ok := output["recipients"].(map[string]any)
+					require.True(ok)
+					assert.Equal([]any{"changed@example.test"}, recipients["to"])
 				} else {
 					var output draftLifecycleOutput
 					require.NoError(json.Unmarshal([]byte(events[0].Data), &output))
@@ -239,7 +241,9 @@ func TestDelegatedGmailEditPreviewConcurrentArchiveRefresh(t *testing.T) {
 				require.NoError(t, err)
 				output := lintObject(t, events)
 				assert.Equal(t, "validated", output["status"])
-				assert.Equal(t, []any{"changed@example.test"}, output["recipients"].(map[string]any)["to"])
+				recipients, ok := output["recipients"].(map[string]any)
+				require.True(t, ok)
+				assert.Equal(t, []any{"changed@example.test"}, recipients["to"])
 			} else {
 				require.EqualError(t, err, "not_permitted")
 				assert.Empty(t, events)
