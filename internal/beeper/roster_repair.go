@@ -24,6 +24,15 @@ func (imp *Importer) repairQuietRosters(ctx context.Context, syncID, sourceID in
 	if err != nil {
 		return false, err
 	}
+	queued := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		queued[id] = true
+	}
+	for id, room := range state.Chats {
+		if room != nil && room.RosterWork != nil && room.RosterWork.Phase != "done" && !queued[id] {
+			ids = append(ids, id)
+		}
+	}
 	seen := make(map[string]bool, len(chats))
 	for _, chat := range chats {
 		seen[chat.ID] = true // Normal sync already attempted these rosters.
@@ -76,11 +85,6 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 		return deferRoom("beeper_roster_repair_failed", store.SyncRunItemStatusError, cause)
 	}
 
-	// Like chat discovery's probe, clear the route's membership proof before the
-	// request and record a fetch failure only if the request actually fails.
-	if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, chatID); err != nil {
-		return failed(fmt.Errorf("invalidate route before roster repair: %w", err))
-	}
 	// The probe timeout bounds only the provider request. Roster writes for a
 	// large room can outlast it, so they share the run's budget instead.
 	requestCtx, cancelRequest := opts.requestContext(ctx)
@@ -91,6 +95,13 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 	cancelProbe()
 	if err := ctx.Err(); err != nil {
 		return false, err
+	}
+	work := cs.RosterWork
+	if errors.Is(opts.budgetError(ctx, fetchErr), errBeeperBudgetExpired) && work != nil && work.Verified && (work.Phase == "matching" || work.Phase == "matching_retry") {
+		return true, nil
+	}
+	if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, chatID); err != nil {
+		return failed(fmt.Errorf("invalidate route before roster repair: %w", err))
 	}
 	if errors.Is(fetchErr, ErrNotFound) {
 		// A chat Beeper no longer has keeps its invalidated route proof without a
@@ -116,30 +127,42 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 	if err := imp.store.SetSourceConversationRosterRepairPendingContext(ctx, sourceID, chatID, true); err != nil {
 		return failed(fmt.Errorf("mark roster repair pending: %w", err))
 	}
-	conversationID, _, membership, err := imp.ensureConversation(requestCtx, syncID, sourceID, detail, opts, &ImportSummary{})
+	if cs.RosterWork == nil {
+		cs.RosterWork = &rosterWork{MemberFirst: true}
+	}
+	opts.rosterState = cs.RosterWork
+	opts.rosterDetailFetched = true
+	conversationID, complete, _, err := imp.ensureConversation(ctx, syncID, sourceID, detail, opts, &ImportSummary{})
+	if conversationID != 0 {
+		statsCtx, cancel := opts.conversationStatsContext(ctx)
+		statsErr := imp.store.RecomputeConversationStatsForConversationContext(statsCtx, conversationID)
+		cancel()
+		if statsErr != nil {
+			err = fmt.Errorf("recompute conversation stats after roster repair: %w", statsErr)
+		} else if complete {
+			pendingCtx := ctx
+			if opts.stopRequested() {
+				var cancelPending context.CancelFunc
+				pendingCtx, cancelPending = opts.finalizeContext(ctx)
+				defer cancelPending()
+			}
+			if pendingErr := imp.store.SetConversationRosterRepairPendingContext(pendingCtx, conversationID, false); pendingErr != nil {
+				err = fmt.Errorf("clear roster repair pending marker: %w", pendingErr)
+			}
+		}
+	}
+	if errors.Is(err, errBeeperBudgetExpired) {
+		return true, nil
+	}
 	if err != nil {
 		return failed(fmt.Errorf("repair archived roster: %w", err))
 	}
-	// Quiet rooms skip syncChat's deferred stats refresh, so update the
-	// denormalized conversation counts after their roster is repaired.
-	statsCtx, cancelStats := opts.conversationStatsContext(ctx)
-	err = imp.store.RecomputeConversationStatsForConversationContext(statsCtx, conversationID)
-	cancelStats()
-	if err != nil {
-		return failed(fmt.Errorf("recompute conversation stats after roster repair: %w", err))
-	}
-	pendingCtx := ctx
-	if opts.stopRequested() {
-		var cancelPending context.CancelFunc
-		pendingCtx, cancelPending = opts.finalizeContext(ctx)
-		defer cancelPending()
-	}
-	if err := imp.store.SetSourceConversationRosterRepairPendingContext(pendingCtx, sourceID, chatID, false); err != nil {
-		return failed(fmt.Errorf("clear roster repair pending marker: %w", err))
-	}
-	if !membership.known {
+	if !complete {
 		stop, err := deferRoom("beeper_roster_repair_deferred", store.SyncRunItemStatusSkipped, nil)
 		return stop || opts.budgetExpired(), err
+	}
+	if cs.RosterWork.Phase == "matching_retry" {
+		return deferRoom("beeper_roster_repair_failed", store.SyncRunItemStatusError, errors.New("contact matching pending"))
 	}
 	cs.RosterRetryAfter = ""
 	return opts.stopRequested(), nil

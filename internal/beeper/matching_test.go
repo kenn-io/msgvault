@@ -1774,3 +1774,51 @@ func TestScoringBlocksOversizedBeeperServiceSlugs(t *testing.T) {
 		})
 	}
 }
+
+func TestLateSharedEmailExplainsExistingSuggestion(t *testing.T) {
+	for _, recorded := range []bool{false, true} {
+		t.Run(strconv.FormatBool(recorded), func(t *testing.T) {
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			first, err := st.EnsureParticipantByPhone(t.Context(), "+12025550141", "", "beeper")
+			require.NoError(err)
+			second, err := st.EnsureParticipantByPhone(t.Context(), "+12025550142", "", "beeper")
+			require.NoError(err)
+			require.NotEqual(first, second)
+			firstScope := captureContext{SourceID: newBeeperTestSource(t, st, "slack"), AccountID: "slack", Network: "Slack"}
+			secondScope := captureContext{SourceID: newBeeperTestSource(t, st, "slack2"), AccountID: "slack2", Network: "Slack"}
+			matcher := newIdentityMatcher(st)
+			captureAndMatch(t, newObservationRecorder(st), matcher, first, &User{ID: "@slack_sam:beeper.local", Username: "sam", PhoneNumber: "+12025550141"}, firstScope)
+			outcome := captureAndMatch(t, newObservationRecorder(st), matcher, second, &User{ID: "@slack2_sam:beeper.local", Username: "sam", PhoneNumber: "+12025550142", Email: "sam@example.test"}, secondScope)
+			require.Len(outcome.Suggested, 1)
+			id := outcome.Suggested[0]
+			evidence := func() []store.IdentityMatchEvidence {
+				candidate, err := st.GetIdentityMatchCandidateContext(t.Context(), id)
+				require.NoError(err)
+				require.Equal(store.IdentityMatchStateCandidate, candidate.State)
+				var found []store.IdentityMatchEvidence
+				for _, e := range candidate.Evidence {
+					if e.EvidenceKind == evidenceEmail && e.Detail != nil && *e.Detail == "sam@example.test" {
+						found = append(found, e)
+					}
+				}
+				return found
+			}
+			require.Empty(evidence())
+			user := &User{ID: "@slack_sam:beeper.local", PhoneNumber: "+12025550141", Email: "sam@example.test"}
+			if recorded {
+				_, err = newObservationRecorder(st).capture(t.Context(), first, user, firstScope)
+				require.NoError(err)
+			}
+			captureAndMatch(t, newObservationRecorder(st), matcher, first, user, firstScope)
+			require.Equal("sam@example.test", observationValues(t, st, first)[store.ContactAddressEmail])
+			rows := evidence()
+			require.Len(rows, 1)
+			captureAndMatch(t, newObservationRecorder(st), matcher, first, user, firstScope)
+			again := evidence()
+			require.Len(again, 1)
+			require.Equal(rows[0].ID, again[0].ID)
+			require.False(linked(t, st, first, second))
+		})
+	}
+}

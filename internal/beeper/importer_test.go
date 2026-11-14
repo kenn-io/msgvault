@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -284,6 +285,15 @@ func TestQuietRosterRepairOfGoneChatLeavesNoFetchFailure(t *testing.T) {
 	f.addChat(active)
 	imp, st, done := newTestImporter(t, f)
 	defer done()
+	provider := f.handler()
+	imp.client.http.Transport = handlerTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/accounts/signal" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"accountID":"signal","bridge":{"type":"signal"},"status":"connected"}`))
+			return
+		}
+		provider(w, r)
+	}))
 	opts := ImportOptions{AccountID: "signal", NoMedia: true}
 	_, err := imp.Import(t.Context(), opts)
 	requirements.NoError(err)
@@ -292,7 +302,33 @@ func TestQuietRosterRepairOfGoneChatLeavesNoFetchFailure(t *testing.T) {
 	var conversationID int64
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM conversations
 		WHERE source_id = ? AND source_conversation_id = ?`), source.ID, quiet.ID).Scan(&conversationID))
-	requirements.NoError(st.MarkConversationMemberCountUnknown(conversationID))
+	peer := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
+	person, _, err := st.CreatePersonFromParticipant(peer)
+	requirements.NoError(err)
+	query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
+	quietRoute := func() store.MessagingRoute {
+		routes, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
+		requirements.NoError(err)
+		for _, route := range routes.Routes.Items {
+			if route.ConversationID == conversationID {
+				return route
+			}
+		}
+		requirements.FailNow("quiet route not found")
+		return store.MessagingRoute{}
+	}
+	requirements.Equal("archive_verified", quietRoute().Status)
+	run, err := st.GetLastSuccessfulSync(source.ID)
+	requirements.NoError(err)
+	state, err := LoadSyncState(run.CursorAfter.String)
+	requirements.NoError(err)
+	requirements.True(state.Chats[quiet.ID].RosterWork.Verified)
+	state.Chats[quiet.ID].RosterWork.Phase = "matching"
+	state.Chats[quiet.ID].RosterWork.Next = 1
+	cursor, err := state.Marshal()
+	requirements.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), cursor, run.ID)
+	requirements.NoError(err)
 	f.mu.Lock()
 	f.goneChatGets = map[string]bool{quiet.ID: true}
 	f.mu.Unlock()
@@ -300,6 +336,7 @@ func TestQuietRosterRepairOfGoneChatLeavesNoFetchFailure(t *testing.T) {
 	_, err = imp.Import(t.Context(), opts)
 	requirements.NoError(err)
 	assertions.True(latestBeeperState(t, imp).Chats[quiet.ID].Gone)
+	assertions.Equal("unresolved", quietRoute().Status)
 	var raw string
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT CAST(metadata AS TEXT) FROM conversations WHERE id = ?`), conversationID).Scan(&raw))
 	var metadata struct {

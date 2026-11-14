@@ -12,6 +12,7 @@ import (
 // backfill walks toward the beginning of history. Done means the backfill
 // reached the beginning of the chat's locally-available history.
 type ChatState struct {
+	RosterWork *rosterWork `json:"roster_work,omitempty"`
 	// Visited records completed work in the current discovery cycle. A
 	// budget-limited run resumes at unvisited chats before starting a new cycle.
 	Visited bool   `json:"visited,omitzero"`
@@ -161,6 +162,7 @@ func (s *SyncState) Merge(other *SyncState) {
 		cs.Done = ocs.Done
 		cs.Gone = ocs.Gone
 		cs.RosterRetryAfter = ocs.RosterRetryAfter
+		cs.RosterWork = ocs.RosterWork
 		cs.Unfinished = ocs.Unfinished
 		if ocs.TailProbed > cs.TailProbed {
 			cs.TailProbed = ocs.TailProbed

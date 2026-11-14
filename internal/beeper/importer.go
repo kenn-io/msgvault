@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
@@ -193,19 +194,39 @@ func (imp *Importer) scopedToSync(sourceID, syncID int64) *Importer {
 // loadResumeState rebuilds the sync state for a source: the last successful
 // run's cursor blob (baseline) merged with the latest interrupted checkpoint,
 // so a resumed run skips already-covered work.
-func (imp *Importer) loadResumeState(ctx context.Context, sourceID int64) *SyncState {
+func (imp *Importer) loadResumeState(ctx context.Context, sourceID int64, full bool) (*SyncState, error) {
+	prev, _ := imp.store.GetLastSuccessfulSyncContext(ctx, sourceID)
+	cp, _ := imp.store.GetLatestCheckpointedSync(sourceID)
+	return resumeState(prev, cp, full)
+}
+
+func resumeState(prev, cp *store.SyncRun, full bool) (*SyncState, error) {
+	// A full sync rebuilds unreadable progress; any other run stops on it.
+	load := func(blob string) (*SyncState, error) {
+		state, err := LoadSyncState(blob)
+		if err != nil && full {
+			return NewSyncState(), nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("unreadable Beeper sync progress; run msgvault sync-beeper --full: %w", err)
+		}
+		return state, nil
+	}
 	state := NewSyncState()
-	if prev, err := imp.store.GetLastSuccessfulSyncContext(ctx, sourceID); err == nil && prev != nil && prev.CursorAfter.Valid {
-		if s, lerr := LoadSyncState(prev.CursorAfter.String); lerr == nil {
-			state = s
+	if prev != nil && prev.CursorAfter.Valid {
+		var err error
+		if state, err = load(prev.CursorAfter.String); err != nil {
+			return nil, err
 		}
 	}
-	if cp, err := imp.store.GetLatestCheckpointedSync(sourceID); err == nil && cp != nil && cp.CursorBefore.Valid {
-		if cpState, lerr := LoadSyncState(cp.CursorBefore.String); lerr == nil {
-			state.Merge(cpState)
+	if cp != nil && cp.CursorBefore.Valid {
+		cpState, err := load(cp.CursorBefore.String)
+		if err != nil {
+			return nil, err
 		}
+		state.Merge(cpState)
 	}
-	return state
+	return state, nil
 }
 
 // Import runs a backfill-then-incremental sync of opts.AccountID's chats.
@@ -233,7 +254,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	sum = &ImportSummary{SourceID: src.ID}
 
-	state := imp.loadResumeState(ctx, src.ID)
+	state, err := imp.loadResumeState(ctx, src.ID, opts.Full)
+	if err != nil {
+		return nil, err
+	}
 	if opts.Full {
 		// Repair path: drop all cursors so every message is re-fetched and
 		// upserted in place — but keep the anchors. Skipping their
@@ -801,18 +825,24 @@ func chatActivityCutoff(opts ImportOptions, state *SyncState, reconcileCutoff ti
 // incrementally extends the chat's messages. Returns the processed message
 // count, whether the chat work completed, and any fatal error.
 func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, state *SyncState, reconcileCutoff time.Time, tailScan, tailOnly bool, sum *ImportSummary) (_ int64, chatComplete bool, err error) {
+	cs := state.EnsureChat(ch.ID)
+	if cs.RosterWork == nil {
+		cs.RosterWork = &rosterWork{MemberFirst: true}
+	}
+	opts.rosterState = cs.RosterWork
+	opts.skipRoster = !cs.RosterWork.MemberFirst && (opts.Scheduled || !opts.StopAt.IsZero() || opts.ShouldStop != nil)
+	cs.RosterWork.MemberFirst = !cs.RosterWork.MemberFirst
+	before := sum.MessagesProcessed
 	convID, membershipComplete, membership, err := imp.ensureConversation(
 		ctx, syncID, sourceID, ch, opts, sum,
 	)
-	if errors.Is(err, errBeeperBudgetExpired) {
-		sum.Stopped = true
-		return 0, false, nil
-	}
-	if err != nil {
-		return 0, false, err
-	}
-
 	defer func() {
+		finishRosterTurn(cs, sum.MessagesProcessed > before || chatComplete && err == nil)
+	}()
+	defer func() {
+		if convID == 0 {
+			return
+		}
 		statsCtx, cancel := opts.conversationStatsContext(ctx)
 		defer cancel()
 		statsErr := imp.store.RecomputeConversationStatsForConversationContext(statsCtx, convID)
@@ -827,7 +857,7 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 				statsErr = nil
 			}
 		}
-		if statsRefreshed && ctx.Err() == nil {
+		if statsRefreshed && ctx.Err() == nil && membershipComplete {
 			pendingCtx := ctx
 			var cancelPending context.CancelFunc
 			if opts.stopRequested() {
@@ -842,7 +872,12 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		}
 		err = errors.Join(err, statsErr)
 	}()
-	cs := state.EnsureChat(ch.ID)
+	if stopBeforeMessages(cs, opts, err, sum) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
 	if membership.known {
 		cs.RosterRetryAfter = ""
 	}
@@ -855,7 +890,6 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		Type:             conversationType(ch.Type),
 		ParticipantCount: membership.policyCount(opts.MediaPolicy),
 	}
-	before := sum.MessagesProcessed
 	tailProbeComplete := true
 
 	// Re-open a completed chat whose oldest end has grown since it was walked;
@@ -904,6 +938,31 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 	return sum.MessagesProcessed - before, tailProbeComplete, nil
 }
 
+// stopBeforeMessages ends a visit whose roster turn used the budget. Roster
+// progress stays saved, and the next visit gives messages their turn first.
+func stopBeforeMessages(cs *ChatState, opts ImportOptions, err error, sum *ImportSummary) bool {
+	if !errors.Is(err, errBeeperBudgetExpired) && (err != nil || !opts.stopRequested()) {
+		return false
+	}
+	cs.RosterWork.MemberFirst = false
+	sum.Stopped = true
+	return true
+}
+
+// finishRosterTurn keeps a finished roster turn until the chat's messages
+// advance or the chat completes, so a message turn that runs out of budget is
+// retried before the roster is matched again.
+func finishRosterTurn(cs *ChatState, messagesMoved bool) {
+	if cs.RosterWork.Phase != "done" {
+		return
+	}
+	if messagesMoved {
+		cs.RosterWork.MemberFirst = true
+		return
+	}
+	cs.RosterWork.MemberFirst = false
+}
+
 // chatMembership is the roster media policy weighs for one chat: the
 // participant total Beeper reports, or the full participant list when no
 // total is reported. Neither is known when a truncated listing reports no
@@ -937,7 +996,7 @@ func (m chatMembership) policyCount(policy attachmentpolicy.Policy) int {
 }
 
 // ensureConversation upserts the conversation row and its membership,
-// fetching the full participant list when the search listing truncated it
+// fetching the full participant list on roster turns when search truncated it
 // (chat search returns at most 20 participants per chat). It archives the
 // roster media policy weighs — the reported total, or the unknown marker
 // when there is none and the list is incomplete — so backfill and purge
@@ -946,9 +1005,10 @@ func (m chatMembership) policyCount(policy attachmentpolicy.Policy) int {
 func (imp *Importer) ensureConversation(
 	ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, sum *ImportSummary,
 ) (int64, bool, chatMembership, error) {
+	listingSignature := rosterSignature(ch, opts.AccountID)
 	detail := ch
 	membershipComplete := !ch.Participants.HasMore
-	if ch.Participants.HasMore {
+	if !opts.skipRoster && !opts.rosterDetailFetched && (ch.Participants.HasMore || (opts.rosterState != nil && opts.rosterState.DetailBacked)) {
 		if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, ch.ID); err != nil {
 			return 0, false, chatMembership{}, fmt.Errorf("invalidate route evidence before Beeper roster refresh for chat %q: %w", ch.ID, err)
 		}
@@ -963,13 +1023,21 @@ func (imp *Importer) ensureConversation(
 			if ctx.Err() != nil {
 				return 0, false, chatMembership{}, ctx.Err()
 			}
-			imp.recordItem(syncID, ch.ID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", gerr)
-			sum.failChat(ch.ID, false, gerr)
-			sum.FetchErrors++
-			sum.Errors++
+			if ch.Participants.HasMore {
+				imp.recordItem(syncID, ch.ID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", gerr)
+				sum.failChat(ch.ID, false, gerr)
+				sum.FetchErrors++
+				sum.Errors++
+			} else {
+				imp.recordItem(syncID, ch.ID, "membership", store.SyncRunItemStatusSkipped, "beeper_roster_verification_deferred", gerr)
+			}
+			membershipComplete = false
 		} else {
 			detail = d
 			membershipComplete = !d.Participants.HasMore
+			if opts.rosterState != nil {
+				opts.rosterState.DetailBacked = true
+			}
 		}
 	}
 	membership := chatMembershipOf(detail, membershipComplete)
@@ -979,8 +1047,13 @@ func (imp *Importer) ensureConversation(
 	if err != nil {
 		return 0, false, chatMembership{}, err
 	}
-	// Invalidate earlier proof before any roster writes. An interrupted refresh
-	// cannot retain a complete route snapshot beside partially updated members.
+	// Keep the resolver tied to the import option, not to any account value
+	// echoed by the remote chat payload. This also covers direct callers of
+	// ensureConversation that do not go through Import's cache reset.
+	imp.res.accountID = opts.AccountID
+	if err := imp.res.useMessageRoster(ctx, sourceID, detail, opts.skipRoster || !membershipComplete); err != nil {
+		return 0, false, chatMembership{}, err
+	}
 	routeEvidence := routeEvidenceFor(detail, opts)
 	if ch.AccountID != opts.AccountID {
 		routeEvidence.Failure = "account_binding_mismatch"
@@ -989,10 +1062,6 @@ func (imp *Importer) ensureConversation(
 	if detail.ID != ch.ID {
 		routeEvidence.Failure = "chat_binding_mismatch"
 	}
-	if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, routeEvidence); err != nil {
-		return 0, false, chatMembership{}, err
-	}
-
 	if membership.known {
 		err = imp.store.SetConversationMemberCountContext(ctx, convID, membership.count)
 	} else {
@@ -1001,88 +1070,124 @@ func (imp *Importer) ensureConversation(
 	if err != nil {
 		return 0, false, chatMembership{}, err
 	}
-	members := make([]store.ConversationParticipantRef, 0, len(detail.Participants.Items))
-	type resolvedMember struct {
-		participantID int64
-		user          *User
+	if opts.skipRoster {
+		if opts.rosterState != nil && opts.rosterState.Verified && opts.rosterState.ListingSignature == listingSignature && opts.rosterState.Signature == rosterSignature(detail, opts.AccountID) {
+			keys := imp.rosterKeys(detail.Participants.Items)
+			settled, err := imp.refreshRosterProof(ctx, sourceID, convID, rosterProvider(ch.ID), detail, detail.Participants.Items, keys, opts.AccountID, routeEvidence, membership, opts.rosterState)
+			if err != nil {
+				return convID, false, membership, err
+			}
+			if settled {
+				return convID, true, membership, nil
+			}
+		}
+		if opts.rosterState != nil && opts.rosterState.Verified && (!ch.Participants.HasMore || opts.rosterState.ListingSignature != listingSignature) {
+			opts.rosterState.Verified = false
+			opts.rosterState.Phase = "members"
+			opts.rosterState.Next = 0
+		}
+		if err := imp.store.SetConversationRosterRepairPendingContext(ctx, convID, true); err != nil {
+			return convID, false, membership, err
+		}
+		if err := imp.store.InvalidateConversationMessagingRouteEvidence(ctx, convID); err != nil {
+			return convID, false, membership, err
+		}
+		return convID, false, membership, nil
 	}
-	resolvedMembers := make([]resolvedMember, 0, len(detail.Participants.Items))
+	work := opts.rosterState
+	if work == nil {
+		work = &rosterWork{}
+	}
+	signature := rosterSignature(detail, opts.AccountID)
+	if work.Signature != signature {
+		work.Signature = signature
+		work.Phase = "members"
+		work.Verified = false
+	}
+	if !opts.rosterDetailFetched {
+		work.ListingSignature = listingSignature
+	}
+	if work.Phase == "" {
+		work.Phase = "members"
+	}
+	if work.Phase == "done" && !membershipComplete {
+		work.Phase = "members"
+		work.Verified = false
+	}
+	provider := rosterProvider(ch.ID)
+	items := slices.Clone(detail.Participants.Items)
+	slices.SortStableFunc(items, func(a, b Participant) int { return strings.Compare(a.ID, b.ID) })
+	keys := imp.rosterKeys(items)
+	if work.Verified && work.Phase != "members" {
+		settled, err := imp.refreshRosterProof(ctx, sourceID, convID, provider, detail, items, keys, opts.AccountID, routeEvidence, membership, work)
+		if err != nil {
+			return convID, false, membership, err
+		}
+		if !settled {
+			work.Verified = false
+			work.Phase = "members"
+		}
+	}
+	// Invalidate earlier proof before any roster writes.
+	needsMembers := work.Phase == "members" || !work.Verified
+	if needsMembers {
+		if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, routeEvidence); err != nil {
+			return 0, false, chatMembership{}, err
+		}
+	}
 	var bridgePrefix string
 	if membershipComplete {
 		bridgePrefix = participantBridgePrefix(detail.Participants.Items)
 	}
-	// Keep the resolver tied to the import option, not to any account value
-	// echoed by the remote chat payload. This also covers direct callers of
-	// ensureConversation that do not go through Import's cache reset.
-	imp.res.accountID = opts.AccountID
-	for i := range detail.Participants.Items {
+	if needsMembers {
+		if err := imp.store.SetConversationRosterRepairPendingContext(ctx, convID, true); err != nil {
+			return convID, false, membership, err
+		}
+		if err := imp.resolveRosterMembers(ctx, sourceID, convID, provider, detail, items, keys, opts, bridgePrefix); err != nil {
+			return convID, false, membership, err
+		}
+		verified, verifyErr := imp.verifyRosterMembers(ctx, ch.ID, membershipComplete, opts)
+		if errors.Is(verifyErr, errBeeperBudgetExpired) {
+			return convID, false, membership, verifyErr
+		}
 		if err := ctx.Err(); err != nil {
-			return 0, false, chatMembership{}, err
+			return convID, false, membership, err
 		}
-		p := &detail.Participants.Items[i]
-		pid, rerr := imp.res.resolveUser(ctx, &p.User)
-		if rerr != nil {
-			return 0, false, chatMembership{}, rerr
+		if verifyErr == nil && (verified == nil || verified.ID != ch.ID || verified.Participants.HasMore || rosterSignature(verified, opts.AccountID) != signature) {
+			verifyErr = errors.New("beeper roster changed or became incomplete during verification")
+			work.DetailBacked = true
 		}
-		if pid == 0 {
-			continue
-		}
-		role := "member"
-		if p.IsAdmin {
-			role = "admin"
-		}
-		members = append(members, store.ConversationParticipantRef{ParticipantID: pid, Role: role})
-		resolvedMembers = append(resolvedMembers, resolvedMember{participantID: pid, user: &p.User})
-	}
-	if err := ctx.Err(); err != nil {
-		return 0, false, chatMembership{}, err
-	}
-	if membershipComplete {
-		if err := imp.store.ReplaceConversationParticipantsContext(ctx, convID, members); err != nil {
-			return 0, false, chatMembership{}, err
-		}
-	} else {
-		for _, member := range members {
-			if err := ctx.Err(); err != nil {
-				return 0, false, chatMembership{}, err
+		if verifyErr != nil {
+			imp.recordItem(syncID, ch.ID, "membership", store.SyncRunItemStatusSkipped, "beeper_roster_verification_deferred", verifyErr)
+			membership.known = membership.known && verified == nil
+			work.Verified = false
+		} else {
+			owners, err := imp.replaceRosterMembership(ctx, sourceID, convID, provider, keys, items, opts)
+			if err != nil {
+				return convID, false, membership, err
 			}
-			cerr := imp.store.EnsureConversationParticipantContext(
-				ctx, convID, member.ParticipantID, member.Role,
-			)
-			if cerr != nil && ctx.Err() == nil {
-				sum.Errors++
+			if err := imp.publishRosterEvidence(ctx, convID, routeEvidence, items, keys, owners, membership); err != nil {
+				return convID, false, membership, err
 			}
+			work.Verified = true
+			work.DetailBacked = ch.Participants.HasMore
+			imp.obs = newObservationRecorder(imp.store)
+			imp.matcher = newIdentityMatcher(imp.store)
+		}
+		if verifyErr == nil || work.Phase == "members" {
+			work.Phase = "matching"
+			work.Next = 0
 		}
 	}
-	routeEvidence.MembershipComplete = membershipComplete && membership.known && len(resolvedMembers) == membership.count
-	for _, member := range resolvedMembers {
-		routeEvidence.ParticipantIDs = append(routeEvidence.ParticipantIDs, member.participantID)
-		if member.user.IsSelf {
-			routeEvidence.SelfParticipantIDs = append(routeEvidence.SelfParticipantIDs, member.participantID)
+	// Membership must be visible before matching. The roster supplies contact
+	// details used to gather shared-conversation evidence for new candidates.
+	if work.Phase == "matching" || work.Phase == "matching_retry" {
+		if err := imp.matchRosterMembers(ctx, sourceID, provider, detail, items, opts, bridgePrefix, work, sum); err != nil {
+			return convID, work.Verified, membership, err
 		}
-	}
-	if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, routeEvidence); err != nil {
-		return 0, false, chatMembership{}, err
 	}
 
-	// Membership must be visible before matching. The chat participant list is
-	// the only place Beeper hands us a person's phone, email, and username
-	// together, and matching those observations gathers shared-conversation
-	// evidence immediately. Recording observations first would omit this chat
-	// from every candidate created on its first import.
-	for _, member := range resolvedMembers {
-		if err := ctx.Err(); err != nil {
-			return 0, false, chatMembership{}, err
-		}
-		imp.captureObservations(
-			ctx, member.participantID, member.user, detail,
-			sourceID, opts.AccountID, bridgePrefix, sum,
-		)
-	}
-	if err := ctx.Err(); err != nil {
-		return 0, false, chatMembership{}, err
-	}
-	return convID, membershipComplete, membership, nil
+	return convID, work.Verified, membership, nil
 }
 
 // recordChatFetchError records a failed message-page read for one chat. Route
@@ -1252,6 +1357,7 @@ func (imp *Importer) captureObservations(
 		}
 		outcome, merr := imp.matcher.match(ctx, participantID, result)
 		if merr != nil {
+			imp.obs = newObservationRecorder(imp.store)
 			if ctx.Err() == nil {
 				slog.Warn("beeper identity matching failed",
 					"participant_id", participantID, "beeper_user_id", u.ID, "error", merr)

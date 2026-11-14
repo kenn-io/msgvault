@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"net/http"
 	"testing"
 	"time"
 
@@ -13,6 +14,88 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestMergeSourcesRepairsLiveRoster(t *testing.T) {
+	for _, quiet := range []bool{false, true} {
+		for _, noRoute := range []bool{false, true} {
+			name := "active"
+			if quiet {
+				name = "quiet"
+			}
+			if noRoute {
+				name += " without route"
+			}
+			t.Run(name, func(t *testing.T) {
+				require, assert := require.New(t), assert.New(t)
+				f := newFakeBeeper(t)
+				chat := budgetTestChat("!merged:example.test", 1, time.Now().Add(-48*time.Hour))
+				f.addChat(chat)
+				imp, st := newHandlerTestImporter(t, f)
+				t.Cleanup(func() { require.NoError(st.Close()) })
+				provider := f.handler()
+				imp.client.http.Transport = handlerTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/v1/accounts/signal" {
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = w.Write([]byte(`{"accountID":"signal","bridge":{"type":"signal"},"status":"connected"}`))
+						return
+					}
+					provider(w, r)
+				}))
+				opts := ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true}
+				sum, err := imp.Import(t.Context(), opts)
+				require.NoError(err)
+				want := rosterMembers(t, st, sum.SourceID, chat.ID)
+				require.Len(want, 2)
+				peer := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
+				person, _, err := st.CreatePersonFromParticipant(peer)
+				require.NoError(err)
+				query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
+				routes, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
+				require.NoError(err)
+				require.Len(routes.Routes.Items, 1)
+				require.Equal("archive_verified", routes.Routes.Items[0].Status)
+				if noRoute {
+					var liveConv int64
+					require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sum.SourceID, chat.ID).Scan(&liveConv))
+					require.NoError(st.SetConversationMetadata(liveConv, sql.NullString{String: `{"member_count":2}`, Valid: true}))
+				}
+				history, err := st.GetOrCreateSource("beeper", "signal-history")
+				require.NoError(err)
+				conv, err := st.EnsureConversation(t.Context(), history.ID, chat.ID, "History")
+				require.NoError(err)
+				departed, err := st.EnsureParticipantByPhone(t.Context(), "+12025550199", "Departed", "signal")
+				require.NoError(err)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO conversation_participants(conversation_id, participant_id, role) VALUES (?, ?, 'member')`), conv, departed)
+				require.NoError(err)
+				_, err = st.UpsertMessage(&store.Message{SourceID: history.ID, ConversationID: conv, SourceMessageID: "historical", MessageType: "beeper"})
+				require.NoError(err)
+				req := store.MergeSourcesRequest{FromSourceID: history.ID, IntoSourceID: sum.SourceID, DryRun: true}
+				_, err = st.MergeSourcesContext(t.Context(), req)
+				require.NoError(err)
+				req.DryRun = false
+				_, err = st.MergeSourcesContext(t.Context(), req)
+				require.NoError(err)
+				shared, err := st.SharedConversationCountContext(t.Context(), peer, departed)
+				require.NoError(err)
+				assert.Zero(shared)
+				if !quiet {
+					f.appendMsg(chat.ID, fakeMsg{ID: "active", SortKey: 99, Timestamp: time.Now(), SenderID: "@signal_ann:beeper.local", Text: "active"})
+				}
+				imp = NewImporter(st, imp.client)
+				_, err = imp.Import(t.Context(), opts)
+				require.NoError(err)
+				assert.ElementsMatch(want, rosterMembers(t, st, sum.SourceID, chat.ID))
+				pending, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+				require.NoError(err)
+				assert.NotContains(pending, chat.ID)
+				routes, err = st.GetPersonMessagingRoutesContext(t.Context(), query)
+				require.NoError(err)
+				require.Len(routes.Routes.Items, 1)
+				assert.Equal("archive_verified", routes.Routes.Items[0].Status)
+			})
+		}
+	}
+}
 
 func TestMergeSourcesRestartsBeeperRepairForMovedHistory(t *testing.T) {
 	t.Parallel()
@@ -104,7 +187,8 @@ func TestMergeSourcesRestartsBeeperRepairForMovedHistory(t *testing.T) {
 			applied, err = st.IsMigrationAppliedContext(t.Context(), ledgerKey, 1)
 			require.NoError(err)
 			assert.False(applied, "committed merge invalidates completed repairs")
-			progress := NewImporter(st, nil).loadResumeState(t.Context(), live.ID)
+			progress, err := NewImporter(st, nil).loadResumeState(t.Context(), live.ID, false)
+			require.NoError(err)
 			require.Contains(progress.Chats, "!live:example.test")
 			assert.Equal("provider-checkpoint", progress.Chats["!live:example.test"].Newest)
 			assert.Equal("provider-oldest", progress.Chats["!live:example.test"].Oldest)
