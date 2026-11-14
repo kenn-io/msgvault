@@ -18,7 +18,6 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-const invalidArguments = "invalid_arguments"
 const maxPersonRecordDisclosureBytes = api.MaxPersonProfilePatchBytes + (1 << 20)
 
 func personRecordCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCapabilities) []string {
@@ -57,7 +56,7 @@ func personRecordRefusal(code string) bool {
 }
 func (b *daemonMCPOperations) executePersonRecord(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	invalid := func() (*mcpserver.OperationResult, bool, error) {
-		return operationFailure(invalidArguments, false), true, nil
+		return operationFailure("invalid_arguments", false), true, nil
 	}
 	switch name {
 	case "get_person_record", "get_person_record_history":
@@ -118,7 +117,7 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	}
 	input, err := decodeMCPOperationArguments[personPatchArgs](args)
 	if err != nil || !validLoopID(input.PersonID) || input.ETag == "" || input.Patch == nil {
-		return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
+		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 	}
 	count := 0
 	if p := input.Patch.Names; p != nil {
@@ -148,7 +147,7 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	// The generated client's runtime uses v1 JSON for request bodies.
 	encodedPatch, err := runtime.MarshalJSON(input.Patch)
 	if err != nil {
-		return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
+		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 	}
 	if len(encodedPatch) > api.MaxPersonProfilePatchBytes {
 		return "", true, &mcpserver.OperationRefusalError{Code: "profile_patch_too_large"}
@@ -175,7 +174,7 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 			if item.Data != nil {
 				data, err := base64.StdEncoding.DecodeString(*item.Data)
 				if err != nil {
-					return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
+					return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 				}
 				if len(data) > store.MaxPersonMediaBytes {
 					return "", true, &mcpserver.OperationRefusalError{Code: "invalid_profile_value"}
