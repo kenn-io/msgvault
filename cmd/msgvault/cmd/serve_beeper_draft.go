@@ -215,7 +215,7 @@ func (a *storeAPIAdapter) runBeeperDraftLifecycle(ctx context.Context, intent dr
 		if err := chatDraftAuthorizer(grant, permissions...)(source.SourceType, source.Identifier); err != nil {
 			return err
 		}
-		intent.MetadataOnly = !grant.Allows(agentgrant.PermissionDraftEdit, agentgrant.SourceRef{
+		intent.MetadataOnly = intent.MetadataOnly || !grant.Allows(agentgrant.PermissionDraftEdit, agentgrant.SourceRef{
 			Type: source.SourceType, Identifier: source.Identifier,
 		})
 	}

@@ -343,8 +343,24 @@ func TestBeeperDraftDeleteOnlyResponses(t *testing.T) {
 			// An unconfirmed edit has both committed and candidate text to hide.
 			_, err = f.store.ClaimBeeperDraftContext(t.Context(), created.DraftID, created.Revision, store.BeeperDraftOperationEdit, "pending owner draft")
 			require.NoError(err)
+			var ownerOutput strings.Builder
+			err = f.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: []string{api.CLIRunDraftGetCommand, created.DraftID, "--json"}, WithholdVerification: true}, func(event api.CLIRunEvent) error {
+				ownerOutput.WriteString(event.Data)
+				return nil
+			})
+			require.NoError(err)
+			assert.Contains(ownerOutput.String(), created.DraftID)
+			assert.NotContains(ownerOutput.String(), "owner draft")
 			require.NoError(run("ok", api.CLIRunDraftGetCommand, created.DraftID))
 			f.beeper.set(`{"text":"<p>pending owner draft</p>"}`, false)
+			ownerOutput.Reset()
+			err = f.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: []string{api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "1", "--json"}, WithholdVerification: true}, func(event api.CLIRunEvent) error {
+				ownerOutput.WriteString(event.Data)
+				return nil
+			})
+			assertBeeperDraftCode(t, err, "pending_operation")
+			assert.Contains(ownerOutput.String(), created.DraftID)
+			assert.NotContains(ownerOutput.String(), "owner draft")
 			err = run("pending_operation", api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "1")
 			assertBeeperDraftCode(t, err, "pending_operation")
 

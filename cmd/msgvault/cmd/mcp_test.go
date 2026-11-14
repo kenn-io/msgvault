@@ -709,6 +709,7 @@ func TestMCPStandaloneVerificationHandshake(t *testing.T) {
 				require.ErrorContains(err, "probe unavailable")
 			} else {
 				require.ErrorContains(err, "requires daemon API schema 5.3.0")
+				require.ErrorContains(err, "--reveal-verification")
 			}
 			assert.Equal(tc.wantServe, served)
 			if tc.reveal {

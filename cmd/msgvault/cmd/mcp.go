@@ -90,7 +90,7 @@ Add to Claude Desktop config:
 				return fmt.Errorf("check daemon verification support: %w", err)
 			}
 			if !daemonclient.APISchemaVersionAtLeast(version, daemonclient.VerificationMinAPISchemaVersion) {
-				return fmt.Errorf("verification withholding requires daemon API schema %s or newer (daemon reports %q); upgrade the daemon", daemonclient.VerificationMinAPISchemaVersion, version)
+				return fmt.Errorf("verification withholding requires daemon API schema %s or newer (daemon reports %q); upgrade the daemon or use --reveal-verification", daemonclient.VerificationMinAPISchemaVersion, version)
 			}
 			st, err = st.WithVerificationWithheld()
 			if err != nil {

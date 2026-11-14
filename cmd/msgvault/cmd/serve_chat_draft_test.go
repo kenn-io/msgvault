@@ -163,6 +163,19 @@ func TestChatDraftDeleteGrantRedactsBody(t *testing.T) {
 	withEdit, err := run(grantFor(agentgrant.PermissionDraftEdit), api.CLIRunDraftGetCommand, draft.DraftID, "--json")
 	requirements.NoError(err)
 	assertions.Contains(withEdit, body)
+	for _, args := range [][]string{
+		{api.CLIRunDraftGetCommand, draft.DraftID, "--json"},
+		{api.CLIRunDraftGetCommand, "--conversation", strconv.FormatInt(conversationID, 10), "--json"},
+	} {
+		var output strings.Builder
+		err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: args, WithholdVerification: true}, func(event api.CLIRunEvent) error {
+			output.WriteString(event.Data)
+			return nil
+		})
+		requirements.NoError(err)
+		assertions.Contains(output.String(), draft.DraftID)
+		assertions.NotContains(output.String(), body)
+	}
 
 	for _, tc := range []struct {
 		name string
@@ -214,4 +227,14 @@ func TestChatDraftDeleteGrantRedactsBody(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Contains(deletedText, textDraft.DraftID)
 	assertions.NotContains(deletedText, body)
+	editDraft, err := st.CreateChatDraftContext(t.Context(), conversationID, 0, body, func(string, string) error { return nil })
+	requirements.NoError(err)
+	var edited strings.Builder
+	err = adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: []string{api.CLIRunDraftEditCommand, editDraft.DraftID, "--revision", "1", "--body", "new secret", "--json"}, WithholdVerification: true}, func(event api.CLIRunEvent) error {
+		edited.WriteString(event.Data)
+		return nil
+	})
+	requirements.NoError(err)
+	assertions.Contains(edited.String(), editDraft.DraftID)
+	assertions.NotContains(edited.String(), "new secret")
 }

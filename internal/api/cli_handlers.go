@@ -1410,7 +1410,7 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auth := s.requestAuthentication(r)
-	if auth.Grant == nil && s.withholdsVerification(r) && !IsCLIRunDraftReply(req.Args) && !IsCLIRunDraftCompose(req.Args) && !IsCLIRunDraftSendAs(req.Args) {
+	if auth.Grant == nil && s.withholdsVerification(r) && !IsCLIRunDraftReply(req.Args) && !IsCLIRunDraftCompose(req.Args) && !IsCLIRunDraftSendAs(req.Args) && !IsCLIRunDraftLifecycle(req.Args) {
 		writeAPIHTTPError(w, newAPIHTTPError(http.StatusForbidden, "verification_masked", "Command is unavailable while verification content is withheld"))
 		return
 	}

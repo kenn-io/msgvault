@@ -838,7 +838,7 @@ func (a *storeAPIAdapter) runDelegatedGmailDraftLifecycle(
 	if err != nil {
 		return err
 	}
-	intent.MetadataOnly = !canReadContent
+	intent.MetadataOnly = intent.MetadataOnly || !canReadContent
 	return a.runCLIGmailDraftLifecycle(ctx, intent, draft, grant, emit)
 }
 

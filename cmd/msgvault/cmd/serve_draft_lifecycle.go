@@ -25,7 +25,7 @@ type draftLifecycleIntent struct {
 	Revision     int64
 	Body         string
 	JSON         bool
-	MetadataOnly bool // Set by delegated authorization, never by CLI arguments.
+	MetadataOnly bool // Set by authorization or verification withholding, never by CLI arguments.
 	// ConversationID lists a conversation's local chat drafts in place of DraftID.
 	ConversationID int64
 }
@@ -410,6 +410,7 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 	if err != nil {
 		return err
 	}
+	intent.MetadataOnly = req.WithholdVerification
 	if intent.ConversationID != 0 || strings.HasPrefix(intent.DraftID, store.ChatDraftIDPrefix) {
 		return a.runCLIChatDraftLifecycle(ctx, intent, req.Grant, emit)
 	}
@@ -449,7 +450,7 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		if err != nil {
 			return err
 		}
-		intent.MetadataOnly = !canReadContent
+		intent.MetadataOnly = intent.MetadataOnly || !canReadContent
 	}
 	if intent.Operation == api.CLIRunDraftGetCommand {
 		provider := &draftLifecycleObservation{State: "not_checked", Code: "not_checked"}
