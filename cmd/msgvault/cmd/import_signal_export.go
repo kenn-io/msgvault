@@ -94,6 +94,7 @@ func runImportSignalExport(cmd *cobra.Command, root, account string) error {
 }
 
 var signalExportReasonLabels = map[string]string{
+	"ambiguous_message":       "ambiguous messages",
 	"recipient_identity":      "unsupported chat recipient",
 	"author_identity":         "unsupported message author",
 	"self_identity":           "missing account identity",

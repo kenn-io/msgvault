@@ -195,9 +195,16 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		}
 		convKey := scopedKey(scope, conversation.key)
 		authorKey := scopedKey(scope, author.key)
-		key, id, err := slots.slot(ctx, st, source.ID, convKey, authorKey, date, originalReceived(m))
+		key, id, repeated, err := slots.slot(ctx, st, source.ID, convKey, authorKey, date, originalReceived(m))
 		if err != nil {
 			return err
+		}
+		ambiguous, err := ambiguousSnapshot(ctx, st, id, repeated, raw)
+		if err != nil {
+			return err
+		}
+		if ambiguous {
+			return skip("ambiguous_message")
 		}
 		standard := m.Standard
 		countOmissions(s, m)

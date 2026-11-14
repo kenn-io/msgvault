@@ -97,13 +97,13 @@ func TestImportDistinctMessagesAtSameMillisecond(t *testing.T) {
 	between := strings.Replace(incoming, "1700000000000", "1700000000001", 1)
 	repeat := strings.Replace(first, "Hello 星", "Repeat", 1)
 	for _, tc := range []struct {
-		name           string
-		frames, replay []string
-		changed        int64
+		name             string
+		frames, replay   []string
+		changed, skipped int64
 	}{
-		{"incoming receive times", []string{first, later(first, "Hello 星")}, []string{later(first, "Hello 星")}, 0},
-		{"outgoing receive times", []string{outgoing, later(outgoing, "First message")}, []string{later(outgoing, "First message")}, 0},
-		{"same-time messages separated by another", []string{first, between, repeat}, []string{repeat, between, first}, 2},
+		{"incoming receive times", []string{first, later(first, "Hello 星")}, []string{later(first, "Hello 星")}, 0, 0},
+		{"outgoing receive times", []string{outgoing, later(outgoing, "First message")}, []string{later(outgoing, "First message")}, 0, 0},
+		{"same-time messages separated by another", []string{first, between, repeat}, []string{repeat, between, first}, 0, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
@@ -117,8 +117,9 @@ func TestImportDistinctMessagesAtSameMillisecond(t *testing.T) {
 			require.NoError(t, err)
 			added := max(len(tc.replay)-len(tc.frames), 0)
 			assert.EqualValues(t, added, summary.MessagesAdded)
-			assert.EqualValues(t, len(tc.replay)-added, summary.MessagesExisting)
+			assert.EqualValues(t, int64(len(tc.replay)-added)-tc.skipped, summary.MessagesExisting)
 			assert.Equal(t, tc.changed, summary.MessagesChanged)
+			assert.Equal(t, tc.skipped, summary.Skipped["ambiguous_message"])
 			assert.Equal(t, len(tc.frames)+added, messageCount(t, st))
 		})
 	}
@@ -795,4 +796,68 @@ func TestContactDoesNotReassignExistingAlias(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, first, aciOwner)
 	assert.Equal(t, second, phoneOwner)
+}
+
+func TestImportAmbiguousSameTimeReplay(t *testing.T) {
+	data := []byte("fictional attachment")
+	message := func(body string) string {
+		return `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"` + body + `"},"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(data) + `}]}}}`
+	}
+	st := testutil.NewTestStore(t)
+	root := fixture(t, message("A"), message("B"))
+	opts := options(t, root)
+	first, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, first.MessagesAdded)
+	assert.Equal(t, 2, first.AttachmentsMissing)
+	rows, err := st.DB().QueryContext(t.Context(), "SELECT id FROM messages ORDER BY id")
+	require.NoError(t, err)
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		require.NoError(t, rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+	require.Len(t, ids, 2)
+	rawA, err := st.GetMessageRawContext(t.Context(), ids[0])
+	require.NoError(t, err)
+	rawB, err := st.GetMessageRawContext(t.Context(), ids[1])
+	require.NoError(t, err)
+	putMedia(t, root, data)
+	writeFrames(t, root, message("B"), message("C"))
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, summary.Skipped["ambiguous_message"])
+	assert.Zero(t, summary.MessagesAdded)
+	assert.Zero(t, summary.MessagesExisting)
+	assert.Zero(t, summary.MessagesChanged)
+	assert.Empty(t, summary.Omitted)
+	assert.Empty(t, summary.MediaMissing)
+	assert.Zero(t, summary.AttachmentsStored)
+	assert.Zero(t, summary.AttachmentsMissing)
+	assert.Equal(t, 2, messageCount(t, st))
+	assertBody(t, st, ids[0], "A")
+	assertBody(t, st, ids[1], "B")
+	afterA, err := st.GetMessageRawContext(t.Context(), ids[0])
+	require.NoError(t, err)
+	afterB, err := st.GetMessageRawContext(t.Context(), ids[1])
+	require.NoError(t, err)
+	assert.Equal(t, rawA, afterA)
+	assert.Equal(t, rawB, afterB)
+	assert.Equal(t, map[string]string{"attachment:0": ""}, slotHashes(t, st, ids[0]))
+	assert.Equal(t, map[string]string{"attachment:0": ""}, slotHashes(t, st, ids[1]))
+	files, err := os.ReadDir(opts.AttachmentsDir)
+	require.NoError(t, err)
+	assert.Empty(t, files)
+
+	writeFrames(t, root, message("A"), message("B"))
+	summary, err = Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, summary.MessagesExisting)
+	assert.Zero(t, summary.Skipped["ambiguous_message"])
+	assert.Equal(t, 2, summary.AttachmentsStored)
+	assert.Equal(t, map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, ids[0]))
+	assert.Equal(t, map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, ids[1]))
 }

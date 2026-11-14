@@ -587,7 +587,7 @@ Contacts keep their existing account-scoped identity when an ACI or phone number
 Run the command again to add history and retry missing media. Existing text
 and raw messages retain their first archived snapshot. Missing media can be
 repaired when a later export uniquely identifies the original attachment.
-Messages from one chat with the same author, send time, and receive time are told apart by export order. If that order changes, or messages are removed from the archive, a repeated message can be duplicated or its media left missing.
+Messages from one chat with the same author, send time, and receive time are told apart by export order. On a later import, a frame that differs from its saved snapshot is skipped as an ambiguous message when another saved message shares those details. Identical frames and a single saved message cannot reveal a change in order, so a message can still be duplicated or left out.
 Committed messages remain after an interrupted or failed import.
 
 The importer accepts version 1 exports. Limits are 16 MiB per JSONL record,

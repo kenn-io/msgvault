@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -73,16 +74,34 @@ func newSlotCounter() *slotCounter {
 	return &slotCounter{next: map[[sha256.Size]byte]int{}}
 }
 
-func (c *slotCounter) slot(ctx context.Context, st *store.Store, sourceID int64, conversation, author string, date, received decimal) (string, int64, error) {
+func (c *slotCounter) slot(ctx context.Context, st *store.Store, sourceID int64, conversation, author string, date, received decimal) (string, int64, bool, error) {
 	tuple := sha256.Sum256([]byte(messageKey(conversation, author, date, received, 0)))
 	n := c.next[tuple]
 	c.next[tuple]++
 	key := messageKey(conversation, author, date, received, n)
-	ids, err := st.MessageExistsBatchContext(ctx, sourceID, []string{key})
+	next := messageKey(conversation, author, date, received, n+1)
+	ids, err := st.MessageExistsBatchContext(ctx, sourceID, []string{key, next})
 	if err != nil {
-		return "", 0, err
+		return "", 0, false, err
 	}
-	return key, ids[key], nil
+	return key, ids[key], n > 0 || ids[next] != 0, nil
+}
+func ambiguousSnapshot(ctx context.Context, st *store.Store, id int64, repeated bool, raw []byte) (bool, error) {
+	if id == 0 || !repeated {
+		return false, nil
+	}
+	saved, err := st.GetMessageRawContext(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	var old, current any
+	if err := json.Unmarshal(saved, &old); err != nil {
+		return false, err
+	}
+	if err := json.Unmarshal(raw, &current); err != nil {
+		return false, err
+	}
+	return !reflect.DeepEqual(old, current), nil
 }
 func originalReceived(m *chatItem) decimal {
 	// An edit keeps the first revision's receive time, like its send time.
