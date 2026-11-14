@@ -394,7 +394,7 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 		confirmMembership := ownerCandidateID == 0
 		if ownerCandidateID != 0 {
 			var decidedBy string
-			if err := tx.QueryRowContext(ctx, `SELECT decided_by FROM identity_match_candidates WHERE id = ?`, ownerCandidateID).Scan(&decidedBy); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(decided_by, 'system') FROM identity_match_candidates WHERE id = ?`, ownerCandidateID).Scan(&decidedBy); err != nil {
 				return err
 			}
 			confirmMembership = decidedBy != string(AttributeOwnershipSystem)
