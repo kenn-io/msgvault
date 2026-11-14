@@ -419,7 +419,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			)
 		}
 	case sourceTypeMSMail:
-		if err := removeMicrosoftMailTokens(cfg, source, source.Identifier, true, logger); err != nil {
+		if err := removeMicrosoftMailTokens(cfg, source.Identifier, true, logger); err != nil {
 			fmt.Fprintf(os.Stderr,
 				"Warning: could not remove Microsoft Graph mail token: %v\n", err,
 			)
@@ -476,7 +476,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			if parseErr == nil {
 				switch imapCfg.EffectiveAuthMethod() {
 				case imaplib.AuthXOAuth2:
-					if err := removeMicrosoftMailTokens(cfg, source, imapCfg.Username, false, logger); err != nil {
+					if err := removeMicrosoftMailTokens(cfg, imapCfg.Username, false, logger); err != nil {
 						fmt.Fprintf(os.Stderr,
 							"Warning: could not remove Microsoft token: %v\n", err,
 						)
@@ -722,30 +722,31 @@ func init() {
 }
 
 // removeMicrosoftMailTokens removes credentials left by any previous client.
-func removeMicrosoftMailTokens(cfg *config.Config, source *store.Source, email string, graph bool, logger *slog.Logger) error {
-	dirs := []string{cfg.TokensDir()}
-	if sourceOAuthApp(source) != "" {
-		dirs = nil
-		root := filepath.Join(cfg.TokensDir(), "microsoft-apps")
-		entries, err := os.ReadDir(root)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+func removeMicrosoftMailTokens(cfg *config.Config, email string, graph bool, logger *slog.Logger) error {
+	dirs := map[string]config.MicrosoftConfig{cfg.TokensDir(): cfg.Microsoft}
+	root := filepath.Join(cfg.TokensDir(), "microsoft-apps")
+	entries, err := os.ReadDir(root)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			dirs[filepath.Join(root, entry.Name())] = config.MicrosoftConfig{}
 		}
-		for _, entry := range entries {
-			if entry.IsDir() {
-				dirs = append(dirs, filepath.Join(root, entry.Name()))
+	}
+	for name := range cfg.Microsoft.Apps {
+		app, dir, err := microsoftMailApp(cfg, name)
+		if err == nil {
+			if _, ok := dirs[dir]; ok {
+				dirs[dir] = app
 			}
 		}
 	}
 	var result error
-	for _, dir := range dirs {
+	for dir, app := range dirs {
 		if graph {
 			result = errors.Join(result, microsoft.NewGraphMailManager("", "", "", dir, logger).DeleteToken(email))
 		} else {
-			app := cfg.Microsoft
-			if sourceOAuthApp(source) != "" {
-				app = config.MicrosoftConfig{}
-			}
 			result = errors.Join(result, microsoft.NewManager(app.ClientID, app.EffectiveTenantID(), app.EffectiveRedirectURI(), dir, logger).DeleteToken(email))
 		}
 	}

@@ -1990,14 +1990,30 @@ func TestRemoveMicrosoftMailTokensAcrossApps(t *testing.T) {
 				paths = append(paths, path)
 			}
 			delete(cfg.Microsoft.Apps, "orgb")
-			source := &store.Source{OAuthApp: sql.NullString{String: "orgb", Valid: true}}
-			require.NoError(t, removeMicrosoftMailTokens(cfg, source, "user@example.com", graph, testDiscardLogger()))
-			for _, path := range paths[:2] {
+			require.NoError(t, removeMicrosoftMailTokens(cfg, "user@example.com", graph, testDiscardLogger()))
+			for _, path := range paths {
 				_, err := os.Stat(path)
 				assert.True(t, os.IsNotExist(err))
 			}
-			_, err = os.Stat(paths[2])
-			assert.NoError(t, err)
 		})
 	}
+}
+
+func TestRemoveMicrosoftIMAPTokensUsesConfiguredClient(t *testing.T) {
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Microsoft.Apps = map[string]config.MicrosoftApp{"orgb": {ClientID: "client-b"}}
+	dir, err := microsoftTokensDir(cfg, "orgb")
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	path := microsoft.NewManager("", "", "", dir, nil).TokenPath("user@example.com")
+	require.NoError(t, os.WriteFile(path, []byte(`{"refresh_token":"refresh-b"}`), 0o600))
+	previous := http.DefaultTransport
+	http.DefaultTransport = testTransport(func(r *http.Request) (*http.Response, error) {
+		require.NoError(t, r.ParseForm())
+		assert.Equal(t, "client-b", r.Form.Get("client_id"))
+		assert.Equal(t, "refresh-b", r.Form.Get("token"))
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	require.NoError(t, removeMicrosoftMailTokens(cfg, "user@example.com", false, testDiscardLogger()))
 }
