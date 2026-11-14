@@ -969,7 +969,7 @@ Enable only the writes intended for the assistant's session:
 | Native email tag edits, Saved View management, attachment export, deletion staging, and drafts | Available by default | `--http-allow-writes` |
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
 | Structured person profile patches | `--allow-curated-writes` | `--http-allow-writes --allow-curated-writes` |
-| Relationship type and declared relationship changes | `--allow-relationship-writes` | `--http-allow-writes --allow-relationship-writes` |
+| Declared relationship changes | `--allow-relationship-writes` | `--http-allow-writes --allow-relationship-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |

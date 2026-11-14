@@ -34,7 +34,7 @@ func relationshipRecordCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MC
 		{"update_person_relationship", "patchPersonRelationship", http.MethodPatch, "/api/v1/person-relationships/{id}", []string{"end_date", "notes"}},
 		{"delete_person_relationship", "deletePersonRelationship", http.MethodDelete, "/api/v1/person-relationships/{id}", nil},
 	} {
-		if hasRoute(route.id, route.method, route.path) && mcpRequestPropertiesPresent(caps, route.id, route.properties...) && (route.name == "create_person_relationship" || hasRoute("getPersonRelationship", http.MethodGet, "/api/v1/person-relationships/{id}")) {
+		if hasRoute(route.id, route.method, route.path) && mcpRequestPropertiesPresent(caps, route.id, route.properties...) && hasRoute("getPersonProfile", http.MethodGet, "/api/v1/people/{id}") && (route.name == "create_person_relationship" && hasRoute("listRelationshipTypes", http.MethodGet, "/api/v1/relationship-types") || route.name != "create_person_relationship" && hasRoute("getPersonRelationship", http.MethodGet, "/api/v1/person-relationships/{id}")) {
 			names = append(names, route.name)
 		}
 	}
@@ -60,15 +60,8 @@ func relationshipInput(name string, args map[string]any) (relationshipArguments,
 	if err != nil {
 		return input, false
 	}
-	switch name {
-	case "list_person_relationships", "get_person_network":
-		return input, validDurableID(input.PersonID) && (input.Depth == nil || *input.Depth >= 1 && *input.Depth <= 3)
-	case "create_person_relationship":
-		return input, validDurableID(input.SourcePersonID) && validDurableID(input.TargetPersonID) && input.RelationshipTypeSlug != ""
-	case "update_person_relationship":
-		return input, validDurableID(input.ID) && validDurableID(input.Revision) && (input.EndDate != nil || input.Notes != nil)
-	case "delete_person_relationship":
-		return input, validDurableID(input.ID) && validDurableID(input.Revision)
+	if name == "update_person_relationship" && input.EndDate == nil && input.Notes == nil {
+		return input, false
 	}
 	return input, true
 }
@@ -128,6 +121,8 @@ func (b *daemonMCPOperations) relationshipDisclosure(ctx context.Context, name s
 		return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 	}
 	var current any
+	sourceID, targetID := input.SourcePersonID, input.TargetPersonID
+	label := ""
 	if name != "create_person_relationship" {
 		result, err := readMCPOperationJSON[generated.PersonRelationship](ctx, b.client, http.MethodGet, "/api/v1/person-relationships/{id}", &generated.GetPersonRelationshipRequestOptions{PathParams: &generated.GetPersonRelationshipPath{ID: input.ID}}, http.StatusOK)
 		if err != nil {
@@ -144,11 +139,55 @@ func (b *daemonMCPOperations) relationshipDisclosure(ctx context.Context, name s
 			return "", true, &mcpserver.OperationRefusalError{Code: "relationship_revision_conflict"}
 		}
 		current = record
+		sourceID, targetID, label = record.SourcePersonID, record.TargetPersonID, record.ForwardLabel
+	} else {
+		result, err := readMCPOperationJSON[generated.RelationshipTypesResponse](ctx, b.client, http.MethodGet, "/api/v1/relationship-types", nil, http.StatusOK)
+		if err != nil {
+			return "", true, err
+		}
+		if result == nil || result.IsError {
+			return "", true, disclosureRefusal(result)
+		}
+		types, ok := result.Output.(generated.RelationshipTypesResponse)
+		if !ok {
+			return "", true, disclosureRefusal(nil)
+		}
+		for _, typ := range types.RelationshipTypes {
+			if typ.Slug == input.RelationshipTypeSlug {
+				label = typ.ForwardLabel
+				break
+			}
+		}
+		if label == "" {
+			return "", true, &mcpserver.OperationRefusalError{Code: "relationship_type_not_found"}
+		}
+	}
+	var people [2]generated.Person
+	for i, id := range []int64{sourceID, targetID} {
+		result, err := readMCPOperationJSON[generated.Person](ctx, b.client, http.MethodGet, "/api/v1/people/{id}", &generated.GetPersonProfileRequestOptions{PathParams: &generated.GetPersonProfilePath{ID: id}}, http.StatusOK)
+		if err != nil {
+			return "", true, err
+		}
+		if result == nil || result.IsError {
+			return "", true, disclosureRefusal(result)
+		}
+		person, ok := result.Output.(generated.Person)
+		if !ok {
+			return "", true, disclosureRefusal(nil)
+		}
+		people[i] = person
+	}
+	type disclosedPerson struct {
+		ID          int64   `json:"id"`
+		DisplayName *string `json:"display_name"`
 	}
 	data, err := json.Marshal(struct {
-		Operation string         `json:"operation"`
-		Current   any            `json:"current"`
-		Changes   map[string]any `json:"changes"`
-	}{name, current, args}, json.Deterministic(true))
+		Operation    string          `json:"operation"`
+		Current      any             `json:"current"`
+		Changes      map[string]any  `json:"changes"`
+		Source       disclosedPerson `json:"source"`
+		Target       disclosedPerson `json:"target"`
+		Relationship string          `json:"relationship"`
+	}{name, current, args, disclosedPerson{ID: people[0].ID, DisplayName: people[0].DisplayName}, disclosedPerson{ID: people[1].ID, DisplayName: people[1].DisplayName}, label}, json.Deterministic(true))
 	return string(data), true, err
 }

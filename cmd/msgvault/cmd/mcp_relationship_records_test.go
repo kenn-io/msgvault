@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/store"
@@ -31,36 +33,59 @@ func TestMCPRelationshipRecords(t *testing.T) {
 	target, _, err := st.CreatePersonFromParticipant(second)
 	require.NoError(t, err)
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler)}))
-	result, err := backend.ExecuteOperation(t.Context(), "create_person_relationship", map[string]any{"source_person_id": source.ID, "target_person_id": target.ID, "relationship_type_slug": "parent", "notes": "synthetic"})
+	_, err = backend.OperationDisclosure(t.Context(), "create_person_relationship", map[string]any{"source_person_id": source.ID, "target_person_id": int64(999999), "relationship_type_slug": "parent"})
+	var refusal *mcpserver.OperationRefusalError
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, "person_profile_not_found", refusal.Code)
+	createArgs := map[string]any{"source_person_id": source.ID, "target_person_id": target.ID, "relationship_type_slug": "parent", "notes": "synthetic"}
+	disclosure, err := backend.OperationDisclosure(t.Context(), "create_person_relationship", createArgs)
+	require.NoError(t, err)
+	assert.Contains(t, disclosure, "First Example")
+	assert.Contains(t, disclosure, "Second Example")
+	assert.Contains(t, disclosure, "parent")
+	assert.Contains(t, disclosure, "synthetic")
+	result, err := backend.ExecuteOperation(t.Context(), "create_person_relationship", createArgs)
 	require.NoError(t, err)
 	created := operationOutput[generated.PersonRelationship](t, result)
 	args := map[string]any{"id": created.ID, "revision": created.Revision, "end_date": "2020", "notes": ""}
-	_, err = backend.OperationDisclosure(t.Context(), "update_person_relationship", args)
+	disclosure, err = backend.OperationDisclosure(t.Context(), "update_person_relationship", args)
 	require.NoError(t, err)
+	assert.Contains(t, disclosure, "First Example")
+	assert.Contains(t, disclosure, "Second Example")
+	assert.Contains(t, disclosure, "parent")
+	assert.Contains(t, disclosure, "2020")
 	result, err = backend.ExecuteOperation(t.Context(), "update_person_relationship", args)
 	require.NoError(t, err)
 	updated := operationOutput[generated.PersonRelationship](t, result)
 	assert.Nil(t, updated.Notes)
 	require.NotNil(t, updated.EndDate)
 	_, err = backend.OperationDisclosure(t.Context(), "delete_person_relationship", map[string]any{"id": created.ID, "revision": created.Revision})
-	var refusal *mcpserver.OperationRefusalError
 	require.ErrorAs(t, err, &refusal)
 	assert.Equal(t, "relationship_revision_conflict", refusal.Code)
 	deleteArgs := map[string]any{"id": updated.ID, "revision": updated.Revision}
-	_, err = backend.OperationDisclosure(t.Context(), "delete_person_relationship", deleteArgs)
+	disclosure, err = backend.OperationDisclosure(t.Context(), "delete_person_relationship", deleteArgs)
 	require.NoError(t, err)
+	assert.Contains(t, disclosure, "First Example")
+	assert.Contains(t, disclosure, "Second Example")
+	assert.Contains(t, disclosure, "parent")
 	result, err = backend.ExecuteOperation(t.Context(), "update_person_relationship", map[string]any{"id": updated.ID, "revision": updated.Revision, "notes": "changed"})
 	require.NoError(t, err)
 	current := operationOutput[generated.PersonRelationship](t, result)
 	stale, err := backend.ExecuteOperation(t.Context(), "delete_person_relationship", deleteArgs)
 	require.NoError(t, err)
 	assertLoopRefusal(t, stale, "relationship_revision_conflict", false)
-	disclosure, err := backend.OperationDisclosure(t.Context(), "delete_person_relationship", map[string]any{"id": current.ID, "revision": current.Revision})
+	disclosure, err = backend.OperationDisclosure(t.Context(), "delete_person_relationship", map[string]any{"id": current.ID, "revision": current.Revision})
 	require.NoError(t, err)
 	assert.Contains(t, disclosure, "changed")
 	result, err = backend.ExecuteOperation(t.Context(), "delete_person_relationship", map[string]any{"id": current.ID, "revision": current.Revision})
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
+	emptySession := operationMCPSession(t, backend, nil, nil)
+	emptyResult, err := emptySession.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_relationships", Arguments: map[string]any{"person_id": source.ID}})
+	require.NoError(t, err)
+	empty := loopToolOutput[mcpserver.PersonRelationshipsPage](t, emptyResult)
+	require.NotNil(t, empty.Relationships)
+	assert.Empty(t, *empty.Relationships)
 	person, err := st.GetPerson(target.ID)
 	require.NoError(t, err)
 	ref, uid := "example-ref", "example-uid"
@@ -75,9 +100,10 @@ func TestMCPRelationshipRecords(t *testing.T) {
 		return result
 	}
 	inline := loopToolOutput[mcpserver.PersonRelationshipsPage](t, call(map[string]any{"person_id": source.ID}))
-	require.Len(t, inline.Relationships, 1)
-	assert.Equal(t, &ref, inline.Relationships[0].Relationship.SourceRef)
-	assert.Equal(t, &uid, inline.Relationships[0].Relationship.SourceResourceUID)
+	require.NotNil(t, inline.Relationships)
+	require.Len(t, *inline.Relationships, 1)
+	assert.Equal(t, &ref, (*inline.Relationships)[0].Relationship.SourceRef)
+	assert.Equal(t, &uid, (*inline.Relationships)[0].Relationship.SourceResourceUID)
 	var assembled bytes.Buffer
 	chunkArgs := map[string]any{"person_id": source.ID, "length": 40}
 	for {
@@ -94,7 +120,7 @@ func TestMCPRelationshipRecords(t *testing.T) {
 	}
 	var page generated.PersonRelationshipsResponse
 	require.NoError(t, json.Unmarshal(assembled.Bytes(), &page))
-	assert.Equal(t, inline.Relationships, page.Relationships)
+	assert.Equal(t, *inline.Relationships, page.Relationships)
 	network, err := backend.ExecuteOperation(t.Context(), "get_person_network", map[string]any{"person_id": int64(999999)})
 	require.NoError(t, err)
 	assertLoopRefusal(t, network, "person_profile_not_found", false)
@@ -117,6 +143,11 @@ func TestMCPRelationshipCapabilities(t *testing.T) {
 	limited := newDaemonMCPOperations(backend.client, caps)
 	assert.NotContains(t, limited.capabilities(), "update_person_relationship")
 	assert.Contains(t, limited.capabilities(), "delete_person_relationship")
+	caps.Routes = slices.DeleteFunc(caps.Routes, func(route apiprotocol.MCPRouteDescriptor) bool { return route.OperationID == "getPersonProfile" })
+	limited = newDaemonMCPOperations(backend.client, caps)
+	assert.NotContains(t, limited.capabilities(), "create_person_relationship")
+	assert.NotContains(t, limited.capabilities(), "update_person_relationship")
+	assert.NotContains(t, limited.capabilities(), "delete_person_relationship")
 }
 
 func TestMCPRelationshipLargeList(t *testing.T) {

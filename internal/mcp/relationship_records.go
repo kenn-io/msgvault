@@ -12,7 +12,7 @@ type RelationshipDeletion struct {
 }
 type PersonRelationshipsPage struct {
 	PersonRecordChunk `json:",inline"`
-	Relationships     []generated.PersonRelationshipView `json:"relationships,omitzero"`
+	Relationships     *[]generated.PersonRelationshipView `json:"relationships,omitzero"`
 }
 
 func relationshipRecordDefinitions() []operationalDefinition {
@@ -36,7 +36,7 @@ func relationshipRecordDefinitions() []operationalDefinition {
 	defs[1].chunked = &chunkedOperation{inline: func(s *downloadSnapshot) (any, error) {
 		var response generated.PersonRelationshipsResponse
 		err := json.Unmarshal(s.data, &response)
-		return PersonRelationshipsPage{Relationships: response.Relationships}, err
+		return PersonRelationshipsPage{Relationships: &response.Relationships}, err
 	}, chunk: func(_ *downloadSnapshot, c byteChunk) any {
 		return PersonRelationshipsPage{PersonRecordChunk: personRecordChunk(c)}
 	}}
