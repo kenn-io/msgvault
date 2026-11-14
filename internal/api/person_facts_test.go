@@ -250,31 +250,17 @@ func TestPersonFactPinHTTPVisibleOnlyRejectsSensitiveTargets(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
-			_, wrapped := newIdentityLinkTestServer(t)
-			participant := wrapped.mustParticipant(t, "pin@example.test", "pin", "example.test")
-			person, _, err := wrapped.CreatePersonFromParticipant(participant)
+			srv, st, personID, targets := newPersonFactAPIFixtureWithoutClaims(t)
+			target := targets[store.AttributeSlugPrimaryChannel]
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE attribute_definitions SET is_sensitive = TRUE WHERE slug = ?`), store.AttributeSlugPrimaryChannel)
 			requirements.NoError(err)
-			_, err = wrapped.SetPersonTrackingContext(t.Context(), person.ID, true)
-			requirements.NoError(err)
-			catalog, err := wrapped.BuildPersonFactCatalogContext(t.Context(), false)
-			requirements.NoError(err)
-			var target personfacts.TargetDescriptor
-			for _, item := range catalog.Targets {
-				if item.Slug == store.AttributeSlugPrimaryChannel {
-					target = item
-				}
-			}
-			requirements.NotEmpty(target.Key)
-			_, err = wrapped.DB().ExecContext(t.Context(), wrapped.Rebind(`UPDATE attribute_definitions SET is_sensitive = TRUE WHERE slug = ?`), store.AttributeSlugPrimaryChannel)
-			requirements.NoError(err)
-			srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, wrapped, nil, testLogger())
-			path := fmt.Sprintf("/api/v1/people/%d/fact-pins/%s/%s", person.ID, target.Kind, target.Key)
+			path := fmt.Sprintf("/api/v1/people/%d/fact-pins/%s/%s", personID, target.Kind, target.Key)
 			if tc.visibleOnly {
 				path += "?visible_only=true"
 			}
 			response := doRequest(t, srv.Router(), http.MethodPut, path, []byte(`{"pinned":true}`), nil)
 			assertions.Equal(tc.status, response.Code, response.Body.String())
-			pins, err := wrapped.ListPersonFactPinsContext(t.Context(), person.ID)
+			pins, err := st.ListPersonFactPinsContext(t.Context(), personID)
 			requirements.NoError(err)
 			var pinned bool
 			for _, pin := range pins {

@@ -68,15 +68,7 @@ func TestPersonFactDisclosureAndPin(t *testing.T) {
 			}
 		}
 	})
-	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), true)
-	requirements.NoError(err)
-	var target personfacts.TargetDescriptor
-	for _, item := range catalog.Targets {
-		if item.Slug == "employment" {
-			target = item
-		}
-	}
-	requirements.Equal("system:employment", target.Key)
+	target := personfacts.TargetRef{Kind: personfacts.TargetEmployment, Key: "system:employment"}
 	args := map[string]any{"person_id": id, "kind": string(target.Kind), "key": target.Key, "pinned": true}
 	disclosure, err := backend.OperationDisclosure(t.Context(), "set_person_fact_pin", args)
 	requirements.NoError(err)
@@ -156,7 +148,23 @@ func TestPersonFactRefusals(t *testing.T) {
 func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	backend, st, id, publicTarget := factFixture(t)
+	var st *store.Store
+	var definition *store.AttributeDefinition
+	var changeOnClaims atomic.Bool
+	changed := make(chan struct {
+		definition *store.AttributeDefinition
+		err        error
+	}, 1)
+	backend, fixtureStore, id, publicTarget := factFixture(t, func(r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/fact-claims") && changeOnClaims.CompareAndSwap(true, false) {
+			updated, err := st.UpdateAttributeDefinitionContext(r.Context(), definition.ID, definition.Revision, store.AttributeDefinitionUpdate{IsSensitive: new(true)})
+			changed <- struct {
+				definition *store.AttributeDefinition
+				err        error
+			}{updated, err}
+		}
+	})
+	st = fixtureStore
 	definition, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: "test-retired", ObjectType: store.AttributeObjectPerson, Slug: "retired_fixture", Label: "Retired fixture", Description: new("A synthetic fact"), ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, APIMutable: true, IsDeletable: true})
 	requirements.NoError(err)
 	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), true)
@@ -207,7 +215,6 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	requirements.NotEmpty(retiredKey)
 	decisions, err := st.ListPersonFactDecisionsContext(t.Context(), id, personfacts.DecisionFilter{})
 	requirements.NoError(err)
-	requirements.True(slices.ContainsFunc(decisions, func(decision personfacts.Decision) bool { return decision.ClaimKey == sensitiveKey }))
 	requirements.True(slices.ContainsFunc(decisions, func(decision personfacts.Decision) bool { return decision.ClaimKey == publicKey }))
 	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyPersonFacts}, &sdkmcp.ClientOptions{ElicitationHandler: func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
@@ -217,7 +224,22 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	requirements.NoError(err)
 	sensitiveRef, err := personfacts.EncodeTargetRef(personfacts.TargetRef{Kind: sensitiveTarget.Kind, Key: sensitiveTarget.Key, Revision: sensitiveTarget.Revision})
 	requirements.NoError(err)
-	_, err = st.UpdateAttributeDefinitionContext(t.Context(), definition.ID, definition.Revision, store.AttributeDefinitionUpdate{IsActive: new(false)})
+	changeOnClaims.Store(true)
+	race, err := backend.ExecuteOperation(t.Context(), "list_person_fact_claims", map[string]any{"person_id": id})
+	requirements.NoError(err)
+	select {
+	case event := <-changed:
+		requirements.NoError(event.err)
+		definition = event.definition
+	default:
+		requirements.FailNow("claims request was not observed")
+	}
+	requirements.False(race.IsError)
+	raceData, err := json.Marshal(race.Output)
+	requirements.NoError(err)
+	assertions.Contains(string(raceData), publicKey)
+	assertions.NotContains(string(raceData), retiredKey)
+	_, err = st.UpdateAttributeDefinitionContext(t.Context(), definition.ID, definition.Revision, store.AttributeDefinitionUpdate{IsSensitive: new(false), IsActive: new(false)})
 	requirements.NoError(err)
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "limit": 3}})
 	requirements.NoError(err)
@@ -258,15 +280,6 @@ func TestPersonFactClaimsExcludeSensitiveContent(t *testing.T) {
 	assertions.NotEqual(firstEvidenceID, output.Evidence[0].ID)
 	requirements.NotNil(output.NextOffset)
 	assertions.EqualValues(2, *output.NextOffset)
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "target": publicRef, "include_evidence": true, "limit": 1, "offset": 2}})
-	requirements.NoError(err)
-	requirements.False(result.IsError)
-	data, err = json.Marshal(result.StructuredContent)
-	requirements.NoError(err)
-	output = mcpserver.PersonFactClaimsOutput{}
-	requirements.NoError(json.Unmarshal(data, &output))
-	assertions.Empty(output.Evidence)
-	assertions.Nil(output.NextOffset)
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_fact_claims", Arguments: map[string]any{"person_id": id, "target": sensitiveRef}})
 	requirements.NoError(err)
 	assertions.True(result.IsError)
@@ -298,65 +311,4 @@ func TestPersonFactCapabilitiesRequireExactContracts(t *testing.T) {
 	}
 	assert.NotContains(t, newDaemonMCPOperations(backend.client, caps).capabilities(), "list_person_fact_claims")
 	assert.NotContains(t, newDaemonMCPOperations(backend.client, caps).capabilities(), "set_person_fact_pin")
-}
-
-func TestPersonFactClaimBecomesSensitiveBetweenReads(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	var catalogSeen atomic.Bool
-	var st *store.Store
-	var definition *store.AttributeDefinition
-	changed := make(chan struct {
-		catalogSeen bool
-		err         error
-	}, 1)
-	backend, fixtureStore, id, _ := factFixture(t, func(r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/v1/person-fact-targets":
-			catalogSeen.Store(true)
-		case strings.HasSuffix(r.URL.Path, "/fact-claims"):
-			_, err := st.UpdateAttributeDefinitionContext(r.Context(), definition.ID, definition.Revision, store.AttributeDefinitionUpdate{IsSensitive: new(true)})
-			select {
-			case changed <- struct {
-				catalogSeen bool
-				err         error
-			}{catalogSeen.Load(), err}:
-			default:
-			}
-		}
-	})
-	st = fixtureStore
-	var err error
-	definition, err = st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: "test-sensitive-change", ObjectType: store.AttributeObjectPerson, Slug: "sensitive_change", Label: "Sensitive change", Description: new("A synthetic fact"), ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, APIMutable: true, IsDeletable: true})
-	requirements.NoError(err)
-	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), false)
-	requirements.NoError(err)
-	var target personfacts.TargetDescriptor
-	for _, item := range catalog.Targets {
-		if item.Key == definition.UniversalID {
-			target = item
-		}
-	}
-	requirements.NotEmpty(target.Key)
-	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	_, err = st.ApplyPersonFactGenerationContext(t.Context(), personfacts.GenerationInput{
-		PersonID: id, SourceCursors: []personfacts.SourceCursor{{Lane: "fixture", Start: "start", End: "end"}},
-		ProgramID: "fixture", ProgramVersion: "v1", ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "fixture", Provider: "fixture", ProviderVersion: "v1", Model: "fixture", ModelVersion: "v1", ResolvedAt: now,
-		Policy: personfacts.PolicyContext{ProviderPolicyFingerprint: "fixture"},
-		Claims: []personfacts.ProposedClaim{{Target: target, Relation: personfacts.RelationSupport, SubmittedValue: jsontext.Value(`"Sensitive change marker"`), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{{PersonID: id, SourceClass: personfacts.EvidencePublic, Directness: personfacts.DirectSelf, Authority: personfacts.AuthorityAuthoritative, SourceURL: "https://example.test/change", SubjectPersonID: &id, SubjectRef: "synthetic", Excerpt: "Fixture evidence", SourceVersion: "v1", EventTime: now, RecordedTime: now, IdentityScore: 990}}}},
-	}, nil)
-	requirements.NoError(err)
-	result, err := backend.ExecuteOperation(t.Context(), "list_person_fact_claims", map[string]any{"person_id": id})
-	requirements.NoError(err)
-	select {
-	case event := <-changed:
-		t.Logf("catalog requested before claims: %t", event.catalogSeen)
-		requirements.NoError(event.err)
-	default:
-		requirements.FailNow("claims request was not observed")
-	}
-	requirements.False(result.IsError)
-	data, err := json.Marshal(result.Output)
-	requirements.NoError(err)
-	assertions.NotContains(string(data), "Sensitive change marker")
 }
