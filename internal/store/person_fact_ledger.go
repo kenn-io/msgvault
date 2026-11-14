@@ -1363,7 +1363,7 @@ func hydratePersonFactFreshnessTx(ctx context.Context, tx *loggedTx, claims []pe
 	if len(claims) == 0 {
 		return nil
 	}
-	args := []any{now}
+	args := []any{now.UTC()}
 	for i := range claims {
 		args = append(args, claims[i].ID)
 	}
