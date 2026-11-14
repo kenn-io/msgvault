@@ -196,7 +196,7 @@ func TestAddO365PreflightUndeterminedIMAPBinding(t *testing.T) {
 	cfg.Microsoft.ClientID = "default"
 	cfg.Microsoft.Apps = map[string]config.MicrosoftApp{"orgb": {ClientID: "orgb-client"}}
 	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
-	_, err := st.GetOrCreateSource(sourceTypeIMAP, "imaps://owner@example.test@outlook.office365.com:993")
+	src, err := st.GetOrCreateSource(sourceTypeIMAP, "imaps://owner@example.test@outlook.office365.com:993")
 	require.NoError(t, err)
 	startStoreAPIDaemon(t, dir, st, nil)
 	ctx := withStoreResolverConfig(t, cfg)
@@ -220,5 +220,11 @@ func TestAddO365PreflightUndeterminedIMAPBinding(t *testing.T) {
 	require.NoError(t, cmd.Flags().Set("oauth-app", "orgb"))
 	_, err = preflightAddO365Authorize(cmd, "owner@example.test")
 	require.ErrorContains(t, err, "does not report the IMAP authentication method")
+	assert.Zero(t, requests)
+	require.NoError(t, st.UpdateSourceSyncConfig(ctx, src.ID, `{"host":"outlook.office365.com","username":"owner@example.test","auth_method":"unknown"}`))
+	_, err = preflightAddO365Authorize(cmd, "owner@example.test")
+	require.ErrorContains(t, err, "does not report the IMAP authentication method")
+	err = runAddO365Local(cmd, []string{"owner@example.test"})
+	require.ErrorContains(t, err, "cannot determine the IMAP authentication method")
 	assert.Zero(t, requests)
 }

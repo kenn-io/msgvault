@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -148,10 +147,7 @@ func matchesO365Account(account daemonclient.CLIAccount, email string, graph boo
 	if err != nil || !parsed.TLS || parsed.Port != 993 || !strings.EqualFold(parsed.Username, email) || (!strings.EqualFold(parsed.Host, "outlook.office365.com") && !strings.EqualFold(parsed.Host, "outlook.office.com")) {
 		return false, false
 	}
-	if account.AuthMethod == "" {
-		return false, true
-	}
-	return account.AuthMethod == string(imapclient.AuthXOAuth2), false
+	return account.AuthMethod == string(imapclient.AuthXOAuth2), account.AuthMethod != string(imapclient.AuthXOAuth2) && account.AuthMethod != string(imapclient.AuthPassword)
 }
 
 func isO365PasswordConflict(account daemonclient.CLIAccount, email string) bool {
@@ -318,24 +314,12 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 
 	identifier := imapCfg.Identifier()
 
-	if source != nil {
-		if err := s.UpdateSourceIdentifier(cmd.Context(), source.ID, identifier); err != nil {
-			return fmt.Errorf("update source identifier: %w", err)
-		}
-	} else {
-		source, err = s.GetOrCreateSource(sourceTypeIMAP, identifier)
-		if err != nil {
-			return fmt.Errorf("create source: %w", err)
-		}
-	}
 	cfgJSON, err := imapCfg.ToJSON()
 	if err != nil {
 		return fmt.Errorf("serialize config: %w", err)
 	}
-	if err := s.UpdateSourceSyncConfig(cmd.Context(), source.ID, cfgJSON); err != nil {
-		return fmt.Errorf("store config: %w", err)
-	}
-	if err := storeO365Binding(cmd.Context(), s, source, binding); err != nil {
+	source, err = s.RegisterMicrosoftMail(cmd.Context(), source, sourceTypeIMAP, identifier, sql.NullString{String: binding.resolvedApp, Valid: binding.resolvedApp != ""}, cfgJSON)
+	if err != nil {
 		return fmt.Errorf("store OAuth app: %w", err)
 	}
 	if err := updateSourceDisplayNameForRegistration(s, source.ID, email, state.logger); err != nil {
@@ -436,13 +420,8 @@ func runAddO365GraphLocal(cmd *cobra.Command, email string, mailWrite bool, s *s
 		}
 	}
 
-	if source == nil {
-		source, err = s.GetOrCreateSource(sourceTypeMSMail, email)
-		if err != nil {
-			return fmt.Errorf("create source: %w", err)
-		}
-	}
-	if err := storeO365Binding(cmd.Context(), s, source, binding); err != nil {
+	source, err = s.RegisterMicrosoftMail(cmd.Context(), source, sourceTypeMSMail, email, sql.NullString{String: binding.resolvedApp, Valid: binding.resolvedApp != ""}, "")
+	if err != nil {
 		return fmt.Errorf("store OAuth app: %w", err)
 	}
 	if err := updateSourceDisplayNameForRegistration(s, source.ID, email, state.logger); err != nil {
@@ -464,10 +443,6 @@ func runAddO365GraphLocal(cmd *cobra.Command, email string, mailWrite bool, s *s
 	fmt.Println("You can now run:")
 	oauth.PrintHeadlessCommand(os.Stdout, "msgvault", "sync", "--", email)
 	return nil
-}
-
-func storeO365Binding(ctx context.Context, s *store.Store, source *store.Source, binding addAccountBinding) error {
-	return s.UpdateSourceOAuthApp(ctx, source.ID, sql.NullString{String: binding.resolvedApp, Valid: binding.resolvedApp != ""})
 }
 
 func init() {

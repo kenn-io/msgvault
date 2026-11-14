@@ -187,7 +187,7 @@ func TestAddO365FailedRegistrationPreservesOldPair(t *testing.T) {
 			}
 			oldToken := `{"access_token":"old","refresh_token":"old-refresh","expiry":"2000-01-01T00:00:00Z"}`
 			require.NoError(t, os.WriteFile(oldPath, []byte(oldToken), 0o600))
-			require.NoError(t, os.WriteFile(newPath, []byte(`{"access_token":"new"}`), 0o600))
+			require.NoError(t, os.WriteFile(newPath, []byte(`{"access_token":"new","scopes":["https://outlook.office.com/IMAP.AccessAsUser.All"]}`), 0o600))
 			cmd := newAddO365LocalCmd()
 			cmd.SetContext(ctx)
 			require.NoError(t, cmd.Flags().Set("oauth-preflighted", "true"))
@@ -203,6 +203,9 @@ func TestAddO365FailedRegistrationPreservesOldPair(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, identifier, saved.Identifier)
 			assert.Empty(t, sourceOAuthApp(saved))
+			if !graph {
+				assert.JSONEq(t, oldConfig, saved.SyncConfig.String)
+			}
 			contents, err := os.ReadFile(oldPath)
 			require.NoError(t, err)
 			assert.JSONEq(t, oldToken, string(contents))
@@ -235,4 +238,30 @@ func TestAddO365FailedRegistrationPreservesOldPair(t *testing.T) {
 			assert.Equal(t, "fresh", access)
 		})
 	}
+}
+
+func TestAddO365FailedNewGraphBindingLeavesNoSource(t *testing.T) {
+	oldGraph, oldApp := o365Graph, o365OAuthApp
+	t.Cleanup(func() { o365Graph, o365OAuthApp = oldGraph, oldApp })
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Microsoft.ClientID = "default"
+	cfg.Microsoft.Apps = map[string]config.MicrosoftApp{"new": {ClientID: "new-client"}}
+	state := testInvocationWithConfig(cfg)
+	ctx := withInvocation(t.Context(), state)
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(ctx, state)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `CREATE TRIGGER fail_binding BEFORE UPDATE OF oauth_app ON sources BEGIN SELECT RAISE(ABORT, 'binding failed'); END`)
+	require.NoError(t, err)
+	cleanup()
+	cmd := newAddO365LocalCmd()
+	cmd.SetContext(ctx)
+	require.NoError(t, cmd.Flags().Set("oauth-preflighted", "true"))
+	require.NoError(t, cmd.Flags().Set("oauth-app", "new"))
+	require.NoError(t, cmd.Flags().Set("graph", "true"))
+	require.ErrorContains(t, runAddO365Local(cmd, []string{"user@example.com"}), "binding failed")
+	s, cleanup, err = openWritableStoreAndInitForIngestInvocation(ctx, state)
+	require.NoError(t, err)
+	defer cleanup()
+	_, err = s.GetSourceByIdentifier(ctx, "user@example.com")
+	require.ErrorIs(t, err, store.ErrSourceNotFound)
 }
