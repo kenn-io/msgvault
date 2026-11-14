@@ -1483,3 +1483,23 @@ func TestSetupStatusAgents(t *testing.T) {
 		}
 	}
 }
+
+func TestSetupStatusAgentError(t *testing.T) {
+	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+	command := newSetupStatusCommand(setupStatusDeps{
+		config: func() *config.Config { return fixture.load(t) },
+		environment: func(*cobra.Command, *config.Config) setupEnvironment {
+			return setupEnvironment{lookupEnv: fixture.lookupEnv, fileExists: defaultFileExists}
+		},
+		agents: func(context.Context) (agentsetup.Report, error) {
+			return agentsetup.Report{}, errors.New("agent check failed")
+		},
+	})
+	var output, errOutput bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&errOutput)
+	command.SetArgs([]string{"--json"})
+	require.NoError(t, command.ExecuteContext(t.Context()))
+	assert.Equal(t, "check agents: agent check failed\n", errOutput.String())
+	assert.NotContains(t, output.String(), `"agents"`)
+}

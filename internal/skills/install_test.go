@@ -11,6 +11,8 @@ import (
 )
 
 func TestDetectAgents(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("CODEX_HOME", "")
 	home := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(home, ".claude"), 0o755))
 	require.NoError(t, os.Mkdir(filepath.Join(home, ".codex"), 0o755))
@@ -199,6 +201,8 @@ func TestUninstall_GlobRootDoesNotEscape(t *testing.T) {
 }
 
 func TestCheckAndRoot(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("CODEX_HOME", "")
 	home := t.TempDir()
 	root, ok := Root(home, "claude")
 	require.True(t, ok)
@@ -227,4 +231,20 @@ func TestCheckAndRoot(t *testing.T) {
 	results, err = Check(root, list)
 	require.NoError(t, err)
 	assert.Equal(t, "modified", results[0].State)
+}
+
+func TestAgentRootsFromEnvironment(t *testing.T) {
+	home := t.TempDir()
+	claude := t.TempDir()
+	codex := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claude)
+	t.Setenv("CODEX_HOME", codex)
+	for agent, dir := range map[string]string{"claude": claude, "codex": codex} {
+		root, ok := Root(home, agent)
+		require.True(t, ok)
+		assert.Equal(t, filepath.Join(dir, "skills"), root)
+	}
+	agents, err := DetectAgents(home, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []AgentDir{{Agent: "claude", Dir: filepath.Join(claude, "skills")}, {Agent: "codex", Dir: filepath.Join(codex, "skills")}}, agents)
 }

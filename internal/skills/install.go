@@ -18,16 +18,23 @@ type AgentDir struct {
 }
 
 // knownAgents maps agent names to their config directory under $HOME.
-var knownAgents = []struct{ name, configDir string }{
-	{"claude", ".claude"},
-	{"codex", ".codex"},
+var knownAgents = []struct{ name, configDir, env string }{
+	{"claude", ".claude", "CLAUDE_CONFIG_DIR"},
+	{"codex", ".codex", "CODEX_HOME"},
+}
+
+func agentConfigDir(home, configDir, env string) string {
+	if dir := os.Getenv(env); dir != "" {
+		return dir
+	}
+	return filepath.Join(home, configDir)
 }
 
 // Root returns the skills root for a supported agent.
 func Root(home, agent string) (string, bool) {
 	for _, a := range knownAgents {
 		if a.name == agent {
-			return filepath.Join(home, a.configDir, "skills"), true
+			return filepath.Join(agentConfigDir(home, a.configDir, a.env), "skills"), true
 		}
 	}
 	return "", false
@@ -85,7 +92,7 @@ func DetectAgents(home string, only []string) ([]AgentDir, error) {
 		if len(filter) > 0 && !filter[a.name] {
 			continue
 		}
-		configDir := filepath.Join(home, a.configDir)
+		configDir := agentConfigDir(home, a.configDir, a.env)
 		info, err := os.Stat(configDir)
 		if err != nil || !info.IsDir() {
 			continue
