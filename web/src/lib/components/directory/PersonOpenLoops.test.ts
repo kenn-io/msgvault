@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { render, screen, within } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 import { tick } from "svelte";
 import { createAPIClient } from "../../api/client";
@@ -83,10 +83,13 @@ describe("PersonOpenLoops", () => {
     const cite = await screen.findByRole("link", { name: "I will send the draft." });
     expect(cite.getAttribute("href")).toBe("/messages/52");
     expect(screen.getByRole("heading", { name: "Promises you made" })).toBeDefined();
-    expect(screen.getByRole("heading", { name: "Promises to you · stale evidence" })).toBeDefined();
-    expect(screen.getByText("Due 2026-11-15")).toBeDefined();
+    expect(screen.getByRole("heading", { name: "Promises to you" })).toBeDefined();
+    expect(within(cite.closest("li")!).getByText(/Due Nov 15, 2026/)).toBeDefined();
+    const stale = screen.getByRole("link", { name: "I will check the venue." });
+    expect(within(stale.closest("li")!).getByText("Stale evidence")).toBeDefined();
     expect(screen.getByText(/discovery since.*incomplete/)).toBeDefined();
-    expect(screen.getByText(/max_bytes/)).toBeDefined();
+    expect(screen.getByText("max_bytes").tagName).toBe("CODE");
+    expect(screen.getByText("[people.sweep.commitments]").tagName).toBe("CODE");
     expect(screen.getByText("7+ open")).toBeDefined();
   });
 
