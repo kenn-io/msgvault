@@ -58,7 +58,7 @@ func ClassifyFirstContact(candidate ActivityCandidate, personID, envelopeSenderI
 // earliestFirstContactTx reads the earliest linked event in the current snapshot.
 func earliestFirstContactTx(ctx context.Context, tx *loggedTx, personID int64) (ActivityEvent, string, error) {
 	const eligible = ` FROM activity_event_persons aep JOIN activity_events ae ON ae.message_id = aep.message_id
- WHERE aep.person_id = ? AND NOT (aep.role = 'member' AND ae.ref_kind <> 'meeting' AND EXISTS (SELECT 1 FROM conversations c WHERE c.id = ae.conversation_id AND c.conversation_type IN ('group_chat', 'channel')))`
+ WHERE aep.person_id = ? AND NOT (aep.role = 'member' AND ae.ref_kind <> 'meeting' AND NOT EXISTS (SELECT 1 FROM message_recipients mr JOIN person_participants pp ON pp.participant_id = mr.participant_id WHERE mr.message_id = ae.message_id AND pp.person_id = aep.person_id))`
 	var event ActivityEvent
 	var refKind, firstDate string
 	err := tx.QueryRowContext(ctx, `SELECT aep.local_date`+eligible+` ORDER BY aep.local_date LIMIT 1`, personID).Scan(&firstDate)
@@ -71,7 +71,7 @@ func earliestFirstContactTx(ctx context.Context, tx *loggedTx, personID int64) (
 	}
 	// UTC−12 through UTC+14 place the earliest timestamp within three local dates.
 	endDate := date.AddDate(0, 0, 2).Format(time.DateOnly)
-	err = tx.QueryRowContext(ctx, `SELECT ae.message_id, ae.occurred_at, ae.conversation_id, ae.ref_kind`+eligible+` AND aep.local_date BETWEEN ? AND ? ORDER BY ae.occurred_at, ae.message_id LIMIT 1`, personID, firstDate, endDate).Scan(&event.MessageID, &event.OccurredAt, &event.ConversationID, &refKind)
+	err = tx.QueryRowContext(ctx, `SELECT ae.message_id, ae.occurred_at, ae.conversation_id, ae.ref_kind, ae.channel`+eligible+` AND aep.local_date BETWEEN ? AND ? ORDER BY ae.occurred_at, ae.message_id LIMIT 1`, personID, firstDate, endDate).Scan(&event.MessageID, &event.OccurredAt, &event.ConversationID, &refKind, &event.Channel)
 	return event, refKind, err
 }
 
@@ -87,6 +87,10 @@ func (s *Store) populateFirstContactTx(ctx context.Context, tx *loggedTx, state 
 	occurredAt := sql.NullTime{Time: event.OccurredAt, Valid: true}
 	state.FirstSeenAt = utcNullTimePointer(occurredAt)
 	state.FirstSeenRef = activityStoredRef(sql.NullString{String: refKind, Valid: true}, sql.NullInt64{Int64: messageID, Valid: true})
+	if event.Channel != ChannelEmail {
+		state.FirstContactKind = FirstContactObserved
+		return nil
+	}
 	candidates, err := s.loadActivityCandidatesByIDQueryerContext(ctx, tx, []int64{messageID})
 	if err != nil {
 		return fmt.Errorf("load first-contact candidate: %w", err)

@@ -3631,3 +3631,66 @@ func TestFirstAppearanceRequiresUnambiguousFromEnvelope(t *testing.T) {
 		})
 	}
 }
+
+func TestFirstAppearanceDirectChatEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		explicitMember, meeting bool
+	}{
+		{"roster added later", false, false},
+		{"explicit member", true, false},
+		{"meeting", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := require.New(t)
+			check := assert.New(t)
+			f := storetest.New(t)
+			target := f.EnsureParticipant("customer@example.test", "Customer", "example.test")
+			person, _, err := f.Store.CreatePersonFromParticipant(target)
+			req.NoError(err)
+			conversation, err := f.Store.EnsureConversationWithType(f.Source.ID, "chatwoot-conversation", "direct_chat", "Chat")
+			req.NoError(err)
+			at := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+			system := f.NewMessage().WithSourceMessageID("chatwoot-system").WithSentAt(at).Build()
+			system.ConversationID = conversation
+			system.MessageType = "chatwoot"
+			if tc.meeting {
+				system.MessageType = "calendar_event"
+			}
+			data := &store.MessagePersistData{Message: system}
+			if tc.explicitMember {
+				data.Recipients = []store.RecipientSet{{Type: "member", ParticipantIDs: []int64{target}}}
+			}
+			systemID, err := f.Store.PersistMessage(data)
+			req.NoError(err)
+			projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
+			req.NoError(err)
+			_, err = projector.RunOnce(t.Context())
+			req.NoError(err)
+			req.NoError(f.Store.EnsureConversationParticipant(conversation, target, "member"))
+			later := at.Add(72 * time.Hour)
+			message := f.NewMessage().WithSourceMessageID("chatwoot-customer").WithSentAt(later).Build()
+			message.ConversationID = conversation
+			message.MessageType = "chatwoot"
+			message.SenderID = sql.NullInt64{Int64: target, Valid: true}
+			id, err := f.Store.PersistMessage(&store.MessagePersistData{Message: message, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{target}, EmailAddresses: []string{"customer@example.test"}}}})
+			req.NoError(err)
+			_, err = projector.RunOnce(t.Context())
+			req.NoError(err)
+			state, err := f.Store.ContactStateContext(t.Context(), person.ID, later)
+			req.NoError(err)
+			wantRef := fmt.Sprintf("message:%d", id)
+			wantTime := later
+			if tc.explicitMember {
+				wantRef, wantTime = fmt.Sprintf("message:%d", systemID), at
+			}
+			if tc.meeting {
+				wantRef, wantTime = fmt.Sprintf("meeting:%d", systemID), at
+			}
+			check.Equal(wantRef, state.FirstSeenRef)
+			check.Equal(store.FirstContactObserved, state.FirstContactKind)
+			req.NotNil(state.FirstSeenAt)
+			check.Equal(wantTime, state.FirstSeenAt.UTC())
+		})
+	}
+}
