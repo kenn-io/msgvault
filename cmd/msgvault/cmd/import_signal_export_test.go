@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/signalexport"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -71,7 +72,7 @@ func TestImportSignalExportNewerFormat(t *testing.T) {
 	require.NoError(t, st.InitSchemaContext(t.Context()))
 	source, err := st.GetOrCreateSourceContext(t.Context(), "signal_export", "fictional")
 	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncState(t.Context(), source.ID, `{"signal_export_format":5}`))
+	require.NoError(t, st.UpdateSourceSyncState(t.Context(), source.ID, `{"signal_export_format":1000000}`))
 	require.NoError(t, st.Close())
 	root := "../../../internal/signalexport/testdata/native-v1"
 	cmd := &cobra.Command{Use: "import-signal-export"}
@@ -80,6 +81,6 @@ func TestImportSignalExportNewerFormat(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(io.Discard)
 	err = runImportSignalExport(cmd, root, "fictional")
-	require.ErrorContains(t, err, "upgrade msgvault")
+	require.ErrorIs(t, err, signalexport.ErrNewerFormat)
 	assert.NotContains(t, out.String(), "Re-run")
 }

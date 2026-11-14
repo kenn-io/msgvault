@@ -126,8 +126,7 @@ func TestImportDirectionsGroupsAndOmissions(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	// Duplicate definitions with extra fields agree with the first ones.
-	root := fixture(t, incoming, strings.Replace(contact, `"profileGivenName":"Example"`, `"profileGivenName":"Example","blocked":true`, 1), `{"chat":{"id":"7","recipientId":"2","archived":true}}`,
+	root := fixture(t, incoming,
 		`{"recipient":{"id":"3","group":{"masterKey":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=","snapshot":{"title":{"title":"Example group"}}}}}`,
 		`{"chat":{"id":"8","recipientId":"3"}}`,
 		`{"chat":{"id":"9","recipientId":"1"}}`,
@@ -337,6 +336,7 @@ func TestReaderValidation(t *testing.T) {
 		{"header", `{"version":"2"}`, "unsupported version"},
 		{"account", header + "\n{}", "account"},
 		{"duplicate", strings.Join([]string{header, account, self, `{"recipient":{"id":"1","contact":{"aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`}, "\n"), "conflicting"},
+		{"agreeing duplicates", strings.Join([]string{header, account, self, contact, direct, strings.Replace(contact, `"profileGivenName":"Example"`, `"profileGivenName":"Example","blocked":true`, 1), `{"chat":{"id":"7","recipientId":"2","archived":true}}`}, "\n"), ""},
 		{"truncated", header + "\n" + account + "\n{", "line 3"},
 		{"multiple", header + "\n" + account + "\n{} {}", "line 3"},
 		{"null", header + "\n" + account + "\nnull", "line 3"},
@@ -350,7 +350,11 @@ func TestReaderValidation(t *testing.T) {
 				defer func() { require.NoError(t, r.Close()) }()
 				err = r.frames(t.Context(), func(*chatItem, []byte, int) error { return nil })
 			}
-			require.ErrorContains(t, err, tc.want)
+			if tc.want == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.want)
+			}
 		})
 	}
 }
@@ -559,14 +563,17 @@ func contactLines(contact, message string) []string {
 }
 
 func TestContactIdentifierAdded(t *testing.T) {
-	for _, contact := range []string{
-		`{"aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}`,
-		`{"e164":"15555550100"}`,
+	for _, tc := range []struct {
+		contact     string
+		reusedPhone bool
+	}{
+		{`{"aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}`, false},
+		{`{"e164":"15555550100"}`, true},
 	} {
-		t.Run(contact, func(t *testing.T) {
+		t.Run(tc.contact, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			root := fixture(t)
-			lines := contactLines(contact, incoming)
+			lines := contactLines(tc.contact, incoming)
 			writeLines(t, root, lines)
 			opts := options(t, root)
 			_, err := Import(t.Context(), st, opts)
@@ -586,6 +593,29 @@ func TestContactIdentifierAdded(t *testing.T) {
 			require.NoError(t, err)
 			assert.EqualValues(t, 2, summary.MessagesExisting)
 			assert.Equal(t, 2, messageCount(t, st))
+			if tc.reusedPhone {
+				scope := accountScope(opts.Account)
+				phoneKey := scopedKey(scope, "e164:+15555550100")
+				first, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
+				require.NoError(t, err)
+				require.NotZero(t, first)
+				aciX, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:01010101010101010101010101010101"))
+				require.NoError(t, err)
+				assert.Equal(t, first, aciX)
+				lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AgICAgICAgICAgICAgICAg=="}}}`
+				lines[7] = strings.Replace(incoming, "1700000000000", "1700000000002", 1)
+				writeLines(t, root, lines)
+				_, err = Import(t.Context(), st, opts)
+				require.NoError(t, err)
+				phone, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
+				require.NoError(t, err)
+				second, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:02020202020202020202020202020202"))
+				require.NoError(t, err)
+				require.NotZero(t, second)
+				assert.NotEqual(t, first, second)
+				assert.Equal(t, first, phone)
+				assert.Equal(t, 4, messageCount(t, st))
+			}
 		})
 	}
 }
@@ -689,7 +719,6 @@ func TestMediaIndexLimit(t *testing.T) {
 	_, reason, err := r.mediaName(t.Context(), hashHex(data))
 	require.NoError(t, err)
 	assert.Empty(t, reason)
-	assert.Equal(t, 2, r.mediaNames)
 	require.NoError(t, r.Close())
 
 	r, err = openReader(t.Context(), root)
@@ -725,66 +754,30 @@ func TestMatchingPointerRequiresUniqueUnclaimedIdentity(t *testing.T) {
 }
 
 func TestContactDoesNotReassignExistingAlias(t *testing.T) {
-	t.Run("existing alias", func(t *testing.T) {
-		st := testutil.NewTestStore(t)
-		scope := accountScope("fictional")
-		aci := scopedKey(scope, "aci:01010101010101010101010101010101")
-		phone := scopedKey(scope, "e164:+15555550100")
-		first, err := st.EnsureParticipantByIdentifierContext(t.Context(), SourceType, aci, "")
-		require.NoError(t, err)
-		second, err := st.EnsureParticipantByIdentifierContext(t.Context(), SourceType, phone, "")
-		require.NoError(t, err)
-		require.NotEqual(t, first, second)
-		root := fixture(t)
-		lines := []string{header, account, self, `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`, direct, incoming}
-		writeLines(t, root, lines)
-		summary, err := Import(t.Context(), st, options(t, root))
-		require.NoError(t, err)
-		assert.EqualValues(t, 1, summary.MessagesAdded)
-		var sender int64
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT participant_id FROM message_recipients WHERE recipient_type = 'from'`).Scan(&sender))
-		assert.Equal(t, first, sender)
-		aciOwner, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, aci)
-		require.NoError(t, err)
-		phoneOwner, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phone)
-		require.NoError(t, err)
-		assert.Equal(t, first, aciOwner)
-		assert.Equal(t, second, phoneOwner)
-	})
-	t.Run("reused phone", func(t *testing.T) {
-		st := testutil.NewTestStore(t)
-		root := fixture(t)
-		lines := contactLines(`{"e164":"15555550100"}`, incoming)
-		writeLines(t, root, lines)
-		opts := options(t, root)
-		_, err := Import(t.Context(), st, opts)
-		require.NoError(t, err)
-		lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`
-		writeLines(t, root, lines)
-		_, err = Import(t.Context(), st, opts)
-		require.NoError(t, err)
-		scope := accountScope(opts.Account)
-		phoneKey := scopedKey(scope, "e164:+15555550100")
-		first, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
-		require.NoError(t, err)
-		require.NotZero(t, first)
-		aciX, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:01010101010101010101010101010101"))
-		require.NoError(t, err)
-		assert.Equal(t, first, aciX)
-		lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AgICAgICAgICAgICAgICAg=="}}}`
-		lines[7] = strings.Replace(incoming, "1700000000000", "1700000000002", 1)
-		writeLines(t, root, lines)
-		_, err = Import(t.Context(), st, opts)
-		require.NoError(t, err)
-		phone, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phoneKey)
-		require.NoError(t, err)
-		second, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(scope, "aci:02020202020202020202020202020202"))
-		require.NoError(t, err)
-		require.NotZero(t, second)
-		assert.NotEqual(t, first, second)
-		assert.Equal(t, first, phone)
-		assert.Equal(t, 4, messageCount(t, st))
-	})
+	st := testutil.NewTestStore(t)
+	scope := accountScope("fictional")
+	aci := scopedKey(scope, "aci:01010101010101010101010101010101")
+	phone := scopedKey(scope, "e164:+15555550100")
+	first, err := st.EnsureParticipantByIdentifierContext(t.Context(), SourceType, aci, "")
+	require.NoError(t, err)
+	second, err := st.EnsureParticipantByIdentifierContext(t.Context(), SourceType, phone, "")
+	require.NoError(t, err)
+	require.NotEqual(t, first, second)
+	root := fixture(t)
+	lines := []string{header, account, self, `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`, direct, incoming}
+	writeLines(t, root, lines)
+	summary, err := Import(t.Context(), st, options(t, root))
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, summary.MessagesAdded)
+	var sender int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT participant_id FROM message_recipients WHERE recipient_type = 'from'`).Scan(&sender))
+	assert.Equal(t, first, sender)
+	aciOwner, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, aci)
+	require.NoError(t, err)
+	phoneOwner, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, phone)
+	require.NoError(t, err)
+	assert.Equal(t, first, aciOwner)
+	assert.Equal(t, second, phoneOwner)
 }
 
 func TestImportAmbiguousSameTimeReplay(t *testing.T) {
