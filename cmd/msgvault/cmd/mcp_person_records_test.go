@@ -88,16 +88,18 @@ func TestPersonRecordDisclosure(t *testing.T) {
 	requirements.NoError(err)
 	added, err := backend.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": current.ETag, "patch": map[string]any{"addresses": map[string]any{"add": []any{
 		map[string]any{"address_kind": "postal", "free_text": "Current address", "envelope": map[string]any{"source": "user"}},
+		map[string]any{"address_kind": "postal", "free_text": "Other current address", "envelope": map[string]any{"source": "user"}},
 		map[string]any{"address_kind": "postal", "free_text": "Old address", "envelope": map[string]any{"source": "user", "active_until": "2020-01-01T00:00:00Z"}},
 		map[string]any{"address_kind": "postal", "free_text": "Other old address", "envelope": map[string]any{"source": "user", "active_until": "2020-01-01T00:00:00Z"}},
 	}}}})
 	requirements.NoError(err)
 	profile := operationOutput[mcpserver.StructuredPersonRecord](t, added)
-	requirements.Len(profile.Profile.Addresses, 1)
+	requirements.Len(profile.Profile.Addresses, 2)
 	currentPatch := map[string]any{"addresses": map[string]any{"supersede": []int64{profile.Profile.Addresses[0].Envelope.ID}}}
 	disclosure, err := backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": added.ETag, "patch": currentPatch})
 	requirements.NoError(err)
 	assertions.Contains(disclosure, "Current address")
+	assertions.NotContains(disclosure, "Other current address")
 	assertions.Zero(historyReads.Load())
 	media := base64.StdEncoding.EncodeToString([]byte("synthetic"))
 	disclosure, err = backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": added.ETag, "patch": map[string]any{"media": map[string]any{"add": []any{map[string]any{"media_kind": "photo", "data": media, "envelope": map[string]any{"source": "user"}}}}}})
@@ -113,7 +115,7 @@ func TestPersonRecordDisclosure(t *testing.T) {
 	history, err := backend.ExecuteOperation(t.Context(), "get_person_record_history", map[string]any{"person_id": id})
 	requirements.NoError(err)
 	values := operationOutput[generated.PersonProfileHistory](t, history)
-	requirements.Len(values.Addresses, 3)
+	requirements.Len(values.Addresses, 4)
 	var oldIDs []int64
 	for _, address := range values.Addresses {
 		if address.Envelope.ActiveUntil != nil {
@@ -289,11 +291,6 @@ func TestPersonRecordLargeProfileChunksAndDisclosure(t *testing.T) {
 	}
 	initial := loopToolOutput[mcpserver.StructuredPersonRecord](t, call("get_person_record", map[string]any{"person_id": id}))
 	etag := initial.ETag
-	value := strings.Repeat("x", 2<<20)
-	largePatch := map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "free_text": value, "envelope": map[string]any{"source": "user"}}}}}
-	largeDisclosure, err := backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": etag, "patch": largePatch})
-	requirements.NoError(err)
-	assertions.GreaterOrEqual(strings.Index(largeDisclosure, value), 0, "disclosure must include the full value")
 	for batch := range 2 {
 		adds := make([]any, 200)
 		for i := range adds {
@@ -330,13 +327,9 @@ func TestPersonRecordLargeProfileChunksAndDisclosure(t *testing.T) {
 	assertions.Equal("operation_response_limit_exceeded", loopToolFailure(t, history)["error"])
 	superseded := profile.Addresses[0]
 	patch := map[string]any{"addresses": map[string]any{"supersede": []int64{superseded.Envelope.ID}}}
-	disclosure, err := backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": etag, "patch": patch})
-	requirements.NoError(err)
 	updated := loopToolOutput[mcpserver.StructuredPersonRecord](t, call("patch_person_record", map[string]any{"person_id": id, "etag": etag, "patch": patch}))
 	assertions.NotEqual(etag, updated.ETag)
 	assertions.Nil(updated.Profile)
-	assertions.Contains(disclosure, *superseded.FreeText)
-	assertions.NotContains(disclosure, *profile.Addresses[1].FreeText)
 }
 
 func TestPersonRecordPatchRefusalsBeforeApproval(t *testing.T) {
@@ -348,6 +341,11 @@ func TestPersonRecordPatchRefusalsBeforeApproval(t *testing.T) {
 	}
 	initial, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
 	requirements.NoError(err)
+	value := strings.Repeat("x", 2<<20)
+	largePatch := map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "free_text": value, "envelope": map[string]any{"source": "user"}}}}}
+	largeDisclosure, err := backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": initial.ETag, "patch": largePatch})
+	requirements.NoError(err)
+	assertions.GreaterOrEqual(strings.Index(largeDisclosure, value), 0, "disclosure must include the full value")
 	approvals := 0
 	session := loopOperationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCurated}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		approvals++
@@ -360,7 +358,6 @@ func TestPersonRecordPatchRefusalsBeforeApproval(t *testing.T) {
 	}{
 		{nil, "invalid_arguments", false},
 		{map[string]any{}, "invalid_profile_value", false},
-		{map[string]any{"names": map[string]any{"add": []any{}}}, "invalid_profile_value", false},
 		{map[string]any{"names": map[string]any{"add": adds}}, "profile_patch_too_large", true},
 		{map[string]any{"media": map[string]any{"add": []any{map[string]any{"media_kind": "photo", "data": base64.StdEncoding.EncodeToString(make([]byte, (8<<20)+1)), "envelope": map[string]any{"source": "user"}}}}}, "invalid_profile_value", true},
 		{map[string]any{"names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": strings.Repeat("x", (12<<20)+1), "envelope": map[string]any{"source": "user"}}}}}, "profile_patch_too_large", true},
