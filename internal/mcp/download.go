@@ -63,7 +63,15 @@ retry:
 	if entry := c.entries[key]; entry != nil && (key.operation == "" || req.offset != 0) {
 		if time.Now().Before(entry.expires) {
 			if entry.validate != nil {
-				if err := entry.validate(ctx); err != nil {
+				err := func() error {
+					c.mu.Unlock()
+					defer c.mu.Lock()
+					return entry.validate(ctx)
+				}()
+				if ctx.Err() != nil || c.closed || c.entries[key] != entry || !time.Now().Before(entry.expires) {
+					goto retry
+				}
+				if err != nil {
 					if !errors.Is(err, errDownloadExpired) {
 						return nil, err
 					}
@@ -84,8 +92,9 @@ retry:
 	if req.offset != 0 {
 		return nil, errDownloadExpired
 	}
-	c.mu.Unlock()
 	entry, err := func() (*downloadSnapshot, error) {
+		c.mu.Unlock()
+		defer c.mu.Lock()
 		entry, err := load()
 		if err != nil {
 			return nil, err
@@ -97,7 +106,6 @@ retry:
 		entry.digest = hex.EncodeToString(sum[:])
 		return entry, nil
 	}()
-	c.mu.Lock()
 	if err != nil {
 		return nil, err
 	}
