@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -92,11 +91,8 @@ func appendDraftLint(advisory *draftRecipientAdvisory, result draftlint.Result) 
 }
 
 // gateDraftLint is shared by create and edit paths before new provider writes.
-func (a *storeAPIAdapter) gateDraftLint(ctx context.Context, in draftlint.Input, options draftLintOptions, asJSON bool, emit func(api.CLIRunEvent) error) (draftlint.Result, bool, error) {
+func (a *storeAPIAdapter) gateDraftLint(in draftlint.Input, options draftLintOptions, asJSON bool, emit func(api.CLIRunEvent) error) (draftlint.Result, bool, error) {
 	result := draftlint.Check(in)
-	if err := ctx.Err(); err != nil {
-		return result, true, draftReplyError("cancelled", err)
-	}
 	if options.ValidateOnly {
 		return result, true, emitValidatedDraft(emit, result, in, asJSON)
 	}

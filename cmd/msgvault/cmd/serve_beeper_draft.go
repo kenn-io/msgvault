@@ -180,13 +180,11 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 		if _, ok := conversations[chatID]; !ok {
 			return draftReplyError("chat_not_found", errors.New("chat is not archived under the selected source"))
 		}
-	}
-	if intent.ValidateOnly {
 		if err := a.checkLiveBeeperDraft(ctx, grant, source.ID, chatID, intent.JSON, emit); err != nil {
 			return err
 		}
 	}
-	lint, done, err := a.gateDraftLint(ctx, draftlint.Input{Kind: "compose", Channel: "chat", Body: intent.Body}, intent.draftLintOptions, intent.JSON, emit)
+	lint, done, err := a.gateDraftLint(draftlint.Input{Kind: "compose", Channel: "chat", Body: intent.Body}, intent.draftLintOptions, intent.JSON, emit)
 	if done || err != nil {
 		return err
 	}
@@ -275,7 +273,7 @@ func (a *storeAPIAdapter) runBeeperDraftLifecycle(ctx context.Context, intent dr
 		if draft.Pending != nil && intent.ValidateOnly {
 			return draftReplyError("pending_operation", store.ErrBeeperDraftPending)
 		}
-		lint, done, lintErr := a.gateDraftLint(ctx, draftlint.Input{Kind: "edit", Channel: "chat", Body: intent.Body}, intent.draftLintOptions, intent.JSON, emit)
+		lint, done, lintErr := a.gateDraftLint(draftlint.Input{Kind: "edit", Channel: "chat", Body: intent.Body}, intent.draftLintOptions, intent.JSON, emit)
 		if done || lintErr != nil {
 			return lintErr
 		}

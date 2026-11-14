@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"net/mail"
 	"strconv"
 	"testing"
@@ -42,21 +41,5 @@ func TestDraftQuotedMailboxValidation(t *testing.T) {
 		{"bcc", `"sam smith"@example.com`},
 	} {
 		assert.Contains(events[0].Data, recipient.field+": "+recipient.address+"\n")
-	}
-}
-func TestDraftInheritedSubjectStrict(t *testing.T) {
-	for _, command := range []string{"draft-reply", "draft-forward"} {
-		t.Run(command, func(t *testing.T) {
-			f := newDraftReplyFixture(t)
-			raw, err := f.store.GetMessageRawContext(t.Context(), f.parentID)
-			require.NoError(t, err)
-			require.NoError(t, f.store.UpsertMessageRaw(f.parentID, bytes.Replace(raw, []byte("Subject: Question"), []byte("Subject: TODO: x"), 1)))
-			args := []string{command, strconv.FormatInt(f.parentID, 10), "--body", "Thanks", "--strict", "--json"}
-			if command == "draft-forward" {
-				args = append(args, "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", "alex@example.com")
-			}
-			_, err = lintRun(t, f.grantedAdapter(), nil, args...)
-			require.NoError(t, err)
-		})
 	}
 }

@@ -192,7 +192,7 @@ func (a *storeAPIAdapter) runCLIComposeDraft(
 	if err != nil {
 		return draftReplyError("invalid_compose_metadata", err)
 	}
-	lint, done, err := a.gateDraftLint(ctx, emailDraftLintInput("compose", intent.Body, draft), intent.draftLintOptions, intent.JSON, emit)
+	lint, done, err := a.gateDraftLint(emailDraftLintInput("compose", intent.Body, draft), intent.draftLintOptions, intent.JSON, emit)
 	if done || err != nil {
 		return err
 	}

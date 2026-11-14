@@ -497,7 +497,7 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 			return err
 		}
 	}
-	lint, done, err := a.gateDraftLint(ctx, emailDraftLintInput("reply", intent.Body, reply), intent.draftLintOptions, intent.JSON, emit)
+	lint, done, err := a.gateDraftLint(emailDraftLintInput("reply", intent.Body, reply), intent.draftLintOptions, intent.JSON, emit)
 	if done || err != nil {
 		return err
 	}

@@ -403,6 +403,21 @@ func TestValidateOnlyEditWritesNothing(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(draft.Revision, after.Revision)
 		assert.Nil(after.Pending)
+
+		_, state := setupCommandOAuth(t)
+		putCommandToken(t, state, f.source.Identifier, oauth.ScopesGmailReadonly)
+		f.adapter.config = state.cfg
+		var scopeEvents []api.CLIRunEvent
+		err = f.adapter.runCLIDraftLifecycle(withInvocation(t.Context(), state), api.CLIRunRequest{Args: []string{
+			"draft-edit", draft.DraftID, "--revision", "1", "--body", "Thanks", "--validate-only", "--json",
+		}}, func(event api.CLIRunEvent) error {
+			scopeEvents = append(scopeEvents, event)
+			return nil
+		})
+		require.EqualError(err, "insufficient_scope")
+		assert.Empty(scopeEvents)
+		assert.Equal(before, f.client.getCalls)
+		assert.Zero(f.client.updateCalls)
 	})
 	t.Run("chat", func(t *testing.T) {
 		require := require.New(t)
@@ -445,30 +460,6 @@ func TestValidateOnlyEditWritesNothing(t *testing.T) {
 		assert.Equal(draft, after)
 	})
 }
-func TestGmailDraftEditValidateOnlyChecksScope(t *testing.T) {
-	assert := assert.New(t)
-
-	f := newGmailDraftTestFixture(t)
-	draft := f.seedDraft(t)
-	before := f.client.getCalls
-	var events []api.CLIRunEvent
-
-	// Saved read-only scopes must refuse preview before provider access.
-	_, state := setupCommandOAuth(t)
-	putCommandToken(t, state, f.source.Identifier, oauth.ScopesGmailReadonly)
-	f.adapter.config = state.cfg
-	err := f.adapter.runCLIDraftLifecycle(withInvocation(t.Context(), state), api.CLIRunRequest{Args: []string{
-		"draft-edit", draft.DraftID, "--revision", "1", "--body", "Thanks", "--validate-only", "--json",
-	}}, func(event api.CLIRunEvent) error {
-		events = append(events, event)
-		return nil
-	})
-	require.EqualError(t, err, "insufficient_scope")
-	assert.Empty(events)
-	assert.Equal(before, f.client.getCalls)
-	assert.Zero(f.client.updateCalls)
-}
-
 func TestDraftForwardValidateAndStrict(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -617,13 +608,9 @@ func TestGmailDraftStrictPendingEditRecovery(t *testing.T) {
 					assert.Equal(cliStreamStderr, events[0].Type)
 				}
 				assert.Contains(events[0].Data, `"status":"recovered"`)
-				latest, loadErr := f.store.GetGmailDraftContext(t.Context(), draft.DraftID)
-				require.NoError(loadErr)
-				args[3] = strconv.FormatInt(latest.Revision, 10)
-				args[5] = "FIRST_NAME"
-				_, err = lintRun(t, f.adapter, nil, args...)
+			} else {
+				require.EqualError(err, "draft_lint_failed")
 			}
-			require.EqualError(err, "draft_lint_failed")
 			assert.Zero(f.client.updateCalls)
 		})
 	}

@@ -920,7 +920,7 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 				in = emailDraftLintInput("edit", intent.Body, replacement)
 			}
 		}
-		lint, done, lintErr := a.gateDraftLint(ctx, in, intent.draftLintOptions, intent.JSON, emit)
+		lint, done, lintErr := a.gateDraftLint(in, intent.draftLintOptions, intent.JSON, emit)
 		if done || lintErr != nil {
 			return lintErr
 		}
@@ -1084,7 +1084,7 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 			return draftReplyError("invalid_draft", buildErr)
 		}
 		if pendingEdit {
-			lint, done, lintErr := a.gateDraftLint(ctx, emailDraftLintInput("edit", intent.Body, replacement), intent.draftLintOptions, intent.JSON, emit)
+			lint, done, lintErr := a.gateDraftLint(emailDraftLintInput("edit", intent.Body, replacement), intent.draftLintOptions, intent.JSON, emit)
 			if done || lintErr != nil {
 				return lintErr
 			}

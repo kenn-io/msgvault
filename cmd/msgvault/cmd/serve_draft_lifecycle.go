@@ -528,11 +528,11 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		forward := imaplib.IsGeneratedForward(replacement.Raw)
 		if forward {
 			kind = "forward"
-			if _, err := a.forwardDraftAttachmentWrites(ctx, draft.CurrentMessageID, replacement); err != nil {
-				return draftReplyError("invalid_draft", err)
-			}
 		}
-		lint, done, lintErr := a.gateDraftLint(ctx, emailDraftLintInput(kind, intent.Body, replacement), intent.draftLintOptions, intent.JSON, emit)
+		if _, err := a.forwardDraftAttachmentWrites(ctx, draft.CurrentMessageID, replacement); err != nil {
+			return draftReplyError("invalid_draft", err)
+		}
+		lint, done, lintErr := a.gateDraftLint(emailDraftLintInput(kind, intent.Body, replacement), intent.draftLintOptions, intent.JSON, emit)
 		if done || lintErr != nil {
 			return lintErr
 		}
@@ -617,14 +617,14 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		if forward {
 			kind = "forward"
 		}
-		lint, done, lintErr := a.gateDraftLint(ctx, emailDraftLintInput(kind, intent.Body, replacement), intent.draftLintOptions, intent.JSON, emit)
+		lint, done, lintErr := a.gateDraftLint(emailDraftLintInput(kind, intent.Body, replacement), intent.draftLintOptions, intent.JSON, emit)
 		if done || lintErr != nil {
 			return lintErr
 		}
 		intent.lint = lint
 	}
 	var attachmentWrites []store.AttachmentWrite
-	if forward {
+	if intent.Operation == api.CLIRunDraftEditCommand {
 		attachmentWrites, err = a.forwardDraftAttachmentWrites(ctx, draft.CurrentMessageID, replacement)
 		if err != nil {
 			return draftReplyError("invalid_draft", err)
@@ -1137,12 +1137,9 @@ func (a *storeAPIAdapter) publishRecoveredDraftReplacement(
 		return store.IMAPDraft{}, fmt.Errorf("load draft reply link for replacement: %w", err)
 	}
 	receipt := *draft.Pending.ReplacementReceipt
-	var attachmentWrites []store.AttachmentWrite
-	if imaplib.IsGeneratedForward(replacement.Raw) {
-		attachmentWrites, err = a.forwardDraftAttachmentWrites(ctx, draft.CurrentMessageID, replacement)
-		if err != nil {
-			return store.IMAPDraft{}, err
-		}
+	attachmentWrites, err := a.forwardDraftAttachmentWrites(ctx, draft.CurrentMessageID, replacement)
+	if err != nil {
+		return store.IMAPDraft{}, err
 	}
 	participants, build := draftLifecyclePersistData(message.ConversationID, replyTo, replacement, receipt, attachmentWrites)
 	return a.store.PublishIMAPDraftReplacementContext(ctx, draft.DraftID, draft.Revision, participants, build)

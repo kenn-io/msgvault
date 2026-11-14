@@ -1,15 +1,12 @@
 package cmd
 
 import (
-	"context"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
-	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/draftlint"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -66,21 +63,4 @@ func TestDraftBeeperValidateLocalDuplicate(t *testing.T) {
 	requests, patches := f.beeper.counts()
 	assert.Zero(requests)
 	assert.Zero(patches)
-}
-
-func TestDraftLintCancelledGate(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	a := &storeAPIAdapter{store: st}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	for _, options := range []draftLintOptions{{ValidateOnly: true}, {}} {
-		var events []api.CLIRunEvent
-		_, done, err := a.gateDraftLint(ctx, draftlint.Input{Kind: "reply", Channel: "email", Body: "Hi Alex,", To: []string{"alex@example.com"}}, options, true, func(event api.CLIRunEvent) error {
-			events = append(events, event)
-			return nil
-		})
-		require.EqualError(t, err, "cancelled")
-		assert.True(t, done)
-		assert.Empty(t, events)
-	}
 }
