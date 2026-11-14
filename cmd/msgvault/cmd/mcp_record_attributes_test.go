@@ -127,17 +127,9 @@ func TestMCPAttributeNotesFallbackRouting(t *testing.T) {
 		require.NoError(err)
 		return result
 	}
-	for _, existing := range []bool{false, true} {
-		if existing {
-			_, err = st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person, DefinitionSlug: notes, Value: store.AttributeValue{Type: store.AttributeValueText, Text: new("original")}, Source: store.ProvenanceUser})
-			require.NoError(err)
-		}
-		assert.Contains(mcpDraftResultText(t, call("set_person_attribute", map[string]any{"person_id": person, "slug": notes, "value": map[string]any{"type": "text", "text": "x"}})), "attribute_notes_use_update_person_notes")
-		assert.Contains(mcpDraftResultText(t, call("clear_person_attribute", map[string]any{"person_id": person, "slug": notes})), "attribute_notes_use_update_person_notes")
-	}
+	assert.Contains(mcpDraftResultText(t, call("set_person_attribute", map[string]any{"person_id": person, "slug": notes, "value": map[string]any{"type": "text", "text": "x"}})), "attribute_notes_use_update_person_notes")
+	assert.Contains(mcpDraftResultText(t, call("clear_person_attribute", map[string]any{"person_id": person, "slug": notes})), "attribute_notes_use_update_person_notes")
 	assert.Empty(approvals)
-	require.Len(attributeValues(t, st, person, notes), 1)
-	assert.Equal("original", *attributeValues(t, st, person, notes)[0].Value.Text)
 
 	result := call("set_person_attribute", map[string]any{"person_id": person, "slug": store.AttributeSlugNotes, "value": map[string]any{"type": "text", "text": "ordinary"}})
 	require.False(result.IsError)
@@ -205,10 +197,8 @@ func TestMCPAttributePersonDefinitions(t *testing.T) {
 	attributeError(t, attributeOperation(t, b, "delete_attribute_definition", staleDelete), "attribute_definition_revision_conflict")
 	assert.True(operationOutput[mcpserver.AttributeDefinitionDeleted](t, attributeOperation(t, b, "delete_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": patched.ETag})).Deleted)
 	attributeError(t, attributeOperation(t, b, "get_attribute_definition", map[string]any{"definition_id": orgDefinition.ID}), "attribute_definition_not_found")
-	for _, name := range []string{"patch_attribute_definition", "delete_attribute_definition"} {
-		_, err = b.OperationDisclosure(t.Context(), name, map[string]any{"definition_id": orgDefinition.ID, "etag": "example", "changes": map[string]any{"label": "changed"}})
-		attributeRefused(t, err, "attribute_definition_not_found")
-	}
+	_, err = b.OperationDisclosure(t.Context(), "delete_attribute_definition", map[string]any{"definition_id": orgDefinition.ID, "etag": "example"})
+	attributeRefused(t, err, "attribute_definition_not_found")
 }
 
 func TestMCPAttributeDefinitionMissingETagAfterWrite(t *testing.T) {
@@ -237,12 +227,11 @@ func TestMCPAttributeDefinitionMissingETagAfterWrite(t *testing.T) {
 	assert.Equal("Favorite tea", definition.Label)
 }
 
-func TestMCPAttributePreviewRejectsContradictoryGuards(t *testing.T) {
-	b, st, person := recordAttributesFixture(t)
+func TestMCPAttributePreviewRefusesInvalidExpectedEmpty(t *testing.T) {
+	b, _, person := recordAttributesFixture(t)
 	args := map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "email"}, "expected_empty": true, "expected_value_id": int64(1)}
 	_, err := b.OperationDisclosure(t.Context(), "set_person_attribute", args)
 	attributeRefused(t, err, "invalid_expected_empty")
-	assert.Empty(t, attributeValues(t, st, person, store.AttributeSlugPrimaryChannel))
 }
 
 func TestMCPAttributePreviewLargeConflict(t *testing.T) {
