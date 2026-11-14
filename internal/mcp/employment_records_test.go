@@ -14,6 +14,9 @@ func TestEmploymentCatalogGatesAndClosedInput(t *testing.T) {
 	require := require.New(t)
 	names := []string{"get_employment", "list_person_employments", "list_organization_employments", "create_employment", "replace_employment", "end_employment", "delete_employment"}
 	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: names}
+	for _, name := range []string{"create_employment", "replace_employment", "end_employment", "delete_employment"} {
+		assert.NotContains(toolsByName(t, rawListTools(t, opts, true)), name)
+	}
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyEmployment}
 	listed := toolsByName(t, rawListTools(t, opts, true))
 	for _, name := range names {

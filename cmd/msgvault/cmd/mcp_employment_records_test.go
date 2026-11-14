@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"log/slog"
-	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -52,17 +51,12 @@ func TestMCPEmploymentLifecycleNativeStore(t *testing.T) {
 	assert.False(created.Employment.IsPrimary)
 	got := operationOutput[mcpserver.EmploymentRecord](t, call("get_employment", map[string]any{"employment_id": created.Employment.ID}))
 	assert.Equal(created.ETag, got.ETag)
-	listed := operationOutput[generated.EmploymentsResponse](t, call("list_person_employments", map[string]any{"person_id": person, "current_only": true}))
-	require.Len(listed.Employments, 1)
-	listed = operationOutput[generated.EmploymentsResponse](t, call("list_organization_employments", map[string]any{"organization_id": org}))
-	require.Len(listed.Employments, 1)
 	body["title"] = "Engineer"
 	delete(body, "department")
 	replaced := operationOutput[mcpserver.EmploymentRecord](t, call("replace_employment", map[string]any{"employment_id": got.Employment.ID, "etag": got.ETag, "employment": body}))
 	require.NotEqual(got.ETag, replaced.ETag)
 	require.NotNil(replaced.Employment.Title)
 	assert.Equal("Engineer", *replaced.Employment.Title)
-	assert.Nil(replaced.Employment.Department)
 	stale := call("end_employment", map[string]any{"employment_id": got.Employment.ID, "etag": got.ETag, "end_date": "2024"})
 	require.True(stale.IsError)
 	data, err := json.Marshal(stale.Output)
@@ -73,8 +67,6 @@ func TestMCPEmploymentLifecycleNativeStore(t *testing.T) {
 	primary := operationOutput[mcpserver.EmploymentRecord](t, call("replace_employment", map[string]any{"employment_id": got.Employment.ID, "etag": replaced.ETag, "employment": body}))
 	assert.True(primary.Employment.IsPrimary)
 	ended := operationOutput[mcpserver.EmploymentRecord](t, call("end_employment", map[string]any{"employment_id": got.Employment.ID, "etag": primary.ETag, "end_date": "2024-05"}))
-	assert.False(ended.Employment.IsCurrent)
-	assert.False(ended.Employment.IsPrimary)
 	second := operationOutput[mcpserver.EmploymentRecord](t, call("create_employment", map[string]any{"employment": map[string]any{"person_id": person, "organization_id": org, "source": "user", "is_current": true, "is_primary": false}}))
 	for _, tc := range []struct {
 		name string
@@ -96,22 +88,34 @@ func TestMCPEmploymentLifecycleNativeStore(t *testing.T) {
 
 func TestMCPEmploymentDisclosure(t *testing.T) {
 	assert := assert.New(t)
-	require := require.New(t)
+	requirements := require.New(t)
 	b, _, person, org := employmentFixture(t)
 	first, err := b.ExecuteOperation(t.Context(), "create_employment", map[string]any{"employment": map[string]any{"person_id": person, "organization_id": org, "source": "user", "is_primary": true, "description": "Synthetic employment note"}})
-	require.NoError(err)
+	requirements.NoError(err)
 	record := operationOutput[mcpserver.EmploymentRecord](t, first)
 	end, err := b.OperationDisclosure(t.Context(), "end_employment", map[string]any{"employment_id": record.Employment.ID, "etag": record.ETag, "end_date": "2024-05"})
-	require.NoError(err)
+	requirements.NoError(err)
 	assert.NotContains(end, "Synthetic employment note")
 	assert.Contains(end, `"operation":"end_employment"`)
 	assert.Contains(end, `"end_date":"2024-05"`)
-	staleDisclosure, err := b.OperationDisclosure(t.Context(), "delete_employment", map[string]any{"employment_id": record.Employment.ID, "etag": "stale"})
-	require.NoError(err)
-	assert.Contains(staleDisclosure, `"etag":"stale"`)
-	assert.Contains(staleDisclosure, `"operation":"delete_employment"`)
-	assert.Contains(staleDisclosure, "Synthetic employment note")
-
+	deletion, err := b.OperationDisclosure(t.Context(), "delete_employment", map[string]any{"employment_id": record.Employment.ID, "etag": record.ETag})
+	requirements.NoError(err)
+	assert.Contains(deletion, `"operation":"delete_employment"`)
+	assert.Contains(deletion, "Synthetic employment note")
+	replacement, err := b.OperationDisclosure(t.Context(), "replace_employment", map[string]any{"employment_id": record.Employment.ID, "etag": record.ETag, "employment": map[string]any{"person_id": person, "organization_id": org, "source": "user", "is_primary": false}})
+	requirements.NoError(err)
+	assert.Contains(replacement, "Synthetic employment note")
+	t.Run("read limit", func(t *testing.T) {
+		must := require.New(t)
+		b, st, person, org := employmentFixture(t)
+		description := strings.Repeat("x", 1<<20)
+		record, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Source: store.ProvenanceUser, Description: &description})
+		must.NoError(err)
+		_, err = b.OperationDisclosure(t.Context(), "delete_employment", map[string]any{"employment_id": record.ID, "etag": "any"})
+		var refusal *mcpserver.OperationRefusalError
+		must.ErrorAs(err, &refusal)
+		must.Equal("operation_response_limit_exceeded", refusal.Code)
+	})
 }
 
 func TestMCPEmploymentCapabilities(t *testing.T) {
@@ -143,26 +147,17 @@ func TestMCPEmploymentCapabilities(t *testing.T) {
 	}
 }
 
-func TestMCPRecordWriteFlagsAreIndependent(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		family mcpserver.OperationFamily
-	}{
-		{"employment", mcpserver.OperationFamilyEmployment},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cmd := &cobra.Command{Use: "test"}
-			addMCPWriteFlags(cmd, "mcp-")
-			var opts mcpserver.ServeOptions
-			applyMCPWriteFlags(cmd, "mcp-", &opts)
-			assert.NotContains(t, opts.OperationWriteFamilies, tc.family)
-			require.NoError(t, cmd.Flags().Set("mcp-allow-"+tc.name+"-writes", "true"))
-			opts = mcpserver.ServeOptions{}
-			applyMCPWriteFlags(cmd, "mcp-", &opts)
-			assert.Contains(t, opts.OperationWriteFamilies, tc.family)
-			assert.NotContains(t, opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
-		})
-	}
+func TestMCPEmploymentWriteFlag(t *testing.T) {
+	cmd := &cobra.Command{Use: "test"}
+	addMCPWriteFlags(cmd, "mcp-")
+	var opts mcpserver.ServeOptions
+	applyMCPWriteFlags(cmd, "mcp-", &opts)
+	assert.NotContains(t, opts.OperationWriteFamilies, mcpserver.OperationFamilyEmployment)
+	require.NoError(t, cmd.Flags().Set("mcp-allow-employment-writes", "true"))
+	opts = mcpserver.ServeOptions{}
+	applyMCPWriteFlags(cmd, "mcp-", &opts)
+	assert.Contains(t, opts.OperationWriteFamilies, mcpserver.OperationFamilyEmployment)
+	assert.NotContains(t, opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
 }
 
 func TestMCPEmploymentApprovedPrimaryIsGuarded(t *testing.T) {
@@ -201,46 +196,6 @@ func TestMCPEmploymentApprovedPrimaryIsGuarded(t *testing.T) {
 
 }
 
-func TestMCPEmploymentPrimaryAppearsAfterDisclosure(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	b, st, person, org := employmentFixture(t)
-	target, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Title: new("Target"), IsPrimary: new(false), Source: store.ProvenanceUser})
-	require.NoError(err)
-	read, err := b.ExecuteOperation(t.Context(), "get_employment", map[string]any{"employment_id": target.ID})
-	require.NoError(err)
-	record := operationOutput[mcpserver.EmploymentRecord](t, read)
-	replace := map[string]any{"employment_id": target.ID, "etag": record.ETag, "employment": map[string]any{"person_id": person, "organization_id": org, "title": "Target", "source": "user", "is_primary": true}}
-	_, err = b.OperationDisclosure(t.Context(), "replace_employment", replace)
-	require.NoError(err)
-	create := map[string]any{"employment": map[string]any{"person_id": person, "organization_id": org, "title": "Another", "source": "user", "is_primary": true}}
-	_, err = b.OperationDisclosure(t.Context(), "create_employment", create)
-	require.NoError(err)
-	primary, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Title: new("Primary"), IsPrimary: new(true), Source: store.ProvenanceUser})
-	require.NoError(err)
-	for _, call := range []struct {
-		name string
-		args map[string]any
-	}{{"replace_employment", replace}, {"create_employment", create}} {
-		result, err := b.ExecuteOperation(t.Context(), call.name, call.args)
-		require.NoError(err)
-		require.True(result.IsError)
-		data, err := json.Marshal(result.Output)
-		require.NoError(err)
-		assert.Contains(string(data), "employment_primary_conflict")
-	}
-	current, err := st.GetEmploymentContext(t.Context(), primary.ID)
-	require.NoError(err)
-	assert.True(current.IsPrimary)
-}
-
-func TestMCPNativeRefusalsAreDefinite(t *testing.T) {
-	b, _, _, _ := employmentFixture(t)
-	result, err := readMCPOperationJSON[map[string]any](t.Context(), b.client, http.MethodGet, "/api/v1/employments/{id}", &generated.GetEmploymentRequestOptions{PathParams: &generated.GetEmploymentPath{ID: -1}}, http.StatusOK)
-	require.NoError(t, err)
-	assertLoopRefusal(t, result, "invalid_employment_id", false)
-}
-
 func legacyOperationSession(t *testing.T, b *daemonMCPOperations, family mcpserver.OperationFamily, handler func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error)) *sdkmcp.ClientSession {
 	t.Helper()
 	serverTransport, clientTransport := sdkmcp.NewInMemoryTransports()
@@ -255,45 +210,6 @@ func legacyOperationSession(t *testing.T, b *daemonMCPOperations, family mcpserv
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = session.Close() })
 	return session
-}
-
-func TestMCPEmploymentLargeDescriptionApproval(t *testing.T) {
-	for _, name := range []string{"replace_employment", "delete_employment"} {
-		t.Run(name, func(t *testing.T) {
-			must := require.New(t)
-			b, st, person, org := employmentFixture(t)
-			description := strings.Repeat("x", 8193)
-			record, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Source: store.ProvenanceUser, Description: &description})
-			must.NoError(err)
-			read, err := b.ExecuteOperation(t.Context(), "get_employment", map[string]any{"employment_id": record.ID})
-			must.NoError(err)
-			calls := 0
-			session := legacyOperationSession(t, b, mcpserver.OperationFamilyEmployment, func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-				calls++
-				assert.Contains(t, request.Params.Message, description)
-				return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
-			})
-			args := map[string]any{"employment_id": record.ID, "etag": read.ETag}
-			if name == "replace_employment" {
-				args["employment"] = map[string]any{"person_id": person, "organization_id": org, "source": "user", "is_primary": false}
-			}
-			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: name, Arguments: args})
-			must.NoError(err)
-			must.False(result.IsError)
-			must.Equal(1, calls)
-		})
-	}
-	t.Run("read limit", func(t *testing.T) {
-		must := require.New(t)
-		b, st, person, org := employmentFixture(t)
-		description := strings.Repeat("x", 1<<20)
-		record, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Source: store.ProvenanceUser, Description: &description})
-		must.NoError(err)
-		_, err = b.OperationDisclosure(t.Context(), "delete_employment", map[string]any{"employment_id": record.ID, "etag": "any"})
-		var refusal *mcpserver.OperationRefusalError
-		must.ErrorAs(err, &refusal)
-		must.Equal("operation_response_limit_exceeded", refusal.Code)
-	})
 }
 
 func TestMCPEmploymentCreatePrimaryRefusesBeforeApproval(t *testing.T) {

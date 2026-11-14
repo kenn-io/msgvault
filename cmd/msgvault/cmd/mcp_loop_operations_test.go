@@ -257,7 +257,7 @@ func TestMCPLoopDeadlineCrossesApproval(t *testing.T) {
 	}
 }
 
-func TestMCPLoopResponseClassifierIsShared(t *testing.T) {
+func TestMCPOperationResponseClassifier(t *testing.T) {
 	for _, code := range []string{"loop_not_found", "loop_decision_not_found", "loop_scan_incomplete", "loops_unavailable", "invalid_request", "server_busy"} {
 		t.Run(code, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -268,14 +268,15 @@ func TestMCPLoopResponseClassifierIsShared(t *testing.T) {
 			defer server.Close()
 			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
 			require.NoError(t, err)
-			result, err := readMCPLoopJSON[generated.LoopDecisionResponse](t.Context(), client, http.MethodPost, "/api/v1/loops/1/done", nil)
-			require.NoError(t, err)
-			assertLoopRefusal(t, result, code, false)
-			result, err = readMCPOperationJSON[generated.Person](t.Context(), client, http.MethodPost, "/api/v1/people", nil, http.StatusOK)
+			result, err := readMCPOperationJSON[generated.Person](t.Context(), client, http.MethodPost, "/api/v1/people", nil, http.StatusOK)
 			require.NoError(t, err)
 			assertLoopRefusal(t, result, code, false)
 		})
 	}
+	b, _, _, _ := employmentFixture(t)
+	result, err := readMCPOperationJSON[map[string]any](t.Context(), b.client, http.MethodGet, "/api/v1/employments/{id}", &generated.GetEmploymentRequestOptions{PathParams: &generated.GetEmploymentPath{ID: -1}}, http.StatusOK)
+	require.NoError(t, err)
+	assertLoopRefusal(t, result, "invalid_employment_id", false)
 }
 
 func TestMCPLoopRealRefusals(t *testing.T) {

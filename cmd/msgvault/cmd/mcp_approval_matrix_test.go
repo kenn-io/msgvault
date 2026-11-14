@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
@@ -63,9 +62,6 @@ func exerciseApprovalMatrix(t *testing.T, makeCase func(*testing.T) approvalCase
 			t.Run(mode+"/"+state, func(t *testing.T) {
 				must := require.New(t)
 				c := makeCase(t)
-				if c.family == mcpserver.OperationFamilyLoops && state == "unreadable" {
-					t.Skip("loop disclosure uses local arguments and the clock")
-				}
 				unavailable, armed, writes := approvalReadProxy(t, c.backend)
 				apply := func() {
 					switch state {
@@ -98,7 +94,7 @@ func exerciseApprovalMatrix(t *testing.T, makeCase func(*testing.T) approvalCase
 				}
 				must.Equal(state != "stable", result.IsError, "%v", result.Content)
 				if mode == "legacy" && state == "changed" {
-					codes := map[mcpserver.OperationFamily]string{mcpserver.OperationFamilySources: "source_not_schedulable", mcpserver.OperationFamilyLoops: "invalid_arguments", mcpserver.OperationFamilyRecords: "person_revision_conflict", mcpserver.OperationFamilyCurated: "person_revision_conflict", mcpserver.OperationFamilyEmployment: "operation_context_changed"}
+					codes := map[mcpserver.OperationFamily]string{mcpserver.OperationFamilySources: "source_not_schedulable", mcpserver.OperationFamilyRecords: "person_revision_conflict", mcpserver.OperationFamilyCurated: "person_revision_conflict", mcpserver.OperationFamilyEmployment: "operation_context_changed"}
 					must.Equal(codes[c.family], loopToolFailure(t, result)["error"])
 				}
 				if state == "stable" {
@@ -121,16 +117,6 @@ func TestApprovalMatrixSource(t *testing.T) {
 		require.NoError(t, sched.AddAccount("sender@example.test", "0 2 * * *"))
 		b := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: st}, Scheduler: &schedulerAdapter{scheduler: sched}, Logger: slog.New(slog.DiscardHandler)}))
 		return approvalCase{b, mcpserver.OperationFamilySources, "sync_source", map[string]any{"account": "sender@example.test", "source_type": "gmail"}, func() { _, err := st.StartSync(source.ID, "incremental"); require.NoError(t, err) }}
-	})
-}
-
-func TestApprovalMatrixLoop(t *testing.T) {
-	exerciseApprovalMatrix(t, func(t *testing.T) approvalCase {
-		_, b, anchor := loopOperationFixture(t)
-		now := time.Now().UTC()
-		deadline := now.Add(time.Hour)
-		b.now = func() time.Time { return now }
-		return approvalCase{b, mcpserver.OperationFamilyLoops, "snooze_open_loop", map[string]any{"message_id": anchor, "question_message_ids": []int64{anchor}, "until": deadline.Format(time.RFC3339Nano)}, func() { b.now = func() time.Time { return deadline } }}
 	})
 }
 

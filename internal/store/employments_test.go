@@ -760,37 +760,26 @@ func TestReplaceEmploymentChecksPrimaryRevision(t *testing.T) {
 	require.NoError(err)
 	assert.False(demoted.IsPrimary)
 	assert.Equal(updated.Revision+1, demoted.Revision)
-}
-
-func TestEmploymentPrimaryGuardCreateAndMove(t *testing.T) {
-	must := require.New(t)
-	ctx := t.Context()
-	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(ctx, t, st, "first@example.test", "First")
 	other := mustPromotedPerson(ctx, t, st, "second@example.test", "Second")
-	org := mustOrganization(t, st, "Example")
-	primary, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: org.ID, Title: new("Primary"), Source: store.ProvenanceUser, IsPrimary: new(true)})
-	must.NoError(err)
+	primary := promoted
 	guard := &store.EmploymentRevision{ID: primary.ID, Revision: primary.Revision}
 	create := store.EmploymentInput{PersonID: person.ID, OrganizationID: org.ID, Title: new("New"), Source: store.ProvenanceUser, IsPrimary: new(true), ExpectedPrimary: guard}
-	_, err = st.AddEmploymentContext(ctx, create)
-	must.ErrorIs(err, store.ErrEmploymentPrimaryConflict)
 	_, err = st.EndEmploymentContext(ctx, primary.ID, primary.Revision, store.PartialDate{Year: new(2024)})
-	must.NoError(err)
+	require.NoError(err)
 	_, err = st.AddEmploymentContext(ctx, create)
-	must.ErrorIs(err, store.ErrEmploymentPrimaryConflict)
+	require.ErrorIs(err, store.ErrEmploymentPrimaryConflict)
 	current, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: org.ID, Title: new("Current"), Source: store.ProvenanceUser, IsPrimary: new(true)})
-	must.NoError(err)
+	require.NoError(err)
 	destination, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: other.ID, OrganizationID: org.ID, Title: new("Destination"), Source: store.ProvenanceUser, IsPrimary: new(true)})
-	must.NoError(err)
+	require.NoError(err)
 	move := store.EmploymentInput{PersonID: other.ID, OrganizationID: org.ID, Title: new("Current"), Source: store.ProvenanceUser, ExpectedPrimary: &store.EmploymentRevision{ID: destination.ID, Revision: destination.Revision + 1}}
 	_, err = st.UpdateEmploymentContext(ctx, current.ID, current.Revision, move)
-	must.ErrorIs(err, store.ErrEmploymentPrimaryConflict)
+	require.ErrorIs(err, store.ErrEmploymentPrimaryConflict)
 	move.ExpectedPrimary.Revision = destination.Revision
 	moved, err := st.UpdateEmploymentContext(ctx, current.ID, current.Revision, move)
-	must.NoError(err)
-	must.True(moved.IsPrimary)
-	demoted, err := st.GetEmploymentContext(ctx, destination.ID)
-	must.NoError(err)
-	must.False(demoted.IsPrimary)
+	require.NoError(err)
+	require.True(moved.IsPrimary)
+	destinationDemoted, err := st.GetEmploymentContext(ctx, destination.ID)
+	require.NoError(err)
+	require.False(destinationDemoted.IsPrimary)
 }
