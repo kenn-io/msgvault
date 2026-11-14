@@ -141,6 +141,12 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 			if failure, ok := errors.AsType[*DraftCommandError](err); ok {
 				message := failure.Message
 				if stderr := strings.TrimSpace(failure.Stderr); stderr != "" {
+					var refusal struct {
+						Error string `json:"error"`
+					}
+					if json.Unmarshal([]byte(stderr), &refusal) == nil && refusal.Error == "draft_lint_failed" {
+						stderr = string(addSensitiveDraftWarnings(jsontext.Value(stderr), findings))
+					}
 					message += "\n" + stderr
 				}
 				return toolErrorResult(message), nil

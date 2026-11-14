@@ -103,3 +103,21 @@ func TestCheckCallerAuthoredSubject(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckRedactsSensitiveExcerpt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   Input
+	}{
+		{"body", Input{Channel: "chat", Body: "Hello FIRST_NAME, card 4111111111111111"}},
+		{"subject", Input{Channel: "email", Kind: "compose", Subject: "TODO: card 4111111111111111", Body: "Thanks", To: []string{"a@example.com"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := Check(tc.in)
+			require.Len(t, result.Warnings, 1)
+			assert.Equal(t, CodeUnresolvedPlaceholder, result.Warnings[0].Code)
+			assert.NotContains(t, result.Warnings[0].Excerpt, "4111111111111111")
+			assert.Contains(t, result.Warnings[0].Excerpt, "****************")
+		})
+	}
+}

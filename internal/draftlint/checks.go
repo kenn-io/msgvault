@@ -6,6 +6,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/sensitive"
 	"go.kenn.io/msgvault/internal/vector/preprocess"
 )
 
@@ -45,7 +46,7 @@ func (c *runeCursor) position(original string, offset int) int {
 	return c.runes
 }
 
-func textWarning(code, severity, field, message, original string, start, end int, cursor *runeCursor) Warning {
+func textWarning(code, severity, field, message, original, masked string, start, end int, cursor *runeCursor) Warning {
 	w := Warning{Code: code, Severity: severity, Field: field, Message: message}
 	w.Span = &Span{cursor.position(original, start), cursor.position(original, end)}
 	windowStart := start
@@ -64,7 +65,7 @@ func textWarning(code, severity, field, message, original string, start, end int
 		_, size := utf8.DecodeRuneInString(original[windowEnd:])
 		windowEnd += size
 	}
-	w.Excerpt = string([]rune(original[windowStart:windowEnd]))
+	w.Excerpt = string([]rune(masked[windowStart:windowEnd]))
 	return w
 }
 func Check(in Input) Result {
@@ -87,6 +88,13 @@ func Check(in Input) Result {
 		if field.name == "subject" && in.Kind != "compose" {
 			continue
 		}
+		masked := []byte(field.text)
+		for _, finding := range sensitive.Scan(field.text) {
+			for i := finding.Start; i < finding.End; i++ {
+				masked[i] = '*'
+			}
+		}
+		maskedText := string(masked)
 		severity := "error"
 		if in.AllowPlaceholders {
 			severity = "warn"
@@ -98,14 +106,14 @@ func Check(in Input) Result {
 			if strings.HasPrefix(match, "<") || strings.HasPrefix(match, "{") && !strings.HasPrefix(match, "{{") {
 				matchSeverity = "warn"
 			}
-			w := textWarning(CodeUnresolvedPlaceholder, matchSeverity, field.name, "The text contains a template placeholder.", field.text, loc[0], loc[1], &placeholderCursor)
+			w := textWarning(CodeUnresolvedPlaceholder, matchSeverity, field.name, "The text contains a template placeholder.", field.text, maskedText, loc[0], loc[1], &placeholderCursor)
 			w.Hint = "Replace the placeholder, or pass --allow-placeholders."
 			r.Warnings = append(r.Warnings, w)
 		}
 		for i, c := range field.text {
 			if c < 32 && c != '\t' && c != '\n' && c != '\r' || c == unicode.ReplacementChar {
 				_, size := utf8.DecodeRuneInString(field.text[i:])
-				r.Warnings = append(r.Warnings, textWarning(CodeControlCharacters, "error", field.name, "The text contains a control or replacement character.", field.text, i, i+size, &controlCursor))
+				r.Warnings = append(r.Warnings, textWarning(CodeControlCharacters, "error", field.name, "The text contains a control or replacement character.", field.text, maskedText, i, i+size, &controlCursor))
 			}
 		}
 	}

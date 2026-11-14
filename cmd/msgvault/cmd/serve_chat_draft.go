@@ -98,12 +98,13 @@ func (a *storeAPIAdapter) runCLIChatDraftCreate(
 		authorized = err == nil
 		return err
 	}
-	_, err := a.store.ResolveChatDraftContext(ctx, intent.ConversationID, intent.ReplyTo, authorize)
-	if err != nil {
-		if authorized {
-			grant = nil
+	if intent.ValidateOnly || intent.Strict {
+		if _, err := a.store.ResolveChatDraftContext(ctx, intent.ConversationID, intent.ReplyTo, authorize); err != nil {
+			if authorized {
+				grant = nil
+			}
+			return chatDraftStoreError(err, grant)
 		}
-		return chatDraftStoreError(err, grant)
 	}
 	lint, done, err := a.gateDraftLint(ctx, draftlint.Input{Kind: "compose", Channel: "chat", Body: intent.Body}, intent.draftLintOptions, intent.JSON, emit)
 	if done || err != nil {

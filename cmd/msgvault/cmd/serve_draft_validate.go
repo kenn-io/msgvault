@@ -16,15 +16,14 @@ type draftRecipients struct {
 	Bcc []string `json:"bcc"`
 }
 type draftValidateOutput struct {
-	Status           string              `json:"status"`
-	Valid            bool                `json:"valid"`
-	Warnings         []draftlint.Warning `json:"warnings"`
-	Recipients       *draftRecipients    `json:"recipients"`
-	RecipientChanges []any               `json:"recipient_changes"`
+	Status     string              `json:"status"`
+	Valid      bool                `json:"valid"`
+	Warnings   []draftlint.Warning `json:"warnings"`
+	Recipients *draftRecipients    `json:"recipients"`
 }
 
 func validatedDraftOutput(result draftlint.Result, recipients *draftRecipients) draftValidateOutput {
-	return draftValidateOutput{Status: "validated", Valid: !result.Blocking(), Warnings: result.Warnings, Recipients: recipients, RecipientChanges: []any{}}
+	return draftValidateOutput{Status: "validated", Valid: !result.Blocking(), Warnings: result.Warnings, Recipients: recipients}
 }
 func emitValidatedDraft(emit func(api.CLIRunEvent) error, result draftlint.Result, in draftlint.Input, asJSON bool) error {
 	var recipients *draftRecipients
