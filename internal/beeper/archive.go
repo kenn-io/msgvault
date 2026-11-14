@@ -12,7 +12,7 @@ import (
 // response is uncertain and the caller must read back before reporting success.
 func (c *Client) ArchiveChat(ctx context.Context, chatID string, archived bool) error {
 	if err := c.limiter.Wait(ctx); err != nil {
-		return err
+		return fmt.Errorf("wait for Beeper archive rate limit: %w", err)
 	}
 	token, err := c.token(ctx)
 	if err != nil {

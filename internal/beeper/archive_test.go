@@ -28,7 +28,10 @@ func FuzzArchiveChatPath(f *testing.F) {
 			assert.Equal(t, "/v1/chats/"+chatID+"/archive", r.URL.Path)
 			assert.Empty(t, r.URL.RawQuery)
 			var body map[string]bool
-			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&body)) {
+				http.Error(w, "invalid fixture request", http.StatusBadRequest)
+				return
+			}
 			assert.Equal(t, map[string]bool{"archived": archived}, body)
 			w.WriteHeader(http.StatusNoContent)
 		}))
