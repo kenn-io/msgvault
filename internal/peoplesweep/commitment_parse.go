@@ -79,10 +79,6 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 	if err := decodeSingleJSON(output, &parsed); err != nil {
 		return invalid()
 	}
-	// A full response may have omitted more promises; retry without advancing.
-	if len(parsed.Promises) >= 2000 {
-		return invalid()
-	}
 	sources := make(map[string]CommitmentSource, len(window.Sources))
 	for _, source := range window.Sources {
 		if _, exists := sources[source.ID]; exists || source.ID == "" || source.MessageID <= 0 || (source.Direction != CommitmentOwedBy && source.Direction != CommitmentOwedTo) {

@@ -8,6 +8,7 @@ export interface LoopListResponse {
   commitments?: LoopCommitment[];
   commitments_complete?: boolean;
   commitments_since?: string;
+  commitments_until?: string;
   /** True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue */
   coverage_incomplete: boolean;
   items: LoopItem[];

@@ -68,6 +68,13 @@ func newLoopsListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			version, err := client.APISchemaVersion(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if !daemonclient.APISchemaVersionAtLeast(version, "5.5.0") {
+				fmt.Fprintf(cmd.ErrOrStderr(), "This daemon (API %s) does not report promises; upgrade and restart it to see them.\n", version)
+			}
 			if jsonOutput {
 				return writeJSONOutput(cmd, result)
 			}
@@ -358,10 +365,18 @@ func writeCommitmentWindow(sb *strings.Builder, result generated.LoopListRespons
 		}
 		return
 	}
+	if result.CommitmentsUntil != nil && result.CommitmentsUntil.Format(time.DateOnly) < result.CommitmentsSince.Format(time.DateOnly) {
+		fmt.Fprintln(sb, "No messages were eligible for promise discovery in the current window.")
+		return
+	}
+	window := "since " + result.CommitmentsSince.Format(time.DateOnly)
+	if result.CommitmentsUntil != nil {
+		window = "from " + result.CommitmentsSince.Format(time.DateOnly) + " through " + result.CommitmentsUntil.Format(time.DateOnly)
+	}
 	if result.CommitmentsComplete != nil && !*result.CommitmentsComplete {
-		fmt.Fprintf(sb, "Promise discovery since %s is incomplete. If messages are too large, increase max_bytes in [people.sweep.commitments] to retry.\n", result.CommitmentsSince.Format(time.DateOnly))
+		fmt.Fprintf(sb, "Promise discovery %s is incomplete. If messages are too large, increase max_bytes in [people.sweep.commitments] to retry.\n", window)
 	} else {
-		fmt.Fprintf(sb, "Promises checked since %s.\n", result.CommitmentsSince.Format(time.DateOnly))
+		fmt.Fprintf(sb, "Promises checked %s.\n", window)
 	}
 }
 

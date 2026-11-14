@@ -4070,3 +4070,9 @@ CREATE TABLE IF NOT EXISTS person_commitment_frontiers (
  scope_fingerprint TEXT NOT NULL DEFAULT '',
  discovery_since TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS person_commitment_oversized (
+ person_id BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+ message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+ PRIMARY KEY(person_id, message_id)
+);

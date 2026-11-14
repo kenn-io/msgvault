@@ -16,6 +16,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/jsonexact"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/vector/preprocess"
@@ -217,6 +218,9 @@ func (s *Store) loadCommitmentCandidateEvidenceTx(ctx context.Context, tx *logge
 		return err
 	}
 	var value personfacts.CommitmentValue
+	if err := jsonexact.Validate([]byte(valueJSON), value); err != nil {
+		return fmt.Errorf("decode commitment claim: %w", err)
+	}
 	if err := json.Unmarshal([]byte(valueJSON), &value); err != nil {
 		return fmt.Errorf("decode commitment claim: %w", err)
 	}
@@ -334,7 +338,8 @@ func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID i
 	query := `SELECT f.discovery_since, f.backfill_message_id,
 		COALESCE(f.scope_fingerprint, ''),
 		EXISTS(SELECT 1 FROM person_sweep_changes c WHERE c.person_id = t.person_id
-			AND c.sequence > CASE WHEN COALESCE(f.observed_sequence, 0) > f.through_sequence THEN f.observed_sequence ELSE f.through_sequence END)
+			AND c.sequence > CASE WHEN COALESCE(f.observed_sequence, 0) > f.through_sequence THEN f.observed_sequence ELSE f.through_sequence END),
+		EXISTS(SELECT 1 FROM person_commitment_oversized o JOIN messages m ON m.id = o.message_id WHERE o.person_id = t.person_id AND m.deleted_at IS NULL AND (COALESCE(m.sent_at, m.received_at, m.internal_date, m.archived_at) >= f.discovery_since OR m.archived_at >= f.discovery_since))
 		FROM person_tracking t LEFT JOIN person_commitment_frontiers f ON f.person_id = t.person_id`
 	var args []any
 	if personID > 0 {
@@ -352,8 +357,8 @@ func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID i
 		var at nullableTimestamp
 		var backfill sql.NullInt64
 		var scope string
-		var pending bool
-		if err := rows.Scan(&at, &backfill, &scope, &pending); err != nil {
+		var pending, oversized bool
+		if err := rows.Scan(&at, &backfill, &scope, &pending, &oversized); err != nil {
 			return nil, false, err
 		}
 		if !at.Valid {
@@ -364,7 +369,7 @@ func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID i
 			value := at.Time
 			since = &value
 		}
-		complete = complete && scope == scopeFingerprint && backfill.Valid && backfill.Int64 == -1 && !pending
+		complete = complete && scope == scopeFingerprint && backfill.Valid && backfill.Int64 == -1 && !pending && !oversized
 	}
 	return since, complete && since != nil, rows.Err()
 }
@@ -389,7 +394,7 @@ func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now ti
 	if now.Before(processed.Time.Add(interval)) {
 		return false, nil
 	}
-	if backfill >= 0 || backfill < -2 {
+	if backfill >= 0 {
 		return true, nil
 	}
 	if observed.Valid {
@@ -535,11 +540,23 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return window, err
 	}
+	if scope != window.ScopeFingerprint && window.BackfillMessageID == -1 {
+		var oversized bool
+		if err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM person_commitment_oversized WHERE person_id = ?)`), personID).Scan(&oversized); err != nil {
+			return window, err
+		}
+		if oversized {
+			window.BackfillMessageID = 0
+		}
+	}
 	if window.BackfillMessageID != -1 && since.Valid && since.Time.Before(now.Add(-cfg.Window)) {
 		window.SelectionAt = since.Time.Add(cfg.Window)
 	}
 	if scope != window.ScopeFingerprint {
 		previous, window.BackfillMessageID = 0, 0
+		if _, err := s.db.ExecContext(ctx, s.Rebind(`DELETE FROM person_commitment_oversized WHERE person_id = ?`), personID); err != nil {
+			return window, err
+		}
 	}
 	window.SnapshotSequence, window.ThroughSequence = through, through
 	inProfile := func(at time.Time) bool {
@@ -552,21 +569,6 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 
 func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, inProfile func(time.Time) bool) error {
 	personID, through := window.PersonID, window.ThroughSequence
-	// -1 means complete, -2 means complete with an oversized gap, and lower
-	// values encode the backfill position while such a gap remains.
-	gap := window.BackfillMessageID <= -2
-	if window.BackfillMessageID < -2 {
-		window.BackfillMessageID = -(window.BackfillMessageID + 3)
-	}
-	defer func() {
-		if gap {
-			if window.BackfillMessageID < 0 {
-				window.BackfillMessageID = -2
-			} else {
-				window.BackfillMessageID = -window.BackfillMessageID - 3
-			}
-		}
-	}()
 	seen, used := map[int64]bool{}, 0
 	add := func(source peoplesweep.CommitmentSource) (bool, error) {
 		sourceBytes, err := peoplesweep.CommitmentSourceBytes(source.Text)
@@ -574,8 +576,8 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			return false, err
 		}
 		if sourceBytes > cfg.MaxBytes {
-			gap = true
-			return true, nil
+			_, err = s.db.ExecContext(ctx, s.Rebind(`INSERT INTO person_commitment_oversized (person_id, message_id) VALUES (?, ?) ON CONFLICT DO NOTHING`), personID, source.MessageID)
+			return true, err
 		}
 		if len(window.Sources) >= cfg.MaxItems || used+sourceBytes > cfg.MaxBytes {
 			return false, nil
@@ -599,9 +601,12 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			single.Sources = []peoplesweep.CommitmentSource{source}
 			fitsAlone, err := peoplesweep.CommitmentInputFits(single)
 			if !fitsAlone && err == nil {
-				gap = true
+				_, err = s.db.ExecContext(ctx, s.Rebind(`INSERT INTO person_commitment_oversized (person_id, message_id) VALUES (?, ?) ON CONFLICT DO NOTHING`), personID, source.MessageID)
 			}
 			return !fitsAlone, err
+		}
+		if _, err := s.db.ExecContext(ctx, s.Rebind(`DELETE FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`), personID, source.MessageID); err != nil {
+			return false, err
 		}
 		seen[source.MessageID] = true
 		used += sourceBytes

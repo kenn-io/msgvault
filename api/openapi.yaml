@@ -7628,6 +7628,9 @@ components:
         commitments_since:
           format: date-time
           type: string
+        commitments_until:
+          format: date-time
+          type: string
         coverage_incomplete:
           description: True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue
           type: boolean

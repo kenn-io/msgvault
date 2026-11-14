@@ -102,19 +102,40 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 	generation.ProgramFingerprint = peoplesweep.CommitmentProgramFingerprint()
 	generation.Claims, generation.EvidenceStatusChanges = nil, nil
 	aligner := make(commitmentEvidenceAligner)
-	matched := make(map[string]bool)
-	for _, promise := range result.Output.Promises {
+	targets := make([]map[string]bool, len(result.Output.Promises))
+	counts := make(map[string]int)
+	for i, promise := range result.Output.Promises {
 		source, err := verify(promise.SourceID)
 		if err != nil {
 			return nil, err
 		}
 		evidence := commitmentEvidence(personID, source, "commitment-promise", promise.Quote, promise.Start, promise.End)
-		targetKey, err := s.matchCommitmentTarget(ctx, personID, source, evidence, promise, matched)
+		keys, err := s.matchCommitmentTarget(ctx, personID, source, evidence, promise)
 		if err != nil {
 			return nil, err
 		}
-		promise.TargetKey = targetKey
-		matched[promise.TargetKey] = true
+		targets[i] = keys
+		for key := range keys {
+			counts[key]++
+		}
+	}
+	for i, promise := range result.Output.Promises {
+		if len(targets[i]) != 1 {
+			continue
+		}
+		var target string
+		for key := range targets[i] {
+			target = key
+		}
+		if counts[target] > 1 {
+			continue
+		}
+		source, err := verify(promise.SourceID)
+		if err != nil {
+			return nil, err
+		}
+		evidence := commitmentEvidence(personID, source, "commitment-promise", promise.Quote, promise.Start, promise.End)
+		promise.TargetKey = target
 		descriptor := personfacts.TargetDescriptor{Kind: personfacts.TargetCommitment,
 			Key: promise.TargetKey, Slug: "commitment", ValueType: personfacts.ValueCommitment,
 			Cardinality: personfacts.CardinalitySingle, Sensitive: true, MaxLength: 240}
@@ -157,7 +178,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 
 // Match unchanged quotes across revisions only when both the new message and
 // the existing ledger identify one promise. Keep same-version overlap matching.
-func (s *Store) matchCommitmentTarget(ctx context.Context, personID int64, source peoplesweep.CommitmentSource, evidence personfacts.EvidenceInput, promise peoplesweep.CommitmentPromise, matched map[string]bool) (string, error) {
+func (s *Store) matchCommitmentTarget(ctx context.Context, personID int64, source peoplesweep.CommitmentSource, evidence personfacts.EvidenceInput, promise peoplesweep.CommitmentPromise) (map[string]bool, error) {
 	find := func(predicate string, args ...any) (map[string]bool, error) {
 		query := `SELECT c.target_key FROM person_fact_claims c
 			WHERE c.person_id = ? AND c.target_kind = 'commitment' AND c.origin = 'commitment'
@@ -181,27 +202,21 @@ func (s *Store) matchCommitmentTarget(ctx context.Context, personID int64, sourc
 	}
 	keys, err := find("e.source_version = ? AND e.span_start < ? AND e.span_end > ?", source.SourceVersion, promise.End, promise.Start)
 	if err != nil {
-		return "", err
-	}
-	if len(keys) > 1 {
-		return "", errCommitmentInvalidOutput
+		return nil, err
 	}
 	if len(keys) == 0 && strings.Index(source.Text, promise.Quote) == strings.LastIndex(source.Text, promise.Quote) {
 		keys, err = find("e.excerpt = ?", promise.Quote)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		if len(keys) != 1 {
-			return promise.TargetKey, nil
+			keys = nil
 		}
 	}
-	for key := range keys {
-		if matched[key] {
-			return "", errCommitmentInvalidOutput
-		}
-		return key, nil
+	if len(keys) == 0 {
+		keys = map[string]bool{promise.TargetKey: true}
 	}
-	return promise.TargetKey, nil
+	return keys, nil
 }
 
 func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {

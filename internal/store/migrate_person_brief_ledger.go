@@ -24,6 +24,12 @@ const personFactClaimOriginConstraint = "person_fact_claims_origin_check"
 // check changes; every column, key, index, and row is preserved, including the
 // claim's evidence links and the resolutions and decisions that reference it.
 func (s *Store) migratePersonFactClaimOriginBrief(ctx context.Context) error {
+	return s.migratePersonFactClaimOrigin(ctx, personFactClaimOriginCheck, "'brief'")
+}
+
+const personFactClaimCommitmentOriginCheck = `CHECK (origin IN ('extraction', 'enrichment', 'brief', 'commitment', 'system', 'invalid'))`
+
+func (s *Store) migratePersonFactClaimOrigin(ctx context.Context, check, marker string) error {
 	if s.IsPostgreSQL() {
 		return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 			if err := validatePersonFactClaimOriginRows(ctx, tx); err != nil {
@@ -35,13 +41,13 @@ func (s *Store) migratePersonFactClaimOriginBrief(ctx context.Context) error {
 			}
 			if _, err := tx.ExecContext(ctx, `ALTER TABLE person_fact_claims
 				ADD CONSTRAINT `+personFactClaimOriginConstraint+` `+
-				personFactClaimOriginCheck); err != nil {
+				check); err != nil {
 				return fmt.Errorf("create person fact claim origin constraint: %w", err)
 			}
 			return nil
 		})
 	}
-	return s.migratePersonFactClaimOriginBriefSQLite(ctx)
+	return s.migratePersonFactClaimOriginBriefSQLite(ctx, check, marker)
 }
 
 // migratePersonFactClaimOriginBriefSQLite follows SQLite's documented procedure
@@ -53,13 +59,13 @@ func (s *Store) migratePersonFactClaimOriginBrief(ctx context.Context) error {
 // otherwise fire those actions and destroy the ledger. The pragma is
 // connection-scoped and cannot change inside a transaction, so this runs on a
 // dedicated pooled connection rather than through runMaintenance.
-func (s *Store) migratePersonFactClaimOriginBriefSQLite(ctx context.Context) (err error) {
+func (s *Store) migratePersonFactClaimOriginBriefSQLite(ctx context.Context, check, marker string) (err error) {
 	var definition string
 	if err := s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master
 		WHERE type = 'table' AND name = 'person_fact_claims'`).Scan(&definition); err != nil {
 		return fmt.Errorf("inspect person fact claim origins: %w", err)
 	}
-	if strings.Contains(definition, "'brief'") {
+	if strings.Contains(definition, marker) {
 		return nil
 	}
 	conn, err := s.db.Conn(ctx)
@@ -97,6 +103,7 @@ func (s *Store) migratePersonFactClaimOriginBriefSQLite(ctx context.Context) (er
 		return err
 	}
 	for _, statement := range personFactClaimOriginRebuildStatements() {
+		statement = strings.ReplaceAll(statement, personFactClaimOriginCheck, check)
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("rebuild person fact claim origins: %w", err)
 		}

@@ -12,11 +12,20 @@ import (
 // person brief and its repair. Only the coupling constraint changes; every
 // column, key, and row is preserved.
 func (s *Store) migratePersonSweepBatchPurposeV2(ctx context.Context) error {
+	return s.migratePersonSweepBatchPurpose(ctx, personSweepBatchPurposeCheck, "'brief_repair'")
+}
+
+const personSweepBatchCommitmentPurposeCheck = `CHECK (
+ (call_ordinal = 0 AND purpose IN ('primary', 'brief', 'commitment')) OR
+ (call_ordinal = 1 AND purpose IN ('repair', 'brief_repair', 'commitment_repair'))
+)`
+
+func (s *Store) migratePersonSweepBatchPurpose(ctx context.Context, check, marker string) error {
 	return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		if s.IsPostgreSQL() {
-			return migratePersonSweepBatchPurposeV2PostgreSQL(ctx, tx)
+			return migratePersonSweepBatchPurposeV2PostgreSQL(ctx, tx, check)
 		}
-		return migratePersonSweepBatchPurposeV2SQLite(ctx, tx)
+		return migratePersonSweepBatchPurposeV2SQLite(ctx, tx, check, marker)
 	})
 }
 
@@ -27,7 +36,7 @@ const personSweepBatchPurposeCheck = `CHECK (
 				(call_ordinal = 1 AND purpose IN ('repair', 'brief_repair'))
 			)`
 
-func migratePersonSweepBatchPurposeV2SQLite(ctx context.Context, tx *loggedTx) error {
+func migratePersonSweepBatchPurposeV2SQLite(ctx context.Context, tx *loggedTx, check, marker string) error {
 	var definition string
 	if err := tx.QueryRowContext(ctx, `SELECT sql FROM sqlite_master
 		WHERE type = 'table' AND name = 'person_sweep_batches'`).Scan(&definition); err != nil {
@@ -36,7 +45,7 @@ func migratePersonSweepBatchPurposeV2SQLite(ctx context.Context, tx *loggedTx) e
 	if err := validatePersonSweepBatchPurposeRows(ctx, tx); err != nil {
 		return err
 	}
-	if strings.Contains(definition, "'brief_repair'") {
+	if strings.Contains(definition, marker) {
 		return nil
 	}
 	statements := []string{
@@ -68,7 +77,7 @@ func migratePersonSweepBatchPurposeV2SQLite(ctx context.Context, tx *loggedTx) e
 			)),
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			completed_at TEXT,
-			CONSTRAINT person_sweep_batches_call_coordinate_check ` + personSweepBatchPurposeCheck + `,
+			CONSTRAINT person_sweep_batches_call_coordinate_check ` + check + `,
 			PRIMARY KEY (attempt_id, batch_ordinal, call_ordinal)
 		)`,
 		`INSERT INTO person_sweep_batches_purpose_v2 (
@@ -96,7 +105,7 @@ func migratePersonSweepBatchPurposeV2SQLite(ctx context.Context, tx *loggedTx) e
 	return nil
 }
 
-func migratePersonSweepBatchPurposeV2PostgreSQL(ctx context.Context, tx *loggedTx) error {
+func migratePersonSweepBatchPurposeV2PostgreSQL(ctx context.Context, tx *loggedTx, check string) error {
 	if err := validatePersonSweepBatchPurposeRows(ctx, tx); err != nil {
 		return err
 	}
@@ -106,7 +115,7 @@ func migratePersonSweepBatchPurposeV2PostgreSQL(ctx context.Context, tx *loggedT
 	}
 	if _, err := tx.ExecContext(ctx, `ALTER TABLE person_sweep_batches
 		ADD CONSTRAINT person_sweep_batches_call_coordinate_check `+
-		personSweepBatchPurposeCheck); err != nil {
+		check); err != nil {
 		return fmt.Errorf("create person sweep call journal purpose constraint: %w", err)
 	}
 	return nil

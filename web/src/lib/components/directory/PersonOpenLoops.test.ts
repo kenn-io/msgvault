@@ -111,6 +111,15 @@ describe("PersonOpenLoops", () => {
     expect(screen.queryByText("Nothing open with this person.")).toBeNull();
   });
 
+  it("reports when no messages fall inside the configured window", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({
+      items: [], commitments: [], commitments_since: "2026-10-01T00:00:00Z",
+      commitments_until: "2026-09-30T00:00:00Z", commitments_complete: true,
+    }));
+    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
+    expect(await screen.findByText("No messages were eligible for promise discovery in the current window.")).toBeDefined();
+  });
+
   it("says how many messages could not be read, with or without loops", async () => {
     const populated = clientFor([loop(1)], false, 2);
     const view = render(PersonOpenLoops, { client: populated.client, personID: 7 });

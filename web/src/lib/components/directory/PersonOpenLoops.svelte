@@ -14,6 +14,7 @@
   let items = $state<LoopItem[]>([]);
   let commitments = $state<LoopCommitment[]>([]);
   let commitmentsSince = $state<string | undefined>();
+  let commitmentsUntil = $state<string | undefined>();
   let commitmentsComplete = $state<boolean | undefined>();
   const openCount = $derived(items.length + commitments.length);
   let loading = $state(true);
@@ -41,6 +42,7 @@
         items = [];
         commitments = [];
         commitmentsSince = undefined;
+        commitmentsUntil = undefined;
         commitmentsComplete = undefined;
         truncated = false;
         coverageIncomplete = false;
@@ -57,6 +59,7 @@
         items = result.data.items ?? [];
         commitments = result.data.commitments ?? [];
         commitmentsSince = result.data.commitments_since;
+        commitmentsUntil = result.data.commitments_until;
         commitmentsComplete = result.data.commitments_complete;
         truncated = Boolean(result.data.truncated);
         coverageIncomplete = Boolean(result.data.coverage_incomplete);
@@ -139,9 +142,10 @@
         </div>
       {/if}
     {/each}
-    {#if commitmentsSince && !commitmentsComplete}<p class="muted discovery">Promise discovery since {formatContactDate(commitmentsSince)} is incomplete. If messages are too large, increase <code>max_bytes</code> in <code>[people.sweep.commitments]</code> to retry.</p>
+    {#if commitmentsSince && commitmentsUntil && commitmentsUntil.slice(0, 10) < commitmentsSince.slice(0, 10)}<p class="muted">No messages were eligible for promise discovery in the current window.</p>
+    {:else if commitmentsSince && !commitmentsComplete}<p class="muted discovery">Promise discovery {commitmentsUntil ? `from ${formatContactDate(commitmentsSince)} through ${formatContactDate(commitmentsUntil)}` : `since ${formatContactDate(commitmentsSince)}`} is incomplete. If messages are too large, increase <code>max_bytes</code> in <code>[people.sweep.commitments]</code> to retry.</p>
     {:else if commitmentsComplete === false && !commitmentsSince}<p class="muted">Promise discovery has not started.</p>
-    {:else if commitmentsSince && commitments.length === 0}<p class="muted">No promises found since {formatContactDate(commitmentsSince)}.</p>{/if}
+    {:else if commitmentsSince && commitments.length === 0}<p class="muted">No promises found {commitmentsUntil ? `from ${formatContactDate(commitmentsSince)} through ${formatContactDate(commitmentsUntil)}` : `since ${formatContactDate(commitmentsSince)}`}.</p>{/if}
   {/if}
   {#if !loading && !failed && unreadable > 0}
     <p class="muted">

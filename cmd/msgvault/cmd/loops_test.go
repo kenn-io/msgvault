@@ -121,6 +121,31 @@ func TestLoopsDoneAndSnooze(t *testing.T) {
 	require.Error(err)
 }
 
+func TestLoopsOldDaemonWarnsOnStderr(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if req.URL.Path == "/api/v1/health" {
+			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"5.3.0"}`))
+			assert.NoError(t, err)
+			return
+		}
+		_, err := w.Write([]byte(`{"items":[],"truncated":false}`))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	command := newLoopsCommand()
+	var stdout, stderr bytes.Buffer
+	command.SetOut(&stdout)
+	command.SetErr(&stderr)
+	command.SetArgs([]string{"list", "--json"})
+	command.SetContext(ctx)
+	require.NoError(t, command.Execute())
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
+	assert.Contains(t, stderr.String(), "does not report promises; upgrade and restart it")
+}
+
 func TestLoopsRequireDaemonSchema(t *testing.T) {
 	for _, tc := range []struct {
 		name, version, minimum string
@@ -253,6 +278,11 @@ Showing up to 50 reply loops and 50 cited promises. Use --limit up to 200 to see
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{CommitmentsSince: &now, CommitmentsComplete: &incomplete}, 50, now))
 	assert.Contains(out.String(), "increase max_bytes in [people.sweep.commitments] to retry")
+
+	out.Reset()
+	until := now.AddDate(0, 0, -1)
+	require.NoError(writeLoops(&out, generated.LoopListResponse{CommitmentsSince: &now, CommitmentsUntil: &until, CommitmentsComplete: &incomplete}, 50, now))
+	assert.Contains(out.String(), "No messages were eligible for promise discovery in the current window.")
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{SkippedUnparseable: 1}, 50, now))

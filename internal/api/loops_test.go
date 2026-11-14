@@ -107,6 +107,7 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 	cfg.People.Sweep.Enabled = true
 	cfg.People.Sweep.Commitments.Enabled = true
 	provider := completeAPIProvider("EXAMPLE_KEY", "example-model")
+	provider.SourceUntil = "2025-06-30"
 	provider.AllowSensitive = true
 	provider.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceConversationText}
 	configureAPIProvider(cfg, provider)
@@ -140,6 +141,8 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 	assert.Nil(t, response.CommitmentsSince)
 	require.NotNil(t, response.CommitmentsComplete)
 	assert.False(t, *response.CommitmentsComplete)
+	require.NotNil(t, response.CommitmentsUntil)
+	assert.Equal(t, "2025-06-30", response.CommitmentsUntil.Format(time.DateOnly))
 	_, err = f.Store.RevokePersonCommitmentConsent(t.Context(), profile.Fingerprint, "test")
 	require.NoError(t, err)
 	response = read()
