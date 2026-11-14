@@ -115,11 +115,44 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 	generation.Claims = nil
 	generation.EvidenceStatusChanges = nil
 	aligner := make(commitmentEvidenceAligner)
+	matched := make(map[string]bool)
 	for _, promise := range parsed.Promises {
 		source, err := verify(promise.SourceID)
 		if err != nil {
 			return nil, err
 		}
+		evidence := commitmentEvidence(personID, source, "commitment-promise", promise.Quote, promise.Start, promise.End)
+		rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT c.target_key FROM person_fact_claims c
+			WHERE c.person_id = ? AND c.target_kind = 'commitment' AND c.origin = 'commitment'
+			AND EXISTS (SELECT 1 FROM person_fact_claim_evidence ce JOIN person_fact_evidence e ON e.id = ce.evidence_id
+			WHERE ce.claim_id = c.id AND e.source_ref = ? AND e.source_version = ? AND e.subject_ref = ? AND e.span_start < ? AND e.span_end > ?)`), personID, source.SourceRef, source.SourceVersion, evidence.SubjectRef, promise.End, promise.Start)
+		if err != nil {
+			return nil, err
+		}
+		keys := make(map[string]bool)
+		for rows.Next() {
+			var key string
+			if err := rows.Scan(&key); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			keys[key] = true
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+		if len(keys) > 1 {
+			return nil, errCommitmentInvalidOutput
+		}
+		for key := range keys {
+			if matched[key] {
+				return nil, errCommitmentInvalidOutput
+			}
+			promise.TargetKey = key
+		}
+		matched[promise.TargetKey] = true
 		descriptor := personfacts.TargetDescriptor{Kind: personfacts.TargetCommitment,
 			Key: promise.TargetKey, Slug: "commitment", ValueType: personfacts.ValueCommitment,
 			Cardinality: personfacts.CardinalitySingle, Sensitive: true, MaxLength: 240}
@@ -131,7 +164,6 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		if err != nil {
 			return nil, err
 		}
-		evidence := commitmentEvidence(personID, source, "commitment-promise", promise.Quote, promise.Start, promise.End)
 		key, err := personfacts.EvidenceKey(evidence)
 		if err != nil {
 			return nil, err

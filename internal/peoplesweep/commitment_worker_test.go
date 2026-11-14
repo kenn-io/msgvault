@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -57,7 +56,7 @@ func (commitmentOnlyRunner) OrdinaryInferenceAllowed(context.Context) (bool, err
 	return false, nil
 }
 
-func TestTargetedCommitmentOnlySweepSucceedsAndDefersImmediateRerun(t *testing.T) {
+func TestTargetedCommitmentOnlySweepAppliesClaims(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	worker, st, sink := newConsentOnlyCommitmentWorker(t, true)
 	seed := packetTestEvidence(71, SourceConversationText, "pending ordinary evidence")
@@ -73,7 +72,6 @@ func TestTargetedCommitmentOnlySweepSucceedsAndDefersImmediateRerun(t *testing.T
 	r.Len(sink.requests, 1)
 	a.True(sink.requests[0].CommitmentOnly)
 	a.Empty(sink.requests[0].Batches)
-
 }
 
 type commitmentCallAuthority struct {
@@ -175,41 +173,14 @@ func newConsentOnlyCommitmentWorker(t *testing.T, due bool) (Worker, *commitment
 	return worker, st, sink
 }
 
-type commitmentConsentSource struct{ workerFailureSource }
-
-func (s commitmentConsentSource) LoadPersonSweepWindow(ctx context.Context, request WindowRequest) (PersonWindow, error) {
-	window, err := s.workerFailureSource.LoadPersonSweepWindow(ctx, request)
-	window.Seeds = []EvidenceItem{packetTestEvidence(71, SourceConversationText, "pending ordinary evidence")}
-	return window, err
-}
-
-func TestCommitmentConsentDeferralAppliesLocalEvidenceInvalidation(t *testing.T) {
-	for _, idle := range []bool{false, true} {
-		t.Run(fmt.Sprintf("idle=%t", idle), func(t *testing.T) {
-			r, a := require.New(t), assert.New(t)
-			worker, st, sink := newConsentOnlyCommitmentWorker(t, false)
-			if idle {
-				source := &workerProductionSource{windows: map[GenerationCursorMode]PersonWindow{}}
-				worker.Source, worker.Context = source, NewContextRetriever(source)
-			} else {
-				source := commitmentConsentSource{}
-				worker.Source, worker.Context = source, NewContextRetriever(source)
-			}
-			result, err := worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental, PersonID: 7})
-			r.NoError(err)
-			a.Empty(sink.requests, "no provider output or cursor progress is applied")
-			if idle {
-				a.Equal(1, result.PeopleSucceeded, "idle claim completion succeeds without inference")
-				a.Empty(st.started, "caught-up unauthorized work has no source envelope for a durable attempt")
-				return
-			}
-			r.Len(sink.statuses, 1)
-			r.Len(sink.statuses[0].Generation.EvidenceStatusChanges, 1)
-			a.False(sink.statuses[0].Generation.EvidenceStatusChanges[0].Supported)
-			a.Zero(result.PeopleSucceeded)
-			a.Equal(1, st.deferred)
-			a.Empty(st.finalized)
-			a.Empty(st.failed)
-		})
-	}
+func TestCommitmentConsentDeferralCompletesIdleWork(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	worker, st, sink := newConsentOnlyCommitmentWorker(t, false)
+	source := &workerProductionSource{windows: map[GenerationCursorMode]PersonWindow{}}
+	worker.Source, worker.Context = source, NewContextRetriever(source)
+	result, err := worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental, PersonID: 7})
+	r.NoError(err)
+	a.Empty(sink.requests, "no provider output or cursor progress is applied")
+	a.Equal(1, result.PeopleSucceeded, "idle claim completion succeeds without inference")
+	a.Empty(st.started, "caught-up unauthorized work has no source envelope for a durable attempt")
 }

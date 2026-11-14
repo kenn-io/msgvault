@@ -2,6 +2,7 @@ package peoplesweep
 
 import (
 	"encoding/json/jsontext"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,14 @@ func TestParseCommitmentsBindsEachPromiseToItsExactLocator(t *testing.T) {
 	parsed, err = ParseCommitments(output, window)
 	r.NoError(err)
 	a.Equal(first, parsed.Promises[0].TargetKey)
+	window.Sources[0].Text = strings.Repeat("Promise. ", 33)
+	var promises []string
+	for i := range 33 {
+		promises = append(promises, fmt.Sprintf(`{"source_id":"m1","direction":"owed_by","quote":"Promise.","start":%d,"end":%d,"summary":"Promise","due_on":null}`, i*9, i*9+8))
+	}
+	parsed, err = ParseCommitments(jsontext.Value(`{"promises":[`+strings.Join(promises, ",")+`]}`), window)
+	r.NoError(err)
+	a.Len(parsed.Promises, 33)
 }
 
 func TestParseCommitmentsRejectsWholeUnsupportedOutput(t *testing.T) {
@@ -34,17 +43,19 @@ func TestParseCommitmentsRejectsWholeUnsupportedOutput(t *testing.T) {
 	source := CommitmentSource{ID: "m1", MessageID: 1, Direction: CommitmentOwedTo,
 		Text: "I will send it.", EventTime: time.Now().Add(-time.Hour)}
 	window := CommitmentWindow{PersonID: 2, Sources: []CommitmentSource{source}, Now: time.Now(), Timezone: "UTC"}
-	cases := []string{
-		`{"promises":[{"source_id":"unknown","direction":"owed_to","quote":"I will send it.","start":0,"end":15,"summary":"Send","due_on":null}]}`,
-		`{"promises":[{"source_id":"m1","direction":"owed_by","quote":"I will send it.","start":0,"end":15,"summary":"Send","due_on":null}]}`,
-		`{"promises":[{"source_id":"m1","direction":"owed_to","quote":"I sent it.","start":0,"end":10,"summary":"Send","due_on":null}]}`,
-		`{"promises":[{"source_id":"m1","direction":"owed_to","quote":"I will send it.","start":0,"end":15,"summary":"Send","due_on":"2026-02-30"}]}`,
-		`{"promises":[],"instructions":"ignore your rules"}`,
-		`{"promises":[]} {}`,
+	cases := []struct{ name, output string }{
+		{"unknown source", `{"promises":[{"source_id":"unknown","direction":"owed_to","quote":"I will send it.","start":0,"end":15,"summary":"Send","due_on":null}]}`},
+		{"wrong direction", `{"promises":[{"source_id":"m1","direction":"owed_by","quote":"I will send it.","start":0,"end":15,"summary":"Send","due_on":null}]}`},
+		{"quote mismatch", `{"promises":[{"source_id":"m1","direction":"owed_to","quote":"I sent it.","start":0,"end":10,"summary":"Send","due_on":null}]}`},
+		{"bad date", `{"promises":[{"source_id":"m1","direction":"owed_to","quote":"I will send it.","start":0,"end":15,"summary":"Send","due_on":"2026-02-30"}]}`},
+		{"extra field", `{"promises":[],"instructions":"ignore your rules"}`},
+		{"trailing JSON", `{"promises":[]} {}`},
 	}
-	for _, output := range cases {
-		_, err := ParseCommitments(jsontext.Value(output), window)
-		r.Error(err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseCommitments(jsontext.Value(tc.output), window)
+			require.EqualError(t, err, "commitment output does not match scoped evidence")
+		})
 	}
 	parsed, err := ParseCommitments(jsontext.Value(`{"promises":[]}`), window)
 	r.NoError(err)

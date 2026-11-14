@@ -76,6 +76,18 @@ func TestPersonSweepDeletionOnlyMaintenanceProgressWithCommitmentLaneNotDue(t *t
 				WHERE person_id = ? AND source_lane = ?`), personID, peoplesweep.SourceConversationText).Scan(&through))
 	a.Equal(highwater, through, "provider-free deletion progress must reach later journal pages")
 	a.Zero(calls, "neither revoked ordinary inference nor a not-due commitment lane needs a provider call")
+	message := f.journal.insertMessage(t, "pending", "chat", f.journal.aliceID, f.now)
+	addSweepBody(t, f.journal, message, "A new fact needs extraction.")
+	result, err := f.worker.Run(ctx, peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
+		PersonID: personID, Limit: 1, Brief: peoplesweep.BriefModeSkip})
+	r.NoError(err)
+	a.Zero(result.PeopleSucceeded)
+	var deferred, failed int
+	r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM person_sweep_attempts WHERE person_id = ? AND status = 'cancelled'`), personID).Scan(&deferred))
+	r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM person_sweep_attempts WHERE person_id = ? AND status = 'failed'`), personID).Scan(&failed))
+	a.Equal(1, deferred)
+	a.Zero(failed)
+	a.Zero(calls)
 }
 
 func TestPersonSweepCommitmentMaintenanceReachesOrdinaryEvidenceBehindLiveSeed(t *testing.T) {

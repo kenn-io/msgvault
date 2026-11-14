@@ -86,6 +86,10 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 	if err := json.UnmarshalDecode(decoder, &parsed); err != nil {
 		return invalid()
 	}
+	// A full response may have omitted more promises; retry without advancing.
+	if len(parsed.Promises) >= 2000 {
+		return invalid()
+	}
 	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		return invalid()
 	}

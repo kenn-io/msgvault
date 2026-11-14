@@ -161,24 +161,29 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 	response := loopListResponse(result)
 	response.Commitments = loopCommitments(result.Commitments)
 	if cfg, ok := s.currentPeopleSweepConfig(); ok && cfg.Commitments.Enabled {
+		profile, profileErr := cfg.Profile()
+		consent, canCheckConsent := s.store.(interface {
+			HasActivePersonCommitmentConsent(context.Context, string) (bool, error)
+		})
+		active := false
+		if profileErr == nil && canCheckConsent {
+			active, err = consent.HasActivePersonCommitmentConsent(r.Context(), profile.Fingerprint)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment consent")
+				return
+			}
+		}
 		if reader, ok := s.store.(interface {
 			PersonCommitmentDiscoveryContext(context.Context, int64) (*time.Time, bool, error)
-		}); ok {
+		}); ok && active {
 			since, complete, err := reader.PersonCommitmentDiscoveryContext(r.Context(), opts.PersonID)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment discovery")
 				return
 			}
-			if since == nil {
-				at := s.clockNow().UTC().Add(-cfg.Commitments.Window)
-				if _, provider, err := cfg.ActiveProviderConfig(); err == nil {
-					if start, err := time.Parse(time.DateOnly, provider.SourceSince); err == nil && start.After(at) {
-						at = start
-					}
-				}
-				since = &at
+			if since != nil {
+				response.CommitmentsSince, response.CommitmentsComplete = since, &complete
 			}
-			response.CommitmentsSince, response.CommitmentsComplete = since, &complete
 		}
 	}
 	for _, l := range result.Loops {
