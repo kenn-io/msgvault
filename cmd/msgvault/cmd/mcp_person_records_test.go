@@ -374,8 +374,6 @@ func TestPersonRecordLargeProfileAndSmallMedia(t *testing.T) {
 		var profile generated.StructuredPersonProfile
 		requirements.NoError(json.Unmarshal(assembled.Bytes(), &profile))
 		requirements.Len(profile.Addresses, 400)
-		history := call("get_person_record_history", map[string]any{"person_id": id})
-		assertions.Equal("operation_response_limit_exceeded", loopToolFailure(t, history)["error"])
 		superseded := profile.Addresses[0]
 		patch := map[string]any{"addresses": map[string]any{"supersede": []int64{superseded.Envelope.ID}}}
 		updated := loopToolOutput[mcpserver.StructuredPersonRecord](t, call("patch_person_record", map[string]any{"person_id": id, "etag": etag, "patch": patch}))

@@ -257,7 +257,7 @@ func TestMCPLoopDeadlineCrossesApproval(t *testing.T) {
 	}
 }
 
-func TestMCPLoopResponseClassifierIsScoped(t *testing.T) {
+func TestMCPLoopAndGenericResponseClassifiers(t *testing.T) {
 	for _, tc := range []struct {
 		code, genericCode string
 		uncertain         bool

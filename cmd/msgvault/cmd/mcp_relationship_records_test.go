@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json/v2"
 	"fmt"
@@ -190,6 +191,5 @@ func TestMCPRelationshipLargeList(t *testing.T) {
 	first, err := base64.StdEncoding.DecodeString(*chunk.DataBase64)
 	requirements.NoError(err)
 	requirements.NotEmpty(first)
-	requirements.LessOrEqual(len(first), len(raw.Data))
-	assertions.Equal(raw.Data[:len(first)], first)
+	assertions.True(bytes.HasPrefix(raw.Data, first))
 }
