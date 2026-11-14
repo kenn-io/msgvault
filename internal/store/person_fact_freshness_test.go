@@ -22,6 +22,7 @@ func TestClaimFreshness(t *testing.T) {
 		days   int
 		status personfacts.FreshnessStatus
 	}{
+		{"commitment", personfacts.TargetRef{Kind: personfacts.TargetCommitment, Key: "commitment", Revision: revision}, nil, personfacts.KindCommitment, 90, personfacts.StatusFresh},
 		{"expired employment", personfacts.TargetRef{Kind: personfacts.TargetEmployment, Key: "system:employment", Revision: revision}, &now, personfacts.KindFact, 365, personfacts.StatusExpired},
 		{"finite employment", personfacts.TargetRef{Kind: personfacts.TargetEmployment, Key: "system:employment", Revision: revision}, &until, personfacts.KindFact, 365, personfacts.StatusFresh},
 		{"event", personfacts.TargetRef{Kind: personfacts.TargetAttribute, Key: "custom-event", Revision: revision}, &until, personfacts.KindEvent, 7, personfacts.StatusFresh},
