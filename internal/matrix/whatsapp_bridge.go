@@ -200,7 +200,9 @@ func (b *WhatsAppBridge) snapshot(ctx context.Context, userID string, since time
 			return err
 		}
 		sender, waID, ok := splitBridgeMessageID(rawID, chat)
-		if !ok || roomID == "" || mxid == "" || !importableWhatsAppChat(chat) {
+		// A message the bridge never sent to Matrix has a "~fake:" mxid and
+		// no content to fetch.
+		if !ok || roomID == "" || !strings.HasPrefix(mxid, "$") || !importableWhatsAppChat(chat) {
 			return nil
 		}
 		snap.messages = append(snap.messages, bridgeMessage{
@@ -544,6 +546,14 @@ func (imp *whatsAppBridgeImporter) importMessage(ctx context.Context, msg bridge
 	evt, err := imp.client.GetEvent(ctx, msg.RoomID, msg.EventID)
 	if errors.Is(err, mautrix.MNotFound) || errors.Is(err, mautrix.MForbidden) {
 		imp.sum.MessagesSkipped++
+		return nil
+	}
+	var httpErr mautrix.HTTPError
+	if errors.As(err, &httpErr) && httpErr.Response != nil &&
+		httpErr.Response.StatusCode >= 400 && httpErr.Response.StatusCode < 500 {
+		// The homeserver refuses this one event; retrying will not help, and
+		// it must not hold back the rest of the chat.
+		imp.sum.ErrorsCount++
 		return nil
 	}
 	if err != nil {

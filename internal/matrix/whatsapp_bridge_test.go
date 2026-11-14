@@ -105,6 +105,8 @@ func TestImportWhatsAppBridgeWritesNativeWhatsAppMessages(t *testing.T) {
 	f.message(t, "120363@g.us", "", "333@lid", "WA-GROUP", "$group", now.Add(-time.Hour), 0)
 	f.message(t, "status@broadcast", "33600000001", "222@lid", "WA-STATUS", "$status", now.Add(-time.Hour), 0)
 	f.message(t, "120363@g.us", "", "333@lid", "WA-OLD", "$old", now.Add(-30*24*time.Hour), 0)
+	f.message(t, "120363@g.us", "", "333@lid", "WA-FAKE", "~fake:abc", now.Add(-time.Hour), 0)
+	f.message(t, "120363@g.us", "", "333@lid", "WA-BAD", "$bad", now.Add(-time.Hour), 0)
 
 	events := map[string]string{
 		"$in":      `{"type":"m.room.message","event_id":"$in","room_id":"!dm:example.org","sender":"@whatsapp_lid-222:example.org","origin_server_ts":1,"content":{"msgtype":"m.text","body":"hello"}}`,
@@ -117,6 +119,11 @@ func TestImportWhatsAppBridgeWritesNativeWhatsAppMessages(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /_matrix/client/v3/rooms/{room}/event/{event}", func(w http.ResponseWriter, r *http.Request) {
 		fetches.Add(1)
+		if r.PathValue("event") == "$bad" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"errcode":"M_BAD_JSON","error":"deserialization failed"}`))
+			return
+		}
 		body, ok := events[r.PathValue("event")]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
@@ -167,6 +174,7 @@ func TestImportWhatsAppBridgeWritesNativeWhatsAppMessages(t *testing.T) {
 	assert.Equal(int64(1), sum.Logins, "only the logins of the syncing Matrix account are imported")
 	assert.Equal(int64(4), sum.MessagesAdded, "first run is full, so last month's group message is included")
 	assert.Equal(int64(1), sum.MessagesSkipped, "the Desktop copy is left alone")
+	assert.Equal(int64(1), sum.ErrorsCount, "a refused event is counted and skipped, the fake one never fetched")
 
 	count, err := st.CountMessagesForSource(source.ID)
 	require.NoError(err)
@@ -225,8 +233,8 @@ func TestImportWhatsAppBridgeWritesNativeWhatsAppMessages(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(0), sum.MessagesAdded)
 	assert.Equal(int64(0), sum.MessagesUpdated)
-	assert.Equal(int64(4), sum.MessagesProcessed, "the month-old message is outside the window")
-	assert.Equal(int64(1), fetches.Load()-before, "only the edited message is fetched again")
+	assert.Equal(int64(5), sum.MessagesProcessed, "the month-old message is outside the window")
+	assert.Equal(int64(2), fetches.Load()-before, "only the edited and the refused messages are fetched again")
 }
 
 func TestOpenWhatsAppBridgeNeverWrites(t *testing.T) {
