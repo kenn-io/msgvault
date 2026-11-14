@@ -14,29 +14,29 @@ workflows:
         - 'actions/setup-node@v7.1.0'
         - 'actions/upload-artifact@v7.0.2'
         - 'kenn-io/actions@e7ba4b0b573de976989328726cdcc83f8a463367'
-        - 'kenn-io/kit@v0.48.4'
+        - 'kenn-io/kit@v0.53.0'
         - 'step-security/setup-bun@v2.1.3'
     '.github/workflows/codex-isolation-pr.yml': []
     '.github/workflows/codex-isolation.yml':
         - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
-        - 'kenn-io/kit@v0.48.4'
+        - 'kenn-io/kit@v0.53.0'
     '.github/workflows/docker-pr.yml': []
     '.github/workflows/docker.yml':
         - 'actions/checkout@v7.0.1'
-        - 'kenn-io/kit@v0.48.4'
+        - 'kenn-io/kit@v0.53.0'
         - 'step-security/docker-build-push-action@v7.4.0'
         - 'step-security/setup-buildx-action@v4.4.1'
         - 'step-security/setup-bun@v2.1.3'
     '.github/workflows/docs.yml':
         - 'actions/checkout@v7.0.1'
         - 'astral-sh/setup-uv@v10.3.3'
-        - 'kenn-io/kit@v0.48.4'
+        - 'kenn-io/kit@v0.53.0'
     '.github/workflows/frontend-shell-pr.yml': []
     '.github/workflows/frontend-shell.yml':
         - 'actions/checkout@v7.0.1'
-        - 'kenn-io/kit@v0.48.4'
+        - 'kenn-io/kit@v0.53.0'
         - 'step-security/setup-bun@v2.1.3'
     '.github/workflows/sibling-pins.yml':
         - 'kenn-io/actions@main'
@@ -100,9 +100,9 @@ dependencies:
         uses:
             - 'actions/checkout@v7.0.1'
             - 'actions/setup-go@v7.0.0'
-    'kenn-io/kit@v0.48.4':
-        ref: 'v0.48.4'
-        commit: 'sha1-82dfc281dc47ce86ba9269737b56e5ac4d35ffe0'
+    'kenn-io/kit@v0.53.0':
+        ref: 'v0.53.0'
+        commit: 'sha1-cecbdf000b6a1e8c6a4d3d4bd9080f9038067d77'
         owner_id: 259885253
         repo_id: 1238000987
     'step-security/docker-build-push-action@v7.4.0':
