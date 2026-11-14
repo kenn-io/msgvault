@@ -26,26 +26,30 @@ func TestOrganizationCapabilities(t *testing.T) {
 	all := []string{"list_organizations", "get_organization", "list_organization_attributes", "create_organization", "update_organization", "delete_organization", "replace_organization_profile", "set_organization_attribute"}
 	properties := []string{"name", "kind", "primary_domain", "description", "retired", "names", "identifiers", "addresses", "contact_points", "media", "categories", "definition_slug", "value", "source", "ordinal", "expected_value_id", "dry_run"}
 	for _, tc := range []struct {
-		name                                string
-		missingReads, missingUpdateProperty bool
+		name, missingRoute, missingProperty string
 		want                                []string
 	}{
-		{"all", false, false, all},
-		{"no reads", true, false, []string{"list_organizations", "create_organization"}},
-		{"missing update property", false, true, []string{"list_organizations", "get_organization", "list_organization_attributes", "create_organization", "delete_organization", "replace_organization_profile", "set_organization_attribute"}},
+		{"all", "", "", all},
+		{"no history", "getOrganizationHistory", "", []string{"list_organizations", "list_organization_attributes", "create_organization"}},
+		{"no organization", "getOrganization", "", []string{"list_organizations", "list_organization_attributes", "create_organization"}},
+		{"no attributes", "listOrganizationAttributes", "", []string{"list_organizations", "get_organization", "create_organization", "update_organization", "delete_organization", "replace_organization_profile"}},
+		{"missing update property", "", "patchOrganization", []string{"list_organizations", "get_organization", "list_organization_attributes", "create_organization", "delete_organization", "replace_organization_profile", "set_organization_attribute"}},
+		{"missing attribute expectation", "", "setOrganizationAttribute", []string{"list_organizations", "get_organization", "list_organization_attributes", "create_organization", "update_organization", "delete_organization", "replace_organization_profile"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			caps := &apiprotocol.MCPCapabilities{}
 			for _, id := range []string{"createOrganization", "patchOrganization", "putOrganizationProfile", "setOrganizationAttribute"} {
 				props := properties
-				if tc.missingUpdateProperty && id == "patchOrganization" {
-					props = []string{"name", "kind", "primary_domain", "description"}
+				if tc.missingProperty == id {
+					if id == "patchOrganization" {
+						props = []string{"name", "kind", "primary_domain", "description"}
+					} else {
+						props = []string{"definition_slug", "value", "source", "ordinal", "dry_run"}
+					}
 				}
 				caps.Routes = append(caps.Routes, apiprotocol.MCPRouteDescriptor{OperationID: id, RequestProperties: props})
 			}
-			hasRoute := func(id, _, _ string, _ ...string) bool {
-				return !tc.missingReads || (id != "getOrganization" && id != "getOrganizationHistory" && id != "listOrganizationAttributes")
-			}
+			hasRoute := func(id, _, _ string, _ ...string) bool { return id != tc.missingRoute }
 			assert.Equal(t, tc.want, organizationMCPCapabilities(hasRoute, caps))
 		})
 	}
@@ -209,20 +213,6 @@ func TestOrganizationSDKRequiresConfirmationAndRejectsUnknownFields(t *testing.T
 	must.NoError(json.Unmarshal(data, &attributes))
 	must.Len(attributes.Values, 1)
 	must.JSONEq(`{"enabled":true}`, string(attributes.Values[0].Value.JSON))
-}
-
-func TestOrganizationWriteCapabilitiesRequirePreviewRoutes(t *testing.T) {
-	properties := []string{"names", "identifiers", "addresses", "contact_points", "media", "categories", "definition_slug", "value", "source", "ordinal", "expected_value_id", "dry_run"}
-	caps := &apiprotocol.MCPCapabilities{Routes: []apiprotocol.MCPRouteDescriptor{{OperationID: "putOrganizationProfile", RequestProperties: properties}, {OperationID: "setOrganizationAttribute", RequestProperties: properties}}}
-	all := func(_, _, _ string, _ ...string) bool { return true }
-	assert.Contains(t, organizationMCPCapabilities(all, caps), "replace_organization_profile")
-	assert.Contains(t, organizationMCPCapabilities(all, caps), "set_organization_attribute")
-	withoutHistory := func(id, _, _ string, _ ...string) bool { return id != "getOrganizationHistory" }
-	assert.NotContains(t, organizationMCPCapabilities(withoutHistory, caps), "replace_organization_profile")
-	withoutAttributes := func(id, _, _ string, _ ...string) bool { return id != "listOrganizationAttributes" }
-	assert.NotContains(t, organizationMCPCapabilities(withoutAttributes, caps), "set_organization_attribute")
-	caps.Routes[1].RequestProperties = []string{"definition_slug", "value", "source", "ordinal", "dry_run"}
-	assert.NotContains(t, organizationMCPCapabilities(all, caps), "set_organization_attribute")
 }
 
 func TestApprovalMatrixOrganization(t *testing.T) {
