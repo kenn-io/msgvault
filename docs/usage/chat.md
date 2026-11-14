@@ -936,12 +936,7 @@ retries a write by itself. If a write reports
 On unreleased `main`, an owner-connected assistant can read fact claims and pins, and change pins and tracking. Delegated sessions get none of these tools. A tool appears only
 when the daemon offers its route.
 
-| Tool | Effect | Parameters |
-|---|---|---|
-| `list_person_fact_claims` | Read claims and optionally evidence and decisions. | `person_id`; optional `target`, `limit` (1–200, default 50), `offset`, `include_evidence`, `include_decisions` |
-| `list_person_fact_pins` | Read effective pins. | `person_id` |
-| `set_person_fact_pin` | Set or clear an attribute or employment pin. | `person_id`, `kind`, `key`, `pinned` |
-| `set_person_tracking` | Change tracking state. | `person_id`, `tracked` |
+Use `list_person_fact_claims`, `list_person_fact_pins`, `set_person_fact_pin`, and `set_person_tracking` for these operations.
 
 - Build `target` as `kind:key:revision` from a claim's `target`. If there are no claims, use `msgvault person facts catalog` to find target keys and revisions.
 - Use `msgvault person facts evidence-status <person-id>` to inspect evidence support history.
