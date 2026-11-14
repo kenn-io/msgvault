@@ -447,7 +447,7 @@ func TestRestorePreflightAllowsOmittedFileWithoutInheritedAccess(t *testing.T) {
 	assertions.Equal(before.String(), after.String())
 }
 
-func TestSecureRestoredRefusesInheritedOmittedACLBeforeChanges(t *testing.T) {
+func TestSecureRestoredPreservesOrRejectsInheritedOmittedACL(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	dir := filepath.Join(t.TempDir(), "tokens")
@@ -550,10 +550,6 @@ func TestSecureRestoredPreservesProtectedMixedTree(t *testing.T) {
 	after, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	requirements.NoError(err)
 	assertions.Equal(before.String(), after.String())
-}
-
-func TestSecureRestoredDoesNotTouchEmptySelection(t *testing.T) {
-	require.NoError(t, SecureRestored(filepath.Join(t.TempDir(), "absent"), nil))
 }
 
 func TestSecureRestoredSkipsUnreadableProtectedDirectory(t *testing.T) {

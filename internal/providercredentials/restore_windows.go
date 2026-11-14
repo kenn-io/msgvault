@@ -18,9 +18,6 @@ var ErrRestorePermissionsConflict = errors.New("restored token permissions confl
 
 // SecureRestored protects snapshot-selected token files while preserving omitted entries.
 func SecureRestored(dir string, restored []string) error {
-	if len(restored) == 0 {
-		return nil
-	}
 	selected := make(map[string]struct{}, len(restored))
 	ancestors := make(map[string]struct{})
 	for _, name := range restored {

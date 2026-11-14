@@ -72,7 +72,7 @@ func TestBackupRestoreNestedTokensRemainUsable(t *testing.T) {
 	assert.Equal(credential, freshNested)
 }
 
-func TestBackupRestoreConfigOnlyLeavesUnrelatedTokenPath(t *testing.T) {
+func TestBackupRestoreConfigOnlySkipsTokensAndHonorsForceUnlock(t *testing.T) {
 	cfg, dbPath, attachments := backupTokenFixture(t)
 	configPath := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(t, os.WriteFile(configPath, []byte("# config"), 0o600))
