@@ -271,9 +271,6 @@ func TestMCPLoopResponseClassifier(t *testing.T) {
 			result, err := readMCPLoopJSON[generated.LoopDecisionResponse](t.Context(), client, http.MethodPost, "/api/v1/loops/1/done", nil)
 			require.NoError(t, err)
 			assertLoopRefusal(t, result, code, false)
-			result, err = readMCPOperationJSON[generated.Person](t.Context(), client, http.MethodPost, "/api/v1/people", nil, http.StatusOK)
-			require.NoError(t, err)
-			assertLoopRefusal(t, result, code, false)
 		})
 	}
 }

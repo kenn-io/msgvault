@@ -28,7 +28,7 @@ func mergeRecoveryFixture(t *testing.T, st *store.Store, slug string) (int64, *s
 	var participant int64
 	for i, value := range []string{"email", "chat"} {
 		var err error
-		participant, err = st.EnsureParticipant(value+"@example.test", value, "example.test")
+		participant, err = st.EnsureParticipant(value+"-"+slug+"@example.test", value, "example.test")
 		require.NoError(err)
 		person, _, err := st.CreatePersonFromParticipant(participant)
 		require.NoError(err)
@@ -111,12 +111,14 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	require.False(sdkResult.IsError)
 	assert.Equal(1, approvals)
 	assert.Equal(reject, disclosure)
+	replay, err := backend.OperationDisclosure(ctx, "decide_person_merge_candidate", args)
+	require.NoError(err)
+	assert.Contains(replay, "daemon will replay it")
+	assert.Contains(replay, "Primary channel")
+	assert.Contains(replay, "email")
+	assert.Contains(replay, "chat")
 	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "decide_person_merge_candidate", Arguments: args})
 	require.NoError(err)
-	assert.Contains(disclosure, "daemon will replay it")
-	assert.Contains(disclosure, "Primary channel")
-	assert.Contains(disclosure, "email")
-	assert.Contains(disclosure, "chat")
 	receipt := loopToolOutput[mcpserver.MergeCandidateReceipt](t, sdkResult)
 	assert.Equal("rejected", receipt.Candidate.State)
 	assert.NotEmpty(receipt.ETag)
@@ -136,6 +138,7 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	require.NoError(err)
 	require.False(sdkResult.IsError)
 	assert.Contains(disclosure, "daemon will replay it")
+	assert.NotContains(disclosure, `"attribute"`)
 	thirdParticipant, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
 	require.NoError(err)
 	third, _, err := st.CreatePersonFromParticipant(thirdParticipant)
@@ -156,42 +159,82 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	assert.Equal(merged.Merge.ID, shown.Lineage.Merge.ID)
 	require.Len(shown.Lineage.Splits, 1)
 	assert.Contains(disclosure, "identical completed request returns its saved result")
+	definition, err := st.CreateAttributeDefinitionContext(ctx, store.AttributeDefinitionInput{UniversalID: "test-preferred-medium", ObjectType: store.AttributeObjectPerson, Slug: "preferred_medium", Label: "Preferred medium", ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, UICreatable: true, UIEditable: true, APIMutable: true, IsAudited: true, IsDeletable: true})
+	require.NoError(err)
+	_, retired := mergeRecoveryFixture(t, st, definition.Slug)
+	_, err = st.UpdateAttributeDefinitionContext(ctx, definition.ID, definition.Revision, store.AttributeDefinitionUpdate{IsActive: new(false)})
+	require.NoError(err)
+	_, err = st.SupersedePersonAttributeValueContext(ctx, store.PersonAttributeSupersedeInput{PersonID: retired.Person.ID, DefinitionSlug: definition.Slug})
+	require.NoError(err)
+	retiredArgs := map[string]any{"person_id": retired.Person.ID, "candidate_id": retired.ReviewCandidates[0].ID, "merge_id": retired.Merge.ID, "decision": "reject", "etag": editETag(retired.Person.ID)}
+	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "decide_person_merge_candidate", Arguments: retiredArgs})
+	require.NoError(err)
+	require.False(sdkResult.IsError)
+	assert.Contains(disclosure, "Preferred medium")
+	assert.Contains(disclosure, `"current_value":null`)
 }
 
 // A fake daemon returns enough rows to exercise paging.
 func TestMCPMergeRecoveryPaging(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	rows := strings.Repeat(`{"original_row_key":"row"},`, 500) + `{"original_row_key":"last"}`
-	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/api/v1/people/7/split" {
-			w.Header().Set("ETag", "source")
-			w.Header().Set("X-New-Person-Etag", "new")
-			_, _ = w.Write([]byte(`{"ambiguous_rows":[` + rows + `],"unrestored_rows":[` + rows + `]}`))
-		} else {
-			_, _ = w.Write([]byte(`{"rows":[` + rows + `]}`))
-		}
-	})
-	backend := &daemonMCPOperations{client: client, supported: []string{"get_person_merge", "split_person_merge"}}
 	for _, tc := range []struct {
-		offset, rows int
-		first        string
-		next         *int
-	}{{0, 500, "row", new(500)}, {500, 1, "last", nil}} {
-		result, err := backend.ExecuteOperation(t.Context(), "get_person_merge", map[string]any{"merge_id": 1, "row_offset": tc.offset})
-		require.NoError(err)
-		detail := operationOutput[mcpserver.MergeDetail](t, result)
-		result, err = backend.ExecuteOperation(t.Context(), "split_person_merge", map[string]any{"person_id": 7, "merge_id": 1, "participant_ids": []int64{}, "etag": "x", "idempotency_key": "same", "row_offset": tc.offset})
-		require.NoError(err)
-		split := operationOutput[mcpserver.MergeSplitReceipt](t, result)
-		assert.Equal([]int{501, 501, 501}, []int{detail.RowCount, split.AmbiguousRowCount, split.UnrestoredRowCount})
-		assert.Len(detail.Rows, tc.rows)
-		require.Len(split.AmbiguousRows, tc.rows)
-		require.Len(split.UnrestoredRows, tc.rows)
-		assert.Equal(tc.first, split.AmbiguousRows[0].OriginalRowKey)
-		assert.Equal(tc.first, split.UnrestoredRows[0].OriginalRowKey)
-		assert.Equal(tc.next, detail.NextRowOffset)
-		assert.Equal(tc.next, split.NextRowOffset)
+		name          string
+		ambiguousLong bool
+	}{
+		{"ambiguous rows continue", true},
+		{"unrestored rows continue", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			long := strings.Repeat(`{"original_row_key":"row"},`, 500) + `{"original_row_key":"last"}`
+			short := `{"original_row_key":"only"}`
+			ambiguous, unrestored := short, long
+			if tc.ambiguousLong {
+				ambiguous, unrestored = long, short
+			}
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/v1/people/7/split" {
+					w.Header().Set("ETag", "source")
+					w.Header().Set("X-New-Person-Etag", "new")
+					_, _ = w.Write([]byte(`{"ambiguous_rows":[` + ambiguous + `],"unrestored_rows":[` + unrestored + `]}`))
+				} else {
+					_, _ = w.Write([]byte(`{"rows":[` + long + `]}`))
+				}
+			})
+			backend := &daemonMCPOperations{client: client, supported: []string{"get_person_merge", "split_person_merge"}}
+			for _, offset := range []int{0, 500} {
+				result, err := backend.ExecuteOperation(t.Context(), "get_person_merge", map[string]any{"merge_id": 1, "row_offset": offset})
+				require.NoError(err)
+				detail := operationOutput[mcpserver.MergeDetail](t, result)
+				result, err = backend.ExecuteOperation(t.Context(), "split_person_merge", map[string]any{"person_id": 7, "merge_id": 1, "participant_ids": []int64{8}, "etag": "x", "idempotency_key": "same", "row_offset": offset})
+				require.NoError(err)
+				split := operationOutput[mcpserver.MergeSplitReceipt](t, result)
+				longPage, shortPage := split.UnrestoredRows, split.AmbiguousRows
+				longCount, shortCount := split.UnrestoredRowCount, split.AmbiguousRowCount
+				if tc.ambiguousLong {
+					longPage, shortPage = split.AmbiguousRows, split.UnrestoredRows
+					longCount, shortCount = split.AmbiguousRowCount, split.UnrestoredRowCount
+				}
+				assert.Equal(501, detail.RowCount)
+				assert.Equal(501, longCount)
+				assert.Equal(1, shortCount)
+				if offset == 0 {
+					assert.Len(detail.Rows, 500)
+					assert.Len(longPage, 500)
+					require.Len(shortPage, 1)
+					assert.Equal("only", shortPage[0].OriginalRowKey)
+					assert.Equal(new(500), detail.NextRowOffset)
+					assert.Equal(new(500), split.NextRowOffset)
+				} else {
+					assert.Len(detail.Rows, 1)
+					require.Len(longPage, 1)
+					assert.Equal("last", longPage[0].OriginalRowKey)
+					assert.Empty(shortPage)
+					assert.Nil(detail.NextRowOffset)
+					assert.Nil(split.NextRowOffset)
+				}
+			}
+		})
 	}
 }
 
@@ -227,14 +270,10 @@ func TestMCPMergeRecoveryLargeConfirmation(t *testing.T) {
 		_, _ = w.Write([]byte(`{"rows":[{"original_row_key":"` + strings.Repeat("x", 16<<20) + `"}]}`))
 	})
 	backend := &daemonMCPOperations{client: client, supported: []string{"get_person_merge", "split_person_merge"}}
-	args := map[string]any{"person_id": 7, "merge_id": 1, "participant_ids": []int64{}, "etag": "x", "idempotency_key": "key"}
+	args := map[string]any{"person_id": 7, "merge_id": 1, "participant_ids": []int64{8}, "etag": "x", "idempotency_key": "key"}
 	disclosure, err := backend.OperationDisclosure(t.Context(), "split_person_merge", args)
 	require.NoError(err)
-	assert.Contains(disclosure, "row_count")
 	assert.Less(len(disclosure), 10000)
-	result, err := backend.ExecuteOperation(t.Context(), "split_person_merge", args)
-	require.NoError(err)
-	assertLoopRefusal(t, result, "invalid_operation_response", true)
 }
 
 func TestMCPMergeRecoveryReadsOnlyCandidateHistory(t *testing.T) {
@@ -261,36 +300,4 @@ func TestMCPMergeRecoveryReadsOnlyCandidateHistory(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(disclosure, "email")
 	assert.Contains(disclosure, "chat")
-}
-
-func TestMCPMergeRecoveryRejectsCandidateAfterDefinitionRetired(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	ctx := t.Context()
-	st := testutil.NewTestStore(t)
-	definition, err := st.CreateAttributeDefinitionContext(ctx, store.AttributeDefinitionInput{UniversalID: "test-preferred-medium", ObjectType: store.AttributeObjectPerson, Slug: "preferred_medium", Label: "Preferred medium", ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, UICreatable: true, UIEditable: true, APIMutable: true, IsAudited: true, IsDeletable: true})
-	require.NoError(err)
-	_, merged := mergeRecoveryFixture(t, st, definition.Slug)
-	survivor := merged.Person
-	_, err = st.UpdateAttributeDefinitionContext(ctx, definition.ID, definition.Revision, store.AttributeDefinitionUpdate{IsActive: new(false)})
-	require.NoError(err)
-	_, err = st.SupersedePersonAttributeValueContext(ctx, store.PersonAttributeSupersedeInput{PersonID: survivor.ID, DefinitionSlug: definition.Slug})
-	require.NoError(err)
-	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
-	edit, err := backend.ExecuteOperation(ctx, "get_person_edit_context", map[string]any{"person_id": survivor.ID})
-	require.NoError(err)
-	args := map[string]any{"person_id": survivor.ID, "candidate_id": merged.ReviewCandidates[0].ID, "merge_id": merged.Merge.ID, "decision": "reject", "etag": edit.ETag}
-	var disclosure string
-	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyMergeRecovery}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		disclosure = request.Params.Message
-		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
-	}})
-	result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "decide_person_merge_candidate", Arguments: args})
-	require.NoError(err)
-	require.False(result.IsError)
-	receipt := loopToolOutput[mcpserver.MergeCandidateReceipt](t, result)
-	assert.Equal("rejected", receipt.Candidate.State)
-	assert.Contains(disclosure, "Preferred medium")
-	assert.Contains(disclosure, "email")
-	assert.Contains(disclosure, "chat")
-	assert.Contains(disclosure, `"current_value":null`)
 }

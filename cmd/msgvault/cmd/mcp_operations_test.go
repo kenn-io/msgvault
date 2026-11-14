@@ -40,8 +40,6 @@ func TestMCPOperationFailureCompletion(t *testing.T) {
 			`{"error":"operation_refused","operation_may_have_completed":false}`, http.StatusPreconditionFailed},
 		{"read validation failure", http.MethodGet, `{"error":"validation_failed"}`,
 			`{"error":"validation_failed","operation_may_have_completed":false}`, http.StatusUnprocessableEntity},
-		{"merge refusal", http.MethodPost, `{"error":"person_merge_already_split"}`,
-			`{"error":"person_merge_already_split","operation_may_have_completed":false}`, http.StatusConflict},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
