@@ -7521,10 +7521,32 @@ func TestHandleSearch_VectorRejectsInvalidTimePeriod(t *testing.T) {
 	assert.Contains(errResp.Message, "YYYY, YYYY-MM, or YYYY-MM-DD", "accepted formats")
 }
 
+type searchCollectionLookupStore struct {
+	*mockStore
+	fullLookups   int
+	memberLookups int
+}
+
+func (s *searchCollectionLookupStore) GetCollectionByName(name string) (*store.CollectionWithSources, error) {
+	s.fullLookups++
+	return s.mockStore.GetCollectionByName(name)
+}
+
+func (s *searchCollectionLookupStore) GetCollectionSourceIDs(name string) ([]int64, error) {
+	s.memberLookups++
+	coll, ok := s.collections[name]
+	if !ok {
+		return nil, store.ErrCollectionNotFound
+	}
+	return coll.SourceIDs, nil
+}
+
 func TestHandleSearch_VectorCollectionParamReachesFilter(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		messages: []APIMessage{{ID: 42, Subject: "Lunch"}},
+	assertions := assert.New(t)
+	st := &searchCollectionLookupStore{mockStore: &mockStore{
+		messages:        []APIMessage{{ID: 42, Subject: "Lunch"}},
+		sourcesByLookup: map[string][]*store.Source{"account": {{ID: 99, Identifier: "account"}}},
 		collections: map[string]*store.CollectionWithSources{
 			"Important": {
 				Collection: store.Collection{
@@ -7534,7 +7556,7 @@ func TestHandleSearch_VectorCollectionParamReachesFilter(t *testing.T) {
 				SourceIDs: []int64{77, 88},
 			},
 		},
-	}
+	}}
 	backend := &fakeVectorBackend{
 		active: &vector.Generation{
 			ID: 1, Model: "fake", Dimension: 4,
@@ -7547,7 +7569,7 @@ func TestHandleSearch_VectorCollectionParamReachesFilter(t *testing.T) {
 	})
 	srv := NewServerWithOptions(ServerOptions{
 		Config:       &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:        store,
+		Store:        st,
 		HybridEngine: engine,
 		Backend:      backend,
 		Logger:       testLogger(),
@@ -7560,6 +7582,21 @@ func TestHandleSearch_VectorCollectionParamReachesFilter(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 	assert.Equal(t, []int64{77, 88}, backend.searchFilter.SourceIDs, "SourceIDs")
+	assertions.Zero(st.fullLookups)
+	assertions.Equal(1, st.memberLookups)
+	for _, tc := range []struct {
+		name    string
+		status  int
+		message string
+	}{
+		{"account", http.StatusBadRequest, "is an account, not a collection"},
+		{"missing", http.StatusBadRequest, "no collection named"},
+	} {
+		rec := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search?q=lunch&mode=vector&collection="+tc.name, nil))
+		assertions.Equal(tc.status, rec.Code)
+		assertions.Contains(rec.Body.String(), tc.message)
+	}
 }
 
 // TestHandleSearch_HybridResponseItemShape regression-guards the

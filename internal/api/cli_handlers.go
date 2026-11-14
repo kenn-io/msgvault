@@ -3918,9 +3918,17 @@ func resolveCLIAccountScope(ctx context.Context, st CLIStore, input string) (cli
 }
 
 func resolveCLICollectionScope(st CLIStore, input string) (cliScope, error) {
+	ids, err := st.GetCollectionSourceIDs(input)
+	if err != nil {
+		return resolveMissingCLICollectionScope(st, input, err)
+	}
+	return cliScope{Account: collectionops.Scope{Input: input}, Collection: &store.CollectionWithSources{Collection: store.Collection{Name: input}, SourceIDs: ids}}, nil
+}
+
+func resolveMissingCLICollectionScope(st CLIStore, input string, lookupErr error) (cliScope, error) {
+	if !errors.Is(lookupErr, store.ErrCollectionNotFound) {
+		return cliScope{}, opserr.Internal(fmt.Errorf("look up collection %q: %w", input, lookupErr))
+	}
 	collScope, err := collectionops.ResolveCollection(st, input)
-	return cliScope{
-		Account:    collectionops.Scope{Input: collScope.Input},
-		Collection: collScope.Collection,
-	}, err
+	return cliScope{Account: collectionops.Scope{Input: collScope.Input}, Collection: collScope.Collection}, err
 }
