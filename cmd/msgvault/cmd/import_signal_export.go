@@ -93,52 +93,34 @@ func runImportSignalExport(cmd *cobra.Command, root, account string) error {
 	return nil
 }
 
+var signalExportReasonLabels = map[string]string{
+	"recipient_identity":      "unsupported chat recipient",
+	"author_identity":         "unsupported message author",
+	"self_identity":           "missing account identity",
+	"revision":                "invalid edit history",
+	"missing":                 "file not found",
+	"index_limit":             "file scan limit reached",
+	"invalid_hash":            "missing or invalid file hash",
+	"contactMessage":          "contact cards",
+	"stickerMessage":          "stickers",
+	"remoteDeletedMessage":    "deleted messages",
+	"updateMessage":           "chat updates",
+	"paymentNotification":     "payments",
+	"giftBadge":               "gifts",
+	"viewOnceMessage":         "view-once messages",
+	"directStoryReplyMessage": "story replies",
+	"adminDeletedMessage":     "messages deleted by admins",
+	"adHocCall":               "calls",
+	"installedStickerPack":    "installed sticker packs",
+	"hiddenStickerPack":       "hidden sticker packs",
+	"favoriteStickerList":     "favorite stickers",
+	"notificationProfile":     "notification profiles",
+	"chatFolder":              "chat folders",
+}
+
 func signalExportReasonLabel(reason string) string {
-	switch reason {
-	case "recipient_identity":
-		return "unsupported chat recipient"
-	case "author_identity":
-		return "unsupported message author"
-	case "self_identity":
-		return "missing account identity"
-	case "revision":
-		return "invalid edit history"
-	case "missing":
-		return "file not found"
-	case "index_limit":
-		return "file scan limit reached"
-	case "invalid_hash":
-		return "missing or invalid file hash"
-	case "contactMessage":
-		return "contact message"
-	case "stickerMessage":
-		return "sticker message"
-	case "remoteDeletedMessage":
-		return "remote deleted message"
-	case "updateMessage":
-		return "update message"
-	case "paymentNotification":
-		return "payment notification"
-	case "giftBadge":
-		return "gift badge"
-	case "viewOnceMessage":
-		return "view once message"
-	case "directStoryReplyMessage":
-		return "direct story reply message"
-	case "adminDeletedMessage":
-		return "admin deleted message"
-	case "adHocCall":
-		return "ad hoc call"
-	case "installedStickerPack":
-		return "installed sticker pack"
-	case "hiddenStickerPack":
-		return "hidden sticker pack"
-	case "favoriteStickerList":
-		return "favorite sticker list"
-	case "notificationProfile":
-		return "notification profile"
-	case "chatFolder":
-		return "chat folder"
+	if label, ok := signalExportReasonLabels[reason]; ok {
+		return label
 	}
 	return strings.ToLower(strings.ReplaceAll(reason, "_", " "))
 }

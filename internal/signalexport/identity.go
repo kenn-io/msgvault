@@ -82,7 +82,6 @@ func newSlotCounter(hints *identityHints) *slotCounter {
 
 // slot returns the key and stored ID (0 when new) for a frame.
 func (c *slotCounter) slot(ctx context.Context, st *store.Store, sourceID int64, conversation, author string, date, received decimal, item *chatItem, line int) (string, int64, error) {
-	m := item.Standard
 	later := c.hints.after(hintTuple(item, date, received), line)
 	tuple := sha256.Sum256([]byte(messageKey(conversation, author, date, received, 0)))
 	n := c.next[tuple]
@@ -98,7 +97,7 @@ func (c *slotCounter) slot(ctx context.Context, st *store.Store, sourceID int64,
 		c.claimed[key] = true
 		return key, own, nil
 	}
-	want := attachmentIdentities(m)
+	want := attachmentIdentities(item.Standard)
 	fits := func(have map[string]bool) bool {
 		if len(want) == 0 {
 			return len(have) == 0

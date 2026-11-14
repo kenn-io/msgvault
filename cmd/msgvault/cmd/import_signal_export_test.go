@@ -111,8 +111,8 @@ func TestImportSignalExportReasonLabels(t *testing.T) {
 	cmd.SetErr(io.Discard)
 	require.NoError(t, runImportSignalExport(cmd, root, "fictional"))
 	for _, label := range []string{
-		"Skipped contact message: 1", "Skipped sticker message: 1", "Skipped remote deleted message: 1", "Skipped update message: 1", "Skipped payment notification: 1", "Skipped gift badge: 1", "Skipped view once message: 1", "Skipped direct story reply message: 1", "Skipped admin deleted message: 1",
-		"Omitted ad hoc call: 1", "Omitted installed sticker pack: 1", "Omitted hidden sticker pack: 1", "Omitted favorite sticker list: 1", "Omitted notification profile: 1", "Omitted chat folder: 1",
+		"Skipped contact cards: 1", "Skipped stickers: 1", "Skipped deleted messages: 1", "Skipped chat updates: 1", "Skipped payments: 1", "Skipped gifts: 1", "Skipped view-once messages: 1", "Skipped story replies: 1", "Skipped messages deleted by admins: 1",
+		"Omitted calls: 1", "Omitted installed sticker packs: 1", "Omitted hidden sticker packs: 1", "Omitted favorite stickers: 1", "Omitted notification profiles: 1", "Omitted chat folders: 1",
 	} {
 		assert.Contains(t, out.String(), label)
 	}
