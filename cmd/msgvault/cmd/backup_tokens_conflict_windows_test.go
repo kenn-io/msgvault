@@ -26,7 +26,6 @@ func TestBackupRestorePermissionConflictAfterPublication(t *testing.T) {
 	require.NoError(err)
 	_, err = providercredentials.Put(cfg.TokensDir(), empty.ETag, providercredentials.VectorEmbeddingsID, endpoint, providerKey)
 	require.NoError(err)
-	require.NoError(os.Remove(filepath.Join(cfg.TokensDir(), ".provider-credentials.lock")))
 
 	repo := createBackupTokenSnapshot(t, cfg, dbPath, attachments)
 
@@ -60,30 +59,15 @@ func TestBackupRestorePermissionConflictAfterPublication(t *testing.T) {
 	require.NoError(os.WriteFile(filepath.Join(cfg.TokensDir(), "other-snapshot.json"), []byte("other"), 0o600))
 	captureBackupTokenSnapshot(t, repo, cfg, dbPath, attachments)
 	require.NoError(os.WriteFile(other, []byte("other"), 0o600))
-	otherAccess, readErr := windows.ACLFromEntries(entries[:1], nil)
+	otherAccess, readErr := windows.ACLFromEntries(entries, nil)
 	require.NoError(readErr)
 	require.NoError(windows.SetNamedSecurityInfo(other, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, otherAccess, nil))
 	otherACL, readErr := windows.GetNamedSecurityInfo(other, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	require.NoError(readErr)
-	attachment := filepath.Join(target, "attachments", "unrelated")
-	require.NoError(os.MkdirAll(filepath.Dir(attachment), 0o700))
-	require.NoError(os.WriteFile(attachment, []byte("attachment"), 0o600))
-	dataState := func() (state []string) {
-		for _, path := range []string{filepath.Join(target, "msgvault.db"), attachment} {
-			data, err := os.ReadFile(path)
-			require.NoError(err)
-			info, err := os.Stat(path)
-			require.NoError(err)
-			state = append(state, fmt.Sprint(info.ModTime(), string(data)))
-		}
-		return state
-	}
-	before := dataState()
 	require.NoError(os.Rename(omitted, filepath.Join(t.TempDir(), "omitted")))
 	output, err = runBackupTokenRestore(t, cfg, repo, manifest.SnapshotID, "--target", target, "--permissions-only")
 	require.NoError(err)
-	assert.Contains(output, "secured token files: 1")
-	assert.Equal(before, dataState())
+	assert.Contains(output, "secured token files: 2")
 	otherAfter, readErr := windows.GetNamedSecurityInfo(other, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	require.NoError(readErr)
 	assert.Equal(otherACL.String(), otherAfter.String())

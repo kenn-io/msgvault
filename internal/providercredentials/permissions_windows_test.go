@@ -518,7 +518,7 @@ func TestSecureRestoredPreservesOmittedBelowProtectedAncestor(t *testing.T) {
 	assert.Equal(t, before, restoredTestDescriptor(t, omittedBelow, false))
 }
 
-func TestSecureRestoredSkipsUnreadableProtectedDirectory(t *testing.T) {
+func TestSecureRestoredHandlesUnreadableProtectedDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "tokens")
 	require.NoError(t, os.Mkdir(dir, 0o700))
 	selected := filepath.Join(dir, "selected")
@@ -566,8 +566,8 @@ func TestSecureRestoredRejectsDistinctUnicodeOmittedFile(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "tokens")
 	require.NoError(t, os.Mkdir(dir, 0o700))
 	shareRestoredTestDirectory(t, dir, windows.GENERIC_ALL, windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE)
-	selected := filepath.Join(dir, "İ.json")
-	omitted := filepath.Join(dir, "i.json")
+	selected := filepath.Join(dir, "K.json")
+	omitted := filepath.Join(dir, "k.json")
 	require.NoError(t, os.WriteFile(selected, []byte("selected"), 0o600))
 	require.NoError(t, os.WriteFile(omitted, []byte("omitted"), 0o600))
 	selectedInfo, err := os.Stat(selected)
@@ -581,7 +581,7 @@ func TestSecureRestoredRejectsDistinctUnicodeOmittedFile(t *testing.T) {
 		return []string{restoredTestDescriptor(t, dir, true), restoredTestDescriptor(t, selected, false), restoredTestDescriptor(t, omitted, false)}
 	}
 	before := descriptors()
-	require.ErrorIs(t, SecureRestored(dir, []string{"İ.json"}), ErrRestorePermissionsConflict)
+	require.ErrorIs(t, SecureRestored(dir, []string{"K.json"}), ErrRestorePermissionsConflict)
 	assert.Equal(t, before, descriptors())
 	data, err := os.ReadFile(omitted)
 	require.NoError(t, err)

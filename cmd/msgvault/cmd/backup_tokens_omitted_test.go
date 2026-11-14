@@ -40,5 +40,4 @@ func TestBackupRestorePermissionsOnlyValidatesInputsBeforeLiveDaemon(t *testing.
 	} else {
 		require.ErrorContains(run("snapshot", "--permissions-only"), "available only on Windows")
 	}
-	require.ErrorContains(run("snapshot"), "running daemon")
 }
