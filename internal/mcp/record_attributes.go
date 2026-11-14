@@ -22,15 +22,7 @@ func attributeValueOutputSchema(write bool) *jsonschema.Schema {
 		for _, field := range []string{"value", "superseded"} {
 			schema.Properties[field].Properties["value"].Properties["json"] = &jsonschema.Schema{}
 		}
-		conflict := closedObject(map[string]*jsonschema.Schema{
-			"error":                        stringSchema("Native value conflict", "attribute_value_conflict"),
-			"operation_may_have_completed": booleanSchema("Whether the operation may have completed"),
-			"current_value_id":             safeIDSchema("Current value ID"),
-			"current_value":                schema.Properties["superseded"].CloneSchemas(),
-		}, "error", "operation_may_have_completed")
-		defs, definitions := schema.Defs, schema.Definitions
-		schema.Defs, schema.Definitions = nil, nil
-		return &jsonschema.Schema{Schema: schema202012, Type: "object", Defs: defs, Definitions: definitions, AnyOf: []*jsonschema.Schema{schema, conflict}}
+		return schema
 	}
 	schema := outputSchemaFor[generated.PersonAttributesResponse]()
 	group := schema.Properties["attributes"].Items

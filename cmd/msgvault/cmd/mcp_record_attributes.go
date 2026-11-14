@@ -68,13 +68,6 @@ type attributeDefinitionArgs struct {
 	Changes    map[string]any                              `json:"changes,omitempty"`
 }
 
-type attributeConflictOutput struct {
-	Error                     string                          `json:"error"`
-	OperationMayHaveCompleted bool                            `json:"operation_may_have_completed"`
-	CurrentValueID            *int64                          `json:"current_value_id,omitempty"`
-	CurrentValue              *generated.PersonAttributeValue `json:"current_value,omitempty"`
-}
-
 // The generated PATCH body cannot represent explicit null independently of omission.
 // Reuse its path and headers while retaining the native JSON merge field presence.
 type attributePatchOptions struct {
@@ -165,29 +158,21 @@ func (b *daemonMCPOperations) executeRecordAttributeOperation(ctx context.Contex
 	}
 	var result *mcpserver.OperationResult
 	var err error
-	classify := func(code string, body []byte) (any, bool) {
-		if code == "attribute_value_conflict" && (name == "set_person_attribute" || name == "clear_person_attribute") {
-			var conflict generated.PersonAttributeConflictResponse
-			if json.Unmarshal(body, &conflict) == nil {
-				return attributeConflictOutput{code, false, conflict.CurrentValueID, conflict.CurrentValue}, true
-			}
-		}
-		return nil, attributeRefusal(code)
-	}
+
 	switch name {
 	case "list_person_attributes":
-		result, err = readMCPOperationJSONWithOutput[generated.PersonAttributesResponse](ctx, b.client, method, path, options, classify, http.StatusOK)
+		result, err = readMCPOperationJSONWithClassifier[generated.PersonAttributesResponse](ctx, b.client, method, path, options, attributeRefusal, http.StatusOK)
 	case "set_person_attribute", "clear_person_attribute":
-		result, err = readMCPOperationJSONWithOutput[generated.PersonAttributeWrite](ctx, b.client, method, path, options, classify, http.StatusOK)
+		result, err = readMCPOperationJSONWithClassifier[generated.PersonAttributeWrite](ctx, b.client, method, path, options, attributeRefusal, http.StatusOK)
 	case "list_attribute_definitions":
-		result, err = readMCPOperationJSONWithOutput[generated.AttributeDefinitionsResponse](ctx, b.client, method, path, options, classify, http.StatusOK)
+		result, err = readMCPOperationJSONWithClassifier[generated.AttributeDefinitionsResponse](ctx, b.client, method, path, options, attributeRefusal, http.StatusOK)
 	case "delete_attribute_definition":
-		result, err = readMCPOperationJSONWithOutput[mcpserver.AttributeDefinitionDeleted](ctx, b.client, method, path, options, classify, http.StatusNoContent)
+		result, err = readMCPOperationJSONWithClassifier[mcpserver.AttributeDefinitionDeleted](ctx, b.client, method, path, options, attributeRefusal, http.StatusNoContent)
 		if result != nil && !result.IsError {
 			result.Output = mcpserver.AttributeDefinitionDeleted{Deleted: true}
 		}
 	default:
-		result, err = readMCPOperationJSONWithOutput[generated.AttributeDefinition](ctx, b.client, method, path, options, classify, http.StatusOK, http.StatusCreated)
+		result, err = readMCPOperationJSONWithClassifier[generated.AttributeDefinition](ctx, b.client, method, path, options, attributeRefusal, http.StatusOK, http.StatusCreated)
 		if result != nil && !result.IsError {
 			d, valid := result.Output.(generated.AttributeDefinition)
 			if !valid || result.ETag == "" {
@@ -210,8 +195,6 @@ func attributeContextRefusal(result *mcpserver.OperationResult) *mcpserver.Opera
 			if !failure.OperationMayHaveCompleted {
 				code = failure.Error
 			}
-		case attributeConflictOutput:
-			code = failure.Error
 		}
 	}
 	return &mcpserver.OperationRefusalError{Code: code}

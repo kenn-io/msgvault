@@ -172,14 +172,6 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 }
 
 func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, success ...int) (*mcpserver.OperationResult, error) {
-	var adapted func(string, []byte) (any, bool)
-	if classify != nil {
-		adapted = func(code string, _ []byte) (any, bool) { return nil, classify(code) }
-	}
-	return readMCPOperationJSONWithOutput[T](ctx, client, method, path, options, adapted, success...)
-}
-
-func readMCPOperationJSONWithOutput[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string, []byte) (any, bool), success ...int) (*mcpserver.OperationResult, error) {
 	writes := method != http.MethodGet
 	response, err := client.DoGeneratedRequestWithErrorLimit(ctx, method, path, options, (1<<20)+1)
 	if err != nil {
@@ -208,13 +200,8 @@ func readMCPOperationJSONWithOutput[T any](ctx context.Context, client *daemoncl
 		}
 		_ = json.Unmarshal(data, &failure)
 		code := failure.Error
-		if classify != nil {
-			if output, ok := classify(code, data); ok {
-				if output == nil {
-					output = mcpOperationFailure{code, false}
-				}
-				return &mcpserver.OperationResult{IsError: true, Output: output}, nil
-			}
+		if classify != nil && classify(code) {
+			return operationFailure(code, false), nil
 		}
 		switch code {
 		case "unauthorized", "not_found", "scheduler_unavailable", "source_not_schedulable", "store_unavailable", "missing_account", "sync_error", "operation_in_progress", "settings_conflict", "settings_edit_rejected", "if_match_required", "person_revision_conflict", "person_profile_not_found", "person_enrichment_dispatch_in_progress", "persons_unavailable", "cache_build_not_found", "cache_build_unavailable", "bad_request", "invalid_participant_id", "participant_not_found", "analytical_cache_unavailable", "query_resource_exhausted", "engine_unavailable":
