@@ -7,7 +7,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io/fs"
 	"path/filepath"
 	"strings"
 
@@ -30,7 +29,7 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 	if err != nil {
 		return 0, fmt.Errorf("load snapshot manifest: %w", err)
 	}
-	if !manifest.Options.IncludeTokens || manifest.Extras.Tree == "" {
+	if manifest.Extras.Tree == "" {
 		return 0, nil
 	}
 	id, err := pack.ParseBlobID(manifest.Extras.Tree)
@@ -47,7 +46,7 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 	}
 	var tree backup.ExtrasTree
 	if err := json.Unmarshal(raw, &tree); err != nil {
-		return 0, fmt.Errorf("read snapshot extras: %w", err)
+		return 0, fmt.Errorf("read saved credentials: %w", err)
 	}
 	var selected []string
 	for _, entry := range tree.Entries {
@@ -55,7 +54,7 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 		if !ok || !strings.EqualFold(prefix, "tokens") {
 			continue
 		}
-		if !fs.ValidPath(name) || strings.Contains(name, `\`) || !filepath.IsLocal(filepath.FromSlash(name)) {
+		if !filepath.IsLocal(filepath.FromSlash(name)) {
 			return 0, fmt.Errorf("invalid snapshot token path %q", entry.Path)
 		}
 		selected = append(selected, filepath.FromSlash(name))
