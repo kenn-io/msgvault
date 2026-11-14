@@ -188,12 +188,13 @@ func TestMCPMergeRecoveryPaging(t *testing.T) {
 }
 
 func TestMCPMergeRecoveryCapabilityRequiresDetailAndAttributeHistory(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	fixture := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Logger: slog.New(slog.DiscardHandler)})
 	backend := sourceOperationFixture(t, fixture)
 	caps, err := backend.client.MCPCapabilities(t.Context())
-	require.NoError(t, err)
-	assert.Contains(t, backend.capabilities(), "decide_person_merge_candidate")
-	assert.Contains(t, backend.capabilities(), "split_person_merge")
+	require.NoError(err)
+	assert.Contains(backend.capabilities(), "decide_person_merge_candidate")
+	assert.Contains(backend.capabilities(), "split_person_merge")
 	for _, tc := range []struct{ operation, missing, name string }{
 		{"listPersonAttributes", "route", "decide_person_merge_candidate"}, {"listPersonAttributes", "history", "decide_person_merge_candidate"}, {"getPersonMerge", "route", "split_person_merge"},
 	} {
@@ -207,7 +208,7 @@ func TestMCPMergeRecoveryCapabilityRequiresDetailAndAttributeHistory(t *testing.
 				route.QueryParameters = slices.DeleteFunc(slices.Clone(route.QueryParameters), func(v string) bool { return v == tc.missing })
 			}
 		}
-		assert.NotContains(t, newDaemonMCPOperations(backend.client, &copyCaps).capabilities(), tc.name)
+		assert.NotContains(newDaemonMCPOperations(backend.client, &copyCaps).capabilities(), tc.name)
 	}
 }
 
