@@ -15,6 +15,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"go.kenn.io/kit/agentsetup"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -81,9 +82,10 @@ type laneStatus struct {
 
 // laneReport is the complete report printed by both setup subcommands.
 type laneReport struct {
-	ConfigPath string       `json:"config_path"`
-	Lanes      []laneStatus `json:"lanes"`
-	MCPTools   []string     `json:"mcp_tools_live"`
+	ConfigPath string           `json:"config_path"`
+	Lanes      []laneStatus     `json:"lanes"`
+	MCPTools   []string         `json:"mcp_tools_live"`
+	Agents     []agentsetup.Row `json:"agents,omitempty"`
 }
 
 // setupConsentState is a best-effort view of recorded consents. A nil
@@ -605,6 +607,12 @@ func writeLaneReport(w io.Writer, report laneReport, jsonOutput bool) error {
 	}
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintf(w, "MCP tools live with this configuration: %s\n", strings.Join(report.MCPTools, ", "))
+	if len(report.Agents) > 0 {
+		_, _ = fmt.Fprintln(w, "\nAgents:")
+		if err := (agentsetup.Report{Rows: report.Agents}).WriteText(w, ""); err != nil {
+			return fmt.Errorf("write agent report: %w", err)
+		}
+	}
 	_, _ = fmt.Fprintf(w, "Config: %s\n", report.ConfigPath)
 	return nil
 }

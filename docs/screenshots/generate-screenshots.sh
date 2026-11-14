@@ -34,6 +34,7 @@ wait_until() {
         elapsed=$((elapsed + 1))
         if [[ $elapsed -ge $((timeout * 2)) ]]; then
             echo "  WARNING: timed out waiting for pattern: $pattern"
+            tmux capture-pane -pt "$SESSION" >&2
             return 1
         fi
     done
@@ -179,9 +180,9 @@ capture "tui-search-drilldown"
 # Search within the drilled-down messages
 send "/"
 sleep 0.5
-send -l "spring"
+send -l "migration"
 sleep 1.5
-wait_until "spring"
+wait_until "> migration"
 capture "tui-search-subject"
 
 # Clear search and return to top-level Senders
@@ -223,8 +224,8 @@ wait_until "Label"
 sleep 0.5
 capture "tui-labels"
 
-# 5. Time view - capture all three granularities
-send "g"
+# 5. Time view - capture all three granularities (t jumps past Lists to Time)
+send "t"
 wait_until "Time"
 sleep 0.5
 # Default is monthly
@@ -246,6 +247,14 @@ capture "tui-time-yearly"
 send "g"
 wait_until "Sender"
 sleep 0.5
+# Deletion stages one account at a time, so scope to the first account.
+send "A"
+wait_until "Select Account"
+send Down
+sleep 0.3
+send Enter
+wait_until "Email\] - [a-z]"
+sleep 0.5
 send Down
 sleep 0.3
 send Space
@@ -260,10 +269,10 @@ send Space
 sleep 0.5
 capture "tui-selection"
 
-# 7. Group deletion confirmation dialog
+# 7. Group deletion confirmation dialog (d stages the selected senders)
 send Down
 sleep 0.3
-send D
+send d
 wait_until "Confirm Deletion"
 sleep 0.5
 capture "tui-deletion"

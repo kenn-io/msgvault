@@ -580,9 +580,15 @@ docs-fixture-smoke:
 docs-web-screenshots:
 	bash docs/screenshots/generate-web-fixture-screenshots.sh
 
-# Regenerate docs screenshots
+# Regenerate docs screenshots. With DOCS_SCREENSHOTS_OUTPUT set, build the
+# complete docs-generated-assets tree into $(DOCS_SCREENSHOTS_OUTPUT)/assets
+# using only Docker on the host.
 docs-screenshots:
+ifdef DOCS_SCREENSHOTS_OUTPUT
+	bash docs/screenshots/build-generated-assets.sh "$(DOCS_SCREENSHOTS_OUTPUT)"
+else
 	bash docs/screenshots/generate-all.sh
+endif
 
 # Publish curated static docs assets to local asset branch
 docs-assets-branch:

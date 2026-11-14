@@ -18,6 +18,8 @@ their intent or authorization is unclear.
 
 ## Connect and discover
 
+For Claude Code and Codex, run `msgvault agent setup` to install skills and connect the MCP server.
+
 Choose the connection the owner has authorized:
 
 - **Local stdio:** configure the MCP client to run `msgvault mcp`. It starts or
