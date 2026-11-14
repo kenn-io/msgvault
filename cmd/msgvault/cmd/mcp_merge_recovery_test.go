@@ -215,7 +215,7 @@ func TestMCPMergeRecoveryCapabilityRequiresDetailAndAttributeHistory(t *testing.
 	assert.Contains(backend.capabilities(), "decide_person_merge_candidate")
 	assert.Contains(backend.capabilities(), "split_person_merge")
 	for _, tc := range []struct{ operation, missing, name string }{
-		{"listPersonAttributes", "slug", "decide_person_merge_candidate"}, {"listPersonAttributes", "route", "decide_person_merge_candidate"}, {"listPersonAttributes", "history", "decide_person_merge_candidate"}, {"getPersonMerge", "route", "split_person_merge"},
+		{"getAttributeDefinition", "route", "decide_person_merge_candidate"}, {"listPersonAttributes", "slug", "decide_person_merge_candidate"}, {"listPersonAttributes", "route", "decide_person_merge_candidate"}, {"listPersonAttributes", "history", "decide_person_merge_candidate"}, {"getPersonMerge", "route", "split_person_merge"},
 	} {
 		copyCaps := *caps
 		copyCaps.Routes = slices.Clone(caps.Routes)
@@ -279,6 +279,8 @@ func TestMCPMergeRecoveryReadsOnlyCandidateHistory(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/person-merges/1":
 			_, _ = w.Write([]byte(`{"review_candidates":[{"id":2,"person_id":7,"definition_id":3,"survivor_value_id":4,"absorbed_value_id":5,"state":"pending"}]}`))
+		case "/api/v1/attribute-definitions/3":
+			_, _ = w.Write([]byte(`{"id":3,"slug":"primary_channel","label":"Primary channel"}`))
 		case "/api/v1/people/7/attributes":
 			if r.URL.Query().Get("history") == "true" && r.URL.Query().Get("slug") == "primary_channel" {
 				historySeen.Store(true)
@@ -287,7 +289,7 @@ func TestMCPMergeRecoveryReadsOnlyCandidateHistory(t *testing.T) {
 				_, _ = w.Write([]byte(strings.Repeat("x", 1<<20+1)))
 				return
 			}
-			_, _ = w.Write([]byte(`{"attributes":[{"definition":{"id":3,"slug":"primary_channel","label":"Primary channel"},"current":[{"id":4,"value":{"type":"text","text":"email"}}],"history":[{"id":5,"value":{"type":"text","text":"chat"}}]}]}`))
+			_, _ = w.Write([]byte(`{"attributes":[{"definition":{"id":3,"slug":"primary_channel","label":"Primary channel"},"current":[{"id":4,"value":{"type":"text","text":"email"}}],"history":[{"id":5,"source_ref":"` + strings.Repeat("x", 1<<20) + `","value":{"type":"text","text":"chat"}}]}]}`))
 		default:
 			assert.Fail("unexpected path", r.URL.Path)
 		}
@@ -301,4 +303,53 @@ func TestMCPMergeRecoveryReadsOnlyCandidateHistory(t *testing.T) {
 	assert.Contains(disclosure, "email")
 	assert.Contains(disclosure, "chat")
 	assert.True(historySeen.Load())
+}
+
+func TestMCPMergeRecoveryRejectsCandidateAfterDefinitionRetired(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	definition, err := st.CreateAttributeDefinitionContext(ctx, store.AttributeDefinitionInput{UniversalID: "test-preferred-medium", ObjectType: store.AttributeObjectPerson, Slug: "preferred_medium", Label: "Preferred medium", ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, UICreatable: true, UIEditable: true, APIMutable: true, IsAudited: true, IsDeletable: true})
+	require.NoError(err)
+	a, err := st.EnsureParticipant("a@example.test", "A", "example.test")
+	require.NoError(err)
+	b, err := st.EnsureParticipant("b@example.test", "B", "example.test")
+	require.NoError(err)
+	survivor, _, err := st.CreatePersonFromParticipant(a)
+	require.NoError(err)
+	absorbed, _, err := st.CreatePersonFromParticipant(b)
+	require.NoError(err)
+	for id, value := range map[int64]string{survivor.ID: "email", absorbed.ID: "chat"} {
+		_, err = st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{PersonID: id, DefinitionSlug: definition.Slug, Value: store.AttributeValue{Type: store.AttributeValueText, Text: &value}, Source: store.ProvenanceUser})
+		require.NoError(err)
+	}
+	survivor, err = st.GetPersonContext(ctx, survivor.ID)
+	require.NoError(err)
+	absorbed, err = st.GetPersonContext(ctx, absorbed.ID)
+	require.NoError(err)
+	merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: survivor.ID, AbsorbedID: absorbed.ID, ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision, IdempotencyKey: "retired-definition", Actor: "test"})
+	require.NoError(err)
+	require.Len(merged.ReviewCandidates, 1)
+	_, err = st.UpdateAttributeDefinitionContext(ctx, definition.ID, definition.Revision, store.AttributeDefinitionUpdate{IsActive: new(false)})
+	require.NoError(err)
+	_, err = st.SupersedePersonAttributeValueContext(ctx, store.PersonAttributeSupersedeInput{PersonID: survivor.ID, DefinitionSlug: definition.Slug})
+	require.NoError(err)
+	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
+	edit, err := backend.ExecuteOperation(ctx, "get_person_edit_context", map[string]any{"person_id": survivor.ID})
+	require.NoError(err)
+	args := map[string]any{"person_id": survivor.ID, "candidate_id": merged.ReviewCandidates[0].ID, "merge_id": merged.Merge.ID, "decision": "reject", "etag": edit.ETag}
+	var disclosure string
+	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyMergeRecovery}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		disclosure = request.Params.Message
+		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+	}})
+	result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "decide_person_merge_candidate", Arguments: args})
+	require.NoError(err)
+	require.False(result.IsError)
+	receipt := loopToolOutput[mcpserver.MergeCandidateReceipt](t, result)
+	assert.Equal("rejected", receipt.Candidate.State)
+	assert.Contains(disclosure, "Preferred medium")
+	assert.Contains(disclosure, "email")
+	assert.Contains(disclosure, "chat")
+	assert.Contains(disclosure, `"current_value":null`)
 }

@@ -21,7 +21,7 @@ func mergeRecoveryCapabilities(has mcpRouteCheck, caps *apiprotocol.MCPCapabilit
 		return names
 	}
 	names = append(names, "get_person_merge")
-	if has("listPersonAttributes", http.MethodGet, "/api/v1/people/{id}/attributes", "history", "slug") && has("decidePersonMergeCandidate", http.MethodPost, "/api/v1/person-merge-candidates/{candidate_id}/decision") && mcpRequestPropertiesPresent(caps, "decidePersonMergeCandidate", "person_id", "decision") {
+	if has("getAttributeDefinition", http.MethodGet, "/api/v1/attribute-definitions/{id}") && has("listPersonAttributes", http.MethodGet, "/api/v1/people/{id}/attributes", "history", "slug") && has("decidePersonMergeCandidate", http.MethodPost, "/api/v1/person-merge-candidates/{candidate_id}/decision") && mcpRequestPropertiesPresent(caps, "decidePersonMergeCandidate", "person_id", "decision") {
 		names = append(names, "decide_person_merge_candidate")
 	}
 	if has("splitPersonMerge", http.MethodPost, "/api/v1/people/{id}/split") && mcpRequestPropertiesPresent(caps, "splitPersonMerge", "merge_id", "participant_ids") {
@@ -195,28 +195,21 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 		if candidate.State == wanted {
 			shown.Effect = "This decision has already been recorded; the daemon will replay it."
 		} else {
-			options := &generated.ListPersonAttributesRequestOptions{PathParams: &generated.ListPersonAttributesPath{ID: decision.PersonID}}
-			attrs, err := readMCPOperationJSON[generated.PersonAttributesResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/attributes", options, http.StatusOK)
-			response, ok := attrs.Output.(generated.PersonAttributesResponse)
+			definition, err := readMCPOperationJSON[generated.AttributeDefinition](ctx, b.client, http.MethodGet, "/api/v1/attribute-definitions/{id}", &generated.GetAttributeDefinitionRequestOptions{PathParams: &generated.GetAttributeDefinitionPath{ID: candidate.DefinitionID}}, http.StatusOK)
+			attribute, ok := definition.Output.(generated.AttributeDefinition)
 			if !ok {
-				return "", true, mergeContextRefusal(attrs, err)
+				return "", true, mergeContextRefusal(definition, err)
 			}
-			var slug string
-			for _, group := range response.Attributes {
-				if group.Definition.ID == candidate.DefinitionID {
-					slug = group.Definition.Slug
-					break
-				}
+			options := &generated.ListPersonAttributesRequestOptions{PathParams: &generated.ListPersonAttributesPath{ID: decision.PersonID}, Query: &generated.ListPersonAttributesQuery{History: new(true), Slug: &attribute.Slug}}
+			data, _, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/people/{id}/attributes", options, mcpserver.MaxDownloadBytes, nil, http.StatusOK)
+			if failure != nil {
+				return "", true, mergeContextRefusal(failure, err)
 			}
-			if slug == "" {
-				return "", true, &mcpserver.OperationRefusalError{Code: "person_merge_candidate_state_changed"}
+			var response generated.PersonAttributesResponse
+			if err := json.Unmarshal(data, &response); err != nil {
+				return "", true, err
 			}
-			options.Query = &generated.ListPersonAttributesQuery{History: new(true), Slug: &slug}
-			attrs, err = readMCPOperationJSON[generated.PersonAttributesResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/attributes", options, http.StatusOK)
-			response, ok = attrs.Output.(generated.PersonAttributesResponse)
-			if !ok {
-				return "", true, mergeContextRefusal(attrs, err)
-			}
+
 			for _, group := range response.Attributes {
 				if group.Definition.ID != candidate.DefinitionID {
 					continue
