@@ -393,3 +393,38 @@ func TestMultiCardinalityAppendsPerOrdinalAndDerivedConfidenceIsAllowed(t *testi
 	assert.Equal(int64(2), third.Value.Ordinal,
 		"appending must not reuse a superseded slot's ordinal and adopt its history")
 }
+
+func TestSetAttributeValueExpectedEmpty(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	person := mustAttributePerson(t, st)
+	input := store.PersonAttributeValueInput{PersonID: person, DefinitionSlug: store.AttributeSlugPrimaryChannel, Value: store.AttributeValue{Type: store.AttributeValueText, Text: new("email")}, Source: store.ProvenanceUser, ExpectedEmpty: true}
+	first, err := st.SetPersonAttributeValueContext(t.Context(), input)
+	require.NoError(err)
+	_, err = st.SetPersonAttributeValueContext(t.Context(), input)
+	var conflict *store.AttributeValueConflictError
+	require.ErrorAs(err, &conflict)
+	require.NotNil(conflict.CurrentValue)
+	assert.Equal(first.Value.ID, conflict.CurrentValue.ID)
+
+	// One plain and one expected_empty writer race for an empty slot.
+	input.DefinitionSlug = store.AttributeSlugLocation
+	results := make(chan error, 2)
+	for _, expected := range []bool{false, true} {
+		go func() {
+			candidate := input
+			candidate.ExpectedEmpty = expected
+			_, err := st.SetPersonAttributeValueContext(t.Context(), candidate)
+			results <- err
+		}()
+	}
+	for range 2 {
+		if err := <-results; err != nil {
+			require.ErrorIs(err, store.ErrAttributeValueConflict)
+		}
+	}
+	current, err := st.ListPersonAttributeValuesContext(t.Context(), person, store.PersonAttributeQuery{DefinitionSlug: input.DefinitionSlug})
+	require.NoError(err)
+	assert.Len(current, 1)
+}

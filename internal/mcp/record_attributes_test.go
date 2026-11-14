@@ -29,17 +29,19 @@ func (s *attributeValidationSpy) ExecuteOperation(context.Context, string, map[s
 }
 
 func TestAttributeToolContract(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	reads := []string{"list_person_attributes", "list_attribute_definitions", "get_attribute_definition"}
 	writes := []string{"set_person_attribute", "create_attribute_definition", "patch_attribute_definition", "clear_person_attribute", "delete_attribute_definition"}
 	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: append(slices.Clone(reads), writes...), OperationWriteFamilies: []OperationFamily{OperationFamilyRecords}}
 	tools := toolsByName(t, rawListTools(t, opts, true))
 	for _, name := range opts.OperationCapabilities {
-		assert.Equal(t, slices.Contains(reads, name), tools[name] != nil, name)
+		assert.Equal(slices.Contains(reads, name), tools[name] != nil, name)
 	}
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyAttributes}
 	tools = toolsByName(t, rawListTools(t, opts, true))
 	data, err := os.ReadFile("../../api/openapi.yaml")
-	require.NoError(t, err)
+	require.NoError(err)
 	var doc struct {
 		Components struct {
 			Schemas map[string]struct {
@@ -47,7 +49,7 @@ func TestAttributeToolContract(t *testing.T) {
 			} `yaml:"schemas"`
 		} `yaml:"components"`
 	}
-	require.NoError(t, yaml.Unmarshal(data, &doc))
+	require.NoError(yaml.Unmarshal(data, &doc))
 	for _, tc := range []struct {
 		tool, component, nested string
 		expected, extra         []string
@@ -57,41 +59,41 @@ func TestAttributeToolContract(t *testing.T) {
 		{"patch_attribute_definition", "PatchAttributeDefinitionRequest", "changes", []string{"description", "display_order", "is_active", "is_sensitive", "label"}, nil},
 	} {
 		tool := tools[tc.tool]
-		require.NotNil(t, tool, tc.tool)
-		require.NotNil(t, tool["outputSchema"])
+		require.NotNil(tool, tc.tool)
+		require.NotNil(tool["outputSchema"])
 		if tc.nested != "" {
 			schema, ok := tool["inputSchema"].(map[string]any)
-			require.True(t, ok)
+			require.True(ok)
 			properties, ok := schema["properties"].(map[string]any)
-			require.True(t, ok)
+			require.True(ok)
 			tool = map[string]any{"inputSchema": properties[tc.nested]}
 		}
 		properties := toolPropertyNames(t, tool)
-		assert.Equal(t, tc.expected, properties)
+		assert.Equal(tc.expected, properties)
 		native := tc.extra
 		for name := range doc.Components.Schemas[tc.component].Properties {
 			if name != "object_type" {
 				native = append(native, name)
 			}
 		}
-		assert.ElementsMatch(t, native, properties)
+		assert.ElementsMatch(native, properties)
 	}
 	patchSchema, ok := tools["patch_attribute_definition"]["inputSchema"].(map[string]any)
-	require.True(t, ok)
+	require.True(ok)
 	patchProperties, ok := patchSchema["properties"].(map[string]any)
-	require.True(t, ok)
+	require.True(ok)
 	changes, ok := patchProperties["changes"].(map[string]any)
-	require.True(t, ok)
+	require.True(ok)
 	changeProperties, ok := changes["properties"].(map[string]any)
-	require.True(t, ok)
+	require.True(ok)
 	patch, ok := changeProperties["description"].(map[string]any)
-	require.True(t, ok)
-	assert.ElementsMatch(t, []any{map[string]any{"type": "string"}, map[string]any{"type": "null"}}, patch["anyOf"])
+	require.True(ok)
+	assert.ElementsMatch([]any{map[string]any{"type": "string"}, map[string]any{"type": "null"}}, patch["anyOf"])
 	for _, name := range []string{"clear_person_attribute", "patch_attribute_definition", "delete_attribute_definition"} {
-		require.NotNil(t, tools[name], name)
+		require.NotNil(tools[name], name)
 		annotations, ok := tools[name]["annotations"].(map[string]any)
-		require.True(t, ok, name)
-		assert.Equal(t, true, annotations["destructiveHint"], name)
+		require.True(ok, name)
+		assert.Equal(true, annotations["destructiveHint"], name)
 	}
 }
 
