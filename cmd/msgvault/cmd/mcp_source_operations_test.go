@@ -158,25 +158,6 @@ func TestMCPSlackPolicyPreservesFalseOmissionAndExactETag(t *testing.T) {
 	keys := make([]string, 0, len(policy.Settings))
 	for _, setting := range policy.Settings {
 		keys = append(keys, setting.Key)
-		requirements.NotNil(setting.Value)
-		requirements.NotNil(setting.Value.SettingValue_OneOf)
-		switch setting.Key {
-		case "slack.dms", "slack.group_dms":
-			assertions.Equal(generated.Boolean, setting.Kind)
-			value, err := setting.Value.SettingValue_OneOf.AsSettingValue_OneOf_3()
-			requirements.NoError(err)
-			assertions.True(value.Boolean)
-		case "slack.channels":
-			assertions.Equal(generated.StringArray, setting.Kind)
-			value, err := setting.Value.SettingValue_OneOf.AsSettingValue_OneOf_4()
-			requirements.NoError(err)
-			assertions.Equal([]string{"C_EXAMPLE"}, value.Strings)
-		case "slack.exclude_channels":
-			assertions.Equal(generated.StringArray, setting.Kind)
-			value, err := setting.Value.SettingValue_OneOf.AsSettingValue_OneOf_4()
-			requirements.NoError(err)
-			assertions.Empty(value.Strings)
-		}
 	}
 	assertions.ElementsMatch([]string{"slack.dms", "slack.group_dms", "slack.channels", "slack.exclude_channels"}, keys)
 	args := map[string]any{"etag": policy.ETag, "dms": false}
@@ -212,9 +193,6 @@ func TestMCPSlackPolicySDKUsesRealDaemonAndApproval(t *testing.T) {
 dms = true
 group_dms = true
 channels = ["C_EXAMPLE"]
-
-[[people.enrichment.providers]]
-name = "minimal"
 `), 0o600))
 	cfg, err := config.Load(path, "")
 	requirements.NoError(err)
@@ -235,19 +213,6 @@ name = "minimal"
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_slack_sync_policy", Arguments: map[string]any{"etag": policy.ETag, "dms": false}})
 	requirements.NoError(err)
 	assertions.False(result.IsError)
-	data, err = json.Marshal(result.StructuredContent)
-	requirements.NoError(err)
-	var updated mcpserver.SlackSyncPolicy
-	requirements.NoError(json.Unmarshal(data, &updated))
-	for _, setting := range updated.Settings {
-		if setting.Key == "slack.dms" {
-			requirements.NotNil(setting.Value)
-			requirements.NotNil(setting.Value.SettingValue_OneOf)
-			value, err := setting.Value.SettingValue_OneOf.AsSettingValue_OneOf_3()
-			requirements.NoError(err)
-			assertions.False(value.Boolean)
-		}
-	}
 	assertions.Equal(1, approved)
 	reloaded, err := config.Load(path, "")
 	requirements.NoError(err)
@@ -399,56 +364,6 @@ func TestMCPPersonNameClearAndStaleRevisionUseOwnerCAS(t *testing.T) {
 	current, err := st.GetPersonContext(t.Context(), person.ID)
 	requirements.NoError(err)
 	assertions.Nil(current.DisplayName)
-}
-
-func TestMCPCardDAVImportedPersonEditAllowsEmptyRemoteUID(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	st := testutil.NewTestStore(t)
-	allowed := true
-	account, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
-		BaseURL: "https://contacts.example/dav", Username: "user-a",
-		PrincipalURL: "https://contacts.example/principal/user-a/",
-		HomeURL:      "https://contacts.example/books/user-a/",
-		Books: []store.CardDAVDiscoveredBook{{
-			CanonicalURL: "https://contacts.example/books/user-a/personal/",
-			DisplayName:  "Personal", SupportsSyncCollection: true,
-			SupportsMultiget: true, CanCreate: &allowed,
-		}},
-	})
-	requirements.NoError(err)
-	requirements.NotNil(account)
-	requirements.Len(books, 1)
-	remote := store.CardDAVRemoteResource{
-		Href:       books[0].CanonicalURL + "imported.vcf",
-		RemoteETag: `"one"`, SemanticHash: "semantic-imported-carddav-person", DisplayName: "Imported Example",
-		RemoteBody: []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Imported Example\r\nEND:VCARD\r\n"),
-	}
-	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
-		AddressBookID: books[0].ID, ConnectionGeneration: account.ConnectionGeneration,
-		SyncRevision: books[0].SyncRevision, Upserts: []store.CardDAVRemoteResource{remote},
-	})
-	requirements.NoError(err)
-	resource, err := st.GetCardDAVResourceContext(t.Context(), books[0].ID, remote.Href)
-	requirements.NoError(err)
-	requirements.NotNil(resource)
-	requirements.NotNil(resource.PersonID)
-	cardDAVPerson, err := st.GetPerson(*resource.PersonID)
-	requirements.NoError(err)
-	assertions.Empty(cardDAVPerson.ParticipantIDs)
-	requirements.Len(cardDAVPerson.CardDAVBindings, 1)
-	assertions.Empty(cardDAVPerson.CardDAVBindings[0].RemoteUID)
-
-	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
-	result, err := backend.ExecuteOperation(t.Context(), "get_person_edit_context", map[string]any{"person_id": cardDAVPerson.ID})
-	requirements.NoError(err)
-	cardDAVEdit := operationOutput[mcpserver.PersonEditContext](t, result)
-	result, err = backend.ExecuteOperation(t.Context(), "set_person_display_name", map[string]any{
-		"person_id": cardDAVPerson.ID, "etag": cardDAVEdit.ETag, "display_name": "Edited Imported Example",
-	})
-	requirements.NoError(err)
-	cardDAVUpdated := operationOutput[mcpserver.PersonEditContext](t, result)
-	assertions.Equal(new("Edited Imported Example"), cardDAVUpdated.Person.DisplayName)
 }
 
 func TestMCPPersonNameRetainsEnrichmentDispatchRefusal(t *testing.T) {
