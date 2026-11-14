@@ -718,6 +718,7 @@ func persistPersonFactLedgerGeneration(
 }
 
 func TestClaimFreshnessUsesSupportedEvidenceAfterPagination(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
 	st, personID := newPersonFactLedgerStore(t)
 	claim := personFactLedgerClaim(personID, "freshness", `"value"`, "freshness-old")
 	old := time.Now().Add(-400 * 24 * time.Hour)
@@ -729,28 +730,28 @@ func TestClaimFreshnessUsesSupportedEvidenceAfterPagination(t *testing.T) {
 	claim.Evidence = append(claim.Evidence, second)
 	prepared := preparePersonFactLedgerGeneration(t, personID, "freshness", []personfacts.ProposedClaim{claim}, nil)
 	stored := persistPersonFactLedgerGeneration(t, st, prepared, nil)
-	require.Len(t, stored.Claims, 1)
+	r.Len(stored.Claims, 1)
 	page, err := st.ListPersonFactClaimsContext(t.Context(), personID, personfacts.ClaimFilter{Limit: 1})
-	require.NoError(t, err)
-	require.Len(t, page, 1)
-	assert.Equal(t, personfacts.StatusFresh, page[0].Freshness.Status)
-	require.NotNil(t, page[0].Freshness.LatestSupportedAt)
-	assert.WithinDuration(t, recent, *page[0].Freshness.LatestSupportedAt, time.Microsecond)
+	r.NoError(err)
+	r.Len(page, 1)
+	a.Equal(personfacts.StatusFresh, page[0].Freshness.Status)
+	r.NotNil(page[0].Freshness.LatestSupportedAt)
+	a.WithinDuration(recent, *page[0].Freshness.LatestSupportedAt, time.Microsecond)
 	var newest personfacts.Evidence
 	for _, e := range stored.Evidence {
 		if e.Input.SourceRef == second.SourceRef {
 			newest = e
 		}
 	}
-	require.NotZero(t, newest.ID)
+	r.NotZero(newest.ID)
 	change := personfacts.EvidenceStatusChange{EvidenceKey: newest.Key, SourceVersion: newest.Input.SourceVersion,
 		Supported: false, Reason: personfacts.EvidenceStatusSourceDeleted}
 	persistPersonFactLedgerGeneration(t, st, preparePersonFactLedgerGeneration(t, personID, "withdraw-new", nil,
 		[]personfacts.EvidenceStatusChange{change}), nil)
 	page, err = st.ListPersonFactClaimsContext(t.Context(), personID, personfacts.ClaimFilter{Limit: 1})
-	require.NoError(t, err)
-	require.Len(t, page, 1)
-	assert.Equal(t, personfacts.StatusStale, page[0].Freshness.Status)
-	require.NotNil(t, page[0].Freshness.LatestSupportedAt)
-	assert.WithinDuration(t, old, *page[0].Freshness.LatestSupportedAt, time.Microsecond)
+	r.NoError(err)
+	r.Len(page, 1)
+	a.Equal(personfacts.StatusStale, page[0].Freshness.Status)
+	r.NotNil(page[0].Freshness.LatestSupportedAt)
+	a.WithinDuration(old, *page[0].Freshness.LatestSupportedAt, time.Microsecond)
 }

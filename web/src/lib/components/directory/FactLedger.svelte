@@ -104,7 +104,7 @@
               {:else if sensitivity === 'sensitive' && !controller.revealedClaims.has(row.rowToken)}
                 <p>Sensitive fact value hidden.</p><Button label="Reveal sensitive fact value" size="sm" onclick={() => controller.revealClaim(row.rowToken)} />
               {:else}<dl><div><dt>Submitted value</dt><dd>{row.submittedValue}</dd></div>{#if row.normalizedValue !== null}<div><dt>Normalized value</dt><dd>{row.normalizedValue}</dd></div>{/if}</dl>{/if}
-              <dl><div><dt>Relation</dt><dd>{row.relation}</dd></div><div><dt>Origin</dt><dd>{row.origin}</dd></div><div><dt>Validity</dt><dd>{row.validFrom ?? 'No start'} – {row.validUntil ?? 'No end'}</dd></div><div><dt>Confidence</dt><dd>Reported confidence {row.reportedScore}</dd></div><div><dt>Created</dt><dd>{row.createdAt}</dd></div></dl>
+              <dl><div><dt>Kind</dt><dd>{row.kind}</dd></div><div><dt>Status</dt><dd>{row.status}</dd></div><div><dt>Relation</dt><dd>{row.relation}</dd></div><div><dt>Origin</dt><dd>{row.origin}</dd></div><div><dt>Validity</dt><dd>{row.validFrom ?? 'No start'} – {row.validUntil ?? 'No end'}</dd></div><div><dt>Confidence</dt><dd>Reported confidence {row.reportedScore}</dd></div><div><dt>Created</dt><dd>{row.createdAt}</dd></div></dl>
             </Card>
           {:else}<EmptyState title="No fact claims on this page." description="Choose another target or page." />{/each}
         </div>
