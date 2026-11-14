@@ -63,16 +63,17 @@ func TestImportSignalExportRequiresAccount(t *testing.T) {
 }
 
 func TestImportSignalExportNewerFormat(t *testing.T) {
+	require := require.New(t)
 	cfg := lifecycleTestConfig(t.TempDir())
 	cfg.Data.DataDir = t.TempDir()
 	ctx := withStoreResolverConfig(t, cfg)
 	st, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(t, err)
-	require.NoError(t, st.InitSchemaContext(t.Context()))
+	require.NoError(err)
+	require.NoError(st.InitSchemaContext(t.Context()))
 	source, err := st.GetOrCreateSourceContext(t.Context(), "signal_export", "fictional")
-	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncState(t.Context(), source.ID, `{"signal_export_format":1000000}`))
-	require.NoError(t, st.Close())
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncState(t.Context(), source.ID, `{"signal_export_format":1000000}`))
+	require.NoError(st.Close())
 	root := "../../../internal/signalexport/testdata/native-v1"
 	cmd := &cobra.Command{Use: "import-signal-export"}
 	cmd.SetContext(ctx)
@@ -80,6 +81,6 @@ func TestImportSignalExportNewerFormat(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(io.Discard)
 	err = runImportSignalExport(cmd, root, "fictional")
-	require.ErrorIs(t, err, signalexport.ErrNewerFormat)
+	require.ErrorIs(err, signalexport.ErrNewerFormat)
 	assert.NotContains(t, out.String(), "Re-run")
 }

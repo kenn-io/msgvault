@@ -106,18 +106,20 @@ func TestImportDistinctMessagesAtSameMillisecond(t *testing.T) {
 		{"outgoing receive times", []string{outgoing, later(outgoing, "First message")}, []string{later(outgoing, "First message")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			st := testutil.NewTestStore(t)
 			root := fixture(t, tc.frames...)
 			opts := options(t, root)
 			summary, err := Import(t.Context(), st, opts)
-			require.NoError(t, err)
-			assert.EqualValues(t, len(tc.frames), summary.MessagesAdded)
+			require.NoError(err)
+			assert.EqualValues(len(tc.frames), summary.MessagesAdded)
 			writeFrames(t, root, tc.replay...)
 			summary, err = Import(t.Context(), st, opts)
-			require.NoError(t, err)
-			assert.Zero(t, summary.MessagesAdded)
-			assert.EqualValues(t, 1, summary.MessagesExisting)
-			assert.Equal(t, 2, messageCount(t, st))
+			require.NoError(err)
+			assert.Zero(summary.MessagesAdded)
+			assert.EqualValues(1, summary.MessagesExisting)
+			assert.Equal(2, messageCount(t, st))
 		})
 	}
 }
@@ -415,14 +417,16 @@ func TestReaderBounds(t *testing.T) {
 	}
 }
 func TestProtoScalars(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	var item chatItem
-	require.NoError(t, json.Unmarshal([]byte(`{"chatId":"007"}`), &item))
-	assert.Equal(t, "7", string(item.ChatID))
-	require.Error(t, json.Unmarshal([]byte(`{"chatId":7}`), &item))
-	require.Error(t, json.Unmarshal([]byte(`{"chatId":"invalid"}`), &item))
-	require.NoError(t, json.Unmarshal([]byte(`{"incoming":{"dateReceived":null}}`), &item))
-	require.NotNil(t, item.Incoming)
-	assert.Nil(t, item.Incoming.DateReceived)
+	require.NoError(json.Unmarshal([]byte(`{"chatId":"007"}`), &item))
+	assert.Equal("7", string(item.ChatID))
+	require.Error(json.Unmarshal([]byte(`{"chatId":7}`), &item))
+	require.Error(json.Unmarshal([]byte(`{"chatId":"invalid"}`), &item))
+	require.NoError(json.Unmarshal([]byte(`{"incoming":{"dateReceived":null}}`), &item))
+	require.NotNil(item.Incoming)
+	assert.Nil(item.Incoming.DateReceived)
 }
 
 func TestImportIdentityTimeAndDirectionSkips(t *testing.T) {
@@ -556,16 +560,18 @@ func TestNativeFixtureProvenance(t *testing.T) {
 }
 
 func TestSourceFormatRefusesNewerVersion(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := fixture(t, incoming)
 	opts := options(t, root)
 	source, err := st.GetOrCreateSourceContext(t.Context(), SourceType, opts.Account)
-	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncState(t.Context(), source.ID, fmt.Sprintf(`{"signal_export_format":%d}`, formatVersion+1)))
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncState(t.Context(), source.ID, fmt.Sprintf(`{"signal_export_format":%d}`, formatVersion+1)))
 	summary, err := Import(t.Context(), st, opts)
-	require.ErrorIs(t, err, ErrNewerFormat)
-	assert.Zero(t, summary.SourceID)
-	assert.Zero(t, messageCount(t, st))
+	require.ErrorIs(err, ErrNewerFormat)
+	assert.Zero(summary.SourceID)
+	assert.Zero(messageCount(t, st))
 }
 
 // A missing slot is filled only by a unique UUID or locator key from its first
@@ -625,6 +631,8 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 }
 
 func TestLongTextTurnedInlineRetainsSnapshot(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	data := []byte("original fictional media")
 	original := `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"original"},"longText":` + pointer(data) + `}}}`
 	inline := `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"original fictional media"}}}}`
@@ -632,68 +640,71 @@ func TestLongTextTurnedInlineRetainsSnapshot(t *testing.T) {
 	root := fixture(t, original)
 	opts := options(t, root)
 	_, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
+	require.NoError(err)
 	id, raw := onlyMessage(t, st)
 	writeFrames(t, root, inline)
 	summary, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Zero(t, summary.AttachmentsStored)
-	assert.Equal(t, 1, summary.AttachmentsMissing)
-	assert.EqualValues(t, 1, summary.MediaMissing["missing"])
-	assert.EqualValues(t, 1, summary.Omitted["incomplete_long_text"])
-	assert.EqualValues(t, 1, summary.MessagesChanged)
-	assert.Equal(t, map[string]string{"long_text": ""}, slotHashes(t, st, id))
+	require.NoError(err)
+	assert.Zero(summary.AttachmentsStored)
+	assert.Equal(1, summary.AttachmentsMissing)
+	assert.EqualValues(1, summary.MediaMissing["missing"])
+	assert.EqualValues(1, summary.Omitted["incomplete_long_text"])
+	assert.EqualValues(1, summary.MessagesChanged)
+	assert.Equal(map[string]string{"long_text": ""}, slotHashes(t, st, id))
 	again, err := st.GetMessageRawContext(t.Context(), id)
-	require.NoError(t, err)
-	assert.Equal(t, raw, again)
+	require.NoError(err)
+	assert.Equal(raw, again)
 	assertBody(t, st, id, "original")
 }
 
 func TestMediaIndexLimit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	data := []byte("fictional index media")
 	other := []byte("fictional other index media")
-	require.NotEqual(t, hashHex(data)[:2], hashHex(other)[:2])
+	require.NotEqual(hashHex(data)[:2], hashHex(other)[:2])
 	root := fixture(t)
 	path := putMedia(t, root, data)
-	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(path), "unrelated"), []byte("x"), 0600))
+	require.NoError(os.WriteFile(filepath.Join(filepath.Dir(path), "unrelated"), []byte("x"), 0600))
 	r, err := openReader(t.Context(), root)
-	require.NoError(t, err)
+	require.NoError(err)
 	r.maxMedia = 2
 	_, reason, err := r.mediaName(t.Context(), hashHex(data))
-	require.NoError(t, err)
-	assert.Empty(t, reason)
-	require.NoError(t, r.Close())
+	require.NoError(err)
+	assert.Empty(reason)
+	require.NoError(r.Close())
 
 	r, err = openReader(t.Context(), root)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, r.Close()) }()
+	require.NoError(err)
+	defer func() { require.NoError(r.Close()) }()
 	r.maxMedia = 1
 	for _, hash := range []string{hashHex(data), hashHex(other)} {
 		_, reason, err := r.mediaName(t.Context(), hash)
-		require.NoError(t, err)
-		assert.Equal(t, "index_limit", reason)
+		require.NoError(err)
+		assert.Equal("index_limit", reason)
 	}
 }
 
 func TestMatchingPointerRequiresUniqueUnclaimedIdentity(t *testing.T) {
+	assert := assert.New(t)
 	old := messageAttachment{ClientUUID: []byte{1}, Pointer: &filePointer{}}
 	old.Pointer.Locator.Key = []byte{2}
 	one := messageAttachment{ClientUUID: []byte{1}, Pointer: &filePointer{}}
 	two := messageAttachment{ClientUUID: []byte{1}, Pointer: &filePointer{}}
 	two.Pointer.Locator.Key = []byte{2}
 	m := &standardMessage{Attachments: []messageAttachment{one, two}}
-	assert.Same(t, two.Pointer, matchingPointer(old, []messageAttachment{old}, m, map[int]bool{}))
+	assert.Same(two.Pointer, matchingPointer(old, []messageAttachment{old}, m, map[int]bool{}))
 	old2 := messageAttachment{ClientUUID: []byte{3}, Pointer: &filePointer{}}
 	old2.Pointer.Locator.Key = []byte{3}
 	claimable := messageAttachment{ClientUUID: []byte{1}, Pointer: &filePointer{}}
 	claimable.Pointer.Locator.Key = []byte{3}
 	claimMessage := &standardMessage{Attachments: []messageAttachment{claimable}}
 	claimed := map[int]bool{}
-	assert.Same(t, claimable.Pointer, matchingPointer(old, []messageAttachment{old, old2}, claimMessage, claimed))
-	assert.Nil(t, matchingPointer(old2, []messageAttachment{old, old2}, claimMessage, claimed))
-	assert.Nil(t, matchingPointer(old, []messageAttachment{old, old}, m, map[int]bool{}))
+	assert.Same(claimable.Pointer, matchingPointer(old, []messageAttachment{old, old2}, claimMessage, claimed))
+	assert.Nil(matchingPointer(old2, []messageAttachment{old, old2}, claimMessage, claimed))
+	assert.Nil(matchingPointer(old, []messageAttachment{old, old}, m, map[int]bool{}))
 	old.Pointer.Locator.Key = []byte{3}
-	assert.Nil(t, matchingPointer(old, []messageAttachment{old}, m, map[int]bool{}))
+	assert.Nil(matchingPointer(old, []messageAttachment{old}, m, map[int]bool{}))
 }
 
 func TestImportAmbiguousSameTimeReplay(t *testing.T) {
@@ -712,15 +723,17 @@ func TestImportAmbiguousSameTimeReplay(t *testing.T) {
 		{"earlier message added", []string{message("B", missing)}, []string{message("A", pointer(data)), message("B", pointer(data))}, nil, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			st := testutil.NewTestStore(t)
 			root := fixture(t, tc.first...)
 			opts := options(t, root)
 			first, err := Import(t.Context(), st, opts)
-			require.NoError(t, err)
-			assert.EqualValues(t, len(tc.first), first.MessagesAdded)
-			assert.Equal(t, len(tc.first)-int(tc.existing), first.AttachmentsMissing)
+			require.NoError(err)
+			assert.EqualValues(len(tc.first), first.MessagesAdded)
+			assert.Equal(len(tc.first)-int(tc.existing), first.AttachmentsMissing)
 			var firstID, lastID int64
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT min(id), max(id) FROM messages").Scan(&firstID, &lastID))
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT min(id), max(id) FROM messages").Scan(&firstID, &lastID))
 			ids := []int64{firstID}
 			if lastID != firstID {
 				ids = append(ids, lastID)
@@ -728,39 +741,40 @@ func TestImportAmbiguousSameTimeReplay(t *testing.T) {
 			putMedia(t, root, data)
 			writeFrames(t, root, tc.replay...)
 			summary, err := Import(t.Context(), st, opts)
-			require.NoError(t, err)
-			assert.EqualValues(t, 2, summary.Skipped["ambiguous_message"])
-			assert.Zero(t, summary.MessagesAdded)
-			assert.Equal(t, tc.existing, summary.MessagesExisting)
-			assert.Zero(t, summary.MessagesChanged)
-			assert.Empty(t, summary.MediaMissing)
-			assert.Zero(t, summary.AttachmentsStored)
-			assert.Zero(t, summary.AttachmentsMissing)
-			assert.Equal(t, len(tc.first), messageCount(t, st))
+			require.NoError(err)
+			assert.EqualValues(2, summary.Skipped["ambiguous_message"])
+			assert.Zero(summary.MessagesAdded)
+			assert.Equal(tc.existing, summary.MessagesExisting)
+			assert.Zero(summary.MessagesChanged)
+			assert.Empty(summary.MediaMissing)
+			assert.Zero(summary.AttachmentsStored)
+			assert.Zero(summary.AttachmentsMissing)
+			assert.Equal(len(tc.first), messageCount(t, st))
 			for _, id := range ids {
-				assert.Equal(t, map[string]string{"attachment:0": ""}, slotHashes(t, st, id))
+				assert.Equal(map[string]string{"attachment:0": ""}, slotHashes(t, st, id))
 			}
 			files, err := os.ReadDir(opts.AttachmentsDir)
-			require.NoError(t, err)
-			assert.Empty(t, files)
+			require.NoError(err)
+			assert.Empty(files)
 			if tc.corrected == nil {
 				assertBody(t, st, firstID, "B")
 				return
 			}
 			writeFrames(t, root, tc.corrected...)
 			summary, err = Import(t.Context(), st, opts)
-			require.NoError(t, err)
-			assert.EqualValues(t, len(tc.corrected), summary.MessagesExisting)
-			assert.Zero(t, summary.Skipped["ambiguous_message"])
-			assert.Equal(t, 2, summary.AttachmentsStored)
+			require.NoError(err)
+			assert.EqualValues(len(tc.corrected), summary.MessagesExisting)
+			assert.Zero(summary.Skipped["ambiguous_message"])
+			assert.Equal(2, summary.AttachmentsStored)
 			for _, id := range ids {
-				assert.Equal(t, map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, id))
+				assert.Equal(map[string]string{"attachment:0": hashHex(data)}, slotHashes(t, st, id))
 			}
 		})
 	}
 }
 
 func TestReviewOmissionsForExpiredMetadata(t *testing.T) {
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	frame := strings.Replace(incoming, `"incoming":{}`, `"incoming":{},"sms":true,"expireStartDate":"1700000000000","expiresInMs":"60000"`, 1)
 	root := fixture(t, frame)
@@ -768,27 +782,29 @@ func TestReviewOmissionsForExpiredMetadata(t *testing.T) {
 	for range 2 {
 		summary, err := Import(t.Context(), st, opts)
 		require.NoError(t, err)
-		assert.EqualValues(t, 1, summary.Omitted["sms"])
-		assert.EqualValues(t, 1, summary.Omitted["expire_start_date"])
-		assert.EqualValues(t, 1, summary.Omitted["expires_in_ms"])
+		assert.EqualValues(1, summary.Omitted["sms"])
+		assert.EqualValues(1, summary.Omitted["expire_start_date"])
+		assert.EqualValues(1, summary.Omitted["expires_in_ms"])
 	}
 }
 
 func TestImportIgnoresInvalidDirectionWhenCountingCollisions(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := fixture(t, incoming)
 	opts := options(t, root)
 	_, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
+	require.NoError(err)
 	edited := strings.Replace(incoming, "Hello 星", "Edited", 1)
 	invalid := strings.Replace(incoming, `"incoming":{}`, `"outgoing":{}`, 1)
 	writeFrames(t, root, invalid, edited)
 	summary, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, summary.Skipped["direction_conflict"])
-	assert.Zero(t, summary.Skipped["ambiguous_message"])
-	assert.EqualValues(t, 1, summary.MessagesExisting)
-	assert.EqualValues(t, 1, summary.MessagesChanged)
+	require.NoError(err)
+	assert.EqualValues(1, summary.Skipped["direction_conflict"])
+	assert.Zero(summary.Skipped["ambiguous_message"])
+	assert.EqualValues(1, summary.MessagesExisting)
+	assert.EqualValues(1, summary.MessagesChanged)
 	id, _ := onlyMessage(t, st)
 	assertBody(t, st, id, "Hello 星")
 }
