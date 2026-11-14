@@ -3577,10 +3577,11 @@ func TestFirstAppearanceRequiresUnambiguousFromEnvelope(t *testing.T) {
 func TestFirstAppearanceRosterEvidence(t *testing.T) {
 	for _, tc := range []struct {
 		name, conversationType string
-		meeting                bool
+		meeting, explicit      bool
 	}{
-		{"direct chat roster added later", "direct_chat", false},
-		{"meeting", "direct_chat", true},
+		{"direct chat roster", "direct_chat", false, false},
+		{"meeting roster", "direct_chat", true, false},
+		{"meeting attendee", "direct_chat", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := require.New(t)
@@ -3599,23 +3600,20 @@ func TestFirstAppearanceRosterEvidence(t *testing.T) {
 				system.MessageType = "calendar_event"
 			}
 			data := &store.MessagePersistData{Message: system}
-			if tc.meeting {
+			if tc.explicit {
 				data.Recipients = []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{target}}}
 			}
 			systemID, err := f.Store.PersistMessage(data)
 			req.NoError(err)
 			projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
 			req.NoError(err)
+			req.NoError(f.Store.EnsureConversationParticipant(conversation, target, "member"))
+			rosterOnly := f.EnsureParticipant("roster@example.test", "Roster", "example.test")
+			rosterPerson, _, err := f.Store.CreatePersonFromParticipant(rosterOnly)
+			req.NoError(err)
+			req.NoError(f.Store.EnsureConversationParticipant(conversation, rosterOnly, "member"))
 			_, err = projector.RunOnce(t.Context())
 			req.NoError(err)
-			req.NoError(f.Store.EnsureConversationParticipant(conversation, target, "member"))
-			var rosterPerson *store.Person
-			if !tc.meeting {
-				rosterOnly := f.EnsureParticipant("roster@example.test", "Roster", "example.test")
-				rosterPerson, _, err = f.Store.CreatePersonFromParticipant(rosterOnly)
-				req.NoError(err)
-				req.NoError(f.Store.EnsureConversationParticipant(conversation, rosterOnly, "member"))
-			}
 			later := at.Add(72 * time.Hour)
 			message := f.NewMessage().WithSourceMessageID("chatwoot-customer").WithSentAt(later).Build()
 			message.ConversationID = conversation
@@ -3629,17 +3627,15 @@ func TestFirstAppearanceRosterEvidence(t *testing.T) {
 			req.NoError(err)
 			wantRef := fmt.Sprintf("message:%d", id)
 			wantTime := later
-			if tc.meeting {
+			if tc.explicit {
 				wantRef, wantTime = fmt.Sprintf("meeting:%d", systemID), at
 			}
 			check.Equal(wantRef, state.FirstSeenRef)
 			req.NotNil(state.FirstSeenAt)
 			check.Equal(wantTime, state.FirstSeenAt.UTC())
-			if rosterPerson != nil {
-				rosterState, err := f.Store.ContactStateContext(t.Context(), rosterPerson.ID, later)
-				req.NoError(err)
-				check.Nil(rosterState.FirstSeenAt)
-			}
+			rosterState, err := f.Store.ContactStateContext(t.Context(), rosterPerson.ID, later)
+			req.NoError(err)
+			check.Nil(rosterState.FirstSeenAt)
 		})
 	}
 }
