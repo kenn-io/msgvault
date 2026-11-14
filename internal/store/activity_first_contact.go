@@ -24,21 +24,20 @@ type FirstContactIntroducer struct {
 }
 
 // ClassifyFirstContact describes a person's earliest linked event using current identities.
-func ClassifyFirstContact(candidate ActivityCandidate, personID int64, maxDirectCounterparts int) (FirstContactKind, *FirstContactIntroducer) {
-	if IsMeetingMessageType(candidate.MessageType) || candidate.ConversationType != "email_thread" || ClassifyActivityCandidate(candidate, maxDirectCounterparts).Direction != DirectionInbound {
+func ClassifyFirstContact(candidate ActivityCandidate, personID, envelopeSenderID int64) (FirstContactKind, *FirstContactIntroducer) {
+	direction, _ := activityDirection(candidate.SourceIsFromMe, candidate.Counterparts)
+	if IsMeetingMessageType(candidate.MessageType) || candidate.ConversationType != "email_thread" || direction != DirectionInbound || envelopeSenderID == 0 {
 		return FirstContactObserved, nil
 	}
 	ownerLinked := activityOwnerLinked(candidate.Counterparts)
 	var sender *ActivityCounterpart
-	fromCount := 0
 	addressed := false
 	others := map[audienceKey]struct{}{}
 	for i := range candidate.Counterparts {
 		c := &candidate.Counterparts[i]
 		isTarget := c.PersonID != nil && *c.PersonID == personID
 		if c.RecipientType == recipientTypeFrom {
-			fromCount++
-			if candidate.SenderID == nil || *candidate.SenderID == c.ParticipantID {
+			if envelopeSenderID == c.ParticipantID {
 				sender = c
 			}
 			continue
@@ -49,9 +48,6 @@ func ClassifyFirstContact(candidate ActivityCandidate, personID int64, maxDirect
 		if (c.RecipientType == "to" || c.RecipientType == "cc" || c.RecipientType == "bcc") && !isTarget && !ownerLinked(*c) {
 			others[activityAudienceKey(*c)] = struct{}{}
 		}
-	}
-	if fromCount != 1 {
-		sender = nil
 	}
 	if sender != nil && !ownerLinked(*sender) && (sender.PersonID == nil || *sender.PersonID != personID) && addressed && len(others) <= maxIntroCounterparts {
 		return FirstContactEmailIntro, &FirstContactIntroducer{ParticipantID: sender.ParticipantID, PersonID: sender.PersonID}
@@ -73,6 +69,7 @@ func earliestFirstContactTx(ctx context.Context, tx *loggedTx, personID int64) (
 	if err != nil {
 		return event, refKind, fmt.Errorf("parse first appearance date: %w", err)
 	}
+	// Offsets within ±14 hours limit the earliest timestamp to these three local dates.
 	endDate := date.AddDate(0, 0, 2).Format(time.DateOnly)
 	err = tx.QueryRowContext(ctx, `SELECT ae.message_id, ae.occurred_at, ae.conversation_id, ae.ref_kind`+eligible+` AND aep.local_date BETWEEN ? AND ? ORDER BY ae.occurred_at, ae.message_id LIMIT 1`, personID, firstDate, endDate).Scan(&event.MessageID, &event.OccurredAt, &event.ConversationID, &refKind)
 	return event, refKind, err
@@ -95,7 +92,20 @@ func (s *Store) populateFirstContactTx(ctx context.Context, tx *loggedTx, state 
 		return fmt.Errorf("load first-contact candidate: %w", err)
 	}
 	candidate := candidates[0]
-	state.FirstContactKind, state.Introducer = ClassifyFirstContact(candidate, state.PersonID, candidate.DirectLimitTransition.Target)
+	var count, participants int
+	var senderID, recordedSenderID sql.NullInt64
+	err = tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT NULLIF(LOWER(TRIM(mr.email_address)), '')),
+ COUNT(DISTINCT CASE WHEN NULLIF(TRIM(mr.email_address), '') IS NOT NULL THEN mr.participant_id END),
+ MIN(CASE WHEN NULLIF(TRIM(mr.email_address), '') IS NOT NULL THEN mr.participant_id END), m.sender_id
+ FROM messages m LEFT JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
+ WHERE m.id = ? GROUP BY m.sender_id`, messageID).Scan(&count, &participants, &senderID, &recordedSenderID)
+	if err != nil {
+		return fmt.Errorf("load first-contact sender evidence: %w", err)
+	}
+	if count != 1 || participants != 1 || (recordedSenderID.Valid && recordedSenderID.Int64 != senderID.Int64) {
+		senderID = sql.NullInt64{}
+	}
+	state.FirstContactKind, state.Introducer = ClassifyFirstContact(candidate, state.PersonID, senderID.Int64)
 	if state.Introducer != nil {
 		err = tx.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(TRIM(person.display_name), ''), NULLIF(TRIM(`+participantSenderNameSQL+`), ''), NULLIF(TRIM(p.email_address), ''), NULLIF(TRIM(p.phone_number), ''), '') FROM participants p
   LEFT JOIN persons person ON person.id = ?

@@ -35,7 +35,6 @@ type ActivityQueueObservation struct {
 // without re-querying classification inputs outside its authoritative write.
 type ActivityCandidate struct {
 	MessageID        int64
-	SenderID         *int64
 	SourceID         int64
 	ConversationID   *int64
 	ConversationType string
@@ -139,7 +138,7 @@ func sentConfirmedSQL(dialect Dialect, schema, m, src string) string {
 
 func (s *Store) activityCandidateColumns() string {
 	return `
-	m.id, m.sender_id, m.source_id, m.conversation_id,
+	m.id, m.source_id, m.conversation_id,
 	COALESCE(c.conversation_type, ''), COALESCE(m.message_type, ''),
 	m.sent_at, m.received_at, m.internal_date, m.last_modified,
 	m.deleted_at, m.deleted_from_source_at, m.metadata,
@@ -425,7 +424,6 @@ func scanActivityCandidateRows(rows rowsScanner) ([]ActivityCandidate, error) {
 		var queueExists, timezoneActive, directLimitActive int
 		if err := rows.Scan(
 			&row.candidate.MessageID,
-			&row.candidate.SenderID,
 			&row.candidate.SourceID,
 			&row.candidate.ConversationID,
 			&row.candidate.ConversationType,

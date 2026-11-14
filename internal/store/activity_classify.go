@@ -38,25 +38,7 @@ func ClassifyActivityCandidate(
 		result.RefKind = RefKindMeeting
 	}
 
-	owningSenderIndex := -1
-	for index, counterpart := range counterparts {
-		if counterpart.RecipientType == recipientTypeFrom && counterpart.IsOwner {
-			owningSenderIndex = index
-			break
-		}
-	}
-	switch {
-	case candidate.SourceIsFromMe || owningSenderIndex >= 0:
-		result.Direction = DirectionOutbound
-		if owningSenderIndex >= 0 {
-			result.OwnerAddress = counterparts[owningSenderIndex].OwnerAddress
-		}
-	case activityOwnerAmongNonSenders(counterparts):
-		result.Direction = DirectionInbound
-		result.OwnerAddress = firstActivityNonSenderOwnerAddress(counterparts)
-	default:
-		result.Direction = DirectionObserved
-	}
+	result.Direction, result.OwnerAddress = activityDirection(candidate.SourceIsFromMe, counterparts)
 	if result.Direction != DirectionObserved && candidate.SourceID > 0 {
 		sourceID := candidate.SourceID
 		result.OwnerSourceID = &sourceID
@@ -86,6 +68,30 @@ func ClassifyActivityCandidate(
 	}
 	result.Persons = strongestClassifiedActivityLinks(result.Persons)
 	return result
+}
+
+// activityDirection applies owner-relative direction to counterpart evidence.
+func activityDirection(sourceIsFromMe bool, counterparts []ActivityCounterpart) (direction ActivityDirection, ownerAddress string) {
+	owningSenderIndex := -1
+	for index, counterpart := range counterparts {
+		if counterpart.RecipientType == recipientTypeFrom && counterpart.IsOwner {
+			owningSenderIndex = index
+			break
+		}
+	}
+	switch {
+	case sourceIsFromMe || owningSenderIndex >= 0:
+		direction = DirectionOutbound
+		if owningSenderIndex >= 0 {
+			ownerAddress = counterparts[owningSenderIndex].OwnerAddress
+		}
+	case activityOwnerAmongNonSenders(counterparts):
+		direction = DirectionInbound
+		ownerAddress = firstActivityNonSenderOwnerAddress(counterparts)
+	default:
+		direction = DirectionObserved
+	}
+	return direction, ownerAddress
 }
 
 type audienceKey struct {

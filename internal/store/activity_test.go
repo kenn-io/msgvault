@@ -3528,14 +3528,8 @@ func TestFirstSeenIntroductionContactState(t *testing.T) {
 	at := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
 	message := f.NewMessage().WithSourceMessageID("intro-store").WithSentAt(at).Build()
 	message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
-	id, err := f.Store.PersistMessage(&store.MessagePersistData{Message: message})
+	id, err := f.Store.PersistMessage(&store.MessagePersistData{Message: message, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{sender}, DisplayNames: []string{"Sender"}, EmailAddresses: []string{"sender@example.test"}}}})
 	require.NoError(err)
-	require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{"Sender"}))
-	candidates, err := f.Store.LoadActivityCandidatesByIDContext(t.Context(), []int64{id})
-	require.NoError(err)
-	require.Len(candidates, 1)
-	require.NotNil(candidates[0].SenderID)
-	assert.Equal(sender, *candidates[0].SenderID)
 	require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{owner, target}, []string{"Owner", "Target"}))
 	projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
 	require.NoError(err)
@@ -3602,4 +3596,63 @@ func TestFirstAppearanceSkipsUntimedGroupMembers(t *testing.T) {
 	rosterState, err := f.Store.ContactStateContext(t.Context(), rosterPerson.ID, february)
 	require.NoError(err)
 	assert.Nil(rosterState.FirstSeenAt)
+}
+
+func TestFirstAppearanceRequiresUnambiguousFromEnvelope(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		addresses             []string
+		otherRecordedSender   bool
+		missingRecordedSender bool
+		want                  store.FirstContactKind
+	}{
+		{"synthetic sender", nil, false, false, store.FirstContactObserved},
+		{"two addresses for sender", []string{"sender@example.test", "alias@example.test"}, false, false, store.FirstContactObserved},
+		{"conflicting recorded sender", []string{"sender@example.test"}, true, false, store.FirstContactObserved},
+		{"blank From address", []string{""}, false, false, store.FirstContactObserved},
+		{"no recorded sender", []string{"sender@example.test"}, false, true, store.FirstContactEmailIntro},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := require.New(t)
+			check := assert.New(t)
+			f := storetest.New(t)
+			req.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+			owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+			sender := f.EnsureParticipant("sender@example.test", "Sender", "example.test")
+			target := f.EnsureParticipant("target@example.test", "Target", "example.test")
+			person, _, err := f.Store.CreatePersonFromParticipant(target)
+			req.NoError(err)
+			at := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+			message := f.NewMessage().WithSourceMessageID("intro-evidence").WithSentAt(at).Build()
+			recordedSender := sender
+			if tc.otherRecordedSender {
+				recordedSender = owner
+			}
+			message.SenderID = sql.NullInt64{Int64: recordedSender, Valid: !tc.missingRecordedSender}
+			recipients := []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{owner, target}, EmailAddresses: []string{"owner@example.test", "target@example.test"}}}
+			if len(tc.addresses) > 0 {
+				ids := make([]int64, len(tc.addresses))
+				for i := range ids {
+					ids[i] = sender
+				}
+				recipients = append(recipients, store.RecipientSet{Type: "from", ParticipantIDs: ids, EmailAddresses: tc.addresses})
+			}
+			id, err := f.Store.PersistMessage(&store.MessagePersistData{Message: message, Recipients: recipients})
+			req.NoError(err)
+			projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
+			req.NoError(err)
+			_, err = projector.RunOnce(t.Context())
+			req.NoError(err)
+			state, err := f.Store.ContactStateContext(t.Context(), person.ID, at)
+			req.NoError(err)
+			check.Equal(fmt.Sprintf("message:%d", id), state.FirstSeenRef)
+			check.Equal(tc.want, state.FirstContactKind)
+			if tc.want == store.FirstContactEmailIntro {
+				req.NotNil(state.Introducer)
+				check.Equal(sender, state.Introducer.ParticipantID)
+			} else {
+				check.Nil(state.Introducer)
+			}
+		})
+	}
 }

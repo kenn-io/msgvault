@@ -89,7 +89,8 @@ var personGetCmd = &cobra.Command{
 	Long: `Show one durable person: id, display_name (when known), vcard_uid,
 participant_ids, revision, created_at, and updated_at. Pass a <person-id>
 from 'msgvault person list --json', or --vcard-uid with the person's vcard_uid
-or a bound CardDAV contact UID. Addresses are in 'person identities'.`,
+or a bound CardDAV contact UID. Addresses are in 'person identities'.
+JSON includes contact_state when history is available.`,
 	Example: `  msgvault person get 1 --json
   msgvault person get --vcard-uid 4f6c1a2e-0000-4000-8000-000000000001 --json`,
 	Args: personGetArgs,
