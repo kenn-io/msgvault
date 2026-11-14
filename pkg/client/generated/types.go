@@ -1628,7 +1628,7 @@ type CardDAVBinding struct {
 	Connection    string `json:"connection" validate:"required"`
 	Href          string `json:"href" validate:"required"`
 	MappingStatus string `json:"mapping_status" validate:"required"`
-	RemoteUID     string `json:"remote_uid" validate:"required"`
+	RemoteUID     string `json:"remote_uid"`
 }
 
 func (c CardDAVBinding) Validate() error {

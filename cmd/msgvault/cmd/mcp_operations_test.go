@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,35 +25,63 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func TestMCPOperationFailureCompletion(t *testing.T) {
+func TestMCPOperationResponseFailures(t *testing.T) {
 	t.Parallel()
+	settings := func(ctx context.Context, client *daemonclient.Client, method, path string) (*mcpserver.OperationResult, error) {
+		return readMCPOperationJSON[slackSettingsResponse](ctx, client, method, path, nil, http.StatusOK)
+	}
+	person := func(ctx context.Context, client *daemonclient.Client, method, path string) (*mcpserver.OperationResult, error) {
+		return readMCPOperationJSON[generated.Person](ctx, client, method, path, nil, http.StatusOK)
+	}
 	for _, tt := range []struct {
-		name, method, body, want string
-		status                   int
+		name, method, body, want, path string
+		status                         int
+		interrupted, wantErr           bool
+		read                           func(context.Context, *daemonclient.Client, string, string) (*mcpserver.OperationResult, error)
 	}{
 		{"post-commit credential conflict", http.MethodPatch, `{"error":"credential_conflict"}`,
-			`{"error":"operation_refused","operation_may_have_completed":true}`, http.StatusPreconditionFailed},
+			`{"error":"operation_refused","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusPreconditionFailed, false, false, settings},
 		{"unclassified server failure", http.MethodPost, `{"error":"settings_write_failed"}`,
-			`{"error":"operation_refused","operation_may_have_completed":true}`, http.StatusInternalServerError},
+			`{"error":"operation_refused","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusInternalServerError, false, false, settings},
 		{"known pre-commit conflict", http.MethodPatch, `{"error":"settings_conflict"}`,
-			`{"error":"settings_conflict","operation_may_have_completed":false}`, http.StatusPreconditionFailed},
+			`{"error":"settings_conflict","operation_may_have_completed":false}`, "/api/v1/settings", http.StatusPreconditionFailed, false, false, settings},
 		{"read failure", http.MethodGet, `{"error":"credential_conflict"}`,
-			`{"error":"operation_refused","operation_may_have_completed":false}`, http.StatusPreconditionFailed},
+			`{"error":"operation_refused","operation_may_have_completed":false}`, "/api/v1/settings", http.StatusPreconditionFailed, false, false, settings},
+		{"oversized successful write receipt", http.MethodPatch, `{"data":"` + strings.Repeat("x", 1<<20) + `"}`,
+			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusOK, false, false, settings},
+		{"interrupted write receipt", http.MethodPatch, `{"partial":`,
+			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusOK, true, true, settings},
+		{"interrupted error response", http.MethodPatch, `{"error":`,
+			`{"error":"operation_response_failed","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusInternalServerError, true, true, settings},
+		{"person receipt without participant list", http.MethodPatch, `{"id":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","vcard_uid":"example"}`,
+			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/people/1", http.StatusOK, false, false, person},
+		{"malformed write receipt", http.MethodPatch, `not json`,
+			`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, "/api/v1/settings", http.StatusOK, false, true, settings},
+		{"oversized read", http.MethodGet, strings.Repeat("x", (1<<20)+1),
+			`{"error":"operation_response_limit_exceeded","operation_may_have_completed":false}`, "/api/v1/settings", http.StatusOK, false, false, settings},
 		{"read validation failure", http.MethodGet, `{"error":"validation_failed"}`,
-			`{"error":"validation_failed","operation_may_have_completed":false}`, http.StatusUnprocessableEntity},
+			`{"error":"validation_failed","operation_may_have_completed":false}`, "/api/v1/settings", http.StatusUnprocessableEntity, false, false, settings},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			requirements, assertions := require.New(t), assert.New(t)
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				assertions.Equal(tt.method, r.Method)
-				assertions.Equal("/api/v1/settings", r.URL.Path)
+				assertions.Equal(tt.path, r.URL.Path)
 				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("ETag", `"settings"`)
+				if tt.interrupted {
+					w.Header().Set("Content-Length", "100")
+				}
 				w.WriteHeader(tt.status)
 				_, _ = w.Write([]byte(tt.body))
 			})
-			result, err := readMCPOperationJSON[generated.SettingsResponse](t.Context(), client, tt.method, "/api/v1/settings", nil, http.StatusOK)
-			requirements.NoError(err)
+			result, err := tt.read(t.Context(), client, tt.method, tt.path)
+			if tt.wantErr {
+				requirements.Error(err)
+			} else {
+				requirements.NoError(err)
+			}
 			requirements.NotNil(result)
 			assertions.True(result.IsError)
 			encoded, err := json.Marshal(result.Output)
