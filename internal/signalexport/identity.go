@@ -31,9 +31,9 @@ func recipientPeer(r recipient) peer {
 		if name == "" {
 			name = strings.TrimSpace(c.SystemGiven + " " + c.SystemFamily)
 		}
-		key := "e164:+" + string(c.E164)
-		if len(c.ACI) == 16 {
-			key = "aci:" + hex.EncodeToString(c.ACI)
+		key := "aci:" + hex.EncodeToString(c.ACI)
+		if c.E164 != "" && c.E164 != "0" {
+			key = "e164:+" + string(c.E164)
 		}
 		return peer{key: key, name: name, kind: "direct_chat"}
 	}

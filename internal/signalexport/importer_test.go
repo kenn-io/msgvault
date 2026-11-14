@@ -621,13 +621,14 @@ func TestMediaPrefixCacheBoundedLookup(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, r2.Close()) }()
 	r2.maxMedia = 1
-	_, _, err = r2.mediaName(t.Context(), hex.EncodeToString(hash[:]))
-	require.ErrorContains(t, err, "signal export: media index limit (1 files)")
+	_, reason, err = r2.mediaName(t.Context(), hex.EncodeToString(hash[:]))
+	require.NoError(t, err)
+	assert.Equal(t, "index_limit", reason)
 }
 
 func TestRepairNewHashByStableIdentity(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	first := `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"original"},"attachments":[{"pointer":{"clientUuid":"AQ==","locatorInfo":{"key":"Ag=="}}}]}}}`
+	first := `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"original"},"attachments":[{"clientUuid":"AQ==","pointer":{"locatorInfo":{"key":"Ag=="}}}]}}}`
 	root := fixture(t, first)
 	opts := options(t, root)
 	summary, err := Import(t.Context(), st, opts)
@@ -639,8 +640,8 @@ func TestRepairNewHashByStableIdentity(t *testing.T) {
 	require.NoError(t, err)
 	data := []byte("fictional attachment")
 	putMedia(t, root, data)
-	p := strings.Replace(pointer(data), `"contentType"`, `"clientUuid":"AQ==","contentType"`, 1)
-	second := `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"changed"},"attachments":[{"pointer":{"clientUuid":"Aw=="}},{"pointer":` + p + `}]}}}`
+	p := pointer(data)
+	second := `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"changed"},"attachments":[{"clientUuid":"Aw==","pointer":{}},{"clientUuid":"AQ==","pointer":` + p + `}]}}}`
 	writeFrames(t, root, strings.Replace(second, `"clientUuid":"AQ=="`, `"clientUuid":"BA=="`, 1))
 	summary, err = Import(t.Context(), st, opts)
 	require.NoError(t, err)
@@ -674,6 +675,12 @@ func TestPhoneOnlyAndNewerMetadata(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, summary.MessagesAdded)
 	assert.Empty(t, summary.Skipped)
+	lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`
+	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
+	summary, err = Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, summary.MessagesExisting)
+	assert.Equal(t, 1, messageCount(t, st))
 	var id int64
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
 	require.NoError(t, st.SetMessageMetadata(id, sql.NullString{String: `{"adapter_version":2}`, Valid: true}))
@@ -768,23 +775,90 @@ func TestPhoneOnlyGroupAuthorAndUnsupportedRecipient(t *testing.T) {
 	assert.NotContains(t, summary.Omitted, "unsupported_recipient")
 }
 
+func TestRepairLongTextWithoutOriginalHash(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	first := `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"inline"},"longText":{"locatorInfo":{"key":"AQ=="}}}}}`
+	root := fixture(t, first)
+	opts := options(t, root)
+	_, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
+	raw, err := st.GetMessageRawContext(t.Context(), id)
+	require.NoError(t, err)
+	data := []byte("long fictional text")
+	putMedia(t, root, data)
+	p := strings.Replace(pointer(data), `"localKey":"AQ=="`, `"key":"AQ=="`, 1)
+	writeFrames(t, root, `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"inline"},"longText":`+p+`}}}`)
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.Equal(t, 1, summary.AttachmentsStored)
+	refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
+	require.NoError(t, err)
+	require.Len(t, refs, 1)
+	hash := sha256.Sum256(data)
+	assert.Equal(t, "long_text", refs[0].SourcePartKey)
+	assert.Equal(t, hex.EncodeToString(hash[:]), refs[0].ContentHash)
+	again, err := st.GetMessageRawContext(t.Context(), id)
+	require.NoError(t, err)
+	assert.Equal(t, raw, again)
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Equal(t, "inline", body)
+}
+
+func TestMediaIndexCountsUnrelatedEntries(t *testing.T) {
+	root := fixture(t)
+	data := []byte("fictional index")
+	path := putMedia(t, root, data)
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(path), "unrelated"), []byte("x"), 0600))
+	r, err := openReader(t.Context(), root)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, r.Close()) }()
+	r.maxMedia = 1
+	hash := sha256.Sum256(data)
+	_, reason, err := r.mediaName(t.Context(), hex.EncodeToString(hash[:]))
+	require.NoError(t, err)
+	assert.Equal(t, "index_limit", reason)
+	_, reason, err = r.mediaName(t.Context(), hex.EncodeToString(hash[:]))
+	require.NoError(t, err)
+	assert.Equal(t, "index_limit", reason)
+}
+
+func TestMediaIndexLimitContinuesFrames(t *testing.T) {
+	data := []byte("fictional index media")
+	frame := mediaMessage(data, false)
+	root := fixture(t, frame, strings.Replace(frame, "1700000000000", "1700000000001", 1))
+	path := putMedia(t, root, data)
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(path), "unrelated"), []byte("x"), 0600))
+	r, err := openReader(t.Context(), root)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, r.Close()) }()
+	r.maxMedia = 1
+	st := testutil.NewTestStore(t)
+	opts := options(t, root)
+	summary := &ImportSummary{MediaMissing: map[string]int64{}, Omitted: map[string]int64{}}
+	visited := 0
+	err = r.frames(t.Context(), func(m *chatItem, _ []byte, _ int) error {
+		visited++
+		_, _, _, err := mediaWrites(t.Context(), st, r, 0, m.Standard, opts, summary)
+		return err
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, visited)
+	assert.EqualValues(t, 4, summary.MediaMissing["index_limit"])
+}
+
 func TestMatchingPointerRequiresUniqueUnclaimedIdentity(t *testing.T) {
-	old := &filePointer{ClientUUID: []byte{1}}
-	old.Locator.Key = []byte{2}
-	one := &filePointer{ClientUUID: []byte{1}}
-	two := &filePointer{ClientUUID: []byte{1}}
-	two.Locator.Key = []byte{2}
-	m := &standardMessage{}
-	m.Attachments = append(m.Attachments, struct {
-		Pointer *filePointer `json:"pointer"`
-		Flag    any          `json:"flag"`
-	}{Pointer: one}, struct {
-		Pointer *filePointer `json:"pointer"`
-		Flag    any          `json:"flag"`
-	}{Pointer: two})
+	old := messageAttachment{ClientUUID: []byte{1}, Pointer: &filePointer{}}
+	old.Pointer.Locator.Key = []byte{2}
+	one := messageAttachment{ClientUUID: []byte{1}, Pointer: &filePointer{}}
+	two := messageAttachment{ClientUUID: []byte{1}, Pointer: &filePointer{}}
+	two.Pointer.Locator.Key = []byte{2}
+	m := &standardMessage{Attachments: []messageAttachment{one, two}}
 	claimed := map[int]bool{}
-	assert.Same(t, two, matchingPointer(old, m, claimed))
+	assert.Same(t, two.Pointer, matchingPointer(old, m, claimed))
 	assert.Nil(t, matchingPointer(old, m, claimed))
-	old.Locator.Key = []byte{3}
+	old.Pointer.Locator.Key = []byte{3}
 	assert.Nil(t, matchingPointer(old, m, map[int]bool{}))
 }

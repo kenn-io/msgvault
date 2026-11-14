@@ -121,6 +121,8 @@ func signalExportReasonLabel(reason string) string {
 		return "file not found"
 	case "ambiguous":
 		return "multiple matching files"
+	case "index_limit":
+		return "media directory entry limit reached"
 	case "invalid_hash":
 		return "missing or invalid file hash"
 	case "hash_mismatch":

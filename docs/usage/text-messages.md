@@ -585,7 +585,7 @@ The label scopes identities; it does not assert an owner phone or address.
 Only the native Self record confirms an owner identifier.
 
 The adapter imports incoming and outgoing standard text and local attachments
-in direct chats, groups and notes to self. Contacts use their ACI or phone number; groups need a master key, which is hashed for identity. PNI-only and name-only recipients are skipped. A contact later seen with an ACI is archived as a separate conversation. Group membership records reflect observed senders and
+in direct chats, groups and notes to self. Contacts use their phone number when available, or their ACI otherwise; groups need a master key, which is hashed for identity. PNI-only and name-only recipients are skipped. Group membership records reflect observed senders and
 the owner, rather than projecting the current group roster into history.
 
 Re-running replays the file: it adds missing history and repairs media slots
@@ -615,7 +615,7 @@ otherwise the inline text is kept with an incomplete-text count.
 
 Limits are 16 MiB per JSONL record, 64 KiB for metadata, 100,000 combined
 recipient/chat lookup entries, 64 MiB of retained lookup strings, 256 MiB per
-media file, 16 MiB per long-text file, and 262,144 indexed media files. A newer saved message format requires a msgvault upgrade before replay. Malformed input, unsupported versions,
+media file, and 16 MiB per long-text file. The importer examines up to 262,144 media directory entries per run. Media beyond that limit is counted as missing while messages continue to import. A newer saved message format requires a msgvault upgrade before replay. Malformed input, unsupported versions,
 conflicting definitions or exceeded limits stop the import with line/context;
 previously committed messages remain. Missing, unsafe, oversized, ambiguous or
 hash-mismatched media is counted and can be retried. Archive storage failures

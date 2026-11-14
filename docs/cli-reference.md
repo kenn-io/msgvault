@@ -2542,7 +2542,7 @@ msgvault import-signal-export <export-dir> --account <stable-label>
 
 `--account` is required. Reuse it for later exports of the same account.
 Re-imports add history and repair missing media while preserving first archived
-snapshots. Phone-only contacts use their number; later ACI identities form separate conversations. Missing media without a saved hash requires a matching client UUID or locator key. The index holds up to 262,144 files, and newer saved formats require an upgrade. Coverage and omission counts are printed even after partial failure;
+snapshots. Contacts use their phone number when available. Missing media without a saved hash requires a matching client UUID or locator key. The importer examines up to 262,144 media directory entries and counts media beyond that limit as missing. Newer saved formats require an upgrade. Coverage and omission counts are printed even after partial failure;
 rerun after an interruption. See [Signal readable exports](usage/text-messages.md#import-signal-export)
 for layout, limits, identity, edit behavior and coverage boundaries.
 

@@ -72,17 +72,18 @@ type standardMessage struct {
 		Body   string `json:"body"`
 		Ranges []any  `json:"bodyRanges"`
 	} `json:"text"`
-	Attachments []struct {
-		Pointer *filePointer `json:"pointer"`
-		Flag    any          `json:"flag"`
-	} `json:"attachments"`
-	LongText    *filePointer `json:"longText"`
-	Quote       any          `json:"quote"`
-	Reactions   []any        `json:"reactions"`
-	LinkPreview []any        `json:"linkPreview"`
+	Attachments []messageAttachment `json:"attachments"`
+	LongText    *filePointer        `json:"longText"`
+	Quote       any                 `json:"quote"`
+	Reactions   []any               `json:"reactions"`
+	LinkPreview []any               `json:"linkPreview"`
+}
+type messageAttachment struct {
+	ClientUUID []byte       `json:"clientUuid"`
+	Pointer    *filePointer `json:"pointer"`
+	Flag       any          `json:"flag"`
 }
 type filePointer struct {
-	ClientUUID  []byte `json:"clientUuid"`
 	ContentType string `json:"contentType"`
 	FileName    string `json:"fileName"`
 	Locator     struct {

@@ -25,6 +25,7 @@ type peer struct {
 type reader struct {
 	media                  map[string]map[string]string
 	mediaNames, maxMedia   int
+	mediaExhausted         bool
 	omitted                map[string]int64
 	root                   *os.Root
 	file                   *os.File
@@ -275,8 +276,14 @@ func (r *reader) mediaName(ctx context.Context, hash string) (string, string, er
 		return hash + suffix, "", nil
 	}
 	if m, ok := r.media[prefix]; ok {
+		if m == nil {
+			return "", "index_limit", nil
+		}
 		suffix, found := m[hash]
 		return result(suffix, found)
+	}
+	if r.mediaExhausted {
+		return "", "index_limit", nil
 	}
 	d, err := r.root.Open("files/" + prefix)
 	if errors.Is(err, os.ErrNotExist) {
@@ -289,8 +296,14 @@ func (r *reader) mediaName(ctx context.Context, hash string) (string, string, er
 	defer func() { _ = d.Close() }()
 	m := map[string]string{}
 	for {
-		entries, err := d.ReadDir(128)
+		entries, err := d.ReadDir(min(128, r.maxMedia-r.mediaNames+1))
 		for _, entry := range entries {
+			if r.mediaNames >= r.maxMedia {
+				r.mediaExhausted = true
+				r.media[prefix] = nil
+				return "", "index_limit", nil
+			}
+			r.mediaNames++
 			name := entry.Name()
 			if len(name) < 64 || (len(name) > 64 && name[64] != '.') {
 				continue
@@ -299,10 +312,6 @@ func (r *reader) mediaName(ctx context.Context, hash string) (string, string, er
 			if stem[:2] != prefix || strings.Trim(stem, "0123456789abcdef") != "" {
 				continue
 			}
-			if r.mediaNames >= r.maxMedia {
-				return "", "", fmt.Errorf("signal export: media index limit (%d files)", r.maxMedia)
-			}
-			r.mediaNames++
 			if _, dup := m[stem]; dup {
 				m[stem] = ambiguousMedia
 			} else {

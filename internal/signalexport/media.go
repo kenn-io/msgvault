@@ -107,7 +107,7 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 				key := fmt.Sprintf("attachment:%d", i)
 				p := a.Pointer
 				if p != nil {
-					match := matchingPointer(p, m, claimed)
+					match := matchingPointer(a, m, claimed)
 					if len(p.Locator.Hash) == 0 {
 						p = match
 					}
@@ -116,7 +116,11 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 				slots = append(slots, slot{key: key, p: p})
 			}
 			if old.Standard.LongText != nil {
-				archived["long_text"] = old.Standard.LongText
+				p := old.Standard.LongText
+				if len(p.Locator.Hash) == 0 && m.LongText != nil && len(p.Locator.Key) > 0 && bytes.Equal(p.Locator.Key, m.LongText.Locator.Key) {
+					p = m.LongText
+				}
+				archived["long_text"] = p
 				slots = append(slots, slot{key: "long_text", p: m.LongText, long: true})
 			}
 		}
@@ -209,10 +213,15 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 }
 
 // matchingPointer accepts only a unique, unclaimed identity in the new export.
-func matchingPointer(old *filePointer, m *standardMessage, claimed map[int]bool) *filePointer {
-	for _, identity := range []func(*filePointer) []byte{
-		func(p *filePointer) []byte { return p.ClientUUID },
-		func(p *filePointer) []byte { return p.Locator.Key },
+func matchingPointer(old messageAttachment, m *standardMessage, claimed map[int]bool) *filePointer {
+	for _, identity := range []func(messageAttachment) []byte{
+		func(a messageAttachment) []byte { return a.ClientUUID },
+		func(a messageAttachment) []byte {
+			if a.Pointer == nil {
+				return nil
+			}
+			return a.Pointer.Locator.Key
+		},
 	} {
 		value := identity(old)
 		if len(value) == 0 {
@@ -220,7 +229,7 @@ func matchingPointer(old *filePointer, m *standardMessage, claimed map[int]bool)
 		}
 		match, count := -1, 0
 		for i, attachment := range m.Attachments {
-			if attachment.Pointer != nil && bytes.Equal(value, identity(attachment.Pointer)) {
+			if attachment.Pointer != nil && bytes.Equal(value, identity(attachment)) {
 				match, count = i, count+1
 			}
 		}
