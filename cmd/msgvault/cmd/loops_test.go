@@ -140,71 +140,21 @@ func TestLoopsListPagesPromises(t *testing.T) {
 	assert.Contains(t, output, "--commitment-offset 400")
 }
 
-func TestLoopsOldDaemonWarnsOnStderr(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if req.URL.Path == "/api/v1/health" {
-			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"5.3.0"}`))
-			assert.NoError(t, err)
-			return
-		}
-		_, err := w.Write([]byte(`{"items":[],"truncated":false}`))
-		assert.NoError(t, err)
-	}))
-	t.Cleanup(server.Close)
-	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	command := newLoopsCommand()
-	var stdout, stderr bytes.Buffer
-	command.SetOut(&stdout)
-	command.SetErr(&stderr)
-	command.SetArgs([]string{"list", "--json"})
-	command.SetContext(ctx)
-	require.NoError(t, command.Execute())
-	var result map[string]any
-	require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
-	assert.Contains(t, stderr.String(), "does not report promises; upgrade and restart it")
-}
-
-func TestLoopsRequireDaemonSchema(t *testing.T) {
+func TestLoopsDaemonVersions(t *testing.T) {
 	for _, tc := range []struct {
-		name, version, minimum string
-		args                   []string
+		name, version, minimum, path, method, response, output, state string
+		args                                                          []string
+		closed, warning                                               bool
 	}{
-		{"old_reply_loop_daemon", "3.23.0", "3.44.0", []string{"list", "--json"}},
-		{"old_closed_commitment_daemon", "5.4.0", "5.5.0", []string{"list", "--json", "--include-closed"}},
-		{"old_commitment_pagination_daemon", "5.4.0", "5.5.0", []string{"list", "--json", "--commitment-offset", "1"}},
-		{"older_commitment_daemon", "5.4.0", "5.5.0", []string{"done", "c12"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			requests := 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				if req.URL.Path == "/api/v1/health" {
-					assert.NoError(t, json.NewEncoder(w).Encode(map[string]string{"status": "ok", "api_schema_version": tc.version}))
-					return
-				}
-				requests++
-			}))
-			t.Cleanup(server.Close)
-			ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-			_, err := runLoops(ctx, t, tc.args...)
-			require.ErrorContains(t, err, "require daemon API schema "+tc.minimum)
-			require.ErrorContains(t, err, fmt.Sprintf("daemon reports %q", tc.version))
-			assert.Zero(t, requests)
-		})
-	}
-}
-
-func TestLoopsRouteCompatibleDaemonRequests(t *testing.T) {
-	for _, tc := range []struct {
-		name, version, path, method, response, output string
-		args                                          []string
-		closed                                        bool
-		state                                         string
-	}{
-		{"compatible_reply_loop_daemon", "3.44.0", "/api/v1/loops", http.MethodGet, `{"items":[],"commitments":[],"truncated":false}`, "", []string{"list", "--json"}, false, ""},
-		{"compatible_closed_commitment_daemon", "5.5.0", "/api/v1/loops", http.MethodGet, `{"items":[],"commitments":[],"truncated":false}`, "", []string{"list", "--json", "--include-closed"}, true, ""},
-		{"commitment", "5.5.0", "/api/v1/loops/commitments/c12/decision", http.MethodPost, `{"id":"c12","state":"done"}`, "c12 is done.\n", []string{"done", "c12"}, false, "done"},
-		{"existing_reply_loop", "3.44.0", "/api/v1/loops/42/done", http.MethodPost, `{"anchor_message_id":42,"state":"done"}`, "Marked 42 done.\n", []string{"done", "42"}, false, ""},
+		{name: "old_reply_loop_daemon", version: "3.23.0", minimum: "3.44.0", args: []string{"list", "--json"}},
+		{name: "old_closed_commitment_daemon", version: "5.4.0", minimum: "5.5.0", args: []string{"list", "--json", "--include-closed"}},
+		{name: "old_commitment_pagination_daemon", version: "5.4.0", minimum: "5.5.0", args: []string{"list", "--json", "--commitment-offset", "1"}},
+		{name: "older_commitment_daemon", version: "5.4.0", minimum: "5.5.0", args: []string{"done", "c12"}},
+		{name: "compatible_reply_loop_daemon", version: "3.44.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"commitments":[],"truncated":false}`, args: []string{"list", "--json"}},
+		{name: "compatible_closed_commitment_daemon", version: "5.5.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"commitments":[],"truncated":false}`, args: []string{"list", "--json", "--include-closed"}, closed: true},
+		{name: "commitment", version: "5.5.0", path: "/api/v1/loops/commitments/c12/decision", method: http.MethodPost, response: `{"id":"c12","state":"done"}`, output: "c12 is done.\n", args: []string{"done", "c12"}, state: "done"},
+		{name: "existing_reply_loop", version: "3.44.0", path: "/api/v1/loops/42/done", method: http.MethodPost, response: `{"anchor_message_id":42,"state":"done"}`, output: "Marked 42 done.\n", args: []string{"done", "42"}},
+		{name: "old_daemon_warning", version: "5.3.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"truncated":false}`, args: []string{"list", "--json"}, warning: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requests := 0
@@ -230,11 +180,28 @@ func TestLoopsRouteCompatibleDaemonRequests(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-			output, err := runLoops(ctx, t, tc.args...)
+			command := newLoopsCommand()
+			var stdout, stderr bytes.Buffer
+			command.SetOut(&stdout)
+			command.SetErr(&stderr)
+			command.SetArgs(tc.args)
+			command.SetContext(ctx)
+			err := command.Execute()
+			if tc.minimum != "" {
+				require.ErrorContains(t, err, "require daemon API schema "+tc.minimum)
+				require.ErrorContains(t, err, fmt.Sprintf("daemon reports %q", tc.version))
+				assert.Zero(t, requests)
+				return
+			}
 			require.NoError(t, err)
 			assert.Equal(t, 1, requests)
 			if tc.output != "" {
-				assert.Equal(t, tc.output, output)
+				assert.Equal(t, tc.output, stdout.String())
+			}
+			if tc.warning {
+				var result map[string]any
+				require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
+				assert.Contains(t, stderr.String(), "does not report promises; upgrade and restart it")
 			}
 		})
 	}

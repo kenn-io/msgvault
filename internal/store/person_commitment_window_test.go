@@ -78,48 +78,46 @@ func TestCommitmentWindowScopesBothSidesOfDirectConversations(t *testing.T) {
 }
 
 func TestCommitmentWindowBoundsEscapedEmailInput(t *testing.T) {
-	r, a := require.New(t), assert.New(t)
-	f := storetest.New(t)
-	r.NoError(f.Store.AddAccountIdentity(f.Source.ID, loopOwner, "manual"))
-	participant := f.EnsureParticipant(loopAlex, "", "example.test")
-	person, _, err := f.Store.CreatePersonFromParticipant(participant)
-	r.NoError(err)
-	for i := range 30 {
-		f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner},
-			Body: "I will send the draft.\n> " + strings.Repeat("quoted history ", 150), SentAt: loopAgo(time.Duration(i+1) * time.Hour)})
+	for _, tc := range []struct {
+		name    string
+		encoded bool
+	}{{"fit bound", false}, {"encoded bytes", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			f := storetest.New(t)
+			r.NoError(f.Store.AddAccountIdentity(f.Source.ID, loopOwner, "manual"))
+			participant := f.EnsureParticipant(loopAlex, "", "example.test")
+			person, _, err := f.Store.CreatePersonFromParticipant(participant)
+			r.NoError(err)
+			cfg := peoplesweep.CommitmentConfig{Enabled: true, Window: 30 * loopDay, MaxItems: 60, MaxBytes: 65536}
+			var large, shorter int64
+			if tc.encoded {
+				large = f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will call.\n> " + strings.Repeat("q", 30000), SentAt: loopAgo(2 * time.Hour)})
+				shorter = f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will reply.\n> " + strings.Repeat("q", 15000), SentAt: loopAgo(time.Hour)})
+				cfg.MaxBytes = 100 << 10
+			} else {
+				for i := range 30 {
+					f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will send the draft.\n> " + strings.Repeat("quoted history ", 150), SentAt: loopAgo(time.Duration(i+1) * time.Hour)})
+				}
+			}
+			profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+			window, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow, "UTC")
+			r.NoError(err)
+			r.NotEmpty(window.Sources)
+			fits, err := peoplesweep.CommitmentInputFits(window)
+			r.NoError(err)
+			a.True(fits)
+			if tc.encoded {
+				r.Len(window.Sources, 1)
+				a.Equal(shorter, window.Sources[0].MessageID)
+				a.NotEqual(large, window.Sources[0].MessageID)
+				var oversized int
+				r.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`), person.ID, large).Scan(&oversized))
+				a.Equal(1, oversized)
+			} else {
+				a.Less(len(window.Sources), 30, "escaped history must leave a bounded prefix for the next pass")
+				a.Equal(window.Sources[len(window.Sources)-1].MessageID, window.BackfillMessageID)
+			}
+		})
 	}
-	cfg := peoplesweep.CommitmentConfig{Enabled: true, Window: 30 * loopDay, MaxItems: 60, MaxBytes: 65536}
-	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
-	window, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow, "UTC")
-	r.NoError(err)
-	r.NotEmpty(window.Sources)
-	a.Less(len(window.Sources), 30, "escaped history must leave a bounded prefix for the next pass")
-	fits, err := peoplesweep.CommitmentInputFits(window)
-	r.NoError(err)
-	a.True(fits)
-	a.Equal(window.Sources[len(window.Sources)-1].MessageID, window.BackfillMessageID)
-}
-
-func TestCommitmentWindowCountsMaskedTextAsEncodedBytes(t *testing.T) {
-	r, a := require.New(t), assert.New(t)
-	f := storetest.New(t)
-	r.NoError(f.Store.AddAccountIdentity(f.Source.ID, loopOwner, "manual"))
-	participant := f.EnsureParticipant(loopAlex, "", "example.test")
-	person, _, err := f.Store.CreatePersonFromParticipant(participant)
-	r.NoError(err)
-	large := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will call.\n> " + strings.Repeat("q", 30000), SentAt: loopAgo(2 * time.Hour)})
-	shorter := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will reply.\n> " + strings.Repeat("q", 15000), SentAt: loopAgo(time.Hour)})
-	cfg := peoplesweep.CommitmentConfig{Enabled: true, Window: 30 * loopDay, MaxItems: 60, MaxBytes: 100 << 10}
-	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
-	window, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow, "UTC")
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	a.Equal(shorter, window.Sources[0].MessageID)
-	a.NotEqual(large, window.Sources[0].MessageID)
-	fits, err := peoplesweep.CommitmentInputFits(window)
-	r.NoError(err)
-	a.True(fits)
-	var oversized int
-	r.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`), person.ID, large).Scan(&oversized))
-	a.Equal(1, oversized)
 }

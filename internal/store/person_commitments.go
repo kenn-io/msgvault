@@ -315,8 +315,17 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 	if state == LoopStateOpen && current.State == LoopStateOpen {
 		return current, nil
 	}
+	result, err := s.updatePersonCommitmentDecision(ctx, candidate, state, until)
+	if err == nil {
+		current.State, current.SnoozedUntil = result.State, result.SnoozedUntil
+		result = current
+	}
+	return result, err
+}
+
+func (s *Store) updatePersonCommitmentDecision(ctx context.Context, candidate commitmentCandidate, state string, until *time.Time) (PersonCommitment, error) {
 	var result PersonCommitment
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockSyncMaintenanceGate(ctx, tx); err != nil {
 			return err
 		}
@@ -329,17 +338,13 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 		result, err = scanPersonCommitment(tx.QueryRowContext(ctx, `UPDATE person_commitments
 			SET owner_state = ?, snoozed_until = ? WHERE id = ? AND owner_state = ?
 			AND COALESCE((SELECT status.supported `+latestPersonFactEvidenceStatusSQL("?", "?", "?")+`), TRUE) = TRUE
-			RETURNING `+commitmentColumns, state, deadline, id, previous.State,
+			RETURNING `+commitmentColumns, state, deadline, previous.ID, previous.State,
 			candidate.promise.Input.PersonID, candidate.promise.Key, candidate.promise.Input.SourceVersion))
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrCommitmentChanged
 		}
 		return err
 	})
-	if err == nil {
-		current.State, current.SnoozedUntil = result.State, result.SnoozedUntil
-		result = current
-	}
 	return result, err
 }
 
