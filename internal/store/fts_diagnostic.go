@@ -115,7 +115,7 @@ func (s *Store) DiagnoseFTSContext(ctx context.Context, opts FTSDiagnosticOption
 			r.Reason = "interrupted"
 			return r, ctx.Err()
 		}
-		return r, errors.New("FTS diagnostic cannot bound message selection")
+		return r, errors.New("cannot determine which messages to check")
 	}
 	r.ThroughID = c.Through
 	finish := func(reason string, cause error) (FTSDiagnosticReport, error) {
@@ -165,7 +165,7 @@ func (s *Store) DiagnoseFTSContext(ctx context.Context, opts FTSDiagnosticOption
 	for _, id := range ids {
 		entry, err := s.diagnoseFTSMessage(ctx, id)
 		if err != nil {
-			return finish("comparison_failed", errors.New("FTS diagnostic comparison failed; retry from next_cursor"))
+			return finish("comparison_failed", errors.New("message check failed; retry with --cursor and the reported continuation value"))
 		}
 		if err := ctx.Err(); err != nil {
 			return finish("interrupted", err)
