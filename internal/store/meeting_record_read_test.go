@@ -12,6 +12,57 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
+func TestMeetingRecordRejectsFutureLinkProjection(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		futureSeed bool
+	}{
+		{name: "selected note", futureSeed: true},
+		{name: "matched note"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, event := calendarFixture(t, st, "event", `{"id":"event","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+			raw := `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00Z"}}`
+			_, seed := projectionFixture(t, st, "seed", "twenty_json", raw)
+			_, peer := projectionFixture(t, st, "peer", "twenty_json", raw)
+			future := peer
+			if tc.futureSeed {
+				future = seed
+			}
+			_, err := st.db.Exec(`UPDATE meeting_details SET projection_version = ? WHERE message_id = ?`, meetingProjectionVersion+1, future)
+			require.NoError(err)
+			for _, read := range []func() error{
+				func() error {
+					_, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: seed})
+					return err
+				},
+				func() error {
+					_, err := st.MeetingNotesContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: seed})
+					return err
+				},
+				func() error {
+					_, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event})
+					return err
+				},
+			} {
+				err := read()
+				require.ErrorIs(err, ErrMeetingProjectionUnavailable)
+				var selection *MeetingSelectionError
+				require.ErrorAs(err, &selection)
+				assert.Equal([]int64{future}, selection.MessageIDs)
+			}
+			if tc.futureSeed {
+				_, err := st.db.Exec(`UPDATE meeting_details SET link_key = NULL WHERE message_id = ?`, seed)
+				require.NoError(err)
+				_, err = st.MeetingNotesContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: seed})
+				require.ErrorIs(err, ErrMeetingProjectionUnavailable)
+			}
+		})
+	}
+}
+
 func TestMeetingRecordUntimedCancellation(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

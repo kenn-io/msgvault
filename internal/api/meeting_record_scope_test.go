@@ -286,3 +286,22 @@ func TestMeetingRecordCalendarDetailsRequireGrant(t *testing.T) {
 		})
 	}
 }
+
+func TestMeetingRecordFutureProjectionHTTP(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("meeting_import", "notes@example.com")
+	require.NoError(err)
+	note, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: "note", MessageType: "meeting_transcript"}, Conversation: &store.ConversationPersistData{SourceConversationID: "note", ConversationType: "meeting"}, RawMIME: []byte(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00Z"}}`), RawFormat: "twenty_json"})
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE meeting_details SET projection_version = projection_version + 1 WHERE message_id = ?`), note)
+	require.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner"}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/meetings/record?ref=msg:%d", note), nil)
+	req.Header.Set("Authorization", "Bearer owner")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusServiceUnavailable, w.Code, w.Body.String())
+	require.Contains(w.Body.String(), "meeting_projection_unavailable")
+}
