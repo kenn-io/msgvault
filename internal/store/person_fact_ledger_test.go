@@ -755,3 +755,42 @@ func TestClaimFreshnessUsesSupportedEvidenceAfterPagination(t *testing.T) {
 	r.NotNil(page[0].Freshness.LatestSupportedAt)
 	a.WithinDuration(old, *page[0].Freshness.LatestSupportedAt, time.Microsecond)
 }
+
+func TestClaimFreshnessIgnoresFutureEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		includeOld bool
+	}{
+		{name: "future only"},
+		{name: "old and future", includeOld: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			st, personID := newPersonFactLedgerStore(t)
+			now := time.Now()
+			old := now.Add(-400 * 24 * time.Hour)
+			claim := personFactLedgerClaim(personID, "future-evidence", `"value"`, "future")
+			claim.Evidence[0].EventTime = now.Add(24 * time.Hour)
+			if tc.includeOld {
+				past := claim.Evidence[0]
+				past.SourceRef = "old"
+				past.EventTime = old
+				claim.Evidence = append(claim.Evidence, past)
+			}
+			prepared := preparePersonFactLedgerGeneration(t, personID, "future-evidence", []personfacts.ProposedClaim{claim}, nil)
+			persistPersonFactLedgerGeneration(t, st, prepared, nil)
+
+			page, err := st.ListPersonFactClaimsContext(t.Context(), personID, personfacts.ClaimFilter{Limit: 1})
+			r.NoError(err)
+			r.Len(page, 1)
+			a.Equal(personfacts.StatusStale, page[0].Freshness.Status)
+			if tc.includeOld {
+				if a.NotNil(page[0].Freshness.LatestSupportedAt) {
+					a.WithinDuration(old, *page[0].Freshness.LatestSupportedAt, time.Microsecond)
+				}
+			} else {
+				a.Nil(page[0].Freshness.LatestSupportedAt)
+			}
+		})
+	}
+}
