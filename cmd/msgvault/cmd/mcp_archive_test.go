@@ -230,7 +230,6 @@ func TestMCPArchiveDelegatedScope(t *testing.T) {
 }
 
 func TestMCPArchiveCatalogBudgets(t *testing.T) {
-	// Merge recovery reads add about 10.5 KiB to each catalog.
 	for _, tc := range []struct {
 		name   string
 		kinds  []string

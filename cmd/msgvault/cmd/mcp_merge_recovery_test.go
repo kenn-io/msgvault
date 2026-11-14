@@ -3,13 +3,10 @@ package cmd
 import (
 	"context"
 	"encoding/json/v2"
-	"fmt"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -17,34 +14,42 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+// mergeRecoveryFixture merges a person whose slug value is "email" with one whose value is "chat".
+func mergeRecoveryFixture(t *testing.T, st *store.Store, slug string) (int64, *store.PersonMergeResult) {
+	t.Helper()
+	require := require.New(t)
+	people := make([]*store.Person, 2)
+	var participant int64
+	for i, value := range []string{"email", "chat"} {
+		var err error
+		participant, err = st.EnsureParticipant(value+"@example.test", value, "example.test")
+		require.NoError(err)
+		person, _, err := st.CreatePersonFromParticipant(participant)
+		require.NoError(err)
+		_, err = st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person.ID, DefinitionSlug: slug, Value: store.AttributeValue{Type: store.AttributeValueText, Text: &value}, Source: store.ProvenanceUser})
+		require.NoError(err)
+		people[i], err = st.GetPersonContext(t.Context(), person.ID)
+		require.NoError(err)
+	}
+	merged, err := st.MergePersonsContext(t.Context(), store.PersonMergeRequest{SurvivorID: people[0].ID, AbsorbedID: people[1].ID, ExpectedSurvivorRevision: people[0].Revision, ExpectedAbsorbedRevision: people[1].Revision, IdempotencyKey: "merge-" + slug, Actor: "test"})
+	require.NoError(err)
+	require.Len(merged.ReviewCandidates, 1)
+	return participant, merged
+}
+
 func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	a, err := st.EnsureParticipant("a@example.test", "A", "example.test")
-	require.NoError(err)
-	b, err := st.EnsureParticipant("b@example.test", "B", "example.test")
-	require.NoError(err)
-	survivor, _, err := st.CreatePersonFromParticipant(a)
-	require.NoError(err)
-	absorbed, _, err := st.CreatePersonFromParticipant(b)
-	require.NoError(err)
-	for id, value := range map[int64]string{survivor.ID: "email", absorbed.ID: "chat"} {
-		_, err = st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{PersonID: id, DefinitionSlug: store.AttributeSlugPrimaryChannel, Value: store.AttributeValue{Type: store.AttributeValueText, Text: &value}, Source: store.ProvenanceUser})
-		require.NoError(err)
-	}
-	survivor, err = st.GetPersonContext(ctx, survivor.ID)
-	require.NoError(err)
-	absorbed, err = st.GetPersonContext(ctx, absorbed.ID)
-	require.NoError(err)
+	b, merged := mergeRecoveryFixture(t, st, store.AttributeSlugPrimaryChannel)
+	survivor := merged.Person
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
 	editETag := func(id int64) string {
 		r, err := backend.ExecuteOperation(ctx, "get_person_edit_context", map[string]any{"person_id": id})
@@ -53,9 +58,6 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 		require.NotEmpty(r.ETag)
 		return r.ETag
 	}
-	merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: survivor.ID, AbsorbedID: absorbed.ID, ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision, IdempotencyKey: "synthetic-merge", Actor: "test"})
-	require.NoError(err)
-	require.Len(merged.ReviewCandidates, 1)
 	result, err := backend.ExecuteOperation(ctx, "list_person_merges", map[string]any{"person_id": survivor.ID})
 	require.NoError(err)
 	list := operationOutput[generated.PersonMergesResponse](t, result)
@@ -76,19 +78,16 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	_, err = backend.OperationDisclosure(ctx, "split_person_merge", map[string]any{"person_id": survivor.ID, "merge_id": int64(999999), "participant_ids": []int64{b}, "etag": etag, "idempotency_key": "missing-split"})
 	require.ErrorAs(err, &refusal)
 	assert.Equal("person_merge_not_found", refusal.Code)
-	accept, err := backend.OperationDisclosure(ctx, "decide_person_merge_candidate", map[string]any{"person_id": survivor.ID, "candidate_id": merged.ReviewCandidates[0].ID, "merge_id": merged.Merge.ID, "decision": "accept", "etag": etag})
-	require.NoError(err)
-	for _, want := range []string{"Primary channel", "email", "chat", "exact split becomes unavailable"} {
-		assert.Contains(accept, want)
-	}
 	_, err = st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{PersonID: survivor.ID, DefinitionSlug: store.AttributeSlugPrimaryChannel, Value: store.AttributeValue{Type: store.AttributeValueText, Text: new("phone")}, Source: store.ProvenanceUser})
 	require.NoError(err)
 	args["etag"] = editETag(survivor.ID)
 	reject, err := backend.OperationDisclosure(ctx, "decide_person_merge_candidate", args)
 	require.NoError(err)
 	assert.Contains(reject, "Keep the current value")
-	accept, err = backend.OperationDisclosure(ctx, "decide_person_merge_candidate", map[string]any{"person_id": survivor.ID, "candidate_id": merged.ReviewCandidates[0].ID, "merge_id": merged.Merge.ID, "decision": "accept", "etag": args["etag"]})
+	accept, err := backend.OperationDisclosure(ctx, "decide_person_merge_candidate", map[string]any{"person_id": survivor.ID, "candidate_id": merged.ReviewCandidates[0].ID, "merge_id": merged.Merge.ID, "decision": "accept", "etag": args["etag"]})
 	require.NoError(err)
+	assert.Contains(accept, "Primary channel")
+	assert.Contains(accept, "exact split becomes unavailable")
 	var values struct {
 		CurrentValue  generated.AttributeValue `json:"current_value"`
 		SurvivorValue generated.AttributeValue `json:"survivor_value"`
@@ -113,12 +112,9 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	require.False(sdkResult.IsError)
 	assert.Equal(1, approvals)
 	assert.Equal(reject, disclosure)
-	replayDisclosure, err := backend.OperationDisclosure(ctx, "decide_person_merge_candidate", args)
-	require.NoError(err)
-	assert.Contains(replayDisclosure, "daemon will replay it")
 	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "decide_person_merge_candidate", Arguments: args})
 	require.NoError(err)
-	assert.Equal(replayDisclosure, disclosure)
+	assert.Contains(disclosure, "daemon will replay it")
 	receipt := loopToolOutput[mcpserver.MergeCandidateReceipt](t, sdkResult)
 	assert.Equal("rejected", receipt.Candidate.State)
 	assert.NotEmpty(receipt.ETag)
@@ -160,7 +156,7 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 func TestMCPMergeRecoveryPaging(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	rows := strings.Repeat(`{"original_row_key":"row"},`, 500) + `{"original_row_key":"last"}`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/v1/people/7/split" {
 			w.Header().Set("ETag", "source")
@@ -169,40 +165,27 @@ func TestMCPMergeRecoveryPaging(t *testing.T) {
 		} else {
 			_, _ = w.Write([]byte(`{"rows":[` + rows + `]}`))
 		}
-	}))
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-	require.NoError(err)
+	})
 	backend := &daemonMCPOperations{client: client, supported: []string{"get_person_merge", "split_person_merge"}}
-	for _, offset := range []int{0, 500} {
-		result, err := backend.ExecuteOperation(t.Context(), "get_person_merge", map[string]any{"merge_id": 1, "row_offset": offset})
+	for _, tc := range []struct {
+		offset, rows int
+		first        string
+		next         *int
+	}{{0, 500, "row", new(500)}, {500, 1, "last", nil}} {
+		result, err := backend.ExecuteOperation(t.Context(), "get_person_merge", map[string]any{"merge_id": 1, "row_offset": tc.offset})
 		require.NoError(err)
 		detail := operationOutput[mcpserver.MergeDetail](t, result)
-		assert.Equal(501, detail.RowCount)
-		result, err = backend.ExecuteOperation(t.Context(), "split_person_merge", map[string]any{"person_id": 7, "merge_id": 1, "participant_ids": []int64{}, "etag": "x", "idempotency_key": "same", "row_offset": offset})
+		result, err = backend.ExecuteOperation(t.Context(), "split_person_merge", map[string]any{"person_id": 7, "merge_id": 1, "participant_ids": []int64{}, "etag": "x", "idempotency_key": "same", "row_offset": tc.offset})
 		require.NoError(err)
 		split := operationOutput[mcpserver.MergeSplitReceipt](t, result)
-		assert.Equal(501, split.UnrestoredRowCount)
-		assert.Equal(501, split.AmbiguousRowCount)
-		if offset == 0 {
-			assert.Len(detail.Rows, 500)
-			assert.Len(split.UnrestoredRows, 500)
-			assert.Len(split.AmbiguousRows, 500)
-			assert.Equal("row", split.UnrestoredRows[0].OriginalRowKey)
-			assert.Equal("row", split.AmbiguousRows[0].OriginalRowKey)
-			require.NotNil(detail.NextRowOffset)
-			require.NotNil(split.NextRowOffset)
-			assert.Equal(500, *detail.NextRowOffset)
-			assert.Equal(500, *split.NextRowOffset)
-		} else {
-			assert.Len(detail.Rows, 1)
-			assert.Len(split.UnrestoredRows, 1)
-			assert.Len(split.AmbiguousRows, 1)
-			assert.Equal("last", split.UnrestoredRows[0].OriginalRowKey)
-			assert.Equal("last", split.AmbiguousRows[0].OriginalRowKey)
-			assert.Nil(detail.NextRowOffset)
-			assert.Nil(split.NextRowOffset)
-		}
+		assert.Equal([]int{501, 501, 501}, []int{detail.RowCount, split.AmbiguousRowCount, split.UnrestoredRowCount})
+		assert.Len(detail.Rows, tc.rows)
+		require.Len(split.AmbiguousRows, tc.rows)
+		require.Len(split.UnrestoredRows, tc.rows)
+		assert.Equal(tc.first, split.AmbiguousRows[0].OriginalRowKey)
+		assert.Equal(tc.first, split.UnrestoredRows[0].OriginalRowKey)
+		assert.Equal(tc.next, detail.NextRowOffset)
+		assert.Equal(tc.next, split.NextRowOffset)
 	}
 }
 
@@ -233,15 +216,10 @@ func TestMCPMergeRecoveryCapabilityRequiresDetailAndAttributeHistory(t *testing.
 
 func TestMCPMergeRecoveryLargeConfirmation(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"rows":[{"original_row_key":"`))
-		_, _ = w.Write([]byte(strings.Repeat("x", 16<<20)))
-		_, _ = w.Write([]byte(`"}]}`))
-	}))
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-	require.NoError(err)
+		_, _ = w.Write([]byte(`{"rows":[{"original_row_key":"` + strings.Repeat("x", 16<<20) + `"}]}`))
+	})
 	backend := &daemonMCPOperations{client: client, supported: []string{"get_person_merge", "split_person_merge"}}
 	disclosure, err := backend.OperationDisclosure(t.Context(), "split_person_merge", map[string]any{"person_id": 7, "merge_id": 1, "participant_ids": []int64{}, "etag": "x", "idempotency_key": "key"})
 	require.NoError(err)
@@ -249,32 +227,9 @@ func TestMCPMergeRecoveryLargeConfirmation(t *testing.T) {
 	assert.Less(len(disclosure), 10000)
 }
 
-func TestMCPMergeRecoveryWriteRefusals(t *testing.T) {
-	for _, tc := range []struct {
-		code, want string
-		uncertain  bool
-	}{
-		{"person_merge_already_split", "person_merge_already_split", false}, {"profile_value_not_found", "profile_value_not_found", false},
-	} {
-		t.Run(tc.code, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusConflict)
-				_, _ = fmt.Fprintf(w, `{"error":%q}`, tc.code)
-			}))
-			t.Cleanup(server.Close)
-			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-			require.NoError(t, err)
-			_, _, failure, err := readMCPOperationBytes(t.Context(), client, http.MethodPost, "/api/v1/people/{id}/split", &generated.SplitPersonMergeRequestOptions{PathParams: &generated.SplitPersonMergePath{ID: 7}}, mcpserver.MaxDownloadBytes, nil, http.StatusOK)
-			require.NoError(t, err)
-			assertLoopRefusal(t, failure, tc.want, tc.uncertain)
-		})
-	}
-}
-
 func TestMCPMergeRecoveryReadsOnlyCandidateHistory(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	var historySeen atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/person-merges/1":
@@ -282,10 +237,7 @@ func TestMCPMergeRecoveryReadsOnlyCandidateHistory(t *testing.T) {
 		case "/api/v1/attribute-definitions/3":
 			_, _ = w.Write([]byte(`{"id":3,"slug":"primary_channel","label":"Primary channel"}`))
 		case "/api/v1/people/7/attributes":
-			if r.URL.Query().Get("history") == "true" && r.URL.Query().Get("slug") == "primary_channel" {
-				historySeen.Store(true)
-			}
-			if r.URL.Query().Get("history") == "true" && r.URL.Query().Get("slug") != "primary_channel" {
+			if r.URL.Query().Get("history") != "true" || r.URL.Query().Get("slug") != "primary_channel" {
 				_, _ = w.Write([]byte(strings.Repeat("x", 1<<20+1)))
 				return
 			}
@@ -293,16 +245,12 @@ func TestMCPMergeRecoveryReadsOnlyCandidateHistory(t *testing.T) {
 		default:
 			assert.Fail("unexpected path", r.URL.Path)
 		}
-	}))
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-	require.NoError(err)
+	})
 	backend := &daemonMCPOperations{client: client, supported: []string{"decide_person_merge_candidate"}}
 	disclosure, err := backend.OperationDisclosure(t.Context(), "decide_person_merge_candidate", map[string]any{"person_id": 7, "candidate_id": 2, "merge_id": 1, "decision": "accept", "etag": "x"})
 	require.NoError(err)
 	assert.Contains(disclosure, "email")
 	assert.Contains(disclosure, "chat")
-	assert.True(historySeen.Load())
 }
 
 func TestMCPMergeRecoveryRejectsCandidateAfterDefinitionRetired(t *testing.T) {
@@ -311,25 +259,8 @@ func TestMCPMergeRecoveryRejectsCandidateAfterDefinitionRetired(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	definition, err := st.CreateAttributeDefinitionContext(ctx, store.AttributeDefinitionInput{UniversalID: "test-preferred-medium", ObjectType: store.AttributeObjectPerson, Slug: "preferred_medium", Label: "Preferred medium", ValueType: store.AttributeValueText, FieldType: store.AttributeFieldText, Cardinality: store.AttributeCardinalitySingle, Ownership: store.AttributeOwnershipUser, UICreatable: true, UIEditable: true, APIMutable: true, IsAudited: true, IsDeletable: true})
 	require.NoError(err)
-	a, err := st.EnsureParticipant("a@example.test", "A", "example.test")
-	require.NoError(err)
-	b, err := st.EnsureParticipant("b@example.test", "B", "example.test")
-	require.NoError(err)
-	survivor, _, err := st.CreatePersonFromParticipant(a)
-	require.NoError(err)
-	absorbed, _, err := st.CreatePersonFromParticipant(b)
-	require.NoError(err)
-	for id, value := range map[int64]string{survivor.ID: "email", absorbed.ID: "chat"} {
-		_, err = st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{PersonID: id, DefinitionSlug: definition.Slug, Value: store.AttributeValue{Type: store.AttributeValueText, Text: &value}, Source: store.ProvenanceUser})
-		require.NoError(err)
-	}
-	survivor, err = st.GetPersonContext(ctx, survivor.ID)
-	require.NoError(err)
-	absorbed, err = st.GetPersonContext(ctx, absorbed.ID)
-	require.NoError(err)
-	merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: survivor.ID, AbsorbedID: absorbed.ID, ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision, IdempotencyKey: "retired-definition", Actor: "test"})
-	require.NoError(err)
-	require.Len(merged.ReviewCandidates, 1)
+	_, merged := mergeRecoveryFixture(t, st, definition.Slug)
+	survivor := merged.Person
 	_, err = st.UpdateAttributeDefinitionContext(ctx, definition.ID, definition.Revision, store.AttributeDefinitionUpdate{IsActive: new(false)})
 	require.NoError(err)
 	_, err = st.SupersedePersonAttributeValueContext(ctx, store.PersonAttributeSupersedeInput{PersonID: survivor.ID, DefinitionSlug: definition.Slug})

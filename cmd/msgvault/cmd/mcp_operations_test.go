@@ -42,6 +42,10 @@ func TestMCPOperationFailureCompletion(t *testing.T) {
 		{"read validation failure", http.MethodGet, `{"error":"validation_failed"}`,
 			`{"error":"validation_failed","operation_may_have_completed":false}`, http.StatusUnprocessableEntity},
 		{"oversized JSON", http.MethodPost, `{"data":"` + strings.Repeat("x", 1<<20) + `"}`, `{"error":"operation_response_limit_exceeded","operation_may_have_completed":true}`, http.StatusOK},
+		{"merge refusal", http.MethodPost, `{"error":"person_merge_already_split"}`,
+			`{"error":"person_merge_already_split","operation_may_have_completed":false}`, http.StatusConflict},
+		{"record refusal", http.MethodPatch, `{"error":"profile_value_not_found"}`,
+			`{"error":"profile_value_not_found","operation_may_have_completed":false}`, http.StatusConflict},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()

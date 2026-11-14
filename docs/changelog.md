@@ -9,7 +9,6 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - MCP owners can inspect person merge history and lineage. With `--allow-merge-recovery-writes`, they can decide candidates and split lineage with client confirmation; `mcp --http` also needs `--http-allow-writes`. For `serve`, use `--mcp-allow-writes --mcp-allow-merge-recovery-writes`.
-
 - Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
 - Let an MCP assistant read structured person records, history and stored media, and read large profiles in chunks.
   With `--allow-curated-writes` and explicit client confirmation, it can apply

@@ -181,7 +181,11 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 }
 
 func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, success ...int) (*mcpserver.OperationResult, error) {
-	data, headers, failure, err := readMCPOperationBytes(ctx, client, method, path, options, 1<<20, classify, success...)
+	return readMCPOperationJSONWithin[T](ctx, client, method, path, options, 1<<20, classify, success...)
+}
+
+func readMCPOperationJSONWithin[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, limit int64, classify func(string) bool, success ...int) (*mcpserver.OperationResult, error) {
+	data, headers, failure, err := readMCPOperationBytes(ctx, client, method, path, options, limit, classify, success...)
 	if failure != nil {
 		return failure, err
 	}

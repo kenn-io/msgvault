@@ -93,18 +93,13 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 		if e != nil || a.RowOffset < 0 {
 			return invalid()
 		}
-		data, _, failure, readErr := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/person-merges/{merge_id}", &generated.GetPersonMergeRequestOptions{PathParams: &generated.GetPersonMergePath{MergeID: a.MergeID}}, mcpserver.MaxDownloadBytes, nil, http.StatusOK)
-		if failure != nil {
-			return failure, true, readErr
+		result, err = readMCPOperationJSONWithin[generated.PersonMergeDetail](ctx, b.client, http.MethodGet, "/api/v1/person-merges/{merge_id}", &generated.GetPersonMergeRequestOptions{PathParams: &generated.GetPersonMergePath{MergeID: a.MergeID}}, mcpserver.MaxDownloadBytes, nil, http.StatusOK)
+		if detail, ok := result.Output.(generated.PersonMergeDetail); ok {
+			output := mcpserver.MergeDetail{RowCount: len(detail.Rows)}
+			detail.Rows, output.NextRowOffset = rowPage(detail.Rows, a.RowOffset)
+			output.PersonMergeDetail = detail
+			result.Output = output
 		}
-		var detail generated.PersonMergeDetail
-		if e := json.Unmarshal(data, &detail); e != nil {
-			return operationFailure("invalid_operation_response", false), true, e
-		}
-		output := mcpserver.MergeDetail{RowCount: len(detail.Rows)}
-		detail.Rows, output.NextRowOffset = rowPage(detail.Rows, a.RowOffset)
-		output.PersonMergeDetail = detail
-		result = &mcpserver.OperationResult{Output: output}
 	case "decide_person_merge_candidate":
 		a, e := decodeMCPOperationArguments[mergeDecisionArgs](args)
 		if e != nil {
@@ -201,15 +196,11 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 				return "", true, mergeContextRefusal(definition, err)
 			}
 			options := &generated.ListPersonAttributesRequestOptions{PathParams: &generated.ListPersonAttributesPath{ID: decision.PersonID}, Query: &generated.ListPersonAttributesQuery{History: new(true), Slug: &attribute.Slug}}
-			data, _, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/people/{id}/attributes", options, mcpserver.MaxDownloadBytes, nil, http.StatusOK)
-			if failure != nil {
-				return "", true, mergeContextRefusal(failure, err)
+			attributes, err := readMCPOperationJSONWithin[generated.PersonAttributesResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/attributes", options, mcpserver.MaxDownloadBytes, nil, http.StatusOK)
+			response, ok := attributes.Output.(generated.PersonAttributesResponse)
+			if !ok {
+				return "", true, mergeContextRefusal(attributes, err)
 			}
-			var response generated.PersonAttributesResponse
-			if err := json.Unmarshal(data, &response); err != nil {
-				return "", true, err
-			}
-
 			for _, group := range response.Attributes {
 				if group.Definition.ID != candidate.DefinitionID {
 					continue
