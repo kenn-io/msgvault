@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	jsonv1 "encoding/json"
 	"encoding/json/v2"
 	"net/http"
 	"slices"
@@ -140,7 +141,7 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	if count > store.MaxPersonProfilePatchOperations {
 		return "", true, &mcpserver.OperationRefusalError{Code: "profile_patch_too_large"}
 	}
-	encodedPatch, err := json.Marshal(input.Patch)
+	encodedPatch, err := jsonv1.Marshal(input.Patch)
 	if err != nil {
 		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 	}
@@ -181,6 +182,13 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 			patch.Media.Add = append(patch.Media.Add, add)
 		}
 	}
+	preview, err := json.Marshal(patch)
+	if err != nil {
+		return "", true, err
+	}
+	if len(preview) > 1<<20 {
+		return "", true, &mcpserver.OperationRefusalError{Code: "operation_response_limit_exceeded"}
+	}
 	current, _, err := b.executePersonRecord(ctx, "get_person_record", map[string]any{"person_id": input.PersonID})
 	if err != nil {
 		return "", true, err
@@ -196,31 +204,35 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 		return "", true, err
 	}
 	selected := struct {
-		Person        generated.Person               `json:"person"`
-		Names         []generated.PersonName         `json:"names,omitempty"`
-		ContactPoints []generated.PersonContactPoint `json:"contact_points,omitempty"`
-		Addresses     []generated.PersonAddress      `json:"addresses,omitempty"`
-		Dates         []generated.PersonDate         `json:"dates,omitempty"`
-		Categories    []generated.PersonCategory     `json:"categories,omitempty"`
-		Media         []generated.PersonMedia        `json:"media,omitempty"`
+		Person        generated.Person `json:"person"`
+		Names         []any            `json:"names,omitempty"`
+		ContactPoints []any            `json:"contact_points,omitempty"`
+		Addresses     []any            `json:"addresses,omitempty"`
+		Dates         []any            `json:"dates,omitempty"`
+		Categories    []any            `json:"categories,omitempty"`
+		Media         []any            `json:"media,omitempty"`
 	}{Person: profile.Person}
+	missing := false
 	if p := input.Patch.Names; p != nil {
-		selected.Names = superseded(profile.Names, p.Supersede, func(v generated.PersonName) int64 { return v.Envelope.ID })
+		selected.Names, missing = superseded(profile.Names, p.Supersede, func(v generated.PersonName) int64 { return v.Envelope.ID }, missing)
 	}
 	if p := input.Patch.ContactPoints; p != nil {
-		selected.ContactPoints = superseded(profile.ContactPoints, p.Supersede, func(v generated.PersonContactPoint) int64 { return v.Envelope.ID })
+		selected.ContactPoints, missing = superseded(profile.ContactPoints, p.Supersede, func(v generated.PersonContactPoint) int64 { return v.Envelope.ID }, missing)
 	}
 	if p := input.Patch.Addresses; p != nil {
-		selected.Addresses = superseded(profile.Addresses, p.Supersede, func(v generated.PersonAddress) int64 { return v.Envelope.ID })
+		selected.Addresses, missing = superseded(profile.Addresses, p.Supersede, func(v generated.PersonAddress) int64 { return v.Envelope.ID }, missing)
 	}
 	if p := input.Patch.Dates; p != nil {
-		selected.Dates = superseded(profile.Dates, p.Supersede, func(v generated.PersonDate) int64 { return v.Envelope.ID })
+		selected.Dates, missing = superseded(profile.Dates, p.Supersede, func(v generated.PersonDate) int64 { return v.Envelope.ID }, missing)
 	}
 	if p := input.Patch.Categories; p != nil {
-		selected.Categories = superseded(profile.Categories, p.Supersede, func(v generated.PersonCategory) int64 { return v.Envelope.ID })
+		selected.Categories, missing = superseded(profile.Categories, p.Supersede, func(v generated.PersonCategory) int64 { return v.Envelope.ID }, missing)
 	}
 	if p := input.Patch.Media; p != nil {
-		selected.Media = superseded(profile.Media, p.Supersede, func(v generated.PersonMedia) int64 { return v.Envelope.ID })
+		selected.Media, missing = superseded(profile.Media, p.Supersede, func(v generated.PersonMedia) int64 { return v.Envelope.ID }, missing)
+	}
+	if missing {
+		return "", true, &mcpserver.OperationRefusalError{Code: "profile_value_not_found"}
 	}
 	changes := struct {
 		PersonID int64  `json:"person_id"`
@@ -239,12 +251,23 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	return string(data), true, err
 }
 
-func superseded[T any](values []T, ids []int64, id func(T) int64) []T {
-	var selected []T
+func superseded[T any](values []T, ids []int64, id func(T) int64, missing bool) ([]any, bool) {
+	var selected []any
+	found := make(map[int64]bool, len(ids))
 	for _, value := range values {
 		if slices.Contains(ids, id(value)) {
-			selected = append(selected, value)
+			found[id(value)] = true
+			data, err := json.Marshal(value, json.Deterministic(true))
+			if err == nil && len(data) > 256<<10 {
+				sum := sha256.Sum256(data)
+				selected = append(selected, map[string]any{"id": id(value), "size": len(data), "sha256": hex.EncodeToString(sum[:])})
+			} else {
+				selected = append(selected, value)
+			}
 		}
 	}
-	return selected
+	for _, value := range ids {
+		missing = missing || !found[value]
+	}
+	return selected, missing
 }

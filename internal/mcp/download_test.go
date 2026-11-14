@@ -256,6 +256,8 @@ func TestPersonDownloadSnapshotsSurviveRefresh(t *testing.T) {
 		must.NoError(err)
 		time.Sleep(time.Second)
 		value = "second"
+		_, err = cache.get(t.Context(), key, chunkRequest{digest: first.digest}, load)
+		must.ErrorIs(err, errDownloadExpired)
 		second, err := cache.get(t.Context(), key, chunkRequest{}, load)
 		must.NoError(err)
 		old, err := cache.get(t.Context(), key, chunkRequest{offset: 1, digest: first.digest}, load)
@@ -281,4 +283,39 @@ func TestPersonDownloadSnapshotsSurviveRefresh(t *testing.T) {
 		cache.close()
 		checks.Zero(cache.bytes)
 	})
+}
+
+func TestDownloadLoadDoesNotBlockOtherDownloads(t *testing.T) {
+	var cache downloadCache
+	defer cache.close()
+	started, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		_, err := cache.get(t.Context(), downloadKey{operation: "profile"}, chunkRequest{}, func() (*downloadSnapshot, error) {
+			close(started)
+			<-release
+			return &downloadSnapshot{data: []byte("profile")}, nil
+		})
+		done <- err
+	}()
+	<-started
+	finished := make(chan error, 1)
+	go func() {
+		_, err := cache.get(t.Context(), downloadKey{attachment: 1}, chunkRequest{}, func() (*downloadSnapshot, error) {
+			return &downloadSnapshot{data: []byte("attachment")}, nil
+		})
+		finished <- err
+	}()
+	completed := false
+	select {
+	case err := <-finished:
+		completed = true
+		assert.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		assert.Fail(t, "another download waited for the profile load")
+	}
+	close(release)
+	assert.NoError(t, <-done)
+	if !completed {
+		assert.NoError(t, <-finished)
+	}
 }

@@ -52,8 +52,6 @@ type downloadCache struct {
 }
 
 func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkRequest, load func() (*downloadSnapshot, error)) (*downloadSnapshot, error) {
-	// ponytail: serialize snapshot loads; per-download locks if concurrent
-	// large exports need to avoid waiting behind another download.
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -65,7 +63,7 @@ func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkReque
 	if key.operation != "" {
 		key.digest = req.digest
 	}
-	if entry := c.entries[key]; entry != nil {
+	if entry := c.entries[key]; entry != nil && (key.operation == "" || req.offset != 0) {
 		if time.Now().Before(entry.expires) {
 			if entry.validate != nil {
 				if err := entry.validate(ctx); err != nil {
@@ -89,15 +87,22 @@ func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkReque
 	if req.offset != 0 {
 		return nil, errDownloadExpired
 	}
+	c.mu.Unlock()
 	entry, err := load()
+	if err == nil && len(entry.data) <= MaxDownloadBytes {
+		sum := sha256.Sum256(entry.data)
+		entry.digest = hex.EncodeToString(sum[:])
+	}
+	c.mu.Lock()
 	if err != nil {
 		return nil, err
+	}
+	if c.closed {
+		return nil, errDownloadExpired
 	}
 	if len(entry.data) > MaxDownloadBytes {
 		return nil, errDownloadTooLarge
 	}
-	sum := sha256.Sum256(entry.data)
-	entry.digest = hex.EncodeToString(sum[:])
 	if req.digest != "" && req.digest != entry.digest {
 		return nil, errDownloadExpired
 	}
@@ -112,6 +117,11 @@ func (c *downloadCache) get(ctx context.Context, key downloadKey, req chunkReque
 			}
 			c.remove(key)
 		}
+	} else if existing := c.entries[key]; existing != nil {
+		if time.Now().Before(existing.expires) && existing.digest == entry.digest {
+			return existing, nil
+		}
+		c.remove(key)
 	}
 	for len(c.entries) >= maxDownloads || c.bytes+len(entry.data) > MaxDownloadBytes {
 		var oldest downloadKey

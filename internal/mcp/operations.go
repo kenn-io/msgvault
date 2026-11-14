@@ -93,6 +93,7 @@ func newOperationalDefinition(name, description string, family OperationFamily, 
 func operationalOutputSchema(output *jsonschema.Schema) *jsonschema.Schema {
 	failure := closedObject(map[string]*jsonschema.Schema{
 		"error":                        stringSchema("Fixed public refusal code"),
+		"message":                      stringSchema("Recovery instruction"),
 		"operation_may_have_completed": {Type: "boolean"},
 	}, "error")
 	failure.Schema = ""
@@ -143,7 +144,7 @@ func (d operationalDefinition) bind(backend OperationBackend, downloads *downloa
 			}
 			if err != nil {
 				if errors.Is(err, errDownloadExpired) {
-					return operationalToolResponse(d.definition.name, &OperationResult{Output: map[string]any{"error": "invalid_arguments"}, IsError: true}, nil)
+					return operationalToolResponse(d.definition.name, &OperationResult{Output: map[string]any{"error": "invalid_arguments", "message": errDownloadExpired.Error()}, IsError: true}, nil)
 				}
 				if errors.Is(err, errDownloadTooLarge) {
 					return operationalToolResponse(d.definition.name, &OperationResult{Output: map[string]any{"error": "operation_response_limit_exceeded"}, IsError: true}, nil)
