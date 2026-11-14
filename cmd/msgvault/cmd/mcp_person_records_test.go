@@ -177,59 +177,65 @@ func TestPersonRecordPatchAllKinds(t *testing.T) {
 }
 
 func TestPersonRecordCapabilitiesAndRefusals(t *testing.T) {
-	requirements := require.New(t)
 	backend, id, _, _ := personRecordFixture(t)
-	capabilities, err := backend.client.MCPCapabilities(t.Context())
-	requirements.NoError(err)
-	for _, tc := range []struct {
-		name, operation string
-		removeProperty  bool
-	}{
-		{"get_person_record_history", "getPersonProfileHistory", false}, {"patch_person_record", "patchPersonStructuredProfile", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			subAssertions := assert.New(t)
-			copyCaps := *capabilities
-			copyCaps.Routes = slices.Clone(capabilities.Routes)
-			if !tc.removeProperty {
-				copyCaps.Routes = slices.DeleteFunc(copyCaps.Routes, func(route apiprotocol.MCPRouteDescriptor) bool { return route.OperationID == tc.operation })
-			}
-			for i := range copyCaps.Routes {
-				if copyCaps.Routes[i].OperationID == tc.operation && tc.removeProperty {
-					copyCaps.Routes[i].RequestProperties = slices.DeleteFunc(slices.Clone(copyCaps.Routes[i].RequestProperties), func(s string) bool { return s == "media" })
-				}
-			}
-			got := newDaemonMCPOperations(backend.client, &copyCaps).capabilities()
-			subAssertions.NotContains(got, tc.name)
-			if tc.removeProperty {
-				subAssertions.Contains(got, "get_person_record")
-				subAssertions.Contains(got, "get_person_record_history")
-				subAssertions.Contains(got, "get_person_record_media")
-			}
-		})
-	}
-	result, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
-	requirements.NoError(err)
-	patch := map[string]any{"media": map[string]any{"add": []any{map[string]any{"media_kind": "photo", "uri": "https://example.test/image", "envelope": map[string]any{"source": "user"}}}}}
-	result, err = backend.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": result.ETag, "patch": patch})
-	requirements.NoError(err)
-	updated := operationOutput[mcpserver.StructuredPersonRecord](t, result)
-	requirements.Len(updated.Profile.Media, 1)
-	for _, tc := range []struct {
-		name string
-		args map[string]any
-		code string
-	}{
-		{"get_person_record", map[string]any{"person_id": 0}, "invalid_arguments"},
-		{"get_person_record_media", map[string]any{"person_id": id, "media_id": 99999999}, "profile_media_not_found"},
-		{"get_person_record_media", map[string]any{"person_id": id, "media_id": updated.Profile.Media[0].Envelope.ID}, "profile_media_content_unavailable"},
-		{"patch_person_record", map[string]any{"person_id": id, "etag": "*", "patch": patch}, "invalid_if_match"},
-		{"patch_person_record", map[string]any{"person_id": id, "etag": updated.ETag, "patch": map[string]any{"categories": map[string]any{"add": []any{map[string]any{"original_value": "Friends", "envelope": map[string]any{"source": "invalid"}}}}}}, "invalid_profile_value"},
-	} {
-		result, err := backend.ExecuteOperation(t.Context(), tc.name, tc.args)
+	t.Run("capabilities", func(t *testing.T) {
+		requirements := require.New(t)
+		capabilities, err := backend.client.MCPCapabilities(t.Context())
 		requirements.NoError(err)
-		assertLoopRefusal(t, result, tc.code, false)
-	}
+		assert.Contains(t, newDaemonMCPOperations(backend.client, capabilities).capabilities(), "patch_person_record")
+		for _, tc := range []struct {
+			name, operation string
+			removeProperty  bool
+		}{
+			{"get_person_record_history", "getPersonProfileHistory", false}, {"patch_person_record", "patchPersonStructuredProfile", true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				subAssertions := assert.New(t)
+				copyCaps := *capabilities
+				copyCaps.Routes = slices.Clone(capabilities.Routes)
+				if !tc.removeProperty {
+					copyCaps.Routes = slices.DeleteFunc(copyCaps.Routes, func(route apiprotocol.MCPRouteDescriptor) bool { return route.OperationID == tc.operation })
+				}
+				for i := range copyCaps.Routes {
+					if copyCaps.Routes[i].OperationID == tc.operation && tc.removeProperty {
+						copyCaps.Routes[i].RequestProperties = slices.DeleteFunc(slices.Clone(copyCaps.Routes[i].RequestProperties), func(s string) bool { return s == "media" })
+					}
+				}
+				got := newDaemonMCPOperations(backend.client, &copyCaps).capabilities()
+				subAssertions.NotContains(got, tc.name)
+				if tc.removeProperty {
+					subAssertions.Contains(got, "get_person_record")
+					subAssertions.Contains(got, "get_person_record_history")
+					subAssertions.Contains(got, "get_person_record_media")
+				}
+			})
+		}
+	})
+	t.Run("refusals", func(t *testing.T) {
+		requirements := require.New(t)
+		result, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
+		requirements.NoError(err)
+		patch := map[string]any{"media": map[string]any{"add": []any{map[string]any{"media_kind": "photo", "uri": "https://example.test/image", "envelope": map[string]any{"source": "user"}}}}}
+		result, err = backend.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": result.ETag, "patch": patch})
+		requirements.NoError(err)
+		updated := operationOutput[mcpserver.StructuredPersonRecord](t, result)
+		requirements.Len(updated.Profile.Media, 1)
+		for _, tc := range []struct {
+			name string
+			args map[string]any
+			code string
+		}{
+			{"get_person_record", map[string]any{"person_id": 0}, "invalid_arguments"},
+			{"get_person_record_media", map[string]any{"person_id": id, "media_id": 99999999}, "profile_media_not_found"},
+			{"get_person_record_media", map[string]any{"person_id": id, "media_id": updated.Profile.Media[0].Envelope.ID}, "profile_media_content_unavailable"},
+			{"patch_person_record", map[string]any{"person_id": id, "etag": "*", "patch": patch}, "invalid_if_match"},
+			{"patch_person_record", map[string]any{"person_id": id, "etag": updated.ETag, "patch": map[string]any{"categories": map[string]any{"add": []any{map[string]any{"original_value": "Friends", "envelope": map[string]any{"source": "invalid"}}}}}}, "invalid_profile_value"},
+		} {
+			result, err := backend.ExecuteOperation(t.Context(), tc.name, tc.args)
+			requirements.NoError(err)
+			assertLoopRefusal(t, result, tc.code, false)
+		}
+	})
 }
 
 func TestPersonRecordLargeInlineMedia(t *testing.T) {
@@ -269,7 +275,7 @@ func TestPersonRecordLargeInlineMedia(t *testing.T) {
 	assertions.Equal(int64(1), reads.Load())
 }
 
-func TestPersonRecordLargeProfileRecoveryAndDisclosure(t *testing.T) {
+func TestPersonRecordLargeProfileChunksAndDisclosure(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	backend, id, _, _ := personRecordFixture(t)
 	session := loopOperationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCurated}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
@@ -283,6 +289,11 @@ func TestPersonRecordLargeProfileRecoveryAndDisclosure(t *testing.T) {
 	}
 	initial := loopToolOutput[mcpserver.StructuredPersonRecord](t, call("get_person_record", map[string]any{"person_id": id}))
 	etag := initial.ETag
+	value := strings.Repeat("x", 2<<20)
+	largePatch := map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "free_text": value, "envelope": map[string]any{"source": "user"}}}}}
+	largeDisclosure, err := backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": etag, "patch": largePatch})
+	requirements.NoError(err)
+	assertions.GreaterOrEqual(strings.Index(largeDisclosure, value), 0, "disclosure must include the full value")
 	for batch := range 2 {
 		adds := make([]any, 200)
 		for i := range adds {
@@ -328,28 +339,6 @@ func TestPersonRecordLargeProfileRecoveryAndDisclosure(t *testing.T) {
 	assertions.NotContains(disclosure, *profile.Addresses[1].FreeText)
 }
 
-func TestPersonRecordLargeValue(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	backend, id, _, _ := personRecordFixture(t)
-	initial, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
-	requirements.NoError(err)
-	value := strings.Repeat("x", 2<<20)
-	args := map[string]any{"person_id": id, "etag": initial.ETag, "patch": map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "free_text": value, "envelope": map[string]any{"source": "user"}}}}}}
-	disclosure, err := backend.OperationDisclosure(t.Context(), "patch_person_record", args)
-	requirements.NoError(err)
-	assertions.GreaterOrEqual(strings.Index(disclosure, value), 0, "disclosure must include the full value")
-	result, err := backend.ExecuteOperation(t.Context(), "patch_person_record", args)
-	requirements.NoError(err)
-	requirements.False(result.IsError)
-	current, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
-	requirements.NoError(err)
-	var profile generated.StructuredPersonProfile
-	requirements.NoError(json.Unmarshal(current.Data, &profile))
-	requirements.Len(profile.Addresses, 1)
-	requirements.NotNil(profile.Addresses[0].FreeText)
-	assertions.Zero(strings.Compare(*profile.Addresses[0].FreeText, value), "saved value must match the disclosed value")
-}
-
 func TestPersonRecordPatchRefusalsBeforeApproval(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	backend, id, _, patches := personRecordFixture(t)
@@ -359,24 +348,40 @@ func TestPersonRecordPatchRefusalsBeforeApproval(t *testing.T) {
 	}
 	initial, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
 	requirements.NoError(err)
+	approvals := 0
+	session := loopOperationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCurated}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		approvals++
+		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+	}})
 	for _, tc := range []struct {
-		patch map[string]any
-		code  string
+		patch     map[string]any
+		code      string
+		oversized bool
 	}{
-		{nil, "invalid_arguments"},
-		{map[string]any{}, "invalid_profile_value"},
-		{map[string]any{"names": map[string]any{"add": []any{}}}, "invalid_profile_value"},
-		{map[string]any{"names": map[string]any{"add": adds}}, "profile_patch_too_large"},
-		{map[string]any{"media": map[string]any{"add": []any{map[string]any{"media_kind": "photo", "data": base64.StdEncoding.EncodeToString(make([]byte, (8<<20)+1)), "envelope": map[string]any{"source": "user"}}}}}, "invalid_profile_value"},
+		{nil, "invalid_arguments", false},
+		{map[string]any{}, "invalid_profile_value", false},
+		{map[string]any{"names": map[string]any{"add": []any{}}}, "invalid_profile_value", false},
+		{map[string]any{"names": map[string]any{"add": adds}}, "profile_patch_too_large", true},
+		{map[string]any{"media": map[string]any{"add": []any{map[string]any{"media_kind": "photo", "data": base64.StdEncoding.EncodeToString(make([]byte, (8<<20)+1)), "envelope": map[string]any{"source": "user"}}}}}, "invalid_profile_value", true},
+		{map[string]any{"names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": strings.Repeat("x", (12<<20)+1), "envelope": map[string]any{"source": "user"}}}}}, "profile_patch_too_large", true},
 	} {
 		args := map[string]any{"person_id": id, "etag": initial.ETag}
 		if tc.patch != nil {
 			args["patch"] = tc.patch
 		}
-		_, err := backend.OperationDisclosure(t.Context(), "patch_person_record", args)
-		var refusal *mcpserver.OperationRefusalError
-		requirements.ErrorAs(err, &refusal)
-		assertions.Equal(tc.code, refusal.Code)
+		if tc.oversized {
+			beforePatches := patches.Load()
+			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "patch_person_record", Arguments: args})
+			requirements.NoError(err)
+			assertions.Equal(tc.code, loopToolFailure(t, result)["error"])
+			assertions.Zero(approvals)
+			assertions.Equal(beforePatches, patches.Load())
+		} else {
+			_, err := backend.OperationDisclosure(t.Context(), "patch_person_record", args)
+			var refusal *mcpserver.OperationRefusalError
+			requirements.ErrorAs(err, &refusal)
+			assertions.Equal(tc.code, refusal.Code)
+		}
 	}
 	largeAdds := make([]any, 16)
 	for i := range largeAdds {
@@ -398,11 +403,6 @@ func TestPersonRecordPatchRefusalsBeforeApproval(t *testing.T) {
 	encoded, err := stdjson.Marshal(patch)
 	requirements.NoError(err)
 	requirements.Less(len(encoded), 12<<20)
-	approvals := 0
-	session := loopOperationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCurated}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		approvals++
-		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
-	}})
 	beforePatches := patches.Load()
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "patch_person_record", Arguments: map[string]any{"person_id": id, "etag": current.ETag, "patch": patch}})
 	requirements.NoError(err)
