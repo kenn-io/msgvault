@@ -334,7 +334,7 @@ func (s *Store) readMessagingRoutes(
  EXISTS(SELECT 1 FROM archive_metadata am WHERE am.key='` + beeperReanchorMarkerPrefix + `' || CAST(src.id AS TEXT))
  FROM conversations c JOIN sources src ON src.id=c.source_id
  LEFT JOIN source_messaging_route_failures srf ON srf.source_id=src.id
- WHERE c.id>? AND c.conversation_type NOT IN ('email_thread','email','meeting','calendar','calendar_event')
+ WHERE c.id>? AND c.conversation_type NOT IN ('email_thread','email','meeting','calendar','calendar_event','thread')
  AND EXISTS(SELECT 1 FROM conversation_participants cp JOIN person_participants pp ON pp.participant_id=cp.participant_id
   WHERE cp.conversation_id=c.id AND cp.left_at IS NULL AND pp.person_id=?)`
 	args := []any{q.AfterConversationID, page.PersonID}

@@ -16,6 +16,9 @@ import (
 
 // Snapshot is one normalized message as msgvault stores it.
 type Snapshot struct {
+	// SourceType is the type of the source the message belongs to:
+	// SourceType for a message import, or a connector's own.
+	SourceType           string
 	SourceIdentifier     string
 	SourceDisplayName    string
 	AccountEmail         string
@@ -30,7 +33,17 @@ type Snapshot struct {
 	Snippet              string
 	Metadata             []byte
 	Raw                  []byte
-	Sender               MessageImportSender
+	// RawFormat names Raw's format: RawFormat for the normalized message,
+	// or a connector's own format; see Writer.WriteFrom.
+	RawFormat string
+	// ConversationType is the type of the message's conversation:
+	// ConversationType, or a connector's own; see
+	// Writer.WithConversationType.
+	ConversationType string
+	Sender           MessageImportSender
+	// SenderIdentifierType, when set, is the shared identifier type of a
+	// sender's id; see Writer.WithSenderIdentifierType.
+	SenderIdentifierType string
 }
 
 type messageMetadata struct {
@@ -54,8 +67,8 @@ func BuildSnapshot(req NormalizedRequest) (Snapshot, error) {
 	return snapshot, nil
 }
 
-// buildMessageSnapshot builds the stored form of one message for a source of
-// type platform.
+// buildMessageSnapshot builds the stored form of one normalized message for a
+// source of type platform.
 func buildMessageSnapshot(platform, sourceIdentifier string, req NormalizedRequest) (Snapshot, error) {
 	message := req.Message
 	raw, err := json.Marshal(message, json.Deterministic(true))
@@ -76,6 +89,7 @@ func buildMessageSnapshot(platform, sourceIdentifier string, req NormalizedReque
 
 	bodyText, bodyHTML := renderBodies(req.Body, req.BodyFormat, message.URL)
 	return Snapshot{
+		SourceType:           platform,
 		SourceIdentifier:     sourceIdentifier,
 		SourceMessageID:      message.ExternalID,
 		SourceConversationID: message.Conversation.ExternalID,
@@ -88,6 +102,8 @@ func buildMessageSnapshot(platform, sourceIdentifier string, req NormalizedReque
 		Snippet:              textutil.PrefixRunes(bodyText, 200),
 		Metadata:             metadata,
 		Raw:                  raw,
+		RawFormat:            RawFormat,
+		ConversationType:     ConversationType,
 		Sender:               message.Sender,
 	}, nil
 }
@@ -117,17 +133,29 @@ func renderBodies(body string, format BodyFormat, messageURL string) (string, st
 
 // senderIdentifier is the participant identifier value of a sender without
 // an email or phone. A URL names the same sender in every source. An ID or a
-// name means something only inside its source, so it carries the source
-// identifier, escaped so that it cannot contain the ":" separator.
-func senderIdentifier(sourceIdentifier string, sender MessageImportSender) string {
+// name means something only inside its source, so it carries the source's
+// scope, see senderScope.
+func senderIdentifier(sourceType, sourceIdentifier string, sender MessageImportSender) string {
 	switch {
 	case sender.ID != "":
-		return boundedIdentifier("id", url.QueryEscape(sourceIdentifier)+":"+sender.ID)
+		return boundedIdentifier("id", senderScope(sourceType, sourceIdentifier)+":"+sender.ID)
 	case sender.URL != "":
 		return boundedIdentifier("url", identityURL(sender.URL))
 	default:
-		return boundedIdentifier("name", url.QueryEscape(sourceIdentifier)+":"+sender.Name)
+		return boundedIdentifier("name", senderScope(sourceType, sourceIdentifier)+":"+sender.Name)
 	}
+}
+
+// senderScope names the source a sender's ID or name belongs to: its
+// identifier and, for any source but a message import, its type, since
+// sources of different types may share an identifier. Each part is escaped,
+// so a scope holds no ":" separator, and only a typed scope holds a "/".
+func senderScope(sourceType, sourceIdentifier string) string {
+	scope := url.QueryEscape(sourceIdentifier)
+	if sourceType != "" && sourceType != SourceType {
+		scope = url.QueryEscape(sourceType) + "/" + scope
+	}
+	return scope
 }
 
 // maxIdentifierValueBytes keeps a participant identifier inside

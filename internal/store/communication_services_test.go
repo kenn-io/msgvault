@@ -25,6 +25,7 @@ func TestSeededServiceCatalogCoversTheRoadmapSet(t *testing.T) {
 		"x", "discord", "slack", "linkedin", "sms", "rcs", "google-messages",
 		"google-voice", "google-chat", "irc", "groupme", "imessage", "line",
 		"bluesky", "matrix", "reddit", "kakaotalk", "wechat", "inline",
+		"github", "gitlab", "gitea",
 	} {
 		service, ok := bySlug[slug]
 		assert.True(ok, "seeded service %q must exist", slug)
@@ -34,6 +35,15 @@ func TestSeededServiceCatalogCoversTheRoadmapSet(t *testing.T) {
 	assert.Equal(store.ScopePolicyRequired, bySlug["slack"].ScopePolicy)
 	assert.Equal(store.NormalizationPhoneE164, bySlug["whatsapp"].Normalization)
 	assert.Equal(store.NormalizationNone, bySlug["matrix"].Normalization)
+	for slug, label := range map[string]string{"github": "GitHub", "gitlab": "GitLab", "gitea": "Gitea"} {
+		service := bySlug[slug]
+		assert.Equal(label, service.DisplayLabel, slug)
+		assert.Equal(store.ScopePolicyRequired, service.ScopePolicy, slug)
+		assert.Equal(store.NormalizationNone, service.Normalization, slug)
+		if assert.NotNil(service.DefaultScopeKind, slug) {
+			assert.Equal("server", *service.DefaultScopeKind, slug)
+		}
+	}
 }
 
 func TestServiceAliasesResolveToOneCanonicalService(t *testing.T) {

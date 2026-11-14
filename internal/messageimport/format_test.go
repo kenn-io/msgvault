@@ -100,20 +100,31 @@ func TestSenderIdentifier(t *testing.T) {
 	assert := assert.New(t)
 
 	assert.Equal("id:feeds:author-7",
-		senderIdentifier("feeds", MessageImportSender{ID: "author-7", URL: "https://example.com", Name: "A"}),
+		senderIdentifier(SourceType, "feeds", MessageImportSender{ID: "author-7", URL: "https://example.com", Name: "A"}),
 		"an id wins and is scoped to its source")
 	assert.Equal("url:https://example.com/Blog",
-		senderIdentifier("feeds", MessageImportSender{URL: "https://EXAMPLE.com/Blog", Name: "A"}),
+		senderIdentifier(SourceType, "feeds", MessageImportSender{URL: "https://EXAMPLE.com/Blog", Name: "A"}),
 		"a url folds only its host's case")
 	assert.Equal(
-		senderIdentifier("feeds", MessageImportSender{URL: "https://example.com/Blog"}),
-		senderIdentifier("bookmarks", MessageImportSender{URL: "https://example.com/Blog"}),
-		"a url names the same sender in every source")
+		senderIdentifier(SourceType, "feeds", MessageImportSender{URL: "https://example.com/Blog"}),
+		senderIdentifier("example_forge", "bookmarks", MessageImportSender{URL: "https://example.com/Blog"}),
+		"a url names the same sender in every source, of any type")
 	assert.Equal("name:feeds:Example Project",
-		senderIdentifier("feeds", MessageImportSender{Name: "Example Project"}),
+		senderIdentifier(SourceType, "feeds", MessageImportSender{Name: "Example Project"}),
 		"a name is scoped to its source")
 	assert.NotEqual(
-		senderIdentifier("a:id:b", MessageImportSender{ID: "c"}),
-		senderIdentifier("a", MessageImportSender{ID: "b:id:c"}),
+		senderIdentifier(SourceType, "a:id:b", MessageImportSender{ID: "c"}),
+		senderIdentifier(SourceType, "a", MessageImportSender{ID: "b:id:c"}),
 		"a source identifier cannot imitate the separator")
+	assert.Equal("name:example_forge/feeds:Example Project",
+		senderIdentifier("example_forge", "feeds", MessageImportSender{Name: "Example Project"}),
+		"another type's source scopes its senders by type and identifier")
+	assert.NotEqual(
+		senderIdentifier(SourceType, "feeds", MessageImportSender{ID: "author-7"}),
+		senderIdentifier("example_forge", "feeds", MessageImportSender{ID: "author-7"}),
+		"sources of different types that share an identifier keep their senders apart")
+	assert.NotEqual(
+		senderIdentifier("example_forge", "feeds", MessageImportSender{ID: "author-7"}),
+		senderIdentifier(SourceType, "example_forge/feeds", MessageImportSender{ID: "author-7"}),
+		"a message import cannot imitate a typed scope")
 }

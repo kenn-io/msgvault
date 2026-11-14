@@ -9,6 +9,21 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
+- Archive the GitHub issues, pull requests, and discussions you take part in,
+  with every comment and review, and the releases of repositories you watch.
+  Add an account with `msgvault add-github`, then sync with `sync-github` or
+  the `[github]` schedule; `exclude_owners` keeps an organization's
+  repositories from ever being fetched. See [Code forges](usage/forges.md).
+- Archive the GitLab issues and merge requests you take part in, on gitlab.com
+  or a self-managed instance, with every comment, thread reply, diff note and
+  approval. Add an account with `msgvault add-gitlab`, then sync with
+  `sync-gitlab` or the `[gitlab]` schedule. See
+  [Code forges](usage/forges.md#gitlab).
+- Archive the issues and pull requests you take part in on a Gitea or Forgejo
+  server, such as Codeberg, with every comment, review and review comment. Add
+  an account with `msgvault add-gitea --url <server>`, then sync with
+  `sync-gitea` or the `[gitea]` schedule. See
+  [Code forges](usage/forges.md#gitea-and-forgejo).
 
 ## 0.24.0
 <small>2026-11-13</small>

@@ -53,6 +53,9 @@ attachments alongside the records you browse.
   Google Voice, Messenger, and SMS imports.
 - **Meetings** — Granola, Plaud, Pocket, Circleback, Omi, Twenty, Twilio, Notion
   AI Meeting Notes, and Muesli in the same searchable record.
+- **Code forges** — GitHub, GitLab, Gitea, and Forgejo issues, pull and merge
+  requests, reviews, and discussions you take part in, and GitHub releases you
+  watch.
 - **Social and feeds** — Facebook Page and Instagram comments, RSS, Atom, and
   JSON feeds, and messages from any other source through the import API.
 - **Calendar** — Google Calendar events, organizers, and attendees, read-only.
