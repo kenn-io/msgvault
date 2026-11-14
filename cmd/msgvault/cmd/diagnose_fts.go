@@ -63,16 +63,30 @@ with the cursor supplied for that request.`,
 
 func runFTSDiagnostic(cmd *cobra.Command, st *store.Store, opts store.FTSDiagnosticOptions, jsonOut bool) error {
 	report, runErr := st.DiagnoseFTSContext(cmd.Context(), opts)
+	return reportFTSDiagnostic(cmd, report, runErr, jsonOut)
+}
+
+// reportFTSDiagnostic prints the result and decides who explains a failure.
+// Keeping that decision here covers both findings and checks that stopped early.
+func reportFTSDiagnostic(cmd *cobra.Command, report store.FTSDiagnosticReport, runErr error, jsonOut bool) error {
+	// A command may be reused. An earlier text report must not hide a later
+	// JSON error, startup failure, or failure to write the report itself.
+	cmd.SilenceErrors = false
 	if err := writeFTSDiagnostic(cmd.OutOrStdout(), report, jsonOut); err != nil {
 		return err
 	}
+
+	// The human report already explains a normal non-success outcome or a
+	// named reason for stopping. Return the error to keep the nonzero exit
+	// status, but do not have Cobra print that explanation a second time.
+	// JSON still needs stderr, as does a startup error with no reported reason.
+	reportedOutcome := runErr == nil && report.Outcome != "ok"
+	reportedError := runErr != nil && report.Reason != ""
+	cmd.SilenceErrors = !jsonOut && (reportedOutcome || reportedError)
 	if runErr != nil {
 		return runErr
 	}
 	if report.Outcome != "ok" {
-		// The text report already explains this outcome. Keep the failure exit
-		// status without printing it again; JSON retains its stderr result.
-		cmd.SilenceErrors = !jsonOut
 		return fmt.Errorf("FTS diagnostic result: %s", report.Outcome)
 	}
 	return nil
