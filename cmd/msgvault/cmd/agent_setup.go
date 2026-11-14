@@ -58,7 +58,13 @@ func checkAgentSetup(ctx context.Context) (agentsetup.Report, error) {
 	if !agentCLIAvailable() {
 		return agentsetup.Report{}, ctx.Err()
 	}
-	return runAgentCheck(ctx)
+	opts := agentsetup.Options{SetupCommand: "msgvault agent setup", Items: agentSetupItems}
+	opts.CheckOnly = true
+	report, err := agentsetup.Run(ctx, opts)
+	if err != nil {
+		return report, fmt.Errorf("check agent setup: %w", err)
+	}
+	return report, nil
 }
 
 func agentCLIAvailable() bool {
@@ -68,16 +74,6 @@ func agentCLIAvailable() bool {
 		}
 	}
 	return false
-}
-
-func runAgentCheck(ctx context.Context) (agentsetup.Report, error) {
-	opts := agentsetup.Options{SetupCommand: "msgvault agent setup", Items: agentSetupItems}
-	opts.CheckOnly = true
-	report, err := agentsetup.Run(ctx, opts)
-	if err != nil {
-		return report, fmt.Errorf("check agent setup: %w", err)
-	}
-	return report, nil
 }
 
 func init() {

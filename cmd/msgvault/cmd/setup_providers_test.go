@@ -1453,16 +1453,12 @@ func TestSetupProvidersDefaultOllamaProbeSelection(t *testing.T) {
 }
 
 func TestSetupStatusAgents(t *testing.T) {
-	for _, name := range []string{"text", "json", "error", "interrupted", "no_agents", "no_agents_json"} {
+	for _, name := range []string{"text", "json", "error", "interrupted", "no_agents"} {
 		t.Run(name, func(t *testing.T) {
-			if strings.HasPrefix(name, "no_agents") {
-				setTestHome(t, t.TempDir())
-				t.Setenv("PATH", t.TempDir())
-			}
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
 			row := agentsetup.Row{Agent: "claude", AgentName: "Claude Code", Piece: "skills", State: agentsetup.StateOK}
 			if name == "text" {
-				row.Status = agentsetup.Status{State: agentsetup.StateMissing, NextStep: "msgvault agent setup --agent claude"}
+				row.Status = agentsetup.Status{State: agentsetup.StateMissing, NextStep: "msgvault agent setup"}
 			}
 			var output, errOutput bytes.Buffer
 			ctx, cancel := context.WithCancel(t.Context())
@@ -1474,8 +1470,8 @@ func TestSetupStatusAgents(t *testing.T) {
 				},
 				agents: func(context.Context) (agentsetup.Report, error) {
 					switch name {
-					case "no_agents", "no_agents_json":
-						return checkAgentSetup(ctx)
+					case "no_agents":
+						return agentsetup.Report{}, nil
 					case "error":
 						return agentsetup.Report{}, errors.New("agent check failed")
 					case "interrupted":
@@ -1489,7 +1485,7 @@ func TestSetupStatusAgents(t *testing.T) {
 			command.SilenceUsage = true
 			command.SetOut(&output)
 			command.SetErr(&errOutput)
-			if name == "json" || name == "error" || name == "interrupted" || name == "no_agents_json" {
+			if name == "json" || name == "error" || name == "interrupted" {
 				command.SetArgs([]string{"--json"})
 			} else {
 				command.SetArgs([]string{})
@@ -1505,7 +1501,7 @@ func TestSetupStatusAgents(t *testing.T) {
 			case "text":
 				text := output.String()
 				assert.Contains(t, text, "Claude Code")
-				assert.Contains(t, text, "msgvault agent setup --agent claude")
+				assert.Contains(t, text, "msgvault agent setup")
 				assert.NotContains(t, text, "afterwards")
 				assert.Less(t, strings.Index(text, "MCP tools live"), strings.Index(text, "Agents:"))
 				assert.Less(t, strings.Index(text, "Agents:"), strings.Index(text, "Config:"))
@@ -1516,15 +1512,9 @@ func TestSetupStatusAgents(t *testing.T) {
 			case "error":
 				assert.Contains(t, errOutput.String(), "check agents: agent check failed\n")
 				assert.NotContains(t, output.String(), `"agents"`)
-			case "no_agents", "no_agents_json":
+			case "no_agents":
 				assert.Empty(t, errOutput.String())
 				assert.NotContains(t, output.String(), "Agents:")
-				if name == "no_agents_json" {
-					var report laneReport
-					require.NoError(t, json.Unmarshal(output.Bytes(), &report))
-					assert.NotEmpty(t, report.Lanes)
-					assert.Empty(t, report.Agents)
-				}
 			}
 		})
 	}

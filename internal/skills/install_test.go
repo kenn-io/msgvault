@@ -45,6 +45,16 @@ func TestDetectAgents(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, got)
 	})
+
+	t.Run("environment directories", func(t *testing.T) {
+		claude := t.TempDir()
+		codex := t.TempDir()
+		t.Setenv("CLAUDE_CONFIG_DIR", claude)
+		t.Setenv("CODEX_HOME", codex)
+		agents, err := DetectAgents(home, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []AgentDir{{Agent: "claude", Dir: filepath.Join(claude, "skills")}, {Agent: "codex", Dir: filepath.Join(codex, "skills")}}, agents)
+	})
 }
 
 func testSkills() []Skill {
@@ -242,7 +252,4 @@ func TestAgentRoots(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, filepath.Join(dir, "skills"), root)
 	}
-	agents, err := DetectAgents(home, nil)
-	require.NoError(t, err)
-	assert.Equal(t, []AgentDir{{Agent: "claude", Dir: filepath.Join(claude, "skills")}, {Agent: "codex", Dir: filepath.Join(codex, "skills")}}, agents)
 }
