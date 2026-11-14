@@ -939,7 +939,7 @@ retries a write by itself. If a write reports
 On unreleased `main`, owner sessions can use `get_person_record`,
 `get_person_record_history`, and `get_person_record_media` to read all structured
 profile values, including sensitive values and stored media. These reads require
-daemon API schema 5.3.0 or newer and no write opt-in. The record includes its
+daemon API schema 5.3.0 or newer. The record includes its
 exact ETag. History over 1 MiB returns `operation_response_limit_exceeded`.
 
 Profiles over 1 MiB return a first chunk automatically; media returns chunks.
