@@ -520,7 +520,6 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 	if err != nil {
 		return window, err
 	}
-	window.SnapshotSequence = through
 	var previous int64
 	var scope string
 	var since nullableTimestamp
@@ -536,7 +535,7 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 	if scope != window.ScopeFingerprint {
 		previous, window.BackfillMessageID = 0, 0
 	}
-	window.ThroughSequence = through
+	window.SnapshotSequence, window.ThroughSequence = through, through
 	inProfile := func(at time.Time) bool {
 		day := at.UTC().Format(time.DateOnly)
 		return day >= profile.SourceSince && (profile.SourceUntil == "" || day <= profile.SourceUntil)

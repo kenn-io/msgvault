@@ -160,7 +160,6 @@
   h4, p, ul { margin: 0; }
   h4 { color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 500; }
   .group { display: grid; gap: var(--space-1); }
-  .group + .group { margin-top: var(--space-2); }
   .discovery { margin-top: var(--space-4); }
   .discovery code { font-size: 0.9em; background: var(--bg-inset); border-radius: var(--radius-sm); }
   ul { display: grid; gap: var(--space-1); padding: 0; list-style: none; }
