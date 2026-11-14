@@ -953,9 +953,9 @@ completed, list the person's employments before retrying.
 
 ## Organization records
 
-Use `list_organizations` to search and `get_organization` to read a profile. Set `include_superseded` to include history. Large profiles return chunks; pass the SHA-256 with each subsequent offset.
+Use `list_organizations` to search, `get_organization` to read a profile, and `list_organization_attributes` to read typed attributes. Set `include_superseded` to include history. Large profiles and attribute histories return chunks; pass the SHA-256 with each subsequent offset.
 
-Enable `--allow-organization-writes` for confirmed create, update, delete, profile replacement, and attribute writes. HTTP also requires the general write opt-in. Updates, deletes, and profile replacement require the exact ETag. Attribute writes require `expected_value_id`: use zero for an empty slot. If a mutation may have completed, read the record before retrying.
+Enable `--allow-organization-writes` for confirmed create, update, delete, profile replacement, and attribute writes. HTTP also requires the general write opt-in. Updates, deletes, and profile replacement require the exact ETag. Attribute writes require an explicit `ordinal` and `expected_value_id`: use zero for an empty slot. If a mutation may have completed, read the record before retrying.
 
 ## Write controls
 

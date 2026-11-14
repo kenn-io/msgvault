@@ -86,7 +86,11 @@ func (b *daemonMCPOperations) executeOrganizationOperation(ctx context.Context, 
 		}
 		return &mcpserver.OperationResult{Data: data, ETag: headers.Get("ETag")}, true, nil
 	case "list_organization_attributes":
-		result, err = readMCPOperationJSON[generated.OrganizationAttributesResponse](ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/attributes", &generated.ListOrganizationAttributesRequestOptions{PathParams: &generated.ListOrganizationAttributesPath{ID: input.OrganizationID}, Query: &generated.ListOrganizationAttributesQuery{DefinitionSlug: input.DefinitionSlug, IncludeSuperseded: input.IncludeSuperseded}}, http.StatusOK)
+		data, _, failure, readErr := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/attributes", &generated.ListOrganizationAttributesRequestOptions{PathParams: &generated.ListOrganizationAttributesPath{ID: input.OrganizationID}, Query: &generated.ListOrganizationAttributesQuery{DefinitionSlug: input.DefinitionSlug, IncludeSuperseded: input.IncludeSuperseded}}, mcpserver.MaxDownloadBytes, http.StatusOK)
+		if failure != nil {
+			return failure, true, readErr
+		}
+		return &mcpserver.OperationResult{Data: data}, true, nil
 	}
 
 	return result, true, err
@@ -120,7 +124,7 @@ func organizationWriteRequest(name string, args map[string]any) (organizationReq
 		r = organizationRequest{http.MethodPut, "/api/v1/organizations/{id}/profile", &generated.PutOrganizationProfileRequestOptions{PathParams: &generated.PutOrganizationProfilePath{ID: a.OrganizationID}, Header: &generated.PutOrganizationProfileHeaders{IfMatch: a.ETag}, Body: &a.Body}, a.OrganizationID}
 	case "set_organization_attribute":
 		a, err := decodeMCPOperationArguments[mcpserver.OrganizationSetAttributeArgs](args)
-		valid = err == nil && args["body"] != nil && a.Body.ExpectedValueID != nil && *a.Body.ExpectedValueID >= 0
+		valid = err == nil && args["body"] != nil && a.Body.Ordinal != nil && a.Body.ExpectedValueID != nil && *a.Body.ExpectedValueID >= 0
 		r = organizationRequest{http.MethodPost, "/api/v1/organizations/{id}/attributes", &generated.SetOrganizationAttributeRequestOptions{PathParams: &generated.SetOrganizationAttributePath{ID: a.OrganizationID}, Body: &a.Body}, a.OrganizationID}
 	default:
 		return r, false, false

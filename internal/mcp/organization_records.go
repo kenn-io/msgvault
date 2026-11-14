@@ -12,6 +12,11 @@ type OrganizationRecord struct {
 	Profile           *generated.OrganizationProfile `json:"profile,omitzero"`
 }
 
+type OrganizationAttributesResult struct {
+	PersonRecordChunk `json:",inline"`
+	Values            []generated.OrganizationAttributeValue `json:"values,omitzero"`
+}
+
 func organizationOperationalDefinitions() []operationalDefinition {
 	id := safeIDSchema("Durable organization ID")
 	offset, length := chunkInputSchemas("organization profile")
@@ -19,7 +24,7 @@ func organizationOperationalDefinitions() []operationalDefinition {
 	definitions := []operationalDefinition{
 		newOperationalDefinition("list_organizations", "Find organizations by name, including organizations without employees.", OperationFamilyRecords, closedObject(map[string]*jsonschema.Schema{"q": stringSchema("Name search"), "include_retired": booleanSchema("Include retired organizations"), "limit": boundedIntegerSchema("Maximum results", 1, 1000), "offset": boundedIntegerSchema("Results to skip", 0, 9007199254740991)}), outputSchemaFor[generated.OrganizationsResponse](), false),
 		newOperationalDefinition("get_organization", "Read an organization profile and ETag; include superseded values when requested. Large profiles return chunks; pass the SHA-256 with subsequent offsets.", OperationFamilyRecords, closedObject(map[string]*jsonschema.Schema{"organization_id": id, "include_superseded": booleanSchema("Include historical values"), "offset": offset, "length": length, "sha256": stringSchema("Whole-object SHA-256")}, "organization_id"), outputSchemaFor[OrganizationRecord](), false),
-		newOperationalDefinition("list_organization_attributes", "Read an organization's typed attributes.", OperationFamilyRecords, closedObject(map[string]*jsonschema.Schema{"organization_id": id, "definition_slug": stringSchema("Optional exact definition slug"), "include_superseded": booleanSchema("Include historical values")}, "organization_id"), organizationAttributesSchema(), false),
+		newOperationalDefinition("list_organization_attributes", "Read an organization's typed attributes. Large histories return chunks; pass the SHA-256 with subsequent offsets.", OperationFamilyRecords, closedObject(map[string]*jsonschema.Schema{"organization_id": id, "definition_slug": stringSchema("Optional exact definition slug"), "include_superseded": booleanSchema("Include historical values"), "offset": offset, "length": length, "sha256": stringSchema("Whole-object SHA-256")}, "organization_id"), organizationAttributesSchema(), false),
 	}
 	definitions[1].chunked = &chunkedOperation{
 		inline: func(s *downloadSnapshot) (any, error) {
@@ -29,6 +34,16 @@ func organizationOperationalDefinitions() []operationalDefinition {
 		},
 		chunk: func(s *downloadSnapshot, c byteChunk) any {
 			return OrganizationRecord{ETag: s.etag, PersonRecordChunk: personRecordChunk(c)}
+		},
+	}
+	definitions[2].chunked = &chunkedOperation{
+		inline: func(s *downloadSnapshot) (any, error) {
+			var attributes generated.OrganizationAttributesResponse
+			err := json.Unmarshal(s.data, &attributes)
+			return OrganizationAttributesResult{Values: attributes.Values}, err
+		},
+		chunk: func(_ *downloadSnapshot, c byteChunk) any {
+			return OrganizationAttributesResult{PersonRecordChunk: personRecordChunk(c)}
 		},
 	}
 	return definitions
@@ -82,8 +97,8 @@ func organizationWriteDefinitions() []operationalDefinition {
 		newOperationalDefinition("create_organization", "Create an organization. Requires client confirmation.", OperationFamilyOrganizations, organizationInputSchema[OrganizationCreateArgs]("body"), outputSchemaFor[OrganizationMutation](), true),
 		destructive(newOperationalDefinition("update_organization", "Replace mutable organization fields using the exact ETag. Omitted fields are cleared except retired. Requires client confirmation.", OperationFamilyOrganizations, organizationInputSchema[OrganizationUpdateArgs]("organization_id", "etag", "body"), outputSchemaFor[OrganizationMutation](), true)),
 		destructive(newOperationalDefinition("delete_organization", "Delete an organization using its exact ETag. Native deletion refuses organizations with employment records. Requires client confirmation.", OperationFamilyOrganizations, organizationInputSchema[OrganizationDeleteArgs]("organization_id", "etag"), outputSchemaFor[OrganizationDeleted](), true)),
-		destructive(newOperationalDefinition("replace_organization_profile", "Replace all profile collections using the exact ETag; omitted collections are cleared. Inline data is bounded and URIs are never fetched. Requires client confirmation.", OperationFamilyOrganizations, organizationInputSchema[OrganizationProfileArgs]("organization_id", "etag", "body"), outputSchemaFor[OrganizationRecord](), true)),
-		destructive(newOperationalDefinition("set_organization_attribute", "Set an organization attribute with native ordinal, expected value and dry-run controls. Requires client confirmation.", OperationFamilyOrganizations, organizationSetAttributeSchema(), organizationAttributeWriteSchema(), true)),
+		destructive(newOperationalDefinition("replace_organization_profile", "Replace all profile collections using the exact ETag; omitted collections are cleared. Oversized saves return an ETag; use get_organization to read chunks. URIs are never fetched. Requires client confirmation.", OperationFamilyOrganizations, organizationInputSchema[OrganizationProfileArgs]("organization_id", "etag", "body"), outputSchemaFor[OrganizationRecord](), true)),
+		destructive(newOperationalDefinition("set_organization_attribute", "Set an organization attribute with an explicit ordinal, expected value and dry-run controls. Requires client confirmation.", OperationFamilyOrganizations, organizationSetAttributeSchema(), organizationAttributeWriteSchema(), true)),
 	}
 }
 
@@ -93,7 +108,7 @@ func organizationAttributeValueSchema(s *jsonschema.Schema) {
 }
 
 func organizationAttributesSchema() *jsonschema.Schema {
-	s := outputSchemaFor[generated.OrganizationAttributesResponse]()
+	s := outputSchemaFor[OrganizationAttributesResult]()
 	organizationAttributeValueSchema(s.Properties["values"].Items)
 	return s
 }
@@ -106,6 +121,6 @@ func organizationAttributeWriteSchema() *jsonschema.Schema {
 func organizationSetAttributeSchema() *jsonschema.Schema {
 	s := organizationInputSchema[OrganizationSetAttributeArgs]("organization_id", "body")
 	organizationAttributeValueSchema(s.Properties["body"])
-	s.Properties["body"].Required = append(s.Properties["body"].Required, "expected_value_id")
+	s.Properties["body"].Required = append(s.Properties["body"].Required, "expected_value_id", "ordinal")
 	return s
 }

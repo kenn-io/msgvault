@@ -236,7 +236,7 @@ func TestMCPArchiveCatalogBudgets(t *testing.T) {
 		budget      int
 		writeBudget int
 	}{
-		{"mail only", []string{"mbox"}, 228_000, 269_000},
+		{"mail only", []string{"mbox"}, 229_000, 269_000},
 		{"every source", []string{"gcal", "granola", "circleback", "pocket", "muesli", "notion_meetings", "meeting_import", "omi", "plaud", "twilio", "twenty", "chatwoot", "gmail", "imap", "beeper", "slack", "slackdump", "teams", "discord", "whatsapp", "telegram", "matrix", "apple_messages", "synctech_sms", "imazing_csv", "facebook_messenger", "google_voice", "inline", "mbox"}, 281_000, 376_000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
