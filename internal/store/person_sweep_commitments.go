@@ -23,9 +23,6 @@ func (f commitmentPrepareError) Error() string { return "commitment lane failed:
 const (
 	// The archive changed between the provider window and the fenced apply.
 	errCommitmentWindowChanged = commitmentPrepareError(peoplesweep.FailureArchiveGap)
-	// The provider output cannot be stored or read back faithfully: an ambiguous
-	// invalid commitment output.
-	errCommitmentInvalidOutput = commitmentPrepareError(peoplesweep.FailureInvalidOutput)
 )
 
 type preparedCommitmentSweep struct {

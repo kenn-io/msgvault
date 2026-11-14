@@ -506,9 +506,11 @@ func TestCommitmentResweepPreservesDecisions(t *testing.T) {
 			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 			r.NoError(err)
 			r.Len(window.Sources, 1)
-			next := []peoplesweep.CommitmentPromise{combined}
+			var next []peoplesweep.CommitmentPromise
 			if split {
 				next = append(parts, peoplesweep.CommitmentPromise{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: third, Summary: "Call", Start: int64(len(combinedText) + 1), End: int64(len(text))})
+			} else {
+				next = []peoplesweep.CommitmentPromise{combined}
 			}
 			_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: next}))
 			r.NoError(err)

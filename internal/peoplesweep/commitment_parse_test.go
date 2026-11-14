@@ -88,7 +88,7 @@ func TestCommitmentSourceBytesAndLimit(t *testing.T) {
 	cfg.ApplyDefaults()
 	cfg.Commitments.Enabled = true
 	cfg.Commitments.MaxBytes = 120 << 10
-	a.NoError(cfg.Commitments.Validate(cfg.Budgets))
+	r.NoError(cfg.Commitments.Validate(cfg.Budgets))
 	cfg.Commitments.MaxBytes++
-	a.Error(cfg.Commitments.Validate(cfg.Budgets))
+	r.Error(cfg.Commitments.Validate(cfg.Budgets))
 }

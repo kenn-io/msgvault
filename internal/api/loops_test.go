@@ -527,6 +527,7 @@ func TestCommitmentDecisionReturnsConflict(t *testing.T) {
 
 type pagingCommitmentStore struct {
 	*store.Store
+
 	offset int
 }
 

@@ -73,7 +73,9 @@ func newLoopsListCommand() *cobra.Command {
 				return err
 			}
 			if !daemonclient.APISchemaVersionAtLeast(version, "5.5.0") {
-				fmt.Fprintf(cmd.ErrOrStderr(), "This daemon (API %s) does not report promises; upgrade and restart it to see them.\n", version)
+				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "This daemon (API %s) does not report promises; upgrade and restart it to see them.\n", version); err != nil {
+					return fmt.Errorf("write daemon warning: %w", err)
+				}
 			}
 			if jsonOutput {
 				return writeJSONOutput(cmd, result)
