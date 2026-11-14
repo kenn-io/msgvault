@@ -60,7 +60,11 @@ func TestAttributeToolContract(t *testing.T) {
 		require.NotNil(t, tool, tc.tool)
 		require.NotNil(t, tool["outputSchema"])
 		if tc.nested != "" {
-			tool = map[string]any{"inputSchema": tool["inputSchema"].(map[string]any)["properties"].(map[string]any)[tc.nested]}
+			schema, ok := tool["inputSchema"].(map[string]any)
+			require.True(t, ok)
+			properties, ok := schema["properties"].(map[string]any)
+			require.True(t, ok)
+			tool = map[string]any{"inputSchema": properties[tc.nested]}
 		}
 		properties := toolPropertyNames(t, tool)
 		assert.Equal(t, tc.expected, properties)
@@ -72,11 +76,22 @@ func TestAttributeToolContract(t *testing.T) {
 		}
 		assert.ElementsMatch(t, native, properties)
 	}
-	patch := tools["patch_attribute_definition"]["inputSchema"].(map[string]any)["properties"].(map[string]any)["changes"].(map[string]any)["properties"].(map[string]any)["description"].(map[string]any)
+	patchSchema, ok := tools["patch_attribute_definition"]["inputSchema"].(map[string]any)
+	require.True(t, ok)
+	patchProperties, ok := patchSchema["properties"].(map[string]any)
+	require.True(t, ok)
+	changes, ok := patchProperties["changes"].(map[string]any)
+	require.True(t, ok)
+	changeProperties, ok := changes["properties"].(map[string]any)
+	require.True(t, ok)
+	patch, ok := changeProperties["description"].(map[string]any)
+	require.True(t, ok)
 	assert.ElementsMatch(t, []any{map[string]any{"type": "string"}, map[string]any{"type": "null"}}, patch["anyOf"])
 	for _, name := range []string{"clear_person_attribute", "patch_attribute_definition", "delete_attribute_definition"} {
 		require.NotNil(t, tools[name], name)
-		assert.Equal(t, true, tools[name]["annotations"].(map[string]any)["destructiveHint"], name)
+		annotations, ok := tools[name]["annotations"].(map[string]any)
+		require.True(t, ok, name)
+		assert.Equal(t, true, annotations["destructiveHint"], name)
 	}
 }
 
