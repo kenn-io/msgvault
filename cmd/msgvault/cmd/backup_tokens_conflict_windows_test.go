@@ -10,8 +10,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/kit/backup"
-	"go.kenn.io/msgvault/internal/backupapp"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"golang.org/x/sys/windows"
@@ -59,10 +57,7 @@ func TestBackupRestorePermissionConflictAfterPublication(t *testing.T) {
 	require.NoError(readErr)
 	other := filepath.Join(tokens, "other-snapshot.json")
 	require.NoError(os.WriteFile(filepath.Join(cfg.TokensDir(), "other-snapshot.json"), []byte("other"), 0o600))
-	extras, readErr := backupExtrasSpec(cfg)
-	require.NoError(readErr)
-	_, readErr = backup.Create(t.Context(), repo, backupapp.New("test"), backup.CreateOptions{DBPath: dbPath, ContentDir: attachments, DataDir: cfg.Data.DataDir, Extras: extras, IncludeTokens: true, AllowPlaintextSecrets: true})
-	require.NoError(readErr)
+	captureBackupTokenSnapshot(t, repo, cfg, dbPath, attachments)
 	require.NoError(os.WriteFile(other, []byte("other"), 0o600))
 	otherAccess, readErr := windows.ACLFromEntries(entries[:1], nil)
 	require.NoError(readErr)

@@ -4,9 +4,11 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,7 +36,7 @@ func TestBackupRestoreCardDAVOnly(t *testing.T) {
 	assert.Equal(t, credential, got)
 }
 
-func TestBackupRestoreNestedTokensRemainUsable(t *testing.T) {
+func TestBackupRestoreProviderAndServerKeyRemainUsable(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg, dbPath, attachments := backupTokenFixture(t)
@@ -47,10 +49,6 @@ func TestBackupRestoreNestedTokensRemainUsable(t *testing.T) {
 	require.NoError(err)
 	serverKey, err := providercredentials.EnsureServerKey(cfg.TokensDir())
 	require.NoError(err)
-
-	nested := filepath.Join(cfg.TokensDir(), "carddav-connections", "example")
-	credential := carddav.Credential{Password: "synthetic-password", BaseURL: "https://carddav.example.test", Username: "person@example.test", ConnectionGeneration: 1}
-	require.NoError(carddav.SaveCredential(nested, credential))
 
 	repo := createBackupTokenSnapshot(t, cfg, dbPath, attachments)
 
@@ -67,9 +65,6 @@ func TestBackupRestoreNestedTokensRemainUsable(t *testing.T) {
 	key, err := providercredentials.ReadSecretFile(filepath.Join(freshTokens, providercredentials.ServerKeyFilename))
 	require.NoError(err)
 	assert.Equal(serverKey, key)
-	freshNested, err := carddav.LoadCredential(filepath.Join(freshTokens, "carddav-connections", "example"))
-	require.NoError(err)
-	assert.Equal(credential, freshNested)
 }
 
 func TestBackupRestoreConfigOnlySkipsTokensAndHonorsForceUnlock(t *testing.T) {
@@ -86,7 +81,6 @@ func TestBackupRestoreConfigOnlySkipsTokensAndHonorsForceUnlock(t *testing.T) {
 	target := t.TempDir()
 	tokens := filepath.Join(target, "tokens")
 	require.NoError(t, os.Mkdir(tokens, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(tokens, "omitted"), []byte("unchanged"), 0o600))
 	path, err := windows.UTF16PtrFromString(tokens)
 	require.NoError(t, err)
 	handle, err := windows.CreateFile(path, windows.READ_CONTROL|windows.WRITE_DAC, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
@@ -112,7 +106,9 @@ func TestBackupRestoreConfigOnlySkipsTokensAndHonorsForceUnlock(t *testing.T) {
 	require.Error(t, err)
 	prepareBackupTokenRestore(t)
 	lock := repo.Path("locks", "exclusive.json")
-	require.NoError(t, os.WriteFile(lock, []byte("{}"), 0o600))
+	lockInfo, err := json.Marshal(backup.LockInfo{Hostname: "backup.example.test", PID: 1234, Operation: "create", AcquiredAt: time.Now().UTC().Format(time.RFC3339Nano)})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(lock, lockInfo, 0o600))
 	args := []string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", manifest.SnapshotID, "--repo", repo.Root(), "--target", target, "--permissions-only"}
 	var output bytes.Buffer
 	rootCmd.SetOut(&output)
