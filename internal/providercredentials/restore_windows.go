@@ -94,7 +94,7 @@ func restorePreflight(dir string, selected, ancestors map[string]struct{}, rootA
 		}
 		protected := control&windows.SE_DACL_PROTECTED != 0
 		if entry.IsDir() {
-			if selectedAncestor && parentAffected && !protected {
+			if selectedAncestor && verifyOwnerOnlyHandle(h, false) != nil {
 				if err := verifyHandleOwner(h); err != nil {
 					return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
 				}

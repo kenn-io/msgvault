@@ -538,6 +538,7 @@ func TestSecureRestoredPreservesProtectedMixedTree(t *testing.T) {
 	}, true)
 	changedAncestor := filepath.Join(nested, "changed")
 	requirements.NoError(os.Mkdir(changedAncestor, 0700))
+	setProviderCredentialTestACL(t, changedAncestor, []windows.EXPLICIT_ACCESS{access}, true)
 	selectedBelow := filepath.Join(changedAncestor, "selected")
 	omittedBelow := filepath.Join(changedAncestor, "omitted")
 	requirements.NoError(os.WriteFile(selectedBelow, []byte("selected"), 0600))
@@ -579,4 +580,32 @@ func TestSecureRestoredSkipsUnreadableProtectedDirectory(t *testing.T) {
 	after, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	require.NoError(t, err)
 	assert.Equal(t, before.String(), after.String())
+}
+
+func TestSecureRestoredRepairsProtectedSelectedDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tokens")
+	require.NoError(t, (nativePermissions{}).secureDirectory(dir))
+	parent := filepath.Join(dir, "carddav-connections", "work")
+	require.NoError(t, os.MkdirAll(parent, 0o700))
+	user := currentWindowsProviderCredentialSID(t)
+	owner := providerCredentialTestAccess(user, windows.GENERIC_ALL, windows.TRUSTEE_IS_USER)
+	owner.Inheritance = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
+	everyone := providerCredentialTestAccess(windowsProviderCredentialSID(t, "S-1-1-0"), windows.GENERIC_ALL, windows.TRUSTEE_IS_WELL_KNOWN_GROUP)
+	everyone.Inheritance = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
+	handle := setProviderCredentialTestACL(t, parent, []windows.EXPLICIT_ACCESS{owner, everyone}, true)
+	selected := filepath.Join(parent, "carddav.json")
+	omitted := filepath.Join(parent, "omitted")
+	require.NoError(t, os.WriteFile(selected, []byte("selected"), 0o600))
+	require.NoError(t, secureFileACL(selected))
+	require.NoError(t, os.WriteFile(omitted, []byte("omitted"), 0o600))
+	before, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	require.NoError(t, err)
+	path := filepath.Join("carddav-connections", "work", "carddav.json")
+	require.ErrorIs(t, SecureRestored(dir, []string{path}), ErrRestorePermissionsConflict)
+	after, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	require.NoError(t, err)
+	assert.Equal(t, before.String(), after.String())
+	require.NoError(t, os.Remove(omitted))
+	require.NoError(t, SecureRestored(dir, []string{path}))
+	require.NoError(t, verifyOwnerOnlyHandle(handle, false))
 }
