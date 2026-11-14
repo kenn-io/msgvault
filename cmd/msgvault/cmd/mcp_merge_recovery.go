@@ -93,7 +93,7 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 		if e != nil || a.RowOffset < 0 {
 			return invalid()
 		}
-		result, err = readMCPOperationJSONWithin[generated.PersonMergeDetail](ctx, b.client, http.MethodGet, "/api/v1/person-merges/{merge_id}", &generated.GetPersonMergeRequestOptions{PathParams: &generated.GetPersonMergePath{MergeID: a.MergeID}}, mcpserver.MaxDownloadBytes, nil, http.StatusOK)
+		result, err = readMCPOperationJSONWithin[generated.PersonMergeDetail](ctx, b.client, http.MethodGet, "/api/v1/person-merges/{merge_id}", &generated.GetPersonMergeRequestOptions{PathParams: &generated.GetPersonMergePath{MergeID: a.MergeID}}, mcpserver.MaxDownloadBytes, http.StatusOK)
 		if detail, ok := result.Output.(generated.PersonMergeDetail); ok {
 			output := mcpserver.MergeDetail{RowCount: len(detail.Rows)}
 			detail.Rows, output.NextRowOffset = rowPage(detail.Rows, a.RowOffset)
@@ -117,7 +117,7 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 		if e != nil || a.RowOffset < 0 {
 			return invalid()
 		}
-		data, headers, failure, readErr := readMCPOperationBytes(ctx, b.client, http.MethodPost, "/api/v1/people/{id}/split", &generated.SplitPersonMergeRequestOptions{PathParams: &generated.SplitPersonMergePath{ID: a.PersonID}, Header: &generated.SplitPersonMergeHeaders{IfMatch: a.ETag, IdempotencyKey: a.Key}, Body: &generated.SplitPersonMergeBody{MergeID: a.MergeID, ParticipantIds: a.ParticipantIDs}}, mcpserver.MaxDownloadBytes, nil, http.StatusOK)
+		data, headers, failure, readErr := readMCPOperationBytes(ctx, b.client, http.MethodPost, "/api/v1/people/{id}/split", &generated.SplitPersonMergeRequestOptions{PathParams: &generated.SplitPersonMergePath{ID: a.PersonID}, Header: &generated.SplitPersonMergeHeaders{IfMatch: a.ETag, IdempotencyKey: a.Key}, Body: &generated.SplitPersonMergeBody{MergeID: a.MergeID, ParticipantIds: a.ParticipantIDs}}, mcpserver.MaxDownloadBytes, http.StatusOK)
 		if failure != nil {
 			return failure, true, readErr
 		}
@@ -187,16 +187,20 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 			wanted = "accepted"
 			shown.Effect = "Replace the current value with the absorbed value; exact split becomes unavailable."
 		}
-		if candidate.State == wanted {
+		replay := candidate.State == wanted
+		if replay {
 			shown.Effect = "This decision has already been recorded; the daemon will replay it."
-		} else {
+		} else if candidate.State != "pending" {
+			return "", true, &mcpserver.OperationRefusalError{Code: "person_merge_candidate_state_changed"}
+		}
+		if !replay || len(merge.Splits) == 0 {
 			definition, err := readMCPOperationJSON[generated.AttributeDefinition](ctx, b.client, http.MethodGet, "/api/v1/attribute-definitions/{id}", &generated.GetAttributeDefinitionRequestOptions{PathParams: &generated.GetAttributeDefinitionPath{ID: candidate.DefinitionID}}, http.StatusOK)
 			attribute, ok := definition.Output.(generated.AttributeDefinition)
 			if !ok {
 				return "", true, mergeContextRefusal(definition, err)
 			}
 			options := &generated.ListPersonAttributesRequestOptions{PathParams: &generated.ListPersonAttributesPath{ID: decision.PersonID}, Query: &generated.ListPersonAttributesQuery{History: new(true), Slug: &attribute.Slug}}
-			attributes, err := readMCPOperationJSONWithin[generated.PersonAttributesResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/attributes", options, mcpserver.MaxDownloadBytes, nil, http.StatusOK)
+			attributes, err := readMCPOperationJSONWithin[generated.PersonAttributesResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/attributes", options, mcpserver.MaxDownloadBytes, http.StatusOK)
 			response, ok := attributes.Output.(generated.PersonAttributesResponse)
 			if !ok {
 				return "", true, mergeContextRefusal(attributes, err)
@@ -208,6 +212,9 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 				shown.Attribute = group.Definition.Label
 				if len(group.Current) > 0 {
 					shown.CurrentValue = &group.Current[0].Value
+				}
+				if !replay && decision.Decision == "accept" && (len(group.Current) == 0 || group.Current[0].ID != candidate.SurvivorValueID) {
+					return "", true, &mcpserver.OperationRefusalError{Code: "person_merge_candidate_state_changed"}
 				}
 				for _, v := range append(group.Current, group.History...) {
 					if v.ID == candidate.SurvivorValueID {

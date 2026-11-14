@@ -177,15 +177,11 @@ func operationFailure(code string, uncertain bool) *mcpserver.OperationResult {
 // cancellation without the daemon client's busy retry loop. Mutations with an
 // unclassified/interrupted response retain uncertain completion explicitly.
 func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, success ...int) (*mcpserver.OperationResult, error) {
-	return readMCPOperationJSONWithClassifier[T](ctx, client, method, path, options, nil, success...)
+	return readMCPOperationJSONWithin[T](ctx, client, method, path, options, 1<<20, success...)
 }
 
-func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, success ...int) (*mcpserver.OperationResult, error) {
-	return readMCPOperationJSONWithin[T](ctx, client, method, path, options, 1<<20, classify, success...)
-}
-
-func readMCPOperationJSONWithin[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, limit int64, classify func(string) bool, success ...int) (*mcpserver.OperationResult, error) {
-	data, headers, failure, err := readMCPOperationBytes(ctx, client, method, path, options, limit, classify, success...)
+func readMCPOperationJSONWithin[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, limit int64, success ...int) (*mcpserver.OperationResult, error) {
+	data, headers, failure, err := readMCPOperationBytes(ctx, client, method, path, options, limit, success...)
 	if failure != nil {
 		return failure, err
 	}
@@ -196,7 +192,7 @@ func readMCPOperationJSONWithin[T any](ctx context.Context, client *daemonclient
 	return &mcpserver.OperationResult{Output: output, ETag: headers.Get("ETag")}, nil
 }
 
-func readMCPOperationBytes(ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, limit int64, classify func(string) bool, success ...int) ([]byte, http.Header, *mcpserver.OperationResult, error) {
+func readMCPOperationBytes(ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, limit int64, success ...int) ([]byte, http.Header, *mcpserver.OperationResult, error) {
 	writes := method != http.MethodGet
 	response, err := client.DoGeneratedRequestWithContext(ctx, method, path, options)
 	if err != nil {
@@ -219,10 +215,9 @@ func readMCPOperationBytes(ctx context.Context, client *daemonclient.Client, met
 		}
 		_ = json.Unmarshal(data, &failure)
 		code := failure.Error
-		if classify != nil && classify(code) {
-			return nil, nil, operationFailure(code, false), nil
-		}
 		switch code {
+		case "loop_not_found", "loop_decision_not_found", "loop_scan_incomplete", "loops_unavailable", "invalid_request", "invalid_status":
+			return nil, nil, operationFailure(code, false), nil
 		case "person_merge_not_found", "person_merge_snapshot_corrupt", "invalid_merge_id", "invalid_candidate_id", "invalid_limit", "invalid_offset", "person_merge_revision_conflict", "person_split_idempotency_conflict", "person_merge_already_split", "person_split_reviewed_candidates", "person_split_merge_not_owned", "person_merge_candidate_not_found", "person_merge_candidate_state_changed", "person_split_invalid_participants", "person_merge_invalid", "invalid_if_match", "idempotency_key_required", "invalid_idempotency_key", "server_busy", "profile_values_unavailable", "profile_media_not_found", "profile_media_content_unavailable", "profile_value_not_found", "invalid_profile_value", "profile_patch_too_large", "person_category_duplicate", "service_alias_conflict", "unauthorized", "not_found", "scheduler_unavailable", "source_not_schedulable", "store_unavailable", "missing_account", "sync_error", "operation_in_progress", "settings_conflict", "settings_edit_rejected", "if_match_required", "person_revision_conflict", "person_profile_not_found", "person_enrichment_dispatch_in_progress", "persons_unavailable", "cache_build_not_found", "cache_build_unavailable", "bad_request", "invalid_participant_id", "participant_not_found", "analytical_cache_unavailable", "query_resource_exhausted", "engine_unavailable":
 			return nil, nil, operationFailure(code, false), nil
 		case "validation_failed":

@@ -257,7 +257,7 @@ func TestMCPLoopDeadlineCrossesApproval(t *testing.T) {
 	}
 }
 
-func TestMCPLoopResponseClassifierIsScoped(t *testing.T) {
+func TestMCPLoopResponseClassifier(t *testing.T) {
 	for _, code := range []string{"loop_not_found", "loop_decision_not_found", "loop_scan_incomplete", "loops_unavailable", "invalid_request"} {
 		t.Run(code, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -273,7 +273,7 @@ func TestMCPLoopResponseClassifierIsScoped(t *testing.T) {
 			assertLoopRefusal(t, result, code, false)
 			result, err = readMCPOperationJSON[generated.Person](t.Context(), client, http.MethodPost, "/api/v1/people", nil, http.StatusOK)
 			require.NoError(t, err)
-			assertLoopRefusal(t, result, "operation_refused", true)
+			assertLoopRefusal(t, result, code, false)
 		})
 	}
 }

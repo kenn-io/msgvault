@@ -84,16 +84,18 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	reject, err := backend.OperationDisclosure(ctx, "decide_person_merge_candidate", args)
 	require.NoError(err)
 	assert.Contains(reject, "Keep the current value")
-	accept, err := backend.OperationDisclosure(ctx, "decide_person_merge_candidate", map[string]any{"person_id": survivor.ID, "candidate_id": merged.ReviewCandidates[0].ID, "merge_id": merged.Merge.ID, "decision": "accept", "etag": args["etag"]})
-	require.NoError(err)
-	assert.Contains(accept, "Primary channel")
-	assert.Contains(accept, "exact split becomes unavailable")
+	assert.Contains(reject, "Primary channel")
+	acceptArgs := map[string]any{"person_id": survivor.ID, "candidate_id": merged.ReviewCandidates[0].ID, "merge_id": merged.Merge.ID, "decision": "accept", "etag": args["etag"]}
+	_, err = backend.OperationDisclosure(ctx, "decide_person_merge_candidate", acceptArgs)
+	if assert.ErrorAs(err, &refusal) {
+		assert.Equal("person_merge_candidate_state_changed", refusal.Code)
+	}
 	var values struct {
 		CurrentValue  generated.AttributeValue `json:"current_value"`
 		SurvivorValue generated.AttributeValue `json:"survivor_value"`
 		AbsorbedValue generated.AttributeValue `json:"absorbed_value"`
 	}
-	require.NoError(json.Unmarshal([]byte(accept), &values))
+	require.NoError(json.Unmarshal([]byte(reject), &values))
 	assert.Equal(new("phone"), values.CurrentValue.Text)
 	assert.Equal(new("email"), values.SurvivorValue.Text)
 	assert.Equal(new("chat"), values.AbsorbedValue.Text)
@@ -115,9 +117,16 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "decide_person_merge_candidate", Arguments: args})
 	require.NoError(err)
 	assert.Contains(disclosure, "daemon will replay it")
+	assert.Contains(disclosure, "Primary channel")
+	assert.Contains(disclosure, "email")
+	assert.Contains(disclosure, "chat")
 	receipt := loopToolOutput[mcpserver.MergeCandidateReceipt](t, sdkResult)
 	assert.Equal("rejected", receipt.Candidate.State)
 	assert.NotEmpty(receipt.ETag)
+	_, err = backend.OperationDisclosure(ctx, "decide_person_merge_candidate", acceptArgs)
+	if assert.ErrorAs(err, &refusal) {
+		assert.Equal("person_merge_candidate_state_changed", refusal.Code)
+	}
 	splitArgs := map[string]any{"person_id": survivor.ID, "merge_id": merged.Merge.ID, "participant_ids": []int64{b}, "etag": editETag(survivor.ID), "idempotency_key": "synthetic-split"}
 	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "split_person_merge", Arguments: splitArgs})
 	require.NoError(err)

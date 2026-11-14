@@ -176,15 +176,6 @@ func (b *daemonMCPOperations) loopOperationDisclosure(name string, args map[stri
 	return string(data), true, err
 }
 
-func loopRefusal(code string) bool {
-	switch code {
-	case "loop_not_found", "loop_decision_not_found", "loop_scan_incomplete", "loops_unavailable", "invalid_request":
-		return true
-	default:
-		return false
-	}
-}
-
 func readMCPLoopJSON[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions) (*mcpserver.OperationResult, error) {
-	return readMCPOperationJSONWithClassifier[T](ctx, client, method, path, options, loopRefusal, http.StatusOK)
+	return readMCPOperationJSON[T](ctx, client, method, path, options, http.StatusOK)
 }
