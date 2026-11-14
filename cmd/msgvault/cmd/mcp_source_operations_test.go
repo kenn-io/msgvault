@@ -330,7 +330,7 @@ func (w missingETagResponseWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
-func TestMCPCommittedWriteWithMissingETagRemainsUncertain(t *testing.T) {
+func TestMCPPersonCommittedRenameWithMissingETagRemainsUncertain(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -365,14 +365,15 @@ func TestMCPCommittedWriteWithMissingETagRemainsUncertain(t *testing.T) {
 	current, err := st.GetPerson(person.ID)
 	requirements.NoError(err)
 	assertions.Equal(new("Committed Example"), current.DisplayName)
-	t.Run("slack projection", func(t *testing.T) {
-		requirements, assertions := require.New(t), assert.New(t)
-		result := slackPolicyProjection(&mcpserver.OperationResult{Output: generated.SettingsResponse{}}, true)
-		requirements.True(result.IsError)
-		data, err := json.Marshal(result.Output)
-		requirements.NoError(err)
-		assertions.JSONEq(`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
-	})
+}
+
+func TestMCPSlackWriteProjectionWithMissingETagRemainsUncertain(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	result := slackPolicyProjection(&mcpserver.OperationResult{Output: generated.SettingsResponse{}}, true)
+	requirements.True(result.IsError)
+	data, err := json.Marshal(result.Output)
+	requirements.NoError(err)
+	assertions.JSONEq(`{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, string(data))
 }
 
 func TestMCPCacheBuildStatusKeepsUnknownJobRefusal(t *testing.T) {
