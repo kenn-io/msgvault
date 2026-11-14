@@ -1,14 +1,31 @@
 package mcp
 
 import (
+	"context"
 	"os"
 	"slices"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
+
+type attributeValidationSpy struct {
+	disclosures atomic.Int32
+	operations  atomic.Int32
+}
+
+func (s *attributeValidationSpy) OperationDisclosure(context.Context, string, map[string]any) (string, error) {
+	s.disclosures.Add(1)
+	return "", nil
+}
+
+func (s *attributeValidationSpy) ExecuteOperation(context.Context, string, map[string]any) (*OperationResult, error) {
+	s.operations.Add(1)
+	return &OperationResult{}, nil
+}
 
 func TestAttributeToolContract(t *testing.T) {
 	reads := []string{"list_person_attributes", "list_attribute_definitions", "get_attribute_definition"}
@@ -63,7 +80,8 @@ func TestAttributeToolContract(t *testing.T) {
 }
 
 func TestAttributeToolRejectsArgumentsOutsideSchema(t *testing.T) {
-	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"create_attribute_definition", "list_person_attributes"}, OperationWriteFamilies: []OperationFamily{OperationFamilyAttributes}}
+	spy := &attributeValidationSpy{}
+	opts := ServeOptions{Operations: spy, OperationCapabilities: []string{"create_attribute_definition", "list_person_attributes"}, OperationWriteFamilies: []OperationFamily{OperationFamilyAttributes}}
 	for _, tc := range []struct {
 		name string
 		args map[string]any
@@ -75,4 +93,6 @@ func TestAttributeToolRejectsArgumentsOutsideSchema(t *testing.T) {
 		result := rawCallTool(t, opts, tc.name, tc.args)
 		assert.Equal(t, true, result["isError"], tc.name)
 	}
+	assert.Zero(t, spy.disclosures.Load())
+	assert.Zero(t, spy.operations.Load())
 }
