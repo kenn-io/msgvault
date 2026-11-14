@@ -237,7 +237,7 @@ func eligibleMessage(r *reader, m *chatItem) (conversation, author peer, date de
 		return conversation, author, "", "self_identity"
 	}
 	fromMe := m.AuthorID == r.self
-	if (m.Incoming == nil) == (m.Outgoing == nil) || m.Directionless != nil {
+	if (m.Incoming == nil) == (m.Outgoing == nil) {
 		return conversation, author, "", "unknown_direction"
 	}
 	if (m.Outgoing != nil) != fromMe || (conversation.kind == "direct_chat" && !fromMe && m.AuthorID != ref) {

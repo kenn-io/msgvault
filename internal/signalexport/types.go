@@ -67,7 +67,6 @@ type chatItem struct {
 	DateSent        string           `json:"dateSent"`
 	Incoming        *receiveInfo     `json:"incoming"`
 	Outgoing        *receiveInfo     `json:"outgoing"`
-	Directionless   *struct{}        `json:"directionless"`
 	SMS             bool             `json:"sms"`
 	ExpireStartDate *decimal         `json:"expireStartDate"`
 	ExpiresInMs     *decimal         `json:"expiresInMs"`

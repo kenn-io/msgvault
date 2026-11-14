@@ -128,7 +128,7 @@ func TestImportDirectionsGroupsAndOmissions(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	root := fixture(t, incoming,
+	root := fixture(t, strings.Replace(incoming, `"incoming":{}`, `"incoming":{},"sms":true,"expireStartDate":"1700000000000","expiresInMs":"60000"`, 1),
 		`{"recipient":{"id":"3","group":{"masterKey":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=","snapshot":{"title":{"title":"Example group"}}}}}`,
 		`{"chat":{"id":"8","recipientId":"3"}}`,
 		`{"chat":{"id":"9","recipientId":"1"}}`,
@@ -164,6 +164,14 @@ func TestImportDirectionsGroupsAndOmissions(t *testing.T) {
 	assert.EqualValues(1, summary.Omitted["reactions"])
 	assert.EqualValues(1, summary.Omitted["link_preview"])
 	assert.EqualValues(1, summary.Omitted["attachment_flag"])
+	for _, kind := range []string{"sms", "expire_start_date", "expires_in_ms"} {
+		assert.EqualValues(1, summary.Omitted[kind], kind)
+	}
+	replay, err := Import(t.Context(), st, options(t, root))
+	require.NoError(err)
+	for _, kind := range []string{"sms", "expire_start_date", "expires_in_ms"} {
+		assert.EqualValues(1, replay.Omitted[kind], kind)
+	}
 	assert.EqualValues(1, summary.UnknownFrames)
 	assert.EqualValues(1, summary.EmptyFrames)
 	var fromMe, owners int
@@ -189,8 +197,7 @@ func mediaMessage(data []byte, long bool) string {
 	return fmt.Sprintf(`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":%s}}`, standard)
 }
 func mediaPath(root string, data []byte) string {
-	hash := sha256.Sum256(data)
-	name := hex.EncodeToString(hash[:])
+	name := hashHex(data)
 	return filepath.Join(root, "files", name[:2], name+".txt")
 }
 func putMedia(t *testing.T, root string, data []byte) string {
@@ -201,11 +208,8 @@ func putMedia(t *testing.T, root string, data []byte) string {
 	return path
 }
 func hashHex(data []byte) string {
-	return hex.EncodeToString(sha256Sum(data))
-}
-func sha256Sum(data []byte) []byte {
 	hash := sha256.Sum256(data)
-	return hash[:]
+	return hex.EncodeToString(hash[:])
 }
 
 // onlyMessage returns the single archived message and its first raw record.
@@ -361,28 +365,17 @@ func TestReaderValidation(t *testing.T) {
 	}
 }
 
-var nonregularInputs = []struct {
-	name  string
-	check func(*testing.T, string, string)
-}{
-	{"directory", func(t *testing.T, root, name string) {
-		t.Helper()
-		path := filepath.Join(root, name)
-		require.NoError(t, os.Remove(path))
-		require.NoError(t, os.Mkdir(path, 0700))
-		_, err := openReader(t.Context(), root)
-		require.ErrorContains(t, err, name)
-		require.ErrorContains(t, err, "regular file")
-	}},
-}
-
 func TestReaderRejectsNonregularInput(t *testing.T) {
 	for _, name := range []string{"metadata.json", "main.jsonl"} {
-		for _, tc := range nonregularInputs {
-			t.Run(name+"/"+tc.name, func(t *testing.T) {
-				tc.check(t, fixture(t), name)
-			})
-		}
+		t.Run(name, func(t *testing.T) {
+			root := fixture(t)
+			path := filepath.Join(root, name)
+			require.NoError(t, os.Remove(path))
+			require.NoError(t, os.Mkdir(path, 0700))
+			_, err := openReader(t.Context(), root)
+			require.ErrorContains(t, err, name)
+			require.ErrorContains(t, err, "regular file")
+		})
 	}
 }
 
@@ -590,10 +583,10 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 	otherKey := strings.Replace(pointer(a), `"key":"AQ=="`, `"key":"Ag=="`, 1)
 	otherKeyB := strings.Replace(pointer(b), `"key":"AQ=="`, `"key":"Ag=="`, 1)
 	for _, tc := range []struct {
-		name, first, unmatched, repaired                     string
-		unmatchedMedia, repairedMedia                        []byte
-		want                                                 map[string]string
-		firstStored, firstMissing, finalStored, finalMissing int
+		name, first, unmatched, repaired                             string
+		unmatchedMedia, repairedMedia                                []byte
+		want                                                         map[string]string
+		unmatchedStored, unmatchedMissing, finalStored, finalMissing int
 	}{
 		{"hashed original ignores new hash", attachments("AQ==", pointer(a)), attachments("AQ==", otherKeyB), attachments("AQ==", otherKeyB), b, a, map[string]string{"attachment:0": hashHex(a)}, 0, 1, 1, 0},
 		{"hashed long text ignores new hash", `"longText":` + pointer(a), `"longText":` + otherKeyB, `"longText":` + otherKeyB, b, a, map[string]string{"long_text": hashHex(a)}, 0, 1, 1, 0},
@@ -617,8 +610,8 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 			}
 			summary, err := Import(t.Context(), st, opts)
 			require.NoError(err)
-			assert.Equal(tc.firstStored, summary.AttachmentsStored)
-			assert.Equal(tc.firstMissing, summary.AttachmentsMissing)
+			assert.Equal(tc.unmatchedStored, summary.AttachmentsStored)
+			assert.Equal(tc.unmatchedMissing, summary.AttachmentsMissing)
 			writeFrames(t, root, message("changed", tc.repaired))
 			putMedia(t, root, tc.repairedMedia)
 			summary, err = Import(t.Context(), st, opts)
@@ -717,10 +710,13 @@ func TestImportAmbiguousSameTimeReplay(t *testing.T) {
 	for _, tc := range []struct {
 		name                     string
 		first, replay, corrected []string
+		firstMissing             int
 		existing                 int64
+		invalidDirection         bool
 	}{
-		{"existing pair reordered", []string{message("A", missing), between, message("B", missing)}, []string{message("B", pointer(data)), between, message("C", pointer(data))}, []string{message("A", pointer(data)), between, message("B", pointer(data))}, 1},
-		{"earlier message added", []string{message("B", missing)}, []string{message("A", pointer(data)), message("B", pointer(data))}, nil, 0},
+		{"existing pair reordered", []string{message("A", missing), between, message("B", missing)}, []string{message("B", pointer(data)), between, message("C", pointer(data))}, []string{message("A", pointer(data)), between, message("B", pointer(data))}, 2, 1, false},
+		{"earlier message added", []string{message("B", missing)}, []string{message("A", pointer(data)), message("B", pointer(data))}, nil, 1, 0, false},
+		{"invalid direction excluded from collisions", []string{incoming}, []string{strings.Replace(incoming, `"incoming":{}`, `"outgoing":{}`, 1), strings.Replace(incoming, "Hello 星", "Edited", 1)}, nil, 0, 1, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -731,7 +727,7 @@ func TestImportAmbiguousSameTimeReplay(t *testing.T) {
 			first, err := Import(t.Context(), st, opts)
 			require.NoError(err)
 			assert.EqualValues(len(tc.first), first.MessagesAdded)
-			assert.Equal(len(tc.first)-int(tc.existing), first.AttachmentsMissing)
+			assert.Equal(tc.firstMissing, first.AttachmentsMissing)
 			var firstID, lastID int64
 			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT min(id), max(id) FROM messages").Scan(&firstID, &lastID))
 			ids := []int64{firstID}
@@ -742,6 +738,14 @@ func TestImportAmbiguousSameTimeReplay(t *testing.T) {
 			writeFrames(t, root, tc.replay...)
 			summary, err := Import(t.Context(), st, opts)
 			require.NoError(err)
+			if tc.invalidDirection {
+				assert.EqualValues(1, summary.Skipped["direction_conflict"])
+				assert.Zero(summary.Skipped["ambiguous_message"])
+				assert.EqualValues(1, summary.MessagesExisting)
+				assert.EqualValues(1, summary.MessagesChanged)
+				assertBody(t, st, firstID, "Hello 星")
+				return
+			}
 			assert.EqualValues(2, summary.Skipped["ambiguous_message"])
 			assert.Zero(summary.MessagesAdded)
 			assert.Equal(tc.existing, summary.MessagesExisting)
@@ -771,40 +775,4 @@ func TestImportAmbiguousSameTimeReplay(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestReviewOmissionsForExpiredMetadata(t *testing.T) {
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	frame := strings.Replace(incoming, `"incoming":{}`, `"incoming":{},"sms":true,"expireStartDate":"1700000000000","expiresInMs":"60000"`, 1)
-	root := fixture(t, frame)
-	opts := options(t, root)
-	for range 2 {
-		summary, err := Import(t.Context(), st, opts)
-		require.NoError(t, err)
-		assert.EqualValues(1, summary.Omitted["sms"])
-		assert.EqualValues(1, summary.Omitted["expire_start_date"])
-		assert.EqualValues(1, summary.Omitted["expires_in_ms"])
-	}
-}
-
-func TestImportIgnoresInvalidDirectionWhenCountingCollisions(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	root := fixture(t, incoming)
-	opts := options(t, root)
-	_, err := Import(t.Context(), st, opts)
-	require.NoError(err)
-	edited := strings.Replace(incoming, "Hello 星", "Edited", 1)
-	invalid := strings.Replace(incoming, `"incoming":{}`, `"outgoing":{}`, 1)
-	writeFrames(t, root, invalid, edited)
-	summary, err := Import(t.Context(), st, opts)
-	require.NoError(err)
-	assert.EqualValues(1, summary.Skipped["direction_conflict"])
-	assert.Zero(summary.Skipped["ambiguous_message"])
-	assert.EqualValues(1, summary.MessagesExisting)
-	assert.EqualValues(1, summary.MessagesChanged)
-	id, _ := onlyMessage(t, st)
-	assertBody(t, st, id, "Hello 星")
 }
