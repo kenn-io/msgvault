@@ -273,6 +273,29 @@ func TestPersonFactPinHTTPVisibleOnlyRejectsSensitiveTargets(t *testing.T) {
 	}
 }
 
+func TestPersonFactEvidenceHTTPVisibleOnlyFollowsCurrentSensitivity(t *testing.T) {
+	t.Parallel()
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, st, personID, targets := newPersonFactAPIFixtureWithoutClaims(t)
+	applyPersonFactAPIGeneration(t, st, personID, targets[store.AttributeSlugPrimaryChannel], "visibility", `"chat"`)
+	evidenceCount := func(query string) int {
+		t.Helper()
+		response := doRequest(t, srv.Router(), http.MethodGet,
+			fmt.Sprintf("/api/v1/people/%d/fact-evidence%s", personID, query), nil, nil)
+		requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+		var body PersonFactEvidenceResponse
+		requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+		return len(body.Evidence)
+	}
+	assertions.Equal(1, evidenceCount("?visible_only=true"))
+
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE attribute_definitions SET is_sensitive = TRUE WHERE slug = ?`), store.AttributeSlugPrimaryChannel)
+	requirements.NoError(err)
+	assertions.Zero(evidenceCount("?visible_only=true"))
+	assertions.Equal(1, evidenceCount(""))
+}
+
 func TestPersonFactHTTPMapsInvalidMissingConflictAndUnavailable(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

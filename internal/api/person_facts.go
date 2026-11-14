@@ -277,17 +277,8 @@ func (s *Server) handleListPersonFactEvidence(w http.ResponseWriter, r *http.Req
 		s.rejectBadParam(w, err)
 		return
 	}
-	var visible []personfacts.TargetDescriptor
-	if visibleOnly {
-		catalog, err := facts.BuildPersonFactCatalogContext(r.Context(), false)
-		if err != nil {
-			s.writePersonFactError(w, err)
-			return
-		}
-		visible = append([]personfacts.TargetDescriptor{}, catalog.Targets...)
-	}
 	rows, err := facts.ListPersonFactEvidenceContext(r.Context(), personID,
-		personfacts.EvidenceFilter{Target: filter.target, VisibleTargets: visible, Limit: filter.limit, Offset: filter.offset})
+		personfacts.EvidenceFilter{Target: filter.target, VisibleOnly: visibleOnly, Limit: filter.limit, Offset: filter.offset})
 	if err != nil {
 		s.writePersonFactError(w, err)
 		return

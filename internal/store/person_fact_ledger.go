@@ -498,19 +498,40 @@ func (s *Store) ListPersonFactEvidenceContext(
 	if err != nil {
 		return nil, err
 	}
+	filter.Limit, filter.Offset = limit, offset
 	evidence := make([]personfacts.Evidence, 0)
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
-		evidence, err = s.queryPersonFactEvidenceTx(ctx, tx, personID,
-			personfacts.EvidenceFilter{Target: filter.Target, VisibleTargets: filter.VisibleTargets, Limit: limit, Offset: offset})
-		if err != nil {
-			return err
-		}
-		return s.hydratePersonFactEvidenceStatusTx(ctx, tx, evidence)
+		evidence, err = s.listPersonFactEvidenceSnapshotTx(ctx, tx, personID, filter)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	return evidence, nil
+}
+
+// listPersonFactEvidenceSnapshotTx evaluates visible-only filtering against
+// the same transaction that reads the evidence page, so a sensitivity change
+// cannot leave a stale catalog deciding which shared evidence is visible.
+func (s *Store) listPersonFactEvidenceSnapshotTx(
+	ctx context.Context,
+	tx *loggedTx,
+	personID int64,
+	filter personfacts.EvidenceFilter,
+) ([]personfacts.Evidence, error) {
+	var visible []personfacts.TargetDescriptor
+	if filter.VisibleOnly {
+		catalog, err := s.buildPersonFactCatalogContext(ctx, tx, false)
+		if err != nil {
+			return nil, err
+		}
+		visible = append([]personfacts.TargetDescriptor{}, catalog.Targets...)
+	}
+	evidence, err := s.queryPersonFactEvidenceTx(ctx, tx, personID, visible, filter)
+	if err != nil {
+		return nil, err
+	}
+	return evidence, s.hydratePersonFactEvidenceStatusTx(ctx, tx, evidence)
 }
 
 // ListPersonFactEvidenceStatusEventsContext returns the bounded append-only
@@ -581,6 +602,7 @@ func (s *Store) queryPersonFactEvidenceTx(
 	ctx context.Context,
 	tx *loggedTx,
 	personID int64,
+	visible []personfacts.TargetDescriptor,
 	filter personfacts.EvidenceFilter,
 ) ([]personfacts.Evidence, error) {
 	query := `SELECT ` + personFactEvidenceColumns + `
@@ -594,18 +616,10 @@ func (s *Store) queryPersonFactEvidenceTx(
 			  AND c.target_kind = ? AND c.target_key = ? AND c.target_revision = ?)`
 		args = append(args, filter.Target.Kind, filter.Target.Key, filter.Target.Revision)
 	}
-	if filter.VisibleTargets != nil {
-		query += ` AND NOT EXISTS (
-			SELECT 1 FROM person_fact_claim_evidence ce2
-			JOIN person_fact_claims c2 ON c2.id = ce2.claim_id
-			WHERE ce2.evidence_id = e.id`
-		if len(filter.VisibleTargets) > 0 {
-			query += ` AND (c2.target_kind, c2.target_key) NOT IN (` + strings.TrimSuffix(strings.Repeat("(?,?),", len(filter.VisibleTargets)), ",") + `)`
-			for _, target := range filter.VisibleTargets {
-				args = append(args, string(target.Kind), target.Key)
-			}
-		}
-		query += `)`
+	if visible != nil {
+		clause, clauseArgs := personFactEvidenceVisibleClause(visible)
+		query += clause
+		args = append(args, clauseArgs...)
 	}
 	query += ` ORDER BY e.id DESC LIMIT ? OFFSET ?`
 	args = append(args, filter.Limit, filter.Offset)
@@ -626,6 +640,23 @@ func (s *Store) queryPersonFactEvidenceTx(
 		return nil, fmt.Errorf("iterate person fact evidence: %w", err)
 	}
 	return evidence, nil
+}
+
+// personFactEvidenceVisibleClause excludes evidence linked to any claim whose
+// target is outside the visible set; an empty set excludes all linked evidence.
+func personFactEvidenceVisibleClause(visible []personfacts.TargetDescriptor) (string, []any) {
+	clause := ` AND NOT EXISTS (
+			SELECT 1 FROM person_fact_claim_evidence ce2
+			JOIN person_fact_claims c2 ON c2.id = ce2.claim_id
+			WHERE ce2.evidence_id = e.id`
+	var args []any
+	if len(visible) > 0 {
+		clause += ` AND (c2.target_kind, c2.target_key) NOT IN (` + strings.TrimSuffix(strings.Repeat("(?,?),", len(visible)), ",") + `)`
+		for _, target := range visible {
+			args = append(args, string(target.Kind), target.Key)
+		}
+	}
+	return clause + `)`, args
 }
 
 func (s *Store) listPersonFactGenerationEvidenceTx(
