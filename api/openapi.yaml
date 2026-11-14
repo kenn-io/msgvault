@@ -2502,6 +2502,8 @@ components:
       properties:
         alias:
           type: string
+        auth_method:
+          type: string
         display_name:
           type: string
         email:

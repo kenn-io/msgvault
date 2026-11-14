@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
 	imapclient "go.kenn.io/msgvault/internal/imap"
-	"go.kenn.io/msgvault/internal/microsoft"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 )
@@ -111,18 +110,12 @@ func listFolders(ctx context.Context, src *store.Source, cfg *config.Config, log
 
 	var password string
 	var tokenFn func(ctx context.Context) (string, error)
-	msClientID := cfg.Microsoft.ClientID
-	msTenant := cfg.Microsoft.EffectiveTenantID()
-	msTokensDir := cfg.TokensDir()
-
 	switch imapCfg.EffectiveAuthMethod() {
 	case imapclient.AuthXOAuth2:
-		if msClientID == "" {
-			fmt.Println("  Microsoft OAuth not configured — add [microsoft] section to config.toml")
-			return errors.New("no Microsoft client ID configured")
+		msMgr, err := newMicrosoftIMAPManager(cfg, logger, src)
+		if err != nil {
+			return err
 		}
-		msRedirectURI := cfg.Microsoft.EffectiveRedirectURI()
-		msMgr := microsoft.NewManager(msClientID, msTenant, msRedirectURI, msTokensDir, logger)
 		if !msMgr.HasToken(imapCfg.Username) {
 			fmt.Println("  Microsoft token not found — run 'add-o365' first")
 			return fmt.Errorf("no Microsoft token for %s", imapCfg.Username)
