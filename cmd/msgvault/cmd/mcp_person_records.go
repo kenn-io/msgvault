@@ -118,30 +118,24 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	if err != nil || !validLoopID(input.PersonID) || input.ETag == "" || input.Patch == nil {
 		return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 	}
-	count, supersedeCount := 0, 0
+	count := 0
 	if p := input.Patch.Names; p != nil {
 		count += len(p.Add) + len(p.Supersede)
-		supersedeCount += len(p.Supersede)
 	}
 	if p := input.Patch.ContactPoints; p != nil {
 		count += len(p.Add) + len(p.Supersede)
-		supersedeCount += len(p.Supersede)
 	}
 	if p := input.Patch.Addresses; p != nil {
 		count += len(p.Add) + len(p.Supersede)
-		supersedeCount += len(p.Supersede)
 	}
 	if p := input.Patch.Dates; p != nil {
 		count += len(p.Add) + len(p.Supersede)
-		supersedeCount += len(p.Supersede)
 	}
 	if p := input.Patch.Categories; p != nil {
 		count += len(p.Add) + len(p.Supersede)
-		supersedeCount += len(p.Supersede)
 	}
 	if p := input.Patch.Media; p != nil {
 		count += len(p.Add) + len(p.Supersede)
-		supersedeCount += len(p.Supersede)
 	}
 	if count > store.MaxPersonProfilePatchOperations {
 		return "", true, &mcpserver.OperationRefusalError{Code: "profile_patch_too_large"}
@@ -209,19 +203,6 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	if err := json.Unmarshal(current.Data, &profile); err != nil {
 		return "", true, err
 	}
-	history := generated.PersonProfileHistory{}
-	if supersedeCount > 0 {
-		data, _, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/history", &generated.GetPersonProfileHistoryRequestOptions{PathParams: &generated.GetPersonProfileHistoryPath{ID: input.PersonID}}, mcpserver.MaxDownloadBytes, personRecordRefusal, http.StatusOK)
-		if err != nil {
-			return "", true, err
-		}
-		if failure != nil {
-			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
-		}
-		if err := json.Unmarshal(data, &history); err != nil {
-			return "", true, err
-		}
-	}
 	selected := struct {
 		Person        generated.Person `json:"person"`
 		Names         []any            `json:"names,omitempty"`
@@ -231,24 +212,46 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 		Categories    []any            `json:"categories,omitempty"`
 		Media         []any            `json:"media,omitempty"`
 	}{Person: profile.Person}
-	missing := false
-	if p := input.Patch.Names; p != nil {
-		selected.Names, missing = superseded(history.Names, p.Supersede, func(v generated.PersonName) generated.ValueEnvelope { return v.Envelope }, missing)
+	selectValues := func(history generated.PersonProfileHistory) bool {
+		missing := false
+		if p := input.Patch.Names; p != nil {
+			selected.Names, missing = superseded(history.Names, p.Supersede, func(v generated.PersonName) generated.ValueEnvelope { return v.Envelope }, missing)
+		}
+		if p := input.Patch.ContactPoints; p != nil {
+			selected.ContactPoints, missing = superseded(history.ContactPoints, p.Supersede, func(v generated.PersonContactPoint) generated.ValueEnvelope { return v.Envelope }, missing)
+		}
+		if p := input.Patch.Addresses; p != nil {
+			selected.Addresses, missing = superseded(history.Addresses, p.Supersede, func(v generated.PersonAddress) generated.ValueEnvelope { return v.Envelope }, missing)
+		}
+		if p := input.Patch.Dates; p != nil {
+			selected.Dates, missing = superseded(history.Dates, p.Supersede, func(v generated.PersonDate) generated.ValueEnvelope { return v.Envelope }, missing)
+		}
+		if p := input.Patch.Categories; p != nil {
+			selected.Categories, missing = superseded(history.Categories, p.Supersede, func(v generated.PersonCategory) generated.ValueEnvelope { return v.Envelope }, missing)
+		}
+		if p := input.Patch.Media; p != nil {
+			selected.Media, missing = superseded(history.Media, p.Supersede, func(v generated.PersonMedia) generated.ValueEnvelope { return v.Envelope }, missing)
+		}
+		return missing
 	}
-	if p := input.Patch.ContactPoints; p != nil {
-		selected.ContactPoints, missing = superseded(history.ContactPoints, p.Supersede, func(v generated.PersonContactPoint) generated.ValueEnvelope { return v.Envelope }, missing)
-	}
-	if p := input.Patch.Addresses; p != nil {
-		selected.Addresses, missing = superseded(history.Addresses, p.Supersede, func(v generated.PersonAddress) generated.ValueEnvelope { return v.Envelope }, missing)
-	}
-	if p := input.Patch.Dates; p != nil {
-		selected.Dates, missing = superseded(history.Dates, p.Supersede, func(v generated.PersonDate) generated.ValueEnvelope { return v.Envelope }, missing)
-	}
-	if p := input.Patch.Categories; p != nil {
-		selected.Categories, missing = superseded(history.Categories, p.Supersede, func(v generated.PersonCategory) generated.ValueEnvelope { return v.Envelope }, missing)
-	}
-	if p := input.Patch.Media; p != nil {
-		selected.Media, missing = superseded(history.Media, p.Supersede, func(v generated.PersonMedia) generated.ValueEnvelope { return v.Envelope }, missing)
+	history := generated.PersonProfileHistory{Names: profile.Names, ContactPoints: profile.ContactPoints, Addresses: profile.Addresses, Dates: profile.Dates, Categories: profile.Categories, Media: profile.Media}
+	missing := selectValues(history)
+	if missing {
+		data, _, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/people/{id}/profile/history", &generated.GetPersonProfileHistoryRequestOptions{PathParams: &generated.GetPersonProfileHistoryPath{ID: input.PersonID}}, mcpserver.MaxDownloadBytes, personRecordRefusal, http.StatusOK)
+		if err != nil {
+			return "", true, err
+		}
+		if failure != nil {
+			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+		}
+		history = generated.PersonProfileHistory{}
+		if err := json.Unmarshal(data, &history); err != nil {
+			return "", true, err
+		}
+		if history.Person.Revision != profile.Person.Revision {
+			return "", true, &mcpserver.OperationRefusalError{Code: "person_revision_conflict"}
+		}
+		missing = selectValues(history)
 	}
 	if missing {
 		return "", true, &mcpserver.OperationRefusalError{Code: "profile_value_not_found"}

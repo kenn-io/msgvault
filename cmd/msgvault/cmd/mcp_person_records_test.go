@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -28,6 +29,11 @@ import (
 
 func personRecordFixture(t *testing.T) (*daemonMCPOperations, int64, *atomic.Int64, *atomic.Int64) {
 	t.Helper()
+	return personRecordFixtureWithHook(t, nil)
+}
+
+func personRecordFixtureWithHook(t *testing.T, hook func(*http.Request)) (*daemonMCPOperations, int64, *atomic.Int64, *atomic.Int64) {
+	t.Helper()
 	f := storetest.New(t)
 	person, _, err := f.Store.CreatePersonFromParticipant(f.EnsureParticipant("synthetic@example.test", "", "example.test"))
 	require.NoError(t, err)
@@ -36,6 +42,9 @@ func personRecordFixture(t *testing.T) (*daemonMCPOperations, int64, *atomic.Int
 	router := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler)}).Router()
 	var mediaReads, patches atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hook != nil {
+			hook(r)
+		}
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/content") {
 			mediaReads.Add(1)
 		}
@@ -50,6 +59,62 @@ func personRecordFixture(t *testing.T) (*daemonMCPOperations, int64, *atomic.Int
 	caps, err := client.MCPCapabilities(t.Context())
 	require.NoError(t, err)
 	return newDaemonMCPOperations(client, caps), person.ID, &mediaReads, &patches
+}
+
+func TestPersonRecordDisclosureCurrentValueSkipsHistory(t *testing.T) {
+	var historyReads atomic.Int64
+	backend, id, _, _ := personRecordFixtureWithHook(t, func(r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/profile/history") {
+			historyReads.Add(1)
+		}
+	})
+	current, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
+	require.NoError(t, err)
+	added, err := backend.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": current.ETag, "patch": map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "free_text": "Current address", "envelope": map[string]any{"source": "user"}}}}}})
+	require.NoError(t, err)
+	profile := operationOutput[mcpserver.StructuredPersonRecord](t, added)
+	require.Len(t, profile.Profile.Addresses, 1)
+	disclosure, err := backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": added.ETag, "patch": map[string]any{"addresses": map[string]any{"supersede": []int64{profile.Profile.Addresses[0].Envelope.ID}}}})
+	require.NoError(t, err)
+	assert.Contains(t, disclosure, "Current address")
+	assert.Zero(t, historyReads.Load())
+}
+
+func TestPersonRecordDisclosureHistoryRevisionChanges(t *testing.T) {
+	var armed atomic.Bool
+	var backend *daemonMCPOperations
+	var id int64
+	var etag string
+	result := make(chan error, 1)
+	backend, id, _, _ = personRecordFixtureWithHook(t, func(r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/profile/history") && armed.CompareAndSwap(true, false) {
+			updated, err := backend.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": etag, "patch": map[string]any{"names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": "Updated", "envelope": map[string]any{"source": "user"}}}}}})
+			if err == nil && updated.IsError {
+				err = fmt.Errorf("concurrent patch refused: %v", updated.Output)
+			}
+			result <- err
+		}
+	})
+	current, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
+	require.NoError(t, err)
+	added, err := backend.ExecuteOperation(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": current.ETag, "patch": map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "free_text": "Old address", "envelope": map[string]any{"source": "user", "active_until": "2020-01-01T00:00:00Z"}}}}}})
+	require.NoError(t, err)
+	etag = added.ETag
+	history, err := backend.ExecuteOperation(t.Context(), "get_person_record_history", map[string]any{"person_id": id})
+	require.NoError(t, err)
+	values := operationOutput[generated.PersonProfileHistory](t, history)
+	require.Len(t, values.Addresses, 1)
+	armed.Store(true)
+	_, err = backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": etag, "patch": map[string]any{"addresses": map[string]any{"supersede": []int64{values.Addresses[0].Envelope.ID}}}})
+	select {
+	case err := <-result:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "history read did not trigger the concurrent patch")
+	}
+	var refusal *mcpserver.OperationRefusalError
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, "person_revision_conflict", refusal.Code)
 }
 
 func TestPersonRecordSDKPatchAllKindsAndHistory(t *testing.T) {
