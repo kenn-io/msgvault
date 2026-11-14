@@ -235,7 +235,7 @@ Showing up to 50 reply loops and 50 cited promises. Use --limit up to 200 to see
 	out.Reset()
 	const promise = "I will send the draft."
 	require.NoError(writeLoops(&out, generated.LoopListResponse{Commitments: []generated.LoopCommitment{{
-		ID: "c12", PersonID: 7, Direction: "owed_to", State: "done", Summary: "Send the draft",
+		ID: "c12", PersonID: 7, Direction: "owed_to", Freshness: "fresh", State: "done", Summary: "Send the draft",
 		Promise: generated.CommitmentQuote{MessageID: 19, Text: promise},
 	}}}, 50, now))
 	assert.Contains(out.String(), "c12   person 7 (done)")

@@ -99,6 +99,36 @@ func TestListLoopsFilters(t *testing.T) {
 	assert.True(truncated.Truncated)
 }
 
+func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
+	f := storetest.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.People.Sweep.Commitments.Enabled = true
+	server := NewServerWithOptions(ServerOptions{Config: cfg, Store: f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
+	w := httptest.NewRecorder()
+	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops?person_id=123", nil))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var response LoopListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.NotNil(t, response.CommitmentsSince)
+	require.NotNil(t, response.CommitmentsComplete)
+	assert.False(t, *response.CommitmentsComplete)
+	assert.Empty(t, response.Commitments)
+}
+
+func TestListLoopsReportsIncompleteCoverage(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	storetest.PersistLoopOriginalReadFixture(f, loops.MaxListEvidenceComputations+1, time.Now().UTC())
+	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
+	w := httptest.NewRecorder()
+	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
+	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	var response LoopListResponse
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	require.True(response.CoverageIncomplete)
+}
+
 func TestListLoopsAnswersDuringBackupFreezeWithoutWritingEvidence(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
