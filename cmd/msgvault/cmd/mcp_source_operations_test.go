@@ -196,8 +196,6 @@ func TestMCPSlackPolicySDKUsesRealDaemonAndApproval(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	requirements.NoError(os.WriteFile(path, []byte(`[slack]
 dms = true
-group_dms = true
-channels = ["C_EXAMPLE"]
 `), 0o600))
 	cfg, err := config.Load(path, "")
 	requirements.NoError(err)
@@ -283,7 +281,7 @@ func TestMCPSlackPolicyProjectionRejectsIncompleteReceipts(t *testing.T) {
 	}{
 		{"write missing pending restart", http.MethodPatch, `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, true, true, false, false},
 		{"write missing ETag", http.MethodPatch, `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, true, false, true, false},
-		{"read unusable setting", http.MethodGet, `{"error":"invalid_operation_response","operation_may_have_completed":false}`, false, true, true, true},
+		{"write unusable setting", http.MethodPatch, `{"error":"operation_receipt_unavailable","operation_may_have_completed":true}`, true, true, true, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()

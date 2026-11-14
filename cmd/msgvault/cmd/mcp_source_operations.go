@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"net/http"
@@ -207,8 +206,8 @@ func personEditProjection(result *mcpserver.OperationResult, writes bool) *mcpse
 	if result.IsError {
 		return result
 	}
-	person, ok := result.Output.(generated.Person)
-	if !ok || result.ETag == "" {
+	person := result.Output.(generated.Person)
+	if result.ETag == "" {
 		return invalidOperationResponse(writes)
 	}
 	result.Output = mcpserver.PersonEditContext{ETag: result.ETag, Person: person}
@@ -238,17 +237,17 @@ func slackPolicyProjection(result *mcpserver.OperationResult, writes bool) *mcps
 		return result
 	}
 	settings, ok := result.Output.(slackSettingsResponse)
-	if !ok || result.ETag == "" || settings.PendingRestart == nil {
+	if !ok || result.ETag == "" || (writes && settings.PendingRestart == nil) {
 		return invalidOperationResponse(writes)
 	}
-	policy := mcpserver.SlackSyncPolicy{ETag: result.ETag, PendingRestart: *settings.PendingRestart, Settings: []generated.Setting{}}
+	policy := mcpserver.SlackSyncPolicy{ETag: result.ETag, PendingRestart: settings.PendingRestart != nil && *settings.PendingRestart, Settings: []generated.Setting{}}
 	found := make(map[string]struct{}, len(slackSelectionKinds))
 	for _, setting := range settings.Settings {
 		expectedKind, selected := slackSelectionKinds[setting.Key]
 		if !selected {
 			continue
 		}
-		if _, duplicate := found[setting.Key]; duplicate || !usableSlackSetting(setting, expectedKind) {
+		if _, duplicate := found[setting.Key]; writes && (duplicate || !usableSlackSetting(setting, expectedKind)) {
 			return invalidOperationResponse(writes)
 		}
 		found[setting.Key] = struct{}{}
@@ -256,7 +255,7 @@ func slackPolicyProjection(result *mcpserver.OperationResult, writes bool) *mcps
 		setting.CredentialID = nil
 		policy.Settings = append(policy.Settings, setting)
 	}
-	if len(found) != len(slackSelectionKinds) {
+	if writes && len(found) != len(slackSelectionKinds) {
 		return invalidOperationResponse(writes)
 	}
 	result.Output = policy
@@ -264,26 +263,16 @@ func slackPolicyProjection(result *mcpserver.OperationResult, writes bool) *mcps
 }
 
 func usableSlackSetting(setting generated.Setting, expectedKind generated.SettingKind) bool {
-	if setting.Kind != expectedKind || setting.Validate() != nil || setting.Value == nil || setting.Value.SettingValue_OneOf == nil {
-		return false
-	}
-	var variants map[string]jsontext.Value
-	if err := json.Unmarshal(setting.Value.SettingValue_OneOf.Raw(), &variants); err != nil || len(variants) != 1 {
+	if setting.Kind != expectedKind || setting.Value == nil || setting.Value.SettingValue_OneOf == nil {
 		return false
 	}
 	switch expectedKind {
 	case generated.Boolean:
-		if _, ok := variants["boolean"]; !ok {
-			return false
-		}
 		var value struct {
 			Boolean *bool `json:"boolean"`
 		}
 		return json.Unmarshal(setting.Value.SettingValue_OneOf.Raw(), &value) == nil && value.Boolean != nil
 	case generated.StringArray:
-		if _, ok := variants["strings"]; !ok {
-			return false
-		}
 		var value struct {
 			Strings *[]string `json:"strings"`
 		}

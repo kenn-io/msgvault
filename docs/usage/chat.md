@@ -927,7 +927,7 @@ appears only when the daemon offers its route.
 
 | Tool | Effect | Parameters |
 |---|---|---|
-| `list_open_loops` | List active questions waiting on the owner (`reply_owed`) and on the other person (`awaiting_reply`); omit snoozed and closed questions. | Optional `person_id`; `limit` from 1 to 200, default 50 |
+| `list_open_loops` | List loops waiting on the owner (`reply_owed`) and on the other person (`awaiting_reply`). | Optional `person_id`; `limit` from 1 to 200, default 50 |
 | `close_open_loop` | Mark the listed questions done. | `message_id` and `question_message_ids` |
 | `snooze_open_loop` | Hide the listed questions until a deadline. | `message_id`, `question_message_ids`, and `until` |
 | `reopen_open_loop` | Clear the decision on one question. | `message_id` |
@@ -943,7 +943,6 @@ To act on a loop:
 3. For `snooze_open_loop`, give `until` as an RFC3339 time or a `YYYY-MM-DD`
    date, which means midnight in the MCP server's time zone. Durations such as
    `24h` are rejected, so the deadline can't move between approval and saving.
-   A snoozed question reappears after that deadline unless it was answered or closed.
 4. To undo a decision, call `reopen_open_loop` with the question's
    `message_id` from an earlier list or receipt.
 
@@ -993,7 +992,7 @@ disclosures are refused. A successful patch returns its new ETag and omits the
 profile when it exceeds 1 MiB. If the result says the operation may have
 completed, read the record again before retrying.
 
-If an MCP operation write returns `operation_receipt_unavailable`, the write
+If any MCP write returns `operation_receipt_unavailable`, the write
 may have completed but its receipt could not be read. Read the current state
 before retrying.
 
