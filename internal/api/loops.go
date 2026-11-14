@@ -182,9 +182,7 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "internal_error", "Failed to read commitment discovery")
 				return
 			}
-			if since != nil {
-				response.CommitmentsSince, response.CommitmentsComplete = since, &complete
-			}
+			response.CommitmentsSince, response.CommitmentsComplete = since, &complete
 		}
 	}
 	for _, l := range result.Loops {

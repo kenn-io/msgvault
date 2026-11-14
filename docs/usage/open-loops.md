@@ -111,7 +111,7 @@ msgvault loops done 4521 --questions 4521,4530
 
 Decisions follow their questions when duplicates or accounts are merged. If
 two copies of a question carry different decisions, done wins over snooze,
-and the later of two snoozes wins.
+and the later of two snoozes wins. Promise decisions for the absorbed person do not move to the survivor.
 
 ## Use loops from an assistant
 

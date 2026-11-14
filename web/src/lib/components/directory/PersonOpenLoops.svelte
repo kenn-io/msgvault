@@ -102,6 +102,7 @@
   <div class="open-loops">
   {#if loading}<p class="muted" role="status">Loading…</p>
   {:else if failed}<InlineNotice message="Couldn't load open loops." />
+  {:else if commitmentsComplete === false && !commitmentsSince && items.length === 0 && commitments.length === 0}<p class="muted">Promise discovery has not started.</p>
   {:else if items.length === 0 && commitments.length === 0 && coverageIncomplete && !commitmentsSince}<p class="muted">No open loops found. Some messages haven't been checked yet.</p>
   {:else if items.length === 0 && commitments.length === 0 && !commitmentsSince}<p class="muted">Nothing open with this person.</p>
   {:else}
@@ -136,7 +137,8 @@
         </div>
       {/if}
     {/each}
-    {#if commitmentsSince && !commitmentsComplete}<p class="muted">Checked since {formatContactDate(commitmentsSince)}; still searching</p>
+    {#if commitmentsSince && !commitmentsComplete}<p class="muted">Promise discovery since {formatContactDate(commitmentsSince)} is incomplete. If messages are too large, increase max_bytes in [people.sweep.commitments] to retry.</p>
+    {:else if commitmentsComplete === false && !commitmentsSince}<p class="muted">Promise discovery has not started.</p>
     {:else if commitmentsSince && commitments.length === 0}<p class="muted">No promises found since {formatContactDate(commitmentsSince)}.</p>{/if}
   {/if}
   {#if !loading && !failed && unreadable > 0}

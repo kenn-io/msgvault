@@ -85,7 +85,7 @@ describe("PersonOpenLoops", () => {
     expect(screen.getByRole("heading", { name: "Promises you made" })).toBeDefined();
     expect(screen.getByRole("heading", { name: "Promises to you · stale evidence" })).toBeDefined();
     expect(screen.getByText("Due 2026-11-15")).toBeDefined();
-    expect(screen.getByText(/still searching/)).toBeDefined();
+    expect(screen.getByText(/discovery since.*incomplete/)).toBeDefined();
     expect(screen.getByText("7+ open")).toBeDefined();
   });
 
@@ -96,6 +96,15 @@ describe("PersonOpenLoops", () => {
     render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
     expect(await screen.findByText(/max_bytes/)).toBeDefined();
     expect(screen.queryByText(/still searching/)).toBeNull();
+  });
+
+  it("reports when promise discovery has not started", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({
+      items: [], commitments: [], commitments_complete: false,
+    }));
+    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
+    expect(await screen.findByText("Promise discovery has not started.")).toBeDefined();
+    expect(screen.queryByText("Nothing open with this person.")).toBeNull();
   });
 
   it("reports an empty completed discovery window", async () => {
