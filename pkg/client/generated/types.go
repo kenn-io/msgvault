@@ -1628,7 +1628,7 @@ type CardDAVBinding struct {
 	Connection    string `json:"connection" validate:"required"`
 	Href          string `json:"href" validate:"required"`
 	MappingStatus string `json:"mapping_status" validate:"required"`
-	RemoteUID     string `json:"remote_uid" validate:"required"`
+	RemoteUID     string `json:"remote_uid"`
 }
 
 func (c CardDAVBinding) Validate() error {
@@ -10576,7 +10576,7 @@ type Person struct {
 	CreatedAt       time.Time        `json:"created_at" validate:"required"`
 	DisplayName     *string          `json:"display_name,omitzero"`
 	ID              int64            `json:"id"`
-	ParticipantIds  []int64          `json:"participant_ids" validate:"required"`
+	ParticipantIds  []int64          `json:"participant_ids"`
 	Revision        int64            `json:"revision"`
 	UpdatedAt       time.Time        `json:"updated_at" validate:"required"`
 	VcardUID        string           `json:"vcard_uid" validate:"required"`
@@ -10594,8 +10594,8 @@ func (p Person) Validate() error {
 	if err := typesValidator.Var(p.CreatedAt, "required"); err != nil {
 		errors = errors.Append("CreatedAt", err)
 	}
-	if err := typesValidator.Var(p.ParticipantIds, "required"); err != nil {
-		errors = errors.Append("ParticipantIds", err)
+	if p.ParticipantIds == nil {
+		errors = errors.Append("ParticipantIds", fmt.Errorf("required field is missing"))
 	}
 	if err := typesValidator.Var(p.UpdatedAt, "required"); err != nil {
 		errors = errors.Append("UpdatedAt", err)
@@ -11534,7 +11534,7 @@ type PersonEnrichmentProviderSetting struct {
 	Credential            *SecretSettingState                 `json:"credential,omitempty"`
 	CredentialID          string                              `json:"credential_id" validate:"required"`
 	Enabled               bool                                `json:"enabled"`
-	Endpoint              string                              `json:"endpoint" validate:"required"`
+	Endpoint              string                              `json:"endpoint"`
 	Kind                  PersonEnrichmentProviderSettingKind `json:"kind" validate:"required"`
 	MaxJobAge             string                              `json:"max_job_age" validate:"required"`
 	MaxRequestsPerDay     int64                               `json:"max_requests_per_day"`
@@ -11567,9 +11567,6 @@ func (p PersonEnrichmentProviderSetting) Validate() error {
 	}
 	if err := typesValidator.Var(p.CredentialID, "required"); err != nil {
 		errors = errors.Append("CredentialID", err)
-	}
-	if err := typesValidator.Var(p.Endpoint, "required"); err != nil {
-		errors = errors.Append("Endpoint", err)
 	}
 	if v, ok := any(p.Kind).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
