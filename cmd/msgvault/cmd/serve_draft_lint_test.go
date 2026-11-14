@@ -341,7 +341,6 @@ func TestValidateOnlyEditWritesNothing(t *testing.T) {
 		require.EqualError(t, err, "invalid_draft")
 		assert.Empty(t, events)
 	})
-
 }
 func TestGmailDraftEditValidateOnlyChecksScope(t *testing.T) {
 	assert := assert.New(t)

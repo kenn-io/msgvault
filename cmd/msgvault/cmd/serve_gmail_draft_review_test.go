@@ -1079,7 +1079,6 @@ func TestGmailDraftExternalAdoptionPersistsAttachments(t *testing.T) {
 	require.Error(err)
 	assert.Equal("invalid_draft", err.Error())
 	assert.Equal(0, fixture.client.updateCalls)
-
 }
 
 func TestGmailDraftCancellationClearsClaim(t *testing.T) {
