@@ -992,6 +992,10 @@ disclosures are refused. A successful patch returns its new ETag and omits the
 profile when it exceeds 1 MiB. If the result says the operation may have
 completed, read the record again before retrying.
 
+If an MCP operation write returns `operation_receipt_unavailable`, the write
+may have completed but its receipt could not be read. Read the current state
+before retrying.
+
 Enable only the writes intended for the assistant's session:
 
 | Writes | Stdio | HTTP |

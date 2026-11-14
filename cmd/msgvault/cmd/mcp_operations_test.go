@@ -69,6 +69,19 @@ func TestMCPOperationFailureCompletion(t *testing.T) {
 	}
 }
 
+func TestMCPOperationInterruptedWriteReceipt(t *testing.T) {
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"partial":`))
+	})
+	result, err := readMCPOperationJSON[generated.SettingsResponse](t.Context(), client, http.MethodPatch, "/api/v1/settings", nil, http.StatusOK)
+	require.Error(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsError)
+	assert.Equal(t, mcpOperationFailure{"operation_receipt_unavailable", true}, result.Output)
+}
+
 func TestDaemonMCPLaunchDiscoversRealOperationalTools(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
