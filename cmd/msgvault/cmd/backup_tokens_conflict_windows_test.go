@@ -4,6 +4,8 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,11 +52,20 @@ func TestBackupRestorePermissionConflictAfterPublication(t *testing.T) {
 	require.NoError(windows.SetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
 	omitted := filepath.Join(tokens, "oauth-token.json.lock")
 	require.NoError(os.WriteFile(omitted, []byte("omitted"), 0o600))
-	err = runBackupTokenRestore(t, cfg, repo, target, true)
+	backupRestoreOverwrite, backupRestoreForceUnlock = false, false
+	backupRestoreLooseAttachments, backupRestoreIntegrityCheck, backupRestorePermissionsOnly = false, false, false
+	var output bytes.Buffer
+	rootCmd.SetOut(&output)
+	rootCmd.SetErr(io.Discard)
+	rootCmd.SetArgs([]string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", "--repo", repo.Root(), "--target", target, "--jobs", "1", "--overwrite"})
+	err = executeRootContext(t.Context(), rootCmd)
 	require.ErrorContains(err, "was restored to")
 	require.ErrorContains(err, "permissions conflict")
 	manifest, readErr := repo.LatestSnapshot()
 	require.NoError(readErr)
+	assert.Contains(output.String(), fmt.Sprintf("Restored snapshot %s to %s", manifest.SnapshotID, target))
+	assert.Contains(output.String(), "Database: ")
+	assert.Contains(output.String(), "Attachments: ")
 	other := filepath.Join(tokens, "other-snapshot.json")
 	require.NoError(os.WriteFile(filepath.Join(cfg.TokensDir(), "other-snapshot.json"), []byte("other"), 0o600))
 	captureBackupTokenSnapshot(t, repo, cfg, dbPath, attachments)
@@ -76,7 +87,7 @@ func TestBackupRestorePermissionConflictAfterPublication(t *testing.T) {
 	require.NoError(readErr)
 	require.NoError(os.Rename(omitted, filepath.Join(t.TempDir(), "omitted")))
 	backupRestoreOverwrite = false
-	var output bytes.Buffer
+	output.Reset()
 	rootCmd.SetOut(&output)
 	rootCmd.SetArgs([]string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", manifest.SnapshotID, "--repo", repo.Root(), "--target", target, "--permissions-only"})
 	require.NoError(executeRootContext(t.Context(), rootCmd))
