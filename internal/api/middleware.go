@@ -52,7 +52,7 @@ func defaultCORSAllowedMethods() []string {
 func defaultCORSAllowedHeaders() []string {
 	return []string{
 		"Accept", "Authorization", "Content-Type", ifMatchHeaderName,
-		idempotencyKeyHeaderName, "X-API-Key", "X-Request-Id", csrfHeaderName,
+		idempotencyKeyHeaderName, "X-API-Key", "X-Request-Id", csrfHeaderName, apiprotocol.VerificationHeader,
 	}
 }
 
