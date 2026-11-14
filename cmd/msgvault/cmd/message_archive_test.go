@@ -58,11 +58,12 @@ func TestArchiveMessageCommands(t *testing.T) {
 		command := newMessageArchiveCommand(archived, backend)
 		var output bytes.Buffer
 		command.SetOut(&output)
-		command.SetArgs([]string{"--message", "7", "--dry-run", "--json"})
+		command.SetArgs([]string{"--message", "7", "--dry-run", "--whole-chat", "--json"})
 		requirementsForTest.NoError(command.ExecuteContext(t.Context()))
 		assertionsForTest.Equal(int64(7), backend.id)
 		assertionsForTest.Equal(archived, *backend.change.Archived)
 		assertionsForTest.True(backend.change.DryRun)
+		assertionsForTest.True(backend.change.WholeChat)
 		assertionsForTest.Contains(output.String(), `"dry_run":true`)
 	}
 	for _, args := range [][]string{{"--message", "0"}, {"--message", "-1"}, {"--message", "7", "extra"}} {

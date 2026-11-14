@@ -16,7 +16,8 @@ type MessageArchiveBackend interface {
 func messageArchiveDefinition() toolDefinition {
 	result, failure := outputSchemaFor[emailtags.ArchiveResult](), outputSchemaFor[emailtags.MessageTagError]()
 	result.Schema, failure.Schema = "", ""
-	definition := writeDefinition(ToolArchiveMessage, "Set one Gmail message's archive state. archived=true removes INBOX; false restores it. Retries preserve the requested state. Other providers return archive_unsupported. dry_run previews without writing.", closedObject(map[string]*jsonschema.Schema{
+	definition := writeDefinition(ToolArchiveMessage, "Set a Gmail message's archive state, or archive its entire Beeper chat with whole_chat=true. Beeper requires a source-wide grant without incoming sender restrictions. archived=false restores the inbox. Other providers return archive_unsupported. dry_run previews without writing.", closedObject(map[string]*jsonschema.Schema{
+		"whole_chat": booleanSchema("Required for Beeper: affects the entire chat"),
 		"message_id": safeIDSchema("Archived message ID"), "archived": booleanSchema("Desired archive state"), "dry_run": booleanSchema("Preview without writing"),
 	}, "message_id", "archived"), &jsonschema.Schema{Type: "object", AnyOf: []*jsonschema.Schema{result, failure}}, (*handlers).archiveMessage)
 	definition.availability = func(c catalogCapabilities) bool { return c.messageArchive }
@@ -37,7 +38,8 @@ func (h *handlers) archiveMessage(ctx context.Context, req toolRequest) (*toolRe
 		return toolErrorResult("archived must be true or false"), nil
 	}
 	dryRun, _ := args["dry_run"].(bool)
-	value, err := h.messageArchive.ArchiveMessage(ctx, id, emailtags.ArchiveChange{Archived: &archived, DryRun: dryRun})
+	wholeChat, _ := args["whole_chat"].(bool)
+	value, err := h.messageArchive.ArchiveMessage(ctx, id, emailtags.ArchiveChange{Archived: &archived, DryRun: dryRun, WholeChat: wholeChat})
 	if err != nil {
 		return messageTagErrorResult(err)
 	}

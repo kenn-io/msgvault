@@ -426,9 +426,11 @@ returns `409 person_uid_ambiguous`.
 
 ### Message archiving
 
-`POST /api/v1/messages/{id}/archive` sets one Gmail message's archive state.
+`POST /api/v1/messages/{id}/archive` sets a Gmail message's archive state or the
+state of the entire Beeper chat containing a message.
 Requires API schema 5.1.0 and owner authorization or a `message.archive` grant
-for the message's source. Other providers return 501 `archive_unsupported`.
+for the message's source. Beeper requires API schema 5.3.0 and `whole_chat: true`.
+Other providers return 501 `archive_unsupported`.
 
 ```json
 {"archived":true,"dry_run":false}
@@ -445,6 +447,15 @@ returns `changed: false` without modifying Gmail and still reconciles local
 labels. Unrelated labels and read/unread state are preserved. Source ownership
 and the daemon work gate follow the [native tag write rules](#native-email-tags).
 For 409 `sync_active`, retry after the active sync finishes.
+
+For Beeper, send `{"archived":true,"whole_chat":true}` (or `archived:false`
+to restore the chat). This affects the whole chat, including messages newer than
+the local archive. The result also includes `chat_id`. Sender-restricted grants
+cannot archive Beeper chats and receive `404 message_not_found`; use an owner
+or a source-wide `message.archive` grant. Beeper state is read live, checked
+against the source account, and verified after writing. Missing archive state
+returns `archive_unsupported`; an uncertain write or failed readback returns
+`remote_unknown`. No local message labels are changed.
 
 Owners may issue `incoming_senders`, a map from selected source IDs to nonempty
 incoming mailbox lists, alongside a read, archive, or draft-create permission. Each source view exposes

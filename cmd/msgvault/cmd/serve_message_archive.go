@@ -16,6 +16,13 @@ var _ api.MessageArchiveStore = (*storeAPIAdapter)(nil)
 
 // ArchiveMessage reuses tag source ownership, readback, and guarded persistence.
 func (a *storeAPIAdapter) ArchiveMessage(ctx context.Context, id int64, change emailtags.ArchiveChange, grant *agentgrant.Grant, acquireWrite func(context.Context) (func(), error)) (*emailtags.ArchiveResult, error) {
+	if change.Archived == nil {
+		return nil, emailtags.Failure("invalid_request", "archived must be true or false", nil, nil)
+	}
+	target, _ := a.store.EmailTagTargetContext(ctx, id, "")
+	if target.Provider == "beeper" {
+		return a.archiveBeeperChat(ctx, id, change, grant, acquireWrite)
+	}
 	authorize := func(ctx context.Context, target store.EmailTagTarget) error {
 		source, err := a.store.GetSourceByIDContext(ctx, target.SourceID)
 		if err != nil {
@@ -35,6 +42,9 @@ func (a *storeAPIAdapter) ArchiveMessage(ctx context.Context, id int64, change e
 			if !allowed {
 				return emailtags.Failure("message_not_found", "Message not found", nil, nil)
 			}
+		}
+		if change.WholeChat {
+			return emailtags.Failure("invalid_request", "whole_chat applies only to Beeper", nil, nil)
 		}
 		if source.SourceType != sourceTypeGmail && source.SourceType != "" {
 			return emailtags.Failure("archive_unsupported", "Archiving is supported only for Gmail messages", nil, nil)

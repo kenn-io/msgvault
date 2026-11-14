@@ -486,17 +486,19 @@ func (a AppendPersonNoteRequest) Validate() error {
 }
 
 type ArchiveChange struct {
-	Archived bool  `json:"archived"`
-	DryRun   *bool `json:"dry_run,omitempty"`
+	Archived  bool  `json:"archived"`
+	DryRun    *bool `json:"dry_run,omitempty"`
+	WholeChat *bool `json:"whole_chat,omitempty"`
 }
 
 type ArchiveResult struct {
-	Archived  bool  `json:"archived"`
-	Changed   bool  `json:"changed"`
-	DryRun    bool  `json:"dry_run"`
-	MessageID int64 `json:"message_id"`
-	SourceID  int64 `json:"source_id"`
-	Verified  bool  `json:"verified"`
+	Archived  bool    `json:"archived"`
+	Changed   bool    `json:"changed"`
+	ChatID    *string `json:"chat_id,omitzero"`
+	DryRun    bool    `json:"dry_run"`
+	MessageID int64   `json:"message_id"`
+	SourceID  int64   `json:"source_id"`
+	Verified  bool    `json:"verified"`
 }
 
 type AttachmentInfo struct {

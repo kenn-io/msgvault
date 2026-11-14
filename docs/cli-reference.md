@@ -19,7 +19,7 @@ appear in full under Inherited Flags.
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
-| Archive or restore one Gmail message | [archive and unarchive](#archive-and-unarchive) |
+| Archive or restore a Gmail message or Beeper chat | [archive and unarchive](#archive-and-unarchive) |
 | Edit live email tags | [message-tags](#message-tags) |
 | Find a partial address | [address](#address) |
 | Inspect staged room policy | [policy](#policy) |
@@ -333,8 +333,20 @@ Unrelated labels and read/unread state are preserved.
 The owner has access. Delegated calls require `message.archive` on the message's
 source. Gmail writes require `gmail.modify` or `mail.google.com`; reauthorize
 with `msgvault add-account <account> --force` if the daemon reports
-`insufficient_scope`. Other providers return `archive_unsupported`.
+`insufficient_scope`. Providers other than Gmail and Beeper return `archive_unsupported`.
 See the [API contract](api-server.md#message-archiving) for readback and errors.
+
+For Beeper, select a locally archived message and opt into changing its entire chat:
+
+```bash
+msgvault archive --message 42 --whole-chat --dry-run
+msgvault archive --message 42 --whole-chat
+msgvault unarchive --message 42 --whole-chat
+```
+
+Requires API schema 5.3.0. The operation affects all messages in that Beeper chat.
+Use owner access or a source-wide `message.archive` grant without incoming sender
+restrictions. JSON results include `chat_id`; previews never write to Beeper.
 
 ---
 

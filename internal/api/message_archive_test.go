@@ -49,7 +49,7 @@ func TestArchiveMessageRouteValidationAndGate(t *testing.T) {
 		srv.Router().ServeHTTP(w, req)
 		return w
 	}
-	for _, body := range []string{`{}`, `{"archived":null}`, `{"archived":true,"dry_run":null}`} {
+	for _, body := range []string{`{}`, `{"archived":null}`, `{"archived":true,"dry_run":null}`, `{"archived":true,"whole_chat":null}`, `{"archived":true,"whole_chat":"true"}`} {
 		response := call("7", body)
 		assertionsForTest.Equal(http.StatusBadRequest, response.Code, response.Body.String())
 	}
