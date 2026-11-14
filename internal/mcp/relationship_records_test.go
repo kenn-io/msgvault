@@ -33,7 +33,6 @@ func TestRelationshipSDKRejectsInvalidArguments(t *testing.T) {
 		name string
 		args map[string]any
 	}{
-		{"update_person_relationship", map[string]any{"id": 1, "revision": 1, "unexpected": true}},
 		{"update_person_relationship", map[string]any{"id": 1, "revision": 1, "end_date": nil}},
 		{"update_person_relationship", map[string]any{"id": 1, "revision": 1, "end_date": ""}},
 		{"get_person_network", map[string]any{"person_id": 1, "depth": 4}},

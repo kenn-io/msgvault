@@ -60,7 +60,7 @@ func assertRelationshipDisclosure(t *testing.T, disclosure string) {
 func TestMCPRelationshipRecords(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	_, backend, source, target := relationshipFixture(t)
+	st, backend, source, target := relationshipFixture(t)
 	createArgs := map[string]any{"source_person_id": source, "target_person_id": target, "relationship_type_slug": "kin", "notes": "synthetic"}
 	disclosure, err := backend.OperationDisclosure(t.Context(), "create_person_relationship", createArgs)
 	requirements.NoError(err)
@@ -79,13 +79,32 @@ func TestMCPRelationshipRecords(t *testing.T) {
 	updated := operationOutput[generated.PersonRelationship](t, result)
 	assertions.Nil(updated.Notes)
 	requirements.NotNil(updated.EndDate)
+	requirements.NotNil(updated.EndDate.Year)
+	assertions.Equal(int64(2020), *updated.EndDate.Year)
 	deleteArgs := map[string]any{"id": updated.ID, "revision": updated.Revision}
 	disclosure, err = backend.OperationDisclosure(t.Context(), "delete_person_relationship", deleteArgs)
 	requirements.NoError(err)
 	assertRelationshipDisclosure(t, disclosure)
+	result, err = backend.ExecuteOperation(t.Context(), "update_person_relationship", map[string]any{"id": updated.ID, "revision": updated.Revision, "notes": "changed"})
+	requirements.NoError(err)
+	current := operationOutput[generated.PersonRelationship](t, result)
+	_, err = backend.OperationDisclosure(t.Context(), "delete_person_relationship", deleteArgs)
+	var refusal *mcpserver.OperationRefusalError
+	requirements.ErrorAs(err, &refusal)
+	assertions.Equal("relationship_revision_conflict", refusal.Code)
+	stale, err := backend.ExecuteOperation(t.Context(), "delete_person_relationship", deleteArgs)
+	requirements.NoError(err)
+	assertLoopRefusal(t, stale, "relationship_revision_conflict", false)
+	deleteArgs["revision"] = current.Revision
+	disclosure, err = backend.OperationDisclosure(t.Context(), "delete_person_relationship", deleteArgs)
+	requirements.NoError(err)
+	assertRelationshipDisclosure(t, disclosure)
+	assertions.Contains(disclosure, "changed")
 	result, err = backend.ExecuteOperation(t.Context(), "delete_person_relationship", deleteArgs)
 	requirements.NoError(err)
-	assertions.False(result.IsError)
+	assertions.True(operationOutput[mcpserver.RelationshipDeletion](t, result).Deleted)
+	_, err = st.GetPersonRelationshipContext(t.Context(), created.ID)
+	requirements.ErrorIs(err, store.ErrPersonRelationshipNotFound)
 }
 
 func TestMCPRelationshipListProjection(t *testing.T) {
@@ -111,40 +130,17 @@ func TestMCPRelationshipListProjection(t *testing.T) {
 	requirements.Len(*inline.Relationships, 1)
 	assertions.Equal(&ref, (*inline.Relationships)[0].Relationship.SourceRef)
 	assertions.Equal(&uid, (*inline.Relationships)[0].Relationship.SourceResourceUID)
-}
-
-func TestMCPRelationshipStaleWrite(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	_, backend, source, target := relationshipFixture(t)
-	result, err := backend.ExecuteOperation(t.Context(), "create_person_relationship", map[string]any{"source_person_id": source, "target_person_id": target, "relationship_type_slug": "parent"})
+	networkResult, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_person_network", Arguments: map[string]any{"person_id": source}})
 	requirements.NoError(err)
-	created := operationOutput[generated.PersonRelationship](t, result)
-	args := map[string]any{"id": created.ID, "revision": created.Revision}
-	_, err = backend.OperationDisclosure(t.Context(), "delete_person_relationship", args)
+	network := loopToolOutput[generated.PersonNetwork](t, networkResult)
+	assertions.Equal(source, network.RootPersonID)
+	requirements.Len(network.Edges, 1)
+	assertions.Equal(fmt.Sprintf("relationship:%d", imported.Relationship.ID), network.Edges[0].ID)
+	assertions.Equal(fmt.Sprintf("person:%d", target), network.Edges[0].SourceNodeID)
+	assertions.Equal(fmt.Sprintf("person:%d", source), network.Edges[0].TargetNodeID)
+	missing, err := backend.ExecuteOperation(t.Context(), "get_person_network", map[string]any{"person_id": int64(999999)})
 	requirements.NoError(err)
-	result, err = backend.ExecuteOperation(t.Context(), "update_person_relationship", map[string]any{"id": created.ID, "revision": created.Revision, "notes": "changed"})
-	requirements.NoError(err)
-	updated := operationOutput[generated.PersonRelationship](t, result)
-	_, err = backend.OperationDisclosure(t.Context(), "delete_person_relationship", args)
-	var refusal *mcpserver.OperationRefusalError
-	requirements.ErrorAs(err, &refusal)
-	assertions.Equal("relationship_revision_conflict", refusal.Code)
-	stale, err := backend.ExecuteOperation(t.Context(), "delete_person_relationship", args)
-	requirements.NoError(err)
-	assertLoopRefusal(t, stale, "relationship_revision_conflict", false)
-	disclosure, err := backend.OperationDisclosure(t.Context(), "delete_person_relationship", map[string]any{"id": updated.ID, "revision": updated.Revision})
-	requirements.NoError(err)
-	assertions.Contains(disclosure, "changed")
-}
-
-func TestMCPRelationshipNetworkMissingPerson(t *testing.T) {
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler)}))
-	result, err := backend.ExecuteOperation(t.Context(), "get_person_network", map[string]any{"person_id": int64(999999)})
-	requirements.NoError(err)
-	assertLoopRefusal(t, result, "person_profile_not_found", false)
+	assertLoopRefusal(t, missing, "person_profile_not_found", false)
 }
 
 func TestMCPRelationshipCapabilities(t *testing.T) {
@@ -196,13 +192,17 @@ func TestMCPRelationshipLargeList(t *testing.T) {
 	requirements.False(raw.IsError)
 	requirements.Greater(len(raw.Data), 1<<20)
 	session := operationMCPSession(t, backend, nil, nil)
-	args := map[string]any{"person_id": root.ID, "length": 32768}
+	args := map[string]any{"person_id": root.ID}
 	var assembled bytes.Buffer
 	for {
 		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_relationships", Arguments: args})
 		requirements.NoError(err)
 		chunk := loopToolOutput[mcpserver.PersonRelationshipsPage](t, result)
 		requirements.NotNil(chunk.DataBase64)
+		requirements.NotNil(chunk.Complete)
+		if assembled.Len() == 0 {
+			assertions.False(*chunk.Complete)
+		}
 		data, err := base64.StdEncoding.DecodeString(*chunk.DataBase64)
 		requirements.NoError(err)
 		_, err = assembled.Write(data)

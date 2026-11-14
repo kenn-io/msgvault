@@ -65,18 +65,23 @@ func TestPersonRecordDisclosure(t *testing.T) {
 			adds[i] = map[string]any{"name_kind": "formatted", "formatted": "Example", "envelope": map[string]any{"source": "user"}}
 		}
 		for i, tc := range []struct {
-			patch map[string]any
-			code  string
+			patch    map[string]any
+			code     string
+			personID int64
 		}{
-			{map[string]any{"names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": "Example", "envelope": map[string]any{"source": "user"}}}}}, "person_revision_conflict"},
-			{nil, "invalid_arguments"},
-			{map[string]any{}, "invalid_profile_value"},
-			{map[string]any{"names": map[string]any{"add": adds}}, "profile_patch_too_large"},
-			{map[string]any{"media": map[string]any{"add": []any{map[string]any{"media_kind": "photo", "data": base64.StdEncoding.EncodeToString(make([]byte, (8<<20)+1)), "envelope": map[string]any{"source": "user"}}}}}, "invalid_profile_value"},
-			{map[string]any{"names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": strings.Repeat("x", (12<<20)+1), "envelope": map[string]any{"source": "user"}}}}}, "profile_patch_too_large"},
+			{map[string]any{"names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": "Example", "envelope": map[string]any{"source": "user"}}}}}, "person_revision_conflict", 0},
+			{nil, "invalid_arguments", 0},
+			{map[string]any{}, "invalid_profile_value", 0},
+			{map[string]any{"names": map[string]any{"add": adds}}, "profile_patch_too_large", 0},
+			{map[string]any{"media": map[string]any{"add": []any{map[string]any{"media_kind": "photo", "data": base64.StdEncoding.EncodeToString(make([]byte, (8<<20)+1)), "envelope": map[string]any{"source": "user"}}}}}, "invalid_profile_value", 0},
+			{map[string]any{"names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": strings.Repeat("x", (12<<20)+1), "envelope": map[string]any{"source": "user"}}}}}, "profile_patch_too_large", 0},
+			{map[string]any{"names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": "Example", "envelope": map[string]any{"source": "user"}}}}}, "person_profile_not_found", 999999},
 		} {
 			t.Run(strconv.Itoa(i), func(t *testing.T) {
 				args := map[string]any{"person_id": id, "etag": "etag"}
+				if tc.personID != 0 {
+					args["person_id"] = tc.personID
+				}
 				if tc.patch != nil {
 					args["patch"] = tc.patch
 				}
@@ -86,10 +91,6 @@ func TestPersonRecordDisclosure(t *testing.T) {
 				assert.Equal(t, tc.code, refusal.Code)
 			})
 		}
-		_, err := backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": int64(999999), "etag": "tag", "patch": map[string]any{"names": map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": "Example", "envelope": map[string]any{"source": "user"}}}}}})
-		var refusal *mcpserver.OperationRefusalError
-		require.ErrorAs(t, err, &refusal)
-		assert.Equal(t, "person_profile_not_found", refusal.Code)
 	})
 	t.Run("full value", func(t *testing.T) {
 		backend, id := personRecordFixture(t)
