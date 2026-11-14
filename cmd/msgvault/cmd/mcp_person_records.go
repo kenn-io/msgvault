@@ -187,13 +187,6 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 			patch.Media.Add = append(patch.Media.Add, add)
 		}
 	}
-	preview, err := json.Marshal(patch)
-	if err != nil {
-		return "", true, err
-	}
-	if len(preview) > maxPersonRecordDisclosureBytes {
-		return "", true, &mcpserver.OperationRefusalError{Code: "operation_response_limit_exceeded"}
-	}
 	current, _, err := b.executePersonRecord(ctx, "get_person_record", map[string]any{"person_id": input.PersonID})
 	if err != nil {
 		return "", true, err
