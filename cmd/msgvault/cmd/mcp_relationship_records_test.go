@@ -107,7 +107,7 @@ func TestMCPRelationshipRecords(t *testing.T) {
 	requirements.ErrorIs(err, store.ErrPersonRelationshipNotFound)
 }
 
-func TestMCPRelationshipListProjection(t *testing.T) {
+func TestMCPRelationshipListAndNetworkReads(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st, backend, source, target := relationshipFixture(t)
@@ -210,6 +210,9 @@ func TestMCPRelationshipLargeList(t *testing.T) {
 		if *chunk.Complete {
 			break
 		}
+		requirements.NotNil(chunk.Offset)
+		requirements.NotNil(chunk.Length)
+		requirements.NotNil(chunk.SHA256)
 		args = map[string]any{"person_id": root.ID, "length": 32768, "offset": *chunk.Offset + *chunk.Length, "sha256": *chunk.SHA256}
 	}
 	assertions.JSONEq(string(raw.Data), assembled.String())
