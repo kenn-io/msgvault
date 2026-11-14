@@ -8,9 +8,6 @@ import (
 )
 
 func TestParseRelationshipDateRequiresAYear(t *testing.T) {
-	// Local helpers: make lint-ci runs testify-helper-check, which fails any
-	// test body with more than three direct testify package calls and at least
-	// two of one kind.
 	assert := assert.New(t)
 	require := require.New(t)
 

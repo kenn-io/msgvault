@@ -29,8 +29,7 @@ const paginationStabilitySubjectTag = "pagestable"
 // seedPaginationStabilityFixture inserts paginationStabilityN messages that all
 // share an identical sent_at — the ambiguous case that makes ordering by
 // sent_at alone non-deterministic — and returns the source plus the set of
-// inserted message IDs. Extracted from the test body so the assertion-heavy
-// setup keeps its require checks without tripping the testify-helper linter.
+// inserted message IDs.
 func seedPaginationStabilityFixture(t *testing.T, st *store.Store) (*store.Source, map[int64]struct{}) {
 	t.Helper()
 	require := require.New(t)
