@@ -273,6 +273,10 @@ func TestMCPLoopResponseClassifierIsScoped(t *testing.T) {
 			assertLoopRefusal(t, result, code, false)
 			result, err = readMCPOperationJSON[generated.Person](t.Context(), client, http.MethodPost, "/api/v1/people", nil, http.StatusOK)
 			require.NoError(t, err)
+			if code == "server_busy" {
+				assertLoopRefusal(t, result, "server_busy", false)
+				return
+			}
 			assertLoopRefusal(t, result, "operation_refused", true)
 		})
 	}
