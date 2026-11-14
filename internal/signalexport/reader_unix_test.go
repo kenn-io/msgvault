@@ -16,10 +16,11 @@ import (
 func TestReaderRejectsFIFO(t *testing.T) {
 	for _, name := range []string{"metadata.json", "main.jsonl"} {
 		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
 			root := fixture(t)
 			path := filepath.Join(root, name)
-			require.NoError(t, os.Remove(path))
-			require.NoError(t, syscall.Mkfifo(path, 0600))
+			require.NoError(os.Remove(path))
+			require.NoError(syscall.Mkfifo(path, 0600))
 			done := make(chan error, 1)
 			go func() {
 				r, err := openReader(t.Context(), root)
@@ -30,10 +31,10 @@ func TestReaderRejectsFIFO(t *testing.T) {
 			}()
 			select {
 			case err := <-done:
-				require.ErrorContains(t, err, name)
-				require.ErrorContains(t, err, "regular file")
+				require.ErrorContains(err, name)
+				require.ErrorContains(err, "regular file")
 			case <-time.After(10 * time.Second):
-				require.FailNow(t, "opening the FIFO blocked")
+				require.FailNow("opening the FIFO blocked")
 			}
 		})
 	}
