@@ -18,8 +18,9 @@ const LoopDecisionNotFoundCode = "loop_decision_not_found"
 
 // LoopListOptions selects loops. Zero values use the daemon's defaults.
 type LoopListOptions struct {
-	PersonID      int64
-	Limit         int
+	PersonID int64
+	Limit    int
+
 	IncludeClosed bool
 }
 

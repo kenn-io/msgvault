@@ -59,7 +59,11 @@ func newLoopsListCommand() *cobra.Command {
 		if opts.Limit < 1 || opts.Limit > loops.MaxLimit {
 			return usageErr(cmd, fmt.Errorf("--limit must be from 1 through %d", loops.MaxLimit))
 		}
-		return withLoopsClientVersion(cmd, loopsListSchemaVersion(opts), func(client *daemonclient.Client) error {
+		version := loopsMinAPISchemaVersion
+		if opts.IncludeClosed {
+			version = "5.5.0"
+		}
+		return withLoopsClientVersion(cmd, version, func(client *daemonclient.Client) error {
 			result, err := client.ListLoops(cmd.Context(), opts)
 			if err != nil {
 				return err
@@ -71,15 +75,6 @@ func newLoopsListCommand() *cobra.Command {
 		})
 	}
 	return command
-}
-
-// loopsListSchemaVersion asks for the closed-commitment schema only when the
-// request sends include_closed, which an older daemon would ignore.
-func loopsListSchemaVersion(opts daemonclient.LoopListOptions) string {
-	if opts.IncludeClosed {
-		return "5.5.0"
-	}
-	return loopsMinAPISchemaVersion
 }
 
 func newLoopsDoneCommand() *cobra.Command {
@@ -224,8 +219,7 @@ func runCommitmentDecision(cmd *cobra.Command, id, state string, until *time.Tim
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s is %s.\n", id, decision.State)
-		if err != nil {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s is %s.\n", id, decision.State); err != nil {
 			return fmt.Errorf("write commitment decision: %w", err)
 		}
 		return nil
@@ -353,7 +347,6 @@ func writeLoopCommitments(sb *strings.Builder, commitments []generated.LoopCommi
 				fmt.Fprintf(sb, "   due %s", *item.DueOn)
 			}
 			fmt.Fprintf(sb, "\n    message %d: %s\n", item.Promise.MessageID, textutil.SanitizeTerminal(item.Promise.Text))
-
 		}
 	}
 }

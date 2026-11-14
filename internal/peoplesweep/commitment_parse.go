@@ -72,10 +72,7 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 		return invalid()
 	}
 	location, err := time.LoadLocation(window.Timezone)
-	if err != nil {
-		return invalid()
-	}
-	if err := validateCommitmentOutput(output); err != nil {
+	if err != nil || validateProgramOutput(output, commitmentSchema, "commitment") != nil {
 		return invalid()
 	}
 	var parsed ParsedCommitments
@@ -88,10 +85,7 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 	}
 	sources := make(map[string]CommitmentSource, len(window.Sources))
 	for _, source := range window.Sources {
-		if source.ID == "" || source.MessageID <= 0 || (source.Direction != CommitmentOwedBy && source.Direction != CommitmentOwedTo) {
-			return invalid()
-		}
-		if _, exists := sources[source.ID]; exists {
+		if _, exists := sources[source.ID]; exists || source.ID == "" || source.MessageID <= 0 || (source.Direction != CommitmentOwedBy && source.Direction != CommitmentOwedTo) {
 			return invalid()
 		}
 		sources[source.ID] = source

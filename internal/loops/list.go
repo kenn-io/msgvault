@@ -16,8 +16,9 @@ import (
 
 // Options selects which loops List returns. A zero Limit means the default.
 type Options struct {
-	PersonID      int64
-	Limit         int
+	PersonID int64
+	Limit    int
+
 	IncludeClosed bool
 }
 

@@ -47,16 +47,12 @@ type CommitmentDecisionResponse struct {
 func loopCommitments(commitments []store.PersonCommitment) []LoopCommitment {
 	var response []LoopCommitment
 	for _, c := range commitments {
-		if c.ClaimID == nil {
-			continue
-		}
-		item := LoopCommitment{
-			ID: loops.FormatCommitmentID(c.ID), PersonID: c.PersonID, ClaimID: *c.ClaimID,
+		response = append(response, LoopCommitment{
+			ID: loops.FormatCommitmentID(c.ID), PersonID: c.PersonID, ClaimID: c.ClaimID,
 			Direction: c.Direction, Summary: c.Summary, PromisedAt: c.PromisedAt, DueOn: c.DueOn,
 			Freshness: string(c.Freshness), State: c.State, SnoozedUntil: c.SnoozedUntil,
 			Promise: CommitmentQuote{MessageID: c.AnchorMessageID, Text: c.Quote, Start: c.Start, End: c.End},
-		}
-		response = append(response, item)
+		})
 	}
 	return response
 }

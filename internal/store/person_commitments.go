@@ -25,7 +25,7 @@ import (
 type PersonCommitment struct {
 	ID              int64                       `json:"id"`
 	PersonID        int64                       `json:"person_id"`
-	ClaimID         *int64                      `json:"claim_id,omitempty"`
+	ClaimID         int64                       `json:"claim_id,omitempty"`
 	TargetKey       string                      `json:"target_key"`
 	AnchorMessageID int64                       `json:"anchor_message_id"`
 	Direction       string                      `json:"direction"`
@@ -55,13 +55,6 @@ func scanPersonCommitment(row scanner) (PersonCommitment, error) {
 type commitmentCandidate struct {
 	commitment PersonCommitment
 	promise    personfacts.Evidence
-}
-
-func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int, includeClosed bool) ([]PersonCommitment, error) {
-	if personID < 0 || limit < 1 || limit > 201 {
-		return nil, ErrInvalidActivityRequest
-	}
-	return s.listPersonCommitments(ctx, personID, now, limit, includeClosed)
 }
 
 // commitmentSourceCache serves one list. It shares raw source reads and each
@@ -96,7 +89,10 @@ func (s *Store) commitmentSourceCache(owners loopOwners) func(context.Context, i
 	}
 }
 
-func (s *Store) listPersonCommitments(ctx context.Context, personID int64, now time.Time, limit int, includeClosed bool) ([]PersonCommitment, error) {
+func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int, includeClosed bool) ([]PersonCommitment, error) {
+	if personID < 0 || limit < 1 || limit > 201 {
+		return nil, ErrInvalidActivityRequest
+	}
 	owners, err := s.loopOwnerIdentities(ctx)
 	if err != nil {
 		return nil, err
@@ -232,7 +228,7 @@ func (s *Store) loadCommitmentCandidateEvidenceTx(ctx context.Context, tx *logge
 	if err != nil || promise.Input.SpanStart == nil || promise.Input.SpanEnd == nil {
 		return fmt.Errorf("invalid commitment citation")
 	}
-	c.ClaimID = &claimID
+	c.ClaimID = claimID
 	c.AnchorMessageID, c.Direction, c.Quote = messageID, value.Direction, promise.Input.Excerpt
 	c.Start, c.End = *promise.Input.SpanStart, *promise.Input.SpanEnd
 	c.Summary, c.DueOn, c.PromisedAt = value.Summary, value.DueOn, promise.Input.EventTime
@@ -323,8 +319,8 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 		return err
 	})
 	if err == nil {
-		result.ClaimID, result.AnchorMessageID, result.Direction, result.Quote = current.ClaimID, current.AnchorMessageID, current.Direction, current.Quote
-		result.Start, result.End, result.Summary, result.DueOn, result.PromisedAt, result.Freshness = current.Start, current.End, current.Summary, current.DueOn, current.PromisedAt, current.Freshness
+		current.State, current.SnoozedUntil = result.State, result.SnoozedUntil
+		result = current
 	}
 	return result, err
 }

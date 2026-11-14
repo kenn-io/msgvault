@@ -98,11 +98,9 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		return source, nil
 	}
 	generation := request.Generation
-	generation.ProgramID = peoplesweep.CommitmentProgramID
-	generation.ProgramVersion = peoplesweep.CommitmentProgramVersion
+	generation.ProgramID, generation.ProgramVersion = peoplesweep.CommitmentProgramID, peoplesweep.CommitmentProgramVersion
 	generation.ProgramFingerprint = peoplesweep.CommitmentProgramFingerprint()
-	generation.Claims = nil
-	generation.EvidenceStatusChanges = nil
+	generation.Claims, generation.EvidenceStatusChanges = nil, nil
 	aligner := make(commitmentEvidenceAligner)
 	matched := make(map[string]bool)
 	for _, promise := range result.Output.Promises {
@@ -207,7 +205,6 @@ func (s *Store) matchCommitmentTarget(ctx context.Context, personID int64, sourc
 }
 
 func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {
-	personID := request.Lease.PersonID
 	if err := s.applyCommitmentStatusesTx(ctx, tx, request, prepared); err != nil {
 		return err
 	}
@@ -217,7 +214,7 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 			return err
 		}
 		for _, p := range prepared.promises {
-			_, err := tx.ExecContext(ctx, `INSERT INTO person_commitments (person_id, target_key) VALUES (?, ?) ON CONFLICT (person_id, target_key) DO NOTHING`, personID, p.TargetKey)
+			_, err := tx.ExecContext(ctx, `INSERT INTO person_commitments (person_id, target_key) VALUES (?, ?) ON CONFLICT (person_id, target_key) DO NOTHING`, request.Lease.PersonID, p.TargetKey)
 			if err != nil {
 				return fmt.Errorf("persist commitment decision: %w", err)
 			}
