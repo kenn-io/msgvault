@@ -368,13 +368,14 @@ func TestReaderValidation(t *testing.T) {
 func TestReaderRejectsNonregularInput(t *testing.T) {
 	for _, name := range []string{"metadata.json", "main.jsonl"} {
 		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
 			root := fixture(t)
 			path := filepath.Join(root, name)
-			require.NoError(t, os.Remove(path))
-			require.NoError(t, os.Mkdir(path, 0700))
+			require.NoError(os.Remove(path))
+			require.NoError(os.Mkdir(path, 0700))
 			_, err := openReader(t.Context(), root)
-			require.ErrorContains(t, err, name)
-			require.ErrorContains(t, err, "regular file")
+			require.ErrorContains(err, name)
+			require.ErrorContains(err, "regular file")
 		})
 	}
 }
