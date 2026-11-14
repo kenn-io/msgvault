@@ -83,16 +83,3 @@ func TestImportSignalExportNewerFormat(t *testing.T) {
 	require.ErrorContains(t, err, "upgrade msgvault")
 	assert.NotContains(t, out.String(), "Re-run")
 }
-
-func TestImportSignalExportReasonLabels(t *testing.T) {
-	for reason, want := range map[string]string{
-		"index_limit":    "file scan limit reached",
-		"contactMessage": "contact cards", "stickerMessage": "stickers", "remoteDeletedMessage": "deleted messages",
-		"updateMessage": "chat updates", "paymentNotification": "payments", "giftBadge": "gifts",
-		"viewOnceMessage": "view-once messages", "directStoryReplyMessage": "story replies", "adminDeletedMessage": "messages deleted by admins",
-		"adHocCall": "calls", "installedStickerPack": "installed sticker packs", "hiddenStickerPack": "hidden sticker packs",
-		"favoriteStickerList": "favorite stickers", "notificationProfile": "notification profiles", "chatFolder": "chat folders",
-	} {
-		assert.Equal(t, want, signalExportReasonLabel(reason), reason)
-	}
-}

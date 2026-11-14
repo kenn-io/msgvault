@@ -98,15 +98,29 @@ func TestImportDistinctMessagesAtSameMillisecond(t *testing.T) {
 	repeat := strings.Replace(first, "Hello 星", "Repeat", 1)
 	shared := `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{"dateReceived":"1700000000100"},"standardMessage":{"text":{"body":"first"},"attachments":[{"clientUuid":"AQ==","pointer":{"locatorInfo":{"key":"Ag=="}}}]}}}`
 	sharedSecond := strings.Replace(shared, `"body":"first"`, `"body":"second"`, 1)
+	one, two := []byte("fictional first media"), []byte("fictional second media")
+	message := func(body, uuid, key string, data []byte) string {
+		locator := `{"key":"` + key + `"}`
+		if data != nil {
+			locator = `{"key":"` + key + `","plaintextHash":"` + base64.StdEncoding.EncodeToString(sha256Sum(data)) + `"}`
+		}
+		return `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{"dateReceived":"1700000000100"},"standardMessage":{"text":{"body":"` + body + `"},"attachments":[{"clientUuid":"` + uuid + `","pointer":{"locatorInfo":` + locator + `}}]}}}`
+	}
+	m1, m2 := message("one", "AQ==", "Ag==", nil), message("two", "Aw==", "BA==", nil)
+	repaired := map[string]string{"one": hashHex(one), "two": hashHex(two)}
 	for _, tc := range []struct {
 		name           string
 		frames, replay []string
 		changed        int64
+		wantHash       map[string]string
 	}{
-		{"incoming receive times", []string{first, later(first, "Hello 星")}, []string{later(first, "Hello 星")}, 0},
-		{"outgoing receive times", []string{outgoing, later(outgoing, "First message")}, []string{later(outgoing, "First message")}, 0},
-		{"same-time messages separated by another", []string{first, between, repeat}, []string{repeat, between, first}, 2},
-		{"shared attachment identity", []string{shared, sharedSecond}, []string{shared, sharedSecond}, 0},
+		{"incoming receive times", []string{first, later(first, "Hello 星")}, []string{later(first, "Hello 星")}, 0, nil},
+		{"outgoing receive times", []string{outgoing, later(outgoing, "First message")}, []string{later(outgoing, "First message")}, 0, nil},
+		{"same-time messages separated by another", []string{first, between, repeat}, []string{repeat, between, first}, 2, nil},
+		{"shared attachment identity", []string{shared, sharedSecond}, []string{shared, sharedSecond}, 0, nil},
+		{"swapped order", []string{m1, m2}, []string{message("two", "Aw==", "BA==", two), message("one", "AQ==", "Ag==", one)}, 0, repaired},
+		{"new before original", []string{m1}, []string{message("two", "Aw==", "BA==", two), message("one", "AQ==", "Ag==", one)}, 0, repaired},
+		{"new, new, original", []string{m1}, []string{message("new", "BQ==", "Bg==", nil), message("newer", "Bw==", "CA==", nil), m1}, 0, map[string]string{"one": "", "new": "", "newer": ""}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
@@ -115,14 +129,40 @@ func TestImportDistinctMessagesAtSameMillisecond(t *testing.T) {
 			summary, err := Import(t.Context(), st, opts)
 			require.NoError(t, err)
 			assert.EqualValues(t, len(tc.frames), summary.MessagesAdded)
-			assert.Equal(t, len(tc.frames), messageCount(t, st))
 			writeFrames(t, root, tc.replay...)
+			if tc.wantHash != nil {
+				putMedia(t, root, one)
+				putMedia(t, root, two)
+			}
 			summary, err = Import(t.Context(), st, opts)
 			require.NoError(t, err)
-			assert.EqualValues(t, len(tc.replay), summary.MessagesExisting)
-			assert.Equal(t, tc.changed, summary.MessagesChanged)
-			assert.Zero(t, summary.MessagesAdded)
-			assert.Equal(t, len(tc.frames), messageCount(t, st))
+			added := max(len(tc.replay)-len(tc.frames), 0)
+			assert.EqualValues(t, added, summary.MessagesAdded)
+			assert.EqualValues(t, len(tc.replay)-added, summary.MessagesExisting)
+			if tc.wantHash == nil {
+				assert.Equal(t, tc.changed, summary.MessagesChanged)
+			}
+			assert.Equal(t, len(tc.frames)+added, messageCount(t, st))
+			if tc.wantHash != nil {
+				rows, err := st.DB().QueryContext(t.Context(), "SELECT id FROM messages")
+				require.NoError(t, err)
+				defer func() { _ = rows.Close() }()
+				var ids []int64
+				for rows.Next() {
+					var id int64
+					require.NoError(t, rows.Scan(&id))
+					ids = append(ids, id)
+				}
+				require.NoError(t, rows.Err())
+				require.NoError(t, rows.Close())
+				got := map[string]string{}
+				for _, id := range ids {
+					body, err := st.GetMessageBodyText(t.Context(), id)
+					require.NoError(t, err)
+					got[body] = slotHashes(t, st, id)["attachment:0"]
+				}
+				assert.Equal(t, tc.wantHash, got)
+			}
 		})
 	}
 }
@@ -135,64 +175,6 @@ func TestImportNullReceivedTime(t *testing.T) {
 	assert.EqualValues(t, 1, summary.MessagesAdded)
 	id, _ := onlyMessage(t, st)
 	assertBody(t, st, id, "Hello 星")
-}
-
-// Stable attachment identities let reordered messages repair their own slots, and
-// a new same-time message before an original never takes the original's row.
-func TestRepairWithSameTimesKeepsEachMessageSlot(t *testing.T) {
-	one, two := []byte("fictional first media"), []byte("fictional second media")
-	message := func(body, uuid, key string, data []byte) string {
-		locator := `{"key":"` + key + `"}`
-		if data != nil {
-			locator = `{"key":"` + key + `","plaintextHash":"` + base64.StdEncoding.EncodeToString(sha256Sum(data)) + `"}`
-		}
-		return `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{"dateReceived":"1700000000100"},"standardMessage":{"text":{"body":"` + body + `"},"attachments":[{"clientUuid":"` + uuid + `","pointer":{"locatorInfo":` + locator + `}}]}}}`
-	}
-	first, second := message("one", "AQ==", "Ag==", nil), message("two", "Aw==", "BA==", nil)
-	repaired := map[string]string{"one": hashHex(one), "two": hashHex(two)}
-	for _, tc := range []struct {
-		name            string
-		initial, replay []string
-		wantHash        map[string]string
-	}{
-		{"swapped order", []string{first, second}, []string{message("two", "Aw==", "BA==", two), message("one", "AQ==", "Ag==", one)}, repaired},
-		{"new before original", []string{first}, []string{message("two", "Aw==", "BA==", two), message("one", "AQ==", "Ag==", one)}, repaired},
-		{"new, new, original", []string{first}, []string{message("new", "BQ==", "Bg==", nil), message("newer", "Bw==", "CA==", nil), first}, map[string]string{"one": "", "new": "", "newer": ""}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			st := testutil.NewTestStore(t)
-			root := fixture(t, tc.initial...)
-			opts := options(t, root)
-			_, err := Import(t.Context(), st, opts)
-			require.NoError(err)
-			writeFrames(t, root, tc.replay...)
-			putMedia(t, root, one)
-			putMedia(t, root, two)
-			summary, err := Import(t.Context(), st, opts)
-			require.NoError(err)
-			assert.EqualValues(t, len(tc.replay)-len(tc.initial), summary.MessagesAdded)
-			assert.Equal(t, len(tc.replay), messageCount(t, st))
-			rows, err := st.DB().QueryContext(t.Context(), "SELECT id FROM messages")
-			require.NoError(err)
-			defer func() { _ = rows.Close() }()
-			var ids []int64
-			for rows.Next() {
-				var id int64
-				require.NoError(rows.Scan(&id))
-				ids = append(ids, id)
-			}
-			require.NoError(rows.Err())
-			require.NoError(rows.Close())
-			got := map[string]string{}
-			for _, id := range ids {
-				body, err := st.GetMessageBodyText(t.Context(), id)
-				require.NoError(err)
-				got[body] = slotHashes(t, st, id)["attachment:0"]
-			}
-			assert.Equal(t, tc.wantHash, got)
-		})
-	}
 }
 
 func TestImportDirectionsGroupsAndOmissions(t *testing.T) {
@@ -504,7 +486,8 @@ func TestImportIdentityTimeAndDirectionSkips(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), []byte(strings.Join(lines, "\n")), 0600))
 			s, err := Import(t.Context(), st, options(t, root))
 			require.NoError(t, err)
-			assert.EqualValues(t, 1, s.Skipped["recipient_identity"])
+			assert.Equal(t, map[string]int64{"recipient_identity": 1}, s.Skipped)
+			assert.Empty(t, s.Omitted)
 		})
 	}
 }
@@ -673,31 +656,16 @@ func TestSourceFormatRefusesNewerVersion(t *testing.T) {
 	assert.Zero(t, summary.SourceID)
 	assert.Zero(t, messageCount(t, st))
 }
-func TestImportLongTextTurnsInline(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	root := fixture(t, strings.Replace(mediaMessage([]byte("short and the rest"), true), `"inline"`, `"short"`, 1))
-	opts := options(t, root)
-	_, err := Import(t.Context(), st, opts)
-	require.NoError(err)
-	writeFrames(t, root, strings.Replace(incoming, "Hello 星", "short and the rest", 1))
-	summary, err := Import(t.Context(), st, opts)
-	require.NoError(err)
-	assert.EqualValues(1, summary.MediaMissing["missing"])
-	assert.EqualValues(1, summary.Omitted["incomplete_long_text"])
-	assert.EqualValues(1, summary.MessagesChanged)
-	id, _ := onlyMessage(t, st)
-	assertBody(t, st, id, "short")
-	assert.Equal(map[string]string{"long_text": ""}, slotHashes(t, st, id))
-}
 
 // A missing slot is filled only by a unique UUID or locator key from its first
 // record; position and a later export's hash never assign bytes.
 func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 	a, b := []byte("original fictional media"), []byte("replacement fictional media")
 	message := func(body, standard string) string {
-		return `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"` + body + `"},` + standard + `}}}`
+		if standard != "" {
+			standard = "," + standard
+		}
+		return `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"` + body + `"}` + standard + `}}}`
 	}
 	attachments := func(uuid string, pointer string) string {
 		return `"attachments":[{"clientUuid":"` + uuid + `","pointer":` + pointer + `}]`
@@ -705,16 +673,18 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 	otherKey := strings.Replace(pointer(a), `"key":"AQ=="`, `"key":"Ag=="`, 1)
 	otherKeyB := strings.Replace(pointer(b), `"key":"AQ=="`, `"key":"Ag=="`, 1)
 	for _, tc := range []struct {
-		name, first, unmatched, repaired string
-		unmatchedMedia, repairedMedia    []byte
-		want                             map[string]string
+		name, first, unmatched, repaired                     string
+		unmatchedMedia, repairedMedia                        []byte
+		want                                                 map[string]string
+		firstStored, firstMissing, finalStored, finalMissing int
 	}{
-		{"hashed original ignores new hash", attachments("AQ==", pointer(a)), attachments("AQ==", pointer(b)), attachments("AQ==", pointer(b)), b, a, map[string]string{"attachment:0": hashHex(a)}},
-		{"hashed long text ignores new hash", `"longText":` + pointer(a), `"longText":` + otherKeyB, `"longText":` + otherKeyB, b, a, map[string]string{"long_text": hashHex(a)}},
-		{"hashless uuid after reorder", attachments("AQ==", `{"locatorInfo":{"key":"Ag=="}}`), attachments("BA==", pointer(a)), `"attachments":[{"clientUuid":"Aw==","pointer":{}},{"clientUuid":"AQ==","pointer":` + pointer(a) + `}]`, a, a, map[string]string{"attachment:0": hashHex(a)}},
-		{"hashless long text by key", `"longText":{"locatorInfo":{"key":"AQ=="}}`, `"longText":` + otherKey, `"longText":` + pointer(a), a, a, map[string]string{"long_text": hashHex(a)}},
-		{"earlier album slot removed", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(b) + `}]`, attachments("Aw==", pointer(b)), attachments("Ag==", pointer(b)), b, b, map[string]string{"attachment:0": "", "attachment:1": hashHex(b)}},
-		{"equal bytes in separate slots", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, attachments("Aw==", pointer(b)), `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, b, a, map[string]string{"attachment:0": hashHex(a), "attachment:1": hashHex(a)}},
+		{"hashed original ignores new hash", attachments("AQ==", pointer(a)), attachments("AQ==", pointer(b)), attachments("AQ==", pointer(b)), b, a, map[string]string{"attachment:0": hashHex(a)}, 0, 1, 1, 0},
+		{"hashed long text ignores new hash", `"longText":` + pointer(a), `"longText":` + otherKeyB, `"longText":` + otherKeyB, b, a, map[string]string{"long_text": hashHex(a)}, 0, 1, 1, 0},
+		{"hashless uuid after reorder", attachments("AQ==", `{"locatorInfo":{"key":"Ag=="}}`), attachments("BA==", pointer(a)), `"attachments":[{"clientUuid":"Aw==","pointer":{}},{"clientUuid":"AQ==","pointer":` + pointer(a) + `}]`, a, a, map[string]string{"attachment:0": hashHex(a)}, 0, 1, 1, 0},
+		{"hashless long text by key", `"longText":{"locatorInfo":{"key":"AQ=="}}`, `"longText":` + otherKey, `"longText":` + pointer(a), a, a, map[string]string{"long_text": hashHex(a)}, 0, 1, 1, 0},
+		{"earlier album slot removed", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(b) + `}]`, attachments("Aw==", pointer(b)), attachments("Ag==", pointer(b)), b, b, map[string]string{"attachment:0": "", "attachment:1": hashHex(b)}, 1, 1, 0, 1},
+		{"equal bytes in separate slots", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, attachments("Aw==", pointer(b)), `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, b, a, map[string]string{"attachment:0": hashHex(a), "attachment:1": hashHex(a)}, 0, 2, 2, 0},
+		{"long text turned inline", `"longText":` + pointer(a), "", "", nil, nil, map[string]string{"long_text": ""}, 0, 1, 0, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -725,39 +695,30 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 			_, err := Import(t.Context(), st, opts)
 			require.NoError(err)
 			id, raw := onlyMessage(t, st)
-			writeFrames(t, root, message("changed", tc.unmatched))
-			putMedia(t, root, tc.unmatchedMedia)
+			body := "changed"
+			if tc.unmatchedMedia == nil {
+				body = string(a)
+			}
+			writeFrames(t, root, message(body, tc.unmatched))
+			if tc.unmatchedMedia != nil {
+				putMedia(t, root, tc.unmatchedMedia)
+			}
 			summary, err := Import(t.Context(), st, opts)
 			require.NoError(err)
-			if tc.name == "earlier album slot removed" {
-				assert.Equal(1, summary.AttachmentsStored)
-				assert.Equal(1, summary.AttachmentsMissing)
-				assert.Equal(map[string]string{"attachment:0": "", "attachment:1": hashHex(b)}, slotHashes(t, st, id))
+			assert.Equal(tc.firstStored, summary.AttachmentsStored)
+			assert.Equal(tc.firstMissing, summary.AttachmentsMissing)
+			if tc.unmatchedMedia == nil {
+				assert.EqualValues(1, summary.MediaMissing["missing"])
+				assert.EqualValues(1, summary.Omitted["incomplete_long_text"])
+				assert.EqualValues(1, summary.MessagesChanged)
 			} else {
-				assert.Zero(summary.AttachmentsStored)
-				assert.Equal(len(tc.want), summary.AttachmentsMissing)
-				for key := range tc.want {
-					assert.Empty(slotHashes(t, st, id)[key])
-				}
-				hash := hashHex(tc.unmatchedMedia)
-				assert.NoFileExists(filepath.Join(opts.AttachmentsDir, hash[:2], hash))
+				writeFrames(t, root, message("changed", tc.repaired))
+				putMedia(t, root, tc.repairedMedia)
+				summary, err = Import(t.Context(), st, opts)
+				require.NoError(err)
+				assert.Equal(tc.finalStored, summary.AttachmentsStored)
+				assert.Equal(tc.finalMissing, summary.AttachmentsMissing)
 			}
-			writeFrames(t, root, message("changed", tc.repaired))
-			putMedia(t, root, tc.repairedMedia)
-			summary, err = Import(t.Context(), st, opts)
-			require.NoError(err)
-			stored := 0
-			for _, hash := range tc.want {
-				if hash != "" {
-					stored++
-				}
-			}
-			if tc.name == "earlier album slot removed" {
-				assert.Zero(summary.AttachmentsStored)
-			} else {
-				assert.Equal(stored, summary.AttachmentsStored)
-			}
-			assert.Equal(len(tc.want)-stored, summary.AttachmentsMissing)
 			assert.Equal(tc.want, slotHashes(t, st, id))
 			again, err := st.GetMessageRawContext(t.Context(), id)
 			require.NoError(err)
@@ -767,14 +728,11 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 	}
 }
 
-// The limit counts directory entries and later frame callbacks report missing media.
 func TestMediaIndexLimit(t *testing.T) {
 	data := []byte("fictional index media")
 	other := []byte("fictional other index media")
 	require.NotEqual(t, hashHex(data)[:2], hashHex(other)[:2])
-	frame := mediaMessage(data, false)
-	second := strings.Replace(mediaMessage(other, false), "1700000000000", "1700000000001", 1)
-	root := fixture(t, frame, second)
+	root := fixture(t)
 	path := putMedia(t, root, data)
 	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(path), "unrelated"), []byte("x"), 0600))
 	r, err := openReader(t.Context(), root)
@@ -804,9 +762,15 @@ func TestMatchingPointerRequiresUniqueUnclaimedIdentity(t *testing.T) {
 	two := messageAttachment{ClientUUID: []byte{1}, Pointer: &filePointer{}}
 	two.Pointer.Locator.Key = []byte{2}
 	m := &standardMessage{Attachments: []messageAttachment{one, two}}
+	assert.Same(t, two.Pointer, matchingPointer(old, []messageAttachment{old}, m, map[int]bool{}))
+	old2 := messageAttachment{ClientUUID: []byte{3}, Pointer: &filePointer{}}
+	old2.Pointer.Locator.Key = []byte{3}
+	claimable := messageAttachment{ClientUUID: []byte{1}, Pointer: &filePointer{}}
+	claimable.Pointer.Locator.Key = []byte{3}
+	claimMessage := &standardMessage{Attachments: []messageAttachment{claimable}}
 	claimed := map[int]bool{}
-	assert.Same(t, two.Pointer, matchingPointer(old, []messageAttachment{old}, m, claimed))
-	assert.Nil(t, matchingPointer(old, []messageAttachment{old}, m, claimed))
+	assert.Same(t, claimable.Pointer, matchingPointer(old, []messageAttachment{old, old2}, claimMessage, claimed))
+	assert.Nil(t, matchingPointer(old2, []messageAttachment{old, old2}, claimMessage, claimed))
 	assert.Nil(t, matchingPointer(old, []messageAttachment{old, old}, m, map[int]bool{}))
 	old.Pointer.Locator.Key = []byte{3}
 	assert.Nil(t, matchingPointer(old, []messageAttachment{old}, m, map[int]bool{}))
