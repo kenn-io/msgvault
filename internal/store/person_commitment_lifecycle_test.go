@@ -30,7 +30,7 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 				r, a, ctx := require.New(t), assert.New(t), t.Context()
 				f := newPersonSweepApplyFixture(t, "commitment-evidence", false)
 				st := f.store
-				_, persist := newCommitmentTestConversation(t, f)
+				sourceID, persist := newCommitmentTestConversation(t, f)
 				profile := f.request.Generation.Policy.ProviderPolicyFingerprint
 				_, err := st.RevokePersonInferenceConsent(ctx, profile, "test")
 				r.NoError(err)
@@ -47,6 +47,9 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 				cfg.ApplyDefaults()
 				cfg.Commitments.Enabled = true
 				applyCommitmentTestSources(t, f, cfg.Commitments)
+				tombstones, err := st.personSweepTombstones(ctx, f.personID, peoplesweep.ArchiveChange{PersonID: f.personID, SourceID: sourceID, MessageID: id, SourceLane: peoplesweep.SourceConversationText, EvidenceEffect: peoplesweep.EvidenceEffectSourceEdited})
+				r.NoError(err)
+				a.Empty(tombstones)
 				before, err := st.LatestPersonSweepChangeSequence(ctx)
 				r.NoError(err)
 				_, err = st.db.ExecContext(ctx, st.Rebind(mutation.query), id)

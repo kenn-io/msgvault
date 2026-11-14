@@ -18,7 +18,7 @@ const commitmentProgramText = "Find explicit promises owed by or to the archive 
 
 const commitmentQuoteProperties = `"source_id":{"type":"string","minLength":1},"quote":{"type":"string","minLength":1,"maxLength":2000},"start":{"type":"integer","minimum":0},"end":{"type":"integer","minimum":1}`
 
-var commitmentSchema = jsontext.Value(`{"type":"object","properties":{"promises":{"type":"array","maxItems":32,"items":{"type":"object","properties":{` + commitmentQuoteProperties + `,"direction":{"type":"string","enum":["owed_by","owed_to"]},"summary":{"type":"string","minLength":1,"maxLength":240},"due_on":{"type":["string","null"],"format":"date"}},"required":["source_id","quote","start","end","direction","summary","due_on"],"additionalProperties":false}}},"required":["promises"],"additionalProperties":false}`)
+var commitmentSchema = jsontext.Value(`{"type":"object","properties":{"promises":{"type":"array","maxItems":2000,"items":{"type":"object","properties":{` + commitmentQuoteProperties + `,"direction":{"type":"string","enum":["owed_by","owed_to"]},"summary":{"type":"string","minLength":1,"maxLength":240},"due_on":{"type":["string","null"],"format":"date"}},"required":["source_id","quote","start","end","direction","summary","due_on"],"additionalProperties":false}}},"required":["promises"],"additionalProperties":false}`)
 
 func CommitmentProgramFingerprint() string {
 	digest := sha256.Sum256(append([]byte(CommitmentProgramID+CommitmentProgramVersion+commitmentProgramText), commitmentSchema...))
