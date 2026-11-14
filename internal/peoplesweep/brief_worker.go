@@ -563,16 +563,12 @@ func (w *Worker) refuseForcedBrief(
 	if !w.Config.Brief.IsEnabled() {
 		return fmt.Errorf("person %d: %w", personID, ErrPersonBriefLaneDisabled)
 	}
-	if authority, ok := w.Runner.(interface {
-		OrdinaryInferenceAllowed(ctx context.Context) (bool, error)
-	}); ok && w.Config.Commitments.Enabled {
-		allowed, err := authority.OrdinaryInferenceAllowed(ctx)
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			return fmt.Errorf("person %d: %w", personID, ErrPersonBriefPolicyRefused)
-		}
+	allowed, err := w.ordinaryInferenceAllowed(ctx)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return fmt.Errorf("person %d: %w", personID, ErrPersonBriefPolicyRefused)
 	}
 	if !profile.AllowSensitive {
 		return fmt.Errorf("person %d: %w", personID, ErrPersonBriefPolicyRefused)

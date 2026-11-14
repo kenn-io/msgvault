@@ -49,7 +49,7 @@ func newLoopsListCommand() *cobra.Command {
   msgvault loops list --person 42`,
 	}
 	command.Flags().IntVar(&opts.Limit, "limit", loops.DefaultLimit, "Maximum entries per collection (1 through 200)")
-	command.Flags().BoolVar(&opts.IncludeClosed, "include-closed", false, "Include done, snoozed, and fulfilled commitments")
+	command.Flags().BoolVar(&opts.IncludeClosed, "include-closed", false, "Include done and snoozed commitments")
 	command.Flags().Int64Var(&opts.PersonID, "person", 0, "Show loops with this person ID")
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output as JSON")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
@@ -77,7 +77,7 @@ func newLoopsListCommand() *cobra.Command {
 // request sends include_closed, which an older daemon would ignore.
 func loopsListSchemaVersion(opts daemonclient.LoopListOptions) string {
 	if opts.IncludeClosed {
-		return "5.2.0"
+		return "5.4.0"
 	}
 	return loopsMinAPISchemaVersion
 }
@@ -219,7 +219,7 @@ func runCommitmentDecision(cmd *cobra.Command, id, state string, until *time.Tim
 	if cmd.Flags().Changed("questions") {
 		return usageErr(cmd, errors.New("--questions is available only for reply loops"))
 	}
-	return withLoopsClientVersion(cmd, "5.2.0", func(client *daemonclient.Client) error {
+	return withLoopsClientVersion(cmd, "5.4.0", func(client *daemonclient.Client) error {
 		decision, err := client.SetCommitmentDecision(cmd.Context(), id, state, until)
 		if err != nil {
 			return err
@@ -349,9 +349,7 @@ func writeLoopCommitments(sb *strings.Builder, commitments []generated.LoopCommi
 				fmt.Fprintf(sb, "   due %s", item.DueOn.Format(time.DateOnly))
 			}
 			fmt.Fprintf(sb, "\n    message %d: %s\n", item.Promise.MessageID, textutil.SanitizeTerminal(item.Promise.Text))
-			if proposal := item.ProposedFulfilment; proposal != nil {
-				fmt.Fprintf(sb, "    proposed fulfilment, message %d: %s\n", proposal.MessageID, textutil.SanitizeTerminal(proposal.Text))
-			}
+
 		}
 	}
 }

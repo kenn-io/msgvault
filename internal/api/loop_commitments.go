@@ -20,18 +20,17 @@ type CommitmentQuote struct {
 }
 
 type LoopCommitment struct {
-	ID                 string           `json:"id"`
-	PersonID           int64            `json:"person_id"`
-	ClaimID            int64            `json:"claim_id"`
-	Direction          string           `json:"direction" enum:"owed_by,owed_to"`
-	Summary            string           `json:"summary"`
-	Promise            CommitmentQuote  `json:"promise"`
-	PromisedAt         time.Time        `json:"promised_at"`
-	Freshness          string           `json:"freshness" enum:"fresh,stale"`
-	State              string           `json:"state" enum:"open,done,snoozed,fulfilled"`
-	SnoozedUntil       *time.Time       `json:"snoozed_until,omitempty"`
-	DueOn              *string          `json:"due_on,omitempty" format:"date"`
-	ProposedFulfilment *CommitmentQuote `json:"proposed_fulfilment,omitempty"`
+	ID           string          `json:"id"`
+	PersonID     int64           `json:"person_id"`
+	ClaimID      int64           `json:"claim_id"`
+	Direction    string          `json:"direction" enum:"owed_by,owed_to"`
+	Summary      string          `json:"summary"`
+	Promise      CommitmentQuote `json:"promise"`
+	PromisedAt   time.Time       `json:"promised_at"`
+	Freshness    string          `json:"freshness" enum:"fresh,stale"`
+	State        string          `json:"state" enum:"open,done,snoozed"`
+	SnoozedUntil *time.Time      `json:"snoozed_until,omitempty"`
+	DueOn        *string         `json:"due_on,omitempty" format:"date"`
 }
 
 type CommitmentDecisionRequest struct {
@@ -56,9 +55,6 @@ func loopCommitments(commitments []store.PersonCommitment) []LoopCommitment {
 			Direction: c.Direction, Summary: c.Summary, PromisedAt: c.PromisedAt, DueOn: c.DueOn,
 			Freshness: string(c.Freshness), State: c.State, SnoozedUntil: c.SnoozedUntil,
 			Promise: CommitmentQuote{MessageID: c.AnchorMessageID, Text: c.Quote, Start: c.Start, End: c.End},
-		}
-		if f := c.Fulfilment; f != nil {
-			item.ProposedFulfilment = &CommitmentQuote{MessageID: f.MessageID, Text: f.Quote, Start: f.Start, End: f.End}
 		}
 		response = append(response, item)
 	}

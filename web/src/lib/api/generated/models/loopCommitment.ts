@@ -15,7 +15,6 @@ export interface LoopCommitment {
   person_id: number;
   promise: CommitmentQuote;
   promised_at: string;
-  proposed_fulfilment?: CommitmentQuote;
   snoozed_until?: string;
   state: LoopCommitmentState;
   summary: string;

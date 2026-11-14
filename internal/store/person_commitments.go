@@ -23,42 +23,31 @@ import (
 
 // PersonCommitment keeps mutable owner decisions separate from immutable facts.
 type PersonCommitment struct {
-	ID                   int64                       `json:"id"`
-	PersonID             int64                       `json:"person_id"`
-	ClaimID              *int64                      `json:"claim_id,omitempty"`
-	TargetKey            string                      `json:"target_key"`
-	AnchorMessageID      int64                       `json:"anchor_message_id"`
-	Direction            string                      `json:"direction"`
-	Quote                string                      `json:"quote"`
-	Start                int64                       `json:"quote_start"`
-	End                  int64                       `json:"quote_end"`
-	Summary              string                      `json:"summary"`
-	DueOn                *string                     `json:"due_on,omitempty"`
-	PromisedAt           time.Time                   `json:"promised_at"`
-	Freshness            personfacts.FreshnessStatus `json:"freshness"`
-	State                string                      `json:"state"`
-	SnoozedUntil         *time.Time                  `json:"snoozed_until,omitempty"`
-	ReopenedAt           *time.Time                  `json:"reopened_at,omitempty"`
-	FulfilmentEvidenceID *int64                      `json:"fulfilment_evidence_id,omitempty"`
-	Fulfilment           *CommitmentCitation         `json:"fulfilment,omitempty"`
-	FulfilmentConfirmed  bool                        `json:"fulfilment_confirmed"`
+	ID              int64                       `json:"id"`
+	PersonID        int64                       `json:"person_id"`
+	ClaimID         *int64                      `json:"claim_id,omitempty"`
+	TargetKey       string                      `json:"target_key"`
+	AnchorMessageID int64                       `json:"anchor_message_id"`
+	Direction       string                      `json:"direction"`
+	Quote           string                      `json:"quote"`
+	Start           int64                       `json:"quote_start"`
+	End             int64                       `json:"quote_end"`
+	Summary         string                      `json:"summary"`
+	DueOn           *string                     `json:"due_on,omitempty"`
+	PromisedAt      time.Time                   `json:"promised_at"`
+	Freshness       personfacts.FreshnessStatus `json:"freshness"`
+	State           string                      `json:"state"`
+	SnoozedUntil    *time.Time                  `json:"snoozed_until,omitempty"`
 }
 
-const commitmentColumns = `id, person_id, target_key, owner_state, snoozed_until, reopened_at, fulfilment_evidence_id, fulfilment_confirmed`
+const commitmentColumns = `id, person_id, target_key, owner_state, snoozed_until`
 
 func scanPersonCommitment(row scanner) (PersonCommitment, error) {
 	var c PersonCommitment
-	var fulfil sql.NullInt64
-	var snooze, reopened nullableTimestamp
-	err := row.Scan(&c.ID, &c.PersonID, &c.TargetKey, &c.State, &snooze, &reopened, &fulfil, &c.FulfilmentConfirmed)
-	if fulfil.Valid {
-		c.FulfilmentEvidenceID = &fulfil.Int64
-	}
+	var snooze nullableTimestamp
+	err := row.Scan(&c.ID, &c.PersonID, &c.TargetKey, &c.State, &snooze)
 	if snooze.Valid {
 		c.SnoozedUntil = &snooze.Time
-	}
-	if reopened.Valid {
-		c.ReopenedAt = &reopened.Time
 	}
 	return c, err
 }
@@ -74,17 +63,13 @@ type CommitmentCitation struct {
 type commitmentCandidate struct {
 	commitment PersonCommitment
 	promise    personfacts.Evidence
-	fulfilment *personfacts.Evidence
 }
-
-// CommitmentStateFulfilled is derived from live, newer evidence on an open promise.
-const CommitmentStateFulfilled = "fulfilled"
 
 func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int, includeClosed bool) ([]PersonCommitment, error) {
 	if personID < 0 || limit < 1 || limit > 201 {
 		return nil, ErrInvalidActivityRequest
 	}
-	return s.listPersonCommitments(ctx, personID, now, limit, includeClosed, false, nil, nil)
+	return s.listPersonCommitments(ctx, personID, now, limit, includeClosed)
 }
 
 // commitmentSourceCache serves one list. It shares raw source reads and each
@@ -119,7 +104,7 @@ func (s *Store) commitmentSourceCache(owners loopOwners) func(context.Context, i
 	}
 }
 
-func (s *Store) listPersonCommitments(ctx context.Context, personID int64, now time.Time, limit int, includeClosed, includeSnoozed bool, afterID *int64, eligible func(PersonCommitment) bool) ([]PersonCommitment, error) {
+func (s *Store) listPersonCommitments(ctx context.Context, personID int64, now time.Time, limit int, includeClosed bool) ([]PersonCommitment, error) {
 	owners, err := s.loopOwnerIdentities(ctx)
 	if err != nil {
 		return nil, err
@@ -127,24 +112,18 @@ func (s *Store) listPersonCommitments(ctx context.Context, personID int64, now t
 	lookup := s.commitmentSourceCache(owners)
 	result := make([]PersonCommitment, 0, limit)
 	var after PersonCommitment
-	if afterID != nil {
-		after.ID = *afterID
-	}
 	pageSize := min(32, max(8, limit))
 	for {
-		candidates, err := s.loadCommitmentCandidates(ctx, personID, now, includeClosed, includeSnoozed, after, afterID != nil, pageSize)
+		candidates, err := s.loadCommitmentCandidates(ctx, personID, now, includeClosed, after, pageSize)
 		if err != nil {
 			return nil, err
 		}
 		for _, candidate := range candidates {
-			if eligible != nil && !eligible(candidate.commitment) {
-				continue
-			}
 			c, visible, err := s.hydrateCommitmentCandidate(ctx, candidate, now, lookup)
 			if err != nil {
 				return nil, err
 			}
-			if !visible || !includeClosed && (c.State == CommitmentStateFulfilled || includeSnoozed && c.FulfilmentConfirmed) {
+			if !visible {
 				continue
 			}
 			result = append(result, c)
@@ -159,27 +138,21 @@ func (s *Store) listPersonCommitments(ctx context.Context, personID int64, now t
 	}
 }
 
-func (s *Store) loadCommitmentCandidates(ctx context.Context, personID int64, now time.Time, includeClosed, includeSnoozed bool, after PersonCommitment, byID bool, pageSize int) ([]commitmentCandidate, error) {
+func (s *Store) loadCommitmentCandidates(ctx context.Context, personID int64, now time.Time, includeClosed bool, after PersonCommitment, pageSize int) ([]commitmentCandidate, error) {
 	var candidates []commitmentCandidate
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		query := `SELECT ` + commitmentColumns + ` FROM person_commitments WHERE 1=1`
 		var args []any
 		if !includeClosed {
 			query += ` AND owner_state <> 'done'`
-			if !includeSnoozed {
-				query += ` AND (owner_state <> 'snoozed' OR ` + s.loopTimeKey("snoozed_until") + ` <= ` + s.loopTimeKey("?") + `)`
-				args = append(args, s.dialect.TimestampParam(now))
-			}
+			query += ` AND (owner_state <> 'snoozed' OR ` + s.loopTimeKey("snoozed_until") + ` <= ` + s.loopTimeKey("?") + `)`
+			args = append(args, s.dialect.TimestampParam(now))
 		}
 		if personID > 0 {
 			query += ` AND person_id = ?`
 			args = append(args, personID)
 		}
-		if byID {
-			query += ` AND id > ? ORDER BY id`
-			args = append(args, after.ID)
-		} else {
-			promised := `(SELECT e.event_time FROM person_fact_claims c
+		promised := `(SELECT e.event_time FROM person_fact_claims c
 				JOIN person_fact_generations g ON g.id = c.generation_id
 				JOIN person_fact_claim_evidence ce ON ce.claim_id = c.id
 				JOIN person_fact_evidence e ON e.id = ce.evidence_id
@@ -188,14 +161,13 @@ func (s *Store) loadCommitmentCandidates(ctx context.Context, personID int64, no
 				AND c.relation = 'support' AND c.rejection_action IS NULL AND c.normalized_value_json IS NOT NULL
 				AND COALESCE((SELECT status.supported ` + latestPersonFactEvidenceStatusSQL("e.person_id", "e.evidence_key", "e.source_version") + `), TRUE) = TRUE
 				ORDER BY g.resolved_at DESC, c.id DESC, e.event_time DESC, e.id DESC LIMIT 1)`
-			key := s.loopTimeKey(promised)
-			query += ` AND ` + promised + ` IS NOT NULL`
-			if after.ID != 0 {
-				query += ` AND (` + key + `, id) > (` + s.loopTimeKey("?") + `, ?)`
-				args = append(args, s.dialect.TimestampParam(after.PromisedAt), after.ID)
-			}
-			query += ` ORDER BY ` + key + `, id`
+		key := s.loopTimeKey(promised)
+		query += ` AND ` + promised + ` IS NOT NULL`
+		if after.ID != 0 {
+			query += ` AND (` + key + `, id) > (` + s.loopTimeKey("?") + `, ?)`
+			args = append(args, s.dialect.TimestampParam(after.PromisedAt), after.ID)
 		}
+		query += ` ORDER BY ` + key + `, id`
 		query += ` LIMIT ?`
 		args = append(args, pageSize)
 		rows, err := tx.QueryContext(ctx, query, args...)
@@ -264,13 +236,6 @@ func (s *Store) loadCommitmentCandidateEvidenceTx(ctx context.Context, tx *logge
 	c.Start, c.End = *promise.Input.SpanStart, *promise.Input.SpanEnd
 	c.Summary, c.DueOn, c.PromisedAt = value.Summary, value.DueOn, promise.Input.EventTime
 	candidate.commitment, candidate.promise = c, promise
-	if c.FulfilmentEvidenceID != nil {
-		evidence, err := s.loadCommitmentFulfilmentTx(ctx, tx, *c.FulfilmentEvidenceID)
-		if err != nil {
-			return err
-		}
-		candidate.fulfilment = &evidence
-	}
 	return nil
 }
 
@@ -284,43 +249,10 @@ func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commit
 		return c, false, err
 	}
 	c.Freshness = describePersonFactFreshness(personfacts.TargetRef{Kind: personfacts.TargetCommitment}, nil, &c.PromisedAt, now).Status
-	if evidence := candidate.fulfilment; evidence != nil && commitmentFulfilmentCurrent(*evidence, c.PromisedAt, c.ReopenedAt) {
-		fulfilment, live, err := s.currentCommitmentCitation(ctx, c.PersonID, c.Direction, evidence.Input, lookup)
-		if err != nil {
-			return c, false, err
-		}
-		if live {
-			c.Fulfilment = &fulfilment
-		}
-	}
 	if c.State == LoopStateSnoozed && c.SnoozedUntil != nil && !c.SnoozedUntil.After(now) {
 		c.State, c.SnoozedUntil = LoopStateOpen, nil
 	}
-	if c.Fulfilment != nil && c.FulfilmentConfirmed && c.State == LoopStateOpen {
-		c.State = CommitmentStateFulfilled
-	}
-	if c.Fulfilment == nil {
-		c.FulfilmentEvidenceID = nil
-		c.FulfilmentConfirmed = false
-	}
 	return c, true, nil
-}
-
-// A retained fulfilment counts only while supported and strictly newer than the
-// current promise time and any owner reopening, the rule the apply SQL enforces.
-func commitmentFulfilmentCurrent(evidence personfacts.Evidence, promisedAt time.Time, reopenedAt *time.Time) bool {
-	at := evidence.Input.EventTime
-	return evidence.Supported && at.After(promisedAt) && (reopenedAt == nil || at.After(*reopenedAt))
-}
-
-func (s *Store) loadCommitmentFulfilmentTx(ctx context.Context, tx *loggedTx, id int64) (personfacts.Evidence, error) {
-	evidence, err := scanPersonFactEvidence(tx.QueryRowContext(ctx, `SELECT `+personFactEvidenceColumns+` FROM person_fact_evidence e WHERE e.id = ?`, id))
-	if err != nil {
-		return evidence, err
-	}
-	page := []personfacts.Evidence{evidence}
-	err = s.hydratePersonFactEvidenceStatusTx(ctx, tx, page)
-	return page[0], err
 }
 
 func (s *Store) currentCommitmentCitation(ctx context.Context, personID int64, direction string, input personfacts.EvidenceInput, lookup func(context.Context, int64, int64) (peoplesweep.CommitmentSource, bool, error)) (CommitmentCitation, bool, error) {
@@ -383,25 +315,12 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 		if until != nil {
 			deadline = s.dialect.TimestampParam(*until)
 		}
-		var reopened any
-		if state == LoopStateOpen {
-			if candidate.fulfilment != nil && candidate.fulfilment.Input.EventTime.After(now) {
-				now = candidate.fulfilment.Input.EventTime
-			}
-			reopened = personFactPortableTime(now)
-		}
 		previous := candidate.commitment
-		var fulfilmentID int64
-		if previous.FulfilmentEvidenceID != nil {
-			fulfilmentID = *previous.FulfilmentEvidenceID
-		}
 		var err error
 		result, err = scanPersonCommitment(tx.QueryRowContext(ctx, `UPDATE person_commitments
-			SET owner_state = ?, snoozed_until = ?, reopened_at = COALESCE(?, reopened_at)
-			WHERE id = ? AND owner_state = ?
-			AND COALESCE(fulfilment_evidence_id, 0) = ? AND (fulfilment_confirmed = 1) = ?
+			SET owner_state = ?, snoozed_until = ? WHERE id = ? AND owner_state = ?
 			AND COALESCE((SELECT status.supported `+latestPersonFactEvidenceStatusSQL("?", "?", "?")+`), TRUE) = TRUE
-			RETURNING `+commitmentColumns, state, deadline, reopened, id, previous.State, fulfilmentID, previous.FulfilmentConfirmed,
+			RETURNING `+commitmentColumns, state, deadline, id, previous.State,
 			candidate.promise.Input.PersonID, candidate.promise.Key, candidate.promise.Input.SourceVersion))
 		return err
 	})
@@ -414,7 +333,7 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 
 // PersonCommitmentDiscoveryContext returns the saved discovery window and progress.
 func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID int64) (*time.Time, bool, error) {
-	query := `SELECT f.discovery_since, f.backfill_message_id, f.anchor_after_id, f.anchor_through_sequence, f.anchor_backfill_id
+	query := `SELECT f.discovery_since, f.backfill_message_id
 		FROM person_tracking t LEFT JOIN person_commitment_frontiers f ON f.person_id = t.person_id`
 	var args []any
 	if personID > 0 {
@@ -430,8 +349,8 @@ func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID i
 	complete := true
 	for rows.Next() {
 		var at nullableTimestamp
-		var backfill, after, through, anchorBackfill sql.NullInt64
-		if err := rows.Scan(&at, &backfill, &after, &through, &anchorBackfill); err != nil {
+		var backfill sql.NullInt64
+		if err := rows.Scan(&at, &backfill); err != nil {
 			return nil, false, err
 		}
 		if !at.Valid {
@@ -442,7 +361,7 @@ func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID i
 			value := at.Time
 			since = &value
 		}
-		complete = complete && backfill.Valid && backfill.Int64 < 0 && after.Int64 == 0 && through.Int64 == 0 && anchorBackfill.Int64 == 0
+		complete = complete && backfill.Valid && backfill.Int64 < 0
 	}
 	return since, complete && since != nil, rows.Err()
 }
@@ -450,12 +369,11 @@ func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID i
 func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now time.Time, interval, window time.Duration, scopeFingerprint string) (bool, error) {
 	var processed requiredTimestamp
 	var through, backfill int64
-	var anchorPagePending bool
 	var scope string
 	var observed sql.NullInt64
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT processed_at, through_sequence, observed_sequence, backfill_message_id,
-		(anchor_after_id > 0 OR anchor_through_sequence > 0 OR anchor_backfill_id > 0), scope_fingerprint
-		FROM person_commitment_frontiers WHERE person_id = ?`), personID).Scan(&processed, &through, &observed, &backfill, &anchorPagePending, &scope)
+		scope_fingerprint
+		FROM person_commitment_frontiers WHERE person_id = ?`), personID).Scan(&processed, &through, &observed, &backfill, &scope)
 	if errors.Is(err, sql.ErrNoRows) {
 		return true, nil
 	}
@@ -468,7 +386,7 @@ func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now ti
 	if now.Before(processed.Time.Add(interval)) {
 		return false, nil
 	}
-	if backfill >= 0 || anchorPagePending {
+	if backfill >= 0 {
 		return true, nil
 	}
 	if observed.Valid {
@@ -602,7 +520,7 @@ func (s *Store) commitmentChatMembers(ctx context.Context, conversationID, perso
 }
 
 func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, profile peoplesweep.ProviderProfile, cfg peoplesweep.CommitmentConfig, now time.Time, timezone string) (peoplesweep.CommitmentWindow, error) {
-	window := peoplesweep.CommitmentWindow{PersonID: personID, ScopeFingerprint: peoplesweep.CommitmentScopeFingerprint(profile, cfg), SelectionAt: now, Now: now, Timezone: timezone, Sources: []peoplesweep.CommitmentSource{}, Anchors: []peoplesweep.CommitmentAnchor{}}
+	window := peoplesweep.CommitmentWindow{PersonID: personID, ScopeFingerprint: peoplesweep.CommitmentScopeFingerprint(profile, cfg), SelectionAt: now, Now: now, Timezone: timezone, Sources: []peoplesweep.CommitmentSource{}}
 	if !profile.AllowSensitive || !slices.Contains(profile.AllowedSources, peoplesweep.SourceConversationText) {
 		return window, nil
 	}
@@ -611,96 +529,27 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 		return window, err
 	}
 	window.SnapshotSequence = through
-	var previous, anchorAfter, anchorThrough, anchorBackfill int64
+	var previous int64
 	var scope string
-	var selection nullableTimestamp
 	err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT CASE WHEN observed_sequence > through_sequence THEN observed_sequence ELSE through_sequence END,
-		backfill_message_id, anchor_after_id, anchor_through_sequence, anchor_backfill_id, scope_fingerprint, selection_at FROM person_commitment_frontiers WHERE person_id = ?`), personID).
-		Scan(&previous, &window.BackfillMessageID, &anchorAfter, &anchorThrough, &anchorBackfill, &scope, &selection)
+  backfill_message_id, scope_fingerprint FROM person_commitment_frontiers WHERE person_id = ?`), personID).
+		Scan(&previous, &window.BackfillMessageID, &scope)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return window, err
 	}
 	if scope != window.ScopeFingerprint {
-		previous, window.BackfillMessageID, anchorAfter, anchorThrough, anchorBackfill = 0, 0, 0, 0, 0
-	} else if selection.Valid && (window.BackfillMessageID >= 0 || anchorAfter > 0 || anchorThrough > 0 || anchorBackfill > 0) {
-		window.SelectionAt = selection.Time
-	}
-	var backfillCap *int64
-	if anchorAfter > 0 || anchorThrough > 0 || anchorBackfill > 0 {
-		through = min(through, anchorThrough)
-		if anchorAfter > 0 {
-			backfillCap = &anchorBackfill
-		}
-		window.SnapshotSequence = through
+		previous, window.BackfillMessageID = 0, 0
 	}
 	window.ThroughSequence = through
 	inProfile := func(at time.Time) bool {
 		day := at.UTC().Format(time.DateOnly)
 		return day >= profile.SourceSince && (profile.SourceUntil == "" || day <= profile.SourceUntil)
 	}
-	backfillStart := window.BackfillMessageID
-	backfillEnd, err := s.loadCommitmentSources(ctx, &window, cfg, previous, backfillCap, inProfile)
-	if err != nil || len(window.Sources) == 0 {
-		return window, err
-	}
-
-	var newest time.Time
-	for _, source := range window.Sources {
-		if source.EventTime.After(newest) {
-			newest = source.EventTime
-		}
-	}
-	// Give every eligible anchor this bounded batch before advancing its
-	// evidence frontier. Anchor quotes suffice to describe the earlier promise.
-	open, err := s.listPersonCommitments(ctx, personID, now, cfg.MaxOpenAnchors+1, false, true, &anchorAfter, func(c PersonCommitment) bool {
-		return c.PromisedAt.Before(newest) && inProfile(c.PromisedAt)
-	})
-	if err != nil {
-		return window, err
-	}
-	if backfillCap != nil {
-		// A continuation keeps its frozen end even if the endpoint was deleted.
-		backfillEnd = *backfillCap
-	}
-	window.AnchorBackfillID = backfillEnd
-	if err := fillCommitmentAnchors(&window, cfg.MaxOpenAnchors, open); err != nil {
-		return window, err
-	}
-	if window.AnchorAfterID > 0 {
-		// Every anchor page replays this bounded history page: start stays in
-		// the backfill cursor and its frozen end in AnchorBackfillID.
-		window.BackfillMessageID = backfillStart
-	}
-	return window, nil
+	_, err = s.loadCommitmentSources(ctx, &window, cfg, previous, inProfile)
+	return window, err
 }
 
-// fillCommitmentAnchors admits as many anchors as the bounded input holds and
-// records where the next anchor page resumes.
-func fillCommitmentAnchors(window *peoplesweep.CommitmentWindow, maxAnchors int, open []PersonCommitment) error {
-	for index, c := range open {
-		if len(window.Anchors) == maxAnchors {
-			window.AnchorAfterID = window.Anchors[len(window.Anchors)-1].ID
-			break
-		}
-		anchor := peoplesweep.CommitmentAnchor{ID: c.ID, TargetKey: c.TargetKey, Direction: c.Direction, Quote: c.Quote, PromisedAt: c.PromisedAt, ReopenedAt: c.ReopenedAt}
-		window.Anchors = append(window.Anchors, anchor)
-		fits, err := peoplesweep.CommitmentInputFits(*window, false)
-		if err != nil {
-			return err
-		}
-		if !fits {
-			window.Anchors = window.Anchors[:len(window.Anchors)-1]
-			if index == 0 {
-				return errors.New("commitment input cannot fit one bounded anchor")
-			}
-			window.AnchorAfterID = window.Anchors[len(window.Anchors)-1].ID
-			break
-		}
-	}
-	return nil
-}
-
-func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, backfillCap *int64, inProfile func(time.Time) bool) (int64, error) {
+func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, inProfile func(time.Time) bool) (int64, error) {
 	personID, through := window.PersonID, window.ThroughSequence
 	backfillEnd := max(0, window.BackfillMessageID)
 	seen, used := map[int64]bool{}, 0
@@ -723,7 +572,7 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			return true, nil
 		}
 		window.Sources = append(window.Sources, source)
-		fits, err := peoplesweep.CommitmentInputFits(*window, true)
+		fits, err := peoplesweep.CommitmentInputFits(*window)
 		if err != nil || !fits {
 			window.Sources = window.Sources[:len(window.Sources)-1]
 			if err != nil {
@@ -731,7 +580,7 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			}
 			single := *window
 			single.Sources = []peoplesweep.CommitmentSource{source}
-			fitsAlone, err := peoplesweep.CommitmentInputFits(single, true)
+			fitsAlone, err := peoplesweep.CommitmentInputFits(single)
 			return !fitsAlone, err
 		}
 		seen[source.MessageID] = true
@@ -779,9 +628,6 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 		return backfillEnd, err
 	}
 	for _, id := range ids {
-		if backfillCap != nil && id > *backfillCap {
-			return backfillEnd, nil
-		}
 		if !seen[id] {
 			source, ok, err := s.currentCommitmentSource(ctx, personID, id)
 			if err != nil {

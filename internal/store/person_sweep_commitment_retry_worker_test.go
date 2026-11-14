@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -92,7 +93,7 @@ func TestPersonSweepWorkerDefersCommitmentPrepareFailureForTheRestOfRun(t *testi
 					FROM person_sweep_work WHERE person_id = ?`), f.journal.alicePersonID).
 					Scan(&attempts, &failure, &leaseOwner, &future))
 				r.Equal(1, attempts)
-				r.Equal(string(peoplesweep.FailureInvalidOutput), failure)
+				r.Equal(string(peoplesweep.FailureArchiveGap), failure)
 				r.Empty(leaseOwner)
 				r.True(future)
 				_, err := st.DB().ExecContext(ctx, st.Rebind(`UPDATE person_sweep_work
@@ -100,12 +101,15 @@ func TestPersonSweepWorkerDefersCommitmentPrepareFailureForTheRestOfRun(t *testi
 				r.NoError(err)
 				clock = clock.Add(2 * time.Minute)
 			}
-			return json.RawMessage(`{"promises":[],"fulfilments":[]}`)
+			return json.RawMessage(`{"promises":[]}`)
 		}
 		aliceCalls++
-		// Valid provider schema/parser output, rejected only at Store preparation:
-		// due+grace cannot be represented as a JSON timestamp.
-		return json.RawMessage(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":%q,"quote":%q,"start":%d,"end":%d,"summary":"Send draft","due_on":"9999-12-31"}],"fulfilments":[]}`,
+		// Change the source after the provider reads it, before store preparation.
+		messageID, err := strconv.ParseInt(strings.TrimPrefix(source.ID, "m"), 10, 64)
+		r.NoError(err)
+		_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "Changed after request", messageID)
+		r.NoError(err)
+		return json.RawMessage(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":%q,"quote":%q,"start":%d,"end":%d,"summary":"Send draft","due_on":null}]}`,
 			source.ID, source.Direction, source.Text, source.Start, source.Start+int64(len([]rune(source.Text)))))
 	}
 	f.worker.Config = f.config

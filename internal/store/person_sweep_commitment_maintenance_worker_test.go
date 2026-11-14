@@ -119,7 +119,7 @@ func TestPersonSweepCommitmentMaintenanceReachesOrdinaryEvidenceBehindLiveSeed(t
 				r.NoError(st.MarkMessageDeletedBySourceMessageID(ctx, f.sourceID, false, "M1"))
 			}
 			runner := emptyFreshnessRunner()
-			runner.response.Output = []byte(`{"promises":[],"fulfilments":[]}`)
+			runner.response.Output = []byte(`{"promises":[]}`)
 			worker.Runner = consentAwareSweepRunner{runner, st, profile.Fingerprint}
 			request := peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
 				PersonID: personID, Limit: 1, Brief: peoplesweep.BriefModeSkip}
