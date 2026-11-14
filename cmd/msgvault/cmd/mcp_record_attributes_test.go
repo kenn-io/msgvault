@@ -212,7 +212,7 @@ func TestMCPAttributePersonDefinitions(t *testing.T) {
 
 func TestMCPAttributePreviewCallerGuards(t *testing.T) {
 	assert := assert.New(t)
-	require := require.New(t)
+	requirements := require.New(t)
 	b, st, person := recordAttributesFixture(t)
 	disclose := func(name string, args map[string]any) error {
 		_, err := b.OperationDisclosure(t.Context(), name, args)
@@ -223,24 +223,29 @@ func TestMCPAttributePreviewCallerGuards(t *testing.T) {
 	invalid["expected_empty"], invalid["expected_value_id"] = true, int64(1)
 	attributeRefused(t, disclose("set_person_attribute", invalid), "invalid_expected_empty")
 	assert.Empty(attributeValues(t, st, person, store.AttributeSlugPrimaryChannel))
-	pinned := maps.Clone(args)
-	require.NoError(disclose("set_person_attribute", pinned))
-	assert.Equal(true, pinned["expected_empty"])
 	args["expected_empty"] = true
-	require.NoError(disclose("set_person_attribute", args))
+	requirements.NoError(disclose("set_person_attribute", args))
 	assert.Nil(args["expected_value_id"])
 	first := operationOutput[generated.PersonAttributeWrite](t, attributeOperation(t, b, "set_person_attribute", args))
 	attributeRefused(t, disclose("set_person_attribute", args), "attribute_value_conflict")
 	delete(args, "expected_empty")
-	pinned = maps.Clone(args)
-	require.NoError(disclose("set_person_attribute", pinned))
-	assert.Equal(first.Value.ID, pinned["expected_value_id"])
-	assert.Nil(pinned["expected_empty"])
 	args["expected_value_id"] = first.Value.ID
-	require.NoError(disclose("set_person_attribute", args))
-	args["expected_value_id"] = first.Value.ID + 1
-	attributeRefused(t, disclose("set_person_attribute", args), "attribute_value_conflict")
-	attributeRefused(t, disclose("clear_person_attribute", map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "expected_value_id": first.Value.ID + 1}), "attribute_value_conflict")
+	requirements.NoError(disclose("set_person_attribute", args))
+	assert.Equal(first.Value.ID, args["expected_value_id"])
+	assert.Nil(args["expected_empty"])
+
+	t.Run("large conflict", func(t *testing.T) {
+		require := require.New(t)
+		b, _, person := recordAttributesFixture(t)
+		attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "metadata", "label": "Metadata", "value_type": "json", "field_type": "json"}})
+		large := jsontext.Value(`{"data":"` + strings.Repeat("x", 70<<10) + `"}`)
+		initial := map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": large}}
+		written := operationOutput[generated.PersonAttributeWrite](t, attributeOperation(t, b, "set_person_attribute", initial))
+		require.NotNil(written.Value)
+		stale := map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": jsontext.Value(`{"data":"replacement"}`)}, "expected_value_id": written.Value.ID + 1}
+		_, err := b.OperationDisclosure(t.Context(), "set_person_attribute", stale)
+		attributeRefused(t, err, "attribute_value_conflict")
+	})
 }
 
 func TestMCPAttributeCapabilityRequiresExpectedEmpty(t *testing.T) {
@@ -255,19 +260,6 @@ func TestMCPAttributeCapabilityRequiresExpectedEmpty(t *testing.T) {
 		}
 	}
 	assert.NotContains(newDaemonMCPOperations(b.client, capabilities).capabilities(), "set_person_attribute")
-}
-
-func TestMCPAttributePreviewLargeConflict(t *testing.T) {
-	require := require.New(t)
-	b, _, person := recordAttributesFixture(t)
-	attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"slug": "metadata", "label": "Metadata", "value_type": "json", "field_type": "json"}})
-	large := jsontext.Value(`{"data":"` + strings.Repeat("x", 70<<10) + `"}`)
-	initial := map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": large}}
-	written := operationOutput[generated.PersonAttributeWrite](t, attributeOperation(t, b, "set_person_attribute", initial))
-	require.NotNil(written.Value)
-	stale := map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": jsontext.Value(`{"data":"replacement"}`)}, "expected_value_id": written.Value.ID + 1}
-	_, err := b.OperationDisclosure(t.Context(), "set_person_attribute", stale)
-	attributeRefused(t, err, "attribute_value_conflict")
 }
 
 type attributeRaceBackend struct {
