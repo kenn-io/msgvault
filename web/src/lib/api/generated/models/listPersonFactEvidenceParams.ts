@@ -15,4 +15,8 @@ export type ListPersonFactEvidenceParams = {
    * Zero-based row offset
    */
   offset?: number;
+  /**
+   * Exclude evidence linked to sensitive or retired targets
+   */
+  visible_only?: boolean;
 };
