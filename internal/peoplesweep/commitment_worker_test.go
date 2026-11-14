@@ -114,11 +114,11 @@ func TestCommitmentOptionalCallRepairBudgetAndRevocation(t *testing.T) {
 			if mode == "revoked before mark" {
 				authority.revokeAt = 2
 			}
-			second := json.RawMessage(`{"promises":[],"fulfilments":[]}`)
+			second := json.RawMessage(`{"promises":[]}`)
 			if mode == "bad repair" {
-				second = json.RawMessage(`{"promises":"bad","fulfilments":[]}`)
+				second = json.RawMessage(`{"promises":"bad"}`)
 			}
-			driver := &workerRepairDriver{responses: []DriverResponse{briefDriverResponse(json.RawMessage(`{"promises":"bad","fulfilments":[]}`), "primary"), briefDriverResponse(second, "repair")}}
+			driver := &workerRepairDriver{responses: []DriverResponse{briefDriverResponse(json.RawMessage(`{"promises":"bad"}`), "primary"), briefDriverResponse(second, "repair")}}
 			runner := newWorkerRepairRunnerWithDependencies(t, cfg, driver, authority, NewCredentialResolver(nil, func(string) (string, bool) { return "test-key", true }))
 			profile, err := cfg.Profile()
 			r.NoError(err)

@@ -436,8 +436,6 @@ direct conversations within the active provider's source and date scope.
 | `max_items` | `60` | Maximum messages in a call, up to 2000. |
 | `max_bytes` | `65536` | Maximum UTF-8 message-text bytes in a call. A longer message waits until you raise this limit. |
 | `max_output_tokens` | `2048` | Output cap within the shared per-person budget. |
-| `max_open_anchors` | `8` | Older open promises a call may revisit, up to 8. |
-| `auto_fulfil` | `false` | Close promises on future explicit, newer supported confirmations. Your email completions also need Sent provenance. The owner can reopen them. |
 
 See [Open loops](usage/open-loops.md#see-cited-commitments) for consent and
 owner controls.

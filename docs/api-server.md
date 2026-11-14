@@ -1872,7 +1872,7 @@ for what counts as a loop.
 `GET /api/v1/loops` lists reply loops and cited promises. The optional
 `person_id` filters both collections. The `limit` applies to each collection
 separately (1 to 200, default 50). Set `include_closed=true` to include done,
-snoozed, and fulfilled promises.
+snoozed promises.
 
 | Field | Meaning |
 |---|---|

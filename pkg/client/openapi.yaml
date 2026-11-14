@@ -7289,8 +7289,6 @@ components:
         promised_at:
           format: date-time
           type: string
-        proposed_fulfilment:
-          $ref: "#/components/schemas/CommitmentQuote"
         snoozed_until:
           format: date-time
           type: string
@@ -7299,7 +7297,6 @@ components:
             - open
             - done
             - snoozed
-            - fulfilled
           type: string
         summary:
           type: string
@@ -24200,7 +24197,7 @@ paths:
           schema:
             format: int64
             type: integer
-        - description: Include done, snoozed and fulfilled commitments
+        - description: Include done and snoozed commitments
           in: query
           name: include_closed
           schema:

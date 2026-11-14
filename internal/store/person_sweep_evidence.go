@@ -964,9 +964,8 @@ func (s *Store) prepareCommitmentStatuses(ctx context.Context, request peopleswe
 		previous = 0
 	}
 	prepared.maintenanceFrom = previous
-	consuming := prepared.observedOnly || prepared.anchorAfterID == 0 && !slices.ContainsFunc(prepared.promises, func(p preparedCommitmentPromise) bool { return p.replay })
 	affected := map[string]personfacts.EvidenceStatusChange{}
-	for consuming && previous < prepared.through {
+	for previous < prepared.through {
 		page, err := s.ScanPersonSweepChanges(ctx, personID, previous, maxPersonSweepChangeScan)
 		if err != nil {
 			return err

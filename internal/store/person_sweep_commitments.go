@@ -28,30 +28,16 @@ const (
 )
 
 type preparedCommitmentPromise struct {
-	replay  bool
 	promise peoplesweep.CommitmentPromise
-	source  peoplesweep.CommitmentSource
-}
-
-type preparedCommitmentFulfilment struct {
-	change            peoplesweep.CommitmentFulfilment
-	anchor            peoplesweep.CommitmentAnchor
-	input             personfacts.EvidenceInput
-	replaceEvidenceID int64
-	messageID         int64
 }
 
 type preparedCommitmentSweep struct {
 	generation        personfacts.PreparedGeneration
 	promises          []preparedCommitmentPromise
-	fulfilments       []preparedCommitmentFulfilment
 	through           int64
 	snapshot          int64
-	autoFulfil        bool
 	observedOnly      bool
 	backfillMessageID int64
-	anchorAfterID     int64
-	anchorBackfillID  int64
 	scope             string
 	selectionAt       time.Time
 	statuses          []personfacts.EvidenceStatusChange
@@ -93,7 +79,7 @@ func (a commitmentEvidenceAligner) Align(_ context.Context, input personfacts.Ev
 func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.ApplyRequest) (*preparedCommitmentSweep, error) {
 	result := request.Commitment
 	window := result.Window
-	prepared := &preparedCommitmentSweep{through: window.ThroughSequence, snapshot: window.SnapshotSequence, observedOnly: len(window.Sources) == 0, backfillMessageID: window.BackfillMessageID, anchorAfterID: window.AnchorAfterID, anchorBackfillID: window.AnchorBackfillID, autoFulfil: result.Config.AutoFulfil, scope: window.ScopeFingerprint, selectionAt: window.SelectionAt}
+	prepared := &preparedCommitmentSweep{through: window.ThroughSequence, snapshot: window.SnapshotSequence, observedOnly: len(window.Sources) == 0, backfillMessageID: window.BackfillMessageID, scope: window.ScopeFingerprint, selectionAt: window.SelectionAt}
 	if prepared.observedOnly {
 		err := s.prepareCommitmentStatuses(ctx, request, prepared, nil)
 		return prepared, err
@@ -109,10 +95,6 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 	sources := make(map[string]peoplesweep.CommitmentSource, len(window.Sources))
 	for _, source := range window.Sources {
 		sources[source.ID] = source
-	}
-	anchors := make(map[int64]peoplesweep.CommitmentAnchor, len(window.Anchors))
-	for _, anchor := range window.Anchors {
-		anchors[anchor.ID] = anchor
 	}
 	personID := request.Lease.PersonID
 	verify := func(sourceID string) (peoplesweep.CommitmentSource, error) {
@@ -138,25 +120,6 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		if err != nil {
 			return nil, err
 		}
-		var existing PersonCommitment
-		err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
-			c, err := scanPersonCommitment(tx.QueryRowContext(ctx, `SELECT `+commitmentColumns+` FROM person_commitments WHERE person_id = ? AND target_key = ?`, personID, promise.TargetKey))
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			candidate := commitmentCandidate{commitment: c}
-			if err := s.loadCommitmentCandidateEvidenceTx(ctx, tx, &candidate); err != nil {
-				return err
-			}
-			existing = candidate.commitment
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
 		descriptor := personfacts.TargetDescriptor{Kind: personfacts.TargetCommitment,
 			Key: promise.TargetKey, Slug: "commitment", ValueType: personfacts.ValueCommitment,
 			Cardinality: personfacts.CardinalitySingle, Sensitive: true, MaxLength: 240}
@@ -178,31 +141,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 			Target: descriptor, Relation: personfacts.RelationSupport, Origin: personfacts.OriginCommitment,
 			SubmittedValue: value, Evidence: []personfacts.EvidenceInput{evidence},
 		})
-		current, err := s.commitmentClaimCurrent(ctx, existing, source, request.Generation.EvidenceStatusChanges)
-		if err != nil {
-			return nil, err
-		}
-		prepared.promises = append(prepared.promises, preparedCommitmentPromise{replay: existing.ClaimID == nil || (!current && anchors[existing.ID].ID == 0), promise: promise, source: source})
-	}
-	for _, fulfilment := range parsed.Fulfilments {
-		source, err := verify(fulfilment.SourceID)
-		if err != nil {
-			return nil, err
-		}
-		input := commitmentEvidence(personID, source, "commitment-fulfilment", fulfilment.Quote, fulfilment.Start, fulfilment.End)
-		key, err := personfacts.EvidenceKey(input)
-		if err != nil {
-			return nil, err
-		}
-		aligner[key] = input
-		anchor := anchors[fulfilment.CommitmentID]
-		replace, err := s.withdrawnCommitmentFulfilment(ctx, personID, anchor)
-		if err != nil {
-			return nil, err
-		}
-		prepared.fulfilments = append(prepared.fulfilments, preparedCommitmentFulfilment{
-			change: fulfilment, anchor: anchor, input: input, replaceEvidenceID: replace, messageID: source.MessageID,
-		})
+		prepared.promises = append(prepared.promises, preparedCommitmentPromise{promise: promise})
 	}
 	if len(generation.Claims) != 0 {
 		prepared.generation, err = personfacts.PreparePersonFactGeneration(ctx, generation, aligner)
@@ -221,143 +160,45 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 	return prepared, nil
 }
 
-// A newer proof may replace a withdrawn or pre-reopen fulfilment. The
-// transaction only replaces the exact ID inspected here.
-func (s *Store) withdrawnCommitmentFulfilment(ctx context.Context, personID int64, anchor peoplesweep.CommitmentAnchor) (int64, error) {
-	var evidence personfacts.Evidence
-	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
-		var id sql.NullInt64
-		err := tx.QueryRowContext(ctx, `SELECT fulfilment_evidence_id FROM person_commitments
-			WHERE id = ? AND person_id = ? AND target_key = ?`, anchor.ID, personID, anchor.TargetKey).Scan(&id)
-		if err != nil || !id.Valid {
-			return err
-		}
-		evidence, err = s.loadCommitmentFulfilmentTx(ctx, tx, id.Int64)
-		return err
-	})
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, errCommitmentWindowChanged
-	}
-	if err != nil || evidence.ID == 0 {
-		return 0, err
-	}
-	if !commitmentFulfilmentCurrent(evidence, anchor.PromisedAt, anchor.ReopenedAt) {
-		return evidence.ID, nil
-	}
-	_, live, err := s.currentCommitmentCitation(ctx, personID, anchor.Direction, evidence.Input, s.currentCommitmentSource)
-	if err == nil && !live {
-		return evidence.ID, nil
-	}
-	return 0, err
-}
-
 func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {
 	personID := request.Lease.PersonID
 	if err := s.applyCommitmentStatusesTx(ctx, tx, request, prepared); err != nil {
 		return err
 	}
 	if prepared.observedOnly {
-		return s.saveCommitmentFrontierTx(ctx, tx, request, prepared, false)
+		return s.saveCommitmentFrontierTx(ctx, tx, request, prepared)
 	}
-	newAnchorNeedsReplay := false
 	if len(prepared.promises) > 0 {
 		_, err := s.applyPreparedPersonFactGenerationTx(ctx, tx, prepared.generation)
 		if err != nil {
 			return err
 		}
 		for _, p := range prepared.promises {
-			newAnchorNeedsReplay = newAnchorNeedsReplay || p.replay
 			_, err := tx.ExecContext(ctx, `INSERT INTO person_commitments (person_id, target_key) VALUES (?, ?) ON CONFLICT (person_id, target_key) DO NOTHING`, personID, p.promise.TargetKey)
 			if err != nil {
 				return fmt.Errorf("persist commitment decision: %w", err)
 			}
 		}
 	}
-	for _, f := range prepared.fulfilments {
-		key, err := personfacts.EvidenceKey(f.input)
-		if err != nil {
-			return err
-		}
-		evidence, err := s.insertPersonFactEvidenceTx(ctx, tx, personID, key, f.input)
-		if err != nil {
-			return err
-		}
-		confirmed, err := s.commitmentFulfilmentConfirmedTx(ctx, tx, prepared.autoFulfil, f)
-		if err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `UPDATE person_commitments SET
-			fulfilment_evidence_id = ?, fulfilment_confirmed = ?
-			WHERE id = ? AND person_id = ? AND target_key = ?
-			AND (reopened_at IS NULL OR `+s.loopTimeKey("reopened_at")+` < `+s.loopTimeKey("?")+`)
-			AND (fulfilment_evidence_id IS NULL OR fulfilment_evidence_id = ? OR (fulfilment_confirmed = 0 AND EXISTS (
-			  SELECT 1 FROM person_fact_evidence e WHERE e.id = person_commitments.fulfilment_evidence_id
-			  AND `+s.loopTimeKey("e.event_time")+` <= `+s.loopTimeKey("?")+`)))`, evidence.ID, confirmed, f.anchor.ID, personID, f.anchor.TargetKey,
-			personFactPortableTime(f.input.EventTime), f.replaceEvidenceID, f.input.EventTime)
-		if err != nil {
-			return fmt.Errorf("persist commitment fulfilment: %w", err)
-		}
-	}
-	return s.saveCommitmentFrontierTx(ctx, tx, request, prepared, newAnchorNeedsReplay)
+	return s.saveCommitmentFrontierTx(ctx, tx, request, prepared)
 }
 
-// Automatic fulfilment needs the owner's opt-in and the model's confirmation.
-// An owner's completion email also needs the Sent provenance the loop reader
-// trusts, so an inbox copy stays an exact proposal. Returns the stored 0 or 1.
-func (s *Store) commitmentFulfilmentConfirmedTx(ctx context.Context, tx *loggedTx, autoFulfil bool, f preparedCommitmentFulfilment) (int, error) {
-	if !autoFulfil || !f.change.Confirmed {
-		return 0, nil
-	}
-	if f.anchor.Direction != peoplesweep.CommitmentOwedBy {
-		return 1, nil
-	}
-	var trusted bool
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM messages m
-		JOIN sources src ON src.id = m.source_id JOIN conversations c ON c.id = m.conversation_id
-		WHERE m.id = ? AND (c.conversation_type <> 'email_thread' OR `+sentConfirmedSQL(s.dialect, "", "m", "src")+`))`,
-		f.messageID).Scan(&trusted)
-	if err != nil {
-		return 0, fmt.Errorf("check commitment completion provenance: %w", err)
-	}
-	return boolInt(trusted), nil
-}
-
-// One frontier carries both recent-history discovery and fair anchor pages.
-// New or reattached promises restart recent-history discovery, which also
-// visits completion messages consumed before their earlier promise arrived.
-func (s *Store) saveCommitmentFrontierTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep, replay bool) error {
+// Save discovery progress after the fenced apply.
+func (s *Store) saveCommitmentFrontierTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {
 	through, backfill := prepared.through, prepared.backfillMessageID
-	after, anchorThrough, anchorBackfill := int64(0), int64(0), int64(0)
 	var observed any
-	var previousThrough int64
-	var previousScope string
-	if prepared.observedOnly || replay || prepared.anchorAfterID > 0 {
-		err := tx.QueryRowContext(ctx, `SELECT through_sequence, scope_fingerprint FROM person_commitment_frontiers WHERE person_id = ?`, request.Lease.PersonID).Scan(&previousThrough, &previousScope)
+	if prepared.observedOnly {
+		var previous int64
+		var scope string
+		err := tx.QueryRowContext(ctx, `SELECT through_sequence, scope_fingerprint FROM person_commitment_frontiers WHERE person_id = ?`, request.Lease.PersonID).Scan(&previous, &scope)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if previousScope != prepared.scope {
-			previousThrough = 0
-		}
-	}
-	if prepared.observedOnly {
 		observed = through
-		// Observations do not consume the model's journal frontier.
-		through = previousThrough
-	} else if replay {
-		// Finish this frozen discovery cycle before admitting newer journal work.
-		backfill, through, anchorThrough = 0, previousThrough, prepared.through
-	} else if prepared.anchorAfterID > 0 {
-		after, anchorThrough, anchorBackfill = prepared.anchorAfterID, prepared.through, prepared.anchorBackfillID
-		// Keep the previously consumed journal prefix while paging anchors.
-		through = previousThrough
-	} else if backfill >= 0 {
-		// More recent-history pages remain within this cycle's snapshot.
-		anchorThrough = prepared.snapshot
-	}
-	var selected any
-	if backfill >= 0 || anchorThrough > 0 || after > 0 {
-		selected = s.dialect.TimestampParam(prepared.selectionAt)
+		through = 0
+		if scope == prepared.scope {
+			through = previous
+		}
 	}
 	since := prepared.selectionAt.Add(-request.Commitment.Config.Window)
 	var profileSince string
@@ -368,15 +209,12 @@ func (s *Store) saveCommitmentFrontierTx(ctx context.Context, tx *loggedTx, requ
 		since = profileStart
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_frontiers
-		(person_id, through_sequence, processed_at, observed_sequence, backfill_message_id,
-		 anchor_after_id, anchor_through_sequence, anchor_backfill_id, scope_fingerprint, selection_at, discovery_since)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (person_id) DO UPDATE SET
-		through_sequence = excluded.through_sequence, processed_at = excluded.processed_at,
-		observed_sequence = excluded.observed_sequence, backfill_message_id = excluded.backfill_message_id,
-		anchor_after_id = excluded.anchor_after_id, anchor_through_sequence = excluded.anchor_through_sequence,
-		anchor_backfill_id = excluded.anchor_backfill_id, scope_fingerprint = excluded.scope_fingerprint,
-		selection_at = excluded.selection_at, discovery_since = excluded.discovery_since`, request.Lease.PersonID, through, s.dialect.TimestampParam(request.CompletedAt), observed,
-		backfill, after, anchorThrough, anchorBackfill, prepared.scope, selected, s.dialect.TimestampParam(since))
+ (person_id, through_sequence, processed_at, observed_sequence, backfill_message_id, scope_fingerprint, discovery_since)
+ VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (person_id) DO UPDATE SET
+ through_sequence = excluded.through_sequence, processed_at = excluded.processed_at,
+ observed_sequence = excluded.observed_sequence, backfill_message_id = excluded.backfill_message_id,
+ scope_fingerprint = excluded.scope_fingerprint, discovery_since = excluded.discovery_since`, request.Lease.PersonID, through, s.dialect.TimestampParam(request.CompletedAt), observed,
+		backfill, prepared.scope, s.dialect.TimestampParam(since))
 	return err
 }
 
@@ -463,22 +301,19 @@ func validatePersonSweepApplyCommitment(request peoplesweep.ApplyRequest) error 
 	window := result.Window
 	if !request.Generation.Policy.AllowSensitive || !result.Config.Enabled ||
 		window.PersonID != request.Lease.PersonID || !window.Now.Equal(request.Generation.ResolvedAt) ||
-		window.BackfillMessageID < -1 || window.AnchorAfterID < 0 || window.AnchorBackfillID < 0 || window.ThroughSequence < 0 || window.SnapshotSequence < window.ThroughSequence ||
-		len(window.Sources) > result.Config.MaxItems || len(window.Anchors) > result.Config.MaxOpenAnchors {
+		window.BackfillMessageID < -1 || window.ThroughSequence < 0 || window.SnapshotSequence < window.ThroughSequence ||
+		len(window.Sources) > result.Config.MaxItems {
 		return errors.New("commitment result does not match the attempt")
 	}
 	if window.SelectionAt.IsZero() || window.SelectionAt.After(window.Now) || len(window.ScopeFingerprint) != 64 {
 		return errors.New("invalid commitment selection bounds")
 	}
-	fits, err := peoplesweep.CommitmentInputFits(window, false)
+	fits, err := peoplesweep.CommitmentInputFits(window)
 	if err != nil || !fits {
 		return errors.Join(errors.New("commitment input exceeds wire limit"), err)
 	}
-	if window.AnchorAfterID > 0 && (len(window.Anchors) == 0 || window.Anchors[len(window.Anchors)-1].ID != window.AnchorAfterID) {
-		return errors.New("commitment continuation must match the last open anchor")
-	}
 	if hasCall == (len(window.Sources) == 0) ||
-		(!hasCall && (len(window.Anchors) != 0 || len(result.Output.Promises) != 0 || len(result.Output.Fulfilments) != 0)) {
+		(!hasCall && (len(result.Output.Promises) != 0)) {
 		return errors.New("commitment result does not match its provider call")
 	}
 	if err := result.Config.Validate(request.Budget); err != nil {
@@ -556,29 +391,6 @@ func (s *Store) commitmentWindowCurrentTx(ctx context.Context, tx *loggedTx, req
 		}
 	}
 	return true, nil
-}
-
-// Identical extraction converges even when a promise cannot be its own older
-// anchor. Changed, detached or newly supported citations need matching replay.
-func (s *Store) commitmentClaimCurrent(ctx context.Context, c PersonCommitment, source peoplesweep.CommitmentSource, changes []personfacts.EvidenceStatusChange) (bool, error) {
-	if c.ClaimID == nil || !personFactPortableTime(c.PromisedAt).Equal(personFactPortableTime(source.EventTime)) {
-		return false, nil
-	}
-	var key string
-	var supported bool
-	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT e.evidence_key,
-		COALESCE((SELECT status.supported `+latestPersonFactEvidenceStatusSQL("e.person_id", "e.evidence_key", "e.source_version")+`), TRUE)
-		FROM person_fact_evidence e WHERE e.source_version = ? AND EXISTS
-		(SELECT 1 FROM person_fact_claim_evidence ce WHERE ce.claim_id = ? AND ce.evidence_id = e.id) LIMIT 1`), source.SourceVersion, *c.ClaimID).Scan(&key, &supported)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	for _, change := range changes {
-		if change.EvidenceKey == key && !change.Supported {
-			supported = false
-		}
-	}
-	return supported, err
 }
 
 func (s *Store) applyCommitmentStatusesTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, sweep *preparedCommitmentSweep) error {

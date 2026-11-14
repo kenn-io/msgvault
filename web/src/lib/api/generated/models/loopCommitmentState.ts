@@ -9,5 +9,4 @@ export const LoopCommitmentState = {
   open: "open",
   done: "done",
   snoozed: "snoozed",
-  fulfilled: "fulfilled",
 } as const;

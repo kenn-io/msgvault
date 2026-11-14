@@ -813,11 +813,6 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 	if err := copyMessages(ctx, tx); err != nil {
 		return nil, err
 	}
-	if options.IncludeProfiles {
-		if err := copySubsetCommitmentDecisions(ctx, tx); err != nil {
-			return nil, fmt.Errorf("copy commitment decisions: %w", err)
-		}
-	}
 	// Merge-protection markers are portable owning-row state. Copy them from
 	// the selected messages directly so they remain useful even when a subset
 	// omits the detailed merge provenance that originally justified them.
@@ -2320,20 +2315,6 @@ func copySubsetInferenceRevisions(ctx context.Context, tx *sql.Tx) error {
 		return fmt.Errorf("copy person inference review revisions: %w", err)
 	}
 	return nil
-}
-
-func copySubsetCommitmentDecisions(ctx context.Context, tx *sql.Tx) error {
-	present, err := sourceTableExists(ctx, tx, "person_commitments")
-	if err != nil || !present {
-		return err
-	}
-	// The subset omits the inference ledger, so its fulfilment references cannot
-	// be retained. Keep owner decisions for people included in the subset.
-	const columns = `id, person_id, target_key, owner_state, snoozed_until, reopened_at`
-	_, err = tx.ExecContext(ctx, `INSERT INTO person_commitments (`+columns+`)
-		SELECT `+columns+` FROM src.person_commitments
-		WHERE person_id IN (SELECT id FROM persons)`)
-	return err
 }
 
 func copyStructuredProfiles(ctx context.Context, tx *sql.Tx) (int64, error) {

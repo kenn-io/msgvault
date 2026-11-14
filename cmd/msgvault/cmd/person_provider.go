@@ -1202,9 +1202,9 @@ func runPersonCommitmentConsent(command *cobra.Command, deps personProviderComma
 		w := command.OutOrStdout()
 		if _, err := fmt.Fprintf(w, "Commitment extraction sends exact text written by you and the other person in verified direct conversations to %s (%s).\n"+
 			"Profile %s, source dates %s through %s, retention=%s, training=%s.\n"+
-			"A request sends up to %d messages and %d open promises within the profile scope.\n",
+			"A request sends up to %d messages within the profile scope.\n",
 			profile.Endpoint, profile.Model, profile.Fingerprint, profile.SourceSince, until, profile.RetentionPosture, profile.TrainingPosture,
-			cfg.Commitments.MaxItems, cfg.Commitments.MaxOpenAnchors); err != nil {
+			cfg.Commitments.MaxItems); err != nil {
 			return fmt.Errorf("write commitment policy disclosure: %w", err)
 		}
 	}

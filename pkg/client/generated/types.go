@@ -7186,18 +7186,17 @@ func (l LocalEmbeddingsStatus) Validate() error {
 }
 
 type LoopCommitment struct {
-	ClaimID            int64                   `json:"claim_id"`
-	Direction          LoopCommitmentDirection `json:"direction" validate:"required"`
-	DueOn              *runtime.Date           `json:"due_on,omitempty"`
-	Freshness          LoopCommitmentFreshness `json:"freshness" validate:"required"`
-	ID                 string                  `json:"id" validate:"required"`
-	PersonID           int64                   `json:"person_id"`
-	Promise            CommitmentQuote         `json:"promise"`
-	PromisedAt         time.Time               `json:"promised_at" validate:"required"`
-	ProposedFulfilment *CommitmentQuote        `json:"proposed_fulfilment,omitempty"`
-	SnoozedUntil       *time.Time              `json:"snoozed_until,omitempty"`
-	State              LoopCommitmentState     `json:"state" validate:"required"`
-	Summary            string                  `json:"summary" validate:"required"`
+	ClaimID      int64                   `json:"claim_id"`
+	Direction    LoopCommitmentDirection `json:"direction" validate:"required"`
+	DueOn        *runtime.Date           `json:"due_on,omitempty"`
+	Freshness    LoopCommitmentFreshness `json:"freshness" validate:"required"`
+	ID           string                  `json:"id" validate:"required"`
+	PersonID     int64                   `json:"person_id"`
+	Promise      CommitmentQuote         `json:"promise"`
+	PromisedAt   time.Time               `json:"promised_at" validate:"required"`
+	SnoozedUntil *time.Time              `json:"snoozed_until,omitempty"`
+	State        LoopCommitmentState     `json:"state" validate:"required"`
+	Summary      string                  `json:"summary" validate:"required"`
 }
 
 func (l LoopCommitment) Validate() error {
@@ -7229,13 +7228,6 @@ func (l LoopCommitment) Validate() error {
 	}
 	if err := typesValidator.Var(l.PromisedAt, "required"); err != nil {
 		errors = errors.Append("PromisedAt", err)
-	}
-	if l.ProposedFulfilment != nil {
-		if v, ok := any(l.ProposedFulfilment).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append("ProposedFulfilment", err)
-			}
-		}
 	}
 	if v, ok := any(l.State).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {

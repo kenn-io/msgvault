@@ -4400,9 +4400,6 @@ CREATE TABLE IF NOT EXISTS person_commitments (
  target_key TEXT NOT NULL,
  owner_state TEXT NOT NULL DEFAULT 'open' CHECK (owner_state IN ('open','done','snoozed')),
  snoozed_until DATETIME,
- reopened_at DATETIME,
- fulfilment_evidence_id INTEGER REFERENCES person_fact_evidence(id) ON DELETE SET NULL,
- fulfilment_confirmed INTEGER NOT NULL DEFAULT 0 CHECK (fulfilment_confirmed IN (0,1)),
  UNIQUE(person_id,target_key)
 );
 CREATE TABLE IF NOT EXISTS person_commitment_frontiers (
@@ -4411,10 +4408,6 @@ CREATE TABLE IF NOT EXISTS person_commitment_frontiers (
  processed_at DATETIME NOT NULL,
  observed_sequence INTEGER,
  backfill_message_id INTEGER NOT NULL DEFAULT 0,
- anchor_after_id INTEGER NOT NULL DEFAULT 0,
- anchor_through_sequence INTEGER NOT NULL DEFAULT 0,
- anchor_backfill_id INTEGER NOT NULL DEFAULT 0,
  scope_fingerprint TEXT NOT NULL DEFAULT '',
- selection_at DATETIME,
  discovery_since DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

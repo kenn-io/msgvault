@@ -38,28 +38,14 @@ type CommitmentSource struct {
 	ContentSHA256 string    `json:"-"`
 }
 
-type CommitmentAnchor struct {
-	ID         int64     `json:"id"`
-	TargetKey  string    `json:"-"`
-	Direction  string    `json:"direction"`
-	Quote      string    `json:"quote"`
-	PromisedAt time.Time `json:"promised_at"`
-	// ReopenedAt is a floor that prevents old automatic fulfilment closing a
-	// promise the owner explicitly reopened.
-	ReopenedAt *time.Time `json:"reopened_at,omitempty"`
-}
-
 type CommitmentWindow struct {
 	ScopeFingerprint  string             `json:"-"`
 	SelectionAt       time.Time          `json:"-"`
 	PersonID          int64              `json:"-"`
 	Sources           []CommitmentSource `json:"sources"`
-	Anchors           []CommitmentAnchor `json:"open_anchors"`
 	Now               time.Time          `json:"now"`
 	Timezone          string             `json:"timezone"`
 	BackfillMessageID int64              `json:"-"`
-	AnchorAfterID     int64              `json:"-"`
-	AnchorBackfillID  int64              `json:"-"`
 	SnapshotSequence  int64              `json:"-"`
 	ThroughSequence   int64              `json:"-"`
 }
@@ -75,18 +61,8 @@ type CommitmentPromise struct {
 	TargetKey string  `json:"-"`
 }
 
-type CommitmentFulfilment struct {
-	CommitmentID int64  `json:"commitment_id"`
-	SourceID     string `json:"source_id"`
-	Quote        string `json:"quote"`
-	Start        int64  `json:"start"`
-	End          int64  `json:"end"`
-	Confirmed    bool   `json:"confirmed"`
-}
-
 type ParsedCommitments struct {
-	Promises    []CommitmentPromise    `json:"promises"`
-	Fulfilments []CommitmentFulfilment `json:"fulfilments"`
+	Promises []CommitmentPromise `json:"promises"`
 }
 
 // ParseCommitments admits the entire bounded output or none of it. Provider
@@ -123,10 +99,6 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 		}
 		sources[source.ID] = source
 	}
-	anchors := make(map[int64]CommitmentAnchor, len(window.Anchors))
-	for _, anchor := range window.Anchors {
-		anchors[anchor.ID] = anchor
-	}
 	type promiseSpan struct{ start, end int64 }
 	spans := make(map[int64][]promiseSpan)
 	for index := range parsed.Promises {
@@ -151,18 +123,6 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 			}
 		}
 		spans[source.MessageID] = append(spans[source.MessageID], promiseSpan{promise.Start, promise.End})
-	}
-	fulfilments := make(map[int64]bool)
-	for _, fulfilment := range parsed.Fulfilments {
-		source, ok := sources[fulfilment.SourceID]
-		anchor, known := anchors[fulfilment.CommitmentID]
-		if !ok || !known || fulfilments[anchor.ID] || source.Direction != anchor.Direction || !source.EventTime.After(anchor.PromisedAt) || !source.MatchesQuote(fulfilment.Quote, fulfilment.Start, fulfilment.End) {
-			return invalid()
-		}
-		if anchor.ReopenedAt != nil && !source.EventTime.After(*anchor.ReopenedAt) {
-			return invalid()
-		}
-		fulfilments[anchor.ID] = true
 	}
 	return parsed, nil
 }

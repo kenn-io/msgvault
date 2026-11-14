@@ -603,15 +603,9 @@ func (w *Worker) runPerson(
 	if err != nil {
 		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
 	}
-	ordinaryAllowed := true
-	if authority, ok := w.Runner.(interface {
-		OrdinaryInferenceAllowed(ctx context.Context) (bool, error)
-	}); ok && w.Config.Commitments.Enabled {
-		allowed, err := authority.OrdinaryInferenceAllowed(ctx)
-		if err != nil {
-			return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
-		}
-		ordinaryAllowed = allowed
+	ordinaryAllowed, err := w.ordinaryInferenceAllowed(ctx)
+	if err != nil {
+		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
 	}
 	if !ordinaryAllowed {
 		briefMode = BriefModeSkip
@@ -1266,20 +1260,23 @@ func (w *Worker) ready(ctx context.Context) (ProviderProfile, personfacts.Catalo
 	return profile, catalog, w.now(), nil
 }
 
+func (w *Worker) ordinaryInferenceAllowed(ctx context.Context) (bool, error) {
+	if authority, ok := w.Runner.(interface {
+		OrdinaryInferenceAllowed(context.Context) (bool, error)
+	}); ok && w.Config.Commitments.Enabled {
+		return authority.OrdinaryInferenceAllowed(ctx)
+	}
+	return true, nil
+}
+
 func (w *Worker) now() time.Time { return w.Clock().UTC() }
 
 func (w *Worker) reconcile(ctx context.Context, profile ProviderProfile,
 	catalog personfacts.Catalog, now time.Time, request RunRequest,
 ) error {
-	ordinaryAllowed := true
-	if authority, ok := w.Runner.(interface {
-		OrdinaryInferenceAllowed(ctx context.Context) (bool, error)
-	}); ok && w.Config.Commitments.Enabled {
-		allowed, err := authority.OrdinaryInferenceAllowed(ctx)
-		if err != nil {
-			return err
-		}
-		ordinaryAllowed = allowed
+	ordinaryAllowed, err := w.ordinaryInferenceAllowed(ctx)
+	if err != nil {
+		return err
 	}
 	after := int64(0)
 	for {

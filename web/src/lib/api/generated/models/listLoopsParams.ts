@@ -8,7 +8,7 @@ export type ListLoopsParams = {
    */
   person_id?: number;
   /**
-   * Include done, snoozed and fulfilled commitments
+   * Include done and snoozed commitments
    */
   include_closed?: boolean;
   /**

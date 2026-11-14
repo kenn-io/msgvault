@@ -52,7 +52,7 @@ func TestCommitmentWindowScopesBothSidesOfDirectConversations(t *testing.T) {
 		Body: "We will send the newsletter.", SentAt: loopAgo(loopDay)})
 	profile := peoplesweep.ProviderProfile{SourceSince: "2026-01-01", AllowSensitive: true,
 		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
-	cfg := peoplesweep.CommitmentConfig{Enabled: true, Window: 30 * loopDay, MaxItems: 60, MaxBytes: 65536, MaxOpenAnchors: 8}
+	cfg := peoplesweep.CommitmentConfig{Enabled: true, Window: 30 * loopDay, MaxItems: 60, MaxBytes: 65536}
 	window, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow, "UTC")
 	r.NoError(err)
 	got := make(map[int64]string)
@@ -84,17 +84,17 @@ func TestCommitmentWindowBoundsEscapedEmailInput(t *testing.T) {
 	participant := f.EnsureParticipant(loopAlex, "", "example.test")
 	person, _, err := f.Store.CreatePersonFromParticipant(participant)
 	r.NoError(err)
-	for i := range 12 {
+	for i := range 30 {
 		f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner},
 			Body: "I will send the draft.\n> " + strings.Repeat("quoted history ", 150), SentAt: loopAgo(time.Duration(i+1) * time.Hour)})
 	}
-	cfg := peoplesweep.CommitmentConfig{Enabled: true, Window: 30 * loopDay, MaxItems: 60, MaxBytes: 65536, MaxOpenAnchors: 8}
+	cfg := peoplesweep.CommitmentConfig{Enabled: true, Window: 30 * loopDay, MaxItems: 60, MaxBytes: 65536}
 	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
 	window, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow, "UTC")
 	r.NoError(err)
 	r.NotEmpty(window.Sources)
-	a.Less(len(window.Sources), 12, "escaped history must leave a bounded prefix for the next pass")
-	fits, err := peoplesweep.CommitmentInputFits(window, true)
+	a.Less(len(window.Sources), 30, "escaped history must leave a bounded prefix for the next pass")
+	fits, err := peoplesweep.CommitmentInputFits(window)
 	r.NoError(err)
 	a.True(fits)
 	a.Equal(window.Sources[len(window.Sources)-1].MessageID, window.BackfillMessageID)

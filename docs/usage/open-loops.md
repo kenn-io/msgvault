@@ -150,15 +150,14 @@ Only the owner can use loops. Delegated agent tokens and remote clients can't.
 
 ## See cited commitments
 
-Commitments are optional and require daemon API schema 5.2.0 or newer.
+Commitments are optional and require daemon API schema 5.4.0 or newer.
 Enable `[people.sweep.commitments]` in [configuration](../configuration.md#commitment-extraction).
 Use `msgvault person provider consent --commitments` to see the provider,
 source dates, and what the request discloses. Repeat with `--yes` to consent
 to sending conversation text from both sides of verified direct chats and
 email. Each message contributes its first 2,000 runes after leading quoted
 history and whitespace, with embedded quoted history masked.
-Changing provider source dates, the commitment window, or message, byte and
-open-promise selection limits restarts recent discovery while keeping saved decisions.
+Changing provider source dates, the commitment window, or message and byte limits restarts recent discovery while keeping saved decisions.
 The profile must allow sensitive `conversation_text` sources. Check the grant
 with `msgvault person provider status`. Use `msgvault person provider revoke`
 to revoke both the ordinary inference and commitment grants for the profile.
@@ -169,19 +168,10 @@ ID and original-body rune range. See the [person facts CLI reference](../cli-ref
 and freshness. A due date is a calendar date in the configured activity timezone. Open promises remain visible as their evidence ages; evidence older than 90 days is marked stale. Unsupported claims leave the list.
 
 Use the commitment ID for actions on a promise. This ID starts with `c`.
-The same message can anchor multiple promises and a reply loop. Run `msgvault loops list --include-closed --limit 200` to find done, snoozed, or fulfilled promises that you can reopen.
+The same message can anchor multiple promises and a reply loop. Run `msgvault loops list --include-closed --limit 200` to find done or snoozed promises that you can reopen.
 
 ```bash
 msgvault loops done c12
 msgvault loops snooze c12 --until 48h
 msgvault loops reopen c12
 ```
-
-The list may show a proposed fulfilment with a quote from a newer message by
-the person who made the promise. Review the quote and mark it done if the
-promise was kept. With `auto_fulfil = true`, an explicit fulfilment supported
-by newer evidence can close it automatically. For promises you made, an email
-completion needs a saved Sent origin or a Sent label from its account. Without
-that provenance, it stays a proposal. Reopen keeps older evidence from closing
-it again. If the supporting fulfilment is withdrawn, the
-promise can appear again.

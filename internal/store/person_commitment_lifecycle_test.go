@@ -42,10 +42,6 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 				cfg.ApplyDefaults()
 				cfg.Commitments.Enabled = true
 				applyCommitmentTestSources(t, f, cfg.Commitments)
-				if mutation.extract {
-					f = nextCommitmentTestAttempt(t, f, "-finish-initial")
-					applyCommitmentTestSources(t, f, cfg.Commitments)
-				}
 				before, err := st.LatestPersonSweepChangeSequence(ctx)
 				r.NoError(err)
 				_, err = st.db.ExecContext(ctx, st.Rebind(mutation.query), id)
@@ -108,7 +104,7 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 					r.Len(window.Sources, 1)
 					request = commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
 						Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: window.Sources[0].Direction,
-							Quote: quote, Summary: "Send draft", End: int64(len(quote))}}, Fulfilments: []peoplesweep.CommitmentFulfilment{},
+							Quote: quote, Summary: "Send draft", End: int64(len(quote))}},
 					})
 				}
 				_, err = st.ApplyPersonSweep(ctx, request)
@@ -178,7 +174,6 @@ func TestCommitmentRejectsSourceDeletedBeforeFirstExtraction(t *testing.T) {
 	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
 		Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo,
 			Quote: quote, Summary: "Send draft", End: int64(len(quote))}},
-		Fulfilments: []peoplesweep.CommitmentFulfilment{},
 	})
 	result, err := f.store.ApplyPersonSweep(ctx, request)
 	r.NoError(err)
@@ -200,8 +195,6 @@ func TestCommitmentOnlyMaintenanceInvalidatesEvidenceBeyondFirstBatch(t *testing
 	cfg := peoplesweep.Config{}
 	cfg.ApplyDefaults()
 	cfg.Commitments.Enabled = true
-	applyCommitmentTestSources(t, f, cfg.Commitments)
-	f = nextCommitmentTestAttempt(t, f, "-finish-initial")
 	applyCommitmentTestSources(t, f, cfg.Commitments)
 	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
 	for _, id := range messageIDs {
