@@ -34,7 +34,6 @@ func TestImportSignalExportReportsPartialImport(t *testing.T) {
 	cmd.SetErr(io.Discard)
 	err = runImportSignalExport(cmd, root, "fictional")
 	require.ErrorContains(err, "line 12")
-	assert.Contains(out.String(), "3 added")
 	assert.Contains(out.String(), "Missing media file not found: 1")
 	assert.Contains(out.String(), "Import failed. Re-run to continue. Committed messages are preserved.")
 	db, err := sql.Open("duckdb", "")

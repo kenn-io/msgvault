@@ -562,34 +562,6 @@ func contactLines(contact, message string) []string {
 	return []string{header, account, self, `{"recipient":{"id":"2","contact":` + contact + `}}`, direct, group, groupChat, message, groupMessage}
 }
 
-func TestPhoneOnlyContactDisplayName(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := fixture(t)
-	writeLines(t, root, contactLines(`{"e164":"15555550100"}`, incoming))
-	opts := options(t, root)
-	_, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-
-	id, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(accountScope(opts.Account), "e164:+15555550100"))
-	require.NoError(t, err)
-	require.NotZero(t, id)
-	var name, title, sender string
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT display_name FROM participants WHERE id = ?`), id).Scan(&name))
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT title FROM conversations WHERE conversation_type = 'direct_chat'`).Scan(&title))
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT display_name FROM message_recipients WHERE recipient_type = 'from' LIMIT 1`).Scan(&sender))
-	assert.Equal(t, "+15555550100", name)
-	assert.Equal(t, "+15555550100", title)
-	assert.Equal(t, "+15555550100", sender)
-
-	opts.Account = "another-fictional-account"
-	_, err = Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	otherID, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(accountScope(opts.Account), "e164:+15555550100"))
-	require.NoError(t, err)
-	require.NotZero(t, otherID)
-	assert.NotEqual(t, id, otherID)
-}
-
 func TestContactIdentifierAdded(t *testing.T) {
 	for _, tc := range []struct {
 		contact     string
@@ -606,6 +578,18 @@ func TestContactIdentifierAdded(t *testing.T) {
 			opts := options(t, root)
 			_, err := Import(t.Context(), st, opts)
 			require.NoError(t, err)
+			if tc.reusedPhone {
+				id, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(accountScope(opts.Account), "e164:+15555550100"))
+				require.NoError(t, err)
+				require.NotZero(t, id)
+				var name, title, sender string
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT display_name FROM participants WHERE id = ?`), id).Scan(&name))
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT title FROM conversations WHERE conversation_type = 'direct_chat'`).Scan(&title))
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT display_name FROM message_recipients WHERE recipient_type = 'from' LIMIT 1`).Scan(&sender))
+				assert.Equal(t, "+15555550100", name)
+				assert.Equal(t, "+15555550100", title)
+				assert.Equal(t, "+15555550100", sender)
+			}
 			lines[3] = `{"recipient":{"id":"2","contact":{"e164":"15555550100","aci":"AQEBAQEBAQEBAQEBAQEBAQ=="}}}`
 			writeLines(t, root, lines)
 			summary, err := Import(t.Context(), st, opts)
@@ -643,6 +627,14 @@ func TestContactIdentifierAdded(t *testing.T) {
 				assert.NotEqual(t, first, second)
 				assert.Equal(t, first, phone)
 				assert.Equal(t, 4, messageCount(t, st))
+				writeLines(t, root, contactLines(tc.contact, incoming))
+				opts.Account = "another-fictional-account"
+				_, err = Import(t.Context(), st, opts)
+				require.NoError(t, err)
+				otherID, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, scopedKey(accountScope(opts.Account), "e164:+15555550100"))
+				require.NoError(t, err)
+				require.NotZero(t, otherID)
+				assert.NotEqual(t, first, otherID)
 			}
 		})
 	}
@@ -681,15 +673,13 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 		unmatchedMedia, repairedMedia                        []byte
 		want                                                 map[string]string
 		firstStored, firstMissing, finalStored, finalMissing int
-		inlineLongText                                       bool
 	}{
-		{"hashed original ignores new hash", attachments("AQ==", pointer(a)), attachments("AQ==", otherKeyB), attachments("AQ==", otherKeyB), b, a, map[string]string{"attachment:0": hashHex(a)}, 0, 1, 1, 0, false},
-		{"hashed long text ignores new hash", `"longText":` + pointer(a), `"longText":` + otherKeyB, `"longText":` + otherKeyB, b, a, map[string]string{"long_text": hashHex(a)}, 0, 1, 1, 0, false},
-		{"hashless uuid after reorder", attachments("AQ==", `{"locatorInfo":{"key":"Ag=="}}`), attachments("BA==", pointer(a)), `"attachments":[{"clientUuid":"Aw==","pointer":{}},{"clientUuid":"AQ==","pointer":` + pointer(a) + `}]`, a, a, map[string]string{"attachment:0": hashHex(a)}, 0, 1, 1, 0, false},
-		{"hashless long text by key", `"longText":{"locatorInfo":{"key":"AQ=="}}`, `"longText":` + otherKey, `"longText":` + pointer(a), a, a, map[string]string{"long_text": hashHex(a)}, 0, 1, 1, 0, false},
-		{"earlier album slot removed", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + otherKeyB + `}]`, attachments("Aw==", pointer(b)), attachments("Ag==", otherKeyB), b, b, map[string]string{"attachment:0": "", "attachment:1": hashHex(b)}, 1, 1, 0, 1, false},
-		{"equal bytes in separate slots", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, attachments("Aw==", pointer(b)), `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, b, a, map[string]string{"attachment:0": hashHex(a), "attachment:1": hashHex(a)}, 0, 2, 2, 0, false},
-		{"long text turned inline", `"longText":` + pointer(a), "", "", nil, nil, map[string]string{"long_text": ""}, 0, 1, 0, 0, true},
+		{"hashed original ignores new hash", attachments("AQ==", pointer(a)), attachments("AQ==", otherKeyB), attachments("AQ==", otherKeyB), b, a, map[string]string{"attachment:0": hashHex(a)}, 0, 1, 1, 0},
+		{"hashed long text ignores new hash", `"longText":` + pointer(a), `"longText":` + otherKeyB, `"longText":` + otherKeyB, b, a, map[string]string{"long_text": hashHex(a)}, 0, 1, 1, 0},
+		{"hashless uuid after reorder", attachments("AQ==", `{"locatorInfo":{"key":"Ag=="}}`), attachments("BA==", pointer(a)), `"attachments":[{"clientUuid":"Aw==","pointer":{}},{"clientUuid":"AQ==","pointer":` + pointer(a) + `}]`, a, a, map[string]string{"attachment:0": hashHex(a)}, 0, 1, 1, 0},
+		{"hashless long text by key", `"longText":{"locatorInfo":{"key":"AQ=="}}`, `"longText":` + otherKey, `"longText":` + pointer(a), a, a, map[string]string{"long_text": hashHex(a)}, 0, 1, 1, 0},
+		{"earlier album slot removed", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + otherKeyB + `}]`, attachments("Aw==", pointer(b)), attachments("Ag==", otherKeyB), b, b, map[string]string{"attachment:0": "", "attachment:1": hashHex(b)}, 1, 1, 0, 1},
+		{"equal bytes in separate slots", `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, attachments("Aw==", pointer(b)), `"attachments":[{"clientUuid":"AQ==","pointer":` + pointer(a) + `},{"clientUuid":"Ag==","pointer":` + pointer(a) + `}]`, b, a, map[string]string{"attachment:0": hashHex(a), "attachment:1": hashHex(a)}, 0, 2, 2, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -699,12 +689,8 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 			opts := options(t, root)
 			_, err := Import(t.Context(), st, opts)
 			require.NoError(err)
-			id, raw := onlyMessage(t, st)
-			body := "changed"
-			if tc.inlineLongText {
-				body = string(a)
-			}
-			writeFrames(t, root, message(body, tc.unmatched))
+			id, _ := onlyMessage(t, st)
+			writeFrames(t, root, message("changed", tc.unmatched))
 			if tc.unmatchedMedia != nil {
 				putMedia(t, root, tc.unmatchedMedia)
 			}
@@ -712,17 +698,6 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(tc.firstStored, summary.AttachmentsStored)
 			assert.Equal(tc.firstMissing, summary.AttachmentsMissing)
-			if tc.inlineLongText {
-				assert.EqualValues(1, summary.MediaMissing["missing"])
-				assert.EqualValues(1, summary.Omitted["incomplete_long_text"])
-				assert.EqualValues(1, summary.MessagesChanged)
-				assert.Equal(tc.want, slotHashes(t, st, id))
-				again, err := st.GetMessageRawContext(t.Context(), id)
-				require.NoError(err)
-				assert.Equal(raw, again)
-				assertBody(t, st, id, "original")
-				return
-			}
 			writeFrames(t, root, message("changed", tc.repaired))
 			putMedia(t, root, tc.repairedMedia)
 			summary, err = Import(t.Context(), st, opts)
@@ -732,6 +707,31 @@ func TestRepairFillsOriginalSlotByIdentity(t *testing.T) {
 			assert.Equal(tc.want, slotHashes(t, st, id))
 		})
 	}
+}
+
+func TestLongTextTurnedInlineRetainsSnapshot(t *testing.T) {
+	data := []byte("original fictional media")
+	original := `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"original"},"longText":` + pointer(data) + `}}}`
+	inline := `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"original fictional media"}}}}`
+	st := testutil.NewTestStore(t)
+	root := fixture(t, original)
+	opts := options(t, root)
+	_, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	id, raw := onlyMessage(t, st)
+	writeFrames(t, root, inline)
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.Zero(t, summary.AttachmentsStored)
+	assert.Equal(t, 1, summary.AttachmentsMissing)
+	assert.EqualValues(t, 1, summary.MediaMissing["missing"])
+	assert.EqualValues(t, 1, summary.Omitted["incomplete_long_text"])
+	assert.EqualValues(t, 1, summary.MessagesChanged)
+	assert.Equal(t, map[string]string{"long_text": ""}, slotHashes(t, st, id))
+	again, err := st.GetMessageRawContext(t.Context(), id)
+	require.NoError(t, err)
+	assert.Equal(t, raw, again)
+	assertBody(t, st, id, "original")
 }
 
 func TestMediaIndexLimit(t *testing.T) {
