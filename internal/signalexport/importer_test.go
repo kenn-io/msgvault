@@ -120,7 +120,7 @@ func TestImportDistinctMessagesAtSameMillisecond(t *testing.T) {
 			summary, err = Import(t.Context(), st, opts)
 			require.NoError(t, err)
 			assert.EqualValues(t, len(tc.replay), summary.MessagesExisting)
-			assert.EqualValues(t, tc.changed, summary.MessagesChanged)
+			assert.Equal(t, tc.changed, summary.MessagesChanged)
 			assert.Zero(t, summary.MessagesAdded)
 			assert.Equal(t, len(tc.frames), messageCount(t, st))
 		})
