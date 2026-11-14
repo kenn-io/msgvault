@@ -251,9 +251,9 @@ func TestPersonFactPinHTTPVisibleOnlyRejectsSensitiveTargets(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			srv, st, personID, targets := newPersonFactAPIFixtureWithoutClaims(t)
-			target := targets[store.AttributeSlugPrimaryChannel]
-			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE attribute_definitions SET is_sensitive = TRUE WHERE slug = ?`), store.AttributeSlugPrimaryChannel)
-			requirements.NoError(err)
+			target := targets[store.AttributeSlugReligion]
+			requirements.NotEmpty(target.Key)
+			requirements.True(target.Sensitive)
 			path := fmt.Sprintf("/api/v1/people/%d/fact-pins/%s/%s", personID, target.Kind, target.Key)
 			if tc.visibleOnly {
 				path += "?visible_only=true"
