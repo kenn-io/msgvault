@@ -508,7 +508,8 @@ func TestCommitmentResweepPreservesDecisions(t *testing.T) {
 			r.Len(window.Sources, 1)
 			var next []peoplesweep.CommitmentPromise
 			if split {
-				next = append(parts, peoplesweep.CommitmentPromise{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: third, Summary: "Call", Start: int64(len(combinedText) + 1), End: int64(len(text))})
+				next = parts
+				next = append(next, peoplesweep.CommitmentPromise{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: third, Summary: "Call", Start: int64(len(combinedText) + 1), End: int64(len(text))})
 			} else {
 				next = []peoplesweep.CommitmentPromise{combined}
 			}
