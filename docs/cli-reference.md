@@ -3435,11 +3435,24 @@ grant consent to a provider or enroll a person in briefs.
 | `person facts catalog [--include-sensitive]` | List eligible fields, their keys, and revisions |
 | `person facts evidence <person-id>` | Inspect saved supporting evidence |
 | `person facts evidence-status <person-id>` | Inspect changes to evidence support |
-| `person facts claims <person-id>` | Inspect proposed values |
+| `person facts claims <person-id>` | Inspect proposed values, kind, and freshness |
 | `person facts decisions <person-id>` | Inspect resolver decisions |
 | `person facts pins <person-id>` | List fields protected from automatic replacement |
 | `person facts pin <person-id> <kind> <key>` | Protect a field's current or empty value |
 | `person facts unpin <person-id> <kind> <key>` | Allow automatic resolution for the field again |
+
+On unreleased main, claim reads include `kind` (`fact`, `event`, `preference`)
+and `status` (`fresh`, `stale`, or `expired`). Kind comes from the claim's saved
+identity. The shipped primary channel, contact frequency, “ask me about,” interest, and favorites
+categories are preferences even if renamed. Custom attributes without an end
+date are facts. Other time-bounded claims are events, and employment claims
+remain facts regardless of an end date. Preference identity takes precedence.
+
+Freshness uses the newest currently supported evidence that is not future-dated: facts stay fresh for
+365 days, events for 7 days, and preferences for 90 days. A claim
+without eligible evidence is stale. A claim expires exactly at `valid_until`,
+regardless of evidence freshness. `latest_supported_at` reports the evidence
+time when available. These read fields do not change inference packets.
 
 These commands accept `--json`. Use catalog keys, not slugs, for fact pins.
 Evidence, claims, and decisions accept an exact `--target`; fact-history

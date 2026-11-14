@@ -521,6 +521,8 @@ func inspectOpenAISweepFactState(
 		return fmt.Errorf("outbound packet has %d unresolved claims, want 1", len(packet.UnresolvedClaims))
 	}
 	got := packet.UnresolvedClaims[0]
+	// Freshness is read metadata and is omitted from inference packets.
+	wantClaim.Freshness = personfacts.Freshness{}
 	if !reflect.DeepEqual(got, wantClaim) || got.ClaimKey != wantClaim.ClaimKey || got.PersonID != wantClaim.PersonID ||
 		got.GenerationID != wantClaim.GenerationID || got.Generation.ID != wantClaim.Generation.ID ||
 		got.Generation.PersonID != wantClaim.Generation.PersonID || got.Target != wantClaim.Target ||

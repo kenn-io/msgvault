@@ -23,7 +23,7 @@ function ledgerResponse(path: string): Response {
     id: 1, claim_key: 'private-claim-key', generation_id: 2, evidence_ids: [],
     target: { kind: 'attribute', key: 'private-note', revision },
     submitted_value: 'private-sensitive-value', normalized_value: 'private-normalized-value',
-    relation: 'equals', origin: 'observed', confidence: { reported_score: 80 },
+    relation: 'equals', origin: 'observed', kind: 'preference', status: 'stale', confidence: { reported_score: 80 },
     created_at: '2026-08-03T00:00:00Z', program_fingerprint: 'private', program_id: 'private',
     program_version: 'private', value_fingerprint: 'private'
   }] });
@@ -39,7 +39,7 @@ function controller(): FactLedgerController {
   value.evidence.rows = [{ rowToken: 'evidence-0', sourceClass: 'message', directness: 'direct', authority: 'first party', identityScore: 92,
     eventTime: '2026-08-01', recordedTime: '2026-08-02', supported: true, currentSupportLabel: 'Source reimported', createdAt: '2026-08-03',
     excerpt: 'allowed evidence excerpt', evidenceKey: 'forbidden-evidence-key' }];
-  value.claims.rows = [{ rowToken: 'claim-0', submittedValue: 'allowed sensitive value', normalizedValue: 'allowed normalized value', relation: 'equals', origin: 'observed',
+  value.claims.rows = [{ rowToken: 'claim-0', kind: 'fact', status: 'fresh', submittedValue: 'allowed sensitive value', normalizedValue: 'allowed normalized value', relation: 'equals', origin: 'observed',
     validFrom: '2026-01-01', validUntil: null, reportedScore: 88, createdAt: '2026-08-03', targetCanonical: value.targets[0]!.canonical }];
   value.decisions.rows = [{ rowToken: 'decision-0', action: 'project', reason: 'highest score', score: { authority: 1, confidence: 2, corroboration: 3,
     directness: 4, freshness: 5, sourceClass: 6, total: 21 }, projectionKind: 'attribute', createdAt: '2026-08-03' }];
@@ -61,6 +61,8 @@ describe('FactLedger', () => {
     expect(screen.getByText('allowed evidence excerpt')).toBeDefined();
 
     await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
+    expect(screen.getByText('Kind').nextElementSibling?.textContent).toBe('fact');
+    expect(screen.getByText('Status').nextElementSibling?.textContent).toBe('fresh');
     expect(rendered.container.innerHTML).not.toContain('allowed sensitive value');
     await fireEvent.click(screen.getByRole('button', { name: 'Reveal sensitive fact value' }));
     expect(screen.getByText('allowed sensitive value')).toBeDefined();
