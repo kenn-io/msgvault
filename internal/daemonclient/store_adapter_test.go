@@ -1340,7 +1340,8 @@ func TestGetCLIAccounts_Success(t *testing.T) {
 			"accounts": [{
 				"id": 7,
 				"email": "alice@example.com",
-				"type": "gmail",
+				"type": "imap",
+				"auth_method": "xoauth2",
 				"display_name": "Alice",
 				"alias": "archive",
 				"message_count": 1234,
@@ -1358,7 +1359,8 @@ func TestGetCLIAccounts_Success(t *testing.T) {
 	require.Len(accounts, 1, "accounts")
 	assert.Equal(int64(7), accounts[0].ID, "ID")
 	assert.Equal("alice@example.com", accounts[0].Email, "Email")
-	assert.Equal("gmail", accounts[0].Type, "Type")
+	assert.Equal("imap", accounts[0].Type, "Type")
+	assert.Equal("xoauth2", accounts[0].AuthMethod)
 	assert.Equal("Alice", accounts[0].DisplayName, "DisplayName")
 	assert.Equal("archive", accounts[0].Alias, "Alias")
 	assert.Equal(int64(1234), accounts[0].MessageCount, "MessageCount")

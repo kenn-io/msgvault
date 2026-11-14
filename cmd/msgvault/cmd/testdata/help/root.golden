@@ -11,8 +11,8 @@ Start here:
   msgvault setup status --json
 
 Output:
-  --json writes JSON to stdout (JSONL for export-messages).
-  Logs and progress go to stderr. Exit: 0 OK, 1 error, 130 interrupted.
+  --json: stdout (JSONL for export-messages).
+  Logs, progress: stderr. Exit: 0 OK, 1 error, 130 interrupted.
   See msgvault quickstart.
 
 Usage:
@@ -181,6 +181,7 @@ Maintenance and repair:
   unpack-attachments      Restore packed attachments to loose files
 
 Setup, daemon, and integrations:
+  agent        Set up agents
   agent-token  Manage restricted agent grant tokens
   completion   Generate shell completion script
   credentials  Manage provider credentials on the daemon host
