@@ -135,6 +135,8 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 	require.NoError(t, err)
 	response = read()
 	assert.Nil(t, response.CommitmentsSince)
+	require.NotNil(t, response.CommitmentsComplete)
+	assert.False(t, *response.CommitmentsComplete)
 	since := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Second)
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, 0, ?, ?)`), person.ID, since, profile.Fingerprint, since)
 	require.NoError(t, err)

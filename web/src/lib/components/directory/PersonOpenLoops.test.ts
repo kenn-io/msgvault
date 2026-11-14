@@ -89,6 +89,15 @@ describe("PersonOpenLoops", () => {
     expect(screen.getByText("7+ open")).toBeDefined();
   });
 
+  it("explains how to retry an oversized gap after backfill", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({
+      items: [], commitments: [], commitments_since: "2026-10-01T00:00:00Z", commitments_complete: false,
+    }));
+    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
+    expect(await screen.findByText(/max_bytes/)).toBeDefined();
+    expect(screen.queryByText(/still searching/)).toBeNull();
+  });
+
   it("reports an empty completed discovery window", async () => {
     const fetcher = vi.fn<typeof fetch>(async () => Response.json({
       items: [], commitments: [], commitments_since: "2026-10-01T00:00:00Z", commitments_complete: true,
