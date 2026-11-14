@@ -27,15 +27,25 @@ func TestDiagnoseFTSOutputAndExit(t *testing.T) {
 				if indexed {
 					r.NoError(f.Store.IndexStoredMessageContext(t.Context(), id))
 				}
-				cmd := &cobra.Command{}
+				cmd := &cobra.Command{Use: "diagnose-fts", SilenceUsage: true, RunE: func(cmd *cobra.Command, _ []string) error {
+					return runFTSDiagnostic(cmd, f.Store, store.FTSDiagnosticOptions{}, jsonOut)
+				}}
 				cmd.SetContext(t.Context())
-				var output bytes.Buffer
+				cmd.SetArgs([]string{})
+				var output, stderr bytes.Buffer
 				cmd.SetOut(&output)
-				err := runFTSDiagnostic(cmd, f.Store, store.FTSDiagnosticOptions{}, jsonOut)
+				cmd.SetErr(&stderr)
+				err := cmd.Execute()
 				if indexed {
 					r.NoError(err)
+					a.Empty(stderr.String())
 				} else {
 					r.ErrorContains(err, "defects")
+					if jsonOut {
+						a.Contains(stderr.String(), "FTS diagnostic result: defects")
+					} else {
+						a.Empty(stderr.String(), "the text report already explains the failure")
+					}
 				}
 				a.NotContains(output.String(), "private-synthetic")
 				if jsonOut {
