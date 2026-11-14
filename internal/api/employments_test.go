@@ -132,6 +132,11 @@ func TestEmploymentHTTPValidationAndConflictMapping(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newOrganizationTestServerWithStore(t)
+	response := httptest.NewRecorder()
+	srv.writeEmploymentError(response, store.ErrPersonEnrichmentDispatchInProgress)
+	assert.Equal(http.StatusConflict, response.Code)
+	assert.Contains(response.Body.String(), `"person_enrichment_dispatch_in_progress"`)
+
 	person := mustAPIPerson(t, st, "alice@example.com", "alice")
 	organization := mustAPIOrganization(t, st, "Example Org")
 
@@ -299,12 +304,4 @@ func mustAPIOrganization(t *testing.T, st *store.Store, name string) *store.Orga
 		store.OrganizationInput{Name: name, Kind: store.OrganizationKindCompany})
 	require.NoError(t, err)
 	return organization
-}
-
-func TestEmploymentHTTPReportsEnrichmentDispatchConflict(t *testing.T) {
-	srv, _ := newIdentityLinkTestServer(t)
-	response := httptest.NewRecorder()
-	srv.writeEmploymentError(response, store.ErrPersonEnrichmentDispatchInProgress)
-	assert.Equal(t, http.StatusConflict, response.Code)
-	assert.Contains(t, response.Body.String(), `"person_enrichment_dispatch_in_progress"`)
 }

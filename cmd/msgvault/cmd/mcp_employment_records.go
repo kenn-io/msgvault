@@ -12,6 +12,8 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+const createEmploymentOperation = "create_employment"
+
 func employmentMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol.MCPCapabilities) []string {
 	var names []string
 	body := []string{"person_id", "organization_id", "source", "title", "role", "department", "location", "address_id", "description", "start_date", "end_date", "is_current", "is_primary", "source_ref", "confidence", "expected_primary"}
@@ -32,12 +34,12 @@ func employmentMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol
 		properties             []string
 		needsGet               bool
 	}{
-		{"create_employment", "createEmployment", http.MethodPost, "/api/v1/employments", body, false},
+		{createEmploymentOperation, "createEmployment", http.MethodPost, "/api/v1/employments", body, false},
 		{"replace_employment", "patchEmployment", http.MethodPatch, "/api/v1/employments/{id}", body, true},
 		{"end_employment", "endEmployment", http.MethodPost, "/api/v1/employments/{id}/end", []string{"end_date"}, true},
 		{"delete_employment", "deleteEmployment", http.MethodDelete, "/api/v1/employments/{id}", nil, true},
 	} {
-		if hasRoute(r.id, r.method, r.path) && (!r.needsGet || slices.Contains(names, "get_employment")) && ((r.name != "replace_employment" && r.name != "create_employment") || slices.Contains(names, "list_person_employments")) && (len(r.properties) == 0 || mcpRequestPropertiesPresent(capabilities, r.id, r.properties...)) {
+		if hasRoute(r.id, r.method, r.path) && (!r.needsGet || slices.Contains(names, "get_employment")) && ((r.name != "replace_employment" && r.name != createEmploymentOperation) || slices.Contains(names, "list_person_employments")) && (len(r.properties) == 0 || mcpRequestPropertiesPresent(capabilities, r.id, r.properties...)) {
 			names = append(names, r.name)
 		}
 	}
@@ -92,7 +94,7 @@ func (b *daemonMCPOperations) executeEmploymentOperation(ctx context.Context, na
 			}
 			result = &mcpserver.OperationResult{Output: struct{}{}}
 		}
-	case "create_employment":
+	case createEmploymentOperation:
 		a, e := decodeMCPOperationArguments[employmentBodyArgs](args)
 		if e != nil || !validEmploymentDescription(a.Employment) || a.Employment.IsPrimary == nil {
 			return invalid()
@@ -133,7 +135,7 @@ func (b *daemonMCPOperations) executeEmploymentOperation(ctx context.Context, na
 
 func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context, name string, args map[string]any) (string, bool, error) {
 	switch name {
-	case "create_employment", "replace_employment", "end_employment", "delete_employment":
+	case createEmploymentOperation, "replace_employment", "end_employment", "delete_employment":
 	default:
 		return "", false, nil
 	}
@@ -143,9 +145,9 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 	var id int64
 	var input *generated.EmploymentBody
 	switch name {
-	case "create_employment", "replace_employment":
+	case createEmploymentOperation, "replace_employment":
 		a, e := decodeMCPOperationArguments[employmentBodyArgs](args)
-		if e != nil || !validEmploymentDescription(a.Employment) || (name == "create_employment" && a.Employment.IsPrimary == nil) {
+		if e != nil || !validEmploymentDescription(a.Employment) || (name == createEmploymentOperation && a.Employment.IsPrimary == nil) {
 			return invalid()
 		}
 		id, input = a.EmploymentID, a.Employment
@@ -164,7 +166,7 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 	}
 	var current *mcpserver.EmploymentRecord
 	var err error
-	if name != "create_employment" {
+	if name != createEmploymentOperation {
 		current, err = b.employmentDisclosureContext(ctx, name, id)
 		if err != nil {
 			return "", true, err
@@ -189,7 +191,7 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 			if len(rows.Employments) > 0 && rows.Employments[0].IsPrimary {
 				primary = &rows.Employments[0]
 				primary.Description = nil
-				if name == "create_employment" {
+				if name == createEmploymentOperation {
 					return "", true, &mcpserver.OperationRefusalError{Code: "employment_primary_conflict"}
 				}
 				guard = map[string]any{"id": primary.ID, "revision": primary.Revision}
@@ -198,16 +200,16 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 			if !ok {
 				return invalid()
 			}
-			if _, exists := body["expected_primary"]; name != "create_employment" && !exists {
+			if _, exists := body["expected_primary"]; name != createEmploymentOperation && !exists {
 				body["expected_primary"] = guard
 			}
 		}
 	}
 	effect := map[string]string{
-		"create_employment":  "Create this employment record; it may become the person's primary current employment.",
-		"replace_employment": "Replace mutable fields; omitted ones clear. Omitted is_current is kept only without end_date; omitted is_primary only while the record stays current.",
-		"end_employment":     "End this employment on the given date; it is no longer current or primary.",
-		"delete_employment":  "Permanently delete this employment record.",
+		createEmploymentOperation: "Create this employment record; it may become the person's primary current employment.",
+		"replace_employment":      "Replace mutable fields; omitted ones clear. Omitted is_current is kept only without end_date; omitted is_primary only while the record stays current.",
+		"end_employment":          "End this employment on the given date; it is no longer current or primary.",
+		"delete_employment":       "Permanently delete this employment record.",
 	}[name]
 	data, err := json.Marshal(struct {
 		Operation string                      `json:"operation"`

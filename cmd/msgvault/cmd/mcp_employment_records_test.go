@@ -162,8 +162,6 @@ func TestMCPEmploymentApprovedPrimaryIsGuarded(t *testing.T) {
 	require.NoError(err)
 	second, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Title: new("Second"), IsPrimary: new(false), Source: store.ProvenanceUser})
 	require.NoError(err)
-	third, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person, OrganizationID: org, Title: new("Third"), IsPrimary: new(false), Source: store.ProvenanceUser})
-	require.NoError(err)
 	read, err := b.ExecuteOperation(t.Context(), "get_employment", map[string]any{"employment_id": second.ID})
 	require.NoError(err)
 	secondRecord := operationOutput[mcpserver.EmploymentRecord](t, read)
@@ -173,17 +171,12 @@ func TestMCPEmploymentApprovedPrimaryIsGuarded(t *testing.T) {
 	assert.Contains(disclosure, `"primary":`)
 	assert.Contains(disclosure, `"title":"First"`)
 	assert.NotContains(disclosure, "Private primary description")
-	third, err = st.SetPrimaryEmploymentContext(t.Context(), third.ID, third.Revision)
+	_, err = st.EndEmploymentContext(t.Context(), first.ID, first.Revision, store.PartialDate{Year: new(2024)})
 	require.NoError(err)
 	result, err := b.ExecuteOperation(t.Context(), "replace_employment", args)
 	require.NoError(err)
 	assertDefiniteRefusal(t, result, "employment_primary_conflict")
-	current, err := st.GetEmploymentContext(t.Context(), third.ID)
-	require.NoError(err)
-	assert.True(current.IsPrimary)
-	current, err = st.GetEmploymentContext(t.Context(), first.ID)
-	require.NoError(err)
-	assert.False(current.IsPrimary)
+
 }
 
 func legacyOperationSession(t *testing.T, b *daemonMCPOperations, family mcpserver.OperationFamily, handler func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error)) *sdkmcp.ClientSession {

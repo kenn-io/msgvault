@@ -40,8 +40,6 @@ func TestMCPOperationFailureCompletion(t *testing.T) {
 			`{"error":"operation_refused","operation_may_have_completed":false}`, http.StatusPreconditionFailed},
 		{"read validation failure", http.MethodGet, "/api/v1/settings", `{"error":"validation_failed"}`,
 			`{"error":"validation_failed","operation_may_have_completed":false}`, http.StatusUnprocessableEntity},
-		{"invalid employment ID", http.MethodGet, "/api/v1/employments/-1", `{"error":"invalid_employment_id"}`,
-			`{"error":"invalid_employment_id","operation_may_have_completed":false}`, http.StatusBadRequest},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()

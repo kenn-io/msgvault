@@ -36,12 +36,13 @@ func TestEmploymentCatalogGatesAndClosedInput(t *testing.T) {
 	require.NoError(json.Unmarshal(data, &schema))
 	resolved, err := schema.Resolve(nil)
 	require.NoError(err)
-	good := map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "user", "is_primary": false, "title": nil}}
-	assert.NoError(resolved.Validate(good))
-	good["employment"].(map[string]any)["description"] = strings.Repeat("a", 131072)
-	assert.NoError(resolved.Validate(good))
-	good["employment"].(map[string]any)["description"] = strings.Repeat("a", 131073)
-	assert.Error(resolved.Validate(good))
+	body := map[string]any{"person_id": 1, "organization_id": 2, "source": "user", "is_primary": false, "title": nil}
+	good := map[string]any{"employment": body}
+	require.NoError(resolved.Validate(good))
+	body["description"] = strings.Repeat("a", 131072)
+	require.NoError(resolved.Validate(good))
+	body["description"] = strings.Repeat("a", 131073)
+	require.Error(resolved.Validate(good))
 	bad := map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "user", "is_primary": false, "other": true}}
 	require.Error(resolved.Validate(bad))
 	missingPrimary := map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "user"}}

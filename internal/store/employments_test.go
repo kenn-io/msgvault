@@ -760,5 +760,4 @@ func TestReplaceEmploymentChecksPrimaryRevision(t *testing.T) {
 	require.NoError(err)
 	assert.False(demoted.IsPrimary)
 	assert.Equal(updated.Revision+1, demoted.Revision)
-
 }
