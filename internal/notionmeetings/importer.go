@@ -370,6 +370,35 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			}
 		}
 		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""
+		terminal := terminalStatus(meeting.MeetingNotes.Status)
+		if len(hydrated.Incomplete) > 0 {
+			sum.PartialCoverage = true
+		}
+		clearPending := false
+		if len(hydrated.Incomplete) > 0 || (providerTranscriptMissing && !terminal) {
+			previousPending, hasPrevious := pendingByID[id]
+			if retained := next.TranscriptRetryUntil[id]; retained != "" {
+				previousPending.RetryUntil = retained
+				hasPrevious = true
+			}
+			pending, keep := schedulePending(hydrated, now, previousPending, hasPrevious, retriesUntilComplete(hydrated))
+			if keep {
+				pendingByID[id] = pending
+				next.TranscriptRetryUntil[id] = pending.RetryUntil
+			} else {
+				clearPending = true
+			}
+		} else {
+			clearPending = true
+		}
+		finishPending := func() {
+			if clearPending {
+				delete(pendingByID, id)
+				if !providerTranscriptMissing || terminal {
+					delete(next.TranscriptRetryUntil, id)
+				}
+			}
+		}
 		archived, recoverErr := imp.archivedState(ctx, source.ID, id)
 		if recoverErr != nil {
 			sum.Errors++
@@ -438,36 +467,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 					continue
 				}
 				preserveArchivedAttendeeRelationships(hydrated, recipients, archived.ResolvedUsers)
-			}
-		}
-
-		terminal := terminalStatus(meeting.MeetingNotes.Status)
-		if len(hydrated.Incomplete) > 0 {
-			sum.PartialCoverage = true
-		}
-		clearPending := false
-		if len(hydrated.Incomplete) > 0 || (providerTranscriptMissing && !terminal) {
-			previousPending, hasPrevious := pendingByID[id]
-			if retained := next.TranscriptRetryUntil[id]; retained != "" {
-				previousPending.RetryUntil = retained
-				hasPrevious = true
-			}
-			pending, keep := schedulePending(hydrated, now, previousPending, hasPrevious, retriesUntilComplete(hydrated))
-			if keep {
-				pendingByID[id] = pending
-				next.TranscriptRetryUntil[id] = pending.RetryUntil
-			} else {
-				clearPending = true
-			}
-		} else {
-			clearPending = true
-		}
-		finishPending := func() {
-			if clearPending {
-				delete(pendingByID, id)
-				if !providerTranscriptMissing || terminal {
-					delete(next.TranscriptRetryUntil, id)
-				}
 			}
 		}
 

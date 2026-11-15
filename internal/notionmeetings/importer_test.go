@@ -1375,6 +1375,41 @@ func TestImporterRefusesToOverwriteNewerEvidence(t *testing.T) {
 	assert.Equal(string(future), string(afterRaw))
 }
 
+func TestImporterRetriesIncompleteSectionAfterNewerEvidenceRefusal(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	meeting := hydrationMeeting()
+	meeting.Parent = Parent{Type: "data_source_id"}
+	raw, err := json.Marshal(meeting)
+	require.NoError(t, err)
+	source.blocks["meeting-1"].Parent = meeting.Parent
+	source.blocks["meeting-1"].Raw = raw
+	source.query.Results = []MeetingNote{meeting}
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	var messageID int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
+	readable, err := st.GetMessageRaw(messageID)
+	require.NoError(t, err)
+	require.NoError(t, st.UpsertMessageRawWithFormat(messageID, []byte(`{"schema_version":3}`), RawFormat))
+	source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	var newer *NewerEvidenceError
+	require.ErrorAs(t, err, &newer)
+
+	require.NoError(t, st.UpsertMessageRawWithFormat(messageID, readable, RawFormat))
+	delete(source.blockErrs, "summary-1")
+	fresh := paragraph("summary-1", "Recovered summary", false)
+	source.blocks["summary-1"] = &fresh
+	source.query.Results = nil
+	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
+	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), result.MaintenanceRetries)
+	body, err := st.GetMessageBodyText(t.Context(), messageID)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Recovered summary")
+}
+
 func TestDecodeArchivedEvidenceVersionProbe(t *testing.T) {
 	for _, tc := range []struct {
 		name, input string
