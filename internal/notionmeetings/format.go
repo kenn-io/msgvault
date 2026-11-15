@@ -41,9 +41,9 @@ type rawEvidence struct {
 	SchemaVersion  int               `json:"schema_version"`
 	Discovery      jsontext.Value    `json:"discovery"`
 	MeetingBlock   jsontext.Value    `json:"meeting_block"`
-	Summary        rawBlockTree      `json:"summary,omitzero"`
-	Notes          rawBlockTree      `json:"notes,omitzero"`
-	Transcript     rawBlockTree      `json:"transcript,omitzero"`
+	Summary        jsontext.Value    `json:"summary,omitzero"`
+	Notes          jsontext.Value    `json:"notes,omitzero"`
+	Transcript     jsontext.Value    `json:"transcript,omitzero"`
 	PageMarkdown   jsontext.Value    `json:"page_markdown"`
 	Canonical      canonicalEvidence `json:"canonical"`
 	AttendeeLabels []string          `json:"attendee_labels,omitempty"`
@@ -100,19 +100,6 @@ func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEma
 }
 
 func (h *HydratedMeeting) archiveEvidence() ([]byte, error) {
-	type archiveEvidence struct {
-		SchemaVersion  int               `json:"schema_version"`
-		Discovery      jsontext.Value    `json:"discovery"`
-		MeetingBlock   jsontext.Value    `json:"meeting_block"`
-		Summary        jsontext.Value    `json:"summary,omitzero"`
-		Notes          jsontext.Value    `json:"notes,omitzero"`
-		Transcript     jsontext.Value    `json:"transcript,omitzero"`
-		PageMarkdown   jsontext.Value    `json:"page_markdown"`
-		Canonical      canonicalEvidence `json:"canonical"`
-		AttendeeLabels []string          `json:"attendee_labels,omitempty"`
-		ResolvedUsers  []resolvedUser    `json:"resolved_users,omitempty"`
-		Warnings       []string          `json:"warnings,omitempty"`
-	}
 	tree := func(name string, current blockTree) (jsontext.Value, error) {
 		if kept := h.keptRawTrees[name]; len(kept) > 0 {
 			return kept, nil
@@ -138,8 +125,8 @@ func (h *HydratedMeeting) archiveEvidence() ([]byte, error) {
 	if len(h.keptMarkdown) > 0 {
 		markdown = h.keptMarkdown
 	}
-	return json.Marshal(archiveEvidence{
-		SchemaVersion: 1, Discovery: h.Discovery.Raw, MeetingBlock: rawForBlock(h.MeetingBlock),
+	return json.Marshal(rawEvidence{
+		SchemaVersion: notionSnapshotVersion, Discovery: h.Discovery.Raw, MeetingBlock: rawForBlock(h.MeetingBlock),
 		Summary: summary, Notes: notes, Transcript: transcript, PageMarkdown: markdown,
 		Canonical:      canonicalEvidence{Summary: h.Summary, Notes: h.Notes, Transcript: h.Transcript},
 		AttendeeLabels: h.AttendeeLabels, ResolvedUsers: h.ResolvedUsers, Warnings: h.Warnings,

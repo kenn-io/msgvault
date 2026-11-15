@@ -102,8 +102,7 @@ func probeNotionReadContent(ctx context.Context, out io.Writer, client notionMee
 			continue
 		}
 		if _, err := client.RetrieveBlock(ctx, id); err != nil {
-			var api *notionmeetings.APIError
-			if errors.As(err, &api) && api.Status == 404 && api.Code == "object_not_found" {
+			if notionmeetings.TemporarySectionError(ctx, err) {
 				missing = err
 				continue
 			}
@@ -113,7 +112,8 @@ func probeNotionReadContent(ctx context.Context, out io.Writer, client notionMee
 		return nil
 	}
 	if missing != nil {
-		return fmt.Errorf("probe Notion Read Content access: %w", missing)
+		_, _ = fmt.Fprintln(out, "  Read Content: not tested (sections temporarily unavailable)")
+		return nil
 	}
 	_, _ = fmt.Fprintln(out, "  Read Content: not tested (no section blocks)")
 	return nil

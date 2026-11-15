@@ -399,6 +399,41 @@ func TestImporterRetriesIncompleteAfterMarkdownFailure(t *testing.T) {
 	assert.Contains(t, body, "Recovered summary.")
 }
 
+func TestImporterKeepsRetryAfterArchiveFailure(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	source.blocks["meeting-1"].Raw = hydrationMeeting().Raw
+	source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	source.query.Results = nil
+	delete(source.blockErrs, "summary-1")
+	updated := paragraph("summary-1", "Recovered summary.", false)
+	source.blocks["summary-1"] = &updated
+	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
+	if st.IsPostgreSQL() {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_notion_retry() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'forced archive failure'; END; $$ LANGUAGE plpgsql; CREATE TRIGGER fail_notion_retry BEFORE UPDATE ON messages FOR EACH ROW EXECUTE FUNCTION fail_notion_retry()`)
+	} else {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_notion_retry BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT, 'forced archive failure'); END`)
+	}
+	require.NoError(t, err)
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.Error(t, err)
+	if st.IsPostgreSQL() {
+		_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_retry ON messages`)
+	} else {
+		_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_retry`)
+	}
+	require.NoError(t, err)
+	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), result.MaintenanceRetries)
+	var messageID int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), first.SourceID).Scan(&messageID))
+	body, err := st.GetMessageBodyText(t.Context(), messageID)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Recovered summary.")
+}
+
 func TestImporterDetectsHydratedSnapshotChangesWithoutDiscoveryEdit(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1361,9 +1396,12 @@ func TestImporterRefusesNewerEvidenceBeforeWritingOtherMeetings(t *testing.T) {
 	require.NoError(st.UpsertMessageRawWithFormat(secondID, future, RawFormat))
 	changed := paragraph("summary-1", "Changed first meeting", false)
 	source.blocks["summary-1"] = &changed
-	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work", AccountEmail: "new-account@example.com"})
 	require.Error(err)
 	assert.NotContains(err.Error(), "private text")
+	var identities int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM account_identities WHERE source_id = ?`), first.SourceID).Scan(&identities))
+	assert.Zero(identities)
 	raw, err := st.GetMessageRaw(secondID)
 	require.NoError(err)
 	assert.Equal(future, raw)

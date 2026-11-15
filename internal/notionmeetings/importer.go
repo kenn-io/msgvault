@@ -157,12 +157,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		return nil, err
 	}
 	sum = &ImportSummary{SourceID: source.ID}
-	if strings.TrimSpace(opts.AccountEmail) != "" {
-		if err := imp.store.AddAccountIdentityContext(ctx, source.ID, opts.AccountEmail, "account-email"); err != nil {
-			return sum, fmt.Errorf("confirm Notion account identity: %w", err)
-		}
-	}
-
 	state := syncState{Version: syncStateVersion, Known: map[string]knownMeeting{}}
 	previous, err := imp.store.GetLastSuccessfulSyncContext(ctx, source.ID)
 	if err == nil && previous.CursorAfter.Valid && previous.CursorAfter.String != "" {
@@ -333,6 +327,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		sum.Errors++
 		return sum, err
 	}
+	if strings.TrimSpace(opts.AccountEmail) != "" {
+		if err := imp.store.AddAccountIdentityContext(ctx, source.ID, opts.AccountEmail, "account-email"); err != nil {
+			return sum, fmt.Errorf("confirm Notion account identity: %w", err)
+		}
+	}
 	hydrator := NewHydrator(imp.client).WithUserSource(imp.users)
 	archiver := meetingarchive.New(scopedStore)
 	var hardErrors []error
@@ -371,11 +370,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			name    string
 			text    *string
 			oldText string
-			oldTree rawBlockTree
 		}{
-			{"summary", &hydrated.Summary, archived.Evidence.Canonical.Summary, archived.Evidence.Summary},
-			{"notes", &hydrated.Notes, archived.Evidence.Canonical.Notes, archived.Evidence.Notes},
-			{sectionTranscript, &hydrated.Transcript, archived.Evidence.Canonical.Transcript, archived.Evidence.Transcript},
+			{"summary", &hydrated.Summary, archived.Evidence.Canonical.Summary},
+			{"notes", &hydrated.Notes, archived.Evidence.Canonical.Notes},
+			{sectionTranscript, &hydrated.Transcript, archived.Evidence.Canonical.Transcript},
 		}
 		leaveUnchanged := false
 		var retainedIDs = map[string]string{}
@@ -401,7 +399,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				// The saved section can't be recovered, so rewriting would erase it.
 				leaveUnchanged = true
 			}
-			if oldText == "" && len(section.oldTree.Root) == 0 && len(archived.RawTrees[section.name]) == 0 {
+			if oldText == "" && len(archived.RawTrees[section.name]) == 0 {
 				continue
 			}
 			*section.text = oldText
@@ -461,6 +459,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		if len(hydrated.Incomplete) > 0 {
 			sum.PartialCoverage = true
 		}
+		clearPending := false
 		if len(hydrated.Incomplete) > 0 || (providerTranscriptMissing && !terminal) {
 			previousPending, hasPrevious := pendingByID[id]
 			if retained := next.TranscriptRetryUntil[id]; retained != "" {
@@ -472,11 +471,16 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				pendingByID[id] = pending
 				next.TranscriptRetryUntil[id] = pending.RetryUntil
 			} else {
-				delete(pendingByID, id)
+				clearPending = true
 			}
 		} else {
-			delete(pendingByID, id)
-			delete(next.TranscriptRetryUntil, id)
+			clearPending = true
+		}
+		finishPending := func() {
+			if clearPending {
+				delete(pendingByID, id)
+				delete(next.TranscriptRetryUntil, id)
+			}
 		}
 
 		if leaveUnchanged {
@@ -506,6 +510,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				SnapshotSHA256:  checksum,
 				SnapshotVersion: notionSnapshotVersion,
 			}
+			finishPending()
 			progress("verified Notion meeting " + id)
 			continue
 		}
@@ -527,6 +532,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			SnapshotSHA256:  checksum,
 			SnapshotVersion: notionSnapshotVersion,
 		}
+		finishPending()
 		progress("imported Notion meeting " + id)
 	}
 
@@ -600,6 +606,11 @@ func (imp *Importer) retrieveMeeting(ctx context.Context, id string) (MeetingNot
 func retriesUntilComplete(hydrated *HydratedMeeting) bool {
 	markdownOnly := hydrated.markdownOnlyIncomplete && slices.Equal(hydrated.Incomplete, []string{sectionTranscript})
 	return len(hydrated.Incomplete) > 0 && !markdownOnly
+}
+
+// TemporarySectionError reports whether a section read can be retried later.
+func TemporarySectionError(ctx context.Context, err error) bool {
+	return ctx.Err() == nil && transcriptTemporarilyUnavailable(err)
 }
 
 type archivedMeetingState struct {
@@ -711,6 +722,12 @@ func decodeArchivedEvidence(raw []byte, expectedID string) (rawEvidence, map[str
 	var evidence rawEvidence
 	if json.Unmarshal(raw, &evidence) != nil {
 		return rawEvidence{}, nil, false, nil
+	}
+	for _, section := range []jsontext.Value{evidence.Summary, evidence.Notes, evidence.Transcript} {
+		var tree rawBlockTree
+		if len(section) > 0 && json.Unmarshal(section, &tree) != nil {
+			return rawEvidence{}, nil, false, nil
+		}
 	}
 	if evidence.SchemaVersion != notionSnapshotVersion {
 		return rawEvidence{}, nil, false, nil
