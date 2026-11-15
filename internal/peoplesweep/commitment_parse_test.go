@@ -132,7 +132,7 @@ func TestParseCommitmentsKeepsOnlyCitedDueDates(t *testing.T) {
 		{"weekday in two weeks rejects this week", "I will send it by Friday in two weeks.", "I will send it by Friday in two weeks.", "2026-11-13", false},
 		{"weekday in three weeks", "I will send it by Friday in three weeks.", "I will send it by Friday in three weeks.", "2026-12-04", true},
 		{"weekday in 3 weeks", "I will send it by Friday in 3 weeks.", "I will send it by Friday in 3 weeks.", "2026-12-04", true},
-		{"weekday in several weeks rejects this week", "I will send it by Friday in several weeks.", "I will send it by Friday in several weeks.", "2026-11-13", false},
+		{"weekday in several weeks rejects an unknown count", "I will send it by Friday in several weeks.", "I will send it by Friday in several weeks.", "2026-11-06", false},
 		{"Sunday this week", "I will send it by Sunday this week.", "I will send it by Sunday this week.", "2026-11-15", true},
 		{"Monday next week", "I will send it by Monday next week.", "I will send it by Monday next week.", "2026-11-16", true},
 		{"Monday week after next", "I will send it by Monday next week.", "I will send it by Monday next week.", "2026-11-23", false},

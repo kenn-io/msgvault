@@ -161,6 +161,30 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 	provider.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceConversationText}
 	configureAPIProvider(cfg, provider)
 	cfg.People.Sweep.ApplyDefaults()
+	for _, stage := range []string{"consent", "discovery", "error"} {
+		t.Run(stage, func(t *testing.T) {
+			a, r := assert.New(t), require.New(t)
+			fixture := newLoopFixture(t)
+			ctx := &deadlineLoopContext{Context: t.Context(), done: make(chan struct{})}
+			st := &deadlineLoopStore{Store: fixture.f.Store, deadline: ctx, stage: stage}
+			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+			w := httptest.NewRecorder()
+			server.Router().ServeHTTP(w, httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/loops", nil))
+			if stage == "error" {
+				a.Equal(http.StatusInternalServerError, w.Code)
+				return
+			}
+			r.Equal(http.StatusOK, w.Code, w.Body.String())
+			var response LoopListResponse
+			r.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+			a.True(response.CoverageIncomplete)
+			a.Len(response.Items, 2)
+			if stage == "discovery" {
+				r.NotNil(response.CommitmentsComplete)
+				a.False(*response.CommitmentsComplete)
+			}
+		})
+	}
 	profile, err := cfg.People.Sweep.Profile()
 	requirements.NoError(err)
 	_, err = f.Store.EnsurePersonInferenceProfile(t.Context(), profile)
@@ -200,42 +224,6 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 	requirements.NoError(err)
 	response = read()
 	assertions.Nil(response.CommitmentsComplete)
-}
-
-func TestListLoopsCommitmentDiscoveryInterruptions(t *testing.T) {
-	cfg := config.NewDefaultConfig()
-	cfg.People.Sweep.Enabled = true
-	cfg.People.Sweep.Commitments.Enabled = true
-	provider := completeAPIProvider("EXAMPLE_KEY", "example-model")
-	provider.SourceUntil = "2025-06-30"
-	provider.AllowSensitive = true
-	provider.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceConversationText}
-	configureAPIProvider(cfg, provider)
-	cfg.People.Sweep.ApplyDefaults()
-	for _, stage := range []string{"consent", "discovery", "error"} {
-		t.Run(stage, func(t *testing.T) {
-			a, r := assert.New(t), require.New(t)
-			fixture := newLoopFixture(t)
-			ctx := &deadlineLoopContext{Context: t.Context(), done: make(chan struct{})}
-			st := &deadlineLoopStore{Store: fixture.f.Store, deadline: ctx, stage: stage}
-			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
-			w := httptest.NewRecorder()
-			server.Router().ServeHTTP(w, httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/loops", nil))
-			if stage == "error" {
-				a.Equal(http.StatusInternalServerError, w.Code)
-				return
-			}
-			r.Equal(http.StatusOK, w.Code, w.Body.String())
-			var response LoopListResponse
-			r.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-			a.True(response.CoverageIncomplete)
-			a.Len(response.Items, 2)
-			if stage == "discovery" {
-				r.NotNil(response.CommitmentsComplete)
-				a.False(*response.CommitmentsComplete)
-			}
-		})
-	}
 }
 
 func TestListLoopsReportsIncompleteCoverage(t *testing.T) {
@@ -608,12 +596,12 @@ func (s *conflictingCommitmentStore) DecidePersonCommitmentContext(_ context.Con
 type pagingCommitmentStore struct {
 	*store.Store
 
-	limit, offset int
+	offset        int
 	includeClosed bool
 }
 
-func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, limit, offset int, includeClosed bool) ([]store.PersonCommitment, error) {
-	s.limit, s.offset, s.includeClosed = limit, offset, includeClosed
+func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, _, offset int, includeClosed bool) ([]store.PersonCommitment, error) {
+	s.offset, s.includeClosed = offset, includeClosed
 	return []store.PersonCommitment{{ID: 201, PersonID: 1, TargetKey: "promise-201", AnchorMessageID: 1, Direction: "owed_to", Quote: "I will call.", Start: 0, End: 12, Summary: "Call", Freshness: "fresh", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"}, {ID: 202, PersonID: 1, TargetKey: "promise-202", AnchorMessageID: 2, Direction: "owed_to", Quote: "I will write.", Start: 0, End: 13, Summary: "Write", Freshness: "stale", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"}}, nil
 }
 
