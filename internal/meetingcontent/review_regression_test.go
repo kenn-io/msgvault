@@ -249,3 +249,25 @@ func TestNotionTreeTraversalSkipsNestedMeetingType(t *testing.T) {
 	require.Len(t, blocks, 4)
 	assert.JSONEq(t, `{"id":"action","type":"to_do","has_children":false}`, string(blocks[3]))
 }
+
+func TestNotionIncompleteLegacyTreeDoesNotAttributeNestedMeetingActions(t *testing.T) {
+	content := Decode("notion_meeting_json", []byte(`{
+		"schema_version":1,
+		"discovery":{"meeting_notes":{"children":{"summary_block_id":"summary-root"}}},
+		"summary":{"root":{"id":"summary-root","type":"paragraph","has_children":true},"pages":[
+			{"results":[{"id":"nested-meeting","type":"meeting_notes","has_children":true},{"id":"sibling","type":"paragraph","has_children":true}],"has_more":false},
+			{"results":[{"id":"other-action","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Other meeting action"}],"checked":false}}],"has_more":false},
+			{"results":[{"id":"sibling-action","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}],"has_more":false}
+		]}
+	}`), nil)
+	assert.Equal(t, CoverageUnavailable, content.ActionCoverage)
+	assert.Equal(t, "incomplete_tree", content.ActionReason)
+	assert.Empty(t, content.Actions)
+}
+
+func TestNotionTreeDropsBlocksWhenRootLeavesPagesUnread(t *testing.T) {
+	tree := []byte(`{"root":{"id":"task-root","type":"to_do","has_children":false},"pages":[{"results":[],"has_more":false}]}`)
+	blocks, complete := notionTreeBlocks(tree, "task-root")
+	assert.False(t, complete)
+	assert.Empty(t, blocks)
+}

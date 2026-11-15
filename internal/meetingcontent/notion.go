@@ -181,14 +181,17 @@ func notionTreeBlocks(raw jsontext.Value, expectedRootID string) ([]jsontext.Val
 		blocks:      []jsontext.Value{tree.Root},
 		blockVisits: 1,
 	}
-	if !rootValid {
-		return traversal.blocks, false
-	}
-	if !rootHasChildren {
-		return traversal.blocks, len(tree.Pages) == 0
+	if !rootValid || !rootHasChildren {
+		if len(tree.Pages) != 0 {
+			return nil, false
+		}
+		return traversal.blocks, rootValid
 	}
 	complete := traversal.readChildren(1)
-	return traversal.blocks, complete && traversal.nextPage == len(traversal.pages)
+	if traversal.nextPage != len(traversal.pages) {
+		return nil, false
+	}
+	return traversal.blocks, complete
 }
 
 type notionTreeTraversal struct {
