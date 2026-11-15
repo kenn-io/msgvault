@@ -339,7 +339,7 @@ func (c *Client) statusFolder(ctx context.Context, mailbox string) (FolderState,
 		NumMessages:   true,
 		UIDNext:       true,
 		UIDValidity:   true,
-		HighestModSeq: c.conn.Caps().Has(imap.CapCondStore),
+		HighestModSeq: c.connCaps().Has(imap.CapCondStore),
 	}
 	data, err := c.statusCommand(ctx, mailbox, opts)
 	if err != nil && isNetworkError(err) {
