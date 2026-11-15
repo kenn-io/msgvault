@@ -117,7 +117,7 @@ var emailInText = regexp.MustCompile(`(?:"(?:[^"\\]|\\.)+"|[^\s@<>()\[\]"\\,;:]+
 
 func boundedMasked(value string, limit int) string {
 	value = emailInText.ReplaceAllStringFunc(strings.ToValidUTF8(value, ""), func(match string) string {
-		_, domain, _ := strings.Cut(match, "@")
+		domain := emailInText.FindStringSubmatch(match)[1]
 		if strings.HasPrefix(domain, "[") {
 			return "[local]@[address]"
 		}

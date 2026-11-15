@@ -11,17 +11,17 @@ import (
 )
 
 func TestBuildPacketProjection(t *testing.T) {
-	in := Input{MessageType: "email", SenderEmail: "Merchant <orders@shop.example>", Subject: "Receipt for 123456",
-		BodyText:            "Paid 123456 for buyer@example.com.\n> old quoted private text\n-- \nSignature private text",
+	in := Input{MessageType: "email", SenderEmail: "Merchant <orders@shop.example>", Subject: `Receipt for 123456 from "avery@team"@example.com`,
+		BodyText:            "Paid 123456 for buyer@example.com and \"avery@team\"@example.com.\n> old quoted private text\n-- \nSignature private text",
 		AttachmentMIMETypes: []string{"application/pdf; name=private-invoice.pdf", "application/pdf", "bad type"}}
 	packet, ok := BuildPacket(in)
 	require.True(t, ok)
 	assert.Equal(t, Packet{SchemaVersion: PacketSchema, SenderDomain: "shop.example",
-		Subject: "Receipt for [digits]", Excerpt: "Paid [digits] for [local]@example.com.",
+		Subject: "Receipt for [digits] from [local]@example.com", Excerpt: "Paid [digits] for [local]@example.com and [local]@example.com.",
 		Attachments: map[string]int{"application/pdf": 2, "application/octet-stream": 1}, Tier0Types: []string{}}, packet)
 	encoded, err := json.Marshal(packet)
 	require.NoError(t, err)
-	for _, private := range []string{"123456", "buyer@", "quoted private", "Signature", "private-invoice", "Merchant"} {
+	for _, private := range []string{"123456", "buyer@", "avery", "team", "quoted private", "Signature", "private-invoice", "Merchant"} {
 		assert.NotContains(t, string(encoded), private)
 	}
 }
