@@ -316,6 +316,17 @@ manual. User-approved identity matches and person merges/splits do the same.
 Manual memberships survive card edits and automatic cleanup. System identity
 matches and importer deduplication preserve automatic ownership.
 
+To remove only the automatic memberships:
+
+```bash
+msgvault carddav bind-participants --undo --dry-run
+msgvault carddav bind-participants --undo
+```
+
+Undo does not change cards or manual memberships. The next sync can recreate
+supported automatic bindings. To keep a binding removed, correct the address in
+the source card or remove that card from the subscribed book.
+
 ## Sync and publish selected people
 
 Pull changes and reconcile existing publications with:

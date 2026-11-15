@@ -923,7 +923,7 @@ export const completeGoogleCardDAVAuthorization = (
   );
 };
 /**
- * @summary Preview or reconcile automatic CardDAV participant memberships
+ * @summary Preview, reconcile, or undo automatic CardDAV participant memberships
  */
 export const reconcileCardDAVParticipantBindings = (
   cardDAVParticipantBindingOptions: CardDAVParticipantBindingOptions,

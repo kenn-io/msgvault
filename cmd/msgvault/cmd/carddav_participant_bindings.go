@@ -34,8 +34,9 @@ conflicting ownership is reported without merging people. No CardDAV server is
 contacted. Sync also reconciles unchanged cards and newly arrived participants.
 
 Card edits and deletions release only automatic memberships.
-Promoting a person or explicitly linking identities prevents automatic removal.`,
-		Example: "  msgvault carddav bind-participants --dry-run",
+Promoting a person or explicitly linking identities prevents automatic removal.
+Correct the source card to keep undone memberships from returning on sync.`,
+		Example: "  msgvault carddav bind-participants --dry-run\n  msgvault carddav bind-participants --undo --dry-run",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			client, _, err := OpenHTTPStore(cmd.Context())
@@ -73,6 +74,7 @@ Promoting a person or explicitly linking identities prevents automatic removal.`
 		},
 	}
 	command.Flags().BoolVar(&options.DryRun, "dry-run", false, "Preview counts without changing the archive")
+	command.Flags().BoolVar(&options.Undo, "undo", false, "Remove only automatic memberships")
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output as JSON")
 	return command
 }

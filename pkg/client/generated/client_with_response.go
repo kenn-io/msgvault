@@ -3383,7 +3383,7 @@ func (c *Client) CompleteGoogleCardDAVAuthorizationWithResponse(ctx context.Cont
 	}
 }
 
-// ReconcileCardDAVParticipantBindings Preview or reconcile automatic CardDAV participant memberships
+// ReconcileCardDAVParticipantBindings Preview, reconcile, or undo automatic CardDAV participant memberships
 func (c *Client) ReconcileCardDAVParticipantBindingsWithResponse(ctx context.Context, options *ReconcileCardDAVParticipantBindingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReconcileCardDAVParticipantBindingsResp, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -387,31 +388,47 @@ func TestAddCardDAVMicrosoftFlagsAreCheckedBeforeSignIn(t *testing.T) {
 }
 
 func TestCardDAVParticipantBindingCLIUsesDaemonAndPrintsCounts(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var seen bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = true
-		assert.Equal(http.MethodPost, r.Method)
-		assert.Equal("/api/v1/carddav/participant-bindings", r.URL.Path)
-		var body map[string]bool
-		assert.NoError(json.NewDecoder(r.Body).Decode(&body))
-		assert.True(body["dry_run"])
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"cards_scanned":2,"participants_bound":0,"participants_unbound":0,"conflicts":2,"conflict_details":[{"participant_id":7,"person_ids":[1,2],"reason":"shared_address"},{"participant_id":8,"person_ids":[2,3],"reason":"existing_person"}]}`))
-	}))
-	t.Cleanup(server.Close)
-	home := t.TempDir()
-	testCtx := withStoreResolverConfig(t, &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	var out bytes.Buffer
-	command := newCardDAVCmd()
-	command.SetContext(testCtx)
-	command.SetOut(&out)
-	args := []string{"bind-participants", "--dry-run"}
-	command.SetArgs(args)
-	require.NoError(command.Execute())
-	assert.True(seen)
-	assert.Contains(out.String(), "2 cards scanned, 0 participants bound, 0 participants unbound, 2 conflicts")
-	assert.Contains(out.String(), "participant 7, people [1 2]: address shared by multiple people")
-	assert.Contains(out.String(), "participant 8, people [2 3]: participant already belongs to another person")
+	for _, undo := range []bool{false, true} {
+		t.Run(strconv.FormatBool(undo), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			var seen bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen = true
+				assert.Equal(http.MethodPost, r.Method)
+				assert.Equal("/api/v1/carddav/participant-bindings", r.URL.Path)
+				var body map[string]bool
+				assert.NoError(json.NewDecoder(r.Body).Decode(&body))
+				assert.True(body["dry_run"])
+				assert.Equal(undo, body["undo"])
+				w.Header().Set("Content-Type", "application/json")
+				if undo {
+					_, _ = w.Write([]byte(`{"cards_scanned":0,"participants_bound":0,"participants_unbound":3,"conflicts":0,"conflict_details":[]}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"cards_scanned":2,"participants_bound":0,"participants_unbound":0,"conflicts":2,"conflict_details":[{"participant_id":7,"person_ids":[1,2],"reason":"shared_address"},{"participant_id":8,"person_ids":[2,3],"reason":"existing_person"}]}`))
+			}))
+			t.Cleanup(server.Close)
+			home := t.TempDir()
+			testCtx := withStoreResolverConfig(t, &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+			var out bytes.Buffer
+			command := newCardDAVCmd()
+			command.SetContext(testCtx)
+			command.SetOut(&out)
+			args := []string{"bind-participants", "--dry-run"}
+			if undo {
+				args = append(args, "--undo")
+			}
+			command.SetArgs(args)
+			require.NoError(command.Execute())
+			assert.True(seen)
+			if undo {
+				assert.Contains(out.String(), "0 cards scanned, 0 participants bound, 3 participants unbound, 0 conflicts")
+				return
+			}
+			assert.Contains(out.String(), "2 cards scanned, 0 participants bound, 0 participants unbound, 2 conflicts")
+			assert.Contains(out.String(), "participant 7, people [1 2]: address shared by multiple people")
+			assert.Contains(out.String(), "participant 8, people [2 3]: participant already belongs to another person")
+		})
+	}
 }

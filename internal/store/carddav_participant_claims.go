@@ -43,7 +43,7 @@ func cardDAVParticipantAddressValue(kind ContactAddressKind, raw string) (cardDA
 	return cardDAVParticipantAddress{kind, value}, err == nil
 }
 
-func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (map[cardDAVParticipantAddress]cardDAVPersonSet, int, error) {
+func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (map[cardDAVParticipantAddress]cardDAVPersonSet, cardDAVPersonSet, int, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT resource.person_id, resource.remote_body,
  conflict.id IS NOT NULL,
  CASE WHEN conflict.local_tombstone THEN NULL ELSE conflict.local_body END,
@@ -59,22 +59,26 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
    AND publication.address_book_id = resource.address_book_id AND publication.href = resource.href
    AND publication.pending_operation = 'create') ORDER BY resource.id`, CardDAVMappingMapped)
 	if err != nil {
-		return nil, 0, fmt.Errorf("read CardDAV participant claims: %w", err)
+		return nil, nil, 0, fmt.Errorf("read CardDAV participant claims: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	claims := map[cardDAVParticipantAddress]cardDAVPersonSet{}
 	conflicted := map[cardDAVParticipantAddress]cardDAVPersonSet{}
+	uncertain := cardDAVPersonSet{}
 	scanned := 0
 	for rows.Next() {
 		var personID int64
 		var body, localBody, remoteBody []byte
 		var hasConflict bool
 		if err := rows.Scan(&personID, &body, &hasConflict, &localBody, &remoteBody); err != nil {
-			return nil, 0, err
+			return nil, nil, 0, err
 		}
 		if hasConflict {
-			local, _ := cardDAVParticipantAddresses(localBody)
-			remote, _ := cardDAVParticipantAddresses(remoteBody)
+			local, _, localComplete := cardDAVParticipantAddresses(localBody)
+			remote, _, remoteComplete := cardDAVParticipantAddresses(remoteBody)
+			if len(localBody) > 0 && !localComplete || len(remoteBody) > 0 && !remoteComplete {
+				uncertain[personID] = struct{}{}
+			}
 			for _, addresses := range []map[cardDAVParticipantAddress]struct{}{local, remote} {
 				for key := range addresses {
 					if conflicted[key] == nil {
@@ -85,7 +89,10 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 			}
 			continue
 		}
-		addresses, ok := cardDAVParticipantAddresses(body)
+		addresses, ok, complete := cardDAVParticipantAddresses(body)
+		if !complete {
+			uncertain[personID] = struct{}{}
+		}
 		if !ok {
 			continue
 		}
@@ -98,7 +105,7 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 		scanned++
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	// Unresolved cards can block another claim, but cannot bind on their own.
 	for key, people := range conflicted {
@@ -109,15 +116,16 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 			claims[key][personID] = struct{}{}
 		}
 	}
-	return claims, scanned, nil
+	return claims, uncertain, scanned, nil
 }
 
-func cardDAVParticipantAddresses(body []byte) (map[cardDAVParticipantAddress]struct{}, bool) {
+func cardDAVParticipantAddresses(body []byte) (map[cardDAVParticipantAddress]struct{}, bool, bool) {
 	envelope, err := vcard.ParseResourceEnvelope(body)
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	addresses := map[cardDAVParticipantAddress]struct{}{}
+	complete := true
 	for _, occurrence := range envelope.PropertyTree {
 		property := occurrence.Property
 		var kind ContactAddressKind
@@ -131,10 +139,12 @@ func cardDAVParticipantAddresses(body []byte) (map[cardDAVParticipantAddress]str
 		}
 		property.RawValue, err = vcard.DecodeLegacyRawValue(property)
 		if err != nil {
+			complete = false
 			continue
 		}
 		value, uri, err := vcard.ContactPointValue(envelope.RenderMetadata.StoredVersion, property)
 		if err != nil {
+			complete = false
 			continue
 		}
 		if kind == ContactAddressPhone && uri != "" {
@@ -146,7 +156,7 @@ func cardDAVParticipantAddresses(body []byte) (map[cardDAVParticipantAddress]str
 		}
 		addresses[key] = struct{}{}
 	}
-	return addresses, true
+	return addresses, true, complete
 }
 
 func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims map[cardDAVParticipantAddress]cardDAVPersonSet) (map[int64]cardDAVPersonSet, map[int64][]int64, error) {

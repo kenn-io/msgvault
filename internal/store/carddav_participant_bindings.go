@@ -7,9 +7,10 @@ import (
 	"slices"
 )
 
-// CardDAVParticipantBindingOptions selects a snapshot preview.
+// CardDAVParticipantBindingOptions selects a snapshot preview or an ownership-only undo.
 type CardDAVParticipantBindingOptions struct {
 	DryRun bool `json:"dry_run"`
+	Undo   bool `json:"undo"`
 }
 
 // CardDAVParticipantBindingConflict exposes only archive handles, never addresses.
@@ -52,7 +53,7 @@ func (s *Store) ReconcileCardDAVParticipantBindingsContext(ctx context.Context, 
 				return err
 			}
 		}
-		plan, err := s.planCardDAVParticipantBindingsTx(ctx, tx, false)
+		plan, err := s.planCardDAVParticipantBindingsTx(ctx, tx, options.Undo, false)
 		if err != nil {
 			return err
 		}
@@ -69,7 +70,7 @@ func (s *Store) ReconcileCardDAVParticipantBindingsContext(ctx context.Context, 
 
 // Callers hold the identity mutation lock, before any person/resource locks.
 func (s *Store) reconcileCardDAVParticipantBindingsTx(ctx context.Context, tx *loggedTx, cleanupOnly bool) (*CardDAVParticipantBindingResult, error) {
-	plan, err := s.planCardDAVParticipantBindingsTx(ctx, tx, cleanupOnly)
+	plan, err := s.planCardDAVParticipantBindingsTx(ctx, tx, false, cleanupOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +92,7 @@ func (s *Store) cleanupCardDAVParticipantBindingsTx(ctx context.Context, tx *log
 	return err
 }
 
-func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *loggedTx, cleanupOnly bool) (*cardDAVParticipantBindingPlan, error) {
+func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *loggedTx, undo, cleanupOnly bool) (*cardDAVParticipantBindingPlan, error) {
 	plan := &cardDAVParticipantBindingPlan{result: CardDAVParticipantBindingResult{ConflictDetails: []CardDAVParticipantBindingConflict{}}}
 	bindings := map[int64]cardDAVParticipantBinding{}
 	rows, err := tx.QueryContext(ctx, `SELECT person_id, participant_id, carddav_owned FROM person_participants ORDER BY participant_id`)
@@ -105,13 +106,20 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 			return nil, err
 		}
 		bindings[binding.participantID] = binding
+		if undo && binding.owned {
+			plan.remove = append(plan.remove, binding)
+		}
 	}
 	err = rows.Err()
 	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}
-	claims, scanned, err := s.cardDAVParticipantClaimsTx(ctx, tx)
+	if undo {
+		plan.result.ParticipantsUnbound = len(plan.remove)
+		return plan, nil
+	}
+	claims, uncertain, scanned, err := s.cardDAVParticipantClaimsTx(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +155,12 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 			visited[id] = struct{}{}
 			for personID := range matched[id] {
 				wanted[personID] = struct{}{}
+			}
+			// An unreadable address may still support an existing automatic member.
+			if binding, ok := bindings[id]; ok && binding.owned {
+				if _, incomplete := uncertain[binding.personID]; incomplete {
+					wanted[binding.personID] = struct{}{}
+				}
 			}
 		}
 		localOwners := cardDAVManualOwners(bindings, members)
@@ -191,7 +205,8 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 		}
 		for _, id := range members {
 			binding, exists := bindings[id]
-			if _, manuallyOwned := localOwners[binding.personID]; exists && binding.owned && !manuallyOwned && (reason != "" || personID == 0 || binding.personID != personID) {
+			_, incomplete := uncertain[binding.personID]
+			if _, manuallyOwned := localOwners[binding.personID]; exists && binding.owned && !manuallyOwned && !incomplete && (reason != "" || personID == 0 || binding.personID != personID) {
 				plan.remove = append(plan.remove, binding)
 			}
 			if (!exists || binding.owned && binding.personID != personID) && personID != 0 && reason == "" && !cleanupOnly {
