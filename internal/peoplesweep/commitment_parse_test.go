@@ -100,7 +100,7 @@ func TestCommitmentRequestSendsPromptFieldsAndFullSourceText(t *testing.T) {
 	a.Contains(request.InputText, strings.Repeat("x", 2001)+"PRIVATE TAIL")
 }
 
-func TestCommitmentSourceBytesAndLimit(t *testing.T) {
+func TestCommitmentSourceBytesAndConfigLimits(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	size, err := CommitmentSourceBytes("a\x00\n\"")
 	r.NoError(err)
@@ -112,4 +112,10 @@ func TestCommitmentSourceBytesAndLimit(t *testing.T) {
 	r.NoError(cfg.Commitments.Validate(cfg.Budgets))
 	cfg.Commitments.MaxBytes++
 	r.Error(cfg.Commitments.Validate(cfg.Budgets))
+	cfg.Commitments.MaxBytes = 120 << 10
+	cfg.Budgets.MaxOutputTokensPerPerson = 40000
+	cfg.Commitments.MaxOutputTokens = 32768
+	r.NoError(cfg.Commitments.Validate(cfg.Budgets))
+	cfg.Commitments.MaxOutputTokens = 32769
+	r.ErrorContains(cfg.Commitments.Validate(cfg.Budgets), "max_output_tokens <= 32768")
 }

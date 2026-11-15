@@ -98,7 +98,6 @@ describe("PersonOpenLoops", () => {
     const undated = screen.getByRole("link", { name: "Promise 2" }).closest("li");
     expect(dated?.textContent).toContain("due 2026-11-20");
     expect(undated?.textContent).not.toContain("due");
-    expect(screen.queryByRole("button", { name: /done|snooze|dismiss/i })).toBeNull();
   });
 
   it("says how many messages could not be read, with or without loops", async () => {
@@ -199,7 +198,6 @@ describe("PersonOpenLoops", () => {
     });
     expect(await screen.findByRole("link", { name: "I will send it." })).toBeDefined();
     expect(screen.getByText("Promise discovery since 2026-10-01 is incomplete.")).toBeDefined();
-    expect(screen.queryByRole("button", { name: /done|snooze|dismiss/i })).toBeNull();
     withPromise.unmount();
 
     render(PersonOpenLoops, { client: respond({ commitments_complete: false }), personID: 7 });

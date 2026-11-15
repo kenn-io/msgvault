@@ -273,9 +273,6 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 	if !visible {
 		return PersonCommitment{}, sql.ErrNoRows
 	}
-	if state == LoopStateOpen && current.State == LoopStateOpen {
-		return current, nil
-	}
 	result, err := s.updatePersonCommitmentDecision(ctx, candidate, state, until)
 	if err == nil {
 		current.State, current.SnoozedUntil = result.State, result.SnoozedUntil
@@ -723,7 +720,7 @@ func (s *Store) commitmentBackfillMessages(ctx context.Context, personID, after 
 	query := `WITH scoped AS (` + scoped + `)
 		SELECT m.id FROM messages m JOIN scoped c ON c.conversation_id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
-		WHERE m.id > ? AND ` + s.loopLiveMessageSQL() + `
+		WHERE m.id > ? AND ` + s.loopLiveMessageSQL("m", "src") + `
 		AND (` + s.loopTimeKey("m.sent_at") + ` >= ` + s.loopTimeKey("?") + `
 			OR ` + s.loopTimeKey("m.archived_at") + ` >= ` + s.loopTimeKey("?") + `)
 		ORDER BY m.id LIMIT ?`

@@ -33,7 +33,10 @@
     const selectedClient = client;
     void refreshKey;
     const controller = new AbortController();
-    stopActions();
+    checkMoreFailed = false;
+    checkingMore = false;
+    morePromisesFailed = false;
+    loadingPromises = false;
     morePromises = () => void loadPromises(selectedID, selectedClient, controller.signal);
     async function load(more = false) {
       if (more) {
@@ -41,7 +44,14 @@
         checkMoreFailed = false;
       } else {
         loading = true;
-        reset();
+        items = [];
+        commitments = [];
+        truncated = false;
+        coverageIncomplete = false;
+        unreadable = 0;
+        failed = false;
+        promiseStatus = '';
+        nextOffset = undefined;
       }
       try {
         const result = await listLoops(
@@ -50,7 +60,13 @@
         );
         if (controller.signal.aborted) return;
         if (!result.data) throw new Error('Open loops are unavailable.');
-        apply(result.data);
+        items = result.data.items ?? [];
+        commitments = result.data.commitments ?? [];
+        truncated = Boolean(result.data.truncated);
+        coverageIncomplete = Boolean(result.data.coverage_incomplete);
+        unreadable = result.data.skipped_unparseable ?? 0;
+        promiseStatus = discoveryStatus(result.data);
+        nextOffset = result.data.commitments_next_offset;
       } catch {
         if (controller.signal.aborted) return;
         if (more) checkMoreFailed = true;
@@ -66,34 +82,6 @@
     void load();
     return () => controller.abort();
   });
-
-  function stopActions() {
-    checkMoreFailed = false;
-    checkingMore = false;
-    morePromisesFailed = false;
-    loadingPromises = false;
-  }
-
-  function reset() {
-    items = [];
-    commitments = [];
-    truncated = false;
-    coverageIncomplete = false;
-    unreadable = 0;
-    failed = false;
-    promiseStatus = '';
-    nextOffset = undefined;
-  }
-
-  function apply(data: LoopListResponse) {
-    items = data.items ?? [];
-    commitments = data.commitments ?? [];
-    truncated = Boolean(data.truncated);
-    coverageIncomplete = Boolean(data.coverage_incomplete);
-    unreadable = data.skipped_unparseable ?? 0;
-    promiseStatus = discoveryStatus(data);
-    nextOffset = data.commitments_next_offset;
-  }
 
   // Mirrors the CLI so an unfinished scan never reads as "nothing promised".
   function discoveryStatus(data: LoopListResponse): string {

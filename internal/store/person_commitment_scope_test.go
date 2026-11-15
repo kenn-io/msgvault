@@ -41,7 +41,7 @@ func TestCommitmentRetryAfterMessageAgesOut(t *testing.T) {
 	r.NoError(err)
 	r.Len(window.Sources, 1)
 	r.Equal(first, window.Sources[0].MessageID)
-	// A provider failure must leave the first retry available on the next run.
+	// Without a successful apply, as after a provider failure, the retry remains available.
 	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, later, "UTC")
 	r.NoError(err)
 	r.Len(window.Sources, 1)

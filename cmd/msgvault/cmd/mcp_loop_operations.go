@@ -71,24 +71,20 @@ func (b *daemonMCPOperations) loopDeadline(value string) (time.Time, error) {
 	return until, nil
 }
 
-func (b *daemonMCPOperations) listOpenLoops(ctx context.Context, args map[string]any) (*mcpserver.OperationResult, bool, error) {
-	input, err := decodeMCPOperationArguments[loopListArguments](args)
-	if err != nil || input.PersonID != nil && !validLoopID(*input.PersonID) || input.Limit != nil && (*input.Limit < 1 || *input.Limit > 200) || input.CommitmentOffset != nil && *input.CommitmentOffset < 0 {
-		return operationFailure("invalid_arguments", false), true, nil
-	}
-	if input.Limit == nil {
-		input.Limit = new(int64(50))
-	}
-	result, err := readMCPLoopJSON[generated.LoopListResponse](ctx, b.client, http.MethodGet, "/api/v1/loops", &generated.ListLoopsRequestOptions{Query: &generated.ListLoopsQuery{PersonID: input.PersonID, Limit: input.Limit, CommitmentOffset: input.CommitmentOffset}})
-	return result, true, err
-}
-
 func (b *daemonMCPOperations) executeLoopOperation(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	invalid := func() (*mcpserver.OperationResult, bool, error) {
 		return operationFailure(invalidArguments, false), true, nil
 	}
 	if name == "list_open_loops" {
-		return b.listOpenLoops(ctx, args)
+		input, err := decodeMCPOperationArguments[loopListArguments](args)
+		if err != nil || input.PersonID != nil && !validLoopID(*input.PersonID) || input.Limit != nil && (*input.Limit < 1 || *input.Limit > 200) || input.CommitmentOffset != nil && *input.CommitmentOffset < 0 {
+			return invalid()
+		}
+		if input.Limit == nil {
+			input.Limit = new(int64(50))
+		}
+		result, err := readMCPLoopJSON[generated.LoopListResponse](ctx, b.client, http.MethodGet, "/api/v1/loops", &generated.ListLoopsRequestOptions{Query: &generated.ListLoopsQuery{PersonID: input.PersonID, Limit: input.Limit, CommitmentOffset: input.CommitmentOffset}})
+		return result, true, err
 	}
 	var id int64
 	var questions []int64

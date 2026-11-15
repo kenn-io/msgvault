@@ -106,10 +106,10 @@ func assertLoopRefusal(t *testing.T, result *mcpserver.OperationResult, code str
 func TestMCPLoopListForwardsCommitmentOffset(t *testing.T) {
 	f := storetest.New(t)
 	apiServer := api.NewServerWithOptions(api.ServerOptions{Config: config.NewDefaultConfig(), Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler)})
-	offsets := make(chan string, 1)
+	var offset atomic.Value
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/loops" {
-			offsets <- r.URL.Query().Get("commitment_offset")
+			offset.Store(r.URL.Query().Get("commitment_offset"))
 		}
 		apiServer.Router().ServeHTTP(w, r)
 	}))
@@ -124,12 +124,7 @@ func TestMCPLoopListForwardsCommitmentOffset(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, result.IsError)
 	loopToolOutput[generated.LoopListResponse](t, result)
-	select {
-	case offset := <-offsets:
-		assert.Equal(t, "5", offset)
-	case <-time.After(time.Second):
-		t.Fatal("list request did not reach the daemon")
-	}
+	assert.Equal(t, "5", offset.Load())
 	invalid, err := backend.ExecuteOperation(t.Context(), "list_open_loops", map[string]any{"commitment_offset": -1})
 	require.NoError(t, err)
 	assertLoopRefusal(t, invalid, "invalid_arguments", false)

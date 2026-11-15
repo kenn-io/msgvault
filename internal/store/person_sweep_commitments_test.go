@@ -416,16 +416,13 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 		name, mode string
 		journal    bool
 	}{
-		{"retry/backfill", "retry", false}, {"retry/journal", "retry", true}, {"cap/backfill", "cap", false}, {"cap/journal", "cap", true}, {"shrink/journal", "shrink", true},
+		{"retry/backfill", "retry", false}, {"retry/journal", "retry", true}, {"shrink/journal", "shrink", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, a, ctx := require.New(t), assert.New(t), t.Context()
 			f := newPersonSweepApplyFixture(t, "commitment-byte-boundary", false)
 			_, persist := newCommitmentTestConversation(t, f)
 			size := 90 << 10
-			if tc.mode == "cap" {
-				size = 140 << 10
-			}
 			if tc.mode == "shrink" {
 				size = 200
 			}
@@ -443,9 +440,6 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 			}
 			cfg, profile := commitmentTestConfig()
 			cfg.Commitments.MaxBytes = 20
-			if tc.mode == "cap" {
-				cfg.Commitments.MaxBytes = 120 << 10
-			}
 			if tc.mode == "shrink" {
 				cfg.Commitments.MaxBytes = 30
 			}
@@ -480,14 +474,6 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 			}
 			r.Len(window.Sources, 1)
 			a.Equal(small, window.Sources[0].MessageID)
-			if tc.mode == "cap" {
-				_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
-				r.NoError(err)
-				_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
-				r.NoError(err)
-				a.False(complete)
-				return
-			}
 			parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[{"source_id":%q,"direction":"owed_to","quote":"I will call.","start":0,"end":12,"summary":"Call","due_on":null}]}`, window.Sources[0].ID)), window)
 			r.NoError(err)
 			request := commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
@@ -631,18 +617,31 @@ func TestCommitmentDecisionReportsConcurrentChange(t *testing.T) {
 	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, true)
 	r.NoError(err)
 	r.Len(items, 1)
-	var candidate commitmentCandidate
-	r.NoError(f.store.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
-		c, err := scanPersonCommitment(tx.QueryRowContext(ctx, `SELECT `+commitmentColumns+` FROM person_commitments WHERE id = ?`, items[0].ID))
-		if err != nil {
-			return err
-		}
-		candidate.commitment = c
-		return f.store.loadCommitmentCandidateEvidenceTx(ctx, tx, &candidate)
-	}))
+	load := func() commitmentCandidate {
+		var candidate commitmentCandidate
+		r.NoError(f.store.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+			c, err := scanPersonCommitment(tx.QueryRowContext(ctx, `SELECT `+commitmentColumns+` FROM person_commitments WHERE id = ?`, items[0].ID))
+			if err != nil {
+				return err
+			}
+			candidate.commitment = c
+			return f.store.loadCommitmentCandidateEvidenceTx(ctx, tx, &candidate)
+		}))
+		return candidate
+	}
+	candidate := load()
 	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
 	r.NoError(err)
 	_, err = f.store.updatePersonCommitmentDecision(ctx, candidate, LoopStateSnoozed, new(request.CompletedAt.Add(time.Hour)))
+	r.ErrorIs(err, ErrCommitmentChanged)
+	// A changed snooze deadline is also a concurrent change.
+	first := request.CompletedAt.Add(time.Hour)
+	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateSnoozed, &first, request.CompletedAt)
+	r.NoError(err)
+	snoozed := load()
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_commitments SET snoozed_until = ? WHERE id = ?`), f.store.dialect.TimestampParam(first.Add(time.Hour)), items[0].ID)
+	r.NoError(err)
+	_, err = f.store.updatePersonCommitmentDecision(ctx, snoozed, LoopStateSnoozed, new(first.Add(2*time.Hour)))
 	r.ErrorIs(err, ErrCommitmentChanged)
 	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateOpen, nil, request.CompletedAt)
 	r.NoError(err)

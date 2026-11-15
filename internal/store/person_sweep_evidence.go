@@ -832,10 +832,11 @@ func (s *Store) BuildPersonSweepEvidenceStatusChanges(ctx context.Context, perso
 					alignment, alignErr := (PersonSweepEvidenceAligner{Store: s}).Align(ctx, stored.Input)
 					if errors.Is(alignErr, peoplesweep.ErrSourceTextUnavailable) {
 						continue
-					} else if alignErr != nil {
+					}
+					if alignErr != nil {
 						return nil, fmt.Errorf("verify reactivated person sweep evidence %s: %w", stored.Key, alignErr)
 					}
-					if supported != alignment.Accepted {
+					if !alignment.Accepted {
 						continue
 					}
 				}
