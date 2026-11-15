@@ -164,7 +164,7 @@ func TestHydratorResolvesParentPageFromRetrievedMeetingBlock(t *testing.T) {
 	assert.Equal(t, "page-1", source.markdownID)
 }
 
-func TestHydratorDataSourceIgnoresRetrievedPageParent(t *testing.T) {
+func TestHydratorKeepsQueriedDataSourceParentAfterBlockMove(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	meeting := hydrationMeeting()
@@ -172,6 +172,7 @@ func TestHydratorDataSourceIgnoresRetrievedPageParent(t *testing.T) {
 	var err error
 	meeting.Raw, err = json.Marshal(meeting)
 	require.NoError(err)
+	// Query and block retrieval are separate snapshots; the block can move between them.
 	source := completeHydrationSource()
 	source.markdown.Markdown = "# Transcript\nAnother meeting"
 	result, err := NewHydrator(source).Hydrate(t.Context(), meeting)
