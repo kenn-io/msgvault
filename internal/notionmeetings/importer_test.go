@@ -278,6 +278,58 @@ func TestImporterRepairsUnavailableRawEvidence(t *testing.T) {
 	}
 }
 
+func TestImporterKeepsMeetingWhenIncompleteSectionCannotBeRecovered(t *testing.T) {
+	for _, tc := range []struct {
+		name, section, text   string
+		malformed, removeTree bool
+	}{
+		{"unavailable evidence", "summary", "Decide the release scope.", true, false},
+		{"summary missing canonical text", "summary", "Decide the release scope.", false, false},
+		{"notes missing section evidence", "notes", "Owner will prepare the rollout.", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, source, imp := newImporterFixture(t)
+			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(t, err)
+			var messageID int64
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT id FROM messages WHERE source_id = ? AND source_message_id = 'meeting-1'
+	`), first.SourceID).Scan(&messageID))
+			raw := []byte("{")
+			if !tc.malformed {
+				stored, err := st.GetMessageRaw(messageID)
+				require.NoError(t, err)
+				var evidence map[string]json.RawMessage
+				require.NoError(t, json.Unmarshal(stored, &evidence))
+				var canonical map[string]json.RawMessage
+				require.NoError(t, json.Unmarshal(evidence["canonical"], &canonical))
+				delete(canonical, tc.section)
+				evidence["canonical"], err = json.Marshal(canonical)
+				require.NoError(t, err)
+				if tc.removeTree {
+					delete(evidence, tc.section)
+				}
+				raw, err = json.Marshal(evidence)
+				require.NoError(t, err)
+			}
+			require.NoError(t, st.UpsertMessageRawWithFormat(messageID, raw, RawFormat))
+			before, err := st.GetMessageBodyText(t.Context(), messageID)
+			require.NoError(t, err)
+
+			source.blockErrs = map[string]error{tc.section + "-1": ErrRateLimited}
+			second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Full: true})
+			require.NoError(t, err)
+			assert.Zero(t, second.MeetingsUpdated)
+			assert.True(t, second.PartialCoverage)
+			after, err := st.GetMessageBodyText(t.Context(), messageID)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+			assert.Contains(t, after, tc.text)
+			assert.Len(t, lastNotionState(t, st, second.SourceID).Pending, 1)
+		})
+	}
+}
+
 func TestImporterDetectsHydratedSnapshotChangesWithoutDiscoveryEdit(t *testing.T) {
 	tests := []struct {
 		name     string

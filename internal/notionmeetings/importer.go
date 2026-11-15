@@ -72,15 +72,6 @@ type ImportSummary struct {
 	Duration           time.Duration
 }
 
-func (s *ImportSummary) checkpoint() *store.Checkpoint {
-	return &store.Checkpoint{
-		MessagesProcessed: s.MeetingsProcessed,
-		MessagesAdded:     s.MeetingsAdded,
-		MessagesUpdated:   s.MeetingsUpdated,
-		ErrorsCount:       s.Errors,
-	}
-}
-
 type knownMeeting struct {
 	LastEditedTime  string `json:"last_edited_time"`
 	SnapshotSHA256  string `json:"snapshot_sha256,omitempty"`
@@ -199,7 +190,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	scopedStore := imp.store.ScopedToSync(source.ID, syncID)
 	defer func() {
 		if retErr != nil {
-			_ = scopedStore.FailSyncWithCheckpoint(syncID, retErr.Error(), sum.checkpoint())
+			_ = scopedStore.FailSyncWithCheckpoint(syncID, retErr.Error(), &store.Checkpoint{
+				MessagesProcessed: sum.MeetingsProcessed,
+				MessagesAdded:     sum.MeetingsAdded,
+				MessagesUpdated:   sum.MeetingsUpdated,
+				ErrorsCount:       sum.Errors,
+			})
 		}
 	}()
 
@@ -356,6 +352,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			{"notes", &hydrated.Notes, archived.Evidence.Canonical.Notes, archived.Evidence.Notes},
 			{sectionTranscript, &hydrated.Transcript, archived.Evidence.Canonical.Transcript, archived.Evidence.Transcript},
 		}
+		leaveUnchanged := false
 		var retainedIDs = map[string]string{}
 		var previousDiscovery MeetingNote
 		_ = json.Unmarshal(archived.Evidence.Discovery, &previousDiscovery) // zero without usable evidence
@@ -374,6 +371,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			oldText := section.oldText
 			if section.name == sectionTranscript && strings.TrimSpace(oldText) == "" {
 				oldText = transcriptFromArchivedBody(archived.Body)
+			}
+			if section.name != sectionTranscript && archived.MessageID != 0 && oldText == "" {
+				// The saved section can't be recovered, so rewriting would erase it.
+				leaveUnchanged = true
 			}
 			if oldText == "" && len(section.oldTree.Root) == 0 && len(archived.RawTrees[section.name]) == 0 {
 				continue
@@ -453,6 +454,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			delete(next.TranscriptRetryUntil, id)
 		}
 
+		if leaveUnchanged {
+			progress("meeting " + id + ": kept the saved meeting because incomplete sections can't be recovered; retry pending")
+			continue
+		}
+
 		snapshot, snapshotErr := hydrated.ArchiveSnapshot(source.ID, opts.Identifier, opts.AccountEmail)
 		if snapshotErr != nil {
 			sum.Errors++
@@ -526,7 +532,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err != nil {
 		return sum, err
 	}
-	if err := scopedStore.UpdateSyncCheckpoint(syncID, sum.checkpoint()); err != nil {
+	checkpoint := &store.Checkpoint{
+		MessagesProcessed: sum.MeetingsProcessed,
+		MessagesAdded:     sum.MeetingsAdded,
+		MessagesUpdated:   sum.MeetingsUpdated,
+		ErrorsCount:       sum.Errors,
+	}
+	if err := scopedStore.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
 		return sum, err
 	}
 	if err := scopedStore.CompleteSync(syncID, cursor); err != nil {

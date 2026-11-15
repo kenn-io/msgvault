@@ -264,7 +264,7 @@ func (h *Hydrator) readChildren(ctx context.Context, blockID string, depth int, 
 				return hydrationLimit("block")
 			}
 			tree.Blocks = append(tree.Blocks, child)
-			if child.HasChildren && child.Type != "meeting_notes" {
+			if child.HasChildren {
 				if err := h.readChildren(ctx, child.ID, depth+1, tree); err != nil {
 					return err
 				}

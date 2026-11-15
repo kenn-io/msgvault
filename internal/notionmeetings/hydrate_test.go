@@ -531,21 +531,6 @@ func TestHydratorDegradesAndCachesTransientUserListingFailure(t *testing.T) {
 	assert.Equal(1, source.usersCalls)
 }
 
-func TestHydratorSkipsNestedMeetingChildren(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	source := completeHydrationSource()
-	var nested Block
-	require.NoError(json.Unmarshal([]byte(`{"object":"block","id":"nested-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{}}`), &nested))
-	source.children["notes-1"][""] = &BlockPage{
-		Results: []Block{nested},
-		Raw:     json.RawMessage(`{"object":"list","results":[{"object":"block","id":"nested-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{}}],"has_more":false,"next_cursor":null}`),
-	}
-	result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-	require.NoError(err)
-	assert.Empty(result.Incomplete)
-}
-
 func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 	for _, tc := range []struct {
 		limit                      string
