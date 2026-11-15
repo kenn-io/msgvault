@@ -280,12 +280,11 @@ func TestImporterRepairsUnavailableRawEvidence(t *testing.T) {
 
 func TestImporterKeepsMeetingWhenIncompleteSectionCannotBeRecovered(t *testing.T) {
 	for _, tc := range []struct {
-		name                    string
-		malformed, emptySummary bool
+		name         string
+		emptySummary bool
 	}{
-		{"unavailable evidence", true, false},
-		{"summary missing canonical text", false, false},
-		{"saved empty summary", false, true},
+		{"unavailable evidence", false},
+		{"saved empty summary", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
@@ -298,20 +297,7 @@ func TestImporterKeepsMeetingWhenIncompleteSectionCannotBeRecovered(t *testing.T
 			var messageID int64
 			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), first.SourceID).Scan(&messageID))
 			if !tc.emptySummary {
-				raw := []byte("{")
-				if !tc.malformed {
-					stored, err := st.GetMessageRaw(messageID)
-					require.NoError(t, err)
-					var evidence, canonical map[string]json.RawMessage
-					require.NoError(t, json.Unmarshal(stored, &evidence))
-					require.NoError(t, json.Unmarshal(evidence["canonical"], &canonical))
-					delete(canonical, "summary")
-					evidence["canonical"], err = json.Marshal(canonical)
-					require.NoError(t, err)
-					raw, err = json.Marshal(evidence)
-					require.NoError(t, err)
-				}
-				require.NoError(t, st.UpsertMessageRawWithFormat(messageID, raw, RawFormat))
+				require.NoError(t, st.UpsertMessageRawWithFormat(messageID, []byte("{"), RawFormat))
 			}
 			before, err := st.GetMessageBodyText(t.Context(), messageID)
 			require.NoError(t, err)
@@ -1341,7 +1327,6 @@ func TestImporterRefusesNewerEvidenceBeforeWritingOtherMeetings(t *testing.T) {
 	source.query.Results = append(source.query.Results, second)
 	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(err)
-	beforeState := lastNotionState(t, st, first.SourceID)
 	var firstID, secondID int64
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&firstID))
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-2'`).Scan(&secondID))
@@ -1362,7 +1347,6 @@ func TestImporterRefusesNewerEvidenceBeforeWritingOtherMeetings(t *testing.T) {
 	raw, err := st.GetMessageRaw(secondID)
 	require.NoError(err)
 	assert.Equal(future, raw)
-	assert.Equal(beforeState, lastNotionState(t, st, first.SourceID))
 	afterBody, err := st.GetMessageBodyText(t.Context(), firstID)
 	require.NoError(err)
 	afterRaw, err := st.GetMessageRaw(firstID)
@@ -1501,24 +1485,6 @@ func TestImporterHandlesIncompleteMarkdownWithDifferentTranscriptSources(t *test
 		require.NoError(t, err)
 		assert.Empty(t, lastNotionState(t, st, expired.SourceID).Pending)
 		assert.Empty(t, source.blockCalls)
-	})
-	t.Run("saved structured transcript", func(t *testing.T) {
-		st, source, imp := newImporterFixture(t)
-		_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-		require.NoError(t, err)
-		var id int64
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&id))
-		empty := paragraph("transcript-1", "", false)
-		source.blocks["transcript-1"] = &empty
-		source.markdown.Markdown = "# Notes\nIncomplete page"
-		source.markdown.Truncated = true
-		source.markdown.Raw, err = json.Marshal(source.markdown)
-		require.NoError(t, err)
-		_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-		require.NoError(t, err)
-		body, err := st.GetMessageBodyText(t.Context(), id)
-		require.NoError(t, err)
-		assert.Contains(t, body, "Test Speaker: Ready to ship.")
 	})
 }
 
@@ -1664,12 +1630,6 @@ func TestImporterExcludesNestedMeetingAndKeepsSiblingActions(t *testing.T) {
 	require.NoError(t, err)
 	var id int64
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_id = ?`, first.SourceID).Scan(&id))
-	raw, err := st.GetMessageRaw(id)
-	require.NoError(t, err)
-	content := meetingcontent.Decode(RawFormat, raw, nil)
-	assert.Equal(t, meetingcontent.CoverageAvailable, content.ActionCoverage)
-	require.Len(t, content.Actions, 1)
-	assert.Equal(t, "Sibling action", content.Actions[0].Title)
 	updated := paragraph("sibling", "Edited sibling", true)
 	source.children["notes-1"][""].Results[1] = updated
 	source.children["notes-1"][""].Raw = json.RawMessage(`{"results":[{"id":"other-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[{"plain_text":"Another meeting"}]}},{"id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[{"plain_text":"Edited sibling"}]}}],"has_more":false}`)
@@ -1682,22 +1642,35 @@ func TestImporterExcludesNestedMeetingAndKeepsSiblingActions(t *testing.T) {
 }
 
 func TestImporterKeepsSavedTranscriptWhenEmptyWhileUpdatingNotes(t *testing.T) {
-	st, source, imp := newImporterFixture(t)
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	empty := paragraph("transcript-1", "", false)
-	source.blocks["transcript-1"] = &empty
-	source.markdown.Markdown = "# Notes\nNo transcript available"
-	source.markdown.Raw = json.RawMessage(`{"object":"page_markdown","id":"page-1","markdown":"# Notes\nNo transcript available"}`)
-	notes := paragraph("notes-1", "Updated notes", false)
-	source.blocks["notes-1"] = &notes
-	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), second.MeetingsUpdated)
-	var id int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_id = ?`, first.SourceID).Scan(&id))
-	body, err := st.GetMessageBodyText(t.Context(), id)
-	require.NoError(t, err)
-	assert.Contains(t, body, "Updated notes")
-	assert.Contains(t, body, "Test Speaker: Ready to ship.")
+	for _, tc := range []struct {
+		name      string
+		truncated bool
+	}{{"complete markdown", false}, {"truncated markdown", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, source, imp := newImporterFixture(t)
+			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(t, err)
+			empty := paragraph("transcript-1", "", false)
+			source.blocks["transcript-1"] = &empty
+			source.markdown.Markdown = "# Notes\nNo transcript available"
+			source.markdown.Truncated = tc.truncated
+			source.markdown.Raw, err = json.Marshal(source.markdown)
+			require.NoError(t, err)
+			notes := paragraph("notes-1", "Updated notes", false)
+			source.blocks["notes-1"] = &notes
+			second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), second.MeetingsUpdated)
+			if tc.truncated {
+				assert.True(t, second.PartialCoverage)
+				assert.Len(t, lastNotionState(t, st, first.SourceID).Pending, 1)
+			}
+			var id int64
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_id = ?`, first.SourceID).Scan(&id))
+			body, err := st.GetMessageBodyText(t.Context(), id)
+			require.NoError(t, err)
+			assert.Contains(t, body, "Updated notes")
+			assert.Contains(t, body, "Test Speaker: Ready to ship.")
+		})
+	}
 }

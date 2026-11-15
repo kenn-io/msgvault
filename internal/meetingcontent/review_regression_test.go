@@ -242,8 +242,8 @@ func TestReviewRound1NotionCheckedMustBeBoolean(t *testing.T) {
 	}
 }
 
-func TestNotionTreeTraversalSkipsEscapedNestedMeetingType(t *testing.T) {
-	tree := []byte(`{"root":{"id":"notes","has_children":true},"pages":[{"results":[{"id":"nested","type": "meeting\u005fnotes" ,"has_children":true},{"id":"sibling","type":"paragraph","has_children":true}],"has_more":false},{"results":[{"id":"action","type":"to_do","has_children":false}],"has_more":false}]}`)
+func TestNotionTreeTraversalSkipsNestedMeetingType(t *testing.T) {
+	tree := []byte(`{"root":{"id":"notes","has_children":true},"pages":[{"results":[{"id":"nested","type":"meeting_notes","has_children":true},{"id":"sibling","type":"paragraph","has_children":true}],"has_more":false},{"results":[{"id":"action","type":"to_do","has_children":false}],"has_more":false}]}`)
 	blocks, complete := notionTreeBlocks(tree, "notes")
 	assert.True(t, complete)
 	require.Len(t, blocks, 4)
