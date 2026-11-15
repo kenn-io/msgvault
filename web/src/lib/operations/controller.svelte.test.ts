@@ -96,7 +96,7 @@ function runsResponse(
 }
 
 function syncResult(): SyncResult {
-  return { books: 1, created: 1, updated: 0, removed: 0 };
+  return { books: 1, created: 1, updated: 0, removed: 0, binding_conflicts: 0 };
 }
 
 function deferredResponse() {
