@@ -244,3 +244,23 @@ func TestTokenFailureStopsThePublicationSweep(t *testing.T) {
 	require.ErrorIs(err, ErrMicrosoftTokenUnavailable)
 	require.Equal(1, remote.failed)
 }
+
+func TestServiceSyncReportsParticipantBindingConflicts(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	allowed := true
+	_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
+		BaseURL: "https://memory.test", Username: "alice", PrincipalURL: "https://memory.test/principal/", HomeURL: "https://memory.test/books/",
+		Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://memory.test/books/personal/", DisplayName: "Personal", CanCreate: &allowed}},
+	})
+	require.NoError(err)
+	_, err = st.EnsureParticipant("shared@example.test", "Shared", "example.test")
+	require.NoError(err)
+	remote := newMemoryRemote()
+	remote.set(books[0].CanonicalURL+"first", []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:first\r\nFN:First\r\nEMAIL:shared@example.test\r\nEND:VCARD\r\n"))
+	remote.set(books[0].CanonicalURL+"second", []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:second\r\nFN:Second\r\nEMAIL:shared@example.test\r\nEND:VCARD\r\n"))
+	result, err := NewRemoteService(st, remote).Sync(t.Context(), SyncOptions{})
+	require.NoError(err)
+	assert.Equal(1, result.BindingConflicts)
+}

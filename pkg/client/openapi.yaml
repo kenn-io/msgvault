@@ -15942,6 +15942,9 @@ components:
       type: object
     SyncResult:
       properties:
+        binding_conflicts:
+          format: int64
+          type: integer
         books:
           format: int64
           type: integer
@@ -15969,6 +15972,7 @@ components:
         - created
         - updated
         - removed
+        - binding_conflicts
       type: object
     SyncRunItemStatus:
       properties:

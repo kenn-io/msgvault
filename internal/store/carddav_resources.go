@@ -91,9 +91,10 @@ type CardDAVSyncPlan struct {
 }
 
 type CardDAVApplyResult struct {
-	Created int
-	Updated int
-	Removed int
+	Created          int
+	Updated          int
+	Removed          int
+	BindingConflicts int
 }
 
 // ApplyCardDAVSyncPlanContext applies a fully fetched network plan in one
@@ -331,9 +332,11 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 			}
 		}
 
-		if err := s.reconcileCardDAVParticipantBindingsTx(ctx, tx, false); err != nil {
+		bindingResult, err := s.reconcileCardDAVParticipantBindingsTx(ctx, tx, false)
+		if err != nil {
 			return err
 		}
+		result.BindingConflicts = bindingResult.Conflicts
 
 		updated, err := tx.ExecContext(ctx, `UPDATE carddav_address_books SET
 			sync_token = ?, sync_revision = sync_revision + 1,
@@ -1167,10 +1170,13 @@ func (s *Store) resolveCardDAVPersonTx(
 			if err != nil {
 				continue
 			}
+			// An address shared by two cards does not establish that they are one person.
 			rows, err := tx.QueryContext(ctx, `SELECT person_id, uri FROM person_contact_points
 				WHERE address_kind = ? AND service_id IS NULL
 				  AND normalized_value = ? AND active_until IS NULL AND superseded_at IS NULL
-				ORDER BY person_id`, candidate.kind, normalized)
+				  AND NOT EXISTS (SELECT 1 FROM carddav_resources existing
+				    WHERE existing.person_id = person_contact_points.person_id AND existing.id <> ?)
+				ORDER BY person_id`, candidate.kind, normalized, resourceID)
 			if err != nil {
 				return nil, nil, fmt.Errorf("match CardDAV contact point: %w", err)
 			}

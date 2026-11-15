@@ -270,8 +270,8 @@ the book; resolve those dependencies first.
 
 After upgrading to a version with participant binding, the next CardDAV sync
 binds subscribed contacts to matching archived participants. Email matches ignore
-case. Phone matches require `+`, `00`, or a numeric `tel:` phone context before
-using the archive's phone normalization. Names never establish
+case. Phone matches require a country code, with `+`, `00`, a numeric `tel:`
+phone context, or more than ten digits before normalization. Names never establish
 a match. Phone extensions and service-scoped handles are excluded.
 
 Each match includes that participant's existing identity links. A saved person
@@ -296,6 +296,7 @@ addresses. A shared address claimed by different saved people, or a participant
 already bound to another person, is reported without moving it or merging
 profiles. Correct the cards or inspect the people and explicitly merge them
 with [person merge](people.md#merge-duplicate-profiles-and-reverse-a-merge).
+When sync reports binding conflicts, run the dry-run command above for details.
 People with active merge history can receive new matching archived identities.
 Those bindings stay with the surviving person after a split.
 

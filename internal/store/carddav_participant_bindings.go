@@ -69,15 +69,15 @@ func (s *Store) ReconcileCardDAVParticipantBindingsContext(ctx context.Context, 
 }
 
 // Callers hold the identity mutation lock, before any person/resource locks.
-func (s *Store) reconcileCardDAVParticipantBindingsTx(ctx context.Context, tx *loggedTx, cleanupOnly bool) error {
+func (s *Store) reconcileCardDAVParticipantBindingsTx(ctx context.Context, tx *loggedTx, cleanupOnly bool) (*CardDAVParticipantBindingResult, error) {
 	plan, err := s.planCardDAVParticipantBindingsTx(ctx, tx, false, cleanupOnly)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := s.applyCardDAVParticipantBindingsTx(ctx, tx, plan); err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	return &plan.result, nil
 }
 
 func (s *Store) cleanupCardDAVParticipantBindingsTx(ctx context.Context, tx *loggedTx) error {
@@ -88,7 +88,8 @@ func (s *Store) cleanupCardDAVParticipantBindingsTx(ctx context.Context, tx *log
 	if !owned {
 		return nil
 	}
-	return s.reconcileCardDAVParticipantBindingsTx(ctx, tx, true)
+	_, err := s.reconcileCardDAVParticipantBindingsTx(ctx, tx, true)
+	return err
 }
 
 func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *loggedTx, undo, cleanupOnly bool) (*cardDAVParticipantBindingPlan, error) {

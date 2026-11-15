@@ -252,7 +252,7 @@ func TestSyncCardDAVUsesTheDaemonServiceRoute(t *testing.T) {
 		assertions.NoError(json.NewDecoder(r.Body).Decode(&body))
 		full = body.Full
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"books":1,"created":2,"updated":3,"removed":4}`))
+		_, _ = w.Write([]byte(`{"books":1,"created":2,"updated":3,"removed":4,"binding_conflicts":2}`))
 	}))
 	t.Cleanup(server.Close)
 
@@ -269,7 +269,7 @@ func TestSyncCardDAVUsesTheDaemonServiceRoute(t *testing.T) {
 	cmd.SetArgs([]string{"--full"})
 	require.NoError(t, cmd.Execute())
 	assertions.True(full)
-	assertions.Equal("CardDAV sync: 1 books, 2 created, 3 updated, 4 removed\n", stdout.String())
+	assertions.Equal("CardDAV sync: 1 books, 2 created, 3 updated, 4 removed\n2 CardDAV binding conflicts. Run msgvault carddav bind-participants --dry-run for details.\n", stdout.String())
 }
 
 func TestCardDAVCLISelectsConnectionsAndReportsAggregateFailures(t *testing.T) {

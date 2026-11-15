@@ -51,12 +51,13 @@ type SyncOptions struct {
 }
 
 type SyncResult struct {
-	Books       int                     `json:"books"`
-	Created     int                     `json:"created"`
-	Updated     int                     `json:"updated"`
-	Removed     int                     `json:"removed"`
-	Status      string                  `json:"status,omitempty" enum:"succeeded,partial,failed"`
-	Connections []ConnectionSyncOutcome `json:"connections,omitempty"`
+	Books            int                     `json:"books"`
+	Created          int                     `json:"created"`
+	Updated          int                     `json:"updated"`
+	Removed          int                     `json:"removed"`
+	BindingConflicts int                     `json:"binding_conflicts"`
+	Status           string                  `json:"status,omitempty" enum:"succeeded,partial,failed"`
+	Connections      []ConnectionSyncOutcome `json:"connections,omitempty"`
 }
 
 type ConnectionSyncOutcome struct {
@@ -160,6 +161,8 @@ func (s *Service) sync(ctx context.Context, options SyncOptions) (SyncResult, er
 		total.Created += applied.Created
 		total.Updated += applied.Updated
 		total.Removed += applied.Removed
+		// Reconciliation counts conflicts across all subscribed books.
+		total.BindingConflicts = applied.BindingConflicts
 	}
 	if err := s.reconcilePublications(operationCtx, recovered); err != nil {
 		failures = append(failures, err)

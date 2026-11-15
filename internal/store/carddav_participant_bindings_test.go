@@ -395,6 +395,7 @@ func TestCardDAVParticipantBindingPhoneAdmission(t *testing.T) {
 		{"202/555-0100", "+12025550100", false},
 		{"+1 202/555-0100", "+12025550100", true},
 		{"0012025550100", "+12025550100", true},
+		{"12025550100", "+12025550100", true},
 		{"20 7946 0958", "+12079460958", false},
 		{"202-555-0100 ext 99", "+202555010099", false},
 		{"letters12025550100", "+12025550100", false},
@@ -1044,4 +1045,27 @@ func TestCardDAVParticipantBindingSystemLinkAfterPersonMerge(t *testing.T) {
 	unbound, err := st.PersonForParticipantsContext(t.Context(), []int64{late})
 	require.NoError(err)
 	assert.Nil(unbound)
+}
+
+func TestCardDAVParticipantBindingDistinctNewCardsShareAddress(t *testing.T) {
+	require := Require.New(t)
+	assert := Assert.New(t)
+	st, account, book := newCardDAVResourceStore(t)
+	id, err := st.EnsureParticipant("shared@example.test", "Shared", "example.test")
+	require.NoError(err)
+	first := remoteResource(book.CanonicalURL+"first.vcf", "first", "First", "shared@example.test", "one")
+	second := remoteResource(book.CanonicalURL+"second.vcf", "second", "Second", "shared@example.test", "one")
+	result, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{first, second}})
+	require.NoError(err)
+	assert.Equal(1, result.BindingConflicts)
+	left := bindingCardPerson(t, st, book, first.Href)
+	right := bindingCardPerson(t, st, book, second.Href)
+	assert.NotEqual(left.ID, right.ID)
+	bound, err := st.PersonForParticipantsContext(t.Context(), []int64{id})
+	require.NoError(err)
+	assert.Nil(bound)
+	preview, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
+	require.NoError(err)
+	require.Len(preview.ConflictDetails, 1)
+	assert.Equal("shared_address", preview.ConflictDetails[0].Reason)
 }
