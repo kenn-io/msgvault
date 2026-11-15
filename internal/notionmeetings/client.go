@@ -310,7 +310,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, payload any, t
 			return nil, fmt.Errorf("close Notion response: %w", closeErr)
 		}
 		if int64(len(body)) > maxResponseSize {
-			return nil, fmt.Errorf("%w: maximum %d bytes", ErrMalformedResponse, maxResponseSize)
+			return nil, fmt.Errorf("%w: response exceeds %d bytes", ErrMalformedResponse, maxResponseSize)
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			if err := json.Unmarshal(body, target); err != nil {

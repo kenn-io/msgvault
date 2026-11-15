@@ -321,6 +321,8 @@ func TestMeetingProjectionRebuildsLegacyNestedMeeting(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, st.InitSchema())
 	var version int
-	require.NoError(t, st.db.QueryRowContext(t.Context(), `SELECT projection_version FROM meeting_details WHERE message_id = ?`, id).Scan(&version))
-	assert.Equal(t, meetingProjectionVersion, version)
+	var content string
+	require.NoError(t, st.db.QueryRowContext(t.Context(), `SELECT projection_version, content_json FROM meeting_details WHERE message_id = ?`, id).Scan(&version, &content))
+	assert.Equal(t, 2, version)
+	assert.NotContains(t, content, "nested-action")
 }

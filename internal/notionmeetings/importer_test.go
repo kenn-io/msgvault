@@ -321,7 +321,7 @@ func TestImporterKeepsMeetingWhenIncompleteSectionCannotBeRecovered(t *testing.T
 }
 
 func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
-	for _, failure := range []string{"another meeting", "markdown", "archive", "checkpoint", "completion and failure"} {
+	for _, failure := range []string{"another meeting", "markdown", "archive", "checkpoint", "completion and failure", "recovery cancellation"} {
 		t.Run(failure, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
 			limited := &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}
@@ -354,7 +354,29 @@ func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
 					}
 					require.NoError(t, err)
 				}
-				_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+				ctx := t.Context()
+				if failure == "recovery cancellation" {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithCancel(ctx)
+					defer cancel()
+					source.onBlock = func(id string) {
+						if id == "transcript-1" {
+							cancel()
+						}
+					}
+				}
+				_, err = imp.Import(ctx, ImportOptions{Identifier: "work"})
+				if failure == "recovery cancellation" {
+					require.ErrorIs(t, err, context.Canceled)
+					checkpoint, checkpointErr := st.GetLatestCheckpointedSyncByType(t.Context(), first.SourceID, SourceType)
+					require.NoError(t, checkpointErr)
+					var state syncState
+					require.NoError(t, json.Unmarshal([]byte(checkpoint.CursorBefore.String), &state))
+					require.Len(t, state.Pending, 1)
+					assert.Equal(t, "meeting-1", state.Pending[0].BlockID)
+					assert.True(t, state.Pending[0].Incomplete)
+					source.onBlock = nil
+				}
 				if failure == "checkpoint" || failure == "completion and failure" {
 					require.ErrorContains(t, err, "forced final write failure")
 					if st.IsPostgreSQL() {
@@ -1025,42 +1047,61 @@ func TestImporterHealthyAttendeeResolutionRemainsAuthoritative(t *testing.T) {
 }
 
 func TestImporterContinuesVisibleWorkWhenPendingMeetingCannotBeLoaded(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, source, imp := newImporterFixture(t)
-	empty := paragraph("transcript-1", "", false)
-	source.blocks["transcript-1"] = &empty
-	source.markdown.Markdown = "# Weekly planning"
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"service unavailable", &APIError{Kind: ErrRateLimited, Status: 503, Code: "service_unavailable"}},
+		{"not found", &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, source, imp := newImporterFixture(t)
+			empty := paragraph("transcript-1", "", false)
+			source.blocks["transcript-1"] = &empty
+			source.markdown.Markdown = "# Weekly planning"
 
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(err)
-	state := lastNotionState(t, st, first.SourceID)
-	require.Len(state.Pending, 1)
+			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(err)
+			state := lastNotionState(t, st, first.SourceID)
+			require.Len(state.Pending, 1)
 
-	source.blockErrs = map[string]error{
-		"meeting-1": &APIError{Kind: ErrRateLimited, Status: 503, Code: "service_unavailable"},
+			source.blockErrs = map[string]error{
+				"meeting-1": tc.err,
+			}
+			visible := hydrationMeeting()
+			visible.ID = "meeting-2"
+			visible.LastEditedTime = "2026-08-29T18:01:00Z"
+			visibleRaw, err := json.Marshal(visible)
+			require.NoError(err)
+			source.blocks["meeting-2"] = &Block{
+				Object: "block", ID: "meeting-2", Type: "meeting_notes", Raw: visibleRaw,
+			}
+			transcript := paragraph("transcript-1", "Test Speaker: New visible meeting.", false)
+			source.blocks["transcript-1"] = &transcript
+			source.query.Results = []MeetingNote{visible}
+			imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
+
+			var progress []string
+			second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Progress: func(s string) { progress = append(progress, s) }})
+			require.NoError(err)
+			assert.Equal(int64(1), second.Errors)
+			assert.Equal(int64(1), second.MeetingsAdded)
+			state = lastNotionState(t, st, second.SourceID)
+			require.Len(state.Pending, 1)
+			assert.Equal("meeting-1", state.Pending[0].BlockID)
+			assert.Equal("2026-08-30T00:01:00Z", state.Pending[0].NextAttemptAt)
+			assert.Contains(strings.Join(progress, "\n"), "load failed; retry deferred")
+			delete(source.blockErrs, "meeting-1")
+			source.query.Results = nil
+			imp.now = func() time.Time { return time.Date(2026, 8, 30, 0, 2, 0, 0, time.UTC) }
+			third, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(err)
+			assert.Equal(int64(1), third.MaintenanceRetries)
+			assert.Empty(lastNotionState(t, st, third.SourceID).Pending)
+		})
 	}
-	visible := hydrationMeeting()
-	visible.ID = "meeting-2"
-	visible.LastEditedTime = "2026-08-29T18:01:00Z"
-	visibleRaw, err := json.Marshal(visible)
-	require.NoError(err)
-	source.blocks["meeting-2"] = &Block{
-		Object: "block", ID: "meeting-2", Type: "meeting_notes", Raw: visibleRaw,
-	}
-	transcript := paragraph("transcript-1", "Test Speaker: New visible meeting.", false)
-	source.blocks["transcript-1"] = &transcript
-	source.query.Results = []MeetingNote{visible}
-	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
-
-	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(err)
-	assert.Equal(int64(1), second.Errors)
-	assert.Equal(int64(1), second.MeetingsAdded)
-	state = lastNotionState(t, st, second.SourceID)
-	require.Len(state.Pending, 1)
-	assert.Equal("meeting-1", state.Pending[0].BlockID)
-	assert.Equal("2026-08-30T00:01:00Z", state.Pending[0].NextAttemptAt)
 }
 
 func TestImporterSurfacesPermanentPendingMeetingLoadFailures(t *testing.T) {
@@ -1361,7 +1402,7 @@ func TestDecodeArchivedEvidenceVersionProbe(t *testing.T) {
 	}{
 		{"future incompatible", `{"schema_version":2,"summary":[]}`, true},
 		{"missing", `{}`, false}, {"truncated", `{"schema_version":3`, false},
-		{"current version missing discovery", `{"schema_version":1,"summary":[]}`, false},
+		{"current version missing discovery", `{"schema_version":1}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, found, err := decodeArchivedEvidence([]byte(tc.input), "meeting-1")
@@ -1493,30 +1534,6 @@ func TestImporterHandlesOmittedSections(t *testing.T) {
 	}
 }
 
-func TestImporterRetriesUnavailablePendingMeeting(t *testing.T) {
-	st, source, imp := newImporterFixture(t)
-	source.blockErrs = map[string]error{"notes-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	require.Len(t, lastNotionState(t, st, first.SourceID).Pending, 1)
-	source.query.Results = nil
-	source.blockErrs["meeting-1"] = &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"}
-	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
-	var progress []string
-	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Progress: func(s string) { progress = append(progress, s) }})
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), second.Errors)
-	assert.Contains(t, strings.Join(progress, "\n"), "load failed; retry deferred")
-	require.Len(t, lastNotionState(t, st, second.SourceID).Pending, 1)
-	delete(source.blockErrs, "meeting-1")
-	delete(source.blockErrs, "notes-1")
-	imp.now = func() time.Time { return time.Date(2026, 8, 30, 0, 2, 0, 0, time.UTC) }
-	third, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), third.MaintenanceRetries)
-	assert.Empty(t, lastNotionState(t, st, third.SourceID).Pending)
-}
-
 func TestImporterNewerEvidencePreservesRetryState(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -1582,29 +1599,4 @@ func TestImporterNewerEvidencePreservesRetryState(t *testing.T) {
 			assert.Equal(before.TranscriptRetryUntil, after.TranscriptRetryUntil)
 		})
 	}
-}
-
-func TestImporterKeepsIncompleteRetryAfterRecoveryCancellation(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, source, imp := newImporterFixture(t)
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(err)
-	source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrRateLimited, Status: 429}}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	source.onBlock = func(id string) {
-		if id == "transcript-1" {
-			cancel()
-		}
-	}
-	_, err = imp.Import(ctx, ImportOptions{Identifier: "work"})
-	require.ErrorIs(err, context.Canceled)
-	checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), first.SourceID, SourceType)
-	require.NoError(err)
-	var state syncState
-	require.NoError(json.Unmarshal([]byte(checkpoint.CursorBefore.String), &state))
-	require.Len(state.Pending, 1)
-	assert.Equal("meeting-1", state.Pending[0].BlockID)
-	assert.True(state.Pending[0].Incomplete)
 }

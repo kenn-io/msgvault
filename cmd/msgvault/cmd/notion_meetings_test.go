@@ -18,7 +18,6 @@ type fakeNotionProbe struct {
 	result      *notionmeetings.QueryResult
 	block       *notionmeetings.Block
 	err         error
-	blockErr    error
 	blockErrors map[string]error
 	usersErr    error
 	blockIDs    *[]string
@@ -41,7 +40,7 @@ func (f fakeNotionProbe) RetrieveBlock(_ context.Context, id string) (*notionmee
 	if err := f.blockErrors[id]; err != nil {
 		return nil, err
 	}
-	return f.block, f.blockErr
+	return f.block, nil
 }
 
 func (f fakeNotionProbe) RetrieveBlockChildren(context.Context, string, string) (*notionmeetings.BlockPage, error) {
@@ -82,12 +81,11 @@ func TestRunNotionMeetingsProbeIsContentAndTokenSafe(t *testing.T) {
 		ID: "private-block-id", MeetingNotes: notionmeetings.MeetingNotesData{
 			Title: []notionmeetings.RichText{{PlainText: "Private meeting title"}},
 		},
-		Parent: notionmeetings.Parent{PageID: "private-page-id"},
 	}
 	var out bytes.Buffer
 	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
 		result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{meeting}, HasMore: true},
-		block:  &notionmeetings.Block{Parent: notionmeetings.Parent{PageID: "private-page-id"}},
+		block:  &notionmeetings.Block{},
 	}, nil)
 	require.NoError(t, err)
 	assert.Contains(out.String(), "Returned meetings: 1")
@@ -121,7 +119,7 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
 				result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", MeetingNotes: notionmeetings.MeetingNotesData{Children: sections}}}},
 				block:  &notionmeetings.Block{}, blockIDs: &ids,
-				blockErr: tc.blockErr, blockErrors: map[string]error{"summary-1": tc.sectionErr},
+				blockErrors: map[string]error{"meeting-1": tc.blockErr, "summary-1": tc.sectionErr},
 			}, nil)
 			if tc.wantIDs != nil {
 				assert.Equal(t, tc.wantIDs, ids)

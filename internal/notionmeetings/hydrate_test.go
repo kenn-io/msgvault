@@ -342,16 +342,21 @@ func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		mutate func(*MarkdownPage)
+		err    error
 	}{
-		{"truncated", func(p *MarkdownPage) { p.Truncated = true }},
-		{"unknown blocks", func(p *MarkdownPage) { p.UnknownBlockIDs = []string{"block-1"} }},
+		{"truncated", func(p *MarkdownPage) { p.Truncated = true }, nil},
+		{"unknown blocks", func(p *MarkdownPage) { p.UnknownBlockIDs = []string{"block-1"} }, nil},
+		{"unavailable", nil, &APIError{Kind: ErrRateLimited, Status: 503, Code: "service_unavailable"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			source := completeHydrationSource()
 			empty := paragraph("transcript-1", "", false)
 			source.blocks["transcript-1"] = &empty
-			tc.mutate(source.markdown)
+			if tc.mutate != nil {
+				tc.mutate(source.markdown)
+			}
+			source.markdownErr = tc.err
 			result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 			require.NoError(t, err)
 			assert.Empty(result.Transcript)
@@ -520,7 +525,7 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 					}
 					blocks := make([]Block, 100)
 					for j := range blocks {
-						blocks[j] = Block{ID: fmt.Sprintf("block-%d", i*100+j), Type: "paragraph"}
+						blocks[j] = paragraph(fmt.Sprintf("block-%d", i*100+j), "", false)
 					}
 					pages[cursor] = &BlockPage{Results: blocks, HasMore: i < 99, NextCursor: strconv.Itoa(i + 1)}
 				}
@@ -530,8 +535,16 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 				id := "summary-1"
 				for i := 0; i <= maxHydrationDepth; i++ {
 					next := fmt.Sprintf("depth-%d", i)
-					source.children[id] = map[string]*BlockPage{"": {Results: []Block{{ID: next, Type: "paragraph", HasChildren: true}}}}
+					child := paragraph(next, "", true)
+					source.children[id] = map[string]*BlockPage{"": {Results: []Block{child}}}
 					id = next
+				}
+			}
+			for _, pages := range source.children {
+				for _, page := range pages {
+					var err error
+					page.Raw, err = json.Marshal(page)
+					require.NoError(err)
 				}
 			}
 			result, err := NewHydrator(source).Hydrate(t.Context(), meeting)
@@ -601,6 +614,11 @@ func TestHydratorPaginationFailureDiscardsPartialSection(t *testing.T) {
 			case "first page malformed":
 				source.childErrs = map[string]map[string]error{"notes-1": {"": ErrMalformedResponse}}
 			}
+			for _, page := range source.children["notes-1"] {
+				var err error
+				page.Raw, err = json.Marshal(page)
+				require.NoError(t, err)
+			}
 			result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 			require.NoError(t, err)
 			assert.Contains(result.Incomplete, "notes")
@@ -612,25 +630,17 @@ func TestHydratorPaginationFailureDiscardsPartialSection(t *testing.T) {
 	}
 }
 
-func TestHydratorMarksTemporaryMarkdownFailureIncomplete(t *testing.T) {
-	source := completeHydrationSource()
-	empty := paragraph("transcript-1", "", false)
-	source.blocks["transcript-1"] = &empty
-	source.markdownErr = &APIError{Kind: ErrRateLimited, Status: 503, Code: "service_unavailable"}
-	meeting, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-	require.NoError(t, err)
-	assert.Contains(t, meeting.Incomplete, "transcript")
-}
-
 func TestHydratorSkipsNestedMeetingAndReadsSibling(t *testing.T) {
 	source := completeHydrationSource()
 	var nested Block
-	require.NoError(t, json.Unmarshal([]byte(`{"id":"other-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[{"plain_text":"Another meeting"}]}}`), &nested))
+	require.NoError(t, json.Unmarshal([]byte(`{"object":"block","id":"other-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[{"plain_text":"Another meeting"}]}}`), &nested))
 	sibling := paragraph("sibling", "Sibling notes", true)
 	action := paragraph("action", "Sibling action", false)
 	source.childErrs = map[string]map[string]error{"other-meeting": {"": errors.New("unreadable nested meeting")}}
 	source.children["notes-1"][""] = &BlockPage{Results: []Block{nested, sibling}}
 	source.children["sibling"] = map[string]*BlockPage{"": {Results: []Block{action}}}
+	source.children["notes-1"][""].Raw = json.RawMessage(`{"object":"list","results":[` + string(nested.Raw) + `,` + string(sibling.Raw) + `],"has_more":false}`)
+	source.children["sibling"][""].Raw = json.RawMessage(`{"object":"list","results":[` + string(action.Raw) + `],"has_more":false}`)
 	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(t, err)
 	assert.NotContains(t, hydrated.Notes, "Another meeting")
