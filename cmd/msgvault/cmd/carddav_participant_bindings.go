@@ -29,7 +29,7 @@ func newCardDAVParticipantBindingsCmd() *cobra.Command {
 	command := &cobra.Command{
 		Use: "bind-participants", Short: "Bind exact CardDAV email and phone matches to archived identities",
 		Long: `Reconcile archived identities against retained cards in subscribed CardDAV books.
-Email matches ignore case; phone matches use archive normalization. Shared or
+Email matches ignore case; phone matches ignore formatting. Shared or
 conflicting ownership is reported without merging people. No CardDAV server is
 contacted. Sync also reconciles unchanged cards and newly arrived participants.
 
