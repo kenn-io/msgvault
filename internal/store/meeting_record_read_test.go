@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"testing"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 
 func TestMeetingRecordRejectsFutureProjection(t *testing.T) {
 	for _, tc := range []struct{ name, source string }{
-		{"archive", "archive"},
 		{"calendar", "calendar"},
 		{"selected note", "selected"},
 		{"matched note", "matched"},
@@ -30,8 +28,6 @@ func TestMeetingRecordRejectsFutureProjection(t *testing.T) {
 			var future int64
 			var err error
 			switch tc.source {
-			case "archive":
-				_, err = st.db.Exec(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`, strconv.Itoa(SchemaVersion+1))
 			case "calendar":
 				_, err = st.db.Exec(`UPDATE calendar_events SET projection_version = ? WHERE message_id = ?`, calendarEventProjectionVersion+1, event)
 			case "selected", "matched":
@@ -42,10 +38,7 @@ func TestMeetingRecordRejectsFutureProjection(t *testing.T) {
 				_, err = st.db.Exec(`UPDATE meeting_details SET projection_version = ? WHERE message_id = ?`, meetingProjectionVersion+1, future)
 			}
 			require.NoError(err)
-			refs := []MeetingLinkRef{{Kind: "msg", MessageID: seed}}
-			if tc.source != "archive" {
-				refs = append(refs, MeetingLinkRef{Kind: "evt", MessageID: event})
-			}
+			refs := []MeetingLinkRef{{Kind: "msg", MessageID: seed}, {Kind: "evt", MessageID: event}}
 			for _, ref := range refs {
 				_, err := st.MeetingRecordContext(t.Context(), ref)
 				require.ErrorIs(err, ErrMeetingProjectionUnavailable)

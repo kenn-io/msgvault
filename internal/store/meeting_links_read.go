@@ -315,13 +315,6 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 		return record, err
 	}
 	defer release()
-	version, err := s.SchemaVersionContext(ctx)
-	if err != nil {
-		return record, fmt.Errorf("read meeting archive version: %w", err)
-	}
-	if version > SchemaVersion {
-		return record, ErrMeetingProjectionUnavailable
-	}
 	budget := calrecur.RequestReadBudget
 	var keys []meetingLinkKey
 	var seed CalendarOccurrence
