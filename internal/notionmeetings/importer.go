@@ -182,6 +182,22 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if state.TranscriptRetryUntil == nil {
 		state.TranscriptRetryUntil = map[string]string{}
 	}
+	checkpointPage := ""
+	previousCheckpoint, checkpointErr := imp.store.GetLatestCheckpointedSyncByType(ctx, source.ID, SourceType)
+	if checkpointErr == nil {
+		checkpointPage = previousCheckpoint.CursorBefore.String
+		var pendingState syncState
+		if err := json.Unmarshal([]byte(checkpointPage), &pendingState); err != nil {
+			return sum, fmt.Errorf("decode pending Notion sync state: %w", err)
+		}
+		if err := pendingState.validate(); err != nil {
+			return sum, fmt.Errorf("validate pending Notion sync state: %w", err)
+		}
+		state.Pending = pendingState.Pending
+		state.TranscriptRetryUntil = pendingState.TranscriptRetryUntil
+	} else if !errors.Is(checkpointErr, store.ErrSyncRunNotFound) {
+		return sum, checkpointErr
+	}
 
 	syncID, err := imp.store.StartSync(source.ID, SourceType)
 	if err != nil {
@@ -191,6 +207,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	defer func() {
 		if retErr != nil {
 			_ = scopedStore.FailSyncWithCheckpoint(syncID, retErr.Error(), &store.Checkpoint{
+				PageToken:         checkpointPage,
 				MessagesProcessed: sum.MeetingsProcessed,
 				MessagesAdded:     sum.MeetingsAdded,
 				MessagesUpdated:   sum.MeetingsUpdated,
@@ -328,6 +345,14 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		sum.MeetingsProcessed++
 		hydrated, hydrateErr := hydrator.Hydrate(ctx, meeting)
 		if hydrateErr != nil {
+			if hydrated != nil && len(hydrated.Incomplete) > 0 {
+				previous, exists := pendingByID[id]
+				pending, keep := schedulePending(hydrated, now, previous, exists, retriesUntilComplete(hydrated))
+				if keep {
+					pendingByID[id] = pending
+					next.TranscriptRetryUntil[id] = pending.RetryUntil
+				}
+			}
 			sum.Errors++
 			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: %w", id, hydrateErr))
 			progress(fmt.Sprintf("meeting %s: hydration failed", id))
@@ -372,7 +397,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			if section.name == sectionTranscript && strings.TrimSpace(oldText) == "" {
 				oldText = transcriptFromArchivedBody(archived.Body)
 			}
-			if section.name != sectionTranscript && archived.MessageID != 0 && oldText == "" {
+			if section.name != sectionTranscript && archived.MessageID != 0 && oldText == "" && !(archived.HasEvidence && archived.EmptySections[section.name]) {
 				// The saved section can't be recovered, so rewriting would erase it.
 				leaveUnchanged = true
 			}
@@ -505,10 +530,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		progress("imported Notion meeting " + id)
 	}
 
-	if len(hardErrors) > 0 {
-		retErr = errors.Join(hardErrors...)
-		return sum, retErr
-	}
 	for id, pending := range pendingByID {
 		if pending.Incomplete {
 			sum.PartialCoverage = true
@@ -519,6 +540,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				next.Known[id] = known
 			}
 		}
+	}
+	if len(hardErrors) > 0 {
+		state.Pending = next.Pending
+		state.TranscriptRetryUntil = next.TranscriptRetryUntil
+		checkpointPage, err = state.marshal()
+		if err != nil {
+			return sum, errors.Join(errors.Join(hardErrors...), err)
+		}
+		return sum, errors.Join(hardErrors...)
 	}
 	for id := range next.Known {
 		if _, inWindow := visible[id]; inWindow {
@@ -575,6 +605,7 @@ func retriesUntilComplete(hydrated *HydratedMeeting) bool {
 type archivedMeetingState struct {
 	Evidence         rawEvidence
 	HasEvidence      bool
+	EmptySections    map[string]bool
 	Body             string
 	MessageID        int64
 	ResolvedUsers    []resolvedUser
@@ -625,6 +656,13 @@ func (imp *Importer) archivedState(ctx context.Context, sourceID int64, id strin
 		if json.Unmarshal([]byte(metadata.String), &decoded) == nil {
 			archived.ResolvedUsers = decoded.ResolvedUsers
 			archived.MarkdownFallback = decoded.MarkdownTranscriptFallback
+		}
+		var fields map[string]jsontext.Value
+		if json.Unmarshal([]byte(metadata.String), &fields) == nil {
+			archived.EmptySections = map[string]bool{}
+			for _, name := range []string{"summary", "notes"} {
+				archived.EmptySections[name] = string(fields["has_"+name]) == "false"
+			}
 		}
 	}
 	raw, err := imp.store.GetMessageRawContext(ctx, messageID)

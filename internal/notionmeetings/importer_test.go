@@ -330,6 +330,75 @@ func TestImporterKeepsMeetingWhenIncompleteSectionCannotBeRecovered(t *testing.T
 	}
 }
 
+func TestImporterUpdatesNotesWhenSavedSummaryIsEmpty(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	empty := paragraph("summary-1", "", false)
+	source.blocks["summary-1"] = &empty
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
+	notes := paragraph("notes-1", "Updated notes.", false)
+	source.blocks["notes-1"] = &notes
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	var messageID int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), first.SourceID).Scan(&messageID))
+	body, err := st.GetMessageBodyText(t.Context(), messageID)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Updated notes.")
+}
+
+func TestImporterRetriesIncompleteAfterAnotherMeetingFails(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	source.blocks["meeting-1"].Raw = hydrationMeeting().Raw
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	second := hydrationMeeting()
+	second.ID = "meeting-2"
+	source.query.Results = append(source.query.Results, second)
+	source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.Error(t, err)
+	source.query.Results = nil
+	delete(source.blockErrs, "summary-1")
+	updated := paragraph("summary-1", "Recovered summary.", false)
+	source.blocks["summary-1"] = &updated
+	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
+	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), result.MaintenanceRetries)
+	var messageID int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), first.SourceID).Scan(&messageID))
+	body, err := st.GetMessageBodyText(t.Context(), messageID)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Recovered summary.")
+}
+
+func TestImporterRetriesIncompleteAfterMarkdownFailure(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	source.blocks["meeting-1"].Raw = hydrationMeeting().Raw
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
+	source.markdownErr = errors.New("markdown unavailable")
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.Error(t, err)
+	source.query.Results = nil
+	delete(source.blockErrs, "summary-1")
+	source.markdownErr = nil
+	updated := paragraph("summary-1", "Recovered summary.", false)
+	source.blocks["summary-1"] = &updated
+	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
+	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), result.MaintenanceRetries)
+	var messageID int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), first.SourceID).Scan(&messageID))
+	body, err := st.GetMessageBodyText(t.Context(), messageID)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Recovered summary.")
+}
+
 func TestImporterDetectsHydratedSnapshotChangesWithoutDiscoveryEdit(t *testing.T) {
 	tests := []struct {
 		name     string

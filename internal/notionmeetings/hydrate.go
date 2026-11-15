@@ -144,7 +144,11 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 		if err != nil {
 			reason := incompleteReason(ctx, err)
 			if reason == "" {
-				return nil, fmt.Errorf("hydrate %s block %s: %w", section.name, section.id, err)
+				err = fmt.Errorf("hydrate %s block %s: %w", section.name, section.id, err)
+				if len(result.Incomplete) > 0 {
+					return result, err
+				}
+				return nil, err
 			}
 			result.markIncomplete(section.name, reason)
 			continue
@@ -153,10 +157,16 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 	}
 
 	if err := h.hydratePageMarkdown(ctx, result); err != nil {
+		if len(result.Incomplete) > 0 {
+			return result, err
+		}
 		return nil, err
 	}
 
 	if err := h.resolveAttendees(ctx, result); err != nil {
+		if len(result.Incomplete) > 0 {
+			return result, err
+		}
 		return nil, err
 	}
 	return result, nil
