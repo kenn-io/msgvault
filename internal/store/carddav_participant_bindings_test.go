@@ -1105,9 +1105,11 @@ func TestCardDAVParticipantBindingPendingNameConflictBlocksSharedAddress(t *test
 	require.NoError(err)
 	result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
 	require.NoError(err)
-	require.Len(result.ConflictDetails, 1)
-	assert.Equal("shared_address", result.ConflictDetails[0].Reason)
-	assert.ElementsMatch([]int64{firstPerson.ID, secondPerson.ID}, result.ConflictDetails[0].PersonIDs)
+	assert.ElementsMatch([]store.CardDAVParticipantBindingConflict{
+		{ParticipantID: id, PersonIDs: []int64{firstPerson.ID, secondPerson.ID}, Reason: "shared_address"},
+		{ParticipantID: localOnly, PersonIDs: []int64{firstPerson.ID, secondPerson.ID}, Reason: "shared_address"},
+		{ParticipantID: remoteOnly, PersonIDs: []int64{firstPerson.ID, secondPerson.ID}, Reason: "shared_address"},
+	}, result.ConflictDetails)
 	bound, err := st.PersonForParticipantsContext(t.Context(), []int64{id})
 	require.NoError(err)
 	assert.Nil(bound)
@@ -1117,7 +1119,6 @@ func TestCardDAVParticipantBindingPendingNameConflictBlocksSharedAddress(t *test
 	for _, participant := range []int64{localOnly, remoteOnly} {
 		bound, err = st.PersonForParticipantsContext(t.Context(), []int64{participant})
 		require.NoError(err)
-		require.NotNil(bound)
-		assert.Equal(secondPerson.ID, bound.ID)
+		assert.Nil(bound)
 	}
 }

@@ -77,8 +77,8 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 		if hasConflict {
 			local, _ := cardDAVParticipantAddresses(localBody)
 			remote, _ := cardDAVParticipantAddresses(remoteBody)
-			for key := range local {
-				if _, ok := remote[key]; ok {
+			for _, addresses := range []map[cardDAVParticipantAddress]struct{}{local, remote} {
+				for key := range addresses {
 					if conflicted[key] == nil {
 						conflicted[key] = cardDAVPersonSet{}
 					}
