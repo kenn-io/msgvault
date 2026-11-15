@@ -1,9 +1,11 @@
 package tiktok
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"io"
@@ -306,8 +308,9 @@ func (r *messageRun) persist(ctx context.Context, m BusinessMessage, event strin
 		return err
 	}
 	prior, exists := existing[key]
+	var saved sql.NullString
 	if exists {
-		saved, err := r.imp.store.GetMessageMetadataContext(ctx, prior.ID)
+		saved, err = r.imp.store.GetMessageMetadataContext(ctx, prior.ID)
 		if err != nil {
 			return err
 		}
@@ -359,12 +362,34 @@ func (r *messageRun) persist(ctx context.Context, m BusinessMessage, event strin
 	}
 	body := m.body()
 	message := &store.Message{SourceID: r.source.ID, SourceMessageID: key, MessageType: MessagesSourceType, SentAt: sql.NullTime{Time: time.UnixMilli(int64(m.Timestamp)).UTC(), Valid: true}, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: self, ReplyToMessageID: parent, Snippet: sql.NullString{String: body, Valid: true}, SizeEstimate: int64(len(body)), PreserveAttachmentStats: true}
-	messageID, err := r.imp.store.PersistMessageContext(ctx, &store.MessagePersistData{
+	snapshot := &store.MessagePersistData{
 		Message: message, Conversation: &store.ConversationPersistData{SourceConversationID: string(m.ConversationID), ConversationType: "direct_chat", Participants: participants, PreserveExistingParticipants: true},
 		Metadata: &sql.NullString{String: string(meta), Valid: true}, BodyText: sql.NullString{String: body, Valid: true}, RawMIME: raw, RawFormat: messageFormat, Recipients: recipients, PreserveLabels: true, FTS: &store.FTSDoc{Body: body, FromAddr: fromName, ToAddrs: toName},
-	})
-	if err != nil {
-		return err
+	}
+	// Identity was checked above. Compare the archived snapshot before writing
+	// it again: replacing unchanged recipients invalidates analytics. Compare
+	// raw JSON without layout differences or rounding provider numbers.
+	unchanged := false
+	message.ConversationID = prior.ConversationID
+	if exists && prior.Matches(message, prior.Raw) && prior.Subject == message.Subject &&
+		tiktokEvidenceEqual(prior.Raw, raw) && tiktokEvidenceEqual([]byte(saved.String), meta) {
+		unchanged, err = r.imp.store.MessageContentMatchesContext(ctx, prior.ID, snapshot.BodyText, *snapshot.FTS)
+		if err != nil {
+			return err
+		}
+		if unchanged {
+			unchanged, err = r.imp.store.MessageRecipientsMatchContext(ctx, prior.ID, recipients)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	messageID := prior.ID
+	if !unchanged {
+		messageID, err = r.imp.store.PersistMessageContext(ctx, snapshot)
+		if err != nil {
+			return err
+		}
 	}
 	r.sum.MessagesProcessed++
 	if !exists {
@@ -376,8 +401,21 @@ func (r *messageRun) persist(ctx context.Context, m BusinessMessage, event strin
 	}
 	r.conversations[target.ConversationID] = struct{}{}
 	if parentKey != "" {
-		if err := r.imp.store.SetReplyToContext(ctx, r.source.ID, key, parentKey); err != nil {
+		// Metadata and the generic reply link commit separately. An identical
+		// retry must finish an interrupted replacement, including a missing parent.
+		current, err := r.imp.store.GetMessageReplyToMessageIDContext(ctx, messageID)
+		if err != nil {
 			return err
+		}
+		parents, err := r.imp.store.MessageExistsBatchContext(ctx, r.source.ID, []string{parentKey})
+		if err != nil {
+			return err
+		}
+		parentID, found := parents[parentKey]
+		if current != (sql.NullInt64{Int64: parentID, Valid: found}) {
+			if err := r.imp.store.SetReplyToContext(ctx, r.source.ID, key, parentKey); err != nil {
+				return err
+			}
 		}
 	}
 	if !m.media() {
@@ -395,6 +433,16 @@ func (r *messageRun) persist(ctx context.Context, m BusinessMessage, event strin
 		}
 	}
 	return r.attach(ctx, messageID, m)
+}
+
+// tiktokEvidenceEqual ignores layout without rounding archived provider numbers.
+func tiktokEvidenceEqual(stored, incoming []byte) bool {
+	if bytes.Equal(stored, incoming) {
+		return true
+	}
+	left, right := jsontext.Value(stored).Clone(), jsontext.Value(incoming).Clone()
+	return left.Canonicalize(jsontext.CanonicalizeRawInts(false), jsontext.CanonicalizeRawFloats(false)) == nil &&
+		right.Canonicalize(jsontext.CanonicalizeRawInts(false), jsontext.CanonicalizeRawFloats(false)) == nil && bytes.Equal(left, right)
 }
 
 func (r *messageRun) attach(ctx context.Context, messageID int64, message BusinessMessage) error {
