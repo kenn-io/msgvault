@@ -331,8 +331,7 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 			}
 		}
 
-		_, err := s.reconcileCardDAVParticipantBindingsTx(ctx, tx, false)
-		if err != nil {
+		if err := s.reconcileCardDAVParticipantBindingsTx(ctx, tx, false); err != nil {
 			return err
 		}
 
