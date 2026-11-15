@@ -26,6 +26,9 @@ func cardDAVParticipantAddressValue(kind ContactAddressKind, raw string) (cardDA
 			}
 			raw = vcard.TelephoneNumber(raw)
 		}
+		if !strings.HasPrefix(raw, "+") && !strings.HasPrefix(raw, "00") {
+			return cardDAVParticipantAddress{}, false
+		}
 		for i, r := range raw {
 			if r >= '0' && r <= '9' {
 				continue
@@ -33,9 +36,6 @@ func cardDAVParticipantAddressValue(kind ContactAddressKind, raw string) (cardDA
 			if unicode.IsSpace(r) || strings.ContainsRune("()-./", r) || r == '+' && i == 0 {
 				continue
 			}
-			return cardDAVParticipantAddress{}, false
-		}
-		if !strings.HasPrefix(raw, "+") && !strings.HasPrefix(raw, "00") {
 			return cardDAVParticipantAddress{}, false
 		}
 	}

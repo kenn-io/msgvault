@@ -270,9 +270,9 @@ the book; resolve those dependencies first.
 
 After upgrading to a version with participant binding, the next CardDAV sync
 binds subscribed contacts to matching archived participants. Email matches ignore
-case. Phone matches require a country code, with `+`, `00`, a numeric `tel:`
-phone context. Names never establish a match. Phone extensions and service-scoped
-handles are excluded.
+case. Phone matches require `+`, `00`, or a numeric `tel:` phone context before
+using the archive's phone normalization. Names never establish
+a match. Phone extensions and service-scoped handles are excluded.
 
 Each match includes that participant's existing identity links. A saved person
 can cover several identity clusters; CardDAV does not create new links between
