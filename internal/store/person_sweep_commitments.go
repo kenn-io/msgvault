@@ -113,17 +113,15 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		}
 	}
 	for i, promise := range result.Output.Promises {
-		if len(targets[i]) != 1 {
-			continue
+		// Reuse a prior decision only for a one-to-one match. Ambiguous matches
+		// keep the parsed identity so an old decision cannot hide the promise.
+		if len(targets[i]) == 1 {
+			for target := range targets[i] {
+				if counts[target] == 1 {
+					promise.TargetKey = target
+				}
+			}
 		}
-		var target string
-		for key := range targets[i] {
-			target = key
-		}
-		if counts[target] > 1 {
-			continue
-		}
-		promise.TargetKey = target
 		descriptor := personfacts.TargetDescriptor{Kind: personfacts.TargetCommitment,
 			Key: promise.TargetKey, Slug: "commitment", ValueType: personfacts.ValueCommitment,
 			Cardinality: personfacts.CardinalitySingle, Sensitive: true, MaxLength: 240}

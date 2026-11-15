@@ -181,12 +181,8 @@ func quoteHasYearlessDate(quote string, due, day time.Time) bool {
 func quoteHasByWeekday(quote string, due, day time.Time) bool {
 	days := (int(due.Weekday()) - int(day.Weekday()) + 7) % 7
 	phrase := "by " + strings.ToLower(due.Weekday().String())
-	end := strings.TrimRightFunc(quote, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsPunct(r) })
-	if day.AddDate(0, 0, days).Format(time.DateOnly) == due.Format(time.DateOnly) && strings.HasSuffix(end, phrase) {
-		before, _ := utf8.DecodeLastRuneInString(end[:len(end)-len(phrase)])
-		return !unicode.IsLetter(before) && !unicode.IsDigit(before)
-	}
-	return false
+	return day.AddDate(0, 0, days).Format(time.DateOnly) == due.Format(time.DateOnly) &&
+		quoteHasPhrase(quote, phrase, nil)
 }
 
 // MatchesQuote verifies an exact authored quote at its original-body rune offsets.

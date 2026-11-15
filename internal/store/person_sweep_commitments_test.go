@@ -169,17 +169,30 @@ func TestCommitmentDecisionSurvivesShiftedQuote(t *testing.T) {
 			items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, true)
 			r.NoError(err)
 			if tc.resweep != "" {
-				r.Len(items, 2)
+				wantItems, wantOpen := 3, 2
+				if tc.resweep == "split" {
+					wantItems, wantOpen = 4, 3
+				}
+				r.Len(items, wantItems)
 				states := map[string]string{}
 				for _, item := range items {
 					states[item.Quote] = item.State
 				}
 				if tc.resweep == "split" {
 					a.Equal(LoopStateDone, states[combined])
+					a.Equal(LoopStateOpen, states[quote])
+					a.Equal(LoopStateOpen, states[second])
 					a.Equal(LoopStateOpen, states[third])
 				} else {
 					a.Equal(LoopStateDone, states[quote])
 					a.Equal(LoopStateOpen, states[second])
+					a.Equal(LoopStateOpen, states[combined])
+				}
+				openItems, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
+				r.NoError(err)
+				r.Len(openItems, wantOpen)
+				for _, item := range openItems {
+					a.Equal(LoopStateOpen, item.State)
 				}
 			} else if tc.identity == "reused" {
 				r.Len(items, 1)

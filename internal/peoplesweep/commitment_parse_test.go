@@ -115,35 +115,38 @@ func TestParseCommitmentsKeepsOnlyCitedDueDates(t *testing.T) {
 		{"tomorrow", "I will call tomorrow.", "I will call tomorrow.", "2026-11-11", true},
 		{"wrong tomorrow", "I will call tomorrow.", "I will call tomorrow.", "2026-11-12", false},
 		{"weekday", "I will call by Friday.", "I will call by Friday.", "2026-11-13", true},
+		{"weekday with trailing prose", "I'll send the draft by Friday, thanks!", "I'll send the draft by Friday, thanks!", "2026-11-13", true},
 		{"wrong weekday date", "I will call by Friday.", "I will call by Friday.", "2026-11-20", false},
 		{"ambiguous next weekday", "I will call by next Friday.", "I will call by next Friday.", "2026-11-20", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
 			now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 			source := CommitmentSource{ID: "m1", MessageID: 1, Direction: CommitmentOwedTo, Text: tc.text, EventTime: now}
 			window := CommitmentWindow{PersonID: 2, Sources: []CommitmentSource{source}, Now: now, Timezone: "UTC"}
 			output := jsontext.Value(fmt.Sprintf(`{"promises":[{"source_id":"m1","direction":"owed_to","quote":%q,"start":0,"end":%d,"summary":"Call","due_on":%q}]}`, tc.quote, len([]rune(tc.quote)), tc.due))
 			parsed, err := ParseCommitments(output, window)
-			require.NoError(t, err)
-			require.Len(t, parsed.Promises, 1)
+			r.NoError(err)
+			r.Len(parsed.Promises, 1)
 			if tc.keep {
-				require.NotNil(t, parsed.Promises[0].DueOn)
-				assert.Equal(t, tc.due, *parsed.Promises[0].DueOn)
+				r.NotNil(parsed.Promises[0].DueOn)
+				a.Equal(tc.due, *parsed.Promises[0].DueOn)
 			} else {
-				assert.Nil(t, parsed.Promises[0].DueOn)
+				a.Nil(parsed.Promises[0].DueOn)
 			}
 		})
 	}
 	t.Run("weekday uses source time in configured timezone", func(t *testing.T) {
+		r, a := require.New(t), assert.New(t)
 		const quote = "I will call by Friday."
 		event := time.Date(2026, 11, 14, 2, 0, 0, 0, time.UTC)
 		source := CommitmentSource{ID: "m1", MessageID: 1, Direction: CommitmentOwedTo, Text: quote, EventTime: event}
 		window := CommitmentWindow{PersonID: 2, Sources: []CommitmentSource{source}, Now: event.AddDate(0, 0, 10), Timezone: "America/New_York"}
 		output := jsontext.Value(`{"promises":[{"source_id":"m1","direction":"owed_to","quote":"I will call by Friday.","start":0,"end":22,"summary":"Call","due_on":"2026-11-13"}]}`)
 		parsed, err := ParseCommitments(output, window)
-		require.NoError(t, err)
-		require.Len(t, parsed.Promises, 1)
-		require.NotNil(t, parsed.Promises[0].DueOn)
-		assert.Equal(t, "2026-11-13", *parsed.Promises[0].DueOn)
+		r.NoError(err)
+		r.Len(parsed.Promises, 1)
+		r.NotNil(parsed.Promises[0].DueOn)
+		a.Equal("2026-11-13", *parsed.Promises[0].DueOn)
 	})
 }

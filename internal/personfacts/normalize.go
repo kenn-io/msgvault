@@ -160,17 +160,9 @@ func normalizeCommitmentValue(submitted jsontext.Value) ([]byte, error) {
 	if err := decodeJSONValue(submitted, &value); err != nil {
 		return nil, fmt.Errorf("decode commitment: %w", err)
 	}
-	if value.Direction != "owed_by" && value.Direction != "owed_to" {
-		return nil, errors.New("invalid commitment direction")
-	}
 	value.Summary = strings.TrimSpace(value.Summary)
 	if value.Summary == "" || utf8.RuneCountInString(value.Summary) > 240 {
 		return nil, errors.New("commitment summary must contain 1 to 240 characters")
-	}
-	if value.DueOn != nil {
-		if _, err := time.Parse(time.DateOnly, *value.DueOn); err != nil {
-			return nil, fmt.Errorf("invalid commitment due date: %w", err)
-		}
 	}
 	return json.Marshal(value, json.Deterministic(true))
 }
