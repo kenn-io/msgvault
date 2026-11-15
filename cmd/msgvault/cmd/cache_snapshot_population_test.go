@@ -234,6 +234,7 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 			t.Cleanup(func() { require.NoError(duck.Close()) })
 			rows, err := duck.QueryContext(t.Context(), `SELECT message_id, group_id FROM read_parquet(?)`, filepath.Join(incDir, "meeting_groups", "*.parquet"))
 			require.NoError(err)
+			defer func() { require.NoError(rows.Close()) }()
 			actualGroups := make(map[int64]int64)
 			for rows.Next() {
 				var messageID, groupID int64
@@ -241,7 +242,6 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 				actualGroups[messageID] = groupID
 			}
 			require.NoError(rows.Err())
-			require.NoError(rows.Close())
 			assert.Equal(map[int64]int64{1: 1, 3: 3}, actualGroups)
 			_, err = buildCache(t.Context(), dbPath, fullDir, true)
 			require.NoError(err)
