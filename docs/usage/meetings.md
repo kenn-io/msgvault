@@ -883,12 +883,15 @@ incomplete. msgvault keeps its archived text and evidence and retries every six
 hours, including after the meeting leaves the visible query window. The deadline
 is the later of seven days after the meeting ended and 48 hours after the retry
 starts. An active deadline isn't extended; an incomplete meeting starts a new
-window after expiry, including when it is outside the visible query.
+window after expiry, including when it is outside the visible query. A missing
+transcript without an incomplete section stops retrying at its deadline.
 The sync summary reports partial coverage when a section is incomplete or the
 Notion query reports more meetings.
 
 When a transcript read is incomplete, sync retains the saved transcript and
-reports that it did so. A complete empty transcript clears saved transcript text.
+reports that it did so. An omitted transcript block also keeps saved text; omitted
+summary and notes blocks clear their sections. A complete empty transcript clears
+saved transcript text.
 An archive with a newer
 evidence version is refused before that meeting is updated, even if its other
 fields have changed shape. Existing `[[notion_meetings]]` settings need no

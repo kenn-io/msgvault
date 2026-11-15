@@ -82,6 +82,7 @@ type pendingTranscript struct {
 	BlockID       string `json:"block_id"`
 	NextAttemptAt string `json:"next_attempt_at"`
 	RetryUntil    string `json:"retry_until"`
+	Incomplete    bool   `json:"incomplete,omitempty"`
 }
 
 type Coverage struct {
@@ -257,6 +258,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 
 	now := imp.now().UTC()
 	for id, pending := range pendingByID {
+		if pendingExpired(pending, now) && !pending.Incomplete {
+			delete(pendingByID, id)
+			continue
+		}
 		if !pendingDue(pending, now) {
 			continue
 		}
@@ -290,6 +295,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	for _, meeting := range result.Results {
 		id := meeting.ID
 		if due[id] {
+			continue
+		}
+		if pending, ok := pendingByID[id]; ok && pending.Incomplete {
 			continue
 		}
 		if !opts.CreatedAfter.IsZero() && candidateTime(meeting).Before(opts.CreatedAfter) {
@@ -341,8 +349,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			{"notes", &hydrated.Notes, archived.Evidence.Canonical.Notes, archived.Evidence.Notes},
 			{"transcript", &hydrated.Transcript, archived.Evidence.Canonical.Transcript, archived.Evidence.Transcript},
 		}
+		var retainedIDs = map[string]string{}
+		var previousDiscovery MeetingNote
+		if archived.HasEvidence {
+			_ = json.Unmarshal(archived.Evidence.Discovery, &previousDiscovery)
+		}
 		for _, section := range sections {
-			if *section.text != "" || !slices.Contains(hydrated.Incomplete, section.name) {
+			incomplete := slices.Contains(hydrated.Incomplete, section.name)
+			omittedTranscript := section.name == "transcript" && meeting.MeetingNotes.Children.TranscriptBlockID == ""
+			if !incomplete && !omittedTranscript {
 				continue
 			}
 			oldText := section.oldText
@@ -353,9 +368,24 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				continue
 			}
 			*section.text = oldText
+			if section.name == "transcript" {
+				providerTranscriptMissing = true
+				hydrated.PageMarkdown = nil
+				hydrated.MarkdownTranscriptFallback = false
+			}
 			if archived.HasEvidence {
 				if rawTree := archived.RawTrees[section.name]; len(rawTree) > 0 {
 					hydrated.keptRawTrees[section.name] = append(jsontext.Value(nil), rawTree...)
+					switch section.name {
+					case "summary":
+						if previousDiscovery.MeetingNotes.Children.SummaryBlockID != "" && previousDiscovery.MeetingNotes.Children.SummaryBlockID != meeting.MeetingNotes.Children.SummaryBlockID {
+							retainedIDs["summary_block_id"] = previousDiscovery.MeetingNotes.Children.SummaryBlockID
+						}
+					case "notes":
+						if previousDiscovery.MeetingNotes.Children.NotesBlockID != "" && previousDiscovery.MeetingNotes.Children.NotesBlockID != meeting.MeetingNotes.Children.NotesBlockID {
+							retainedIDs["notes_block_id"] = previousDiscovery.MeetingNotes.Children.NotesBlockID
+						}
+					}
 				}
 				markdownPresent := len(archived.Evidence.PageMarkdown) > 0 && string(archived.Evidence.PageMarkdown) != "null"
 				if section.name == "transcript" && archived.MarkdownFallback {
@@ -367,6 +397,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				}
 			}
 			hydrated.Warnings = append(hydrated.Warnings, "provider temporarily omitted the "+section.name+"; preserved the archived "+section.name)
+		}
+		if len(retainedIDs) > 0 {
+			var discoveryErr error
+			hydrated.Discovery.Raw, discoveryErr = retainDiscoverySectionIDs(hydrated.Discovery.Raw, retainedIDs)
+			if discoveryErr != nil {
+				sum.Errors++
+				hardErrors = append(hardErrors, fmt.Errorf("meeting %s: retain section IDs: %w", id, discoveryErr))
+				continue
+			}
 		}
 		if hydrated.AttendeeResolutionDegraded {
 			preserveArchivedAttendees(hydrated, archived.ResolvedUsers)
@@ -391,13 +430,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				previousPending.RetryUntil = retained
 				hasPrevious = true
 			}
-			pending, keep := schedulePending(hydrated, now, previousPending, hasPrevious)
+			pending, keep := schedulePending(hydrated, now, previousPending, hasPrevious, len(hydrated.Incomplete) > 0)
 			if keep {
 				pendingByID[id] = pending
 				next.TranscriptRetryUntil[id] = pending.RetryUntil
 			} else {
 				delete(pendingByID, id)
-				hydrated.Warnings = append(hydrated.Warnings, "transcript retry window expired")
 			}
 		} else {
 			delete(pendingByID, id)
@@ -455,6 +493,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		return sum, retErr
 	}
 	for id, pending := range pendingByID {
+		if pending.Incomplete {
+			sum.PartialCoverage = true
+		}
 		next.Pending = append(next.Pending, pending)
 		if known, ok := state.Known[id]; ok {
 			if _, exists := next.Known[id]; !exists {
@@ -607,6 +648,39 @@ func decodeArchivedEvidence(raw []byte, expectedID string) (rawEvidence, map[str
 		return rawEvidence{}, nil, false, nil
 	}
 	return evidence, fields, true, nil
+}
+
+func retainDiscoverySectionIDs(raw jsontext.Value, ids map[string]string) (jsontext.Value, error) {
+	var discovery, meeting, children map[string]jsontext.Value
+	if err := json.Unmarshal(raw, &discovery); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(discovery["meeting_notes"], &meeting); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(meeting["children"], &children); err != nil {
+		return nil, err
+	}
+	for key, id := range ids {
+		if id != "" {
+			value, err := json.Marshal(id)
+			if err != nil {
+				return nil, err
+			}
+			children[key] = value
+		}
+	}
+	value, err := json.Marshal(children)
+	if err != nil {
+		return nil, err
+	}
+	meeting["children"] = value
+	value, err = json.Marshal(meeting)
+	if err != nil {
+		return nil, err
+	}
+	discovery["meeting_notes"] = value
+	return json.Marshal(discovery)
 }
 
 func transcriptFromArchivedBody(body string) string {
@@ -860,11 +934,14 @@ func candidateTime(meeting MeetingNote) time.Time {
 	return time.Time{}
 }
 
-func schedulePending(meeting *HydratedMeeting, now time.Time, previous pendingTranscript, hasPrevious bool) (pendingTranscript, bool) {
+func schedulePending(meeting *HydratedMeeting, now time.Time, previous pendingTranscript, hasPrevious, incomplete bool) (pendingTranscript, bool) {
 	_, endedAt := meeting.times()
 	retryUntil := time.Time{}
 	if hasPrevious {
 		retryUntil, _ = time.Parse(time.RFC3339, previous.RetryUntil)
+	}
+	if hasPrevious && !retryUntil.After(now) && !incomplete {
+		return pendingTranscript{}, false
 	}
 	if !retryUntil.After(now) {
 		retryUntil = now.Add(unknownTranscriptRetrySpan)
@@ -881,6 +958,7 @@ func schedulePending(meeting *HydratedMeeting, now time.Time, previous pendingTr
 		BlockID:       meeting.Discovery.ID,
 		NextAttemptAt: next.UTC().Format(time.RFC3339),
 		RetryUntil:    retryUntil.UTC().Format(time.RFC3339),
+		Incomplete:    incomplete,
 	}, true
 }
 
