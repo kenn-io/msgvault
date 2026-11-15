@@ -290,13 +290,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		meeting, loadErr := imp.retrieveMeeting(ctx, id)
 		if loadErr != nil {
-			missing := false
-			if api, ok := errors.AsType[*APIError](loadErr); ok {
-				missing = api.Status == 404 && api.Code == "object_not_found"
-			}
-			if !missing || ctx.Err() != nil {
-				sum.Errors++
-			}
+			sum.Errors++
 			if ctx.Err() != nil || !transcriptTemporarilyUnavailable(loadErr) {
 				return sum, fmt.Errorf("load pending Notion meeting %s: %w", id, loadErr)
 			}
@@ -306,12 +300,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			pending.NextAttemptAt = now.Add(transcriptRetryCadence).Format(time.RFC3339)
 			pendingByID[id] = pending
 			next.TranscriptRetryUntil[id] = pending.RetryUntil
-			if missing {
-				sum.PartialCoverage = true
-				progress("pending Notion meeting " + id + ": unavailable; will retry")
-			} else {
-				progress("pending Notion meeting " + id + ": load failed; retry deferred")
-			}
+			progress("pending Notion meeting " + id + ": load failed; retry deferred")
 			continue
 		}
 		work[id] = meeting
@@ -588,11 +577,6 @@ func (imp *Importer) retrieveMeeting(ctx context.Context, id string) (MeetingNot
 		return MeetingNote{}, errors.New("retrieved block has unexpected ID or type")
 	}
 	return meeting, nil
-}
-
-// TemporarySectionError reports whether a section read can be retried later.
-func TemporarySectionError(ctx context.Context, err error) bool {
-	return ctx.Err() == nil && transcriptTemporarilyUnavailable(err)
 }
 
 type archivedMeetingState struct {

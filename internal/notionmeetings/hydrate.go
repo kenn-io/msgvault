@@ -171,7 +171,7 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 //nolint:nilerr // budget exhaustion marks the transcript incomplete for retry
 func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeeting) error {
 	pageID := strings.TrimSpace(result.Discovery.Parent.PageID)
-	if pageID == "" || strings.TrimSpace(result.Transcript) != "" || slices.Contains(result.Incomplete, sectionTranscript) {
+	if pageID == "" || strings.TrimSpace(result.Transcript) != "" {
 		return nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -183,7 +183,7 @@ func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeet
 	}
 	page, err := h.source.RetrievePageMarkdown(ctx, pageID, true)
 	if err != nil {
-		if ctx.Err() == nil && (transcriptTemporarilyUnavailable(err) || errors.Is(err, ErrMalformedResponse) || errors.Is(err, ErrResponseTooLarge)) {
+		if ctx.Err() == nil && (transcriptTemporarilyUnavailable(err) || errors.Is(err, ErrMalformedResponse)) {
 			result.markIncomplete(sectionTranscript, "markdown")
 			return nil
 		}
@@ -201,7 +201,7 @@ func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeet
 	} else if markdown != "" {
 		result.Transcript = markdown
 		result.MarkdownTranscriptFallback = true
-		result.Warnings = append(result.Warnings, "structured transcript was empty; used page Markdown transcript")
+		result.Warnings = append(result.Warnings, "used page Markdown transcript")
 	}
 	return nil
 }
@@ -496,9 +496,6 @@ func incompleteReason(ctx context.Context, err error) string {
 		}
 		return section.reason
 	}
-	if errors.Is(err, ErrResponseTooLarge) {
-		return "limit: response size limit"
-	}
 	if transcriptTemporarilyUnavailable(err) {
 		return "provider"
 	}
@@ -509,7 +506,7 @@ func transcriptTemporarilyUnavailable(err error) bool {
 		return true
 	}
 	if api, ok := errors.AsType[*APIError](err); ok {
-		return api.Status >= 500 || api.Status == 429 || api.Status == 404 && api.Code == "object_not_found"
+		return api.Status == 404 && api.Code == "object_not_found"
 	}
 	var network net.Error
 	return errors.As(err, &network) || errors.Is(err, io.EOF)

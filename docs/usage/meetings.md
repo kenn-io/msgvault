@@ -889,9 +889,10 @@ When a transcript is missing without an incomplete section, background retries
 stop at the deadline. The sync summary reports partial coverage when a section
 is incomplete or the Notion query reports more meetings.
 
-When a transcript read is incomplete and no complete page transcript is available,
-sync retains the saved transcript. A complete empty or omitted transcript clears
-saved text when no page Markdown supplies it. Omitted summary and notes blocks clear their sections. A
+When a transcript read is incomplete, sync uses a complete page transcript if no
+transcript is saved. It retains saved transcript text and retries the section.
+A complete empty or omitted transcript clears saved text when no page Markdown
+supplies it. Omitted summary and notes blocks clear their sections. A
 meeting whose saved evidence has a newer version keeps that evidence, and the sync
 reports an error for it.
 Existing `[[notion_meetings]]` settings need no changes. Other hard

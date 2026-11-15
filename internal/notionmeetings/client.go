@@ -32,7 +32,6 @@ var (
 	ErrUserInformation   = errors.New("notion integration lacks User Information access")
 	ErrRateLimited       = errors.New("notion rate limit retry budget exhausted")
 	ErrMalformedResponse = errors.New("notion returned a malformed response")
-	ErrResponseTooLarge  = errors.New("notion response exceeds size limit")
 	ErrProvider          = errors.New("notion API request failed")
 )
 
@@ -311,7 +310,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, payload any, t
 			return nil, fmt.Errorf("close Notion response: %w", closeErr)
 		}
 		if int64(len(body)) > maxResponseSize {
-			return nil, fmt.Errorf("%w: maximum %d bytes", ErrResponseTooLarge, maxResponseSize)
+			return nil, fmt.Errorf("%w: maximum %d bytes", ErrMalformedResponse, maxResponseSize)
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			if err := json.Unmarshal(body, target); err != nil {

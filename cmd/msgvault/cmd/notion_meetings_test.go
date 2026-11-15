@@ -108,7 +108,6 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 	}{
 		{name: "available", wantIDs: []string{"meeting-1", "summary-1"}},
 		{name: "block unavailable", blockErr: blockUnavailable, wantErr: blockUnavailable},
-		{name: "temporary section failure", sectionErr: &notionmeetings.APIError{Kind: notionmeetings.ErrProvider, Status: 503}, want: "Read Content: not tested (section temporarily unavailable)", wantIDs: []string{"meeting-1", "summary-1"}},
 		{name: "section permission denied", sectionErr: &notionmeetings.APIError{Kind: notionmeetings.ErrUnauthorized, Status: 401}, wantErr: notionmeetings.ErrUnauthorized, wantIDs: []string{"meeting-1", "summary-1"}},
 		{name: "no section blocks", sections: &notionmeetings.MeetingChildren{}, want: "Read Content: not tested (no section blocks)", wantIDs: []string{"meeting-1"}},
 	} {

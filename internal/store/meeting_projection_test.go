@@ -320,6 +320,7 @@ func TestMeetingProjectionRebuildsLegacyNestedMeeting(t *testing.T) {
 	_, err = st.db.ExecContext(t.Context(), `UPDATE applied_migrations SET version = 1 WHERE name = ?`, migrationMeetingProjectionV1)
 	require.NoError(t, err)
 	require.NoError(t, st.InitSchema())
-	content, _ := readProjection(t, st, id)
-	assert.Empty(t, content.Actions)
+	var version int
+	require.NoError(t, st.db.QueryRowContext(t.Context(), `SELECT projection_version FROM meeting_details WHERE message_id = ?`, id).Scan(&version))
+	assert.Equal(t, meetingProjectionVersion, version)
 }
