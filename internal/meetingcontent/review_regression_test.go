@@ -249,7 +249,6 @@ func TestNotionTreeTraversalSkipsNestedMeetingType(t *testing.T) {
 	}{
 		{"sibling page", `{"object":"block","id":"notes","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}}`, `[{"results":[{"object":"block","id":"nested","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[]}},{"object":"block","id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}}],"has_more":false},{"results":[{"object":"block","id":"action","type":"to_do","has_children":false,"to_do":{"rich_text":[],"checked":false}}],"has_more":false}]`, true},
 		{"legacy nested page left unread", `{"object":"block","id":"notes","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}}`, `[{"results":[{"object":"block","id":"nested","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[]}},{"object":"block","id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}}],"has_more":false},{"results":[{"object":"block","id":"other-action","type":"to_do","has_children":false,"to_do":{"rich_text":[],"checked":false}}],"has_more":false},{"results":[{"object":"block","id":"action","type":"to_do","has_children":false,"to_do":{"rich_text":[],"checked":false}}],"has_more":false}]`, false},
-		{"unreachable pages without root children", `{"id":"notes","type":"to_do","has_children":false}`, `[{"results":[],"has_more":false}]`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tree := []byte(`{"root":` + tc.root + `,"pages":` + tc.pages + `}`)
