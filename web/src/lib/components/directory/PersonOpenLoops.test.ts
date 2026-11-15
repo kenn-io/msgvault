@@ -193,17 +193,14 @@ describe("PersonOpenLoops", () => {
     expect(screen.getByText("Promise discovery since 2026-10-01 is incomplete.")).toBeDefined();
     withPromise.unmount();
 
-    render(PersonOpenLoops, { client: respond({ commitments_complete: false }), personID: 7 });
+    const notStarted = render(PersonOpenLoops, { client: respond({ commitments_complete: false }), personID: 7 });
     expect(await screen.findByText("Promise discovery has not started.")).toBeDefined();
     expect(screen.queryByText("Nothing open with this person.")).toBeNull();
-  });
-
-  it("shows the completed discovery window", async () => {
-    const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json({
-      items: [], commitments: [], truncated: false, commitments_complete: true,
+    notStarted.unmount();
+    render(PersonOpenLoops, { client: respond({
+      commitments_complete: true,
       commitments_since: "2026-10-01T00:00:00Z", commitments_until: "2026-10-31T00:00:00Z",
-    })));
-    render(PersonOpenLoops, { client, personID: 7 });
+    }), personID: 7 });
     expect(await screen.findByText("Promise discovery from 2026-10-01 through 2026-10-31 is complete.")).toBeDefined();
   });
 
@@ -320,16 +317,11 @@ describe("PersonOpenLoops", () => {
     (await screen.findByRole("button", { name: "More promises" })).click();
     await view.rerender({ client, personID: 8 });
     expect(await screen.findByText("Nothing open with this person.")).toBeDefined();
-    const response = Response.json({ items: [], truncated: false, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(6)] });
-    const readText = response.text.bind(response);
-    const consumed = new Promise<void>((resolve) => {
-      vi.spyOn(response, "text").mockImplementation(() => {
-        const reading = readText();
-        void reading.then(() => resolve());
-        return reading;
-      });
-    });
-    resolvePage(response);
+    let resolveConsumed!: () => void;
+    const consumed = new Promise<void>((resolve) => { resolveConsumed = resolve; });
+    const body = JSON.stringify({ items: [], truncated: false, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(6)] });
+    const stream = new ReadableStream({ pull(controller) { controller.enqueue(new TextEncoder().encode(body)); controller.close(); resolveConsumed(); } }, { highWaterMark: 0 });
+    resolvePage(new Response(stream, { headers: { "Content-Type": "application/json" } }));
     await consumed;
     await new Promise((resolve) => setTimeout(resolve, 0));
     await tick();

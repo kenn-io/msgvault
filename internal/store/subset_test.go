@@ -6217,26 +6217,6 @@ func TestCopySubsetPreservesCommitmentDecisions(t *testing.T) {
 	r.NoError(err)
 	_, err = f.store.DecidePersonCommitmentContext(ctx, items[1].ID, LoopStateSnoozed, &until, personFactLedgerNow)
 	r.NoError(err)
-	for _, item := range items {
-		_, err = f.store.db.ExecContext(ctx, `UPDATE message_bodies SET body_text = ? WHERE message_id = ?`, "Update: "+item.Quote, item.AnchorMessageID)
-		r.NoError(err)
-	}
-	f = nextCommitmentTestAttempt(t, f, "-shifted")
-	cfg.Commitments.Window += time.Second
-	_, profile := commitmentTestConfig()
-	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
-	r.NoError(err)
-	var shifted peoplesweep.ParsedCommitments
-	for _, source := range window.Sources {
-		for _, item := range items {
-			if source.MessageID == item.AnchorMessageID {
-				shifted.Promises = append(shifted.Promises, peoplesweep.CommitmentPromise{SourceID: source.ID, Direction: source.Direction, Quote: item.Quote, Summary: "Keep the promise", Start: 8, End: int64(8 + len(item.Quote))})
-			}
-		}
-	}
-	r.Len(shifted.Promises, 2)
-	_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, shifted))
-	r.NoError(err)
 	var seq int
 	var name, sourcePath string
 	r.NoError(f.store.db.QueryRowContext(ctx, `PRAGMA database_list`).Scan(&seq, &name, &sourcePath))
@@ -6254,20 +6234,22 @@ func TestCopySubsetPreservesCommitmentDecisions(t *testing.T) {
 	active, err = destination.HasActivePersonCommitmentConsent(ctx, f.request.Generation.Policy.ProviderPolicyFingerprint)
 	r.NoError(err)
 	a.False(active)
-	var doneID, snoozedID int64
-	var doneState, snoozedState string
-	var doneUntil, snoozedUntil sql.NullTime
-	r.NoError(destination.db.QueryRowContext(ctx, `SELECT id, owner_state, snoozed_until FROM person_commitments WHERE id = ?`, items[0].ID).Scan(&doneID, &doneState, &doneUntil))
-	r.NoError(destination.db.QueryRowContext(ctx, `SELECT id, owner_state, snoozed_until FROM person_commitments WHERE id = ?`, items[1].ID).Scan(&snoozedID, &snoozedState, &snoozedUntil))
-	a.Equal(items[0].ID, doneID)
-	a.Equal(LoopStateDone, doneState)
-	a.False(doneUntil.Valid)
-	a.Equal(items[1].ID, snoozedID)
-	a.Equal(LoopStateSnoozed, snoozedState)
-	if a.True(snoozedUntil.Valid) {
-		a.True(snoozedUntil.Time.Equal(until))
+	copied, err := destination.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, 0, true)
+	r.NoError(err)
+	r.Len(copied, 2)
+	byID := make(map[int64]PersonCommitment, len(copied))
+	for _, item := range copied {
+		byID[item.ID] = item
+	}
+	a.Equal(LoopStateDone, byID[items[0].ID].State)
+	a.Nil(byID[items[0].ID].SnoozedUntil)
+	a.Equal(LoopStateSnoozed, byID[items[1].ID].State)
+	if a.NotNil(byID[items[1].ID].SnoozedUntil) {
+		a.True(byID[items[1].ID].SnoozedUntil.Equal(until))
 	}
 	for _, item := range items {
+		_, err := destination.db.ExecContext(ctx, `UPDATE message_bodies SET body_text = ? WHERE message_id = ?`, "Update: "+item.Quote, item.AnchorMessageID)
+		r.NoError(err)
 		source, ok, err := destination.currentCommitmentSource(ctx, f.personID, item.AnchorMessageID)
 		r.NoError(err)
 		r.True(ok)

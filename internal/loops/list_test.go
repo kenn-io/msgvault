@@ -200,7 +200,10 @@ type pagingCommitmentStore struct {
 
 func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, limit int, _ int, _ bool) ([]store.PersonCommitment, error) {
 	s.limit = limit
-	return []store.PersonCommitment{{ID: 201, State: store.LoopStateOpen}, {ID: 202, State: store.LoopStateOpen}}, nil
+	return []store.PersonCommitment{
+		{ID: 201, PersonID: 1, AnchorMessageID: 1, Direction: "owed_to", Quote: "I will call.", End: 12, Summary: "Call", Freshness: "fresh", PromisedAt: now, State: store.LoopStateOpen},
+		{ID: 202, PersonID: 1, AnchorMessageID: 2, Direction: "owed_to", Quote: "I will write.", End: 13, Summary: "Write", Freshness: "fresh", PromisedAt: now, State: store.LoopStateOpen},
+	}, nil
 }
 
 func TestListPagesCommitments(t *testing.T) {
