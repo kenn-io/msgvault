@@ -558,7 +558,7 @@ func createConvenienceViews(ctx context.Context, db *sql.DB) error {
 // analytical_entries view (the explore/files page-enrichment fast paths)
 // must use this so labels cannot drift from the view's.
 func sqlAnalyticalEntriesParticipantLabel(alias string) string {
-	return "COALESCE(NULLIF(" + alias + ".display_name, ''), NULLIF(" + alias + ".phone_number, ''), NULLIF(" + alias + ".email_address, ''), " + xUserIDExpr(alias, "") + ", '')"
+	return "COALESCE(NULLIF(" + alias + ".display_name, ''), NULLIF(" + alias + ".phone_number, ''), NULLIF(" + alias + ".email_address, ''), " + identityindex.ParticipantIdentifierExpr(alias, "") + ", '')"
 }
 
 // buildNarrowAnalyticalEntriesCTE renders the scalar part of
@@ -609,7 +609,7 @@ func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSum
 		COALESCE(m.message_type, '') AS message_type,
 		m.list_id,
 		m.sender_id,
-		COALESCE(` + identityindex.RelayAddressSubquery("m.id", "message_recipients") + `, NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), ` + xUserIDExpr("sender", "") + `, '') AS sender_identifier,
+		COALESCE(` + identityindex.RelayAddressSubquery("m.id", "message_recipients") + `, NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), ` + identityindex.ParticipantIdentifierExpr("sender", "") + `, '') AS sender_identifier,
 		` + sqlAnalyticalEntriesParticipantLabel("sender") + ` AS sender_display,
 		COALESCE(NULLIF(` + identityindex.SenderEnvelopeDomainExpr(identityindex.RelayAddressSubquery("m.id", "message_recipients")) + `, ''), sender.domain, '') AS sender_domain,
 		m.sent_at AS occurred_at,
@@ -672,7 +672,7 @@ SELECT
     COALESCE(m.message_type, '') AS message_type,
     m.list_id,
     m.sender_id,
-    COALESCE(` + identityindex.RelayAddressSubquery("m.id", "message_recipients") + `, NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), ` + xUserIDExpr("sender", "") + `, '') AS sender_identifier,
+    COALESCE(` + identityindex.RelayAddressSubquery("m.id", "message_recipients") + `, NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), ` + identityindex.ParticipantIdentifierExpr("sender", "") + `, '') AS sender_identifier,
     ` + sqlAnalyticalEntriesParticipantLabel("sender") + ` AS sender_display,
     COALESCE(NULLIF(` + identityindex.SenderEnvelopeDomainExpr(identityindex.RelayAddressSubquery("m.id", "message_recipients")) + `, ''), sender.domain, '') AS sender_domain,
     m.sent_at AS occurred_at,

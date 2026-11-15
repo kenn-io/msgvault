@@ -753,3 +753,52 @@ func TestImportIdentityFailureIsRetryable(t *testing.T) {
 		})
 	}
 }
+
+func TestImportNoResumeLimitPauses(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","date_unixtime":"1","text":"first"}]},{"id":3,"type":"personal_chat","messages":[{"id":2,"type":"message","date_unixtime":"2","text":"second"}]},{"id":4,"type":"personal_chat","messages":[{"id":3,"type":"message","date_unixtime":"3","text":"third"}]}]}}`))
+	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1", Limit: 1})
+	require.NoError(err)
+	var id int64
+	var old string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id, cursor_before FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&id, &old))
+	old = strings.Replace(old, `"version":1`, `"version":999`, 1)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sync_runs SET cursor_before = ? WHERE id = ?`), old, id)
+	require.NoError(err)
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1", Limit: 1, NoResume: true})
+	require.NoError(err)
+	require.True(summary.LimitReached)
+	var status, cursor string
+	var processed, added int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT status, COALESCE(cursor_before, ''), messages_processed, messages_added FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status, &cursor, &processed, &added))
+	assert.Equal("paused", status)
+	assert.NotEmpty(cursor)
+	assert.EqualValues(2, processed)
+	assert.EqualValues(1, added)
+	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1", Limit: 1})
+	require.NoError(err)
+	assert.True(summary.WasResumed)
+	assert.Equal(1, summary.ChatsProcessed)
+}
+
+func TestImportFreshCancellationReplacesCheckpoint(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "result.json", []byte(`{"personal_information":{"user_id":1},"chats":{"list":[{"id":2,"type":"personal_chat","messages":[{"id":1,"type":"message","text":"first","date_unixtime":"1"}]},{"id":3,"type":"personal_chat","messages":[{"id":1,"type":"message","text":"second","date_unixtime":"1"}]}]}}`))
+	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Limit: 1})
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE sync_runs SET cursor_before = '{"version":999}'`)
+	require.NoError(err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	_, err = Import(ctx, st, ImportOptions{RootDir: root, NoResume: true, Logger: slog.New(slog.NewTextHandler(cancelWriter{cancel}, nil))})
+	require.ErrorIs(err, context.Canceled)
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
+	require.NoError(err)
+	assert.True(summary.WasResumed)
+	assert.EqualValues(1, summary.MessagesAdded)
+	assert.Equal(1, summary.ChatsProcessed)
+}

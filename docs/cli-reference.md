@@ -16,7 +16,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full), [source feeds add](#source-feeds-add) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-discord-package](#import-discord-package), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-discord-package](#import-discord-package), [import-x](#import-x), [import-line](#import-line), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -2548,6 +2548,27 @@ msgvault import-telegram <export-dir>
 | `--no-default-identity` | `false` | Skip automatic account identity creation |
 
 Re-imports add new messages and fill missing media. Archived text and edit flags stay unchanged. See [Telegram imports](usage/text-messages.md#import-telegram) for export and resume behavior.
+
+---
+
+## import-line
+
+Available on `main`, unreleased. Import LINE chats from the message store in an unencrypted iPhone backup.
+
+```bash
+msgvault import-line <path>
+```
+
+`<path>` is the backup directory holding `Manifest.db`, the `Messages` directory copied out of it, or its `Line.sqlite` file.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--me` | Store owner | Your LINE user ID; required when the store has no Keep Memo chat |
+| `--limit` | `0` | Maximum messages added; `0` imports all messages |
+| `--no-resume` | `false` | Scan every chat, ignoring the resume checkpoint |
+| `--no-default-identity` | `false` | Skip automatic account identity creation |
+
+Text messages, senders, and replies are archived; media, stickers, calls, and system notices are counted and skipped. Re-imports add new messages and leave archived ones unchanged. See [LINE imports](usage/text-messages.md#import-line) for the backup layout and resume behavior.
 
 ---
 

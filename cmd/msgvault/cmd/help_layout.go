@@ -102,6 +102,7 @@ var topLevelCommandGroups = map[string]string{
 	"import-gvoice":           helpGroupImport,
 	"import-imazing-csv":      helpGroupImport,
 	"import-imessage":         helpGroupImport,
+	"import-line":             helpGroupImport,
 	"import-maildir":          helpGroupImport,
 	"import-mbox":             helpGroupImport,
 	"import-messenger":        helpGroupImport,

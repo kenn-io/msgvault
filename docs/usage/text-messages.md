@@ -20,6 +20,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | [iMazing Messages](#import-imazing-csv) | CSV export root or `csv/` directory |
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
 | [Telegram](#import-telegram) | Telegram Desktop Machine-readable JSON export |
+| [LINE](#import-line) | `Line.sqlite` from an unencrypted iPhone backup (unreleased on `main`) |
 | [X DMs](#import-x) | Extracted X account archive |
 | [Facebook Messenger](#import-messenger) | Download Your Information export |
 | [SMS Backup & Restore](#import-synctech-sms) | XML backup |
@@ -506,6 +507,30 @@ A later or overlapping export adds new messages and fills media slots that still
 Every exported chat becomes a conversation, even one with no messages. Each import replaces the conversation title with the export's chat name when that name is non-empty.
 
 An interrupted import resumes after the last completed chat when `result.json` in the same directory has the same size and modification time. Use `--no-resume` to scan every chat again, or `--limit N` to cap the messages added in one run.
+
+## import-line
+
+Available on `main`, unreleased. LINE keeps its iPhone history in a Core Data store, `Line.sqlite`, that an unencrypted iPhone backup includes. Make the backup with Finder (macOS), the Apple Devices app (Windows), or `idevicebackup2` with encryption turned off, then point the import at the backup directory, the one that holds `Manifest.db`:
+
+```bash
+msgvault import-line "$HOME/Library/Application Support/MobileSync/Backup/<device>"
+```
+
+macOS protects the backup folder. Grant Full Disk Access to the process running the msgvault daemon, which reads the backup, in **System Settings → Privacy & Security**.
+
+The command also accepts the LINE `Messages` directory copied out of a backup, or its `Line.sqlite` file. `UnifiedGroup.sqlite` beside the store supplies group names and member lists; without it, groups have no title and list only the members that `Line.sqlite` records. Group snapshots add observed members and retain members seen in earlier imports. A `Line.sqlite-wal` file beside the store is read with it, so messages the phone had not yet folded into the main file are included. The backup files themselves are never modified. A backup that holds stores for more than one LINE account (one `PrivateStore` directory per account that was ever signed in on the phone) is refused. Use a backup browser to extract the `Messages` directory for the account you want, including its SQLite files and write-ahead logs, then import the extracted directory.
+
+Direct chats, groups, and rooms become conversations. Text messages are archived with their senders and reply links; rich messages from official accounts keep their readable text. The owner of the account is read from the store's Keep Memo chat. When the store has none, pass your LINE user ID:
+
+```bash
+msgvault import-line --me u0123456789abcdef0123456789abcdef ./Messages
+```
+
+Photos, videos, files, stickers, calls, and system notices such as joins and unsent messages are counted in the import summary and skipped: the phone's store holds no media bytes, and the other kinds carry no text. Sends that never completed have no message id and are skipped too.
+
+A later backup adds the messages the archive lacks and leaves archived messages unchanged. Messages are keyed by chat and LINE message id. An interrupted import resumes after the last completed chat when `Line.sqlite` has the same path and the message store, group store, and their write-ahead logs have the same contents. A change to any of those files restarts the scan. Use `--no-resume` to scan every chat again, or `--limit N` to cap the messages added in one run.
+
+Encrypted backups are not supported; decrypt or re-make the backup without a password first. LINE for Mac and LINE for Windows keep their own stores and are not read.
 
 ## import-x
 
