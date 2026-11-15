@@ -536,25 +536,36 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 // Keep journal positions for the scan cursor, but defer each message to its
 // last change in the snapshot so its current body is sent only once.
 func (s *Store) scanCommitmentChanges(ctx context.Context, personID, previous, through int64) ([]peoplesweep.ArchiveChange, error) {
-	changes, err := s.ScanPersonSweepChanges(ctx, personID, previous, maxPersonSweepChangeScan)
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH page AS (
+		SELECT sequence, source_lane, message_id, recorded_at FROM person_sweep_changes
+		WHERE person_id = ? AND sequence > ? ORDER BY sequence LIMIT ?
+	) SELECT p.sequence, p.source_lane, COALESCE(p.message_id, 0), p.recorded_at,
+		EXISTS(SELECT 1 FROM person_sweep_changes c WHERE c.person_id = ? AND c.message_id = p.message_id
+			AND c.source_lane = 'conversation_text' AND c.sequence > p.sequence AND c.sequence <= ?)
+		FROM page p ORDER BY p.sequence`), personID, previous, maxPersonSweepChangeScan, personID, through)
 	if err != nil {
 		return nil, err
 	}
-	for i := range changes {
-		change := &changes[i]
-		if change.SourceLane != peoplesweep.SourceConversationText || change.MessageID == 0 || change.Sequence > through {
-			continue
-		}
+	defer func() { _ = rows.Close() }()
+	return readCommitmentChanges(rows)
+}
+
+func readCommitmentChanges(rows *loggedRows) ([]peoplesweep.ArchiveChange, error) {
+	var changes []peoplesweep.ArchiveChange
+	for rows.Next() {
+		var change peoplesweep.ArchiveChange
+		var recordedAt requiredTimestamp
 		var later bool
-		err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM person_sweep_changes WHERE person_id = ? AND message_id = ? AND source_lane = 'conversation_text' AND sequence > ? AND sequence <= ?)`), personID, change.MessageID, change.Sequence, through).Scan(&later)
-		if err != nil {
+		if err := rows.Scan(&change.Sequence, &change.SourceLane, &change.MessageID, &recordedAt, &later); err != nil {
 			return nil, err
 		}
-		if later {
+		change.RecordedAt = recordedAt.Time.UTC()
+		if later && change.SourceLane == peoplesweep.SourceConversationText {
 			change.MessageID = 0
 		}
+		changes = append(changes, change)
 	}
-	return changes, nil
+	return changes, rows.Err()
 }
 
 func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, baseScope string, inProfile func(time.Time) bool) error {
