@@ -202,7 +202,7 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 	assertions.Nil(response.CommitmentsComplete)
 }
 
-func TestListLoopsCommitmentDiscoveryDeadline(t *testing.T) {
+func TestListLoopsCommitmentDiscoveryInterruptions(t *testing.T) {
 	cfg := config.NewDefaultConfig()
 	cfg.People.Sweep.Enabled = true
 	cfg.People.Sweep.Commitments.Enabled = true

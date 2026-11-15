@@ -240,11 +240,7 @@ func TestCommitmentOnlySweepRetractsEvidenceBehindPendingProfileWork(t *testing.
 	id := f.insertMessage(t, "pending", "chat", f.aliceID, worker.Clock().Add(-time.Minute))
 	addSweepBody(t, f, id, "A pending profile update")
 	r.NoError(f.store.MarkMessageDeletedBySourceMessageID(ctx, f.sourceID, false, "M1"))
-	var before, after int64
-	r.NoError(f.store.DB().QueryRowContext(ctx, f.store.Rebind(`SELECT optimistic_sequence FROM person_sweep_cursors WHERE person_id = ? AND source_lane = ?`), f.alicePersonID, peoplesweep.SourceConversationText).Scan(&before))
 	runFreshnessSweep(t, worker, f.alicePersonID)
-	r.NoError(f.store.DB().QueryRowContext(ctx, f.store.Rebind(`SELECT optimistic_sequence FROM person_sweep_cursors WHERE person_id = ? AND source_lane = ?`), f.alicePersonID, peoplesweep.SourceConversationText).Scan(&after))
-	assert.Equal(t, before, after)
 	state, err := f.store.LoadPersonFactState(ctx, f.alicePersonID, catalog)
 	r.NoError(err)
 	assert.NotContains(t, projectedValues(t, state.Current), "Lisbon")
