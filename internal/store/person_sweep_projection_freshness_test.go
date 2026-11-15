@@ -167,26 +167,25 @@ func newProjectionFreshnessSweep(t *testing.T) (personSweepJournalFixture, peopl
 	items, err := f.store.HydratePersonSweepMessages(t.Context(), f.alicePersonID, []int64{messageID}, 0)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
-	r := require.New(t)
 	packetJSON, err := peoplesweep.CanonicalPacketJSON(peoplesweep.EvidencePacket{
 		PersonID: f.alicePersonID, Catalog: catalog, Seeds: items,
 		ProgramID: peoplesweep.ExtractionProgramID, ProgramVersion: peoplesweep.ExtractionProgramVersion,
 	})
-	r.NoError(err)
+	require.NoError(t, err)
 	var wire struct {
 		Seeds []struct {
 			ID string `json:"id"`
 		} `json:"seeds"`
 	}
-	r.NoError(json.Unmarshal(packetJSON, &wire))
-	r.Len(wire.Seeds, 1)
+	require.NoError(t, json.Unmarshal(packetJSON, &wire))
+	require.Len(t, wire.Seeds, 1)
 	var targetKey string
 	for _, target := range catalog.Targets {
 		if target.Slug == "location" {
 			targetKey = target.Key
 		}
 	}
-	r.NotEmpty(targetKey)
+	require.NotEmpty(t, targetKey)
 	runner := emptyFreshnessRunner()
 	runner.response.Output = []byte(fmt.Sprintf(`{"claims":[{"target_key":%q,"relation":"support","value":"Lisbon","evidence_ids":[%q],"valid_from":null,"valid_until":null,"confidence_basis_points":1000}]}`, targetKey, wire.Seeds[0].ID))
 	serial := 0

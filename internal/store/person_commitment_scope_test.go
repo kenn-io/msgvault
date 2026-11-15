@@ -1,7 +1,6 @@
 package store
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -9,53 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 )
-
-func TestCommitmentRetryAfterMessageAgesOut(t *testing.T) {
-	r, ctx := require.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "retry-aged", false)
-	_, persist := newCommitmentTestConversation(t, f)
-	first := persist("first", strings.Repeat("a", 1000)+" I will call.", -time.Hour)
-	second := persist("second", strings.Repeat("b", 1000)+" I will write.", -time.Hour)
-	for _, id := range []int64{first, second} {
-		_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET archived_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-time.Hour)), id)
-		r.NoError(err)
-		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-time.Hour)), id)
-		r.NoError(err)
-	}
-	cfg, profile := commitmentTestConfig()
-	cfg.Commitments.MaxBytes, cfg.Commitments.MaxItems = 100, 1
-	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
-	r.NoError(err)
-	r.Empty(window.Sources)
-	request := f.request
-	request.CommitmentOnly = true
-	request.Generation.Policy.AllowSensitive = true
-	request.Budget = personSweepApplyBudget()
-	request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
-	_, err = f.store.ApplyPersonSweep(ctx, request)
-	r.NoError(err)
-
-	cfg.Commitments.MaxBytes = 2000
-	later := personFactLedgerNow.Add(31 * 24 * time.Hour)
-	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, later, "UTC")
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	r.Equal(first, window.Sources[0].MessageID)
-	// Without a successful apply, as after a provider failure, the retry remains available.
-	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, later, "UTC")
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	r.Equal(first, window.Sources[0].MessageID)
-	f = nextCommitmentTestAttempt(t, f, "-first")
-	request = commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
-	request.Generation.ResolvedAt = later
-	_, err = f.store.ApplyPersonSweep(ctx, request)
-	r.NoError(err)
-	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, later, "UTC")
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	r.Equal(second, window.Sources[0].MessageID)
-}
 
 func TestCommitmentScopeExpansionRevisitsJournaledHistory(t *testing.T) {
 	for _, expanded := range []string{"dates", "window", "batch"} {

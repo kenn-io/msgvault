@@ -125,9 +125,6 @@ func TestMCPLoopListForwardsCommitmentOffset(t *testing.T) {
 	require.False(t, result.IsError)
 	loopToolOutput[generated.LoopListResponse](t, result)
 	assert.Equal(t, "5", offset.Load())
-	invalid, err := backend.ExecuteOperation(t.Context(), "list_open_loops", map[string]any{"commitment_offset": -1})
-	require.NoError(t, err)
-	assertLoopRefusal(t, invalid, "invalid_arguments", false)
 }
 
 func TestMCPLoopsSDKDecisionsAndList(t *testing.T) {
@@ -216,7 +213,7 @@ func TestMCPLoopArgumentValidationAndDateResolution(t *testing.T) {
 		name string
 		args map[string]any
 	}{
-		{"list_open_loops", map[string]any{"limit": 0}}, {"list_open_loops", map[string]any{"limit": 201}}, {"list_open_loops", map[string]any{"limit": 1.5}},
+		{"list_open_loops", map[string]any{"commitment_offset": -1}}, {"list_open_loops", map[string]any{"limit": 0}}, {"list_open_loops", map[string]any{"limit": 201}}, {"list_open_loops", map[string]any{"limit": 1.5}},
 		{"list_open_loops", map[string]any{"person_id": 0}}, {"list_open_loops", map[string]any{"person_id": int64(1 << 53)}}, {"list_open_loops", map[string]any{"kind": "reply_owed"}},
 		{"close_open_loop", map[string]any{"message_id": 0, "question_message_ids": []int64{anchor}}}, {"close_open_loop", map[string]any{"message_id": int64(1 << 53), "question_message_ids": []int64{anchor}}}, {"close_open_loop", map[string]any{"message_id": anchor, "question_message_ids": []int64{anchor}, "note": "x"}},
 		{"close_open_loop", map[string]any{"message_id": anchor}}, {"close_open_loop", map[string]any{"message_id": anchor, "question_message_ids": []int64{}}}, {"close_open_loop", map[string]any{"message_id": anchor, "question_message_ids": []int64{0}}},

@@ -41,21 +41,3 @@ func TestCommitmentSourceDeletedBeforeExtraction(t *testing.T) {
 	r.NoError(err)
 	a.Empty(claims)
 }
-
-func applyCommitmentTestSources(t *testing.T, f personSweepApplyFixture, cfg peoplesweep.CommitmentConfig) {
-	t.Helper()
-	r := require.New(t)
-	_, profile := commitmentTestConfig()
-	window, err := f.store.LoadPersonCommitmentWindow(t.Context(), f.personID, profile, cfg, personFactLedgerNow, "UTC")
-	r.NoError(err)
-	r.NotEmpty(window.Sources)
-	output := peoplesweep.ParsedCommitments{}
-	for _, source := range window.Sources {
-		output.Promises = append(output.Promises, peoplesweep.CommitmentPromise{
-			SourceID: source.ID, Direction: source.Direction, Quote: source.Text,
-			Start: source.Start, End: source.Start + int64(len([]rune(source.Text))), Summary: "Keep the promise",
-		})
-	}
-	_, err = f.store.ApplyPersonSweep(t.Context(), commitmentApplyRequest(t, f, window, cfg, output))
-	r.NoError(err)
-}

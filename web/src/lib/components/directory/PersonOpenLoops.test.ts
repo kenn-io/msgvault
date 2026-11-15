@@ -73,7 +73,7 @@ describe("PersonOpenLoops", () => {
       items: [loop(42), loop(43), loop(44), loop(45), loop(46)],
       truncated: true,
       commitments: [
-        { id: "c12", person_id: 7, summary: "Send the draft", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: 52, start: 0, end: 22, text: "I will send the draft." }, promised_at: "2026-10-12T12:00:00Z" },
+        { id: "c12", person_id: 7, summary: "Send the draft", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: 52, start: 0, end: 22, text: "I will send the draft." }, promised_at: "2026-10-12T12:00:00Z", due_on: "2026-11-20" },
         { id: "c13", person_id: 7, summary: "Check the venue", state: "open", direction: "owed_to", freshness: "stale", promise: { message_id: 53, start: 0, end: 23, text: "I will check the venue." }, promised_at: "2026-10-12T12:00:00Z" },
       ],
     }));
@@ -82,29 +82,11 @@ describe("PersonOpenLoops", () => {
     expect(cite.getAttribute("href")).toBe("/messages/52");
     expect(screen.getByRole("heading", { name: "Promises you made" })).toBeDefined();
     expect(screen.getByRole("heading", { name: "Stale promises to you" })).toBeDefined();
-    expect(screen.getByRole("link", { name: "I will check the venue." }).getAttribute("href")).toBe("/messages/53");
-  });
-
-  it("shows a plus when more loops are open than the card lists", async () => {
-    const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json({
-      items: [loop(42), loop(43), loop(44), loop(45), loop(46)], truncated: true,
-      commitments: [
-        { id: "c1", person_id: 7, state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: 52, start: 0, end: 4, text: "Call" }, promised_at: "2026-10-12T12:00:00Z" },
-        { id: "c2", person_id: 7, state: "open", direction: "owed_to", freshness: "stale", promise: { message_id: 53, start: 0, end: 5, text: "Write" }, promised_at: "2026-10-12T12:00:00Z" },
-      ],
-    })));
-    render(PersonOpenLoops, { client, personID: 7 });
+    const undated = screen.getByRole("link", { name: "I will check the venue." });
+    expect(undated.getAttribute("href")).toBe("/messages/53");
     expect(await screen.findByText("7+ open")).toBeDefined();
-  });
-
-  it("shows the due date only on dated promises", async () => {
-    const promise = (id: number, dueOn?: string) => ({ id: `c${id}`, person_id: 7, summary: "", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: id, start: 0, end: 10, text: `Promise ${id}` }, promised_at: "2026-10-12T12:00:00Z", due_on: dueOn });
-    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ items: [], truncated: false, commitments: [promise(1, "2026-11-20"), promise(2)] }));
-    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
-    const dated = (await screen.findByRole("link", { name: "Promise 1" })).closest("li");
-    const undated = screen.getByRole("link", { name: "Promise 2" }).closest("li");
-    expect(dated?.textContent).toContain("due 2026-11-20");
-    expect(undated?.textContent).not.toContain("due");
+    expect(cite.closest("li")?.textContent).toContain("due 2026-11-20");
+    expect(undated.closest("li")?.textContent).not.toContain("due");
   });
 
   it("says how many messages could not be read, with or without loops", async () => {
@@ -215,23 +197,23 @@ describe("PersonOpenLoops", () => {
   it("appends the next promise page", async () => {
     const promise = (id: number) => ({ id: `c${id}`, person_id: 7, summary: "", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: id, start: 0, end: 10, text: `Promise ${id}` }, promised_at: "2026-10-12T12:00:00Z" });
     const fetcher = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(Response.json({ items: [loop()], truncated: true, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(1)], commitments_next_offset: 1 }))
+      .mockResolvedValueOnce(Response.json({ items: [loop()], truncated: true, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(1), promise(2), promise(3), promise(4), promise(5)], commitments_next_offset: 5 }))
       .mockRejectedValueOnce(new Error("temporary failure"))
-      .mockResolvedValueOnce(Response.json({ items: [loop()], truncated: false, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(2)] }));
+      .mockResolvedValueOnce(Response.json({ items: [loop()], truncated: false, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(6)] }));
     render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
     const button = await screen.findByRole("button", { name: "More promises" });
     button.click();
     expect((await screen.findByRole("alert")).textContent).toContain("Couldn't load more promises.");
     expect(screen.getByRole("link", { name: "Promise 1" })).toBeDefined();
     screen.getByRole("button", { name: "More promises" }).click();
-    expect(await screen.findByRole("link", { name: "Promise 2" })).toBeDefined();
+    expect(await screen.findByRole("link", { name: "Promise 6" })).toBeDefined();
     expect(screen.getByRole("link", { name: "Promise 1" })).toBeDefined();
     expect(screen.getByRole("link", { name: "Review the draft?" })).toBeDefined();
     expect(screen.queryByRole("button", { name: "More promises" })).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
     const request = fetcher.mock.calls[2]?.[0];
     const url = new URL(request instanceof Request ? request.url : String(request), "http://localhost");
-    expect(url.searchParams.get("commitment_offset")).toBe("1");
+    expect(url.searchParams.get("commitment_offset")).toBe("5");
     expect(url.searchParams.get("person_id")).toBe("7");
     expect(url.searchParams.get("limit")).toBe("5");
   });
@@ -301,17 +283,27 @@ describe("PersonOpenLoops", () => {
         const url = new URL(input instanceof Request ? input.url : String(input), "http://localhost");
         if (url.searchParams.has("commitment_offset")) return page;
         return url.searchParams.get("person_id") === "7"
-          ? Response.json({ items: [], truncated: true, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(1)], commitments_next_offset: 1 })
+          ? Response.json({ items: [], truncated: true, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(1), promise(2), promise(3), promise(4), promise(5)], commitments_next_offset: 5 })
           : Response.json({ items: [], truncated: false, skipped_unparseable: 0, coverage_incomplete: false });
       }));
       const view = render(PersonOpenLoops, { client, personID: 7 });
       (await screen.findByRole("button", { name: "More promises" })).click();
       await view.rerender({ client, personID: 8 });
       expect(await screen.findByText("Nothing open with this person.")).toBeDefined();
-      resolvePage(Response.json({ items: [], truncated: false, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(2)] }));
+      const response = Response.json({ items: [], truncated: false, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(6)] });
+      const readText = response.text.bind(response);
+      const consumed = new Promise<void>((resolve) => {
+        vi.spyOn(response, "text").mockImplementation(() => {
+          const reading = readText();
+          void reading.then(() => resolve());
+          return reading;
+        });
+      });
+      resolvePage(response);
+      await consumed;
       await new Promise((resolve) => setTimeout(resolve, 0));
       await tick();
-      expect(screen.queryByText("Promise 2")).toBeNull();
+      expect(screen.queryByText("Promise 6")).toBeNull();
       expect(screen.getByText("Nothing open with this person.")).toBeDefined();
     }
   });

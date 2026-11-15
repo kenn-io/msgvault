@@ -121,38 +121,19 @@ func TestLoopsDoneAndSnooze(t *testing.T) {
 	require.Error(err)
 }
 
-func TestLoopsListPagesPromises(t *testing.T) {
-	a := assert.New(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if req.URL.Path == "/api/v1/health" {
-			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"5.5.0"}`))
-			assert.NoError(t, err)
-			return
-		}
-		a.Equal("200", req.URL.Query().Get("commitment_offset"))
-		a.Equal("1", req.URL.Query().Get("limit"))
-		_, err := w.Write([]byte(`{"items":[],"commitments":[{"id":"c201","person_id":1,"direction":"owed_to","summary":"Call","promise":{"message_id":42,"text":"I will call.","start":0,"end":12},"promised_at":"2026-01-01T00:00:00Z","freshness":"fresh","state":"done"}],"truncated":true,"commitments_next_offset":201}`))
-		a.NoError(err)
-	}))
-	t.Cleanup(server.Close)
-	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	_, err := runLoops(ctx, t, "list", "--limit", "1", "--commitment-offset", "200")
-	require.NoError(t, err)
-}
-
 func TestLoopsDaemonVersions(t *testing.T) {
 	for _, tc := range []struct {
-		name, version, minimum, path, method, response, output, state string
-		args                                                          []string
-		closed, warning                                               bool
+		name, version, minimum, path, method, response, output, state, offset string
+		args                                                                  []string
+		closed, warning                                                       bool
 	}{
 		{name: "old_reply_loop_daemon", version: "3.23.0", minimum: "3.44.0", args: []string{"list", "--json"}},
 		{name: "old_closed_commitment_daemon", version: "5.4.0", minimum: "5.5.0", args: []string{"list", "--json", "--include-closed"}},
 		{name: "old_commitment_pagination_daemon", version: "5.4.0", minimum: "5.5.0", args: []string{"list", "--json", "--commitment-offset", "1"}},
 		{name: "older_commitment_daemon", version: "5.4.0", minimum: "5.5.0", args: []string{"done", "c12"}},
-		{name: "compatible_reply_loop_daemon", version: "3.44.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"commitments":[],"truncated":false}`, args: []string{"list", "--json"}},
+		{name: "compatible_reply_loop_daemon", version: "3.44.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"truncated":false}`, args: []string{"list", "--json"}},
 		{name: "compatible_closed_commitment_daemon", version: "5.5.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"commitments":[],"truncated":false}`, args: []string{"list", "--json", "--include-closed"}, closed: true},
+		{name: "commitment_page", version: "5.5.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"commitments":[],"truncated":false}`, args: []string{"list", "--json", "--commitment-offset", "200"}, offset: "200"},
 		{name: "commitment", version: "5.5.0", path: "/api/v1/loops/commitments/c12/decision", method: http.MethodPost, response: `{"id":"c12","state":"done"}`, output: "c12 is done.\n", args: []string{"done", "c12"}, state: "done"},
 		{name: "existing_reply_loop", version: "3.44.0", path: "/api/v1/loops/42/done", method: http.MethodPost, response: `{"anchor_message_id":42,"state":"done"}`, args: []string{"done", "42"}},
 		{name: "old_daemon_warning", version: "5.3.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"truncated":false}`, args: []string{"list", "--json"}, warning: true},
@@ -170,6 +151,9 @@ func TestLoopsDaemonVersions(t *testing.T) {
 				assert.Equal(t, tc.method, req.Method)
 				if tc.closed {
 					assert.Equal(t, "true", req.URL.Query().Get("include_closed"))
+				}
+				if tc.offset != "" {
+					assert.Equal(t, tc.offset, req.URL.Query().Get("commitment_offset"))
 				}
 				if tc.state != "" {
 					var body map[string]string
