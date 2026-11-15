@@ -547,7 +547,7 @@ func TestCardDAVParticipantBindingMergedAliasRemainsClaimed(t *testing.T) {
 		}
 	})
 	t.Run("phone", func(t *testing.T) {
-		for _, identifierType := range []string{"imessage", "google_voice"} {
+		for _, identifierType := range []string{"imessage", "google_voice", "imazing_csv"} {
 			t.Run(identifierType, func(t *testing.T) {
 				assert := Assert.New(t)
 				require := Require.New(t)
