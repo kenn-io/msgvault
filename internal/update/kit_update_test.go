@@ -2,6 +2,7 @@ package update
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -153,13 +155,27 @@ func TestUpdaterCheckForUpdateOffersSameBaseReleaseForDevBuild(t *testing.T) {
 	assert.True(info.IsDevBuild, "dev build")
 }
 
-func TestPerformUpdateInstallsWithKitClient(t *testing.T) {
+// TestMain lets the update tests install this test executable as the new
+// msgvault binary. Run as "<test binary> version", it exits 0 like a working
+// release.
+func TestMain(m *testing.M) {
+	if len(os.Args) == 2 && os.Args[1] == "version" {
+		fmt.Println("msgvault test build")
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// performTestUpdate serves a release archive holding newBinary and updates an
+// installed "old binary" with it.
+func performTestUpdate(t *testing.T, newBinary []byte) (dstPath string, err error) {
+	t.Helper()
 	require := require.New(t)
-	assert := assert.New(t)
 	tmp := t.TempDir()
-	srcArchive := filepath.Join(tmp, "msgvault_0.17.0_linux_amd64.tar.gz")
-	dstPath := filepath.Join(tmp, "bin", "msgvault")
-	require.NoError(makeTestTarGz(srcArchive, "msgvault", "new binary"), "write archive")
+	assetName := fmt.Sprintf("msgvault_0.17.0_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	srcArchive := filepath.Join(tmp, assetName)
+	dstPath = filepath.Join(tmp, "bin", executableName(runtime.GOOS))
+	require.NoError(makeTestTarGz(srcArchive, executableName(runtime.GOOS), string(newBinary)), "write archive")
 	checksum, err := selfupdate.HashFile(srcArchive)
 	require.NoError(err, "hash archive")
 	archiveBytes, err := os.ReadFile(srcArchive)
@@ -175,8 +191,8 @@ func TestPerformUpdateInstallsWithKitClient(t *testing.T) {
 	u := NewUpdater(Deps{
 		Client:  server.Client(),
 		Version: "v0.16.0",
-		GOOS:    "linux",
-		GOARCH:  "amd64",
+		GOOS:    runtime.GOOS,
+		GOARCH:  runtime.GOARCH,
 		Executable: func() (string, error) {
 			return dstPath, nil
 		},
@@ -189,18 +205,41 @@ func TestPerformUpdateInstallsWithKitClient(t *testing.T) {
 		Owner:         "kenn-io",
 		Repo:          "msgvault",
 		LatestVersion: "v0.17.0",
-		AssetName:     "msgvault_0.17.0_linux_amd64.tar.gz",
-		DownloadURL:   server.URL + "/msgvault_0.17.0_linux_amd64.tar.gz",
-		GOOS:          "linux",
-		GOARCH:        "amd64",
+		AssetName:     assetName,
+		DownloadURL:   server.URL + "/" + assetName,
+		GOOS:          runtime.GOOS,
+		GOARCH:        runtime.GOARCH,
 		Checksum:      checksum,
 		Size:          int64(len(archiveBytes)),
 	}, nopReporter{})
+	return dstPath, err
+}
+
+func TestPerformUpdateInstallsWithKitClient(t *testing.T) {
+	require := require.New(t)
+	self, err := os.Executable()
+	require.NoError(err, "find test executable")
+	newBinary, err := os.ReadFile(self)
+	require.NoError(err, "read test executable")
+
+	dstPath, err := performTestUpdate(t, newBinary)
 
 	require.NoError(err, "PerformUpdate")
 	got, err := os.ReadFile(dstPath)
 	require.NoError(err, "read installed binary")
-	assert.Equal("new binary", string(got), "installed binary")
+	assert.True(t, bytes.Equal(newBinary, got), "installed binary differs from the release")
+}
+
+func TestPerformUpdateKeepsInstalledBinaryWhenNewBinaryCannotRun(t *testing.T) {
+	require := require.New(t)
+
+	dstPath, err := performTestUpdate(t, []byte("not a program for this system"))
+
+	require.Error(err, "PerformUpdate")
+	assert.Contains(t, err.Error(), "new binary failed to run; kept the installed binary")
+	got, err := os.ReadFile(dstPath)
+	require.NoError(err, "read installed binary")
+	assert.Equal(t, "old binary", string(got), "installed binary")
 }
 
 func TestDefaultUpdaterUsesMSGVAULTHomeForCache(t *testing.T) {
