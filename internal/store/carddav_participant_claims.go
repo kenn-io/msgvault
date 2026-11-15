@@ -144,8 +144,7 @@ func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims map[c
 	return matched, rows.Err()
 }
 
-// Confirmed identities use the same comparison rules as message ownership.
-// Read them in the reconciliation snapshot so preview and apply agree.
+// Read confirmed identities in the reconciliation snapshot so preview and apply agree.
 func cardDAVOwnParticipantsTx(ctx context.Context, tx *loggedTx) (cardDAVPersonSet, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT p.id FROM account_identities ai
  JOIN participants p ON `+ownerEmailMatch("p.email_address", "ai.address")+`
@@ -165,5 +164,38 @@ func cardDAVOwnParticipantsTx(ctx context.Context, tx *loggedTx) (cardDAVPersonS
 		}
 		owners[id] = struct{}{}
 	}
-	return owners, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	rows, err = tx.QueryContext(ctx, `SELECT address FROM account_identities`)
+	if err != nil {
+		return nil, fmt.Errorf("read CardDAV owner phone identities: %w", err)
+	}
+	phoneClaims := map[cardDAVParticipantAddress]cardDAVPersonSet{}
+	for rows.Next() {
+		var address string
+		if err := rows.Scan(&address); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if key, ok := cardDAVParticipantAddressValue(ContactAddressPhone, address); ok {
+			phoneClaims[key] = cardDAVPersonSet{0: {}}
+		}
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	matches, err := cardDAVParticipantMatchesTx(ctx, tx, phoneClaims)
+	if err != nil {
+		return nil, err
+	}
+	for id := range matches {
+		owners[id] = struct{}{}
+	}
+	return owners, nil
 }

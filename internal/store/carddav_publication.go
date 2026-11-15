@@ -669,7 +669,10 @@ func (s *Store) CommitCardDAVPublicationContext(
 			if err := s.resolvePublicationConflictAuditTx(ctx, tx, pending); err != nil {
 				return err
 			}
-			return s.cleanupCardDAVParticipantBindingsTx(ctx, tx)
+			if pending.ResolutionConflictID == 0 {
+				return s.cleanupCardDAVParticipantBindingsTx(ctx, tx)
+			}
+			return nil
 		}
 		if input.Tombstone || input.Remote.Href != current.Href || input.Remote.SemanticHash != current.OutgoingSemanticHash ||
 			len(input.Remote.RemoteBody) == 0 || input.Remote.RemoteETag == "" {
@@ -772,7 +775,10 @@ func (s *Store) CommitCardDAVPublicationContext(
 		if err := s.resolvePublicationConflictAuditTx(ctx, tx, pending); err != nil {
 			return err
 		}
-		return s.cleanupCardDAVParticipantBindingsTx(ctx, tx)
+		if pending.ResolutionConflictID == 0 {
+			return s.cleanupCardDAVParticipantBindingsTx(ctx, tx)
+		}
+		return nil
 	})
 }
 

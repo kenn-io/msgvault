@@ -887,7 +887,7 @@ func TestCardDAVParticipantBindingPublicationPreparationLockOrder(t *testing.T) 
 }
 
 func TestCardDAVParticipantBindingExcludesConfirmedOwnComponents(t *testing.T) {
-	for _, kind := range []string{"email", "phone", "linked_alias"} {
+	for _, kind := range []string{"email", "phone", "linked_alias", "formatted_phone_linked"} {
 		t.Run(kind, func(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)
@@ -898,13 +898,22 @@ func TestCardDAVParticipantBindingExcludesConfirmedOwnComponents(t *testing.T) {
 			require.NoError(err)
 			identity := "OWNER@EXAMPLE.TEST"
 			card := remoteResource(book.CanonicalURL+"owner.vcf", "owner-card", "Owner Example", "owner@example.test", "one")
-			if kind == "phone" {
+			if kind == "phone" || kind == "formatted_phone_linked" {
 				identity = "+12025550100"
 				participant, err = st.EnsureParticipantByPhone(t.Context(), identity, "Owner Example", "imessage")
 				require.NoError(err)
 				card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:owner-card\r\nFN:Owner Example\r\nTEL:+1\u00a0202-555-0100\r\nEND:VCARD\r\n")
 				card.Emails = nil
 				card.Phones = []string{identity}
+				if kind == "formatted_phone_linked" {
+					identity = "+1 (202) 555-0100"
+					alias, err := st.EnsureParticipant("linked@example.test", "Linked", "example.test")
+					require.NoError(err)
+					_, err = st.LinkParticipants(participant, alias)
+					require.NoError(err)
+					card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:owner-card\r\nFN:Owner Example\r\nTEL:+12025550100\r\nEMAIL:linked@example.test\r\nEND:VCARD\r\n")
+					card.Emails = []string{"linked@example.test"}
+				}
 			} else if kind == "linked_alias" {
 				alias, err := st.EnsureParticipantByIdentifier("email", "alias@example.test", "")
 				require.NoError(err)
