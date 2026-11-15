@@ -148,7 +148,7 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 		*section.text = renderTree(*section.tree)
 	}
 
-	if strings.TrimSpace(meeting.Parent.PageID) != "" && result.Transcript == "" {
+	if strings.TrimSpace(meeting.Parent.PageID) != "" && result.Transcript == "" && !slices.Contains(result.Incomplete, "transcript") {
 		if err = h.reserveRequest(); err == nil {
 			result.PageMarkdown, err = h.source.RetrievePageMarkdown(ctx, meeting.Parent.PageID, true)
 			if err == nil {
@@ -459,6 +459,9 @@ func incompleteReason(ctx context.Context, err error) string {
 	}
 	if section, ok := errors.AsType[*sectionReadError](err); ok {
 		return section.reason
+	}
+	if errors.Is(err, ErrResponseTooLarge) {
+		return "limit"
 	}
 	if transcriptTemporarilyUnavailable(err) {
 		return "provider"

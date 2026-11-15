@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	syncStateVersion           = 1
+	syncStateVersion           = 2
 	notionSnapshotVersion      = 1
 	transcriptRetryCadence     = 6 * time.Hour
 	transcriptRetryWindow      = 7 * 24 * time.Hour
@@ -112,7 +112,7 @@ func (s syncState) marshal() (string, error) {
 }
 
 func (s syncState) validate() error {
-	if s.Version != syncStateVersion {
+	if s.Version != 1 && s.Version != syncStateVersion {
 		return fmt.Errorf("unsupported Notion sync cursor version %d", s.Version)
 	}
 	seen := make(map[string]struct{}, len(s.Pending))
@@ -172,6 +172,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		if err := state.validate(); err != nil {
 			return sum, fmt.Errorf("validate previous Notion sync cursor: %w", err)
 		}
+		state.Version = syncStateVersion
 	} else if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return sum, fmt.Errorf("load previous Notion sync cursor: %w", err)
 	}
@@ -297,7 +298,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		if due[id] {
 			continue
 		}
-		if pending, ok := pendingByID[id]; ok && pending.Incomplete {
+		if pending, ok := pendingByID[id]; ok && pending.Incomplete && !opts.Full {
 			continue
 		}
 		if !opts.CreatedAfter.IsZero() && candidateTime(meeting).Before(opts.CreatedAfter) {
@@ -356,7 +357,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		for _, section := range sections {
 			incomplete := slices.Contains(hydrated.Incomplete, section.name)
-			omittedTranscript := section.name == "transcript" && meeting.MeetingNotes.Children.TranscriptBlockID == ""
+			omittedTranscript := section.name == "transcript" && meeting.MeetingNotes.Children.TranscriptBlockID == "" && strings.TrimSpace(hydrated.Transcript) == ""
 			if !incomplete && !omittedTranscript {
 				continue
 			}

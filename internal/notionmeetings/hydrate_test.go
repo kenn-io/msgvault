@@ -92,9 +92,8 @@ func paragraph(id, text string, children bool) Block {
 }
 
 func hydrationMeeting() MeetingNote {
-	raw := json.RawMessage(`{"object":"block","id":"meeting-1","type":"meeting_notes","future":{"kept":true}}`)
-	return MeetingNote{
-		Object: "block", ID: "meeting-1", Type: "meeting_notes", Raw: raw,
+	meeting := MeetingNote{
+		Object: "block", ID: "meeting-1", Type: "meeting_notes",
 		Parent:      Parent{Type: "page_id", PageID: "page-1"},
 		CreatedTime: "2026-08-29T09:59:00Z", LastEditedTime: "2026-08-29T10:35:00Z",
 		CreatedBy: UserRef{ID: "creator-1", Object: "user"},
@@ -110,6 +109,12 @@ func hydrationMeeting() MeetingNote {
 			},
 		},
 	}
+	raw, err := json.Marshal(meeting)
+	if err != nil {
+		panic(err)
+	}
+	meeting.Raw = raw
+	return meeting
 }
 
 func completeHydrationSource() *fakeHydrationSource {
@@ -234,10 +239,10 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal("Decide the release scope.", hydrated.Summary)
 			assert.Contains(hydrated.Notes, "Nested action item.")
-			assert.Equal("Test Speaker: Published in Markdown.", hydrated.Transcript)
-			assert.True(hydrated.MarkdownTranscriptFallback)
+			assert.Empty(hydrated.Transcript)
+			assert.False(hydrated.MarkdownTranscriptFallback)
 			assert.Contains(hydrated.Incomplete, "transcript")
-			assert.Equal("page-1", source.markdownID)
+			assert.Zero(source.markdownCalls)
 			assert.Len(hydrated.AttendeeLabels, 2)
 		})
 	}
