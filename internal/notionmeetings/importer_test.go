@@ -1237,7 +1237,7 @@ func TestImporterReplacesCompleteSectionEdits(t *testing.T) {
 		var block Block
 		require.NoError(json.Unmarshal([]byte(payload), &block))
 		source.blocks["notes-1"] = &block
-		pageRaw := fmt.Sprintf(`{"object":"list","results":[{"object":"block","id":"task-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":%q}],"checked":%t}},{"object":"block","id":"nested-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{}}],"has_more":false,"next_cursor":null}`, text, checked)
+		pageRaw := fmt.Sprintf(`{"object":"list","results":[{"object":"block","id":"task-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":%q}],"checked":%t}}],"has_more":false,"next_cursor":null}`, text, checked)
 		var page BlockPage
 		require.NoError(json.Unmarshal([]byte(pageRaw), &page))
 		page.Raw = json.RawMessage(pageRaw)
