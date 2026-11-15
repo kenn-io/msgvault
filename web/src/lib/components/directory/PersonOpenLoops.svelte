@@ -5,7 +5,7 @@
   import type { APIClient } from '../../api/client';
   import { formatContactDate } from '../../directory/labels';
   import { listLoops } from '../../api/generated/api/api';
-  import type { LoopCommitment, LoopItem } from '../../api/generated/models';
+  import type { LoopCommitment, LoopItem, LoopListResponse } from '../../api/generated/models';
 
   // refreshKey changes when the person's identities change, so the list reloads.
   interface Props { client: APIClient; personID: number; refreshKey?: string }
@@ -22,26 +22,26 @@
   let coverageIncomplete = $state(false);
   let unreadable = $state(0);
   let checkMore = $state<() => void>(() => {});
+  let promiseStatus = $state('');
+  let nextOffset = $state<number | undefined>();
+  let loadingPromises = $state(false);
+  let morePromisesFailed = $state(false);
+  let morePromises = $state<() => void>(() => {});
 
   $effect(() => {
     const selectedID = personID;
     const selectedClient = client;
     void refreshKey;
     const controller = new AbortController();
-    checkMoreFailed = false;
-    checkingMore = false;
+    stopActions();
+    morePromises = () => void loadPromises(selectedID, selectedClient, controller.signal);
     async function load(more = false) {
       if (more) {
         checkingMore = true;
         checkMoreFailed = false;
       } else {
         loading = true;
-        items = [];
-        commitments = [];
-        truncated = false;
-        coverageIncomplete = false;
-        unreadable = 0;
-        failed = false;
+        reset();
       }
       try {
         const result = await listLoops(
@@ -50,11 +50,7 @@
         );
         if (controller.signal.aborted) return;
         if (!result.data) throw new Error('Open loops are unavailable.');
-        items = result.data.items ?? [];
-        commitments = result.data.commitments ?? [];
-        truncated = Boolean(result.data.truncated);
-        coverageIncomplete = Boolean(result.data.coverage_incomplete);
-        unreadable = result.data.skipped_unparseable ?? 0;
+        apply(result.data);
       } catch {
         if (controller.signal.aborted) return;
         if (more) checkMoreFailed = true;
@@ -70,6 +66,64 @@
     void load();
     return () => controller.abort();
   });
+
+  function stopActions() {
+    checkMoreFailed = false;
+    checkingMore = false;
+    morePromisesFailed = false;
+    loadingPromises = false;
+  }
+
+  function reset() {
+    items = [];
+    commitments = [];
+    truncated = false;
+    coverageIncomplete = false;
+    unreadable = 0;
+    failed = false;
+    promiseStatus = '';
+    nextOffset = undefined;
+  }
+
+  function apply(data: LoopListResponse) {
+    items = data.items ?? [];
+    commitments = data.commitments ?? [];
+    truncated = Boolean(data.truncated);
+    coverageIncomplete = Boolean(data.coverage_incomplete);
+    unreadable = data.skipped_unparseable ?? 0;
+    promiseStatus = discoveryStatus(data);
+    nextOffset = data.commitments_next_offset;
+  }
+
+  // Mirrors the CLI so an unfinished scan never reads as "nothing promised".
+  function discoveryStatus(data: LoopListResponse): string {
+    if (data.commitments_complete !== false) return '';
+    const since = data.commitments_since?.slice(0, 10);
+    const until = data.commitments_until?.slice(0, 10);
+    if (!since) return 'Promise discovery has not started.';
+    if (until && until < since) return 'No messages were eligible for promise discovery in the current window.';
+    return `Promise discovery ${until ? `from ${since} through ${until}` : `since ${since}`} is incomplete.`;
+  }
+
+  async function loadPromises(selectedID: number, selectedClient: APIClient, signal: AbortSignal) {
+    loadingPromises = true;
+    morePromisesFailed = false;
+    try {
+      const result = await listLoops(
+        { person_id: selectedID, limit, commitment_offset: nextOffset },
+        { ...selectedClient, signal },
+      );
+      if (signal.aborted) return;
+      if (!result.data) throw new Error('Promises are unavailable.');
+      commitments = [...commitments, ...(result.data.commitments ?? [])];
+      truncated = Boolean(result.data.truncated);
+      nextOffset = result.data.commitments_next_offset;
+    } catch {
+      if (!signal.aborted) morePromisesFailed = true;
+    } finally {
+      if (!signal.aborted) loadingPromises = false;
+    }
+  }
 
   const groups = $derived([
     { kind: 'reply_owed', label: 'Waiting on you', items: items.filter((loop) => loop.kind === 'reply_owed') },
@@ -96,7 +150,7 @@
   <div class="open-loops">
   {#if loading}<p class="muted" role="status">Loading…</p>
   {:else if failed}<InlineNotice message="Couldn't load open loops." />
-  {:else if openCount === 0 && coverageIncomplete}<p class="muted">No open loops found. Some messages haven't been checked yet.</p>
+  {:else if openCount === 0 && (coverageIncomplete || promiseStatus)}<p class="muted">No open loops found.{coverageIncomplete ? " Some messages haven't been checked yet." : ''}</p>
   {:else if openCount === 0}<p class="muted">Nothing open with this person.</p>
   {:else}
     {#each groups as group (group.kind)}
@@ -130,6 +184,11 @@
       {/if}
     {/each}
   {/if}
+  {#if !loading && !failed && promiseStatus && commitments.length === 0}<p class="muted">{promiseStatus}</p>{/if}
+  {#if !loading && !failed && nextOffset !== undefined}
+    {#if morePromisesFailed}<p role="alert">Couldn't load more promises.</p>{/if}
+    <div><Button size="sm" label={loadingPromises ? 'Loading…' : 'More promises'} disabled={loadingPromises || checkingMore} onclick={morePromises} /></div>
+  {/if}
   {#if !loading && !failed && unreadable > 0}
     <p class="muted">
       {unreadable === 1 ? '1 message' : `${unreadable} messages`} could not be read, so a reply in {unreadable === 1 ? 'it' : 'one'} may have settled a loop.
@@ -137,7 +196,7 @@
   {/if}
   {#if !loading && !failed && coverageIncomplete}
     {#if checkMoreFailed}<p role="alert">Couldn't check more archive history.</p>{/if}
-    <div><Button size="sm" label={checkingMore ? 'Checking…' : 'Check more'} disabled={checkingMore} onclick={checkMore} /></div>
+    <div><Button size="sm" label={checkingMore ? 'Checking…' : 'Check more'} disabled={checkingMore || loadingPromises} onclick={checkMore} /></div>
   {/if}
 </div>
 </DetailSection>

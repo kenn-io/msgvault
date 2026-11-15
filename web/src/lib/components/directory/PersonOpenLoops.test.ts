@@ -160,6 +160,76 @@ describe("PersonOpenLoops", () => {
     expect(screen.queryByRole("button", { name: "Check more" })).toBeNull();
   });
 
+  it("shows incomplete promise discovery instead of implying everything was checked", async () => {
+    const respond = (body: object) => createAPIClient(vi.fn<typeof fetch>(async () =>
+      Response.json({ items: [], truncated: false, skipped_unparseable: 0, coverage_incomplete: false, ...body })));
+    const view = render(PersonOpenLoops, {
+      client: respond({ commitments_complete: false, commitments_since: "2026-10-01T00:00:00Z" }),
+      personID: 7,
+    });
+    expect(await screen.findByText("Promise discovery since 2026-10-01 is incomplete.")).toBeDefined();
+    expect(screen.queryByText("Nothing open with this person.")).toBeNull();
+    view.unmount();
+
+    const withLoops = render(PersonOpenLoops, {
+      client: respond({ items: [loop()], commitments_complete: false, commitments_since: "2026-10-01T00:00:00Z", commitments_until: "2026-10-31T00:00:00Z" }),
+      personID: 7,
+    });
+    expect(await screen.findByText("Promise discovery from 2026-10-01 through 2026-10-31 is incomplete.")).toBeDefined();
+    expect(screen.getByRole("link", { name: "Review the draft?" })).toBeDefined();
+    withLoops.unmount();
+
+    render(PersonOpenLoops, { client: respond({ commitments_complete: false }), personID: 7 });
+    expect(await screen.findByText("Promise discovery has not started.")).toBeDefined();
+    expect(screen.queryByText("Nothing open with this person.")).toBeNull();
+  });
+
+  it("appends the next promise page", async () => {
+    const promise = (id: number) => ({ id: `c${id}`, person_id: 7, summary: "", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: id, start: 0, end: 10, text: `Promise ${id}` }, promised_at: "2026-10-12T12:00:00Z" });
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ items: [loop()], truncated: true, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(1)], commitments_next_offset: 1 }))
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValueOnce(Response.json({ items: [loop()], truncated: false, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(2)] }));
+    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
+    const button = await screen.findByRole("button", { name: "More promises" });
+    button.click();
+    expect((await screen.findByRole("alert")).textContent).toContain("Couldn't load more promises.");
+    expect(screen.getByRole("link", { name: "Promise 1" })).toBeDefined();
+    screen.getByRole("button", { name: "More promises" }).click();
+    expect(await screen.findByRole("link", { name: "Promise 2" })).toBeDefined();
+    expect(screen.getByRole("link", { name: "Promise 1" })).toBeDefined();
+    expect(screen.getByRole("link", { name: "Review the draft?" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: "More promises" })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    const request = fetcher.mock.calls[2]?.[0];
+    const url = new URL(request instanceof Request ? request.url : String(request), "http://localhost");
+    expect(url.searchParams.get("commitment_offset")).toBe("1");
+    expect(url.searchParams.get("person_id")).toBe("7");
+    expect(url.searchParams.get("limit")).toBe("5");
+  });
+
+  it("drops a late promise page after the person changes", async () => {
+    let resolvePage!: (response: Response) => void;
+    const page = new Promise<Response>((resolve) => { resolvePage = resolve; });
+    const promise = (id: number) => ({ id: `c${id}`, person_id: 7, summary: "", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: id, start: 0, end: 10, text: `Promise ${id}` }, promised_at: "2026-10-12T12:00:00Z" });
+    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(input instanceof Request ? input.url : String(input), "http://localhost");
+      if (url.searchParams.has("commitment_offset")) return page;
+      return url.searchParams.get("person_id") === "7"
+        ? Response.json({ items: [], truncated: true, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(1)], commitments_next_offset: 1 })
+        : Response.json({ items: [], truncated: false, skipped_unparseable: 0, coverage_incomplete: false });
+    }));
+    const view = render(PersonOpenLoops, { client, personID: 7 });
+    (await screen.findByRole("button", { name: "More promises" })).click();
+    await view.rerender({ client, personID: 8 });
+    expect(await screen.findByText("Nothing open with this person.")).toBeDefined();
+    resolvePage(Response.json({ items: [], truncated: false, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(2)] }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await tick();
+    expect(screen.queryByText("Promise 2")).toBeNull();
+    expect(screen.getByText("Nothing open with this person.")).toBeDefined();
+  });
+
   it("shows an error", async () => {
     const client = createAPIClient(
       vi.fn<typeof fetch>(async () =>

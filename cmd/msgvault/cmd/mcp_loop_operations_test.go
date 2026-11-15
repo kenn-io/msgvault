@@ -103,6 +103,38 @@ func assertLoopRefusal(t *testing.T, result *mcpserver.OperationResult, code str
 	assert.JSONEq(t, fmt.Sprintf(`{"error":%q,"operation_may_have_completed":%t}`, code, uncertain), string(data))
 }
 
+func TestMCPLoopListForwardsCommitmentOffset(t *testing.T) {
+	f := storetest.New(t)
+	apiServer := api.NewServerWithOptions(api.ServerOptions{Config: config.NewDefaultConfig(), Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler)})
+	offsets := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/loops" {
+			offsets <- r.URL.Query().Get("commitment_offset")
+		}
+		apiServer.Router().ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+	require.NoError(t, err)
+	capabilities, err := client.MCPCapabilities(t.Context())
+	require.NoError(t, err)
+	backend := newDaemonMCPOperations(client, capabilities)
+	session := loopOperationMCPSession(t, backend, nil, &sdkmcp.ClientOptions{})
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_open_loops", Arguments: map[string]any{"commitment_offset": 5}})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	loopToolOutput[generated.LoopListResponse](t, result)
+	select {
+	case offset := <-offsets:
+		assert.Equal(t, "5", offset)
+	case <-time.After(time.Second):
+		t.Fatal("list request did not reach the daemon")
+	}
+	invalid, err := backend.ExecuteOperation(t.Context(), "list_open_loops", map[string]any{"commitment_offset": -1})
+	require.NoError(t, err)
+	assertLoopRefusal(t, invalid, "invalid_arguments", false)
+}
+
 func TestMCPLoopsSDKDecisionsAndList(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

@@ -9,10 +9,7 @@ import (
 
 func loopOperationalDefinitions() []operationalDefinition {
 	return []operationalDefinition{
-		newOperationalDefinition("list_open_loops", "List unanswered questions and cited commitments. coverage_incomplete means call again to continue checking retained evidence; truncated means narrow by person_id because there is no cursor; skipped_unparseable means an unreadable original may contain a reply that settled a listed loop. These evidence warnings do not measure source freshness.", OperationFamilyLoops, closedObject(map[string]*jsonschema.Schema{
-			"person_id": safeIDSchema("Only questions with this durable person ID"),
-			"limit":     {Type: "integer", Minimum: new(float64(1)), Maximum: new(float64(200)), Default: jsontext.Value("50")},
-		}), outputSchemaFor[generated.LoopListResponse](), false),
+		newOperationalDefinition("list_open_loops", "List unanswered questions and cited commitments. Use commitments_next_offset to request more promises. Narrow by person_id if reply loops are truncated. coverage_incomplete means call again to continue checking retained evidence; skipped_unparseable means an unreadable original may contain a reply that settled a listed loop. These evidence warnings do not measure source freshness.", OperationFamilyLoops, closedObject(listLoopProperties()), outputSchemaFor[generated.LoopListResponse](), false),
 		newOperationalDefinition("close_open_loop", "Mark done exactly the listed questions after rechecking the anchor's evidence. Questions that appeared after the list stay open. Requires approval.", OperationFamilyLoops, closedObject(map[string]*jsonschema.Schema{
 			"message_id":           safeIDSchema("Exact anchor_message_id from a list or decision receipt"),
 			"question_message_ids": listedQuestionsSchema(),
@@ -29,4 +26,12 @@ func loopOperationalDefinitions() []operationalDefinition {
 func listedQuestionsSchema() *jsonschema.Schema {
 	one := 1
 	return &jsonschema.Schema{Type: schemaTypeArray, Description: "question_message_ids from the same list item", Items: safeIDSchema("Question message ID"), MinItems: &one}
+}
+
+func listLoopProperties() map[string]*jsonschema.Schema {
+	return map[string]*jsonschema.Schema{
+		"person_id":         safeIDSchema("Only questions with this durable person ID"),
+		"commitment_offset": {Type: "integer", Description: "Cited promises to skip", Minimum: new(float64(0)), Default: jsontext.Value("0")},
+		"limit":             {Type: "integer", Minimum: new(float64(1)), Maximum: new(float64(200)), Default: jsontext.Value("50")},
+	}
 }
