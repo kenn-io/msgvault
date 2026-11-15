@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"strconv"
 	"testing"
 
@@ -1117,13 +1118,17 @@ func TestCardDAVParticipantBindingSystemLinkAfterPersonMerge(t *testing.T) {
 	assert.ElementsMatch([]int64{a, b}, current.ParticipantIDs)
 	split, err := st.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID, ParticipantIDs: []int64{b}, ExpectedSourceRevision: current.Revision, IdempotencyKey: "system-link-split", Actor: "test"})
 	require.NoError(err)
+	assert.True(split.ExactReversal)
 	assert.Equal([]int64{a}, split.SourcePerson.ParticipantIDs)
 	assert.Equal([]int64{b}, split.NewPerson.ParticipantIDs)
 	var leftOriginAfter, rightOriginAfter string
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT origin_side FROM person_merge_participants WHERE merge_id = ? AND participant_id = ?`), merged.Merge.ID, a).Scan(&leftOriginAfter))
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT origin_side FROM person_merge_participants WHERE merge_id = ? AND participant_id = ?`), merged.Merge.ID, b).Scan(&rightOriginAfter))
+	var leftSplit, rightSplit sql.NullInt64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT origin_side, split_id FROM person_merge_participants WHERE merge_id = ? AND participant_id = ?`), merged.Merge.ID, a).Scan(&leftOriginAfter, &leftSplit))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT origin_side, split_id FROM person_merge_participants WHERE merge_id = ? AND participant_id = ?`), merged.Merge.ID, b).Scan(&rightOriginAfter, &rightSplit))
 	assert.Equal(leftOrigin, leftOriginAfter)
 	assert.Equal(rightOrigin, rightOriginAfter)
+	assert.False(leftSplit.Valid)
+	assert.Equal(sql.NullInt64{Int64: split.Split.ID, Valid: true}, rightSplit)
 	unbound, err := st.PersonForParticipantsContext(t.Context(), []int64{late})
 	require.NoError(err)
 	assert.Nil(unbound)

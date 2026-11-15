@@ -485,7 +485,7 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 		}
 		if personID != 0 {
 			if err := extendActivePersonMergeLineageTx(
-				ctx, tx, personID, lo, hi, edges,
+				ctx, tx, personID, lo, hi, edges, !confirmMembership,
 			); err != nil {
 				return err
 			}
@@ -547,12 +547,14 @@ type activePersonMergeLineageState struct {
 // its one unambiguous state. A lineage-free component inherits the state of
 // the participant it is directly linked to, which remains deterministic even
 // when that participant's existing component contains both merge origins.
+// Automatic memberships can be undone, so system links omit them from lineage.
 func extendActivePersonMergeLineageTx(
 	ctx context.Context,
 	tx *loggedTx,
 	personID int64,
 	lo, hi int64,
 	edges []linkEdge,
+	skipAutomatic bool,
 ) error {
 	left := sortedComponentMembers(lo, edges)
 	right := sortedComponentMembers(hi, edges)
@@ -638,9 +640,12 @@ func extendActivePersonMergeLineageTx(
 			state := assignments[participantID]
 			if _, err := tx.ExecContext(ctx, `INSERT INTO person_merge_participants
 				(merge_id, participant_id, origin_side, split_id)
-				VALUES (?, ?, ?, ?)
+				SELECT ?, ?, ?, ? WHERE ? = FALSE OR NOT EXISTS (
+					SELECT 1 FROM person_participants
+					WHERE person_id = ? AND participant_id = ? AND carddav_owned = TRUE
+				)
 				ON CONFLICT (merge_id, participant_id) DO NOTHING`,
-				mergeID, participantID, state.origin, state.splitID); err != nil {
+				mergeID, participantID, state.origin, state.splitID, skipAutomatic, personID, participantID); err != nil {
 				return fmt.Errorf("extend person merge lineage for linked participant: %w", err)
 			}
 		}
