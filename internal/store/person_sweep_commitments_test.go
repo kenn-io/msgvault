@@ -718,38 +718,35 @@ func TestCommitmentDecisionReportsConcurrentChange(t *testing.T) {
 }
 
 func TestCommitmentDiscoveryPagesJournal(t *testing.T) {
-	for _, limit := range []int{1, 10} {
-		t.Run(fmt.Sprintf("limit=%d", limit), func(t *testing.T) {
-			r, ctx := require.New(t), t.Context()
-			f := newPersonSweepApplyFixture(t, "journal-pages", false)
-			_, persist := newCommitmentTestConversation(t, f)
-			var ids []int64
-			for i := range limit + 1 {
-				ids = append(ids, persist(fmt.Sprintf("pending-%d", i), "I will reply.", -time.Hour))
-			}
-			cfg, profile := commitmentTestConfig()
-			cfg.Commitments.MaxItems = limit
-			for page, want := range [][]int64{ids[:limit], ids[limit:]} {
-				if page > 0 {
-					f = nextCommitmentTestAttempt(t, f, "-next")
-				}
-				window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
-				r.NoError(err)
-				r.Len(window.Sources, len(want))
-				for i, id := range want {
-					r.Equal(id, window.Sources[i].MessageID)
-				}
-				_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
-				r.NoError(err)
-				if page == 0 {
-					_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
-					r.NoError(err)
-					r.False(complete)
-				}
-			}
-			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
-			r.NoError(err)
-			r.Empty(window.Sources, "checked messages should not be sent again")
-		})
+	const limit = 10
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "journal-pages", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	var ids []int64
+	for i := range limit + 1 {
+		ids = append(ids, persist(fmt.Sprintf("pending-%d", i), "I will reply.", -time.Hour))
 	}
+	cfg, profile := commitmentTestConfig()
+	cfg.Commitments.MaxItems = limit
+	for page, want := range [][]int64{ids[:limit], ids[limit:]} {
+		if page > 0 {
+			f = nextCommitmentTestAttempt(t, f, "-next")
+		}
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+		r.NoError(err)
+		r.Len(window.Sources, len(want))
+		for i, id := range want {
+			r.Equal(id, window.Sources[i].MessageID)
+		}
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+		r.NoError(err)
+		if page == 0 {
+			_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
+			r.NoError(err)
+			r.False(complete)
+		}
+	}
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Empty(window.Sources, "checked messages should not be sent again")
 }

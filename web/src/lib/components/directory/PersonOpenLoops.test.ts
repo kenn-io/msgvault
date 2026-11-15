@@ -72,7 +72,7 @@ describe("PersonOpenLoops", () => {
     expect(url.searchParams.get("limit")).toBe("5");
   });
 
-  it("shows fresh and stale cited promises", async () => {
+  it("shows fresh and stale cited promises and includes them in the count", async () => {
     const fetcher = vi.fn<typeof fetch>(async () => Response.json({
       items: [loop(42), loop(43), loop(44), loop(45), loop(46)],
       truncated: true,
@@ -91,6 +91,15 @@ describe("PersonOpenLoops", () => {
     expect(await screen.findByText("7+ open")).toBeDefined();
     expect(cite.closest("li")?.textContent).toContain("due 2026-11-20");
     expect(undated.closest("li")?.textContent).not.toContain("due");
+  });
+
+  it("shows a plus when more loops are open than the card lists", async () => {
+    const { client } = clientFor(
+      [loop(1), loop(2), loop(3), loop(4), loop(5)],
+      true,
+    );
+    render(PersonOpenLoops, { client, personID: 7 });
+    expect(await screen.findByText("5+ open")).toBeDefined();
   });
 
   it("says how many messages could not be read, with or without loops", async () => {

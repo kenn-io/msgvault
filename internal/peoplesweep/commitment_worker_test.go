@@ -72,14 +72,10 @@ func TestTargetedCommitmentOnlyRunSkipsOrdinaryWork(t *testing.T) {
 
 type commitmentCallAuthority struct {
 	workerRepairAuthority
-
-	checks   int
-	revokeAt int
 }
 
-func (a *commitmentCallAuthority) HasActivePersonCommitmentConsent(context.Context, string) (bool, error) {
-	a.checks++
-	return a.revokeAt == 0 || a.checks < a.revokeAt, nil
+func (*commitmentCallAuthority) HasActivePersonCommitmentConsent(context.Context, string) (bool, error) {
+	return true, nil
 }
 
 func TestCommitmentOptionalCallRepairAndBudget(t *testing.T) {

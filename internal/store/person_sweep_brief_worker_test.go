@@ -25,7 +25,6 @@ type scriptedBriefRunner struct {
 	briefPackets  []map[string]any
 
 	extractionRequests int
-	respond            func(peoplesweep.StructuredRequest) json.RawMessage
 }
 
 func (r *scriptedBriefRunner) PrepareStructured(
@@ -60,10 +59,6 @@ func (r *scriptedBriefRunner) RunPreparedStructured(
 		ProviderVersion:   "provider-v1", ModelVersion: "model-v1",
 		Usage:      peoplesweep.TokenUsage{InputTokens: 11, OutputTokens: 4},
 		UsageKnown: true,
-	}
-	if r.respond != nil {
-		response.Output = r.respond(request)
-		return response, nil
 	}
 	if request.ProgramID != peoplesweep.BriefProgramID {
 		r.extractionRequests++

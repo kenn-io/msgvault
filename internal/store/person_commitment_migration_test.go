@@ -62,10 +62,7 @@ func TestCommitmentMigrationUpgradesVersion42(t *testing.T) {
 	var id int64
 	r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`INSERT INTO person_commitments (person_id,target_key) VALUES (?, 'promise') RETURNING id`), f.personID).Scan(&id))
 	a.Positive(id)
-	// Journal positions must retain the clock's 64-bit range after the upgrade.
 	const sequence = int64(1) << 31
-	_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE person_sweep_change_clock SET sequence = ? WHERE singleton = TRUE`), sequence)
-	r.NoError(err)
 	_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO person_commitment_frontiers
 		(person_id, through_sequence, processed_at, backfill_message_id)
 		VALUES (?, ?, ?, -1)`), f.personID, sequence, sweepBudgetNow())

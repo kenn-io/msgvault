@@ -273,7 +273,7 @@ Showing up to 50 reply loops and 50 cited promises. Use --limit up to 200 to see
 	out.Reset()
 	const promise = "I will send the draft."
 	nextOffset := int64(201)
-	require.NoError(writeLoops(&out, generated.LoopListResponse{CommitmentsNextOffset: &nextOffset, Commitments: []generated.LoopCommitment{{
+	require.NoError(writeLoops(&out, generated.LoopListResponse{Truncated: true, CommitmentsNextOffset: &nextOffset, Commitments: []generated.LoopCommitment{{
 		ID: "c12", PersonID: 7, Direction: "owed_to", Freshness: "fresh", State: "done", Summary: "Send the draft",
 		Promise: generated.CommitmentQuote{MessageID: 19, Text: promise},
 	}}}, 50, now))
