@@ -155,7 +155,8 @@ msgvault delete-staged --account you@gmail.com --permanent
 
 Gmail and IMAP both default to moving messages to Trash. Gmail retains trash
 for 30 days; IMAP recovery and retention depend on the server. IMAP uses the
-server's discovered Trash folder, falling back to a folder named `Trash`.
+server's advertised Trash folder, or searches for common names such as `Trash`,
+`[Gmail]/Trash`, `Deleted Items`, and `Deleted Messages`.
 If that move fails, the batch records the failure rather than switching to
 permanent deletion. Microsoft Graph mail moves messages to Deleted Items, where
 you can restore them in Outlook. A later sync keeps them marked as deleted

@@ -929,6 +929,19 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				checkpoint.ErrorsCount++
 				continue
 			}
+			if s.requireLabelRefresh && snapshotComplete &&
+				s.opts.SourceType != sourceTypeIMAP &&
+				!slices.Contains(labelResult.LabelIDs, "TRASH") {
+				if err := s.store.ClearMessageDeletedFromSourceContext(
+					ctx, sourceID, sourceMessageID,
+				); err != nil {
+					checkpoint.MessagesUpdated += result.updated
+					return nil, fmt.Errorf(
+						"clear Gmail deletion mark for restored message %s: %w",
+						sourceMessageID, err,
+					)
+				}
+			}
 			if changed {
 				result.updated++
 				result.skipped--

@@ -179,6 +179,24 @@ func TestGmailRecoveryReplacesArchivedLabels(t *testing.T) {
 	}
 }
 
+func TestReviewRecoveryRestore(t *testing.T) {
+	require := require.New(t)
+	e, _, ids := recoveryLabelsEnv(t)
+	source := gmailCoverageSource(t.Context(), t, e)
+	require.NoError(e.Store.MarkMessageDeleted(source.ID, "normal1"))
+	require.NoError(e.Store.MarkMessageDeleted(source.ID, "trash"))
+
+	_, err := e.Syncer.IncrementalWithHistoryRecovery(
+		t.Context(), source, nil)
+	require.NoError(err)
+
+	assertDeletedFromSource(t, e.Store, "normal1", true)
+	assertDeletedFromSource(t, e.Store, "trash", false)
+	assertRecoveryLabels(t, e, ids, map[string][]string{
+		"normal1": {"TRASH"}, "trash": {"INBOX"},
+	})
+}
+
 func TestGmailRecoveryLabelFailureRetainsCheckpoint(t *testing.T) {
 	for _, fault := range []string{"read", "identity", "write", "cancel"} {
 		t.Run(fault, func(t *testing.T) {

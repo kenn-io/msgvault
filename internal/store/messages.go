@@ -2950,7 +2950,7 @@ const LabelSystemRoleSent = "sent"
 // holds unsent drafts.
 const LabelSystemRoleDrafts = "drafts"
 
-// LabelSystemRoleTrash identifies a provider-confirmed Trash label.
+// LabelSystemRoleTrash identifies the mailbox msgvault selected as Trash.
 const LabelSystemRoleTrash = "trash"
 
 // EnsureLabel gets or creates a label, handling renames and ID changes.
