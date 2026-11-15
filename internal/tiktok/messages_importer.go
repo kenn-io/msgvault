@@ -428,17 +428,6 @@ func (r *messageRun) persist(ctx context.Context, m BusinessMessage, event strin
 	if !m.media() {
 		return nil
 	}
-	if exists {
-		stored, err := r.imp.store.GetMessageContext(ctx, messageID)
-		if err != nil {
-			return err
-		}
-		for _, att := range stored.Attachments {
-			if att.ContentHash != "" {
-				return nil
-			}
-		}
-	}
 	return r.attach(ctx, messageID, m)
 }
 
@@ -468,7 +457,8 @@ func (r *messageRun) attach(ctx context.Context, messageID int64, message Busine
 		return nil
 	}
 	write := pendingMessageAttachment(message)
-	if err := r.imp.store.UpsertAttachmentRecordWithStats(ctx, messageID, write, true); err != nil {
+	attachmentID, err := r.imp.store.PrepareTikTokMediaContext(ctx, messageID, write)
+	if err != nil || attachmentID == 0 {
 		return err
 	}
 	if r.imp.options.AttachmentsDir == "" {
@@ -493,7 +483,7 @@ func (r *messageRun) attach(ctx context.Context, messageID int64, message Busine
 		return err
 	}
 	write.StoragePath, write.ContentHash, write.Size, write.MIMEType, write.State = storage, hash, size, media.ContentType, attachmentpolicy.StateStored
-	if err := r.imp.store.UpsertAttachmentRecordWithStats(ctx, messageID, write, true); err != nil {
+	if err := r.imp.store.CompleteTikTokMediaContext(ctx, messageID, attachmentID, write); err != nil {
 		return err
 	}
 	r.sum.MediaStored++

@@ -21,6 +21,7 @@ type pendingMediaAPI struct {
 	messages   []BusinessMessage
 	attempts   []ID
 	fail       bool
+	body       string
 	accountErr error
 	open       func(context.Context, BusinessMessage) error
 }
@@ -60,7 +61,11 @@ func (a *pendingMediaAPI) OpenMessageMedia(ctx context.Context, _ string, m Busi
 	if a.fail {
 		return nil, errors.New("synthetic provider unavailable")
 	}
-	return &MessageMediaResponse{Body: io.NopCloser(strings.NewReader("synthetic media")), ContentType: "image/png"}, nil
+	body := a.body
+	if body == "" {
+		body = "synthetic media"
+	}
+	return &MessageMediaResponse{Body: io.NopCloser(strings.NewReader(body)), ContentType: "image/png"}, nil
 }
 func pendingMessage(i int) BusinessMessage {
 	return BusinessMessage{ID: ID(fmt.Sprintf("media-%03d", i)), ConversationID: "conversation-example", Timestamp: 1700000000001, Type: "image", Image: &MessageMedia{ID: ID(fmt.Sprintf("image-%03d", i))}}
