@@ -267,8 +267,12 @@ func (r *messageRun) persist(ctx context.Context, m BusinessMessage, event strin
 	}
 	key := messageKey(m.ConversationID, m.ID)
 	parentKey := ""
-	if m.Reference != nil && m.Reference.ID != "" {
-		parentKey = messageKey(m.ConversationID, m.Reference.ID)
+	var replyTo ID
+	if m.Reference != nil {
+		replyTo = m.Reference.ID
+	}
+	if replyTo != "" {
+		parentKey = messageKey(m.ConversationID, replyTo)
 	}
 	existing, err := r.imp.store.StoredMessagesContext(ctx, r.source.ID, messageFormat, []string{key, parentKey})
 	if err != nil {
@@ -283,6 +287,10 @@ func (r *messageRun) persist(ctx context.Context, m BusinessMessage, event strin
 		var metadata messageMetadata
 		if !saved.Valid || json.Unmarshal([]byte(saved.String), &metadata) != nil || metadata.App != r.app || metadata.Account != r.account || metadata.Conversation != m.ConversationID || metadata.Message != m.ID {
 			return errors.New("TikTok message identity conflicts with the archive")
+		}
+		if m.Reference == nil && metadata.ReplyTo != "" {
+			replyTo = metadata.ReplyTo
+			parentKey = messageKey(m.ConversationID, replyTo)
 		}
 	}
 	sender, err := resolveActor(ctx, r.imp.store, r.source.ID, r.app, r.account, string(from.ID), fromName)
@@ -313,10 +321,7 @@ func (r *messageRun) persist(ctx context.Context, m BusinessMessage, event strin
 	if row, ok := existing[parentKey]; ok {
 		parent = sql.NullInt64{Int64: row.ID, Valid: true}
 	}
-	metadata := messageMetadata{App: r.app, Account: r.account, Conversation: m.ConversationID, Message: m.ID, Type: m.Kind(), Event: event}
-	if m.Reference != nil {
-		metadata.ReplyTo = m.Reference.ID
-	}
+	metadata := messageMetadata{App: r.app, Account: r.account, Conversation: m.ConversationID, Message: m.ID, Type: m.Kind(), Event: event, ReplyTo: replyTo}
 	meta, err := json.Marshal(metadata)
 	if err != nil {
 		return err

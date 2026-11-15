@@ -266,13 +266,19 @@ func TestMessageRawPreservesNestedProviderFields(t *testing.T) {
 }
 
 func TestMessageRepliesResolveAfterParentArrives(t *testing.T) {
-	for _, mode := range []string{"webhook", "pull"} {
+	for _, mode := range []string{"webhook", "pull", "webhook_sparse", "pull_sparse"} {
 		t.Run(mode, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			st := testutil.NewSQLiteTestStore(t)
 			child := BusinessMessage{ID: "reply-example", ConversationID: "conversation-example", Timestamp: 1700000000001, Type: "text", Text: &MessageText{Body: "Example reply"}, Reference: &MessageReference{ID: "parent-example"}}
 			parent := BusinessMessage{ID: "parent-example", ConversationID: child.ConversationID, Timestamp: child.Timestamp, Type: "text", Text: &MessageText{Body: "Example parent"}}
+			messages := []BusinessMessage{child, parent}
+			if strings.HasSuffix(mode, "_sparse") {
+				sparse := child
+				sparse.Reference = nil
+				messages = []BusinessMessage{child, sparse, parent}
+			}
 			c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/business/get/":
@@ -280,7 +286,7 @@ func TestMessageRepliesResolveAfterParentArrives(t *testing.T) {
 				case "/business/message/conversation/list/":
 					_, _ = fmt.Fprint(w, `{"code":0,"data":{"conversations":[{"conversation_id":"conversation-example"}]}}`)
 				case "/business/message/content/list/":
-					assertions.NoError(json.MarshalWrite(w, map[string]any{"code": 0, "data": MessagePage{Messages: []BusinessMessage{child, parent}}}))
+					assertions.NoError(json.MarshalWrite(w, map[string]any{"code": 0, "data": MessagePage{Messages: messages}}))
 				default:
 					http.NotFound(w, r)
 				}
@@ -288,11 +294,11 @@ func TestMessageRepliesResolveAfterParentArrives(t *testing.T) {
 			imp := NewMessageImporter(st, c, MessageImportOptions{AttachmentsDir: t.TempDir()})
 			source, err := imp.Register(t.Context(), "app-example", "account-example")
 			requirements.NoError(err)
-			if mode == "pull" {
+			if strings.HasPrefix(mode, "pull") {
 				_, err = imp.Import(t.Context(), "app-example", "account-example")
 				requirements.NoError(err)
 			} else {
-				for _, message := range []BusinessMessage{child, parent} {
+				for _, message := range messages {
 					_, err = imp.Apply(t.Context(), "app-example", MessageEvent{ClientKey: "app-example", Event: "im_receive_msg", Account: "account-example"}, message)
 					requirements.NoError(err)
 				}
@@ -304,6 +310,12 @@ func TestMessageRepliesResolveAfterParentArrives(t *testing.T) {
 			requirements.NoError(st.DB().QueryRowContext(t.Context(), "SELECT reply_to_message_id FROM messages WHERE id = ?", rows[messageKey(child.ConversationID, child.ID)].ID).Scan(&replyTo))
 			requirements.True(replyTo.Valid)
 			assertions.Equal(rows[messageKey(parent.ConversationID, parent.ID)].ID, replyTo.Int64)
+			if strings.HasSuffix(mode, "_sparse") {
+				_, err = imp.Apply(t.Context(), "app-example", MessageEvent{ClientKey: "app-example", Event: "im_receive_msg", Account: "account-example"}, messages[1])
+				requirements.NoError(err)
+				requirements.NoError(st.DB().QueryRowContext(t.Context(), "SELECT reply_to_message_id FROM messages WHERE id = ?", rows[messageKey(child.ConversationID, child.ID)].ID).Scan(&replyTo))
+				assertions.Equal(sql.NullInt64{Int64: rows[messageKey(parent.ConversationID, parent.ID)].ID, Valid: true}, replyTo)
+			}
 		})
 	}
 }
