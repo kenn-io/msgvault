@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
+	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/meetingidentity"
 )
 
@@ -23,6 +24,7 @@ const (
 )
 
 type hydrationSource interface {
+	RetrievePageMarkdown(ctx context.Context, pageID string, includeTranscript bool) (*MarkdownPage, error)
 	RetrieveBlock(ctx context.Context, blockID string) (*Block, error)
 	RetrieveBlockChildren(ctx context.Context, blockID, cursor string) (*BlockPage, error)
 	ListUsers(ctx context.Context, cursor string) (*UserPage, error)
@@ -47,6 +49,8 @@ type HydratedMeeting struct {
 	SummaryTree                blockTree
 	NotesTree                  blockTree
 	TranscriptTree             blockTree
+	PageMarkdown               *MarkdownPage
+	MarkdownTranscriptFallback bool
 	Summary                    string
 	Notes                      string
 	Transcript                 string
@@ -115,21 +119,6 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 	return h.hydrateBlock(ctx, meetingBlock)
 }
 
-// HydrateBlock hydrates an already retrieved, authoritative meeting header.
-// Callers performing identity selection must match this header before calling.
-func (h *Hydrator) HydrateBlock(ctx context.Context, meetingBlock *Block) (*HydratedMeeting, error) {
-	if h == nil || h.source == nil {
-		return nil, errors.New("notion meeting hydrator is unavailable")
-	}
-	h.requests, h.bytes, h.blocks = 0, 0, 0
-	if meetingBlock != nil {
-		if err := h.reserveBytes(meetingBlock.Raw); err != nil {
-			return nil, err
-		}
-	}
-	return h.hydrateBlock(ctx, meetingBlock)
-}
-
 func (h *Hydrator) hydrateBlock(ctx context.Context, meetingBlock *Block) (*HydratedMeeting, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -180,10 +169,99 @@ func (h *Hydrator) hydrateBlock(ctx context.Context, meetingBlock *Block) (*Hydr
 		*section.tree = tree
 		*section.text = renderTree(tree)
 	}
+	if meeting.Parent.Type == "page_id" && meeting.Parent.PageID != "" && strings.TrimSpace(result.Transcript) == "" {
+		soleMeeting, err := h.pageHasOnlyMeeting(ctx, meeting.Parent.PageID, meeting.ID)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if err != nil || !soleMeeting || h.reserveRequest() != nil {
+			result.Warnings = append(result.Warnings, "page Markdown transcript could not be attributed to this meeting; transcript remains pending")
+		} else {
+			page, err := h.source.RetrievePageMarkdown(ctx, meeting.Parent.PageID, true)
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if err == nil && page != nil {
+				err = h.reserveBytes(page.Raw)
+			}
+			if err != nil || page == nil || page.ID != meeting.Parent.PageID || page.Object != "page_markdown" || page.Truncated || len(page.UnknownBlockIDs) > 0 {
+				result.Warnings = append(result.Warnings, "page Markdown transcript was incomplete; transcript remains pending")
+			} else {
+				result.PageMarkdown = page
+				result.Transcript = meetingcontent.ExtractMarkdownTranscript(page.Markdown)
+				result.MarkdownTranscriptFallback = result.Transcript != ""
+			}
+		}
+	}
 	if err := h.resolveAttendees(ctx, result); err != nil {
 		return nil, hydrationFailure("resolve attendees", err)
 	}
 	return result, nil
+}
+
+// pageHasOnlyMeeting checks the whole page tree before attributing its Markdown.
+func (h *Hydrator) pageHasOnlyMeeting(ctx context.Context, pageID, meetingID string) (bool, error) {
+	seen := map[string]bool{pageID: true}
+	found := false
+	var walk func(string, int) (bool, error)
+	walk = func(id string, depth int) (bool, error) {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if depth > maxHydrationDepth {
+			return false, errHydrationLimit
+		}
+		cursor := ""
+		cursors := map[string]bool{}
+		for {
+			if err := h.reserveRequest(); err != nil {
+				return false, err
+			}
+			page, err := h.source.RetrieveBlockChildren(ctx, id, cursor)
+			if err != nil {
+				return false, err
+			}
+			if page == nil {
+				return false, ErrMalformedResponse
+			}
+			if err := h.reserveBytes(page.Raw); err != nil {
+				return false, err
+			}
+			for _, child := range page.Results {
+				if child.Object != "block" || child.ID == "" || child.Type == "" || seen[child.ID] {
+					return false, ErrMalformedResponse
+				}
+				seen[child.ID] = true
+				h.blocks++
+				if h.blocks > maxHydrationBlocks {
+					return false, errHydrationLimit
+				}
+				if child.Type == meetingNotesType {
+					if child.ID != meetingID {
+						return false, nil
+					}
+					found = true
+				}
+				if child.HasChildren {
+					ok, err := walk(child.ID, depth+1)
+					if err != nil || !ok {
+						return false, err
+					}
+				}
+			}
+			next := strings.TrimSpace(page.NextCursor)
+			if !page.HasMore {
+				return next == "", nil
+			}
+			if next == "" || cursors[next] {
+				return false, nil
+			}
+			cursors[next] = true
+			cursor = next
+		}
+	}
+	complete, err := walk(pageID, 1)
+	return complete && found, err
 }
 
 func (h *Hydrator) retrieveBlock(ctx context.Context, id string) (*Block, error) {

@@ -123,6 +123,7 @@ func completeHydrationSource() *fakeHydrationSource {
 			"notes-1": &notesRoot, "transcript-1": &transcriptRoot,
 		},
 		children: map[string]map[string]*BlockPage{
+			"page-1": {"": {Results: []Block{meetingBlock}}},
 			"notes-1": {
 				"": {Results: []Block{nested}, Raw: json.RawMessage(`{"results":[{"id":"nested-1"}],"has_more":false}`)},
 			},
@@ -948,4 +949,42 @@ func TestHydrationParentCancellationStopsSectionRequests(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	assert.NotContains(t, paths, "/v1/blocks/transcript-1")
 	assert.NotContains(t, paths, "/v1/users")
+}
+
+func TestPageMarkdownRequiresCompleteSingleMeetingTree(t *testing.T) {
+	for _, scenario := range []string{"nested sibling", "unreadable page", "missing continuation", "request limit"} {
+		t.Run(scenario, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			source := completeHydrationSource()
+			meeting := hydrationMeeting()
+			meeting.MeetingNotes.Children.TranscriptBlockID = ""
+			installMeetingHeader(t, source, meeting)
+			source.children["page-1"][""].Results = []Block{*source.blocks["meeting-1"]}
+			switch scenario {
+			case "nested sibling":
+				parent := paragraph("parent", "", true)
+				var sibling Block
+				require.NoError(json.Unmarshal([]byte(`{"object":"block","id":"meeting-2","type":"meeting_notes","has_children":false,"meeting_notes":{}}`), &sibling))
+				source.children["page-1"][""].Results = append(source.children["page-1"][""].Results, parent)
+				source.children[parent.ID] = map[string]*BlockPage{"": {Results: []Block{sibling}}}
+			case "unreadable page":
+				source.childrenErrs = map[string]error{"page-1/": ErrRateLimited}
+			case "missing continuation":
+				source.children["page-1"][""].HasMore = true
+			case "request limit":
+				page := source.children["page-1"][""]
+				for i := range maxHydrationRequests {
+					next := strconv.Itoa(i)
+					page.HasMore, page.NextCursor = true, next
+					page = &BlockPage{}
+					source.children["page-1"][next] = page
+				}
+			}
+			hydrated, err := NewHydrator(source).Hydrate(t.Context(), meeting)
+			require.NoError(err)
+			assert.Empty(hydrated.Transcript)
+			assert.Zero(source.markdownCalls)
+		})
+	}
 }

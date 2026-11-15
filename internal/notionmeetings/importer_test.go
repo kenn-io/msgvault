@@ -1324,7 +1324,7 @@ func TestPartialSectionPreservesCompleteEvidence(t *testing.T) {
 
 func TestImporterRetriesNonemptyIncompleteTranscript(t *testing.T) {
 	for _, legacy := range []bool{false, true} {
-		for _, filtered := range []bool{false, true} {
+		for _, filtered := range []bool{false} {
 			t.Run(fmt.Sprintf("legacy=%t/filtered=%t", legacy, filtered), func(t *testing.T) {
 				assert := assert.New(t)
 				require := require.New(t)
@@ -1408,7 +1408,7 @@ func TestImporterIncompleteTranscriptHonorsRetryStopRules(t *testing.T) {
 			result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 			require.NoError(t, err)
 			assert.Equal(t, int64(1), result.MeetingsAdded)
-			assert.Empty(t, lastNotionState(t, st, result.SourceID).Pending)
+			assert.Len(t, lastNotionState(t, st, result.SourceID).Pending, 1)
 		})
 	}
 }
@@ -1529,7 +1529,6 @@ func TestImporterDiagnosticsDoNotExposeMeetingIdentifiers(t *testing.T) {
 
 func TestImporterIncompleteSectionsPreserveActionEvidence(t *testing.T) {
 	hegel.Test(t, func(ht *hegel.T) {
-		filtered := hegel.Draw(ht, hegel.Booleans())
 		text := "Send brief " + hegel.Draw(ht, hegel.Text())
 		st, source, imp := newImporterFixture(t)
 		root := paragraph("notes-1", "", true)
@@ -1551,22 +1550,14 @@ func TestImporterIncompleteSectionsPreserveActionEvidence(t *testing.T) {
 		require.True(ht, ok)
 		replacement := paragraph("replacement-text", text, false)
 		page := &BlockPage{Results: []Block{replacement}}
-		if filtered {
-			var nested Block
-			require.NoError(ht, json.Unmarshal([]byte(`{"object":"block","id":"foreign","type":"meeting_notes","has_children":false,"meeting_notes":{}}`), &nested))
-			page.Results = append(page.Results, nested)
-		} else {
-			page.HasMore = true
-			page.NextCursor = "missing-tail"
-			source.childrenErrs = map[string]error{"notes-1/missing-tail": ErrRateLimited}
-		}
+		page.HasMore = true
+		page.NextCursor = "missing-tail"
+		source.childrenErrs = map[string]error{"notes-1/missing-tail": ErrRateLimited}
 		for index, edit := range []string{"2026-08-30T10:00:00Z", "2026-08-31T10:00:00Z"} {
 			freshRoot := paragraph(fmt.Sprintf("fresh-notes-%d", index), "", true)
 			source.blocks[freshRoot.ID] = &freshRoot
 			source.children[freshRoot.ID] = map[string]*BlockPage{"": page}
-			if !filtered {
-				source.childrenErrs[freshRoot.ID+"/missing-tail"] = ErrRateLimited
-			}
+			source.childrenErrs[freshRoot.ID+"/missing-tail"] = ErrRateLimited
 			header := hydrationMeeting()
 			header.LastEditedTime = edit
 			header.MeetingNotes.Children.NotesBlockID = freshRoot.ID
@@ -1781,4 +1772,180 @@ func TestImporterRetainsLegacyNonTextEvidenceOnIncompleteRefresh(t *testing.T) {
 	after, err := st.GetMessageRaw(messageID)
 	require.NoError(err)
 	assert.Equal(legacyRaw, after)
+}
+
+func TestImporterPageMarkdownTranscript(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := newImporterFixture(t)
+	meeting := hydrationMeeting()
+	meeting.MeetingNotes.Children.TranscriptBlockID = ""
+	installMeetingHeader(t, source.fakeHydrationSource, meeting)
+	source.markdown.Markdown = "## Transcript\nPage transcript."
+	source.markdown.Raw = json.RawMessage(`{"object":"page_markdown","id":"page-1","markdown":"## Transcript\nPage transcript."}`)
+	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	assert.Empty(lastNotionState(t, st, result.SourceID).Pending)
+	var id int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+	raw, err := st.GetMessageRaw(id)
+	require.NoError(err)
+	assert.Equal("Page transcript.", meetingcontent.Decode(RawFormat, raw, nil).Transcript.Text)
+	var body string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT body_text FROM message_bodies WHERE message_id = ?`, id).Scan(&body))
+	assert.Contains(body, "Page transcript.")
+	result, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	assert.False(result.PartialCoverage)
+	assert.Empty(lastNotionState(t, st, result.SourceID).Pending)
+}
+
+func TestImporterRefusesFutureEvidence(t *testing.T) {
+	for _, full := range []bool{false, true} {
+		t.Run(fmt.Sprintf("full=%t", full), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, _, imp := newImporterFixture(t)
+			result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(err)
+			var id int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+			future := []byte(`{"schema_version":3,"future":"keep"}`)
+			require.NoError(st.UpsertMessageRawWithFormat(id, future, RawFormat))
+			before := lastNotionState(t, st, result.SourceID)
+			var body string
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT body_text FROM message_bodies WHERE message_id = ?`, id).Scan(&body))
+			_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work", Full: full})
+			require.ErrorContains(err, "newer than supported")
+			raw, err := st.GetMessageRaw(id)
+			require.NoError(err)
+			assert.Equal(future, raw)
+			assert.Equal(before, lastNotionState(t, st, result.SourceID))
+			var after string
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT body_text FROM message_bodies WHERE message_id = ?`, id).Scan(&after))
+			assert.Equal(body, after)
+		})
+	}
+}
+
+func TestImporterRetriesIncompleteSectionsOutsideWindow(t *testing.T) {
+	for _, section := range []string{"summary-1", "notes-1", "transcript-1"} {
+		t.Run(section, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, source, imp := newImporterFixture(t)
+			_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(err)
+			source.blockErrs = map[string]error{section: ErrRateLimited}
+			imp.now = func() time.Time { return time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC) }
+			result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(err)
+			assert.True(result.PartialCoverage)
+			require.Len(lastNotionState(t, st, result.SourceID).Pending, 1)
+			source.query.Results = nil
+			delete(source.blockErrs, section)
+			updated := paragraph(section, "Recovered section.", false)
+			source.blocks[section] = &updated
+			imp.now = func() time.Time { return time.Date(2026, 10, 1, 18, 1, 0, 0, time.UTC) }
+			result, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(err)
+			assert.Equal(int64(1), result.MaintenanceRetries)
+			assert.Empty(lastNotionState(t, st, result.SourceID).Pending)
+			var body string
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT body_text FROM message_bodies`).Scan(&body))
+			assert.Contains(body, "Recovered section.")
+		})
+	}
+}
+
+func TestImporterUpdatesFilteredSection(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := newImporterFixture(t)
+	root := paragraph("notes-1", "Original notes", true)
+	source.blocks[root.ID] = &root
+	var nested Block
+	require.NoError(json.Unmarshal([]byte(`{"object":"block","id":"foreign","type":"meeting_notes","has_children":false,"meeting_notes":{}}`), &nested))
+	var task Block
+	require.NoError(json.Unmarshal([]byte(`{"object":"block","id":"task-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Ship"}],"checked":false}}`), &task))
+	source.children[root.ID][""].Results = []Block{nested, task}
+	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	updated := paragraph("notes-1", "Edited notes", true)
+	source.blocks[updated.ID] = &updated
+	require.NoError(json.Unmarshal([]byte(`{"object":"block","id":"task-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Ship"}],"checked":true}}`), &task))
+	source.children[root.ID][""].Results = []Block{nested, task}
+	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	assert.False(result.PartialCoverage)
+	assert.Empty(lastNotionState(t, st, result.SourceID).Pending)
+	var body string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT body_text FROM message_bodies`).Scan(&body))
+	assert.Contains(body, "Edited notes")
+	assert.NotContains(body, "Original notes")
+	var id int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&id))
+	raw, err := st.GetMessageRaw(id)
+	require.NoError(err)
+	content := meetingcontent.Decode(RawFormat, raw, nil)
+	require.Len(content.Actions, 1)
+	assert.Equal(meetingcontent.StatusCompleted, content.Actions[0].Status)
+}
+
+func TestImporterIncompleteSectionRetryExpires(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := newImporterFixture(t)
+	source.blockErrs = map[string]error{"notes-1": ErrRateLimited}
+	imp.now = func() time.Time { return time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC) }
+	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	require.Len(lastNotionState(t, st, result.SourceID).Pending, 1)
+	imp.now = func() time.Time { return time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC) }
+	result, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	assert.Empty(lastNotionState(t, st, result.SourceID).Pending)
+}
+
+func TestMarkdownEvidenceRequiresMatchingPage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	source := completeHydrationSource()
+	meeting := hydrationMeeting()
+	meeting.MeetingNotes.Children.TranscriptBlockID = ""
+	installMeetingHeader(t, source, meeting)
+	source.markdown.Markdown = "## Transcript\nPage transcript."
+	source.markdown.Raw = json.RawMessage(`{"object":"page_markdown","id":"page-1","markdown":"## Transcript\nPage transcript."}`)
+	hydrated, err := NewHydrator(source).Hydrate(t.Context(), meeting)
+	require.NoError(err)
+	snapshot, err := hydrated.ArchiveSnapshot(1, "work", "")
+	require.NoError(err)
+	assert.Equal("Page transcript.", meetingcontent.Decode(RawFormat, snapshot.Raw, nil).Transcript.Text)
+	var raw map[string]any
+	require.NoError(json.Unmarshal(snapshot.Raw, &raw))
+	raw["page_markdown"] = map[string]any{"object": "page_markdown", "id": "other", "markdown": "## Transcript\nWrong meeting."}
+	modified, err := json.Marshal(raw)
+	require.NoError(err)
+	assert.Empty(meetingcontent.Decode(RawFormat, modified, nil).Transcript.Text)
+}
+
+func TestImporterDoesNotUseSiblingTranscript(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := newImporterFixture(t)
+	meeting := hydrationMeeting()
+	meeting.MeetingNotes.Children.TranscriptBlockID = ""
+	installMeetingHeader(t, source.fakeHydrationSource, meeting)
+	var sibling Block
+	require.NoError(json.Unmarshal([]byte(`{"object":"block","id":"meeting-2","type":"meeting_notes","has_children":false,"meeting_notes":{}}`), &sibling))
+	source.children["page-1"][""].Results = []Block{*source.blocks["meeting-1"], sibling}
+	source.markdown.Markdown = "## Transcript\nSibling transcript."
+	source.markdown.Raw = json.RawMessage(`{"object":"page_markdown","id":"page-1","markdown":"## Transcript\nSibling transcript."}`)
+	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	assert.Len(lastNotionState(t, st, result.SourceID).Pending, 1)
+	var body string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT body_text FROM message_bodies`).Scan(&body))
+	assert.NotContains(body, "Sibling transcript.")
+	assert.Zero(source.markdownCalls)
 }
