@@ -780,3 +780,31 @@ func TestCommitmentDiscoveryPagesJournal(t *testing.T) {
 	r.NoError(err)
 	r.Empty(window.Sources, "checked messages should not be sent again")
 }
+
+func TestCommitmentDiscoveryCoalescesChangesAcrossPages(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "journal-repeat", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	first := persist("first", "I will call.", -time.Hour)
+	second := persist("second", "I will write.", -time.Hour)
+	_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "I will call tomorrow.", first)
+	r.NoError(err)
+	cfg, profile := commitmentTestConfig()
+	cfg.Commitments.MaxItems = 1
+	var got []int64
+	for i := range 2 {
+		if i > 0 {
+			f = nextCommitmentTestAttempt(t, f, "-next")
+		}
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+		r.NoError(err)
+		r.Len(window.Sources, 1)
+		got = append(got, window.Sources[0].MessageID)
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+		r.NoError(err)
+	}
+	r.ElementsMatch([]int64{first, second}, got)
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Empty(window.Sources)
+}

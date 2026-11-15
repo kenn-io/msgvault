@@ -533,6 +533,30 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 	return window, err
 }
 
+// Keep journal positions for the scan cursor, but defer each message to its
+// last change in the snapshot so its current body is sent only once.
+func (s *Store) scanCommitmentChanges(ctx context.Context, personID, previous, through int64) ([]peoplesweep.ArchiveChange, error) {
+	changes, err := s.ScanPersonSweepChanges(ctx, personID, previous, maxPersonSweepChangeScan)
+	if err != nil {
+		return nil, err
+	}
+	for i := range changes {
+		change := &changes[i]
+		if change.SourceLane != peoplesweep.SourceConversationText || change.MessageID == 0 || change.Sequence > through {
+			continue
+		}
+		var later bool
+		err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM person_sweep_changes WHERE person_id = ? AND message_id = ? AND source_lane = 'conversation_text' AND sequence > ? AND sequence <= ?)`), personID, change.MessageID, change.Sequence, through).Scan(&later)
+		if err != nil {
+			return nil, err
+		}
+		if later {
+			change.MessageID = 0
+		}
+	}
+	return changes, nil
+}
+
 func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, baseScope string, inProfile func(time.Time) bool) error {
 	personID, through := window.PersonID, window.ThroughSequence
 	seen, used := map[int64]bool{}, 0
@@ -578,7 +602,7 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 	if stop, err := s.retryOversizedCommitments(ctx, window, cfg, previous, baseScope, inProfile, add); stop || err != nil {
 		return err
 	}
-	changes, err := s.ScanPersonSweepChanges(ctx, personID, previous, maxPersonSweepChangeScan)
+	changes, err := s.scanCommitmentChanges(ctx, personID, previous, through)
 	if err != nil {
 		return err
 	}
