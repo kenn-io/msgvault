@@ -85,6 +85,7 @@ type ImportOptions struct {
 type ImportSummary struct {
 	MessagesProcessed int  `json:"messages_processed"`
 	MessagesAdded     int  `json:"messages_added"`
+	MediaStored       int  `json:"media_stored,omitempty"`
 	Requests          int  `json:"requests"`
 	Partial           bool `json:"partial"`
 }

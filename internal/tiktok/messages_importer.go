@@ -51,6 +51,7 @@ type messageRun struct {
 	app, account  string
 	sum           *ImportSummary
 	conversations map[int64]struct{}
+	mediaAttempts map[messageMediaOccurrence]struct{}
 }
 
 func (imp *MessageImporter) run(ctx context.Context, app, account, syncType string, fn func(*messageRun) error) (sum *ImportSummary, retErr error) {
@@ -81,7 +82,6 @@ func (imp *MessageImporter) run(ctx context.Context, app, account, syncType stri
 	scoped.store = imp.store.ScopedToSync(source.ID, syncID)
 	sum = &ImportSummary{}
 	defer func() {
-		sum.Partial = retErr != nil
 		cp := &store.Checkpoint{MessagesProcessed: int64(sum.MessagesProcessed), MessagesAdded: int64(sum.MessagesAdded)}
 		if retErr != nil {
 			retErr = errors.Join(retErr, imp.store.InterruptSyncWithCheckpoint(ctx, syncID, retErr, cp))
@@ -90,6 +90,7 @@ func (imp *MessageImporter) run(ctx context.Context, app, account, syncType stri
 		} else {
 			retErr = scoped.store.CompleteSyncAndUpdateSourceCursorContext(ctx, syncID, source.ID, "")
 		}
+		sum.Partial = retErr != nil
 	}()
 	run := &messageRun{imp: &scoped, source: source, app: app, account: account, sum: sum, conversations: make(map[int64]struct{})}
 	retErr = fn(run)
@@ -116,6 +117,11 @@ func (imp *MessageImporter) Import(ctx context.Context, app, account string) (*I
 		if _, err := imp.api.Account(ctx, account); err != nil {
 			return err
 		}
+		r.mediaAttempts = make(map[messageMediaOccurrence]struct{})
+		retryErr := r.retryMedia(ctx)
+		if ctx.Err() != nil {
+			return errors.Join(retryErr, ctx.Err())
+		}
 		var conversations []BusinessConversation
 		for _, kind := range []string{"SINGLE", "STRANGER"} {
 			cursor := ""
@@ -124,11 +130,11 @@ func (imp *MessageImporter) Import(ctx context.Context, app, account string) (*I
 				r.sum.Requests++
 				page, err := imp.api.Conversations(ctx, account, kind, cursor, 100-count)
 				if err != nil {
-					return err
+					return errors.Join(retryErr, err)
 				}
 				for _, conversation := range page.Conversations {
 					if !ValidID(string(conversation.ID)) {
-						return errors.New("TikTok conversation identity is missing")
+						return errors.Join(retryErr, errors.New("TikTok conversation identity is missing"))
 					}
 				}
 				conversations = append(conversations, page.Conversations...)
@@ -138,13 +144,13 @@ func (imp *MessageImporter) Import(ctx context.Context, app, account string) (*I
 				}
 				cursor, err = nextCursor(cursor, page.Cursor, true)
 				if err != nil {
-					return err
+					return errors.Join(retryErr, err)
 				}
 			}
 		}
 		slices.SortStableFunc(conversations, func(a, b BusinessConversation) int { return cmp.Compare(b.UpdateTime, a.UpdateTime) })
 		seen := map[ID]bool{}
-		var errs []error
+		errs := []error{retryErr}
 		for _, conversation := range conversations {
 			if seen[conversation.ID] {
 				continue
@@ -174,6 +180,11 @@ func (imp *MessageImporter) Import(ctx context.Context, app, account string) (*I
 					break
 				}
 			}
+		}
+		pending, err := r.imp.store.HasPendingTikTokMediaContext(ctx, r.source.ID)
+		errs = append(errs, err)
+		if pending {
+			errs = append(errs, errPendingMessageMedia)
 		}
 		return errors.Join(errs...)
 	})
@@ -388,16 +399,25 @@ func (r *messageRun) persist(ctx context.Context, m BusinessMessage, event strin
 
 func (r *messageRun) attach(ctx context.Context, messageID int64, message BusinessMessage) error {
 	kind := message.Kind()
+	occurrence := messageMediaOccurrence{messageID: messageID, partKey: "tiktok:" + kind}
+	if _, attempted := r.mediaAttempts[occurrence]; attempted {
+		return nil
+	}
 	role := store.AttachmentRoleStandalone
 	if kind == "sticker" || kind == "emoji" {
 		role = store.AttachmentRoleSticker
 	}
-	write := store.AttachmentWrite{Filename: "tiktok-" + kind + ".bin", MediaType: kind, SourcePartKey: "tiktok:" + kind, Role: role, RoleSource: store.AttachmentRoleSourceProviderExplicit, State: attachmentpolicy.StatePending}
+	write := store.AttachmentWrite{Filename: "tiktok-" + kind + ".bin", MediaType: kind, SourcePartKey: occurrence.partKey, Role: role, RoleSource: store.AttachmentRoleSourceProviderExplicit, State: attachmentpolicy.StatePending}
 	if err := r.imp.store.UpsertAttachmentRecordWithStats(ctx, messageID, write, true); err != nil {
 		return err
 	}
 	if r.imp.options.AttachmentsDir == "" {
 		return errors.New("TikTok media needs an attachment directory")
+	}
+	// Only manual runs track attempts. Persistence still runs for overlapping
+	// window messages, but one failed occurrence waits until the next sync.
+	if r.mediaAttempts != nil {
+		r.mediaAttempts[occurrence] = struct{}{}
 	}
 	r.sum.Requests++
 	media, err := r.imp.api.OpenMessageMedia(ctx, r.account, message, r.imp.options.MaxMediaBytes)
@@ -413,7 +433,11 @@ func (r *messageRun) attach(ctx context.Context, messageID int64, message Busine
 		return err
 	}
 	write.StoragePath, write.ContentHash, write.Size, write.MIMEType, write.State = storage, hash, size, media.ContentType, attachmentpolicy.StateStored
-	return r.imp.store.UpsertAttachmentRecordWithStats(ctx, messageID, write, true)
+	if err := r.imp.store.UpsertAttachmentRecordWithStats(ctx, messageID, write, true); err != nil {
+		return err
+	}
+	r.sum.MediaStored++
+	return nil
 }
 
 func durableMedia(path string) error {

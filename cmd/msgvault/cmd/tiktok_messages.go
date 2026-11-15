@@ -94,7 +94,7 @@ func newTikTokMessagesAction(operation string) *cobra.Command {
 				errs = append(errs, fmt.Errorf("TikTok profile %s: %w", profile.Identifier, err))
 			}
 			if sum := result.Summary; sum != nil {
-				writes = writes || sum.MessagesProcessed > 0
+				writes = writes || sum.MessagesProcessed > 0 || sum.MediaStored > 0
 				if !asJSON {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "TikTok %s: %d messages processed (%d added); partial: %t\n", profile.Identifier, sum.MessagesProcessed, sum.MessagesAdded, sum.Partial)
 				}

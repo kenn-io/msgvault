@@ -180,6 +180,12 @@ msgvault source tiktok-messages sync example-account
 It considers both accepted (`SINGLE`) conversations and requests (`STRANGER`),
 archives at most the 100 most recently updated conversations returned across
 them, and reads at most 20 messages from each. Repeated syncs update existing
-rows. Failed runs retain accepted messages and can be repeated. This cannot
-recover older gaps, and there is no full-history flag. msgvault does not send
+rows. Before reading that window, each sync retries up to 20 archived messages
+whose media is still pending, including messages no longer in the window.
+Retries advance through a fixed archive snapshot so failed downloads do not
+block later messages. A media item gets at most one retrieval attempt per sync,
+even when it also appears in the recent window. A sync remains partial while
+eligible media is pending; repeat it to continue. The same per-file size and download limits apply.
+Failed runs retain accepted messages and can be repeated. This cannot
+recover messages never archived, and there is no full-history flag. msgvault does not send
 messages, manage read receipts, or archive TikTok Shop messages through this API.
