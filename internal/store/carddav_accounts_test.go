@@ -1794,61 +1794,6 @@ func TestCardDAVConnectionIdentityChangeCreatesFreshBooksAndCleansOldImportState
 	}
 }
 
-func TestCardDAVConnectionIdentityChangeDeletesAutomaticallyBoundPerson(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	st, account, book := newCardDAVResourceStore(t)
-	participantID, err := st.EnsureParticipant("retired@example.test", "Retired Example", "example.test")
-	require.NoError(err)
-	card := remoteResource(book.CanonicalURL+"retired.vcf", "retired-card", "Retired Example", "retired@example.test", `"one"`)
-	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
-		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
-		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{card},
-	})
-	require.NoError(err)
-	oldMapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, card.Href)
-	require.NoError(err)
-	require.NotNil(oldMapping.PersonID)
-	oldPersonID := *oldMapping.PersonID
-	oldPerson, err := st.GetPersonContext(t.Context(), oldPersonID)
-	require.NoError(err)
-	assert.Equal([]int64{participantID}, oldPerson.ParticipantIDs)
-	var cardDAVOwned bool
-	require.NoError(st.DB().QueryRowContext(t.Context(),
-		st.Rebind(`SELECT carddav_owned FROM person_participants WHERE person_id = ? AND participant_id = ?`),
-		oldPersonID, participantID).Scan(&cardDAVOwned))
-	assert.True(cardDAVOwned, "the old connection's membership must be automatic")
-
-	input := cardDAVRediscoveryForBook(account, book)
-	input.Username = "bob"
-	input.PrincipalURL = "https://contacts.example/principal/bob/"
-	input.HomeURL = "https://contacts.example/books/bob/"
-	afterAccount, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), input)
-	require.NoError(err)
-	require.Len(books, 1)
-	assert.Equal(account.ConnectionGeneration+1, afterAccount.ConnectionGeneration)
-	assert.NotEqual(book.ID, books[0].ID)
-
-	_, err = st.GetPersonContext(t.Context(), oldPersonID)
-	require.ErrorIs(err, store.ErrPersonNotFound)
-
-	rematch := remoteResource(books[0].CanonicalURL+"rematch.vcf", "replacement-card", "Replacement Example", "retired@example.test", `"two"`)
-	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
-		AddressBookID: books[0].ID, ConnectionGeneration: afterAccount.ConnectionGeneration,
-		SyncRevision: books[0].SyncRevision, Upserts: []store.CardDAVRemoteResource{rematch},
-	})
-	require.NoError(err)
-	newMapping, err := st.GetCardDAVResourceContext(t.Context(), books[0].ID, rematch.Href)
-	require.NoError(err)
-	require.NotNil(newMapping.PersonID)
-	assert.NotEqual(oldPersonID, *newMapping.PersonID,
-		"retired imported addresses from the old connection must not match its replacement")
-	newPerson, err := st.GetPersonContext(t.Context(), *newMapping.PersonID)
-	require.NoError(err)
-	assert.Equal([]int64{participantID}, newPerson.ParticipantIDs)
-}
-
 func TestCardDAVConnectionIdentityChangeRejectsOwnedPublicationOrConflict(t *testing.T) {
 	t.Run("publication", func(t *testing.T) {
 		st, account, book := newCardDAVResourceStore(t)

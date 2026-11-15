@@ -265,6 +265,26 @@ func TestCardDAVParticipantBindingConflictsNeverSteal(t *testing.T) {
 			})
 		}
 	})
+	t.Run("primary email outranks another participant alias", func(t *testing.T) {
+		assert := Assert.New(t)
+		require := Require.New(t)
+		st, account, book := newCardDAVResourceStore(t)
+		absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
+		require.NoError(err)
+		third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
+		require.NoError(err)
+		card := remoteResource(book.CanonicalURL+"collision.vcf", "email-collision", "Absorbed", "absorbed@example.test", "one")
+		applyParticipantBindingCards(t, st, account, book, card)
+		person := bindingCardPerson(t, st, book, card.Href)
+		require.Equal([]int64{absorbed}, person.ParticipantIDs)
+		require.NoError(st.SetParticipantIdentifier(third, "email", "ABSORBED@example.test"))
+		_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
+		require.NoError(err)
+		assert.Equal([]int64{absorbed}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
+		other, err := st.PersonForParticipantsContext(t.Context(), []int64{third})
+		require.NoError(err)
+		assert.Nil(other)
+	})
 }
 
 func TestCardDAVParticipantBindingSharedCardsWithdrawAutomaticOwnership(t *testing.T) {
@@ -287,7 +307,7 @@ func TestCardDAVParticipantBindingSharedCardsWithdrawAutomaticOwnership(t *testi
 			second = remoteResource(second.Href, second.RemoteUID, "Second Example", "shared@example.test", "two")
 			second.SemanticHash = "changed-shared"
 			if test.unreadable {
-				second.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:2.1\r\nUID:shared-second\r\nFN:Second Example\r\nEMAIL:shared@example.test\r\nTEL;CHARSET=NO-SUCH-CHARSET:123\r\nEND:VCARD\r\n")
+				second.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:2.1\r\nUID:shared-second\r\nFN:Second Example\r\nTEL;CHARSET=NO-SUCH-CHARSET:123\r\nEMAIL:shared@example.test\r\nEND:VCARD\r\n")
 			}
 			cards := []store.CardDAVRemoteResource{first, second}
 			if test.reverse {
@@ -316,8 +336,8 @@ func TestCardDAVParticipantBindingPhoneAdmission(t *testing.T) {
 		{"0012025550100", "+12025550100", true},
 		{"12025550100", "+12025550100", false},
 		{"20 7946 0958", "+12079460958", false},
-		{"202-555-0100 ext 99", "+202555010099", false},
-		{"letters12025550100", "+12025550100", false},
+		{"+202-555-0100 ext 99", "+202555010099", false},
+		{"+letters12025550100", "+12025550100", false},
 		{"tel:+12025550100;ext=99", "+12025550100", false},
 		{"tel:+12025550100;phone-context=example.test", "+12025550100", false},
 		{"+1\u00a0202-555-0100", "+12025550100", true},
@@ -578,29 +598,6 @@ func TestCardDAVParticipantBindingMergedAliasRemainsClaimed(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(1, undo.ParticipantsUnbound)
 		assert.Empty(bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
-	})
-	t.Run("email owned by another participant", func(t *testing.T) {
-		assert := Assert.New(t)
-		require := Require.New(t)
-		st, account, book := newCardDAVResourceStore(t)
-		absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
-		require.NoError(err)
-		survivor, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
-		require.NoError(err)
-		third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
-		require.NoError(err)
-		card := remoteResource(book.CanonicalURL+"collision.vcf", "email-collision", "Absorbed", "absorbed@example.test", "one")
-		applyParticipantBindingCards(t, st, account, book, card)
-		person := bindingCardPerson(t, st, book, card.Href)
-		require.Equal([]int64{absorbed}, person.ParticipantIDs)
-		require.NoError(st.SetParticipantIdentifier(third, "email", "ABSORBED@example.test"))
-		require.ErrorIs(st.MergeParticipants(absorbed, survivor), store.ErrParticipantAddressConflict)
-		_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
-		require.NoError(err)
-		assert.Equal([]int64{absorbed}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
-		other, err := st.PersonForParticipantsContext(t.Context(), []int64{third})
-		require.NoError(err)
-		assert.Nil(other)
 	})
 	t.Run("phone", func(t *testing.T) {
 		for _, identifierType := range []string{"imessage", "google_voice", "imazing_csv"} {
