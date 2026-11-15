@@ -1558,14 +1558,14 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 			require.NoError(err)
 			_, err = db.ExecContext(t.Context(), `
 				INSERT INTO conversations (id, source_id, source_conversation_id, title)
-				VALUES (105, 1, 'thread105', 'Partial Meeting');
+				VALUES (105, 1, 'thread105', 'Partial message');
 				INSERT INTO messages (
 					id, source_id, source_message_id, conversation_id,
 					subject, snippet, sent_at, size_estimate, message_type
 				) VALUES (
-					6, 1, 'meeting-partial', 105,
-					'Partial Meeting', 'Parent persisted first',
-					'2026-07-12 10:00:00', 500, 'meeting_transcript'
+					6, 1, 'message-partial', 105,
+					'Partial message', 'Parent persisted first',
+					'2026-07-12 10:00:00', 500, 'email'
 				);
 				CREATE TABLE sync_runs (
 					id INTEGER PRIMARY KEY,
@@ -1637,9 +1637,9 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 					id, source_id, source_message_id, conversation_id,
 					subject, snippet, sent_at, size_estimate, message_type
 				) VALUES (
-					7, 1, 'meeting-later', 105,
-					'Later Meeting', 'Arrived after the partial snapshot',
-					'2026-07-13 10:00:00', 500, 'meeting_transcript'
+					7, 1, 'message-later', 105,
+					'Later message', 'Arrived after the partial snapshot',
+					'2026-07-13 10:00:00', 500, 'email'
 				);
 			`)
 			require.NoError(err)
