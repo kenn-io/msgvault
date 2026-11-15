@@ -165,6 +165,9 @@ func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeet
 	}
 	if err := h.reserveRequest(); err != nil {
 		if len(result.Incomplete) > 0 {
+			if result.Transcript == "" {
+				result.markIncomplete("transcript", "limit")
+			}
 			return nil
 		}
 		return err
@@ -175,6 +178,9 @@ func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeet
 	}
 	if err := h.reserveBytes(page.Raw); err != nil {
 		if len(result.Incomplete) > 0 {
+			if result.Transcript == "" {
+				result.markIncomplete("transcript", "limit")
+			}
 			return nil
 		}
 		return err

@@ -1530,6 +1530,77 @@ func TestImporterPreservesPageTranscriptWhenMarkdownIncomplete(t *testing.T) {
 	}
 }
 
+func TestImporterPreservesPageTranscriptWhenMarkdownExceedsBudget(t *testing.T) {
+	for _, limit := range []string{"requests", "bytes"} {
+		t.Run(limit, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, source, imp := newImporterFixture(t)
+			empty := paragraph("transcript-1", "", false)
+			source.blocks["transcript-1"] = &empty
+			source.markdown.Markdown = "# Transcript\nSaved page transcript"
+			var err error
+			source.markdown.Raw, err = json.Marshal(source.markdown)
+			require.NoError(err)
+			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(err)
+			var id int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&id))
+			before, err := st.GetMessageRaw(id)
+			require.NoError(err)
+			savedChildren := source.children["notes-1"]
+			source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
+			if limit == "requests" {
+				pages := map[string]*BlockPage{}
+				for i := range maxHydrationRequests - 4 {
+					cursor := ""
+					if i > 0 {
+						cursor = fmt.Sprint(i)
+					}
+					page := &BlockPage{Object: "list", Results: []Block{}, HasMore: i < maxHydrationRequests-5}
+					if page.HasMore {
+						page.NextCursor = fmt.Sprint(i + 1)
+					}
+					page.Raw, err = json.Marshal(page)
+					require.NoError(err)
+					pages[cursor] = page
+				}
+				source.children["notes-1"] = pages
+			} else {
+				source.markdown.Raw = json.RawMessage(strings.Repeat("x", maxHydrationBytes+1))
+			}
+			second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(err)
+			assert.True(second.PartialCoverage)
+			assert.Equal(first.SourceID, second.SourceID)
+			pending := lastNotionState(t, st, second.SourceID).Pending
+			require.Len(pending, 1)
+			assert.True(pending[0].Incomplete)
+			body, err := st.GetMessageBodyText(t.Context(), id)
+			require.NoError(err)
+			assert.Contains(body, "Saved page transcript")
+			after, err := st.GetMessageRaw(id)
+			require.NoError(err)
+			var oldFields, newFields map[string]json.RawMessage
+			require.NoError(json.Unmarshal(before, &oldFields))
+			require.NoError(json.Unmarshal(after, &newFields))
+			assert.JSONEq(string(oldFields["page_markdown"]), string(newFields["page_markdown"]))
+			delete(source.blockErrs, "summary-1")
+			source.children["notes-1"] = savedChildren
+			source.markdown.Markdown = "# Transcript\nRecovered page transcript"
+			source.markdown.Raw, err = json.Marshal(source.markdown)
+			require.NoError(err)
+			third, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(err)
+			assert.False(third.PartialCoverage)
+			assert.Empty(lastNotionState(t, st, third.SourceID).Pending)
+			body, err = st.GetMessageBodyText(t.Context(), id)
+			require.NoError(err)
+			assert.Contains(body, "Recovered page transcript")
+		})
+	}
+}
+
 func TestImporterKeepsTranscriptWhenStructuredReadIncompleteOrOmitted(t *testing.T) {
 	for _, mode := range []string{"incomplete", "omitted", "omitted data source"} {
 		t.Run(mode, func(t *testing.T) {
