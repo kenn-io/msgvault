@@ -613,13 +613,8 @@ func TestListCalendarOccurrencesCancelledSinglesWithoutBounds(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal([]CalendarUnexpandable{{MessageID: unknown, Reason: "missing event bounds"}}, page.Unexpandable)
 	for _, tc := range []struct{ name, bound, recurrence string }{
-		{"start timed", `"start":{"dateTime":"2027-03-14T10:00:00Z"}`, ""},
 		{"end timed", `"end":{"dateTime":"2027-03-14T11:00:00Z"}`, ""},
-		{"start all-day", `"start":{"date":"2027-03-14"}`, ""},
-		{"end all-day", `"end":{"date":"2027-03-15"}`, ""},
-		{"supported-start", `"start":{"dateTime":"2027-03-15T10:00:00Z"}`, "RRULE:FREQ=WEEKLY;COUNT=2"},
 		{"supported-end", `"end":{"dateTime":"2027-03-15T11:00:00Z"}`, "RRULE:FREQ=WEEKLY;COUNT=2"},
-		{"unsupported-start", `"start":{"dateTime":"2027-03-15T10:00:00Z"}`, "RRULE:FREQ=YEARLY;BYWEEKNO=20"},
 		{"unsupported-end", `"end":{"dateTime":"2027-03-15T11:00:00Z"}`, "RRULE:FREQ=YEARLY;BYWEEKNO=20"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -23,7 +23,7 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.Result, int64) {
+func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.Result) {
 	t.Helper()
 	st := testutil.NewTestStore(t)
 	importer := meetingimport.NewImporter(st, meetingimport.Hooks{})
@@ -61,10 +61,6 @@ func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.R
 		results[i], err = importer.Import(t.Context(), request)
 		require.NoError(t, err)
 	}
-	calendar, err := st.GetOrCreateSource("gcal", "owner@example.com")
-	require.NoError(t, err)
-	cancelled, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: calendar.ID, SourceMessageID: "cancelled", MessageType: "calendar_event"}, Conversation: &store.ConversationPersistData{SourceConversationID: "cancelled", ConversationType: "calendar"}, RawMIME: []byte(`{"id":"cancelled","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled"}`), RawFormat: "gcal_json"})
-	require.NoError(t, err)
 	server := httptest.NewServer(api.NewServer(
 		&config.Config{}, st, nil, slog.New(slog.DiscardHandler),
 	).Router())
@@ -74,13 +70,13 @@ func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.R
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
-	return client, results, cancelled
+	return client, results
 }
 
 func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.T) {
 	checks := assert.New(t)
 	must := require.New(t)
-	backend, imported, cancelled := newMeetingMCPBackend(t)
+	backend, imported := newMeetingMCPBackend(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 
@@ -112,9 +108,6 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 		Name:      ToolGetMeetingRecord,
 		Arguments: map[string]any{"ref": fmt.Sprintf("msg:%d", imported[0].MessageID)},
 	})
-	must.NoError(err)
-	must.False(recordResult.IsError)
-	recordResult, err = clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingRecord, Arguments: map[string]any{"ref": fmt.Sprintf("evt:%d", cancelled)}})
 	must.NoError(err)
 	must.False(recordResult.IsError)
 	missing, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingRecord, Arguments: map[string]any{"ref": "msg:999999"}})

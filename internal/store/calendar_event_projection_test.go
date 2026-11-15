@@ -187,47 +187,32 @@ func TestCalendarEventBackfillMalformedRecurrenceDoesNotFailInit(t *testing.T) {
 }
 
 func TestCalendarEventUpgradeRebuildsProjection(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-
-	st := newRFC822IDBackfillBackendStore(t)
-	_, id := calendarFixture(t, st, "upgrade", calendarRaw)
-	for _, query := range []string{`DROP TABLE calendar_event_attendees`, `DROP TABLE calendar_events`, `DELETE FROM applied_migrations WHERE name = 'calendar_event_projection_v1'`, `UPDATE archive_metadata SET value = '10' WHERE key = 'schema_version'`} {
-		_, err := st.db.Exec(query)
-		requirements.NoError(err)
-	}
-	requirements.NoError(st.Close())
-	reopened, err := OpenForTest(t.Context(), st.dbPath)
-	requirements.NoError(err)
-	t.Cleanup(func() { assertions.NoError(reopened.Close()) })
-	requirements.NoError(reopened.InitSchemaContext(t.Context()))
-	rows := calendarRows(t, reopened, id)
-	requirements.Len(rows, 1)
-	assertions.Equal("event-example", rows[0].Event.ProviderEventID)
-}
-
-func TestCalendarEventUpgradeBackfillsUID(t *testing.T) {
-	require := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, id := calendarFixture(t, st, "uid-upgrade", calendarRaw)
-	for _, query := range []string{
-		`DROP INDEX IF EXISTS idx_calendar_events_ical_uid`,
-		`ALTER TABLE calendar_events DROP COLUMN ical_uid`,
-		`UPDATE calendar_events SET projection_version = 2`,
-		`UPDATE applied_migrations SET version = 2 WHERE name = 'calendar_event_projection_v1'`,
-		`UPDATE archive_metadata SET value = '40' WHERE key = 'schema_version'`,
+	for _, tc := range []struct {
+		name    string
+		queries []string
+	}{
+		{"missing table", []string{`DROP TABLE calendar_event_attendees`, `DROP TABLE calendar_events`, `DELETE FROM applied_migrations WHERE name = 'calendar_event_projection_v1'`, `UPDATE archive_metadata SET value = '10' WHERE key = 'schema_version'`}},
+		{"missing UID", []string{`DROP INDEX IF EXISTS idx_calendar_events_ical_uid`, `ALTER TABLE calendar_events DROP COLUMN ical_uid`, `UPDATE calendar_events SET projection_version = 2`, `UPDATE applied_migrations SET version = 2 WHERE name = 'calendar_event_projection_v1'`, `UPDATE archive_metadata SET value = '40' WHERE key = 'schema_version'`}},
 	} {
-		_, err := st.db.Exec(query)
-		require.NoError(err)
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, id := calendarFixture(t, st, "upgrade", calendarRaw)
+			for _, query := range tc.queries {
+				_, err := st.db.Exec(query)
+				requirements.NoError(err)
+			}
+			requirements.NoError(st.Close())
+			reopened, err := OpenForTest(t.Context(), st.dbPath)
+			requirements.NoError(err)
+			t.Cleanup(func() { assertions.NoError(reopened.Close()) })
+			requirements.NoError(reopened.InitSchemaContext(t.Context()))
+			rows := calendarRows(t, reopened, id)
+			requirements.Len(rows, 1)
+			assertions.Equal("event-example", rows[0].Event.ProviderEventID)
+			assertions.Equal("event-uid@example.com", rows[0].Event.ICalUID)
+		})
 	}
-	require.NoError(st.Close())
-	reopened, err := OpenForTest(t.Context(), st.dbPath)
-	require.NoError(err)
-	t.Cleanup(func() { assert.NoError(t, reopened.Close()) })
-	require.NoError(reopened.InitSchemaContext(t.Context()))
-	rows := calendarRows(t, reopened, id)
-	require.Len(rows, 1)
-	assert.Equal(t, "event-uid@example.com", rows[0].Event.ICalUID)
 }
 
 func TestCalendarEventProjectionUpgradeRebuildsLeapYearEnd(t *testing.T) {
