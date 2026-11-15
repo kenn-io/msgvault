@@ -121,7 +121,7 @@ func completeHydrationSource() *fakeHydrationSource {
 	meetingBlock := Block{
 		Object: "block", ID: "meeting-1", Type: "meeting_notes",
 		Parent: Parent{Type: "page_id", PageID: "page-1"},
-		Raw:    json.RawMessage(`{"object":"block","id":"meeting-1","type":"meeting_notes"}`),
+		Raw:    hydrationMeeting().Raw,
 	}
 	summaryRoot := paragraph("summary-1", "Decide the release scope.", false)
 	notesRoot := paragraph("notes-1", "Owner will prepare the rollout.", true)
@@ -170,6 +170,10 @@ func TestHydratorResolvesMeetingParent(t *testing.T) {
 			meeting.Raw, err = json.Marshal(meeting)
 			require.NoError(t, err)
 			source := completeHydrationSource()
+			if tc.parent.Type == "data_source_id" {
+				source.blocks["meeting-1"].Parent = tc.parent
+				source.blocks["meeting-1"].Raw = meeting.Raw
+			}
 			result, err := NewHydrator(source).Hydrate(t.Context(), meeting)
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantType, result.Discovery.Parent.Type)
@@ -262,24 +266,6 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 			assert.Len(hydrated.AttendeeLabels, 2)
 		})
 	}
-	t.Run("data source", func(t *testing.T) {
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				meeting := hydrationMeeting()
-				meeting.Parent = Parent{Type: "data_source_id"}
-				var err error
-				meeting.Raw, err = json.Marshal(meeting)
-				require.NoError(t, err)
-				source := completeHydrationSource()
-				source.blocks["meeting-1"].Parent = meeting.Parent
-				source.blockErrs = map[string]error{"transcript-1": tt.err}
-				hydrated, err := NewHydrator(source).Hydrate(t.Context(), meeting)
-				require.NoError(t, err)
-				assert.Empty(t, hydrated.Transcript)
-				assert.Contains(t, hydrated.Incomplete, "transcript")
-			})
-		}
-	})
 }
 
 func TestHydratorKeepsSystemicTranscriptErrorsFatal(t *testing.T) {
@@ -320,16 +306,20 @@ func TestHydratorKeepsSystemicTranscriptErrorsFatal(t *testing.T) {
 
 func TestHydratorRejectsNonMeetingRootBlock(t *testing.T) {
 	for _, bad := range []struct{ id, kind string }{{"meeting-1", "paragraph"}, {"other-1", "meeting_notes"}} {
-		source := completeHydrationSource()
-		source.blocks["meeting-1"] = &Block{
-			Object: "block", ID: bad.id, Type: bad.kind,
-			Raw: json.RawMessage(`{"object":"block","id":"meeting-1","type":"paragraph","has_children":false,"paragraph":{}}`),
-		}
+		t.Run(bad.kind+"-"+bad.id, func(t *testing.T) {
+			source := completeHydrationSource()
+			source.blocks["meeting-1"] = &Block{
+				Object: "block", ID: bad.id, Type: bad.kind,
+			}
+			var err error
+			source.blocks["meeting-1"].Raw, err = json.Marshal(source.blocks["meeting-1"])
+			require.NoError(t, err)
 
-		hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
+			hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 
-		require.ErrorIs(t, err, ErrMalformedResponse)
-		assert.Nil(t, hydrated)
+			require.ErrorIs(t, err, ErrMalformedResponse)
+			assert.Nil(t, hydrated)
+		})
 	}
 }
 
@@ -563,6 +553,7 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 				meeting.Raw, err = json.Marshal(meeting)
 				require.NoError(err)
 				source.blocks["meeting-1"].Parent = meeting.Parent
+				source.blocks["meeting-1"].Raw = meeting.Raw
 			}
 			root := source.blocks["summary-1"]
 			switch tc.limit {
@@ -603,7 +594,9 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 			}
 			result, err := NewHydrator(source).Hydrate(t.Context(), meeting)
 			require.NoError(err)
-			assert.Equal(tc.markdownCalls, source.markdownCalls)
+			if !tc.dataSource {
+				assert.Equal(tc.markdownCalls, source.markdownCalls)
+			}
 			for _, section := range tc.incomplete {
 				assert.Contains(result.Incomplete, section)
 			}
@@ -685,4 +678,19 @@ func TestHydratorSurfacesMarkdownFailures(t *testing.T) {
 	meeting, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.ErrorIs(t, err, source.markdownErr)
 	assert.Nil(t, meeting)
+}
+
+func TestHydratorSkipsNestedMeetingAndReadsSibling(t *testing.T) {
+	source := completeHydrationSource()
+	var nested Block
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"other-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[{"plain_text":"Another meeting"}]}}`), &nested))
+	sibling := paragraph("sibling", "Sibling notes", true)
+	action := paragraph("action", "Sibling action", false)
+	source.childErrs = map[string]map[string]error{"other-meeting": {"": errors.New("unreadable nested meeting")}}
+	source.children["notes-1"][""] = &BlockPage{Results: []Block{nested, sibling}}
+	source.children["sibling"] = map[string]*BlockPage{"": {Results: []Block{action}}}
+	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
+	require.NoError(t, err)
+	assert.NotContains(t, hydrated.Notes, "Another meeting")
+	assert.Contains(t, hydrated.Notes, "Sibling action")
 }

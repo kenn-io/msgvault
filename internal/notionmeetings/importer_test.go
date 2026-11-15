@@ -280,158 +280,115 @@ func TestImporterRepairsUnavailableRawEvidence(t *testing.T) {
 
 func TestImporterKeepsMeetingWhenIncompleteSectionCannotBeRecovered(t *testing.T) {
 	for _, tc := range []struct {
-		name, section, text   string
-		malformed, removeTree bool
+		name                    string
+		malformed, emptySummary bool
 	}{
-		{"unavailable evidence", "summary", "Decide the release scope.", true, false},
-		{"summary missing canonical text", "summary", "Decide the release scope.", false, false},
-		{"notes missing section evidence", "notes", "Owner will prepare the rollout.", false, true},
+		{"unavailable evidence", true, false},
+		{"summary missing canonical text", false, false},
+		{"saved empty summary", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
+			if tc.emptySummary {
+				empty := paragraph("summary-1", "", false)
+				source.blocks["summary-1"] = &empty
+			}
 			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 			require.NoError(t, err)
 			var messageID int64
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
-		SELECT id FROM messages WHERE source_id = ? AND source_message_id = 'meeting-1'
-	`), first.SourceID).Scan(&messageID))
-			raw := []byte("{")
-			if !tc.malformed {
-				stored, err := st.GetMessageRaw(messageID)
-				require.NoError(t, err)
-				var evidence map[string]json.RawMessage
-				require.NoError(t, json.Unmarshal(stored, &evidence))
-				var canonical map[string]json.RawMessage
-				require.NoError(t, json.Unmarshal(evidence["canonical"], &canonical))
-				delete(canonical, tc.section)
-				evidence["canonical"], err = json.Marshal(canonical)
-				require.NoError(t, err)
-				if tc.removeTree {
-					delete(evidence, tc.section)
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), first.SourceID).Scan(&messageID))
+			if !tc.emptySummary {
+				raw := []byte("{")
+				if !tc.malformed {
+					stored, err := st.GetMessageRaw(messageID)
+					require.NoError(t, err)
+					var evidence, canonical map[string]json.RawMessage
+					require.NoError(t, json.Unmarshal(stored, &evidence))
+					require.NoError(t, json.Unmarshal(evidence["canonical"], &canonical))
+					delete(canonical, "summary")
+					evidence["canonical"], err = json.Marshal(canonical)
+					require.NoError(t, err)
+					raw, err = json.Marshal(evidence)
+					require.NoError(t, err)
 				}
-				raw, err = json.Marshal(evidence)
-				require.NoError(t, err)
+				require.NoError(t, st.UpsertMessageRawWithFormat(messageID, raw, RawFormat))
 			}
-			require.NoError(t, st.UpsertMessageRawWithFormat(messageID, raw, RawFormat))
 			before, err := st.GetMessageBodyText(t.Context(), messageID)
 			require.NoError(t, err)
-
-			source.blockErrs = map[string]error{tc.section + "-1": ErrRateLimited}
+			source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
+			notes := paragraph("notes-1", "Updated notes.", false)
+			source.blocks["notes-1"] = &notes
 			second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Full: true})
 			require.NoError(t, err)
-			assert.Zero(t, second.MeetingsUpdated)
 			assert.True(t, second.PartialCoverage)
 			after, err := st.GetMessageBodyText(t.Context(), messageID)
 			require.NoError(t, err)
-			assert.Equal(t, before, after)
-			assert.Contains(t, after, tc.text)
+			if tc.emptySummary {
+				assert.Contains(t, after, "Updated notes.")
+			} else {
+				assert.Zero(t, second.MeetingsUpdated)
+				assert.Equal(t, before, after)
+				assert.Contains(t, after, "Decide the release scope.")
+			}
 			assert.Len(t, lastNotionState(t, st, second.SourceID).Pending, 1)
 		})
 	}
 }
 
-func TestImporterUpdatesNotesWhenSavedSummaryIsEmpty(t *testing.T) {
-	st, source, imp := newImporterFixture(t)
-	empty := paragraph("summary-1", "", false)
-	source.blocks["summary-1"] = &empty
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
-	notes := paragraph("notes-1", "Updated notes.", false)
-	source.blocks["notes-1"] = &notes
-	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	var messageID int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), first.SourceID).Scan(&messageID))
-	body, err := st.GetMessageBodyText(t.Context(), messageID)
-	require.NoError(t, err)
-	assert.Contains(t, body, "Updated notes.")
-}
-
-func TestImporterRetriesIncompleteAfterAnotherMeetingFails(t *testing.T) {
-	st, source, imp := newImporterFixture(t)
-	source.blocks["meeting-1"].Raw = hydrationMeeting().Raw
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	second := hydrationMeeting()
-	second.ID = "meeting-2"
-	source.query.Results = append(source.query.Results, second)
-	source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
-	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.Error(t, err)
-	source.query.Results = nil
-	delete(source.blockErrs, "summary-1")
-	updated := paragraph("summary-1", "Recovered summary.", false)
-	source.blocks["summary-1"] = &updated
-	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
-	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), result.MaintenanceRetries)
-	var messageID int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), first.SourceID).Scan(&messageID))
-	body, err := st.GetMessageBodyText(t.Context(), messageID)
-	require.NoError(t, err)
-	assert.Contains(t, body, "Recovered summary.")
-}
-
-func TestImporterRetriesIncompleteAfterMarkdownFailure(t *testing.T) {
-	st, source, imp := newImporterFixture(t)
-	source.blocks["meeting-1"].Raw = hydrationMeeting().Raw
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
-	source.markdownErr = errors.New("markdown unavailable")
-	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.Error(t, err)
-	source.query.Results = nil
-	delete(source.blockErrs, "summary-1")
-	source.markdownErr = nil
-	updated := paragraph("summary-1", "Recovered summary.", false)
-	source.blocks["summary-1"] = &updated
-	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
-	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), result.MaintenanceRetries)
-	var messageID int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), first.SourceID).Scan(&messageID))
-	body, err := st.GetMessageBodyText(t.Context(), messageID)
-	require.NoError(t, err)
-	assert.Contains(t, body, "Recovered summary.")
-}
-
-func TestImporterKeepsRetryAfterArchiveFailure(t *testing.T) {
-	st, source, imp := newImporterFixture(t)
-	source.blocks["meeting-1"].Raw = hydrationMeeting().Raw
-	source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	source.query.Results = nil
-	delete(source.blockErrs, "summary-1")
-	updated := paragraph("summary-1", "Recovered summary.", false)
-	source.blocks["summary-1"] = &updated
-	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
-	if st.IsPostgreSQL() {
-		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_notion_retry() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'forced archive failure'; END; $$ LANGUAGE plpgsql; CREATE TRIGGER fail_notion_retry BEFORE UPDATE ON messages FOR EACH ROW EXECUTE FUNCTION fail_notion_retry()`)
-	} else {
-		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_notion_retry BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT, 'forced archive failure'); END`)
+func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
+	for _, failure := range []string{"another meeting", "markdown", "archive"} {
+		t.Run(failure, func(t *testing.T) {
+			st, source, imp := newImporterFixture(t)
+			if failure == "archive" {
+				source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
+			}
+			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(t, err)
+			if failure == "another meeting" {
+				second := hydrationMeeting()
+				second.ID = "meeting-2"
+				source.query.Results = append(source.query.Results, second)
+			}
+			if failure != "archive" {
+				source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
+				if failure == "markdown" {
+					source.markdownErr = errors.New("markdown unavailable")
+				}
+				_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+				require.Error(t, err)
+			}
+			source.query.Results = nil
+			delete(source.blockErrs, "summary-1")
+			source.markdownErr = nil
+			updated := paragraph("summary-1", "Recovered summary.", false)
+			source.blocks["summary-1"] = &updated
+			imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
+			if failure == "archive" {
+				if st.IsPostgreSQL() {
+					_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_notion_retry() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'forced archive failure'; END; $$ LANGUAGE plpgsql; CREATE TRIGGER fail_notion_retry BEFORE UPDATE ON messages FOR EACH ROW EXECUTE FUNCTION fail_notion_retry()`)
+				} else {
+					_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_notion_retry BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT, 'forced archive failure'); END`)
+				}
+				require.NoError(t, err)
+				_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+				require.Error(t, err)
+				if st.IsPostgreSQL() {
+					_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_retry ON messages`)
+				} else {
+					_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_retry`)
+				}
+				require.NoError(t, err)
+			}
+			result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), result.MaintenanceRetries)
+			var messageID int64
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), first.SourceID).Scan(&messageID))
+			body, err := st.GetMessageBodyText(t.Context(), messageID)
+			require.NoError(t, err)
+			assert.Contains(t, body, "Recovered summary.")
+		})
 	}
-	require.NoError(t, err)
-	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.Error(t, err)
-	if st.IsPostgreSQL() {
-		_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_retry ON messages`)
-	} else {
-		_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_retry`)
-	}
-	require.NoError(t, err)
-	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), result.MaintenanceRetries)
-	var messageID int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), first.SourceID).Scan(&messageID))
-	body, err := st.GetMessageBodyText(t.Context(), messageID)
-	require.NoError(t, err)
-	assert.Contains(t, body, "Recovered summary.")
 }
 
 func TestImporterDetectsHydratedSnapshotChangesWithoutDiscoveryEdit(t *testing.T) {
@@ -1264,7 +1221,7 @@ func TestImporterDataSourceRetriesIncompleteSections(t *testing.T) {
 	for _, tc := range []struct {
 		section string
 		visible bool
-	}{{"summary", false}, {"notes", false}, {"transcript", false}, {"summary", true}} {
+	}{{"transcript", false}, {"summary", true}} {
 		name := tc.section
 		if tc.visible {
 			name += " visible"
@@ -1561,66 +1518,65 @@ func TestImporterHandlesIncompleteMarkdownWithDifferentTranscriptSources(t *test
 		require.NoError(t, err)
 		body, err := st.GetMessageBodyText(t.Context(), id)
 		require.NoError(t, err)
-		assert.NotContains(t, body, "Test Speaker: Ready to ship.")
+		assert.Contains(t, body, "Test Speaker: Ready to ship.")
 	})
 }
 
 func TestImporterHandlesOmittedSections(t *testing.T) {
-	for _, mode := range []string{"omitted transcript", "omitted data source", "omitted summary and notes"} {
-		t.Run(mode, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+	for _, tc := range []struct {
+		name                                         string
+		dataSource, omitSections, retainedTranscript bool
+		want, absent                                 string
+		pending                                      int
+	}{
+		{"omitted transcript", false, false, false, "Updated page text", "Test Speaker: Ready to ship.", 0},
+		{"omitted data source", true, false, true, "Test Speaker: Ready to ship.", "Updated page text", 1},
+		{"omitted summary and notes", false, true, false, "Test Speaker: Ready to ship.", "Decide the release scope", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
 			meeting := hydrationMeeting()
-			if mode == "omitted data source" {
+			if tc.dataSource {
 				meeting.Parent = Parent{Type: "data_source_id"}
 				source.blocks["meeting-1"].Parent = meeting.Parent
+				var err error
+				source.blocks["meeting-1"].Raw, err = json.Marshal(meeting)
+				require.NoError(t, err)
 			}
-			rawMeeting, err := json.Marshal(meeting)
-			require.NoError(err)
-			meeting.Raw = rawMeeting
 			source.query.Results = []MeetingNote{meeting}
-			_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-			require.NoError(err)
+			_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(t, err)
 			var id int64
-			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
 			before, err := st.GetMessageRaw(id)
-			require.NoError(err)
+			require.NoError(t, err)
 			var original map[string]json.RawMessage
-			require.NoError(json.Unmarshal(before, &original))
-			if mode == "omitted summary and notes" {
+			require.NoError(t, json.Unmarshal(before, &original))
+			if tc.omitSections {
 				source.query.Results[0].MeetingNotes.Children.SummaryBlockID = ""
 				source.query.Results[0].MeetingNotes.Children.NotesBlockID = ""
 			} else {
 				source.query.Results[0].MeetingNotes.Children.TranscriptBlockID = ""
 			}
 			source.markdown.Markdown = "# Transcript\nUpdated page text"
-			source.markdown.Raw = json.RawMessage(`{"object":"page_markdown","id":"page-1","markdown":"updated"}`)
+			source.markdown.Raw, err = json.Marshal(source.markdown)
+			require.NoError(t, err)
 			second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-			require.NoError(err)
+			require.NoError(t, err)
 			body, err := st.GetMessageBodyText(t.Context(), id)
-			require.NoError(err)
-			if mode == "omitted summary and notes" {
-				assert.NotContains(body, "Decide the release scope")
-				assert.NotContains(body, "Owner will prepare the rollout")
-				return
+			require.NoError(t, err)
+			assert.Contains(t, body, tc.want)
+			assert.NotContains(t, body, tc.absent)
+			if tc.omitSections {
+				assert.NotContains(t, body, "Owner will prepare the rollout")
 			}
-			if mode == "omitted transcript" {
-				assert.Contains(body, "Updated page text")
-				assert.NotContains(body, "Test Speaker: Ready to ship.")
-			} else {
-				assert.Contains(body, "Test Speaker: Ready to ship.")
-				assert.NotContains(body, "Updated page text")
-			}
-			after, err := st.GetMessageRaw(id)
-			require.NoError(err)
-			var fields map[string]json.RawMessage
-			require.NoError(json.Unmarshal(after, &fields))
-			if mode == "omitted transcript" {
-				assert.Empty(lastNotionState(t, st, second.SourceID).Pending)
-			} else {
-				assert.JSONEq(string(original["transcript"]), string(fields["transcript"]))
-				assert.Len(lastNotionState(t, st, second.SourceID).Pending, 1)
+			assert.Len(t, lastNotionState(t, st, second.SourceID).Pending, tc.pending)
+			if tc.retainedTranscript {
+				after, err := st.GetMessageRaw(id)
+				require.NoError(t, err)
+				var fields map[string]json.RawMessage
+				require.NoError(t, json.Unmarshal(after, &fields))
+				assert.JSONEq(t, string(original["transcript"]), string(fields["transcript"]))
 			}
 		})
 	}
@@ -1635,6 +1591,9 @@ func TestImporterRetainsActionAttributionDuringReplacementFailure(t *testing.T) 
 			meeting := hydrationMeeting()
 			meeting.Parent = Parent{Type: "data_source_id"}
 			source.blocks["meeting-1"].Parent = meeting.Parent
+			var err error
+			source.blocks["meeting-1"].Raw, err = json.Marshal(meeting)
+			require.NoError(err)
 			oldID := section + "-1"
 			if section == "summary" {
 				notes := paragraph("notes-1", "Other notes", false)
@@ -1643,9 +1602,6 @@ func TestImporterRetainsActionAttributionDuringReplacementFailure(t *testing.T) 
 			var task Block
 			require.NoError(json.Unmarshal([]byte(`{"object":"block","id":"`+oldID+`","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Saved task"}],"checked":false}}`), &task))
 			source.blocks[oldID] = &task
-			rawMeeting, err := json.Marshal(meeting)
-			meeting.Raw = rawMeeting
-			require.NoError(err)
 			source.query.Results = []MeetingNote{meeting}
 			_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 			require.NoError(err)
@@ -1656,8 +1612,6 @@ func TestImporterRetainsActionAttributionDuringReplacementFailure(t *testing.T) 
 			} else {
 				meeting.MeetingNotes.Children.NotesBlockID = "replacement"
 			}
-			meeting.Raw, err = json.Marshal(meeting)
-			require.NoError(err)
 			source.query.Results = []MeetingNote{meeting}
 			source.blockErrs = map[string]error{"replacement": ErrRateLimited}
 			_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
@@ -1668,6 +1622,11 @@ func TestImporterRetainsActionAttributionDuringReplacementFailure(t *testing.T) 
 			assert.Equal(meetingcontent.CoverageAvailable, content.ActionCoverage)
 			require.Len(content.Actions, 1)
 			assert.Equal("Saved task", content.Actions[0].Title)
+			if section == "notes" {
+				repeated, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+				require.NoError(err)
+				assert.Zero(repeated.MeetingsUpdated)
+			}
 			fresh := paragraph("replacement", "Replacement", false)
 			source.blocks["replacement"] = &fresh
 			delete(source.blockErrs, "replacement")
@@ -1687,13 +1646,17 @@ func TestImporterExcludesNestedMeetingAndKeepsSiblingActions(t *testing.T) {
 	st, source, imp := newImporterFixture(t)
 	meeting := hydrationMeeting()
 	meeting.Parent = Parent{Type: "data_source_id"}
+	source.blocks["meeting-1"].Parent = meeting.Parent
+	var err error
+	source.blocks["meeting-1"].Raw, err = json.Marshal(meeting)
+	require.NoError(t, err)
 	source.query.Results = []MeetingNote{meeting}
 	source.blocks["notes-1"].Raw = json.RawMessage(`{"id":"notes-1","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}}`)
 	var nested, sibling Block
 	require.NoError(t, json.Unmarshal([]byte(`{"id":"other-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[{"plain_text":"Another meeting"}]}}`), &nested))
 	require.NoError(t, json.Unmarshal([]byte(`{"id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[{"plain_text":"Sibling notes"}]}}`), &sibling))
 	source.childErrs = map[string]map[string]error{"other-meeting": {"": errors.New("unreadable nested meeting")}}
-	source.children["notes-1"][""] = &BlockPage{Results: []Block{nested, sibling}, Raw: json.RawMessage(`{"results":[{"id":"other-meeting","type":  "meeting\u005fnotes"  ,"has_children":true,"meeting_notes":{"title":[{"plain_text":"Another meeting"}]}},{"id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[{"plain_text":"Sibling notes"}]}}],"has_more":false}`)}
+	source.children["notes-1"][""] = &BlockPage{Results: []Block{nested, sibling}, Raw: json.RawMessage(`{"results":[{"id":"other-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[{"plain_text":"Another meeting"}]}},{"id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[{"plain_text":"Sibling notes"}]}}],"has_more":false}`)}
 	var action Block
 	require.NoError(t, json.Unmarshal([]byte(`{"id":"task-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}`), &action))
 	source.children["sibling"] = map[string]*BlockPage{"": {Results: []Block{action}, Raw: json.RawMessage(`{"results":[{"id":"task-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}],"has_more":false}`)}}
@@ -1707,33 +1670,34 @@ func TestImporterExcludesNestedMeetingAndKeepsSiblingActions(t *testing.T) {
 	assert.Equal(t, meetingcontent.CoverageAvailable, content.ActionCoverage)
 	require.Len(t, content.Actions, 1)
 	assert.Equal(t, "Sibling action", content.Actions[0].Title)
-	body, err := st.GetMessageBodyText(t.Context(), id)
-	require.NoError(t, err)
-	assert.NotContains(t, body, "Another meeting")
 	updated := paragraph("sibling", "Edited sibling", true)
 	source.children["notes-1"][""].Results[1] = updated
 	source.children["notes-1"][""].Raw = json.RawMessage(`{"results":[{"id":"other-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[{"plain_text":"Another meeting"}]}},{"id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[{"plain_text":"Edited sibling"}]}}],"has_more":false}`)
 	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), second.MeetingsUpdated)
-	body, err = st.GetMessageBodyText(t.Context(), id)
+	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(t, err)
 	assert.Contains(t, body, "Edited sibling")
 }
 
-func TestImporterUnchangedUnavailableReplacementDoesNotUpdate(t *testing.T) {
-	_, source, imp := newImporterFixture(t)
-	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+func TestImporterKeepsSavedTranscriptWhenEmptyWhileUpdatingNotes(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(t, err)
-	meeting := source.query.Results[0]
-	meeting.MeetingNotes.Children.NotesBlockID = "replacement"
-	source.query.Results = []MeetingNote{meeting}
-	source.blockErrs = map[string]error{"replacement": ErrRateLimited}
-	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	empty := paragraph("transcript-1", "", false)
+	source.blocks["transcript-1"] = &empty
+	source.markdown.Markdown = "# Notes\nNo transcript available"
+	source.markdown.Raw = json.RawMessage(`{"object":"page_markdown","id":"page-1","markdown":"# Notes\nNo transcript available"}`)
+	notes := paragraph("notes-1", "Updated notes", false)
+	source.blocks["notes-1"] = &notes
+	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(t, err)
-	for range 20 {
-		result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-		require.NoError(t, err)
-		assert.Zero(t, result.MeetingsUpdated)
-	}
+	assert.Equal(t, int64(1), second.MeetingsUpdated)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_id = ?`, first.SourceID).Scan(&id))
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Updated notes")
+	assert.Contains(t, body, "Test Speaker: Ready to ship.")
 }

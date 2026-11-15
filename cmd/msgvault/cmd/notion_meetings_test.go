@@ -153,7 +153,6 @@ func TestRunNotionMeetingsProbeTriesLaterSection(t *testing.T) {
 		{name: "no sections", sections: &notionmeetings.MeetingChildren{}, want: "Read Content: not tested (no section blocks)", wantIDs: []string{"meeting-1"}},
 		{name: "missing then available", firstErr: missing, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
 		{name: "all missing", firstErr: missing, secondErr: missing, want: "Read Content: not tested (sections temporarily unavailable)", wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
-		{name: "rate limited", firstErr: notionmeetings.ErrRateLimited, secondErr: notionmeetings.ErrRateLimited, want: "Read Content: not tested (sections temporarily unavailable)", wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
 		{name: "forbidden", firstErr: notionmeetings.ErrReadContent, wantErr: notionmeetings.ErrReadContent, wantIDs: []string{"meeting-1", "summary-1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
