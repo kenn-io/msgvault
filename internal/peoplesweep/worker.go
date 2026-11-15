@@ -403,8 +403,6 @@ type PersonRunResult struct {
 }
 
 type Worker struct {
-	Timezone string
-
 	Config  Config
 	Store   WorkStore
 	Source  AssemblySource
@@ -753,12 +751,10 @@ func (w *Worker) runPerson(
 		if err := startAttempt(progress.CursorEnvelope); err != nil {
 			return PersonRunResult{}, err
 		}
-		if len(progress.EvidenceStatusChanges) > 0 {
-			if err := applyStatusOnly(progress.CursorEnvelope, progress.EvidenceStatusChanges); err != nil {
-				return PersonRunResult{}, err
-			}
-		}
 		return PersonRunResult{}, w.deferAttempt(ctx, lease, attemptID, resolvedAt)
+	}
+	if commitmentOnly {
+		assembly.EvidenceStatusChanges = nil
 	}
 	if !commitmentOnly && hasEvidenceRetraction(progress.EvidenceStatusChanges) && len(progress.Seeds) > 0 &&
 		len(catalog.Targets) > 0 {
@@ -1125,17 +1121,6 @@ func (w *Worker) runPerson(
 		}, accounting, &reservations)
 		if fatal != nil {
 			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations, accounting.completedUsage, fatal, resolvedAt)
-		}
-		if commitmentOnly && commitment != nil {
-			changes := append([]ArchiveChange(nil), commitment.Window.Changes...)
-			for _, window := range progress.Windows {
-				changes = append(changes, window.Changes...)
-			}
-			assembly.EvidenceStatusChanges, err = w.Source.BuildPersonSweepEvidenceStatusChanges(ctx, lease.PersonID, canonicalArchiveChanges(changes))
-			if err != nil {
-				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations, accounting.completedUsage, err, resolvedAt)
-			}
-			assembly.EvidenceStatusChanges = canonicalStatusChanges(assembly.EvidenceStatusChanges)
 		}
 	}
 

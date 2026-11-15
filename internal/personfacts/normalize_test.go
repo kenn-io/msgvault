@@ -10,21 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNormalizeCommitmentVersion(t *testing.T) {
-	target := TargetDescriptor{Kind: TargetCommitment, ValueType: ValueCommitment}
-	value, failure, err := NormalizeClaimValue(target, json.RawMessage(`{"version":1,"direction":"owed_to","summary":"Call","due_on":null}`))
-	require.NoError(t, err)
-	require.Nil(t, failure)
-	require.NotNil(t, value)
-	assert.JSONEq(t, `{"version":1,"direction":"owed_to","summary":"Call","due_on":null}`, string(value.JSON))
-
-	value, failure, err = NormalizeClaimValue(target, json.RawMessage(`{"version":2,"direction":"owed_to","summary":"Call","due_on":null}`))
-	require.NoError(t, err)
-	assert.Nil(t, value)
-	require.NotNil(t, failure)
-	assert.Contains(t, failure.Detail, "unsupported commitment version")
-}
-
 func TestNormalizeClaimValueSupportedGenericTypes(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

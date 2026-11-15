@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/msgvault/internal/loops"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -370,6 +371,37 @@ func TestMCPLoopListExposesIncompleteCoverage(t *testing.T) {
 	requirements.NoError(err)
 	list := loopToolOutput[generated.LoopListResponse](t, result)
 	requirements.True(list.CoverageIncomplete)
+}
+
+type pagedMCPLoopStore struct{ *storeAPIAdapter }
+
+func (s *pagedMCPLoopStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, limit, offset int, _ bool) ([]store.PersonCommitment, error) {
+	promises := []store.PersonCommitment{
+		{ID: 1, PersonID: 1, AnchorMessageID: 1, Direction: "owed_to", Quote: "First", Summary: "First", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"},
+		{ID: 2, PersonID: 1, AnchorMessageID: 2, Direction: "owed_to", Quote: "Second", Summary: "Second", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"},
+	}
+	if offset >= len(promises) {
+		return nil, nil
+	}
+	return promises[offset:min(offset+limit, len(promises))], nil
+}
+
+func TestMCPLoopListContinuesPromises(t *testing.T) {
+	f := storetest.New(t)
+	st := &pagedMCPLoopStore{&storeAPIAdapter{store: f.Store}}
+	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: config.NewDefaultConfig(), Store: st, Logger: slog.New(slog.DiscardHandler)}))
+	session := loopOperationMCPSession(t, backend, nil, &sdkmcp.ClientOptions{})
+	first, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_open_loops", Arguments: map[string]any{"limit": 1}})
+	require.NoError(t, err)
+	page := loopToolOutput[generated.LoopListResponse](t, first)
+	require.Len(t, page.Commitments, 1)
+	assert.Equal(t, "First", page.Commitments[0].Summary)
+	require.NotNil(t, page.CommitmentsNextOffset)
+	next, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_open_loops", Arguments: map[string]any{"limit": 1, "commitment_offset": *page.CommitmentsNextOffset}})
+	require.NoError(t, err)
+	page = loopToolOutput[generated.LoopListResponse](t, next)
+	require.Len(t, page.Commitments, 1)
+	assert.Equal(t, "Second", page.Commitments[0].Summary)
 }
 
 func TestMCPLoopListExposesSkippedUnparseable(t *testing.T) {

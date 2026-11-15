@@ -213,27 +213,6 @@ describe("PersonOpenLoops", () => {
     expect(await screen.findByText("Promise discovery from 2026-10-01 through 2026-10-31 is complete.")).toBeDefined();
   });
 
-  it.each([false, true])("includes discovered promises with pages loaded: %s", async (paged) => {
-    const first = { items: [], commitments: paged ? [1, 2, 3, 4, 5].map((id) => promise(id)) : [], commitments_next_offset: paged ? 5 : undefined, coverage_incomplete: true };
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(first));
-    if (paged) fetcher.mockResolvedValueOnce(Response.json({ ...first, commitments: [promise(6)], commitments_next_offset: undefined }));
-    fetcher.mockResolvedValueOnce(Response.json({ ...first, commitments: [1, 2, 3, 4, 7].map((id) => promise(id)), commitments_next_offset: 5, coverage_incomplete: false }));
-    fetcher.mockResolvedValueOnce(Response.json({ commitments: [6, 8, 9, 10, 11].map((id) => promise(id)), commitments_next_offset: 10 }));
-    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
-    if (paged) {
-      (await screen.findByRole("button", { name: "More promises" })).click();
-      await vi.waitFor(() => expect(screen.queryByRole("button", { name: "More promises" })).toBeNull());
-    }
-    (await screen.findByRole("button", { name: "Check more" })).click();
-    await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Check more" })).toBeNull());
-    expect(screen.getByRole("link", { name: "Promise 7" })).toBeDefined();
-    expect(screen.getAllByRole("link", { name: "Promise 1" })).toHaveLength(1);
-    if (paged) expect(screen.queryByRole("link", { name: "Promise 5" })).toBeNull();
-    if (!paged) (await screen.findByRole("button", { name: "More promises" })).click();
-    expect(await screen.findByRole("link", { name: "Promise 8" })).toBeDefined();
-    if (paged) expect(screen.getAllByRole("link", { name: "Promise 6" })).toHaveLength(1);
-  });
-
   it("appends the next promise page", async () => {
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ items: [loop()], truncated: true, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(1), promise(2), promise(3), promise(4), promise(5)], commitments_next_offset: 5 }))

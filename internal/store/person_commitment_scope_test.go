@@ -29,7 +29,7 @@ func TestCommitmentScopeAndUnfinishedBackfillWindow(t *testing.T) {
 				_, err = st.db.ExecContext(ctx, st.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, 0, ?, ?)`), f.personID, st.dialect.TimestampParam(personFactLedgerNow), scope, st.dialect.TimestampParam(personFactLedgerNow.Add(-30*24*time.Hour)))
 				r.NoError(err)
 				now := personFactLedgerNow.Add(24 * time.Hour)
-				window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, now, "UTC")
+				window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, now)
 				r.NoError(err)
 				a.Equal(personFactLedgerNow, window.SelectionAt)
 				r.Len(window.Sources, 1)
@@ -65,7 +65,7 @@ func TestCommitmentScopeAndUnfinishedBackfillWindow(t *testing.T) {
 				r.NoError(err)
 			}
 			f.request.Generation.Policy.ProviderPolicyFingerprint = profile.Fingerprint
-			window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+			window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 			r.NoError(err)
 			r.Empty(window.Sources)
 			request := f.request
@@ -115,7 +115,7 @@ func TestCommitmentScopeAndUnfinishedBackfillWindow(t *testing.T) {
 			_, complete, err = st.PersonCommitmentDiscoveryContext(ctx, f.personID, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 			r.NoError(err)
 			a.Equal(expanded == "batch", complete)
-			window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+			window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 			r.NoError(err)
 			if expanded == "batch" {
 				a.Empty(window.Sources, "batch sizing preserves progress without widening eligibility")
@@ -137,7 +137,7 @@ func TestCommitmentScopeAndUnfinishedBackfillWindow(t *testing.T) {
 					persist("promise", "I will call.", -time.Hour)
 				}
 				cfg, profile := commitmentTestConfig()
-				window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+				window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 				r.NoError(err)
 				r.Empty(window.Sources)
 				request := f.request
@@ -156,7 +156,7 @@ func TestCommitmentScopeAndUnfinishedBackfillWindow(t *testing.T) {
 					err = f.store.AddAccountIdentity(source, "owner@example.test", "manual")
 				}
 				r.NoError(err)
-				window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+				window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 				r.NoError(err)
 				r.Len(window.Sources, 1)
 				r.Equal("I will call.", window.Sources[0].Text)
@@ -180,7 +180,7 @@ func TestCommitmentDiscoveryStatusSurvivesUntracking(t *testing.T) {
 	const quote = "I will send the draft."
 	persist("promise", quote, -time.Hour)
 	cfg, profile := commitmentTestConfig()
-	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
 	r.NoError(err)
 	r.Len(window.Sources, 1)
 	parsed := peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{{

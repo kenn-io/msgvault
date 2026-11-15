@@ -53,7 +53,7 @@ func TestCommitmentWindowScopesBothSidesOfDirectConversations(t *testing.T) {
 	profile := peoplesweep.ProviderProfile{SourceSince: "2026-01-01", AllowSensitive: true,
 		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
 	cfg := peoplesweep.CommitmentConfig{Enabled: true, Window: 30 * loopDay, MaxItems: 60, MaxBytes: 65536}
-	window, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow, "UTC")
+	window, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow)
 	r.NoError(err)
 	got := make(map[int64]string)
 	for _, source := range window.Sources {
@@ -72,7 +72,7 @@ func TestCommitmentWindowScopesBothSidesOfDirectConversations(t *testing.T) {
 	}, got)
 
 	profile.AllowSensitive = false
-	window, err = f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow.Add(time.Hour), "UTC")
+	window, err = f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow.Add(time.Hour))
 	r.NoError(err)
 	a.Empty(window.Sources)
 }
@@ -101,7 +101,7 @@ func TestCommitmentWindowBoundsEscapedEmailInput(t *testing.T) {
 				}
 			}
 			profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
-			window, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow, "UTC")
+			window, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow)
 			r.NoError(err)
 			r.NotEmpty(window.Sources)
 			fits, err := peoplesweep.CommitmentInputFits(window)

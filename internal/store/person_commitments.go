@@ -185,15 +185,6 @@ func (s *Store) loadCommitmentCandidateEvidenceTx(ctx context.Context, tx *logge
 	if err != nil {
 		return err
 	}
-	var header struct {
-		Version int `json:"version"`
-	}
-	if err := json.Unmarshal([]byte(valueJSON), &header); err != nil {
-		return fmt.Errorf("decode commitment claim: %w", err)
-	}
-	if header.Version != personfacts.CommitmentValueVersion {
-		return fmt.Errorf("unsupported commitment claim version %d", header.Version)
-	}
 	var value personfacts.CommitmentValue
 	if err := json.Unmarshal([]byte(valueJSON), &value); err != nil {
 		return fmt.Errorf("decode commitment claim: %w", err)
@@ -515,8 +506,8 @@ func (s *Store) commitmentChatMembers(ctx context.Context, conversationID, perso
 	return owner, person, rows.Err()
 }
 
-func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, profile peoplesweep.ProviderProfile, cfg peoplesweep.CommitmentConfig, now time.Time, timezone string) (peoplesweep.CommitmentWindow, error) {
-	window := peoplesweep.CommitmentWindow{PersonID: personID, ScopeFingerprint: peoplesweep.CommitmentScopeFingerprint(profile, cfg), SelectionAt: now, Now: now, Timezone: timezone, Sources: []peoplesweep.CommitmentSource{}}
+func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, profile peoplesweep.ProviderProfile, cfg peoplesweep.CommitmentConfig, now time.Time) (peoplesweep.CommitmentWindow, error) {
+	window := peoplesweep.CommitmentWindow{PersonID: personID, ScopeFingerprint: peoplesweep.CommitmentScopeFingerprint(profile, cfg), SelectionAt: now, Now: now, Sources: []peoplesweep.CommitmentSource{}}
 	if !profile.AllowSensitive || !slices.Contains(profile.AllowedSources, peoplesweep.SourceConversationText) {
 		return window, nil
 	}
@@ -548,12 +539,7 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 		return day >= profile.SourceSince && (profile.SourceUntil == "" || day <= profile.SourceUntil)
 	}
 	err = s.loadCommitmentSources(ctx, &window, cfg, previous, window.ScopeFingerprint, inProfile)
-	if err == nil && window.ThroughSequence > previous {
-		window.Changes, err = s.ScanPersonSweepChanges(ctx, personID, previous, maxPersonSweepChangeScan)
-		window.Changes = slices.DeleteFunc(window.Changes, func(change peoplesweep.ArchiveChange) bool {
-			return change.Sequence > window.ThroughSequence
-		})
-	}
+
 	return window, err
 }
 

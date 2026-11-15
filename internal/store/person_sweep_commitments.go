@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -95,33 +94,14 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 	generation.Claims, generation.EvidenceStatusChanges = nil, nil
 	aligner := make(commitmentEvidenceAligner)
 	evidence := make([]personfacts.EvidenceInput, len(result.Output.Promises))
-	targets := make([]map[string]bool, len(result.Output.Promises))
-	counts := make(map[string]int)
 	for i, promise := range result.Output.Promises {
 		source, err := verify(promise.SourceID)
 		if err != nil {
 			return nil, err
 		}
 		evidence[i] = commitmentEvidence(personID, source, "commitment-promise", promise.Quote, promise.Start, promise.End)
-		keys, err := s.matchCommitmentTarget(ctx, personID, source, evidence[i], promise)
-		if err != nil {
-			return nil, err
-		}
-		targets[i] = keys
-		for key := range keys {
-			counts[key]++
-		}
 	}
 	for i, promise := range result.Output.Promises {
-		// Reuse a prior decision only for a one-to-one match. Ambiguous matches
-		// keep the parsed identity so an old decision cannot hide the promise.
-		if len(targets[i]) == 1 {
-			for target := range targets[i] {
-				if counts[target] == 1 {
-					promise.TargetKey = target
-				}
-			}
-		}
 		descriptor := personfacts.TargetDescriptor{Kind: personfacts.TargetCommitment,
 			Key: promise.TargetKey, Slug: "commitment", ValueType: personfacts.ValueCommitment,
 			Cardinality: personfacts.CardinalitySingle, Sensitive: true, MaxLength: 240}
@@ -130,7 +110,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 			return nil, err
 		}
 		descriptor.Revision = revision
-		value, err := json.Marshal(personfacts.CommitmentValue{Version: personfacts.CommitmentValueVersion, Direction: promise.Direction, Summary: promise.Summary, DueOn: promise.DueOn})
+		value, err := json.Marshal(personfacts.CommitmentValue{Direction: promise.Direction, Summary: promise.Summary, DueOn: promise.DueOn})
 		if err != nil {
 			return nil, err
 		}
@@ -158,50 +138,6 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		}
 	}
 	return prepared, nil
-}
-
-// Match unchanged quotes across revisions only when both the new message and
-// the existing ledger identify one promise. Keep same-version overlap matching.
-func (s *Store) matchCommitmentTarget(ctx context.Context, personID int64, source peoplesweep.CommitmentSource, evidence personfacts.EvidenceInput, promise peoplesweep.CommitmentPromise) (map[string]bool, error) {
-	find := func(predicate string, args ...any) (map[string]bool, error) {
-		query := `SELECT c.target_key FROM person_fact_claims c
-			WHERE c.person_id = ? AND c.target_kind = 'commitment' AND c.origin = 'commitment'
-			AND EXISTS (SELECT 1 FROM person_fact_claim_evidence ce JOIN person_fact_evidence e ON e.id = ce.evidence_id
-			WHERE ce.claim_id = c.id AND e.source_ref = ? AND e.subject_ref = ?
-			AND ` + s.loopTimeKey("e.recorded_time") + ` = ` + s.loopTimeKey("?") + ` AND ` + predicate + `)`
-		params := append([]any{personID, source.SourceRef, evidence.SubjectRef, evidence.RecordedTime.Format(time.RFC3339Nano)}, args...)
-		rows, err := s.db.QueryContext(ctx, s.Rebind(query), params...)
-		if err != nil {
-			return nil, err
-		}
-		defer func() { _ = rows.Close() }()
-		keys := map[string]bool{}
-		for rows.Next() {
-			var key string
-			if err := rows.Scan(&key); err != nil {
-				return nil, err
-			}
-			keys[key] = true
-		}
-		return keys, rows.Err()
-	}
-	keys, err := find("e.source_version = ? AND e.span_start < ? AND e.span_end > ?", source.SourceVersion, promise.End, promise.Start)
-	if err != nil {
-		return nil, err
-	}
-	if len(keys) == 0 && strings.Index(source.Text, promise.Quote) == strings.LastIndex(source.Text, promise.Quote) {
-		keys, err = find("e.excerpt = ?", promise.Quote)
-		if err != nil {
-			return nil, err
-		}
-		if len(keys) != 1 {
-			keys = nil
-		}
-	}
-	if len(keys) == 0 {
-		keys = map[string]bool{promise.TargetKey: true}
-	}
-	return keys, nil
 }
 
 func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {

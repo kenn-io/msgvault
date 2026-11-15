@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"slices"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -45,11 +43,9 @@ type CommitmentWindow struct {
 	PersonID          int64              `json:"-"`
 	Sources           []CommitmentSource `json:"sources"`
 	Now               time.Time          `json:"now"`
-	Timezone          string             `json:"timezone"`
 	BackfillMessageID int64              `json:"-"`
 	SnapshotSequence  int64              `json:"-"`
 	ThroughSequence   int64              `json:"-"`
-	Changes           []ArchiveChange    `json:"-"`
 }
 
 type CommitmentPromise struct {
@@ -76,8 +72,7 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 	if window.PersonID <= 0 || window.Now.IsZero() {
 		return invalid()
 	}
-	location, err := time.LoadLocation(window.Timezone)
-	if err != nil || validateProgramOutput(output, commitmentSchema, "commitment") != nil {
+	if validateProgramOutput(output, commitmentSchema, "commitment") != nil {
 		return invalid()
 	}
 	var parsed ParsedCommitments
@@ -100,11 +95,11 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 			return invalid()
 		}
 		if promise.DueOn != nil {
-			due, err := time.ParseInLocation(time.DateOnly, *promise.DueOn, location)
+			due, err := time.Parse(time.DateOnly, *promise.DueOn)
 			if err != nil || due.Format(time.DateOnly) != *promise.DueOn {
 				return invalid()
 			}
-			if !commitmentQuoteHasDate(promise.Quote, due, source.EventTime, location) {
+			if !commitmentQuoteHasDate(promise.Quote, due, source.EventTime) {
 				promise.DueOn = nil
 			}
 		}
@@ -122,43 +117,17 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 	return parsed, nil
 }
 
-var (
-	commitmentDateLayouts     = []string{time.DateOnly, "January 2, 2006", "Jan 2, 2006", "2 January 2006", "2 Jan 2006"}
-	commitmentYearlessLayouts = []string{"January 2", "Jan 2", "2 January", "2 Jan"}
-	commitmentYearFollows     = regexp.MustCompile(`^[,\s]*\d{4}\b`)
-	commitmentNumericDate     = regexp.MustCompile(`\b\d{1,2}/\d{1,2}/\d{4}\b`)
-	commitmentTomorrow        = regexp.MustCompile(`\b(day after )?tomorrow\b`)
-	commitmentTwoDays         = regexp.MustCompile(`\bin two days\b`)
-	commitmentWeekdayDeadline = regexp.MustCompile(`\b(?:by|on)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:(?:of\s+)?(this|next)\s+week|in\s+([a-z0-9]+)\s+weeks?))?\b`)
-	commitmentInTail          = regexp.MustCompile(`^\s+in\b`)
-)
+var commitmentDateLayouts = []string{time.DateOnly, "January 2, 2006", "Jan 2, 2006", "2 January 2006", "2 Jan 2006"}
+var commitmentTomorrow = regexp.MustCompile(`\b(day after )?tomorrow\b`)
 
-// commitmentQuoteHasDate reports whether the quote itself states due, either
-// literally or relative to the source event day in the configured timezone.
-func commitmentQuoteHasDate(quote string, due, event time.Time, location *time.Location) bool {
+func commitmentQuoteHasDate(quote string, due, event time.Time) bool {
 	quote = strings.ToLower(quote)
 	for _, layout := range commitmentDateLayouts {
 		if quoteHasPhrase(quote, strings.ToLower(due.Format(layout)), nil) {
 			return true
 		}
 	}
-	for _, span := range commitmentNumericDate.FindAllStringIndex(quote, -1) {
-		if (span[0] > 0 && quote[span[0]-1] == '/') || (span[1] < len(quote) && quote[span[1]] == '/') {
-			continue
-		}
-		date := quote[span[0]:span[1]]
-		monthFirst, monthErr := time.Parse("1/2/2006", date)
-		dayFirst, dayErr := time.Parse("2/1/2006", date)
-		if (monthErr == nil && (dayErr != nil || monthFirst.Equal(dayFirst)) && monthFirst.Format(time.DateOnly) == due.Format(time.DateOnly)) ||
-			(dayErr == nil && monthErr != nil && dayFirst.Format(time.DateOnly) == due.Format(time.DateOnly)) {
-			return true
-		}
-	}
-	if event.IsZero() {
-		return false
-	}
-	day := event.In(location)
-	return quoteHasTomorrow(quote, due, day) || (commitmentTwoDays.MatchString(quote) && day.AddDate(0, 0, 2).Format(time.DateOnly) == due.Format(time.DateOnly)) || quoteHasYearlessDate(quote, due, day) || quoteHasByWeekday(quote, due, day)
+	return !event.IsZero() && quoteHasTomorrow(quote, due, event.UTC())
 }
 
 // quoteHasPhrase finds phrase as a whole token; allow, when set, vets the text after each match.
@@ -184,58 +153,6 @@ func quoteHasTomorrow(quote string, due, day time.Time) bool {
 		days := 1
 		if match[1] != "" {
 			days = 2
-		}
-		if day.AddDate(0, 0, days).Format(time.DateOnly) == due.Format(time.DateOnly) {
-			return true
-		}
-	}
-	return false
-}
-
-// quoteHasYearlessDate accepts a month and day only for its next occurrence
-// within a year of the event day, and never when the quote names a year.
-func quoteHasYearlessDate(quote string, due, day time.Time) bool {
-	start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, due.Location())
-	if due.Before(start) || !due.Before(start.AddDate(1, 0, 0)) {
-		return false
-	}
-	for _, layout := range commitmentYearlessLayouts {
-		if quoteHasPhrase(quote, strings.ToLower(due.Format(layout)), func(rest string) bool { return !commitmentYearFollows.MatchString(rest) }) {
-			return true
-		}
-	}
-	return false
-}
-
-func quoteHasByWeekday(quote string, due, day time.Time) bool {
-	for _, span := range commitmentWeekdayDeadline.FindAllStringIndex(quote, -1) {
-		if commitmentInTail.MatchString(quote[span[1]:]) {
-			continue
-		}
-		match := commitmentWeekdayDeadline.FindStringSubmatch(quote[span[0]:span[1]])
-		var weekday time.Weekday
-		for candidate := time.Sunday; candidate <= time.Saturday; candidate++ {
-			if match[1] == strings.ToLower(candidate.String()) {
-				weekday = candidate
-				break
-			}
-		}
-		days := (int(weekday) - int(day.Weekday()) + 7) % 7
-		switch match[2] {
-		case "this":
-			days = (int(weekday)+6)%7 - (int(day.Weekday())+6)%7
-		case "next":
-			days = 7 - (int(day.Weekday())+6)%7 + (int(weekday)+6)%7
-		}
-		if match[3] != "" {
-			weeks, err := strconv.Atoi(match[3])
-			if err != nil {
-				weeks = slices.Index([]string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"}, match[3])
-			}
-			if weeks < 0 || weeks > 520000 {
-				continue
-			}
-			days += weeks * 7
 		}
 		if day.AddDate(0, 0, days).Format(time.DateOnly) == due.Format(time.DateOnly) {
 			return true

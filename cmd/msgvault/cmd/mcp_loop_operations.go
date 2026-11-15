@@ -17,7 +17,7 @@ import (
 
 func loopMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol.MCPCapabilities) []string {
 	var names []string
-	if hasRoute("listLoops", http.MethodGet, "/api/v1/loops", "person_id", "limit") {
+	if hasRoute("listLoops", http.MethodGet, "/api/v1/loops", "person_id", "limit", "commitment_offset") {
 		names = append(names, "list_open_loops")
 	}
 	for _, route := range []struct {
@@ -36,8 +36,9 @@ func loopMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol.MCPCa
 }
 
 type loopListArguments struct {
-	PersonID *int64 `json:"person_id,omitempty"`
-	Limit    *int64 `json:"limit,omitempty"`
+	CommitmentOffset *int64 `json:"commitment_offset,omitempty"`
+	PersonID         *int64 `json:"person_id,omitempty"`
+	Limit            *int64 `json:"limit,omitempty"`
 }
 type loopDecisionArguments struct {
 	MessageID int64 `json:"message_id"`
@@ -76,13 +77,13 @@ func (b *daemonMCPOperations) executeLoopOperation(ctx context.Context, name str
 	}
 	if name == "list_open_loops" {
 		input, err := decodeMCPOperationArguments[loopListArguments](args)
-		if err != nil || input.PersonID != nil && !validLoopID(*input.PersonID) || input.Limit != nil && (*input.Limit < 1 || *input.Limit > 200) {
+		if err != nil || input.PersonID != nil && !validLoopID(*input.PersonID) || input.Limit != nil && (*input.Limit < 1 || *input.Limit > 200) || input.CommitmentOffset != nil && *input.CommitmentOffset < 0 {
 			return invalid()
 		}
 		if input.Limit == nil {
 			input.Limit = new(int64(50))
 		}
-		result, err := readMCPLoopJSON[generated.LoopListResponse](ctx, b.client, http.MethodGet, "/api/v1/loops", &generated.ListLoopsRequestOptions{Query: &generated.ListLoopsQuery{PersonID: input.PersonID, Limit: input.Limit}})
+		result, err := readMCPLoopJSON[generated.LoopListResponse](ctx, b.client, http.MethodGet, "/api/v1/loops", &generated.ListLoopsRequestOptions{Query: &generated.ListLoopsQuery{PersonID: input.PersonID, Limit: input.Limit, CommitmentOffset: input.CommitmentOffset}})
 		return result, true, err
 	}
 	var id int64

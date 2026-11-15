@@ -11,7 +11,7 @@ import (
 type CommitmentStore interface {
 	HasActivePersonCommitmentConsent(ctx context.Context, fingerprint string) (bool, error)
 	PersonCommitmentsDue(ctx context.Context, personID int64, now time.Time, interval, window time.Duration, scopeFingerprint string, maxBytes int) (bool, error)
-	LoadPersonCommitmentWindow(ctx context.Context, personID int64, profile ProviderProfile, cfg CommitmentConfig, now time.Time, timezone string) (CommitmentWindow, error)
+	LoadPersonCommitmentWindow(ctx context.Context, personID int64, profile ProviderProfile, cfg CommitmentConfig, now time.Time) (CommitmentWindow, error)
 	EnsurePersonSweepWork(ctx context.Context, personID int64, force bool) (bool, error)
 }
 
@@ -45,11 +45,7 @@ func (w *Worker) runCommitmentCall(
 	if !ok {
 		return nil, FailurePolicy, lease, nil
 	}
-	timezone := w.Timezone
-	if timezone == "" {
-		timezone = "UTC"
-	}
-	window, err := store.LoadPersonCommitmentWindow(ctx, lease.PersonID, call.profile, w.Config.Commitments, call.resolvedAt, timezone)
+	window, err := store.LoadPersonCommitmentWindow(ctx, lease.PersonID, call.profile, w.Config.Commitments, call.resolvedAt)
 	if err != nil {
 		return nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
 	}

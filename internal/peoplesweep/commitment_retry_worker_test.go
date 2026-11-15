@@ -29,8 +29,8 @@ func (s *retryCommitmentStore) ClaimPersonSweep(_ context.Context, request Claim
 	return nil, nil //nolint:nilnil // No work remains to claim.
 }
 
-func (s *retryCommitmentStore) LoadPersonCommitmentWindow(_ context.Context, id int64, _ ProviderProfile, _ CommitmentConfig, now time.Time, zone string) (CommitmentWindow, error) {
-	return CommitmentWindow{PersonID: id, Now: now, Timezone: zone, Sources: []CommitmentSource{{ID: "m1", MessageID: 1, Direction: CommitmentOwedTo, Text: "I will call.", EventTime: now.Add(-time.Hour)}}}, nil
+func (s *retryCommitmentStore) LoadPersonCommitmentWindow(_ context.Context, id int64, _ ProviderProfile, _ CommitmentConfig, now time.Time) (CommitmentWindow, error) {
+	return CommitmentWindow{PersonID: id, Now: now, Sources: []CommitmentSource{{ID: "m1", MessageID: 1, Direction: CommitmentOwedTo, Text: "I will call.", EventTime: now.Add(-time.Hour)}}}, nil
 }
 
 type retryCommitmentSink struct {

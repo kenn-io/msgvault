@@ -205,7 +205,8 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 		return response
 	}
 	response := read()
-	assertions.Nil(response.CommitmentsComplete)
+	requirements.NotNil(response.CommitmentsComplete)
+	assertions.False(*response.CommitmentsComplete)
 	assertions.Empty(response.Commitments)
 	_, _, err = f.Store.GrantPersonCommitmentConsent(t.Context(), profile.Fingerprint, "test")
 	requirements.NoError(err)
@@ -223,7 +224,8 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 	_, err = f.Store.RevokePersonCommitmentConsent(t.Context(), profile.Fingerprint, "test")
 	requirements.NoError(err)
 	response = read()
-	assertions.Nil(response.CommitmentsComplete)
+	requirements.NotNil(response.CommitmentsComplete)
+	assertions.False(*response.CommitmentsComplete)
 }
 
 func TestListLoopsReportsIncompleteCoverage(t *testing.T) {

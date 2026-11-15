@@ -34,11 +34,11 @@ func (*commitmentWorkerFixture) HasActivePersonCommitmentConsent(context.Context
 func (*commitmentWorkerFixture) PersonCommitmentsDue(context.Context, int64, time.Time, time.Duration, time.Duration, string, int) (bool, error) {
 	return true, nil
 }
-func (s *commitmentWorkerFixture) LoadPersonCommitmentWindow(_ context.Context, id int64, _ ProviderProfile, _ CommitmentConfig, now time.Time, zone string) (CommitmentWindow, error) {
+func (s *commitmentWorkerFixture) LoadPersonCommitmentWindow(_ context.Context, id int64, _ ProviderProfile, _ CommitmentConfig, now time.Time) (CommitmentWindow, error) {
 	if s.window != nil {
 		return *s.window, nil
 	}
-	return CommitmentWindow{PersonID: id, Now: now, Timezone: zone}, nil
+	return CommitmentWindow{PersonID: id, Now: now}, nil
 }
 func (*commitmentWorkerFixture) EnsurePersonSweepWork(context.Context, int64, bool) (bool, error) {
 	return true, nil
@@ -86,7 +86,7 @@ func TestCommitmentOptionalCallRepairAndBudget(t *testing.T) {
 			mutateTestProvider(&cfg, func(p *ProviderConfig) { p.AllowSensitive = true })
 			cfg.Commitments.Enabled = true
 			now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
-			window := CommitmentWindow{PersonID: 7, Now: now, Timezone: "UTC", Sources: []CommitmentSource{{ID: "m71", MessageID: 71, Direction: CommitmentOwedTo, Text: "I will send it.", EventTime: now.Add(-time.Hour)}}}
+			window := CommitmentWindow{PersonID: 7, Now: now, Sources: []CommitmentSource{{ID: "m71", MessageID: 71, Direction: CommitmentOwedTo, Text: "I will send it.", EventTime: now.Add(-time.Hour)}}}
 			st := &commitmentWorkerFixture{window: &window}
 			if mode == "budget" {
 				st.reserveErrAt = 2
