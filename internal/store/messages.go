@@ -1366,6 +1366,35 @@ func (s *Store) MessageMetadataWithRawBatch(
 	return result, nil
 }
 
+// MarkedSourceMessageIDsBatchContext returns marked source message IDs from a
+// provider listing page, including rows whose raw MIME is missing.
+func (s *Store) MarkedSourceMessageIDsBatchContext(
+	ctx context.Context, sourceID int64, sourceMessageIDs []string,
+) (map[string]struct{}, error) {
+	result := make(map[string]struct{})
+	if len(sourceMessageIDs) == 0 {
+		return result, nil
+	}
+
+	err := queryInChunksContext(ctx, s.db, sourceMessageIDs, []any{sourceID}, `
+		SELECT source_message_id
+		FROM messages
+		WHERE source_id = ? AND deleted_from_source_at IS NOT NULL
+		  AND source_message_id IN (%s)`,
+		func(rows *loggedRows) error {
+			var sourceMessageID string
+			if err := rows.Scan(&sourceMessageID); err != nil {
+				return err
+			}
+			result[sourceMessageID] = struct{}{}
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // EnsureConversation gets or creates a conversation (thread) for a message.
 // Concurrent first-inserts converge via INSERT ... ON CONFLICT DO NOTHING
 // RETURNING id followed by a lookup. The conflict path deliberately issues no
@@ -2936,6 +2965,9 @@ const LabelSystemRoleDrafts = "drafts"
 
 // LabelSystemRoleTrash identifies the mailbox msgvault selected as Trash.
 const LabelSystemRoleTrash = "trash"
+
+// LabelSystemRoleAll identifies an IMAP mailbox containing all messages.
+const LabelSystemRoleAll = "all"
 
 // EnsureLabel gets or creates a label, handling renames and ID changes.
 // For batch operations prefer EnsureLabelsBatch which runs in a single

@@ -694,14 +694,8 @@ func (s *Syncer) reconcileGmailTrashRemovals(
 		if err != nil {
 			return fmt.Errorf("fetch final Gmail labels: %w", err)
 		}
-		if len(results) != len(batch) {
-			return fmt.Errorf("got %d label results for %d messages", len(results), len(batch))
-		}
 		for i, result := range results {
 			messageID := batch[i]
-			if result.ID != messageID {
-				return fmt.Errorf("unexpected label result ID %q for message %q", result.ID, messageID)
-			}
 			if result.Err != nil {
 				if _, gone := messageGoneKind(result.Err); gone {
 					continue

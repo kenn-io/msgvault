@@ -462,10 +462,15 @@ func (s *Store) applyIMAPMailboxDeltas(
 					return fmt.Errorf("tombstone IMAP message %d: %w", messageID, err)
 				}
 			} else if _, err := tx.ExecContext(ctx, `
+				-- RFC 6154's \All can include Trash, so it is not proof of restore.
 				UPDATE messages SET deleted_from_source_at = NULL
 				WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NOT NULL
-				AND EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
-					WHERE ml.message_id = messages.id AND COALESCE(l.system_role, '') <> 'trash')
+				AND (
+					NOT EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+						WHERE ml.message_id = messages.id AND l.system_role = 'trash')
+					OR EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+						WHERE ml.message_id = messages.id AND COALESCE(l.system_role, '') NOT IN ('trash', 'all'))
+				)
 			`, messageID, sourceID); err != nil {
 				return fmt.Errorf("clear IMAP tombstone for message %d: %w", messageID, err)
 			}
