@@ -62,7 +62,7 @@ func TestMeetingRecordUntimedCancellation(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw, status, reason string
 	}{
-		{"cancelled", `{"id":"event","iCalUID":"uid@example.org","status":"cancelled"}`, "cancelled", "missing event bounds"},
+		{"cancelled", `{"id":"event_20270314T100000Z","iCalUID":"uid@example.org","status":"cancelled"}`, "cancelled", "missing event bounds"},
 		{"decode error", `{"id":`, "decode_error", "event data could not be decoded"},
 		{"exception", `{"id":"series_20270314T100000Z","recurringEventId":"series","status":"cancelled"}`, "cancelled", "exception has no original start"},
 	} {
@@ -76,7 +76,7 @@ func TestMeetingRecordUntimedCancellation(t *testing.T) {
 			case "cancelled":
 				_, err := st.db.Exec(`UPDATE messages SET deleted_from_source_at = ? WHERE id = ?`, time.Now(), event)
 				require.NoError(err)
-				_, note = projectionFixture(t, st, "note", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"event"}}`)
+				_, note = projectionFixture(t, st, "note", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"event_20270314T100000Z"}}`)
 				_, uidNote = projectionFixture(t, st, "uid-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 			case "exception":
 				_, note = projectionFixture(t, st, "own", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"series_20270314T100000Z"}}`)
@@ -811,6 +811,28 @@ func occurrenceIdentity(t *testing.T, key string) calrecur.Identity {
 	_, identity, ok := calrecur.ParseInstanceID("event_" + key)
 	require.True(t, ok)
 	return identity
+}
+
+func TestMeetingRecordBareGoogleIDWithUntimedCancellation(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "cancelled", `{"id":"series","status":"cancelled"}`, "owner@example.com")
+	_, first := projectionFixture(t, st, "first-week", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"series","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
+	_, second := projectionFixture(t, st, "second-week", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"series","scheduled_start_time":"2027-03-21T10:00:00Z"}}`)
+	for _, id := range []int64{first, second} {
+		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: id})
+		require.NoError(err)
+		assert.Equal([]int64{id}, record.MessageIDs)
+		assert.Empty(record.Links)
+	}
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event})
+	require.NoError(err)
+	require.Len(record.Links, 1)
+	assert.Equal(fmt.Sprintf("evt:%d", event), record.Links[0].Ref)
+	assert.Nil(record.Links[0].Start)
+	assert.Nil(record.Links[0].End)
+	assert.Empty(record.MessageIDs)
+	assert.Contains(record.Unexpandable, CalendarUnexpandable{MessageID: event, Reason: "missing event bounds"})
 }
 
 func TestMeetingRecordBareGoogleIDBeforeAndAfterSingle(t *testing.T) {

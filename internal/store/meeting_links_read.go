@@ -440,7 +440,11 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 				identities["time:"+original.UTC().Format(time.RFC3339Nano)] = true
 			}
 			_, _, instance := calrecur.ParseInstanceID(key[2])
-			allowNotes := key[0] != "google_event_id" || instance || len(identities) == 1 || len(identities) == 0 && len(matched) > 0
+			if key[0] == "google_event_id" && !instance && len(identities) == 0 {
+				// A bare ID without an occurrence time cannot identify a meeting.
+				continue
+			}
+			allowNotes := key[0] != "google_event_id" || instance || len(identities) == 1
 			if len(identities) > 1 {
 				// Notes with exact keys remain peers even if calendar matches are ambiguous.
 				if allowNotes && ref.Kind == "msg" && len(copies) == 0 {
