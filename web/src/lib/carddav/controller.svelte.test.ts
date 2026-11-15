@@ -870,7 +870,7 @@ it('scopes selected status, books, history and sync requests to their connection
   controller.destroy();
 });
 
-it.each(['partial', 'failed'] as const)('names a connection whose sync is %s', async (status) => {
+it.each(['succeeded', 'partial', 'failed'] as const)('reports binding conflicts when sync is %s', async (status) => {
   let bookReads = 0;
   const client = createAPIClient(async (input) => {
     const request = requestOf(input);
@@ -881,6 +881,7 @@ it.each(['partial', 'failed'] as const)('names a connection whose sync is %s', a
         created: 1,
         updated: 0,
         removed: 0,
+        binding_conflicts: 2,
         status,
         connections: [
           {
@@ -903,9 +904,15 @@ it.each(['partial', 'failed'] as const)('names a connection whose sync is %s', a
   const controller = new CardDAVController(client);
   await controller.load();
   await controller.sync();
-  expect(controller.syncError).toContain('work');
-  expect(controller.syncError).not.toContain('private upstream');
-  expect(controller.syncStatus).toBeNull();
-  expect(bookReads).toBe(status === 'partial' ? 2 : 1);
+  const message = '2 CardDAV binding conflicts. Run msgvault carddav bind-participants --dry-run for details.';
+  if (status === 'succeeded') {
+    expect(controller.syncStatus).toContain(message);
+  } else {
+    expect(controller.syncError).toContain('work');
+    expect(controller.syncError).toContain(message);
+    expect(controller.syncError).not.toContain('private upstream');
+    expect(controller.syncStatus).toBeNull();
+  }
+  expect(bookReads).toBe(status === 'failed' ? 1 : 2);
   controller.destroy();
 });

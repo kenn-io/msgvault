@@ -45,6 +45,7 @@ export class OperationsController {
   private actionPending = $state<OperationAction>();
   private actionConflict = $state<string | null>(null);
   private actionError = $state<string | null>(null);
+  private actionStatus = $state<string | null>(null);
 
   private readonly client: APIClient;
   private filters: OperationsURLState = defaultOperationsState();
@@ -90,7 +91,8 @@ export class OperationsController {
       restartRequired: this.restartRequired,
       actionPending: this.actionPending ?? null,
       actionConflict: this.actionConflict,
-      actionError: this.actionError
+      actionError: this.actionError,
+      actionStatus: this.actionStatus
     });
   }
 
@@ -240,6 +242,7 @@ export class OperationsController {
     this.actionPending = action;
     this.actionConflict = null;
     this.actionError = null;
+    this.actionStatus = null;
     let reconcile = false;
     let uncertain = false;
     let outcome: OperationActionOutcome = 'succeeded';
@@ -249,6 +252,7 @@ export class OperationsController {
       reconcile = true;
       outcome = result.outcome;
       if (outcome === 'conflict') this.actionConflict = result.message ?? null;
+      else if (outcome === 'succeeded') this.actionStatus = result.message ?? null;
       else this.actionError = result.message ?? null;
     } catch {
       if (this.ownsAction(request, generation, context)) {
@@ -268,7 +272,8 @@ export class OperationsController {
           ? 'The operation result is uncertain. Current state was refreshed.'
           : 'The operation result is uncertain, and current state could not be refreshed.';
       } else if (outcome === 'succeeded' && !reconciled) {
-        this.actionError = 'The operation started, but current state could not be refreshed.';
+        this.actionError = ['The operation started, but current state could not be refreshed.', this.actionStatus].filter(Boolean).join(' ');
+        this.actionStatus = null;
         outcome = 'failed';
       }
     }
@@ -398,6 +403,7 @@ export class OperationsController {
     this.actionPending = undefined;
     this.actionConflict = null;
     this.actionError = null;
+    this.actionStatus = null;
   }
 
   private cancelPage(): void {

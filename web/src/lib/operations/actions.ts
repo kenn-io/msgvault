@@ -1,3 +1,4 @@
+import { cardDAVBindingConflictMessage } from '../carddav/sync-message';
 import {
   resumeVisualAttachmentBuild,
   startVisualAttachmentBuild,
@@ -21,12 +22,14 @@ export async function runOperationAction(action: OperationAction, client: Genera
     return { outcome: 'conflict', message: 'The operation could not start because current server state changed.' };
   }
   if (!result.response.ok) return { outcome: 'failed', message: 'Unable to start the operation.' };
+  const conflicts = action === 'carddav_sync' && result.data && 'binding_conflicts' in result.data
+    ? cardDAVBindingConflictMessage((result.data as SyncResult).binding_conflicts) : '';
   if (action === 'carddav_sync' && result.data && 'status' in result.data &&
     (result.data.status === 'partial' || result.data.status === 'failed')) {
     const names = ((result.data as SyncResult).connections ?? [])
       .filter(connection => connection.status !== 'succeeded')
       .map(connection => connection.connection);
-    return { outcome: 'failed', message: `CardDAV sync ${result.data.status}. Connections needing attention: ${names.join(', ')}.` };
+    return { outcome: 'failed', message: [`CardDAV sync ${result.data.status}. Connections needing attention: ${names.join(', ')}.`, conflicts].filter(Boolean).join(' ') };
   }
-  return { outcome: 'succeeded' };
+  return conflicts ? { outcome: 'succeeded', message: conflicts } : { outcome: 'succeeded' };
 }

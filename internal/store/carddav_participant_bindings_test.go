@@ -211,9 +211,10 @@ func TestCardDAVParticipantBindingConflictsNeverSteal(t *testing.T) {
 		applyParticipantBindingCards(t, st, account, book, card)
 		result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
 		require.NoError(err)
-		require.Len(result.ConflictDetails, 1)
-		assert.Equal("existing_person", result.ConflictDetails[0].Reason)
-		assert.ElementsMatch([]int64{person.ID, owner.ID}, result.ConflictDetails[0].PersonIDs)
+		assert.ElementsMatch([]store.CardDAVParticipantBindingConflict{
+			{ParticipantID: primary, PersonIDs: []int64{person.ID, owner.ID}, Reason: "existing_person"},
+			{ParticipantID: alias, PersonIDs: []int64{person.ID, owner.ID}, Reason: "existing_person"},
+		}, result.ConflictDetails)
 		bound, err := st.PersonForParticipantsContext(t.Context(), []int64{primary})
 		require.NoError(err)
 		assert.Nil(bound)
@@ -265,7 +266,7 @@ func TestCardDAVParticipantBindingConflictsNeverSteal(t *testing.T) {
 			})
 		}
 	})
-	t.Run("primary email outranks another participant alias", func(t *testing.T) {
+	t.Run("primary and alias holders bind independently", func(t *testing.T) {
 		assert := Assert.New(t)
 		require := Require.New(t)
 		st, account, book := newCardDAVResourceStore(t)
@@ -273,17 +274,14 @@ func TestCardDAVParticipantBindingConflictsNeverSteal(t *testing.T) {
 		require.NoError(err)
 		third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
 		require.NoError(err)
+		require.NoError(st.SetParticipantIdentifier(third, "email", "ABSORBED@example.test"))
 		card := remoteResource(book.CanonicalURL+"collision.vcf", "email-collision", "Absorbed", "absorbed@example.test", "one")
 		applyParticipantBindingCards(t, st, account, book, card)
 		person := bindingCardPerson(t, st, book, card.Href)
-		require.Equal([]int64{absorbed}, person.ParticipantIDs)
-		require.NoError(st.SetParticipantIdentifier(third, "email", "ABSORBED@example.test"))
-		_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
-		require.NoError(err)
-		assert.Equal([]int64{absorbed}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
-		other, err := st.PersonForParticipantsContext(t.Context(), []int64{third})
-		require.NoError(err)
-		assert.Nil(other)
+		assert.ElementsMatch([]int64{absorbed, third}, person.ParticipantIDs)
+		var links int
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participant_links`).Scan(&links))
+		assert.Zero(links)
 	})
 }
 
@@ -534,9 +532,10 @@ func TestCardDAVParticipantBindingCandidateOwnership(t *testing.T) {
 					sharedPerson := bindingCardPerson(t, st, book, shared.Href)
 					conflict, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
 					require.NoError(err)
-					require.Len(conflict.ConflictDetails, 1)
-					assert.Equal("existing_person", conflict.ConflictDetails[0].Reason)
-					assert.ElementsMatch([]int64{sharedPerson.ID, person.ID}, conflict.ConflictDetails[0].PersonIDs)
+					assert.ElementsMatch([]store.CardDAVParticipantBindingConflict{
+						{ParticipantID: a, PersonIDs: []int64{person.ID, sharedPerson.ID}, Reason: "shared_address"},
+						{ParticipantID: primary, PersonIDs: []int64{person.ID, sharedPerson.ID}, Reason: "existing_person"},
+					}, conflict.ConflictDetails)
 					bound, err := st.PersonForParticipantsContext(t.Context(), []int64{primary})
 					require.NoError(err)
 					assert.Nil(bound)

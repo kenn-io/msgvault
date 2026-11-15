@@ -114,6 +114,7 @@
   let saving = $state(false);
   let error = $state('');
   let buildError = $state('');
+  let buildStatus = $state('');
   let activeCategory = $state(untrack(() => category));
   let root = $state<HTMLElement>();
   let embeddingStatus = $state<EmbeddingStatus>();
@@ -255,14 +256,15 @@
     void loadLocalSearch();
   }
 
-  async function build(id: string, run: () => Promise<void>): Promise<void> {
+  async function build(id: string, run: () => Promise<void | string>): Promise<void> {
     if (building[id]) return;
     building[id] = true;
     buildError = '';
+    buildStatus = '';
     try {
       const operation = run();
       onStatusChange();
-      await operation;
+      buildStatus = await operation ?? '';
     } catch (cause) {
       buildError = cause instanceof Error ? cause.message : "Can't build the index.";
     } finally {
@@ -290,6 +292,7 @@
       if (action.id === 'messages') return createExploreAPI(client).runCoverageAction('build_index', 'initializing');
       const result = await runOperationAction(action.id, client);
       if (result.outcome !== 'succeeded') throw new Error(result.message);
+      return result.message;
     });
   }
 
@@ -643,6 +646,7 @@
           {/if}
           {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
           {#if buildError && activeId === 'overview'}<p class="notice notice--error" role="alert">{buildError}</p>{/if}
+          {#if buildStatus && activeId === 'overview'}<p role="status">{buildStatus}</p>{/if}
           {#if pendingRestart || inference.status?.pending_restart}
             <div class="restart-notice"><InlineNotice tone="warning" message="Restart pending."><span>On the computer running msgvault, restart its service, or stop and rerun your foreground <code>msgvault serve</code> with the same flags. Otherwise, run <code>msgvault daemon restart</code> with the same custom <code>--home</code> and <code>--config</code> options.</span></InlineNotice></div>
           {/if}

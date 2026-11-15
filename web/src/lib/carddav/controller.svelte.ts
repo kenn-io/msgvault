@@ -1,3 +1,4 @@
+import { cardDAVBindingConflictMessage } from './sync-message';
 import {
   getCardDAVStatus as generatedGetCardDAVStatus,
   listCardDAVBooks as generatedListCardDAVBooks,
@@ -266,14 +267,15 @@ export class CardDAVController {
         succeeded = data.status === undefined || data.status === 'succeeded';
         refreshBooks = succeeded || data.status === 'partial';
         reconcile = true;
+        const conflicts = cardDAVBindingConflictMessage(data.binding_conflicts);
         if (!succeeded) {
           const names = (data.connections ?? [])
             .filter((outcome) => outcome.status !== 'succeeded')
             .map((outcome) => outcome.connection);
-          this.syncError = `CardDAV sync ${data.status}. Connections needing attention: ${names.join(', ')}.`;
+          this.syncError = [`CardDAV sync ${data.status}. Connections needing attention: ${names.join(', ')}.`, conflicts].filter(Boolean).join(' ');
         }
         if (succeeded) {
-          this.syncStatus = 'CardDAV sync completed.';
+          this.syncStatus = ['CardDAV sync completed.', conflicts].filter(Boolean).join(' ');
         }
       } else if (response.status === 409 || response.status >= 500) {
         reconcile = true;

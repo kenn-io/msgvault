@@ -59,4 +59,5 @@ export interface OperationsSnapshot {
   readonly actionPending: OperationAction | null;
   readonly actionConflict: string | null;
   readonly actionError: string | null;
+  readonly actionStatus: string | null;
 }

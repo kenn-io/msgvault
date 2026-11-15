@@ -77,7 +77,7 @@
   };
   async function runAction(action: OperationAction): Promise<void> {
     const outcome = await controller.runAction(action);
-    if (outcome === 'succeeded') onAnnounce(actionSuccess[action]);
+    if (outcome === 'succeeded') onAnnounce([actionSuccess[action], controller.snapshot.actionStatus].filter(Boolean).join(' '));
     else if (outcome !== 'discarded') onAnnounce(controller.snapshot.actionConflict ?? controller.snapshot.actionError ?? '');
   }
   async function refresh(event: MouseEvent): Promise<void> {
@@ -140,6 +140,7 @@
     {#if current.conflict}<p class="error" role="alert">{current.conflict}</p>{#if current.restartRequired}<Button size="sm" label="Restart" onclick={() => void controller.restart()} />{/if}{/if}
     {#if current.actionConflict}<p class="error" role="alert">{current.actionConflict}</p>{/if}
     {#if current.actionError}<p class="error" role="alert">{current.actionError}</p>{/if}
+    {#if current.actionStatus}<p role="status">{current.actionStatus}</p>{/if}
   </div>
 </Dialog>
 
