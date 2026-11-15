@@ -415,6 +415,13 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			identities := map[string]bool{}
 			for _, o := range matched {
 				if o.original == (calrecur.Identity{}) && o.Start.IsZero() {
+					if !o.End.IsZero() {
+						if o.AllDay && o.EndDate != "" {
+							identities["end-date:"+o.EndDate] = true
+						} else {
+							identities["end-time:"+o.End.UTC().Format(time.RFC3339Nano)] = true
+						}
+					}
 					continue
 				}
 				if o.original.AllDay {

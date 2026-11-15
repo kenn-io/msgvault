@@ -708,6 +708,42 @@ func TestMeetingRecordSkipsUnrelatedExceptionsWithinBudget(t *testing.T) {
 	assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), matches[key][0].Ref)
 }
 
+func TestMeetingRecordEndOnlyBareIDCopies(t *testing.T) {
+	for _, tc := range []struct{ name, firstEnd, secondEnd string }{
+		{"timed", `{"dateTime":"2027-03-14T11:00:00Z"}`, `{"dateTime":"2027-03-21T11:00:00Z"}`},
+		{"all-day", `{"date":"2027-03-15"}`, `{"date":"2027-03-22"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			data, first := calendarFixture(t, st, "first", fmt.Sprintf(`{"id":"event","status":"cancelled","end":%s}`, tc.firstEnd), "first@example.com")
+			require.NoError(st.UpdateSourceSyncConfig(t.Context(), data.Message.SourceID, `{"calendar_id":"owner@example.com","account_email":"first@example.com","time_zone":"UTC"}`))
+			_, note := projectionFixture(t, st, "note", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"event"}}`)
+			for _, ref := range []MeetingLinkRef{{Kind: "evt", MessageID: first}, {Kind: "msg", MessageID: note}} {
+				record, err := st.MeetingRecordContext(t.Context(), ref)
+				require.NoError(err)
+				require.Len(record.Links, 1)
+				assert.Equal(fmt.Sprintf("evt:%d", first), record.Links[0].Ref)
+				assert.Equal([]int64{note}, record.MessageIDs)
+				assert.Contains(record.Unexpandable, CalendarUnexpandable{MessageID: first, Reason: "missing event bounds"})
+			}
+			data, second := calendarFixture(t, st, "second", fmt.Sprintf(`{"id":"event","status":"cancelled","end":%s}`, tc.secondEnd), "second@example.com")
+			require.NoError(st.UpdateSourceSyncConfig(t.Context(), data.Message.SourceID, `{"calendar_id":"owner@example.com","account_email":"second@example.com","time_zone":"UTC"}`))
+			record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+			require.NoError(err)
+			assert.Equal([]int64{note}, record.MessageIDs)
+			assert.Empty(record.Links)
+			for _, id := range []int64{first, second} {
+				record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: id})
+				require.NoError(err)
+				require.Len(record.Links, 1)
+				assert.Equal(fmt.Sprintf("evt:%d", id), record.Links[0].Ref)
+				assert.Empty(record.MessageIDs)
+			}
+		})
+	}
+}
+
 func TestMeetingRecordSeriesNotesByOwner(t *testing.T) {
 	for _, tc := range []struct {
 		name, mode       string
