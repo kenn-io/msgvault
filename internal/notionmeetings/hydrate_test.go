@@ -154,22 +154,18 @@ func completeHydrationSource() *fakeHydrationSource {
 	}
 }
 
-func TestHydratorReadsPageParentMarkdown(t *testing.T) {
-	meeting := hydrationMeeting()
-	source := completeHydrationSource()
-	result, err := NewHydrator(source).Hydrate(t.Context(), meeting)
-	require.NoError(t, err)
-	assert.Equal(t, "page_id", result.Discovery.Parent.Type)
-	assert.Equal(t, "page-1", result.Discovery.Parent.PageID)
-	assert.Equal(t, 1, source.markdownCalls)
-	assert.Equal(t, "page-1", source.markdownID)
-}
-
 func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	hydrated, err := NewHydrator(completeHydrationSource()).Hydrate(t.Context(), hydrationMeeting())
+	source := completeHydrationSource()
+	meeting := hydrationMeeting()
+	meeting.Parent = Parent{}
+	hydrated, err := NewHydrator(source).Hydrate(t.Context(), meeting)
 	require.NoError(err)
+	assert.Equal("page_id", hydrated.Discovery.Parent.Type)
+	assert.Equal("page-1", hydrated.Discovery.Parent.PageID)
+	assert.Equal(1, source.markdownCalls)
+	assert.Equal("page-1", source.markdownID)
 	assert.False(hydrated.AttendeeResolutionDegraded)
 	assert.Equal("Decide the release scope.", hydrated.Summary)
 	assert.Contains(hydrated.Notes, "Nested action item.")
@@ -221,8 +217,7 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 			err:  &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"},
 		},
 		{name: "restricted", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "restricted_resource"}},
-		{name: "rate limit", err: ErrRateLimited},
-		{name: "server", err: &APIError{Kind: ErrProvider, Status: 503}},
+		{name: "server retry exhausted", err: &APIError{Kind: ErrRateLimited, Status: 503, Code: "service_unavailable"}},
 		{name: "reset", err: syscall.ECONNRESET},
 		{name: "truncated", err: io.ErrUnexpectedEOF},
 		{name: "oversized section", err: ErrResponseTooLarge},
@@ -250,19 +245,30 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 
 func TestHydratorKeepsSystemicTranscriptErrorsFatal(t *testing.T) {
 	tests := []struct {
-		name   string
-		err    error
-		cancel bool
+		name       string
+		err        error
+		cancel     bool
+		secondPage bool
 	}{
 		{name: "unauthorized", err: &APIError{Kind: ErrUnauthorized, Status: 401, Code: "unauthorized"}},
+		{name: "forbidden", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "forbidden"}},
+		{name: "forbidden second page", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "forbidden"}, secondPage: true},
 		{name: "malformed response", err: fmt.Errorf("%w: invalid block", ErrMalformedResponse)},
-		{name: "transient error after cancel", err: ErrRateLimited, cancel: true},
+		{name: "transient error after cancel", err: &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}, cancel: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			source := completeHydrationSource()
-			source.blockErrs = map[string]error{"transcript-1": tt.err}
+			if tt.secondPage {
+				source.children["notes-1"][""].HasMore = true
+				source.children["notes-1"][""].NextCursor = "next"
+				child := source.children["notes-1"][""].Results[0]
+				source.children["notes-1"][""].Raw = json.RawMessage(`{"object":"list","results":[` + string(child.Raw) + `],"has_more":true,"next_cursor":"next"}`)
+				source.childErrs = map[string]map[string]error{"notes-1": {"next": tt.err}}
+			} else {
+				source.blockErrs = map[string]error{"transcript-1": tt.err}
+			}
 
 			ctx := t.Context()
 			if tt.cancel {
@@ -351,7 +357,7 @@ func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 		markdownOnly bool
 	}{
 		{"block read fine", nil, true},
-		{"block read failed", ErrRateLimited, false},
+		{"block read failed", &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}, false},
 	} {
 		t.Run("no transcript in incomplete page/"+tc.name, func(t *testing.T) {
 			source := completeHydrationSource()
@@ -369,7 +375,7 @@ func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 	}
 }
 
-func TestHydratorStoresAndComparesPageMarkdown(t *testing.T) {
+func TestHydratorComparesPageMarkdown(t *testing.T) {
 	for _, tc := range []struct {
 		name, markdown     string
 		differs, truncated bool
@@ -540,7 +546,7 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 				source.blocks["meeting-1"].Raw = json.RawMessage(`{"object":"block","id":"meeting-1","type":"meeting_notes","padding":"` + payload + `"}`)
 				source.blocks["notes-1"].Raw = json.RawMessage(`{"object":"block","id":"notes-1","type":"paragraph","padding":"` + payload + `"}`)
 				source.markdown.Raw = json.RawMessage(`{"object":"page_markdown","id":"page-1","markdown":"` + payload + `"}`)
-				source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
+				source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
 				empty := paragraph("transcript-1", "", false)
 				source.blocks["transcript-1"] = &empty
 			case "requests":
@@ -572,9 +578,7 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 			}
 			result, err := NewHydrator(source).Hydrate(t.Context(), meeting)
 			require.NoError(err)
-			if !tc.dataSource {
-				assert.Equal(tc.markdownCalls, source.markdownCalls)
-			}
+			assert.Equal(tc.markdownCalls, source.markdownCalls)
 			for _, section := range tc.incomplete {
 				assert.Contains(result.Incomplete, section)
 			}
@@ -599,7 +603,7 @@ func TestHydratorAttendeeLimitRequiresIncompleteSection(t *testing.T) {
 			require := require.New(t)
 			source := completeHydrationSource()
 			if incomplete {
-				source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
+				source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
 			}
 			source.users = map[string]*UserPage{}
 			for i := range maxHydrationRequests {
@@ -652,7 +656,7 @@ func TestHydratorPaginationFailureDiscardsPartialSection(t *testing.T) {
 
 func TestHydratorSurfacesMarkdownFailures(t *testing.T) {
 	source := completeHydrationSource()
-	source.markdownErr = &APIError{Kind: ErrProvider, Status: 503}
+	source.markdownErr = &APIError{Kind: ErrRateLimited, Status: 503, Code: "service_unavailable"}
 	meeting, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.ErrorIs(t, err, source.markdownErr)
 	assert.Nil(t, meeting)

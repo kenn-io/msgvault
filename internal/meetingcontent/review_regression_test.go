@@ -243,26 +243,25 @@ func TestReviewRound1NotionCheckedMustBeBoolean(t *testing.T) {
 }
 
 func TestNotionTreeTraversalSkipsNestedMeetingType(t *testing.T) {
-	tree := []byte(`{"root":{"id":"notes","has_children":true},"pages":[{"results":[{"id":"nested","type":"meeting_notes","has_children":true},{"id":"sibling","type":"paragraph","has_children":true}],"has_more":false},{"results":[{"id":"action","type":"to_do","has_children":false}],"has_more":false}]}`)
-	blocks, complete := notionTreeBlocks(tree, "notes")
-	assert.True(t, complete)
-	require.Len(t, blocks, 4)
-	assert.JSONEq(t, `{"id":"action","type":"to_do","has_children":false}`, string(blocks[3]))
-}
-
-func TestNotionIncompleteLegacyTreeDoesNotAttributeNestedMeetingActions(t *testing.T) {
-	content := Decode("notion_meeting_json", []byte(`{
-		"schema_version":1,
-		"discovery":{"meeting_notes":{"children":{"summary_block_id":"summary-root"}}},
-		"summary":{"root":{"id":"summary-root","type":"paragraph","has_children":true},"pages":[
-			{"results":[{"id":"nested-meeting","type":"meeting_notes","has_children":true},{"id":"sibling","type":"paragraph","has_children":true}],"has_more":false},
-			{"results":[{"id":"other-action","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Other meeting action"}],"checked":false}}],"has_more":false},
-			{"results":[{"id":"sibling-action","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}],"has_more":false}
-		]}
-	}`), nil)
-	assert.Equal(t, CoverageUnavailable, content.ActionCoverage)
-	assert.Equal(t, "incomplete_tree", content.ActionReason)
-	assert.Empty(t, content.Actions)
+	for _, tc := range []struct {
+		name, pages string
+		complete    bool
+	}{
+		{"sibling page", `[{"results":[{"object":"block","id":"nested","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[]}},{"object":"block","id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}}],"has_more":false},{"results":[{"object":"block","id":"action","type":"to_do","has_children":false,"to_do":{"rich_text":[],"checked":false}}],"has_more":false}]`, true},
+		{"legacy nested page left unread", `[{"results":[{"object":"block","id":"nested","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[]}},{"object":"block","id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}}],"has_more":false},{"results":[{"object":"block","id":"other-action","type":"to_do","has_children":false,"to_do":{"rich_text":[],"checked":false}}],"has_more":false},{"results":[{"object":"block","id":"action","type":"to_do","has_children":false,"to_do":{"rich_text":[],"checked":false}}],"has_more":false}]`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tree := []byte(`{"root":{"object":"block","id":"notes","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}},"pages":` + tc.pages + `}`)
+			blocks, complete := notionTreeBlocks(tree, "notes")
+			assert.Equal(t, tc.complete, complete)
+			if !tc.complete {
+				assert.Nil(t, blocks)
+				return
+			}
+			require.Len(t, blocks, 4)
+			assert.JSONEq(t, `{"object":"block","id":"action","type":"to_do","has_children":false,"to_do":{"rich_text":[],"checked":false}}`, string(blocks[3]))
+		})
+	}
 }
 
 func TestNotionTreeDropsBlocksWhenRootLeavesPagesUnread(t *testing.T) {

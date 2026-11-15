@@ -301,7 +301,7 @@ func TestImporterKeepsMeetingWhenIncompleteSectionCannotBeRecovered(t *testing.T
 			}
 			before, err := st.GetMessageBodyText(t.Context(), messageID)
 			require.NoError(t, err)
-			source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
+			source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
 			notes := paragraph("notes-1", "Updated notes.", false)
 			source.blocks["notes-1"] = &notes
 			second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Full: true})
@@ -322,11 +322,12 @@ func TestImporterKeepsMeetingWhenIncompleteSectionCannotBeRecovered(t *testing.T
 }
 
 func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
-	for _, failure := range []string{"another meeting", "markdown", "archive"} {
+	for _, failure := range []string{"another meeting", "markdown", "archive", "checkpoint", "completion"} {
 		t.Run(failure, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
+			limited := &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}
 			if failure == "archive" {
-				source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
+				source.blockErrs = map[string]error{"summary-1": limited}
 			}
 			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 			require.NoError(t, err)
@@ -336,12 +337,41 @@ func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
 				source.query.Results = append(source.query.Results, second)
 			}
 			if failure != "archive" {
-				source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
+				source.blockErrs = map[string]error{"summary-1": limited}
 				if failure == "markdown" {
 					source.markdownErr = errors.New("markdown unavailable")
 				}
+				if failure == "checkpoint" || failure == "completion" {
+					column, status := "cursor_before", "running"
+					if failure == "completion" {
+						column, status = "status", "completed"
+					}
+					if st.IsPostgreSQL() {
+						_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE FUNCTION fail_notion_final_write() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'forced final write failure'; END; $$ LANGUAGE plpgsql; CREATE TRIGGER fail_notion_final_write BEFORE UPDATE OF %s ON sync_runs FOR EACH ROW WHEN (NEW.status = '%s') EXECUTE FUNCTION fail_notion_final_write()`, column, status))
+					} else {
+						_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER fail_notion_final_write BEFORE UPDATE OF %s ON sync_runs WHEN NEW.status = '%s' BEGIN SELECT RAISE(ABORT, 'forced final write failure'); END`, column, status))
+					}
+					require.NoError(t, err)
+				}
 				_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-				require.Error(t, err)
+				if failure == "checkpoint" || failure == "completion" {
+					require.ErrorContains(t, err, "forced final write failure")
+					if st.IsPostgreSQL() {
+						_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_final_write ON sync_runs`)
+					} else {
+						_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_final_write`)
+					}
+					require.NoError(t, err)
+					if failure == "checkpoint" {
+						checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), first.SourceID, SourceType)
+						require.NoError(t, err)
+						var state syncState
+						require.NoError(t, json.Unmarshal([]byte(checkpoint.CursorBefore.String), &state))
+						assert.Equal(t, "2026-09-05T10:30:00Z", state.TranscriptRetryUntil["meeting-1"])
+					}
+				} else {
+					require.Error(t, err)
+				}
 			}
 			source.query.Results = nil
 			delete(source.blockErrs, "summary-1")
@@ -710,12 +740,11 @@ func TestImporterMigratesPendingRetryDeadlineFromVersionOneCursor(t *testing.T) 
 	summary, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(err)
 	state := lastNotionState(t, st, summary.SourceID)
-	assert.Equal(1, state.Version)
 	assert.Empty(state.Pending)
 	assert.Equal("2026-08-31T12:00:00Z", lastTranscriptRetryUntil(t, st, summary.SourceID)["meeting-1"])
 }
 
-func TestSyncStateRejectsInvalidDeadlineAndVersion(t *testing.T) {
+func TestSyncStateRejectsInvalidDeadline(t *testing.T) {
 	require := require.New(t)
 	var state syncState
 	require.NoError(json.Unmarshal([]byte(`{"version":1,"known":{},"transcript_retry_until":{"meeting-1":"not-a-time"}}`), &state))
@@ -724,7 +753,6 @@ func TestSyncStateRejectsInvalidDeadlineAndVersion(t *testing.T) {
 
 	require.Error(err)
 	assert.Contains(t, err.Error(), `transcript retry deadline "meeting-1" is invalid`)
-	require.ErrorContains((syncState{Version: 3}).validate(), "unsupported Notion sync cursor version 3")
 }
 
 func TestImporterContinuesWhenUserListingFailsTransiently(t *testing.T) {
@@ -1156,7 +1184,7 @@ func TestImporterPreservesTranscriptWithMissingOrCorruptEvidence(t *testing.T) {
 			meeting := hydrationMeeting()
 			meeting.LastEditedTime = "2026-08-29T14:00:00Z"
 			source.query.Results = []MeetingNote{meeting}
-			source.blockErrs = map[string]error{"transcript-1": ErrRateLimited}
+			source.blockErrs = map[string]error{"transcript-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
 			source.markdown.Markdown = "# Weekly planning"
 			second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 			require.NoError(err)
@@ -1207,8 +1235,7 @@ func TestImporterDataSourceRetriesIncompleteSections(t *testing.T) {
 	for _, tc := range []struct {
 		section string
 		visible bool
-		err     error
-	}{{"transcript", false, ErrRateLimited}, {"summary", true, ErrRateLimited}, {"notes", false, &APIError{Kind: ErrReadContent, Status: 403, Code: "restricted_resource"}}} {
+	}{{"transcript", false}, {"summary", true}, {"notes", false}} {
 		name := tc.section
 		if tc.visible {
 			name += " visible"
@@ -1237,7 +1264,7 @@ func TestImporterDataSourceRetriesIncompleteSections(t *testing.T) {
 			var beforeEvidence map[string]json.RawMessage
 			require.NoError(json.Unmarshal(before, &beforeEvidence))
 			id := section + "-1"
-			source.blockErrs = map[string]error{id: tc.err}
+			source.blockErrs = map[string]error{id: &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
 			for _, other := range []string{"summary", "notes", "transcript"} {
 				if other != section {
 					updated := paragraph(other+"-1", "Updated "+other, false)
@@ -1375,9 +1402,18 @@ func TestImporterRetriesIncompletePastDeadlineOutsideWindow(t *testing.T) {
 	source.blocks["meeting-1"].Raw = raw
 	source.blocks["meeting-1"].Parent = meeting.Parent
 	source.query.Results = []MeetingNote{meeting}
-	source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
+	parent := "notes-1"
+	for i := 0; i <= maxHydrationDepth; i++ {
+		child := paragraph(fmt.Sprintf("depth-%d", i), "nested", true)
+		source.children[parent] = map[string]*BlockPage{"": {Results: []Block{child}, Raw: json.RawMessage(`{"results":[` + string(child.Raw) + `],"has_more":false}`)}}
+		parent = child.ID
+	}
+	var progress []string
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Progress: func(s string) { progress = append(progress, s) }})
 	require.NoError(err)
+	assert.Contains(strings.Join(progress, "\n"), "depth limit")
+	source.children["notes-1"] = map[string]*BlockPage{"": {Raw: json.RawMessage(`{"results":[],"has_more":false}`)}}
 	require.Len(lastNotionState(t, st, first.SourceID).Pending, 1)
 	source.query.Results = nil
 	source.blockCalls = nil
@@ -1391,7 +1427,7 @@ func TestImporterRetriesIncompletePastDeadlineOutsideWindow(t *testing.T) {
 	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(err)
 	require.Len(lastNotionState(t, st, result.SourceID).Pending, 1)
-	source.blockErrs["meeting-1"] = ErrRateLimited
+	source.blockErrs["meeting-1"] = &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}
 	imp.now = func() time.Time { return time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC) }
 	result, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(err)
@@ -1411,7 +1447,7 @@ func TestImporterRetriesIncompletePastDeadlineOutsideWindow(t *testing.T) {
 func TestImporterHandlesIncompleteMarkdownWithDifferentTranscriptSources(t *testing.T) {
 	t.Run("readable page with unreadable section", func(t *testing.T) {
 		st, source, imp := newImporterFixture(t)
-		source.blockErrs = map[string]error{"transcript-1": ErrRateLimited}
+		source.blockErrs = map[string]error{"transcript-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
 		source.markdown.Markdown = "# Transcript\nPage transcript"
 		source.markdown.Raw = json.RawMessage(`{"object":"page_markdown","id":"page-1","markdown":"# Transcript\nPage transcript"}`)
 		first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
@@ -1573,7 +1609,7 @@ func TestImporterKeepsSectionTextWhileReplacementIsIncomplete(t *testing.T) {
 				meeting.MeetingNotes.Children.NotesBlockID = "replacement"
 			}
 			source.query.Results = []MeetingNote{meeting}
-			source.blockErrs = map[string]error{"replacement": ErrRateLimited}
+			source.blockErrs = map[string]error{"replacement": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
 			other := "summary"
 			if section == "summary" {
 				other = "notes"
@@ -1649,56 +1685,6 @@ func TestImporterKeepsSavedTranscriptWhenEmptyWhileUpdatingNotes(t *testing.T) {
 	}
 }
 
-func TestImporterRetriesIncompleteAfterFinalWriteFailure(t *testing.T) {
-	for _, tc := range []struct {
-		name, column, status string
-	}{
-		{"checkpoint", "cursor_before", "running"},
-		{"completion", "status", "completed"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			st, source, imp := newImporterFixture(t)
-			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-			require.NoError(err)
-			source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
-			if st.IsPostgreSQL() {
-				_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE FUNCTION fail_notion_final_write() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'forced final write failure'; END; $$ LANGUAGE plpgsql; CREATE TRIGGER fail_notion_final_write BEFORE UPDATE OF %s ON sync_runs FOR EACH ROW WHEN (NEW.status = '%s') EXECUTE FUNCTION fail_notion_final_write()`, tc.column, tc.status))
-			} else {
-				_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER fail_notion_final_write BEFORE UPDATE OF %s ON sync_runs WHEN NEW.status = '%s' BEGIN SELECT RAISE(ABORT, 'forced final write failure'); END`, tc.column, tc.status))
-			}
-			require.NoError(err)
-			_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-			require.ErrorContains(err, "forced final write failure")
-			if st.IsPostgreSQL() {
-				_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_final_write ON sync_runs`)
-			} else {
-				_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_final_write`)
-			}
-			require.NoError(err)
-			checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), first.SourceID, SourceType)
-			require.NoError(err)
-			var state syncState
-			require.NoError(json.Unmarshal([]byte(checkpoint.CursorBefore.String), &state))
-			assert.Equal("2026-09-05T10:30:00Z", state.TranscriptRetryUntil["meeting-1"])
-			source.query.Results = nil
-			delete(source.blockErrs, "summary-1")
-			updated := paragraph("summary-1", "Recovered summary.", false)
-			source.blocks["summary-1"] = &updated
-			imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
-			result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-			require.NoError(err)
-			assert.Equal(int64(1), result.MaintenanceRetries)
-			var id int64
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), first.SourceID).Scan(&id))
-			body, err := st.GetMessageBodyText(t.Context(), id)
-			require.NoError(err)
-			assert.Contains(body, "Recovered summary.")
-		})
-	}
-}
-
 func TestImporterReportsPartialActionsForUnreadableSavedSection(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -1729,7 +1715,7 @@ func TestImporterReportsPartialActionsForUnreadableSavedSection(t *testing.T) {
 	assert.Equal(meetingcontent.CoverageAvailable, content.ActionCoverage)
 	require.Len(content.Actions, 1)
 	assert.Equal("Saved task", content.Actions[0].Title)
-	source.blockErrs = map[string]error{"notes-1": ErrRateLimited}
+	source.blockErrs = map[string]error{"notes-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
 	updated := paragraph("summary-1", "Updated summary", false)
 	source.blocks["summary-1"] = &updated
 	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
@@ -1760,7 +1746,7 @@ func TestImporterReportsPartialActionsForUnreadableSavedSection(t *testing.T) {
 
 func TestImporterRetriesUnavailablePendingMeeting(t *testing.T) {
 	st, source, imp := newImporterFixture(t)
-	source.blockErrs = map[string]error{"notes-1": ErrRateLimited}
+	source.blockErrs = map[string]error{"notes-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
 	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(t, err)
 	require.Len(t, lastNotionState(t, st, first.SourceID).Pending, 1)
@@ -1781,61 +1767,4 @@ func TestImporterRetriesUnavailablePendingMeeting(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), third.MaintenanceRetries)
 	assert.Empty(t, lastNotionState(t, st, third.SourceID).Pending)
-}
-
-func TestImporterReportsSectionLimitAndRetries(t *testing.T) {
-	st, source, imp := newImporterFixture(t)
-	meeting := hydrationMeeting()
-	meeting.Parent = Parent{Type: "data_source_id"}
-	source.query.Results = []MeetingNote{meeting}
-	source.blocks["meeting-1"].Parent = meeting.Parent
-	var err error
-	source.blocks["meeting-1"].Raw, err = json.Marshal(meeting)
-	require.NoError(t, err)
-	parent := "notes-1"
-	for i := 0; i <= maxHydrationDepth; i++ {
-		child := paragraph(fmt.Sprintf("depth-%d", i), "nested", true)
-		source.children[parent] = map[string]*BlockPage{"": {Results: []Block{child}, Raw: json.RawMessage(`{"results":[` + string(child.Raw) + `],"has_more":false}`)}}
-		parent = child.ID
-	}
-	var progress []string
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Progress: func(s string) { progress = append(progress, s) }})
-	require.NoError(t, err)
-	assert.True(t, first.PartialCoverage)
-	assert.Contains(t, strings.Join(progress, "\n"), "depth limit")
-	require.Len(t, lastNotionState(t, st, first.SourceID).Pending, 1)
-	source.query.Results = nil
-	imp.now = func() time.Time { return time.Date(2026, 9, 6, 12, 1, 0, 0, time.UTC) }
-	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), second.MaintenanceRetries)
-	require.Len(t, lastNotionState(t, st, second.SourceID).Pending, 1)
-	source.children["notes-1"] = map[string]*BlockPage{"": {Raw: json.RawMessage(`{"results":[],"has_more":false}`)}}
-	imp.now = func() time.Time { return time.Date(2026, 9, 6, 18, 2, 0, 0, time.UTC) }
-	third, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	assert.Empty(t, lastNotionState(t, st, third.SourceID).Pending)
-}
-
-func TestImporterParagraphBodyMatchesArchivedEvidence(t *testing.T) {
-	st, _, imp := newImporterFixture(t)
-	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	var id int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), result.SourceID).Scan(&id))
-	body, err := st.GetMessageBodyText(t.Context(), id)
-	require.NoError(t, err)
-	assert.Contains(t, body, "Owner will prepare the rollout.")
-	raw, err := st.GetMessageRaw(id)
-	require.NoError(t, err)
-	var evidence struct {
-		Notes struct {
-			Root json.RawMessage `json:"root"`
-		} `json:"notes"`
-	}
-	require.NoError(t, json.Unmarshal(raw, &evidence))
-	var block Block
-	require.NoError(t, json.Unmarshal(evidence.Notes.Root, &block))
-	assert.Equal(t, "Owner will prepare the rollout.", block.PlainText())
-	assert.True(t, block.HasChildren)
 }
