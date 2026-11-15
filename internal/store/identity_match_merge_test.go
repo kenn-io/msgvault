@@ -762,6 +762,16 @@ func TestMergeParticipantsPreservesAbsorbedEmail(t *testing.T) {
 				require.NoError(err)
 				require.NoError(st.SetParticipantIdentifier(third, "email", "absorbed@example.test"))
 			}
+			if mode == "third party" {
+				require.ErrorIs(st.MergeParticipants(absorbed, survivor), store.ErrPersonBindingConflict)
+				resolved, err := st.EnsureParticipantByIdentifier("email", "absorbed@example.test", "")
+				require.NoError(err)
+				assert.Equal(third, resolved)
+				var email string
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT email_address FROM participants WHERE id = ?`), absorbed).Scan(&email))
+				assert.Equal("absorbed@example.test", email)
+				return
+			}
 			require.NoError(st.MergeParticipants(absorbed, survivor))
 			var count int
 			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id = ? AND identifier_type = 'email' AND identifier_value = ?`), survivor, "absorbed@example.test").Scan(&count))
@@ -769,11 +779,6 @@ func TestMergeParticipantsPreservesAbsorbedEmail(t *testing.T) {
 				assert.Equal(1, count)
 			} else {
 				assert.Zero(count)
-			}
-			if mode == "third party" {
-				resolved, err := st.EnsureParticipantByIdentifier("email", "absorbed@example.test", "")
-				require.NoError(err)
-				assert.Equal(third, resolved)
 			}
 		})
 	}

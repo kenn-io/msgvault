@@ -5014,12 +5014,12 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 			return err
 		}
 		if oldEmail.Valid {
-			conflict, err := s.claimedAbsorbedEmailConflictTx(ctx, tx, oldEmail.String, oldID, newID, edges)
+			conflict, err := s.absorbedEmailConflictTx(ctx, tx, oldEmail.String, oldID, newID, edges)
 			if err != nil {
 				return err
 			}
 			if conflict {
-				return errors.New("preserve absorbed participant email: identifier belongs to another participant")
+				return fmt.Errorf("preserve absorbed participant email: identifier belongs to another participant: %w", ErrPersonBindingConflict)
 			}
 			// Preserve the absorbed primary email as an unscoped identifier. A
 			// survivor with its own primary address cannot store this value in
@@ -5112,11 +5112,9 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 	})
 }
 
-// claimedAbsorbedEmailConflictTx reports whether a CardDAV card claims email
-// while an unscoped identifier for it belongs to a participant outside the
-// merged components. Merging would then favor one owner; an unclaimed alias,
-// a scoped alias, or one the survivor's component already holds does not block.
-func (s *Store) claimedAbsorbedEmailConflictTx(ctx context.Context, tx *loggedTx, email string, oldID, newID int64, edges []linkEdge) (bool, error) {
+// absorbedEmailConflictTx detects an unscoped email identifier owned outside
+// both components, which would otherwise prevent preserving the absorbed email.
+func (s *Store) absorbedEmailConflictTx(ctx context.Context, tx *loggedTx, email string, oldID, newID int64, edges []linkEdge) (bool, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT participant_id FROM participant_identifiers
 		WHERE identifier_type IN ('email', 'apple_id', 'imessage', 'synctech_sms')
 		AND scope_kind IS NULL AND scope_value IS NULL
@@ -5139,15 +5137,7 @@ func (s *Store) claimedAbsorbedEmailConflictTx(ctx context.Context, tx *loggedTx
 		_, inNew := survivor[ownerID]
 		competing = competing || !inOld && !inNew
 	}
-	if err := rows.Err(); err != nil || !competing {
-		return false, err
-	}
-	claims, _, err := s.cardDAVParticipantClaimsTx(ctx, tx)
-	if err != nil {
-		return false, err
-	}
-	key, ok := cardDAVParticipantAddressValue(ContactAddressEmail, email)
-	return ok && len(claims[key]) > 0, nil
+	return competing, rows.Err()
 }
 
 // ParticipantByIdentifier returns the participant an identifier points at,
