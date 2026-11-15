@@ -1348,7 +1348,7 @@ func TestMeetingDecisionDedupCollisionPriority(t *testing.T) {
 	})
 }
 
-func TestMeetingDecisionClearRejectsLostSurvivor(t *testing.T) {
+func TestMeetingDecisionClearAfterPurgingIntermediateCopy(t *testing.T) {
 	for _, all := range []bool{false, true} {
 		name := "delete batch"
 		if all {
@@ -1374,13 +1374,16 @@ func TestMeetingDecisionClearRejectsLostSurvivor(t *testing.T) {
 				_, err = st.DeleteDedupedBatchContext(t.Context(), "middle")
 			}
 			r.NoError(err)
-			if !all {
-				_, err = st.DecideMeetingLinkContext(t.Context(), ref(first), ref(note), "clear")
-				r.ErrorIs(err, sql.ErrNoRows)
-			}
 			record, err := st.MeetingRecordContext(t.Context(), ref(note))
 			r.NoError(err)
 			r.Contains(record.MessageIDs, survivor)
+			if !all {
+				_, err = st.DecideMeetingLinkContext(t.Context(), ref(first), ref(note), "clear")
+				r.NoError(err)
+				record, err = st.MeetingRecordContext(t.Context(), ref(note))
+				r.NoError(err)
+				r.NotContains(record.MessageIDs, survivor)
+			}
 		})
 	}
 }
@@ -1919,4 +1922,109 @@ func TestMeetingDecisionGCAfterMultipleSourceMerges(t *testing.T) {
 	r.NoError(err)
 	r.Len(record.Links, 1)
 	r.Equal(fmt.Sprintf("evt:%d", firstID), record.Links[0].Ref)
+}
+
+func TestMeetingDecisionPurgeAnotherBatchKeepsRestoredLink(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, kept := projectionFixture(t, st, "batch-kept", "meeting_json", `{}`)
+	_, purged := projectionFixture(t, st, "batch-purged", "meeting_json", `{}`)
+	_, restored := projectionFixture(t, st, "batch-restored", "meeting_json", `{}`)
+	_, note := projectionFixture(t, st, "batch-note", "meeting_json", `{}`)
+	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+	_, err := st.DecideMeetingLinkContext(t.Context(), ref(restored), ref(note), "link")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), kept, []int64{purged}, "purged-batch")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), kept, []int64{restored}, "restored-batch")
+	r.NoError(err)
+	_, err = st.DeleteDedupedBatchContext(t.Context(), "purged-batch")
+	r.NoError(err)
+	_, err = st.UndoDedup(t.Context(), "restored-batch")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), ref(note))
+	r.NoError(err)
+	r.Equal([]int64{restored, note}, record.MessageIDs)
+}
+
+func TestMeetingDecisionPurgeAnotherBatchKeepsSurvivingChoices(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, kept := projectionFixture(t, st, "choices-kept", "meeting_json", `{}`)
+	_, purged := projectionFixture(t, st, "choices-purged", "meeting_json", `{}`)
+	_, restored := projectionFixture(t, st, "choices-restored", "meeting_json", `{}`)
+	_, note := projectionFixture(t, st, "choices-note", "meeting_json", `{}`)
+	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+	_, err := st.DecideMeetingLinkContext(t.Context(), ref(kept), ref(note), "unlink")
+	r.NoError(err)
+	_, err = st.DecideMeetingLinkContext(t.Context(), ref(restored), ref(note), "link")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), kept, []int64{purged}, "choices-purged")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), kept, []int64{restored}, "choices-restored")
+	r.NoError(err)
+	_, err = st.DeleteDedupedBatchContext(t.Context(), "choices-purged")
+	r.NoError(err)
+	_, err = st.UndoDedup(t.Context(), "choices-restored")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), ref(note))
+	r.NoError(err)
+	r.Equal([]int64{restored, note}, record.MessageIDs)
+	var choice string
+	r.NoError(st.db.QueryRowContext(t.Context(), `SELECT decision FROM meeting_link_decisions WHERE left_message_id=? AND right_message_id=?`, kept, note).Scan(&choice))
+	r.Equal("split", choice)
+}
+
+func TestMeetingDecisionPurgeMovesOnlyDeletedEndpoint(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, leftKept := projectionFixture(t, st, "endpoint-left-kept", "meeting_json", `{}`)
+	_, leftHidden := projectionFixture(t, st, "endpoint-left-hidden", "meeting_json", `{}`)
+	_, rightKept := projectionFixture(t, st, "endpoint-right-kept", "meeting_json", `{}`)
+	_, rightDeleted := projectionFixture(t, st, "endpoint-right-deleted", "meeting_json", `{}`)
+	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+	_, err := st.DecideMeetingLinkContext(t.Context(), ref(leftHidden), ref(rightDeleted), "link")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), leftKept, []int64{leftHidden}, "endpoint-undo")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), rightKept, []int64{rightDeleted}, "endpoint-purge")
+	r.NoError(err)
+	_, err = st.DeleteDedupedBatchContext(t.Context(), "endpoint-purge")
+	r.NoError(err)
+	_, err = st.UndoDedup(t.Context(), "endpoint-undo")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), ref(rightKept))
+	r.NoError(err)
+	r.Equal([]int64{leftHidden, rightKept}, record.MessageIDs)
+}
+
+func TestMeetingDecisionPurgeKeepsVisibleChoiceOnCollision(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, kept := projectionFixture(t, st, "collision-kept", "meeting_json", `{}`)
+	_, deleted := projectionFixture(t, st, "collision-deleted", "meeting_json", `{}`)
+	_, restored := projectionFixture(t, st, "collision-restored", "meeting_json", `{}`)
+	_, note := projectionFixture(t, st, "collision-note", "meeting_json", `{}`)
+	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+	_, err := st.DecideMeetingLinkContext(t.Context(), ref(kept), ref(note), "unlink")
+	r.NoError(err)
+	_, err = st.DecideMeetingLinkContext(t.Context(), ref(deleted), ref(note), "link")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), kept, []int64{deleted}, "collision-purged")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), kept, []int64{restored}, "collision-undo")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), ref(note))
+	r.NoError(err)
+	r.Equal([]int64{kept, note}, record.MessageIDs)
+	_, err = st.DeleteDedupedBatchContext(t.Context(), "collision-purged")
+	r.NoError(err)
+	record, err = st.MeetingRecordContext(t.Context(), ref(note))
+	r.NoError(err)
+	r.Equal([]int64{kept, note}, record.MessageIDs)
+	_, err = st.UndoDedup(t.Context(), "collision-undo")
+	r.NoError(err)
+	record, err = st.MeetingRecordContext(t.Context(), ref(note))
+	r.NoError(err)
+	r.Equal([]int64{kept, note}, record.MessageIDs)
 }

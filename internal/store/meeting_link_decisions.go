@@ -638,6 +638,9 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 			return err
 		}
 	}
+	if len(edges) == 0 {
+		return nil
+	}
 	slices.SortFunc(edges, func(a, b meetingDecisionEdge) int { return cmp.Compare(b.id, a.id) })
 	// Keep a choice on a surviving copy when possible. All choices resolving
 	// to the same deleted visible copy use the same replacement for priority.
@@ -655,13 +658,15 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 	}
 	type pair struct{ a, b meetingDecisionEndpoint }
 	type resolved struct {
-		edge          meetingDecisionEdge
-		pair          pair
-		moving, valid bool
+		edge  meetingDecisionEdge
+		pair  pair
+		valid bool
 	}
 	resolvedEdges := make([]resolved, 0, len(edges))
-	movingPairs := map[pair]bool{}
 	for _, edge := range edges {
+		if !purged[edge.a.ID] && !purged[edge.b.ID] {
+			continue
+		}
 		budget := calrecur.RequestReadBudget
 		a, b, ok, err := s.meetingPairKeys(ctx, edge.a, edge.b, &budget)
 		if err != nil {
@@ -677,35 +682,92 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 			b.ID, found = replacement(b.ID)
 			ok = ok && found
 		}
+		if !purged[edge.a.ID] {
+			a = edge.a
+		}
+		if !purged[edge.b.ID] {
+			b = edge.b
+		}
 		if compareMeetingEndpoints(a, b) > 0 {
 			a, b = b, a
 		}
-		_, leftAffected := purged[edge.a.ID]
-		_, rightAffected := purged[edge.b.ID]
-		moving := leftAffected || rightAffected
 		p := pair{a, b}
 		valid := ok && a != b
-		resolvedEdges = append(resolvedEdges, resolved{edge, p, moving, valid})
-		if moving && valid {
-			movingPairs[p] = true
-		}
+		resolvedEdges = append(resolvedEdges, resolved{edge, p, valid})
 	}
-	seen := map[pair]bool{}
-	var updates []resolved
-	for _, item := range resolvedEdges {
-		if !item.moving && (!item.valid || !movingPairs[item.pair]) {
+	// Keep surviving hidden copies connected when their intermediate survivor
+	// is removed. Their choices remain on the rows where they were saved.
+	type redirect struct{ from, to int64 }
+	var redirects []redirect
+	for id, deleted := range purged {
+		if !deleted {
 			continue
 		}
-		if !item.valid || seen[item.pair] {
+		next := parents[id]
+		visited := map[int64]bool{id: true}
+		for next != 0 && purged[next] && !visited[next] {
+			visited[next] = true
+			next = parents[next]
+		}
+		if next == 0 || visited[next] {
+			var ok bool
+			next, ok = replacement(id)
+			if !ok {
+				continue
+			}
+			// A descendant may point through another surviving copy. Route to
+			// that nearer copy so that the redirect cannot create a cycle.
+			for parent := parents[next]; parent != 0 && parent != id && !visited[parent]; parent = parents[parent] {
+				visited[parent] = true
+				if !purged[parent] {
+					next = parent
+				}
+			}
+		}
+		redirects = append(redirects, redirect{id, next})
+	}
+	for batch := range slices.Chunk(redirects, 200) {
+		values := make([]string, len(batch))
+		params := make([]any, 0, len(batch)*2+len(args))
+		for i, item := range batch {
+			values[i] = "(CAST(? AS BIGINT), CAST(? AS BIGINT))"
+			params = append(params, item.from, item.to)
+		}
+		params = append(params, args...)
+		for _, table := range []string{"meeting_copy_survivors", "source_merge_messages"} {
+			query := `WITH redirects(id, target) AS (VALUES ` + strings.Join(values, ",") + `)
+ UPDATE ` + table + ` SET survivor_message_id=(SELECT target FROM redirects WHERE id=survivor_message_id)
+ WHERE survivor_message_id IN (SELECT id FROM redirects)
+ AND message_id <> (SELECT target FROM redirects WHERE id=survivor_message_id)
+ AND message_id NOT IN (SELECT id FROM messages WHERE ` + predicate + `)`
+			if _, err := tx.ExecContext(ctx, s.dialect.Rebind(query), params...); err != nil {
+				return err
+			}
+		}
+	}
+	seen := map[pair]int64{}
+	for _, edge := range edges {
+		if !purged[edge.a.ID] && !purged[edge.b.ID] {
+			seen[pair{edge.a, edge.b}] = edge.id
+		}
+	}
+	var updates []resolved
+	for _, item := range resolvedEdges {
+		previous := seen[item.pair]
+		if !item.valid || previous > item.edge.id {
 			if _, err := tx.ExecContext(ctx, s.dialect.Rebind(`DELETE FROM meeting_link_decisions WHERE id=?`), item.edge.id); err != nil {
 				return err
 			}
 			continue
 		}
-		seen[item.pair] = true
-		if item.moving {
-			updates = append(updates, item)
+		if previous != 0 {
+			// The unique pair already has an older choice; keep the newer id.
+			if _, err := tx.ExecContext(ctx, s.dialect.Rebind(`DELETE FROM meeting_link_decisions WHERE id=?`), previous); err != nil {
+				return err
+			}
 		}
+		seen[item.pair] = item.edge.id
+		updates = append(updates, item)
 	}
 	for _, item := range updates {
 		p := item.pair
