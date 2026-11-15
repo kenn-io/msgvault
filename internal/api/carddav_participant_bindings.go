@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/store"
@@ -33,6 +34,12 @@ func (s *Server) handleCardDAVParticipantBindings(w http.ResponseWriter, r *http
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "carddav_binding_failed", "CardDAV participant binding failed")
 		return
+	}
+	if !options.DryRun && (result.ParticipantsBound > 0 || result.ParticipantsUnbound > 0) {
+		// The binding is committed even if the client disconnects.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Minute)
+		defer cancel()
+		s.refreshIdentityCacheState(ctx)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, result)

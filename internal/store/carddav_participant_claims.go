@@ -38,7 +38,7 @@ func cardDAVParticipantAddressValue(kind ContactAddressKind, raw string) (cardDA
 }
 
 func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (map[cardDAVParticipantAddress]cardDAVPersonSet, int, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT resource.id, resource.person_id, resource.remote_body
+	rows, err := tx.QueryContext(ctx, `SELECT resource.person_id, resource.remote_body
  FROM carddav_resources resource
  WHERE resource.mapping_status = ? AND resource.person_id IS NOT NULL
  AND EXISTS (SELECT 1 FROM carddav_address_books book
@@ -57,9 +57,9 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 	claims := map[cardDAVParticipantAddress]cardDAVPersonSet{}
 	scanned := 0
 	for rows.Next() {
-		var resourceID, personID int64
+		var personID int64
 		var body []byte
-		if err := rows.Scan(&resourceID, &personID, &body); err != nil {
+		if err := rows.Scan(&personID, &body); err != nil {
 			return nil, 0, err
 		}
 		envelope, err := vcard.ParseResourceEnvelope(body)

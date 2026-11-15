@@ -457,7 +457,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("configure CardDAV: %w", err)
 	}
 	cardDAVController.SetConnectionScheduleReconciler(func(name string, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations) error {
-		return reconcileCardDAVSchedulerJob(sched, cardDAVConfig, service, logger, name, state)
+		return reconcileCardDAVSchedulerJob(sched, cardDAVConfig, service, logger, name, state, s)
 	})
 	if err := cardDAVController.ReconcileSchedule(ctx); err != nil {
 		return err
@@ -1288,7 +1288,7 @@ func snapshotBeeperDraftPolicy(cfg *config.Config) []config.GmailDraftSource {
 	return append([]config.GmailDraftSource(nil), cfg.Beeper.Drafts...)
 }
 
-func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations, logger *slog.Logger, name string, state *invocation) error {
+func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations, logger *slog.Logger, name string, state *invocation, st *store.Store) error {
 	jobName := api.CardDAVJobNameForConnection(name)
 	if !cardDAVConfig.Enabled || cardDAVConfig.Schedule == "" {
 		sched.RemoveJob(jobName)
@@ -1314,7 +1314,24 @@ func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig conf
 	if err := sched.AddJob(scheduler.Job{
 		Name: jobName, Schedule: cardDAVConfig.Schedule,
 		Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+			var before int64
+			var beforeErr error
+			if st != nil {
+				before, beforeErr = st.IdentityRevisionContext(ctx)
+			}
 			_, err := service.Sync(ctx, carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
+			if st != nil {
+				after, afterErr := st.IdentityRevisionContext(context.WithoutCancel(ctx))
+				if beforeErr != nil || afterErr != nil || before != after {
+					// A completed book remains committed after sync cancellation.
+					refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+					refreshErr := runDerivedCacheSubprocess(refreshCtx, state.cfg.AnalyticsDir())
+					cancel()
+					if refreshErr != nil {
+						logger.Error("identity cache refresh failed", "error", refreshErr)
+					}
+				}
+			}
 			return recordSyncAttempt(ctx, "carddav", name, err)
 		}),
 	}); err != nil {

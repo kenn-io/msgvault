@@ -1711,6 +1711,13 @@ func (s *Server) handleCardDAVSync(w http.ResponseWriter, r *http.Request) {
 	if !decodeCardDAV(w, r, &req) {
 		return
 	}
+	// Individual books can commit before a later sync error.
+	revisionStore, hasRevision := s.store.(interface{ IdentityRevision() (int64, error) })
+	var before int64
+	var revisionErr error
+	if hasRevision {
+		before, revisionErr = revisionStore.IdentityRevision()
+	}
 	var result carddav.SyncResult
 	var err error
 	if s.cardDAV.cfg == nil {
@@ -1721,6 +1728,15 @@ func (s *Server) handleCardDAVSync(w http.ResponseWriter, r *http.Request) {
 		result, err = service.Sync(r.Context(), carddav.SyncOptions{Full: req.Full, Trigger: store.CardDAVSyncTriggerManual})
 	} else {
 		result, err = s.cardDAV.Sync(r.Context(), req)
+	}
+	if hasRevision {
+		after, afterErr := revisionStore.IdentityRevision()
+		if revisionErr != nil || afterErr != nil || after != before {
+			// A completed book remains committed after sync cancellation.
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Minute)
+			defer cancel()
+			s.refreshIdentityCacheState(ctx)
+		}
 	}
 	// Sync can fail for several people, so it keeps the fixed message.
 	if errors.Is(err, carddav.ErrMicrosoftContactTooLarge) {
