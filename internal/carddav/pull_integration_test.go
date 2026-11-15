@@ -176,10 +176,10 @@ func TestSnapshotDuplicateRemoteUIDClaimsPreviousHrefOnlyOnce(t *testing.T) {
 	resources, err := st.ListCardDAVResourcesContext(t.Context(), book.ID)
 	require.NoError(err)
 	require.Len(resources, 2)
-	for _, resource := range resources {
-		require.NotNil(resource.PersonID)
-		assert.Equal(personID, *resource.PersonID)
-	}
+	require.NotNil(resources[0].PersonID)
+	require.NotNil(resources[1].PersonID)
+	assert.NotEqual(*resources[0].PersonID, *resources[1].PersonID)
+	assert.Contains([]int64{*resources[0].PersonID, *resources[1].PersonID}, personID)
 }
 
 func TestSyncRefetchesOneStalePlanThenAborts(t *testing.T) {

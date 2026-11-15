@@ -577,7 +577,6 @@ func TestCardDAVParticipantBindingCandidateOwnership(t *testing.T) {
 				}
 			})
 		}
-
 	})
 }
 

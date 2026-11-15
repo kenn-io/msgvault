@@ -2298,20 +2298,19 @@ func TestPublishedImportRetainsPreferenceHashBaseline(t *testing.T) {
 	assert.Contains(string(fixture.body), "PREF=01")
 }
 
-func TestPhoneURIIdentityReusesImportedPerson(t *testing.T) {
+func TestPhoneURIIdentityKeepsImportedPersonsSeparate(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		phone, second string
-		distinct      bool
 	}{
-		{"+12025550102", "+12025550102", false},
-		{"tel:+12025550102;ext=42", "tel:+12025550102;ext=42", false},
-		{"tel:5550102;phone-context=+1202;ext=42", "tel:5550102;phone-context=+1202;ext=42", false},
-		{"tel:5550102;phone-context=+1202;ext=42", "tel:+12025550102;ext=42", false},
-		{"tel:5550102;phone-context=+1202;ext=42", "TEL:5550102;EXT=42;PHONE-CONTEXT=+1202", false},
-		{"tel:+12025550102;ext=42;isub=7", "tel:+12025550102;ISUB=7;EXT=42", false},
-		{"tel:+12025550102;ext=42", "tel:+12025550102;ext=43", true},
-		{"tel:+12025550102;ext=42", "+12025550102", true},
+		{"+12025550102", "+12025550102"},
+		{"tel:+12025550102;ext=42", "tel:+12025550102;ext=42"},
+		{"tel:5550102;phone-context=+1202;ext=42", "tel:5550102;phone-context=+1202;ext=42"},
+		{"tel:5550102;phone-context=+1202;ext=42", "tel:+12025550102;ext=42"},
+		{"tel:5550102;phone-context=+1202;ext=42", "TEL:5550102;EXT=42;PHONE-CONTEXT=+1202"},
+		{"tel:+12025550102;ext=42;isub=7", "tel:+12025550102;ISUB=7;EXT=42"},
+		{"tel:+12025550102;ext=42", "tel:+12025550102;ext=43"},
+		{"tel:+12025550102;ext=42", "+12025550102"},
 	} {
 		phone := tc.phone
 		t.Run(phone+"/"+tc.second, func(t *testing.T) {
@@ -2333,12 +2332,8 @@ func TestPhoneURIIdentityReusesImportedPerson(t *testing.T) {
 			require.NotNil(first.PersonID)
 			second, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"second.vcf")
 			require.NoError(err)
-			if !tc.distinct {
-				assert.Equal(first.PersonID, second.PersonID)
-			} else {
-				require.NotNil(second.PersonID)
-				assert.NotEqual(*first.PersonID, *second.PersonID)
-			}
+			require.NotNil(second.PersonID)
+			assert.NotEqual(*first.PersonID, *second.PersonID)
 			points, err := st.ListPersonContactPointsContext(t.Context(), *first.PersonID, true)
 			require.NoError(err)
 			require.Len(points, 1)
