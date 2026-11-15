@@ -90,10 +90,14 @@ func probeNotionReadContent(ctx context.Context, out io.Writer, client notionMee
 	}
 	if pageID != "" {
 		if _, err := client.RetrievePageMarkdown(ctx, pageID, true); err != nil {
-			return fmt.Errorf("probe Notion Read Content access: %w", err)
+			api, isAPI := errors.AsType[*notionmeetings.APIError](err)
+			if !notionmeetings.TemporarySectionError(ctx, err) || (isAPI && api.Status == 403) {
+				return fmt.Errorf("probe Notion Read Content access: %w", err)
+			}
+		} else {
+			_, _ = fmt.Fprintln(out, "  Read Content: available")
+			return nil
 		}
-		_, _ = fmt.Fprintln(out, "  Read Content: available")
-		return nil
 	}
 	children := meeting.MeetingNotes.Children
 	for _, id := range []string{children.SummaryBlockID, children.NotesBlockID, children.TranscriptBlockID} {
