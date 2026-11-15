@@ -66,7 +66,6 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 		if err != nil {
 			continue
 		}
-		cardClaims := map[cardDAVParticipantAddress]struct{}{}
 		for _, occurrence := range envelope.PropertyTree {
 			property := occurrence.Property
 			var kind ContactAddressKind
@@ -93,15 +92,12 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 			if !ok {
 				continue
 			}
-			cardClaims[key] = struct{}{}
-		}
-		scanned++
-		for key := range cardClaims {
 			if claims[key] == nil {
 				claims[key] = cardDAVPersonSet{}
 			}
 			claims[key][personID] = struct{}{}
 		}
+		scanned++
 	}
 	return claims, scanned, rows.Err()
 }
