@@ -47,6 +47,7 @@ func startIdleWire(t *testing.T, capability, mode string) *idleWire {
 	}
 	go func() {
 		defer close(w.exited)
+		defer close(w.commands)
 		conn, err := listener.Accept()
 		if err != nil {
 			return
@@ -169,7 +170,6 @@ func TestWatchInboxReadOnlyHints(t *testing.T) {
 	cancel()
 	requirements.ErrorIs(<-result, context.Canceled)
 	requirements.NoError(client.Close(), "dedicated watcher must hard-close before ordinary Close")
-	close(w.commands)
 	var commands []string
 	for line := range w.commands {
 		commands = append(commands, line)
