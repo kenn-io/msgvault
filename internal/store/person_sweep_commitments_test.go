@@ -182,6 +182,46 @@ func TestCommitmentDecisionSurvivesShiftedQuote(t *testing.T) {
 	}
 }
 
+func TestCommitmentDecisionDoesNotFollowReusedMessageID(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "commitment-reused-message", false)
+	if f.store.IsPostgreSQL() {
+		t.Skip("SQLite can reuse the highest message ID")
+	}
+	_, persist := newCommitmentTestConversation(t, f)
+	const quote = "I will send the draft."
+	id := persist("first", quote, -2*time.Hour)
+	cfg, profile := commitmentTestConfig()
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	promise := peoplesweep.CommitmentPromise{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send draft", End: int64(len(quote))}
+	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{promise}})
+	_, err = f.store.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	decision, err := f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
+	r.NoError(err)
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`DELETE FROM messages WHERE id = ?`), id)
+	r.NoError(err)
+	replacement := persist("replacement", quote, -time.Hour)
+	r.Equal(id, replacement)
+	f = nextCommitmentTestAttempt(t, f, "-replacement")
+	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	promise.SourceID = window.Sources[0].ID
+	_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{promise}}))
+	r.NoError(err)
+	items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	r.NotEqual(decision.ID, items[0].ID)
+	r.Equal(LoopStateOpen, items[0].State)
+}
+
 func TestCommitmentListPages(t *testing.T) {
 	t.Run("fresh before limit", func(t *testing.T) {
 		r, a, ctx := require.New(t), assert.New(t), t.Context()
