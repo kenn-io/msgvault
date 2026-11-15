@@ -34,6 +34,7 @@ type Spool struct {
 	root    string
 	maximum int64
 	now     func() time.Time
+	syncDir func(string) error
 }
 
 func OpenSpool(root string, maximum int64) (*Spool, error) {
@@ -56,7 +57,7 @@ func OpenSpool(root string, maximum int64) (*Spool, error) {
 			break
 		}
 	}
-	return &Spool{root: root, maximum: maximum, now: time.Now}, nil
+	return &Spool{root: root, maximum: maximum, now: time.Now, syncDir: syncDir}, nil
 }
 func syncDir(path string) error {
 	if runtime.GOOS == "windows" {
@@ -131,11 +132,14 @@ func (s *Spool) Accept(ctx context.Context, app string, body []byte) (id string,
 	err = s.lock(ctx, func() error {
 		if _, err := os.Stat(s.path(id)); err == nil {
 			duplicate = true
-			return nil
+			// SecureReplaceFile syncs the file before publishing it, but can
+			// fail to sync its directory afterward. Finish that durability
+			// step before acknowledging a retry, without resetting its state.
+			return s.syncDir(s.root)
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		_, size, err := s.scan()
+		size, err := s.bytesUsed()
 		if err != nil {
 			return err
 		}
@@ -151,6 +155,28 @@ func (s *Spool) Accept(ctx context.Context, app string, body []byte) (id string,
 		return s.write(delivery)
 	})
 	return id, duplicate, err
+}
+
+// bytesUsed checks capacity without loading retained delivery bodies. The
+// caller holds the spool lock so acceptance and settlement cannot change sizes.
+func (s *Spool) bytesUsed() (int64, error) {
+	files, err := os.ReadDir(s.root)
+	if err != nil {
+		return 0, err
+	}
+	var size int64
+	for _, file := range files {
+		id, ok := strings.CutSuffix(file.Name(), ".json")
+		if !ok || !validDeliveryID(id) || file.IsDir() {
+			continue
+		}
+		info, err := os.Stat(s.path(id))
+		if err != nil {
+			return 0, err
+		}
+		size += info.Size()
+	}
+	return size, nil
 }
 
 type Status struct {
