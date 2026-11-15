@@ -176,3 +176,36 @@ func TestMeetingRecordMessageReadSourceScope(t *testing.T) {
 	srv.Router().ServeHTTP(w, req)
 	requirements.Equal(http.StatusNotFound, w.Code, w.Body.String())
 }
+
+func TestMeetingRecordMessageOnlyAgentSeesOwnerChoices(t *testing.T) {
+	r := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("meeting_import", "notes@example.com")
+	r.NoError(err)
+	add := func(key string) int64 {
+		id, err := st.PersistMessage(&store.MessagePersistData{
+			Message:      &store.Message{SourceID: source.ID, SourceMessageID: key, MessageType: "meeting_transcript"},
+			Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"},
+			RawMIME:      []byte(`{}`), RawFormat: "meeting_json",
+		})
+		r.NoError(err)
+		return id
+	}
+	first, second := add("first"), add("second")
+	_, err = st.DecideMeetingLinkContext(t.Context(), store.MeetingLinkRef{Kind: "msg", MessageID: first}, store.MeetingLinkRef{Kind: "msg", MessageID: second}, "link")
+	r.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(srv.agentGrants.Close)
+	_, token, _, err := srv.agentGrants.Issue("notes-reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	r.NoError(err)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/meetings/record?ref=msg:%d", first), nil)
+	req.Header.Set(apiprotocol.AgentTokenHeader, token)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	r.Equal(http.StatusOK, w.Code, w.Body.String())
+	var record store.MeetingRecord
+	r.NoError(json.Unmarshal(w.Body.Bytes(), &record))
+	assert.Equal(t, []int64{first, second}, record.MessageIDs)
+	assert.Empty(t, record.Links)
+}
