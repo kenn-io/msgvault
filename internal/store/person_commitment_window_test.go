@@ -115,7 +115,7 @@ func TestCommitmentWindowBoundsEscapedEmailInput(t *testing.T) {
 				r.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`), person.ID, large).Scan(&oversized))
 				a.Equal(1, oversized)
 			} else {
-				a.Equal(5, len(window.Sources), "escaped history must leave a bounded prefix for the next pass")
+				a.Len(window.Sources, 5, "escaped history must leave a bounded prefix for the next pass")
 				a.Equal(window.Sources[len(window.Sources)-1].MessageID, window.BackfillMessageID)
 			}
 		})
