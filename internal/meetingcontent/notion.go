@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"slices"
 	"strings"
 )
 
 func decodeNotion(fields map[string]jsontext.Value) Content {
 	version, ok := rawInteger(fields["schema_version"])
-	if !ok || version != 1 {
+	if !ok || (version != 1 && version != 2) {
 		return unavailableContent("unsupported_schema")
 	}
 	content := baseRecognizedContent()
@@ -100,6 +101,8 @@ func decodeNotionActions(fields map[string]jsontext.Value, discovery notionDisco
 	completeTrees := 0
 	incomplete := false
 	invalid := false
+	var incompleteSections []string
+	_ = json.Unmarshal(fields["incomplete_sections"], &incompleteSections)
 	actions := []Action{}
 	seen := map[string]struct{}{}
 	ordinal := 0
@@ -109,7 +112,7 @@ func decodeNotionActions(fields map[string]jsontext.Value, discovery notionDisco
 		}
 		referenced = true
 		blocks, complete := notionTreeBlocks(fields[tree.key], tree.id)
-		if !complete {
+		if !complete || slices.Contains(incompleteSections, tree.key) {
 			incomplete = true
 		} else {
 			completeTrees++

@@ -23,7 +23,7 @@ import (
 
 const (
 	syncStateVersion           = 1
-	notionSnapshotVersion      = 1
+	notionSnapshotVersion      = 2
 	transcriptRetryCadence     = 6 * time.Hour
 	transcriptRetryWindow      = 7 * 24 * time.Hour
 	unknownTranscriptRetrySpan = 48 * time.Hour
@@ -685,7 +685,7 @@ func decodeArchivedEvidence(raw []byte, expectedID string) (rawEvidence, map[str
 			return rawEvidence{}, nil, false, nil
 		}
 	}
-	if evidence.SchemaVersion != notionSnapshotVersion {
+	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > notionSnapshotVersion {
 		return rawEvidence{}, nil, false, nil
 	}
 	var discovery MeetingNote

@@ -49,6 +49,7 @@ type rawEvidence struct {
 	AttendeeLabels []string          `json:"attendee_labels,omitempty"`
 	ResolvedUsers  []resolvedUser    `json:"resolved_users,omitempty"`
 	Warnings       []string          `json:"warnings,omitempty"`
+	Incomplete     []string          `json:"incomplete_sections,omitempty"`
 }
 
 type canonicalEvidence struct {
@@ -129,7 +130,7 @@ func (h *HydratedMeeting) archiveEvidence() ([]byte, error) {
 		SchemaVersion: notionSnapshotVersion, Discovery: h.Discovery.Raw, MeetingBlock: rawForBlock(h.MeetingBlock),
 		Summary: summary, Notes: notes, Transcript: transcript, PageMarkdown: markdown,
 		Canonical:      canonicalEvidence{Summary: h.Summary, Notes: h.Notes, Transcript: h.Transcript},
-		AttendeeLabels: h.AttendeeLabels, ResolvedUsers: h.ResolvedUsers, Warnings: h.Warnings,
+		AttendeeLabels: h.AttendeeLabels, ResolvedUsers: h.ResolvedUsers, Warnings: h.Warnings, Incomplete: h.Incomplete,
 	}, json.Deterministic(true))
 }
 

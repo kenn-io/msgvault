@@ -1327,7 +1327,7 @@ func TestImporterRefusesToOverwriteNewerEvidence(t *testing.T) {
 	var firstID, secondID int64
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&firstID))
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-2'`).Scan(&secondID))
-	future := []byte(`{"schema_version":2,"summary":[],"page_markdown":"private text","transcript":42}`)
+	future := []byte(`{"schema_version":3,"summary":[],"page_markdown":"private text","transcript":42}`)
 	require.NoError(st.UpsertMessageRawWithFormat(secondID, future, RawFormat))
 	changed := paragraph("summary-2", "Changed second meeting", false)
 	source.blocks["summary-2"] = &changed
@@ -1349,8 +1349,8 @@ func TestDecodeArchivedEvidenceVersionProbe(t *testing.T) {
 		name, input string
 		newer       bool
 	}{
-		{"future incompatible", `{"schema_version":2,"summary":[]}`, true},
-		{"missing", `{}`, false}, {"truncated", `{"schema_version":2`, false},
+		{"future incompatible", `{"schema_version":3,"summary":[]}`, true},
+		{"missing", `{}`, false}, {"truncated", `{"schema_version":3`, false},
 		{"old incompatible", `{"schema_version":1,"summary":[]}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1696,4 +1696,63 @@ func TestImporterRetriesIncompleteAfterFinalWriteFailure(t *testing.T) {
 			assert.Contains(body, "Recovered summary.")
 		})
 	}
+}
+
+func TestImporterReportsPartialActionsForUnreadableSavedSection(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := newImporterFixture(t)
+	meeting := hydrationMeeting()
+	meeting.Parent = Parent{Type: "data_source_id"}
+	source.blocks["meeting-1"].Parent = meeting.Parent
+	var err error
+	source.blocks["meeting-1"].Raw, err = json.Marshal(meeting)
+	require.NoError(err)
+	source.query.Results = []MeetingNote{meeting}
+	var task Block
+	require.NoError(json.Unmarshal([]byte(`{"id":"notes-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Saved task"}],"checked":false}}`), &task))
+	source.blocks["notes-1"] = &task
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	var id int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), first.SourceID).Scan(&id))
+	raw, err := st.GetMessageRaw(id)
+	require.NoError(err)
+	var evidence map[string]json.RawMessage
+	require.NoError(json.Unmarshal(raw, &evidence))
+	evidence["schema_version"] = json.RawMessage(`1`)
+	raw, err = json.Marshal(evidence)
+	require.NoError(err)
+	require.NoError(st.UpsertMessageRawWithFormat(id, raw, RawFormat))
+	content := meetingcontent.Decode(RawFormat, raw, nil)
+	assert.Equal(meetingcontent.CoverageAvailable, content.ActionCoverage)
+	require.Len(content.Actions, 1)
+	assert.Equal("Saved task", content.Actions[0].Title)
+	source.blockErrs = map[string]error{"notes-1": ErrRateLimited}
+	updated := paragraph("summary-1", "Updated summary", false)
+	source.blocks["summary-1"] = &updated
+	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	assert.Equal(int64(1), second.MeetingsUpdated)
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(err)
+	assert.Contains(body, "Updated summary")
+	assert.Contains(body, "Saved task")
+	raw, err = st.GetMessageRaw(id)
+	require.NoError(err)
+	require.NoError(json.Unmarshal(raw, &evidence))
+	assert.JSONEq(`2`, string(evidence["schema_version"]))
+	content = meetingcontent.Decode(RawFormat, raw, nil)
+	assert.Equal(meetingcontent.CoveragePartial, content.ActionCoverage)
+	require.Len(content.Actions, 1)
+	assert.Equal("Saved task", content.Actions[0].Title)
+	delete(source.blockErrs, "notes-1")
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	raw, err = st.GetMessageRaw(id)
+	require.NoError(err)
+	content = meetingcontent.Decode(RawFormat, raw, nil)
+	assert.Equal(meetingcontent.CoverageAvailable, content.ActionCoverage)
+	require.Len(content.Actions, 1)
+	assert.Equal("Saved task", content.Actions[0].Title)
 }
