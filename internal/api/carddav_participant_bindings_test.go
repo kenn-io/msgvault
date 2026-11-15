@@ -52,6 +52,7 @@ func TestCardDAVParticipantBindingHTTPPreviewApplyUndo(t *testing.T) {
 
 type cardDAVMutationFixture struct {
 	cardDAVListFixture
+
 	store       *store.Store
 	participant int64
 	syncErr     error
