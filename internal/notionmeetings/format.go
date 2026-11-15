@@ -1,7 +1,6 @@
 package notionmeetings
 
 import (
-	"bytes"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -87,36 +86,11 @@ func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEma
 	if err != nil {
 		return meetingarchive.Snapshot{}, fmt.Errorf("marshal Notion meeting metadata: %w", err)
 	}
-	summary, notes, transcript := rawForTree(h.SummaryTree), rawForTree(h.NotesTree), rawForTree(h.TranscriptTree)
-	markdown := rawForMarkdown(h.PageMarkdown)
-	if len(h.keptMarkdown) > 0 {
-		markdown = nil
-	}
-	raw, err := json.Marshal(rawEvidence{
-		SchemaVersion: 1, Discovery: h.Discovery.Raw,
-		MeetingBlock: rawForBlock(h.MeetingBlock),
-		Summary:      summary, Notes: notes,
-		Transcript: transcript, PageMarkdown: markdown,
-		Canonical:      canonicalEvidence{Summary: h.Summary, Notes: h.Notes, Transcript: h.Transcript},
-		AttendeeLabels: h.AttendeeLabels, ResolvedUsers: h.ResolvedUsers, Warnings: h.Warnings,
-	}, json.Deterministic(true))
+	raw, err := h.archiveEvidence()
 	if err != nil {
 		return meetingarchive.Snapshot{}, fmt.Errorf("marshal Notion raw evidence: %w", err)
 	}
-	for _, section := range []string{"summary", "notes", "transcript"} {
-		if tree := h.keptRawTrees[section]; len(tree) > 0 {
-			raw, err = restoreEvidenceBytes(raw, section, tree)
-			if err != nil {
-				return meetingarchive.Snapshot{}, fmt.Errorf("retain Notion %s evidence: %w", section, err)
-			}
-		}
-	}
-	if len(h.keptMarkdown) > 0 {
-		raw, err = restoreEvidenceBytes(raw, "page_markdown", h.keptMarkdown)
-		if err != nil {
-			return meetingarchive.Snapshot{}, fmt.Errorf("retain Notion Markdown evidence: %w", err)
-		}
-	}
+
 	return meetingarchive.Snapshot{
 		SourceID: sourceID, AccountEmail: accountEmail,
 		SourceMessageID: h.Discovery.ID, SourceConversationID: h.Discovery.ID,
@@ -126,42 +100,51 @@ func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEma
 	}, nil
 }
 
-func restoreEvidenceBytes(raw []byte, field string, preserved []byte) ([]byte, error) {
-	decoder := jsontext.NewDecoder(bytes.NewReader(raw))
-	if _, err := decoder.ReadToken(); err != nil {
+func (h *HydratedMeeting) archiveEvidence() ([]byte, error) {
+	type archiveEvidence struct {
+		SchemaVersion  int               `json:"schema_version"`
+		Discovery      jsontext.Value    `json:"discovery"`
+		MeetingBlock   jsontext.Value    `json:"meeting_block"`
+		Summary        jsontext.Value    `json:"summary,omitzero"`
+		Notes          jsontext.Value    `json:"notes,omitzero"`
+		Transcript     jsontext.Value    `json:"transcript,omitzero"`
+		PageMarkdown   jsontext.Value    `json:"page_markdown"`
+		Canonical      canonicalEvidence `json:"canonical"`
+		AttendeeLabels []string          `json:"attendee_labels,omitempty"`
+		ResolvedUsers  []resolvedUser    `json:"resolved_users,omitempty"`
+		Warnings       []string          `json:"warnings,omitempty"`
+	}
+	tree := func(name string, current blockTree) (jsontext.Value, error) {
+		if kept := h.keptRawTrees[name]; len(kept) > 0 {
+			return kept, nil
+		}
+		if current.Root == nil && len(current.Pages) == 0 {
+			return nil, nil
+		}
+		return json.Marshal(rawForTree(current))
+	}
+	summary, err := tree("summary", h.SummaryTree)
+	if err != nil {
 		return nil, err
 	}
-	for decoder.PeekKind() != '}' {
-		key, err := decoder.ReadToken()
-		if err != nil {
-			return nil, err
-		}
-		name := key.String()
-		value, err := decoder.ReadValue()
-		if err != nil {
-			return nil, err
-		}
-		if name == field {
-			end := int(decoder.InputOffset())
-			start := end - len(value)
-			out := make([]byte, 0, len(raw)-len(value)+len(preserved))
-			out = append(out, raw[:start]...)
-			out = append(out, preserved...)
-			out = append(out, raw[end:]...)
-			return out, nil
-		}
+	notes, err := tree("notes", h.NotesTree)
+	if err != nil {
+		return nil, err
 	}
-	end := bytes.LastIndexByte(raw, '}')
-	if end < 0 {
-		return nil, fmt.Errorf("invalid evidence while retaining %s", field)
+	transcript, err := tree("transcript", h.TranscriptTree)
+	if err != nil {
+		return nil, err
 	}
-	out := append([]byte(nil), raw[:end]...)
-	out = append(out, ',', '"')
-	out = append(out, field...)
-	out = append(out, '"', ':')
-	out = append(out, preserved...)
-	out = append(out, raw[end:]...)
-	return out, nil
+	markdown := rawForMarkdown(h.PageMarkdown)
+	if len(h.keptMarkdown) > 0 {
+		markdown = h.keptMarkdown
+	}
+	return json.Marshal(archiveEvidence{
+		SchemaVersion: 1, Discovery: h.Discovery.Raw, MeetingBlock: rawForBlock(h.MeetingBlock),
+		Summary: summary, Notes: notes, Transcript: transcript, PageMarkdown: markdown,
+		Canonical:      canonicalEvidence{Summary: h.Summary, Notes: h.Notes, Transcript: h.Transcript},
+		AttendeeLabels: h.AttendeeLabels, ResolvedUsers: h.ResolvedUsers, Warnings: h.Warnings,
+	}, json.Deterministic(true))
 }
 
 func (h *HydratedMeeting) times() (time.Time, time.Time) {

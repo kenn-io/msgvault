@@ -389,10 +389,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 					}
 				}
 				markdownPresent := len(archived.Evidence.PageMarkdown) > 0 && string(archived.Evidence.PageMarkdown) != "null"
+				if section.name == "transcript" && markdownPresent {
+					hydrated.keptMarkdown = append(jsontext.Value(nil), archived.Evidence.PageMarkdown...)
+				}
 				if section.name == "transcript" && archived.MarkdownFallback {
-					if markdownPresent {
-						hydrated.keptMarkdown = append(jsontext.Value(nil), archived.Evidence.PageMarkdown...)
-					}
 					hydrated.MarkdownTranscriptFallback = true
 					progress("Kept the saved transcript because current transcript content could not be read completely.")
 				}

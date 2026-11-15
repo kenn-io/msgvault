@@ -619,7 +619,7 @@ func TestImporterMigratesPendingRetryDeadlineFromVersionOneCursor(t *testing.T) 
 }
 
 func TestSyncStateRejectsInvalidTranscriptRetryDeadline(t *testing.T) {
-    require := require.New(t)
+	require := require.New(t)
 	var state syncState
 	require.NoError(json.Unmarshal([]byte(`{"version":1,"known":{},"transcript_retry_until":{"meeting-1":"not-a-time"}}`), &state))
 
@@ -1064,7 +1064,7 @@ func TestImporterPreservesArchivedTranscriptOnTemporaryOmission(t *testing.T) {
 			source.query.Results = []MeetingNote{meeting}
 			empty := paragraph("transcript-1", "", false)
 			source.blocks["transcript-1"] = &empty
-			source.markdownErr = ErrRateLimited
+			source.blockErrs = map[string]error{"transcript-1": ErrRateLimited}
 			second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 			require.NoError(err)
 			assert.Equal(int64(1), second.MeetingsUpdated)
@@ -1266,7 +1266,7 @@ func TestImporterReplacesCompleteSectionEdits(t *testing.T) {
 		var block Block
 		require.NoError(json.Unmarshal([]byte(payload), &block))
 		source.blocks["notes-1"] = &block
-		pageRaw := fmt.Sprintf(`{"object":"list","results":[{"object":"block","id":"task-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":%q}],"checked":%t}}],"has_more":false,"next_cursor":null}`, text, checked)
+		pageRaw := fmt.Sprintf(`{"object":"list","results":[{"object":"block","id":"task-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":%q}],"checked":%t}},{"object":"block","id":"nested-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{}}],"has_more":false,"next_cursor":null}`, text, checked)
 		var page BlockPage
 		require.NoError(json.Unmarshal([]byte(pageRaw), &page))
 		page.Raw = json.RawMessage(pageRaw)
@@ -1374,14 +1374,14 @@ func TestImporterRetainsLegacyMarkdownUntilCompleteRead(t *testing.T) {
 		case "/v1/blocks/notes-1":
 			_, _ = fmt.Fprint(w, `{"object":"block","id":"notes-1","type":"paragraph","has_children":false,"paragraph":{"rich_text":[{"plain_text":"Updated notes"}]}}`)
 		case "/v1/blocks/transcript-1":
-			_, _ = fmt.Fprint(w, `{"object":"block","id":"transcript-1","type":"paragraph","has_children":false,"paragraph":{"rich_text":[]}}`)
-		case "/v1/pages/page-1/markdown":
-			markdownRequests++
 			if mode == "failure" {
 				w.WriteHeader(http.StatusNotFound)
 				_, _ = fmt.Fprint(w, `{"code":"object_not_found"}`)
 				return
 			}
+			_, _ = fmt.Fprint(w, `{"object":"block","id":"transcript-1","type":"paragraph","has_children":false,"paragraph":{"rich_text":[]}}`)
+		case "/v1/pages/page-1/markdown":
+			markdownRequests++
 			id, transcript := "page-1", "Legacy text"
 			if mode == "scoped" {
 				transcript = "Scoped text"
@@ -1442,8 +1442,8 @@ func TestImporterRetainsLegacyMarkdownUntilCompleteRead(t *testing.T) {
 		raw, err = st.GetMessageRaw(id)
 		require.NoError(err)
 		require.NoError(json.Unmarshal(raw, &fields))
-		assert.Equal(string(legacy), string(fields["page_markdown"]), mode)
-		assert.Equal(string(legacyTree), string(fields["transcript"]), mode)
+		assert.JSONEq(string(legacy), string(fields["page_markdown"]), mode)
+		assert.JSONEq(string(legacyTree), string(fields["transcript"]), mode)
 	}
 	mode = "no transcript"
 	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
@@ -1551,6 +1551,7 @@ func TestImporterKeepsTranscriptWhenStructuredReadIncompleteOrOmitted(t *testing
 			require.NoError(err)
 			source.query.Results[0].Raw = updatedRaw
 			source.markdown.Markdown = "# Transcript\nUpdated page text"
+			source.markdown.Raw = json.RawMessage(`{"object":"page_markdown","id":"page-1","markdown":"updated"}`)
 			second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 			require.NoError(err)
 			body, err := st.GetMessageBodyText(t.Context(), id)
@@ -1570,6 +1571,9 @@ func TestImporterKeepsTranscriptWhenStructuredReadIncompleteOrOmitted(t *testing
 				assert.Empty(lastNotionState(t, st, second.SourceID).Pending)
 			} else {
 				assert.JSONEq(string(original["transcript"]), string(fields["transcript"]))
+				if mode == "incomplete" {
+					assert.JSONEq(string(original["page_markdown"]), string(fields["page_markdown"]))
+				}
 				assert.Len(lastNotionState(t, st, second.SourceID).Pending, 1)
 			}
 			assert.Equal(first.SourceID, second.SourceID)

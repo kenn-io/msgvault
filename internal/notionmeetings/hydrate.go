@@ -148,38 +148,52 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 		*section.text = renderTree(*section.tree)
 	}
 
-	if strings.TrimSpace(meeting.Parent.PageID) != "" && result.Transcript == "" && !slices.Contains(result.Incomplete, "transcript") {
-		if err = h.reserveRequest(); err == nil {
-			result.PageMarkdown, err = h.source.RetrievePageMarkdown(ctx, meeting.Parent.PageID, true)
-			if err == nil {
-				err = h.reserveBytes(result.PageMarkdown.Raw)
-				if err == nil && (result.PageMarkdown.Truncated || len(result.PageMarkdown.UnknownBlockIDs) != 0) {
-					err = ErrMalformedResponse
-				}
-				if err == nil {
-					result.Transcript = extractMarkdownTranscript(result.PageMarkdown.Markdown)
-				}
-			}
-		}
-		if err != nil {
-			reason := incompleteReason(ctx, err)
-			if errors.Is(err, ErrMalformedResponse) && ctx.Err() == nil {
-				reason = "provider"
-			}
-			if reason == "" {
-				return nil, fmt.Errorf("retrieve Notion meeting Markdown: %w", err)
-			}
-			result.PageMarkdown = nil
-			result.markIncomplete("transcript", reason)
-		} else if result.Transcript != "" {
-			result.MarkdownTranscriptFallback = true
-		}
+	if err := h.hydratePageMarkdown(ctx, result); err != nil {
+		return nil, err
 	}
 
 	if err := h.resolveAttendees(ctx, result); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeeting) error {
+	pageID := strings.TrimSpace(result.Discovery.Parent.PageID)
+	if pageID == "" {
+		return nil
+	}
+	if err := h.reserveRequest(); err != nil {
+		if len(result.Incomplete) > 0 {
+			return nil
+		}
+		return err
+	}
+	page, err := h.source.RetrievePageMarkdown(ctx, pageID, true)
+	if err != nil {
+		return fmt.Errorf("retrieve Notion page Markdown: %w", err)
+	}
+	if err := h.reserveBytes(page.Raw); err != nil {
+		if len(result.Incomplete) > 0 {
+			return nil
+		}
+		return err
+	}
+	result.PageMarkdown = page
+	markdown := extractMarkdownTranscript(page.Markdown)
+	complete := !page.Truncated && len(page.UnknownBlockIDs) == 0
+	if result.Transcript == "" && markdown != "" && !complete {
+		result.Warnings = append(result.Warnings, "page Markdown transcript was incomplete; transcript remains pending")
+	} else if result.Transcript == "" && markdown != "" {
+		result.Transcript = markdown
+		result.MarkdownTranscriptFallback = true
+		if !slices.Contains(result.Incomplete, "transcript") {
+			result.Warnings = append(result.Warnings, "structured transcript was empty; used page Markdown transcript")
+		}
+	} else if result.Transcript != "" && markdown != "" && complete && strings.Join(strings.Fields(result.Transcript), " ") != strings.Join(strings.Fields(markdown), " ") {
+		result.Warnings = append(result.Warnings, "structured transcript and page Markdown transcript differed")
+	}
+	return nil
 }
 
 func (h *Hydrator) retrieveBlock(ctx context.Context, id string) (*Block, error) {

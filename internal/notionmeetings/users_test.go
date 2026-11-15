@@ -104,12 +104,12 @@ func TestHydratorOptionalLocalBudgetsDoNotPoisonCache(t *testing.T) {
 			meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1"}
 			if budget == "requests" {
 				pages := map[string]*BlockPage{}
-				for i := range maxHydrationRequests - 4 {
+				for i := range maxHydrationRequests - 5 {
 					cursor := ""
 					if i > 0 {
 						cursor = strconv.Itoa(i)
 					}
-					pages[cursor] = &BlockPage{HasMore: i < maxHydrationRequests-5, NextCursor: strconv.Itoa(i + 1)}
+					pages[cursor] = &BlockPage{HasMore: i < maxHydrationRequests-6, NextCursor: strconv.Itoa(i + 1)}
 				}
 				source.children["notes-1"] = pages
 			} else {
@@ -119,6 +119,8 @@ func TestHydratorOptionalLocalBudgetsDoNotPoisonCache(t *testing.T) {
 					switch r.URL.Path {
 					case "/v1/blocks/meeting-1":
 						response = map[string]any{"object": "block", "id": "meeting-1", "type": "meeting_notes", "has_children": false, "meeting_notes": map[string]any{}}
+					case "/v1/pages/page-1/markdown":
+						response = map[string]any{"object": "page_markdown", "id": "page-1", "markdown": "# Transcript\nTest Speaker: Ready to ship.", "truncated": false, "unknown_block_ids": []string{}}
 					case "/v1/users/user-1":
 						userRequests.Add(1)
 						padding = 2 << 20

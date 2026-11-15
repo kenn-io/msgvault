@@ -15,12 +15,14 @@ import (
 )
 
 type fakeNotionProbe struct {
-	result   *notionmeetings.QueryResult
-	block    *notionmeetings.Block
-	err      error
-	blockErr error
-	usersErr error
-	blockIDs *[]string
+	result      *notionmeetings.QueryResult
+	block       *notionmeetings.Block
+	err         error
+	blockErr    error
+	usersErr    error
+	blockIDs    *[]string
+	markdownID  *string
+	markdownErr error
 }
 
 func (f fakeNotionProbe) QueryMeetingNotes(context.Context, int) (*notionmeetings.QueryResult, error) {
@@ -34,7 +36,13 @@ func (f fakeNotionProbe) RetrieveBlock(_ context.Context, id string) (*notionmee
 	return f.block, f.blockErr
 }
 
-func (f fakeNotionProbe) RetrievePageMarkdown(context.Context, string, bool) (*notionmeetings.MarkdownPage, error) {
+func (f fakeNotionProbe) RetrievePageMarkdown(_ context.Context, id string, include bool) (*notionmeetings.MarkdownPage, error) {
+	if f.markdownID != nil {
+		*f.markdownID = id
+	}
+	if f.markdownErr != nil {
+		return nil, f.markdownErr
+	}
 	return &notionmeetings.MarkdownPage{Markdown: "private transcript"}, nil
 }
 
@@ -92,6 +100,35 @@ func TestRunNotionMeetingsProbeIsContentAndTokenSafe(t *testing.T) {
 	assert.NotContains(out.String(), "private transcript")
 	assert.Contains(out.String(), "Read Content: available")
 	assert.Contains(out.String(), "User Information: available")
+}
+
+func TestRunNotionMeetingsProbeChecksPageMarkdown(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		pageInQuery bool
+		err         error
+	}{
+		{name: "query parent", pageInQuery: true}, {name: "retrieved parent"}, {name: "permission denied", err: notionmeetings.ErrReadContent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			meeting := notionmeetings.MeetingNote{ID: "meeting-1", MeetingNotes: notionmeetings.MeetingNotesData{Children: notionmeetings.MeetingChildren{SummaryBlockID: "summary-1"}}}
+			if tc.pageInQuery {
+				meeting.Parent.PageID = "page-1"
+			}
+			var out bytes.Buffer
+			var ids []string
+			var page string
+			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{meeting}}, block: &notionmeetings.Block{Parent: notionmeetings.Parent{PageID: "page-1"}}, blockIDs: &ids, markdownID: &page, markdownErr: tc.err}, nil)
+			assert.Equal(t, "page-1", page)
+			assert.Equal(t, []string{"meeting-1"}, ids)
+			if tc.err != nil {
+				require.ErrorIs(t, err, tc.err)
+			} else {
+				require.NoError(t, err)
+				assert.Contains(t, out.String(), "Read Content: available")
+			}
+		})
+	}
 }
 
 func TestRunNotionMeetingsProbeDataSource(t *testing.T) {
