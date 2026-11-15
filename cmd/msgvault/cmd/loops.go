@@ -17,7 +17,10 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-const loopsMinAPISchemaVersion = "3.44.0"
+const (
+	loopsMinAPISchemaVersion      = "3.44.0"
+	commitmentMinAPISchemaVersion = "5.5.0"
+)
 
 func init() {
 	rootCmd.AddCommand(newLoopsCommand())
@@ -65,14 +68,14 @@ func newLoopsListCommand() *cobra.Command {
 		}
 		version := loopsMinAPISchemaVersion
 		if opts.IncludeClosed || opts.CommitmentOffset > 0 {
-			version = "5.5.0"
+			version = commitmentMinAPISchemaVersion
 		}
 		return withLoopsClientVersion(cmd, version, func(client *daemonclient.Client, version string) error {
 			result, err := client.ListLoops(cmd.Context(), opts)
 			if err != nil {
 				return err
 			}
-			if !daemonclient.APISchemaVersionAtLeast(version, "5.5.0") {
+			if !daemonclient.APISchemaVersionAtLeast(version, commitmentMinAPISchemaVersion) {
 				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "This daemon (API %s) does not report promises; upgrade and restart it to see them.\n", version); err != nil {
 					return fmt.Errorf("write daemon warning: %w", err)
 				}
@@ -223,7 +226,7 @@ func runCommitmentDecision(cmd *cobra.Command, id, state string, until *time.Tim
 	if cmd.Flags().Changed("questions") {
 		return usageErr(cmd, errors.New("--questions is available only for reply loops"))
 	}
-	return withLoopsClientVersion(cmd, "5.5.0", func(client *daemonclient.Client, _ string) error {
+	return withLoopsClientVersion(cmd, commitmentMinAPISchemaVersion, func(client *daemonclient.Client, _ string) error {
 		decision, err := client.SetCommitmentDecision(cmd.Context(), id, state, until)
 		if err != nil {
 			return err

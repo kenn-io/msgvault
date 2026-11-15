@@ -124,7 +124,8 @@ var (
 	commitmentDateLayouts     = []string{time.DateOnly, "January 2, 2006", "Jan 2, 2006", "2 January 2006", "2 Jan 2006"}
 	commitmentYearlessLayouts = []string{"January 2", "Jan 2", "2 January", "2 Jan"}
 	commitmentYearFollows     = regexp.MustCompile(`^[,\s]*\d{4}\b`)
-	commitmentWeekdayDeadline = regexp.MustCompile(`\bby\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:of\s+)?(this|next)\s+week)?\b`)
+	commitmentNumericDate     = regexp.MustCompile(`\b\d{1,2}/\d{1,2}/\d{4}\b`)
+	commitmentWeekdayDeadline = regexp.MustCompile(`\b(?:by|on)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:of\s+)?(this|next)\s+week)?\b`)
 )
 
 // commitmentQuoteHasDate reports whether the quote itself states due, either
@@ -133,6 +134,18 @@ func commitmentQuoteHasDate(quote string, due, event time.Time, location *time.L
 	quote = strings.ToLower(quote)
 	for _, layout := range commitmentDateLayouts {
 		if quoteHasPhrase(quote, strings.ToLower(due.Format(layout)), nil) {
+			return true
+		}
+	}
+	for _, span := range commitmentNumericDate.FindAllStringIndex(quote, -1) {
+		if (span[0] > 0 && quote[span[0]-1] == '/') || (span[1] < len(quote) && quote[span[1]] == '/') {
+			continue
+		}
+		date := quote[span[0]:span[1]]
+		monthFirst, monthErr := time.Parse("1/2/2006", date)
+		dayFirst, dayErr := time.Parse("2/1/2006", date)
+		if (monthErr == nil && dayErr != nil && monthFirst.Format(time.DateOnly) == due.Format(time.DateOnly)) ||
+			(dayErr == nil && monthErr != nil && dayFirst.Format(time.DateOnly) == due.Format(time.DateOnly)) {
 			return true
 		}
 	}
