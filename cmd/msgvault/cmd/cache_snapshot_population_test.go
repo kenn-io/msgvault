@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"database/sql"
 	"encoding/csv"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
@@ -153,7 +155,11 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 			label, err := st.EnsureLabel(t.Context(), sourceID, "inbox", "Inbox", "system")
 			require.NoError(err)
 			addMessage := func(i int) {
-				_, id := addCacheExportParityMessage(t, st, sourceID, bob, alice, i)
+				messageType := "meeting_transcript"
+				if i == 2 {
+					messageType = "email"
+				}
+				_, id := addCacheExportParityMessage(t, st, sourceID, bob, alice, i, messageType)
 				require.Equal(int64(i), id)
 				require.NoError(st.AddMessageLabels(t.Context(), id, []int64{label}))
 				require.NoError(st.UpsertAttachment(t.Context(), id, "document.txt", "text/plain", "", fmt.Sprintf("hash-%d", i), 42))
@@ -167,6 +173,10 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 			require.NoError(err)
 			addMessage(2)
 			addMessage(3)
+			groups, fallback, err := st.MeetingTranscriptGroupsContext(t.Context(), 3)
+			require.NoError(err)
+			require.False(fallback)
+			require.Equal(map[int64]int64{1: 1, 3: 3}, groups)
 			_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at = NULL WHERE id = 2`)
 			require.NoError(err)
 			if tt.repair {
@@ -219,6 +229,20 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 			require.NoError(err)
 			assert.True(hookCalled)
 			assert.Equal(int64(1), built.StagedCount)
+			duck, err := sql.Open("duckdb", "")
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(duck.Close()) })
+			rows, err := duck.QueryContext(t.Context(), `SELECT message_id, group_id FROM read_parquet(?)`, filepath.Join(incDir, "meeting_groups", "*.parquet"))
+			require.NoError(err)
+			actualGroups := make(map[int64]int64)
+			for rows.Next() {
+				var messageID, groupID int64
+				require.NoError(rows.Scan(&messageID, &groupID))
+				actualGroups[messageID] = groupID
+			}
+			require.NoError(rows.Err())
+			require.NoError(rows.Close())
+			assert.Equal(map[int64]int64{1: 1, 3: 3}, actualGroups)
 			_, err = buildCache(t.Context(), dbPath, fullDir, true)
 			require.NoError(err)
 			assertCacheExportParity(t, tmp, incDir, fullDir, query.RequiredParquetDirs)
