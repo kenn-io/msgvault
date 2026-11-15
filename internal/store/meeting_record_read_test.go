@@ -707,6 +707,37 @@ func TestMeetingRecordSkipsUnrelatedExceptionsWithinBudget(t *testing.T) {
 	assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), matches[key][0].Ref)
 }
 
+func TestMeetingRecordEndOnlyMatchesCompleteCopy(t *testing.T) {
+	for _, tc := range []struct{ name, start, otherStart, end string }{
+		{"timed", `{"dateTime":"2027-03-14T10:00:00Z"}`, `{"dateTime":"2027-03-14T09:00:00Z"}`, `{"dateTime":"2027-03-14T11:00:00Z"}`},
+		{"all-day", `{"date":"2027-03-14"}`, `{"date":"2027-03-13"}`, `{"date":"2027-03-15"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			data, complete := calendarFixture(t, st, "complete", fmt.Sprintf(`{"id":"event","start":%s,"end":%s}`, tc.start, tc.end), "first@example.com")
+			require.NoError(st.UpdateSourceSyncConfig(t.Context(), data.Message.SourceID, `{"calendar_id":"owner@example.com","time_zone":"UTC"}`))
+			data, partial := calendarFixture(t, st, "partial", fmt.Sprintf(`{"id":"event","status":"cancelled","end":%s}`, tc.end), "second@example.com")
+			require.NoError(st.UpdateSourceSyncConfig(t.Context(), data.Message.SourceID, `{"calendar_id":"owner@example.com","time_zone":"UTC"}`))
+			_, note := projectionFixture(t, st, "note", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"event"}}`)
+			for _, ref := range []MeetingLinkRef{{Kind: "evt", MessageID: complete}, {Kind: "evt", MessageID: partial}, {Kind: "msg", MessageID: note}} {
+				record, err := st.MeetingRecordContext(t.Context(), ref)
+				require.NoError(err)
+				require.Len(record.Links, 2)
+				assert.ElementsMatch([]string{fmt.Sprintf("evt:%d", complete), fmt.Sprintf("evt:%d", partial)}, []string{record.Links[0].Ref, record.Links[1].Ref})
+				assert.Equal([]int64{note}, record.MessageIDs)
+				assert.Contains(record.Unexpandable, CalendarUnexpandable{MessageID: partial, Reason: "missing event bounds"})
+			}
+			data, _ = calendarFixture(t, st, "other", fmt.Sprintf(`{"id":"event","start":%s,"end":%s}`, tc.otherStart, tc.end), "third@example.com")
+			require.NoError(st.UpdateSourceSyncConfig(t.Context(), data.Message.SourceID, `{"calendar_id":"owner@example.com","time_zone":"UTC"}`))
+			record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+			require.NoError(err)
+			assert.Equal([]int64{note}, record.MessageIDs)
+			assert.Empty(record.Links)
+		})
+	}
+}
+
 func TestMeetingRecordEndOnlyBareIDCopies(t *testing.T) {
 	for _, tc := range []struct{ name, firstEnd, secondEnd string }{
 		{"timed", `{"dateTime":"2027-03-14T11:00:00Z"}`, `{"dateTime":"2027-03-21T11:00:00Z"}`},

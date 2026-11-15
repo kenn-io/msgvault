@@ -413,30 +413,48 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 		for _, key := range pending {
 			matched := matches[key]
 			identities := map[string]bool{}
+			ends := map[string]map[string]bool{}
+			endOnly := map[string]bool{}
 			for _, o := range matched {
+				end := ""
+				if !o.End.IsZero() {
+					if o.EndDate != "" {
+						end = "end-date:" + o.EndDate
+					} else {
+						end = "end-time:" + o.End.UTC().Format(time.RFC3339Nano)
+					}
+				}
 				if o.original == (calrecur.Identity{}) && o.Start.IsZero() {
-					if !o.End.IsZero() {
-						if o.AllDay && o.EndDate != "" {
-							identities["end-date:"+o.EndDate] = true
-						} else {
-							identities["end-time:"+o.End.UTC().Format(time.RFC3339Nano)] = true
-						}
+					if end != "" {
+						endOnly[end] = true
 					}
 					continue
 				}
+				var identity string
 				if o.original.AllDay {
-					identities["date:"+o.original.Date] = true
-					continue
+					identity = "date:" + o.original.Date
+				} else if o.original == (calrecur.Identity{}) && o.AllDay {
+					identity = "date:" + o.StartDate
+				} else {
+					original := o.Start
+					if o.original != (calrecur.Identity{}) {
+						original = o.original.Instant
+					}
+					identity = "time:" + original.UTC().Format(time.RFC3339Nano)
 				}
-				if o.original == (calrecur.Identity{}) && o.AllDay {
-					identities["date:"+o.StartDate] = true
-					continue
+				identities[identity] = true
+				if end != "" {
+					if ends[end] == nil {
+						ends[end] = map[string]bool{}
+					}
+					ends[end][identity] = true
 				}
-				original := o.Start
-				if o.original != (calrecur.Identity{}) {
-					original = o.original.Instant
+			}
+			// An end-only copy shares an identity only when its end identifies one occurrence.
+			for end := range endOnly {
+				if len(ends[end]) != 1 {
+					identities[end] = true
 				}
-				identities["time:"+original.UTC().Format(time.RFC3339Nano)] = true
 			}
 			_, _, instance := calrecur.ParseInstanceID(key[2])
 			if key[0] == "google_event_id" && !instance && len(identities) == 0 {
