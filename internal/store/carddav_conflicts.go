@@ -800,7 +800,8 @@ func (s *Store) recordCardDAVPublicationConflictContext(
 			return ErrCardDAVConflictStale
 		}
 		conflict, err = s.recordCardDAVConflictTx(ctx, tx, capture, cardDAVConflictRecordOptions{
-			allowIntentTombstone: true,
+			allowIntentTombstone:    true,
+			deferParticipantCleanup: true,
 		})
 		if err != nil {
 			return err
@@ -821,7 +822,7 @@ func (s *Store) recordCardDAVPublicationConflictContext(
 		if affected, _ := result.RowsAffected(); affected != 1 {
 			return ErrCardDAVConflictStale
 		}
-		return nil
+		return s.cleanupCardDAVParticipantBindingsTx(ctx, tx)
 	})
 	return conflict, err
 }
