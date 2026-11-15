@@ -54,8 +54,8 @@ func decodeHex(raw []byte) Content {
 	for _, entry := range m.Entries {
 		offset := float64(entry.StartMS) / 1000
 		end := time.UnixMilli(m.Manifest.CreatedAtMS + entry.EndMS).UTC()
-		content.Transcript.Segments = append(content.Transcript.Segments, Segment{Speaker: entry.Speaker(), Text: entry.Text, OffsetSeconds: &offset, EndedAt: &end})
-		lines = append(lines, FormatTranscriptLine(time.Duration(entry.StartMS)*time.Millisecond, entry.Speaker(), entry.Text))
+		content.Transcript.Segments = append(content.Transcript.Segments, Segment{Speaker: m.Manifest.Speaker(entry.Source), Text: entry.Text, OffsetSeconds: &offset, EndedAt: &end})
+		lines = append(lines, FormatTranscriptLine(time.Duration(entry.StartMS)*time.Millisecond, m.Manifest.Speaker(entry.Source), entry.Text))
 	}
 	if len(lines) > 0 {
 		content.Transcript.State = StateAvailable

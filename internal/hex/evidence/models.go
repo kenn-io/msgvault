@@ -12,7 +12,7 @@ import (
 	"unicode"
 )
 
-const Version = 1
+const Version = 2
 
 var ErrUnsupportedVersion = errors.New("unsupported Hex evidence version")
 
@@ -29,6 +29,7 @@ type Manifest struct {
 	EndedAtMS        *int64    `json:"ended_at_ms,omitempty"`
 	DurationMS       *int64    `json:"duration_ms,omitempty"`
 	App              string    `json:"app,omitempty"`
+	Imported         bool      `json:"imported,omitempty,omitzero"`
 	Notes            *Notes    `json:"notes,omitempty"`
 	Calendar         *Calendar `json:"calendar,omitempty"`
 	Chapters         []Chapter `json:"chapters,omitempty"`
@@ -106,8 +107,11 @@ func (e *Entry) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
 	return nil
 }
 
-func (e *Entry) Speaker() string {
-	if e.Source == "microphone" {
+func (m Manifest) Speaker(source string) string {
+	if m.Imported {
+		return "Speaker"
+	}
+	if source == "microphone" {
 		return "You"
 	}
 	return "Them"
@@ -124,7 +128,7 @@ func Decode(raw []byte) (Envelope, error) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return out, err
 	}
-	if out.Version != Version {
+	if out.Version != 1 && out.Version != Version {
 		return out, fmt.Errorf("%w %d", ErrUnsupportedVersion, out.Version)
 	}
 	return out, out.Meeting.Validate()

@@ -126,7 +126,7 @@ func TestPreserveSnapshotUntilReadableFinalReplacement(t *testing.T) {
 			check.Equal("hex_partial", content.Transcript.Reason)
 			var wire map[string]any
 			must.NoError(json.Unmarshal(after, &wire))
-			wire["version"] = 2
+			wire["version"] = 3
 			future, err := json.Marshal(wire)
 			must.NoError(err)
 			must.NoError(st.UpsertMessageRawWithFormat(id, future, RawFormat))

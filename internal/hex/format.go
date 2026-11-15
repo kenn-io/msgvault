@@ -11,7 +11,12 @@ import (
 )
 
 func (m Meeting) ArchiveSnapshot(sourceID int64, identifier, email string) (meetingarchive.Snapshot, error) {
-	raw, err := json.Marshal(evidence.Envelope{Version: evidence.Version, Meeting: evidence.Meeting(m)}, json.Deterministic(true))
+	// Recorded meetings retain v1; older readers must refuse imported speaker semantics.
+	version := 1
+	if m.Manifest.Imported {
+		version = evidence.Version
+	}
+	raw, err := json.Marshal(evidence.Envelope{Version: version, Meeting: evidence.Meeting(m)}, json.Deterministic(true))
 	if err != nil {
 		return meetingarchive.Snapshot{}, err
 	}
@@ -50,7 +55,7 @@ func (m Meeting) ArchiveSnapshot(sourceID int64, identifier, email string) (meet
 	}
 	lines = append(lines, "", "Transcript ("+m.TranscriptState+"):")
 	for _, e := range m.Entries {
-		lines = append(lines, meetingarchive.FormatTranscriptLine(time.Duration(e.StartMS)*time.Millisecond, e.Speaker(), e.Text))
+		lines = append(lines, meetingarchive.FormatTranscriptLine(time.Duration(e.StartMS)*time.Millisecond, v.Speaker(e.Source), e.Text))
 	}
 	body := strings.Join(lines, "\n")
 	metadata, err := json.Marshal(struct {

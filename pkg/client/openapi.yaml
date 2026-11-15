@@ -6791,6 +6791,8 @@ components:
           type: integer
         id:
           type: string
+        imported:
+          type: boolean
         notes:
           $ref: "#/components/schemas/HexNotes"
         provisional_title:

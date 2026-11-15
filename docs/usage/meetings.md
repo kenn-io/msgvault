@@ -977,6 +977,8 @@ This integration is available on `main`. In remote mode, the recorder sends
 selected JSON evidence over the authenticated daemon connection. Source paths
 stay on the recorder. Same-host mode reads the folders on the daemon's host.
 Use Hex's authoritative meeting store, rather than its Documents Markdown exports.
+Hex's optional separate notes file is an exported copy; notes and chapters
+continue to sync from the manifest, without following either export path.
 The default paths and `meetings_dir` override are in the configuration reference.
 
 Hex defaults to keeping new meetings for **24 hours**. Schedule sync well
@@ -1018,7 +1020,10 @@ the recorder time zone does not retitle an unchanged archive.
 Calendar attendee strings remain context evidence. Only explicit valid email
 strings become recipients; names never identify people. `account_email` is the
 organizer. Transcript offsets keep the source's **You** and **Them** labels;
-**Them** can represent several people.
+**Them** can represent several people. Audio imported into Hex uses **Speaker**,
+matching Hex rather than attributing the recording to the other side of a call.
+Existing archives pick up this distinction on the next scan while the source
+meeting is still present. Upgrade the recorder and daemon together.
 
 Duration uses provider timing when present. Otherwise, the time between the
 first transcript start and last end is an observed transcript-span estimate,
@@ -1032,7 +1037,9 @@ Keep capture running before Hex expires meetings:
 - For a remote recorder, keep `msgvault sync-hex --watch` running on that computer.
   It scans initially and then follows enabled schedules serially. File and network
   failures retry on the next scan; rejected credentials or an incompatible daemon
-  stop it. Hex has no executable completion hook.
+  stop it. Hex has no executable completion hook. Its optional local API finished
+  event is a best-effort signal, not a durable queue, and does not report later
+  notes edits. msgvault uses scheduled folder scans, not that event stream.
 
 Audio is off by default. Set `recordings = true` to retain `system.wav` and
 `microphone.wav` as separate attachments, without mixing or transcoding:

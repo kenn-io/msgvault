@@ -6454,6 +6454,7 @@ type HexManifest struct {
 	DurationMs       *int64       `json:"duration_ms,omitempty"`
 	EndedAtMs        *int64       `json:"ended_at_ms,omitempty"`
 	ID               string       `json:"id" validate:"required"`
+	Imported         *bool        `json:"imported,omitempty"`
 	Notes            *HexNotes    `json:"notes,omitempty"`
 	ProvisionalTitle *string      `json:"provisional_title,omitzero"`
 	SchemaVersion    int64        `json:"schema_version"`

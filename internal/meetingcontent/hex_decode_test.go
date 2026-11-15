@@ -8,7 +8,7 @@ import (
 )
 
 func TestHexDecodeFutureVersionUnavailable(t *testing.T) {
-	content := Decode("hex_json", []byte(`{"version":2}`), nil)
+	content := Decode("hex_json", []byte(`{"version":3}`), nil)
 	assert.Equal(t, StateUnavailable, content.Transcript.State)
 	assert.Equal(t, "unsupported_version", content.Transcript.Reason)
 	assert.Equal(t, "unsupported_version", content.ActionReason)
