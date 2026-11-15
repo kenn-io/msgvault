@@ -457,7 +457,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("configure CardDAV: %w", err)
 	}
 	cardDAVController.SetConnectionScheduleReconciler(func(name string, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations) error {
-		return reconcileCardDAVSchedulerJob(sched, cardDAVConfig, service, logger, name, state, s)
+		return reconcileCardDAVSchedulerJob(sched, cardDAVConfig, service, logger, name, state)
 	})
 	if err := cardDAVController.ReconcileSchedule(ctx); err != nil {
 		return err
@@ -1288,7 +1288,7 @@ func snapshotBeeperDraftPolicy(cfg *config.Config) []config.GmailDraftSource {
 	return append([]config.GmailDraftSource(nil), cfg.Beeper.Drafts...)
 }
 
-func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations, logger *slog.Logger, name string, state *invocation, st *store.Store) error {
+func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations, logger *slog.Logger, name string, state *invocation) error {
 	jobName := api.CardDAVJobNameForConnection(name)
 	if !cardDAVConfig.Enabled || cardDAVConfig.Schedule == "" {
 		sched.RemoveJob(jobName)
@@ -1314,23 +1314,10 @@ func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig conf
 	if err := sched.AddJob(scheduler.Job{
 		Name: jobName, Schedule: cardDAVConfig.Schedule,
 		Run: invocationBoundJobRun(state, func(ctx context.Context) error {
-			var before int64
-			var beforeErr error
-			if st != nil {
-				before, beforeErr = st.IdentityRevisionContext(ctx)
-			}
 			_, err := service.Sync(ctx, carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
-			if st != nil {
-				after, afterErr := st.IdentityRevisionContext(context.WithoutCancel(ctx))
-				if beforeErr != nil || afterErr != nil || before != after {
-					// A completed book remains committed after sync cancellation.
-					refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
-					refreshErr := runDerivedCacheSubprocess(refreshCtx, state.cfg.AnalyticsDir())
-					cancel()
-					if refreshErr != nil {
-						logger.Error("identity cache refresh failed", "error", refreshErr)
-					}
-				}
+			// Completed books remain committed after cancellation.
+			if refreshErr := rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), jobName); refreshErr != nil {
+				logger.Error("identity cache refresh failed", "error", refreshErr)
 			}
 			return recordSyncAttempt(ctx, "carddav", name, err)
 		}),
@@ -3953,10 +3940,12 @@ func (a *storeAPIAdapter) GetParticipantIdentityContext(
 func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
 	ctx = a.invocationContext(ctx)
 	if err := runDerivedCacheSubprocess(ctx, a.analyticsDir); err != nil {
+		_ = rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), "identity")
 		return 0, err
 	}
 	state, err := query.ReadCacheSyncState(a.analyticsDir)
 	if err != nil {
+		_ = rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), "identity")
 		return 0, fmt.Errorf("read refreshed cache revision: %w", err)
 	}
 	return state.IdentityRevision, nil

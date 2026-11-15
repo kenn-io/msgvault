@@ -157,6 +157,25 @@ func TestCardDAVMultipleConnectionsAggregateSyncReportsActiveAndUnavailable(t *t
 	assertions.Equal("sync_active", result.Connections[2].ErrorCode)
 	assertions.Nil(result.Connections[2].RunID, "another request's run must not be reported as this request's run")
 	assertions.NotEqual(active.ID, *result.Connections[0].RunID)
+	// A started zero-book run carries the latest global snapshot. A later
+	// unavailable connection cannot replace it.
+	defaultConnection, err := controller.Select("default", false)
+	require.NoError(err)
+	workConnection, err := controller.Select("work", false)
+	require.NoError(err)
+	defaultService, workService := defaultConnection.service, workConnection.service
+	defaultConnection.service = &snapshotCardDAVService{CardDAVOperations: defaultService, conflicts: 3, started: true}
+	workConnection.service = &snapshotCardDAVService{CardDAVOperations: workService, conflicts: 7, started: true}
+	snapshot, err := controller.Sync(t.Context(), CardDAVSyncRequest{})
+	require.NoError(err)
+	assertions.Equal(7, snapshot.BindingConflicts)
+	workConnection.service = &snapshotCardDAVService{CardDAVOperations: workConnection.service, conflicts: 0, started: false}
+	snapshot, err = controller.Sync(t.Context(), CardDAVSyncRequest{})
+	require.NoError(err)
+	assertions.Equal(3, snapshot.BindingConflicts)
+	// Restore the real services for the remaining HTTP and run-history checks.
+	defaultConnection.service = defaultService
+	workConnection.service = workService
 	runs, err := controller.store.ListCardDAVSyncRunsContext(t.Context(), 25, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
 	assertions.Len(runs, 2, "unavailable and leased connections do not insert additional runs")
@@ -573,4 +592,19 @@ func TestCardDAVMultipleConnectionsTransactionalRetryHeader(t *testing.T) {
 	require.NoError(parseErr)
 	assertions.GreaterOrEqual(seconds, int64(1))
 	assertions.LessOrEqual(seconds, int64(90), "the transaction's owning connection must supply the retry delay")
+}
+
+type snapshotCardDAVService struct {
+	CardDAVOperations
+
+	conflicts int
+	started   bool
+}
+
+func (s *snapshotCardDAVService) Sync(_ context.Context, options carddav.SyncOptions) (carddav.SyncResult, error) {
+	if !s.started {
+		return carddav.SyncResult{}, store.ErrCardDAVSyncActive
+	}
+	options.OnRunStarted(123)
+	return carddav.SyncResult{BindingConflicts: s.conflicts}, nil
 }

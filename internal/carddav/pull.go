@@ -120,9 +120,20 @@ func (s *Service) Sync(ctx context.Context, options SyncOptions) (result SyncRes
 	return s.sync(ctx, options)
 }
 
-func (s *Service) sync(ctx context.Context, options SyncOptions) (SyncResult, error) {
+func (s *Service) sync(ctx context.Context, options SyncOptions) (total SyncResult, err error) {
 	operationCtx, cancel := context.WithTimeout(ctx, s.operationTimeout())
 	defer cancel()
+	// Publications may commit before an operation fails or is cancelled.
+	defer func() {
+		snapshotCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.operationTimeout())
+		defer cancel()
+		preview, snapshotErr := s.store.ReconcileCardDAVParticipantBindingsContext(snapshotCtx, store.CardDAVParticipantBindingOptions{DryRun: true})
+		if snapshotErr != nil {
+			err = errors.Join(err, fmt.Errorf("preview CardDAV participant conflicts: %w", snapshotErr))
+			return
+		}
+		total.BindingConflicts = preview.Conflicts
+	}()
 	if err := s.checkRetry(operationCtx); err != nil {
 		return SyncResult{}, err
 	}
@@ -136,7 +147,6 @@ func (s *Service) sync(ctx context.Context, options SyncOptions) (SyncResult, er
 	var failures []error
 	_, budgetBytes := s.remote.Limits()
 	budget := &Budget{remaining: budgetBytes}
-	var total SyncResult
 	books, err := s.scopedBooks(operationCtx)
 	if err != nil {
 		return total, err
@@ -161,8 +171,6 @@ func (s *Service) sync(ctx context.Context, options SyncOptions) (SyncResult, er
 		total.Created += applied.Created
 		total.Updated += applied.Updated
 		total.Removed += applied.Removed
-		// Reconciliation counts conflicts across all subscribed books.
-		total.BindingConflicts = applied.BindingConflicts
 	}
 	if err := s.reconcilePublications(operationCtx, recovered); err != nil {
 		failures = append(failures, err)
