@@ -552,7 +552,7 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 		var parent sql.NullInt64
 		var deleted, visible bool
 		if err := rows.Scan(&id, &parent, &deleted, &visible); err != nil {
-			return errors.Join(err, rows.Close()) //nolint:sqlclosecheck // Close before returning the scan error.
+			return errors.Join(err, rows.Close())
 		}
 		ids = append(ids, id)
 		purged[id] = deleted
