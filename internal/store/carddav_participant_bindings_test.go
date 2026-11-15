@@ -966,11 +966,9 @@ func TestCardDAVParticipantBindingPrimaryAliasOwnershipConflict(t *testing.T) {
 	cardPerson := bindingCardPerson(t, st, book, card.Href)
 	result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
 	require.NoError(err)
-	assert.NotEmpty(result.ConflictDetails)
-	if len(result.ConflictDetails) > 0 {
-		assert.Equal("existing_person", result.ConflictDetails[0].Reason)
-		assert.ElementsMatch([]int64{owner.ID, cardPerson.ID}, result.ConflictDetails[0].PersonIDs)
-	}
+	require.Len(result.ConflictDetails, 1)
+	assert.Equal("existing_person", result.ConflictDetails[0].Reason)
+	assert.ElementsMatch([]int64{owner.ID, cardPerson.ID}, result.ConflictDetails[0].PersonIDs)
 	bound, err := st.PersonForParticipantsContext(t.Context(), []int64{primary})
 	require.NoError(err)
 	assert.Nil(bound)
