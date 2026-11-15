@@ -67,7 +67,6 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 			continue
 		}
 		cardClaims := map[cardDAVParticipantAddress]struct{}{}
-		valid := true
 		for _, occurrence := range envelope.PropertyTree {
 			property := occurrence.Property
 			var kind ContactAddressKind
@@ -81,13 +80,11 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 			}
 			property.RawValue, err = vcard.DecodeLegacyRawValue(property)
 			if err != nil {
-				valid = false
-				break
+				continue
 			}
 			value, uri, err := vcard.ContactPointValue(envelope.RenderMetadata.StoredVersion, property)
 			if err != nil {
-				valid = false
-				break
+				continue
 			}
 			if kind == ContactAddressPhone && uri != "" {
 				value = uri
@@ -97,9 +94,6 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 				continue
 			}
 			cardClaims[key] = struct{}{}
-		}
-		if !valid {
-			continue
 		}
 		scanned++
 		for key := range cardClaims {

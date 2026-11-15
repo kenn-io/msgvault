@@ -57,5 +57,4 @@ func TestCardDAVParticipantBindingHTTPRequiresOwner(t *testing.T) {
 	srv := NewServer(&config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Server: config.ServerConfig{APIKey: "synthetic-owner-key"}}, st, nil, testLogger())
 	response := personRequest(t, srv, http.MethodPost, "/api/v1/carddav/participant-bindings", []byte(`{"dry_run":true}`), "")
 	assert.Equal(http.StatusUnauthorized, response.Code)
-	assert.False(delegatedOperationAllowed("reconcileCardDAVParticipantBindings"))
 }

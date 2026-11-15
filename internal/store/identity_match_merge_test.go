@@ -740,3 +740,41 @@ func TestMergeParticipantsRollsBackWhenCandidateRewriteFails(t *testing.T) {
 		"candidate endpoints must roll back",
 	)
 }
+
+func TestMergeParticipantsPreservesAbsorbedEmail(t *testing.T) {
+	for _, mode := range []string{"empty survivor", "different email", "third party"} {
+		t.Run(mode, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := storetest.New(t).Store
+			absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
+			require.NoError(err)
+			var survivor int64
+			if mode == "empty survivor" {
+				survivor, err = st.EnsureParticipantByIdentifier("beeper", "survivor", "Survivor")
+			} else {
+				survivor, err = st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
+			}
+			require.NoError(err)
+			var third int64
+			if mode == "third party" {
+				third, err = st.EnsureParticipant("third@example.test", "Third", "example.test")
+				require.NoError(err)
+				require.NoError(st.SetParticipantIdentifier(third, "email", "absorbed@example.test"))
+			}
+			require.NoError(st.MergeParticipants(absorbed, survivor))
+			var count int
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id = ? AND identifier_type = 'email' AND identifier_value = ?`), survivor, "absorbed@example.test").Scan(&count))
+			if mode == "different email" {
+				assert.Equal(1, count)
+			} else {
+				assert.Zero(count)
+			}
+			if mode == "third party" {
+				resolved, err := st.EnsureParticipantByIdentifier("email", "absorbed@example.test", "")
+				require.NoError(err)
+				assert.Equal(third, resolved)
+			}
+		})
+	}
+}

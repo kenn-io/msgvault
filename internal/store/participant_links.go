@@ -489,8 +489,12 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 			); err != nil {
 				return err
 			}
-			changed, err := s.bindPersonParticipantsTx(
-				ctx, tx, personID, unionMembers)
+			var changed bool
+			if confirmMembership {
+				changed, err = s.bindPersonParticipantsTx(ctx, tx, personID, unionMembers)
+			} else {
+				changed, err = s.bindPersonParticipantsOwnedTx(ctx, tx, personID, unionMembers, true)
+			}
 			if err != nil {
 				return err
 			}

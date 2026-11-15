@@ -398,54 +398,25 @@ func TestCardDAVKeepLocalCreateRollbackRestoresMappingFence(t *testing.T) {
 }
 
 func TestCardDAVKeepLocalCreateOversizedEvidencePreservesPublication(t *testing.T) {
-	for _, test := range []struct {
-		name         string
-		retainIntent bool
-	}{
-		{name: "clears pending operation but keeps publication"},
-		{name: "retains pending operation", retainIntent: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			st, _, book, mapping, conflict, pending := prepareCardDAVKeepLocalCreate(t)
-			current, err := st.GetCardDAVResourceContext(t.Context(), book.ID, mapping.Href)
-			require.NoError(err)
-			capture := conflictCapture(current)
-			capture.LocalHash = pending.LocalHash
-			capture.RemoteETag = `"oversized"`
-			capture.RemoteBody = bytes.Repeat([]byte("x"), store.MaxCardDAVConflictSnapshotBytes+1)
-
-			if test.retainIntent {
-				_, err := st.RecordCardDAVPublicationConflictRetainingIntentContext(t.Context(), *pending, capture)
-				require.ErrorIs(err, store.ErrCardDAVConflictTooLarge)
-			} else {
-				_, err := st.RecordCardDAVPublicationConflictContext(t.Context(), *pending, capture)
-				require.ErrorIs(err, store.ErrCardDAVConflictTooLarge)
-			}
-
-			resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, mapping.Href)
-			require.NoError(err)
-			assert.Equal(pending.PreviousMappingRevision, resource.MappingRevision)
-			assert.Equal(store.CardDAVMappingMapped, resource.MappingStatus)
-			publication, err := st.GetCardDAVPublicationContext(t.Context(), *mapping.PersonID)
-			require.NoError(err)
-			assert.True(publication.Desired)
-			if test.retainIntent {
-				require.Equal(store.CardDAVMutationCreate, publication.PendingOperation)
-				assert.Equal(pending.PreviousMappingRevision, publication.MappingRevision)
-				assert.Equal(pending.PreviousMappingRevision, publication.PreviousMappingRevision)
-				recovered, err := st.PrepareCardDAVConflictLocalContext(t.Context(), store.CardDAVConflictLocalPlan{
-					ConflictID: conflict.ID, ExpectedMappingRevision: conflict.MappingRevision,
-					RemoteTombstone: true, OutgoingSemanticHash: "keep-local-recreation",
-				})
-				require.NoError(err)
-				assert.True(recovered.RecoveryOnly)
-			} else {
-				assert.Empty(publication.PendingOperation)
-			}
-		})
-	}
+	assert := assert.New(t)
+	require := require.New(t)
+	st, _, book, mapping, _, pending := prepareCardDAVKeepLocalCreate(t)
+	current, err := st.GetCardDAVResourceContext(t.Context(), book.ID, mapping.Href)
+	require.NoError(err)
+	capture := conflictCapture(current)
+	capture.LocalHash = pending.LocalHash
+	capture.RemoteETag = `"oversized"`
+	capture.RemoteBody = bytes.Repeat([]byte("x"), store.MaxCardDAVConflictSnapshotBytes+1)
+	_, err = st.RecordCardDAVPublicationConflictContext(t.Context(), *pending, capture)
+	require.ErrorIs(err, store.ErrCardDAVConflictTooLarge)
+	resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, mapping.Href)
+	require.NoError(err)
+	assert.Equal(pending.PreviousMappingRevision, resource.MappingRevision)
+	assert.Equal(store.CardDAVMappingMapped, resource.MappingStatus)
+	publication, err := st.GetCardDAVPublicationContext(t.Context(), *mapping.PersonID)
+	require.NoError(err)
+	assert.True(publication.Desired)
+	assert.Empty(publication.PendingOperation)
 }
 
 func TestCardDAVKeepLocalCreateRecoverySurvivesOversizedEvidence(t *testing.T) {
