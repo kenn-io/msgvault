@@ -627,7 +627,6 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 		r.NoError(err)
 		a.True(complete)
 	})
-
 }
 
 func TestCommitmentDiscoveryMaxItemsLeavesJournalIncomplete(t *testing.T) {

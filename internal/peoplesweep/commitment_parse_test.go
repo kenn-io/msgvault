@@ -73,7 +73,6 @@ func TestCommitmentRequestSendsPromptFieldsAndFullSourceText(t *testing.T) {
 		"now": "2026-10-19T12:00:00Z",
 		"timezone": "UTC"
 	}`, packet)
-
 }
 
 func TestCommitmentSourceBytes(t *testing.T) {

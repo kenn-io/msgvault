@@ -13,6 +13,7 @@ import (
 
 type retryCommitmentStore struct {
 	*commitmentWorkerFixture
+
 	completed []int64
 }
 
@@ -34,6 +35,7 @@ func (s *retryCommitmentStore) LoadPersonCommitmentWindow(_ context.Context, id 
 
 type retryCommitmentSink struct {
 	workerProductionSink
+
 	store *retryCommitmentStore
 }
 
