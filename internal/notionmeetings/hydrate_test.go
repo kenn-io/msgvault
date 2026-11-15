@@ -221,6 +221,7 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 		{name: "reset", err: syscall.ECONNRESET},
 		{name: "truncated", err: io.ErrUnexpectedEOF},
 		{name: "oversized section", err: ErrResponseTooLarge},
+		{name: "malformed section root", err: fmt.Errorf("%w: invalid block", ErrMalformedResponse)},
 	}
 
 	for _, tt := range tests {
@@ -254,7 +255,6 @@ func TestHydratorKeepsSystemicTranscriptErrorsFatal(t *testing.T) {
 		{name: "unauthorized second page", err: &APIError{Kind: ErrUnauthorized, Status: 401, Code: "unauthorized"}, secondPage: true},
 		{name: "forbidden", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "forbidden"}},
 		{name: "forbidden second page", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "forbidden"}, secondPage: true},
-		{name: "malformed response", err: fmt.Errorf("%w: invalid block", ErrMalformedResponse)},
 		{name: "transient error after cancel", err: &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}, cancel: true},
 	}
 

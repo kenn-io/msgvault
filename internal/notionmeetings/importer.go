@@ -392,10 +392,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			if section.name == sectionTranscript && hydrated.MarkdownTranscriptFallback {
 				incomplete = false
 			}
-			if section.name == sectionTranscript && hydrated.TranscriptTree.Root != nil && !archived.MarkdownFallback {
-				incomplete = false
-			}
-			omittedTranscript := section.name == sectionTranscript && strings.TrimSpace(hydrated.Transcript) == ""
+			omittedTranscript := section.name == sectionTranscript && hydrated.Discovery.MeetingNotes.Children.TranscriptBlockID == "" && strings.TrimSpace(hydrated.Transcript) == ""
 			if !incomplete && !omittedTranscript {
 				continue
 			}

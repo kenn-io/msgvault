@@ -1237,7 +1237,8 @@ func TestImporterDataSourceRetriesIncompleteSections(t *testing.T) {
 	for _, tc := range []struct {
 		section string
 		visible bool
-	}{{"transcript", false}, {"summary", true}, {"notes", false}} {
+		err     error
+	}{{"transcript", false, &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}, {"summary", true, &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}, {"notes", false, fmt.Errorf("%w: invalid section", ErrMalformedResponse)}} {
 		name := tc.section
 		if tc.visible {
 			name += " visible"
@@ -1266,7 +1267,7 @@ func TestImporterDataSourceRetriesIncompleteSections(t *testing.T) {
 			var beforeEvidence map[string]json.RawMessage
 			require.NoError(json.Unmarshal(before, &beforeEvidence))
 			id := section + "-1"
-			source.blockErrs = map[string]error{id: &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
+			source.blockErrs = map[string]error{id: tc.err}
 			for _, other := range []string{"summary", "notes", "transcript"} {
 				if other != section {
 					updated := paragraph(other+"-1", "Updated "+other, false)
@@ -1653,13 +1654,20 @@ func TestImporterKeepsSectionTextWhileReplacementIsIncomplete(t *testing.T) {
 	}
 }
 
-func TestImporterKeepsSavedTranscriptWhenEmptyWhileUpdatingNotes(t *testing.T) {
+func TestImporterUpdatesEmptyTranscriptWhileUpdatingNotes(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		truncated bool
-	}{{"complete markdown", false}, {"truncated markdown", true}} {
+		name       string
+		truncated  bool
+		dataSource bool
+	}{{"complete markdown", false, false}, {"truncated markdown", true, false}, {"data source", false, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
+			if tc.dataSource {
+				meeting := hydrationMeeting()
+				meeting.Parent = Parent{Type: "data_source_id"}
+				source.blocks["meeting-1"].Parent = meeting.Parent
+				source.query.Results = []MeetingNote{meeting}
+			}
 			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 			require.NoError(t, err)
 			empty := paragraph("transcript-1", "", false)
@@ -1682,7 +1690,11 @@ func TestImporterKeepsSavedTranscriptWhenEmptyWhileUpdatingNotes(t *testing.T) {
 			body, err := st.GetMessageBodyText(t.Context(), id)
 			require.NoError(t, err)
 			assert.Contains(t, body, "Updated notes")
-			assert.Contains(t, body, "Test Speaker: Ready to ship.")
+			if tc.truncated {
+				assert.Contains(t, body, "Test Speaker: Ready to ship.")
+			} else {
+				assert.NotContains(t, body, "Test Speaker: Ready to ship.")
+			}
 		})
 	}
 }
