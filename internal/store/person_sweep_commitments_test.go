@@ -208,6 +208,8 @@ func TestCommitmentDecisionDoesNotFollowReusedMessageID(t *testing.T) {
 	r.NoError(err)
 	replacement := persist("replacement", quote, -time.Hour)
 	r.Equal(id, replacement)
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind("UPDATE messages SET archived_at = ? WHERE id = ?"), f.store.dialect.TimestampParam(window.Sources[0].RecordedTime.Add(time.Second)), replacement)
+	r.NoError(err)
 	f = nextCommitmentTestAttempt(t, f, "-replacement")
 	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 	r.NoError(err)
@@ -494,12 +496,8 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 			cfg.Commitments.MaxItems = 10
 			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, laterNow, "UTC")
 			r.NoError(err)
-			if !tc.journal {
-				r.Len(window.Sources, 1, "raising batch limits should retry only the oversized message")
-				a.Equal(laterNow, window.SelectionAt)
-			} else {
-				a.Equal(personFactLedgerNow, window.SelectionAt)
-			}
+			r.Len(window.Sources, 1, "raising batch limits should retry only the oversized message")
+			a.Equal(laterNow, window.SelectionAt)
 			var largeSource string
 			for _, source := range window.Sources {
 				if source.MessageID == large {
@@ -744,4 +742,67 @@ func TestCommitmentDecisionReportsConcurrentChange(t *testing.T) {
 	r.NoError(err)
 	_, err = f.store.updatePersonCommitmentDecision(ctx, candidate, LoopStateSnoozed, new(request.CompletedAt.Add(time.Hour)))
 	r.ErrorIs(err, ErrCommitmentChanged)
+}
+
+func TestCommitmentDecisionSurvivesSentTimeCorrection(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "sent-time-correction", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	const quote = "I will send the draft."
+	id := persist("promise", quote, -time.Hour)
+	cfg, profile := commitmentTestConfig()
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	promise := peoplesweep.CommitmentPromise{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send draft", End: int64(len(quote))}
+	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{promise}})
+	_, err = f.store.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	decision, err := f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
+	r.NoError(err)
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind("UPDATE messages SET sent_at = ? WHERE id = ?"), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-2*time.Hour)), id)
+	r.NoError(err)
+	f = nextCommitmentTestAttempt(t, f, "-corrected")
+	cfg.Commitments.Window += time.Second
+	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	promise.SourceID = window.Sources[0].ID
+	_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{promise}}))
+	r.NoError(err)
+	items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, true)
+	r.NoError(err)
+	r.Len(items, 1)
+	r.Equal(decision.ID, items[0].ID)
+	r.Equal(LoopStateDone, items[0].State)
+	reopened, err := f.store.DecidePersonCommitmentContext(ctx, decision.ID, LoopStateOpen, nil, request.CompletedAt)
+	r.NoError(err)
+	r.Equal(LoopStateOpen, reopened.State)
+}
+
+func TestCommitmentDiscoveryDoesNotRepeatBackfill(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "backfill-repeat", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	first := persist("first", "I will call.", -time.Hour)
+	second := persist("second", "I will write.", -time.Hour)
+	cfg, profile := commitmentTestConfig()
+	cfg.Commitments.MaxItems = 1
+	for i, want := range []int64{first, second} {
+		if i > 0 {
+			f = nextCommitmentTestAttempt(t, f, "-next")
+		}
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+		r.NoError(err)
+		r.Len(window.Sources, 1)
+		r.Equal(want, window.Sources[0].MessageID)
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+		r.NoError(err)
+	}
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Empty(window.Sources, "the two checked messages should not be sent again")
 }

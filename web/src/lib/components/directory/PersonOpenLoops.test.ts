@@ -198,6 +198,31 @@ describe("PersonOpenLoops", () => {
     expect(screen.queryByText("Nothing open with this person.")).toBeNull();
   });
 
+  it("shows the completed discovery window", async () => {
+    const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json({
+      items: [], commitments: [], truncated: false, commitments_complete: true,
+      commitments_since: "2026-10-01T00:00:00Z", commitments_until: "2026-10-31T00:00:00Z",
+    })));
+    render(PersonOpenLoops, { client, personID: 7 });
+    expect(await screen.findByText(/2026-10-01.*2026-10-31/)).toBeDefined();
+  });
+
+  it("keeps loaded promises when checking more reply history", async () => {
+    const promise = (id: number) => ({ id: `c${id}`, person_id: 7, summary: "", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: id, start: 0, end: 10, text: `Promise ${id}` }, promised_at: "2026-10-12T12:00:00Z" });
+    const first = { items: [], commitments: [promise(1)], commitments_next_offset: 1, truncated: true, coverage_incomplete: true };
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json(first))
+      .mockResolvedValueOnce(Response.json({ ...first, commitments: [promise(6)], commitments_next_offset: undefined }))
+      .mockResolvedValueOnce(Response.json({ ...first, coverage_incomplete: false }));
+    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
+    (await screen.findByRole("button", { name: "More promises" })).click();
+    expect(await screen.findByRole("link", { name: "Promise 6" })).toBeDefined();
+    (await screen.findByRole("button", { name: "Check more" })).click();
+    await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Check more" })).toBeNull());
+    expect(screen.getByRole("link", { name: "Promise 6" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: "More promises" })).toBeNull();
+  });
+
   it("appends the next promise page", async () => {
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ items: [loop()], truncated: true, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(1), promise(2), promise(3), promise(4), promise(5)], commitments_next_offset: 5 }))

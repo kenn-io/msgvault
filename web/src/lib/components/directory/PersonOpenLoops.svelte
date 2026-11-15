@@ -61,12 +61,14 @@
         if (controller.signal.aborted) return;
         if (!result.data) throw new Error('Open loops are unavailable.');
         items = result.data.items ?? [];
-        commitments = result.data.commitments ?? [];
+        if (!more) {
+          commitments = result.data.commitments ?? [];
+          nextOffset = result.data.commitments_next_offset;
+        }
         truncated = Boolean(result.data.truncated);
         coverageIncomplete = Boolean(result.data.coverage_incomplete);
         unreadable = result.data.skipped_unparseable ?? 0;
         promiseStatus = discoveryStatus(result.data);
-        nextOffset = result.data.commitments_next_offset;
       } catch {
         if (controller.signal.aborted) return;
         if (more) checkMoreFailed = true;
@@ -83,14 +85,14 @@
     return () => controller.abort();
   });
 
-  // Mirrors the CLI so an unfinished scan never reads as "nothing promised".
+  // Show the discovery window with the loop results.
   function discoveryStatus(data: LoopListResponse): string {
-    if (data.commitments_complete !== false) return '';
+    if (data.commitments_complete == null) return '';
     const since = data.commitments_since?.slice(0, 10);
     const until = data.commitments_until?.slice(0, 10);
-    if (!since) return 'Promise discovery has not started.';
+    if (!since) return data.commitments_complete ? '' : 'Promise discovery has not started.';
     if (until && until < since) return 'No messages were eligible for promise discovery in the current window.';
-    return `Promise discovery ${until ? `from ${since} through ${until}` : `since ${since}`} is incomplete.`;
+    return `Promise discovery ${until ? `from ${since} through ${until}` : `since ${since}`} is ${data.commitments_complete ? 'complete' : 'incomplete'}.`;
   }
 
   async function loadPromises(selectedID: number, selectedClient: APIClient, signal: AbortSignal) {

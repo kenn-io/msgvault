@@ -636,7 +636,7 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 		return nil
 	}
 	const backfillPage = 256
-	ids, err := s.commitmentBackfillMessages(ctx, personID, window.BackfillMessageID, cutoff, backfillPage)
+	ids, err := s.commitmentBackfillMessages(ctx, personID, window.BackfillMessageID, previous, cutoff, backfillPage)
 	if err != nil {
 		return err
 	}
@@ -713,16 +713,18 @@ func (s *Store) resolvePersonCommitmentTargetTx(ctx context.Context, tx *loggedT
 
 // The journal handles changes to every imported source. This keyset covers
 // older live messages that predate a person's journal, one page at a time.
-func (s *Store) commitmentBackfillMessages(ctx context.Context, personID, after int64, cutoff time.Time, limit int) ([]int64, error) {
+func (s *Store) commitmentBackfillMessages(ctx context.Context, personID, after, processed int64, cutoff time.Time, limit int) ([]int64, error) {
 	scoped, args := s.loopConversationQuery(LoopQuery{PersonID: personID})
 	at := s.dialect.TimestampParam(cutoff)
-	args = append(args, after, at, at, limit)
+	args = append(args, after, at, at, personID, processed, limit)
+	// The journal has already covered these messages in the current scope.
 	query := `WITH scoped AS (` + scoped + `)
 		SELECT m.id FROM messages m JOIN scoped c ON c.conversation_id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
 		WHERE m.id > ? AND ` + s.loopLiveMessageSQL() + `
 		AND (` + s.loopTimeKey("m.sent_at") + ` >= ` + s.loopTimeKey("?") + `
 			OR ` + s.loopTimeKey("m.archived_at") + ` >= ` + s.loopTimeKey("?") + `)
+		AND NOT EXISTS (SELECT 1 FROM person_sweep_changes c WHERE c.person_id = ? AND c.message_id = m.id AND c.source_lane = 'conversation_text' AND c.sequence <= ?)
 		ORDER BY m.id LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {

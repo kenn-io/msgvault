@@ -170,9 +170,8 @@ func (s *Store) matchCommitmentTarget(ctx context.Context, personID int64, sourc
 			WHERE c.person_id = ? AND c.target_kind = 'commitment' AND c.origin = 'commitment'
 			AND EXISTS (SELECT 1 FROM person_fact_claim_evidence ce JOIN person_fact_evidence e ON e.id = ce.evidence_id
 			WHERE ce.claim_id = c.id AND e.source_ref = ? AND e.subject_ref = ?
-			AND ` + s.loopTimeKey("e.event_time") + ` = ` + s.loopTimeKey("?") + `
 			AND ` + s.loopTimeKey("e.recorded_time") + ` = ` + s.loopTimeKey("?") + ` AND ` + predicate + `)`
-		params := append([]any{personID, source.SourceRef, evidence.SubjectRef, evidence.EventTime.Format(time.RFC3339Nano), evidence.RecordedTime.Format(time.RFC3339Nano)}, args...)
+		params := append([]any{personID, source.SourceRef, evidence.SubjectRef, evidence.RecordedTime.Format(time.RFC3339Nano)}, args...)
 		rows, err := s.db.QueryContext(ctx, s.Rebind(query), params...)
 		if err != nil {
 			return nil, err
@@ -280,7 +279,7 @@ func (s *Store) currentCommitmentSource(ctx context.Context, personID, messageID
 	var conversationID int64
 	err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.conversation_id
 		FROM messages m JOIN sources src ON src.id = m.source_id
-		WHERE m.id = ? AND m.conversation_id IS NOT NULL AND m.deleted_from_source_at IS NULL AND `+s.loopLiveMessageSQL()), messageID).Scan(&conversationID)
+		WHERE m.id = ? AND m.conversation_id IS NOT NULL AND `+s.loopLiveMessageSQL()), messageID).Scan(&conversationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return peoplesweep.CommitmentSource{}, false, nil
 	}
