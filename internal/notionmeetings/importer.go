@@ -72,6 +72,15 @@ type ImportSummary struct {
 	Duration           time.Duration
 }
 
+func (s *ImportSummary) checkpoint() *store.Checkpoint {
+	return &store.Checkpoint{
+		MessagesProcessed: s.MeetingsProcessed,
+		MessagesAdded:     s.MeetingsAdded,
+		MessagesUpdated:   s.MeetingsUpdated,
+		ErrorsCount:       s.Errors,
+	}
+}
+
 type knownMeeting struct {
 	LastEditedTime  string `json:"last_edited_time"`
 	SnapshotSHA256  string `json:"snapshot_sha256,omitempty"`
@@ -190,12 +199,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	scopedStore := imp.store.ScopedToSync(source.ID, syncID)
 	defer func() {
 		if retErr != nil {
-			_ = scopedStore.FailSyncWithCheckpoint(syncID, retErr.Error(), &store.Checkpoint{
-				MessagesProcessed: sum.MeetingsProcessed,
-				MessagesAdded:     sum.MeetingsAdded,
-				MessagesUpdated:   sum.MeetingsUpdated,
-				ErrorsCount:       sum.Errors,
-			})
+			_ = scopedStore.FailSyncWithCheckpoint(syncID, retErr.Error(), sum.checkpoint())
 		}
 	}()
 
@@ -311,6 +315,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		workOrder = append(workOrder, id)
 	}
 
+	archivedStates, err := imp.preflightArchivedStates(ctx, source.ID, workOrder)
+	if err != nil {
+		sum.Errors++
+		return sum, err
+	}
 	hydrator := NewHydrator(imp.client).WithUserSource(imp.users)
 	archiver := meetingarchive.New(scopedStore)
 	var hardErrors []error
@@ -330,7 +339,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 
 		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""
-		archived, recoverErr := imp.archivedState(ctx, source.ID, id)
+		archived, recoverErr := archivedStates[id].state, archivedStates[id].err
 		if recoverErr != nil {
 			sum.Errors++
 			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: recover archived evidence: %w", id, recoverErr))
@@ -349,9 +358,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		var retainedIDs = map[string]string{}
 		var previousDiscovery MeetingNote
-		if archived.HasEvidence {
-			_ = json.Unmarshal(archived.Evidence.Discovery, &previousDiscovery)
-		}
+		_ = json.Unmarshal(archived.Evidence.Discovery, &previousDiscovery) // zero without usable evidence
 		for _, section := range sections {
 			incomplete := slices.Contains(hydrated.Incomplete, section.name)
 			if section.name == "transcript" && hydrated.TranscriptTree.Root != nil && !archived.MarkdownFallback {
@@ -431,7 +438,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				previousPending.RetryUntil = retained
 				hasPrevious = true
 			}
-			pending, keep := schedulePending(hydrated, now, previousPending, hasPrevious, len(hydrated.Incomplete) > 0)
+			pending, keep := schedulePending(hydrated, now, previousPending, hasPrevious, retriesUntilComplete(hydrated))
 			if keep {
 				pendingByID[id] = pending
 				next.TranscriptRetryUntil[id] = pending.RetryUntil
@@ -516,13 +523,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err != nil {
 		return sum, err
 	}
-	checkpoint := &store.Checkpoint{
-		MessagesProcessed: sum.MeetingsProcessed,
-		MessagesAdded:     sum.MeetingsAdded,
-		MessagesUpdated:   sum.MeetingsUpdated,
-		ErrorsCount:       sum.Errors,
-	}
-	if err := scopedStore.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
+	if err := scopedStore.UpdateSyncCheckpoint(syncID, sum.checkpoint()); err != nil {
 		return sum, err
 	}
 	if err := scopedStore.CompleteSync(syncID, cursor); err != nil {
@@ -547,6 +548,15 @@ func (imp *Importer) retrieveMeeting(ctx context.Context, id string) (MeetingNot
 	return meeting, nil
 }
 
+// retriesUntilComplete reports whether an incomplete read keeps retrying past
+// the retry deadline. Only an incomplete page-Markdown transcript with no
+// transcript marker is bounded by that deadline; incomplete summary, notes, and
+// transcript block reads stay pending until a complete read succeeds.
+func retriesUntilComplete(hydrated *HydratedMeeting) bool {
+	markdownOnly := hydrated.markdownOnlyIncomplete && slices.Equal(hydrated.Incomplete, []string{"transcript"})
+	return len(hydrated.Incomplete) > 0 && !markdownOnly
+}
+
 type archivedMeetingState struct {
 	Evidence         rawEvidence
 	HasEvidence      bool
@@ -555,6 +565,26 @@ type archivedMeetingState struct {
 	ResolvedUsers    []resolvedUser
 	MarkdownFallback bool
 	RawTrees         map[string]jsontext.Value
+}
+
+type archivedLookup struct {
+	state archivedMeetingState
+	err   error
+}
+
+// preflightArchivedStates reads each meeting's stored evidence once, before the
+// first archive write, so newer evidence stops the import with nothing written.
+// Other read errors are kept for the per-meeting handling in Import.
+func (imp *Importer) preflightArchivedStates(ctx context.Context, sourceID int64, ids []string) (map[string]archivedLookup, error) {
+	lookups := make(map[string]archivedLookup, len(ids))
+	for _, id := range ids {
+		state, err := imp.archivedState(ctx, sourceID, id)
+		if _, newer := errors.AsType[*NewerEvidenceError](err); newer {
+			return nil, fmt.Errorf("meeting %s: recover archived evidence: %w", id, err)
+		}
+		lookups[id] = archivedLookup{state: state, err: err}
+	}
+	return lookups, nil
 }
 
 func (imp *Importer) archivedState(ctx context.Context, sourceID int64, id string) (archivedMeetingState, error) {

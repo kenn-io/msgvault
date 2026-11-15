@@ -42,6 +42,9 @@ type HydratedMeeting struct {
 	failedAttendeeIDs map[string]bool
 	keptRawTrees      map[string]jsontext.Value
 	keptMarkdown      jsontext.Value
+	// markdownOnlyIncomplete marks a transcript left incomplete only by a
+	// partial page-Markdown read that shows no transcript marker.
+	markdownOnlyIncomplete bool
 
 	Discovery                  MeetingNote
 	MeetingBlock               *Block
@@ -189,6 +192,7 @@ func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeet
 	markdown := extractMarkdownTranscript(page.Markdown)
 	complete := !page.Truncated && len(page.UnknownBlockIDs) == 0
 	if result.Transcript == "" && !complete {
+		result.markdownOnlyIncomplete = !slices.Contains(result.Incomplete, "transcript") && !hasTranscriptMarker(page.Markdown)
 		result.markIncomplete("transcript", "markdown")
 	} else if result.Transcript == "" && markdown != "" && !slices.Contains(result.Incomplete, "transcript") {
 		result.Transcript = markdown
@@ -528,6 +532,19 @@ func extractMarkdownTranscript(markdown string) string {
 		return strings.TrimSpace(strings.Join(lines[index+1:end], "\n"))
 	}
 	return ""
+}
+
+func hasTranscriptMarker(markdown string) bool {
+	for line := range strings.SplitSeq(strings.ReplaceAll(markdown, "\r\n", "\n"), "\n") {
+		_, heading, isHeading := markdownHeading(line)
+		if !isHeading {
+			heading = strings.TrimSpace(line)
+		}
+		if _, found := transcriptMarker(heading); found {
+			return true
+		}
+	}
+	return false
 }
 
 func markdownHeading(line string) (int, string, bool) {

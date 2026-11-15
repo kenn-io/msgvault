@@ -872,30 +872,32 @@ It still cannot discover history beyond the visible window.
 - `--limit` caps the visible meetings fetched and checked.
 - Due transcript retries run in addition to that limit.
 
-Meetings under pages and data sources import their summary, notes, and transcript
-from the meeting's section blocks. When a page meeting has no structured
-transcript, msgvault requests Markdown for its parent page and reads its
-transcript section. A structured transcript takes precedence.
+Meetings under data sources import their summary, notes, and transcript from
+their referenced section blocks. For meetings under pages, msgvault also reads
+the parent page's Markdown. When the structured transcript is empty and its
+section read is complete, msgvault uses the Markdown transcript section.
 
 Temporary provider or network errors, incomplete pagination, and the existing
 request, response-size, block-count, and nesting limits can leave a section
-incomplete. msgvault keeps its archived text and evidence and retries every six
-hours, including after the meeting leaves the visible query window. The deadline
-is the later of seven days after the meeting ended and 48 hours after the retry
-starts. An active deadline isn't extended; an incomplete meeting starts a new
-window after expiry, including when it is outside the visible query. A missing
-transcript without an incomplete section stops retrying at its deadline.
-The sync summary reports partial coverage when a section is incomplete or the
-Notion query reports more meetings.
+incomplete. msgvault keeps its archived text and evidence and retries incomplete
+section blocks every six hours until they can be read, including after the meeting
+leaves the visible query window. The initial retry deadline is seven days after
+the meeting ended, or 48 hours after the first retry when the end time is unknown.
+Incomplete section blocks start another 48-hour window after the deadline expires.
+
+If incomplete page Markdown has no transcript marker, msgvault keeps saved page
+transcript text. When that is the only incomplete content, background retries stop
+at the deadline without starting another window. Visible meetings still refresh on
+later syncs. A missing transcript without an incomplete section also stops
+background retries at its deadline. The sync summary reports partial coverage when
+a section is incomplete or the Notion query reports more meetings.
 
 When a transcript read is incomplete, sync retains the saved transcript and
 reports that it did so. An omitted transcript block also keeps saved text; omitted
 summary and notes blocks clear their sections. A complete empty transcript clears
-saved transcript text.
-An archive with a newer
-evidence version is refused before that meeting is updated, even if its other
-fields have changed shape. Existing `[[notion_meetings]]` settings need no
-changes. Hard per-meeting failures retain the previous
+saved transcript text. If a meeting selected for import has a newer evidence
+version, the import stops before writing any meetings to the archive. Existing `[[notion_meetings]]`
+settings need no changes. Other hard per-meeting failures retain the previous
 successful state; meetings written earlier in that failed run remain safe and
 idempotent.
 
