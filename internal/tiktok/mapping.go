@@ -1,8 +1,10 @@
 package tiktok
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"time"
@@ -80,8 +82,9 @@ func (r *commentRun) persist(ctx context.Context, id, body, video, parent, actor
 	}
 	metadata := commentMetadata{App: r.app, Account: r.account, Video: video, Parent: parent}
 	prior, exists := existing[id]
+	var saved sql.NullString
 	if exists {
-		saved, err := r.imp.store.GetMessageMetadataContext(ctx, prior.ID)
+		saved, err = r.imp.store.GetMessageMetadataContext(ctx, prior.ID)
 		if err != nil {
 			return err
 		}
@@ -136,18 +139,50 @@ func (r *commentRun) persist(ctx context.Context, id, body, video, parent, actor
 			title = "TikTok video " + video
 		}
 	}
-	_, err = r.imp.store.PersistMessageContext(ctx, &store.MessagePersistData{
+	snapshot := &store.MessagePersistData{
 		Message:      &store.Message{SourceID: r.source.ID, SourceMessageID: id, MessageType: CommentsSourceType, SentAt: sentAt, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: self, ReplyToMessageID: reply, Snippet: sql.NullString{String: body, Valid: true}, SizeEstimate: int64(len(body))},
 		Conversation: &store.ConversationPersistData{SourceConversationID: video, ConversationType: "public_comments", Title: title, Participants: participants, PreserveExistingParticipants: true},
 		Metadata:     &sql.NullString{String: string(meta), Valid: true}, BodyText: sql.NullString{String: body, Valid: true}, RawMIME: data, RawFormat: commentFormat, Recipients: recipients, PreserveLabels: true,
 		FTS: &store.FTSDoc{Body: body, FromAddr: name},
-	})
-	if err != nil {
-		return err
+	}
+	unchanged := false
+	message := snapshot.Message
+	if exists && prior.SenderID == message.SenderID &&
+		prior.SourceIsFromMe.Valid && prior.SourceIsFromMe.Bool == message.IsFromMe &&
+		prior.MessageType == message.MessageType && prior.Subject == message.Subject &&
+		prior.SentAt.Valid == message.SentAt.Valid && (!prior.SentAt.Valid || prior.SentAt.Time.Equal(message.SentAt.Time)) &&
+		prior.InternalDate == message.InternalDate && prior.Snippet == message.Snippet && prior.SizeEstimate == message.SizeEstimate &&
+		commentEvidenceEqual(prior.Raw, snapshot.RawMIME) && commentEvidenceEqual([]byte(saved.String), meta) {
+		unchanged, err = r.imp.store.MessageContentMatchesContext(ctx, prior.ID, snapshot.BodyText, *snapshot.FTS)
+		if err != nil {
+			return err
+		}
+		if unchanged {
+			unchanged, err = r.imp.store.MessageRecipientsMatchContext(ctx, prior.ID, recipients)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if !unchanged {
+		if _, err = r.imp.store.PersistMessageContext(ctx, snapshot); err != nil {
+			return err
+		}
 	}
 	r.sum.MessagesProcessed++
 	if !exists {
 		r.sum.MessagesAdded++
 	}
 	return nil
+}
+
+// commentEvidenceEqual ignores JSON layout, but retains exact number spellings:
+// provider fields in Extra may exceed float64 precision.
+func commentEvidenceEqual(stored, incoming []byte) bool {
+	if bytes.Equal(stored, incoming) {
+		return true
+	}
+	left, right := jsontext.Value(stored).Clone(), jsontext.Value(incoming).Clone()
+	return left.Canonicalize(jsontext.CanonicalizeRawInts(false), jsontext.CanonicalizeRawFloats(false)) == nil &&
+		right.Canonicalize(jsontext.CanonicalizeRawInts(false), jsontext.CanonicalizeRawFloats(false)) == nil && bytes.Equal(left, right)
 }
