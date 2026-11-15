@@ -89,12 +89,16 @@ func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEma
 	}
 	body := h.body(title, startedAt, endedAt)
 	children := h.Discovery.MeetingNotes.Children
-	pageID := ""
-	if h.Discovery.Parent.Type == "page_id" {
-		pageID = h.Discovery.Parent.ID()
+	pageID, parentID := "", ""
+	switch h.Discovery.Parent.Type {
+	case "page_id":
+		pageID = h.Discovery.Parent.PageID
+		parentID = pageID
+	case "data_source_id":
+		parentID = h.Discovery.Parent.DataSourceID
 	}
 	metadata, err := json.Marshal(meetingMetadata{
-		ParentKind: h.Discovery.Parent.Type, ParentID: h.Discovery.Parent.ID(),
+		ParentKind: h.Discovery.Parent.Type, ParentID: parentID,
 		EditorUserID: h.Discovery.LastEditedBy.ID, AttendeeIDs: h.Discovery.MeetingNotes.CalendarEvent.Attendees,
 		IsFullPage: h.Discovery.MeetingNotes.IsFullPage, CalendarEventID: h.Discovery.MeetingNotes.CalendarEvent.EventID,
 		CreatedTime: h.Discovery.CreatedTime, LastEditedTime: h.Discovery.LastEditedTime,
@@ -181,6 +185,13 @@ func (h *HydratedMeeting) body(title string, start, end time.Time) string {
 		}
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func rawForMarkdown(page *MarkdownPage) jsontext.Value {
+	if page == nil {
+		return nil
+	}
+	return page.Raw
 }
 
 func rawForBlock(block *Block) jsontext.Value {

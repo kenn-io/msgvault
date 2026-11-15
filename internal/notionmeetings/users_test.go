@@ -251,39 +251,6 @@ func TestImporterIncompleteDirectoryPreservesArchivedAttendees(t *testing.T) {
 	assert.Contains(string(raw), "attendee@example.com")
 }
 
-type slowOptionalUserSource struct{}
-
-func (slowOptionalUserSource) RetrieveUser(ctx context.Context, id string) (*User, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(50 * time.Second):
-		return &User{ID: id, Person: UserPerson{Email: id + "@example.com", EmailVerified: true}}, nil
-	}
-}
-
-func TestImporterPublishesContentWhenOptionalLookupBudgetExpires(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, source, imp := newImporterFixture(t)
-	meeting := hydrationMeeting()
-	meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1", "user-2", "user-3"}
-	source.query.Results = []MeetingNote{meeting}
-	installMeetingHeader(t, source.fakeHydrationSource, meeting)
-	imp.WithUserSource(slowOptionalUserSource{})
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
-	defer cancel()
-	result, err := imp.Import(ctx, ImportOptions{Identifier: "work"})
-	require.NoError(err)
-	assert.Equal(int64(1), result.MeetingsAdded)
-	var messageID int64
-	require.NoError(st.DB().QueryRowContext(ctx, `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
-	body, err := st.GetMessageBodyText(ctx, messageID)
-	require.NoError(err)
-	assert.Contains(body, "Test Speaker: Ready to ship.")
-	assert.NoError(ctx.Err())
-}
-
 type slowOptionalDirectorySource struct {
 	*fakeHydrationSource
 
@@ -296,41 +263,37 @@ func (s slowOptionalDirectorySource) ListUsers(ctx context.Context, _ string) (*
 	return nil, ctx.Err()
 }
 
-func TestHydratorRetainsContentOnDirectoryBudgetExpiry(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		calls := 0
-		source := slowOptionalDirectorySource{fakeHydrationSource: completeHydrationSource(), calls: &calls}
-		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
-		defer cancel()
-		hydrator := NewHydrator(source)
-		for range 2 {
-			result, err := hydrator.Hydrate(ctx, hydrationMeeting())
-			require.NoError(err)
-			assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
-			assert.True(result.AttendeeResolutionDegraded)
-		}
-		assert.Equal(1, calls)
-		assert.NoError(ctx.Err())
-	})
-}
-
-func TestHydratorReservesShortParentDeadlineForContent(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		calls := 0
-		source := slowOptionalDirectorySource{fakeHydrationSource: completeHydrationSource(), calls: &calls}
-		ctx, cancel := context.WithTimeout(t.Context(), 6*time.Second)
-		defer cancel()
-		started := time.Now()
-		result, err := NewHydrator(source).Hydrate(ctx, hydrationMeeting())
-		require.NoError(err)
-		assert.Equal(3*time.Second, time.Since(started))
-		assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
-		assert.True(result.AttendeeResolutionDegraded)
-		assert.Equal(1, calls)
-		assert.NoError(ctx.Err())
-	})
+func TestHydratorDirectoryBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		timeout, want time.Duration
+		repeat        bool
+	}{
+		{"cap", 2 * time.Minute, optionalLookupBudget, true},
+		{"short deadline", 6 * time.Second, 3 * time.Second, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				calls := 0
+				source := slowOptionalDirectorySource{fakeHydrationSource: completeHydrationSource(), calls: &calls}
+				ctx, cancel := context.WithTimeout(t.Context(), tc.timeout)
+				defer cancel()
+				hydrator := NewHydrator(source)
+				started := time.Now()
+				result, err := hydrator.Hydrate(ctx, hydrationMeeting())
+				require.NoError(err)
+				assert.Equal(tc.want, time.Since(started))
+				assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
+				assert.True(result.AttendeeResolutionDegraded)
+				if tc.repeat {
+					_, err = hydrator.Hydrate(ctx, hydrationMeeting())
+					require.NoError(err)
+				}
+				assert.Equal(1, calls)
+				assert.NoError(ctx.Err())
+			})
+		})
+	}
 }

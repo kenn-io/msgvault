@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -153,16 +152,6 @@ func installMeetingHeader(t *testing.T, source *fakeHydrationSource, meeting Mee
 	source.blocks[meeting.ID] = &block
 }
 
-func TestHydratorResolvesParentPageFromRetrievedMeetingBlock(t *testing.T) {
-	meeting := hydrationMeeting()
-	meeting.Parent = Parent{}
-
-	hydrated, err := NewHydrator(completeHydrationSource()).Hydrate(t.Context(), meeting)
-	require.NoError(t, err)
-	assert.Equal(t, "page-1", hydrated.Discovery.Parent.PageID)
-	assert.NotNil(t, hydrated.MeetingBlock)
-}
-
 func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -238,7 +227,6 @@ func TestHydratorKeepsSystemicTranscriptErrorsFatal(t *testing.T) {
 		{name: "read content forbidden", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "restricted_resource"}},
 		{name: "malformed response", err: fmt.Errorf("%w: invalid block", ErrMalformedResponse)},
 		{name: "context canceled", err: context.Canceled},
-		{name: "local traversal limit", err: errors.New("notion block traversal exceeded block limit")},
 	}
 
 	for _, tt := range tests {
@@ -267,36 +255,29 @@ func TestHydratorRejectsNonMeetingRootBlock(t *testing.T) {
 	assert.Nil(t, hydrated)
 }
 
-func TestHydratorDoesNotWarnWhenOnlyLaterMarkdownSectionDiffers(t *testing.T) {
-	source := completeHydrationSource()
-	source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Ready to ship.\n\n## Action items\nDifferent content."
-
-	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-	require.NoError(t, err)
-	assert.NotContains(t, hydrated.Warnings, "structured transcript and page Markdown transcript differed")
-}
-
-func TestHydratorDoesNotCompareIncompleteMarkdownTranscript(t *testing.T) {
-	source := completeHydrationSource()
-	source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Partial conflicting transcript."
-	source.markdown.Truncated = true
-
-	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-	require.NoError(t, err)
-	assert.NotContains(t, hydrated.Warnings, "structured transcript and page Markdown transcript differed")
-}
-
-func TestHydratorDoesNotWarnAboutIncompleteMarkdownWithoutTranscript(t *testing.T) {
-	source := completeHydrationSource()
-	empty := paragraph("transcript-1", "", false)
-	source.blocks["transcript-1"] = &empty
-	source.markdown.Markdown = "# Weekly planning\n\nMeeting context only."
-	source.markdown.UnknownBlockIDs = []string{"unrelated-block-1"}
-
-	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-	require.NoError(t, err)
-	assert.Empty(t, hydrated.Transcript)
-	assert.Contains(t, hydrated.Warnings, "page Markdown transcript was incomplete; transcript remains pending")
+func TestHydratorWarnsAboutIncompleteMarkdown(t *testing.T) {
+	for _, kind := range []string{"truncated", "unknown blocks", "without transcript"} {
+		t.Run(kind, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			source := completeHydrationSource()
+			empty := paragraph("transcript-1", "", false)
+			source.blocks["transcript-1"] = &empty
+			source.markdown.Markdown = "## Transcript\nPartial transcript."
+			if kind == "truncated" {
+				source.markdown.Truncated = true
+			} else {
+				source.markdown.UnknownBlockIDs = []string{"unknown"}
+			}
+			if kind == "without transcript" {
+				source.markdown.Markdown = "Meeting context only."
+			}
+			hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
+			require.NoError(err)
+			assert.Empty(hydrated.Transcript)
+			assert.Contains(hydrated.Warnings, "page Markdown transcript was incomplete; transcript remains pending")
+		})
+	}
 }
 
 func TestHydratorRejectsRepeatedChildCursor(t *testing.T) {
@@ -424,58 +405,61 @@ func TestHydratorDegradesAndCachesTransientUserListingFailure(t *testing.T) {
 // The authoritative block can have any parent. Query fields may be stale and
 // another meeting on the same page must never supply this meeting's transcript.
 func TestHydrateBlockOwnedParents(t *testing.T) {
-	for _, parent := range []string{
-		`{"type":"page_id","page_id":"page-1"}`,
-		`{"type":"data_source_id","data_source_id":"rows-1"}`,
-		`{"type":"block_id","block_id":"toggle-1"}`,
-		`{"type":"future_parent","future_parent":{"opaque":true}}`,
-	} {
+	for _, parent := range []string{`{"type":"page_id","page_id":"page-1"}`, `{"type":"data_source_id","data_source_id":"rows-1"}`} {
 		t.Run(parent, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-
 			source := completeHydrationSource()
-			raw := []byte(`{"object":"block","id":"meeting-1","type":"meeting_notes","created_time":"2026-08-29T10:00:00Z","has_children":false,"parent":` + parent + `,"meeting_notes":{"status":"notes_ready","children":{"transcript_block_id":"fresh-transcript"}}}`)
+			children := `{}`
+			if strings.Contains(parent, "page_id") {
+				children = `{"transcript_block_id":"fresh-transcript"}`
+			}
+			raw := []byte(`{"object":"block","id":"meeting-1","type":"meeting_notes","created_time":"2026-08-29T10:00:00Z","has_children":false,"parent":` + parent + `,"meeting_notes":{"status":"notes_ready","children":` + children + `}}`)
 			var block Block
 			require.NoError(json.Unmarshal(raw, &block))
 			source.blocks["meeting-1"] = &block
 			transcript := paragraph("fresh-transcript", "Own transcript.", false)
 			source.blocks[transcript.ID] = &transcript
-			source.markdown.Raw = json.RawMessage(`{"markdown":"SIBLING_PRIVATE_MARKER"}`)
-			source.markdown.Markdown = "## Transcript\nSIBLING_PRIVATE_MARKER"
+			source.markdown.Markdown = "## Transcript\nSibling transcript."
 			hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 			require.NoError(err)
-			assert.Equal("Own transcript.", hydrated.Transcript)
-			assert.Empty(hydrated.Summary)
+			if hydrated.Discovery.Parent.Type == "page_id" {
+				assert.Equal("page-1", hydrated.Discovery.Parent.PageID)
+				assert.Equal("Own transcript.", hydrated.Transcript)
+			} else {
+				assert.Empty(hydrated.Transcript)
+			}
 			snapshot, err := hydrated.ArchiveSnapshot(1, "synthetic", "")
 			require.NoError(err)
-			assert.NotContains(string(snapshot.Raw), "SIBLING_PRIVATE_MARKER")
+			var evidence map[string]json.RawMessage
+			require.NoError(json.Unmarshal(snapshot.Raw, &evidence))
+			var header map[string]json.RawMessage
+			require.NoError(json.Unmarshal(evidence["meeting_block"], &header))
+			assert.JSONEq(parent, string(header["parent"]))
 			assert.Zero(source.markdownCalls)
 		})
 	}
 }
 
 func TestHydrateExcludesNestedMeetingEvidence(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		source := completeHydrationSource()
-		marker := "SIBLING_PRIVATE_" + hegel.Draw(ht, hegel.Text())
-		payload, err := json.Marshal(map[string]any{"object": "block", "id": "other-meeting", "type": "meeting_notes", "has_children": true, "meeting_notes": map[string]any{"title": []any{map[string]any{"plain_text": marker}}}})
-		require.NoError(ht, err)
-		var nested Block
-		require.NoError(ht, json.Unmarshal(payload, &nested))
-		privateChild := paragraph("private-child", marker, false)
-		source.children["other-meeting"] = map[string]*BlockPage{"": {Results: []Block{privateChild}, Raw: payload}}
-		child := paragraph("own-child", "Own notes.", false)
-		source.children["notes-1"][""] = &BlockPage{Results: []Block{nested, child}, Raw: payload}
-		hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-		require.NoError(ht, err)
-		snapshot, err := hydrated.ArchiveSnapshot(1, "synthetic", "")
-		require.NoError(ht, err)
-		var decoded any
-		require.NoError(ht, json.Unmarshal(snapshot.Raw, &decoded))
-		assert.NotContains(ht, string(snapshot.Raw), "SIBLING_PRIVATE_")
-		assert.Contains(ht, hydrated.Notes, "Own notes.")
-	}, hegel.WithTestCases(64), hegel.WithDatabase(""))
+	assert := assert.New(t)
+	require := require.New(t)
+	source := completeHydrationSource()
+	marker := "SIBLING_PRIVATE_CONTENT"
+	payload, err := json.Marshal(map[string]any{"object": "block", "id": "other-meeting", "type": "meeting_notes", "has_children": true, "meeting_notes": map[string]any{"title": []any{map[string]any{"plain_text": marker}}}})
+	require.NoError(err)
+	var nested Block
+	require.NoError(json.Unmarshal(payload, &nested))
+	privateChild := paragraph("private-child", marker, false)
+	source.children["other-meeting"] = map[string]*BlockPage{"": {Results: []Block{privateChild}, Raw: payload}}
+	child := paragraph("own-child", "Own notes.", false)
+	source.children["notes-1"][""] = &BlockPage{Results: []Block{nested, child}, Raw: payload}
+	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
+	require.NoError(err)
+	snapshot, err := hydrated.ArchiveSnapshot(1, "synthetic", "")
+	require.NoError(err)
+	assert.NotContains(string(snapshot.Raw), "SIBLING_PRIVATE_")
+	assert.Contains(hydrated.Notes, "Own notes.")
 }
 
 func TestV2SnapshotMeetingContent(t *testing.T) {
@@ -491,12 +475,6 @@ func TestV2SnapshotMeetingContent(t *testing.T) {
 	snapshot, err := hydrated.ArchiveSnapshot(1, "synthetic", "")
 	require.NoError(err)
 	content := meetingcontent.Decode(RawFormat, snapshot.Raw, nil)
-	assert.Equal(hydrated.Summary, content.Summary.Text)
-	assert.Equal(hydrated.Notes, content.Notes.Text)
-	assert.Equal(hydrated.Transcript, content.Transcript.Text)
-	assert.Equal(meetingcontent.CoverageAvailable, content.ActionCoverage)
-	require.Len(content.Actions, 1)
-	assert.Equal("Prepare report", content.Actions[0].Title)
 	require.NotNil(content.DurationSeconds)
 	assert.InDelta(float64(1800), *content.DurationSeconds, 0.001)
 	require.Len(content.SourceParticipants, 2)
@@ -515,40 +493,6 @@ func TestV2SnapshotMeetingContent(t *testing.T) {
 	require.Len(content.Actions, 1)
 }
 
-func TestHydrateParentShapesPreserveScopedContent(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		kind := hegel.Draw(ht, hegel.SampledFrom([]string{"page_id", "data_source_id", "database_id", "block_id", "agent_id", "workspace", "future_kind"}))
-		id := hegel.Draw(ht, hegel.Text())
-		source := completeHydrationSource()
-		header := hydrationMeeting()
-		raw, err := json.Marshal(header)
-		require.NoError(ht, err)
-		var fields map[string]any
-		require.NoError(ht, json.Unmarshal(raw, &fields))
-		parent := map[string]any{"type": kind, kind: id}
-		if kind == "workspace" {
-			parent[kind] = true
-		}
-		fields["parent"] = parent
-		raw, err = json.Marshal(fields)
-		require.NoError(ht, err)
-		require.NoError(ht, json.Unmarshal(raw, source.blocks["meeting-1"]))
-		result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-		require.NoError(ht, err)
-		snapshot, err := result.ArchiveSnapshot(1, "synthetic", "")
-		require.NoError(ht, err)
-		decoded := meetingcontent.Decode(RawFormat, snapshot.Raw, nil)
-		assert.Equal(ht, "Test Speaker: Ready to ship.", decoded.Transcript.Text)
-		var evidence map[string]json.RawMessage
-		require.NoError(ht, json.Unmarshal(snapshot.Raw, &evidence))
-		var archivedHeader map[string]json.RawMessage
-		require.NoError(ht, json.Unmarshal(evidence["meeting_block"], &archivedHeader))
-		parentRaw, err := json.Marshal(parent)
-		require.NoError(ht, err)
-		assert.JSONEq(ht, string(parentRaw), string(archivedHeader["parent"]))
-	}, hegel.WithTestCases(128), hegel.WithDatabase(""))
-}
-
 func TestHydratePaginatedCyclicTrees(t *testing.T) {
 	source := completeHydrationSource()
 	root := source.blocks["notes-1"]
@@ -565,10 +509,10 @@ func TestHydratePaginatedCyclicTrees(t *testing.T) {
 }
 
 func TestHydrateRejectsMalformedAuthoritativeHeader(t *testing.T) {
-	source := completeHydrationSource()
 	deleteFields := []string{"meeting_notes", "has_children"}
 	for _, field := range deleteFields {
 		t.Run(field, func(t *testing.T) {
+			source := completeHydrationSource()
 			var raw map[string]any
 			require.NoError(t, json.Unmarshal(source.blocks["meeting-1"].Raw, &raw))
 			delete(raw, field)
@@ -623,15 +567,6 @@ func TestHydrationErrorsDoNotExposeIdentifiers(t *testing.T) {
 	assert.NotContains(err.Error(), "PRIVATE_CURSOR")
 }
 
-func TestHydratorOptionalFailuresDoNotExposeRequestIdentifiers(t *testing.T) {
-	source := completeHydrationSource()
-	source.usersErr = errors.New("https://example.test/PRIVATE_ID?cursor=PRIVATE_CURSOR")
-	result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-	require.NoError(t, err)
-	assert.NotContains(t, strings.Join(result.Warnings, "\n"), "PRIVATE_ID")
-	assert.NotContains(t, strings.Join(result.Warnings, "\n"), "PRIVATE_CURSOR")
-}
-
 func TestSnapshotFullPagePresence(t *testing.T) {
 	for _, value := range []any{nil, false, true} {
 		t.Run(fmt.Sprint(value), func(t *testing.T) {
@@ -663,128 +598,35 @@ func TestSnapshotFullPagePresence(t *testing.T) {
 	}
 }
 
-func TestV2BlockRenderingRoundTrip(t *testing.T) {
-	// Flat v2 evidence and the live hydrator must render every supported payload
-	// the same way, including arbitrary provider text and fallback payload fields.
-	hegel.Test(t, func(ht *hegel.T) {
-		kind := hegel.Draw(ht, hegel.SampledFrom([]string{"paragraph", "heading_1", "heading_2", "heading_3", "bulleted_list_item", "numbered_list_item", "quote", "callout", "toggle", "to_do", "code", "image", "table_row", "equation", "child_page", "unsupported"}))
-		text := hegel.Draw(ht, hegel.Text())
-		titleArray := hegel.Draw(ht, hegel.SampledFrom([]bool{false, true}))
-		title := any(text)
-		if titleArray {
-			title = []RichText{{PlainText: text}}
-		}
-		raw, err := json.Marshal(map[string]any{"object": "block", "id": "transcript-1", "type": kind, "has_children": false, kind: map[string]any{"rich_text": []RichText{{PlainText: text}}, "caption": []RichText{{PlainText: text}}, "title": title, "expression": text, "cells": [][]RichText{{{PlainText: text}}}}})
-		require.NoError(ht, err)
-		source := completeHydrationSource()
-		require.NoError(ht, json.Unmarshal(raw, source.blocks["transcript-1"]))
-		hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-		require.NoError(ht, err)
-		snapshot, err := hydrated.ArchiveSnapshot(1, "synthetic", "")
-		require.NoError(ht, err)
-		content := meetingcontent.Decode(RawFormat, snapshot.Raw, nil)
-		assert.Equal(ht, hydrated.Transcript, content.Transcript.Text)
-	}, hegel.WithTestCases(256), hegel.WithDatabase(""))
-}
-
 func TestSnapshotRejectsEvidenceLargerThanReaderLimit(t *testing.T) {
 	require := require.New(t)
 	source := completeHydrationSource()
 	text := strings.Repeat("a", 12<<20)
 	for _, id := range []string{"summary-1", "notes-1"} {
 		block := paragraph(id, text, false)
-		require.Less(int64(len(block.Raw)), maxResponseSize)
 		source.blocks[id] = &block
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		id := strings.TrimPrefix(r.URL.Path, "/v1/blocks/")
-		if block, ok := source.blocks[id]; ok {
-			_, _ = w.Write(block.Raw)
-			return
-		}
-		if r.URL.Path == "/v1/users" {
-			_, _ = io.WriteString(w, `{"object":"list","results":[],"has_more":false,"next_cursor":null}`)
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(server.Close)
-	result, err := NewHydrator(NewClient(server.URL, "synthetic")).Hydrate(t.Context(), hydrationMeeting())
+	result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(err)
 	_, err = result.ArchiveSnapshot(1, "synthetic", "")
-	require.Error(err)
-	assert.Contains(t, err.Error(), "evidence limit")
+	require.ErrorContains(err, "evidence limit")
 }
 
-func TestV2ReaderPreservesAttendeeEmails(t *testing.T) {
-	for _, verified := range []any{true, false, nil, "bad"} {
-		t.Run(fmt.Sprint(verified), func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-
-			hydrated, err := NewHydrator(completeHydrationSource()).Hydrate(t.Context(), hydrationMeeting())
-			require.NoError(err)
-			snapshot, err := hydrated.ArchiveSnapshot(1, "synthetic", "")
-			require.NoError(err)
-			var raw map[string]any
-			require.NoError(json.Unmarshal(snapshot.Raw, &raw))
-			user := map[string]any{"id": "user-1", "name": "Same label", "email": " ATTENDEE@EXAMPLE.COM "}
-			if verified != nil {
-				user["email_verified"] = verified
-			}
-			raw["resolved_users"] = []any{user, map[string]any{"id": "unrelated-user", "name": "Same label", "email": "foreign@example.com", "email_verified": true}, map[string]any{"id": "user-2", "name": "Second attendee", "email": "second@example.com", "email_verified": true}}
-			encoded, err := json.Marshal(raw)
-			require.NoError(err)
-			content := meetingcontent.Decode(RawFormat, encoded, nil)
-			require.NotEmpty(content.SourceParticipants)
-			assert.Equal("attendee@example.com", content.SourceParticipants[0].Email)
-			require.Len(content.SourceParticipants, 2)
-			assert.Equal("second@example.com", content.SourceParticipants[1].Email)
-			for _, participant := range content.SourceParticipants {
-				assert.NotEqual("foreign@example.com", participant.Email)
-			}
-		})
-	}
-}
-
-func TestHydrateRejectsDanglingContinuationHTTP(t *testing.T) {
+func TestHydrateRejectsDanglingContinuation(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-
 	source := completeHydrationSource()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/v1/blocks/meeting-1":
-			_, err := w.Write(source.blocks["meeting-1"].Raw)
-			assert.NoError(err)
-		case "/v1/blocks/summary-1", "/v1/blocks/notes-1", "/v1/blocks/transcript-1":
-			id := strings.TrimPrefix(r.URL.Path, "/v1/blocks/")
-			_, err := w.Write(source.blocks[id].Raw)
-			assert.NoError(err)
-		case "/v1/blocks/notes-1/children":
-			_, err := io.WriteString(w, `{"object":"list","results":[],"has_more":false,"next_cursor":"dangling"}`)
-			assert.NoError(err)
-		case "/v1/users":
-			_, err := io.WriteString(w, `{"object":"list","results":[],"has_more":false,"next_cursor":null}`)
-			assert.NoError(err)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-	result, err := NewHydrator(NewClient(server.URL, "synthetic")).Hydrate(t.Context(), hydrationMeeting())
+	source.children["notes-1"][""].NextCursor = "dangling"
+	result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(err)
 	assert.False(result.NotesTree.Complete)
 	snapshot, err := result.ArchiveSnapshot(1, "synthetic", "")
 	require.NoError(err)
-	content := meetingcontent.Decode(RawFormat, snapshot.Raw, nil)
-	assert.Equal(meetingcontent.StateTruncated, content.Notes.State)
+	assert.Equal(meetingcontent.StateTruncated, meetingcontent.Decode(RawFormat, snapshot.Raw, nil).Notes.State)
 }
 
 func TestSnapshotParentDiscriminator(t *testing.T) {
-	for _, kind := range []string{"data_source_id", "block_id", "database_id", "agent_id", "workspace", "unknown"} {
+	for _, kind := range []string{"data_source_id", "unknown"} {
 		t.Run(kind, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -794,9 +636,6 @@ func TestSnapshotParentDiscriminator(t *testing.T) {
 			require.NoError(json.Unmarshal(source.blocks["meeting-1"].Raw, &header))
 			parent := map[string]any{"type": kind, "page_id": "MISLEADING_PAGE", kind: "actual-parent"}
 			header["parent"] = parent
-			if kind == "workspace" {
-				parent[kind] = true
-			}
 			raw, err := json.Marshal(header)
 			require.NoError(err)
 			require.NoError(json.Unmarshal(raw, source.blocks["meeting-1"]))

@@ -6,6 +6,8 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
 const (
@@ -30,29 +32,6 @@ type Parent struct {
 	Type         string `json:"type"`
 	PageID       string `json:"page_id,omitempty"`
 	DataSourceID string `json:"data_source_id,omitempty"`
-	DatabaseID   string `json:"database_id,omitempty"`
-	BlockID      string `json:"block_id,omitempty"`
-	AgentID      string `json:"agent_id,omitempty"`
-	Workspace    bool   `json:"workspace,omitzero"`
-}
-
-// ID returns only the identifier named by the documented parent kind.
-// Unknown kinds remain available in the original provider JSON.
-func (p Parent) ID() string {
-	switch p.Type {
-	case "page_id":
-		return p.PageID
-	case "data_source_id":
-		return p.DataSourceID
-	case "database_id":
-		return p.DatabaseID
-	case "block_id":
-		return p.BlockID
-	case "agent_id":
-		return p.AgentID
-	default:
-		return ""
-	}
 }
 
 type MeetingChildren struct {
@@ -81,8 +60,6 @@ type MeetingNotesData struct {
 	CalendarEvent MeetingCalendarEvent `json:"calendar_event"`
 	Recording     MeetingRecording     `json:"recording"`
 }
-
-const meetingNotesType = "meeting_notes"
 
 type MeetingNote struct {
 	URL            string                    `json:"url,omitempty"`
@@ -113,7 +90,7 @@ func (m *MeetingNote) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	for _, key := range []string{
-		"object", "id", "type", meetingNotesType, "created_time",
+		"object", "id", "type", "meeting_notes", "created_time",
 		"last_edited_time", "created_by", "last_edited_by", "parent",
 		"has_children", "in_trash", "archived", "url",
 	} {
@@ -192,63 +169,7 @@ func (b *Block) UnmarshalJSON(data []byte) error {
 }
 
 func (b Block) PlainText() string {
-	var parts []RichText
-	switch b.Type {
-	case "paragraph":
-		parts = b.Paragraph.RichText
-	case "heading_1":
-		parts = b.Heading1.RichText
-	case "heading_2":
-		parts = b.Heading2.RichText
-	case "heading_3":
-		parts = b.Heading3.RichText
-	case "bulleted_list_item":
-		parts = b.BulletedListItem.RichText
-	case "numbered_list_item":
-		parts = b.NumberedListItem.RichText
-	case "quote":
-		parts = b.Quote.RichText
-	case "callout":
-		parts = b.Callout.RichText
-	case "toggle":
-		parts = b.Toggle.RichText
-	case "to_do":
-		parts = b.ToDo.RichText
-	default:
-		return b.content.plainText()
-	}
-	return richTextPlainText(parts)
-}
-
-func (c blockContent) plainText() string {
-	lines := make([]string, 0, 2+len(c.Cells))
-	appendRichText := func(parts []RichText) {
-		if text := richTextPlainText(parts); text != "" {
-			lines = append(lines, text)
-		}
-	}
-	appendRichText(c.RichText)
-	appendRichText(c.Caption)
-	if len(c.Title) > 0 {
-		var title string
-		if json.Unmarshal(c.Title, &title) == nil {
-			if title = strings.TrimSpace(title); title != "" {
-				lines = append(lines, title)
-			}
-		} else {
-			var titleParts []RichText
-			if json.Unmarshal(c.Title, &titleParts) == nil {
-				appendRichText(titleParts)
-			}
-		}
-	}
-	if expression := strings.TrimSpace(c.Expression); expression != "" {
-		lines = append(lines, expression)
-	}
-	for _, cell := range c.Cells {
-		appendRichText(cell)
-	}
-	return strings.Join(lines, "\n")
+	return meetingcontent.NotionBlockPlainText(b.Raw)
 }
 
 func richTextPlainText(parts []RichText) string {

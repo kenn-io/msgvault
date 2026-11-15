@@ -823,8 +823,7 @@ Both commands print capability and result-count diagnostics without printing
 meeting titles, notes, transcripts, attendee details, block IDs, page URLs, or
 the tokens. Probe reports query-verified credentials, Meeting Notes query access,
 and hydration of one sampled meeting separately. It reads that meeting's current
-summary, notes, and transcript block IDs. A one-meeting sample does not measure
-sync coverage, even when the query says more results exist. Probe checks the
+summary, notes, and transcript block IDs. Probe checks the
 optional users token on one attendee from the refreshed meeting and reports
 whether that attendee has a verified email. Optional user lookup failures do
 not prevent content access.
@@ -886,17 +885,15 @@ Each meeting-note block becomes one `meeting_transcript` message in a
 `meeting` conversation. Its block ID identifies the meeting on later syncs.
 The body includes title, time, attendees, summary, notes, and transcript
 sections. Hydration reads the meeting block and its current section subtrees.
-Meetings can have a page, data source, block, or another parent kind. Hydration
-does not require a parent page or fetch its Markdown. It excludes nested meeting
-blocks so a second meeting cannot supply this meeting's transcript.
+Meetings can have a page or data source parent. Hydration excludes nested meeting blocks so a second meeting cannot supply this
+meeting's transcript. When a page-parented meeting has no structured transcript,
+msgvault reads its page Markdown for a transcript if that page has only one meeting.
 
 New raw archives (`notion_meeting_json`, snapshot version 2) contain the refreshed
 meeting header, admitted section blocks, attendee labels, resolved user details,
 and section coverage. They omit parent-page content and unfiltered child-list
 responses. Metadata preserves creator and editor IDs, actual attendee IDs,
 parent kind and ID, lifecycle and recording times, and source flags when exposed.
-Calendar event IDs remain opaque provider evidence; they do not join unrelated
-calendar events.
 
 Incomplete refreshes preserve previously archived meeting-owned sections with
 their original provenance. Older version 1 snapshots remain readable. When an

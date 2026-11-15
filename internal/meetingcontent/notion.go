@@ -425,7 +425,7 @@ func decodeNotionV2Section(raw jsontext.Value, expectedRootID, meetingID, sectio
 	}
 	lines := make([]string, 0, len(blocks))
 	for _, block := range blocks {
-		if text := notionBlockText(block); text != "" {
+		if text := RenderNotionBlock(block); text != "" {
 			lines = append(lines, text)
 		}
 	}
@@ -442,14 +442,38 @@ func decodeNotionV2Section(raw jsontext.Value, expectedRootID, meetingID, sectio
 	return Section{State: StateAvailable, Text: text}
 }
 
-func notionBlockText(raw jsontext.Value) string {
+// RenderNotionBlock renders a Notion block as meeting text.
+func RenderNotionBlock(raw jsontext.Value) string {
+	text, kind := notionBlockPlainText(raw)
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	switch kind {
+	case "bulleted_list_item":
+		return "- " + text
+	case "numbered_list_item":
+		return "1. " + text
+	case "quote":
+		return "> " + text
+	}
+	return text
+}
+
+// NotionBlockPlainText extracts text without list or quote markers.
+func NotionBlockPlainText(raw jsontext.Value) string {
+	text, _ := notionBlockPlainText(raw)
+	return text
+}
+
+func notionBlockPlainText(raw jsontext.Value) (string, string) {
 	var fields map[string]jsontext.Value
 	if json.Unmarshal(raw, &fields) != nil {
-		return ""
+		return "", ""
 	}
 	var kind string
 	if json.Unmarshal(fields["type"], &kind) != nil {
-		return ""
+		return "", ""
 	}
 	var payload struct {
 		RichText []struct {
@@ -465,7 +489,7 @@ func notionBlockText(raw jsontext.Value) string {
 		} `json:"cells"`
 	}
 	if json.Unmarshal(fields[kind], &payload) != nil {
-		return ""
+		return "", ""
 	}
 	richText := func(parts []struct {
 		PlainText string `json:"plain_text"`
@@ -513,19 +537,7 @@ func notionBlockText(raw jsontext.Value) string {
 		}
 		text = strings.Join(lines, "\n")
 	}
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return ""
-	}
-	switch kind {
-	case "bulleted_list_item":
-		text = "- " + text
-	case "numbered_list_item":
-		text = "1. " + text
-	case "quote":
-		text = "> " + text
-	}
-	return text
+	return text, kind
 }
 
 type notionResolvedUser struct {
