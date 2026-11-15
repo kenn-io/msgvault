@@ -1794,7 +1794,7 @@ func TestCardDAVConnectionIdentityChangeCreatesFreshBooksAndCleansOldImportState
 	}
 }
 
-func TestCardDAVConnectionIdentityChangeRetiresImportedProjectionForAutomaticBinding(t *testing.T) {
+func TestCardDAVConnectionIdentityChangeDeletesAutomaticallyBoundPerson(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -1830,15 +1830,8 @@ func TestCardDAVConnectionIdentityChangeRetiresImportedProjectionForAutomaticBin
 	assert.Equal(account.ConnectionGeneration+1, afterAccount.ConnectionGeneration)
 	assert.NotEqual(book.ID, books[0].ID)
 
-	oldPerson, err = st.GetPersonContext(t.Context(), oldPersonID)
-	require.NoError(err)
-	assert.Empty(oldPerson.ParticipantIDs, "replacing the connection releases its automatic membership")
-	oldNames, err := st.ListPersonNamesContext(t.Context(), oldPersonID, true)
-	require.NoError(err)
-	assert.Empty(oldNames, "the old account's imported names must be retired")
-	oldPoints, err := st.ListPersonContactPointsContext(t.Context(), oldPersonID, true)
-	require.NoError(err)
-	assert.Empty(oldPoints, "the old account's imported addresses must be retired")
+	_, err = st.GetPersonContext(t.Context(), oldPersonID)
+	assert.ErrorIs(err, store.ErrPersonNotFound)
 
 	rematch := remoteResource(books[0].CanonicalURL+"rematch.vcf", "replacement-card", "Replacement Example", "retired@example.test", `"two"`)
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{

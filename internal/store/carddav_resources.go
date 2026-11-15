@@ -1876,7 +1876,7 @@ func (s *Store) removeCardDAVResourceWithModeTx(
 		}
 		retireImportedProjection = mode == cardDAVRemovalRetireProjection && personHasUserOwnedState
 		if mode == cardDAVRemovalRetireProjection && !retireImportedProjection {
-			// A retained person must not keep matching cards from a replacement account.
+			// A person with remaining links may be retained, so retire the old projection.
 			var retained bool
 			if err := tx.QueryRowContext(ctx, `SELECT
 				EXISTS (SELECT 1 FROM person_participants WHERE person_id = ?)

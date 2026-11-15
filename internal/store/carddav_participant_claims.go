@@ -70,11 +70,6 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 		valid := true
 		for _, occurrence := range envelope.PropertyTree {
 			property := occurrence.Property
-			property.RawValue, err = vcard.DecodeLegacyRawValue(property)
-			if err != nil {
-				valid = false
-				break
-			}
 			var kind ContactAddressKind
 			switch strings.ToUpper(property.Name) {
 			case "EMAIL":
@@ -83,6 +78,11 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 				kind = ContactAddressPhone
 			default:
 				continue
+			}
+			property.RawValue, err = vcard.DecodeLegacyRawValue(property)
+			if err != nil {
+				valid = false
+				break
 			}
 			value, uri, err := vcard.ContactPointValue(envelope.RenderMetadata.StoredVersion, property)
 			if err != nil {

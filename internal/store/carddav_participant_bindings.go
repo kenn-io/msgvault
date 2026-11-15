@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 )
 
@@ -140,7 +141,7 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 		}
 	}
 	visited := cardDAVPersonSet{}
-	for _, seed := range cardDAVSortedIDs(seeds) {
+	for _, seed := range slices.Sorted(maps.Keys(seeds)) {
 		if _, ok := visited[seed]; ok {
 			continue
 		}
@@ -195,7 +196,7 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 			for id := range owners {
 				people[id] = struct{}{}
 			}
-			plan.result.ConflictDetails = append(plan.result.ConflictDetails, CardDAVParticipantBindingConflict{members[0], cardDAVSortedIDs(people), reason})
+			plan.result.ConflictDetails = append(plan.result.ConflictDetails, CardDAVParticipantBindingConflict{members[0], slices.Sorted(maps.Keys(people)), reason})
 		}
 		for _, id := range members {
 			binding, exists := bindings[id]
@@ -210,15 +211,6 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 	plan.result.ParticipantsBound, plan.result.ParticipantsUnbound = len(plan.add), len(plan.remove)
 	plan.result.Conflicts = len(plan.result.ConflictDetails)
 	return plan, nil
-}
-
-func cardDAVSortedIDs(ids cardDAVPersonSet) []int64 {
-	result := make([]int64, 0, len(ids))
-	for id := range ids {
-		result = append(result, id)
-	}
-	slices.Sort(result)
-	return result
 }
 
 func (s *Store) applyCardDAVParticipantBindingsTx(ctx context.Context, tx *loggedTx, plan *cardDAVParticipantBindingPlan) error {
@@ -238,7 +230,7 @@ func (s *Store) applyCardDAVParticipantBindingsTx(ctx context.Context, tx *logge
 	if len(changed) == 0 {
 		return nil
 	}
-	for _, personID := range cardDAVSortedIDs(changed) {
+	for _, personID := range slices.Sorted(maps.Keys(changed)) {
 		if err := s.advanceCardDAVAutomaticBindingBaselineTx(ctx, tx, personID); err != nil {
 			return err
 		}
@@ -256,7 +248,7 @@ func (s *Store) applyCardDAVParticipantBindingsTx(ctx context.Context, tx *logge
 	if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
 		return err
 	}
-	return s.coalescePersonSweepPeopleTx(ctx, tx, cardDAVSortedIDs(changed))
+	return s.coalescePersonSweepPeopleTx(ctx, tx, slices.Sorted(maps.Keys(changed)))
 }
 
 // Confirmation is a provenance-only change: membership and its revisions stay
