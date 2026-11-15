@@ -464,6 +464,8 @@ func (s *Store) applyIMAPMailboxDeltas(
 			} else if _, err := tx.ExecContext(ctx, `
 				UPDATE messages SET deleted_from_source_at = NULL
 				WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NOT NULL
+				AND EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+					WHERE ml.message_id = messages.id AND COALESCE(l.system_role, '') <> 'trash')
 			`, messageID, sourceID); err != nil {
 				return fmt.Errorf("clear IMAP tombstone for message %d: %w", messageID, err)
 			}

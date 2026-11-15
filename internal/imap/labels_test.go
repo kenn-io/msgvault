@@ -103,6 +103,7 @@ func TestClassifyLabelType(t *testing.T) {
 func TestSystemRoleForMailboxTrustsSpecialUseNotName(t *testing.T) {
 	assert := assert.New(t)
 	assert.Equal("sent", systemRoleForMailbox([]imap.MailboxAttr{imap.MailboxAttrSent}))
+	assert.Equal("trash", systemRoleForMailbox([]imap.MailboxAttr{imap.MailboxAttrTrash}))
 	assert.Empty(systemRoleForMailbox(nil), "a folder name is not part of role classification")
 	assert.Equal("drafts", systemRoleForMailbox([]imap.MailboxAttr{imap.MailboxAttrDrafts}))
 	assert.Equal("drafts", systemRoleForMailbox([]imap.MailboxAttr{imap.MailboxAttrSent, imap.MailboxAttrDrafts}), "drafts win when sent comes first")
