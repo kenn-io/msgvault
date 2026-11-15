@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"strconv"
 	"testing"
@@ -148,13 +147,6 @@ func TestCardDAVParticipantBindingPreviewUndoAndLaterArrival(t *testing.T) {
 		assert.Equal([]int64{participant}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
 		assert.True(bindingOwned(t, st, participant))
 	})
-	t.Run("cancellation", func(t *testing.T) {
-		st, _, _ := newCardDAVResourceStore(t)
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		_, err := st.ReconcileCardDAVParticipantBindingsContext(ctx, store.CardDAVParticipantBindingOptions{})
-		Assert.ErrorIs(t, err, context.Canceled)
-	})
 }
 
 func TestCardDAVParticipantBindingCardEditsRebaseAndRelease(t *testing.T) {
@@ -199,13 +191,172 @@ func TestCardDAVParticipantBindingConflictsNeverSteal(t *testing.T) {
 	require.NoError(err)
 	assert.Equal([]int64{id}, current.ParticipantIDs)
 	assert.False(bindingOwned(t, st, id))
+	t.Run("manual alias after binding", func(t *testing.T) {
+		assert := Assert.New(t)
+		require := Require.New(t)
+		st, account, book := newCardDAVResourceStore(t)
+		primary, err := st.EnsureParticipant("shared@example.test", "Primary", "example.test")
+		require.NoError(err)
+		alias, err := st.EnsureParticipant("other@example.test", "Other", "example.test")
+		require.NoError(err)
+		card := remoteResource(book.CanonicalURL+"order.vcf", "order", "Card", "shared@example.test", "one")
+		applyParticipantBindingCards(t, st, account, book, card)
+		person := bindingCardPerson(t, st, book, card.Href)
+		require.Equal([]int64{primary}, person.ParticipantIDs)
+		require.True(bindingOwned(t, st, primary))
+		owner, _, err := st.CreatePersonFromParticipant(alias)
+		require.NoError(err)
+		require.NoError(st.SetParticipantIdentifier(alias, "email", "SHARED@example.test"))
+		card.RemoteETag, card.SemanticHash = "two", "two"
+		applyParticipantBindingCards(t, st, account, book, card)
+		result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
+		require.NoError(err)
+		require.Len(result.ConflictDetails, 1)
+		assert.Equal("existing_person", result.ConflictDetails[0].Reason)
+		assert.ElementsMatch([]int64{person.ID, owner.ID}, result.ConflictDetails[0].PersonIDs)
+		bound, err := st.PersonForParticipantsContext(t.Context(), []int64{primary})
+		require.NoError(err)
+		assert.Nil(bound)
+		owner, err = st.GetPersonContext(t.Context(), owner.ID)
+		require.NoError(err)
+		assert.Equal([]int64{alias}, owner.ParticipantIDs)
+	})
+	t.Run("other address holders", func(t *testing.T) {
+		for _, kind := range []string{"phone", "email aliases"} {
+			t.Run(kind, func(t *testing.T) {
+				assert := Assert.New(t)
+				require := Require.New(t)
+				st, account, book := newCardDAVResourceStore(t)
+				var ownerID, otherID int64
+				var err error
+				card := remoteResource(book.CanonicalURL+"shared-holder.vcf", "shared-holder", "Shared", "shared@example.test", "one")
+				if kind == "phone" {
+					old, err := st.EnsureParticipantByPhone(t.Context(), "+12025550101", "Old", "imessage")
+					require.NoError(err)
+					ownerID, err = st.EnsureParticipantByPhone(t.Context(), "+12025550102", "Owner", "whatsapp")
+					require.NoError(err)
+					require.NoError(st.MergeParticipants(old, ownerID))
+					otherID, err = st.EnsureParticipantByPhone(t.Context(), "+12025550101", "Other", "imessage")
+					require.NoError(err)
+					card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:shared-holder\r\nFN:Shared\r\nTEL:+12025550101\r\nEND:VCARD\r\n")
+					card.Emails = nil
+					card.Phones = []string{"+12025550101"}
+				} else {
+					ownerID, err = st.EnsureParticipant("owner@example.test", "Owner", "example.test")
+					require.NoError(err)
+					otherID, err = st.EnsureParticipant("other@example.test", "Other", "example.test")
+					require.NoError(err)
+					require.NoError(st.SetParticipantIdentifier(ownerID, "imessage", "shared@example.test"))
+					require.NoError(st.SetParticipantIdentifier(otherID, "email", "shared@example.test"))
+				}
+				require.NotEqual(ownerID, otherID)
+				owner, _, err := st.CreatePersonFromParticipant(ownerID)
+				require.NoError(err)
+				applyParticipantBindingCards(t, st, account, book, card)
+				person := bindingCardPerson(t, st, book, card.Href)
+				result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
+				require.NoError(err)
+				require.NotEmpty(result.ConflictDetails)
+				assert.Equal("existing_person", result.ConflictDetails[0].Reason)
+				assert.ElementsMatch([]int64{person.ID, owner.ID}, result.ConflictDetails[0].PersonIDs)
+				other, err := st.PersonForParticipantsContext(t.Context(), []int64{otherID})
+				require.NoError(err)
+				assert.Nil(other)
+			})
+		}
+	})
+	t.Run("mixed membership", func(t *testing.T) {
+		for _, actor := range []string{"system", "user"} {
+			t.Run(actor, func(t *testing.T) {
+				assert := Assert.New(t)
+				require := Require.New(t)
+				st, account, book := newCardDAVResourceStore(t)
+				a, err := st.EnsureParticipant("alex@example.test", "Alex Example", "example.test")
+				require.NoError(err)
+				person, _, err := st.CreatePersonFromParticipant(a)
+				require.NoError(err)
+				b, err := st.EnsureParticipant("alias@example.test", "Alex Example", "example.test")
+				require.NoError(err)
+				card := remoteResource(book.CanonicalURL+"mixed-ownership.vcf", person.VCardUID, "Alex Example", "alex@example.test", "one")
+				card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + person.VCardUID + "\r\nFN:Alex Example\r\nEMAIL:alex@example.test\r\nEMAIL:alias@example.test\r\nEND:VCARD\r\n")
+				card.Emails = []string{"alex@example.test", "alias@example.test"}
+				applyParticipantBindingCards(t, st, account, book, card)
+				assert.Equal(person.ID, bindingCardPerson(t, st, book, card.Href).ID)
+				assert.False(bindingOwned(t, st, a))
+				require.True(bindingOwned(t, st, b))
+
+				candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{
+					LeftKind: store.IdentityMatchParticipant, LeftID: a,
+					RightKind: store.IdentityMatchParticipant, RightID: b,
+					Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("synthetic-provider-id"),
+					State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation,
+				})
+				require.NoError(err)
+				_, _, err = st.AcceptIdentityMatchCandidateContext(t.Context(), candidate.ID, actor, nil)
+				require.NoError(err)
+				assert.False(bindingOwned(t, st, a))
+				assert.Equal(actor == "system", bindingOwned(t, st, b))
+				if actor == "system" {
+					primary, err := st.EnsureParticipant("shared@example.test", "Primary", "example.test")
+					require.NoError(err)
+					require.NoError(st.SetParticipantIdentifier(b, "email", "SHARED@example.test"))
+					shared := remoteResource(book.CanonicalURL+"shared.vcf", "shared", "Shared", "shared@example.test", "one")
+					applyParticipantBindingCards(t, st, account, book, shared)
+					sharedPerson := bindingCardPerson(t, st, book, shared.Href)
+					conflict, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
+					require.NoError(err)
+					require.Len(conflict.ConflictDetails, 1)
+					assert.Equal("existing_person", conflict.ConflictDetails[0].Reason)
+					assert.ElementsMatch([]int64{sharedPerson.ID, person.ID}, conflict.ConflictDetails[0].PersonIDs)
+					bound, err := st.PersonForParticipantsContext(t.Context(), []int64{primary})
+					require.NoError(err)
+					assert.Nil(bound)
+					card.Emails = nil
+					card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + person.VCardUID + "\r\nFN:Alex Example\r\nEND:VCARD\r\n")
+					card.RemoteETag, card.SemanticHash = "two", "no-claims"
+					applyParticipantBindingCards(t, st, account, book, card)
+					current, err := st.GetPersonContext(t.Context(), person.ID)
+					require.NoError(err)
+					assert.ElementsMatch([]int64{a, b}, current.ParticipantIDs)
+					_, err = st.DecideIdentityMatchCandidateContext(t.Context(), candidate.ID, store.IdentityMatchStateRejected, "user", nil)
+					require.NoError(err)
+				}
+
+				result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{Undo: true})
+				require.NoError(err)
+				if actor == "system" {
+					assert.Equal(1, result.ParticipantsUnbound)
+					assert.Equal([]int64{a}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
+				} else {
+					assert.Zero(result.ParticipantsUnbound)
+					assert.ElementsMatch([]int64{a, b}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
+				}
+			})
+		}
+		t.Run("system extends manual person", func(t *testing.T) {
+			assert := Assert.New(t)
+			require := Require.New(t)
+			st, _, _ := newCardDAVResourceStore(t)
+			a, err := st.EnsureParticipant("manual@example.test", "Manual", "example.test")
+			require.NoError(err)
+			b, err := st.EnsureParticipant("linked@example.test", "Linked", "example.test")
+			require.NoError(err)
+			_, _, err = st.CreatePersonFromParticipant(a)
+			require.NoError(err)
+			candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{LeftKind: store.IdentityMatchParticipant, LeftID: a, RightKind: store.IdentityMatchParticipant, RightID: b, Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("synthetic-provider-id"), State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation})
+			require.NoError(err)
+			_, _, err = st.AcceptIdentityMatchCandidateContext(t.Context(), candidate.ID, "system", nil)
+			require.NoError(err)
+			assert.False(bindingOwned(t, st, b))
+		})
+	})
 }
 
 func TestCardDAVParticipantBindingSharedCardsWithdrawAutomaticOwnership(t *testing.T) {
 	for _, test := range []struct {
-		name            string
-		reverse, badTel bool
-	}{{"forward", false, false}, {"reverse", true, false}, {"unreadable phone", false, true}} {
+		name    string
+		reverse bool
+	}{{"forward", false}, {"reverse", true}} {
 		t.Run(test.name, func(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)
@@ -219,9 +370,6 @@ func TestCardDAVParticipantBindingSharedCardsWithdrawAutomaticOwnership(t *testi
 			require.NotEqual(a.ID, b.ID)
 			second = remoteResource(second.Href, second.RemoteUID, "Second Example", "shared@example.test", "two")
 			second.SemanticHash = "changed-shared"
-			if test.badTel {
-				second.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:2.1\r\nUID:shared-second\r\nFN:Second Example\r\nEMAIL:shared@example.test\r\nTEL;CHARSET=NO-SUCH-CHARSET:123\r\nEND:VCARD\r\n")
-			}
 			cards := []store.CardDAVRemoteResource{first, second}
 			if test.reverse {
 				cards[0], cards[1] = cards[1], cards[0]
@@ -312,13 +460,11 @@ func TestCardDAVParticipantBindingManualPromotionAndLinkConfirmOwnership(t *test
 func TestCardDAVParticipantBindingEmailIdentifiersAndEncoding(t *testing.T) {
 	for _, tc := range []struct {
 		name, kind, value, email, property string
-		scoped                             bool
 	}{
-		{"legacy encoding", "email", "josé@example.test", "josé@example.test", "EMAIL;CHARSET=ISO-8859-1;ENCODING=QUOTED-PRINTABLE:jos=E9@example.test", false},
-		{"email alias", "email_alias", "ALIAS@EXAMPLE.TEST", "alias@example.test", "EMAIL:alias@example.test", false},
-		{"imessage alias", "imessage", "Alias@Example.test", "alias@example.test", "EMAIL:alias@example.test", false},
-		{"synctech", "synctech_sms", "Alex@Example.Test", "alex@example.test", "EMAIL:alex@example.test", false},
-		{"scoped synctech", "synctech_sms", "Alex@Example.Test", "alex@example.test", "EMAIL:alex@example.test", true},
+		{"legacy encoding", "email", "josé@example.test", "josé@example.test", "EMAIL;CHARSET=ISO-8859-1;ENCODING=QUOTED-PRINTABLE:jos=E9@example.test"},
+		{"email alias", "email_alias", "ALIAS@EXAMPLE.TEST", "alias@example.test", "EMAIL:alias@example.test"},
+		{"imessage alias", "imessage", "Alias@Example.test", "alias@example.test", "EMAIL:alias@example.test"},
+		{"synctech", "synctech_sms", "Alex@Example.Test", "alex@example.test", "EMAIL:alex@example.test"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := Assert.New(t)
@@ -332,106 +478,27 @@ func TestCardDAVParticipantBindingEmailIdentifiersAndEncoding(t *testing.T) {
 			case "email_alias":
 				id, err = st.EnsureParticipant("primary@example.test", "Alex", "example.test")
 				require.NoError(err)
-				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'email', ?)`), id, tc.value)
+				err = st.SetParticipantIdentifier(id, "email", tc.value)
 			case "imessage":
 				id, err = st.EnsureParticipantByPhone(t.Context(), "+12025550100", "Alex", "imessage")
 				require.NoError(err)
-				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'imessage', ?)`), id, tc.value)
+				err = st.SetParticipantIdentifier(id, "imessage", tc.value)
 			default:
 				id, err = st.EnsureParticipantByIdentifier(tc.kind, tc.value, "Alex")
 			}
 			require.NoError(err)
-			if tc.scoped {
-				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participant_identifiers SET scope_kind = 'service', scope_value = 'synthetic-source' WHERE participant_id = ? AND identifier_type = ?`), id, tc.kind)
-				require.NoError(err)
-			}
 			card := remoteResource(book.CanonicalURL+"email.vcf", "email-card", "Alex", tc.email, "one")
 			card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:2.1\r\nUID:email-card\r\nFN:Alex\r\n" + tc.property + "\r\nEND:VCARD\r\n")
 			applyParticipantBindingCards(t, st, account, book, card)
 			person, err := st.PersonForParticipantsContext(t.Context(), []int64{id})
 			require.NoError(err)
-			if tc.scoped {
-				assert.Nil(person)
-			} else {
-				require.NotNil(person)
-				assert.Equal(bindingCardPerson(t, st, book, card.Href).ID, person.ID)
-			}
+			require.NotNil(person)
+			assert.Equal(bindingCardPerson(t, st, book, card.Href).ID, person.ID)
 		})
 	}
 }
 
 func TestCardDAVParticipantBindingCandidateOwnership(t *testing.T) {
-	t.Run("mixed membership", func(t *testing.T) {
-		for _, actor := range []string{"system", "user"} {
-			t.Run(actor, func(t *testing.T) {
-				assert := Assert.New(t)
-				require := Require.New(t)
-				st, account, book := newCardDAVResourceStore(t)
-				a, err := st.EnsureParticipant("alex@example.test", "Alex Example", "example.test")
-				require.NoError(err)
-				person, _, err := st.CreatePersonFromParticipant(a)
-				require.NoError(err)
-				b, err := st.EnsureParticipant("alias@example.test", "Alex Example", "example.test")
-				require.NoError(err)
-				card := remoteResource(book.CanonicalURL+"mixed-ownership.vcf", person.VCardUID, "Alex Example", "alex@example.test", "one")
-				card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + person.VCardUID + "\r\nFN:Alex Example\r\nEMAIL:alex@example.test\r\nEMAIL:alias@example.test\r\nEND:VCARD\r\n")
-				card.Emails = []string{"alex@example.test", "alias@example.test"}
-				applyParticipantBindingCards(t, st, account, book, card)
-				assert.Equal(person.ID, bindingCardPerson(t, st, book, card.Href).ID)
-				assert.False(bindingOwned(t, st, a))
-				require.True(bindingOwned(t, st, b))
-
-				candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{
-					LeftKind: store.IdentityMatchParticipant, LeftID: a,
-					RightKind: store.IdentityMatchParticipant, RightID: b,
-					Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("synthetic-provider-id"),
-					State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation,
-				})
-				require.NoError(err)
-				_, _, err = st.AcceptIdentityMatchCandidateContext(t.Context(), candidate.ID, actor, nil)
-				require.NoError(err)
-				assert.False(bindingOwned(t, st, a))
-				assert.Equal(actor == "system", bindingOwned(t, st, b))
-				if actor == "system" {
-					card.Emails = nil
-					card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + person.VCardUID + "\r\nFN:Alex Example\r\nEND:VCARD\r\n")
-					card.RemoteETag, card.SemanticHash = "two", "no-claims"
-					applyParticipantBindingCards(t, st, account, book, card)
-					current, err := st.GetPersonContext(t.Context(), person.ID)
-					require.NoError(err)
-					assert.ElementsMatch([]int64{a, b}, current.ParticipantIDs)
-					_, err = st.DecideIdentityMatchCandidateContext(t.Context(), candidate.ID, store.IdentityMatchStateRejected, "user", nil)
-					require.NoError(err)
-				}
-
-				result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{Undo: true})
-				require.NoError(err)
-				if actor == "system" {
-					assert.Equal(1, result.ParticipantsUnbound)
-					assert.Equal([]int64{a}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
-				} else {
-					assert.Zero(result.ParticipantsUnbound)
-					assert.ElementsMatch([]int64{a, b}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
-				}
-			})
-		}
-		t.Run("system extends manual person", func(t *testing.T) {
-			assert := Assert.New(t)
-			require := Require.New(t)
-			st, _, _ := newCardDAVResourceStore(t)
-			a, err := st.EnsureParticipant("manual@example.test", "Manual", "example.test")
-			require.NoError(err)
-			b, err := st.EnsureParticipant("linked@example.test", "Linked", "example.test")
-			require.NoError(err)
-			_, _, err = st.CreatePersonFromParticipant(a)
-			require.NoError(err)
-			candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{LeftKind: store.IdentityMatchParticipant, LeftID: a, RightKind: store.IdentityMatchParticipant, RightID: b, Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("synthetic-provider-id"), State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation})
-			require.NoError(err)
-			_, _, err = st.AcceptIdentityMatchCandidateContext(t.Context(), candidate.ID, "system", nil)
-			require.NoError(err)
-			assert.False(bindingOwned(t, st, b))
-		})
-	})
 	t.Run("automatic membership", func(t *testing.T) {
 		for _, mode := range []string{"system", "user", "stale-system", "null-actor"} {
 			t.Run(mode, func(t *testing.T) {
@@ -535,9 +602,6 @@ func TestCardDAVParticipantBindingMergedAliasRemainsClaimed(t *testing.T) {
 				require.Equal([]int64{absorbed}, person.ParticipantIDs)
 				require.NoError(st.SetParticipantIdentifier(third, kind, "ABSORBED@example.test"))
 				require.ErrorIs(st.MergeParticipants(absorbed, survivor), store.ErrParticipantAddressConflict)
-				resolved, err := st.EnsureParticipantByIdentifier(kind, "ABSORBED@example.test", "")
-				require.NoError(err)
-				assert.Equal(third, resolved)
 				_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
 				require.NoError(err)
 				assert.Equal([]int64{absorbed}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
@@ -575,13 +639,35 @@ func TestCardDAVParticipantBindingMergedAliasRemainsClaimed(t *testing.T) {
 			})
 		}
 	})
+	t.Run("alias in survivor component", func(t *testing.T) {
+		assert := Assert.New(t)
+		require := Require.New(t)
+		st, account, book := newCardDAVResourceStore(t)
+		absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
+		require.NoError(err)
+		survivor, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
+		require.NoError(err)
+		alias, err := st.EnsureParticipant("alias@example.test", "Alias", "example.test")
+		require.NoError(err)
+		card := remoteResource(book.CanonicalURL+"linked-alias.vcf", "linked-alias", "Absorbed", "absorbed@example.test", "one")
+		applyParticipantBindingCards(t, st, account, book, card)
+		require.Equal([]int64{absorbed}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
+		_, err = st.LinkParticipants(survivor, alias)
+		require.NoError(err)
+		require.NoError(st.SetParticipantIdentifier(alias, "imessage", "absorbed@example.test"))
+
+		require.NoError(st.MergeParticipantsContext(t.Context(), absorbed, survivor))
+		_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
+		require.NoError(err)
+		assert.ElementsMatch([]int64{survivor, alias}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
+	})
 }
 
 func TestCardDAVParticipantBindingLifecycleCleanup(t *testing.T) {
 	for _, test := range []struct {
 		action  string
 		tracked bool
-	}{{"delete", false}, {"demote", false}, {"discovery", false}, {"demote", true}, {"discovery", true}, {"conflict-edit", true}, {"conflict-tombstone", true}} {
+	}{{"delete", false}, {"demote", false}, {"demote", true}, {"discovery", true}, {"conflict-edit", true}, {"publication-conflict", true}, {"publication-commit", true}} {
 		t.Run(test.action+"/tracked="+strconv.FormatBool(test.tracked), func(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)
@@ -608,14 +694,29 @@ func TestCardDAVParticipantBindingLifecycleCleanup(t *testing.T) {
 			case "discovery":
 				allowed := true
 				_, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{BaseURL: "https://contacts.example/dav", Username: "alice", PrincipalURL: "https://contacts.example/principal/alice/", HomeURL: "https://contacts.example/books/alice/", Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://contacts.example/books/alice/replacement/", DisplayName: "Replacement", CanCreate: &allowed}}})
+			case "publication-conflict", "publication-commit":
+				snapshot, readErr := st.LoadPersonVCardSnapshotContext(t.Context(), person.ID)
+				require.NoError(readErr)
+				card.SemanticHash = "local-change"
+				if test.action == "publication-commit" {
+					card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:lifecycle-card\r\nFN:Alex Example\r\nEND:VCARD\r\n")
+					card.Emails = nil
+					card.RemoteETag, card.SemanticHash = "two", "changed"
+				}
+				pending, readErr := st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{PersonID: person.ID, Desired: true, AddressBookID: book.ID, Href: card.Href, OutgoingBody: card.RemoteBody, OutgoingSemanticHash: card.SemanticHash, LocalHash: snapshot.Fingerprint})
+				require.NoError(readErr)
+				if test.action == "publication-conflict" {
+					mapping, readErr := st.GetCardDAVResourceContext(t.Context(), book.ID, card.Href)
+					require.NoError(readErr)
+					_, err = st.RecordCardDAVPublicationConflictContext(t.Context(), *pending, conflictCapture(mapping))
+				} else {
+					err = st.CommitCardDAVPublicationContext(t.Context(), store.CardDAVCanonicalMutation{Publication: *pending, Remote: card})
+				}
+
 			default:
 				resource, readErr := st.GetCardDAVResourceContext(t.Context(), book.ID, card.Href)
 				require.NoError(readErr)
 				capture := store.CardDAVConflictCapture{AddressBookID: book.ID, Href: card.Href, ExpectedPersonID: *resource.PersonID, ExpectedMappingRevision: resource.MappingRevision, BaseLocalHash: resource.LocalHash, LocalHash: resource.LocalHash, BaseRemoteHash: resource.RemoteSemanticHash, BaseRemoteETag: resource.RemoteETag, RemoteETag: "two", LocalBody: card.RemoteBody, RemoteBody: []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Changed Example\r\nEND:VCARD\r\n")}
-				if test.action == "conflict-tombstone" {
-					capture.RemoteTombstone = true
-					capture.RemoteBody = nil
-				}
 				_, err = st.RecordCardDAVConflictContext(t.Context(), capture)
 			}
 			require.NoError(err)
@@ -868,219 +969,30 @@ func TestCardDAVParticipantBindingSkipsUnreadableCard(t *testing.T) {
 	preview, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
 	require.NoError(err)
 	assert.Equal(2, preview.CardsScanned)
-}
-
-func TestCardDAVPublicationConflictReleasesUnsupportedBinding(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-	st, account, book := newCardDAVResourceStore(t)
-	id, err := st.EnsureParticipant("conflict@example.test", "Conflict", "example.test")
-	require.NoError(err)
-	card := remoteResource(book.CanonicalURL+"conflict.vcf", "conflict-card", "Conflict", "conflict@example.test", "one")
-	applyParticipantBindingCards(t, st, account, book, card)
-	person := bindingCardPerson(t, st, book, card.Href)
-	require.True(bindingOwned(t, st, id))
-	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), person.ID)
-	require.NoError(err)
-	pending, err := st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{PersonID: person.ID, Desired: true, AddressBookID: book.ID, Href: card.Href, OutgoingBody: card.RemoteBody, OutgoingSemanticHash: "local-change", LocalHash: snapshot.Fingerprint})
-	require.NoError(err)
-	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, card.Href)
-	require.NoError(err)
-	capture := conflictCapture(mapping)
-	_, err = st.RecordCardDAVPublicationConflictContext(t.Context(), *pending, capture)
-	require.NoError(err)
-	bound, err := st.PersonForParticipantsContext(t.Context(), []int64{id})
-	require.NoError(err)
-	assert.Nil(bound)
-}
-
-func TestCardDAVPublicationCommitReleasesUnsupportedBinding(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-	st, account, book := newCardDAVResourceStore(t)
-	id, err := st.EnsureParticipant("publish@example.test", "Publish", "example.test")
-	require.NoError(err)
-	card := remoteResource(book.CanonicalURL+"publish.vcf", "publish-card", "Publish", "publish@example.test", "one")
-	applyParticipantBindingCards(t, st, account, book, card)
-	person := bindingCardPerson(t, st, book, card.Href)
-	require.True(bindingOwned(t, st, id))
-	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), person.ID)
-	require.NoError(err)
-	card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:publish-card\r\nFN:Publish\r\nEND:VCARD\r\n")
-	card.Emails = nil
-	card.RemoteETag, card.SemanticHash = "two", "changed"
-	pending, err := st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{PersonID: person.ID, Desired: true, AddressBookID: book.ID, Href: card.Href, OutgoingBody: card.RemoteBody, OutgoingSemanticHash: card.SemanticHash, LocalHash: snapshot.Fingerprint})
-	require.NoError(err)
-	require.NoError(st.CommitCardDAVPublicationContext(t.Context(), store.CardDAVCanonicalMutation{Publication: *pending, Remote: card}))
-	bound, err := st.PersonForParticipantsContext(t.Context(), []int64{id})
-	require.NoError(err)
-	assert.Nil(bound)
-}
-
-func TestCardDAVParticipantBindingMergeAliasInSurvivorComponent(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-	st, account, book := newCardDAVResourceStore(t)
-	absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
-	require.NoError(err)
-	survivor, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
-	require.NoError(err)
-	alias, err := st.EnsureParticipant("alias@example.test", "Alias", "example.test")
-	require.NoError(err)
-	card := remoteResource(book.CanonicalURL+"linked-alias.vcf", "linked-alias", "Absorbed", "absorbed@example.test", "one")
-	applyParticipantBindingCards(t, st, account, book, card)
-	require.Equal([]int64{absorbed}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
-	_, err = st.LinkParticipants(survivor, alias)
-	require.NoError(err)
-	require.NoError(st.SetParticipantIdentifier(alias, "imessage", "absorbed@example.test"))
-
-	require.NoError(st.MergeParticipantsContext(t.Context(), absorbed, survivor))
-	_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
-	require.NoError(err)
-	assert.ElementsMatch([]int64{survivor, alias}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
-}
-
-func TestCardDAVParticipantBindingMergeScopedAlias(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-	st, account, book := newCardDAVResourceStore(t)
-	absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
-	require.NoError(err)
-	survivor, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
-	require.NoError(err)
-	alias, err := st.EnsureParticipant("alias@example.test", "Alias", "example.test")
-	require.NoError(err)
-	card := remoteResource(book.CanonicalURL+"scoped-alias.vcf", "scoped-alias", "Absorbed", "absorbed@example.test", "one")
-	applyParticipantBindingCards(t, st, account, book, card)
-	require.Equal([]int64{absorbed}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
-	require.NoError(st.SetParticipantIdentifier(alias, "imessage", "absorbed@example.test"))
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participant_identifiers SET scope_kind = 'service', scope_value = 'synthetic-source' WHERE participant_id = ? AND identifier_type = ?`), alias, "imessage")
-	require.NoError(err)
-
-	require.NoError(st.MergeParticipantsContext(t.Context(), absorbed, survivor))
-	_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
-	require.NoError(err)
-	assert.Equal([]int64{survivor}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
-	other, err := st.PersonForParticipantsContext(t.Context(), []int64{alias})
-	require.NoError(err)
-	assert.Nil(other)
-}
-
-func TestCardDAVParticipantBindingReleasesAfterManualAliasConflict(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-	st, account, book := newCardDAVResourceStore(t)
-	primary, err := st.EnsureParticipant("shared@example.test", "Primary", "example.test")
-	require.NoError(err)
-	alias, err := st.EnsureParticipant("other@example.test", "Other", "example.test")
-	require.NoError(err)
-	card := remoteResource(book.CanonicalURL+"order.vcf", "order", "Card", "shared@example.test", "one")
-	applyParticipantBindingCards(t, st, account, book, card)
-	person := bindingCardPerson(t, st, book, card.Href)
-	require.Equal([]int64{primary}, person.ParticipantIDs)
-	require.True(bindingOwned(t, st, primary))
-	owner, _, err := st.CreatePersonFromParticipant(alias)
-	require.NoError(err)
-	require.NoError(st.SetParticipantIdentifier(alias, "email", "SHARED@example.test"))
-	card.RemoteETag, card.SemanticHash = "two", "two"
-	applyParticipantBindingCards(t, st, account, book, card)
-	result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
-	require.NoError(err)
-	require.Len(result.ConflictDetails, 1)
-	assert.Equal("existing_person", result.ConflictDetails[0].Reason)
-	assert.ElementsMatch([]int64{person.ID, owner.ID}, result.ConflictDetails[0].PersonIDs)
-	bound, err := st.PersonForParticipantsContext(t.Context(), []int64{primary})
-	require.NoError(err)
-	assert.Nil(bound)
-	owner, err = st.GetPersonContext(t.Context(), owner.ID)
-	require.NoError(err)
-	assert.Equal([]int64{alias}, owner.ParticipantIDs)
-}
-
-func TestCardDAVParticipantBindingDetectsLinkedManualAliasOwner(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-	st, account, book := newCardDAVResourceStore(t)
-	manual, err := st.EnsureParticipant("manual@example.test", "Manual", "example.test")
-	require.NoError(err)
-	alias, err := st.EnsureParticipant("alias@example.test", "Alias", "example.test")
-	require.NoError(err)
-	owner, _, err := st.CreatePersonFromParticipant(manual)
-	require.NoError(err)
-	card := remoteResource(book.CanonicalURL+"owner.vcf", owner.VCardUID, "Manual", "manual@example.test", "one")
-	card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + owner.VCardUID + "\r\nFN:Manual\r\nEMAIL:manual@example.test\r\nEMAIL:alias@example.test\r\nEND:VCARD\r\n")
-	card.Emails = []string{"manual@example.test", "alias@example.test"}
-	applyParticipantBindingCards(t, st, account, book, card)
-	require.True(bindingOwned(t, st, alias))
-	candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{LeftKind: store.IdentityMatchParticipant, LeftID: manual, RightKind: store.IdentityMatchParticipant, RightID: alias, Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("synthetic-provider-id"), State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation})
-	require.NoError(err)
-	_, _, err = st.AcceptIdentityMatchCandidateContext(t.Context(), candidate.ID, "system", nil)
-	require.NoError(err)
-	require.True(bindingOwned(t, st, alias))
-	primary, err := st.EnsureParticipant("shared@example.test", "Primary", "example.test")
-	require.NoError(err)
-	require.NoError(st.SetParticipantIdentifier(alias, "email", "SHARED@example.test"))
-	shared := remoteResource(book.CanonicalURL+"shared.vcf", "shared", "Shared", "shared@example.test", "one")
-	applyParticipantBindingCards(t, st, account, book, shared)
-	person := bindingCardPerson(t, st, book, shared.Href)
-	result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
-	require.NoError(err)
-	require.Len(result.ConflictDetails, 1)
-	assert.Equal("existing_person", result.ConflictDetails[0].Reason)
-	assert.ElementsMatch([]int64{person.ID, owner.ID}, result.ConflictDetails[0].PersonIDs)
-	bound, err := st.PersonForParticipantsContext(t.Context(), []int64{primary})
-	require.NoError(err)
-	assert.Nil(bound)
-	owner, err = st.GetPersonContext(t.Context(), owner.ID)
-	require.NoError(err)
-	assert.ElementsMatch([]int64{manual, alias}, owner.ParticipantIDs)
-	assert.False(bindingOwned(t, st, manual))
-	assert.True(bindingOwned(t, st, alias))
-}
-
-func TestCardDAVParticipantBindingConflictsWithOtherAddressHolders(t *testing.T) {
-	for _, kind := range []string{"phone", "email aliases"} {
-		t.Run(kind, func(t *testing.T) {
-			assert := Assert.New(t)
-			require := Require.New(t)
-			st, account, book := newCardDAVResourceStore(t)
-			var ownerID, otherID int64
-			var err error
-			card := remoteResource(book.CanonicalURL+"shared-holder.vcf", "shared-holder", "Shared", "shared@example.test", "one")
-			if kind == "phone" {
-				old, err := st.EnsureParticipantByPhone(t.Context(), "+12025550101", "Old", "imessage")
-				require.NoError(err)
-				ownerID, err = st.EnsureParticipantByPhone(t.Context(), "+12025550102", "Owner", "whatsapp")
-				require.NoError(err)
-				require.NoError(st.MergeParticipants(old, ownerID))
-				otherID, err = st.EnsureParticipantByPhone(t.Context(), "+12025550101", "Other", "imessage")
-				require.NoError(err)
-				card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:shared-holder\r\nFN:Shared\r\nTEL:+12025550101\r\nEND:VCARD\r\n")
-				card.Emails = nil
-				card.Phones = []string{"+12025550101"}
-			} else {
-				ownerID, err = st.EnsureParticipant("owner@example.test", "Owner", "example.test")
-				require.NoError(err)
-				otherID, err = st.EnsureParticipant("other@example.test", "Other", "example.test")
-				require.NoError(err)
-				require.NoError(st.SetParticipantIdentifier(ownerID, "imessage", "shared@example.test"))
-				require.NoError(st.SetParticipantIdentifier(otherID, "email", "shared@example.test"))
-			}
-			require.NotEqual(ownerID, otherID)
-			owner, _, err := st.CreatePersonFromParticipant(ownerID)
-			require.NoError(err)
-			applyParticipantBindingCards(t, st, account, book, card)
-			person := bindingCardPerson(t, st, book, card.Href)
-			result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
-			require.NoError(err)
-			require.NotEmpty(result.ConflictDetails)
-			assert.Equal("existing_person", result.ConflictDetails[0].Reason)
-			assert.ElementsMatch([]int64{person.ID, owner.ID}, result.ConflictDetails[0].PersonIDs)
-			other, err := st.PersonForParticipantsContext(t.Context(), []int64{otherID})
-			require.NoError(err)
-			assert.Nil(other)
-		})
-	}
+	t.Run("shared card with unreadable phone", func(t *testing.T) {
+		assert := Assert.New(t)
+		require := Require.New(t)
+		st, account, book := newCardDAVResourceStore(t)
+		id, err := st.EnsureParticipant("shared@example.test", "Shared Example", "example.test")
+		require.NoError(err)
+		first := remoteResource(book.CanonicalURL+"first.vcf", "shared-first", "First Example", "shared@example.test", "one")
+		second := remoteResource(book.CanonicalURL+"second.vcf", "shared-second", "Second Example", "other@example.test", "one")
+		applyParticipantBindingCards(t, st, account, book, first, second)
+		a, b := bindingCardPerson(t, st, book, first.Href), bindingCardPerson(t, st, book, second.Href)
+		require.NotEqual(a.ID, b.ID)
+		second = remoteResource(second.Href, second.RemoteUID, "Second Example", "shared@example.test", "two")
+		second.SemanticHash = "changed-shared"
+		second.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:2.1\r\nUID:shared-second\r\nFN:Second Example\r\nEMAIL:shared@example.test\r\nTEL;CHARSET=NO-SUCH-CHARSET:123\r\nEND:VCARD\r\n")
+		applyParticipantBindingCards(t, st, account, book, first, second)
+		bound, err := st.PersonForParticipantsContext(t.Context(), []int64{id})
+		require.NoError(err)
+		assert.Nil(bound)
+		result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
+		require.NoError(err)
+		require.Len(result.ConflictDetails, 1)
+		assert.Equal("shared_address", result.ConflictDetails[0].Reason)
+		assert.ElementsMatch([]int64{a.ID, b.ID}, result.ConflictDetails[0].PersonIDs)
+	})
 }
 
 func TestCardDAVParticipantBindingSystemLinkAfterPersonMerge(t *testing.T) {

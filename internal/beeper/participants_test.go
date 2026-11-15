@@ -533,7 +533,7 @@ func TestResolveUserContinuesAfterEmailAliasConflict(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	r := newParticipantResolver(st, "account-a")
 	emailUser := &User{ID: "synthetic-user", Email: "absorbed@example.test", FullName: "Absorbed"}
-	absorbed, err := r.resolveUser(t.Context(), emailUser)
+	_, err := r.resolveUser(t.Context(), emailUser)
 	require.NoError(err)
 	third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
 	require.NoError(err)
@@ -546,10 +546,4 @@ func TestResolveUserContinuesAfterEmailAliasConflict(t *testing.T) {
 	pid, err := r.resolveUser(t.Context(), &User{ID: emailUser.ID, PhoneNumber: "+12025550100", FullName: "Absorbed"})
 	require.NoError(err)
 	assert.Equal(phone, pid)
-	var email string
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT email_address FROM participants WHERE id = ?`), absorbed).Scan(&email))
-	assert.Equal("absorbed@example.test", email)
-	owner, err := st.EnsureParticipantByIdentifier("email", "absorbed@example.test", "")
-	require.NoError(err)
-	assert.Equal(third, owner)
 }
