@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/verification"
 )
@@ -44,6 +45,11 @@ func (s *Server) handleMeetingSuggestions(w http.ResponseWriter, r *http.Request
 	backend, ok := s.store.(MeetingSuggestionStore)
 	if !ok {
 		writeError(w, 503, "meetings_unavailable", "Meeting suggestions are unavailable")
+		return
+	}
+	grant := s.requestAuthentication(r).Grant
+	if grant != nil && !grant.HasPermission(agentgrant.PermissionCalendarEventRead) {
+		writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionCalendarEventRead))
 		return
 	}
 	var classify func(context.Context, []int64) (map[int64]bool, error)

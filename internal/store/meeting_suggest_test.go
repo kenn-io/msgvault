@@ -200,7 +200,7 @@ func TestMeetingSuggestionsAllDayAndPartialExpansion(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	_, event := calendarFixture(t, st, "tokyo-day", `{"id":"tokyo","start":{"date":"2027-03-15","timeZone":"Asia/Tokyo"},"end":{"date":"2027-03-16","timeZone":"Asia/Tokyo"}}`)
 	_, unsupported := calendarFixture(t, st, "unsupported", `{"id":"unsupported","start":{"dateTime":"2027-03-14T16:00:00Z"},"end":{"dateTime":"2027-03-14T17:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`)
-	_, exception := calendarFixture(t, st, "unsupported-exception", `{"id":"unsupported-edit","recurringEventId":"unsupported","originalStartTime":{"dateTime":"2027-03-14T16:00:00Z"},"start":{"dateTime":"2027-03-14T16:00:00Z"},"end":{"dateTime":"2027-03-14T17:00:00Z"}}`)
+	calendarFixture(t, st, "unsupported-exception", `{"id":"unsupported-edit","recurringEventId":"unsupported","originalStartTime":{"dateTime":"2027-03-14T16:00:00Z"},"start":{"dateTime":"2027-03-14T16:00:00Z"},"end":{"dateTime":"2027-03-14T17:00:00Z"}}`)
 	noteData, note := projectionFixture(t, st, "tokyo-note", "meeting_json", `{}`)
 	noteData.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 16, 0, 0, 0, time.UTC), Valid: true}
 	_, err := st.UpsertMessage(noteData.Message)
@@ -227,7 +227,7 @@ func TestMeetingSuggestionsAllDayAndPartialExpansion(t *testing.T) {
 	r.NotEmpty(page.Unexpandable)
 	r.Equal(unsupported, page.Unexpandable[0].MessageID)
 	r.Len(page.Suggestions, 1)
-	r.Equal(fmt.Sprintf("evt:%d", exception), page.Suggestions[0].Ref)
+	r.Equal(fmt.Sprintf("evt:%d@20270314T160000Z", unsupported), page.Suggestions[0].Ref)
 }
 
 func TestMeetingSuggestionsExcludeConflictingLink(t *testing.T) {

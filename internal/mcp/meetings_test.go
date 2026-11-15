@@ -119,13 +119,20 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 	item, ok := items[0].(map[string]any)
 	must.True(ok)
 	checks.Equal(fmt.Sprintf("evt:%d", event), item["ref"])
-	checks.Equal(float64(imported[0].MessageID), item["member_message_id"])
+	checks.InDelta(float64(imported[0].MessageID), item["member_message_id"], 0)
 	recordResult, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{
 		Name:      ToolGetMeetingRecord,
 		Arguments: map[string]any{"ref": fmt.Sprintf("msg:%d", imported[0].MessageID)},
 	})
 	must.NoError(err)
 	must.False(recordResult.IsError)
+	missing, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingRecord, Arguments: map[string]any{"ref": "msg:999999"}})
+	must.NoError(err)
+	must.True(missing.IsError)
+	must.NotEmpty(missing.Content)
+	missingText, ok := missing.Content[0].(*sdkmcp.TextContent)
+	must.True(ok)
+	checks.Contains(missingText.Text, "meeting_not_found")
 	checks.Equal(map[string]any{"links": []any{}, "message_ids": []any{float64(imported[0].MessageID)}, "unexpandable": []any{}}, meetingStructuredContent(t, recordResult))
 	recordResult, err = clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingRecord, Arguments: map[string]any{"ref": fmt.Sprintf("evt:%d", cancelled)}})
 	must.NoError(err)

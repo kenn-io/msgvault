@@ -345,7 +345,7 @@ func (s *Store) suggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		if seen[partner.ref()] {
 			continue
 		}
-		graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{a, b}, &budget)
+		graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{a, b}, &budget, false)
 		if err != nil {
 			return page, err
 		}

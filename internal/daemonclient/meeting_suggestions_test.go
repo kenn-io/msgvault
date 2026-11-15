@@ -1,9 +1,9 @@
 package daemonclient_test
 
 import (
-	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,7 +13,7 @@ import (
 
 func TestSuggestMeetingLinksDefaultLimit(t *testing.T) {
 	for _, limit := range []int{0, 5} {
-		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+		t.Run(strconv.Itoa(limit), func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				assert.Equal(t, "msg:42", req.URL.Query().Get("ref"))
 				if limit == 0 {

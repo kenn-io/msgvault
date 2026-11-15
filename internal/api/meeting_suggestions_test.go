@@ -38,14 +38,18 @@ func TestGrantedMeetingSuggestions(t *testing.T) {
 		name          string
 		sources       []agentgrant.SourceRef
 		ref           string
+		permissions   []agentgrant.Permission
 		status, count int
 	}{
-		{"both", sources, fmt.Sprintf("msg:%d", note), 200, 1},
-		{"event denied", sources[:1], fmt.Sprintf("evt:%d", event), 404, 0},
+		{"both", sources, fmt.Sprintf("msg:%d", note), []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionCalendarEventRead}, 200, 1},
+		{"message without calendar permission", sources, fmt.Sprintf("msg:%d", note), []agentgrant.Permission{agentgrant.PermissionMessageRead}, 403, 0},
+		{"event without calendar permission", sources, fmt.Sprintf("evt:%d", event), []agentgrant.Permission{agentgrant.PermissionMessageRead}, 403, 0},
+		{"event with calendar permission", sources, fmt.Sprintf("evt:%d", event), []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionCalendarEventRead}, 200, 1},
+		{"event denied", sources[:1], fmt.Sprintf("evt:%d", event), []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionCalendarEventRead}, 404, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := require.New(t)
-			_, token, _, err := srv.agentGrants.Issue(tc.name, []agentgrant.Permission{agentgrant.PermissionMessageRead}, tc.sources, time.Time{})
+			_, token, _, err := srv.agentGrants.Issue(tc.name, tc.permissions, tc.sources, time.Time{})
 			r.NoError(err)
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/suggestions?ref="+tc.ref, nil)
 			req.Header.Set(apiprotocol.AgentTokenHeader, token)
@@ -74,7 +78,7 @@ func TestGrantedMeetingSuggestions(t *testing.T) {
 		title := "482913"
 		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: notes.ID, SourceMessageID: title, MessageType: "meeting_transcript", Subject: sql.NullString{String: title, Valid: true}, SentAt: sql.NullTime{Time: at, Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: title, ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"})
 		r.NoError(err)
-		_, limited, _, err := srv.agentGrants.Issue("limited", []agentgrant.Permission{agentgrant.PermissionMessageRead}, sources, time.Time{})
+		_, limited, _, err := srv.agentGrants.Issue("limited", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionCalendarEventRead}, sources, time.Time{})
 		r.NoError(err)
 		for _, tc := range []struct {
 			name, token string
