@@ -283,7 +283,7 @@ func TestGmailPushActualIngestionProfileBeforeMutation(t *testing.T) {
 			requirements.NoError(readErr)
 			assertions.Equal("1000", current.SyncCursor.String)
 			var runs int
-			requirements.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM sync_runs WHERE source_id = ?", source.ID).Scan(&runs))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM sync_runs WHERE source_id = ?"), source.ID).Scan(&runs))
 			assertions.Zero(runs, "preflight identity failure must not create or fail a sync run")
 			debt, readErr := st.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
 			requirements.NoError(readErr)
