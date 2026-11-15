@@ -1457,6 +1457,53 @@ func TestImporterRetriesIncompletePastDeadlineOutsideWindow(t *testing.T) {
 	assert.NotContains(lastTranscriptRetryUntil(t, st, result.SourceID), "meeting-1")
 }
 
+func TestImporterRetriesRecoveredSectionAfterArchiveFailureNearDeadline(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	meeting := hydrationMeeting()
+	meeting.MeetingNotes.CalendarEvent.EndTime = ""
+	raw, err := json.Marshal(meeting)
+	require.NoError(t, err)
+	source.blocks["meeting-1"].Raw = raw
+	source.query.Results = []MeetingNote{meeting}
+	empty := paragraph("transcript-1", "", false)
+	source.blocks["transcript-1"] = &empty
+	source.markdown.Markdown = ""
+	source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	require.Len(t, lastNotionState(t, st, first.SourceID).Pending, 1)
+
+	source.query.Results = nil
+	delete(source.blockErrs, "summary-1")
+	recovered := paragraph("summary-1", "Recovered summary.", false)
+	source.blocks["summary-1"] = &recovered
+	imp.now = func() time.Time { return time.Date(2026, 8, 31, 11, 0, 0, 0, time.UTC) }
+	if st.IsPostgreSQL() {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_notion_recovery() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'forced archive failure'; END; $$ LANGUAGE plpgsql; CREATE TRIGGER fail_notion_recovery BEFORE UPDATE ON messages FOR EACH ROW EXECUTE FUNCTION fail_notion_recovery()`)
+	} else {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_notion_recovery BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT, 'forced archive failure'); END`)
+	}
+	require.NoError(t, err)
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.ErrorContains(t, err, "forced archive failure")
+	if st.IsPostgreSQL() {
+		_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_recovery ON messages`)
+	} else {
+		_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_recovery`)
+	}
+	require.NoError(t, err)
+
+	imp.now = func() time.Time { return time.Date(2026, 8, 31, 12, 1, 0, 0, time.UTC) }
+	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), result.MaintenanceRetries)
+	var messageID int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), first.SourceID).Scan(&messageID))
+	body, err := st.GetMessageBodyText(t.Context(), messageID)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Recovered summary.")
+}
+
 func TestImporterKeepsSavedPageTranscriptWhenMarkdownIncomplete(t *testing.T) {
 	st, source, imp := newImporterFixture(t)
 	empty := paragraph("transcript-1", "", false)

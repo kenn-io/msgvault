@@ -377,29 +377,30 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		if len(hydrated.Incomplete) > 0 {
 			sum.PartialCoverage = true
 		}
-		clearPending := false
+		previousPending, hasPrevious := pendingByID[id]
+		if retained := next.TranscriptRetryUntil[id]; retained != "" {
+			previousPending.RetryUntil = retained
+			hasPrevious = true
+		}
+		var pending pendingTranscript
+		keep := false
 		if len(hydrated.Incomplete) > 0 || (providerTranscriptMissing && !terminal) {
-			previousPending, hasPrevious := pendingByID[id]
-			if retained := next.TranscriptRetryUntil[id]; retained != "" {
-				previousPending.RetryUntil = retained
-				hasPrevious = true
+			pending, keep = schedulePending(hydrated, now, previousPending, hasPrevious, len(hydrated.Incomplete) > 0)
+			// Keep incomplete retries alive until recovered content and links are saved.
+			if keep && (!previousPending.Incomplete || pending.Incomplete) {
+				pendingByID[id] = pending
+				next.TranscriptRetryUntil[id] = pending.RetryUntil
 			}
-			pending, keep := schedulePending(hydrated, now, previousPending, hasPrevious, len(hydrated.Incomplete) > 0)
+		}
+		finishPending := func() {
 			if keep {
 				pendingByID[id] = pending
 				next.TranscriptRetryUntil[id] = pending.RetryUntil
-			} else {
-				clearPending = true
+				return
 			}
-		} else {
-			clearPending = true
-		}
-		finishPending := func() {
-			if clearPending {
-				delete(pendingByID, id)
-				if !providerTranscriptMissing || terminal {
-					delete(next.TranscriptRetryUntil, id)
-				}
+			delete(pendingByID, id)
+			if !providerTranscriptMissing || terminal {
+				delete(next.TranscriptRetryUntil, id)
 			}
 		}
 		hydrated.keptRawTrees = map[string]jsontext.Value{}
