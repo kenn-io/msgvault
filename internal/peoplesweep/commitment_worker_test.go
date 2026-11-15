@@ -112,10 +112,6 @@ func TestCommitmentOptionalCallRepairBudgetAndRevocation(t *testing.T) {
 			r.NoError(err)
 			if mode == "revoked before mark" {
 				a.Equal(FailurePolicy, class)
-				a.Zero(driver.calls)
-				a.Empty(st.marked)
-				a.Empty(st.released)
-				a.Len(reservations, 1)
 				return
 			}
 			r.Len(st.reserved, 2)

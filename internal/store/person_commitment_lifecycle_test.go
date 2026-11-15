@@ -15,11 +15,6 @@ func TestCommitmentSourceDeletedBeforeExtraction(t *testing.T) {
 	f := newPersonSweepApplyFixture(t, "commitment-evidence", false)
 	st := f.store
 	_, persist := newCommitmentTestConversation(t, f)
-	profile := f.request.Generation.Policy.ProviderPolicyFingerprint
-	_, err := st.RevokePersonInferenceConsent(ctx, profile, "test")
-	r.NoError(err)
-	_, _, err = st.GrantPersonCommitmentConsent(ctx, profile, "test")
-	r.NoError(err)
 	const quote = "I will send the draft."
 	id := persist("promise", quote, -time.Hour)
 	cfg, commitmentProfile := commitmentTestConfig()

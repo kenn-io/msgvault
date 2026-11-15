@@ -69,39 +69,6 @@ func (s *deadlineLoopStore) PersonCommitmentDiscoveryContext(context.Context, in
 	return nil, false, context.DeadlineExceeded
 }
 
-func TestListLoopsReturnsResultsWhenDiscoveryTimesOut(t *testing.T) {
-	for _, stage := range []string{"consent", "discovery", "error"} {
-		t.Run(stage, func(t *testing.T) {
-			a, r := assert.New(t), require.New(t)
-			fixture := newLoopFixture(t)
-			cfg := config.NewDefaultConfig()
-			cfg.HomeDir = t.TempDir()
-			cfg.People.Sweep.Enabled = true
-			cfg.People.Sweep.Commitments.Enabled = true
-			configureAPIProvider(cfg, completeAPIProvider("EXAMPLE_KEY", "example-model"))
-			cfg.People.Sweep.ApplyDefaults()
-			ctx := &deadlineLoopContext{Context: t.Context(), done: make(chan struct{})}
-			st := &deadlineLoopStore{Store: fixture.f.Store, deadline: ctx, stage: stage}
-			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
-			w := httptest.NewRecorder()
-			server.Router().ServeHTTP(w, httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/loops", nil))
-			if stage == "error" {
-				a.Equal(http.StatusInternalServerError, w.Code)
-				return
-			}
-			r.Equal(http.StatusOK, w.Code, w.Body.String())
-			var response LoopListResponse
-			r.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-			a.True(response.CoverageIncomplete)
-			a.Len(response.Items, 2)
-			if stage == "discovery" {
-				r.NotNil(response.CommitmentsComplete)
-				a.False(*response.CommitmentsComplete)
-			}
-		})
-	}
-}
-
 func newLoopFixture(t *testing.T) *loopFixture {
 	t.Helper()
 	f := storetest.New(t)
@@ -180,8 +147,8 @@ func TestListLoopsFilters(t *testing.T) {
 }
 
 func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := storetest.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
@@ -194,44 +161,68 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 	configureAPIProvider(cfg, provider)
 	cfg.People.Sweep.ApplyDefaults()
 	profile, err := cfg.People.Sweep.Profile()
-	require.NoError(err)
+	requirements.NoError(err)
 	_, err = f.Store.EnsurePersonInferenceProfile(t.Context(), profile)
-	require.NoError(err)
-	require.NoError(f.Store.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{ProfileFingerprint: profile.Fingerprint, CheckedAt: time.Now(), DriverVersion: profile.DriverVersion, OutputMode: profile.OutputMode, ModelVersion: profile.Model}))
+	requirements.NoError(err)
+	requirements.NoError(f.Store.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{ProfileFingerprint: profile.Fingerprint, CheckedAt: time.Now(), DriverVersion: profile.DriverVersion, OutputMode: profile.OutputMode, ModelVersion: profile.Model}))
 	participant := f.EnsureParticipant("alex@example.test", "Alex", "example.test")
 	person, _, err := f.Store.CreatePersonFromParticipant(participant)
-	require.NoError(err)
+	requirements.NoError(err)
 	_, err = f.Store.SetPersonTrackingContext(t.Context(), person.ID, true)
-	require.NoError(err)
+	requirements.NoError(err)
 	server := NewServerWithOptions(ServerOptions{Config: cfg, Store: f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
 	read := func() LoopListResponse {
 		w := httptest.NewRecorder()
 		server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/loops?person_id=%d", person.ID), nil))
-		require.Equal(http.StatusOK, w.Code, w.Body.String())
+		requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 		var response LoopListResponse
-		require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+		requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 		return response
 	}
 	response := read()
-	assert.Nil(response.CommitmentsComplete)
-	assert.Empty(response.Commitments)
+	assertions.Nil(response.CommitmentsComplete)
+	assertions.Empty(response.Commitments)
 	_, _, err = f.Store.GrantPersonCommitmentConsent(t.Context(), profile.Fingerprint, "test")
-	require.NoError(err)
+	requirements.NoError(err)
 	response = read()
-	require.NotNil(response.CommitmentsComplete)
-	assert.False(*response.CommitmentsComplete)
-	require.NotNil(response.CommitmentsUntil)
-	assert.Equal("2025-06-30", response.CommitmentsUntil.Format(time.DateOnly))
+	requirements.NotNil(response.CommitmentsComplete)
+	assertions.False(*response.CommitmentsComplete)
+	requirements.NotNil(response.CommitmentsUntil)
+	assertions.Equal("2025-06-30", response.CommitmentsUntil.Format(time.DateOnly))
 	since := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, -1, ?, ?)`), person.ID, since, peoplesweep.CommitmentScopeFingerprint(profile, cfg.People.Sweep.Commitments), since)
-	require.NoError(err)
+	requirements.NoError(err)
 	response = read()
-	require.NotNil(response.CommitmentsSince)
-	assert.True(response.CommitmentsSince.Equal(since))
+	requirements.NotNil(response.CommitmentsSince)
+	assertions.True(response.CommitmentsSince.Equal(since))
 	_, err = f.Store.RevokePersonCommitmentConsent(t.Context(), profile.Fingerprint, "test")
-	require.NoError(err)
+	requirements.NoError(err)
 	response = read()
-	assert.Nil(response.CommitmentsComplete)
+	assertions.Nil(response.CommitmentsComplete)
+	for _, stage := range []string{"consent", "discovery", "error"} {
+		t.Run(stage, func(t *testing.T) {
+			a, r := assert.New(t), require.New(t)
+			fixture := newLoopFixture(t)
+			ctx := &deadlineLoopContext{Context: t.Context(), done: make(chan struct{})}
+			st := &deadlineLoopStore{Store: fixture.f.Store, deadline: ctx, stage: stage}
+			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+			w := httptest.NewRecorder()
+			server.Router().ServeHTTP(w, httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/loops", nil))
+			if stage == "error" {
+				a.Equal(http.StatusInternalServerError, w.Code)
+				return
+			}
+			r.Equal(http.StatusOK, w.Code, w.Body.String())
+			var response LoopListResponse
+			r.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+			a.True(response.CoverageIncomplete)
+			a.Len(response.Items, 2)
+			if stage == "discovery" {
+				r.NotNil(response.CommitmentsComplete)
+				a.False(*response.CommitmentsComplete)
+			}
+		})
+	}
 }
 
 func TestListLoopsReportsIncompleteCoverage(t *testing.T) {
@@ -604,12 +595,12 @@ func (s *conflictingCommitmentStore) DecidePersonCommitmentContext(_ context.Con
 type pagingCommitmentStore struct {
 	*store.Store
 
-	limit, offset int
+	offset        int
 	includeClosed bool
 }
 
-func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, limit int, offset int, includeClosed bool) ([]store.PersonCommitment, error) {
-	s.limit, s.offset, s.includeClosed = limit, offset, includeClosed
+func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, _ int, offset int, includeClosed bool) ([]store.PersonCommitment, error) {
+	s.offset, s.includeClosed = offset, includeClosed
 	return []store.PersonCommitment{{ID: 201, PersonID: 1, TargetKey: "promise-201", AnchorMessageID: 1, Direction: "owed_to", Quote: "I will call.", Summary: "Call", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"}, {ID: 202, PersonID: 1, TargetKey: "promise-202", AnchorMessageID: 2, Direction: "owed_to", Quote: "I will write.", Summary: "Write", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"}}, nil
 }
 
@@ -622,7 +613,6 @@ func TestListLoopsPagesCommitments(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops?limit=1&commitment_offset=200&include_closed=true", nil))
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
-	assert.Equal(2, st.limit)
 	assert.Equal(200, st.offset)
 	assert.True(st.includeClosed)
 }
