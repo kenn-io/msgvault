@@ -246,7 +246,7 @@ func TestTokenFailureStopsThePublicationSweep(t *testing.T) {
 	require.Equal(1, remote.failed)
 }
 
-func TestServiceSyncReportsConflictsCreatedByPublication(t *testing.T) {
+func TestServiceSyncReportsFinalConflictCount(t *testing.T) {
 	for _, scenario := range []string{"successful sync", "publication failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			require := require.New(t)

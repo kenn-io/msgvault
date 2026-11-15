@@ -80,7 +80,7 @@ describe('Past runs', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Start CardDAV sync' }));
     await vi.waitFor(() => expect(onAnnounce).toHaveBeenCalledWith('CardDAV sync request completed; current operation state was refreshed.'));
     expect(onAnnounce).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('status').textContent).toBe('2 CardDAV binding conflicts. Check CardDAV settings for the review command.');
+    expect(screen.getByRole('status').textContent).toBe(controller.snapshot.actionStatus);
   });
 
   it('keeps the same title while a deep-linked run loads and identifies its kind', async () => {

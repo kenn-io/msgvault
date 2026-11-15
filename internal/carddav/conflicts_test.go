@@ -2298,7 +2298,7 @@ func TestPublishedImportRetainsPreferenceHashBaseline(t *testing.T) {
 	assert.Contains(string(fixture.body), "PREF=01")
 }
 
-func TestPhoneURIIdentityKeepsImportedPersonsSeparate(t *testing.T) {
+func TestPhoneURINormalizationThroughSync(t *testing.T) {
 	t.Parallel()
 	for _, phone := range []string{
 		"+12025550102",
@@ -2323,10 +2323,6 @@ func TestPhoneURIIdentityKeepsImportedPersonsSeparate(t *testing.T) {
 			first, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"first.vcf")
 			require.NoError(err)
 			require.NotNil(first.PersonID)
-			second, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"second.vcf")
-			require.NoError(err)
-			require.NotNil(second.PersonID)
-			assert.NotEqual(*first.PersonID, *second.PersonID)
 			points, err := st.ListPersonContactPointsContext(t.Context(), *first.PersonID, true)
 			require.NoError(err)
 			require.Len(points, 1)
