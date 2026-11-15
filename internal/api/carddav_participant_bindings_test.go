@@ -74,6 +74,10 @@ func (f *cardDAVMutationFixture) SetBookRoles(ctx context.Context, _ int64, _ ca
 	return f.mutate(ctx)
 }
 
+func (f *cardDAVMutationFixture) ListBooks(context.Context) ([]store.CardDAVAddressBook, error) {
+	return []store.CardDAVAddressBook{{ID: 7}}, nil
+}
+
 func (f *cardDAVMutationFixture) PublishPerson(ctx context.Context, _ int64) error {
 	if err := f.mutate(ctx); err != nil {
 		return err
@@ -93,7 +97,7 @@ func TestCardDAVMutationRefreshesIdentityCache(t *testing.T) {
 	}{
 		{"sync", http.MethodPost, "/api/v1/carddav/sync", `{}`, http.StatusOK, nil},
 		{"sync failure", http.MethodPost, "/api/v1/carddav/sync", `{}`, http.StatusInternalServerError, errors.New("cache unavailable")},
-		{"roles", http.MethodPatch, "/api/v1/carddav/books/7", `{"write_target":false,"subscribed":false,"lookup_source":false}`, http.StatusNotFound, nil},
+		{"roles", http.MethodPatch, "/api/v1/carddav/books/7", `{"write_target":false,"subscribed":false,"lookup_source":false}`, http.StatusOK, nil},
 		{"publish", http.MethodPost, "/api/v1/carddav/publications/7", `{}`, http.StatusInternalServerError, nil},
 		{"resolve", http.MethodPost, "/api/v1/carddav/conflicts/7/resolve", `{"choice":"keep_local"}`, http.StatusInternalServerError, nil},
 	} {
