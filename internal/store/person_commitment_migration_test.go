@@ -70,4 +70,7 @@ func TestCommitmentMigrationUpgradesVersion42(t *testing.T) {
 		(person_id, through_sequence, processed_at, backfill_message_id)
 		VALUES (?, ?, ?, -1)`), f.personID, sequence, sweepBudgetNow())
 	r.NoError(err)
+	var storedSequence int64
+	r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT through_sequence FROM person_commitment_frontiers WHERE person_id = ?`), f.personID).Scan(&storedSequence))
+	a.Equal(sequence, storedSequence)
 }

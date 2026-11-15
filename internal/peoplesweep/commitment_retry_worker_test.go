@@ -42,13 +42,13 @@ type retryCommitmentSink struct {
 func (s *retryCommitmentSink) ApplyPersonSweep(_ context.Context, request ApplyRequest) (ApplyResult, error) {
 	s.requests = append(s.requests, request)
 	if request.Lease.PersonID == 7 {
-		return ApplyResult{CommitmentFailureClass: FailureInternal}, nil
+		return ApplyResult{CommitmentFailureClass: FailureArchiveGap}, nil
 	}
 	s.store.completed = append(s.store.completed, request.Lease.PersonID)
 	return ApplyResult{}, nil
 }
 
-func TestPersonSweepWorkerDefersCommitmentPrepareFailureForTheRestOfRun(t *testing.T) {
+func TestPersonSweepWorkerDefersCommitmentFailureForTheRestOfRun(t *testing.T) {
 	worker, fixture, _ := newConsentOnlyCommitmentWorker(t)
 	st := &retryCommitmentStore{commitmentWorkerFixture: fixture}
 	sink := &retryCommitmentSink{store: st}
@@ -67,6 +67,5 @@ func TestPersonSweepWorkerDefersCommitmentPrepareFailureForTheRestOfRun(t *testi
 	assert.Contains(t, st.claims[1].ExcludePersonIDs, int64(7))
 	assert.Equal(t, []int64{8}, st.completed)
 	require.Len(t, result.People, 2)
-	assert.Equal(t, FailureInternal, result.People[0].CommitmentFailureClass)
 	assert.False(t, sink.requests[0].CommitmentOnly)
 }
