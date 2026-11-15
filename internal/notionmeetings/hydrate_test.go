@@ -537,7 +537,7 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 			root := source.blocks["summary-1"]
 			switch limit {
 			case "bytes":
-				source.markdown.Raw = json.RawMessage(strings.Repeat("x", maxHydrationBytes+1))
+				source.markdown.Raw = json.RawMessage(`{"object":"page_markdown","id":"page-1","markdown":"` + strings.Repeat("x", maxHydrationBytes) + `"}`)
 				source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
 				empty := paragraph("transcript-1", "", false)
 				source.blocks["transcript-1"] = &empty
