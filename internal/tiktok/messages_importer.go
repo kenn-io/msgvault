@@ -46,10 +46,11 @@ func (imp *MessageImporter) Register(ctx context.Context, app, account string) (
 }
 
 type messageRun struct {
-	imp          *MessageImporter
-	source       *store.Source
-	app, account string
-	sum          *ImportSummary
+	imp           *MessageImporter
+	source        *store.Source
+	app, account  string
+	sum           *ImportSummary
+	conversations map[int64]struct{}
 }
 
 func (imp *MessageImporter) run(ctx context.Context, app, account, syncType string, fn func(*messageRun) error) (sum *ImportSummary, retErr error) {
@@ -90,10 +91,18 @@ func (imp *MessageImporter) run(ctx context.Context, app, account, syncType stri
 			retErr = scoped.store.CompleteSyncAndUpdateSourceCursorContext(ctx, syncID, source.ID, "")
 		}
 	}()
-	run := &messageRun{imp: &scoped, source: source, app: app, account: account, sum: sum}
+	run := &messageRun{imp: &scoped, source: source, app: app, account: account, sum: sum, conversations: make(map[int64]struct{})}
 	retErr = fn(run)
 	if ctx.Err() == nil {
-		retErr = errors.Join(retErr, run.resolveReplies(ctx))
+		if syncType == MessagesSourceType {
+			// A manual pull also repairs interrupted imports outside the
+			// provider's current shallow conversation window.
+			retErr = errors.Join(retErr, run.resolveReplies(ctx, 0))
+		} else {
+			for conversationID := range run.conversations {
+				retErr = errors.Join(retErr, run.resolveReplies(ctx, conversationID))
+			}
+		}
 	}
 	return sum, retErr
 }
@@ -189,12 +198,12 @@ type messageMetadata struct {
 	ReplyTo      ID     `json:"referenced_message_id,omitempty"`
 }
 
-// Resolve persisted native references after each batch or event. Metadata
-// survives restarts and covers parents delivered after their replies.
-func (r *messageRun) resolveReplies(ctx context.Context) error {
+// Resolve persisted native references in one conversation, or the whole source
+// for a manual pull. Metadata survives restarts and late parent delivery.
+func (r *messageRun) resolveReplies(ctx context.Context, conversationID int64) error {
 	var after int64
 	for {
-		rows, err := r.imp.store.ListUnresolvedMessageRepliesAfterContext(ctx, r.source.ID, MessagesSourceType, after, 100, 0)
+		rows, err := r.imp.store.ListUnresolvedMessageRepliesAfterContext(ctx, r.source.ID, MessagesSourceType, after, 100, conversationID)
 		if err != nil {
 			return err
 		}
@@ -204,8 +213,15 @@ func (r *messageRun) resolveReplies(ctx context.Context) error {
 				return errors.New("invalid TikTok reply metadata")
 			}
 			if metadata.ReplyTo != "" {
-				if err := r.imp.store.SetReplyToContext(ctx, r.source.ID, row.SourceMessageID, messageKey(metadata.Conversation, metadata.ReplyTo)); err != nil {
+				parentKey := messageKey(metadata.Conversation, metadata.ReplyTo)
+				parents, err := r.imp.store.MessageExistsBatchContext(ctx, r.source.ID, []string{parentKey})
+				if err != nil {
 					return err
+				}
+				if _, exists := parents[parentKey]; exists {
+					if err := r.imp.store.SetReplyToContext(ctx, r.source.ID, row.SourceMessageID, parentKey); err != nil {
+						return err
+					}
 				}
 			}
 			after = row.MessageID
@@ -343,6 +359,11 @@ func (r *messageRun) persist(ctx context.Context, m BusinessMessage, event strin
 	if !exists {
 		r.sum.MessagesAdded++
 	}
+	target, err := r.imp.store.GetMessageRelationTarget(ctx, messageID)
+	if err != nil {
+		return err
+	}
+	r.conversations[target.ConversationID] = struct{}{}
 	if parentKey != "" {
 		if err := r.imp.store.SetReplyToContext(ctx, r.source.ID, key, parentKey); err != nil {
 			return err

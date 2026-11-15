@@ -1,6 +1,7 @@
 package tiktok
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
@@ -316,6 +317,128 @@ func TestMessageRepliesResolveAfterParentArrives(t *testing.T) {
 				requirements.NoError(st.DB().QueryRowContext(t.Context(), "SELECT reply_to_message_id FROM messages WHERE id = ?", rows[messageKey(child.ConversationID, child.ID)].ID).Scan(&replyTo))
 				assertions.Equal(sql.NullInt64{Int64: rows[messageKey(parent.ConversationID, parent.ID)].ID, Valid: true}, replyTo)
 			}
+		})
+	}
+}
+
+func TestMessageReplyResolutionOnlyWritesAvailableParentsInTouchedConversations(t *testing.T) {
+	for _, interrupted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("interrupted_parent_%t", interrupted), func(t *testing.T) {
+			st := testutil.NewSQLiteTestStore(t)
+			c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+				_, _ = fmt.Fprint(w, `{"code":0,"data":{"username":"example"}}`)
+			})
+			imp := NewMessageImporter(st, c, MessageImportOptions{})
+			source, err := imp.Register(t.Context(), "app-example", "account-example")
+			require.NoError(t, err)
+			event := MessageEvent{ClientKey: "app-example", Event: "im_receive_msg", Account: "account-example"}
+			apply := func(message BusinessMessage) {
+				t.Helper()
+				_, err := imp.Apply(t.Context(), "app-example", event, message)
+				require.NoError(t, err)
+			}
+			// More than one resolver page, with the same missing parent, must neither
+			// stop pagination nor cause repeated NULL-to-NULL writes.
+			for i := range 101 {
+				apply(BusinessMessage{ID: ID(fmt.Sprintf("reply-%d", i)), ConversationID: "conversation-a", Timestamp: 1700000000001, Type: "text", Reference: &MessageReference{ID: "parent-example"}})
+			}
+			_, err = st.DB().ExecContext(t.Context(), `
+				CREATE TABLE reply_writes (message_id INTEGER);
+				CREATE TRIGGER count_reply_writes AFTER UPDATE OF reply_to_message_id ON messages
+				WHEN OLD.metadata LIKE '%"referenced_message_id"%'
+				BEGIN INSERT INTO reply_writes VALUES (NEW.id); END`)
+			require.NoError(t, err)
+			check := func(writes, resolved int) {
+				t.Helper()
+				var gotWrites, gotResolved int
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM reply_writes").Scan(&gotWrites))
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE source_id = ? AND metadata LIKE '%"referenced_message_id"%' AND reply_to_message_id IS NOT NULL`, source.ID).Scan(&gotResolved))
+				assert.Equal(t, writes, gotWrites)
+				assert.Equal(t, resolved, gotResolved)
+			}
+			// A parent with the same native ID in B must not resolve A's replies.
+			apply(BusinessMessage{ID: "parent-example", ConversationID: "conversation-b", Timestamp: 1700000000001, Type: "text"})
+			check(0, 0)
+			apply(BusinessMessage{ID: "unrelated-example", ConversationID: "conversation-a", Timestamp: 1700000000001, Type: "text"})
+			check(0, 0)
+			parent := BusinessMessage{ID: "parent-example", ConversationID: "conversation-a", Timestamp: 1700000000001, Type: "text"}
+			if interrupted {
+				// A canceled run can persist the parent but leave deferred replies.
+				// An unrelated event must not repair that untouched conversation.
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				_, err := imp.run(ctx, "app-example", "account-example", "tiktok_messages_webhook", func(r *messageRun) error {
+					err := r.persist(ctx, parent, event.Event)
+					cancel()
+					return errors.Join(err, ctx.Err())
+				})
+				require.ErrorIs(t, err, context.Canceled)
+				check(0, 0)
+				apply(BusinessMessage{ID: "later-example", ConversationID: "conversation-b", Timestamp: 1700000000001, Type: "text"})
+				check(0, 0)
+			}
+			apply(parent)
+			check(101, 101)
+			apply(BusinessMessage{ID: "later-example", ConversationID: "conversation-a", Timestamp: 1700000000001, Type: "text"})
+			check(101, 101)
+		})
+	}
+}
+
+func TestMessagePullRecoversRepliesAfterInterruptedParentImport(t *testing.T) {
+	for _, nextPull := range []string{"empty", "unrelated"} {
+		t.Run(nextPull, func(t *testing.T) {
+			st := testutil.NewSQLiteTestStore(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var recovering atomic.Bool
+			child := BusinessMessage{ID: "reply-example", ConversationID: "conversation-a", Timestamp: 1700000000001, Type: "text", Reference: &MessageReference{ID: "parent-example"}}
+			parent := BusinessMessage{ID: "parent-example", ConversationID: child.ConversationID, Timestamp: child.Timestamp, Type: "text"}
+			c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/business/get/":
+					_, _ = fmt.Fprint(w, `{"code":0,"data":{"username":"example"}}`)
+				case "/business/message/conversation/list/":
+					conversations := []BusinessConversation{{ID: "conversation-a", UpdateTime: 2}, {ID: "conversation-b", UpdateTime: 1}}
+					if recovering.Load() {
+						conversations = nil
+						if nextPull == "unrelated" {
+							conversations = []BusinessConversation{{ID: "conversation-b"}}
+						}
+					}
+					assert.NoError(t, json.MarshalWrite(w, map[string]any{"code": 0, "data": ConversationPage{Conversations: conversations}}))
+				case "/business/message/content/list/":
+					messages := []BusinessMessage{{ID: "unrelated-example", ConversationID: "conversation-b", Timestamp: child.Timestamp, Type: "text"}}
+					if !recovering.Load() {
+						if r.URL.Query().Get("conversation_id") == "conversation-b" {
+							// A has committed both rows; interrupt before deferred repair.
+							cancel()
+							return
+						}
+						messages = []BusinessMessage{child, parent}
+					}
+					assert.NoError(t, json.MarshalWrite(w, map[string]any{"code": 0, "data": MessagePage{Messages: messages}}))
+				default:
+					http.NotFound(w, r)
+				}
+			})
+			imp := NewMessageImporter(st, c, MessageImportOptions{})
+			source, err := imp.Register(t.Context(), "app-example", "account-example")
+			require.NoError(t, err)
+			_, err = imp.Import(ctx, "app-example", "account-example")
+			require.Error(t, err)
+			require.ErrorIs(t, ctx.Err(), context.Canceled)
+			rows, err := st.StoredMessagesContext(t.Context(), source.ID, messageFormat, []string{messageKey(child.ConversationID, child.ID), messageKey(parent.ConversationID, parent.ID)})
+			require.NoError(t, err)
+			require.Len(t, rows, 2)
+			var replyTo sql.NullInt64
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT reply_to_message_id FROM messages WHERE id = ?", rows[messageKey(child.ConversationID, child.ID)].ID).Scan(&replyTo))
+			require.False(t, replyTo.Valid)
+			recovering.Store(true)
+			_, err = imp.Import(t.Context(), "app-example", "account-example")
+			require.NoError(t, err)
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT reply_to_message_id FROM messages WHERE id = ?", rows[messageKey(child.ConversationID, child.ID)].ID).Scan(&replyTo))
+			assert.Equal(t, sql.NullInt64{Int64: rows[messageKey(parent.ConversationID, parent.ID)].ID, Valid: true}, replyTo)
 		})
 	}
 }
