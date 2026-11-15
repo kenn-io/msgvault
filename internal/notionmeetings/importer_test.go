@@ -1188,6 +1188,9 @@ func TestImporterPreservesTranscriptWithMissingOrCorruptEvidence(t *testing.T) {
 			meeting.LastEditedTime = "2026-08-29T14:00:00Z"
 			source.query.Results = []MeetingNote{meeting}
 			source.blockErrs = map[string]error{"transcript-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
+			source.markdown.Markdown = "# Weekly planning"
+			source.markdown.Raw, err = json.Marshal(source.markdown)
+			require.NoError(err)
 			second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 			require.NoError(err)
 			assert.Equal(int64(1), second.MeetingsUpdated)
@@ -1199,6 +1202,46 @@ func TestImporterPreservesTranscriptWithMissingOrCorruptEvidence(t *testing.T) {
 			require.Len(state.Pending, 1)
 		})
 	}
+}
+
+func TestImporterKeepsNewMarkdownTranscriptWhileBlocksAreIncomplete(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := newImporterFixture(t)
+	empty := paragraph("transcript-1", "", false)
+	source.blocks["transcript-1"] = &empty
+	source.markdown.Markdown = "# Weekly planning"
+	var err error
+	source.markdown.Raw, err = json.Marshal(source.markdown)
+	require.NoError(err)
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	var messageID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
+	before, err := st.GetMessageRaw(messageID)
+	require.NoError(err)
+	var beforeEvidence map[string]json.RawMessage
+	require.NoError(json.Unmarshal(before, &beforeEvidence))
+
+	source.blockErrs = map[string]error{"transcript-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
+	source.markdown.Markdown = "# Transcript\nNew page transcript"
+	source.markdown.Raw, err = json.Marshal(source.markdown)
+	require.NoError(err)
+	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
+	source.query.Results = nil
+	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	assert.True(second.PartialCoverage)
+	assert.Len(lastNotionState(t, st, first.SourceID).Pending, 1)
+	body, err := st.GetMessageBodyText(t.Context(), messageID)
+	require.NoError(err)
+	assert.Contains(body, "New page transcript")
+	raw, err := st.GetMessageRaw(messageID)
+	require.NoError(err)
+	var evidence map[string]json.RawMessage
+	require.NoError(json.Unmarshal(raw, &evidence))
+	assert.JSONEq(string(beforeEvidence["transcript"]), string(evidence["transcript"]))
+	assert.JSONEq(string(source.markdown.Raw), string(evidence["page_markdown"]))
 }
 
 func TestImporterRequiresRegisteredSource(t *testing.T) {

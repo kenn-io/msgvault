@@ -428,8 +428,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			if oldText == "" && len(archived.RawTrees[section.name]) == 0 {
 				continue
 			}
-			*section.text = oldText
-			if section.name == sectionTranscript {
+			keepCurrentTranscript := section.name == sectionTranscript && strings.TrimSpace(oldText) == "" && hydrated.MarkdownTranscriptFallback
+			if !keepCurrentTranscript {
+				*section.text = oldText
+			}
+			if section.name == sectionTranscript && !keepCurrentTranscript {
 				providerTranscriptMissing = true
 				hydrated.PageMarkdown = nil
 				hydrated.MarkdownTranscriptFallback = false
@@ -439,14 +442,16 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 					hydrated.keptRawTrees[section.name] = append(jsontext.Value(nil), rawTree...)
 				}
 				markdownPresent := len(archived.Evidence.PageMarkdown) > 0 && string(archived.Evidence.PageMarkdown) != "null"
-				if section.name == sectionTranscript && markdownPresent {
+				if section.name == sectionTranscript && markdownPresent && !keepCurrentTranscript {
 					hydrated.keptMarkdown = append(jsontext.Value(nil), archived.Evidence.PageMarkdown...)
 				}
-				if section.name == sectionTranscript && archived.MarkdownFallback {
+				if section.name == sectionTranscript && archived.MarkdownFallback && !keepCurrentTranscript {
 					hydrated.MarkdownTranscriptFallback = true
 				}
 			}
-			hydrated.Warnings = append(hydrated.Warnings, "provider temporarily omitted the "+section.name+"; preserved the archived "+section.name)
+			if !keepCurrentTranscript {
+				hydrated.Warnings = append(hydrated.Warnings, "provider temporarily omitted the "+section.name+"; preserved the archived "+section.name)
+			}
 		}
 		if hydrated.AttendeeResolutionDegraded {
 			preserveArchivedAttendees(hydrated, archived.ResolvedUsers)
