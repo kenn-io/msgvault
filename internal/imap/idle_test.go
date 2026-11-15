@@ -38,6 +38,11 @@ func startIdleWire(t *testing.T, capability, mode string) *idleWire {
 	requirements := require.New(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	requirements.NoError(err)
+	return startIdleWireOnListener(t, listener, capability, mode)
+}
+
+func startIdleWireOnListener(t *testing.T, listener net.Listener, capability, mode string) *idleWire {
+	t.Helper()
 	w := &idleWire{address: listener.Addr().String(), commands: make(chan string, 64), idling: make(chan struct{}), updates: make(chan string, 16), done: make(chan struct{}), exited: make(chan struct{})}
 	w.stop = sync.OnceFunc(func() { _ = listener.Close(); close(w.done); <-w.exited })
 	t.Cleanup(w.stop)

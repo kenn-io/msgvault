@@ -4,9 +4,14 @@ package imap
 
 import "syscall"
 
-// transportErrnos are the socket errors that mean the peer or network dropped
-// the connection, so a fresh connection attempt is worth making.
+// transportErrnos are the socket errors that mean the peer or network is
+// unavailable or dropped the connection, so a fresh attempt is worth making.
 var transportErrnos = []syscall.Errno{
+	syscall.ECONNREFUSED,
+	syscall.ENETUNREACH,
+	syscall.EHOSTUNREACH,
+	syscall.ENETDOWN,
+
 	syscall.ECONNRESET,
 	syscall.ECONNABORTED,
 	syscall.EPIPE,
