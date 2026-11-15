@@ -1029,6 +1029,13 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 			return nil, fmt.Errorf("copy loop decisions: %w", err)
 		}
 	}
+	if present, err := sourceTableExists(ctx, tx, "meeting_link_decisions"); err != nil {
+		return nil, err
+	} else if present {
+		if err := copySubsetMeetingDecisions(ctx, tx); err != nil {
+			return nil, fmt.Errorf("copy meeting decisions: %w", err)
+		}
+	}
 
 	// A Matrix cursor can carry pending relation events from rooms outside
 	// the subset, so exports start Matrix sync over.
@@ -3145,4 +3152,35 @@ func preserveSubsetDraftEvidence(ctx context.Context, tx *sql.Tx) (int64, error)
 		}
 	}
 	return int64(len(sourceIDs)), nil
+}
+
+func copySubsetMeetingDecisions(ctx context.Context, tx *sql.Tx) error {
+	visibility := calendarEventVisibility("e", "m")
+	visibility = strings.NewReplacer("FROM source_merge_", "FROM src.source_merge_", "FROM calendar_events", "FROM src.calendar_events", "JOIN messages", "JOIN src.messages").Replace(visibility)
+	_, err := tx.ExecContext(ctx, `WITH RECURSIVE copies(original, id, depth) AS (
+ SELECT left_message_id, left_message_id, 0 FROM src.meeting_link_decisions
+ UNION SELECT right_message_id, right_message_id, 0 FROM src.meeting_link_decisions
+ UNION ALL
+ SELECT c.original, COALESCE((SELECT survivor_message_id FROM src.meeting_copy_survivors WHERE message_id=m.id AND m.delete_batch_id IS NOT NULL), (SELECT survivor_message_id FROM src.source_merge_messages WHERE message_id=m.id)), c.depth+1
+ FROM copies c JOIN src.messages m ON m.id=c.id
+ WHERE c.depth<100 AND (m.deleted_at IS NOT NULL OR EXISTS (SELECT 1 FROM src.calendar_events e WHERE e.message_id=m.id AND NOT `+visibility+`))
+ AND COALESCE((SELECT survivor_message_id FROM src.meeting_copy_survivors WHERE message_id=m.id AND m.delete_batch_id IS NOT NULL), (SELECT survivor_message_id FROM src.source_merge_messages WHERE message_id=m.id)) IS NOT NULL
+ ), visible AS (
+ SELECT c.original,c.id FROM copies c JOIN src.messages m ON m.id=c.id
+ WHERE m.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM src.calendar_events e WHERE e.message_id=m.id AND NOT `+visibility+`)
+ AND c.id IN (SELECT id FROM selected_messages)
+ ), choices AS (
+ SELECT d.id,l.id AS a,d.left_kind AS ak,d.left_key AS av,r.id AS b,d.right_kind AS bk,d.right_key AS bv,d.decision
+ FROM src.meeting_link_decisions d JOIN visible l ON l.original=d.left_message_id JOIN visible r ON r.original=d.right_message_id
+ WHERE l.id<>r.id OR d.left_kind<>d.right_kind OR d.left_key<>d.right_key
+ )
+ INSERT OR IGNORE INTO meeting_link_decisions(id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision)
+ SELECT id, CASE WHEN a<b OR (a=b AND (ak<bk OR (ak=bk AND av<bv))) THEN a ELSE b END,
+ CASE WHEN a<b OR (a=b AND (ak<bk OR (ak=bk AND av<bv))) THEN ak ELSE bk END,
+ CASE WHEN a<b OR (a=b AND (ak<bk OR (ak=bk AND av<bv))) THEN av ELSE bv END,
+ CASE WHEN a<b OR (a=b AND (ak<bk OR (ak=bk AND av<bv))) THEN b ELSE a END,
+ CASE WHEN a<b OR (a=b AND (ak<bk OR (ak=bk AND av<bv))) THEN bk ELSE ak END,
+ CASE WHEN a<b OR (a=b AND (ak<bk OR (ak=bk AND av<bv))) THEN bv ELSE av END, decision
+ FROM choices ORDER BY id DESC`)
+	return err
 }

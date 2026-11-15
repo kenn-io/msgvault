@@ -22,8 +22,13 @@ func newerMeetingDecision(a, b meetingDecisionEdge) bool {
 
 // meetingDecisionEdges finds choices saved on the occurrence or its exception.
 func (s *Store) meetingDecisionEdges(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) ([]meetingDecisionEdge, error) {
+	copies, err := s.meetingCopies(ctx, endpoint.ID)
+	if err != nil {
+		return nil, err
+	}
 	leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
 	rightScope, rightArgs := sourceScopeClause(ctx, "r.source_id")
+	copyScope, copyArgs := sourceScopeClause(ctx, "m.source_id")
 	var originalDate string
 	var originalTime any
 	if endpoint.Kind == meetingRefEvent && endpoint.Key != "" {
@@ -37,13 +42,20 @@ func (s *Store) meetingDecisionEdges(ctx context.Context, endpoint meetingDecisi
 			originalTime = ref.Identity.Instant
 		}
 	}
-	args := []any{endpoint.ID, endpoint.ID, originalDate, originalTime, endpoint.Kind, endpoint.Key, endpoint.Key, endpoint.Kind, endpoint.Key, endpoint.Key}
+	args := make([]any, 0, len(copies)+8)
+	for _, id := range copies {
+		args = append(args, id)
+	}
+	args = append(args, endpoint.ID, originalDate, originalTime)
+	args = append(args, copyArgs...)
+	args = append(args, endpoint.Kind, endpoint.Key, endpoint.Kind, endpoint.Key)
 	args = append(args, leftArgs...)
 	args = append(args, rightArgs...)
 	args = append(args, *budget+1)
-	rows, err := s.db.QueryContext(ctx, `WITH ids(id) AS (
- SELECT CAST(? AS BIGINT) UNION SELECT e.message_id FROM calendar_events e JOIN messages m ON m.id=e.message_id JOIN calendar_events series ON series.message_id=? AND series.provider_event_id=e.series_provider_id JOIN messages sm ON sm.id=series.message_id AND sm.source_id=m.source_id WHERE e.kind='exception' AND e.series_provider_id<>'' AND series.kind='series' AND m.deleted_at IS NULL AND ((e.original_start_date<>'' AND e.original_start_date=?) OR e.original_start_at=?)
- ) SELECT d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE l.deleted_at IS NULL AND r.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM calendar_events e WHERE e.message_id=l.id AND NOT `+calendarEventVisibility("e", "l")+`) AND NOT EXISTS (SELECT 1 FROM calendar_events e WHERE e.message_id=r.id AND NOT `+calendarEventVisibility("e", "r")+`) AND ((d.left_message_id IN (SELECT id FROM ids) AND (d.left_kind=? AND (d.left_key=? OR d.left_key='' OR ?=''))) OR (d.right_message_id IN (SELECT id FROM ids) AND (d.right_kind=? AND (d.right_key=? OR d.right_key='' OR ?=''))))`+leftScope+rightScope+` LIMIT ?`, args...)
+	rows, err := s.meetingSQLReader(ctx).QueryContext(ctx, `WITH RECURSIVE ids(id) AS (
+ SELECT id FROM messages WHERE id IN (`+placeholders(len(copies))+`) UNION SELECT e.message_id FROM calendar_events e JOIN messages m ON m.id=e.message_id JOIN calendar_events series ON series.message_id=? AND series.provider_event_id=e.series_provider_id JOIN messages sm ON sm.id=series.message_id AND sm.source_id=m.source_id WHERE e.kind='exception' AND e.series_provider_id<>'' AND series.kind='series' AND m.deleted_at IS NULL AND ((e.original_start_date<>'' AND e.original_start_date=?) OR e.original_start_at=?)
+ UNION SELECT m.id FROM messages m JOIN ids c ON c.id=COALESCE((SELECT survivor_message_id FROM meeting_copy_survivors WHERE message_id=m.id AND m.delete_batch_id IS NOT NULL),(SELECT survivor_message_id FROM source_merge_messages WHERE message_id=m.id)) WHERE (m.deleted_at IS NOT NULL OR EXISTS (SELECT 1 FROM calendar_events e WHERE e.message_id=m.id AND NOT `+calendarEventVisibility("e", "m")+`))`+copyScope+`
+ ) SELECT d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE ((d.left_message_id IN (SELECT id FROM ids) AND d.left_kind=? AND d.left_key=?) OR (d.right_message_id IN (SELECT id FROM ids) AND d.right_kind=? AND d.right_key=?))`+leftScope+rightScope+` LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +80,7 @@ func (s *Store) meetingDecisionEdges(ctx context.Context, endpoint meetingDecisi
 
 // MeetingRecordContext follows automatic evidence and owner choices in one snapshot.
 func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (MeetingRecord, error) {
-	return s.meetingRecordContext(ctx, ref)
+	return s.meetingRecordContext(ctx, ref, false)
 }
 
 type meetingDecisionNode struct {
@@ -89,7 +101,7 @@ type meetingDecisionGraph struct {
 	automatic  MeetingRecord
 }
 
-func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (MeetingRecord, error) {
+func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, notesOnly bool) (MeetingRecord, error) {
 	result := MeetingRecord{Links: []MeetingLink{}, MessageIDs: []int64{}, Unexpandable: []CalendarUnexpandable{}}
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
@@ -104,7 +116,7 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 	if err != nil {
 		return result, err
 	}
-	graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{seed}, &budget)
+	graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{seed}, &budget, notesOnly)
 	if err != nil {
 		return result, err
 	}
@@ -114,7 +126,7 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 	return graph.record(seed), nil
 }
 
-func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDecisionEndpoint, budget *int) (*meetingDecisionGraph, error) {
+func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDecisionEndpoint, budget *int, notesOnly bool) (*meetingDecisionGraph, error) {
 	nodes := map[string]meetingDecisionNode{}
 	var queue []meetingDecisionEndpoint
 	add := func(endpoint meetingDecisionEndpoint, link *MeetingLink) {
@@ -142,8 +154,11 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 		endpoint := queue[0]
 		queue = queue[1:]
 		if !resolved[endpoint.ref()] {
-			record, err := s.meetingAutomaticRecordForEndpoint(ctx, endpoint, budget)
+			record, err := s.meetingAutomaticRecordForEndpoint(ctx, endpoint, budget, notesOnly)
 			if errors.Is(err, sql.ErrNoRows) && endpoint != seeds[0] {
+				// A choice on a missing occurrence stays saved but joins nothing.
+				delete(nodes, endpoint.ref())
+				candidates = slices.DeleteFunc(candidates, func(c meetingDecisionEdge) bool { return c.a.ref() == endpoint.ref() || c.b.ref() == endpoint.ref() })
 				continue
 			}
 			if err != nil {
@@ -194,22 +209,18 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 			if seenDecisions[choice.id] {
 				continue
 			}
-			seenDecisions[choice.id] = true
-			valid := true
-			for _, endpoint := range []*meetingDecisionEndpoint{&choice.a, &choice.b} {
-				canonical, err := s.meetingOccurrenceKey(ctx, *endpoint, budget)
-				if errors.Is(err, ErrMeetingOccurrenceRequired) || errors.Is(err, sql.ErrNoRows) {
-					valid = false
-					break
-				}
-				if err != nil {
-					return nil, err
-				}
-				*endpoint = canonical
+			a, b, ok, err := s.meetingPairKeys(ctx, choice.a, choice.b, budget)
+			if err != nil {
+				return nil, err
 			}
-			if !valid {
+			if !ok {
 				continue
 			}
+			if a != endpoint && b != endpoint || a == b {
+				continue
+			}
+			seenDecisions[choice.id] = true
+			choice.a, choice.b = a, b
 			add(choice.a, nil)
 			add(choice.b, nil)
 			candidates = append(candidates, choice)

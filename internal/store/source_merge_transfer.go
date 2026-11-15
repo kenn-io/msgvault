@@ -37,17 +37,12 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			}
 		}
 	}
-	meetingMapping := map[int64]int64{}
 	for _, m := range plan.messages {
 		if m.survivor != 0 {
-			meetingMapping[m.id] = m.survivor
 			if err := s.copyLoopDecisionTx(ctx, tx, m.id, m.survivor); err != nil {
 				return err
 			}
 		}
-	}
-	if err := s.copyMeetingDecisionMappingsTx(ctx, tx, meetingMapping); err != nil {
-		return err
 	}
 	// Batch the ordinary row transfer and provenance writes. The values table
 	// keeps provider IDs and hidden-survivor decisions in the same transaction.
@@ -107,15 +102,6 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 		visibleGroups[visible] = append(visibleGroups[visible], hidden)
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return err
-	}
-	visibleMapping := map[int64]int64{}
-	for visible, ids := range visibleGroups {
-		for _, id := range ids {
-			visibleMapping[id] = visible
-		}
-	}
-	if err := s.copyMeetingDecisionMappingsTx(ctx, tx, visibleMapping); err != nil {
 		return err
 	}
 	for visible, ids := range visibleGroups {
