@@ -1284,7 +1284,7 @@ func TestCardDAVTombstoneDeletesImportedPersonAfterRemoteMappingBeforeLocalDupli
 
 	st, account, book := newCardDAVResourceStore(t)
 	remote := remoteResource(
-		book.CanonicalURL+"remote.vcf", "remote-owner", "Shared", "shared@example.test", `"one"`,
+		book.CanonicalURL+"remote.vcf", "10000000-0000-4000-8000-000000000001", "Shared", "shared@example.test", `"one"`,
 	)
 	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
@@ -1298,7 +1298,7 @@ func TestCardDAVTombstoneDeletesImportedPersonAfterRemoteMappingBeforeLocalDupli
 	require.Equal(store.CardDAVGovernanceRemote, remoteMapping.Governance)
 
 	duplicate := remoteResource(
-		book.CanonicalURL+"duplicate.vcf", "local-duplicate", "Shared", "shared@example.test", `"two"`,
+		book.CanonicalURL+"duplicate.vcf", remote.RemoteUID, "Shared", "shared@example.test", `"two"`,
 	)
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
 		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
