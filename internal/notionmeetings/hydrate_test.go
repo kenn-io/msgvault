@@ -236,10 +236,10 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal("Decide the release scope.", hydrated.Summary)
 			assert.Contains(hydrated.Notes, "Nested action item.")
-			assert.Equal("Test Speaker: Published in Markdown.", hydrated.Transcript)
-			assert.True(hydrated.MarkdownTranscriptFallback)
+			assert.Empty(hydrated.Transcript)
+			assert.Zero(source.markdownCalls)
+			assert.False(hydrated.MarkdownTranscriptFallback)
 			assert.Contains(hydrated.Incomplete, "transcript")
-			assert.Contains(hydrated.Warnings, "structured transcript was empty; used page Markdown transcript")
 			assert.Len(hydrated.AttendeeLabels, 2)
 		})
 	}

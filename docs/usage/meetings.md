@@ -873,9 +873,9 @@ It still cannot discover history beyond the visible window.
 - Due transcript retries run in addition to that limit.
 
 Meetings under data sources import their summary, notes, and transcript from
-their referenced section blocks. When a page meeting's structured transcript is
-empty or its section can't be read, msgvault reads the parent page's Markdown
-and uses a complete transcript section.
+their referenced section blocks. When a page meeting has no transcript section
+or its section reads completely empty, msgvault uses a complete transcript from
+the parent page's Markdown. An incomplete section keeps saved text for retry.
 
 Provider or network errors, incomplete pagination, and request, response-size,
 block-count, and nesting limits can leave sections incomplete. msgvault keeps

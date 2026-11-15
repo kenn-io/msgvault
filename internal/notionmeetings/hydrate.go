@@ -168,9 +168,10 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 	return result, nil
 }
 
+//nolint:nilerr // budget exhaustion marks the transcript incomplete for retry
 func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeeting) error {
 	pageID := strings.TrimSpace(result.Discovery.Parent.PageID)
-	if pageID == "" || strings.TrimSpace(result.Transcript) != "" {
+	if pageID == "" || strings.TrimSpace(result.Transcript) != "" || slices.Contains(result.Incomplete, sectionTranscript) {
 		return nil
 	}
 	if err := ctx.Err(); err != nil {

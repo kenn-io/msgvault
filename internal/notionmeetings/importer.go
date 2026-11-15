@@ -349,7 +349,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		meeting := work[id]
 		sum.MeetingsProcessed++
 		hydrated, hydrateErr := hydrator.Hydrate(ctx, meeting)
-		if hydrateErr != nil {
+		queueIncomplete := func() {
 			if hydrated != nil && len(hydrated.Incomplete) > 0 {
 				previous, exists := pendingByID[id]
 				pending, keep := schedulePending(hydrated, now, previous, exists, true)
@@ -358,6 +358,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 					next.TranscriptRetryUntil[id] = pending.RetryUntil
 				}
 			}
+		}
+		if hydrateErr != nil {
+			queueIncomplete()
 			sum.Errors++
 			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: %w", id, hydrateErr))
 			progress(fmt.Sprintf("meeting %s: hydration failed", id))
@@ -373,6 +376,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 						break
 					}
 				}
+			} else {
+				queueIncomplete()
 			}
 			sum.Errors++
 			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: recover archived evidence: %w", id, recoverErr))
@@ -420,11 +425,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		leaveUnchanged := false
 		for _, section := range sections {
-			incomplete := slices.Contains(hydrated.Incomplete, section.name)
-			if section.name == sectionTranscript && hydrated.MarkdownTranscriptFallback {
-				incomplete = false
-			}
-			if !incomplete {
+			if !slices.Contains(hydrated.Incomplete, section.name) {
 				continue
 			}
 			oldText := section.oldText

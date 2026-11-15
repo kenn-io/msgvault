@@ -114,7 +114,11 @@ func decodeNotionActions(fields map[string]jsontext.Value, discovery notionDisco
 			continue
 		}
 		referenced = true
-		blocks, complete := notionTreeBlocks(fields[tree.key], tree.id)
+		expectedID := tree.id
+		if slices.Contains(incompleteSections, tree.key) {
+			expectedID = ""
+		}
+		blocks, complete := notionTreeBlocks(fields[tree.key], expectedID)
 		if !complete || slices.Contains(incompleteSections, tree.key) {
 			incomplete = true
 		} else {
@@ -179,7 +183,7 @@ func notionTreeBlocks(raw jsontext.Value, expectedRootID string) ([]jsontext.Val
 		return nil, false
 	}
 	rootID, rootHasChildren, rootValid := notionBlockTraversalHeader(tree.Root)
-	if rootID != expectedRootID {
+	if expectedRootID != "" && rootID != expectedRootID {
 		return nil, false
 	}
 	traversal := notionTreeTraversal{

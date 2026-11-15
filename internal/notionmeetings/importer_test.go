@@ -1429,26 +1429,32 @@ func TestImporterRetriesIncompletePastDeadlineOutsideWindow(t *testing.T) {
 
 func TestImporterHandlesIncompleteMarkdownWithDifferentTranscriptSources(t *testing.T) {
 	t.Run("readable page with unreadable section", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		st, source, imp := newImporterFixture(t)
+		_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+		require.NoError(err)
 		source.blockErrs = map[string]error{"transcript-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
 		source.markdown.Markdown = "# Transcript\nPage transcript"
 		source.markdown.Raw = json.RawMessage(`{"object":"page_markdown","id":"page-1","markdown":"# Transcript\nPage transcript"}`)
 		first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-		require.NoError(t, err)
-		require.Len(t, lastNotionState(t, st, first.SourceID).Pending, 1)
+		require.NoError(err)
+		require.Len(lastNotionState(t, st, first.SourceID).Pending, 1)
 		var id int64
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
 		body, err := st.GetMessageBodyText(t.Context(), id)
-		require.NoError(t, err)
-		assert.Contains(t, body, "Page transcript")
+		require.NoError(err)
+		assert.Contains(body, "Test Speaker: Ready to ship.")
+		assert.NotContains(body, "Page transcript")
 		source.markdown.Markdown = "# Transcript\nUpdated page transcript"
 		source.markdown.Raw = json.RawMessage(`{"object":"page_markdown","id":"page-1","markdown":"# Transcript\nUpdated page transcript"}`)
 		second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-		require.NoError(t, err)
-		require.Len(t, lastNotionState(t, st, second.SourceID).Pending, 1)
+		require.NoError(err)
+		require.Len(lastNotionState(t, st, second.SourceID).Pending, 1)
 		body, err = st.GetMessageBodyText(t.Context(), id)
-		require.NoError(t, err)
-		assert.Contains(t, body, "Updated page transcript")
+		require.NoError(err)
+		assert.Contains(body, "Test Speaker: Ready to ship.")
+		assert.NotContains(body, "Updated page transcript")
 	})
 	t.Run("saved page transcript", func(t *testing.T) {
 		st, source, imp := newImporterFixture(t)
@@ -1660,4 +1666,33 @@ func TestImporterNewerEvidencePreservesRetryState(t *testing.T) {
 			assert.Equal(t, before.TranscriptRetryUntil, after.TranscriptRetryUntil)
 		})
 	}
+}
+
+func TestImporterKeepsIncompleteRetryAfterRecoveryCancellation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := newImporterFixture(t)
+	meeting := hydrationMeeting()
+	meeting.Parent = Parent{Type: "data_source_id"}
+	source.blocks["meeting-1"].Parent = meeting.Parent
+	source.query.Results = []MeetingNote{meeting}
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrRateLimited, Status: 429}}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	source.onBlock = func(id string) {
+		if id == "transcript-1" {
+			cancel()
+		}
+	}
+	_, err = imp.Import(ctx, ImportOptions{Identifier: "work"})
+	require.ErrorIs(err, context.Canceled)
+	checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), first.SourceID, SourceType)
+	require.NoError(err)
+	var state syncState
+	require.NoError(json.Unmarshal([]byte(checkpoint.CursorBefore.String), &state))
+	require.Len(state.Pending, 1)
+	assert.Equal("meeting-1", state.Pending[0].BlockID)
+	assert.True(state.Pending[0].Incomplete)
 }
