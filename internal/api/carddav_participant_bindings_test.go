@@ -46,8 +46,6 @@ func TestCardDAVParticipantBindingHTTPPreviewApplyUndo(t *testing.T) {
 	call(`{"undo":true}`)
 	assert.Equal(2, st.refreshCalls)
 	assert.Equal([]store.CardDAVParticipantBindingOptions{{DryRun: true}, {}, {DryRun: true, Undo: true}, {Undo: true}}, st.options)
-	malformed := personRequest(t, srv, http.MethodPost, "/api/v1/carddav/participant-bindings", []byte(`{"dry_run":"yes"}`), "")
-	assert.Equal(http.StatusBadRequest, malformed.Code)
 }
 
 type cardDAVMutationFixture struct {

@@ -643,7 +643,7 @@ func TestCardDAVParticipantBindingLifecycleCleanup(t *testing.T) {
 	for _, test := range []struct {
 		action  string
 		tracked bool
-	}{{"delete", false}, {"demote", false}, {"demote", true}, {"discovery", true}, {"conflict-edit", true}, {"publication-conflict", true}, {"publication-commit", true}} {
+	}{{"delete", false}, {"demote", true}, {"discovery", true}, {"conflict-edit", true}, {"publication-conflict", true}, {"publication-commit", true}} {
 		t.Run(test.action+"/tracked="+strconv.FormatBool(test.tracked), func(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)

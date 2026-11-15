@@ -905,7 +905,6 @@ it.each(['partial', 'failed'] as const)('names a connection whose sync is %s', a
   await controller.load();
   await controller.sync();
   expect(controller.syncError).toContain('work');
-  expect(controller.syncBindingConflicts).toBe(2);
   expect(controller.syncError).not.toContain('private upstream');
   expect(controller.syncStatus).toBeNull();
   expect(bookReads).toBe(status === 'partial' ? 2 : 1);

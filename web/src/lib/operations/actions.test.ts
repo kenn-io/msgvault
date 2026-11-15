@@ -3,15 +3,24 @@ import { createAPIClient } from '../api/client';
 import { runOperationAction } from './actions';
 
 describe('runOperationAction', () => {
-  it.each(['partial', 'failed'])('reports contacts sync %s', async result => {
-    const client = createAPIClient(async () => Response.json({ status: result, binding_conflicts: result === 'partial' ? 2 : 0, connections: [
-      { connection: 'work', status: result, error_message: 'private arbitrary upstream detail' },
-      ...(result === 'partial' ? [{ connection: 'personal', status: 'succeeded' }] : [])
-    ] }));
+  it.each([
+    {
+      result: { status: 'partial', binding_conflicts: 2, connections: [
+        { connection: 'work', status: 'partial', error_message: 'private arbitrary upstream detail' },
+        { connection: 'personal', status: 'succeeded' }
+      ] },
+      message: 'CardDAV sync partial. Connections needing attention: work. 2 CardDAV binding conflicts. Check CardDAV settings for the review command.'
+    },
+    {
+      result: { status: 'failed', binding_conflicts: 0, connections: [
+        { connection: 'work', status: 'failed', error_message: 'private arbitrary upstream detail' }
+      ] },
+      message: 'CardDAV sync failed. Connections needing attention: work.'
+    }
+  ])('reports contacts sync $result.status', async ({ result, message }) => {
+    const client = createAPIClient(async () => Response.json(result));
     const action = await runOperationAction('carddav_sync', client);
-    expect(action).toEqual({ outcome: 'failed', message: result === 'partial'
-      ? 'CardDAV sync partial. Connections needing attention: work. 2 CardDAV binding conflicts. Check CardDAV settings for the review command.'
-      : 'CardDAV sync failed. Connections needing attention: work.' });
+    expect(action).toEqual({ outcome: 'failed', message });
   });
   it('reports binding conflicts after a successful contacts sync', async () => {
     const client = createAPIClient(async () => Response.json({ status: 'succeeded', binding_conflicts: 2 }));
