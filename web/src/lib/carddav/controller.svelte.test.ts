@@ -906,6 +906,7 @@ it.each(['partial', 'failed'] as const)('names a connection whose sync is %s', a
         updated: 0,
         removed: 0,
         status,
+        binding_conflicts: 2,
         connections: [
           {
             connection: 'work',
@@ -930,16 +931,17 @@ it.each(['partial', 'failed'] as const)('names a connection whose sync is %s', a
   expect(controller.syncError).toContain('work');
   expect(controller.syncError).not.toContain('private upstream');
   expect(controller.syncStatus).toBeNull();
+  expect(controller.syncBindingConflicts).toBe(2);
   expect(bookReads).toBe(status === 'partial' ? 2 : 1);
   controller.destroy();
 });
 
-it.each(['succeeded', 'partial', 'failed'] as const)('retains binding conflicts after a %s sync', async (status) => {
+it('retains binding conflicts after a succeeded sync', async () => {
   const client = createAPIClient(async (input) => {
     const request = requestOf(input);
     const path = new URL(request.url).pathname;
     if (request.method === 'POST') {
-      return Response.json({ books: 1, created: 1, updated: 0, removed: 0, binding_conflicts: 2, status });
+      return Response.json({ books: 1, created: 1, updated: 0, removed: 0, binding_conflicts: 2, status: 'succeeded' });
     }
     return Response.json(
       path.endsWith('/status') ? idleStatus : path.endsWith('/books') ? { books: [] } : { runs: [] }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -136,7 +137,15 @@ func TestCardDAVIdentityRefreshFailureRequestsRecovery(t *testing.T) {
 		req.FailNow("cache recovery was not requested")
 	}
 
-	runDerivedCacheSubprocess = func(context.Context, string) error { return nil }
+	dbPath := filepath.Join(cfg.Data.DataDir, "msgvault.db")
+	testutil.NewSQLiteTestStoreAt(t, dbPath)
+	runDerivedCacheSubprocess = func(ctx context.Context, _ string) error {
+		_, err := buildCache(ctx, dbPath, cfg.AnalyticsDir(), true)
+		if err != nil {
+			return err
+		}
+		return os.Remove(query.CacheStatePath(cfg.AnalyticsDir()))
+	}
 	_, err = adapter.RefreshIdentityDatasets(t.Context())
 	req.ErrorContains(err, "read refreshed cache revision")
 	select {

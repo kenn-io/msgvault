@@ -2332,6 +2332,45 @@ func TestPhoneURINormalizationThroughSync(t *testing.T) {
 			}
 		})
 	}
+	for _, tc := range []struct {
+		local, remote string
+		matches       bool
+	}{
+		{"tel:5550102;phone-context=+1202;ext=42", "tel:+12025550102;ext=42", true},
+		{"tel:5550102;phone-context=+1202;ext=42", "TEL:5550102;EXT=42;PHONE-CONTEXT=+1202", true},
+		{"tel:+12025550102;ext=42;isub=7", "tel:+12025550102;ISUB=7;EXT=42", true},
+		{"tel:+12025550102;ext=42", "tel:+12025550102;ext=43", false},
+		{"tel:+12025550102;ext=42", "+12025550102", false},
+	} {
+		t.Run(tc.local+"/"+tc.remote, func(t *testing.T) {
+			t.Parallel()
+			card := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:remote\r\nFN:remote\r\nTEL:" + tc.remote + "\r\nEND:VCARD\r\n")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				writeDAVXML(t, w, syncResponse(cardResponseRaw("/books/personal/remote.vcf", `"one"`, escapedCardData(card)), ""))
+			}))
+			t.Cleanup(server.Close)
+			service, st, book := newPullService(t, server, false)
+			participant, err := st.EnsureParticipant("local@example.test", "Local", "example.test")
+			require.NoError(t, err)
+			person, _, err := st.CreatePersonFromParticipant(participant)
+			require.NoError(t, err)
+			_, err = st.AddPersonContactPointContext(t.Context(), person.ID, store.PersonContactPointInput{
+				AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550102", URI: &tc.local,
+				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+			})
+			require.NoError(t, err)
+			_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+			require.NoError(t, err)
+			resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"remote.vcf")
+			require.NoError(t, err)
+			require.NotNil(t, resource.PersonID)
+			if tc.matches {
+				assert.Equal(t, person.ID, *resource.PersonID)
+			} else {
+				assert.NotEqual(t, person.ID, *resource.PersonID)
+			}
+		})
+	}
 }
 
 func assertKeepRemoteRejected(t *testing.T, fixture *mutationFixture, service *Service, st *store.Store, personID, conflictID int64) error {

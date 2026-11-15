@@ -61,7 +61,7 @@ describe('Past runs', () => {
     expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Build visual index' }).disabled).toBe(false);
   });
 
-  it('announces sync completion once while displaying binding conflicts', async () => {
+  it('announces sync completion once and renders the action status', async () => {
     const carddavRun = fixture.runs.find(candidate => candidate.kind === 'carddav_sync')!;
     const client = createAPIClient(async input => {
       const request = input as Request;

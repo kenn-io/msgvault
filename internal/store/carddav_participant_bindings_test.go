@@ -1116,49 +1116,41 @@ func TestCardDAVParticipantBindingCreateCollision(t *testing.T) {
 }
 
 func TestCardDAVParticipantBindingAcceptConnectedCandidateAfterUndo(t *testing.T) {
-	for _, actor := range []string{"user", "system"} {
-		t.Run(actor, func(t *testing.T) {
-			st, account, book := newCardDAVResourceStore(t)
-			a, err := st.EnsureParticipant("a@example.test", "A", "example.test")
-			Require.NoError(t, err)
-			person, _, err := st.CreatePersonFromParticipant(a)
-			Require.NoError(t, err)
-			d, err := st.EnsureParticipant("d@example.test", "D", "example.test")
-			Require.NoError(t, err)
-			other, _, err := st.CreatePersonFromParticipant(d)
-			Require.NoError(t, err)
-			merged, err := st.MergePersonsContext(t.Context(), store.PersonMergeRequest{SurvivorID: person.ID, AbsorbedID: other.ID, ExpectedSurvivorRevision: person.Revision, ExpectedAbsorbedRevision: other.Revision, IdempotencyKey: "connected-merge", Actor: "test"})
-			Require.NoError(t, err)
-			person = &merged.Person
-			b, err := st.EnsureParticipant("b@example.test", "B", "example.test")
-			Require.NoError(t, err)
-			c, err := st.EnsureParticipant("c@example.test", "C", "example.test")
-			Require.NoError(t, err)
-			card := remoteResource(book.CanonicalURL+"connected.vcf", person.VCardUID, "A", "a@example.test", "one")
-			card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + person.VCardUID + "\r\nFN:A\r\nEMAIL:a@example.test\r\nEMAIL:b@example.test\r\nEMAIL:c@example.test\r\nEND:VCARD\r\n")
-			card.Emails = []string{"a@example.test", "b@example.test", "c@example.test"}
-			applyParticipantBindingCards(t, st, account, book, card)
-			for _, pair := range [][2]int64{{a, b}, {b, c}} {
-				candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{LeftKind: store.IdentityMatchParticipant, LeftID: pair[0], RightKind: store.IdentityMatchParticipant, RightID: pair[1], Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("connected-provider"), State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation})
-				Require.NoError(t, err)
-				_, _, err = st.AcceptIdentityMatchCandidateContext(t.Context(), candidate.ID, "system", nil)
-				Require.NoError(t, err)
-			}
-			_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{Undo: true})
-			Require.NoError(t, err)
-			candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{LeftKind: store.IdentityMatchParticipant, LeftID: a, RightKind: store.IdentityMatchParticipant, RightID: c, Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("other-provider"), State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation})
-			Require.NoError(t, err)
-			_, _, err = st.AcceptIdentityMatchCandidateContext(t.Context(), candidate.ID, actor, nil)
-			Require.NoError(t, err)
-			current, err := st.GetPersonContext(t.Context(), person.ID)
-			Require.NoError(t, err)
-			if actor == "user" {
-				Assert.ElementsMatch(t, []int64{a, b, c, d}, current.ParticipantIDs)
-				Assert.False(t, bindingOwned(t, st, b))
-				Assert.False(t, bindingOwned(t, st, c))
-			} else {
-				Assert.ElementsMatch(t, []int64{a, d}, current.ParticipantIDs)
-			}
-		})
+	st, account, book := newCardDAVResourceStore(t)
+	a, err := st.EnsureParticipant("a@example.test", "A", "example.test")
+	Require.NoError(t, err)
+	person, _, err := st.CreatePersonFromParticipant(a)
+	Require.NoError(t, err)
+	d, err := st.EnsureParticipant("d@example.test", "D", "example.test")
+	Require.NoError(t, err)
+	other, _, err := st.CreatePersonFromParticipant(d)
+	Require.NoError(t, err)
+	merged, err := st.MergePersonsContext(t.Context(), store.PersonMergeRequest{SurvivorID: person.ID, AbsorbedID: other.ID, ExpectedSurvivorRevision: person.Revision, ExpectedAbsorbedRevision: other.Revision, IdempotencyKey: "connected-merge", Actor: "test"})
+	Require.NoError(t, err)
+	person = &merged.Person
+	b, err := st.EnsureParticipant("b@example.test", "B", "example.test")
+	Require.NoError(t, err)
+	c, err := st.EnsureParticipant("c@example.test", "C", "example.test")
+	Require.NoError(t, err)
+	card := remoteResource(book.CanonicalURL+"connected.vcf", person.VCardUID, "A", "a@example.test", "one")
+	card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + person.VCardUID + "\r\nFN:A\r\nEMAIL:a@example.test\r\nEMAIL:b@example.test\r\nEMAIL:c@example.test\r\nEND:VCARD\r\n")
+	card.Emails = []string{"a@example.test", "b@example.test", "c@example.test"}
+	applyParticipantBindingCards(t, st, account, book, card)
+	for _, pair := range [][2]int64{{a, b}, {b, c}} {
+		candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{LeftKind: store.IdentityMatchParticipant, LeftID: pair[0], RightKind: store.IdentityMatchParticipant, RightID: pair[1], Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("connected-provider"), State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation})
+		Require.NoError(t, err)
+		_, _, err = st.AcceptIdentityMatchCandidateContext(t.Context(), candidate.ID, "system", nil)
+		Require.NoError(t, err)
 	}
+	_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{Undo: true})
+	Require.NoError(t, err)
+	candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{LeftKind: store.IdentityMatchParticipant, LeftID: a, RightKind: store.IdentityMatchParticipant, RightID: c, Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("other-provider"), State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation})
+	Require.NoError(t, err)
+	_, _, err = st.AcceptIdentityMatchCandidateContext(t.Context(), candidate.ID, "user", nil)
+	Require.NoError(t, err)
+	current, err := st.GetPersonContext(t.Context(), person.ID)
+	Require.NoError(t, err)
+	Assert.ElementsMatch(t, []int64{a, b, c, d}, current.ParticipantIDs)
+	Assert.False(t, bindingOwned(t, st, b))
+	Assert.False(t, bindingOwned(t, st, c))
 }

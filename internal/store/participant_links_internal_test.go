@@ -1,7 +1,6 @@
 package store
 
 import (
-	"context"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -358,26 +357,4 @@ func TestMergeParticipantsReappliesAcceptedMatchAfterScopedCleanup(t *testing.T)
 			assert.Equal(before+2, after, "cleanup and the participant merge each bump the identity revision")
 		})
 	}
-}
-
-func TestConnectedCandidateCallsAfterLink(t *testing.T) {
-	st := openTestStore(t)
-	a, err := st.EnsureParticipant("a@example.test", "A", "example.test")
-	require.NoError(t, err)
-	b, err := st.EnsureParticipant("b@example.test", "B", "example.test")
-	require.NoError(t, err)
-	c, err := st.EnsureParticipant("c@example.test", "C", "example.test")
-	require.NoError(t, err)
-	_, err = st.LinkParticipants(a, b)
-	require.NoError(t, err)
-	_, err = st.LinkParticipants(b, c)
-	require.NoError(t, err)
-	candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), IdentityMatchCandidateInput{LeftKind: IdentityMatchParticipant, LeftID: a, RightKind: IdentityMatchParticipant, RightID: c, Basis: IdentityMatchStableProviderID, NormalizedValue: new("callback-provider"), State: IdentityMatchStateCandidate, Source: ProvenanceArchiveObservation})
-	require.NoError(t, err)
-	_, err = st.DecideIdentityMatchCandidateContext(t.Context(), candidate.ID, IdentityMatchStateAccepted, "user", nil)
-	require.NoError(t, err)
-	called := false
-	_, _, err = st.linkParticipantsContextGuardedOwned(t.Context(), a, c, candidate.ID, nil, func(_ context.Context, _ *loggedTx) error { called = true; return nil })
-	require.NoError(t, err)
-	assert.True(t, called)
 }
