@@ -207,7 +207,6 @@ func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) 
 	assert.NotContains(string(snapshot.Raw), "user@example.com", "configured identity must not enter provider evidence")
 	assert.Contains(string(snapshot.Metadata), `"creator_user_id":"creator-1"`)
 	assert.Contains(string(snapshot.Metadata), `"unresolved_attendee_ids":["user-2"]`)
-
 }
 
 func TestHydratorUsesMarkdownTranscriptFallback(t *testing.T) {

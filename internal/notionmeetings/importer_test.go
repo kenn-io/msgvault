@@ -1391,7 +1391,10 @@ func TestImporterRetriesIncompleteSections(t *testing.T) {
 				assert.JSONEq(string(source.markdown.Raw), string(afterEvidence["page_markdown"]))
 				metadata, err := st.GetMessageMetadata(messageID)
 				require.NoError(err)
-				assert.Contains(metadata.String, `"markdown_transcript_fallback":true`)
+				require.True(metadata.Valid)
+				var fields map[string]any
+				require.NoError(json.Unmarshal([]byte(metadata.String), &fields))
+				assert.Equal(true, fields["markdown_transcript_fallback"])
 			} else {
 				assert.Contains(body, original[section])
 			}
@@ -1517,7 +1520,10 @@ func TestImporterKeepsSavedPageTranscriptWhenMarkdownIncomplete(t *testing.T) {
 	assert.JSONEq(t, string(oldFields["page_markdown"]), string(newFields["page_markdown"]))
 	metadata, err := st.GetMessageMetadata(id)
 	require.NoError(t, err)
-	assert.Contains(t, metadata.String, `"markdown_transcript_fallback":true`)
+	require.True(t, metadata.Valid)
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal([]byte(metadata.String), &fields))
+	assert.Equal(t, true, fields["markdown_transcript_fallback"])
 }
 
 func TestImporterHandlesOmittedSections(t *testing.T) {
