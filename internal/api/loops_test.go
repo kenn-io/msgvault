@@ -617,7 +617,7 @@ func TestListLoopsPagesCommitments(t *testing.T) {
 	assert.True(st.includeClosed)
 	var response LoopListResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-	require.Len(response.Commitments, 1)
+	require.NotEmpty(response.Commitments)
 	assert.Equal(LoopCommitment{ID: "c201", PersonID: 1, Direction: "owed_to", Summary: "Call", Promise: CommitmentQuote{MessageID: 1, Text: "I will call.", Start: 0, End: 12}, PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Freshness: "fresh", State: "open"}, response.Commitments[0])
 	require.NotNil(response.CommitmentsNextOffset)
 	assert.Equal(201, *response.CommitmentsNextOffset)

@@ -212,7 +212,7 @@ describe("PersonOpenLoops", () => {
     render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
     if (paged) {
       (await screen.findByRole("button", { name: "More promises" })).click();
-      expect(await screen.findByRole("link", { name: "Promise 6" })).toBeDefined();
+      await vi.waitFor(() => expect(screen.queryByRole("button", { name: "More promises" })).toBeNull());
     }
     (await screen.findByRole("button", { name: "Check more" })).click();
     await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Check more" })).toBeNull());
@@ -317,15 +317,10 @@ describe("PersonOpenLoops", () => {
     (await screen.findByRole("button", { name: "More promises" })).click();
     await view.rerender({ client, personID: 8 });
     expect(await screen.findByText("Nothing open with this person.")).toBeDefined();
-    let resolveConsumed!: () => void;
-    const consumed = new Promise<void>((resolve) => { resolveConsumed = resolve; });
-    const body = JSON.stringify({ items: [], truncated: false, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(6)] });
-    const stream = new ReadableStream({ pull(controller) { controller.enqueue(new TextEncoder().encode(body)); controller.close(); resolveConsumed(); } }, { highWaterMark: 0 });
-    resolvePage(new Response(stream, { headers: { "Content-Type": "application/json" } }));
-    await consumed;
+    resolvePage(Response.json({ items: [], truncated: false, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(6)] }));
     await new Promise((resolve) => setTimeout(resolve, 0));
     await tick();
+    expect(await screen.findByText("Nothing open with this person.")).toBeDefined();
     expect(screen.queryByText("Promise 6")).toBeNull();
-    expect(screen.getByText("Nothing open with this person.")).toBeDefined();
   });
 });

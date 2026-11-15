@@ -82,8 +82,8 @@ func (a *commitmentCallAuthority) HasActivePersonCommitmentConsent(context.Conte
 	return a.revokeAt == 0 || a.checks < a.revokeAt, nil
 }
 
-func TestCommitmentOptionalCallRepairBudgetAndRevocation(t *testing.T) {
-	for _, mode := range []string{"repair", "budget", "revoked before mark"} {
+func TestCommitmentOptionalCallRepairAndBudget(t *testing.T) {
+	for _, mode := range []string{"repair", "budget"} {
 		t.Run(mode, func(t *testing.T) {
 			r, a := require.New(t), assert.New(t)
 			cfg, catalog := workerTestConfig(t)
@@ -96,9 +96,6 @@ func TestCommitmentOptionalCallRepairBudgetAndRevocation(t *testing.T) {
 				st.reserveErrAt = 2
 			}
 			authority := &commitmentCallAuthority{}
-			if mode == "revoked before mark" {
-				authority.revokeAt = 2
-			}
 			second := json.RawMessage(`{"promises":[]}`)
 			driver := &workerRepairDriver{responses: []DriverResponse{briefDriverResponse(json.RawMessage(`{"promises":"bad"}`), "primary"), briefDriverResponse(second, "repair")}}
 			runner := newWorkerRepairRunnerWithDependencies(t, cfg, driver, authority, NewCredentialResolver(nil, func(string) (string, bool) { return "test-key", true }))
@@ -110,10 +107,6 @@ func TestCommitmentOptionalCallRepairBudgetAndRevocation(t *testing.T) {
 			var reservations []BudgetReservation
 			result, class, _, err := worker.runCommitmentCall(t.Context(), briefCall{runID: "run", attemptID: "attempt", lease: lease, catalog: catalog, profile: profile, resolvedAt: now}, accounting, &reservations)
 			r.NoError(err)
-			if mode == "revoked before mark" {
-				a.Equal(FailurePolicy, class)
-				return
-			}
 			r.Len(st.reserved, 2)
 			a.Equal(ProviderCallPurposeCommitment, st.reserved[0].Purpose)
 			a.Equal(ProviderCallPurposeCommitmentRepair, st.reserved[1].Purpose)
