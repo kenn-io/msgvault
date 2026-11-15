@@ -184,7 +184,7 @@
       {/if}
     {/each}
   {/if}
-  {#if !loading && !failed && promiseStatus && commitments.length === 0}<p class="muted">{promiseStatus}</p>{/if}
+  {#if !loading && !failed && promiseStatus}<p class="muted">{promiseStatus}</p>{/if}
   {#if !loading && !failed && nextOffset !== undefined}
     {#if morePromisesFailed}<p role="alert">Couldn't load more promises.</p>{/if}
     <div><Button size="sm" label={loadingPromises ? 'Loading…' : 'More promises'} disabled={loadingPromises || checkingMore} onclick={morePromises} /></div>

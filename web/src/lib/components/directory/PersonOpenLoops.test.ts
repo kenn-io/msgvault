@@ -179,6 +179,18 @@ describe("PersonOpenLoops", () => {
     expect(screen.getByRole("link", { name: "Review the draft?" })).toBeDefined();
     withLoops.unmount();
 
+    const withPromise = render(PersonOpenLoops, {
+      client: respond({
+        commitments: [{ id: "c1", person_id: 7, summary: "", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: 52, start: 0, end: 10, text: "I will send it." }, promised_at: "2026-10-12T12:00:00Z" }],
+        commitments_complete: false, commitments_since: "2026-10-01T00:00:00Z",
+      }),
+      personID: 7,
+    });
+    expect(await screen.findByRole("link", { name: "I will send it." })).toBeDefined();
+    expect(screen.getByText("Promise discovery since 2026-10-01 is incomplete.")).toBeDefined();
+    expect(screen.queryByRole("button", { name: /done|snooze|dismiss/i })).toBeNull();
+    withPromise.unmount();
+
     render(PersonOpenLoops, { client: respond({ commitments_complete: false }), personID: 7 });
     expect(await screen.findByText("Promise discovery has not started.")).toBeDefined();
     expect(screen.queryByText("Nothing open with this person.")).toBeNull();
