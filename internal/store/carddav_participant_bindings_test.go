@@ -1081,3 +1081,40 @@ func TestCardDAVParticipantBindingPendingNameConflictBlocksSharedAddress(t *test
 		assert.Nil(bound)
 	}
 }
+
+func TestCardDAVParticipantBindingPendingNameConflictAcrossLinkedAddresses(t *testing.T) {
+	require := Require.New(t)
+	assert := Assert.New(t)
+	st, account, book := newCardDAVResourceStore(t)
+	first := remoteResource(book.CanonicalURL+"first.vcf", "first", "First", "first@example.test", "one")
+	second := remoteResource(book.CanonicalURL+"second.vcf", "second", "Second", "second@example.test", "one")
+	applyParticipantBindingCards(t, st, account, book, first, second)
+	firstPerson := bindingCardPerson(t, st, book, first.Href)
+	secondPerson := bindingCardPerson(t, st, book, second.Href)
+	resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, first.Href)
+	require.NoError(err)
+	_, err = st.RecordCardDAVConflictContext(t.Context(), store.CardDAVConflictCapture{
+		AddressBookID: book.ID, Href: first.Href, ExpectedPersonID: firstPerson.ID,
+		ExpectedMappingRevision: resource.MappingRevision, BaseLocalHash: resource.LocalHash,
+		LocalHash: resource.LocalHash, BaseRemoteHash: resource.RemoteSemanticHash,
+		BaseRemoteETag: resource.RemoteETag, RemoteETag: "two", LocalBody: first.RemoteBody,
+		RemoteBody: []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:first\r\nFN:Changed Name\r\nEMAIL:first@example.test\r\nEND:VCARD\r\n"),
+	})
+	require.NoError(err)
+	firstID, err := st.EnsureParticipant("first@example.test", "Sender", "example.test")
+	require.NoError(err)
+	secondID, err := st.EnsureParticipant("second@example.test", "Sender", "example.test")
+	require.NoError(err)
+	_, err = st.LinkParticipants(firstID, secondID)
+	require.NoError(err)
+	result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
+	require.NoError(err)
+	if assert.Len(result.ConflictDetails, 1) {
+		assert.ElementsMatch([]int64{firstPerson.ID, secondPerson.ID}, result.ConflictDetails[0].PersonIDs)
+	}
+	for _, id := range []int64{firstID, secondID} {
+		bound, err := st.PersonForParticipantsContext(t.Context(), []int64{id})
+		require.NoError(err)
+		assert.Nil(bound)
+	}
+}
