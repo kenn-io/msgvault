@@ -126,19 +126,23 @@ func TestCardDAVIdentityRefreshFailureRequestsRecovery(t *testing.T) {
 	oldBuild := runDerivedCacheSubprocess
 	t.Cleanup(func() { runDerivedCacheSubprocess = oldBuild })
 	adapter := &storeAPIAdapter{config: cfg, analyticsDir: cfg.AnalyticsDir()}
-	for _, buildErr := range []error{errors.New("synthetic build failure"), nil} {
-		runDerivedCacheSubprocess = func(context.Context, string) error { return buildErr }
-		_, err := adapter.RefreshIdentityDatasets(t.Context())
-		if buildErr != nil {
-			req.ErrorContains(err, "synthetic build failure")
-		} else {
-			req.ErrorContains(err, "read refreshed cache revision")
-		}
-		select {
-		case id := <-requests:
-			req.Equal("identity", id)
-		case <-time.After(10 * time.Second):
-			req.FailNow("cache recovery was not requested")
-		}
+	runDerivedCacheSubprocess = func(context.Context, string) error { return errors.New("synthetic build failure") }
+	_, err := adapter.RefreshIdentityDatasets(t.Context())
+	req.ErrorContains(err, "synthetic build failure")
+	select {
+	case id := <-requests:
+		req.Equal("identity", id)
+	case <-time.After(10 * time.Second):
+		req.FailNow("cache recovery was not requested")
+	}
+
+	runDerivedCacheSubprocess = func(context.Context, string) error { return nil }
+	_, err = adapter.RefreshIdentityDatasets(t.Context())
+	req.ErrorContains(err, "read refreshed cache revision")
+	select {
+	case id := <-requests:
+		req.Equal("identity", id)
+	case <-time.After(10 * time.Second):
+		req.FailNow("cache recovery was not requested")
 	}
 }
