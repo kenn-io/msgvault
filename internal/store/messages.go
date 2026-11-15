@@ -2950,6 +2950,9 @@ const LabelSystemRoleSent = "sent"
 // holds unsent drafts.
 const LabelSystemRoleDrafts = "drafts"
 
+// LabelSystemRoleTrash identifies a provider-confirmed Trash label.
+const LabelSystemRoleTrash = "trash"
+
 // EnsureLabel gets or creates a label, handling renames and ID changes.
 // For batch operations prefer EnsureLabelsBatch which runs in a single
 // transaction.

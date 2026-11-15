@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -645,6 +646,11 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 	}
 	if err := s.store.RemoveMessageLabels(ctx, internalID, labelIDs); err != nil {
 		return false, false, err
+	}
+	if slices.Contains(gmailLabelIDs, "TRASH") {
+		if err := s.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, messageID); err != nil {
+			return false, false, err
+		}
 	}
 	return true, true, nil
 }

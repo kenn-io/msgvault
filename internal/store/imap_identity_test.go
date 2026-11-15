@@ -645,6 +645,22 @@ func TestIMAPIdentity_OrphanRetirementMailboxBoundary(t *testing.T) {
 	assertions.Equal(nested+"|1", nestedKey)
 }
 
+func TestIMAPIdentity_MovedCopyToTrashKeepsMark(t *testing.T) {
+	f := newIMAPIdentityFixture(t)
+	id := f.createMessage(t, "INBOX|1", "<moved-trash@example.com>")
+	_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{"Trash": {Name: "Trash", Type: "system", SystemRole: store.LabelSystemRoleTrash}})
+	require.NoError(t, err)
+	inbox := store.IMAPMailboxDelta{Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 10, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "INBOX|1"}}}
+	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{inbox}))
+	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "INBOX|1"))
+	inbox.Reset = true
+	inbox.Memberships = nil
+	trash := store.IMAPMailboxDelta{Mailbox: "Trash", State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 30, UIDNext: 8}, Memberships: []store.IMAPMembershipObservation{{UID: 7, CanonicalSourceMessageID: "INBOX|1"}}}
+	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{inbox, trash}))
+	assert.True(t, messageTombstoned(t, f.store, id))
+	assert.Equal(t, []string{"Trash"}, messageLabels(t, f.store, id))
+}
+
 func TestIMAPIdentity_MovedCopyMembershipBeforeSync(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

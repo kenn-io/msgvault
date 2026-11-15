@@ -2586,6 +2586,27 @@ func TestIncrementalSyncWithLabelRemoved(t *testing.T) {
 	assertMessageHasLabel(t, env.Store, "msg1", "INBOX")
 }
 
+func TestIncrementalSyncRemovedLabelPreservesOrClearsDeletion(t *testing.T) {
+	for _, tc := range []struct {
+		label   string
+		deleted bool
+	}{{"TRASH", false}, {"STARRED", true}} {
+		t.Run(tc.label, func(t *testing.T) {
+			env := newTestEnv(t)
+			env.Mock.Profile.MessagesTotal = 1
+			env.Mock.Profile.HistoryID = 12340
+			env.Mock.AddMessage("msg1", testMIME(), []string{"INBOX", tc.label})
+			runFullSync(t, env)
+			source, err := env.Store.GetOrCreateSource("gmail", testEmail)
+			require.NoError(t, err)
+			require.NoError(t, env.Store.MarkMessageDeleted(source.ID, "msg1"))
+			env.SetHistory(12350, historyLabelRemoved("msg1", tc.label))
+			runIncrementalSync(t, env)
+			assertDeletedFromSource(t, env.Store, "msg1", tc.deleted)
+		})
+	}
+}
+
 func TestIncrementalSyncLabelAddedToNewMessage(t *testing.T) {
 	t.Parallel()
 	env := newTestEnv(t)
