@@ -44,7 +44,7 @@ func cardDAVParticipantAddressValue(kind ContactAddressKind, raw string) (cardDA
 	return cardDAVParticipantAddress{kind, value}, err == nil
 }
 
-func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (map[cardDAVParticipantAddress]cardDAVPersonSet, map[int64]cardDAVUncertainKinds, int, error) {
+func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (map[cardDAVParticipantAddress]cardDAVPersonSet, map[cardDAVParticipantAddress]cardDAVPersonSet, map[int64]cardDAVUncertainKinds, int, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT resource.person_id, resource.remote_body,
  conflict.id IS NOT NULL,
  CASE WHEN conflict.local_tombstone THEN NULL ELSE conflict.local_body END,
@@ -60,7 +60,7 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
    AND publication.address_book_id = resource.address_book_id AND publication.href = resource.href
    AND publication.pending_operation = 'create') ORDER BY resource.id`, CardDAVMappingMapped)
 	if err != nil {
-		return nil, nil, 0, fmt.Errorf("read CardDAV participant claims: %w", err)
+		return nil, nil, nil, 0, fmt.Errorf("read CardDAV participant claims: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	claims := map[cardDAVParticipantAddress]cardDAVPersonSet{}
@@ -80,7 +80,7 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 		var body, localBody, remoteBody []byte
 		var hasConflict bool
 		if err := rows.Scan(&personID, &body, &hasConflict, &localBody, &remoteBody); err != nil {
-			return nil, nil, 0, err
+			return nil, nil, nil, 0, err
 		}
 		if hasConflict {
 			local, _, localUncertain := cardDAVParticipantAddresses(localBody)
@@ -115,18 +115,9 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 		scanned++
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, 0, err
+		return nil, nil, nil, 0, err
 	}
-	// Unresolved cards can block another claim, but cannot bind on their own.
-	for key, people := range conflicted {
-		if len(claims[key]) == 0 {
-			continue
-		}
-		for personID := range people {
-			claims[key][personID] = struct{}{}
-		}
-	}
-	return claims, uncertain, scanned, nil
+	return claims, conflicted, uncertain, scanned, nil
 }
 
 func cardDAVParticipantAddresses(body []byte) (map[cardDAVParticipantAddress]struct{}, bool, cardDAVUncertainKinds) {

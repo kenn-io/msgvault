@@ -119,12 +119,16 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 		plan.result.ParticipantsUnbound = len(plan.remove)
 		return plan, nil
 	}
-	claims, uncertain, scanned, err := s.cardDAVParticipantClaimsTx(ctx, tx)
+	claims, conflicted, uncertain, scanned, err := s.cardDAVParticipantClaimsTx(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
 	plan.result.CardsScanned = scanned
 	matched, shadowed, participantKinds, err := cardDAVParticipantMatchesTx(ctx, tx, claims)
+	if err != nil {
+		return nil, err
+	}
+	disputed, _, _, err := cardDAVParticipantMatchesTx(ctx, tx, conflicted)
 	if err != nil {
 		return nil, err
 	}
@@ -152,9 +156,11 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 		members := sortedComponentMembers(seed, edges)
 		wanted := cardDAVPersonSet{}
 		uncertainOwners := cardDAVPersonSet{}
+		hasCleanClaim := false
 		for _, id := range members {
 			visited[id] = struct{}{}
 			for personID := range matched[id] {
+				hasCleanClaim = true
 				wanted[personID] = struct{}{}
 			}
 			// An unreadable address may still support an existing automatic member.
@@ -163,6 +169,15 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 				if kinds[""] || kinds[ContactAddressEmail] && participantKinds[id][ContactAddressEmail] || kinds[ContactAddressPhone] && participantKinds[id][ContactAddressPhone] {
 					wanted[binding.personID] = struct{}{}
 					uncertainOwners[binding.personID] = struct{}{}
+				}
+			}
+		}
+		// A disputed card cannot bind on its own, but it can block a clean
+		// claim anywhere in the linked participant component.
+		if hasCleanClaim {
+			for _, id := range members {
+				for personID := range disputed[id] {
+					wanted[personID] = struct{}{}
 				}
 			}
 		}
