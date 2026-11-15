@@ -130,7 +130,7 @@ func (h *HydratedMeeting) archiveEvidence() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	transcript, err := tree("transcript", h.TranscriptTree)
+	transcript, err := tree(sectionTranscript, h.TranscriptTree)
 	if err != nil {
 		return nil, err
 	}

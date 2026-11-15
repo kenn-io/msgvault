@@ -354,32 +354,32 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}{
 			{"summary", &hydrated.Summary, archived.Evidence.Canonical.Summary, archived.Evidence.Summary},
 			{"notes", &hydrated.Notes, archived.Evidence.Canonical.Notes, archived.Evidence.Notes},
-			{"transcript", &hydrated.Transcript, archived.Evidence.Canonical.Transcript, archived.Evidence.Transcript},
+			{sectionTranscript, &hydrated.Transcript, archived.Evidence.Canonical.Transcript, archived.Evidence.Transcript},
 		}
 		var retainedIDs = map[string]string{}
 		var previousDiscovery MeetingNote
 		_ = json.Unmarshal(archived.Evidence.Discovery, &previousDiscovery) // zero without usable evidence
 		for _, section := range sections {
 			incomplete := slices.Contains(hydrated.Incomplete, section.name)
-			if section.name == "transcript" && hydrated.MarkdownTranscriptFallback {
+			if section.name == sectionTranscript && hydrated.MarkdownTranscriptFallback {
 				incomplete = false
 			}
-			if section.name == "transcript" && hydrated.TranscriptTree.Root != nil && !archived.MarkdownFallback {
+			if section.name == sectionTranscript && hydrated.TranscriptTree.Root != nil && !archived.MarkdownFallback {
 				incomplete = false
 			}
-			omittedTranscript := section.name == "transcript" && meeting.MeetingNotes.Children.TranscriptBlockID == "" && strings.TrimSpace(hydrated.Transcript) == ""
+			omittedTranscript := section.name == sectionTranscript && meeting.MeetingNotes.Children.TranscriptBlockID == "" && strings.TrimSpace(hydrated.Transcript) == ""
 			if !incomplete && !omittedTranscript {
 				continue
 			}
 			oldText := section.oldText
-			if section.name == "transcript" && strings.TrimSpace(oldText) == "" {
+			if section.name == sectionTranscript && strings.TrimSpace(oldText) == "" {
 				oldText = transcriptFromArchivedBody(archived.Body)
 			}
 			if oldText == "" && len(section.oldTree.Root) == 0 && len(archived.RawTrees[section.name]) == 0 {
 				continue
 			}
 			*section.text = oldText
-			if section.name == "transcript" {
+			if section.name == sectionTranscript {
 				providerTranscriptMissing = true
 				hydrated.PageMarkdown = nil
 				hydrated.MarkdownTranscriptFallback = false
@@ -399,10 +399,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 					}
 				}
 				markdownPresent := len(archived.Evidence.PageMarkdown) > 0 && string(archived.Evidence.PageMarkdown) != "null"
-				if section.name == "transcript" && markdownPresent {
+				if section.name == sectionTranscript && markdownPresent {
 					hydrated.keptMarkdown = append(jsontext.Value(nil), archived.Evidence.PageMarkdown...)
 				}
-				if section.name == "transcript" && archived.MarkdownFallback {
+				if section.name == sectionTranscript && archived.MarkdownFallback {
 					hydrated.MarkdownTranscriptFallback = true
 					progress("Kept the saved transcript because current transcript content could not be read completely.")
 				}
@@ -556,7 +556,7 @@ func (imp *Importer) retrieveMeeting(ctx context.Context, id string) (MeetingNot
 // transcript marker is bounded by that deadline; incomplete summary, notes, and
 // transcript block reads stay pending until a complete read succeeds.
 func retriesUntilComplete(hydrated *HydratedMeeting) bool {
-	markdownOnly := hydrated.markdownOnlyIncomplete && slices.Equal(hydrated.Incomplete, []string{"transcript"})
+	markdownOnly := hydrated.markdownOnlyIncomplete && slices.Equal(hydrated.Incomplete, []string{sectionTranscript})
 	return len(hydrated.Incomplete) > 0 && !markdownOnly
 }
 

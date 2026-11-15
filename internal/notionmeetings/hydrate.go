@@ -17,6 +17,7 @@ import (
 )
 
 const (
+	sectionTranscript    = "transcript"
 	UserLookupTimeout    = time.Minute
 	maxHydrationDepth    = 32
 	maxHydrationRequests = 256
@@ -129,7 +130,7 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 	}{
 		{"summary", children.SummaryBlockID, &result.SummaryTree, &result.Summary},
 		{"notes", children.NotesBlockID, &result.NotesTree, &result.Notes},
-		{"transcript", children.TranscriptBlockID, &result.TranscriptTree, &result.Transcript},
+		{sectionTranscript, children.TranscriptBlockID, &result.TranscriptTree, &result.Transcript},
 	}
 	for _, section := range sections {
 		if section.id == "" {
@@ -169,7 +170,7 @@ func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeet
 	if err := h.reserveRequest(); err != nil {
 		if len(result.Incomplete) > 0 {
 			if result.Transcript == "" {
-				result.markIncomplete("transcript", "limit")
+				result.markIncomplete(sectionTranscript, "limit")
 			}
 			return nil
 		}
@@ -182,7 +183,7 @@ func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeet
 	if err := h.reserveBytes(page.Raw); err != nil {
 		if len(result.Incomplete) > 0 {
 			if result.Transcript == "" {
-				result.markIncomplete("transcript", "limit")
+				result.markIncomplete(sectionTranscript, "limit")
 			}
 			return nil
 		}
@@ -192,8 +193,8 @@ func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeet
 	markdown := extractMarkdownTranscript(page.Markdown)
 	complete := !page.Truncated && len(page.UnknownBlockIDs) == 0
 	if result.Transcript == "" && !complete {
-		result.markdownOnlyIncomplete = !slices.Contains(result.Incomplete, "transcript") && !hasTranscriptMarker(page.Markdown)
-		result.markIncomplete("transcript", "markdown")
+		result.markdownOnlyIncomplete = !slices.Contains(result.Incomplete, sectionTranscript) && !hasTranscriptMarker(page.Markdown)
+		result.markIncomplete(sectionTranscript, "markdown")
 	} else if result.Transcript == "" && markdown != "" && complete {
 		result.Transcript = markdown
 		result.MarkdownTranscriptFallback = true
