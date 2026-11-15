@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-14"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -433,7 +433,7 @@ conventions.
 
 For an agent-oriented workflow, see the [agent quickstart](../guides/agent-quickstart.md).
 
-## Find tools for a task (unreleased)
+## Find tools for a task
 
 Call `search_tools` with a task description when you need to choose an MCP
 tool. For example, `{"query":"read one message","limit":3}` finds tools for
@@ -463,7 +463,7 @@ The MCP server exposes the following tools to connected AI clients:
 
 | Tool | Description | Parameters |
 |---|---|---|
-| `search_tools` | Find available tools for a task; see [task discovery](#find-tools-for-a-task-unreleased). | `query` (string, required), `limit` (int, 1–20, default 5) |
+| `search_tools` | Find available tools for a task; see [task discovery](#find-tools-for-a-task). | `query` (string, required), `limit` (int, 1–20, default 5) |
 | `search_messages` | Deprecated compatibility wrapper. Omitted mode dispatches to `search_metadata`; `vector`/`hybrid` dispatch to `semantic_search_messages`. | `query` (string, required), `mode` (string: `vector`/`hybrid`), `explain` (bool), `min_score` (number), `limit` (int), `offset` (int), `account` (string) |
 | `search_metadata` | Search message metadata with a subset of Gmail query syntax (not full Gmail compatibility). Matches subject, snippet, and sender/recipient metadata, not message bodies. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |
 | `search_message_bodies` | Keyword full-text search inside message bodies. Returns `matches` excerpts (up to 5 per message), ordered newest-first. Backend excerpts may omit `char_offset` and `line`; use `search_in_message` when exact locations are needed. | `query` (string, required), `limit` (int), `offset` (int), `account` (string) |

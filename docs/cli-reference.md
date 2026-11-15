@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-14"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -5542,6 +5542,11 @@ msgvault update [flags]
 ```
 
 Update restarts only a daemon msgvault started in the background. A daemon run as `msgvault serve` is left to its supervisor or the person who started it. Use `--no-restart` to leave even a background daemon stopped.
+
+Before replacing the installed binary, update runs the new one with
+`msgvault version`. If that run fails, takes longer than a minute, or is
+canceled, the update stops, keeps the installed binary, and shows the new
+binary's output, such as a missing glibc version.
 
 A Homebrew install reports whether a newer release exists but does not replace
 itself. Run `brew upgrade msgvault` instead.
