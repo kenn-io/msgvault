@@ -215,10 +215,10 @@ describe("PersonOpenLoops", () => {
 
   it("refreshes loaded promises and discovery when checking more", async () => {
     const fetcher = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(Response.json({ items: [], commitments: [1, 2, 3, 4, 5].map((id) => promise(id)), commitments_next_offset: 5, coverage_incomplete: true, commitments_complete: false }))
+      .mockResolvedValueOnce(Response.json({ items: [], commitments: [1, 2, 3, 4, 5].map((id) => promise(id)), commitments_next_offset: 5, truncated: true, coverage_incomplete: true, commitments_complete: false }))
       .mockResolvedValueOnce(Response.json({ items: [], commitments: [promise(6)], coverage_incomplete: true }))
-      .mockResolvedValueOnce(Response.json({ items: [], commitments: [2, 3, 4, 6, 7].map((id) => promise(id)), commitments_next_offset: 5, coverage_incomplete: false, commitments_complete: true, commitments_since: "2026-10-01T00:00:00Z" }))
-      .mockResolvedValueOnce(Response.json({ commitments: [promise(8)], commitments_next_offset: 6 }));
+      .mockResolvedValueOnce(Response.json({ items: [], commitments: [2, 3, 4, 6, 7].map((id) => promise(id)), commitments_next_offset: 5, truncated: true, coverage_incomplete: false, commitments_complete: true, commitments_since: "2026-10-01T00:00:00Z" }))
+      .mockResolvedValueOnce(Response.json({ items: [], commitments: [promise(8)], commitments_next_offset: 6, truncated: true }));
     render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
     (await screen.findByRole("button", { name: "More promises" })).click();
     await screen.findByRole("link", { name: "Promise 6" });

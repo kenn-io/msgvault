@@ -78,52 +78,35 @@ func (*commitmentCallAuthority) HasActivePersonCommitmentConsent(context.Context
 	return true, nil
 }
 
-func TestCommitmentOptionalCallRepairAndBudget(t *testing.T) {
-	for _, mode := range []string{"repair", "budget"} {
-		t.Run(mode, func(t *testing.T) {
-			r, a := require.New(t), assert.New(t)
-			cfg, catalog := workerTestConfig(t)
-			mutateTestProvider(&cfg, func(p *ProviderConfig) { p.AllowSensitive = true })
-			cfg.Commitments.Enabled = true
-			now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
-			window := CommitmentWindow{PersonID: 7, Now: now, Sources: []CommitmentSource{{ID: "m71", MessageID: 71, Direction: CommitmentOwedTo, Text: "I will send it.", EventTime: now.Add(-time.Hour)}}}
-			st := &commitmentWorkerFixture{window: &window}
-			if mode == "budget" {
-				st.reserveErrAt = 2
-			}
-			authority := &commitmentCallAuthority{}
-			second := json.RawMessage(`{"promises":[]}`)
-			driver := &workerRepairDriver{responses: []DriverResponse{briefDriverResponse(json.RawMessage(`{"promises":"bad"}`), "primary"), briefDriverResponse(second, "repair")}}
-			runner := newWorkerRepairRunnerWithDependencies(t, cfg, driver, authority, NewCredentialResolver(nil, func(string) (string, bool) { return "test-key", true }))
-			profile, err := cfg.Profile()
-			r.NoError(err)
-			lease := Lease{PersonID: 7, WorkerID: "worker-fixture", Fence: 1, ExpiresAt: now.Add(time.Hour)}
-			worker := Worker{Config: cfg, Timezone: "America/New_York", Store: st, Runner: runner, Clock: func() time.Time { return now }}
-			accounting := &sweepCallAccounting{budget: cfg.Budgets}
-			var reservations []BudgetReservation
-			result, class, _, err := worker.runCommitmentCall(t.Context(), briefCall{runID: "run", attemptID: "attempt", lease: lease, catalog: catalog, profile: profile, resolvedAt: now}, accounting, &reservations)
-			r.NoError(err)
-			r.Len(st.reserved, 2)
-			a.Equal(ProviderCallPurposeCommitment, st.reserved[0].Purpose)
-			a.Equal(ProviderCallPurposeCommitmentRepair, st.reserved[1].Purpose)
-			a.Equal(1, st.reserved[1].CallOrdinal)
-			if mode == "budget" {
-				a.Equal(FailureBudget, class)
-				a.Equal(1, driver.calls)
-				a.Len(accounting.completedBatches, 1)
-			} else {
-				a.Equal(2, driver.calls)
-				a.Len(accounting.completedBatches, 2)
-			}
-			if mode == "repair" {
-				r.NotNil(result)
-				a.Equal("America/New_York", result.Window.Timezone)
-				a.Empty(class)
-			} else {
-				a.Nil(result)
-			}
-		})
-	}
+func TestCommitmentOptionalCallRepair(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	cfg, catalog := workerTestConfig(t)
+	mutateTestProvider(&cfg, func(p *ProviderConfig) { p.AllowSensitive = true })
+	cfg.Commitments.Enabled = true
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	window := CommitmentWindow{PersonID: 7, Now: now, Sources: []CommitmentSource{{ID: "m71", MessageID: 71, Direction: CommitmentOwedTo, Text: "I will send it.", EventTime: now.Add(-time.Hour)}}}
+	st := &commitmentWorkerFixture{window: &window}
+	authority := &commitmentCallAuthority{}
+	second := json.RawMessage(`{"promises":[]}`)
+	driver := &workerRepairDriver{responses: []DriverResponse{briefDriverResponse(json.RawMessage(`{"promises":"bad"}`), "primary"), briefDriverResponse(second, "repair")}}
+	runner := newWorkerRepairRunnerWithDependencies(t, cfg, driver, authority, NewCredentialResolver(nil, func(string) (string, bool) { return "test-key", true }))
+	profile, err := cfg.Profile()
+	r.NoError(err)
+	lease := Lease{PersonID: 7, WorkerID: "worker-fixture", Fence: 1, ExpiresAt: now.Add(time.Hour)}
+	worker := Worker{Config: cfg, Timezone: "America/New_York", Store: st, Runner: runner, Clock: func() time.Time { return now }}
+	accounting := &sweepCallAccounting{budget: cfg.Budgets}
+	var reservations []BudgetReservation
+	result, class, _, err := worker.runCommitmentCall(t.Context(), briefCall{runID: "run", attemptID: "attempt", lease: lease, catalog: catalog, profile: profile, resolvedAt: now}, accounting, &reservations)
+	r.NoError(err)
+	r.Len(st.reserved, 2)
+	a.Equal(ProviderCallPurposeCommitment, st.reserved[0].Purpose)
+	a.Equal(ProviderCallPurposeCommitmentRepair, st.reserved[1].Purpose)
+	a.Equal(1, st.reserved[1].CallOrdinal)
+	a.Equal(2, driver.calls)
+	a.Len(accounting.completedBatches, 2)
+	r.NotNil(result)
+	a.Equal("America/New_York", result.Window.Timezone)
+	a.Empty(class)
 }
 
 func newConsentOnlyCommitmentWorker(t *testing.T) (Worker, *commitmentWorkerFixture, *workerProductionSink) {

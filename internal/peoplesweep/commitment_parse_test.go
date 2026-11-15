@@ -54,7 +54,7 @@ func TestParseCommitmentsRejectsWholeUnsupportedOutput(t *testing.T) {
 	a.Empty(parsed.Promises)
 }
 
-func TestCommitmentRequestSendsPromptFieldsAndFullSourceText(t *testing.T) {
+func TestCommitmentRequestOmitsInternalSourceFields(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
 	window := CommitmentWindow{
