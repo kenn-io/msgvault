@@ -60,9 +60,21 @@
         );
         if (controller.signal.aborted) return;
         if (!result.data) throw new Error('Open loops are unavailable.');
+        let refreshed = result.data.commitments ?? [];
+        let offset = result.data.commitments_next_offset;
+        while (more && refreshed.length < commitments.length && offset !== undefined) {
+          const page = await listLoops(
+            { person_id: selectedID, limit, commitment_offset: offset },
+            { ...selectedClient, signal: controller.signal },
+          );
+          if (controller.signal.aborted) return;
+          if (!page.data) throw new Error('Promises are unavailable.');
+          refreshed = mergeCommitments(refreshed, page.data.commitments);
+          offset = page.data.commitments_next_offset;
+        }
         items = result.data.items ?? [];
-        commitments = mergeCommitments(more ? commitments : [], result.data.commitments);
-        nextOffset = result.data.commitments_next_offset;
+        commitments = refreshed;
+        nextOffset = offset;
         truncated = Boolean(result.data.truncated);
         coverageIncomplete = Boolean(result.data.coverage_incomplete);
         unreadable = result.data.skipped_unparseable ?? 0;
