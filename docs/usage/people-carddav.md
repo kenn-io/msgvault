@@ -270,7 +270,8 @@ the book; resolve those dependencies first.
 
 After upgrading to a version with participant binding, the next CardDAV sync
 binds subscribed contacts to matching archived participants. Email matches ignore
-case. Phone matches use the archive's phone normalization. Names never establish
+case. Phone matches require `+`, `00`, or a numeric `tel:` phone context before
+using the archive's phone normalization. Names never establish
 a match. Phone extensions and service-scoped handles are excluded.
 
 Each match includes that participant's existing identity links. A saved person

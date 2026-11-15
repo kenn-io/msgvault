@@ -228,7 +228,10 @@ func TestCardDAVParticipantBindingPhoneAdmission(t *testing.T) {
 		raw, phone string
 		bound      bool
 	}{
-		{"202/555-0100", "+12025550100", true},
+		{"202/555-0100", "+12025550100", false},
+		{"+1 202/555-0100", "+12025550100", true},
+		{"0012025550100", "+12025550100", true},
+		{"20 7946 0958", "+12079460958", false},
 		{"202-555-0100 ext 99", "+202555010099", false},
 		{"letters12025550100", "+12025550100", false},
 		{"tel:+12025550100;ext=99", "+12025550100", false},
