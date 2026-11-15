@@ -682,7 +682,7 @@ func (s *Syncer) reconcileGmailTrashRemovals(
 ) error {
 	reader, ok := s.client.(messageLabelBatchReader)
 	if !ok {
-		return errors.New("Gmail label reader unavailable after Trash removal")
+		return errors.New("label reader unavailable after Trash removal")
 	}
 	batchSize := s.opts.BatchSize
 	if batchSize <= 0 {
@@ -695,12 +695,12 @@ func (s *Syncer) reconcileGmailTrashRemovals(
 			return fmt.Errorf("fetch final Gmail labels: %w", err)
 		}
 		if len(results) != len(batch) {
-			return fmt.Errorf("Gmail returned %d label results for %d messages", len(results), len(batch))
+			return fmt.Errorf("got %d label results for %d messages", len(results), len(batch))
 		}
 		for i, result := range results {
 			messageID := batch[i]
 			if result.ID != messageID {
-				return fmt.Errorf("Gmail returned labels for %q while reading %q", result.ID, messageID)
+				return fmt.Errorf("unexpected label result ID %q for message %q", result.ID, messageID)
 			}
 			if result.Err != nil {
 				if _, gone := messageGoneKind(result.Err); gone {
