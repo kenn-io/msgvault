@@ -72,8 +72,12 @@ func TestCommitmentScopeChangesRevisitJournaledHistory(t *testing.T) {
 			switch expanded {
 			case "dates":
 				profile.SourceSince = "2026-01-01"
-				_, err = st.db.ExecContext(ctx, st.Rebind(`UPDATE person_inference_profiles SET source_since = ? WHERE fingerprint = ?`), profile.SourceSince, f.request.Generation.Policy.ProviderPolicyFingerprint)
+				_, err = st.db.ExecContext(ctx, st.Rebind(`INSERT INTO person_inference_profiles
+					(fingerprint, provider_kind, endpoint, model, api_key_env, allow_anonymous, retention_posture, training_posture, allowed_sources, source_since, allow_sensitive, policy_json)
+					SELECT ?, provider_kind, endpoint, model, api_key_env, allow_anonymous, retention_posture, training_posture, allowed_sources, ?, allow_sensitive, policy_json
+					FROM person_inference_profiles WHERE fingerprint = ?`), "expanded-profile", profile.SourceSince, f.request.Generation.Policy.ProviderPolicyFingerprint)
 				r.NoError(err)
+				profile.Fingerprint = "expanded-profile"
 			case "window":
 				cfg.Commitments.Window = 30 * 24 * time.Hour
 			default:
@@ -134,17 +138,25 @@ func TestCommitmentScopeChangesRevisitJournaledHistory(t *testing.T) {
 				r.NoError(err)
 				r.Len(window.Sources, 1)
 				r.Equal("I will call.", window.Sources[0].Text)
+				if change == "identity" {
+					_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+					r.NoError(err)
+					r.False(complete)
+					due, err := f.store.PersonCommitmentsDue(ctx, f.personID, personFactLedgerNow.Add(time.Minute), cfg.Commitments.MinInterval, cfg.Commitments.Window, window.ScopeFingerprint, cfg.Commitments.MaxBytes)
+					r.NoError(err)
+					r.True(due)
+				}
 			})
 		}
 	})
 }
 
 func TestCommitmentDiscoveryStatusSurvivesIdentityAndUntracking(t *testing.T) {
-	for _, change := range []string{"identity", "untracking"} {
+	for _, change := range []string{"untracking"} {
 		t.Run(change, func(t *testing.T) {
 			r, a, ctx := require.New(t), assert.New(t), t.Context()
 			f := newPersonSweepApplyFixture(t, "status-"+change, false)
-			sourceID, persist := newCommitmentTestConversation(t, f)
+			_, persist := newCommitmentTestConversation(t, f)
 			const quote = "I will send the draft."
 			persist("promise", quote, -time.Hour)
 			cfg, profile := commitmentTestConfig()
@@ -166,24 +178,13 @@ func TestCommitmentDiscoveryStatusSurvivesIdentityAndUntracking(t *testing.T) {
 			r.NotNil(savedSince)
 			r.True(complete)
 
-			if change == "identity" {
-				err = f.store.AddAccountIdentity(sourceID, "alternate-owner@example.test", "manual")
-			} else {
-				_, err = f.store.SetPersonTrackingContext(ctx, f.personID, false)
-			}
+			_, err = f.store.SetPersonTrackingContext(ctx, f.personID, false)
 			r.NoError(err)
 			since, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
 			r.NoError(err)
 			r.NotNil(since)
 			a.Equal(*savedSince, *since)
-			if change == "identity" {
-				r.False(complete)
-				due, err := f.store.PersonCommitmentsDue(ctx, f.personID, personFactLedgerNow.Add(time.Minute), cfg.Commitments.MinInterval, cfg.Commitments.Window, window.ScopeFingerprint, cfg.Commitments.MaxBytes)
-				r.NoError(err)
-				r.True(due)
-			} else {
-				r.True(complete)
-			}
+			r.True(complete)
 			items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
 			r.NoError(err)
 			r.Len(items, 1)

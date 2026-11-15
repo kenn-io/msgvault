@@ -814,3 +814,26 @@ func TestListChatDoesNotReadMIMEOriginal(t *testing.T) {
 	assert.Equal(store.ChannelChat, result.Loops[0].Channel)
 	assert.Zero(counted.originals, "chat detection must skip email MIME evidence")
 }
+
+type pagingCommitmentStore struct {
+	*store.Store
+	limit int
+}
+
+func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, limit, _ int, _ bool) ([]store.PersonCommitment, error) {
+	s.limit = limit
+	return []store.PersonCommitment{{ID: 201}, {ID: 202}}, nil
+}
+
+func TestListPagesCommitments(t *testing.T) {
+	f := storetest.New(t)
+	st := &pagingCommitmentStore{Store: f.Store}
+	result, err := loops.List(t.Context(), st, loops.Options{Limit: 1, CommitmentOffset: 200}, now)
+	require.NoError(t, err)
+	assert.Equal(t, 2, st.limit)
+	require.Len(t, result.Commitments, 1)
+	assert.Equal(t, int64(201), result.Commitments[0].ID)
+	require.NotNil(t, result.CommitmentsNextOffset)
+	assert.Equal(t, 201, *result.CommitmentsNextOffset)
+	assert.True(t, result.Truncated)
+}

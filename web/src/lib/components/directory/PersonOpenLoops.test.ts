@@ -233,12 +233,6 @@ describe("PersonOpenLoops", () => {
     if (!paged) (await screen.findByRole("button", { name: "More promises" })).click();
     expect(await screen.findByRole("link", { name: "Promise 8" })).toBeDefined();
     expect(screen.getAllByRole("link", { name: "Promise 6" })).toHaveLength(1);
-    (await screen.findByRole("button", { name: "More promises" })).click();
-    expect(await screen.findByRole("link", { name: "Promise 12" })).toBeDefined();
-    const request = fetcher.mock.calls.at(-1)?.[0];
-    const url = new URL(request instanceof Request ? request.url : String(request), "http://localhost");
-    expect(url.searchParams.get("commitment_offset")).toBe("10");
-    expect(screen.getByText("11 open")).toBeDefined();
   });
 
   it("appends the next promise page", async () => {

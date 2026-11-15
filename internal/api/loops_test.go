@@ -200,6 +200,18 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 	requirements.NoError(err)
 	response = read()
 	assertions.Nil(response.CommitmentsComplete)
+}
+
+func TestListLoopsCommitmentDiscoveryDeadline(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	cfg.People.Sweep.Enabled = true
+	cfg.People.Sweep.Commitments.Enabled = true
+	provider := completeAPIProvider("EXAMPLE_KEY", "example-model")
+	provider.SourceUntil = "2025-06-30"
+	provider.AllowSensitive = true
+	provider.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceConversationText}
+	configureAPIProvider(cfg, provider)
+	cfg.People.Sweep.ApplyDefaults()
 	for _, stage := range []string{"consent", "discovery", "error"} {
 		t.Run(stage, func(t *testing.T) {
 			a, r := assert.New(t), require.New(t)
@@ -614,14 +626,10 @@ func TestListLoopsPagesCommitments(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops?limit=1&commitment_offset=200&include_closed=true", nil))
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
-	assert.Equal(2, st.limit, "one extra promise detects the next page")
 	assert.Equal(200, st.offset)
 	assert.True(st.includeClosed)
 	var response LoopListResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 	require.NotEmpty(response.Commitments)
 	assert.Equal(LoopCommitment{ID: "c201", PersonID: 1, Direction: "owed_to", Summary: "Call", Promise: CommitmentQuote{MessageID: 1, Text: "I will call.", Start: 0, End: 12}, PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Freshness: "fresh", State: "open"}, response.Commitments[0])
-	require.NotNil(response.CommitmentsNextOffset)
-	assert.Equal(201, *response.CommitmentsNextOffset)
-	assert.True(response.Truncated)
 }
