@@ -3467,7 +3467,7 @@ MSGVAULT_HOME=./subset-vault msgvault tui
 | `--rows <count>` | Number of most recent messages to copy; must be positive (required) |
 | `--include-identity` | Copy complete identity clusters for included participants and every confirmed address of each included account |
 | `--include-attributes` | Copy current and historical person and organization attribute values |
-| `--include-profiles` | Copy profiles, profile history and media, relationships, employment history, and referenced organizations, plus owner decisions on promises cited by copied messages with those citations' quote excerpts; promise-discovery consent and progress are not copied |
+| `--include-profiles` | Copy profiles, profile history and media, relationships, employment history, and referenced organizations |
 | `--include-vcard-resources` | Copy complete native vCards and retired UID aliases; requires `--include-profiles` |
 
 The command is SQLite-only. Without `--include-identity`, it copies only the
