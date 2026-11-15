@@ -84,7 +84,7 @@ var (
 	transactionalReferenceAfterCode  = regexp.MustCompile(`^\s*(?:[.,:;#-]\s*)?(?:is\s+)?(?:your\s+)?(?:order|tracking|shipment|invoice|reservation|booking)\s*(?:number|no\.?|id|code)?\b`)
 	reverseCodeBeforeCuePattern      = regexp.MustCompile(`(?i)\b(?:[a-z]-[0-9]{4,8}|[0-9]{3}[ -][0-9]{3}|[a-z0-9]{4,8})\s+$`)
 	numericDatePattern               = regexp.MustCompile(`\b(?:[0-9]{4}[-/.][0-9]{1,2}[-/.][0-9]{1,2}|[0-9]{1,2}[-/.][0-9]{1,2}[-/.][0-9]{4})\b`)
-	moneyAmountPattern               = regexp.MustCompile(`(?i)(?:\p{Sc}\s*|\b(?:USD|CAD|EUR|GBP|JPY)\s+)[0-9][0-9.,]*|\b[0-9][0-9.,]*\s*(?:USD|CAD|EUR|GBP|JPY)\b`)
+	moneyAmountPattern               = regexp.MustCompile(`(?i)(?:\p{Sc}\s*|\b(?:USD|CAD|EUR|GBP|JPY)\s+)[0-9][0-9.,]*|\b[0-9][0-9.,]*\s*(?:USD|CAD|EUR|GBP|JPY)\b|\b[0-9]+(?:[.,][0-9]+)+\b`)
 	promotionalCodePattern           = regexp.MustCompile(`\b(?:coupon|promo(?:tional)?|discount)\s+code\b|\b[0-9]{1,3}\s*(?:%|percent)\s*(?:off|discount)\b`)
 	expiryPattern                    = regexp.MustCompile(`(?i)(?:expires? in|valid for)\s+([0-9]{1,5})\s+(minutes?|mins?|hours?|hrs?|seconds?|secs?)\b`)
 )
