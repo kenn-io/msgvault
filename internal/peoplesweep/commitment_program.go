@@ -72,6 +72,7 @@ func CommitmentScopeFingerprint(profile ProviderProfile, cfg CommitmentConfig) s
 
 // CommitmentConfig is a separately consented, default-off lane.
 type CommitmentConfig struct {
+	Timezone        string        `toml:"-"`
 	Enabled         bool          `toml:"enabled"`
 	MinInterval     time.Duration `toml:"min_interval"`
 	Window          time.Duration `toml:"window"`

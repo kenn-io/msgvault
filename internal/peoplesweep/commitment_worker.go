@@ -45,13 +45,14 @@ func (w *Worker) runCommitmentCall(
 	if !ok {
 		return nil, FailurePolicy, lease, nil
 	}
-	window, err := store.LoadPersonCommitmentWindow(ctx, lease.PersonID, call.profile, w.Config.Commitments, call.resolvedAt)
+	cfg := w.Config.Commitments
+	cfg.Timezone = w.Timezone
+	if cfg.Timezone == "" {
+		cfg.Timezone = "UTC"
+	}
+	window, err := store.LoadPersonCommitmentWindow(ctx, lease.PersonID, call.profile, cfg, call.resolvedAt)
 	if err != nil {
 		return nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
-	}
-	window.Timezone = w.Timezone
-	if window.Timezone == "" {
-		window.Timezone = "UTC"
 	}
 	if len(window.Sources) == 0 {
 		return &CommitmentResult{Window: window, Config: w.Config.Commitments}, "", lease, nil

@@ -183,6 +183,9 @@ func TestCommitmentScopeAndUnfinishedBackfillWindow(t *testing.T) {
 					persist("promise", "I will call.", -time.Hour)
 					_, err = f.store.SetPersonTrackingContext(ctx, f.personID, true)
 				} else {
+					old := personFactLedgerNow.Add(-60 * 24 * time.Hour)
+					_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_commitment_frontiers SET processed_at = ?, discovery_since = ? WHERE person_id = ?`), f.store.dialect.TimestampParam(old), f.store.dialect.TimestampParam(old), f.personID)
+					r.NoError(err)
 					err = f.store.AddAccountIdentity(source, "owner@example.test", "manual")
 				}
 				r.NoError(err)
@@ -191,8 +194,11 @@ func TestCommitmentScopeAndUnfinishedBackfillWindow(t *testing.T) {
 				r.Len(window.Sources, 1)
 				r.Equal("I will call.", window.Sources[0].Text)
 				if change == "identity" {
-					_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+					r.Equal(personFactLedgerNow, window.SelectionAt)
+					since, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
 					r.NoError(err)
+					r.NotNil(since)
+					r.Equal(personFactLedgerNow.Add(-60*24*time.Hour), *since)
 					r.False(complete)
 					due, err := f.store.PersonCommitmentsDue(ctx, f.personID, personFactLedgerNow.Add(time.Minute), cfg.Commitments.MinInterval, cfg.Commitments.Window, window.ScopeFingerprint, cfg.Commitments.MaxBytes)
 					r.NoError(err)

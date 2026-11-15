@@ -121,3 +121,42 @@ func TestCommitmentWindowBoundsEscapedEmailInput(t *testing.T) {
 		})
 	}
 }
+
+func TestCommitmentWindowAdmissionIncludesTimezone(t *testing.T) {
+	r := require.New(t)
+	f := storetest.New(t)
+	r.NoError(f.Store.AddAccountIdentity(f.Source.ID, loopOwner, "manual"))
+	participant := f.EnsureParticipant(loopAlex, "", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(participant)
+	r.NoError(err)
+	first := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will send the first.", SentAt: loopAgo(2 * time.Hour)})
+	second := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "I will send the second.", SentAt: loopAgo(time.Hour)})
+	for _, id := range []int64{first, second} {
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO person_sweep_changes (sequence, person_id, source_lane, change_kind, message_id, recorded_at) SELECT COALESCE(MAX(sequence), 0) + 1, ?, 'conversation_text', 'upsert', ?, ? FROM person_sweep_changes`), person.ID, id, loopNow)
+		r.NoError(err)
+	}
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE person_sweep_change_clock SET sequence = (SELECT MAX(sequence) FROM person_sweep_changes) WHERE singleton = TRUE`)
+	r.NoError(err)
+	cfg := peoplesweep.CommitmentConfig{Enabled: true, Window: 30 * loopDay, MaxItems: 60, MaxBytes: 65536}
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	window, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow)
+	r.NoError(err)
+	r.Len(window.Sources, 2)
+	low, high := 0, 128<<10
+	for low < high {
+		mid := (low + high) / 2
+		window.Timezone = strings.Repeat("x", mid)
+		fits, err := peoplesweep.CommitmentInputFits(window)
+		r.NoError(err)
+		if fits {
+			low = mid + 1
+		} else {
+			high = mid
+		}
+	}
+	cfg.Timezone = strings.Repeat("x", low)
+	window, err = f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow)
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	r.Less(window.ThroughSequence, window.SnapshotSequence)
+}

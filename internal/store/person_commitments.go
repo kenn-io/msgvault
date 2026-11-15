@@ -507,7 +507,7 @@ func (s *Store) commitmentChatMembers(ctx context.Context, conversationID, perso
 }
 
 func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, profile peoplesweep.ProviderProfile, cfg peoplesweep.CommitmentConfig, now time.Time) (peoplesweep.CommitmentWindow, error) {
-	window := peoplesweep.CommitmentWindow{PersonID: personID, ScopeFingerprint: peoplesweep.CommitmentScopeFingerprint(profile, cfg), SelectionAt: now, Now: now, Sources: []peoplesweep.CommitmentSource{}}
+	window := peoplesweep.CommitmentWindow{PersonID: personID, ScopeFingerprint: peoplesweep.CommitmentScopeFingerprint(profile, cfg), SelectionAt: now, Now: now, Timezone: cfg.Timezone, Sources: []peoplesweep.CommitmentSource{}}
 	if !profile.AllowSensitive || !slices.Contains(profile.AllowedSources, peoplesweep.SourceConversationText) {
 		return window, nil
 	}
@@ -780,8 +780,8 @@ func (s *Store) oversizedRetryEligible(ctx context.Context, personID int64, sour
 
 const oversizedRetryPage = 256
 
-func (s *Store) oversizedRetryIDs(ctx context.Context, personID int64, baseScope string, maxBytes int) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT message_id FROM person_commitment_oversized WHERE person_id = ? AND scope_fingerprint = ? AND max_bytes < ? ORDER BY message_id LIMIT ?`), personID, baseScope, maxBytes, oversizedRetryPage)
+func (s *Store) oversizedRetryIDs(ctx context.Context, personID int64, baseScope string, maxBytes int, previous int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT o.message_id FROM person_commitment_oversized o WHERE o.person_id = ? AND o.scope_fingerprint = ? AND o.max_bytes < ? AND NOT EXISTS (SELECT 1 FROM person_sweep_changes c WHERE c.person_id = o.person_id AND c.message_id = o.message_id AND c.source_lane = 'conversation_text' AND c.sequence > ?) ORDER BY o.message_id LIMIT ?`), personID, baseScope, maxBytes, previous, oversizedRetryPage)
 	if err != nil {
 		return nil, err
 	}
@@ -799,7 +799,7 @@ func (s *Store) forgetOversizedCommitment(ctx context.Context, personID, message
 // window is full, in which case discovery resumes from the previous frontier.
 func (s *Store) retryOversizedCommitments(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, baseScope string, inProfile func(time.Time) bool, add func(peoplesweep.CommitmentSource) (bool, error)) (bool, error) {
 	personID := window.PersonID
-	ids, err := s.oversizedRetryIDs(ctx, personID, baseScope, cfg.MaxBytes)
+	ids, err := s.oversizedRetryIDs(ctx, personID, baseScope, cfg.MaxBytes, previous)
 	if err != nil {
 		return false, err
 	}

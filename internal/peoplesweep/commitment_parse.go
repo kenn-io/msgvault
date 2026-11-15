@@ -108,7 +108,14 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 			}
 		}
 		// Human-readable wording is deliberately absent from identity.
-		identity := fmt.Sprintf("%d/%s/%d/%s/%d/%d/%s", window.PersonID, promise.Direction, source.MessageID, source.RecordedTime.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), promise.Start, promise.End, promise.Quote)
+		runes, quote := []rune(source.Text), []rune(promise.Quote)
+		occurrence := 0
+		for i := 0; i < int(promise.Start-source.Start); i++ {
+			if i+len(quote) <= len(runes) && string(runes[i:i+len(quote)]) == promise.Quote {
+				occurrence++
+			}
+		}
+		identity := fmt.Sprintf("%d/%s/%d/%s/%d/%s", window.PersonID, promise.Direction, source.MessageID, source.RecordedTime.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), occurrence, promise.Quote)
 		digest := sha256.Sum256([]byte(identity))
 		promise.TargetKey = "commitment:" + hex.EncodeToString(digest[:])
 		for _, span := range spans[source.MessageID] {
@@ -128,7 +135,7 @@ var (
 	commitmentNumericDate     = regexp.MustCompile(`\b\d{1,2}/\d{1,2}/\d{4}\b`)
 	commitmentTomorrow        = regexp.MustCompile(`\b(day after )?tomorrow\b`)
 	commitmentRelativeDays    = regexp.MustCompile(`\bin ([a-z0-9]+) days?\b`)
-	commitmentWeekdayDeadline = regexp.MustCompile(`\b(?:by|on)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:(?:of\s+)?(this|next)\s+week|in\s+([a-z0-9]+)\s+weeks?))?\b`)
+	commitmentWeekdayDeadline = regexp.MustCompile(`\b(?:by|on)\s+(?:(this)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:(?:of\s+)?(this|next)\s+week|in\s+([a-z0-9]+)\s+weeks?))?\b`)
 	commitmentInTail          = regexp.MustCompile(`^\s+in\b`)
 )
 
@@ -225,24 +232,31 @@ func quoteHasByWeekday(quote string, due, day time.Time) bool {
 			continue
 		}
 		match := commitmentWeekdayDeadline.FindStringSubmatch(quote[span[0]:span[1]])
+		if match[1] != "" && (match[3] != "" || match[4] != "") {
+			continue
+		}
 		var weekday time.Weekday
 		for candidate := time.Sunday; candidate <= time.Saturday; candidate++ {
-			if match[1] == strings.ToLower(candidate.String()) {
+			if match[2] == strings.ToLower(candidate.String()) {
 				weekday = candidate
 				break
 			}
 		}
 		days := (int(weekday) - int(day.Weekday()) + 7) % 7
-		switch match[2] {
+		period := match[3]
+		if match[1] == "this" {
+			period = "this"
+		}
+		switch period {
 		case "this":
 			days = (int(weekday)+6)%7 - (int(day.Weekday())+6)%7
 		case "next":
 			days = 7 - (int(day.Weekday())+6)%7 + (int(weekday)+6)%7
 		}
-		if match[3] != "" {
-			weeks, err := strconv.Atoi(match[3])
+		if match[4] != "" {
+			weeks, err := strconv.Atoi(match[4])
 			if err != nil {
-				weeks = slices.Index([]string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"}, match[3])
+				weeks = slices.Index([]string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"}, match[4])
 			}
 			if weeks < 0 || weeks > 520000 {
 				continue

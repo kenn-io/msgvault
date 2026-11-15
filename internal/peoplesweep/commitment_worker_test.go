@@ -30,11 +30,13 @@ func (*commitmentWorkerFixture) HasActivePersonCommitmentConsent(context.Context
 func (*commitmentWorkerFixture) PersonCommitmentsDue(context.Context, int64, time.Time, time.Duration, time.Duration, string, int) (bool, error) {
 	return true, nil
 }
-func (s *commitmentWorkerFixture) LoadPersonCommitmentWindow(_ context.Context, id int64, _ ProviderProfile, _ CommitmentConfig, now time.Time) (CommitmentWindow, error) {
+func (s *commitmentWorkerFixture) LoadPersonCommitmentWindow(_ context.Context, id int64, _ ProviderProfile, cfg CommitmentConfig, now time.Time) (CommitmentWindow, error) {
 	if s.window != nil {
-		return *s.window, nil
+		window := *s.window
+		window.Timezone = cfg.Timezone
+		return window, nil
 	}
-	return CommitmentWindow{PersonID: id, Now: now}, nil
+	return CommitmentWindow{PersonID: id, Now: now, Timezone: cfg.Timezone}, nil
 }
 func (*commitmentWorkerFixture) EnsurePersonSweepWork(context.Context, int64, bool) (bool, error) {
 	return true, nil

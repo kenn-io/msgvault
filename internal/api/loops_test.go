@@ -223,6 +223,14 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 	response = read()
 	requirements.NotNil(response.CommitmentsSince)
 	assertions.True(response.CommitmentsSince.Equal(since))
+	_, err = f.Store.RevokePersonCommitmentConsent(t.Context(), profile.Fingerprint, "test")
+	requirements.NoError(err)
+	response = read()
+	requirements.NotNil(response.CommitmentsSince)
+	assertions.True(response.CommitmentsSince.Equal(since))
+	requirements.NotNil(response.CommitmentsUntil)
+	requirements.NotNil(response.CommitmentsComplete)
+	assertions.False(*response.CommitmentsComplete)
 }
 
 func TestListLoopsReportsIncompleteCoverage(t *testing.T) {
