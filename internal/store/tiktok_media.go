@@ -21,6 +21,16 @@ func tikTokMediaSweepKey(sourceID int64) string {
 	return fmt.Sprintf("tiktok.media_sweep:%d", sourceID)
 }
 
+// Source IDs can be reused. Remove only this source's sweep in the source
+// removal transaction so its replacement cannot inherit retry progress.
+func (s *Store) deleteTikTokMediaSweepContext(ctx context.Context, exec sourceIdentityExec, sourceID int64) error {
+	_, err := exec(ctx, s.Rebind(`DELETE FROM archive_metadata WHERE key = ?`), tikTokMediaSweepKey(sourceID))
+	if err != nil {
+		return fmt.Errorf("delete TikTok media sweep progress: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) LoadTikTokMediaSweepContext(ctx context.Context, sourceID int64, identifier string) (TikTokMediaSweep, error) {
 	state := TikTokMediaSweep{Version: 1, Source: identifier}
 	var value string
