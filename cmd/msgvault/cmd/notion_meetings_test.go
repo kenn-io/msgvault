@@ -115,6 +115,8 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 	}{
 		{name: "query parent", queryPage: "query-page", blockPage: "page-1", wantPage: "query-page"},
 		{name: "retrieved parent", blockPage: "page-1", wantPage: "page-1"},
+		{name: "page only", blockPage: "page-1", wantPage: "page-1", sections: &notionmeetings.MeetingChildren{}, wantIDs: []string{"meeting-1"}},
+		{name: "page section permission denied", blockPage: "page-1", wantPage: "page-1", sectionErr: &notionmeetings.APIError{Kind: notionmeetings.ErrUnauthorized, Status: 401}, wantErr: notionmeetings.ErrUnauthorized, wantIDs: []string{"meeting-1", "summary-1"}},
 		{name: "temporary markdown failure", blockPage: "page-1", wantPage: "page-1", markdownErr: &notionmeetings.APIError{Kind: notionmeetings.ErrProvider, Status: 503}, wantIDs: []string{"meeting-1", "summary-1"}},
 		{name: "markdown permission denied", blockPage: "page-1", wantPage: "page-1", markdownErr: &notionmeetings.APIError{Kind: notionmeetings.ErrReadContent, Status: 403, Code: "restricted_resource"}, wantErr: notionmeetings.ErrReadContent},
 		{name: "block unavailable with query parent", queryPage: "page-1", blockErr: blockUnavailable, wantErr: blockUnavailable},

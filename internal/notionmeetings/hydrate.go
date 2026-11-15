@@ -193,7 +193,7 @@ func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeet
 		return nil
 	}
 	result.PageMarkdown = page
-	markdown, _ := extractMarkdownTranscript(page.Markdown)
+	markdown := extractMarkdownTranscript(page.Markdown)
 	complete := !page.Truncated && len(page.UnknownBlockIDs) == 0
 	if !complete {
 		result.markIncomplete(sectionTranscript, "markdown")
@@ -520,7 +520,7 @@ func transcriptTemporarilyUnavailable(err error) bool {
 	return errors.As(err, &network) || errors.Is(err, io.EOF)
 }
 
-func extractMarkdownTranscript(markdown string) (string, bool) {
+func extractMarkdownTranscript(markdown string) string {
 	lines := strings.Split(strings.ReplaceAll(markdown, "\r\n", "\n"), "\n")
 	for index, line := range lines {
 		headingLevel, heading, isHeading := markdownHeading(line)
@@ -532,7 +532,7 @@ func extractMarkdownTranscript(markdown string) (string, bool) {
 			continue
 		}
 		if inline != "" {
-			return inline, true
+			return inline
 		}
 		end := len(lines)
 		if !isHeading {
@@ -545,9 +545,9 @@ func extractMarkdownTranscript(markdown string) (string, bool) {
 				break
 			}
 		}
-		return strings.TrimSpace(strings.Join(lines[index+1:end], "\n")), true
+		return strings.TrimSpace(strings.Join(lines[index+1:end], "\n"))
 	}
-	return "", false
+	return ""
 }
 
 func markdownHeading(line string) (int, string, bool) {

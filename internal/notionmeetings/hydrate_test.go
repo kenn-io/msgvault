@@ -317,20 +317,18 @@ func TestHydratorRejectsNonMeetingRootBlock(t *testing.T) {
 func TestExtractMarkdownTranscript(t *testing.T) {
 	for _, tc := range []struct {
 		name, markdown, want string
-		wantMarker           bool
 	}{
-		{"deeper heading", "# Meeting\n## Transcript\nFirst\n### Detail\nSecond\n## Actions\nExclude", "First\n### Detail\nSecond", true},
-		{"CRLF and case", "# Meeting\r\n### tRaNsCrIpT\r\nKeep\r\n## Notes\r\nExclude", "Keep", true},
-		{"EOF", "# Meeting\n## Transcript\nKeep to EOF", "Keep to EOF", true},
-		{"bare marker", "# Meeting\nTranscript:\nKeep\n## Actions\nExclude", "Keep", true},
-		{"inline", "Transcript: Inline text\n## Notes\nExclude", "Inline text", true},
-		{"absent", "# Notes\nSome notes", "", false},
-		{"empty", "# Transcript\n", "", true},
+		{"deeper heading", "# Meeting\n## Transcript\nFirst\n### Detail\nSecond\n## Actions\nExclude", "First\n### Detail\nSecond"},
+		{"CRLF and case", "# Meeting\r\n### tRaNsCrIpT\r\nKeep\r\n## Notes\r\nExclude", "Keep"},
+		{"EOF", "# Meeting\n## Transcript\nKeep to EOF", "Keep to EOF"},
+		{"bare marker", "# Meeting\nTranscript:\nKeep\n## Actions\nExclude", "Keep"},
+		{"inline", "Transcript: Inline text\n## Notes\nExclude", "Inline text"},
+		{"absent", "# Notes\nSome notes", ""},
+		{"empty", "# Transcript\n", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, found := extractMarkdownTranscript(tc.markdown)
+			got := extractMarkdownTranscript(tc.markdown)
 			assert.Equal(t, tc.want, got)
-			assert.Equal(t, tc.wantMarker, found)
 		})
 	}
 }
