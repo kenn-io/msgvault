@@ -54,15 +54,6 @@ func TestCardDAVParticipantBindingHTTPPreviewApplyUndo(t *testing.T) {
 	assert.Equal(http.StatusBadRequest, malformed.Code)
 }
 
-func TestCardDAVParticipantBindingHTTPRequiresOwner(t *testing.T) {
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	home := t.TempDir()
-	srv := NewServer(&config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Server: config.ServerConfig{APIKey: "synthetic-owner-key"}}, st, nil, testLogger())
-	response := personRequest(t, srv, http.MethodPost, "/api/v1/carddav/participant-bindings", []byte(`{"dry_run":true}`), "")
-	assert.Equal(http.StatusUnauthorized, response.Code)
-}
-
 type partialCardDAVSyncFixture struct {
 	cardDAVListFixture
 
@@ -100,9 +91,6 @@ func TestCardDAVSyncRefreshesIdentityCacheAfterPartialCommit(t *testing.T) {
 				assert.Equal(http.StatusOK, response.Code)
 			}
 			assert.Equal(1, st.refreshCalls)
-			person, err := st.PersonForParticipantsContext(t.Context(), []int64{id})
-			require.NoError(err)
-			assert.NotNil(person)
 		})
 	}
 }

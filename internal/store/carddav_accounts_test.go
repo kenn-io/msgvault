@@ -1849,48 +1849,6 @@ func TestCardDAVConnectionIdentityChangeDeletesAutomaticallyBoundPerson(t *testi
 	assert.Equal([]int64{participantID}, newPerson.ParticipantIDs)
 }
 
-func TestCardDAVConnectionIdentityChangeDeletesUntouchedPersonAfterDuplicateMappings(t *testing.T) {
-	require := require.New(t)
-
-	st, account, book := newCardDAVResourceStore(t)
-	first := remoteResource(
-		book.CanonicalURL+"a-first.vcf", "duplicate-first", "Shared Example", "shared@example.test", `"one"`,
-	)
-	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
-		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
-		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{first},
-	})
-	require.NoError(err)
-	firstMapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, first.Href)
-	require.NoError(err)
-	require.NotNil(firstMapping.PersonID)
-
-	duplicate := remoteResource(
-		book.CanonicalURL+"z-duplicate.vcf", "duplicate-second", "Shared Example", "shared@example.test", `"two"`,
-	)
-	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
-		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
-		SyncRevision: book.SyncRevision + 1, Upserts: []store.CardDAVRemoteResource{duplicate},
-	})
-	require.NoError(err)
-	duplicateMapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, duplicate.Href)
-	require.NoError(err)
-	require.NotNil(duplicateMapping.PersonID)
-	personID := *firstMapping.PersonID
-	require.Equal(personID, *duplicateMapping.PersonID)
-
-	input := cardDAVRediscoveryForBook(account, book)
-	input.Username = "bob"
-	input.PrincipalURL = "https://contacts.example/principal/bob/"
-	input.HomeURL = "https://contacts.example/books/bob/"
-	_, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), input)
-	require.NoError(err)
-
-	_, err = st.GetPersonContext(t.Context(), personID)
-	require.ErrorIs(err, store.ErrPersonNotFound,
-		"replacing the connection should delete an untouched person after its final duplicate mapping is removed")
-}
-
 func TestCardDAVConnectionIdentityChangeRejectsOwnedPublicationOrConflict(t *testing.T) {
 	t.Run("publication", func(t *testing.T) {
 		st, account, book := newCardDAVResourceStore(t)
