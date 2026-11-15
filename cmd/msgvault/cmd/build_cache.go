@@ -1314,6 +1314,9 @@ func buildCacheLockedAttempt(
 		if err := sourceSnapshot.Close(); err != nil {
 			return nil, fmt.Errorf("close SQLite snapshot after metadata check: %w", err)
 		}
+		if identityRevision != previousState.IdentityRevision {
+			return refreshDerivedDatasetsOnly(ctx, dbPath, analyticsDir, false, builderOverrides...)
+		}
 		return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
 	}
 
@@ -1395,6 +1398,9 @@ func buildCacheLockedAttempt(
 		} else {
 			afterMessageIDs[dataset] = 0
 		}
+	}
+	if err := stageMeetingGroups(ctx, sourceSnapshot, dbPath, maxID); err != nil {
+		return nil, err
 	}
 	if err := sourceSnapshot.Prepare(ctx, maxID, afterMessageIDs); err != nil {
 		return nil, err
@@ -1594,6 +1600,7 @@ func buildCacheLockedAttempt(
 	}
 	derived, err := identityindex.Build(ctx, exportDB, identityindex.BuildOptions{
 		UnsentMessages:       "tmp_unsent_messages",
+		MeetingGroups:        "tmp_meeting_groups",
 		Mode:                 buildMode,
 		CommittedRoot:        analyticsDir,
 		StagedBaseRoot:       staging.root,
@@ -1675,6 +1682,7 @@ func buildCacheLockedAttempt(
 	// Save sync state using the pre-export watermark so any deletion
 	// that occurs during or after the build is detected as stale.
 	state := syncState{
+		MeetingGroupsFallback:               sourceSnapshot.meetingGroupsFallback,
 		LastMessageID:                       maxID,
 		LastSyncAt:                          cacheWatermark,
 		SchemaVersion:                       cacheSchemaVersion,
@@ -1905,6 +1913,7 @@ func writeCacheStatsLine(w io.Writer, format string, args ...any) error {
 // transaction directly. The fallback exports every table from one go-sqlite3
 // transaction before DuckDB reads the resulting static CSV files.
 type cacheSourceSnapshot struct {
+	meetingGroupsFallback       bool
 	duckDB                      *sql.DB
 	duckTx                      *sql.Tx
 	sqliteDB                    *sql.DB
@@ -2004,6 +2013,7 @@ func (s *cacheSourceSnapshot) QueryRowContext(ctx context.Context, query string,
 	if s.sqliteTx != nil {
 		return s.sqliteTx.QueryRowContext(ctx, query, args...)
 	}
+	args = sqliteQueryArgs(args)
 	escapedQuery := strings.ReplaceAll(query, "'", "''")
 	duckQuery := fmt.Sprintf("SELECT * FROM sqlite_query('sqlite_db', '%s'", escapedQuery)
 	if len(args) > 0 {
@@ -2012,6 +2022,70 @@ func (s *cacheSourceSnapshot) QueryRowContext(ctx context.Context, query string,
 	}
 	duckQuery += ")"
 	return s.duckTx.QueryRowContext(ctx, duckQuery, args...)
+}
+
+func (s *cacheSourceSnapshot) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if s.sqliteTx != nil {
+		return s.sqliteTx.QueryContext(ctx, query, args...)
+	}
+	args = sqliteQueryArgs(args)
+	duckQuery := fmt.Sprintf("SELECT * FROM sqlite_query('sqlite_db', '%s'", strings.ReplaceAll(query, "'", "''"))
+	if len(args) > 0 {
+		duckQuery += ", params=row(" + strings.TrimSuffix(strings.Repeat("?,", len(args)), ",") + ")"
+	}
+	return s.duckTx.QueryContext(ctx, duckQuery+")", args...)
+}
+
+func sqliteQueryArgs(args []any) []any {
+	result := append([]any(nil), args...)
+	for i, arg := range result {
+		if at, ok := arg.(time.Time); ok {
+			result[i] = at.UTC().Format("2006-01-02 15:04:05.999999999-07:00")
+		}
+	}
+	return result
+}
+
+func stageMeetingGroups(ctx context.Context, snapshot *cacheSourceSnapshot, dbPath string, through int64) error {
+	archive, err := store.OpenReadOnlyContext(ctx, dbPath)
+	if err != nil {
+		return fmt.Errorf("open archive for meeting groups: %w", err)
+	}
+	defer func() { _ = archive.Close() }()
+	ctx = store.WithReadSnapshotReaderContext(ctx, archive.DB(), snapshot)
+	groups, fallback, err := archive.MeetingTranscriptGroupsContext(ctx, through)
+	if err != nil {
+		return fmt.Errorf("resolve meeting groups: %w", err)
+	}
+	if fallback {
+		slog.Warn("meeting grouping exceeded read budget; counting transcripts individually")
+	}
+	snapshot.meetingGroupsFallback = fallback
+	db := snapshot.DuckDB()
+	if _, err := db.ExecContext(ctx, "CREATE TEMP TABLE tmp_meeting_groups (message_id BIGINT, group_id BIGINT)"); err != nil {
+		return fmt.Errorf("create meeting groups: %w", err)
+	}
+	var values []string
+	flush := func() error {
+		if len(values) == 0 {
+			return nil
+		}
+		_, err := db.ExecContext(ctx, "INSERT INTO tmp_meeting_groups VALUES "+strings.Join(values, ","))
+		values = values[:0]
+		return err
+	}
+	for id, group := range groups {
+		values = append(values, fmt.Sprintf("(%d,%d)", id, group))
+		if len(values) == 1000 {
+			if err := flush(); err != nil {
+				return fmt.Errorf("stage meeting groups: %w", err)
+			}
+		}
+	}
+	if err := flush(); err != nil {
+		return fmt.Errorf("stage meeting groups: %w", err)
+	}
+	return nil
 }
 
 func (s *cacheSourceSnapshot) DuckDB() sqlRunner {

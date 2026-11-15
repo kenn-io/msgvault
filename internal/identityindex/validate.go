@@ -50,6 +50,7 @@ func Validate(
 		DatasetTemperatureContributions: activityRelation(
 			filepath.Join(opts.OutputRoot, DatasetTemperatureContributions, "*.parquet"), false,
 		),
+		DatasetMeetingGroups: activityRelation(filepath.Join(opts.OutputRoot, DatasetMeetingGroups, "*.parquet"), false),
 	}
 	if opts.ActivityRelation != "" {
 		relations[DatasetActivity] = opts.ActivityRelation
@@ -256,6 +257,7 @@ const duckDBTypeBoolean = "BOOLEAN"
 const duckDBTypeVarchar = "VARCHAR"
 
 var datasetSchemas = map[string][]schemaColumn{
+	DatasetMeetingGroups: {{"message_id", duckDBTypeBigInt}, {"group_id", duckDBTypeBigInt}},
 	DatasetActivity: {
 		{"message_id", duckDBTypeBigInt},
 		{"conversation_id", duckDBTypeBigInt},

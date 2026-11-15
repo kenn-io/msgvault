@@ -26,6 +26,8 @@ const (
 
 // BuildOptions identifies committed, staged, and output cache roots.
 type BuildOptions struct {
+	// MeetingGroups names a relation with message_id and group_id columns.
+	MeetingGroups string
 	// UnsentMessages names a message_id relation; empty means no unsent messages.
 	UnsentMessages string
 	Mode           Mode
@@ -153,7 +155,14 @@ func Build(
 		"SELECT * FROM "+logicalBuildRelation); err != nil {
 		return BuildResult{}, err
 	}
-	if err := b.copyDataset(ctx, DatasetPeople, buildRelationshipPeopleSQL(effectiveAt)); err != nil {
+	groups := opts.MeetingGroups
+	if groups == "" {
+		groups = "(SELECT NULL::BIGINT AS message_id, NULL::BIGINT AS group_id WHERE false)"
+	}
+	if err := b.copyDataset(ctx, DatasetMeetingGroups, "SELECT message_id::BIGINT AS message_id, group_id::BIGINT AS group_id FROM "+groups); err != nil {
+		return BuildResult{}, err
+	}
+	if err := b.copyDataset(ctx, DatasetPeople, buildRelationshipPeopleSQL(effectiveAt, groups)); err != nil {
 		return BuildResult{}, err
 	}
 	if err := b.copyDataset(ctx, DatasetDomains, buildRelationshipDomainsSQL()); err != nil {

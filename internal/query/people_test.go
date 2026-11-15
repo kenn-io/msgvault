@@ -262,6 +262,31 @@ func TestSearchPeopleAggregatesLinkedIdentitiesAsOneCanonicalRow(t *testing.T) {
 	assertions.Equal(int64(1), bobSearch.Rows[0].ActivityCount)
 }
 
+func TestPeopleMeetingGroupsAcrossSources(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	firstSource := b.AddSourceWithType("first@example.test", "granola")
+	secondSource := b.AddSourceWithType("second@example.test", "zoom")
+	alice := b.AddParticipant("alice@example.test", "example.test", "Alice")
+	first := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "meeting_transcript"})
+	second := b.AddMessage(MessageOpt{SourceID: secondSource, MessageType: "meeting_transcript"})
+	calendar := b.AddMessage(MessageOpt{SourceID: firstSource, MessageType: "calendar_event"})
+	for _, id := range []int64{first, second, calendar} {
+		b.AddTo(id, alice, "Alice")
+	}
+	b.meetingGroups = fmt.Sprintf("(SELECT %d::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT %d, %d)", first, first, second, first)
+	engine := b.BuildEngine()
+	for _, filter := range []Context{{}, {SourceIDs: []int64{firstSource}}, {SourceIDs: []int64{secondSource}}, {SourceIDs: []int64{firstSource, secondSource}}} {
+		result, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Query: "Alice", Explore: ExploreRequest{Context: filter}})
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+		assert.Equal(t, int64(1), result.Rows[0].MeetingCount)
+	}
+	detail, err := engine.GetPerson(t.Context(), alice, Context{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), detail.MeetingCount)
+	assert.Equal(t, int64(3), detail.ActivityCount)
+}
+
 func TestPeopleAndDomainsExcludeUnsentActivity(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

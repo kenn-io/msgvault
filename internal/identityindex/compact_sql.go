@@ -12,17 +12,20 @@ const (
 	directoryBuildRelation = "relationship_build_directory"
 )
 
-func buildRelationshipPeopleSQL(effectiveAt time.Time) string {
+func buildRelationshipPeopleSQL(effectiveAt time.Time, groups string) string {
 	return `
 WITH logical_people AS (
-	SELECT entry_key, source_id, source_type, occurred_at, message_type, attachment_count,
-	       canonical_id
-	FROM ` + logicalBuildRelation + `
-	WHERE relation_kind = 1
+	SELECT l.entry_key, l.source_id, l.source_type, l.occurred_at, l.message_type, l.attachment_count,
+	       l.canonical_id, coalesce(g.group_id, l.anchor_message_id) AS meeting_group,
+	       row_number() OVER (PARTITION BY l.canonical_id, coalesce(g.group_id, l.anchor_message_id)
+	                          ORDER BY l.occurred_at, l.anchor_message_id) AS meeting_order
+	FROM ` + logicalBuildRelation + ` l
+	LEFT JOIN ` + groups + ` g ON g.message_id = l.anchor_message_id
+	WHERE l.relation_kind = 1
 ), people_totals AS (
 	SELECT canonical_id,
 	       count(*)::BIGINT AS activity_count,
-	       count(*) FILTER (WHERE message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+	       count(DISTINCT meeting_group) FILTER (WHERE message_type = 'meeting_transcript')::BIGINT AS meeting_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
@@ -31,7 +34,7 @@ WITH logical_people AS (
 ), source_rows AS (
 	SELECT canonical_id, source_id, source_type,
 	       count(*)::BIGINT AS activity_count,
-	       count(*) FILTER (WHERE message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+	       count(*) FILTER (WHERE message_type = 'meeting_transcript' AND meeting_order = 1)::BIGINT AS meeting_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at

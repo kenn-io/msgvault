@@ -26,6 +26,42 @@ import (
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
+func TestPeopleHTTPCountsMeetingGroups(t *testing.T) {
+	archive := testutil.NewTestStore(t)
+	source, err := archive.GetOrCreateSource("meeting_import", "owner@example.test")
+	require.NoError(t, err)
+	var ids []int64
+	for _, key := range []string{"first", "second", "other"} {
+		id, err := archive.PersistMessage(&store.MessagePersistData{
+			Message:      &store.Message{SourceID: source.ID, SourceMessageID: key, MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC), Valid: true}},
+			Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"},
+			RawMIME:      []byte(`{}`), RawFormat: "meeting_json",
+		})
+		require.NoError(t, err)
+		ids = append(ids, id)
+	}
+	_, err = archive.DecideMeetingLinkContext(t.Context(), store.MeetingLinkRef{Kind: "msg", MessageID: ids[0]}, store.MeetingLinkRef{Kind: "msg", MessageID: ids[1]}, "link")
+	require.NoError(t, err)
+	groups, fallback, err := archive.MeetingTranscriptGroupsContext(t.Context(), ids[2])
+	require.NoError(t, err)
+	require.False(t, fallback)
+	require.Equal(t, map[int64]int64{ids[0]: ids[0], ids[1]: ids[0], ids[2]: ids[2]}, groups)
+	messages := strings.ReplaceAll(exploreFixtureDefaultMessages, "'email', NULL::VARCHAR", "'meeting_transcript', NULL::VARCHAR")
+	engine, _ := newExploreDuckDBFixtureWithClusters(t, messages, exploreFixtureDefaultRecipients, "", 3, identityCacheFixtureOptions{
+		meetingGroups: fmt.Sprintf("(SELECT 1::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT 2, %d UNION ALL SELECT 3, %d)", groups[ids[0]], groups[ids[1]], groups[ids[2]]),
+	})
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}}, Store: archive, Engine: engine, Logger: testLogger()})
+	response := postExploreJSON(t, srv, "/api/v1/participants/search", `{"identity_query":"Alice","limit":25}`)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var body struct {
+		Rows []query.PersonSummary `json:"rows"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.Len(t, body.Rows, 1)
+	assert.Equal(t, int64(2), body.Rows[0].MeetingCount)
+	assert.Equal(t, int64(3), body.Rows[0].ActivityCount)
+}
+
 func TestExploreHTTPUsesCommittedDuckDBReadModel(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

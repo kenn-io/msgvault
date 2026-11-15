@@ -211,10 +211,19 @@ func refreshDerivedDatasetsOnly(
 			relatedReplacements[dataset] = true
 		}
 	}
+	if err := stageMeetingGroups(ctx, sourceSnapshot, dbPath, state.LastMessageID); err != nil {
+		return nil, err
+	}
 	if err := sourceSnapshot.PrepareDatasets(ctx, state.LastMessageID, datasets...); err != nil {
 		return nil, err
 	}
 	exportDB := sourceSnapshot.DuckDB()
+	groupPath := strings.ReplaceAll(filepath.ToSlash(filepath.Join(analyticsDir, identityindex.DatasetMeetingGroups, "*.parquet")), "'", "''")
+	var meetingGroupsChanged bool
+	groupDiff := `SELECT EXISTS ((SELECT message_id, group_id FROM tmp_meeting_groups EXCEPT SELECT message_id, group_id FROM read_parquet('` + groupPath + `')) UNION ALL (SELECT message_id, group_id FROM read_parquet('` + groupPath + `') EXCEPT SELECT message_id, group_id FROM tmp_meeting_groups))`
+	if err := exportDB.QueryRowContext(ctx, groupDiff).Scan(&meetingGroupsChanged); err != nil {
+		return nil, fmt.Errorf("compare meeting groups: %w", err)
+	}
 
 	conversationFingerprint, err := fingerprintConversationParticipantsFromSnapshot(
 		ctx,
@@ -238,7 +247,7 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 
-	if !repairRelated && identityRevision == state.IdentityRevision &&
+	if !repairRelated && !meetingGroupsChanged && sourceSnapshot.meetingGroupsFallback == state.MeetingGroupsFallback && identityRevision == state.IdentityRevision &&
 		participantIdentifierRevision == state.ParticipantIdentifierRevision &&
 		participantDisplayNameRevision == state.ParticipantDisplayNameRevision &&
 		personDisplayNameRevision == state.PersonDisplayNameRevision &&
@@ -251,7 +260,7 @@ func refreshDerivedDatasetsOnly(
 		// it active pagination cursors — for no analytical difference.
 		return &buildResult{OutputDir: analyticsDir, IdentityOnly: true, Skipped: true}, nil
 	}
-	if repairRelated && !relatedKinds.recipients &&
+	if repairRelated && !meetingGroupsChanged && sourceSnapshot.meetingGroupsFallback == state.MeetingGroupsFallback && !relatedKinds.recipients &&
 		identityRevision == state.IdentityRevision &&
 		participantIdentifierRevision == state.ParticipantIdentifierRevision &&
 		participantDisplayNameRevision == state.ParticipantDisplayNameRevision &&
@@ -356,6 +365,7 @@ func refreshDerivedDatasetsOnly(
 	derived, err := identityindex.Build(ctx, exportDB, identityindex.BuildOptions{
 		Mode:           identityindex.ModeIndexOnly,
 		UnsentMessages: "tmp_unsent_messages",
+		MeetingGroups:  "tmp_meeting_groups",
 		CommittedRoot:  analyticsDir,
 		StagedBaseRoot: staging.root,
 		OutputRoot:     staging.root,
@@ -374,6 +384,7 @@ func refreshDerivedDatasetsOnly(
 	}
 
 	state.IdentityRevision = identityRevision
+	state.MeetingGroupsFallback = sourceSnapshot.meetingGroupsFallback
 	if repairRelated {
 		state.DerivedDataRevision = derivedDataRevision
 	}
@@ -553,6 +564,7 @@ func derivedCachePublishPlan(
 		identityindex.DatasetRelationshipDaily,
 		identityindex.DatasetLogicalContributions,
 		identityindex.DatasetTemperatureContributions,
+		identityindex.DatasetMeetingGroups,
 	} {
 		plan.Replace[dataset] = true
 	}
