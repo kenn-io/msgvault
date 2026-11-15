@@ -122,9 +122,8 @@ func TestRunNotionMeetingsProbeChecksPageMarkdown(t *testing.T) {
 				meeting.Parent.PageID = "query-page"
 			}
 			var out bytes.Buffer
-			var ids []string
 			var page string
-			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{meeting}}, block: &notionmeetings.Block{Parent: notionmeetings.Parent{PageID: "page-1"}}, blockIDs: &ids, markdownID: &page, markdownErr: tc.err}, nil)
+			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{meeting}}, block: &notionmeetings.Block{Parent: notionmeetings.Parent{PageID: "page-1"}}, markdownID: &page, markdownErr: tc.err}, nil)
 			if tc.pageInQuery {
 				assert.Equal("query-page", page)
 			} else {
@@ -140,39 +139,19 @@ func TestRunNotionMeetingsProbeChecksPageMarkdown(t *testing.T) {
 	}
 }
 
-func TestRunNotionMeetingsProbeDataSource(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		section string
-		want    string
-		ids     []string
-	}{
-		{name: "section", section: "summary-1", want: "Read Content: available", ids: []string{"meeting-1", "summary-1"}},
-		{name: "no sections", want: "Read Content: not tested (no section blocks)", ids: []string{"meeting-1"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var out bytes.Buffer
-			var ids []string
-			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
-				result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", MeetingNotes: notionmeetings.MeetingNotesData{Children: notionmeetings.MeetingChildren{SummaryBlockID: tc.section}}}}},
-				block:  &notionmeetings.Block{Parent: notionmeetings.Parent{Type: "data_source_id"}}, blockIDs: &ids,
-			}, nil)
-			require.NoError(t, err)
-			assert.Contains(t, out.String(), tc.want)
-			assert.Equal(t, tc.ids, ids)
-		})
-	}
-}
-
 func TestRunNotionMeetingsProbeTriesLaterSection(t *testing.T) {
 	missing := &notionmeetings.APIError{Kind: notionmeetings.ErrProvider, Status: 404, Code: "object_not_found"}
 	for _, tc := range []struct {
 		name      string
+		sections  *notionmeetings.MeetingChildren
+		want      string
 		firstErr  error
 		secondErr error
 		wantErr   error
 		wantIDs   []string
 	}{
+		{name: "section", sections: &notionmeetings.MeetingChildren{SummaryBlockID: "summary-1"}, want: "Read Content: available", wantIDs: []string{"meeting-1", "summary-1"}},
+		{name: "no sections", sections: &notionmeetings.MeetingChildren{}, want: "Read Content: not tested (no section blocks)", wantIDs: []string{"meeting-1"}},
 		{name: "missing then available", firstErr: missing, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
 		{name: "all missing", firstErr: missing, secondErr: missing, wantErr: missing, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
 		{name: "forbidden", firstErr: notionmeetings.ErrReadContent, wantErr: notionmeetings.ErrReadContent, wantIDs: []string{"meeting-1", "summary-1"}},
@@ -182,8 +161,12 @@ func TestRunNotionMeetingsProbeTriesLaterSection(t *testing.T) {
 			require := require.New(t)
 			var out bytes.Buffer
 			var ids []string
+			sections := notionmeetings.MeetingChildren{SummaryBlockID: "summary-1", NotesBlockID: "notes-1"}
+			if tc.sections != nil {
+				sections = *tc.sections
+			}
 			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
-				result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", MeetingNotes: notionmeetings.MeetingNotesData{Children: notionmeetings.MeetingChildren{SummaryBlockID: "summary-1", NotesBlockID: "notes-1"}}}}},
+				result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", MeetingNotes: notionmeetings.MeetingNotesData{Children: sections}}}},
 				block:  &notionmeetings.Block{Parent: notionmeetings.Parent{Type: "data_source_id"}}, blockIDs: &ids,
 				blockErrors: map[string]error{"summary-1": tc.firstErr, "notes-1": tc.secondErr},
 			}, nil)
@@ -192,7 +175,11 @@ func TestRunNotionMeetingsProbeTriesLaterSection(t *testing.T) {
 				require.ErrorIs(err, tc.wantErr)
 			} else {
 				require.NoError(err)
-				assert.Contains(out.String(), "Read Content: available")
+				want := tc.want
+				if want == "" {
+					want = "Read Content: available"
+				}
+				assert.Contains(out.String(), want)
 			}
 		})
 	}

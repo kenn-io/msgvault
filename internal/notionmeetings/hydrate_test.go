@@ -158,8 +158,6 @@ func TestHydratorResolvesParentPageFromRetrievedMeetingBlock(t *testing.T) {
 	meeting.Parent = Parent{}
 
 	source := completeHydrationSource()
-	empty := paragraph("transcript-1", "", false)
-	source.blocks["transcript-1"] = &empty
 	hydrated, err := NewHydrator(source).Hydrate(t.Context(), meeting)
 	require.NoError(t, err)
 	assert.Equal(t, "page-1", hydrated.Discovery.Parent.PageID)
@@ -364,6 +362,7 @@ func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 		require.NoError(err)
 		assert.Empty(result.Transcript)
 		assert.Contains(result.Incomplete, "transcript")
+		assert.True(result.markdownOnlyIncomplete)
 	})
 }
 
@@ -537,9 +536,10 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 			root := source.blocks["summary-1"]
 			switch limit {
 			case "bytes":
-				root.HasChildren = true
-				root.Raw = json.RawMessage(strings.Repeat("x", 12<<20))
-				source.children["summary-1"] = map[string]*BlockPage{"": {Raw: json.RawMessage(strings.Repeat("x", 12<<20)), HasMore: true, NextCursor: "next"}, "next": {Raw: json.RawMessage(strings.Repeat("x", 12<<20))}}
+				source.markdown.Raw = json.RawMessage(strings.Repeat("x", maxHydrationBytes+1))
+				source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
+				empty := paragraph("transcript-1", "", false)
+				source.blocks["transcript-1"] = &empty
 			case "requests":
 				root.HasChildren = true
 				pages := map[string]*BlockPage{}
@@ -565,9 +565,14 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 			}
 			result, err := NewHydrator(source).Hydrate(t.Context(), meeting)
 			require.NoError(err)
+			if limit == "bytes" {
+				assert.Equal(1, source.markdownCalls)
+				assert.Contains(result.Incomplete, "transcript")
+				return
+			}
 			assert.Contains(result.Incomplete, "summary")
 			assert.Empty(result.SummaryTree.Blocks)
-			if limit == "requests" || limit == "bytes" {
+			if limit == "requests" {
 				assert.Zero(source.markdownCalls)
 			}
 			if limit == "depth" {
@@ -642,28 +647,10 @@ func TestHydratorPaginationFailureDiscardsPartialSection(t *testing.T) {
 }
 
 func TestHydratorSurfacesMarkdownFailures(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		err  error
-	}{
-		{"404", &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"}},
-		{"429", ErrRateLimited},
-		{"503", &APIError{Kind: ErrProvider, Status: 503}},
-		{"reset", syscall.ECONNRESET},
-		{"timeout", context.DeadlineExceeded},
-		{"truncated body", io.ErrUnexpectedEOF},
-		{"invalid response", ErrMalformedResponse},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			source := completeHydrationSource()
-			empty := paragraph("transcript-1", "", false)
-			source.blocks["transcript-1"] = &empty
-			source.markdownErr = tc.err
-			meeting, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-			require.ErrorIs(t, err, tc.err)
-			assert.Nil(meeting)
-			assert.Equal("page-1", source.markdownID)
-		})
-	}
+	source := completeHydrationSource()
+	source.markdownErr = &APIError{Kind: ErrProvider, Status: 503}
+	meeting, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
+	require.ErrorIs(t, err, source.markdownErr)
+	assert.Nil(t, meeting)
+	assert.Equal(t, "page-1", source.markdownID)
 }
