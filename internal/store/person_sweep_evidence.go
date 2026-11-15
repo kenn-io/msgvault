@@ -811,10 +811,7 @@ func (s *Store) BuildPersonSweepEvidenceStatusChanges(ctx context.Context, perso
 	}
 	terminal := map[evidenceVersion]personfacts.EvidenceStatusChange{}
 	for _, stored := range evidence {
-		if stored.Input.SourceClass != personfacts.EvidenceArchive {
-			continue
-		}
-		if strings.HasPrefix(stored.Input.SourceRef, personfacts.CommitmentMessageRefPrefix) {
+		if stored.Input.SourceClass != personfacts.EvidenceArchive || strings.HasPrefix(stored.Input.SourceRef, personfacts.CommitmentMessageRefPrefix) {
 			continue
 		}
 		ref, err := peoplesweep.DecodePersonSweepEvidenceRef(stored.Input.SourceRef)

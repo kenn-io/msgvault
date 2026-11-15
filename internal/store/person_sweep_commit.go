@@ -404,13 +404,8 @@ func (s *Store) applyPersonSweepWithAligner(
 				if !current {
 					request.CommitmentFailureClass = peoplesweep.FailureArchiveGap
 					request.CommitmentRetryAt = request.CompletedAt.Add(time.Minute)
-				} else {
-					if err := s.applyCommitmentSweepTx(ctx, tx, request, commitment); err != nil {
-						return err
-					}
-					if err := personSweepApplyStage(ctx, "commitment"); err != nil {
-						return err
-					}
+				} else if err := s.applyCommitmentSweepTx(ctx, tx, request, commitment); err != nil {
+					return err
 				}
 			}
 		}

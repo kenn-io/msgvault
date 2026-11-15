@@ -237,9 +237,7 @@ const (
 	ProviderCallPurposeRepair      = "repair"
 	ProviderCallPurposeBrief       = "brief"
 	ProviderCallPurposeBriefRepair = "brief_repair"
-)
 
-const (
 	ProviderCallPurposeCommitment       = "commitment"
 	ProviderCallPurposeCommitmentRepair = "commitment_repair"
 )

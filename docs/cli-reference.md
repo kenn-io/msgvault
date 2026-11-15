@@ -66,11 +66,9 @@ that doesn't start an open loop, such as one you already answered,
 fails with `<id> isn't an open loop.`
 
 For cited commitments, use the displayed `c<ID>` with `done`, `snooze`, or
-`reopen`. `list --json` includes exact citations in `commitments` when
-promises are open. Add `--include-closed` to find done or snoozed
-promises you can reopen. Repeat the command with the displayed
-`--commitment-offset` to see the next page. Keep the same filters.
-`--questions` selects reply-loop question IDs.
+`reopen`. Add `--include-closed` to find done or snoozed promises, and the
+displayed `--commitment-offset` for the next page. `--questions` selects
+reply-loop question IDs.
 Commitment extraction and decisions require API schema 5.5.0 or newer.
 See [cited commitments](usage/open-loops.md#see-cited-commitments).
 
@@ -3747,7 +3745,7 @@ grant consent to a provider or enroll a person in briefs.
 | `person provider history [name] [--person <id>]` | Inspect redacted runs and attempts |
 | `person sweep run [--person <id>] [--limit 25]` | Run a bounded maintenance pass for tracked people |
 | `person sweep status` | Read redacted progress and usage |
-| `person sweep history [--person <id>] [--limit 20]` | Read recent maintenance attempts, including any commitment-lane failure class |
+| `person sweep history [--person <id>] [--limit 20]` | Read recent maintenance attempts |
 | `person facts catalog [--include-sensitive]` | List eligible fields, their keys, and revisions |
 | `person facts evidence <person-id>` | Inspect saved supporting evidence |
 | `person facts evidence-status <person-id>` | Inspect changes to evidence support |
@@ -3768,8 +3766,7 @@ Freshness uses the newest currently supported evidence that is not future-dated:
 365 days, events for 7 days, and preferences and commitments for 90 days. A claim
 without eligible evidence is stale. A claim expires exactly at `valid_until`,
 regardless of evidence freshness. `latest_supported_at` reports the evidence
-time when available. Stale evidence does not close an open commitment. These read
-fields do not change inference packets.
+time when available. These read fields do not change inference packets.
 
 These commands accept `--json`. Use catalog keys, not slugs, for fact pins.
 Evidence, claims, and decisions accept an exact `--target`; fact-history

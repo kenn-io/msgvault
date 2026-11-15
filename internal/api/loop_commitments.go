@@ -67,9 +67,8 @@ func (s *Server) registerCommitmentDecision(api huma.API) {
 }
 
 func (s *Server) handleCommitmentDecision(w http.ResponseWriter, r *http.Request) {
-	decider, ok := s.store.(loops.Store)
+	decider, ok := s.loopStore(w)
 	if !ok {
-		writeError(w, http.StatusServiceUnavailable, "loops_unavailable", "Commitment decisions are unavailable")
 		return
 	}
 	id, err := loops.ParseCommitmentID(r.PathValue("commitment_id"))

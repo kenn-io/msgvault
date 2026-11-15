@@ -172,7 +172,6 @@ Each row links to the quoted message. The JSON response also gives the
 original-body rune range. See the [person facts CLI reference](../cli-reference.md#person-track-tiers-provider-sweep-and-facts) for claim kinds
 and freshness. A due date is a calendar date in the configured activity timezone. Open promises remain visible as their evidence ages; evidence older than 90 days is marked stale. Unsupported claims leave the list. If a message edit changes a quote so it can't be matched to the original, rediscovery can list it as a new open promise.
 
-Use the commitment ID for actions on a promise. This ID starts with `c`.
 The same message can anchor multiple promises and a reply loop. Run `msgvault loops list --include-closed --limit 200` to find done or snoozed promises that you can reopen. When more promises remain, repeat the command with the displayed `--commitment-offset` and the same filters to see the next page.
 
 ```bash
