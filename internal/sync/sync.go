@@ -715,17 +715,28 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			existingMap[sourceMessageID] = canonical
 		}
 	}
+	markedGmailMessageIDs := make(map[string]struct{})
+	if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
+		markedGmailMessageIDs, err = s.store.MarkedSourceMessageIDsBatchContext(
+			ctx, sourceID, messageIDs,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("check marked Gmail messages: %w", err)
+		}
+	}
 
 	// Existing exact IDs only need current label metadata. Clients with a
 	// lightweight metadata path use it for both complete snapshots (replace
 	// labels) and incomplete snapshots (merge labels). Keep the old fallback
 	// for clients that cannot fetch labels separately.
 	snapshotComplete := s.labelsSnapshotComplete()
-	labelReader, canReadLabels := s.client.(messageLabelBatchReader)
+	labelReader, hasLabelReader := s.client.(messageLabelBatchReader)
+	refreshAllExistingLabels := hasLabelReader
 	// Ordinary Gmail full scans keep the existing-RAW shortcut. Recovery
-	// instead establishes a fresh membership snapshot after lost History.
+	// instead establishes a fresh membership snapshot after lost History. A
+	// marked Gmail message always gets a current label snapshot on either path.
 	if s.opts.SourceType != sourceTypeIMAP && !s.requireLabelRefresh {
-		canReadLabels = false
+		refreshAllExistingLabels = false
 	}
 	var fetchIDs []string
 	var labelRefreshIDs []string
@@ -765,8 +776,15 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				}
 			}
 		}
-		if canReadLabels {
+		_, markedGmail := markedGmailMessageIDs[id]
+		if refreshAllExistingLabels || (markedGmail && hasLabelReader) {
 			labelRefreshIDs = append(labelRefreshIDs, id)
+			continue
+		}
+		if markedGmail {
+			// Clients without the lightweight metadata endpoint use the raw
+			// message response as their current label snapshot.
+			fetchIDs = append(fetchIDs, id)
 			continue
 		}
 		if snapshotComplete {
@@ -792,11 +810,12 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 		}
 
 		for i, sourceMessageID := range labelRefreshIDs {
+			_, markedGmail := markedGmailMessageIDs[sourceMessageID]
 			if i >= len(labelResults) {
 				err := errors.New("label metadata missing from batch response")
-				if s.requireLabelRefresh {
+				if s.requireLabelRefresh || markedGmail {
 					checkpoint.MessagesUpdated += result.updated
-					return nil, fmt.Errorf("fetch recovery labels for %s: %w", sourceMessageID, err)
+					return nil, fmt.Errorf("fetch labels for %s: %w", sourceMessageID, err)
 				}
 				s.logger.Warn("failed to fetch message labels",
 					"id", sourceMessageID, "error", err)
@@ -815,9 +834,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				continue
 			}
 			if labelResult.Err != nil {
-				if s.requireLabelRefresh {
+				if s.requireLabelRefresh || markedGmail {
 					checkpoint.MessagesUpdated += result.updated
-					return nil, fmt.Errorf("fetch recovery labels for %s: %w", sourceMessageID, labelResult.Err)
+					return nil, fmt.Errorf("fetch labels for %s: %w", sourceMessageID, labelResult.Err)
 				}
 				s.logger.Warn("failed to fetch message labels",
 					"id", sourceMessageID, "error", labelResult.Err)
@@ -919,9 +938,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				snapshotComplete,
 			)
 			if err != nil {
-				if s.requireLabelRefresh {
+				if s.requireLabelRefresh || markedGmail {
 					checkpoint.MessagesUpdated += result.updated
-					return nil, fmt.Errorf("replace recovery labels for %s: %w", sourceMessageID, err)
+					return nil, fmt.Errorf("replace labels for %s: %w", sourceMessageID, err)
 				}
 				s.logger.Warn("failed to refresh existing message labels",
 					"id", sourceMessageID, "error", err)
@@ -929,8 +948,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				checkpoint.ErrorsCount++
 				continue
 			}
-			if s.requireLabelRefresh && snapshotComplete &&
-				s.opts.SourceType != sourceTypeIMAP &&
+			if markedGmail &&
 				!slices.Contains(labelResult.LabelIDs, "TRASH") {
 				if err := s.store.ClearMessageDeletedFromSourceContext(
 					ctx, sourceID, sourceMessageID,
@@ -979,6 +997,12 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 					}
 					result.acknowledged = append(result.acknowledged, sourceMessageID)
 					continue
+				}
+				if _, marked := markedGmailMessageIDs[sourceMessageID]; marked {
+					if fetch.Err == nil {
+						fetch.Err = errRawBatchMissing
+					}
+					return nil, fmt.Errorf("fetch marked Gmail message %s: %w", sourceMessageID, fetch.Err)
 				}
 				errMsg := syncItemErrorMessage(fetch.Err, errRawBatchMissing.Error())
 				s.logger.Warn("failed to fetch message", "id", sourceMessageID, "error", errMsg)
@@ -1105,19 +1129,28 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 
 			if alreadyExists {
 				changed := false
+				_, markedGmail := markedGmailMessageIDs[sourceMessageID]
 				if !s.defersAuthoritativeLabelReconciliation() {
 					changed, err = s.store.ReconcileMessageLabels(
 						ctx,
 						existing.ID,
 						labelIDsFor(raw.LabelIDs, labelMap),
-						false,
+						markedGmail && snapshotComplete,
 					)
 					if err != nil {
+						if markedGmail {
+							return nil, fmt.Errorf("reconcile labels for marked Gmail message %s: %w", sourceMessageID, err)
+						}
 						s.logger.Warn("failed to merge existing message labels",
 							"id", sourceMessageID, "error", err)
 						s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 						checkpoint.ErrorsCount++
 						continue
+					}
+				}
+				if markedGmail && !slices.Contains(raw.LabelIDs, "TRASH") {
+					if err := s.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, sourceMessageID); err != nil {
+						return nil, fmt.Errorf("clear Gmail deletion mark for restored message %s: %w", sourceMessageID, err)
 					}
 				}
 				if changed {
@@ -1171,6 +1204,13 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			}
 			if !acquired || (err != nil && s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail) {
 				continue
+			}
+			if err == nil && !slices.Contains(raw.LabelIDs, "TRASH") {
+				if _, marked := markedGmailMessageIDs[sourceMessageID]; marked {
+					if err := s.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, sourceMessageID); err != nil {
+						return nil, fmt.Errorf("clear Gmail deletion mark for restored message %s: %w", sourceMessageID, err)
+					}
+				}
 			}
 
 			result.added++
