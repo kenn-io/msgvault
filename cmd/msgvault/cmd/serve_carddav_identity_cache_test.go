@@ -115,7 +115,6 @@ func TestCardDAVIdentityRefreshUpdatesCache(t *testing.T) {
 	req.NoError(db.QueryRowContext(t.Context(), `SELECT person_id FROM read_parquet(?) WHERE participant_id = ?`, filepath.Join(cfg.AnalyticsDir(), tablePersonDisplayNames, "*.parquet"), id).Scan(&publishedPerson))
 	req.Equal(person.ID, publishedPerson)
 	req.NoError(db.Close())
-
 }
 
 func TestCardDAVIdentityRefreshFailureRequestsRecovery(t *testing.T) {
