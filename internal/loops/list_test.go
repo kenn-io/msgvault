@@ -161,6 +161,7 @@ func (s *commitmentPhaseEndingStore) ListPersonCommitmentsContext(context.Contex
 
 type pagingCommitmentStore struct {
 	*store.Store
+
 	limit int
 }
 

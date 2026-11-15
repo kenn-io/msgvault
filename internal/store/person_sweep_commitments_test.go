@@ -178,7 +178,6 @@ func TestCommitmentDecisionSurvivesShiftedQuote(t *testing.T) {
 					a.True(items[0].SnoozedUntil.Equal(*until))
 				}
 			}
-
 		})
 	}
 }
@@ -438,7 +437,7 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, laterNow, "UTC")
 			r.NoError(err)
 			if !tc.journal {
-				r.Equal(1, len(window.Sources), "raising batch limits should retry only the oversized message")
+				r.Len(window.Sources, 1, "raising batch limits should retry only the oversized message")
 				a.Equal(laterNow, window.SelectionAt)
 			} else {
 				a.Equal(personFactLedgerNow, window.SelectionAt)
