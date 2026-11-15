@@ -561,6 +561,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	checkpointPage = cursor
 	checkpoint := &store.Checkpoint{
+		PageToken:         cursor,
 		MessagesProcessed: sum.MeetingsProcessed,
 		MessagesAdded:     sum.MeetingsAdded,
 		MessagesUpdated:   sum.MeetingsUpdated,

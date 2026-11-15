@@ -322,7 +322,7 @@ func TestImporterKeepsMeetingWhenIncompleteSectionCannotBeRecovered(t *testing.T
 }
 
 func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
-	for _, failure := range []string{"another meeting", "markdown", "archive", "checkpoint", "completion"} {
+	for _, failure := range []string{"another meeting", "markdown", "archive", "checkpoint", "completion", "completion and failure"} {
 		t.Run(failure, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
 			limited := &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}
@@ -341,20 +341,22 @@ func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
 				if failure == "markdown" {
 					source.markdownErr = errors.New("markdown unavailable")
 				}
-				if failure == "checkpoint" || failure == "completion" {
-					column, status := "cursor_before", "running"
+				if failure == "checkpoint" || failure == "completion" || failure == "completion and failure" {
+					column, condition := "cursor_before", "NEW.status = 'running'"
 					if failure == "completion" {
-						column, status = "status", "completed"
+						column, condition = "status", "NEW.status = 'completed'"
+					} else if failure == "completion and failure" {
+						column, condition = "status", "NEW.status IN ('completed', 'failed')"
 					}
 					if st.IsPostgreSQL() {
-						_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE FUNCTION fail_notion_final_write() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'forced final write failure'; END; $$ LANGUAGE plpgsql; CREATE TRIGGER fail_notion_final_write BEFORE UPDATE OF %s ON sync_runs FOR EACH ROW WHEN (NEW.status = '%s') EXECUTE FUNCTION fail_notion_final_write()`, column, status))
+						_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE FUNCTION fail_notion_final_write() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'forced final write failure'; END; $$ LANGUAGE plpgsql; CREATE TRIGGER fail_notion_final_write BEFORE UPDATE OF %s ON sync_runs FOR EACH ROW WHEN (%s) EXECUTE FUNCTION fail_notion_final_write()`, column, condition))
 					} else {
-						_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER fail_notion_final_write BEFORE UPDATE OF %s ON sync_runs WHEN NEW.status = '%s' BEGIN SELECT RAISE(ABORT, 'forced final write failure'); END`, column, status))
+						_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER fail_notion_final_write BEFORE UPDATE OF %s ON sync_runs WHEN %s BEGIN SELECT RAISE(ABORT, 'forced final write failure'); END`, column, condition))
 					}
 					require.NoError(t, err)
 				}
 				_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-				if failure == "checkpoint" || failure == "completion" {
+				if failure == "checkpoint" || failure == "completion" || failure == "completion and failure" {
 					require.ErrorContains(t, err, "forced final write failure")
 					if st.IsPostgreSQL() {
 						_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_final_write ON sync_runs`)
@@ -362,7 +364,7 @@ func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
 						_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_final_write`)
 					}
 					require.NoError(t, err)
-					if failure == "checkpoint" {
+					if failure == "checkpoint" || failure == "completion and failure" {
 						checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), first.SourceID, SourceType)
 						require.NoError(t, err)
 						var state syncState
