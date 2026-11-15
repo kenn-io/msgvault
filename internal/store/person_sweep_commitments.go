@@ -217,12 +217,7 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 			}
 		}
 	}
-	return s.finishCommitmentSweepTx(ctx, tx, request, prepared)
-}
-
-// finishCommitmentSweepTx clears the oversized messages this window retried,
-// then saves discovery progress after the fenced apply.
-func (s *Store) finishCommitmentSweepTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {
+	// Clear the oversized messages this window retried.
 	for _, source := range request.Commitment.Window.Sources {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`, request.Lease.PersonID, source.MessageID); err != nil {
 			return err
@@ -347,32 +342,27 @@ func validatePersonSweepApplyCommitment(request peoplesweep.ApplyRequest) error 
 	return result.Config.Validate(request.Budget)
 }
 
-// Window sources and person-level changes are watched in the conversation lane.
-func (s *Store) commitmentCitedChangedTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) (bool, error) {
-	var ids []int64
-	for _, source := range request.Commitment.Window.Sources {
-		ids = append(ids, source.MessageID)
-	}
-	marks, binds := sortedIDPlaceholders(ids)
-	if marks == "" {
-		return false, nil
-	}
-	var changed bool
-	args := append([]any{request.Lease.PersonID, prepared.snapshot, peoplesweep.SourceConversationText}, binds...)
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_sweep_changes
-		WHERE person_id = ? AND sequence > ? AND (source_lane = ?
-		AND (message_id IS NULL OR message_id IN (`+marks+`))))`, args...).Scan(&changed)
-	return changed, err
-}
-
 // The change journal covers message content and person identity changes between
-// source alignment and the fenced apply. A stale window can be retried without
+// source alignment and the fenced apply. Window sources and person-level changes
+// are watched in the conversation lane. A stale window can be retried without
 // committing its frontier or discarding the ordinary result.
 func (s *Store) commitmentWindowCurrentTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) (bool, error) {
 	var latest int64
 	if err := tx.QueryRowContext(ctx, `SELECT sequence FROM person_sweep_change_clock WHERE singleton = TRUE`).Scan(&latest); err != nil || prepared.snapshot > latest {
 		return false, err
 	}
-	changed, err := s.commitmentCitedChangedTx(ctx, tx, request, prepared)
+	var ids []int64
+	for _, source := range request.Commitment.Window.Sources {
+		ids = append(ids, source.MessageID)
+	}
+	marks, binds := sortedIDPlaceholders(ids)
+	if marks == "" {
+		return true, nil
+	}
+	var changed bool
+	args := append([]any{request.Lease.PersonID, prepared.snapshot, peoplesweep.SourceConversationText}, binds...)
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_sweep_changes
+		WHERE person_id = ? AND sequence > ? AND (source_lane = ?
+		AND (message_id IS NULL OR message_id IN (`+marks+`))))`, args...).Scan(&changed)
 	return !changed, err
 }
