@@ -1069,3 +1069,55 @@ func TestCardDAVParticipantBindingDistinctNewCardsShareAddress(t *testing.T) {
 	require.Len(preview.ConflictDetails, 1)
 	assert.Equal("shared_address", preview.ConflictDetails[0].Reason)
 }
+
+func TestCardDAVParticipantBindingPendingNameConflictBlocksSharedAddress(t *testing.T) {
+	require := Require.New(t)
+	assert := Assert.New(t)
+	st, account, book := newCardDAVResourceStore(t)
+	id, err := st.EnsureParticipant("shared@example.test", "Shared", "example.test")
+	require.NoError(err)
+	localOnly, err := st.EnsureParticipant("local@example.test", "Local", "example.test")
+	require.NoError(err)
+	remoteOnly, err := st.EnsureParticipant("remote@example.test", "Remote", "example.test")
+	require.NoError(err)
+	private, err := st.EnsureParticipant("private@example.test", "Private", "example.test")
+	require.NoError(err)
+	first := remoteResource(book.CanonicalURL+"first.vcf", "first", "First", "shared@example.test", "one")
+	first.Emails = []string{"shared@example.test", "local@example.test", "private@example.test"}
+	first.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:first\r\nFN:First\r\nEMAIL:shared@example.test\r\nEMAIL:local@example.test\r\nEMAIL:private@example.test\r\nEND:VCARD\r\n")
+	second := remoteResource(book.CanonicalURL+"second.vcf", "second", "Second", "shared@example.test", "one")
+	second.Emails = []string{"shared@example.test", "local@example.test", "remote@example.test"}
+	second.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:second\r\nFN:Second\r\nEMAIL:shared@example.test\r\nEMAIL:local@example.test\r\nEMAIL:remote@example.test\r\nEND:VCARD\r\n")
+	applyParticipantBindingCards(t, st, account, book, first, second)
+	firstPerson := bindingCardPerson(t, st, book, first.Href)
+	secondPerson := bindingCardPerson(t, st, book, second.Href)
+	require.NotEqual(firstPerson.ID, secondPerson.ID)
+	resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, first.Href)
+	require.NoError(err)
+	capture := store.CardDAVConflictCapture{
+		AddressBookID: book.ID, Href: first.Href, ExpectedPersonID: firstPerson.ID,
+		ExpectedMappingRevision: resource.MappingRevision, BaseLocalHash: resource.LocalHash,
+		LocalHash: resource.LocalHash, BaseRemoteHash: resource.RemoteSemanticHash,
+		BaseRemoteETag: resource.RemoteETag, RemoteETag: "two", LocalBody: first.RemoteBody,
+		RemoteBody: []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:first\r\nFN:Changed Name\r\nEMAIL:shared@example.test\r\nEMAIL:remote@example.test\r\nEMAIL:private@example.test\r\nEND:VCARD\r\n"),
+	}
+	_, err = st.RecordCardDAVConflictContext(t.Context(), capture)
+	require.NoError(err)
+	result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
+	require.NoError(err)
+	require.Len(result.ConflictDetails, 1)
+	assert.Equal("shared_address", result.ConflictDetails[0].Reason)
+	assert.ElementsMatch([]int64{firstPerson.ID, secondPerson.ID}, result.ConflictDetails[0].PersonIDs)
+	bound, err := st.PersonForParticipantsContext(t.Context(), []int64{id})
+	require.NoError(err)
+	assert.Nil(bound)
+	bound, err = st.PersonForParticipantsContext(t.Context(), []int64{private})
+	require.NoError(err)
+	assert.Nil(bound)
+	for _, participant := range []int64{localOnly, remoteOnly} {
+		bound, err = st.PersonForParticipantsContext(t.Context(), []int64{participant})
+		require.NoError(err)
+		require.NotNil(bound)
+		assert.Equal(secondPerson.ID, bound.ID)
+	}
+}

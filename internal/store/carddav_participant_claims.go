@@ -46,14 +46,16 @@ func cardDAVParticipantAddressValue(kind ContactAddressKind, raw string) (cardDA
 }
 
 func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (map[cardDAVParticipantAddress]cardDAVPersonSet, int, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT resource.person_id, resource.remote_body
+	rows, err := tx.QueryContext(ctx, `SELECT resource.person_id, resource.remote_body,
+ conflict.id IS NOT NULL,
+ CASE WHEN conflict.local_tombstone THEN NULL ELSE conflict.local_body END,
+ CASE WHEN conflict.remote_tombstone THEN NULL ELSE conflict.remote_body END
  FROM carddav_resources resource
+ LEFT JOIN carddav_conflicts conflict ON conflict.address_book_id = resource.address_book_id
+   AND conflict.href = resource.href AND conflict.status = 'unresolved'
  WHERE resource.mapping_status = ? AND resource.person_id IS NOT NULL
  AND EXISTS (SELECT 1 FROM carddav_address_books book
    WHERE book.id = resource.address_book_id AND book.is_subscribed = TRUE)
- AND NOT EXISTS (SELECT 1 FROM carddav_conflicts conflict
-   WHERE conflict.address_book_id = resource.address_book_id AND conflict.href = resource.href
-   AND conflict.status = 'unresolved')
  AND NOT EXISTS (SELECT 1 FROM carddav_publications publication
    WHERE publication.person_id = resource.person_id
    AND publication.address_book_id = resource.address_book_id AND publication.href = resource.href
@@ -63,43 +65,33 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 	}
 	defer func() { _ = rows.Close() }()
 	claims := map[cardDAVParticipantAddress]cardDAVPersonSet{}
+	conflicted := map[cardDAVParticipantAddress]cardDAVPersonSet{}
 	scanned := 0
 	for rows.Next() {
 		var personID int64
-		var body []byte
-		if err := rows.Scan(&personID, &body); err != nil {
+		var body, localBody, remoteBody []byte
+		var hasConflict bool
+		if err := rows.Scan(&personID, &body, &hasConflict, &localBody, &remoteBody); err != nil {
 			return nil, 0, err
 		}
-		envelope, err := vcard.ParseResourceEnvelope(body)
-		if err != nil {
+		if hasConflict {
+			local, _ := cardDAVParticipantAddresses(localBody)
+			remote, _ := cardDAVParticipantAddresses(remoteBody)
+			for key := range local {
+				if _, ok := remote[key]; ok {
+					if conflicted[key] == nil {
+						conflicted[key] = cardDAVPersonSet{}
+					}
+					conflicted[key][personID] = struct{}{}
+				}
+			}
 			continue
 		}
-		for _, occurrence := range envelope.PropertyTree {
-			property := occurrence.Property
-			var kind ContactAddressKind
-			switch strings.ToUpper(property.Name) {
-			case "EMAIL":
-				kind = ContactAddressEmail
-			case "TEL":
-				kind = ContactAddressPhone
-			default:
-				continue
-			}
-			property.RawValue, err = vcard.DecodeLegacyRawValue(property)
-			if err != nil {
-				continue
-			}
-			value, uri, err := vcard.ContactPointValue(envelope.RenderMetadata.StoredVersion, property)
-			if err != nil {
-				continue
-			}
-			if kind == ContactAddressPhone && uri != "" {
-				value = uri
-			}
-			key, ok := cardDAVParticipantAddressValue(kind, value)
-			if !ok {
-				continue
-			}
+		addresses, ok := cardDAVParticipantAddresses(body)
+		if !ok {
+			continue
+		}
+		for key := range addresses {
 			if claims[key] == nil {
 				claims[key] = cardDAVPersonSet{}
 			}
@@ -107,7 +99,56 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 		}
 		scanned++
 	}
-	return claims, scanned, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	// Unresolved cards can block another claim, but cannot bind on their own.
+	for key, people := range conflicted {
+		if len(claims[key]) == 0 {
+			continue
+		}
+		for personID := range people {
+			claims[key][personID] = struct{}{}
+		}
+	}
+	return claims, scanned, nil
+}
+
+func cardDAVParticipantAddresses(body []byte) (map[cardDAVParticipantAddress]struct{}, bool) {
+	envelope, err := vcard.ParseResourceEnvelope(body)
+	if err != nil {
+		return nil, false
+	}
+	addresses := map[cardDAVParticipantAddress]struct{}{}
+	for _, occurrence := range envelope.PropertyTree {
+		property := occurrence.Property
+		var kind ContactAddressKind
+		switch strings.ToUpper(property.Name) {
+		case "EMAIL":
+			kind = ContactAddressEmail
+		case "TEL":
+			kind = ContactAddressPhone
+		default:
+			continue
+		}
+		property.RawValue, err = vcard.DecodeLegacyRawValue(property)
+		if err != nil {
+			continue
+		}
+		value, uri, err := vcard.ContactPointValue(envelope.RenderMetadata.StoredVersion, property)
+		if err != nil {
+			continue
+		}
+		if kind == ContactAddressPhone && uri != "" {
+			value = uri
+		}
+		key, ok := cardDAVParticipantAddressValue(kind, value)
+		if !ok {
+			continue
+		}
+		addresses[key] = struct{}{}
+	}
+	return addresses, true
 }
 
 func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims map[cardDAVParticipantAddress]cardDAVPersonSet) (map[int64]cardDAVPersonSet, map[int64][]int64, error) {
