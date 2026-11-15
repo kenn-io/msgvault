@@ -172,6 +172,20 @@ func TestRunNotionMeetingsProbeChecksPageMarkdownAccess(t *testing.T) {
 	assert.True(t, includeTranscript)
 }
 
+func TestRunNotionMeetingsProbeChecksBlockParentPageMarkdownAccess(t *testing.T) {
+	var out bytes.Buffer
+	var pageIDs []string
+	denied := &notionmeetings.APIError{Kind: notionmeetings.ErrUnauthorized, Status: 401}
+	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
+		result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{
+			ID: "meeting-1", MeetingNotes: notionmeetings.MeetingNotesData{Children: notionmeetings.MeetingChildren{SummaryBlockID: "summary-1"}},
+		}}},
+		block: &notionmeetings.Block{Parent: notionmeetings.Parent{PageID: "page-1"}}, pageIDs: &pageIDs, markdownErr: denied,
+	}, nil)
+	require.ErrorIs(t, err, notionmeetings.ErrUnauthorized)
+	assert.Equal(t, []string{"page-1"}, pageIDs)
+}
+
 func TestRunNotionMeetingsProbeDegradesWithoutUserInformation(t *testing.T) {
 	var out bytes.Buffer
 	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{

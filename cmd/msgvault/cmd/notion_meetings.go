@@ -84,14 +84,21 @@ func probeNotionReadContent(ctx context.Context, out io.Writer, client notionMee
 	if block == nil {
 		return errors.New("probe Notion meeting block access returned no response")
 	}
-	if strings.TrimSpace(meeting.Parent.PageID) != "" {
-		if _, err := client.RetrievePageMarkdown(ctx, strings.TrimSpace(meeting.Parent.PageID), true); err != nil {
+	if pageID := notionProbePageID(meeting, block); pageID != "" {
+		if _, err := client.RetrievePageMarkdown(ctx, pageID, true); err != nil {
 			return fmt.Errorf("probe Notion Read Content access: %w", err)
 		}
 		_, _ = fmt.Fprintln(out, "  Read Content: available")
 		return nil
 	}
 	return probeNotionSectionContent(ctx, out, client, meeting.MeetingNotes.Children)
+}
+
+func notionProbePageID(meeting notionmeetings.MeetingNote, block *notionmeetings.Block) string {
+	if pageID := strings.TrimSpace(meeting.Parent.PageID); pageID != "" {
+		return pageID
+	}
+	return strings.TrimSpace(block.Parent.PageID)
 }
 
 func probeNotionSectionContent(ctx context.Context, out io.Writer, client notionMeetingsQuerySource, children notionmeetings.MeetingChildren) error {
