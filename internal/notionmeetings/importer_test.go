@@ -1519,14 +1519,15 @@ func TestImporterHandlesIncompleteMarkdownWithDifferentTranscriptSources(t *test
 
 func TestImporterHandlesOmittedSections(t *testing.T) {
 	for _, tc := range []struct {
-		name                                         string
-		dataSource, omitSections, retainedTranscript bool
-		want, absent                                 string
-		pending                                      int
+		name                                                    string
+		dataSource, omitSections, retainedTranscript, emptyPage bool
+		want, absent                                            string
+		pending                                                 int
 	}{
-		{"omitted transcript", false, false, false, "Updated page text", "Test Speaker: Ready to ship.", 0},
-		{"omitted data source", true, false, true, "Test Speaker: Ready to ship.", "Updated page text", 1},
-		{"omitted summary and notes", false, true, false, "Test Speaker: Ready to ship.", "Decide the release scope", 0},
+		{"omitted transcript", false, false, false, false, "Updated page text", "Test Speaker: Ready to ship.", 0},
+		{"omitted transcript with empty page", false, false, false, true, "Decide the release scope.", "Test Speaker: Ready to ship.", 1},
+		{"omitted data source", true, false, true, false, "Test Speaker: Ready to ship.", "Updated page text", 1},
+		{"omitted summary and notes", false, true, false, false, "Test Speaker: Ready to ship.", "Decide the release scope", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
@@ -1554,6 +1555,9 @@ func TestImporterHandlesOmittedSections(t *testing.T) {
 				source.query.Results[0].MeetingNotes.Children.TranscriptBlockID = ""
 			}
 			source.markdown.Markdown = "# Transcript\nUpdated page text"
+			if tc.emptyPage {
+				source.markdown.Markdown = "# Notes\nNo transcript available"
+			}
 			source.markdown.Raw, err = json.Marshal(source.markdown)
 			require.NoError(t, err)
 			second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
