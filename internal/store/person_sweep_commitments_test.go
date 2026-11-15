@@ -584,6 +584,36 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 		}
 	})
 
+	t.Run("recent change to old oversized message", func(t *testing.T) {
+		r, ctx := require.New(t), t.Context()
+		f := newPersonSweepApplyFixture(t, "commitment-old-edit", false)
+		_, persist := newCommitmentTestConversation(t, f)
+		id := persist("old-large", strings.Repeat("x", 200), -40*24*time.Hour)
+		_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET archived_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-40*24*time.Hour)), id)
+		r.NoError(err)
+		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-time.Hour)), id)
+		r.NoError(err)
+		cfg, profile := commitmentTestConfig()
+		cfg.Commitments.MaxBytes = 30
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+		r.NoError(err)
+		r.Empty(window.Sources)
+		request := f.request
+		request.CommitmentOnly = true
+		request.Generation.Policy.AllowSensitive = true
+		request.Budget = personSweepApplyBudget()
+		request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
+		_, err = f.store.ApplyPersonSweep(ctx, request)
+		r.NoError(err)
+		_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+		r.NoError(err)
+		r.False(complete)
+		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-40*24*time.Hour)), id)
+		r.NoError(err)
+		_, complete, err = f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+		r.NoError(err)
+		r.True(complete)
+	})
 	t.Run("edited oversized message", func(t *testing.T) {
 		r, a, ctx := require.New(t), assert.New(t), t.Context()
 		f := newPersonSweepApplyFixture(t, "commitment-shrink", false)

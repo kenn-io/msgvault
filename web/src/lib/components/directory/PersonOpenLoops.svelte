@@ -27,7 +27,6 @@
   let loadingPromises = $state(false);
   let morePromisesFailed = $state(false);
   let morePromises = $state<() => void>(() => {});
-  let pagedPromises = false;
 
   $effect(() => {
     const selectedID = personID;
@@ -52,7 +51,7 @@
         unreadable = 0;
         failed = false;
         promiseStatus = '';
-        [nextOffset, pagedPromises] = [undefined, false];
+        nextOffset = undefined;
       }
       try {
         const result = await listLoops(
@@ -63,7 +62,7 @@
         if (!result.data) throw new Error('Open loops are unavailable.');
         items = result.data.items ?? [];
         commitments = mergeCommitments(more ? commitments : [], result.data.commitments);
-        if (!pagedPromises) nextOffset = result.data.commitments_next_offset;
+        nextOffset = result.data.commitments_next_offset;
         truncated = Boolean(result.data.truncated);
         coverageIncomplete = Boolean(result.data.coverage_incomplete);
         unreadable = result.data.skipped_unparseable ?? 0;
@@ -112,7 +111,6 @@
       if (signal.aborted) return;
       if (!result.data) throw new Error('Promises are unavailable.');
       commitments = mergeCommitments(commitments, result.data.commitments);
-      pagedPromises = true;
       truncated = Boolean(result.data.truncated);
       nextOffset = result.data.commitments_next_offset;
     } catch {

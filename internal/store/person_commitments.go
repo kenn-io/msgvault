@@ -294,7 +294,7 @@ func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID i
 		COALESCE(f.scope_fingerprint, ''),
 		EXISTS(SELECT 1 FROM person_sweep_changes c WHERE c.person_id = t.person_id
 			AND c.sequence > CASE WHEN COALESCE(f.observed_sequence, 0) > f.through_sequence THEN f.observed_sequence ELSE f.through_sequence END),
-		EXISTS(SELECT 1 FROM person_commitment_oversized o JOIN messages m ON m.id = o.message_id WHERE o.person_id = t.person_id AND m.deleted_at IS NULL AND (COALESCE(m.sent_at, m.received_at, m.internal_date, m.archived_at) >= f.discovery_since OR m.archived_at >= f.discovery_since))
+		EXISTS(SELECT 1 FROM person_commitment_oversized o JOIN messages m ON m.id = o.message_id WHERE o.person_id = t.person_id AND m.deleted_at IS NULL AND (COALESCE(m.sent_at, m.received_at, m.internal_date, m.archived_at) >= f.discovery_since OR m.archived_at >= f.discovery_since OR EXISTS(SELECT 1 FROM person_sweep_changes c WHERE c.person_id = o.person_id AND c.message_id = o.message_id AND c.source_lane = 'conversation_text' AND ` + s.loopTimeKey("c.recorded_at") + ` >= ` + s.loopTimeKey("f.discovery_since") + `)))
 		FROM person_tracking t LEFT JOIN person_commitment_frontiers f ON f.person_id = t.person_id`
 	var args []any
 	if personID > 0 {
