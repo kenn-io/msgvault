@@ -194,7 +194,7 @@ func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeet
 	if result.Transcript == "" && !complete {
 		result.markdownOnlyIncomplete = !slices.Contains(result.Incomplete, "transcript") && !hasTranscriptMarker(page.Markdown)
 		result.markIncomplete("transcript", "markdown")
-	} else if result.Transcript == "" && markdown != "" && !slices.Contains(result.Incomplete, "transcript") {
+	} else if result.Transcript == "" && markdown != "" && complete {
 		result.Transcript = markdown
 		result.MarkdownTranscriptFallback = true
 		result.Warnings = append(result.Warnings, "structured transcript was empty; used page Markdown transcript")

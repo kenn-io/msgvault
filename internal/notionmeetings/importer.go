@@ -361,6 +361,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		_ = json.Unmarshal(archived.Evidence.Discovery, &previousDiscovery) // zero without usable evidence
 		for _, section := range sections {
 			incomplete := slices.Contains(hydrated.Incomplete, section.name)
+			if section.name == "transcript" && hydrated.MarkdownTranscriptFallback {
+				incomplete = false
+			}
 			if section.name == "transcript" && hydrated.TranscriptTree.Root != nil && !archived.MarkdownFallback {
 				incomplete = false
 			}

@@ -218,7 +218,7 @@ func TestHydratorUsesMarkdownTranscriptFallback(t *testing.T) {
 	source := completeHydrationSource()
 	empty := paragraph("transcript-1", "", false)
 	source.blocks["transcript-1"] = &empty
-	source.markdown.Markdown = "# Transcript\nTest Speaker: Late transcript."
+	source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Late transcript."
 
 	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(t, err)
@@ -249,19 +249,34 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 			assert := assert.New(t)
 			source := completeHydrationSource()
 			source.blockErrs = map[string]error{"transcript-1": tt.err}
-			source.markdown.Markdown = "# Transcript\nTest Speaker: Published in Markdown."
+			source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Published in Markdown.\n\n## Action items\nFollow up."
 
 			hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 			require.NoError(t, err)
 			assert.Equal("Decide the release scope.", hydrated.Summary)
 			assert.Contains(hydrated.Notes, "Nested action item.")
-			assert.Empty(hydrated.Transcript)
-			assert.False(hydrated.MarkdownTranscriptFallback)
+			assert.Equal("Test Speaker: Published in Markdown.", hydrated.Transcript)
+			assert.True(hydrated.MarkdownTranscriptFallback)
 			assert.Contains(hydrated.Incomplete, "transcript")
-			assert.NotContains(hydrated.Warnings, "structured transcript was empty; used page Markdown transcript")
+			assert.Contains(hydrated.Warnings, "structured transcript was empty; used page Markdown transcript")
 			assert.Len(hydrated.AttendeeLabels, 2)
 		})
 	}
+	t.Run("data source", func(t *testing.T) {
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				meeting := hydrationMeeting()
+				meeting.Parent = Parent{Type: "data_source_id"}
+				source := completeHydrationSource()
+				source.blocks["meeting-1"].Parent = meeting.Parent
+				source.blockErrs = map[string]error{"transcript-1": tt.err}
+				hydrated, err := NewHydrator(source).Hydrate(t.Context(), meeting)
+				require.NoError(t, err)
+				assert.Empty(t, hydrated.Transcript)
+				assert.Contains(t, hydrated.Incomplete, "transcript")
+			})
+		}
+	})
 }
 
 func TestHydratorKeepsSystemicTranscriptErrorsFatal(t *testing.T) {
@@ -537,7 +552,10 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 			root := source.blocks["summary-1"]
 			switch limit {
 			case "bytes":
-				source.markdown.Raw = json.RawMessage(`{"object":"page_markdown","id":"page-1","markdown":"` + strings.Repeat("x", maxHydrationBytes) + `"}`)
+				payload := strings.Repeat("x", 12<<20)
+				source.blocks["meeting-1"].Raw = json.RawMessage(`{"object":"block","id":"meeting-1","type":"meeting_notes","padding":"` + payload + `"}`)
+				source.blocks["notes-1"].Raw = json.RawMessage(`{"object":"block","id":"notes-1","type":"paragraph","padding":"` + payload + `"}`)
+				source.markdown.Raw = json.RawMessage(`{"object":"page_markdown","id":"page-1","markdown":"` + payload + `"}`)
 				source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
 				empty := paragraph("transcript-1", "", false)
 				source.blocks["transcript-1"] = &empty

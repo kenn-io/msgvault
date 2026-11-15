@@ -874,8 +874,8 @@ It still cannot discover history beyond the visible window.
 
 Meetings under data sources import their summary, notes, and transcript from
 their referenced section blocks. For meetings under pages, msgvault also reads
-the parent page's Markdown. When the structured transcript is empty and its
-section read is complete, msgvault uses the Markdown transcript section.
+the parent page's Markdown. When the structured transcript is empty or its
+section can't be read, msgvault uses a complete Markdown transcript section.
 
 Temporary provider or network errors, incomplete pagination, and the existing
 request, response-size, block-count, and nesting limits can leave a section
@@ -892,10 +892,11 @@ later syncs. A missing transcript without an incomplete section also stops
 background retries at its deadline. The sync summary reports partial coverage when
 a section is incomplete or the Notion query reports more meetings.
 
-When a transcript read is incomplete, sync retains the saved transcript and
-reports that it did so. An omitted transcript block also keeps saved text; omitted
-summary and notes blocks clear their sections. A complete empty transcript clears
-saved transcript text. If a meeting selected for import has a newer evidence
+When a transcript read is incomplete and no complete page transcript is available,
+sync retains the saved transcript and reports that it did so. An omitted transcript
+block also keeps saved text when no page transcript is available. Omitted summary
+and notes blocks clear their sections. A complete empty transcript clears saved
+transcript text. If a meeting selected for import has a newer evidence
 version, the import stops before writing any meetings to the archive. Existing `[[notion_meetings]]`
 settings need no changes. Other hard per-meeting failures retain the previous
 successful state; meetings written earlier in that failed run remain safe and
