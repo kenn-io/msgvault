@@ -172,7 +172,7 @@ func notionTreeBlocks(raw jsontext.Value, expectedRootID string) ([]jsontext.Val
 	if json.Unmarshal(raw, &tree) != nil || len(tree.Root) == 0 || isNull(tree.Root) {
 		return nil, false
 	}
-	rootID, _, rootHasChildren, rootValid, _ := notionBlockTraversalHeader(tree.Root)
+	rootID, _, rootHasChildren, rootValid := notionBlockTraversalHeader(tree.Root)
 	if rootID != expectedRootID {
 		return nil, false
 	}
@@ -223,8 +223,8 @@ func (t *notionTreeTraversal) readChildren(depth int) bool {
 			}
 			t.blockVisits++
 			t.blocks = append(t.blocks, child)
-			childID, blockType, hasChildren, childValid, typeValid := notionBlockTraversalHeader(child)
-			if !childValid || !typeValid {
+			childID, blockType, hasChildren, childValid := notionBlockTraversalHeader(child)
+			if !childValid {
 				childrenComplete = false
 				continue
 			}
@@ -279,30 +279,29 @@ func notionTraversalPage(raw jsontext.Value) ([]jsontext.Value, bool, string, bo
 	return results, hasMore, nextCursor, hasMore == (nextCursor != "")
 }
 
-func notionBlockTraversalHeader(raw jsontext.Value) (string, string, bool, bool, bool) {
+func notionBlockTraversalHeader(raw jsontext.Value) (string, string, bool, bool) {
 	var fields map[string]jsontext.Value
 	if json.Unmarshal(raw, &fields) != nil || fields == nil {
-		return "", "", false, false, false
+		return "", "", false, false
 	}
 	id, idOK := optionalString(fields["id"])
 	if !idOK {
-		return "", "", false, false, false
+		return "", "", false, false
 	}
 	id = strings.TrimSpace(id)
 	blockType := ""
-	typeValid := true
 	if rawType := fields["type"]; len(rawType) > 0 && !isNull(rawType) {
-		typeValid = json.Unmarshal(rawType, &blockType) == nil
+		_ = json.Unmarshal(rawType, &blockType)
 	}
 	hasChildrenRaw, exists := fields["has_children"]
 	if !exists {
-		return id, blockType, false, true, typeValid
+		return id, blockType, false, true
 	}
 	var hasChildren bool
 	if isNull(hasChildrenRaw) || json.Unmarshal(hasChildrenRaw, &hasChildren) != nil {
-		return id, blockType, false, false, typeValid
+		return id, blockType, false, false
 	}
-	return id, blockType, hasChildren, !hasChildren || id != "", typeValid
+	return id, blockType, hasChildren, !hasChildren || id != ""
 }
 
 type notionResolvedUser struct {

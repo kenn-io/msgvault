@@ -190,7 +190,7 @@ func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeet
 		if !slices.Contains(result.Incomplete, "transcript") {
 			result.Warnings = append(result.Warnings, "structured transcript was empty; used page Markdown transcript")
 		}
-	} else if result.Transcript != "" && markdown != "" && complete && strings.Join(strings.Fields(result.Transcript), " ") != strings.Join(strings.Fields(markdown), " ") {
+	} else if result.Transcript != "" && markdown != "" && complete && normalizedContent(result.Transcript) != normalizedContent(markdown) {
 		result.Warnings = append(result.Warnings, "structured transcript and page Markdown transcript differed")
 	}
 	return nil
@@ -548,6 +548,10 @@ func transcriptMarker(value string) (string, bool) {
 		return "", false
 	}
 	return inline, true
+}
+
+func normalizedContent(value string) string {
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func parseNotionTime(value string) time.Time {

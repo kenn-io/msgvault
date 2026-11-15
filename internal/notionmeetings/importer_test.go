@@ -1111,7 +1111,48 @@ func TestPendingTranscriptCadenceAndExpiry(t *testing.T) {
 	hydrated.Discovery.MeetingNotes.CalendarEvent.EndTime = "2026-10-20T10:00:00Z"
 	old, keep = schedulePending(hydrated, oldNow.Add(transcriptRetryCadence), old, true, false)
 	require.True(keep)
-	assert.Equal("2026-10-01T12:00:00Z", old.RetryUntil)
+	assert.Equal("2026-10-27T10:00:00Z", old.RetryUntil)
+}
+
+func TestImporterMissingTranscriptDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		firstEnd     string
+		updatedEnd   string
+		wantPending  bool
+		wantDeadline string
+	}{
+		{name: "already expired", firstEnd: "2026-08-01T10:00:00Z"},
+		{name: "extended end", firstEnd: "2026-08-29T10:30:00Z", updatedEnd: "2026-09-10T10:00:00Z", wantPending: true, wantDeadline: "2026-09-17T10:00:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, source, imp := newImporterFixture(t)
+			meeting := hydrationMeeting()
+			meeting.Parent = Parent{Type: "data_source_id"}
+			meeting.MeetingNotes.CalendarEvent.StartTime = "2026-08-01T09:00:00Z"
+			meeting.MeetingNotes.CalendarEvent.EndTime = tc.firstEnd
+			source.query.Results = []MeetingNote{meeting}
+			source.blocks["meeting-1"].Parent = meeting.Parent
+			empty := paragraph("transcript-1", "", false)
+			source.blocks["transcript-1"] = &empty
+			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(err)
+			if tc.updatedEnd != "" {
+				source.query.Results[0].MeetingNotes.CalendarEvent.EndTime = tc.updatedEnd
+				first, err = imp.Import(t.Context(), ImportOptions{Identifier: "work", Full: true})
+				require.NoError(err)
+			}
+			pending := lastNotionState(t, st, first.SourceID).Pending
+			if tc.wantPending {
+				require.Len(pending, 1)
+				assert.Equal(tc.wantDeadline, pending[0].RetryUntil)
+			} else {
+				assert.Empty(pending)
+			}
+		})
+	}
 }
 
 func TestImporterDataSourceRetriesIncompleteSections(t *testing.T) {

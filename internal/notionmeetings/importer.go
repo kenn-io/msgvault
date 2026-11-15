@@ -941,14 +941,14 @@ func schedulePending(meeting *HydratedMeeting, now time.Time, previous pendingTr
 	if hasPrevious {
 		retryUntil, _ = time.Parse(time.RFC3339, previous.RetryUntil)
 	}
-	if hasPrevious && !retryUntil.After(now) && !incomplete {
-		return pendingTranscript{}, false
+	if deadline := endedAt.Add(transcriptRetryWindow); !endedAt.IsZero() && deadline.After(retryUntil) {
+		retryUntil = deadline
+	}
+	if (retryUntil.IsZero() && endedAt.IsZero()) || (incomplete && !retryUntil.After(now)) {
+		retryUntil = now.Add(unknownTranscriptRetrySpan)
 	}
 	if !retryUntil.After(now) {
-		retryUntil = now.Add(unknownTranscriptRetrySpan)
-		if deadline := endedAt.Add(transcriptRetryWindow); !endedAt.IsZero() && deadline.After(retryUntil) {
-			retryUntil = deadline
-		}
+		return pendingTranscript{}, false
 	}
 
 	next := now.Add(transcriptRetryCadence)
