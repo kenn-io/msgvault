@@ -192,7 +192,7 @@ func quoteHasByWeekday(quote string, due, day time.Time) bool {
 		days := (int(weekday) - int(day.Weekday()) + 7) % 7
 		switch match[2] {
 		case "this":
-			days = int(weekday) - int(day.Weekday())
+			days = (int(weekday)+6)%7 - (int(day.Weekday())+6)%7
 		case "next":
 			days = 7 - (int(day.Weekday())+6)%7 + (int(weekday)+6)%7
 		}
