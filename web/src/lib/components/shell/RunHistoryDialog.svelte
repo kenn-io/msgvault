@@ -77,7 +77,7 @@
   };
   async function runAction(action: OperationAction): Promise<void> {
     const outcome = await controller.runAction(action);
-    if (outcome === 'succeeded') onAnnounce([actionSuccess[action], controller.snapshot.actionStatus].filter(Boolean).join(' '));
+    if (outcome === 'succeeded') onAnnounce(actionSuccess[action]);
     else if (outcome !== 'discarded') onAnnounce(controller.snapshot.actionConflict ?? controller.snapshot.actionError ?? '');
   }
   async function refresh(event: MouseEvent): Promise<void> {
