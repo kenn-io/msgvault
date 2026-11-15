@@ -1205,7 +1205,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			if !acquired || (err != nil && s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail) {
 				continue
 			}
-			if err == nil && !slices.Contains(raw.LabelIDs, "TRASH") {
+			if !slices.Contains(raw.LabelIDs, "TRASH") {
 				if _, marked := markedGmailMessageIDs[sourceMessageID]; marked {
 					if err := s.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, sourceMessageID); err != nil {
 						return nil, fmt.Errorf("clear Gmail deletion mark for restored message %s: %w", sourceMessageID, err)

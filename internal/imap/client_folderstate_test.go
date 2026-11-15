@@ -17,6 +17,33 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
+func TestReviewFallbackTrashNameKeepsSentRole(t *testing.T) {
+	for _, tc := range []struct {
+		role imapv2.MailboxAttr
+		want string
+	}{{imapv2.MailboxAttrSent, "sent"}, {imapv2.MailboxAttrDrafts, "drafts"}} {
+		t.Run(string(tc.role), func(t *testing.T) {
+			addr, _ := testutil.StartIMAPMemServerWithSpecialUse(t,
+				map[string]int{"INBOX": 1, "Trash": 0},
+				map[string][]imapv2.MailboxAttr{"Trash": {tc.role}},
+			)
+			client := newTestClient(t, addr)
+			labels, err := client.ListLabels(t.Context())
+			require.NoError(t, err)
+			found := false
+			for _, label := range labels {
+				if label.ID == "Trash" {
+					found = true
+					assert.Equal(t, tc.want, label.SystemRole)
+				}
+			}
+			require.True(t, found)
+			require.ErrorContains(t, client.TrashMessage(t.Context(), "INBOX|1"), "no selectable trash mailbox")
+			assert.Contains(t, listAllMessages(t, client), "INBOX|1")
+		})
+	}
+}
+
 func TestListMessages_UnmatchedFolderExclusionWarning(t *testing.T) {
 	assert := assert.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1})
