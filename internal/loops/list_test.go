@@ -817,6 +817,7 @@ func TestListChatDoesNotReadMIMEOriginal(t *testing.T) {
 
 type pagingCommitmentStore struct {
 	*store.Store
+
 	limit int
 }
 
