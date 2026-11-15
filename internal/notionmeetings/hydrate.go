@@ -499,13 +499,10 @@ func incompleteReason(ctx context.Context, err error) string {
 	if errors.Is(err, ErrResponseTooLarge) {
 		return "limit: response size limit"
 	}
-	if sectionTemporarilyUnavailable(err) {
+	if transcriptTemporarilyUnavailable(err) {
 		return "provider"
 	}
 	return ""
-}
-func sectionTemporarilyUnavailable(err error) bool {
-	return transcriptTemporarilyUnavailable(err)
 }
 func transcriptTemporarilyUnavailable(err error) bool {
 	if errors.Is(err, ErrRateLimited) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) {

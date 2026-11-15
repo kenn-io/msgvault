@@ -592,7 +592,7 @@ func (imp *Importer) retrieveMeeting(ctx context.Context, id string) (MeetingNot
 
 // TemporarySectionError reports whether a section read can be retried later.
 func TemporarySectionError(ctx context.Context, err error) bool {
-	return ctx.Err() == nil && sectionTemporarilyUnavailable(err)
+	return ctx.Err() == nil && transcriptTemporarilyUnavailable(err)
 }
 
 type archivedMeetingState struct {
