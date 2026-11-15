@@ -11,6 +11,67 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
+// MeetingTranscriptGroupsContext resolves all visible transcripts in one graph.
+// When the shared read budget is exhausted, each transcript remains separate.
+func (s *Store) MeetingTranscriptGroupsContext(ctx context.Context, through int64) (map[int64]int64, bool, error) {
+	return s.meetingTranscriptGroupsContext(ctx, through, calrecur.RequestReadBudget)
+}
+
+func (s *Store) meetingTranscriptGroupsContext(ctx context.Context, through int64, batchBudget int) (map[int64]int64, bool, error) {
+	ctx, release, err := s.BeginReadSnapshotContext(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer release()
+	var seeds []meetingDecisionEndpoint
+	groups := make(map[int64]int64)
+	err = func() error {
+		rows, err := s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT id FROM messages WHERE message_type = 'meeting_transcript' AND deleted_at IS NULL AND sent_at IS NOT NULL AND id <= ? ORDER BY id`, through)
+		if err != nil {
+			return err
+		}
+		defer rows.Close() //nolint:errcheck // read-only cursor
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			seeds = append(seeds, meetingDecisionEndpoint{ID: id, Kind: meetingRefMessage})
+			groups[id] = id
+		}
+		return rows.Err()
+	}()
+	if err != nil {
+		return nil, false, err
+	}
+	if len(seeds) == 0 {
+		return groups, false, nil
+	}
+	budget := batchBudget * ((len(seeds) + 999) / 1000)
+	graph, err := s.loadMeetingDecisionGraph(ctx, seeds, &budget, false)
+	if errors.Is(err, ErrQueryTooBroad) {
+		return groups, true, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if budget <= 0 {
+		return groups, true, nil
+	}
+	root, _ := graph.reduce()
+	minimum := make(map[string]int64)
+	for _, seed := range seeds {
+		key := root(seed.ref())
+		if id, ok := minimum[key]; !ok || seed.ID < id {
+			minimum[key] = seed.ID
+		}
+	}
+	for _, seed := range seeds {
+		groups[seed.ID] = minimum[root(seed.ref())]
+	}
+	return groups, false, nil
+}
+
 type meetingDecisionEdge struct {
 	id       int64
 	a, b     meetingDecisionEndpoint
