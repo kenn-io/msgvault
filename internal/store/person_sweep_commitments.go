@@ -33,9 +33,6 @@ type preparedCommitmentSweep struct {
 	backfillMessageID int64
 	scope             string
 	selectionAt       time.Time
-	statuses          []personfacts.EvidenceStatusChange
-	maintenanceIDs    []int64
-	maintenanceFrom   int64
 }
 
 func commitmentEvidence(personID int64, source peoplesweep.CommitmentSource, role, quote string, start, end int64) personfacts.EvidenceInput {
@@ -74,8 +71,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 	window := result.Window
 	prepared := &preparedCommitmentSweep{through: window.ThroughSequence, snapshot: window.SnapshotSequence, observedOnly: len(window.Sources) == 0, backfillMessageID: window.BackfillMessageID, scope: window.ScopeFingerprint, selectionAt: window.SelectionAt}
 	if prepared.observedOnly {
-		err := s.prepareCommitmentStatuses(ctx, request, prepared, nil)
-		return prepared, err
+		return prepared, nil
 	}
 	sources := make(map[string]peoplesweep.CommitmentSource, len(window.Sources))
 	for _, source := range window.Sources {
@@ -163,9 +159,6 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 			}
 		}
 	}
-	if err := s.prepareCommitmentStatuses(ctx, request, prepared, aligner); err != nil {
-		return nil, err
-	}
 	return prepared, nil
 }
 
@@ -213,9 +206,6 @@ func (s *Store) matchCommitmentTarget(ctx context.Context, personID int64, sourc
 }
 
 func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {
-	if err := s.applyCommitmentStatusesTx(ctx, tx, request, prepared); err != nil {
-		return err
-	}
 	if len(prepared.promises) > 0 {
 		_, err := s.applyPreparedPersonFactGenerationTx(ctx, tx, prepared.generation)
 		if err != nil {
@@ -359,9 +349,8 @@ func validatePersonSweepApplyCommitment(request peoplesweep.ApplyRequest) error 
 }
 
 // Window sources and person-level changes are watched in the conversation lane.
-// A maintained citation can live in any lane, so its message is watched in all.
 func (s *Store) commitmentCitedChangedTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) (bool, error) {
-	ids := append([]int64(nil), prepared.maintenanceIDs...)
+	var ids []int64
 	for _, source := range request.Commitment.Window.Sources {
 		ids = append(ids, source.MessageID)
 	}
@@ -369,16 +358,11 @@ func (s *Store) commitmentCitedChangedTx(ctx context.Context, tx *loggedTx, requ
 	if marks == "" {
 		return false, nil
 	}
-	cited, citedBinds := sortedIDPlaceholders(prepared.maintenanceIDs)
-	if cited == "" {
-		cited = "NULL"
-	}
 	var changed bool
 	args := append([]any{request.Lease.PersonID, prepared.snapshot, peoplesweep.SourceConversationText}, binds...)
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_sweep_changes
-		WHERE person_id = ? AND sequence > ? AND ((source_lane = ?
-		AND (message_id IS NULL OR message_id IN (`+marks+`))) OR message_id IN (`+cited+`)))`,
-		append(args, citedBinds...)...).Scan(&changed)
+		WHERE person_id = ? AND sequence > ? AND (source_lane = ?
+		AND (message_id IS NULL OR message_id IN (`+marks+`))))`, args...).Scan(&changed)
 	return changed, err
 }
 
@@ -392,26 +376,4 @@ func (s *Store) commitmentWindowCurrentTx(ctx context.Context, tx *loggedTx, req
 	}
 	changed, err := s.commitmentCitedChangedTx(ctx, tx, request, prepared)
 	return !changed, err
-}
-
-func (s *Store) applyCommitmentStatusesTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, sweep *preparedCommitmentSweep) error {
-	pending, err := personSweepPendingStatusChangesTx(ctx, tx, request.Lease.PersonID, sweep.statuses)
-	if err != nil || len(pending) == 0 {
-		return err
-	}
-	input := request.Generation
-	input.ProgramID, input.ProgramVersion = peoplesweep.CommitmentProgramID, peoplesweep.CommitmentProgramVersion
-	input.ProgramFingerprint = peoplesweep.CommitmentProgramFingerprint()
-	input.Claims, input.EvidenceStatusChanges = nil, pending
-	// Bind status identity to the existing commitment journal interval, even
-	// when the ordinary provider cursors have not advanced.
-	input.SourceCursors = []personfacts.SourceCursor{{Lane: peoplesweep.CommitmentProgramID,
-		Start: fmt.Sprintf("%s:%d", sweep.scope, sweep.maintenanceFrom),
-		End:   fmt.Sprintf("%s:%d", sweep.scope, sweep.through)}}
-	prepared, err := personfacts.PreparePersonFactGeneration(ctx, input, nil)
-	if err != nil {
-		return err
-	}
-	_, err = s.applyPreparedPersonFactGenerationTx(ctx, tx, prepared)
-	return err
 }

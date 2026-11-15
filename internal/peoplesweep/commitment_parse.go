@@ -68,7 +68,7 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 	invalid := func() (ParsedCommitments, error) {
 		return ParsedCommitments{}, errors.New("commitment output does not match scoped evidence")
 	}
-	if len(output) > 32768 || window.PersonID <= 0 || window.Now.IsZero() {
+	if window.PersonID <= 0 || window.Now.IsZero() {
 		return invalid()
 	}
 	location, err := time.LoadLocation(window.Timezone)

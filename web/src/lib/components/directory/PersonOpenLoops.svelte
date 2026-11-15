@@ -3,7 +3,7 @@
   import InlineNotice from '../common/InlineNotice.svelte';
   import { Button } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
-  import { formatContactDate, formatDay } from '../../directory/labels';
+  import { formatContactDate } from '../../directory/labels';
   import { listLoops } from '../../api/generated/api/api';
   import type { LoopCommitment, LoopItem } from '../../api/generated/models';
 
@@ -13,9 +13,6 @@
   const limit = 5;
   let items = $state<LoopItem[]>([]);
   let commitments = $state<LoopCommitment[]>([]);
-  let commitmentsSince = $state<string | undefined>();
-  let commitmentsUntil = $state<string | undefined>();
-  let commitmentsComplete = $state<boolean | undefined>();
   const openCount = $derived(items.length + commitments.length);
   let loading = $state(true);
   let checkingMore = $state(false);
@@ -41,9 +38,6 @@
         loading = true;
         items = [];
         commitments = [];
-        commitmentsSince = undefined;
-        commitmentsUntil = undefined;
-        commitmentsComplete = undefined;
         truncated = false;
         coverageIncomplete = false;
         unreadable = 0;
@@ -58,9 +52,6 @@
         if (!result.data) throw new Error('Open loops are unavailable.');
         items = result.data.items ?? [];
         commitments = result.data.commitments ?? [];
-        commitmentsSince = result.data.commitments_since;
-        commitmentsUntil = result.data.commitments_until;
-        commitmentsComplete = result.data.commitments_complete;
         truncated = Boolean(result.data.truncated);
         coverageIncomplete = Boolean(result.data.coverage_incomplete);
         unreadable = result.data.skipped_unparseable ?? 0;
@@ -98,11 +89,6 @@
     if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h`;
     return `${Math.floor(seconds / 60)}m`;
   }
-
-  function dueLabel(day: string): string {
-    const formatted = formatDay(day);
-    return day.slice(0, 4) === String(new Date().getFullYear()) ? formatted.replace(/, \d{4}$/, '') : formatted;
-  }
 </script>
 
 <DetailSection title="Open loops">
@@ -110,9 +96,8 @@
   <div class="open-loops">
   {#if loading}<p class="muted" role="status">Loading…</p>
   {:else if failed}<InlineNotice message="Couldn't load open loops." />
-  {:else if commitmentsComplete === false && !commitmentsSince && items.length === 0 && commitments.length === 0}<p class="muted">Promise discovery has not started.</p>
-  {:else if items.length === 0 && commitments.length === 0 && coverageIncomplete && !commitmentsSince}<p class="muted">No open loops found. Some messages haven't been checked yet.</p>
-  {:else if items.length === 0 && commitments.length === 0 && !commitmentsSince}<p class="muted">Nothing open with this person.</p>
+  {:else if openCount === 0 && coverageIncomplete}<p class="muted">No open loops found. Some messages haven't been checked yet.</p>
+  {:else if openCount === 0}<p class="muted">Nothing open with this person.</p>
   {:else}
     {#each groups as group (group.kind)}
       {#if group.items.length > 0}
@@ -137,17 +122,13 @@
             {#each group.items as promise (promise.id)}
               <li class="promise">
                 <a href={`/messages/${promise.promise.message_id}`} title={promise.promise.text}>{promise.promise.text}</a>
-                <span class="promise-meta muted">{#if promise.due_on}<span>Due {dueLabel(promise.due_on)}</span><span aria-hidden="true">·</span>{/if}<span>{ageLabel(promise.promised_at)}</span></span>
+                <span class="muted">{ageLabel(promise.promised_at)}</span>
               </li>
             {/each}
           </ul>
         </div>
       {/if}
     {/each}
-    {#if commitmentsSince && commitmentsUntil && commitmentsUntil.slice(0, 10) < commitmentsSince.slice(0, 10)}<p class="muted">No messages were eligible for promise discovery in the current window.</p>
-    {:else if commitmentsSince && !commitmentsComplete}<p class="muted discovery">Promise discovery {commitmentsUntil ? `from ${formatContactDate(commitmentsSince)} through ${formatContactDate(commitmentsUntil)}` : `since ${formatContactDate(commitmentsSince)}`} is incomplete. Some messages may be too large to check.</p>
-    {:else if commitmentsComplete === false && !commitmentsSince}<p class="muted">Promise discovery has not started.</p>
-    {:else if commitmentsSince && commitments.length === 0}<p class="muted">No promises found {commitmentsUntil ? `from ${formatContactDate(commitmentsSince)} through ${formatContactDate(commitmentsUntil)}` : `since ${formatContactDate(commitmentsSince)}`}.</p>{/if}
   {/if}
   {#if !loading && !failed && unreadable > 0}
     <p class="muted">
@@ -166,13 +147,11 @@
   h4, p, ul { margin: 0; }
   h4 { color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 500; }
   .group { display: grid; gap: var(--space-1); }
-  .discovery { margin-top: var(--space-4); }
   ul { display: grid; gap: var(--space-1); padding: 0; list-style: none; }
   li { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); min-width: 0; }
   a { min-width: 0; overflow: hidden; color: var(--link-ink); text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
   a:hover { text-decoration: underline; }
   li > span { flex: none; }
-  .promise-meta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
   .muted { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   [role="alert"] { color: var(--text-danger); }
 </style>

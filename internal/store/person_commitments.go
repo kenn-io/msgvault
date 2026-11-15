@@ -284,22 +284,26 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 	return result, err
 }
 
+// commitmentDeadline is the bind value for a snooze deadline; nil binds NULL.
+func (s *Store) commitmentDeadline(until *time.Time) any {
+	if until == nil {
+		return nil
+	}
+	return s.dialect.TimestampParam(*until)
+}
+
 func (s *Store) updatePersonCommitmentDecision(ctx context.Context, candidate commitmentCandidate, state string, until *time.Time) (PersonCommitment, error) {
 	var result PersonCommitment
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockSyncMaintenanceGate(ctx, tx); err != nil {
 			return err
 		}
-		var deadline any
-		if until != nil {
-			deadline = s.dialect.TimestampParam(*until)
-		}
 		previous := candidate.commitment
 		var err error
 		result, err = scanPersonCommitment(tx.QueryRowContext(ctx, `UPDATE person_commitments
-			SET owner_state = ?, snoozed_until = ? WHERE id = ? AND owner_state = ?
+			SET owner_state = ?, snoozed_until = ? WHERE id = ? AND owner_state = ? AND snoozed_until IS NOT DISTINCT FROM ?
 			AND COALESCE((SELECT status.supported `+latestPersonFactEvidenceStatusSQL("?", "?", "?")+`), TRUE) = TRUE
-			RETURNING `+commitmentColumns, state, deadline, previous.ID, previous.State,
+			RETURNING `+commitmentColumns, state, s.commitmentDeadline(until), previous.ID, previous.State, s.commitmentDeadline(previous.SnoozedUntil),
 			candidate.promise.Input.PersonID, candidate.promise.Key, candidate.promise.Input.SourceVersion))
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrCommitmentChanged

@@ -609,15 +609,6 @@ func copyData(ctx context.Context, db *sql.DB, tx *sql.Tx, rowCount int, options
 			`person_id IN (SELECT id FROM persons)`); err != nil {
 			return nil, fmt.Errorf("copy person tracking: %w", err)
 		}
-		hasCommitments, err := sourceTableExists(ctx, tx, "person_commitments")
-		if err != nil {
-			return nil, fmt.Errorf("inspect person commitments: %w", err)
-		}
-		if hasCommitments {
-			if err := copyPersonCommitments(ctx, tx); err != nil {
-				return nil, err
-			}
-		}
 		if options.IncludeVCardResources {
 			if err := copyVCardResourceEnvelopes(ctx, tx); err != nil {
 				return nil, err
@@ -3258,29 +3249,6 @@ func copySubsetMeetingDecisions(ctx context.Context, db *sql.DB, tx *sql.Tx) err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO meeting_link_decisions(id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES(?,?,?,?,?,?,?,?)`, edge.id, left, edge.a.Kind, edge.a.Key, right, edge.b.Kind, edge.b.Key, edge.decision); err != nil {
 			return err
-		}
-	}
-	return nil
-}
-
-// copyPersonCommitments copies the owner decisions with the citations that tie
-// them to retained messages.
-func copyPersonCommitments(ctx context.Context, tx *sql.Tx) error {
-	if _, err := copyByName(ctx, tx, "person_commitments", `person_id IN (SELECT id FROM persons)`); err != nil {
-		return fmt.Errorf("copy person commitments: %w", err)
-	}
-	// Preserve the citations that tie copied decisions to retained messages.
-	claims := `person_id IN (SELECT id FROM persons) AND target_kind = 'commitment' AND origin = 'commitment'
-		AND EXISTS (SELECT 1 FROM src.person_fact_claim_evidence ce JOIN src.person_fact_evidence e ON e.id = ce.evidence_id
-		WHERE ce.claim_id = src.person_fact_claims.id AND e.source_ref IN (SELECT 'commitment-message:' || id FROM selected_messages))`
-	for _, record := range []struct{ table, where string }{
-		{"person_fact_generations", `id IN (SELECT generation_id FROM src.person_fact_claims WHERE ` + claims + `)`},
-		{"person_fact_claims", claims},
-		{"person_fact_evidence", `id IN (SELECT ce.evidence_id FROM src.person_fact_claim_evidence ce JOIN person_fact_claims c ON c.id = ce.claim_id JOIN src.person_fact_evidence e ON e.id = ce.evidence_id WHERE e.source_ref IN (SELECT 'commitment-message:' || id FROM selected_messages))`},
-		{"person_fact_claim_evidence", `claim_id IN (SELECT id FROM person_fact_claims) AND evidence_id IN (SELECT id FROM person_fact_evidence)`},
-	} {
-		if _, err := copyByName(ctx, tx, record.table, record.where); err != nil {
-			return fmt.Errorf("copy commitment %s: %w", record.table, err)
 		}
 	}
 	return nil

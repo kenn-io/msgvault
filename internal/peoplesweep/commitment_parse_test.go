@@ -2,6 +2,7 @@ package peoplesweep
 
 import (
 	"encoding/json/jsontext"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,26 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestParseCommitmentsAcceptsLargeValidOutput(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	const quote = "I will send it."
+	source := CommitmentSource{ID: "m1", MessageID: 1, Direction: CommitmentOwedBy, Text: strings.Repeat(quote, 150), EventTime: now}
+	window := CommitmentWindow{PersonID: 2, Sources: []CommitmentSource{source}, Now: now, Timezone: "UTC"}
+	var output strings.Builder
+	output.WriteString(`{"promises":[`)
+	for i := range 150 {
+		if i > 0 {
+			output.WriteByte(',')
+		}
+		fmt.Fprintf(&output, `{"source_id":"m1","direction":"owed_by","quote":%q,"start":%d,"end":%d,"summary":%q,"due_on":null}`, quote, i*len(quote), (i+1)*len(quote), strings.Repeat("a", 200))
+	}
+	output.WriteString(`]}`)
+	require.Greater(t, output.Len(), 32768)
+	parsed, err := ParseCommitments(jsontext.Value(output.String()), window)
+	require.NoError(t, err)
+	require.Len(t, parsed.Promises, 150)
+}
 
 func TestParseCommitmentsBindsEachPromiseToItsExactLocator(t *testing.T) {
 	r, a := require.New(t), assert.New(t)

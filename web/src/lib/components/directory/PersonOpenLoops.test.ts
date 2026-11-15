@@ -68,16 +68,13 @@ describe("PersonOpenLoops", () => {
     expect(url.searchParams.get("limit")).toBe("5");
   });
 
-  it("shows cited promises and their discovery window", async () => {
-    const year = new Date().getFullYear();
+  it("shows fresh and stale cited promises", async () => {
     const fetcher = vi.fn<typeof fetch>(async () => Response.json({
       items: [loop(42), loop(43), loop(44), loop(45), loop(46)],
       truncated: true,
-      commitments_since: "2026-10-01T00:00:00Z",
-      commitments_complete: false,
       commitments: [
-        { id: "c12", person_id: 7, summary: "Send the draft", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: 52, start: 0, end: 22, text: "I will send the draft." }, promised_at: "2026-10-12T12:00:00Z", due_on: `${year}-11-15` },
-        { id: "c13", person_id: 7, summary: "Check the venue", state: "open", direction: "owed_to", freshness: "stale", promise: { message_id: 53, start: 0, end: 23, text: "I will check the venue." }, promised_at: "2026-10-12T12:00:00Z", due_on: `${year + 1}-11-15` },
+        { id: "c12", person_id: 7, summary: "Send the draft", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: 52, start: 0, end: 22, text: "I will send the draft." }, promised_at: "2026-10-12T12:00:00Z" },
+        { id: "c13", person_id: 7, summary: "Check the venue", state: "open", direction: "owed_to", freshness: "stale", promise: { message_id: 53, start: 0, end: 23, text: "I will check the venue." }, promised_at: "2026-10-12T12:00:00Z" },
       ],
     }));
     render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
@@ -85,36 +82,12 @@ describe("PersonOpenLoops", () => {
     expect(cite.getAttribute("href")).toBe("/messages/52");
     expect(screen.getByRole("heading", { name: "Promises you made" })).toBeDefined();
     expect(screen.getByRole("heading", { name: "Stale promises to you" })).toBeDefined();
-    expect(cite.closest("li")!.textContent).toMatch(/Due Nov 15\s*·\s*\d+[mhd]/);
-    const stale = screen.getByRole("link", { name: "I will check the venue." });
-    expect(stale.closest("li")!.textContent).toMatch(new RegExp(`Due Nov 15, ${year + 1}\\s*·\\s*\\d+[mhd]`));
-    expect(screen.getByText(/discovery since.*incomplete/)).toBeDefined();
-    expect(screen.getByText(/Some messages may be too large to check/)).toBeDefined();
+    expect(screen.getByRole("link", { name: "I will check the venue." }).getAttribute("href")).toBe("/messages/53");
+    expect(screen.queryByRole("button", { name: /done|snooze|dismiss/i })).toBeNull();
     expect(screen.getByText("7+ open")).toBeDefined();
     const request = fetcher.mock.calls[0]?.[0];
     const url = new URL(request instanceof Request ? request.url : String(request), "http://localhost");
     expect(url.searchParams.has("include_closed")).toBe(false);
-  });
-
-  it.each([
-    { since: undefined, complete: false, message: /Promise discovery has not started/ },
-    { since: "2026-10-01T00:00:00Z", complete: true, message: /No promises found since/ },
-  ])("reports an empty discovery state", async ({ since, complete, message }) => {
-    const fetcher = vi.fn<typeof fetch>(async () => Response.json({
-      items: [], commitments: [], commitments_since: since, commitments_complete: complete,
-    }));
-    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
-    expect(await screen.findByText(message)).toBeDefined();
-    expect(screen.queryByText("Nothing open with this person.")).toBeNull();
-  });
-
-  it("reports when no messages fall inside the configured window", async () => {
-    const fetcher = vi.fn<typeof fetch>(async () => Response.json({
-      items: [], commitments: [], commitments_since: "2026-10-01T00:00:00Z",
-      commitments_until: "2026-09-30T00:00:00Z", commitments_complete: true,
-    }));
-    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
-    expect(await screen.findByText("No messages were eligible for promise discovery in the current window.")).toBeDefined();
   });
 
   it("says how many messages could not be read, with or without loops", async () => {

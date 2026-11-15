@@ -129,12 +129,7 @@ func (s *Store) setPersonTrackingTx(
 			}
 		}
 		if err == nil && inserted == 1 {
-			_, err = tx.ExecContext(ctx, `UPDATE person_sweep_cursors
-				SET reconcile_upper_key = '', reconcile_after_key = '',
-				    backstop_upper_key = '', backstop_after_key = '',
-				    reconciliation_complete = FALSE, last_backstop_at = NULL,
-				    updated_at = ?
-				WHERE person_id = ?`, time.Now().UTC(), personID)
+			err = resetPersonSweepProgressTx(ctx, tx, personID)
 		}
 		if err == nil && inserted == 1 {
 			var highWater int64
@@ -175,6 +170,21 @@ func (s *Store) setPersonTrackingTx(
 		}
 	}
 	return s.getPersonTrackingTx(ctx, tx, personID)
+}
+
+// resetPersonSweepProgressTx restarts sweep reconciliation and promise
+// discovery for a person who is being tracked again.
+func resetPersonSweepProgressTx(ctx context.Context, tx *loggedTx, personID int64) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE person_sweep_cursors
+		SET reconcile_upper_key = '', reconcile_after_key = '',
+		    backstop_upper_key = '', backstop_after_key = '',
+		    reconciliation_complete = FALSE, last_backstop_at = NULL,
+		    updated_at = ?
+		WHERE person_id = ?`, time.Now().UTC(), personID); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_frontiers WHERE person_id = ?`, personID)
+	return err
 }
 
 func (s *Store) getPersonTrackingTx(

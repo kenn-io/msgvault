@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
@@ -1973,100 +1972,6 @@ func TestCopySubset_AllRows(t *testing.T) {
 	require.NoError(t, err, "CopySubset")
 
 	assert.Equal(t, int64(5), result.Messages, "Messages (all available)")
-}
-
-func TestCopySubsetPreservesCommitmentDecisions(t *testing.T) {
-	r, a, ctx := require.New(t), assert.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "subset-source", false)
-	if f.store.IsPostgreSQL() {
-		t.Skip("subset copies SQLite archives")
-	}
-	_, persist := newCommitmentTestConversation(t, f)
-	ownerMessage := persist("owner", "", -3*time.Hour)
-	_, err := f.store.db.ExecContext(ctx, `UPDATE messages SET sender_id = (SELECT id FROM participants WHERE email_address = 'owner@example.test') WHERE id = ?`, ownerMessage)
-	r.NoError(err)
-	persist("done", "I will send the report.", -2*time.Hour)
-	persist("snoozed", "I will send the draft.", -time.Hour)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
-	applyCommitmentTestSources(t, f, cfg.Commitments)
-	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, 0, false)
-	r.NoError(err)
-	r.Len(items, 2)
-	until := personFactLedgerNow.Add(24 * time.Hour)
-	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, personFactLedgerNow)
-	r.NoError(err)
-	_, err = f.store.DecidePersonCommitmentContext(ctx, items[1].ID, LoopStateSnoozed, &until, personFactLedgerNow)
-	r.NoError(err)
-	for _, item := range items {
-		_, err = f.store.db.ExecContext(ctx, `UPDATE message_bodies SET body_text = ? WHERE message_id = ?`, "Update: "+item.Quote, item.AnchorMessageID)
-		r.NoError(err)
-	}
-	f = nextCommitmentTestAttempt(t, f, "-shifted")
-	cfg.Commitments.MaxBytes++
-	_, profile := commitmentTestConfig()
-	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
-	r.NoError(err)
-	var shifted peoplesweep.ParsedCommitments
-	for _, source := range window.Sources {
-		for _, item := range items {
-			if source.MessageID == item.AnchorMessageID {
-				shifted.Promises = append(shifted.Promises, peoplesweep.CommitmentPromise{SourceID: source.ID, Direction: source.Direction, Quote: item.Quote, Summary: "Keep the promise", Start: 8, End: int64(8 + len(item.Quote))})
-			}
-		}
-	}
-	r.Len(shifted.Promises, 2)
-	_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, shifted))
-	r.NoError(err)
-	var seq int
-	var name, sourcePath string
-	r.NoError(f.store.db.QueryRowContext(ctx, `PRAGMA database_list`).Scan(&seq, &name, &sourcePath))
-	destinationDir := filepath.Join(t.TempDir(), "subset")
-	_, err = CopySubsetWithOptions(ctx, sourcePath, destinationDir, 3, CopySubsetOptions{IncludeIdentity: true, IncludeProfiles: true})
-	r.NoError(err)
-	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
-	r.NoError(err)
-	t.Cleanup(func() { _ = destination.Close() })
-	var doneID, snoozedID int64
-	var doneState, snoozedState string
-	var doneUntil, snoozedUntil sql.NullTime
-	r.NoError(destination.db.QueryRowContext(ctx, `SELECT id, owner_state, snoozed_until FROM person_commitments WHERE id = ?`, items[0].ID).Scan(&doneID, &doneState, &doneUntil))
-	r.NoError(destination.db.QueryRowContext(ctx, `SELECT id, owner_state, snoozed_until FROM person_commitments WHERE id = ?`, items[1].ID).Scan(&snoozedID, &snoozedState, &snoozedUntil))
-	a.Equal(items[0].ID, doneID)
-	a.Equal(LoopStateDone, doneState)
-	a.False(doneUntil.Valid)
-	a.Equal(items[1].ID, snoozedID)
-	a.Equal(LoopStateSnoozed, snoozedState)
-	if a.True(snoozedUntil.Valid) {
-		a.True(snoozedUntil.Time.Equal(until))
-	}
-	for _, item := range items {
-		source, ok, err := destination.currentCommitmentSource(ctx, f.personID, item.AnchorMessageID)
-		r.NoError(err)
-		r.True(ok)
-		promise := peoplesweep.CommitmentPromise{Direction: source.Direction, Quote: item.Quote, Start: 8, End: int64(8 + len(item.Quote)), TargetKey: "new-key"}
-		evidence := commitmentEvidence(f.personID, source, "commitment-promise", item.Quote, promise.Start, promise.End)
-		keys, err := destination.matchCommitmentTarget(ctx, f.personID, source, evidence, promise)
-		r.NoError(err)
-		var target string
-		r.NoError(destination.db.QueryRowContext(ctx, `SELECT target_key FROM person_commitments WHERE id = ?`, item.ID).Scan(&target))
-		a.Equal(map[string]bool{target: true}, keys)
-	}
-}
-
-func TestCopySubsetProfilesBeforeCommitments(t *testing.T) {
-	r, ctx := require.New(t), t.Context()
-	sourcePath := createTestSourceDB(t, t.TempDir(), 5)
-	source, err := Open(sourcePath)
-	r.NoError(err)
-	_, _, err = source.CreatePersonFromParticipant(2)
-	r.NoError(err)
-	_, err = source.db.ExecContext(ctx, `DROP TABLE person_commitments`)
-	r.NoError(err)
-	r.NoError(source.Close())
-	_, err = CopySubsetWithOptions(ctx, sourcePath, filepath.Join(t.TempDir(), "subset"), 5, CopySubsetOptions{IncludeProfiles: true})
-	r.NoError(err)
 }
 
 func TestCopySubset_PreservesPersonProfiles(t *testing.T) {
