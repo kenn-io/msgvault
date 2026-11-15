@@ -113,6 +113,29 @@ func TestMeetingRecordPartialHTTP(t *testing.T) {
 	assert.Contains(response.Body.String(), "invalid meeting reference")
 }
 
+func TestMeetingRecordSeriesRequiresOccurrenceHTTP(t *testing.T) {
+	r := require.New(t)
+	st := testutil.NewTestStore(t)
+	calendar, err := st.GetOrCreateSource("gcal", "calendar@example.com")
+	r.NoError(err)
+	r.NoError(st.UpdateSourceSyncConfig(t.Context(), calendar.ID, `{"calendar_id":"calendar@example.com","time_zone":"UTC"}`))
+	series, err := st.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: calendar.ID, SourceMessageID: "series", MessageType: "calendar_event"},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "series", ConversationType: "calendar"},
+		RawMIME:      []byte(`{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`), RawFormat: "gcal_json",
+	})
+	r.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(srv.agentGrants.Close)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/meetings/record?ref=evt:%d", series), nil)
+	req.Header.Set("Authorization", "Bearer owner")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	r.Equal(http.StatusBadRequest, w.Code, w.Body.String())
+	r.Contains(w.Body.String(), "copy the full occurrence reference from calendar events")
+}
+
 type partialMeetingRecordStore struct {
 	*mockStore
 }
