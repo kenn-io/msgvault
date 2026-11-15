@@ -386,7 +386,15 @@ func (r *messageRun) persist(ctx context.Context, m BusinessMessage, event strin
 	}
 	messageID := prior.ID
 	if !unchanged {
-		messageID, err = r.imp.store.PersistMessageContext(ctx, snapshot)
+		state := store.TikTokMessageState{}
+		if m.Reference != nil || parentKey != "" {
+			state.ReplyTo = &parentKey
+		}
+		if m.media() {
+			pending := pendingMessageAttachment(m)
+			state.PendingMedia = &pending
+		}
+		messageID, err = r.imp.store.PersistTikTokMessageContext(ctx, snapshot, state)
 		if err != nil {
 			return err
 		}
@@ -400,9 +408,8 @@ func (r *messageRun) persist(ctx context.Context, m BusinessMessage, event strin
 		return err
 	}
 	r.conversations[target.ConversationID] = struct{}{}
-	if parentKey != "" {
-		// Metadata and the generic reply link commit separately. An identical
-		// retry must finish an interrupted replacement, including a missing parent.
+	if unchanged && (parentKey != "" || m.Reference != nil) {
+		// Repair legacy interrupted links without rewriting unchanged snapshots.
 		current, err := r.imp.store.GetMessageReplyToMessageIDContext(ctx, messageID)
 		if err != nil {
 			return err
@@ -445,17 +452,22 @@ func tiktokEvidenceEqual(stored, incoming []byte) bool {
 		right.Canonicalize(jsontext.CanonicalizeRawInts(false), jsontext.CanonicalizeRawFloats(false)) == nil && bytes.Equal(left, right)
 }
 
+func pendingMessageAttachment(message BusinessMessage) store.AttachmentWrite {
+	kind := message.Kind()
+	role := store.AttachmentRoleStandalone
+	if kind == "sticker" || kind == "emoji" {
+		role = store.AttachmentRoleSticker
+	}
+	return store.AttachmentWrite{Filename: "tiktok-" + kind + ".bin", MediaType: kind, SourcePartKey: "tiktok:" + kind, Role: role, RoleSource: store.AttachmentRoleSourceProviderExplicit, State: attachmentpolicy.StatePending}
+}
+
 func (r *messageRun) attach(ctx context.Context, messageID int64, message BusinessMessage) error {
 	kind := message.Kind()
 	occurrence := messageMediaOccurrence{messageID: messageID, partKey: "tiktok:" + kind}
 	if _, attempted := r.mediaAttempts[occurrence]; attempted {
 		return nil
 	}
-	role := store.AttachmentRoleStandalone
-	if kind == "sticker" || kind == "emoji" {
-		role = store.AttachmentRoleSticker
-	}
-	write := store.AttachmentWrite{Filename: "tiktok-" + kind + ".bin", MediaType: kind, SourcePartKey: occurrence.partKey, Role: role, RoleSource: store.AttachmentRoleSourceProviderExplicit, State: attachmentpolicy.StatePending}
+	write := pendingMessageAttachment(message)
 	if err := r.imp.store.UpsertAttachmentRecordWithStats(ctx, messageID, write, true); err != nil {
 		return err
 	}

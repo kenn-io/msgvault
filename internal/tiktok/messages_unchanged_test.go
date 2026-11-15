@@ -190,9 +190,9 @@ func TestUnchangedMediaReplayStillRetries(t *testing.T) {
 	assert.Zero(t, invalidations)
 }
 
-// Metadata and the direct reply write can commit separately. Replaying the
-// same event must complete the latter without rewriting the snapshot.
-func TestMessageReplayRepairsInterruptedReplyReplacement(t *testing.T) {
+// A failed reply update rolls back its metadata too. A successful retry and
+// later sparse replays keep the new link without redundant reply writes.
+func TestMessageReplayRollsBackInterruptedReplyReplacement(t *testing.T) {
 	for _, missing := range []bool{false, true} {
 		t.Run(fmt.Sprintf("missing_parent_%t", missing), func(t *testing.T) {
 			st := testutil.NewSQLiteTestStore(t)
@@ -220,7 +220,7 @@ func TestMessageReplayRepairsInterruptedReplyReplacement(t *testing.T) {
 			assert.True(t, sum.Partial)
 			metadata, err := st.GetMessageMetadataContext(t.Context(), childID)
 			require.NoError(t, err)
-			assert.Contains(t, metadata.String, `"referenced_message_id":"parent-b"`)
+			assert.Contains(t, metadata.String, `"referenced_message_id":"parent-a"`)
 			current, err := st.GetMessageReplyToMessageIDContext(t.Context(), childID)
 			require.NoError(t, err)
 			require.Equal(t, sql.NullInt64{Int64: rows[messageKey(message.ConversationID, "parent-a")].ID, Valid: true}, current)
@@ -237,7 +237,7 @@ func TestMessageReplayRepairsInterruptedReplyReplacement(t *testing.T) {
 			apply()
 			var writes int
 			require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM replay_reply_writes`).Scan(&writes))
-			assert.Equal(t, 1, writes, "only the interrupted link needs a write")
+			assert.Equal(t, 1, writes, "only the changed link needs a write")
 		})
 	}
 }
