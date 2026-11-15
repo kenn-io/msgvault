@@ -25,7 +25,7 @@ func (s *cardDAVBindingOptionsStore) ReconcileCardDAVParticipantBindingsContext(
 	return &store.CardDAVParticipantBindingResult{}, nil
 }
 
-func TestCardDAVParticipantBindingHTTPPreviewApplyUndo(t *testing.T) {
+func TestCardDAVParticipantBindingHTTPPreviewApply(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := &cardDAVBindingOptionsStore{stubIdentityCacheStore: &stubIdentityCacheStore{Store: testutil.NewTestStore(t)}}
@@ -40,12 +40,10 @@ func TestCardDAVParticipantBindingHTTPPreviewApplyUndo(t *testing.T) {
 	assert.Zero(st.refreshCalls)
 	call(`{}`)
 	assert.Equal(1, st.refreshCalls)
-	call(`{"dry_run":true,"undo":true}`)
-	assert.Equal(1, st.refreshCalls)
 	st.refreshErr = errors.New("cache unavailable")
-	call(`{"undo":true}`)
+	call(`{}`)
 	assert.Equal(2, st.refreshCalls)
-	assert.Equal([]store.CardDAVParticipantBindingOptions{{DryRun: true}, {}, {DryRun: true, Undo: true}, {Undo: true}}, st.options)
+	assert.Equal([]store.CardDAVParticipantBindingOptions{{DryRun: true}, {}, {}}, st.options)
 	malformed := personRequest(t, srv, http.MethodPost, "/api/v1/carddav/participant-bindings", []byte(`{"dry_run":"yes"}`), "")
 	assert.Equal(http.StatusBadRequest, malformed.Code)
 }

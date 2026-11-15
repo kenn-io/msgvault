@@ -7,10 +7,9 @@ import (
 	"slices"
 )
 
-// CardDAVParticipantBindingOptions selects a snapshot preview or an ownership-only undo.
+// CardDAVParticipantBindingOptions selects a snapshot preview.
 type CardDAVParticipantBindingOptions struct {
 	DryRun bool `json:"dry_run"`
-	Undo   bool `json:"undo"`
 }
 
 // CardDAVParticipantBindingConflict exposes only archive handles, never addresses.
@@ -53,7 +52,7 @@ func (s *Store) ReconcileCardDAVParticipantBindingsContext(ctx context.Context, 
 				return err
 			}
 		}
-		plan, err := s.planCardDAVParticipantBindingsTx(ctx, tx, options.Undo, false)
+		plan, err := s.planCardDAVParticipantBindingsTx(ctx, tx, false)
 		if err != nil {
 			return err
 		}
@@ -70,7 +69,7 @@ func (s *Store) ReconcileCardDAVParticipantBindingsContext(ctx context.Context, 
 
 // Callers hold the identity mutation lock, before any person/resource locks.
 func (s *Store) reconcileCardDAVParticipantBindingsTx(ctx context.Context, tx *loggedTx, cleanupOnly bool) (*CardDAVParticipantBindingResult, error) {
-	plan, err := s.planCardDAVParticipantBindingsTx(ctx, tx, false, cleanupOnly)
+	plan, err := s.planCardDAVParticipantBindingsTx(ctx, tx, cleanupOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +91,7 @@ func (s *Store) cleanupCardDAVParticipantBindingsTx(ctx context.Context, tx *log
 	return err
 }
 
-func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *loggedTx, undo, cleanupOnly bool) (*cardDAVParticipantBindingPlan, error) {
+func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *loggedTx, cleanupOnly bool) (*cardDAVParticipantBindingPlan, error) {
 	plan := &cardDAVParticipantBindingPlan{result: CardDAVParticipantBindingResult{ConflictDetails: []CardDAVParticipantBindingConflict{}}}
 	bindings := map[int64]cardDAVParticipantBinding{}
 	rows, err := tx.QueryContext(ctx, `SELECT person_id, participant_id, carddav_owned FROM person_participants ORDER BY participant_id`)
@@ -106,18 +105,11 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 			return nil, err
 		}
 		bindings[binding.participantID] = binding
-		if undo && binding.owned {
-			plan.remove = append(plan.remove, binding)
-		}
 	}
 	err = rows.Err()
 	_ = rows.Close()
 	if err != nil {
 		return nil, err
-	}
-	if undo {
-		plan.result.ParticipantsUnbound = len(plan.remove)
-		return plan, nil
 	}
 	claims, scanned, err := s.cardDAVParticipantClaimsTx(ctx, tx)
 	if err != nil {

@@ -4,5 +4,4 @@
 
 export interface CardDAVParticipantBindingOptions {
   dry_run: boolean;
-  undo: boolean;
 }

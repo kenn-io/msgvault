@@ -5838,9 +5838,23 @@ func TestCopySubsetPreservesAutomaticCardDAVMembership(t *testing.T) {
 	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
 	require.NoError(err)
 	t.Cleanup(func() { _ = destination.Close() })
-	result, err := destination.ReconcileCardDAVParticipantBindingsContext(t.Context(), CardDAVParticipantBindingOptions{Undo: true})
+	var owned bool
+	require.NoError(destination.DB().QueryRowContext(t.Context(), `SELECT carddav_owned FROM person_participants WHERE participant_id = 1`).Scan(&owned))
+	assert.True(owned)
+	account, books, err = destination.ReplaceCardDAVDiscoveryContext(t.Context(), CardDAVDiscoveryInput{BaseURL: "https://contacts.example.test/dav", Username: "synthetic", PrincipalURL: "https://contacts.example.test/principal/", HomeURL: "https://contacts.example.test/books/", Books: []CardDAVDiscoveredBook{{CanonicalURL: "https://contacts.example.test/books/personal/", DisplayName: "Personal", CanCreate: &allowed}}})
 	require.NoError(err)
-	assert.Equal(1, result.ParticipantsUnbound)
+	require.Len(books, 1)
+	card.RemoteUID = bound.VCardUID
+	card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + bound.VCardUID + "\r\nFN:Alice\r\nEMAIL:alice@example.com\r\nEND:VCARD\r\n")
+	_, err = destination.ApplyCardDAVSyncPlanContext(t.Context(), CardDAVSyncPlan{AddressBookID: books[0].ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: books[0].SyncRevision, Upserts: []CardDAVRemoteResource{card}})
+	require.NoError(err)
+	books, err = destination.ListCardDAVAddressBooksContext(t.Context(), AllCardDAVAccounts)
+	require.NoError(err)
+	card.RemoteETag, card.SemanticHash = "two", "without-address"
+	card.Emails = nil
+	card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + bound.VCardUID + "\r\nFN:Alice\r\nEND:VCARD\r\n")
+	_, err = destination.ApplyCardDAVSyncPlanContext(t.Context(), CardDAVSyncPlan{AddressBookID: books[0].ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: books[0].SyncRevision, Upserts: []CardDAVRemoteResource{card}})
+	require.NoError(err)
 	bound, err = destination.PersonForParticipantsContext(t.Context(), []int64{1})
 	require.NoError(err)
 	assert.Nil(bound)

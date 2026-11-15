@@ -179,7 +179,7 @@ type ClientInterface interface {
 	CompleteGoogleCardDAVAuthorization(ctx context.Context, options *CompleteGoogleCardDAVAuthorizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CompleteGoogleCardDAVAuthorizationResponse, error)
 	CompleteGoogleCardDAVAuthorizationWithResponse(ctx context.Context, options *CompleteGoogleCardDAVAuthorizationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CompleteGoogleCardDAVAuthorizationResp, error)
 
-	// ReconcileCardDAVParticipantBindings Preview, reconcile, or undo automatic CardDAV participant memberships
+	// ReconcileCardDAVParticipantBindings Preview or reconcile automatic CardDAV participant memberships
 	ReconcileCardDAVParticipantBindings(ctx context.Context, options *ReconcileCardDAVParticipantBindingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReconcileCardDAVParticipantBindingsResponse, error)
 	ReconcileCardDAVParticipantBindingsWithResponse(ctx context.Context, options *ReconcileCardDAVParticipantBindingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReconcileCardDAVParticipantBindingsResp, error)
 
@@ -3508,7 +3508,7 @@ func (c *Client) CompleteGoogleCardDAVAuthorization(ctx context.Context, options
 	return responseParser(ctx, resp)
 }
 
-// ReconcileCardDAVParticipantBindings Preview, reconcile, or undo automatic CardDAV participant memberships
+// ReconcileCardDAVParticipantBindings Preview or reconcile automatic CardDAV participant memberships
 func (c *Client) ReconcileCardDAVParticipantBindings(ctx context.Context, options *ReconcileCardDAVParticipantBindingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReconcileCardDAVParticipantBindingsResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

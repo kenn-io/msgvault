@@ -16,7 +16,7 @@ type cardDAVParticipantBindingStore interface {
 func (s *Server) registerCardDAVParticipantBindingRoutes(api huma.API) {
 	registerCardDAVJSONRouteWithRequest[store.CardDAVParticipantBindingOptions, store.CardDAVParticipantBindingResult](api,
 		"reconcileCardDAVParticipantBindings", http.MethodPost, "/carddav/participant-bindings",
-		"Preview, reconcile, or undo automatic CardDAV participant memberships", s.handleCardDAVParticipantBindings,
+		"Preview or reconcile automatic CardDAV participant memberships", s.handleCardDAVParticipantBindings,
 		http.StatusBadRequest, http.StatusInternalServerError, http.StatusServiceUnavailable)
 }
 

@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCardDAVParticipantBindingInvalidatesPreparedEnrichmentOnBindAndUndo(t *testing.T) {
+func TestCardDAVParticipantBindingInvalidatesPreparedEnrichmentOnBindAndRelease(t *testing.T) {
 	require := require.New(t)
 	f := newEnrichmentResultFixture(t)
 	allowed := true
@@ -26,9 +26,10 @@ func TestCardDAVParticipantBindingInvalidatesPreparedEnrichmentOnBindAndUndo(t *
 	require.Error(err)
 	assertEnrichmentInvalidationState(t, f, f.attempt.ID)
 	fresh, attempt := prepareCurrentEnrichmentResult(t, f, "carddav-bound")
-	result, err := f.store.ReconcileCardDAVParticipantBindingsContext(t.Context(), CardDAVParticipantBindingOptions{Undo: true})
+	books, err = f.store.ListCardDAVAddressBooksContext(t.Context(), AllCardDAVAccounts)
 	require.NoError(err)
-	require.Equal(1, result.ParticipantsUnbound)
+	_, err = f.store.ApplyCardDAVSyncPlanContext(t.Context(), CardDAVSyncPlan{AddressBookID: books[0].ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: books[0].SyncRevision, Upserts: []CardDAVRemoteResource{{Href: books[0].CanonicalURL + "automatic.vcf", RemoteUID: f.person.VCardUID, RemoteETag: "two", RemoteBody: []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + f.person.VCardUID + "\r\nFN:Automatic Example\r\nEND:VCARD\r\n"), SemanticHash: "without-address", DisplayName: "Automatic Example"}}})
+	require.NoError(err)
 	_, err = f.store.commitPreparedPersonEnrichmentResult(t.Context(), fresh)
 	require.Error(err)
 	assertEnrichmentInvalidationState(t, f, attempt.ID)

@@ -1983,7 +1983,6 @@ func (c CardDAVParticipantBindingConflict) Validate() error {
 
 type CardDAVParticipantBindingOptions struct {
 	DryRun bool `json:"dry_run"`
-	Undo   bool `json:"undo"`
 }
 
 type CardDAVParticipantBindingResult struct {
