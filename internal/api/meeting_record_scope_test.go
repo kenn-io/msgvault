@@ -144,6 +144,9 @@ func (s *partialMeetingRecordStore) MeetingRecordContext(_ context.Context, ref 
 	if ref.MessageID == 999999 {
 		return store.MeetingRecord{}, sql.ErrNoRows
 	}
+	if ref.MessageID == 9007199254740992 {
+		return store.MeetingRecord{}, nil
+	}
 	return store.MeetingRecord{}, store.ErrMeetingOccurrenceRequired
 }
 
