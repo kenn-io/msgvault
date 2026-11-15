@@ -475,6 +475,50 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 	}
 }
 
+func TestCommitmentRetryBatchKeepsDiscoveryProgress(t *testing.T) {
+	for _, journal := range []bool{false, true} {
+		name := "backfill"
+		if journal {
+			name = "journal"
+		}
+		t.Run(name, func(t *testing.T) {
+			r, ctx := require.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "commitment-retry-progress", false)
+			_, persist := newCommitmentTestConversation(t, f)
+			first := persist("first-large", strings.Repeat("x", 90<<10), -2*time.Hour)
+			second := persist("second-large", strings.Repeat("y", 90<<10), -time.Hour)
+			history := persist("history", "I will call.", -time.Hour)
+			if !journal {
+				_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`DELETE FROM person_sweep_changes WHERE person_id = ?`), f.personID)
+				r.NoError(err)
+			}
+			cfg, profile := commitmentTestConfig()
+			cfg.Commitments.MaxBytes = 20
+			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+			r.NoError(err)
+			r.Len(window.Sources, 1)
+			r.Equal(history, window.Sources[0].MessageID)
+			_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+			r.NoError(err)
+
+			cfg.Commitments.MaxBytes = 100 << 10
+			cfg.Commitments.MaxItems = 1
+			for i, want := range []int64{first, second} {
+				window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+				r.NoError(err)
+				r.Len(window.Sources, 1)
+				r.Equal(want, window.Sources[0].MessageID)
+				f = nextCommitmentTestAttempt(t, f, fmt.Sprintf("-retry-%d", i))
+				_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+				r.NoError(err)
+			}
+			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+			r.NoError(err)
+			r.Len(window.Sources, 0, "completed history must not be sent again")
+		})
+	}
+}
+
 func TestCommitmentDiscoveryRetriesEditedOversizedMessage(t *testing.T) {
 	r, a, ctx := require.New(t), assert.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "commitment-shrink", false)

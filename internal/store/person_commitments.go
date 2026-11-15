@@ -768,12 +768,12 @@ func (s *Store) retryOversizedCommitments(ctx context.Context, window *peopleswe
 			return false, err
 		}
 		if !added {
-			window.ThroughSequence, window.BackfillMessageID = previous, 0
+			window.ThroughSequence = previous
 			return true, nil
 		}
 	}
 	if len(ids) == retryPage {
-		window.ThroughSequence, window.BackfillMessageID = previous, 0
+		window.ThroughSequence = previous
 		return true, nil
 	}
 	return false, nil
