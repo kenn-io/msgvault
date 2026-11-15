@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -261,7 +260,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 			src, id = source, messageID
 		}
 	}
-	note, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: src.ID, SourceMessageID: "meeting-note", MessageType: "meeting_transcript"}, Conversation: &store.ConversationPersistData{SourceConversationID: "meeting-note", ConversationType: "meeting"}})
+	note, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: src.ID, SourceMessageID: "meeting-note", MessageType: "meeting_transcript"}, Conversation: &store.ConversationPersistData{SourceConversationID: "meeting-note", ConversationType: "meeting"}, RawMIME: []byte(`{"summary_text":"Meeting"}`), RawFormat: "granola_json"})
 	requirements.NoError(err)
 	_, err = st.CreateCollection("Selected", "", []int64{src.ID})
 	requirements.NoError(err)
@@ -299,7 +298,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 		"getAttachment":           {fmt.Sprintf("/api/v1/attachments/%d", attachmentID), "permitted.bin"},
 		"getAttachmentContent":    {"/api/v1/attachments/" + hash + "/content", "permitted bytes"},
 		"getCLIAttachment":        {"/api/v1/cli/attachment?content_hash=" + hash, "permitted bytes"},
-		"getMeetingRecord":        {fmt.Sprintf("/api/v1/meetings/record?ref=msg:%d", note), strconv.FormatInt(note, 10)},
+		"getMeetingRecord":        {fmt.Sprintf("/api/v1/meetings/record?ref=msg:%d", note), fmt.Sprintf(`"message_ids":[%d]`, note)},
 		"listCLIAccounts":         {"/api/v1/cli/accounts", src.Identifier},
 		"listCLICollections":      {"/api/v1/cli/collections", `"name":"Selected"`},
 	}

@@ -17,8 +17,8 @@ func TestMeetingRecordFractionalExceptionImportAndListing(t *testing.T) {
 		name, uid, fraction string
 		nanoseconds         int
 	}{
-		{"without own UID", "", "001", 1000000},
-		{"with own UID", `,"iCalUID":"uid@example.org"`, "001", 1000000},
+		{"without own UID", "", "123", 123000000},
+		{"with own UID", `,"iCalUID":"uid@example.org"`, "123", 123000000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -30,7 +30,8 @@ func TestMeetingRecordFractionalExceptionImportAndListing(t *testing.T) {
 			requirements.Equal(tc.nanoseconds, imported.OriginalStartTime.DateTime.Nanosecond())
 			_, edit := calendarFixture(t, st, "edit", string(imported.Raw), "owner@example.com")
 			_, exactID := projectionFixture(t, st, "exact-id", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"edit"}}`)
-			_, exactTime := projectionFixture(t, st, "exact-time", "twenty_json", fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00.%sZ"}}`, tc.fraction))
+			_, exactTime := projectionFixture(t, st, "exact-time", "twenty_json", fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T06:00:00.%s-04:00"}}`, tc.fraction))
+			_, otherTime := projectionFixture(t, st, "other-time", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00.124Z"}}`)
 			_, wholeSecond := projectionFixture(t, st, "whole-second", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"series_20270314T100000Z"}}`)
 			t.Run("exact link", func(t *testing.T) {
 				require := require.New(t)
@@ -42,7 +43,11 @@ func TestMeetingRecordFractionalExceptionImportAndListing(t *testing.T) {
 					require.Equal([]int64{exactID, exactTime}, record.MessageIDs)
 					require.NotContains(record.MessageIDs, wholeSecond)
 				}
-				record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: wholeSecond})
+				record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: otherTime})
+				require.NoError(err)
+				require.Empty(record.Links)
+				require.Equal([]int64{otherTime}, record.MessageIDs)
+				record, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: wholeSecond})
 				require.NoError(err)
 				for _, link := range record.Links {
 					require.NotEqual(edit, link.MessageID)

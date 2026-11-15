@@ -1,13 +1,12 @@
 package store
 
 import (
-	"bytes"
 	"fmt"
-	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,20 +14,30 @@ import (
 func TestCalendarListingUsesProjectedEvents(t *testing.T) {
 	require := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
+	if st.IsPostgreSQL() {
+		t.Skip("SQLite authorizer detects raw event reads")
+	}
 	_, event := calendarFixture(t, st, "event", calendarRaw)
-	ConfigureSQLLogging(SQLLogOptions{FullTrace: true, MaxStmtChars: 10000})
-	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
-	var logs bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(previous) })
+	st.DB().SetMaxOpenConns(1)
+	conn, err := st.DB().Conn(t.Context())
+	require.NoError(err)
+	require.NoError(conn.Raw(func(driverConn any) error {
+		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+		require.True(ok)
+		sqliteConn.RegisterAuthorizer(func(action int, table, _, _ string) int {
+			if action == sqlite3.SQLITE_READ && table == "message_raw" {
+				return sqlite3.SQLITE_DENY
+			}
+			return sqlite3.SQLITE_OK
+		})
+		return nil
+	}))
+	require.NoError(conn.Close())
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 	require.NoError(err)
 	require.Len(page.Occurrences, 1)
 	require.Equal(event, page.Occurrences[0].MessageID)
-	require.Contains(logs.String(), "calendar_events")
-	require.NotContains(logs.String(), "message_raw")
 }
 
 func calendarWindow(t *testing.T, st *Store, from, to string) ([]CalendarEventRow, error) {

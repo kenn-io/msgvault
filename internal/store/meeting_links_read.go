@@ -281,7 +281,7 @@ func (s *Store) meetingNoteKeys(ctx context.Context, keys []string, budget *int)
 	scope, extra := sourceScopeClause(ctx, "m.source_id")
 	args = append(args, extra...)
 	args = append(args, *budget+1)
-	rows, err := s.db.QueryContext(ctx, `SELECT k.link_key, m.id, k.projection_version FROM meeting_details k JOIN messages m ON m.id = k.message_id WHERE k.link_key IN (`+placeholders(len(keys))+`) AND m.message_type = 'meeting_transcript' AND m.deleted_at IS NULL`+scope+` ORDER BY m.id LIMIT ?`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT k.link_key, m.id FROM meeting_details k JOIN messages m ON m.id = k.message_id WHERE k.link_key IN (`+placeholders(len(keys))+`) AND m.message_type = 'meeting_transcript' AND m.deleted_at IS NULL`+scope+` ORDER BY m.id LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -289,12 +289,8 @@ func (s *Store) meetingNoteKeys(ctx context.Context, keys []string, budget *int)
 	for rows.Next() {
 		var key string
 		var id int64
-		var version int
-		if err := rows.Scan(&key, &id, &version); err != nil {
+		if err := rows.Scan(&key, &id); err != nil {
 			return nil, err
-		}
-		if version > meetingProjectionVersion {
-			return nil, newMeetingSelectionError(ErrMeetingProjectionUnavailable, []int64{id})
 		}
 		out[key] = append(out[key], id)
 		*budget--
@@ -320,14 +316,10 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 	var seed CalendarOccurrence
 	if ref.Kind == "msg" {
 		var raw sql.NullString
-		var version sql.NullInt64
 		scope, args := sourceScopeClause(ctx, "m.source_id")
-		err = s.db.QueryRowContext(ctx, `SELECT k.link_key, k.projection_version FROM messages m LEFT JOIN meeting_details k ON k.message_id=m.id WHERE m.id=? AND m.message_type='meeting_transcript' AND m.deleted_at IS NULL`+scope, append([]any{ref.MessageID}, args...)...).Scan(&raw, &version)
+		err = s.db.QueryRowContext(ctx, `SELECT k.link_key FROM messages m LEFT JOIN meeting_details k ON k.message_id=m.id WHERE m.id=? AND m.message_type='meeting_transcript' AND m.deleted_at IS NULL`+scope, append([]any{ref.MessageID}, args...)...).Scan(&raw)
 		if err != nil {
 			return record, err
-		}
-		if version.Valid && version.Int64 > meetingProjectionVersion {
-			return record, newMeetingSelectionError(ErrMeetingProjectionUnavailable, []int64{ref.MessageID})
 		}
 		record.MessageIDs = append(record.MessageIDs, ref.MessageID)
 		if raw.Valid {

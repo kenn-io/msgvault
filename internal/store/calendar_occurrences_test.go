@@ -612,6 +612,33 @@ func TestListCalendarOccurrencesCancelledSinglesWithoutBounds(t *testing.T) {
 	page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 	requirements.NoError(err)
 	assertions.Equal([]CalendarUnexpandable{{MessageID: unknown, Reason: "missing event bounds"}}, page.Unexpandable)
+	for _, tc := range []struct{ name, bound, recurrence string }{
+		{"start timed", `"start":{"dateTime":"2027-03-14T10:00:00Z"}`, ""},
+		{"end timed", `"end":{"dateTime":"2027-03-14T11:00:00Z"}`, ""},
+		{"start all-day", `"start":{"date":"2027-03-14"}`, ""},
+		{"end all-day", `"end":{"date":"2027-03-15"}`, ""},
+		{"supported-start", `"start":{"dateTime":"2027-03-15T10:00:00Z"}`, "RRULE:FREQ=WEEKLY;COUNT=2"},
+		{"supported-end", `"end":{"dateTime":"2027-03-15T11:00:00Z"}`, "RRULE:FREQ=WEEKLY;COUNT=2"},
+		{"unsupported-start", `"start":{"dateTime":"2027-03-15T10:00:00Z"}`, "RRULE:FREQ=YEARLY;BYWEEKNO=20"},
+		{"unsupported-end", `"end":{"dateTime":"2027-03-15T11:00:00Z"}`, "RRULE:FREQ=YEARLY;BYWEEKNO=20"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			extra := ""
+			if tc.recurrence != "" {
+				calendarFixture(t, st, "master", fmt.Sprintf(`{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":[%q]}`, tc.recurrence))
+				extra = `,"recurringEventId":"series"`
+			}
+			_, event := calendarFixture(t, st, "partial", fmt.Sprintf(`{"id":"partial","status":"cancelled",%s%s}`, tc.bound, extra))
+			window := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), window, window.AddDate(0, 0, 2))
+			require.NoError(err)
+			for _, occurrence := range page.Occurrences {
+				assert.NotEqual(event, occurrence.MessageID)
+			}
+		})
+	}
 }
 
 func TestListCalendarOccurrencesExceptionMessageIDZero(t *testing.T) {
