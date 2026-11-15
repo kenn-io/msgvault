@@ -5019,7 +5019,7 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 				return err
 			}
 			if conflict {
-				return fmt.Errorf("preserve absorbed participant email: identifier belongs to another participant: %w", ErrPersonBindingConflict)
+				return fmt.Errorf("preserve absorbed participant email: %w", ErrParticipantAddressConflict)
 			}
 			// Preserve the absorbed primary email as an unscoped identifier. A
 			// survivor with its own primary address cannot store this value in
