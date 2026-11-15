@@ -150,7 +150,6 @@ func splitHTML(r *Result, body string) {
 	}
 	var stack []context
 	priorText := ""
-	sticky := false
 	lastContent := -1
 	for i, p := range parts {
 		if p.typ == html.StartTagToken || p.typ == html.SelfClosingTagToken || (p.typ == html.TextToken && strings.TrimSpace(p.token.Data) != "") {
@@ -167,11 +166,9 @@ func splitHTML(r *Result, body string) {
 			id := htmlAttr(p.token, "id")
 			if p.token.Data == "div" && (id == "divrplyfwdmsg" || id == "appendonsend") && htmlHeaderFollows(parts, i, min(len(parts), i+100)) {
 				basis = "outlook_header"
-				sticky = true
 			}
 			if p.token.Data == "hr" && htmlHeaderFollows(parts, i+1, min(len(parts), i+100)) {
 				basis = "outlook_header"
-				sticky = true
 			}
 			if basis == "" && bareHTMLQuote(parts, i, priorText, lastContent) {
 				basis = "trailing_blockquote"
@@ -179,8 +176,13 @@ func splitHTML(r *Result, body string) {
 			}
 			if basis != "" {
 				until := p.close
-				if until < 0 {
+				if until < 0 || basis == "outlook_header" {
 					until = len(parts)
+				}
+				// Outlook headers quote following siblings, but only within
+				// the enclosing quote when one exists.
+				if basis == "outlook_header" && len(stack) > 0 {
+					until = stack[len(stack)-1].until
 				}
 				depth := 1
 				kind := Quoted
@@ -205,8 +207,6 @@ func splitHTML(r *Result, body string) {
 			s = segment(c.kind, p.start, p.end, c.basis, c.depth)
 			s.Confidence = c.confidence
 			s.Claimed = c.claimed
-		} else if sticky {
-			s = segment(Quoted, p.start, p.end, "outlook_header", 1)
 		}
 		addSegment(r, s)
 		if p.typ == html.TextToken {

@@ -27,6 +27,16 @@ func TestBuildPacketProjection(t *testing.T) {
 }
 
 func TestBuildPacketHTMLAndBounds(t *testing.T) {
+	for _, tc := range []struct{ name, body, excerpt string }{
+		{"nested outlook", `<div class="gmail_quote"><div id="divRplyFwdMsg">From: Sender<br>Sent: Tuesday</div><p>Old note</p></div><p>Current note</p>`, "Current note"},
+		{"flat outlook", `<p>Current note</p><div id="divRplyFwdMsg">From: Sender<br>Sent: Tuesday</div><p>Old note</p>`, "Current note"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			packet, ok := BuildPacket(Input{BodyHTML: tc.body})
+			require.True(t, ok)
+			assert.Equal(t, tc.excerpt, packet.Excerpt)
+		})
+	}
 	packet, ok := BuildPacket(Input{Subject: "Your receipt", BodyHTML: `<div>Paid <b>12</b> EUR.<script>script private</script><style>style private</style><div class="gmail_quote">quoted private</div></div>`})
 	require.True(t, ok)
 	assert.Equal(t, "Paid 12 EUR.", packet.Excerpt)
