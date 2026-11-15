@@ -210,7 +210,7 @@ func TestPendingMediaRejectsIneligibleArchiveEvidence(t *testing.T) {
 		{"raw identity", `UPDATE message_raw SET raw_data = ?, compression = ''`, []any{[]byte(`{"message_id":"other-message","type":"image"}`)}},
 		{"raw format", `UPDATE message_raw SET raw_format = 'other-json'`, nil},
 		{"raw compression", `UPDATE message_raw SET compression = 'other'`, nil},
-		{"raw size", `UPDATE message_raw SET raw_data = ?, compression = ''`, []any{[]byte(strings.Repeat("x", (1<<20)+1))}},
+		{"raw size", `UPDATE message_raw SET raw_data = ?, compression = ''`, []any{[]byte(`{"message_id":"media-000","conversation_id":"conversation-example","timestamp":1700000000001,"type":"image","image":{"media_id":"image-000"},"padding":"` + strings.Repeat("x", (1<<20)+1) + `"}`)}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
