@@ -112,8 +112,8 @@ func TestMeetingLinkProjectionRefreshesEvidence(t *testing.T) {
 	data.RawMIME = []byte(`{"owner":{"email":"other@example.com"},"calendar_event":{"calendar_event_id":"event-b","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
 	_, err = st.PersistMessage(data)
 	require.NoError(err)
-	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_details WHERE message_id = ? AND link_key IS NOT NULL`, id).Scan(&count))
-	assert.Equal(1, count)
+	require.NoError(st.db.QueryRow(`SELECT link_key FROM meeting_details WHERE message_id = ?`, id).Scan(&key))
+	assert.Equal(`["google_event_id","other@example.com","event-b",""]`, key)
 }
 
 func TestMeetingProjectionDirectWritesAndCascade(t *testing.T) {

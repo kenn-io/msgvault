@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
-	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
@@ -115,27 +114,10 @@ func TestMeetingRecordPartialHTTP(t *testing.T) {
 			assert.Contains(response.Body.String(), "use msg:<id> for notes or copy REF from calendar events")
 		}
 	}
-}
-
-func TestParseMeetingLinkRef(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	for _, tc := range []struct {
-		input string
-		want  store.MeetingLinkRef
-	}{
-		{"msg:5", store.MeetingLinkRef{Kind: "msg", MessageID: 5}},
-		{"evt:9@20270314", store.MeetingLinkRef{Kind: "evt", MessageID: 9, Identity: calrecur.Identity{Date: "2027-03-14", AllDay: true}}},
-		{"evt:10@20270314T100000Z", store.MeetingLinkRef{Kind: "evt", MessageID: 10, Identity: calrecur.Identity{Instant: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)}}},
-	} {
-		ref, err := parseMeetingLinkRef(tc.input)
-		require.NoError(err)
-		assert.Equal(tc.want, ref)
-	}
-	for _, input := range []string{"msg:5@20270314", "evt:9@", "evt:9@20270230", "evt:0", "other:5"} {
-		_, err := parseMeetingLinkRef(input)
-		require.Error(err, input)
-	}
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/record?ref=msg:9007199254740992", nil)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	assert.Equal(http.StatusBadRequest, response.Code, response.Body.String())
 }
 
 func TestMeetingRecordMessageReadSourceScope(t *testing.T) {
