@@ -123,6 +123,7 @@ var (
 	commitmentDateLayouts     = []string{time.DateOnly, "January 2, 2006", "Jan 2, 2006", "2 January 2006", "2 Jan 2006"}
 	commitmentYearlessLayouts = []string{"January 2", "Jan 2", "2 January", "2 Jan"}
 	commitmentYearFollows     = regexp.MustCompile(`^[,\s]*\d{4}\b`)
+	commitmentWeekdayDeadline = regexp.MustCompile(`\bby\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:of\s+)?(this|next)\s+week)?\b`)
 )
 
 // commitmentQuoteHasDate reports whether the quote itself states due, either
@@ -179,10 +180,26 @@ func quoteHasYearlessDate(quote string, due, day time.Time) bool {
 }
 
 func quoteHasByWeekday(quote string, due, day time.Time) bool {
-	days := (int(due.Weekday()) - int(day.Weekday()) + 7) % 7
-	phrase := "by " + strings.ToLower(due.Weekday().String())
-	return day.AddDate(0, 0, days).Format(time.DateOnly) == due.Format(time.DateOnly) &&
-		quoteHasPhrase(quote, phrase, nil)
+	for _, match := range commitmentWeekdayDeadline.FindAllStringSubmatch(quote, -1) {
+		var weekday time.Weekday
+		for candidate := time.Sunday; candidate <= time.Saturday; candidate++ {
+			if match[1] == strings.ToLower(candidate.String()) {
+				weekday = candidate
+				break
+			}
+		}
+		days := (int(weekday) - int(day.Weekday()) + 7) % 7
+		switch match[2] {
+		case "this":
+			days = int(weekday) - int(day.Weekday())
+		case "next":
+			days += 7
+		}
+		if day.AddDate(0, 0, days).Format(time.DateOnly) == due.Format(time.DateOnly) {
+			return true
+		}
+	}
+	return false
 }
 
 // MatchesQuote verifies an exact authored quote at its original-body rune offsets.

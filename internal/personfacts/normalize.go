@@ -161,9 +161,6 @@ func normalizeCommitmentValue(submitted jsontext.Value) ([]byte, error) {
 		return nil, fmt.Errorf("decode commitment: %w", err)
 	}
 	value.Summary = strings.TrimSpace(value.Summary)
-	if value.Summary == "" || utf8.RuneCountInString(value.Summary) > 240 {
-		return nil, errors.New("commitment summary must contain 1 to 240 characters")
-	}
 	return json.Marshal(value, json.Deterministic(true))
 }
 

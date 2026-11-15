@@ -138,3 +138,55 @@ func TestCommitmentScopeChangesRevisitJournaledHistory(t *testing.T) {
 		}
 	})
 }
+
+func TestCommitmentDiscoveryStatusSurvivesIdentityAndUntracking(t *testing.T) {
+	for _, change := range []string{"identity", "untracking"} {
+		t.Run(change, func(t *testing.T) {
+			r, a, ctx := require.New(t), assert.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "status-"+change, false)
+			sourceID, persist := newCommitmentTestConversation(t, f)
+			const quote = "I will send the draft."
+			persist("promise", quote, -time.Hour)
+			cfg, profile := commitmentTestConfig()
+			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+			r.NoError(err)
+			r.Len(window.Sources, 1)
+			parsed := peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{{
+				SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo,
+				Quote: quote, End: int64(len(quote)), Summary: "Send the draft",
+			}}}
+			request := commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
+			_, err = f.store.ApplyPersonSweep(ctx, request)
+			r.NoError(err)
+			items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
+			r.NoError(err)
+			r.Len(items, 1)
+			savedSince, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+			r.NoError(err)
+			r.NotNil(savedSince)
+			r.True(complete)
+
+			if change == "identity" {
+				err = f.store.AddAccountIdentity(sourceID, "alternate-owner@example.test", "manual")
+			} else {
+				_, err = f.store.SetPersonTrackingContext(ctx, f.personID, false)
+			}
+			r.NoError(err)
+			since, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+			r.NoError(err)
+			r.NotNil(since)
+			a.Equal(*savedSince, *since)
+			if change == "identity" {
+				r.False(complete)
+				due, err := f.store.PersonCommitmentsDue(ctx, f.personID, personFactLedgerNow.Add(time.Minute), cfg.Commitments.MinInterval, cfg.Commitments.Window, window.ScopeFingerprint, cfg.Commitments.MaxBytes)
+				r.NoError(err)
+				r.True(due)
+			} else {
+				r.True(complete)
+			}
+			items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
+			r.NoError(err)
+			r.Len(items, 1)
+		})
+	}
+}

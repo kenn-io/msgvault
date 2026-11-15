@@ -76,8 +76,12 @@ func (s *Store) bumpAccountIdentityRevisionContext(ctx context.Context, tx *logg
 		accountIdentityRevisionKey); err != nil {
 		return fmt.Errorf("bump account identity revision: %w", err)
 	}
-	// A changed identity can make unseen chats direct, so discovery restarts.
-	_, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_frontiers`)
+	// A changed identity can make unseen chats direct. Reset scan progress while
+	// preserving each saved window for the commitment discovery status. The
+	// epoch makes the reset due immediately.
+	_, err := tx.ExecContext(ctx, `UPDATE person_commitment_frontiers
+		SET through_sequence = 0, processed_at = ?, observed_sequence = NULL,
+			backfill_message_id = 0`, s.dialect.TimestampParam(time.Unix(0, 0).UTC()))
 	return err
 }
 

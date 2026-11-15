@@ -25014,7 +25014,7 @@ paths:
           name: include_closed
           schema:
             type: boolean
-        - description: Maximum loops to return
+        - description: Maximum loops and commitments to return per collection
           in: query
           name: limit
           schema:
