@@ -170,8 +170,7 @@ func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) 
 	require.NoError(err)
 	assert.Equal("page_id", hydrated.Discovery.Parent.Type)
 	assert.Equal("page-1", hydrated.Discovery.Parent.PageID)
-	assert.Equal(1, source.markdownCalls)
-	assert.Equal("page-1", source.markdownID)
+	assert.Zero(source.markdownCalls)
 	assert.False(hydrated.AttendeeResolutionDegraded)
 	assert.Equal("Decide the release scope.", hydrated.Summary)
 	assert.Contains(hydrated.Notes, "Nested action item.")
@@ -191,7 +190,7 @@ func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) 
 	assert.Contains(snapshot.Body, "Transcript:\nTest Speaker: Ready to ship.")
 	assert.Equal(RawFormat, snapshot.RawFormat)
 	assert.Contains(string(snapshot.Raw), `"discovery"`)
-	assert.Contains(string(snapshot.Raw), `"page_markdown":{"object":"page_markdown","id":"page-1"`)
+	assert.Contains(string(snapshot.Raw), `"page_markdown":null`)
 	assert.Contains(string(snapshot.Raw), `"attendee_labels":["Test Attendee","Unresolved Attendee"]`)
 	assert.NotContains(string(snapshot.Raw), "unverified@example.com")
 	assert.NotContains(string(snapshot.Raw), "user@example.com", "configured identity must not enter provider evidence")
@@ -370,30 +369,13 @@ func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 	})
 }
 
-func TestHydratorComparesPageMarkdown(t *testing.T) {
-	for _, tc := range []struct {
-		name, markdown     string
-		differs, truncated bool
-	}{
-		{"same words", "# Transcript\nTest Speaker: Ready   to ship.", false, false},
-		{"different", "# Transcript\nAnother transcript", true, false},
-		{"incomplete different", "# Transcript\nPartial conflicting transcript", false, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			source := completeHydrationSource()
-			source.markdown.Markdown = tc.markdown
-			source.markdown.Truncated = tc.truncated
-			result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-			require.NoError(t, err)
-			assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
-			if tc.differs {
-				assert.Contains(result.Warnings, "structured transcript and page Markdown transcript differed")
-			} else {
-				assert.NotContains(result.Warnings, "structured transcript and page Markdown transcript differed")
-			}
-		})
-	}
+func TestHydratorSkipsMarkdownForStructuredTranscript(t *testing.T) {
+	source := completeHydrationSource()
+	source.markdownErr = &APIError{Kind: ErrProvider, Status: 503}
+	result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
+	require.NoError(t, err)
+	assert.Equal(t, "Test Speaker: Ready to ship.", result.Transcript)
+	assert.Zero(t, source.markdownCalls)
 }
 
 func TestHydratorDegradesWhenUserInformationIsUnavailable(t *testing.T) {
@@ -649,12 +631,14 @@ func TestHydratorPaginationFailureDiscardsPartialSection(t *testing.T) {
 	}
 }
 
-func TestHydratorSurfacesMarkdownFailures(t *testing.T) {
+func TestHydratorRetriesTemporaryMarkdownFailures(t *testing.T) {
 	source := completeHydrationSource()
+	empty := paragraph("transcript-1", "", false)
+	source.blocks["transcript-1"] = &empty
 	source.markdownErr = &APIError{Kind: ErrRateLimited, Status: 503, Code: "service_unavailable"}
 	meeting, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-	require.ErrorIs(t, err, source.markdownErr)
-	assert.Nil(t, meeting)
+	require.NoError(t, err)
+	assert.Contains(t, meeting.Incomplete, "transcript")
 }
 
 func TestHydratorSkipsNestedMeetingAndReadsSibling(t *testing.T) {

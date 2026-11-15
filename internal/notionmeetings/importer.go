@@ -416,8 +416,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			if section.name == sectionTranscript && hydrated.MarkdownTranscriptFallback {
 				incomplete = false
 			}
-			omittedTranscript := section.name == sectionTranscript && hydrated.TranscriptTree.Root == nil && hydrated.PageMarkdown == nil
-			if !incomplete && !omittedTranscript {
+			if !incomplete {
 				continue
 			}
 			oldText := section.oldText
@@ -580,6 +579,11 @@ func (imp *Importer) retrieveMeeting(ctx context.Context, id string) (MeetingNot
 		return MeetingNote{}, errors.New("retrieved block has unexpected ID or type")
 	}
 	return meeting, nil
+}
+
+// TemporarySectionError reports whether a section read can be retried later.
+func TemporarySectionError(ctx context.Context, err error) bool {
+	return ctx.Err() == nil && sectionTemporarilyUnavailable(err)
 }
 
 type archivedMeetingState struct {

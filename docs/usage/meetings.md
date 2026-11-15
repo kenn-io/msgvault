@@ -873,9 +873,9 @@ It still cannot discover history beyond the visible window.
 - Due transcript retries run in addition to that limit.
 
 Meetings under data sources import their summary, notes, and transcript from
-their referenced section blocks. For meetings under pages, msgvault also reads
-the parent page's Markdown. When the structured transcript is empty or its
-section can't be read, msgvault uses a complete Markdown transcript section.
+their referenced section blocks. When a page meeting's structured transcript is
+empty or its section can't be read, msgvault reads the parent page's Markdown
+and uses a complete transcript section.
 
 Provider or network errors, incomplete pagination, and request, response-size,
 block-count, and nesting limits can leave sections incomplete. msgvault keeps
@@ -884,16 +884,14 @@ even after a meeting leaves the query window. The first retry window ends seven
 days after the meeting ended, or 48 hours after the first retry if the end time
 is unknown. Incomplete section blocks start another 48-hour window at expiry.
 
-If incomplete page Markdown has no transcript marker, msgvault keeps the saved
-page transcript. When that is the only incomplete content, or a transcript is
-missing without an incomplete section, background retries stop at the deadline.
-Later syncs still refresh visible meetings. The sync summary reports partial
-coverage when a section is incomplete or the Notion query reports more meetings.
+If page Markdown is incomplete, msgvault keeps the saved transcript and retries.
+When a transcript is missing without an incomplete section, background retries
+stop at the deadline. The sync summary reports partial coverage when a section
+is incomplete or the Notion query reports more meetings.
 
 When a transcript read is incomplete and no complete page transcript is available,
-sync retains the saved transcript and reports that it did so. A complete empty
-transcript clears saved text. An omitted transcript keeps saved text when no page
-Markdown is available. Omitted summary and notes blocks clear their sections. A
+sync retains the saved transcript. A complete empty or omitted transcript clears
+saved text when no page Markdown supplies it. Omitted summary and notes blocks clear their sections. A
 meeting whose saved evidence has a newer version keeps that evidence, and the sync
 reports an error for it.
 Existing `[[notion_meetings]]` settings need no changes. Other hard

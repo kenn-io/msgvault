@@ -40,9 +40,9 @@ type blockTree struct {
 
 type HydratedMeeting struct {
 	// With a users token, archived emails are recovered only for failed lookups.
-	failedAttendeeIDs map[string]bool
-	keptRawTrees      map[string]jsontext.Value
-	keptMarkdown      jsontext.Value
+	failedAttendeeIDs          map[string]bool
+	keptRawTrees               map[string]jsontext.Value
+	keptMarkdown               jsontext.Value
 	Discovery                  MeetingNote
 	MeetingBlock               *Block
 	SummaryTree                blockTree
@@ -170,42 +170,37 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 
 func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeeting) error {
 	pageID := strings.TrimSpace(result.Discovery.Parent.PageID)
-	if pageID == "" {
+	if pageID == "" || strings.TrimSpace(result.Transcript) != "" {
 		return nil
 	}
-	if err := h.reserveRequest(); err != nil {
-		if len(result.Incomplete) > 0 {
-			if result.Transcript == "" {
-				result.markIncomplete(sectionTranscript, "limit: request or byte limit")
-			}
-			return nil
-		}
+	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if err := h.reserveRequest(); err != nil {
+		result.markIncomplete(sectionTranscript, "limit: request or byte limit")
+		return nil
 	}
 	page, err := h.source.RetrievePageMarkdown(ctx, pageID, true)
 	if err != nil {
+		if ctx.Err() == nil && (transcriptTemporarilyUnavailable(err) || errors.Is(err, ErrMalformedResponse) || errors.Is(err, ErrResponseTooLarge)) {
+			result.markIncomplete(sectionTranscript, "markdown")
+			return nil
+		}
 		return fmt.Errorf("retrieve Notion page Markdown: %w", err)
 	}
 	if err := h.reserveBytes(page.Raw); err != nil {
-		if len(result.Incomplete) > 0 {
-			if result.Transcript == "" {
-				result.markIncomplete(sectionTranscript, "limit: byte limit")
-			}
-			return nil
-		}
-		return err
+		result.markIncomplete(sectionTranscript, "limit: byte limit")
+		return nil
 	}
 	result.PageMarkdown = page
 	markdown, _ := extractMarkdownTranscript(page.Markdown)
 	complete := !page.Truncated && len(page.UnknownBlockIDs) == 0
-	if result.Transcript == "" && !complete {
+	if !complete {
 		result.markIncomplete(sectionTranscript, "markdown")
-	} else if result.Transcript == "" && markdown != "" && complete {
+	} else if markdown != "" {
 		result.Transcript = markdown
 		result.MarkdownTranscriptFallback = true
 		result.Warnings = append(result.Warnings, "structured transcript was empty; used page Markdown transcript")
-	} else if result.Transcript != "" && markdown != "" && complete && normalizedContent(result.Transcript) != normalizedContent(markdown) {
-		result.Warnings = append(result.Warnings, "structured transcript and page Markdown transcript differed")
 	}
 	return nil
 }
@@ -580,10 +575,6 @@ func transcriptMarker(value string) (string, bool) {
 		return "", false
 	}
 	return inline, true
-}
-
-func normalizedContent(value string) string {
-	return strings.Join(strings.Fields(value), " ")
 }
 
 func parseNotionTime(value string) time.Time {

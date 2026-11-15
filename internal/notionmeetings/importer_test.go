@@ -339,6 +339,8 @@ func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
 			if failure != "archive" {
 				source.blockErrs = map[string]error{"summary-1": limited}
 				if failure == "markdown" {
+					empty := paragraph("transcript-1", "", false)
+					source.blocks["transcript-1"] = &empty
 					source.markdownErr = errors.New("markdown unavailable")
 				}
 				if failure == "checkpoint" || failure == "completion and failure" {
@@ -454,6 +456,10 @@ func TestImporterDetectsHydratedSnapshotChangesWithoutDiscoveryEdit(t *testing.T
 			assert := assert.New(t)
 			require := require.New(t)
 			st, source, imp := newImporterFixture(t)
+			if tt.name == "page Markdown" {
+				empty := paragraph("transcript-1", "", false)
+				source.blocks["transcript-1"] = &empty
+			}
 
 			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 			require.NoError(err)
@@ -1411,7 +1417,7 @@ func TestDecodeArchivedEvidenceVersionProbe(t *testing.T) {
 		name, input string
 		newer       bool
 	}{
-		{"future incompatible", `{"schema_version":3,"summary":[]}`, true},
+		{"future incompatible", `{"schema_version":2,"summary":[]}`, true},
 		{"missing", `{}`, false}, {"truncated", `{"schema_version":3`, false},
 		{"old incompatible", `{"schema_version":1,"summary":[]}`, false},
 	} {
@@ -1443,10 +1449,9 @@ func TestImporterRetriesIncompletePastDeadlineOutsideWindow(t *testing.T) {
 		source.children[parent] = map[string]*BlockPage{"": {Results: []Block{child}, Raw: json.RawMessage(`{"results":[` + string(child.Raw) + `],"has_more":false}`)}}
 		parent = child.ID
 	}
-	var progress []string
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Progress: func(s string) { progress = append(progress, s) }})
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(err)
-	assert.Contains(strings.Join(progress, "\n"), "depth limit")
+	assert.True(first.PartialCoverage)
 	source.children["notes-1"] = map[string]*BlockPage{"": {Raw: json.RawMessage(`{"results":[],"has_more":false}`)}}
 	require.Len(lastNotionState(t, st, first.SourceID).Pending, 1)
 	source.query.Results = nil
@@ -1549,15 +1554,15 @@ func TestImporterHandlesIncompleteMarkdownWithDifferentTranscriptSources(t *test
 
 func TestImporterHandlesOmittedSections(t *testing.T) {
 	for _, tc := range []struct {
-		name                                                    string
-		dataSource, omitSections, retainedTranscript, emptyPage bool
-		want, absent                                            string
-		pending                                                 int
+		name                                string
+		dataSource, omitSections, emptyPage bool
+		want, absent                        string
+		pending                             int
 	}{
-		{"omitted transcript", false, false, false, false, "Updated page text", "Test Speaker: Ready to ship.", 0},
-		{"omitted transcript with empty page", false, false, false, true, "Decide the release scope.", "Test Speaker: Ready to ship.", 1},
-		{"omitted data source", true, false, true, false, "Test Speaker: Ready to ship.", "Updated page text", 1},
-		{"omitted summary and notes", false, true, false, false, "Test Speaker: Ready to ship.", "Decide the release scope", 0},
+		{"omitted transcript", false, false, false, "Updated page text", "Test Speaker: Ready to ship.", 0},
+		{"omitted transcript with empty page", false, false, true, "Decide the release scope.", "Test Speaker: Ready to ship.", 1},
+		{"omitted data source", true, false, false, "Decide the release scope.", "Test Speaker: Ready to ship.", 1},
+		{"omitted summary and notes", false, true, false, "Test Speaker: Ready to ship.", "Decide the release scope", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
@@ -1574,10 +1579,6 @@ func TestImporterHandlesOmittedSections(t *testing.T) {
 			require.NoError(t, err)
 			var id int64
 			require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
-			before, err := st.GetMessageRaw(id)
-			require.NoError(t, err)
-			var original map[string]json.RawMessage
-			require.NoError(t, json.Unmarshal(before, &original))
 			if tc.omitSections {
 				source.query.Results[0].MeetingNotes.Children.SummaryBlockID = ""
 				source.query.Results[0].MeetingNotes.Children.NotesBlockID = ""
@@ -1600,13 +1601,6 @@ func TestImporterHandlesOmittedSections(t *testing.T) {
 				assert.NotContains(t, body, "Owner will prepare the rollout")
 			}
 			assert.Len(t, lastNotionState(t, st, second.SourceID).Pending, tc.pending)
-			if tc.retainedTranscript {
-				after, err := st.GetMessageRaw(id)
-				require.NoError(t, err)
-				var fields map[string]json.RawMessage
-				require.NoError(t, json.Unmarshal(after, &fields))
-				assert.JSONEq(t, string(original["transcript"]), string(fields["transcript"]))
-			}
 		})
 	}
 }
@@ -1765,7 +1759,7 @@ func TestImporterReportsPartialActionsForUnreadableSavedSection(t *testing.T) {
 	raw, err = st.GetMessageRaw(id)
 	require.NoError(err)
 	require.NoError(json.Unmarshal(raw, &evidence))
-	assert.JSONEq(`2`, string(evidence["schema_version"]))
+	assert.JSONEq(`1`, string(evidence["schema_version"]))
 	content = meetingcontent.Decode(RawFormat, raw, nil)
 	assert.Equal(meetingcontent.CoveragePartial, content.ActionCoverage)
 	require.Len(content.Actions, 1)
@@ -1804,4 +1798,25 @@ func TestImporterRetriesUnavailablePendingMeeting(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), third.MaintenanceRetries)
 	assert.Empty(t, lastNotionState(t, st, third.SourceID).Pending)
+}
+
+func TestImporterRetriesTemporaryMarkdownFailure(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_id = ?`, first.SourceID).Scan(&id))
+	empty := paragraph("transcript-1", "", false)
+	updated := paragraph("summary-1", "Updated summary", false)
+	source.blocks["transcript-1"] = &empty
+	source.blocks["summary-1"] = &updated
+	source.markdownErr = &APIError{Kind: ErrProvider, Status: 503}
+	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	assert.True(t, second.PartialCoverage)
+	assert.Len(t, lastNotionState(t, st, second.SourceID).Pending, 1)
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Updated summary")
+	assert.Contains(t, body, "Test Speaker: Ready to ship.")
 }
