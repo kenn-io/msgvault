@@ -157,25 +157,6 @@ func TestCardDAVMultipleConnectionsAggregateSyncReportsActiveAndUnavailable(t *t
 	assertions.Equal("sync_active", result.Connections[2].ErrorCode)
 	assertions.Nil(result.Connections[2].RunID, "another request's run must not be reported as this request's run")
 	assertions.NotEqual(active.ID, *result.Connections[0].RunID)
-	// A started zero-book run carries the latest global snapshot. A later
-	// unavailable connection cannot replace it.
-	defaultConnection, err := controller.Select("default", false)
-	require.NoError(err)
-	workConnection, err := controller.Select("work", false)
-	require.NoError(err)
-	defaultService, workService := defaultConnection.service, workConnection.service
-	defaultConnection.service = &snapshotCardDAVService{CardDAVOperations: defaultService, conflicts: 3, started: true}
-	workConnection.service = &snapshotCardDAVService{CardDAVOperations: workService, conflicts: 7, started: true}
-	snapshot, err := controller.Sync(t.Context(), CardDAVSyncRequest{})
-	require.NoError(err)
-	assertions.Equal(7, snapshot.BindingConflicts)
-	workConnection.service = &snapshotCardDAVService{CardDAVOperations: workConnection.service, conflicts: 0, started: false}
-	snapshot, err = controller.Sync(t.Context(), CardDAVSyncRequest{})
-	require.NoError(err)
-	assertions.Equal(3, snapshot.BindingConflicts)
-	// Restore the real services for the remaining HTTP and run-history checks.
-	defaultConnection.service = defaultService
-	workConnection.service = workService
 	runs, err := controller.store.ListCardDAVSyncRunsContext(t.Context(), 25, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
 	assertions.Len(runs, 2, "unavailable and leased connections do not insert additional runs")
@@ -209,6 +190,37 @@ func TestCardDAVMultipleConnectionsAggregateSyncReportsActiveAndUnavailable(t *t
 	afterRuns, err := controller.store.ListCardDAVSyncRunsContext(t.Context(), 25, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
 	assertions.Equal(beforeRuns, afterRuns, "no-enabled sync never creates a run")
+}
+
+func TestCardDAVMultipleConnectionsAdoptStartedRunConflictSnapshot(t *testing.T) {
+	assertions := assert.New(t)
+	require := require.New(t)
+	controller, baseURL := multipleCardDAVController(t)
+	for _, name := range []string{"default", "work", "offline"} {
+		_, err := controller.Save(t.Context(), CardDAVAccountRequest{Connection: name, BaseURL: baseURL, Username: name, Password: name + "-synthetic-secret", Enabled: new(true)})
+		require.NoError(err)
+	}
+	offline, err := controller.Select("offline", false)
+	require.NoError(err)
+	controller.mu.Lock()
+	offline.service = nil
+	controller.mu.Unlock()
+	// A started zero-book run carries the latest global snapshot. A later
+	// unavailable connection cannot replace it.
+	defaultConnection, err := controller.Select("default", false)
+	require.NoError(err)
+	workConnection, err := controller.Select("work", false)
+	require.NoError(err)
+	defaultService, workService := defaultConnection.service, workConnection.service
+	defaultConnection.service = &snapshotCardDAVService{CardDAVOperations: defaultService, conflicts: 3, started: true}
+	workConnection.service = &snapshotCardDAVService{CardDAVOperations: workService, conflicts: 7, started: true}
+	snapshot, err := controller.Sync(t.Context(), CardDAVSyncRequest{})
+	require.NoError(err)
+	assertions.Equal(7, snapshot.BindingConflicts)
+	workConnection.service = &snapshotCardDAVService{CardDAVOperations: workConnection.service, conflicts: 0, started: false}
+	snapshot, err = controller.Sync(t.Context(), CardDAVSyncRequest{})
+	require.NoError(err)
+	assertions.Equal(3, snapshot.BindingConflicts)
 }
 
 func TestCardDAVMultipleConnectionsReadSelectorsAndNamedOnlyStatus(t *testing.T) {

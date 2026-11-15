@@ -91,10 +91,9 @@ type CardDAVSyncPlan struct {
 }
 
 type CardDAVApplyResult struct {
-	Created          int
-	Updated          int
-	Removed          int
-	BindingConflicts int
+	Created int
+	Updated int
+	Removed int
 }
 
 // ApplyCardDAVSyncPlanContext applies a fully fetched network plan in one
@@ -332,11 +331,10 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 			}
 		}
 
-		bindingResult, err := s.reconcileCardDAVParticipantBindingsTx(ctx, tx, false)
+		_, err := s.reconcileCardDAVParticipantBindingsTx(ctx, tx, false)
 		if err != nil {
 			return err
 		}
-		result.BindingConflicts = bindingResult.Conflicts
 
 		updated, err := tx.ExecContext(ctx, `UPDATE carddav_address_books SET
 			sync_token = ?, sync_revision = sync_revision + 1,

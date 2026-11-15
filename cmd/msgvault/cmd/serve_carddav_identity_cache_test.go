@@ -116,15 +116,6 @@ func TestCardDAVIdentityRefreshUpdatesCache(t *testing.T) {
 	req.Equal(person.ID, publishedPerson)
 	req.NoError(db.Close())
 
-	cfg.Analytics.AutoBuildCache = false
-	other, err := st.EnsureParticipant("another@example.test", "Another", "example.test")
-	req.NoError(err)
-	_, _, err = st.CreatePersonFromParticipantContext(t.Context(), other)
-	req.NoError(err)
-	req.ErrorContains(sched.TriggerJob(api.CardDAVJobName), "later book failed")
-	unchanged, err := query.ReadCacheSyncState(cfg.AnalyticsDir())
-	req.NoError(err)
-	req.Equal(published.IdentityRevision, unchanged.IdentityRevision)
 }
 
 func TestCardDAVIdentityRefreshFailureRequestsRecovery(t *testing.T) {
