@@ -364,6 +364,20 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			continue
 		}
 
+		archived, recoverErr := imp.archivedState(ctx, source.ID, id)
+		if recoverErr != nil {
+			if _, newer := errors.AsType[*NewerEvidenceError](recoverErr); newer {
+				for _, pending := range state.Pending {
+					if pending.BlockID == id {
+						pendingByID[id] = pending
+						break
+					}
+				}
+			}
+			sum.Errors++
+			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: recover archived evidence: %w", id, recoverErr))
+			continue
+		}
 		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""
 		terminal := terminalStatus(meeting.MeetingNotes.Status)
 		if len(hydrated.Incomplete) > 0 {
@@ -393,12 +407,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 					delete(next.TranscriptRetryUntil, id)
 				}
 			}
-		}
-		archived, recoverErr := imp.archivedState(ctx, source.ID, id)
-		if recoverErr != nil {
-			sum.Errors++
-			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: recover archived evidence: %w", id, recoverErr))
-			continue
 		}
 		hydrated.keptRawTrees = map[string]jsontext.Value{}
 		sections := []struct {

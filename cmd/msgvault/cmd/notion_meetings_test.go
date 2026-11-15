@@ -108,17 +108,15 @@ func TestRunNotionMeetingsProbeIsContentAndTokenSafe(t *testing.T) {
 func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 	blockUnavailable := errors.New("block endpoint unavailable")
 	for _, tc := range []struct {
-		name, queryPage, blockPage, wantPage, want string
-		sections                                   *notionmeetings.MeetingChildren
-		blockErr, markdownErr, sectionErr, wantErr error
-		wantIDs                                    []string
+		name, queryPage, blockPage, want string
+		sections                         *notionmeetings.MeetingChildren
+		blockErr, sectionErr, wantErr    error
+		wantIDs                          []string
 	}{
-		{name: "query parent", queryPage: "query-page", blockPage: "page-1", wantPage: "query-page"},
-		{name: "retrieved parent", blockPage: "page-1", wantPage: "page-1"},
-		{name: "page only", blockPage: "page-1", wantPage: "page-1", sections: &notionmeetings.MeetingChildren{}, wantIDs: []string{"meeting-1"}},
-		{name: "page section permission denied", blockPage: "page-1", wantPage: "page-1", sectionErr: &notionmeetings.APIError{Kind: notionmeetings.ErrUnauthorized, Status: 401}, wantErr: notionmeetings.ErrUnauthorized, wantIDs: []string{"meeting-1", "summary-1"}},
-		{name: "temporary markdown failure", blockPage: "page-1", wantPage: "page-1", markdownErr: &notionmeetings.APIError{Kind: notionmeetings.ErrProvider, Status: 503}, wantIDs: []string{"meeting-1", "summary-1"}},
-		{name: "markdown permission denied", blockPage: "page-1", wantPage: "page-1", markdownErr: &notionmeetings.APIError{Kind: notionmeetings.ErrReadContent, Status: 403, Code: "restricted_resource"}, wantErr: notionmeetings.ErrReadContent},
+		{name: "query parent", queryPage: "query-page", blockPage: "page-1", wantIDs: []string{"meeting-1", "summary-1"}},
+		{name: "retrieved parent", blockPage: "page-1", wantIDs: []string{"meeting-1", "summary-1"}},
+		{name: "page only", blockPage: "page-1", sections: &notionmeetings.MeetingChildren{}, want: "Read Content: not tested (no section blocks)", wantIDs: []string{"meeting-1"}},
+		{name: "page section permission denied", blockPage: "page-1", sectionErr: &notionmeetings.APIError{Kind: notionmeetings.ErrUnauthorized, Status: 401}, wantErr: notionmeetings.ErrUnauthorized, wantIDs: []string{"meeting-1", "summary-1"}},
 		{name: "block unavailable with query parent", queryPage: "page-1", blockErr: blockUnavailable, wantErr: blockUnavailable},
 		{name: "data source parent", sections: &notionmeetings.MeetingChildren{SummaryBlockID: "summary-1"}, wantIDs: []string{"meeting-1", "summary-1"}},
 		{name: "temporary section failure", sectionErr: &notionmeetings.APIError{Kind: notionmeetings.ErrProvider, Status: 503}, want: "Read Content: not tested (section temporarily unavailable)", wantIDs: []string{"meeting-1", "summary-1"}},
@@ -127,7 +125,6 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
-			var page string
 			var ids []string
 			sections := notionmeetings.MeetingChildren{SummaryBlockID: "summary-1", NotesBlockID: "notes-1"}
 			if tc.sections != nil {
@@ -140,11 +137,8 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
 				result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", Parent: notionmeetings.Parent{PageID: tc.queryPage}, MeetingNotes: notionmeetings.MeetingNotesData{Children: sections}}}},
 				block:  &notionmeetings.Block{Parent: parent}, blockIDs: &ids,
-				blockErr: tc.blockErr, blockErrors: map[string]error{"summary-1": tc.sectionErr}, markdownID: &page, markdownErr: tc.markdownErr,
+				blockErr: tc.blockErr, blockErrors: map[string]error{"summary-1": tc.sectionErr},
 			}, nil)
-			if tc.wantPage != "" {
-				assert.Equal(t, tc.wantPage, page)
-			}
 			if tc.wantIDs != nil {
 				assert.Equal(t, tc.wantIDs, ids)
 			}
@@ -160,6 +154,18 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNotionProbeChecksPageSectionWithoutMarkdown(t *testing.T) {
+	var out bytes.Buffer
+	var page string
+	var ids []string
+	meeting := notionmeetings.MeetingNote{ID: "meeting-1", Parent: notionmeetings.Parent{PageID: "page-1"}, MeetingNotes: notionmeetings.MeetingNotesData{Children: notionmeetings.MeetingChildren{SummaryBlockID: "summary-1"}}}
+	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{meeting}}, block: &notionmeetings.Block{}, blockIDs: &ids, markdownID: &page}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"meeting-1", "summary-1"}, ids)
+	assert.Empty(t, page)
+	assert.Contains(t, out.String(), "Read Content: available")
 }
 
 func TestRunNotionMeetingsProbeDegradesWithoutUserInformation(t *testing.T) {

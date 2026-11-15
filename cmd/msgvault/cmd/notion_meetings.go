@@ -67,7 +67,6 @@ func resolveNotionMeetingsSources(args []string, probe bool, cfg *config.Config)
 type notionMeetingsQuerySource interface {
 	QueryMeetingNotes(ctx context.Context, limit int) (*notionmeetings.QueryResult, error)
 	RetrieveBlock(ctx context.Context, blockID string) (*notionmeetings.Block, error)
-	RetrievePageMarkdown(ctx context.Context, pageID string, includeTranscript bool) (*notionmeetings.MarkdownPage, error)
 	ListUsers(ctx context.Context, cursor string) (*notionmeetings.UserPage, error)
 }
 
@@ -84,21 +83,6 @@ func probeNotionReadContent(ctx context.Context, out io.Writer, client notionMee
 	if block == nil {
 		return errors.New("probe Notion meeting block access returned no response")
 	}
-	pageID := strings.TrimSpace(meeting.Parent.PageID)
-	if pageID == "" {
-		pageID = strings.TrimSpace(block.Parent.PageID)
-	}
-	markdownAvailable := false
-	if pageID != "" {
-		if _, err := client.RetrievePageMarkdown(ctx, pageID, true); err != nil {
-			api, isAPI := errors.AsType[*notionmeetings.APIError](err)
-			if !notionmeetings.TemporarySectionError(ctx, err) || (isAPI && api.Status == 403) {
-				return fmt.Errorf("probe Notion Read Content access: %w", err)
-			}
-		} else {
-			markdownAvailable = true
-		}
-	}
 	children := meeting.MeetingNotes.Children
 	for _, id := range []string{children.SummaryBlockID, children.NotesBlockID, children.TranscriptBlockID} {
 		if strings.TrimSpace(id) == "" {
@@ -114,11 +98,7 @@ func probeNotionReadContent(ctx context.Context, out io.Writer, client notionMee
 		_, _ = fmt.Fprintln(out, "  Read Content: available")
 		return nil
 	}
-	if markdownAvailable {
-		_, _ = fmt.Fprintln(out, "  Read Content: available")
-	} else {
-		_, _ = fmt.Fprintln(out, "  Read Content: not tested (no section blocks)")
-	}
+	_, _ = fmt.Fprintln(out, "  Read Content: not tested (no section blocks)")
 	return nil
 }
 

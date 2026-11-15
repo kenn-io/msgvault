@@ -504,9 +504,6 @@ func incompleteReason(ctx context.Context, err error) string {
 	return ""
 }
 func sectionTemporarilyUnavailable(err error) bool {
-	if api, ok := errors.AsType[*APIError](err); ok && api.Status == 403 && api.Code == "restricted_resource" {
-		return true
-	}
 	return transcriptTemporarilyUnavailable(err)
 }
 func transcriptTemporarilyUnavailable(err error) bool {

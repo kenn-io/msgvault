@@ -221,7 +221,6 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 			name: "provider reports transcript block not found",
 			err:  &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"},
 		},
-		{name: "restricted", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "restricted_resource"}},
 		{name: "server retry exhausted", err: &APIError{Kind: ErrRateLimited, Status: 503, Code: "service_unavailable"}},
 		{name: "reset", err: syscall.ECONNRESET},
 		{name: "truncated", err: io.ErrUnexpectedEOF},

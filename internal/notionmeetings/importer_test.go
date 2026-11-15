@@ -1386,6 +1386,7 @@ func TestImporterRetriesIncompleteSectionAfterNewerEvidenceRefusal(t *testing.T)
 	source.blocks["meeting-1"].Parent = meeting.Parent
 	source.blocks["meeting-1"].Raw = raw
 	source.query.Results = []MeetingNote{meeting}
+	source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
 	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(t, err)
 	var messageID int64
@@ -1819,4 +1820,62 @@ func TestImporterRetriesTemporaryMarkdownFailure(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, body, "Updated summary")
 	assert.Contains(t, body, "Test Speaker: Ready to ship.")
+}
+
+func TestImporterRejectsSectionPermissionFailure(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+	before, err := st.GetMessageRaw(id)
+	require.NoError(t, err)
+	last, err := st.GetLastSuccessfulSync(first.SourceID)
+	require.NoError(t, err)
+	source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrReadContent, Status: 403, Code: "restricted_resource"}}
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.ErrorIs(t, err, ErrReadContent)
+	after, err := st.GetMessageRaw(id)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	current, err := st.GetLastSuccessfulSync(first.SourceID)
+	require.NoError(t, err)
+	assert.Equal(t, last.CursorAfter, current.CursorAfter)
+	assert.Equal(t, last.ID, current.ID)
+}
+
+func TestImporterNewerEvidencePreservesRetryState(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		existing bool
+		now      time.Time
+	}{
+		{"no pending", false, time.Date(2026, 8, 29, 19, 0, 0, 0, time.UTC)},
+		{"pending", true, time.Date(2026, 8, 29, 19, 0, 0, 0, time.UTC)},
+		{"expired deadline", true, time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, source, imp := newImporterFixture(t)
+			if tc.existing {
+				source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrRateLimited, Status: 429}}
+			}
+			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(t, err)
+			before := lastNotionState(t, st, first.SourceID)
+			var id int64
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+			require.NoError(t, st.UpsertMessageRawWithFormat(id, []byte(`{"schema_version":3}`), RawFormat))
+			source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrRateLimited, Status: 429}}
+			imp.now = func() time.Time { return tc.now }
+			_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			var newer *NewerEvidenceError
+			require.ErrorAs(t, err, &newer)
+			checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), first.SourceID, SourceType)
+			require.NoError(t, err)
+			var after syncState
+			require.NoError(t, json.Unmarshal([]byte(checkpoint.CursorBefore.String), &after))
+			assert.Equal(t, before.Pending, after.Pending)
+			assert.Equal(t, before.TranscriptRetryUntil, after.TranscriptRetryUntil)
+		})
+	}
 }
