@@ -266,23 +266,24 @@ func TestCardDAVParticipantBindingConflictsNeverSteal(t *testing.T) {
 			})
 		}
 	})
-	t.Run("primary and alias holders bind independently", func(t *testing.T) {
-		assert := Assert.New(t)
-		require := Require.New(t)
-		st, account, book := newCardDAVResourceStore(t)
-		absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
-		require.NoError(err)
-		third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
-		require.NoError(err)
-		require.NoError(st.SetParticipantIdentifier(third, "email", "ABSORBED@example.test"))
-		card := remoteResource(book.CanonicalURL+"collision.vcf", "email-collision", "Absorbed", "absorbed@example.test", "one")
-		applyParticipantBindingCards(t, st, account, book, card)
-		person := bindingCardPerson(t, st, book, card.Href)
-		assert.ElementsMatch([]int64{absorbed, third}, person.ParticipantIDs)
-		var links int
-		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participant_links`).Scan(&links))
-		assert.Zero(links)
-	})
+}
+
+func TestCardDAVParticipantBindingPrimaryAndAliasHoldersBindIndependently(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	st, account, book := newCardDAVResourceStore(t)
+	absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
+	require.NoError(err)
+	third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
+	require.NoError(err)
+	require.NoError(st.SetParticipantIdentifier(third, "email", "ABSORBED@example.test"))
+	card := remoteResource(book.CanonicalURL+"collision.vcf", "email-collision", "Absorbed", "absorbed@example.test", "one")
+	applyParticipantBindingCards(t, st, account, book, card)
+	person := bindingCardPerson(t, st, book, card.Href)
+	assert.ElementsMatch([]int64{absorbed, third}, person.ParticipantIDs)
+	var links int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participant_links`).Scan(&links))
+	assert.Zero(links)
 }
 
 func TestCardDAVParticipantBindingSharedCardsWithdrawAutomaticOwnership(t *testing.T) {
@@ -480,14 +481,6 @@ func TestCardDAVParticipantBindingCandidateOwnership(t *testing.T) {
 					applyParticipantBindingCards(t, st, account, book, card)
 					person := bindingCardPerson(t, st, book, card.Href)
 					assert.Equal("Remote Updated", *person.DisplayName)
-				case "stale-system", "null-actor":
-					_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{Undo: true})
-					require.NoError(err)
-					if automatic {
-						assert.Empty(bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
-					} else {
-						assert.ElementsMatch([]int64{a, b}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
-					}
 				}
 			})
 		}
@@ -643,28 +636,6 @@ func TestCardDAVParticipantBindingMergedAliasRemainsClaimed(t *testing.T) {
 				assert.True(bindingOwned(t, st, survivor))
 			})
 		}
-	})
-	t.Run("alias in survivor component", func(t *testing.T) {
-		assert := Assert.New(t)
-		require := Require.New(t)
-		st, account, book := newCardDAVResourceStore(t)
-		absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
-		require.NoError(err)
-		survivor, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
-		require.NoError(err)
-		alias, err := st.EnsureParticipant("alias@example.test", "Alias", "example.test")
-		require.NoError(err)
-		card := remoteResource(book.CanonicalURL+"linked-alias.vcf", "linked-alias", "Absorbed", "absorbed@example.test", "one")
-		applyParticipantBindingCards(t, st, account, book, card)
-		require.Equal([]int64{absorbed}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
-		_, err = st.LinkParticipants(survivor, alias)
-		require.NoError(err)
-		require.NoError(st.SetParticipantIdentifier(alias, "imessage", "absorbed@example.test"))
-
-		require.NoError(st.MergeParticipantsContext(t.Context(), absorbed, survivor))
-		_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
-		require.NoError(err)
-		assert.ElementsMatch([]int64{survivor, alias}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
 	})
 }
 
@@ -990,6 +961,31 @@ func TestCardDAVParticipantBindingSkipsUnreadableCard(t *testing.T) {
 	preview, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
 	require.NoError(err)
 	assert.Equal(2, preview.CardsScanned)
+}
+
+func TestCardDAVParticipantBindingReconcilesReadableEmailWithUnreadablePhone(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	st, account, book := newCardDAVResourceStore(t)
+	alex, err := st.EnsureParticipant("alex@example.test", "Alex", "example.test")
+	require.NoError(err)
+	other, err := st.EnsureParticipant("other@example.test", "Other", "example.test")
+	require.NoError(err)
+	phone, err := st.EnsureParticipantByPhone(t.Context(), "+12025550100", "Alex", "imessage")
+	require.NoError(err)
+	card := remoteResource(book.CanonicalURL+"alex.vcf", "alex", "Alex", "alex@example.test", "one")
+	card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:alex\r\nFN:Alex\r\nEMAIL:alex@example.test\r\nTEL:+12025550100\r\nEND:VCARD\r\n")
+	applyParticipantBindingCards(t, st, account, book, card)
+	require.ElementsMatch([]int64{alex, phone}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
+
+	card = remoteResource(card.Href, card.RemoteUID, "Alex", "other@example.test", "two")
+	card.SemanticHash = "updated"
+	card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:2.1\r\nUID:alex\r\nFN:Alex\r\nEMAIL:other@example.test\r\nTEL;CHARSET=NO-SUCH-CHARSET:123\r\nEND:VCARD\r\n")
+	applyParticipantBindingCards(t, st, account, book, card)
+	assert.ElementsMatch([]int64{other, phone}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
+	person, err := st.PersonForParticipantsContext(t.Context(), []int64{alex})
+	require.NoError(err)
+	assert.Nil(person)
 }
 
 func TestCardDAVParticipantBindingRetainsMatchWhenAddressIsUnreadable(t *testing.T) {

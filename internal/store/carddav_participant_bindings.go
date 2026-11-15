@@ -124,7 +124,7 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 		return nil, err
 	}
 	plan.result.CardsScanned = scanned
-	matched, shadowed, err := cardDAVParticipantMatchesTx(ctx, tx, claims)
+	matched, shadowed, participantKinds, err := cardDAVParticipantMatchesTx(ctx, tx, claims)
 	if err != nil {
 		return nil, err
 	}
@@ -151,6 +151,7 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 		}
 		members := sortedComponentMembers(seed, edges)
 		wanted := cardDAVPersonSet{}
+		uncertainOwners := cardDAVPersonSet{}
 		for _, id := range members {
 			visited[id] = struct{}{}
 			for personID := range matched[id] {
@@ -158,8 +159,10 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 			}
 			// An unreadable address may still support an existing automatic member.
 			if binding, ok := bindings[id]; ok && binding.owned {
-				if _, incomplete := uncertain[binding.personID]; incomplete {
+				kinds := uncertain[binding.personID]
+				if kinds[""] || kinds[ContactAddressEmail] && participantKinds[id][ContactAddressEmail] || kinds[ContactAddressPhone] && participantKinds[id][ContactAddressPhone] {
 					wanted[binding.personID] = struct{}{}
+					uncertainOwners[binding.personID] = struct{}{}
 				}
 			}
 		}
@@ -205,7 +208,7 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 		}
 		for _, id := range members {
 			binding, exists := bindings[id]
-			_, incomplete := uncertain[binding.personID]
+			_, incomplete := uncertainOwners[binding.personID]
 			if _, manuallyOwned := localOwners[binding.personID]; exists && binding.owned && !manuallyOwned && !incomplete && (reason != "" || personID == 0 || binding.personID != personID) {
 				plan.remove = append(plan.remove, binding)
 			}

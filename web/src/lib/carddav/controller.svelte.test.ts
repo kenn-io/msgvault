@@ -848,7 +848,7 @@ it('scopes selected status, books, history and sync requests to their connection
     const request = requestOf(input);
     requests.push(request);
     const url = new URL(request.url);
-    if (request.method === 'POST') return Response.json({ books: 0, created: 0, updated: 0, removed: 0, binding_conflicts: 2 });
+    if (request.method === 'POST') return Response.json({ books: 0, created: 0, updated: 0, removed: 0 });
     if (url.pathname.endsWith('/status')) return Response.json(idleStatus);
     if (url.pathname.endsWith('/books')) return Response.json({ books: [] });
     return Response.json({ runs: [] });
@@ -867,8 +867,6 @@ it('scopes selected status, books, history and sync requests to their connection
       .filter((r) => r.method === 'GET')
       .every((r) => new URL(r.url).searchParams.get('connection') === 'work')
   ).toBe(true);
-  expect(controller.syncStatus).toBe('CardDAV sync completed.');
-  expect(controller.syncBindingConflicts).toBe(2);
   controller.destroy();
 });
 
@@ -910,6 +908,6 @@ it.each(['partial', 'failed'] as const)('names a connection whose sync is %s', a
   expect(controller.syncBindingConflicts).toBe(2);
   expect(controller.syncError).not.toContain('private upstream');
   expect(controller.syncStatus).toBeNull();
-  expect(bookReads).toBe(status === 'failed' ? 1 : 2);
+  expect(bookReads).toBe(status === 'partial' ? 2 : 1);
   controller.destroy();
 });

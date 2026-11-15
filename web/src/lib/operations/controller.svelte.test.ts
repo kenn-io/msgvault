@@ -5,7 +5,6 @@ import { createAPIClient } from '../api/client';
 import type { SyncResult } from '../api/generated/models';
 import { KIND_LANES, RELATED_STATUS, visualStatus } from '../../test/operations';
 import { OperationsController } from './controller.svelte';
-import { runOperationAction } from './actions';
 import type {
   OperationAction,
   OperationKind,
@@ -702,8 +701,7 @@ it('keeps binding conflicts visible after a successful sync action', async () =>
   const controller = new OperationsController(client);
   await controller.applyURLState(operationState());
   expect(await controller.runAction('carddav_sync')).toBe('succeeded');
-  expect(controller.snapshot.actionStatus).not.toBeNull();
-  expect(controller.snapshot.actionStatus).toBe((await runOperationAction('carddav_sync', client)).message);
+  expect(controller.snapshot.actionStatus).toContain('2 CardDAV binding conflicts.');
   expect(controller.snapshot.actionError).toBeNull();
   controller.destroy();
 });

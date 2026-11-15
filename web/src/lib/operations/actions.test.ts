@@ -9,9 +9,9 @@ describe('runOperationAction', () => {
       ...(result === 'partial' ? [{ connection: 'personal', status: 'succeeded' }] : [])
     ] }));
     const action = await runOperationAction('carddav_sync', client);
-    expect(action.outcome).toBe('failed');
-    expect(action.message).toContain(`CardDAV sync ${result}. Connections needing attention: work.`);
-    if (result === 'partial') expect(action.message).toContain('2 CardDAV binding conflicts. Check CardDAV settings for the review command.');
+    expect(action).toEqual({ outcome: 'failed', message: result === 'partial'
+      ? 'CardDAV sync partial. Connections needing attention: work. 2 CardDAV binding conflicts. Check CardDAV settings for the review command.'
+      : 'CardDAV sync failed. Connections needing attention: work.' });
   });
   it('reports binding conflicts after a successful contacts sync', async () => {
     const client = createAPIClient(async () => Response.json({ status: 'succeeded', binding_conflicts: 2 }));

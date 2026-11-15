@@ -390,7 +390,7 @@ func TestCardDAVParticipantBindingCLIUsesDaemonAndPrintsCounts(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		undo bool
-	}{{"bind", false}, {"undo", true}} {
+	}{{"dry run", false}, {"undo", true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			undo := tc.undo
 			assert := assert.New(t)

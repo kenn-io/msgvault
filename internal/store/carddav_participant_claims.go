@@ -14,6 +14,7 @@ type cardDAVParticipantAddress struct {
 	value string
 }
 type cardDAVPersonSet map[int64]struct{}
+type cardDAVUncertainKinds map[ContactAddressKind]bool
 
 // Admission is deliberately stricter than phone normalization: the latter also
 // accepts text containing digits, which is unsafe evidence for automatic ownership.
@@ -43,7 +44,7 @@ func cardDAVParticipantAddressValue(kind ContactAddressKind, raw string) (cardDA
 	return cardDAVParticipantAddress{kind, value}, err == nil
 }
 
-func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (map[cardDAVParticipantAddress]cardDAVPersonSet, cardDAVPersonSet, int, error) {
+func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (map[cardDAVParticipantAddress]cardDAVPersonSet, map[int64]cardDAVUncertainKinds, int, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT resource.person_id, resource.remote_body,
  conflict.id IS NOT NULL,
  CASE WHEN conflict.local_tombstone THEN NULL ELSE conflict.local_body END,
@@ -64,7 +65,15 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 	defer func() { _ = rows.Close() }()
 	claims := map[cardDAVParticipantAddress]cardDAVPersonSet{}
 	conflicted := map[cardDAVParticipantAddress]cardDAVPersonSet{}
-	uncertain := cardDAVPersonSet{}
+	uncertain := map[int64]cardDAVUncertainKinds{}
+	markUncertain := func(personID int64, kinds cardDAVUncertainKinds) {
+		if uncertain[personID] == nil {
+			uncertain[personID] = cardDAVUncertainKinds{}
+		}
+		for kind := range kinds {
+			uncertain[personID][kind] = true
+		}
+	}
 	scanned := 0
 	for rows.Next() {
 		var personID int64
@@ -74,10 +83,13 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 			return nil, nil, 0, err
 		}
 		if hasConflict {
-			local, _, localComplete := cardDAVParticipantAddresses(localBody)
-			remote, _, remoteComplete := cardDAVParticipantAddresses(remoteBody)
-			if len(localBody) > 0 && !localComplete || len(remoteBody) > 0 && !remoteComplete {
-				uncertain[personID] = struct{}{}
+			local, _, localUncertain := cardDAVParticipantAddresses(localBody)
+			remote, _, remoteUncertain := cardDAVParticipantAddresses(remoteBody)
+			if len(localBody) > 0 {
+				markUncertain(personID, localUncertain)
+			}
+			if len(remoteBody) > 0 {
+				markUncertain(personID, remoteUncertain)
 			}
 			for _, addresses := range []map[cardDAVParticipantAddress]struct{}{local, remote} {
 				for key := range addresses {
@@ -89,10 +101,8 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 			}
 			continue
 		}
-		addresses, ok, complete := cardDAVParticipantAddresses(body)
-		if !complete {
-			uncertain[personID] = struct{}{}
-		}
+		addresses, ok, incomplete := cardDAVParticipantAddresses(body)
+		markUncertain(personID, incomplete)
 		if !ok {
 			continue
 		}
@@ -119,13 +129,13 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 	return claims, uncertain, scanned, nil
 }
 
-func cardDAVParticipantAddresses(body []byte) (map[cardDAVParticipantAddress]struct{}, bool, bool) {
+func cardDAVParticipantAddresses(body []byte) (map[cardDAVParticipantAddress]struct{}, bool, cardDAVUncertainKinds) {
 	envelope, err := vcard.ParseResourceEnvelope(body)
 	if err != nil {
-		return nil, false, false
+		return nil, false, cardDAVUncertainKinds{"": true}
 	}
 	addresses := map[cardDAVParticipantAddress]struct{}{}
-	complete := true
+	incomplete := cardDAVUncertainKinds{}
 	for _, occurrence := range envelope.PropertyTree {
 		property := occurrence.Property
 		var kind ContactAddressKind
@@ -139,12 +149,12 @@ func cardDAVParticipantAddresses(body []byte) (map[cardDAVParticipantAddress]str
 		}
 		property.RawValue, err = vcard.DecodeLegacyRawValue(property)
 		if err != nil {
-			complete = false
+			incomplete[kind] = true
 			continue
 		}
 		value, uri, err := vcard.ContactPointValue(envelope.RenderMetadata.StoredVersion, property)
 		if err != nil {
-			complete = false
+			incomplete[kind] = true
 			continue
 		}
 		if kind == ContactAddressPhone && uri != "" {
@@ -156,44 +166,49 @@ func cardDAVParticipantAddresses(body []byte) (map[cardDAVParticipantAddress]str
 		}
 		addresses[key] = struct{}{}
 	}
-	return addresses, true, complete
+	return addresses, true, incomplete
 }
 
-func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims map[cardDAVParticipantAddress]cardDAVPersonSet) (map[int64]cardDAVPersonSet, map[int64][]int64, error) {
-	if len(claims) == 0 {
-		return map[int64]cardDAVPersonSet{}, nil, nil
-	}
+func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims map[cardDAVParticipantAddress]cardDAVPersonSet) (map[int64]cardDAVPersonSet, map[int64][]int64, map[int64]cardDAVUncertainKinds, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id, 'email', email_address FROM participants WHERE email_address IS NOT NULL
  UNION ALL SELECT id, 'phone', phone_number FROM participants WHERE phone_number IS NOT NULL
  UNION ALL SELECT participant_id, identifier_type, identifier_value FROM participant_identifiers
  WHERE scope_kind IS NULL AND scope_value IS NULL
  AND identifier_type IN ('email','phone','apple_id','whatsapp','imessage','synctech_sms','google_voice','imazing_csv')`)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read participant addresses for CardDAV binding: %w", err)
+		return nil, nil, nil, fmt.Errorf("read participant addresses for CardDAV binding: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var candidates []cardDAVAddressMatch
+	participantKinds := map[int64]cardDAVUncertainKinds{}
 	for rows.Next() {
 		var id int64
 		var kind, value string
 		if err := rows.Scan(&id, &kind, &value); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		addressKind := ContactAddressPhone
 		if kind == "email" || (kind == "apple_id" || kind == "imessage" || kind == "synctech_sms") && strings.Contains(value, "@") {
 			addressKind = ContactAddressEmail
 		}
 		key, ok := cardDAVParticipantAddressValue(addressKind, value)
-		if !ok || len(claims[key]) == 0 {
+		if !ok {
+			continue
+		}
+		if participantKinds[id] == nil {
+			participantKinds[id] = cardDAVUncertainKinds{}
+		}
+		participantKinds[id][addressKind] = true
+		if len(claims[key]) == 0 {
 			continue
 		}
 		candidates = append(candidates, cardDAVAddressMatch{id, key})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	matched, shadowed := cardDAVMatchCandidates(claims, candidates)
-	return matched, shadowed, nil
+	return matched, shadowed, participantKinds, nil
 }
 
 type cardDAVAddressMatch struct {
