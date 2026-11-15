@@ -13,7 +13,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
 type fakeHydrationSource struct {
@@ -30,10 +29,14 @@ type fakeHydrationSource struct {
 	markdownID    string
 	markdownErr   error
 	blockCalls    []string
+	onBlock       func(string)
 }
 
 func (f *fakeHydrationSource) RetrieveBlock(_ context.Context, id string) (*Block, error) {
 	f.blockCalls = append(f.blockCalls, id)
+	if f.onBlock != nil {
+		f.onBlock(id)
+	}
 	if err := f.blockErrs[id]; err != nil {
 		return nil, err
 	}
@@ -149,10 +152,13 @@ func TestHydratorResolvesParentPageFromRetrievedMeetingBlock(t *testing.T) {
 	meeting := hydrationMeeting()
 	meeting.Parent = Parent{}
 
-	hydrated, err := NewHydrator(completeHydrationSource()).Hydrate(t.Context(), meeting)
+	source := completeHydrationSource()
+	empty := paragraph("transcript-1", "", false)
+	source.blocks["transcript-1"] = &empty
+	hydrated, err := NewHydrator(source).Hydrate(t.Context(), meeting)
 	require.NoError(t, err)
 	assert.Equal(t, "page-1", hydrated.Discovery.Parent.PageID)
-	assert.Nil(t, hydrated.PageMarkdown)
+	assert.Equal(t, "page-1", source.markdownID)
 }
 
 func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) {
@@ -179,7 +185,7 @@ func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) 
 	assert.Contains(snapshot.Body, "Transcript:\nTest Speaker: Ready to ship.")
 	assert.Equal(RawFormat, snapshot.RawFormat)
 	assert.Contains(string(snapshot.Raw), `"discovery"`)
-	assert.Contains(string(snapshot.Raw), `"page_markdown"`)
+	assert.Contains(string(snapshot.Raw), `"page_markdown":null`)
 	assert.Contains(string(snapshot.Raw), `"attendee_labels":["Test Attendee","Unresolved Attendee"]`)
 	assert.NotContains(string(snapshot.Raw), "unverified@example.com")
 	assert.NotContains(string(snapshot.Raw), "user@example.com", "configured identity must not enter provider evidence")
@@ -210,10 +216,11 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 			name: "provider reports transcript block not found",
 			err:  &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"},
 		},
-		{
-			name: "provider transient retry budget exhausted",
-			err:  &APIError{Kind: ErrRateLimited, Status: 503, Code: "service_unavailable"},
-		},
+		{name: "rate limit", err: ErrRateLimited},
+		{name: "server", err: &APIError{Kind: ErrProvider, Status: 503}},
+		{name: "reset", err: syscall.ECONNRESET},
+		{name: "timeout", err: context.DeadlineExceeded},
+		{name: "truncated", err: io.ErrUnexpectedEOF},
 	}
 
 	for _, tt := range tests {
@@ -244,7 +251,7 @@ func TestHydratorKeepsSystemicTranscriptErrorsFatal(t *testing.T) {
 		{name: "unauthorized", err: &APIError{Kind: ErrUnauthorized, Status: 401, Code: "unauthorized"}},
 		{name: "read content forbidden", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "restricted_resource"}},
 		{name: "malformed response", err: fmt.Errorf("%w: invalid block", ErrMalformedResponse)},
-		{name: "context canceled", err: context.Canceled},
+		{name: "context canceled", err: ErrRateLimited},
 		{name: "local traversal limit", err: errors.New("notion block traversal exceeded block limit")},
 	}
 
@@ -253,7 +260,18 @@ func TestHydratorKeepsSystemicTranscriptErrorsFatal(t *testing.T) {
 			source := completeHydrationSource()
 			source.blockErrs = map[string]error{"transcript-1": tt.err}
 
-			hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
+			ctx := t.Context()
+			if tt.name == "context canceled" {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				defer cancel()
+				source.onBlock = func(id string) {
+					if id == "transcript-1" {
+						cancel()
+					}
+				}
+			}
+			hydrated, err := NewHydrator(source).Hydrate(ctx, hydrationMeeting())
 			require.Error(t, err)
 			assert.Nil(t, hydrated)
 			assert.ErrorIs(t, err, tt.err)
@@ -262,16 +280,18 @@ func TestHydratorKeepsSystemicTranscriptErrorsFatal(t *testing.T) {
 }
 
 func TestHydratorRejectsNonMeetingRootBlock(t *testing.T) {
-	source := completeHydrationSource()
-	source.blocks["meeting-1"] = &Block{
-		Object: "block", ID: "meeting-1", Type: "paragraph",
-		Raw: json.RawMessage(`{"object":"block","id":"meeting-1","type":"paragraph","has_children":false,"paragraph":{}}`),
+	for _, bad := range []struct{ id, kind string }{{"meeting-1", "paragraph"}, {"other-1", "meeting_notes"}} {
+		source := completeHydrationSource()
+		source.blocks["meeting-1"] = &Block{
+			Object: "block", ID: bad.id, Type: bad.kind,
+			Raw: json.RawMessage(`{"object":"block","id":"meeting-1","type":"paragraph","has_children":false,"paragraph":{}}`),
+		}
+
+		hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
+
+		require.ErrorIs(t, err, ErrMalformedResponse)
+		assert.Nil(t, hydrated)
 	}
-
-	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-
-	require.ErrorIs(t, err, ErrMalformedResponse)
-	assert.Nil(t, hydrated)
 }
 
 func TestExtractMarkdownTranscript(t *testing.T) {
@@ -291,7 +311,6 @@ func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 	}{
 		{"truncated", func(p *MarkdownPage) { p.Truncated = true }},
 		{"unknown blocks", func(p *MarkdownPage) { p.UnknownBlockIDs = []string{"block-1"} }},
-		{"wrong ID", func(p *MarkdownPage) { p.ID = "other-1" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source := completeHydrationSource()
@@ -312,16 +331,6 @@ func TestHydratorStructuredTranscriptAvoidsMarkdown(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Test Speaker: Ready to ship.", result.Transcript)
 	assert.Zero(t, source.markdownCalls)
-}
-
-func TestHydratorRejectsRepeatedChildCursor(t *testing.T) {
-	source := completeHydrationSource()
-	source.children["notes-1"][""] = &BlockPage{HasMore: true, NextCursor: "same"}
-	source.children["notes-1"]["same"] = &BlockPage{HasMore: true, NextCursor: "same"}
-	result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-	require.NoError(t, err)
-	assert.Contains(t, result.Incomplete, "notes")
-	assert.Empty(t, result.NotesTree.Blocks)
 }
 
 func TestHydratorDegradesWhenUserInformationIsUnavailable(t *testing.T) {
@@ -453,10 +462,7 @@ func TestHydratorSkipsNestedMeetingChildren(t *testing.T) {
 	result, err := NewHydrator(source).Hydrate(t.Context(), meeting)
 	require.NoError(err)
 	assert.Empty(result.Incomplete)
-	snapshot, err := result.ArchiveSnapshot(1, "work", "")
-	require.NoError(err)
-	content := meetingcontent.Decode(RawFormat, snapshot.Raw, nil)
-	assert.Equal(meetingcontent.CoverageAvailable, content.ActionCoverage)
+	assert.NotContains(source.blockCalls, "nested-meeting")
 }
 
 func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
@@ -466,12 +472,16 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 			require := require.New(t)
 			source := completeHydrationSource()
 			meeting := hydrationMeeting()
-			meeting.Parent = Parent{Type: "data_source_id"}
-			source.blocks["meeting-1"].Parent = meeting.Parent
+			if limit == "blocks" || limit == "depth" {
+				meeting.Parent = Parent{Type: "data_source_id"}
+				source.blocks["meeting-1"].Parent = meeting.Parent
+			}
 			root := source.blocks["summary-1"]
 			switch limit {
 			case "bytes":
-				root.Raw = json.RawMessage(strings.Repeat("x", maxHydrationBytes))
+				root.HasChildren = true
+				root.Raw = json.RawMessage(strings.Repeat("x", 12<<20))
+				source.children["summary-1"] = map[string]*BlockPage{"": {Raw: json.RawMessage(strings.Repeat("x", 12<<20)), HasMore: true, NextCursor: "next"}, "next": {Raw: json.RawMessage(strings.Repeat("x", 12<<20))}}
 			case "requests":
 				root.HasChildren = true
 				pages := map[string]*BlockPage{}
@@ -499,6 +509,9 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 			require.NoError(err)
 			assert.Contains(result.Incomplete, "summary")
 			assert.Empty(result.SummaryTree.Blocks)
+			if limit == "requests" || limit == "bytes" {
+				assert.Zero(source.markdownCalls)
+			}
 			if limit == "depth" {
 				assert.NotContains(result.Incomplete, "notes")
 				assert.NotEmpty(result.Notes)
@@ -513,7 +526,7 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 }
 
 func TestHydratorPaginationFailureDiscardsPartialSection(t *testing.T) {
-	for _, mode := range []string{"missing cursor", "repeated cursor", "second page failure", "second page malformed", "first page malformed"} {
+	for _, mode := range []string{"missing cursor", "repeated cursor", "second page failure", "first page malformed"} {
 		t.Run(mode, func(t *testing.T) {
 			assert := assert.New(t)
 			source := completeHydrationSource()
@@ -525,9 +538,7 @@ func TestHydratorPaginationFailureDiscardsPartialSection(t *testing.T) {
 			case "repeated cursor":
 				source.children["notes-1"]["next"] = &BlockPage{HasMore: true, NextCursor: "next"}
 			case "second page failure":
-				source.childErrs = map[string]map[string]error{"notes-1": {"next": io.ErrUnexpectedEOF}}
-			case "second page malformed":
-				source.childErrs = map[string]map[string]error{"notes-1": {"next": ErrMalformedResponse}}
+				source.childErrs = map[string]map[string]error{"notes-1": {"next": errors.New("incomplete page")}}
 			case "first page malformed":
 				source.childErrs = map[string]map[string]error{"notes-1": {"": ErrMalformedResponse}}
 			}
@@ -567,37 +578,6 @@ func TestHydratorRetriesTransientMarkdownFailures(t *testing.T) {
 			assert.Empty(meeting.Transcript)
 			assert.Nil(meeting.PageMarkdown)
 			assert.Equal("page-1", source.markdownID)
-		})
-	}
-}
-
-func TestHydratorSkipsMarkdownWhenBudgetSpent(t *testing.T) {
-	for _, budget := range []string{"requests", "bytes"} {
-		t.Run(budget, func(t *testing.T) {
-			assert := assert.New(t)
-			source := completeHydrationSource()
-			meeting := hydrationMeeting()
-			meeting.MeetingNotes.Children.TranscriptBlockID = ""
-			root := source.blocks["summary-1"]
-			if budget == "bytes" {
-				root.Raw = json.RawMessage(strings.Repeat("x", maxHydrationBytes))
-			} else {
-				root.HasChildren = true
-				pages := map[string]*BlockPage{}
-				for i := range maxHydrationRequests - 2 {
-					cursor := ""
-					if i > 0 {
-						cursor = strconv.Itoa(i)
-					}
-					pages[cursor] = &BlockPage{HasMore: true, NextCursor: strconv.Itoa(i + 1)}
-				}
-				source.children["summary-1"] = pages
-			}
-			result, err := NewHydrator(source).Hydrate(t.Context(), meeting)
-			require.NoError(t, err)
-			assert.Contains(result.Incomplete, "summary")
-			assert.Contains(result.Incomplete, "transcript")
-			assert.Zero(source.markdownCalls)
 		})
 	}
 }

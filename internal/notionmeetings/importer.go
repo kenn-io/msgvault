@@ -330,7 +330,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: recover archived evidence: %w", id, recoverErr))
 			continue
 		}
-		hydrated.keptTrees = map[string]rawBlockTree{}
 		hydrated.keptRawTrees = map[string]jsontext.Value{}
 		sections := []struct {
 			name    string
@@ -355,7 +354,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			}
 			*section.text = oldText
 			if archived.HasEvidence {
-				hydrated.keptTrees[section.name] = section.oldTree
 				if rawTree := archived.RawTrees[section.name]; len(rawTree) > 0 {
 					hydrated.keptRawTrees[section.name] = append(jsontext.Value(nil), rawTree...)
 				}
@@ -549,16 +547,14 @@ func (imp *Importer) archivedState(ctx context.Context, sourceID int64, id strin
 	if err != nil {
 		return archivedMeetingState{}, err
 	}
-	evidence, ok, err := decodeArchivedEvidence(raw, id)
+	evidence, fields, ok, err := decodeArchivedEvidence(raw, id)
 	if err != nil {
 		return archivedMeetingState{}, err
 	}
 	archived.Evidence = evidence
 	archived.HasEvidence = ok
 	if ok {
-		if err := json.Unmarshal(raw, &archived.RawTrees); err != nil {
-			return archivedMeetingState{}, err
-		}
+		archived.RawTrees = fields
 		archived.ResolvedUsers = evidence.ResolvedUsers
 	}
 	return archived, nil
@@ -575,42 +571,42 @@ func (e *NewerEvidenceError) Error() string {
 }
 
 //nolint:nilerr // Invalid old evidence is treated as unavailable; newer versions must stop the import.
-func decodeArchivedEvidence(raw []byte, expectedID string) (rawEvidence, bool, error) {
+func decodeArchivedEvidence(raw []byte, expectedID string) (rawEvidence, map[string]jsontext.Value, bool, error) {
 	var fields map[string]jsontext.Value
 	if json.Unmarshal(raw, &fields) != nil || fields == nil {
-		return rawEvidence{}, false, nil
+		return rawEvidence{}, nil, false, nil
 	}
 	version, err := strconv.ParseInt(string(fields["schema_version"]), 10, 64)
 	if err != nil {
-		return rawEvidence{}, false, nil
+		return rawEvidence{}, nil, false, nil
 	}
 	if version > notionSnapshotVersion {
-		return rawEvidence{}, false, &NewerEvidenceError{MeetingID: expectedID, Found: version, Supported: notionSnapshotVersion}
+		return rawEvidence{}, nil, false, &NewerEvidenceError{MeetingID: expectedID, Found: version, Supported: notionSnapshotVersion}
 	}
 
 	var evidence rawEvidence
 	if json.Unmarshal(raw, &evidence) != nil {
-		return rawEvidence{}, false, nil
+		return rawEvidence{}, nil, false, nil
 	}
 	if evidence.SchemaVersion != notionSnapshotVersion {
-		return rawEvidence{}, false, nil
+		return rawEvidence{}, nil, false, nil
 	}
 	var discovery MeetingNote
 	if json.Unmarshal(evidence.Discovery, &discovery) != nil ||
 		discovery.ID != expectedID || discovery.Type != "meeting_notes" {
-		return rawEvidence{}, false, nil
+		return rawEvidence{}, nil, false, nil
 	}
 	var meetingBlock Block
 	if json.Unmarshal(evidence.MeetingBlock, &meetingBlock) != nil ||
 		meetingBlock.ID != expectedID || meetingBlock.Type != "meeting_notes" {
-		return rawEvidence{}, false, nil
+		return rawEvidence{}, nil, false, nil
 	}
 	var markdown MarkdownPage
 	if len(evidence.PageMarkdown) > 0 && string(evidence.PageMarkdown) != "null" && (json.Unmarshal(evidence.PageMarkdown, &markdown) != nil ||
 		markdown.Object != "page_markdown" || strings.TrimSpace(markdown.ID) == "") {
-		return rawEvidence{}, false, nil
+		return rawEvidence{}, nil, false, nil
 	}
-	return evidence, true, nil
+	return evidence, fields, true, nil
 }
 
 func transcriptFromArchivedBody(body string) string {

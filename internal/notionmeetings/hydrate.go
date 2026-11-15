@@ -40,7 +40,6 @@ type blockTree struct {
 type HydratedMeeting struct {
 	// With a users token, archived emails are recovered only for failed lookups.
 	failedAttendeeIDs map[string]bool
-	keptTrees         map[string]rawBlockTree
 	keptRawTrees      map[string]jsontext.Value
 	keptMarkdown      jsontext.Value
 
@@ -103,14 +102,8 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 	if h == nil || h.source == nil {
 		return nil, errors.New("notion meeting hydrator is unavailable")
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	if strings.TrimSpace(meeting.ID) == "" {
 		return nil, errors.New("notion meeting query returned a blank block ID")
-	}
-	if meeting.Object != "block" || meeting.Type != "meeting_notes" {
-		return nil, fmt.Errorf("%w: query meeting has unexpected identity or type", ErrMalformedResponse)
 	}
 	h.requests, h.bytes, h.blocks = 0, 0, 0
 
@@ -158,16 +151,14 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 	if strings.TrimSpace(meeting.Parent.PageID) != "" && result.Transcript == "" {
 		if err = h.reserveRequest(); err == nil {
 			result.PageMarkdown, err = h.source.RetrievePageMarkdown(ctx, meeting.Parent.PageID, true)
-			if err == nil && result.PageMarkdown != nil {
+			if err == nil {
 				err = h.reserveBytes(result.PageMarkdown.Raw)
-				if err == nil && (result.PageMarkdown.ID != meeting.Parent.PageID || result.PageMarkdown.Truncated || len(result.PageMarkdown.UnknownBlockIDs) != 0) {
+				if err == nil && (result.PageMarkdown.Truncated || len(result.PageMarkdown.UnknownBlockIDs) != 0) {
 					err = ErrMalformedResponse
 				}
 				if err == nil {
 					result.Transcript = extractMarkdownTranscript(result.PageMarkdown.Markdown)
 				}
-			} else if err == nil {
-				err = ErrMalformedResponse
 			}
 		}
 		if err != nil {

@@ -144,7 +144,7 @@ func TestDecodeNotionEvidence(t *testing.T) {
 		},
 		"notes":{
 			"root":{"object":"block","id":"notes-1","type":"paragraph","has_children":true,"paragraph":{"rich_text":[{"plain_text":"Notes"}]}},
-			"pages":[{"results":[{"object":"block","id":"task-3","type":"to_do","to_do":{"rich_text":[{"plain_text":"Verify metrics"}]}}],"has_more":false}]
+			"pages":[{"results":[{"object":"block","id":"task-3","type":"to_do","to_do":{"rich_text":[{"plain_text":"Verify metrics"}]}},{"object":"block","id":"nested-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{}}],"has_more":false}]
 		},
 		"transcript":{
 			"root":{"object":"block","id":"transcript-1","type":"to_do","to_do":{"rich_text":[{"plain_text":"Ignore transcript checkbox"}],"checked":false}}
