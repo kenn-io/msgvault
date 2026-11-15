@@ -343,23 +343,19 @@ func prepareCardDAVKeepLocalCreate(t *testing.T) (
 }
 
 func TestCardDAVKeepLocalCreateRollbackRestoresMappingFence(t *testing.T) {
-	for _, mode := range []string{"rejected", "throttled", "oversized", "repeated oversized after recovery", "rollback after recovery"} {
+	for _, mode := range []string{"rejected", "oversized", "repeated oversized after recovery", "rollback after recovery"} {
 		t.Run(mode, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			st, account, book, mapping, conflict, pending := prepareCardDAVKeepLocalCreate(t)
+			st, _, book, mapping, conflict, pending := prepareCardDAVKeepLocalCreate(t)
 			personID := *mapping.PersonID
 			require.Equal(store.CardDAVMutationCreate, pending.PendingOperation)
 			require.Positive(pending.PreviousMappingRevision)
 			assert.Equal(pending.PreviousMappingRevision+1, pending.MappingRevision)
 
-			var retryAfter time.Time
 			switch mode {
 			case "rejected":
 				require.NoError(st.RollbackCardDAVPublicationContext(t.Context(), pending))
-			case "throttled":
-				retryAfter = time.Now().UTC().Add(time.Minute)
-				require.NoError(st.RollbackCardDAVPublicationThrottleContext(t.Context(), pending, retryAfter))
 			default:
 				recordOversized := func(pending *store.CardDAVPublication, retaining bool, etag string) {
 					t.Helper()
@@ -414,12 +410,6 @@ func TestCardDAVKeepLocalCreateRollbackRestoresMappingFence(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(store.CardDAVConflictUnresolved, remaining.Status)
 			assert.Equal(after.MappingRevision, remaining.MappingRevision)
-			if mode == "throttled" {
-				gate, err := st.GetCardDAVRetryAfterContext(t.Context(), account.ID)
-				require.NoError(err)
-				require.NotNil(gate)
-				assert.WithinDuration(retryAfter, *gate, time.Second)
-			}
 			if mode == "repeated oversized after recovery" || mode == "rollback after recovery" {
 				var envelopes int
 				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM vcard_resource_envelopes

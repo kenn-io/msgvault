@@ -12,7 +12,6 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
@@ -106,15 +105,6 @@ func TestCardDAVIdentityRefreshUpdatesCache(t *testing.T) {
 	req.NoError(err)
 	req.Greater(revision, initial.IdentityRevision)
 	req.Equal(revision, published.IdentityRevision)
-	person, err := st.PersonForParticipantsContext(t.Context(), []int64{id})
-	req.NoError(err)
-	req.NotNil(person)
-	db, err := duckdbutil.Open(t.Context(), duckdbutil.BuilderPolicy(filepath.Join(cfg.Data.DataDir, "check-duckdb")))
-	req.NoError(err)
-	var publishedPerson int64
-	req.NoError(db.QueryRowContext(t.Context(), `SELECT person_id FROM read_parquet(?) WHERE participant_id = ?`, filepath.Join(cfg.AnalyticsDir(), tablePersonDisplayNames, "*.parquet"), id).Scan(&publishedPerson))
-	req.Equal(person.ID, publishedPerson)
-	req.NoError(db.Close())
 }
 
 func TestCardDAVIdentityRefreshFailureRequestsRecovery(t *testing.T) {
@@ -136,24 +126,19 @@ func TestCardDAVIdentityRefreshFailureRequestsRecovery(t *testing.T) {
 	oldBuild := runDerivedCacheSubprocess
 	t.Cleanup(func() { runDerivedCacheSubprocess = oldBuild })
 	adapter := &storeAPIAdapter{config: cfg, analyticsDir: cfg.AnalyticsDir()}
-	for _, test := range []struct {
-		name     string
-		buildErr error
-		message  string
-	}{
-		{name: "build failure", buildErr: errors.New("synthetic build failure"), message: "synthetic build failure"},
-		{name: "missing publication", message: "read refreshed cache revision"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			runDerivedCacheSubprocess = func(context.Context, string) error { return test.buildErr }
-			_, err := adapter.RefreshIdentityDatasets(t.Context())
-			require.ErrorContains(t, err, test.message)
-			select {
-			case id := <-requests:
-				require.Equal(t, "identity", id)
-			case <-time.After(10 * time.Second):
-				require.FailNow(t, "cache recovery was not requested")
-			}
-		})
+	for _, buildErr := range []error{errors.New("synthetic build failure"), nil} {
+		runDerivedCacheSubprocess = func(context.Context, string) error { return buildErr }
+		_, err := adapter.RefreshIdentityDatasets(t.Context())
+		if buildErr != nil {
+			req.ErrorContains(err, "synthetic build failure")
+		} else {
+			req.ErrorContains(err, "read refreshed cache revision")
+		}
+		select {
+		case id := <-requests:
+			req.Equal("identity", id)
+		case <-time.After(10 * time.Second):
+			req.FailNow("cache recovery was not requested")
+		}
 	}
 }

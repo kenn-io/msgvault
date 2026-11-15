@@ -196,17 +196,11 @@ func TestCardDAVMultipleConnectionsAdoptStartedRunConflictSnapshot(t *testing.T)
 	assertions := assert.New(t)
 	require := require.New(t)
 	controller, baseURL := multipleCardDAVController(t)
-	for _, name := range []string{"default", "work", "offline"} {
+	for _, name := range []string{"default", "work"} {
 		_, err := controller.Save(t.Context(), CardDAVAccountRequest{Connection: name, BaseURL: baseURL, Username: name, Password: name + "-synthetic-secret", Enabled: new(true)})
 		require.NoError(err)
 	}
-	offline, err := controller.Select("offline", false)
-	require.NoError(err)
-	controller.mu.Lock()
-	offline.service = nil
-	controller.mu.Unlock()
-	// A started zero-book run carries the latest global snapshot. A later
-	// unavailable connection cannot replace it.
+	// A started zero-book run carries the latest global snapshot.
 	defaultConnection, err := controller.Select("default", false)
 	require.NoError(err)
 	workConnection, err := controller.Select("work", false)

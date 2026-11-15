@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+
+	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
 // ErrAlreadyLinked is returned by LinkParticipants when the requested edge
@@ -430,7 +432,7 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 						if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(ctx, tx, personID); err != nil {
 							return err
 						}
-						if err := s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID}); err != nil {
+						if err := s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID}, peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
 							return err
 						}
 					}
@@ -536,7 +538,8 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 			linked = true
 			if personID != 0 {
 				err = s.publishPersonIdentityScopeChangesTx(
-					ctx, tx, []int64{personID})
+					ctx, tx, []int64{personID},
+					peoplesweep.EvidenceEffectIdentityReassigned)
 			}
 		}
 		if err == nil && afterLink != nil {
@@ -760,7 +763,8 @@ func (s *Store) UnlinkParticipants(a, b int64) (int64, error) {
 			return err
 		}
 		if err := s.publishPersonIdentityScopeChangesTx(
-			context.Background(), tx, trackedPeople); err != nil {
+			context.Background(), tx, trackedPeople,
+			peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
 			return err
 		}
 		return s.invalidatePersonEnrichmentIdentitiesTx(
