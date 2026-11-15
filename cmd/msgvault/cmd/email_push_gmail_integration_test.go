@@ -397,7 +397,10 @@ func TestEmailPushGmailUnionBindings(t *testing.T) {
 			cfg.Accounts = append(cfg.Accounts, config.AccountSchedule{Email: gmailSource.Identifier, Schedule: "0 0 * * *", Enabled: true})
 			switch mode {
 			case "wrong-type":
-				selectedID = imapSource.ID
+				other, err := st.GetOrCreateSource(sourceTypeIMAP, "imap://other@example.test")
+				requirements.NoError(err)
+				selectedID = other.ID
+				cfg.Accounts = append(cfg.Accounts, config.AccountSchedule{Email: other.Identifier, Schedule: "0 0 * * *", Enabled: true})
 			case "disabled":
 				cfg.Accounts[1].Enabled = false
 			case "alias":

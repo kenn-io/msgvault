@@ -49,6 +49,7 @@ func TestEmailPushBindingValidation(t *testing.T) {
 				other, err := st.GetOrCreateSource(sourceTypeGmail, "other@example.test")
 				requirements.NoError(err)
 				cfg.EmailPush.IMAPSourceIDs = []int64{other.ID}
+				cfg.Accounts[0].Email = other.Identifier
 			case "missing":
 				cfg.EmailPush.IMAPSourceIDs = []int64{src.ID + 999}
 			case "disabled":
