@@ -1468,6 +1468,7 @@ func TestImporterRetriesRecoveredSectionAfterArchiveFailureNearDeadline(t *testi
 	empty := paragraph("transcript-1", "", false)
 	source.blocks["transcript-1"] = &empty
 	source.markdown.Markdown = ""
+	source.markdown.Raw = json.RawMessage(`{"object":"page_markdown","id":"page-1","markdown":""}`)
 	source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
 	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(t, err)
