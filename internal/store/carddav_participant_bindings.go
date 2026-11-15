@@ -156,7 +156,19 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 				wanted[personID] = struct{}{}
 			}
 		}
-		owners := cardDAVManualOwners(bindings, members, shadowed)
+		localOwners := cardDAVManualOwners(bindings, members)
+		owners := maps.Clone(localOwners)
+		for _, id := range members {
+			for _, holder := range shadowed[id] {
+				edges, err := s.loadComponentEdgesTxContext(ctx, tx, holder, holder)
+				if err != nil {
+					return nil, err
+				}
+				for owner := range cardDAVManualOwners(bindings, sortedComponentMembers(holder, edges)) {
+					owners[owner] = struct{}{}
+				}
+			}
+		}
 		var personID int64
 		if len(wanted) == 1 {
 			for id := range wanted {
@@ -186,7 +198,7 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 		}
 		for _, id := range members {
 			binding, exists := bindings[id]
-			if _, manuallyOwned := owners[binding.personID]; exists && binding.owned && !manuallyOwned && (personID == 0 || binding.personID != personID) {
+			if _, manuallyOwned := localOwners[binding.personID]; exists && binding.owned && !manuallyOwned && (reason != "" || personID == 0 || binding.personID != personID) {
 				plan.remove = append(plan.remove, binding)
 			}
 			if (!exists || binding.owned && binding.personID != personID) && personID != 0 && reason == "" && !cleanupOnly {
@@ -199,15 +211,12 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 	return plan, nil
 }
 
-// cardDAVManualOwners collects the people manually holding any member or any
-// participant whose claim on a member's address yields to it.
-func cardDAVManualOwners(bindings map[int64]cardDAVParticipantBinding, members []int64, shadowed map[int64][]int64) cardDAVPersonSet {
+// cardDAVManualOwners collects the people manually holding component members.
+func cardDAVManualOwners(bindings map[int64]cardDAVParticipantBinding, members []int64) cardDAVPersonSet {
 	owners := cardDAVPersonSet{}
 	for _, id := range members {
-		for _, holder := range append([]int64{id}, shadowed[id]...) {
-			if binding, ok := bindings[holder]; ok && !binding.owned {
-				owners[binding.personID] = struct{}{}
-			}
+		if binding, ok := bindings[id]; ok && !binding.owned {
+			owners[binding.personID] = struct{}{}
 		}
 	}
 	return owners
