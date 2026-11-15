@@ -192,33 +192,6 @@ func (s *commitmentPhaseEndingStore) ListPersonCommitmentsContext(context.Contex
 	return nil, s.ctx.Err()
 }
 
-type pagingCommitmentStore struct {
-	*store.Store
-
-	limit int
-}
-
-func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, limit int, _ int, _ bool) ([]store.PersonCommitment, error) {
-	s.limit = limit
-	return []store.PersonCommitment{
-		{ID: 201, PersonID: 1, AnchorMessageID: 1, Direction: "owed_to", Quote: "I will call.", End: 12, Summary: "Call", Freshness: "fresh", PromisedAt: now, State: store.LoopStateOpen},
-		{ID: 202, PersonID: 1, AnchorMessageID: 2, Direction: "owed_to", Quote: "I will write.", End: 13, Summary: "Write", Freshness: "fresh", PromisedAt: now, State: store.LoopStateOpen},
-	}, nil
-}
-
-func TestListPagesCommitments(t *testing.T) {
-	f := storetest.New(t)
-	st := &pagingCommitmentStore{Store: f.Store}
-	result, err := loops.List(t.Context(), st, loops.Options{Limit: 1, CommitmentOffset: 200}, now)
-	require.NoError(t, err)
-	require.Len(t, result.Commitments, 1)
-	assert.Equal(t, int64(201), result.Commitments[0].ID)
-	require.NotNil(t, result.CommitmentsNextOffset)
-	assert.Equal(t, 201, *result.CommitmentsNextOffset)
-	assert.Equal(t, 2, st.limit)
-	assert.True(t, result.Truncated)
-}
-
 func TestListRecomputesEvidenceFromBeforeLoopTextRulesWereVersioned(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

@@ -111,6 +111,7 @@ func TestCommitmentDecisionMapsMalformedAndUnknownIDs(t *testing.T) {
 		status      int
 	}{
 		{"12", `{"state":"done"}`, http.StatusBadRequest},
+		{"c012", `{"state":"done"}`, http.StatusBadRequest},
 		{"c12", `{"state":"done"}`, http.StatusNotFound},
 		{"c1", `{"state":"done"}`, http.StatusConflict},
 	} {
@@ -595,12 +596,12 @@ func (s *conflictingCommitmentStore) DecidePersonCommitmentContext(_ context.Con
 type pagingCommitmentStore struct {
 	*store.Store
 
-	offset        int
+	limit, offset int
 	includeClosed bool
 }
 
-func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, _ int, offset int, includeClosed bool) ([]store.PersonCommitment, error) {
-	s.offset, s.includeClosed = offset, includeClosed
+func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, limit, offset int, includeClosed bool) ([]store.PersonCommitment, error) {
+	s.limit, s.offset, s.includeClosed = limit, offset, includeClosed
 	return []store.PersonCommitment{{ID: 201, PersonID: 1, TargetKey: "promise-201", AnchorMessageID: 1, Direction: "owed_to", Quote: "I will call.", Start: 0, End: 12, Summary: "Call", Freshness: "fresh", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"}, {ID: 202, PersonID: 1, TargetKey: "promise-202", AnchorMessageID: 2, Direction: "owed_to", Quote: "I will write.", Start: 0, End: 13, Summary: "Write", Freshness: "stale", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"}}, nil
 }
 
@@ -613,6 +614,7 @@ func TestListLoopsPagesCommitments(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops?limit=1&commitment_offset=200&include_closed=true", nil))
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(2, st.limit, "one extra promise detects the next page")
 	assert.Equal(200, st.offset)
 	assert.True(st.includeClosed)
 	var response LoopListResponse
@@ -621,4 +623,5 @@ func TestListLoopsPagesCommitments(t *testing.T) {
 	assert.Equal(LoopCommitment{ID: "c201", PersonID: 1, Direction: "owed_to", Summary: "Call", Promise: CommitmentQuote{MessageID: 1, Text: "I will call.", Start: 0, End: 12}, PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Freshness: "fresh", State: "open"}, response.Commitments[0])
 	require.NotNil(response.CommitmentsNextOffset)
 	assert.Equal(201, *response.CommitmentsNextOffset)
+	assert.True(response.Truncated)
 }
