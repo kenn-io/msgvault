@@ -127,10 +127,6 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 	if err != nil {
 		return nil, err
 	}
-	ownParticipants, err := cardDAVOwnParticipantsTx(ctx, tx)
-	if err != nil {
-		return nil, err
-	}
 	seeds := cardDAVPersonSet{}
 	for id := range matched {
 		seeds[id] = struct{}{}
@@ -154,22 +150,14 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 		}
 		members := sortedComponentMembers(seed, edges)
 		wanted, owners := cardDAVPersonSet{}, cardDAVPersonSet{}
-		ownComponent := false
 		for _, id := range members {
 			visited[id] = struct{}{}
-			_, own := ownParticipants[id]
-			ownComponent = ownComponent || own
 			for personID := range matched[id] {
 				wanted[personID] = struct{}{}
 			}
 			if binding, ok := bindings[id]; ok && !binding.owned {
 				owners[binding.personID] = struct{}{}
 			}
-		}
-		// A confirmed account identity makes its entire linked component the
-		// owner. Release automatic memberships, but leave explicit links alone.
-		if ownComponent {
-			clear(wanted)
 		}
 		var personID int64
 		if len(wanted) == 1 {

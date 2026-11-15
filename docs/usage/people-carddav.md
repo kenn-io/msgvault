@@ -298,11 +298,6 @@ with [person merge](people.md#merge-duplicate-profiles-and-reverse-a-merge).
 People with active merge history can receive new matching archived identities.
 Those bindings stay with the surviving person after a split.
 
-Confirmed account identities and their linked components are excluded from
-automatic binding. Confirming an identity after it was automatically bound
-releases that component on the next sync or explicit reconciliation. Explicit
-manual memberships stay in place.
-
 An unresolved CardDAV edit conflict also suspends that card's automatic claims
 until you resolve it. Other subscribed cards can still support the same person.
 

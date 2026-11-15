@@ -909,74 +909,59 @@ func TestCardDAVParticipantBindingPublicationPreparationLockOrder(t *testing.T) 
 	require.NoError(<-done)
 }
 
-func TestCardDAVParticipantBindingExcludesConfirmedOwnComponents(t *testing.T) {
-	for _, kind := range []string{"email", "phone", "linked_alias", "formatted_phone_linked"} {
-		t.Run(kind, func(t *testing.T) {
+func TestCardDAVParticipantBindingIncludesConfirmedAccountIdentities(t *testing.T) {
+	for _, tc := range []struct {
+		kind   string
+		manual bool
+	}{{"email", false}, {"email", true}, {"phone", false}, {"phone", true}} {
+		t.Run(tc.kind+"/manual="+strconv.FormatBool(tc.manual), func(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)
 			st, account, book := newCardDAVResourceStore(t)
 			source, err := st.GetOrCreateSource("imap", "synthetic-owner@example.test")
 			require.NoError(err)
-			participant, err := st.EnsureParticipant("owner@example.test", "Owner Example", "example.test")
-			require.NoError(err)
-			identity := "OWNER@EXAMPLE.TEST"
-			card := remoteResource(book.CanonicalURL+"owner.vcf", "owner-card", "Owner Example", "owner@example.test", "one")
-			if kind == "phone" || kind == "formatted_phone_linked" {
-				identity = "+12025550100"
-				participant, err = st.EnsureParticipantByPhone(t.Context(), identity, "Owner Example", "imessage")
-				require.NoError(err)
-				card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:owner-card\r\nFN:Owner Example\r\nTEL:+1\u00a0202-555-0100\r\nEND:VCARD\r\n")
-				card.Emails = nil
-				card.Phones = []string{identity}
-				if kind == "formatted_phone_linked" {
-					identity = "+1 (202) 555-0100"
-					alias, err := st.EnsureParticipant("linked@example.test", "Linked", "example.test")
-					require.NoError(err)
-					_, err = st.LinkParticipants(participant, alias)
-					require.NoError(err)
-					card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:owner-card\r\nFN:Owner Example\r\nTEL:+12025550100\r\nEMAIL:linked@example.test\r\nEND:VCARD\r\n")
-					card.Emails = []string{"linked@example.test"}
-				}
-			} else if kind == "linked_alias" {
-				alias, err := st.EnsureParticipantByIdentifier("email", "alias@example.test", "")
-				require.NoError(err)
-				// Only the identifier table carries this confirmed address.
-				_, err = st.LinkParticipants(participant, alias)
-				require.NoError(err)
-				identity = "alias@example.test"
+			identity := "owner@example.test"
+			var participant int64
+			if tc.kind == "phone" {
+				identity = "+1 (202) 555-0100"
+				participant, err = st.EnsureParticipantByPhone(t.Context(), "+12025550100", "Owner", "imessage")
+			} else {
+				participant, err = st.EnsureParticipant(identity, "Owner", "example.test")
 			}
+			require.NoError(err)
+			alias, err := st.EnsureParticipant("linked@example.test", "Linked", "example.test")
+			require.NoError(err)
+			_, err = st.LinkParticipants(participant, alias)
+			require.NoError(err)
 			require.NoError(st.AddAccountIdentityContext(t.Context(), source.ID, identity, "manual"))
+			var owner *store.Person
+			if tc.manual {
+				owner, _, err = st.CreatePersonFromParticipant(participant)
+				require.NoError(err)
+			}
+			card := remoteResource(book.CanonicalURL+"owner.vcf", "owner-card", "Owner", "owner@example.test", "one")
+			if tc.kind == "phone" {
+				card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:owner-card\r\nFN:Owner\r\nTEL:+1 (202) 555-0100\r\nEND:VCARD\r\n")
+				card.Emails, card.Phones = nil, []string{"+1 (202) 555-0100"}
+			}
 			applyParticipantBindingCards(t, st, account, book, card)
-			person := bindingCardPerson(t, st, book, card.Href)
-			assert.Empty(person.ParticipantIDs)
-			preview, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
+			cardPerson := bindingCardPerson(t, st, book, card.Href)
+			result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
 			require.NoError(err)
-			assert.Zero(preview.ParticipantsBound)
-			assert.Zero(preview.Conflicts)
-			_, err = st.RemoveAccountIdentityContext(t.Context(), source.ID, identity)
-			require.NoError(err)
-			result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
-			require.NoError(err)
-			assert.Positive(result.ParticipantsBound)
-			require.True(bindingOwned(t, st, participant))
-			// Confirmation after binding releases only feature-owned memberships.
-			require.NoError(st.AddAccountIdentityContext(t.Context(), source.ID, identity, "manual"))
-			preview, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
-			require.NoError(err)
-			assert.Equal(result.ParticipantsBound, preview.ParticipantsUnbound)
-			result, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
-			require.NoError(err)
-			assert.Equal(preview, result)
-			person, err = st.GetPersonContext(t.Context(), person.ID)
-			require.NoError(err)
-			assert.Empty(person.ParticipantIDs)
-			_, _, err = st.CreatePersonFromParticipantContext(t.Context(), participant)
-			require.NoError(err)
-			result, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
-			require.NoError(err)
-			assert.Zero(result.ParticipantsUnbound, "explicit own-identity memberships stay manual")
-			assert.Zero(result.Conflicts)
-			assert.False(bindingOwned(t, st, participant))
+			if tc.manual {
+				assert.Empty(cardPerson.ParticipantIDs)
+				require.Len(result.ConflictDetails, 1)
+				assert.Equal("existing_person", result.ConflictDetails[0].Reason)
+				assert.ElementsMatch([]int64{owner.ID, cardPerson.ID}, result.ConflictDetails[0].PersonIDs)
+				owner, err = st.GetPersonContext(t.Context(), owner.ID)
+				require.NoError(err)
+				assert.ElementsMatch([]int64{participant, alias}, owner.ParticipantIDs)
+			} else {
+				assert.ElementsMatch([]int64{participant, alias}, cardPerson.ParticipantIDs)
+				assert.True(bindingOwned(t, st, participant))
+				assert.True(bindingOwned(t, st, alias))
+				assert.Zero(result.Conflicts)
+			}
 		})
 	}
 }
