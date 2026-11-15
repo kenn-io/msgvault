@@ -1,7 +1,9 @@
 package store
 
 import (
+	"bytes"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +11,25 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCalendarListingUsesProjectedEvents(t *testing.T) {
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "event", calendarRaw)
+	ConfigureSQLLogging(SQLLogOptions{FullTrace: true, MaxStmtChars: 10000})
+	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	require.NoError(err)
+	require.Len(page.Occurrences, 1)
+	require.Equal(event, page.Occurrences[0].MessageID)
+	require.Contains(logs.String(), "calendar_events")
+	require.NotContains(logs.String(), "message_raw")
+}
 
 func calendarWindow(t *testing.T, st *Store, from, to string) ([]CalendarEventRow, error) {
 	t.Helper()

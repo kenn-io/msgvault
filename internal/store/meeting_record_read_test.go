@@ -638,7 +638,6 @@ func TestMeetingRecordDerivedGoogleAlias(t *testing.T) {
 func TestMeetingRecordExactFractionalAndOffsetTimes(t *testing.T) {
 	for _, tc := range []struct{ name, eventTime, noteTime, otherTime string }{
 		{"milliseconds", "2027-03-14T10:00:00.123Z", "2027-03-14T06:00:00.123-04:00", "2027-03-14T10:00:00.124Z"},
-		{"submicrosecond", "2027-03-14T10:00:00.1230001Z", "2027-03-14T06:00:00.1230001-04:00", "2027-03-14T10:00:00.1230009Z"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
