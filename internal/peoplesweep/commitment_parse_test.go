@@ -2,6 +2,7 @@ package peoplesweep
 
 import (
 	"encoding/json/jsontext"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -97,4 +98,49 @@ func TestCommitmentConfigLimits(t *testing.T) {
 	r.NoError(cfg.Commitments.Validate(cfg.Budgets))
 	cfg.Commitments.MaxOutputTokens = 32769
 	r.ErrorContains(cfg.Commitments.Validate(cfg.Budgets), "max_output_tokens <= 32768")
+}
+
+func TestParseCommitmentsKeepsOnlyCitedDueDates(t *testing.T) {
+	for _, tc := range []struct {
+		name, text, quote, due string
+		keep                   bool
+	}{
+		{"no date", "I will call.", "I will call.", "2026-11-20", false},
+		{"outside quote", "I will call. Meeting is on 2026-11-20.", "I will call.", "2026-11-20", false},
+		{"different date", "I will call by 2026-11-21.", "I will call by 2026-11-21.", "2026-11-20", false},
+		{"embedded digits", "I will call about 12026-11-20.", "I will call about 12026-11-20.", "2026-11-20", false},
+		{"ISO date", "I will call by 2026-11-20.", "I will call by 2026-11-20.", "2026-11-20", true},
+		{"written date", "I will call by November 20, 2026.", "I will call by November 20, 2026.", "2026-11-20", true},
+		{"weekday", "I will call by Friday.", "I will call by Friday.", "2026-11-13", true},
+		{"wrong weekday date", "I will call by Friday.", "I will call by Friday.", "2026-11-20", false},
+		{"ambiguous next weekday", "I will call by next Friday.", "I will call by next Friday.", "2026-11-20", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+			source := CommitmentSource{ID: "m1", MessageID: 1, Direction: CommitmentOwedTo, Text: tc.text, EventTime: now}
+			window := CommitmentWindow{PersonID: 2, Sources: []CommitmentSource{source}, Now: now, Timezone: "UTC"}
+			output := jsontext.Value(fmt.Sprintf(`{"promises":[{"source_id":"m1","direction":"owed_to","quote":%q,"start":0,"end":%d,"summary":"Call","due_on":%q}]}`, tc.quote, len([]rune(tc.quote)), tc.due))
+			parsed, err := ParseCommitments(output, window)
+			require.NoError(t, err)
+			require.Len(t, parsed.Promises, 1)
+			if tc.keep {
+				require.NotNil(t, parsed.Promises[0].DueOn)
+				assert.Equal(t, tc.due, *parsed.Promises[0].DueOn)
+			} else {
+				assert.Nil(t, parsed.Promises[0].DueOn)
+			}
+		})
+	}
+	t.Run("weekday uses source time in configured timezone", func(t *testing.T) {
+		const quote = "I will call by Friday."
+		event := time.Date(2026, 11, 14, 2, 0, 0, 0, time.UTC)
+		source := CommitmentSource{ID: "m1", MessageID: 1, Direction: CommitmentOwedTo, Text: quote, EventTime: event}
+		window := CommitmentWindow{PersonID: 2, Sources: []CommitmentSource{source}, Now: event.AddDate(0, 0, 10), Timezone: "America/New_York"}
+		output := jsontext.Value(`{"promises":[{"source_id":"m1","direction":"owed_to","quote":"I will call by Friday.","start":0,"end":22,"summary":"Call","due_on":"2026-11-13"}]}`)
+		parsed, err := ParseCommitments(output, window)
+		require.NoError(t, err)
+		require.Len(t, parsed.Promises, 1)
+		require.NotNil(t, parsed.Promises[0].DueOn)
+		assert.Equal(t, "2026-11-13", *parsed.Promises[0].DueOn)
+	})
 }

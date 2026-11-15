@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -99,6 +100,9 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 			if err != nil || due.Format(time.DateOnly) != *promise.DueOn {
 				return invalid()
 			}
+			if !commitmentQuoteHasDate(promise.Quote, due, source.EventTime, location) {
+				promise.DueOn = nil
+			}
 		}
 		// Human-readable wording is deliberately absent from identity.
 		identity := fmt.Sprintf("%d/%s/%d/%s/%d/%d/%s", window.PersonID, promise.Direction, source.MessageID, source.RecordedTime.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), promise.Start, promise.End, promise.Quote)
@@ -112,6 +116,36 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 		spans[source.MessageID] = append(spans[source.MessageID], promiseSpan{promise.Start, promise.End})
 	}
 	return parsed, nil
+}
+
+func commitmentQuoteHasDate(quote string, due, event time.Time, location *time.Location) bool {
+	quote = strings.ToLower(quote)
+	for _, layout := range []string{time.DateOnly, "January 2, 2006", "Jan 2, 2006", "2 January 2006", "2 Jan 2006"} {
+		date := strings.ToLower(due.Format(layout))
+		for remaining := quote; ; {
+			i := strings.Index(remaining, date)
+			if i < 0 {
+				break
+			}
+			before, _ := utf8.DecodeLastRuneInString(remaining[:i])
+			after, _ := utf8.DecodeRuneInString(remaining[i+len(date):])
+			if !unicode.IsLetter(before) && !unicode.IsDigit(before) && !unicode.IsLetter(after) && !unicode.IsDigit(after) {
+				return true
+			}
+			remaining = remaining[i+len(date):]
+		}
+	}
+	if !event.IsZero() {
+		day := event.In(location)
+		days := (int(due.Weekday()) - int(day.Weekday()) + 7) % 7
+		phrase := "by " + strings.ToLower(due.Weekday().String())
+		end := strings.TrimRightFunc(quote, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsPunct(r) })
+		if day.AddDate(0, 0, days).Format(time.DateOnly) == due.Format(time.DateOnly) && strings.HasSuffix(end, phrase) {
+			before, _ := utf8.DecodeLastRuneInString(end[:len(end)-len(phrase)])
+			return !unicode.IsLetter(before) && !unicode.IsDigit(before)
+		}
+	}
+	return false
 }
 
 // MatchesQuote verifies an exact authored quote at its original-body rune offsets.
