@@ -156,18 +156,26 @@ type cardDAVAddressMatch struct {
 	primary bool
 }
 
-// A primary email outranks another participant's alias for the same address:
-// the alias holder is not matched, but is returned in shadowed under each
-// primary owner so its manual person binding still counts as a competing owner.
+// A primary email outranks another participant's alias for matching. All
+// holders still contribute manual owners when checking for conflicts.
 func cardDAVMatchCandidates(claims map[cardDAVParticipantAddress]cardDAVPersonSet, candidates []cardDAVAddressMatch, primaryOwners map[cardDAVParticipantAddress]cardDAVPersonSet) (map[int64]cardDAVPersonSet, map[int64][]int64) {
 	matched, shadowed := map[int64]cardDAVPersonSet{}, map[int64][]int64{}
+	holders := map[cardDAVParticipantAddress]cardDAVPersonSet{}
 	for _, candidate := range candidates {
+		if holders[candidate.key] == nil {
+			holders[candidate.key] = cardDAVPersonSet{}
+		}
+		holders[candidate.key][candidate.id] = struct{}{}
+	}
+	for _, candidate := range candidates {
+		for holder := range holders[candidate.key] {
+			if holder != candidate.id {
+				shadowed[candidate.id] = append(shadowed[candidate.id], holder)
+			}
+		}
 		if !candidate.primary && candidate.key.kind == ContactAddressEmail {
 			owners := primaryOwners[candidate.key]
 			if _, ownsPrimary := owners[candidate.id]; len(owners) > 0 && !ownsPrimary {
-				for owner := range owners {
-					shadowed[owner] = append(shadowed[owner], candidate.id)
-				}
 				continue
 			}
 		}

@@ -1036,3 +1036,95 @@ func TestCardDAVParticipantBindingDetectsLinkedManualAliasOwner(t *testing.T) {
 	assert.False(bindingOwned(t, st, manual))
 	assert.True(bindingOwned(t, st, alias))
 }
+
+func TestCardDAVParticipantBindingConflictsWithOtherAddressHolders(t *testing.T) {
+	for _, kind := range []string{"phone", "email aliases"} {
+		t.Run(kind, func(t *testing.T) {
+			assert := Assert.New(t)
+			require := Require.New(t)
+			st, account, book := newCardDAVResourceStore(t)
+			var ownerID, otherID int64
+			var err error
+			card := remoteResource(book.CanonicalURL+"shared-holder.vcf", "shared-holder", "Shared", "shared@example.test", "one")
+			if kind == "phone" {
+				old, err := st.EnsureParticipantByPhone(t.Context(), "+12025550101", "Old", "imessage")
+				require.NoError(err)
+				ownerID, err = st.EnsureParticipantByPhone(t.Context(), "+12025550102", "Owner", "whatsapp")
+				require.NoError(err)
+				require.NoError(st.MergeParticipants(old, ownerID))
+				otherID, err = st.EnsureParticipantByPhone(t.Context(), "+12025550101", "Other", "imessage")
+				require.NoError(err)
+				card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:shared-holder\r\nFN:Shared\r\nTEL:+12025550101\r\nEND:VCARD\r\n")
+				card.Emails = nil
+				card.Phones = []string{"+12025550101"}
+			} else {
+				ownerID, err = st.EnsureParticipant("owner@example.test", "Owner", "example.test")
+				require.NoError(err)
+				otherID, err = st.EnsureParticipant("other@example.test", "Other", "example.test")
+				require.NoError(err)
+				require.NoError(st.SetParticipantIdentifier(ownerID, "imessage", "shared@example.test"))
+				require.NoError(st.SetParticipantIdentifier(otherID, "email", "shared@example.test"))
+			}
+			require.NotEqual(ownerID, otherID)
+			owner, _, err := st.CreatePersonFromParticipant(ownerID)
+			require.NoError(err)
+			applyParticipantBindingCards(t, st, account, book, card)
+			person := bindingCardPerson(t, st, book, card.Href)
+			result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
+			require.NoError(err)
+			require.NotEmpty(result.ConflictDetails)
+			assert.Equal("existing_person", result.ConflictDetails[0].Reason)
+			assert.ElementsMatch([]int64{person.ID, owner.ID}, result.ConflictDetails[0].PersonIDs)
+			other, err := st.PersonForParticipantsContext(t.Context(), []int64{otherID})
+			require.NoError(err)
+			assert.Nil(other)
+		})
+	}
+}
+
+func TestCardDAVParticipantBindingSystemLinkAfterPersonMerge(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	st, account, book := newCardDAVResourceStore(t)
+	a, err := st.EnsureParticipant("left@example.test", "Left", "example.test")
+	require.NoError(err)
+	b, err := st.EnsureParticipant("right@example.test", "Right", "example.test")
+	require.NoError(err)
+	first := remoteResource(book.CanonicalURL+"left.vcf", "left", "Left", "left@example.test", "one")
+	first.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:left\r\nFN:Left\r\nEMAIL:left@example.test\r\nEMAIL:late@example.test\r\nEND:VCARD\r\n")
+	first.Emails = []string{"left@example.test", "late@example.test"}
+	second := remoteResource(book.CanonicalURL+"right.vcf", "right", "Right", "right@example.test", "one")
+	applyParticipantBindingCards(t, st, account, book, first, second)
+	left, right := bindingCardPerson(t, st, book, first.Href), bindingCardPerson(t, st, book, second.Href)
+	merged, err := st.MergePersonsContext(t.Context(), store.PersonMergeRequest{SurvivorID: left.ID, AbsorbedID: right.ID, ExpectedSurvivorRevision: left.Revision, ExpectedAbsorbedRevision: right.Revision, IdempotencyKey: "system-link-merge", Actor: "test"})
+	require.NoError(err)
+	var leftOrigin, rightOrigin string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT origin_side FROM person_merge_participants WHERE merge_id = ? AND participant_id = ?`), merged.Merge.ID, a).Scan(&leftOrigin))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT origin_side FROM person_merge_participants WHERE merge_id = ? AND participant_id = ?`), merged.Merge.ID, b).Scan(&rightOrigin))
+	late, err := st.EnsureParticipant("late@example.test", "Late", "example.test")
+	require.NoError(err)
+	_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
+	require.NoError(err)
+	require.True(bindingOwned(t, st, late))
+	candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{LeftKind: store.IdentityMatchParticipant, LeftID: b, RightKind: store.IdentityMatchParticipant, RightID: late, Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("synthetic-provider-id"), State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation})
+	require.NoError(err)
+	_, _, err = st.AcceptIdentityMatchCandidateContext(t.Context(), candidate.ID, "system", nil)
+	require.NoError(err)
+	_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{Undo: true})
+	require.NoError(err)
+	current, err := st.GetPersonContext(t.Context(), merged.Person.ID)
+	require.NoError(err)
+	assert.ElementsMatch([]int64{a, b}, current.ParticipantIDs)
+	split, err := st.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID, ParticipantIDs: []int64{b}, ExpectedSourceRevision: current.Revision, IdempotencyKey: "system-link-split", Actor: "test"})
+	require.NoError(err)
+	assert.Equal([]int64{a}, split.SourcePerson.ParticipantIDs)
+	assert.Equal([]int64{b}, split.NewPerson.ParticipantIDs)
+	var leftOriginAfter, rightOriginAfter string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT origin_side FROM person_merge_participants WHERE merge_id = ? AND participant_id = ?`), merged.Merge.ID, a).Scan(&leftOriginAfter))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT origin_side FROM person_merge_participants WHERE merge_id = ? AND participant_id = ?`), merged.Merge.ID, b).Scan(&rightOriginAfter))
+	assert.Equal(leftOrigin, leftOriginAfter)
+	assert.Equal(rightOrigin, rightOriginAfter)
+	unbound, err := st.PersonForParticipantsContext(t.Context(), []int64{late})
+	require.NoError(err)
+	assert.Nil(unbound)
+}
