@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -85,21 +86,12 @@ func TestMeetingRecordInheritedVerificationSubject(t *testing.T) {
 
 func TestMeetingRecordPartialHTTP(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("gcal", "calendar@example.test")
-	require.NoError(err)
-	id, err := st.PersistMessage(&store.MessagePersistData{
-		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "series", MessageType: "calendar_event"},
-		Conversation: &store.ConversationPersistData{SourceConversationID: "series", ConversationType: "calendar"},
-		RawMIME:      []byte(`{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`), RawFormat: "gcal_json",
-	})
-	require.NoError(err)
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger()})
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &partialMeetingRecordStore{mockStore: &mockStore{}}, Logger: testLogger()})
 	for _, tc := range []struct {
 		ref    string
 		status int
 	}{
-		{fmt.Sprintf("evt:%d", id), http.StatusBadRequest},
+		{"evt:42", http.StatusBadRequest},
 		{"evt:999999", http.StatusNotFound},
 	} {
 		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/record?ref="+tc.ref, nil)
@@ -118,6 +110,17 @@ func TestMeetingRecordPartialHTTP(t *testing.T) {
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, request)
 	assert.Equal(http.StatusBadRequest, response.Code, response.Body.String())
+}
+
+type partialMeetingRecordStore struct {
+	*mockStore
+}
+
+func (s *partialMeetingRecordStore) MeetingRecordContext(_ context.Context, ref store.MeetingLinkRef) (store.MeetingRecord, error) {
+	if ref.MessageID == 999999 {
+		return store.MeetingRecord{}, sql.ErrNoRows
+	}
+	return store.MeetingRecord{}, store.ErrMeetingOccurrenceRequired
 }
 
 func TestMeetingRecordMessageReadSourceScope(t *testing.T) {

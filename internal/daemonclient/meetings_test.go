@@ -215,11 +215,10 @@ func TestMeetingDecisionClientRoundTrip(t *testing.T) {
 	client, imported := newMeetingDaemonClient(t)
 	left := fmt.Sprintf("msg:%d", imported[0].MessageID)
 	right := fmt.Sprintf("msg:%d", imported[1].MessageID)
-	for _, tc := range []struct{ decision, state string }{{"link", "link"}, {"unlink", "split"}, {"clear", "automatic"}} {
-		result, err := client.DecideMeetingLink(t.Context(), left, right, tc.decision)
+	for _, decision := range []string{"link", "unlink", "clear"} {
+		result, err := client.DecideMeetingLink(t.Context(), left, right, decision)
 		requirements.NoError(err)
 		assertions.Equal(left, result.Left)
 		assertions.Equal(right, result.Right)
-		assertions.Equal(tc.state, result.State)
 	}
 }

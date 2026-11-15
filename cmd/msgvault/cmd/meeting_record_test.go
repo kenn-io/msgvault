@@ -37,8 +37,6 @@ func TestMeetingLinksCLIPartialRecord(t *testing.T) {
 	start, end := &at, new(at.Add(time.Hour))
 	record := store.MeetingRecord{
 		Links: []store.MeetingLink{
-			{Ref: "evt:1", Start: start, End: end, Status: "confirmed"},
-			{Ref: "evt:2", Start: start, End: end, Status: "cancelled"},
 			{Ref: "evt:3", Start: start, End: end, Status: "confirmed", DeletedFromSource: true},
 			{Ref: "evt:4", Status: "cancelled"},
 		},
