@@ -732,6 +732,12 @@ func TestCommitmentDecisionReportsConcurrentChange(t *testing.T) {
 	_, err = f.store.updatePersonCommitmentDecision(ctx, snoozed, LoopStateSnoozed, new(first.Add(2*time.Hour)))
 	r.ErrorIs(err, ErrCommitmentChanged)
 
+	reopened, err := f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateOpen, nil, request.CompletedAt)
+	r.NoError(err)
+	r.Equal(LoopStateOpen, reopened.State)
+	r.Nil(reopened.SnoozedUntil)
+	candidate = load()
+
 	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`INSERT INTO person_fact_evidence_status_events
 		(person_id, generation_id, evidence_id, evidence_key, source_version, supported, reason)
 		VALUES (?, ?, ?, ?, ?, FALSE, 'source-edited')`), f.personID, result.Generation.GenerationID,
@@ -739,30 +745,4 @@ func TestCommitmentDecisionReportsConcurrentChange(t *testing.T) {
 	r.NoError(err)
 	_, err = f.store.updatePersonCommitmentDecision(ctx, candidate, LoopStateSnoozed, new(request.CompletedAt.Add(time.Hour)))
 	r.ErrorIs(err, ErrCommitmentChanged)
-}
-
-func TestCommitmentReopensSnoozedPromise(t *testing.T) {
-	r, ctx := require.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "decision-reopen", false)
-	_, persist := newCommitmentTestConversation(t, f)
-	const quote = "I will call."
-	persist("promise", quote, -time.Hour)
-	cfg, profile := commitmentTestConfig()
-	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	promise := peoplesweep.CommitmentPromise{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Call", End: int64(len(quote))}
-	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{promise}})
-	_, err = f.store.ApplyPersonSweep(ctx, request)
-	r.NoError(err)
-	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, true)
-	r.NoError(err)
-	r.Len(items, 1)
-	until := request.CompletedAt.Add(time.Hour)
-	_, err = f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateSnoozed, &until, request.CompletedAt)
-	r.NoError(err)
-	reopened, err := f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateOpen, nil, request.CompletedAt)
-	r.NoError(err)
-	assert.Equal(t, LoopStateOpen, reopened.State)
-	assert.Nil(t, reopened.SnoozedUntil)
 }

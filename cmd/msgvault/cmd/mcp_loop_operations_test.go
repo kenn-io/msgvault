@@ -103,8 +103,10 @@ func assertLoopRefusal(t *testing.T, result *mcpserver.OperationResult, code str
 	assert.JSONEq(t, fmt.Sprintf(`{"error":%q,"operation_may_have_completed":%t}`, code, uncertain), string(data))
 }
 
-func TestMCPLoopListForwardsCommitmentOffset(t *testing.T) {
-	f := storetest.New(t)
+func TestMCPLoopsSDKDecisionsAndList(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f, _, anchor := loopOperationFixture(t)
 	apiServer := api.NewServerWithOptions(api.ServerOptions{Config: config.NewDefaultConfig(), Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler)})
 	var offset atomic.Value
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -115,22 +117,10 @@ func TestMCPLoopListForwardsCommitmentOffset(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	capabilities, err := client.MCPCapabilities(t.Context())
-	require.NoError(t, err)
+	requirements.NoError(err)
 	backend := newDaemonMCPOperations(client, capabilities)
-	session := loopOperationMCPSession(t, backend, nil, &sdkmcp.ClientOptions{})
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_open_loops", Arguments: map[string]any{"commitment_offset": 5}})
-	require.NoError(t, err)
-	require.False(t, result.IsError)
-	loopToolOutput[generated.LoopListResponse](t, result)
-	assert.Equal(t, "5", offset.Load())
-}
-
-func TestMCPLoopsSDKDecisionsAndList(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	f, backend, anchor := loopOperationFixture(t)
 	approved := true
 	var disclosures []string
 	session := loopOperationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyLoops}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
@@ -150,6 +140,8 @@ func TestMCPLoopsSDKDecisionsAndList(t *testing.T) {
 		requirements.NoError(err)
 		return result
 	}
+	loopToolOutput[generated.LoopListResponse](t, call("list_open_loops", map[string]any{"commitment_offset": 5}))
+	assertions.Equal("5", offset.Load())
 	list := loopToolOutput[generated.LoopListResponse](t, call("list_open_loops", nil))
 	requirements.Len(list.Items, 2)
 	kinds := []string{}

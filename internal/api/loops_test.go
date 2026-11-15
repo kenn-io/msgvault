@@ -601,7 +601,7 @@ type pagingCommitmentStore struct {
 
 func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, _ int, offset int, includeClosed bool) ([]store.PersonCommitment, error) {
 	s.offset, s.includeClosed = offset, includeClosed
-	return []store.PersonCommitment{{ID: 201, PersonID: 1, TargetKey: "promise-201", AnchorMessageID: 1, Direction: "owed_to", Quote: "I will call.", Summary: "Call", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"}, {ID: 202, PersonID: 1, TargetKey: "promise-202", AnchorMessageID: 2, Direction: "owed_to", Quote: "I will write.", Summary: "Write", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"}}, nil
+	return []store.PersonCommitment{{ID: 201, PersonID: 1, TargetKey: "promise-201", AnchorMessageID: 1, Direction: "owed_to", Quote: "I will call.", Summary: "Call", Freshness: "fresh", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"}, {ID: 202, PersonID: 1, TargetKey: "promise-202", AnchorMessageID: 2, Direction: "owed_to", Quote: "I will write.", Summary: "Write", Freshness: "stale", PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), State: "open"}}, nil
 }
 
 func TestListLoopsPagesCommitments(t *testing.T) {
@@ -615,4 +615,10 @@ func TestListLoopsPagesCommitments(t *testing.T) {
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
 	assert.Equal(200, st.offset)
 	assert.True(st.includeClosed)
+	var response LoopListResponse
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	require.Len(response.Commitments, 1)
+	assert.Equal(LoopCommitment{ID: "c201", PersonID: 1, Direction: "owed_to", Summary: "Call", Promise: CommitmentQuote{MessageID: 1, Text: "I will call."}, PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Freshness: "fresh", State: "open"}, response.Commitments[0])
+	require.NotNil(response.CommitmentsNextOffset)
+	assert.Equal(201, *response.CommitmentsNextOffset)
 }
