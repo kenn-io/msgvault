@@ -1873,6 +1873,22 @@ func (s *Store) GetMessageRawContext(ctx context.Context, messageID int64) ([]by
 	return decodeMessageRaw(compressed, compression)
 }
 
+// GetMessageRawWithFormatContext retrieves a message's raw evidence and the
+// format it is stored in.
+func (s *Store) GetMessageRawWithFormatContext(ctx context.Context, messageID int64) ([]byte, string, error) {
+	var compressed []byte
+	var compression sql.NullString
+	var format string
+	err := s.db.QueryRowContext(ctx, s.Rebind(`
+		SELECT raw_data, compression, raw_format FROM message_raw WHERE message_id = ?
+	`), messageID).Scan(&compressed, &compression, &format)
+	if err != nil {
+		return nil, "", err
+	}
+	raw, err := decodeMessageRaw(compressed, compression)
+	return raw, format, err
+}
+
 // GetMessageRawsContext decodes each selected raw message once; missing or invalid data is omitted.
 func (s *Store) GetMessageRawsContext(ctx context.Context, ids []int64) (map[int64][]byte, error) {
 	result := make(map[int64][]byte, len(ids))

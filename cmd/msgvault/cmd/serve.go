@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -677,6 +678,26 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}),
 		}); err != nil {
 			logger.Error("failed to schedule inline sync", "error", err)
+		}
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(forgeSources)) {
+		fs := forgeSources[name]
+		block := fs.config(cfg)
+		if block.Enabled && block.Schedule == "" {
+			logger.Warn(name + " is enabled but has no schedule; set [" + name + "].schedule to sync automatically")
+		}
+		if block.Enabled && block.Schedule != "" {
+			if err := sched.AddJob(scheduler.Job{
+				Name: name, Schedule: block.Schedule, Preemptible: true,
+				Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+					return fs.runScheduled(ctx, s)
+				}),
+			}); err != nil {
+				logger.Error("failed to schedule "+name+" sync", "error", err)
+			} else {
+				logger.Info("scheduled "+name+" sync", "schedule", block.Schedule)
+			}
 		}
 	}
 

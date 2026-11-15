@@ -275,6 +275,34 @@ func TestSchemaVersionInlineServiceUpgrade(t *testing.T) {
 	}
 }
 
+func TestSchemaVersionForgeServicesUpgrade(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	s := testutil.NewTestStore(t)
+	ctx := t.Context()
+
+	// An archive set up by version 39 has no forge services.
+	_, err := s.DB().ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = 'communication_services_forges_v1'`)
+	require.NoError(err)
+	_, err = s.DB().ExecContext(ctx, `DELETE FROM communication_services WHERE slug IN ('github', 'gitlab', 'gitea')`)
+	require.NoError(err)
+	_, err = s.DB().ExecContext(ctx, s.Rebind(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`), "39")
+	require.NoError(err)
+	require.ErrorContains(s.ValidateSchemaContext(ctx), "run setup")
+
+	// A writer opens the archive through InitSchemaUnlessCurrentContext. Its
+	// PostgreSQL fast path for current archives applies no new seed, so the
+	// older version must send this archive through the full initializer.
+	require.NoError(s.InitSchemaUnlessCurrentContext(ctx))
+	require.NoError(s.ValidateSchemaContext(ctx))
+	for _, slug := range []string{"github", "gitlab", "gitea"} {
+		service, err := s.ResolveCommunicationServiceContext(ctx, slug)
+		require.NoError(err, slug)
+		assert.True(service.IsSystem, slug)
+		assert.Equal(store.ScopePolicyRequired, service.ScopePolicy, slug)
+	}
+}
+
 func TestSchemaVersionMalformedAndFuture(t *testing.T) {
 	req := require.New(t)
 	check := assert.New(t)
@@ -340,6 +368,7 @@ var (
 		40: "a26d72acc985ec3ca25ab69f8173b6fc2fb050f26298e162a0cc1358abeda0f9",
 		41: "87805b27cac30a9b23f779a8bec0c9d5bf5d5cc463b286fb63f645e60567aa56",
 		42: "d59c2905aca47c18220182ebf5ada7a8e781f5bda3d2cb65d6bdd6d66fd2d936",
+		43: "0587fe1dae20da24ecfe462347419ffbc3552348e4f0dac999d87926c2b97c75",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -379,6 +408,7 @@ var (
 		40: "fd168ca80dd687aba404bf05be9a932eb5530303b9ac0cd73f91cc7ee01c14f2",
 		41: "f5438190c64d99d1f9d8f85e6a2d0508a8296aae5dfc5b389c5a1dc3e16c59d6",
 		42: "f3cc0baedce3bb1638cc4a4ecf5443039c176fd069c25975397bb35c41c26167",
+		43: "046cf6ad34af15018885e3287cd5704847e142a5c550482364edd7a282d4b528",
 	}
 )
 
