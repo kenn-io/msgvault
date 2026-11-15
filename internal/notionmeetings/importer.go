@@ -272,8 +272,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			next.Known[id] = known
 		}
 	}
-
 	now := imp.now().UTC()
+	var hardErrors []error
 	for id, pending := range pendingByID {
 		if pendingExpired(pending, now) && !pending.Incomplete {
 			delete(pendingByID, id)
@@ -294,6 +294,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			if ctx.Err() != nil || !transcriptTemporarilyUnavailable(loadErr) {
 				return sum, fmt.Errorf("load pending Notion meeting %s: %w", id, loadErr)
 			}
+			if errors.Is(loadErr, ErrProvider) {
+				hardErrors = append(hardErrors, fmt.Errorf("load pending Notion meeting %s: %w", id, loadErr))
+			}
 			if pendingExpired(pending, now) {
 				pending.RetryUntil = now.Add(unknownTranscriptRetrySpan).Format(time.RFC3339)
 			}
@@ -307,7 +310,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		workOrder = append(workOrder, id)
 	}
 	sum.MaintenanceRetries = int64(len(due))
-
 	remaining := max(opts.Limit, 0)
 	for _, meeting := range result.Results {
 		id := meeting.ID
@@ -326,10 +328,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		work[id] = meeting
 		workOrder = append(workOrder, id)
 	}
-
 	hydrator := NewHydrator(imp.client).WithUserSource(imp.users)
 	archiver := meetingarchive.New(scopedStore)
-	var hardErrors []error
 	for _, id := range workOrder {
 		if err := ctx.Err(); err != nil {
 			hardErrors = append(hardErrors, err)
@@ -429,7 +429,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			if oldText == "" && len(archived.RawTrees[section.name]) == 0 {
 				continue
 			}
-			keepCurrentTranscript := section.name == sectionTranscript && hydrated.MarkdownTranscriptFallback
+			keepCurrentTranscript := section.name == sectionTranscript && hydrated.MarkdownTranscriptFallback && strings.TrimSpace(oldText) == ""
 			if !keepCurrentTranscript {
 				*section.text = oldText
 			}

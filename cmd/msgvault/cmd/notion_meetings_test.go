@@ -15,18 +15,31 @@ import (
 )
 
 type fakeNotionProbe struct {
-	result      *notionmeetings.QueryResult
-	block       *notionmeetings.Block
-	err         error
-	blockErrors map[string]error
-	usersErr    error
-	blockIDs    *[]string
+	result            *notionmeetings.QueryResult
+	block             *notionmeetings.Block
+	err               error
+	blockErrors       map[string]error
+	usersErr          error
+	blockIDs          *[]string
+	pageIDs           *[]string
+	includeTranscript *bool
+	markdownErr       error
 }
 
 type fakeNotionSyncSource struct{ fakeNotionProbe }
 
 func (fakeNotionSyncSource) RetrievePageMarkdown(context.Context, string, bool) (*notionmeetings.MarkdownPage, error) {
 	return &notionmeetings.MarkdownPage{Object: "page_markdown", ID: "page-1", Raw: []byte(`{"object":"page_markdown","id":"page-1","markdown":""}`)}, nil
+}
+
+func (f fakeNotionProbe) RetrievePageMarkdown(_ context.Context, id string, includeTranscript bool) (*notionmeetings.MarkdownPage, error) {
+	if f.pageIDs != nil {
+		*f.pageIDs = append(*f.pageIDs, id)
+	}
+	if f.includeTranscript != nil {
+		*f.includeTranscript = includeTranscript
+	}
+	return &notionmeetings.MarkdownPage{ID: id}, f.markdownErr
 }
 
 func (f fakeNotionProbe) QueryMeetingNotes(context.Context, int) (*notionmeetings.QueryResult, error) {
@@ -140,6 +153,23 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRunNotionMeetingsProbeChecksPageMarkdownAccess(t *testing.T) {
+	var out bytes.Buffer
+	var pageIDs []string
+	var includeTranscript bool
+	denied := &notionmeetings.APIError{Kind: notionmeetings.ErrUnauthorized, Status: 401}
+	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
+		result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{
+			ID: "meeting-1", Parent: notionmeetings.Parent{Type: "page_id", PageID: "page-1"},
+			MeetingNotes: notionmeetings.MeetingNotesData{Children: notionmeetings.MeetingChildren{SummaryBlockID: "summary-1"}},
+		}}},
+		block: &notionmeetings.Block{}, pageIDs: &pageIDs, includeTranscript: &includeTranscript, markdownErr: denied,
+	}, nil)
+	require.ErrorIs(t, err, notionmeetings.ErrUnauthorized)
+	assert.Equal(t, []string{"page-1"}, pageIDs)
+	assert.True(t, includeTranscript)
 }
 
 func TestRunNotionMeetingsProbeDegradesWithoutUserInformation(t *testing.T) {

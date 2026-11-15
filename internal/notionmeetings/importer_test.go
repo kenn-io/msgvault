@@ -1106,10 +1106,17 @@ func TestImporterContinuesVisibleWorkWhenPendingMeetingCannotBeLoaded(t *testing
 
 			var progress []string
 			second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Progress: func(s string) { progress = append(progress, s) }})
-			require.NoError(err)
+			if tc.name == "not found" {
+				require.ErrorIs(err, tc.err)
+				checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), second.SourceID, SourceType)
+				require.NoError(err)
+				require.NoError(json.Unmarshal([]byte(checkpoint.CursorBefore.String), &state))
+			} else {
+				require.NoError(err)
+				state = lastNotionState(t, st, second.SourceID)
+			}
 			assert.Equal(int64(1), second.Errors)
 			assert.Equal(int64(1), second.MeetingsAdded)
-			state = lastNotionState(t, st, second.SourceID)
 			require.Len(state.Pending, 1)
 			assert.Equal("meeting-1", state.Pending[0].BlockID)
 			assert.Equal("2026-08-30T00:01:00Z", state.Pending[0].NextAttemptAt)
@@ -1264,6 +1271,27 @@ func TestImporterPreservesTranscriptWithMissingOrCorruptEvidence(t *testing.T) {
 			require.Len(state.Pending, 1)
 		})
 	}
+}
+
+func TestImporterKeepsSavedTranscriptWhenBlocksAreIncomplete(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+
+	meeting := hydrationMeeting()
+	meeting.LastEditedTime = "2026-08-29T14:00:00Z"
+	source.query.Results = []MeetingNote{meeting}
+	source.blockErrs = map[string]error{"transcript-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
+	source.markdown.Markdown = "# Transcript\nDifferent page transcript"
+	source.markdown.Raw, err = json.Marshal(source.markdown)
+	require.NoError(t, err)
+	summary, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	assert.Len(t, lastNotionState(t, st, summary.SourceID).Pending, 1)
+	var body string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT body_text FROM message_bodies`).Scan(&body))
+	assert.Contains(t, body, "Test Speaker: Ready to ship.")
+	assert.NotContains(t, body, "Different page transcript")
 }
 
 func TestImporterKeepsNewMarkdownTranscriptWhileBlocksAreIncomplete(t *testing.T) {
