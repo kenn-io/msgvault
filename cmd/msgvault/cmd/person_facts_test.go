@@ -229,7 +229,7 @@ func TestPersonFactsClaimsTableRetainsMalformedPersistedTargets(t *testing.T) {
 				"confidence":{"reported_score":400},"created_at":"2026-08-22T12:00:00Z"
 			},
 			{
-				"id":9,"generation_id":6,"claim_key":"valid-claim","kind":"fact","status":"fresh",
+				"id":9,"generation_id":6,"claim_key":"valid-claim","kind":"fact","status":"stale",
 				"program_id":"fixture-program","program_version":"v1",
 				"program_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				"target":{"kind":"attribute","key":"target-key","revision":"` + personFactTestRevision + `"},

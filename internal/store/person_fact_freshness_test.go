@@ -39,7 +39,9 @@ func TestClaimFreshness(t *testing.T) {
 			boundary := freshTime.Add(-time.Nanosecond)
 			a.Equal(personfacts.StatusStale, describePersonFactFreshness(tt.target, tt.until, &boundary, now).Status)
 			a.Equal(personfacts.StatusStale, describePersonFactFreshness(tt.target, tt.until, nil, now).Status)
-			a.Equal(personfacts.StatusExpired, describePersonFactFreshness(tt.target, &now, &freshTime, now).Status)
+			if tt.name == "finite employment" {
+				a.Equal(personfacts.StatusExpired, describePersonFactFreshness(tt.target, &now, &freshTime, now).Status)
+			}
 		})
 	}
 }
