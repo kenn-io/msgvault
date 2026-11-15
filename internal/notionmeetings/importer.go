@@ -364,11 +364,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			continue
 		}
 
-		for _, warning := range hydrated.Warnings {
-			if strings.Contains(warning, " incomplete: limit:") {
-				progress("meeting " + id + ": " + warning + "; reduce content or nesting; will retry")
-			}
-		}
 		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""
 		terminal := terminalStatus(meeting.MeetingNotes.Status)
 		if len(hydrated.Incomplete) > 0 {
@@ -452,7 +447,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				}
 				if section.name == sectionTranscript && archived.MarkdownFallback {
 					hydrated.MarkdownTranscriptFallback = true
-					progress("Kept the saved transcript because current transcript content could not be read completely.")
 				}
 			}
 			hydrated.Warnings = append(hydrated.Warnings, "provider temporarily omitted the "+section.name+"; preserved the archived "+section.name)
@@ -586,11 +580,6 @@ func (imp *Importer) retrieveMeeting(ctx context.Context, id string) (MeetingNot
 		return MeetingNote{}, errors.New("retrieved block has unexpected ID or type")
 	}
 	return meeting, nil
-}
-
-// TemporarySectionError reports whether a section read can be retried later.
-func TemporarySectionError(ctx context.Context, err error) bool {
-	return ctx.Err() == nil && sectionTemporarilyUnavailable(err)
 }
 
 type archivedMeetingState struct {

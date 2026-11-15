@@ -1519,15 +1519,13 @@ func TestImporterHandlesIncompleteMarkdownWithDifferentTranscriptSources(t *test
 		source.markdown.Truncated = true
 		source.markdown.Raw, err = json.Marshal(source.markdown)
 		require.NoError(t, err)
-		var messages []string
-		second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Progress: func(message string) { messages = append(messages, message) }})
+		second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 		require.NoError(t, err)
 		assert.True(t, second.PartialCoverage)
 		pending := lastNotionState(t, st, first.SourceID).Pending
 		require.Len(t, pending, 1)
 		body, err := st.GetMessageBodyText(t.Context(), id)
 		require.NoError(t, err)
-		assert.Contains(t, messages, "Kept the saved transcript because current transcript content could not be read completely.")
 		assert.Contains(t, body, "Saved page transcript")
 		after, err := st.GetMessageRaw(id)
 		require.NoError(t, err)

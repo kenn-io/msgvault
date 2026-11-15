@@ -310,3 +310,16 @@ func TestMeetingProjectionPostgresKeepsWideMessageIDs(t *testing.T) {
 	requirements.NoError(st.db.QueryRow(`SELECT message_id FROM meeting_action_items WHERE message_id = ?`, id).Scan(&storedID))
 	assertions.Equal(id, storedID)
 }
+
+func TestMeetingProjectionRebuildsLegacyNestedMeeting(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"schema_version":1,"discovery":{"meeting_notes":{"children":{"summary_block_id":"root"}}},"canonical":{"summary":"Summary"},"summary":{"root":{"id":"root","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}},"pages":[{"results":[{"id":"nested","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[]}}],"has_more":false},{"results":[{"id":"nested-action","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Other meeting action"}],"checked":false}}],"has_more":false}]}}`
+	_, id := projectionFixture(t, st, "legacy-nested", "notion_meeting_json", raw)
+	_, err := st.db.ExecContext(t.Context(), `UPDATE meeting_details SET projection_version = 1, content_json = ? WHERE message_id = ?`, `{"actions":[{"source_id":"nested-action","title":"Other meeting action"}]}`, id)
+	require.NoError(t, err)
+	_, err = st.db.ExecContext(t.Context(), `UPDATE applied_migrations SET version = 1 WHERE name = ?`, migrationMeetingProjectionV1)
+	require.NoError(t, err)
+	require.NoError(t, st.InitSchema())
+	content, _ := readProjection(t, st, id)
+	assert.Empty(t, content.Actions)
+}
