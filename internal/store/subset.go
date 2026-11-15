@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/identityindex"
+	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
@@ -605,9 +606,8 @@ func copyData(ctx context.Context, db *sql.DB, tx *sql.Tx, rowCount int, options
 			return nil, err
 		}
 		result.Sources += extraSources
-		if _, err := copyByName(ctx, tx, "person_tracking",
-			`person_id IN (SELECT id FROM persons)`); err != nil {
-			return nil, fmt.Errorf("copy person tracking: %w", err)
+		if err := copyPersonTrackingAndCommitments(ctx, tx); err != nil {
+			return nil, err
 		}
 		if options.IncludeVCardResources {
 			if err := copyVCardResourceEnvelopes(ctx, tx); err != nil {
@@ -3249,6 +3249,49 @@ func copySubsetMeetingDecisions(ctx context.Context, db *sql.DB, tx *sql.Tx) err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO meeting_link_decisions(id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES(?,?,?,?,?,?,?,?)`, edge.id, left, edge.a.Kind, edge.a.Key, right, edge.b.Kind, edge.b.Key, edge.decision); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// copyPersonTrackingAndCommitments copies tracking rows, then the owner
+// decisions on promises cited by retained messages.
+func copyPersonTrackingAndCommitments(ctx context.Context, tx *sql.Tx) error {
+	if _, err := copyByName(ctx, tx, "person_tracking",
+		`person_id IN (SELECT id FROM persons)`); err != nil {
+		return fmt.Errorf("copy person tracking: %w", err)
+	}
+	hasCommitments, err := sourceTableExists(ctx, tx, "person_commitments")
+	if err != nil {
+		return fmt.Errorf("inspect person commitments: %w", err)
+	}
+	if !hasCommitments {
+		return nil
+	}
+	return copyPersonCommitments(ctx, tx)
+}
+
+// copyPersonCommitments copies the claims, generations, and evidence that cite
+// retained messages, then the decisions on those promises. Evidence stays
+// limited to retained messages, so a claim also cited elsewhere keeps only its
+// retained citations. Consent, provider profile, frontier, and oversized rows
+// stay behind.
+func copyPersonCommitments(ctx context.Context, tx *sql.Tx) error {
+	const retainedRef = `e.source_ref IN (SELECT '` + personfacts.CommitmentMessageRefPrefix + `' || id FROM selected_messages)`
+	claims := `person_id IN (SELECT id FROM persons) AND target_kind = 'commitment' AND origin = 'commitment'
+		AND EXISTS (SELECT 1 FROM src.person_fact_claim_evidence ce JOIN src.person_fact_evidence e ON e.id = ce.evidence_id
+		WHERE ce.claim_id = src.person_fact_claims.id AND ` + retainedRef + `)`
+	for _, record := range []struct{ table, where string }{
+		{"person_fact_generations", `id IN (SELECT generation_id FROM src.person_fact_claims WHERE ` + claims + `)`},
+		{"person_fact_claims", claims},
+		{"person_fact_evidence", `id IN (SELECT ce.evidence_id FROM src.person_fact_claim_evidence ce
+			JOIN person_fact_claims c ON c.id = ce.claim_id JOIN src.person_fact_evidence e ON e.id = ce.evidence_id WHERE ` + retainedRef + `)`},
+		{"person_fact_claim_evidence", `claim_id IN (SELECT id FROM person_fact_claims) AND evidence_id IN (SELECT id FROM person_fact_evidence)`},
+		{"person_commitments", `EXISTS (SELECT 1 FROM person_fact_claims c WHERE c.person_id = src.person_commitments.person_id
+			AND c.target_key = src.person_commitments.target_key AND c.target_kind = 'commitment')`},
+	} {
+		if _, err := copyByName(ctx, tx, record.table, record.where); err != nil {
+			return fmt.Errorf("copy commitment %s: %w", record.table, err)
 		}
 	}
 	return nil
