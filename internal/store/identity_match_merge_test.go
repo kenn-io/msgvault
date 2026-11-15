@@ -781,7 +781,7 @@ func TestMergeParticipantsRejectsCompetingEmailAlias(t *testing.T) {
 	require.NoError(st.SetParticipantIdentifier(third, "email", "absorbed@example.test"))
 	mergeErr := st.MergeParticipants(absorbed, survivor)
 	require.ErrorIs(mergeErr, store.ErrParticipantAddressConflict)
-	assert.NotErrorIs(mergeErr, store.ErrPersonBindingConflict)
+	require.NotErrorIs(mergeErr, store.ErrPersonBindingConflict)
 	resolved, err := st.EnsureParticipantByIdentifier("email", "absorbed@example.test", "")
 	require.NoError(err)
 	assert.Equal(third, resolved)
