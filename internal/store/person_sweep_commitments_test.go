@@ -67,18 +67,23 @@ func TestCommitmentDecisionSurvivesShiftedQuote(t *testing.T) {
 	for _, tc := range []struct {
 		name, state            string
 		ambiguous, sameVersion bool
-		resweep                string
+		resweep, identity      string
 	}{
-		{"done", LoopStateDone, false, false, ""},
-		{"snoozed", LoopStateSnoozed, false, false, ""},
-		{"ambiguous", LoopStateDone, true, false, ""},
-		{"shorter_quote", LoopStateDone, false, true, ""},
-		{"split", LoopStateDone, false, true, "split"},
-		{"merged", LoopStateDone, false, true, "merged"},
+		{"done", LoopStateDone, false, false, "", ""},
+		{"snoozed", LoopStateSnoozed, false, false, "", ""},
+		{"ambiguous", LoopStateDone, true, false, "", ""},
+		{"shorter_quote", LoopStateDone, false, true, "", ""},
+		{"split", LoopStateDone, false, true, "split", ""},
+		{"merged", LoopStateDone, false, true, "merged", ""},
+		{"corrected_sent_time", LoopStateDone, false, true, "", "sent"},
+		{"reused_message_id", LoopStateDone, false, false, "", "reused"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, a, ctx := require.New(t), assert.New(t), t.Context()
 			f := newPersonSweepApplyFixture(t, "shifted-"+tc.name, false)
+			if tc.identity == "reused" && f.store.IsPostgreSQL() {
+				t.Skip("SQLite can reuse the highest message ID")
+			}
 			_, persist := newCommitmentTestConversation(t, f)
 			const quote = "I will send the draft."
 			const second, third = "I will check the venue.", "I will call."
@@ -119,7 +124,18 @@ func TestCommitmentDecisionSurvivesShiftedQuote(t *testing.T) {
 			if tc.ambiguous {
 				body += " " + quote
 			}
-			if tc.sameVersion {
+			if tc.identity == "sent" {
+				_, err = f.store.db.ExecContext(ctx, f.store.Rebind("UPDATE messages SET sent_at = ? WHERE id = ?"), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-2*time.Hour)), id)
+				r.NoError(err)
+				cfg.Commitments.Window += time.Second
+			} else if tc.identity == "reused" {
+				_, err = f.store.db.ExecContext(ctx, f.store.Rebind("DELETE FROM messages WHERE id = ?"), id)
+				r.NoError(err)
+				replacement := persist("replacement", quote, -time.Hour)
+				r.Equal(id, replacement)
+				_, err = f.store.db.ExecContext(ctx, f.store.Rebind("UPDATE messages SET archived_at = ? WHERE id = ?"), f.store.dialect.TimestampParam(window.Sources[0].RecordedTime.Add(time.Second)), replacement)
+				r.NoError(err)
+			} else if tc.sameVersion {
 				cfg.Commitments.Window += time.Second
 			} else {
 				_, err = f.store.db.ExecContext(ctx, f.store.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), body, id)
@@ -130,7 +146,9 @@ func TestCommitmentDecisionSurvivesShiftedQuote(t *testing.T) {
 			r.NoError(err)
 			r.Len(window.Sources, 1)
 			promises := []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send draft", Start: 8, End: 8 + int64(len(quote))}}
-			if tc.sameVersion {
+			if tc.identity != "" {
+				promises[0].Start, promises[0].End = 0, int64(len(quote))
+			} else if tc.sameVersion {
 				promises[0].Quote = strings.TrimSuffix(quote, ".")
 				promises[0].Start = 0
 				promises[0].End = int64(len(quote) - 1)
@@ -163,6 +181,10 @@ func TestCommitmentDecisionSurvivesShiftedQuote(t *testing.T) {
 					a.Equal(LoopStateDone, states[quote])
 					a.Equal(LoopStateOpen, states[second])
 				}
+			} else if tc.identity == "reused" {
+				r.Len(items, 1)
+				a.NotEqual(decision.ID, items[0].ID)
+				a.Equal(LoopStateOpen, items[0].State)
 			} else if tc.ambiguous {
 				r.Len(items, 2)
 				for _, item := range items {
@@ -177,51 +199,14 @@ func TestCommitmentDecisionSurvivesShiftedQuote(t *testing.T) {
 					r.NotNil(items[0].SnoozedUntil)
 					a.True(items[0].SnoozedUntil.Equal(*until))
 				}
+				if tc.identity == "sent" {
+					reopened, err := f.store.DecidePersonCommitmentContext(ctx, decision.ID, LoopStateOpen, nil, request.CompletedAt)
+					r.NoError(err)
+					a.Equal(LoopStateOpen, reopened.State)
+				}
 			}
 		})
 	}
-}
-
-func TestCommitmentDecisionDoesNotFollowReusedMessageID(t *testing.T) {
-	r, ctx := require.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "commitment-reused-message", false)
-	if f.store.IsPostgreSQL() {
-		t.Skip("SQLite can reuse the highest message ID")
-	}
-	_, persist := newCommitmentTestConversation(t, f)
-	const quote = "I will send the draft."
-	id := persist("first", quote, -2*time.Hour)
-	cfg, profile := commitmentTestConfig()
-	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	promise := peoplesweep.CommitmentPromise{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send draft", End: int64(len(quote))}
-	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{promise}})
-	_, err = f.store.ApplyPersonSweep(ctx, request)
-	r.NoError(err)
-	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
-	r.NoError(err)
-	r.Len(items, 1)
-	decision, err := f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
-	r.NoError(err)
-	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`DELETE FROM messages WHERE id = ?`), id)
-	r.NoError(err)
-	replacement := persist("replacement", quote, -time.Hour)
-	r.Equal(id, replacement)
-	_, err = f.store.db.ExecContext(ctx, f.store.Rebind("UPDATE messages SET archived_at = ? WHERE id = ?"), f.store.dialect.TimestampParam(window.Sources[0].RecordedTime.Add(time.Second)), replacement)
-	r.NoError(err)
-	f = nextCommitmentTestAttempt(t, f, "-replacement")
-	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	promise.SourceID = window.Sources[0].ID
-	_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{promise}}))
-	r.NoError(err)
-	items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
-	r.NoError(err)
-	r.Len(items, 1)
-	r.NotEqual(decision.ID, items[0].ID)
-	r.Equal(LoopStateOpen, items[0].State)
 }
 
 func TestCommitmentListPages(t *testing.T) {
@@ -751,46 +736,7 @@ func TestCommitmentDecisionReportsConcurrentChange(t *testing.T) {
 	r.ErrorIs(err, ErrCommitmentChanged)
 }
 
-func TestCommitmentDecisionSurvivesSentTimeCorrection(t *testing.T) {
-	r, ctx := require.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "sent-time-correction", false)
-	_, persist := newCommitmentTestConversation(t, f)
-	const quote = "I will send the draft."
-	id := persist("promise", quote, -time.Hour)
-	cfg, profile := commitmentTestConfig()
-	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	promise := peoplesweep.CommitmentPromise{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send draft", End: int64(len(quote))}
-	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{promise}})
-	_, err = f.store.ApplyPersonSweep(ctx, request)
-	r.NoError(err)
-	items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, false)
-	r.NoError(err)
-	r.Len(items, 1)
-	decision, err := f.store.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
-	r.NoError(err)
-	_, err = f.store.db.ExecContext(ctx, f.store.Rebind("UPDATE messages SET sent_at = ? WHERE id = ?"), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-2*time.Hour)), id)
-	r.NoError(err)
-	f = nextCommitmentTestAttempt(t, f, "-corrected")
-	cfg.Commitments.Window += time.Second
-	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
-	r.NoError(err)
-	r.Len(window.Sources, 1)
-	promise.SourceID = window.Sources[0].ID
-	_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{promise}}))
-	r.NoError(err)
-	items, err = f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, 0, true)
-	r.NoError(err)
-	r.Len(items, 1)
-	r.Equal(decision.ID, items[0].ID)
-	r.Equal(LoopStateDone, items[0].State)
-	reopened, err := f.store.DecidePersonCommitmentContext(ctx, decision.ID, LoopStateOpen, nil, request.CompletedAt)
-	r.NoError(err)
-	r.Equal(LoopStateOpen, reopened.State)
-}
-
-func TestCommitmentDiscoveryDoesNotRepeatBackfill(t *testing.T) {
+func TestCommitmentDiscoveryDoesNotRepeatJournal(t *testing.T) {
 	r, ctx := require.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "backfill-repeat", false)
 	_, persist := newCommitmentTestConversation(t, f)

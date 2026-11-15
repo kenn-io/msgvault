@@ -204,34 +204,25 @@ describe("PersonOpenLoops", () => {
       commitments_since: "2026-10-01T00:00:00Z", commitments_until: "2026-10-31T00:00:00Z",
     })));
     render(PersonOpenLoops, { client, personID: 7 });
-    expect(await screen.findByText(/2026-10-01.*2026-10-31/)).toBeDefined();
+    expect(await screen.findByText("Promise discovery from 2026-10-01 through 2026-10-31 is complete.")).toBeDefined();
   });
 
-  it("keeps loaded promises when checking more reply history", async () => {
-    const first = { items: [], commitments: [promise(1)], commitments_next_offset: 1, truncated: true, coverage_incomplete: true };
-    const fetcher = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(Response.json(first))
-      .mockResolvedValueOnce(Response.json({ ...first, commitments: [promise(6)], commitments_next_offset: undefined }))
-      .mockResolvedValueOnce(Response.json({ ...first, commitments: [promise(1), promise(2)], coverage_incomplete: false }));
+  it.each([false, true])("includes discovered promises with pages loaded: %s", async (paged) => {
+    const first = { items: [], commitments: paged ? [1, 2, 3, 4, 5].map((id) => promise(id)) : [], commitments_next_offset: paged ? 5 : undefined, coverage_incomplete: true };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(first));
+    if (paged) fetcher.mockResolvedValueOnce(Response.json({ ...first, commitments: [promise(6)], commitments_next_offset: undefined }));
+    fetcher.mockResolvedValueOnce(Response.json({ ...first, commitments: [1, 2, 3, 4, 7].map((id) => promise(id)), commitments_next_offset: 5, coverage_incomplete: false }));
     render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
-    (await screen.findByRole("button", { name: "More promises" })).click();
-    expect(await screen.findByRole("link", { name: "Promise 6" })).toBeDefined();
+    if (paged) {
+      (await screen.findByRole("button", { name: "More promises" })).click();
+      expect(await screen.findByRole("link", { name: "Promise 6" })).toBeDefined();
+    }
     (await screen.findByRole("button", { name: "Check more" })).click();
     await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Check more" })).toBeNull());
-    expect(screen.getByRole("link", { name: "Promise 6" })).toBeDefined();
-    expect(screen.getByRole("link", { name: "Promise 2" })).toBeDefined();
+    expect(screen.getByRole("link", { name: "Promise 7" })).toBeDefined();
     expect(screen.getAllByRole("link", { name: "Promise 1" })).toHaveLength(1);
-    expect(screen.queryByRole("button", { name: "More promises" })).toBeNull();
-  });
-
-  it("shows promises discovered when checking more history", async () => {
-    const fetcher = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(Response.json({ items: [], commitments: [], coverage_incomplete: true }))
-      .mockResolvedValueOnce(Response.json({ items: [], commitments: [promise(1)], commitments_next_offset: 1, coverage_incomplete: false }));
-    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
-    (await screen.findByRole("button", { name: "Check more" })).click();
-    expect(await screen.findByRole("link", { name: "Promise 1" })).toBeDefined();
-    expect(screen.getByRole("button", { name: "More promises" })).toBeDefined();
+    if (paged) expect(screen.getByRole("link", { name: "Promise 6" })).toBeDefined();
+    expect(Boolean(screen.queryByRole("button", { name: "More promises" }))).toBe(!paged);
   });
 
   it("appends the next promise page", async () => {
