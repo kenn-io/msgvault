@@ -271,8 +271,10 @@ func (s *Server) addCommitmentDiscovery(w http.ResponseWriter, r *http.Request, 
 		response.CoverageIncomplete = true
 	}
 	if !active {
-		complete := false
-		response.CommitmentsComplete = &complete
+		if err == nil {
+			complete := false
+			response.CommitmentsComplete = &complete
+		}
 		return true
 	}
 	since, complete, err := loopStore.PersonCommitmentDiscoveryContext(r.Context(), personID, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))

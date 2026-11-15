@@ -182,6 +182,8 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 			if stage == "discovery" {
 				r.NotNil(response.CommitmentsComplete)
 				a.False(*response.CommitmentsComplete)
+			} else {
+				a.Nil(response.CommitmentsComplete)
 			}
 		})
 	}

@@ -127,7 +127,8 @@ func commitmentQuoteHasDate(quote string, due, event time.Time) bool {
 			return true
 		}
 	}
-	return !event.IsZero() && quoteHasTomorrow(quote, due, event.UTC())
+	return !event.IsZero() && (quoteHasTomorrow(quote, due, event.UTC()) ||
+		quoteHasPhrase(quote, "in three days", nil) && event.UTC().AddDate(0, 0, 3).Format(time.DateOnly) == due.Format(time.DateOnly))
 }
 
 // quoteHasPhrase finds phrase as a whole token; allow, when set, vets the text after each match.
