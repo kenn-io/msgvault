@@ -67,11 +67,12 @@ func operationMCPSession(t *testing.T, backend *daemonMCPOperations, families []
 
 func sourceOperationFixture(t *testing.T, fixture *api.Server, observers ...func(*http.Request)) *daemonMCPOperations {
 	t.Helper()
+	router := fixture.Router()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for _, observe := range observers {
 			observe(r)
 		}
-		fixture.Router().ServeHTTP(w, r)
+		router.ServeHTTP(w, r)
 	}))
 	t.Cleanup(server.Close)
 	t.Cleanup(func() {
