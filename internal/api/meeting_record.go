@@ -49,12 +49,8 @@ func (s *Server) writeMeetingLinkError(w http.ResponseWriter, err error) {
 		writeError(w, 400, "invalid_argument", err.Error())
 	case errors.Is(err, store.ErrQueryTooBroad):
 		writeError(w, 400, "query_too_broad", err.Error())
-	case errors.Is(err, store.ErrMeetingProjectionUnavailable):
-		s.writeMeetingError(w, err)
 	default:
-		if !s.writeIfContextError(w, err) {
-			writeError(w, 500, "meeting_links_failed", err.Error())
-		}
+		s.writeMeetingError(w, err)
 	}
 }
 

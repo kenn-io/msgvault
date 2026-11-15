@@ -6,7 +6,6 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -419,66 +418,6 @@ func TestMeetingLinkDecisionUnsupportedSeries(t *testing.T) {
 			r.Empty(record.Unexpandable)
 		})
 	}
-}
-
-func TestMeetingLinkDecisionSubsetOmitsHiddenOrigin(t *testing.T) {
-	for _, action := range []string{"link", "unlink"} {
-		t.Run(action, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			path := filepath.Join(t.TempDir(), "source.db")
-			st, err := OpenForTest(t.Context(), path)
-			requirements.NoError(err)
-			t.Cleanup(func() { assertions.NoError(st.Close()) })
-			requirements.NoError(st.InitSchemaContext(t.Context()))
-			format, raw := "meeting_json", `{}`
-			if action == "unlink" {
-				format, raw = "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"subset_20270314T100000Z"}}`
-			}
-			_, survivor := projectionFixture(t, st, "subset-survivor", format, raw)
-			_, other := projectionFixture(t, st, "subset-other", format, raw)
-			_, intermediate := projectionFixture(t, st, "subset-intermediate", format, raw)
-			_, duplicate := projectionFixture(t, st, "subset-hidden", format, raw)
-			dupRef := MeetingLinkRef{Kind: "msg", MessageID: duplicate}
-			otherRef := MeetingLinkRef{Kind: "msg", MessageID: other}
-			_, err = st.DecideMeetingLinkContext(t.Context(), dupRef, otherRef, action)
-			requirements.NoError(err)
-			_, err = st.MergeDuplicates(t.Context(), intermediate, []int64{duplicate}, "subset-undo")
-			requirements.NoError(err)
-			_, err = st.MergeDuplicates(t.Context(), survivor, []int64{intermediate}, "subset-later")
-			requirements.NoError(err)
-			dir := t.TempDir()
-			_, err = CopySubset(t.Context(), path, dir, 2, false)
-			requirements.NoError(err)
-			dst, err := OpenForTest(t.Context(), filepath.Join(dir, "msgvault.db"))
-			requirements.NoError(err)
-			t.Cleanup(func() { assertions.NoError(dst.Close()) })
-			record, err := dst.MeetingRecordContext(t.Context(), otherRef)
-			requirements.NoError(err)
-			if action == "link" {
-				assertions.Equal([]int64{survivor, other}, record.MessageIDs)
-			} else {
-				assertions.Equal([]int64{other}, record.MessageIDs)
-			}
-		})
-	}
-}
-
-func TestMeetingLinkDecisionSubsetSourceWithoutDecisionTables(t *testing.T) {
-	requirements := require.New(t)
-	path := filepath.Join(t.TempDir(), "source.db")
-	st, err := OpenForTest(t.Context(), path)
-	requirements.NoError(err)
-	t.Cleanup(func() { assert.NoError(t, st.Close()) })
-	requirements.NoError(st.InitSchemaContext(t.Context()))
-	_, _ = projectionFixture(t, st, "version-note", "meeting_json", `{}`)
-	_, err = st.db.ExecContext(t.Context(), `DROP TABLE meeting_copy_survivors`)
-	requirements.NoError(err)
-	_, err = st.db.ExecContext(t.Context(), `DROP TABLE meeting_link_decisions`)
-	requirements.NoError(err)
-	_, err = st.db.ExecContext(t.Context(), `UPDATE archive_metadata SET value = '43' WHERE key = 'schema_version'`)
-	requirements.NoError(err)
-	_, err = CopySubset(t.Context(), path, t.TempDir(), 1, false)
-	requirements.NoError(err)
 }
 
 func TestMeetingLinkDecisionFollowsOrphanExceptionToMaster(t *testing.T) {

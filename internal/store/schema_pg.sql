@@ -4042,7 +4042,6 @@ CREATE TABLE IF NOT EXISTS meeting_link_decisions (
     decision TEXT NOT NULL CHECK (decision IN ('link', 'split'))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_link_decisions_pair ON meeting_link_decisions(left_message_id, left_kind, left_key, right_message_id, right_kind, right_key);
-CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_left ON meeting_link_decisions(left_message_id);
 CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_right ON meeting_link_decisions(right_message_id);
 CREATE TABLE IF NOT EXISTS meeting_copy_survivors (
     message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
