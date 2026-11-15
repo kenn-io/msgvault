@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -126,7 +128,8 @@ var (
 	commitmentYearFollows     = regexp.MustCompile(`^[,\s]*\d{4}\b`)
 	commitmentNumericDate     = regexp.MustCompile(`\b\d{1,2}/\d{1,2}/\d{4}\b`)
 	commitmentTomorrow        = regexp.MustCompile(`\b(day after )?tomorrow\b`)
-	commitmentWeekdayDeadline = regexp.MustCompile(`\b(?:by|on)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:(?:of\s+)?(this|next)\s+week|(in two weeks)))?\b`)
+	commitmentWeekdayDeadline = regexp.MustCompile(`\b(?:by|on)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:(?:of\s+)?(this|next)\s+week|in\s+([a-z0-9]+)\s+weeks?))?\b`)
+	commitmentInTail          = regexp.MustCompile(`^\s+in\b`)
 )
 
 // commitmentQuoteHasDate reports whether the quote itself states due, either
@@ -204,7 +207,11 @@ func quoteHasYearlessDate(quote string, due, day time.Time) bool {
 }
 
 func quoteHasByWeekday(quote string, due, day time.Time) bool {
-	for _, match := range commitmentWeekdayDeadline.FindAllStringSubmatch(quote, -1) {
+	for _, span := range commitmentWeekdayDeadline.FindAllStringIndex(quote, -1) {
+		if commitmentInTail.MatchString(quote[span[1]:]) {
+			continue
+		}
+		match := commitmentWeekdayDeadline.FindStringSubmatch(quote[span[0]:span[1]])
 		var weekday time.Weekday
 		for candidate := time.Sunday; candidate <= time.Saturday; candidate++ {
 			if match[1] == strings.ToLower(candidate.String()) {
@@ -220,7 +227,14 @@ func quoteHasByWeekday(quote string, due, day time.Time) bool {
 			days = 7 - (int(day.Weekday())+6)%7 + (int(weekday)+6)%7
 		}
 		if match[3] != "" {
-			days += 14
+			weeks, err := strconv.Atoi(match[3])
+			if err != nil {
+				weeks = slices.Index([]string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"}, match[3])
+			}
+			if weeks < 0 || weeks > 520000 {
+				continue
+			}
+			days += weeks * 7
 		}
 		if day.AddDate(0, 0, days).Format(time.DateOnly) == due.Format(time.DateOnly) {
 			return true
