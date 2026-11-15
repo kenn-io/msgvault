@@ -121,7 +121,8 @@ func TestPersonFactHistoryHTTPIsBoundedNewestFirstNonNullAndNoStore(t *testing.T
 	assertions.Equal("fixture-program", claimBody.Claims[0]["program_id"])
 	assertions.Equal(string(storedClaims[0].Freshness.Kind), claimBody.Claims[0]["kind"])
 	assertions.Equal(string(storedClaims[0].Freshness.Status), claimBody.Claims[0]["status"])
-	assertions.NotEmpty(claimBody.Claims[0]["latest_supported_at"])
+	requirements.NotNil(storedClaims[0].Freshness.LatestSupportedAt)
+	assertions.Equal(storedClaims[0].Freshness.LatestSupportedAt.Format(time.RFC3339Nano), claimBody.Claims[0]["latest_supported_at"])
 	assertions.Equal("v1", claimBody.Claims[0]["program_version"])
 	assertions.Equal(strings.Repeat("a", 64), claimBody.Claims[0]["program_fingerprint"])
 }
