@@ -421,6 +421,12 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 			if e.a == lo && e.b == hi {
 				membershipChanged := false
 				if confirmMembership && personID != 0 {
+					priorEdges := slices.DeleteFunc(slices.Clone(edges), func(edge linkEdge) bool {
+						return edge.a == lo && edge.b == hi
+					})
+					if err := extendActivePersonMergeLineageTx(ctx, tx, personID, lo, hi, priorEdges, false); err != nil {
+						return err
+					}
 					membershipChanged, err = s.bindPersonParticipantsTx(ctx, tx, personID, unionMembers)
 					if err != nil {
 						return err

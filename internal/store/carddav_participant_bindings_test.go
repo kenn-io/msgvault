@@ -654,7 +654,7 @@ func TestCardDAVParticipantBindingLifecycleCleanup(t *testing.T) {
 }
 
 func TestCardDAVParticipantBindingActiveMergeAllowsIndependentMembership(t *testing.T) {
-	for _, mode := range []string{"independent", "system link"} {
+	for _, mode := range []string{"independent", "system link", "confirmed system link"} {
 		t.Run(mode, func(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)
@@ -706,22 +706,34 @@ func TestCardDAVParticipantBindingActiveMergeAllowsIndependentMembership(t *test
 			assert.Zero(noop.ParticipantsBound)
 
 			var leftOrigin, rightOrigin string
-			if mode == "system link" {
+			if mode != "independent" {
 				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT origin_side FROM person_merge_participants WHERE merge_id = ? AND participant_id = ?`), merged.Merge.ID, a).Scan(&leftOrigin))
 				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT origin_side FROM person_merge_participants WHERE merge_id = ? AND participant_id = ?`), merged.Merge.ID, b).Scan(&rightOrigin))
 				candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{LeftKind: store.IdentityMatchParticipant, LeftID: b, RightKind: store.IdentityMatchParticipant, RightID: late, Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("synthetic-provider-id"), State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation})
 				require.NoError(err)
 				_, _, err = st.AcceptIdentityMatchCandidateContext(t.Context(), candidate.ID, "system", nil)
 				require.NoError(err)
-				_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{Undo: true})
-				require.NoError(err)
-				current, err = st.GetPersonContext(t.Context(), merged.Person.ID)
-				require.NoError(err)
-				assert.ElementsMatch([]int64{a, b}, current.ParticipantIDs)
+				if mode == "confirmed system link" {
+					_, err = st.LinkParticipants(b, late)
+					require.NoError(err)
+					assert.False(bindingOwned(t, st, late))
+					current, err = st.GetPersonContext(t.Context(), merged.Person.ID)
+					require.NoError(err)
+				} else {
+					_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{Undo: true})
+					require.NoError(err)
+					current, err = st.GetPersonContext(t.Context(), merged.Person.ID)
+					require.NoError(err)
+					assert.ElementsMatch([]int64{a, b}, current.ParticipantIDs)
+				}
 			}
 
+			participants := []int64{b}
+			if mode == "confirmed system link" {
+				participants = append(participants, late)
+			}
 			split, err := st.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{
-				SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID, ParticipantIDs: []int64{b},
+				SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID, ParticipantIDs: participants,
 				ExpectedSourceRevision: current.Revision, IdempotencyKey: "carddav-active-merge-split", Actor: "test",
 			})
 			require.NoError(err)
@@ -745,7 +757,7 @@ func TestCardDAVParticipantBindingActiveMergeAllowsIndependentMembership(t *test
 			}
 			assert.True(split.ExactReversal)
 			assert.Equal([]int64{a}, split.SourcePerson.ParticipantIDs)
-			assert.Equal([]int64{b}, split.NewPerson.ParticipantIDs)
+			assert.ElementsMatch(participants, split.NewPerson.ParticipantIDs)
 			var leftOriginAfter, rightOriginAfter string
 			var leftSplit, rightSplit sql.NullInt64
 			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT origin_side, split_id FROM person_merge_participants WHERE merge_id = ? AND participant_id = ?`), merged.Merge.ID, a).Scan(&leftOriginAfter, &leftSplit))
@@ -754,9 +766,11 @@ func TestCardDAVParticipantBindingActiveMergeAllowsIndependentMembership(t *test
 			assert.Equal(rightOrigin, rightOriginAfter)
 			assert.False(leftSplit.Valid)
 			assert.Equal(sql.NullInt64{Int64: split.Split.ID, Valid: true}, rightSplit)
-			unbound, err := st.PersonForParticipantsContext(t.Context(), []int64{late})
-			require.NoError(err)
-			assert.Nil(unbound)
+			if mode == "system link" {
+				unbound, err := st.PersonForParticipantsContext(t.Context(), []int64{late})
+				require.NoError(err)
+				assert.Nil(unbound)
+			}
 		})
 	}
 }
