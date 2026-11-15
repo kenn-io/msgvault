@@ -395,7 +395,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			if section.name == sectionTranscript && strings.TrimSpace(oldText) == "" {
 				oldText = transcriptFromArchivedBody(archived.Body)
 			}
-			if section.name != sectionTranscript && archived.MessageID != 0 && oldText == "" && !(archived.HasEvidence && archived.EmptySections[section.name]) {
+			if section.name != sectionTranscript && archived.MessageID != 0 && oldText == "" && (!archived.HasEvidence || !archived.EmptySections[section.name]) {
 				// The saved section can't be recovered, so rewriting would erase it.
 				leaveUnchanged = true
 			}
@@ -570,6 +570,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err != nil {
 		return sum, err
 	}
+	checkpointPage = cursor
 	checkpoint := &store.Checkpoint{
 		MessagesProcessed: sum.MeetingsProcessed,
 		MessagesAdded:     sum.MeetingsAdded,

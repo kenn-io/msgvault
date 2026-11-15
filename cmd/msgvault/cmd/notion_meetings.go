@@ -96,14 +96,14 @@ func probeNotionReadContent(ctx context.Context, out io.Writer, client notionMee
 		return nil
 	}
 	children := meeting.MeetingNotes.Children
-	var missing error
+	missing := false
 	for _, id := range []string{children.SummaryBlockID, children.NotesBlockID, children.TranscriptBlockID} {
 		if strings.TrimSpace(id) == "" {
 			continue
 		}
 		if _, err := client.RetrieveBlock(ctx, id); err != nil {
 			if notionmeetings.TemporarySectionError(ctx, err) {
-				missing = err
+				missing = true
 				continue
 			}
 			return fmt.Errorf("probe Notion Read Content access: %w", err)
@@ -111,7 +111,7 @@ func probeNotionReadContent(ctx context.Context, out io.Writer, client notionMee
 		_, _ = fmt.Fprintln(out, "  Read Content: available")
 		return nil
 	}
-	if missing != nil {
+	if missing {
 		_, _ = fmt.Fprintln(out, "  Read Content: not tested (sections temporarily unavailable)")
 		return nil
 	}

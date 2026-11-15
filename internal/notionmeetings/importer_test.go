@@ -1626,11 +1626,61 @@ func TestImporterKeepsSavedTranscriptWhenEmptyWhileUpdatingNotes(t *testing.T) {
 				assert.Len(t, lastNotionState(t, st, first.SourceID).Pending, 1)
 			}
 			var id int64
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_id = ?`, first.SourceID).Scan(&id))
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), first.SourceID).Scan(&id))
 			body, err := st.GetMessageBodyText(t.Context(), id)
 			require.NoError(t, err)
 			assert.Contains(t, body, "Updated notes")
 			assert.Contains(t, body, "Test Speaker: Ready to ship.")
+		})
+	}
+}
+
+func TestImporterRetriesIncompleteAfterFinalWriteFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name, column, status string
+	}{
+		{"checkpoint", "cursor_before", "running"},
+		{"completion", "status", "completed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, source, imp := newImporterFixture(t)
+			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(err)
+			source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
+			if st.IsPostgreSQL() {
+				_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE FUNCTION fail_notion_final_write() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'forced final write failure'; END; $$ LANGUAGE plpgsql; CREATE TRIGGER fail_notion_final_write BEFORE UPDATE OF %s ON sync_runs FOR EACH ROW WHEN (NEW.status = '%s') EXECUTE FUNCTION fail_notion_final_write()`, tc.column, tc.status))
+			} else {
+				_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER fail_notion_final_write BEFORE UPDATE OF %s ON sync_runs WHEN NEW.status = '%s' BEGIN SELECT RAISE(ABORT, 'forced final write failure'); END`, tc.column, tc.status))
+			}
+			require.NoError(err)
+			_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.ErrorContains(err, "forced final write failure")
+			if st.IsPostgreSQL() {
+				_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_final_write ON sync_runs`)
+			} else {
+				_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_final_write`)
+			}
+			require.NoError(err)
+			checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), first.SourceID, SourceType)
+			require.NoError(err)
+			var state syncState
+			require.NoError(json.Unmarshal([]byte(checkpoint.CursorBefore.String), &state))
+			assert.Equal("2026-09-05T10:30:00Z", state.TranscriptRetryUntil["meeting-1"])
+			source.query.Results = nil
+			delete(source.blockErrs, "summary-1")
+			updated := paragraph("summary-1", "Recovered summary.", false)
+			source.blocks["summary-1"] = &updated
+			imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
+			result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			require.NoError(err)
+			assert.Equal(int64(1), result.MaintenanceRetries)
+			var id int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), first.SourceID).Scan(&id))
+			body, err := st.GetMessageBodyText(t.Context(), id)
+			require.NoError(err)
+			assert.Contains(body, "Recovered summary.")
 		})
 	}
 }
