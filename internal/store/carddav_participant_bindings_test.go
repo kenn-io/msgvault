@@ -411,6 +411,29 @@ func TestCardDAVParticipantBindingMixedMembershipOwnership(t *testing.T) {
 			}
 		})
 	}
+	t.Run("system extends manual person", func(t *testing.T) {
+		assert := Assert.New(t)
+		require := Require.New(t)
+		st, account, book := newCardDAVResourceStore(t)
+		a, err := st.EnsureParticipant("manual@example.test", "Manual", "example.test")
+		require.NoError(err)
+		b, err := st.EnsureParticipant("linked@example.test", "Linked", "example.test")
+		require.NoError(err)
+		person, _, err := st.CreatePersonFromParticipant(a)
+		require.NoError(err)
+		candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{LeftKind: store.IdentityMatchParticipant, LeftID: a, RightKind: store.IdentityMatchParticipant, RightID: b, Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("synthetic-provider-id"), State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation})
+		require.NoError(err)
+		_, _, err = st.AcceptIdentityMatchCandidateContext(t.Context(), candidate.ID, "system", nil)
+		require.NoError(err)
+		assert.False(bindingOwned(t, st, b))
+		card := remoteResource(book.CanonicalURL+"unrelated.vcf", "unrelated", "Unrelated", "unrelated@example.test", "one")
+		applyParticipantBindingCards(t, st, account, book, card)
+		_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{Undo: true})
+		require.NoError(err)
+		person, err = st.GetPersonContext(t.Context(), person.ID)
+		require.NoError(err)
+		assert.ElementsMatch([]int64{a, b}, person.ParticipantIDs)
+	})
 }
 
 func TestCardDAVParticipantBindingMergedPhoneAliasRemainsClaimed(t *testing.T) {

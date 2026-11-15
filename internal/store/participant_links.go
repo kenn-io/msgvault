@@ -493,7 +493,12 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 			if confirmMembership {
 				changed, err = s.bindPersonParticipantsTx(ctx, tx, personID, unionMembers)
 			} else {
-				changed, err = s.bindPersonParticipantsOwnedTx(ctx, tx, personID, unionMembers, true)
+				var owned bool
+				owned, err = cardDAVBindingOwnershipTx(ctx, tx, personID, unionMembers)
+				if err != nil {
+					return err
+				}
+				changed, err = s.bindPersonParticipantsOwnedTx(ctx, tx, personID, unionMembers, owned)
 			}
 			if err != nil {
 				return err
