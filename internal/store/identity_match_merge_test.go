@@ -795,4 +795,24 @@ func TestMergeParticipantsRejectsCompetingEmailAlias(t *testing.T) {
 			assert.Equal("absorbed@example.test", email)
 		})
 	}
+	t.Run("alias in survivor component", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st := storetest.New(t).Store
+		absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
+		require.NoError(err)
+		survivor, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
+		require.NoError(err)
+		alias, err := st.EnsureParticipant("alias@example.test", "Alias", "example.test")
+		require.NoError(err)
+		_, err = st.LinkParticipants(survivor, alias)
+		require.NoError(err)
+		require.NoError(st.SetParticipantIdentifier(alias, "imessage", "absorbed@example.test"))
+
+		require.NoError(st.MergeParticipants(absorbed, survivor))
+		resolved, err := st.EnsureParticipantByIdentifier("imessage", "absorbed@example.test", "")
+		require.NoError(err)
+		assert.Equal(alias, resolved)
+		assert.True(linkedPair(t, st, survivor, alias))
+	})
 }
