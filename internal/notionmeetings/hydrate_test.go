@@ -349,16 +349,14 @@ func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 			assert.Empty(result.Transcript)
 			assert.Contains(result.Incomplete, "transcript")
 			assert.Contains(result.Warnings, "transcript incomplete: markdown")
-			assert.False(result.markdownOnlyIncomplete)
 		})
 	}
 	for _, tc := range []struct {
-		name         string
-		blockErr     error
-		markdownOnly bool
+		name     string
+		blockErr error
 	}{
-		{"block read fine", nil, true},
-		{"block read failed", &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}, false},
+		{"block read fine", nil},
+		{"block read failed", &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}},
 	} {
 		t.Run("no transcript in incomplete page/"+tc.name, func(t *testing.T) {
 			source := completeHydrationSource()
@@ -371,7 +369,6 @@ func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 			require.NoError(t, err)
 			assert.Empty(t, result.Transcript)
 			assert.Contains(t, result.Incomplete, "transcript")
-			assert.Equal(t, tc.markdownOnly, result.markdownOnlyIncomplete)
 		})
 	}
 }

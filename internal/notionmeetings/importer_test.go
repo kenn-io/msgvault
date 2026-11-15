@@ -1547,8 +1547,9 @@ func TestImporterHandlesIncompleteMarkdownWithDifferentTranscriptSources(t *test
 		imp.now = func() time.Time { return deadline.Add(time.Second) }
 		expired, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 		require.NoError(t, err)
-		assert.Empty(t, lastNotionState(t, st, expired.SourceID).Pending)
-		assert.Empty(t, source.blockCalls)
+		assert.Len(t, lastNotionState(t, st, expired.SourceID).Pending, 1)
+		assert.Contains(t, source.blockCalls, "meeting-1")
+		assert.Contains(t, source.blockCalls, "transcript-1")
 	})
 }
 

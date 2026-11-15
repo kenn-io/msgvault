@@ -352,7 +352,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		if hydrateErr != nil {
 			if hydrated != nil && len(hydrated.Incomplete) > 0 {
 				previous, exists := pendingByID[id]
-				pending, keep := schedulePending(hydrated, now, previous, exists, retriesUntilComplete(hydrated))
+				pending, keep := schedulePending(hydrated, now, previous, exists, true)
 				if keep {
 					pendingByID[id] = pending
 					next.TranscriptRetryUntil[id] = pending.RetryUntil
@@ -381,7 +381,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				previousPending.RetryUntil = retained
 				hasPrevious = true
 			}
-			pending, keep := schedulePending(hydrated, now, previousPending, hasPrevious, retriesUntilComplete(hydrated))
+			pending, keep := schedulePending(hydrated, now, previousPending, hasPrevious, len(hydrated.Incomplete) > 0)
 			if keep {
 				pendingByID[id] = pending
 				next.TranscriptRetryUntil[id] = pending.RetryUntil
@@ -586,15 +586,6 @@ func (imp *Importer) retrieveMeeting(ctx context.Context, id string) (MeetingNot
 		return MeetingNote{}, errors.New("retrieved block has unexpected ID or type")
 	}
 	return meeting, nil
-}
-
-// retriesUntilComplete reports whether an incomplete read keeps retrying past
-// the retry deadline. Only an incomplete page-Markdown transcript with no
-// transcript marker is bounded by that deadline; incomplete summary, notes, and
-// transcript block reads stay pending until a complete read succeeds.
-func retriesUntilComplete(hydrated *HydratedMeeting) bool {
-	markdownOnly := hydrated.markdownOnlyIncomplete && slices.Equal(hydrated.Incomplete, []string{sectionTranscript})
-	return len(hydrated.Incomplete) > 0 && !markdownOnly
 }
 
 // TemporarySectionError reports whether a section read can be retried later.
