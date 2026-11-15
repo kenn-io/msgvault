@@ -1251,7 +1251,11 @@ func TestImporterRetriesIncompleteSections(t *testing.T) {
 			require.NoError(json.Unmarshal(before, &beforeEvidence))
 			id := section + "-1"
 			source.blockErrs = map[string]error{id: &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
-			source.markdown.Markdown = "# Transcript\nReplacement page transcript"
+			if section == "transcript" {
+				source.markdown.Markdown = "# Transcript\nReplacement page transcript"
+				source.markdown.Raw, err = json.Marshal(source.markdown)
+				require.NoError(err)
+			}
 			for _, other := range []string{"summary", "notes", "transcript"} {
 				if other != section {
 					updated := paragraph(other+"-1", "Updated "+other, false)
