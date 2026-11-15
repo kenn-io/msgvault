@@ -375,6 +375,7 @@ func TestMCPLoopListExposesIncompleteCoverage(t *testing.T) {
 
 type pagedMCPLoopStore struct {
 	*storeAPIAdapter
+
 	offset int
 }
 

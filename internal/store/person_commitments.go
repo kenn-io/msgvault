@@ -743,7 +743,7 @@ func (s *Store) commitmentBackfillMessages(ctx context.Context, personID, after,
 	query := `WITH scoped AS (` + scoped + `)
 		SELECT m.id FROM messages m JOIN scoped c ON c.conversation_id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
-		WHERE m.id > ? AND ` + s.loopLiveMessageSQL("m", "src") + `
+		WHERE m.id > ? AND ` + s.loopLiveMessageSQL() + `
 		AND (` + s.loopTimeKey("m.sent_at") + ` >= ` + s.loopTimeKey("?") + `
 			OR ` + s.loopTimeKey("m.archived_at") + ` >= ` + s.loopTimeKey("?") + `)
 		AND NOT EXISTS (SELECT 1 FROM person_sweep_changes c WHERE c.person_id = ? AND c.message_id = m.id AND c.source_lane = 'conversation_text' AND c.sequence <= ?)
