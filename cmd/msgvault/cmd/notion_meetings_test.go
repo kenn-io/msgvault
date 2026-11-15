@@ -111,6 +111,8 @@ func TestRunNotionMeetingsProbeChecksPageMarkdown(t *testing.T) {
 		{name: "query parent", pageInQuery: true}, {name: "retrieved parent"}, {name: "permission denied", err: notionmeetings.ErrReadContent},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			meeting := notionmeetings.MeetingNote{ID: "meeting-1", MeetingNotes: notionmeetings.MeetingNotesData{Children: notionmeetings.MeetingChildren{SummaryBlockID: "summary-1"}}}
 			if tc.pageInQuery {
 				meeting.Parent.PageID = "page-1"
@@ -119,13 +121,13 @@ func TestRunNotionMeetingsProbeChecksPageMarkdown(t *testing.T) {
 			var ids []string
 			var page string
 			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{meeting}}, block: &notionmeetings.Block{Parent: notionmeetings.Parent{PageID: "page-1"}}, blockIDs: &ids, markdownID: &page, markdownErr: tc.err}, nil)
-			assert.Equal(t, "page-1", page)
-			assert.Equal(t, []string{"meeting-1"}, ids)
+			assert.Equal("page-1", page)
+			assert.Equal([]string{"meeting-1"}, ids)
 			if tc.err != nil {
-				require.ErrorIs(t, err, tc.err)
+				require.ErrorIs(err, tc.err)
 			} else {
-				require.NoError(t, err)
-				assert.Contains(t, out.String(), "Read Content: available")
+				require.NoError(err)
+				assert.Contains(out.String(), "Read Content: available")
 			}
 		})
 	}
