@@ -680,6 +680,17 @@ func (s *Syncer) reconcileGmailTrashRemovals(
 	sourceID int64,
 	messageIDs []string,
 ) error {
+	marked, err := s.store.MarkedSourceMessageIDsBatchContext(ctx, sourceID, messageIDs)
+	if err != nil {
+		return fmt.Errorf("check marked Gmail messages: %w", err)
+	}
+	messageIDs = slices.DeleteFunc(messageIDs, func(id string) bool {
+		_, ok := marked[id]
+		return !ok
+	})
+	if len(messageIDs) == 0 {
+		return nil
+	}
 	reader, ok := s.client.(messageLabelBatchReader)
 	if !ok {
 		return errors.New("label reader unavailable after Trash removal")

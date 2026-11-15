@@ -652,15 +652,22 @@ func (c *Client) listOptionsLocked() *imap.ListOptions {
 }
 
 func discoverTrashMailbox(items []*imap.ListData) string {
+	eligible := func(item *imap.ListData) bool {
+		for _, attr := range item.Attrs {
+			if attr == imap.MailboxAttrNoSelect || (systemAttrs[attr] && attr != imap.MailboxAttrTrash) {
+				return false
+			}
+		}
+		return true
+	}
 	for _, item := range items {
-		if !hasAttr(item.Attrs, imap.MailboxAttrNoSelect) &&
-			hasAttr(item.Attrs, imap.MailboxAttrTrash) {
+		if eligible(item) && hasAttr(item.Attrs, imap.MailboxAttrTrash) {
 			return item.Mailbox
 		}
 	}
 	for _, candidate := range []string{Trash, "[Gmail]/Trash", "Deleted Items", "Deleted Messages"} {
 		for _, item := range items {
-			if !hasAttr(item.Attrs, imap.MailboxAttrNoSelect) &&
+			if eligible(item) &&
 				strings.EqualFold(item.Mailbox, candidate) {
 				return item.Mailbox
 			}
@@ -1956,12 +1963,12 @@ func (c *Client) TrashMessage(ctx context.Context, messageID string) error {
 		// Populate trashMailbox via LIST if not yet discovered.
 		if c.trashMailbox == "" {
 			if _, err := c.listMailboxesLocked(ctx); err != nil {
-				c.logger.Warn("failed to discover trash mailbox, will use default", "error", err)
+				return fmt.Errorf("discover trash mailbox: %w", err)
 			}
 		}
 		trashMailbox := c.trashMailbox
 		if trashMailbox == "" {
-			trashMailbox = Trash
+			return errors.New("no selectable trash mailbox found")
 		}
 		var uidSet imap.UIDSet
 		uidSet.AddNum(uid)

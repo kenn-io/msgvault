@@ -2724,6 +2724,44 @@ func TestGmailFullSyncReacquiresRawForMarkedMessageAndReconcilesLabels(t *testin
 	}
 }
 
+func TestReviewRestoreMissingRawWithAttachmentFailure(t *testing.T) {
+	env := newTestEnv(t)
+	env.Mock.Profile.HistoryID = 12340
+	env.Mock.AddMessage("msg1", testMIMEWithAttachment(), []string{"TRASH"})
+	runFullSync(t, env)
+	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
+	require.NoError(t, err)
+	require.NoError(t, env.Store.MarkMessageDeleted(source.ID, "msg1"))
+	ids, err := env.Store.MessageExistsBatch(source.ID, []string{"msg1"})
+	require.NoError(t, err)
+	_, err = env.Store.DB().ExecContext(t.Context(), env.Store.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), ids["msg1"])
+	require.NoError(t, err)
+	env.Mock.Messages["msg1"].LabelIDs = []string{"INBOX"}
+	blocked := filepath.Join(t.TempDir(), "blocked")
+	require.NoError(t, os.WriteFile(blocked, []byte("not a directory"), 0600))
+	env.Syncer = New(env.Mock, env.Store, &Options{AttachmentsDir: blocked})
+	summary, err := env.Syncer.Full(t.Context(), testEmail)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), summary.Errors)
+	assertDeletedFromSource(t, env.Store, "msg1", false)
+}
+
+func TestReviewRestoreUnmarkedMessageWhenMetadataFails(t *testing.T) {
+	env := newTestEnv(t)
+	env.Mock.Profile.HistoryID = 12340
+	env.Mock.AddMessage("msg1", testMIME(), []string{"TRASH"})
+	runFullSync(t, env)
+	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
+	require.NoError(t, err)
+	api := &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true, labelErrors: map[string]error{"msg1": errors.New("metadata unavailable")}}
+	env.Syncer = New(api, env.Store, nil)
+	env.SetHistory(12350, historyLabelRemoved("msg1", "TRASH"))
+	_, err = env.Syncer.Incremental(t.Context(), source)
+	require.NoError(t, err)
+	assert.Empty(t, api.labelCalls)
+	assertMessageNotHasLabel(t, env.Store, "msg1", "TRASH")
+}
+
 func TestIncrementalSyncRestoreThenRetrashPreservesDeletionMark(t *testing.T) {
 	t.Parallel()
 	env := newTestEnv(t)
