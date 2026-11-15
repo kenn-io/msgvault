@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
+	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
 type meetingMetadata struct {
@@ -127,7 +128,7 @@ func (h *HydratedMeeting) archiveEvidence() ([]byte, error) {
 		markdown = h.keptMarkdown
 	}
 	return json.Marshal(rawEvidence{
-		SchemaVersion: notionSnapshotVersion, Discovery: h.Discovery.Raw, MeetingBlock: rawForBlock(h.MeetingBlock),
+		SchemaVersion: meetingcontent.NotionEvidenceVersion, Discovery: h.Discovery.Raw, MeetingBlock: rawForBlock(h.MeetingBlock),
 		Summary: summary, Notes: notes, Transcript: transcript, PageMarkdown: markdown,
 		Canonical:      canonicalEvidence{Summary: h.Summary, Notes: h.Notes, Transcript: h.Transcript},
 		AttendeeLabels: h.AttendeeLabels, ResolvedUsers: h.ResolvedUsers, Warnings: h.Warnings, Incomplete: h.Incomplete,

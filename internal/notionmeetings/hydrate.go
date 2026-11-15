@@ -137,7 +137,7 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 			continue
 		}
 		if h.blocks >= maxHydrationBlocks {
-			result.markIncomplete(section.name, "limit")
+			result.markIncomplete(section.name, "limit: block count limit")
 			continue
 		}
 		*section.tree, err = h.readTree(ctx, section.id)
@@ -180,7 +180,7 @@ func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeet
 	if err := h.reserveRequest(); err != nil {
 		if len(result.Incomplete) > 0 {
 			if result.Transcript == "" {
-				result.markIncomplete(sectionTranscript, "limit")
+				result.markIncomplete(sectionTranscript, "limit: request or byte limit")
 			}
 			return nil
 		}
@@ -193,7 +193,7 @@ func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeet
 	if err := h.reserveBytes(page.Raw); err != nil {
 		if len(result.Incomplete) > 0 {
 			if result.Transcript == "" {
-				result.markIncomplete(sectionTranscript, "limit")
+				result.markIncomplete(sectionTranscript, "limit: byte limit")
 			}
 			return nil
 		}
@@ -497,15 +497,24 @@ func incompleteReason(ctx context.Context, err error) string {
 		return ""
 	}
 	if section, ok := errors.AsType[*sectionReadError](err); ok {
+		if section.reason == "limit" {
+			return "limit: " + section.err.Error()
+		}
 		return section.reason
 	}
 	if errors.Is(err, ErrResponseTooLarge) {
-		return "limit"
+		return "limit: response size limit"
 	}
-	if transcriptTemporarilyUnavailable(err) {
+	if sectionTemporarilyUnavailable(err) {
 		return "provider"
 	}
 	return ""
+}
+func sectionTemporarilyUnavailable(err error) bool {
+	if api, ok := errors.AsType[*APIError](err); ok && api.Status == 403 && api.Code == "restricted_resource" {
+		return true
+	}
+	return transcriptTemporarilyUnavailable(err)
 }
 func transcriptTemporarilyUnavailable(err error) bool {
 	if errors.Is(err, ErrRateLimited) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) {

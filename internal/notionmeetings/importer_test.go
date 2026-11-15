@@ -1207,7 +1207,8 @@ func TestImporterDataSourceRetriesIncompleteSections(t *testing.T) {
 	for _, tc := range []struct {
 		section string
 		visible bool
-	}{{"transcript", false}, {"summary", true}} {
+		err     error
+	}{{"transcript", false, ErrRateLimited}, {"summary", true, ErrRateLimited}, {"notes", false, &APIError{Kind: ErrReadContent, Status: 403, Code: "restricted_resource"}}} {
 		name := tc.section
 		if tc.visible {
 			name += " visible"
@@ -1236,7 +1237,7 @@ func TestImporterDataSourceRetriesIncompleteSections(t *testing.T) {
 			var beforeEvidence map[string]json.RawMessage
 			require.NoError(json.Unmarshal(before, &beforeEvidence))
 			id := section + "-1"
-			source.blockErrs = map[string]error{id: ErrRateLimited}
+			source.blockErrs = map[string]error{id: tc.err}
 			for _, other := range []string{"summary", "notes", "transcript"} {
 				if other != section {
 					updated := paragraph(other+"-1", "Updated "+other, false)
@@ -1755,4 +1756,86 @@ func TestImporterReportsPartialActionsForUnreadableSavedSection(t *testing.T) {
 	assert.Equal(meetingcontent.CoverageAvailable, content.ActionCoverage)
 	require.Len(content.Actions, 1)
 	assert.Equal("Saved task", content.Actions[0].Title)
+}
+
+func TestImporterRetriesUnavailablePendingMeeting(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	source.blockErrs = map[string]error{"notes-1": ErrRateLimited}
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	require.Len(t, lastNotionState(t, st, first.SourceID).Pending, 1)
+	source.query.Results = nil
+	source.blockErrs["meeting-1"] = &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"}
+	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
+	var progress []string
+	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Progress: func(s string) { progress = append(progress, s) }})
+	require.NoError(t, err)
+	assert.Zero(t, second.Errors)
+	assert.True(t, second.PartialCoverage)
+	assert.Contains(t, strings.Join(progress, "\n"), "unavailable; will retry")
+	require.Len(t, lastNotionState(t, st, second.SourceID).Pending, 1)
+	delete(source.blockErrs, "meeting-1")
+	delete(source.blockErrs, "notes-1")
+	imp.now = func() time.Time { return time.Date(2026, 8, 30, 0, 2, 0, 0, time.UTC) }
+	third, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), third.MaintenanceRetries)
+	assert.Empty(t, lastNotionState(t, st, third.SourceID).Pending)
+}
+
+func TestImporterReportsSectionLimitAndRetries(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	meeting := hydrationMeeting()
+	meeting.Parent = Parent{Type: "data_source_id"}
+	source.query.Results = []MeetingNote{meeting}
+	source.blocks["meeting-1"].Parent = meeting.Parent
+	var err error
+	source.blocks["meeting-1"].Raw, err = json.Marshal(meeting)
+	require.NoError(t, err)
+	parent := "notes-1"
+	for i := 0; i <= maxHydrationDepth; i++ {
+		child := paragraph(fmt.Sprintf("depth-%d", i), "nested", true)
+		source.children[parent] = map[string]*BlockPage{"": {Results: []Block{child}, Raw: json.RawMessage(`{"results":[` + string(child.Raw) + `],"has_more":false}`)}}
+		parent = child.ID
+	}
+	var progress []string
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Progress: func(s string) { progress = append(progress, s) }})
+	require.NoError(t, err)
+	assert.True(t, first.PartialCoverage)
+	assert.Contains(t, strings.Join(progress, "\n"), "depth limit")
+	require.Len(t, lastNotionState(t, st, first.SourceID).Pending, 1)
+	source.query.Results = nil
+	imp.now = func() time.Time { return time.Date(2026, 9, 6, 12, 1, 0, 0, time.UTC) }
+	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), second.MaintenanceRetries)
+	require.Len(t, lastNotionState(t, st, second.SourceID).Pending, 1)
+	source.children["notes-1"] = map[string]*BlockPage{"": {Raw: json.RawMessage(`{"results":[],"has_more":false}`)}}
+	imp.now = func() time.Time { return time.Date(2026, 9, 6, 18, 2, 0, 0, time.UTC) }
+	third, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	assert.Empty(t, lastNotionState(t, st, third.SourceID).Pending)
+}
+
+func TestImporterParagraphBodyMatchesArchivedEvidence(t *testing.T) {
+	st, _, imp := newImporterFixture(t)
+	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), result.SourceID).Scan(&id))
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Owner will prepare the rollout.")
+	raw, err := st.GetMessageRaw(id)
+	require.NoError(t, err)
+	var evidence struct {
+		Notes struct {
+			Root json.RawMessage `json:"root"`
+		} `json:"notes"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &evidence))
+	var block Block
+	require.NoError(t, json.Unmarshal(evidence.Notes.Root, &block))
+	assert.Equal(t, "Owner will prepare the rollout.", block.PlainText())
+	assert.True(t, block.HasChildren)
 }

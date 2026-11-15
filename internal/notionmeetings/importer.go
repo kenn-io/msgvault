@@ -17,13 +17,13 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
+	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/meetingidentity"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 const (
 	syncStateVersion           = 1
-	notionSnapshotVersion      = 2
 	transcriptRetryCadence     = 6 * time.Hour
 	transcriptRetryWindow      = 7 * 24 * time.Hour
 	unknownTranscriptRetrySpan = 48 * time.Hour
@@ -290,7 +290,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		meeting, loadErr := imp.retrieveMeeting(ctx, id)
 		if loadErr != nil {
-			sum.Errors++
+			missing := false
+			if api, ok := errors.AsType[*APIError](loadErr); ok {
+				missing = api.Status == 404 && api.Code == "object_not_found"
+			}
+			if !missing || ctx.Err() != nil {
+				sum.Errors++
+			}
 			if ctx.Err() != nil || !transcriptTemporarilyUnavailable(loadErr) {
 				return sum, fmt.Errorf("load pending Notion meeting %s: %w", id, loadErr)
 			}
@@ -300,7 +306,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			pending.NextAttemptAt = now.Add(transcriptRetryCadence).Format(time.RFC3339)
 			pendingByID[id] = pending
 			next.TranscriptRetryUntil[id] = pending.RetryUntil
-			progress("pending Notion meeting " + id + ": load failed; retry deferred")
+			if missing {
+				sum.PartialCoverage = true
+				progress("pending Notion meeting " + id + ": unavailable; will retry")
+			} else {
+				progress("pending Notion meeting " + id + ": load failed; retry deferred")
+			}
 			continue
 		}
 		work[id] = meeting
@@ -353,6 +364,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			continue
 		}
 
+		for _, warning := range hydrated.Warnings {
+			if strings.Contains(warning, " incomplete: limit:") {
+				progress("meeting " + id + ": " + warning + "; reduce content or nesting; will retry")
+			}
+		}
 		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""
 		archived, recoverErr := imp.archivedState(ctx, source.ID, id)
 		if recoverErr != nil {
@@ -471,7 +487,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		checksum := checksumBytes(snapshot.Raw)
 		known, exists := state.Known[id]
-		if archived.HasEvidence && exists && !opts.Full && known.SnapshotVersion == notionSnapshotVersion &&
+		if archived.HasEvidence && exists && !opts.Full && known.SnapshotVersion == meetingcontent.NotionEvidenceVersion &&
 			known.SnapshotSHA256 == checksum {
 			// The archived meeting is current, but attendee linking may not
 			// have finished before an earlier run stopped.
@@ -483,7 +499,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			next.Known[id] = knownMeeting{
 				LastEditedTime:  meeting.LastEditedTime,
 				SnapshotSHA256:  checksum,
-				SnapshotVersion: notionSnapshotVersion,
+				SnapshotVersion: meetingcontent.NotionEvidenceVersion,
 			}
 			finishPending()
 			progress("verified Notion meeting " + id)
@@ -505,7 +521,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		next.Known[id] = knownMeeting{
 			LastEditedTime:  meeting.LastEditedTime,
 			SnapshotSHA256:  checksum,
-			SnapshotVersion: notionSnapshotVersion,
+			SnapshotVersion: meetingcontent.NotionEvidenceVersion,
 		}
 		finishPending()
 		progress("imported Notion meeting " + id)
@@ -586,7 +602,7 @@ func retriesUntilComplete(hydrated *HydratedMeeting) bool {
 
 // TemporarySectionError reports whether a section read can be retried later.
 func TemporarySectionError(ctx context.Context, err error) bool {
-	return ctx.Err() == nil && transcriptTemporarilyUnavailable(err)
+	return ctx.Err() == nil && sectionTemporarilyUnavailable(err)
 }
 
 type archivedMeetingState struct {
@@ -672,8 +688,8 @@ func decodeArchivedEvidence(raw []byte, expectedID string) (rawEvidence, map[str
 	if err != nil {
 		return rawEvidence{}, nil, false, nil
 	}
-	if version > notionSnapshotVersion {
-		return rawEvidence{}, nil, false, &NewerEvidenceError{MeetingID: expectedID, Found: version, Supported: notionSnapshotVersion}
+	if version > meetingcontent.NotionEvidenceVersion {
+		return rawEvidence{}, nil, false, &NewerEvidenceError{MeetingID: expectedID, Found: version, Supported: meetingcontent.NotionEvidenceVersion}
 	}
 	var evidence rawEvidence
 	if json.Unmarshal(raw, &evidence) != nil {
@@ -685,7 +701,7 @@ func decodeArchivedEvidence(raw []byte, expectedID string) (rawEvidence, map[str
 			return rawEvidence{}, nil, false, nil
 		}
 	}
-	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > notionSnapshotVersion {
+	if evidence.SchemaVersion < 1 || evidence.SchemaVersion > meetingcontent.NotionEvidenceVersion {
 		return rawEvidence{}, nil, false, nil
 	}
 	var discovery MeetingNote

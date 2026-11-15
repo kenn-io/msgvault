@@ -8,9 +8,12 @@ import (
 	"strings"
 )
 
+// NotionEvidenceVersion is the latest supported Notion archive schema.
+const NotionEvidenceVersion = 2
+
 func decodeNotion(fields map[string]jsontext.Value) Content {
 	version, ok := rawInteger(fields["schema_version"])
-	if !ok || (version != 1 && version != 2) {
+	if !ok || (version < 1 || version > NotionEvidenceVersion) {
 		return unavailableContent("unsupported_schema")
 	}
 	content := baseRecognizedContent()

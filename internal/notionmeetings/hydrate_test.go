@@ -77,11 +77,12 @@ func (f *fakeHydrationSource) ListUsers(_ context.Context, cursor string) (*User
 
 func paragraph(id, text string, children bool) Block {
 	raw, err := json.Marshal(struct {
-		Object string `json:"object"`
-		ID     string `json:"id"`
-		Type   string `json:"type"`
-		Text   string `json:"text"`
-	}{Object: "block", ID: id, Type: "paragraph", Text: text})
+		Object      string        `json:"object"`
+		ID          string        `json:"id"`
+		Type        string        `json:"type"`
+		HasChildren bool          `json:"has_children"`
+		Paragraph   RichTextBlock `json:"paragraph"`
+	}{Object: "block", ID: id, Type: "paragraph", HasChildren: children, Paragraph: RichTextBlock{RichText: []RichText{{PlainText: text}}}})
 	if err != nil {
 		panic(err)
 	}
@@ -219,6 +220,7 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 			name: "provider reports transcript block not found",
 			err:  &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"},
 		},
+		{name: "restricted", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "restricted_resource"}},
 		{name: "rate limit", err: ErrRateLimited},
 		{name: "server", err: &APIError{Kind: ErrProvider, Status: 503}},
 		{name: "reset", err: syscall.ECONNRESET},
@@ -253,7 +255,6 @@ func TestHydratorKeepsSystemicTranscriptErrorsFatal(t *testing.T) {
 		cancel bool
 	}{
 		{name: "unauthorized", err: &APIError{Kind: ErrUnauthorized, Status: 401, Code: "unauthorized"}},
-		{name: "read content forbidden", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "restricted_resource"}},
 		{name: "malformed response", err: fmt.Errorf("%w: invalid block", ErrMalformedResponse)},
 		{name: "transient error after cancel", err: ErrRateLimited, cancel: true},
 	}

@@ -120,6 +120,7 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 		{name: "block unavailable with query parent", queryPage: "page-1", blockErr: blockUnavailable, wantErr: blockUnavailable},
 		{name: "section", sections: &notionmeetings.MeetingChildren{SummaryBlockID: "summary-1"}, wantIDs: []string{"meeting-1", "summary-1"}},
 		{name: "no sections", sections: &notionmeetings.MeetingChildren{}, want: "Read Content: not tested (no section blocks)", wantIDs: []string{"meeting-1"}},
+		{name: "restricted then available", firstErr: &notionmeetings.APIError{Kind: notionmeetings.ErrReadContent, Status: 403, Code: "restricted_resource"}, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
 		{name: "missing then available", firstErr: missing, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
 		{name: "all missing", firstErr: missing, secondErr: missing, want: "Read Content: not tested (sections temporarily unavailable)", wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
 		{name: "forbidden", firstErr: notionmeetings.ErrReadContent, wantErr: notionmeetings.ErrReadContent, wantIDs: []string{"meeting-1", "summary-1"}},
