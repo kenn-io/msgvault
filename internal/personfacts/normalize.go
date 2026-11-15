@@ -160,6 +160,9 @@ func normalizeCommitmentValue(submitted jsontext.Value) ([]byte, error) {
 	if err := decodeJSONValue(submitted, &value); err != nil {
 		return nil, fmt.Errorf("decode commitment: %w", err)
 	}
+	if value.Version != CommitmentValueVersion {
+		return nil, fmt.Errorf("unsupported commitment version %d", value.Version)
+	}
 	value.Summary = strings.TrimSpace(value.Summary)
 	return json.Marshal(value, json.Deterministic(true))
 }

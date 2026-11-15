@@ -56,11 +56,22 @@ func TestApplyCommitmentOnlySweepWritesClaims(t *testing.T) {
 	r.Len(claims, 2)
 	for _, claim := range claims {
 		a.Nil(claim.ValidUntil)
+		var stored struct {
+			Version int `json:"version"`
+		}
+		r.NoError(json.Unmarshal(claim.Normalized.JSON, &stored))
+		a.Equal(1, stored.Version)
 		var value personfacts.CommitmentValue
 		r.NoError(json.Unmarshal(claim.Normalized.JSON, &value))
 		a.Equal("owed_to", value.Direction)
 		a.NotEmpty(value.Summary)
 	}
+	_, err = st.db.ExecContext(ctx, st.Rebind(`UPDATE person_fact_claims SET normalized_value_json = ? WHERE id = ?`), `{"version":2,"summary":{"text":"Future"}}`, claims[0].ID)
+	r.NoError(err)
+	items, err = st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 5, 0, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	a.NotEqual("Future", items[0].Summary)
 }
 
 func TestCommitmentDecisionSurvivesShiftedQuote(t *testing.T) {

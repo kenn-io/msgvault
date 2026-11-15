@@ -130,7 +130,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 			return nil, err
 		}
 		descriptor.Revision = revision
-		value, err := json.Marshal(personfacts.CommitmentValue{Direction: promise.Direction, Summary: promise.Summary, DueOn: promise.DueOn})
+		value, err := json.Marshal(personfacts.CommitmentValue{Version: personfacts.CommitmentValueVersion, Direction: promise.Direction, Summary: promise.Summary, DueOn: promise.DueOn})
 		if err != nil {
 			return nil, err
 		}

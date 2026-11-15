@@ -185,9 +185,17 @@ func (s *Store) loadCommitmentCandidateEvidenceTx(ctx context.Context, tx *logge
 	if err != nil {
 		return err
 	}
-	var value personfacts.CommitmentValue
-	if err := json.Unmarshal([]byte(valueJSON), &value); err != nil {
+	var header struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal([]byte(valueJSON), &header); err != nil {
 		return fmt.Errorf("decode commitment claim: %w", err)
+	}
+	var value personfacts.CommitmentValue
+	if header.Version == personfacts.CommitmentValueVersion {
+		if err := json.Unmarshal([]byte(valueJSON), &value); err != nil {
+			return fmt.Errorf("decode commitment claim: %w", err)
+		}
 	}
 	promise, err := scanPersonFactEvidence(tx.QueryRowContext(ctx, `SELECT `+personFactEvidenceColumns+`
 		FROM person_fact_evidence e WHERE EXISTS (
@@ -204,7 +212,10 @@ func (s *Store) loadCommitmentCandidateEvidenceTx(ctx context.Context, tx *logge
 	c.AnchorMessageID, c.Direction, c.Quote = messageID, value.Direction, promise.Input.Excerpt
 	c.Start, c.End = *promise.Input.SpanStart, *promise.Input.SpanEnd
 	c.Summary, c.DueOn, c.PromisedAt = value.Summary, value.DueOn, promise.Input.EventTime
-	candidate.commitment, candidate.promise = c, promise
+	candidate.commitment = c
+	if header.Version == personfacts.CommitmentValueVersion {
+		candidate.promise = promise
+	}
 	return nil
 }
 

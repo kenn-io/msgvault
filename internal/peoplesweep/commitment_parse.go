@@ -125,7 +125,8 @@ var (
 	commitmentYearlessLayouts = []string{"January 2", "Jan 2", "2 January", "2 Jan"}
 	commitmentYearFollows     = regexp.MustCompile(`^[,\s]*\d{4}\b`)
 	commitmentNumericDate     = regexp.MustCompile(`\b\d{1,2}/\d{1,2}/\d{4}\b`)
-	commitmentWeekdayDeadline = regexp.MustCompile(`\b(?:by|on)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:of\s+)?(this|next)\s+week)?\b`)
+	commitmentTomorrow        = regexp.MustCompile(`\b(day after )?tomorrow\b`)
+	commitmentWeekdayDeadline = regexp.MustCompile(`\b(?:by|on)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:(?:of\s+)?(this|next)\s+week|(in two weeks)))?\b`)
 )
 
 // commitmentQuoteHasDate reports whether the quote itself states due, either
@@ -144,7 +145,7 @@ func commitmentQuoteHasDate(quote string, due, event time.Time, location *time.L
 		date := quote[span[0]:span[1]]
 		monthFirst, monthErr := time.Parse("1/2/2006", date)
 		dayFirst, dayErr := time.Parse("2/1/2006", date)
-		if (monthErr == nil && dayErr != nil && monthFirst.Format(time.DateOnly) == due.Format(time.DateOnly)) ||
+		if (monthErr == nil && (dayErr != nil || monthFirst.Equal(dayFirst)) && monthFirst.Format(time.DateOnly) == due.Format(time.DateOnly)) ||
 			(dayErr == nil && monthErr != nil && dayFirst.Format(time.DateOnly) == due.Format(time.DateOnly)) {
 			return true
 		}
@@ -175,7 +176,16 @@ func quoteHasPhrase(quote, phrase string, allow func(rest string) bool) bool {
 }
 
 func quoteHasTomorrow(quote string, due, day time.Time) bool {
-	return day.AddDate(0, 0, 1).Format(time.DateOnly) == due.Format(time.DateOnly) && quoteHasPhrase(quote, "tomorrow", nil)
+	for _, match := range commitmentTomorrow.FindAllStringSubmatch(quote, -1) {
+		days := 1
+		if match[1] != "" {
+			days = 2
+		}
+		if day.AddDate(0, 0, days).Format(time.DateOnly) == due.Format(time.DateOnly) {
+			return true
+		}
+	}
+	return false
 }
 
 // quoteHasYearlessDate accepts a month and day only for its next occurrence
@@ -208,6 +218,9 @@ func quoteHasByWeekday(quote string, due, day time.Time) bool {
 			days = (int(weekday)+6)%7 - (int(day.Weekday())+6)%7
 		case "next":
 			days = 7 - (int(day.Weekday())+6)%7 + (int(weekday)+6)%7
+		}
+		if match[3] != "" {
+			days += 14
 		}
 		if day.AddDate(0, 0, days).Format(time.DateOnly) == due.Format(time.DateOnly) {
 			return true

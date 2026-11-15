@@ -220,7 +220,10 @@ type PartialDateValue struct {
 	Day   int `json:"day,omitzero"`
 }
 
+const CommitmentValueVersion = 1
+
 type CommitmentValue struct {
+	Version   int     `json:"version"`
 	Direction string  `json:"direction"`
 	Summary   string  `json:"summary"`
 	DueOn     *string `json:"due_on"`
