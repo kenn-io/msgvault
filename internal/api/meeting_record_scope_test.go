@@ -110,6 +110,7 @@ func TestMeetingRecordPartialHTTP(t *testing.T) {
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, request)
 	assert.Equal(http.StatusBadRequest, response.Code, response.Body.String())
+	assert.Contains(response.Body.String(), "invalid meeting reference")
 }
 
 type partialMeetingRecordStore struct {

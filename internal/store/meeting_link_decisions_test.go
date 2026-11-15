@@ -1139,6 +1139,61 @@ func TestMeetingDecisionResetUntimedDedupAfterSeriesUpdate(t *testing.T) {
 	r.Equal(endpointFromRef(occurrence).ref(), record.Links[0].Ref)
 }
 
+func TestMeetingDecisionClearSeriesOccurrencePreservesHiddenSingleChoice(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+	data, survivor := calendarFixture(t, st, "series-survivor", raw)
+	_, duplicate := calendarFixture(t, st, "series-duplicate", raw, "duplicate@example.com")
+	_, note := projectionFixture(t, st, "series-note", "meeting_json", `{}`)
+	eventRef := MeetingLinkRef{Kind: "evt", MessageID: duplicate}
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err := st.DecideMeetingLinkContext(t.Context(), eventRef, noteRef, "link")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "series-copy")
+	r.NoError(err)
+	data.RawMIME = []byte(`{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+	_, err = st.PersistMessage(data)
+	r.NoError(err)
+	otherOccurrence := MeetingLinkRef{Kind: "evt", MessageID: survivor, Identity: occurrenceIdentity(t, "20270321T100000Z")}
+	_, err = st.DecideMeetingLinkContext(t.Context(), otherOccurrence, noteRef, "clear")
+	r.NoError(err)
+	_, err = st.UndoDedup(t.Context(), "series-copy")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Len(record.Links, 2)
+	r.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", survivor), record.Links[0].Ref)
+	r.Equal(fmt.Sprintf("evt:%d", duplicate), record.Links[1].Ref)
+}
+
+func TestMeetingDecisionClearSeriesOccurrenceRemovesMatchingUntimedChoice(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	data, survivor := calendarFixture(t, st, "matching-survivor", `{"id":"event","status":"cancelled"}`)
+	duplicateData, duplicate := calendarFixture(t, st, "matching-duplicate", `{"id":"event","status":"cancelled"}`, "duplicate@example.com")
+	_, note := projectionFixture(t, st, "matching-note", "meeting_json", `{}`)
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: duplicate}, noteRef, "link")
+	r.NoError(err)
+	duplicateData.RawMIME = []byte(`{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	_, err = st.PersistMessage(duplicateData)
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "matching-copy")
+	r.NoError(err)
+	data.RawMIME = []byte(`{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+	_, err = st.PersistMessage(data)
+	r.NoError(err)
+	occurrence := MeetingLinkRef{Kind: "evt", MessageID: survivor, Identity: occurrenceIdentity(t, "20270314T100000Z")}
+	_, err = st.DecideMeetingLinkContext(t.Context(), occurrence, noteRef, "clear")
+	r.NoError(err)
+	_, err = st.UndoDedup(t.Context(), "matching-copy")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Empty(record.Links)
+}
+
 func TestMeetingDecisionWrongKindResetDoesNotClearChoice(t *testing.T) {
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -1436,6 +1491,44 @@ func TestMeetingDecisionSourceMergeReplacesPreviouslyVisibleCopy(t *testing.T) {
 	})
 }
 
+func TestMeetingDecisionSourceMergeKeepsNewerSplit(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	from, err := st.GetOrCreateSource("meeting_import", "history@example.test")
+	r.NoError(err)
+	into, err := st.GetOrCreateSource("meeting_import", "live@example.test")
+	r.NoError(err)
+	sender, err := st.EnsureParticipant("owner@example.test", "Example Owner", "example.test")
+	r.NoError(err)
+	sentAt := sql.NullTime{Time: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Valid: true}
+	add := func(sourceID int64, providerID string) int64 {
+		conversation, err := st.EnsureConversationWithType(sourceID, "!shared:example.test", "meeting", "Shared meeting")
+		r.NoError(err)
+		content := "Transcript " + providerID
+		id, err := st.PersistMessage(&MessagePersistData{
+			Message:      &Message{SourceID: sourceID, ConversationID: conversation, SourceMessageID: providerID, MessageType: "meeting_transcript", SenderID: sql.NullInt64{Int64: sender, Valid: true}, SentAt: sentAt, Subject: sql.NullString{String: content, Valid: true}},
+			Conversation: &ConversationPersistData{SourceConversationID: "!shared:example.test", ConversationType: "meeting", Title: "Shared meeting"},
+			BodyText:     sql.NullString{String: content, Valid: true},
+			RawMIME:      []byte(fmt.Sprintf(`{"summary_text":%q}`, content)), RawFormat: "meeting_json",
+		})
+		r.NoError(err)
+		return id
+	}
+	a, b := add(from.ID, "meeting-a"), add(from.ID, "meeting-b")
+	keptA, keptB := add(into.ID, "meeting-a"), add(into.ID, "meeting-b")
+	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+	_, err = st.DecideMeetingLinkContext(t.Context(), ref(a), ref(keptB), "link")
+	r.NoError(err)
+	_, err = st.DecideMeetingLinkContext(t.Context(), ref(keptA), ref(b), "unlink")
+	r.NoError(err)
+	merged, err := st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	r.NoError(err)
+	r.Equal(int64(2), merged.DuplicatesHidden)
+	record, err := st.MeetingRecordContext(t.Context(), ref(keptA))
+	r.NoError(err)
+	r.Equal([]int64{keptA}, record.MessageIDs)
+}
+
 func TestMeetingDecisionDedupBetweenDuplicates(t *testing.T) {
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -1516,4 +1609,22 @@ func TestParseMeetingLinkRef(t *testing.T) {
 		_, err := ParseMeetingLinkRef(input)
 		require.Error(err, input)
 	}
+}
+
+func TestMeetingDecisionFractionalException(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	calendarFixture(t, st, "fraction-master", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00.500Z"},"end":{"dateTime":"2027-03-14T11:00:00.500Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+	_, exception := calendarFixture(t, st, "fraction-exception", `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00.500Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`)
+	_, note := projectionFixture(t, st, "fraction-note", "meeting_json", `{}`)
+	eventRef := MeetingLinkRef{Kind: "evt", MessageID: exception}
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	decision, err := st.DecideMeetingLinkContext(t.Context(), eventRef, noteRef, "link")
+	r.NoError(err)
+	r.Contains([]string{decision.Left, decision.Right}, fmt.Sprintf("evt:%d", exception))
+	record, err := st.MeetingRecordContext(t.Context(), eventRef)
+	r.NoError(err)
+	r.Equal([]int64{note}, record.MessageIDs)
+	r.Len(record.Links, 1)
+	r.Equal(fmt.Sprintf("evt:%d", exception), record.Links[0].Ref)
 }
