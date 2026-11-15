@@ -63,14 +63,14 @@ func loopOperationMCPSession(t *testing.T, backend *daemonMCPOperations, familie
 	return session
 }
 
-func loopOperationFixture(t *testing.T) (*storetest.Fixture, *daemonMCPOperations, int64) {
+func loopOperationFixture(t *testing.T, observers ...func(*http.Request)) (*storetest.Fixture, *daemonMCPOperations, int64) {
 	t.Helper()
 	f := storetest.New(t)
 	now := time.Now().UTC()
 	f.PersistEmail(storetest.EmailSpec{Thread: "owed", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: "Hello", SentAt: now.Add(-10 * 24 * time.Hour)})
 	anchor := f.PersistEmail(storetest.EmailSpec{Thread: "owed", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send the contract?", SentAt: now.Add(-5 * 24 * time.Hour)})
 	f.PersistEmail(storetest.EmailSpec{Thread: "asked", From: storetest.OwnerAddress, To: []string{"sam@example.test"}, Body: "Are you free?", SentAt: now.Add(-20 * 24 * time.Hour)})
-	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: config.NewDefaultConfig(), Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler)}))
+	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: config.NewDefaultConfig(), Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler)}), observers...)
 	return f, backend, anchor
 }
 
@@ -106,21 +106,12 @@ func assertLoopRefusal(t *testing.T, result *mcpserver.OperationResult, code str
 func TestMCPLoopsSDKDecisionsAndList(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	f, _, anchor := loopOperationFixture(t)
-	apiServer := api.NewServerWithOptions(api.ServerOptions{Config: config.NewDefaultConfig(), Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler)})
 	var offset atomic.Value
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	f, backend, anchor := loopOperationFixture(t, func(r *http.Request) {
 		if r.URL.Path == "/api/v1/loops" {
 			offset.Store(r.URL.Query().Get("commitment_offset"))
 		}
-		apiServer.Router().ServeHTTP(w, r)
-	}))
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-	requirements.NoError(err)
-	capabilities, err := client.MCPCapabilities(t.Context())
-	requirements.NoError(err)
-	backend := newDaemonMCPOperations(client, capabilities)
+	})
 	approved := true
 	var disclosures []string
 	session := loopOperationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyLoops}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
