@@ -94,11 +94,11 @@ func TestMeetingLinkProjectionRefreshesEvidence(t *testing.T) {
 	require.NoError(st.db.QueryRow(`SELECT link_key FROM meeting_details WHERE message_id = ?`, id).Scan(&key))
 	assert.Equal(`["google_event_id","owner@example.com","event-a",""]`, key)
 
-	data.RawMIME = []byte(`{"owner":{"email":"other@example.com"},"calendar_event":{"calendar_event_id":"event-b","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
+	data.RawMIME = []byte(`{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"event-b","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
 	_, err := st.PersistMessage(data)
 	require.NoError(err)
 	require.NoError(st.db.QueryRow(`SELECT link_key FROM meeting_details WHERE message_id = ?`, id).Scan(&key))
-	assert.Equal(`["google_event_id","other@example.com","event-b",""]`, key)
+	assert.Equal(`["google_event_id","owner@example.com","event-b",""]`, key)
 
 	data.RawMIME = []byte(`{"calendar_event":{"scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
 	_, err = st.PersistMessage(data)

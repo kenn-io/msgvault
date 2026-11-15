@@ -72,6 +72,7 @@ func TestMeetingLinksCLIPartialRecord(t *testing.T) {
 			} else {
 				assert.Contains(out.String(), "STATUS")
 				assert.Regexp(`evt:4\s+unknown\s+unknown`, out.String())
+				assert.Regexp(`evt:3\s+\S+\s+\S+\s+deleted`, out.String())
 				if tc.noNotes {
 					assert.Contains(out.String(), "Notes: none\n")
 				} else {
@@ -99,7 +100,7 @@ func TestMeetingLinksCLIReferenceNormalizationAndSchemaGate(t *testing.T) {
 	}
 	t.Run("previous schema", func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
-		client := &meetingRecordClient{version: "5.0.0"}
+		client := &meetingRecordClient{version: "5.3.0"}
 		command := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 		command.SetArgs([]string{"evt:23", "--json"})
 		require.ErrorContains(command.Execute(), "daemon API schema 5.4.0 or newer")
