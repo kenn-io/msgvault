@@ -1142,8 +1142,8 @@ func TestImporterDataSourceRetriesIncompleteSections(t *testing.T) {
 			var afterEvidence map[string]json.RawMessage
 			require.NoError(json.Unmarshal(updatedRaw, &afterEvidence))
 			assert.JSONEq(string(beforeEvidence[section]), string(afterEvidence[section]))
-			var body string
-			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT body_text FROM message_bodies WHERE message_id = ?`, messageID).Scan(&body))
+			body, err := st.GetMessageBodyText(t.Context(), messageID)
+			require.NoError(err)
 			original := map[string]string{"summary": "Decide the release scope.", "notes": "Owner will prepare the rollout.", "transcript": "Test Speaker: Ready to ship."}
 			assert.Contains(body, original[section])
 			for _, other := range []string{"summary", "notes", "transcript"} {
@@ -1161,7 +1161,8 @@ func TestImporterDataSourceRetriesIncompleteSections(t *testing.T) {
 			assert.False(third.PartialCoverage)
 			assert.Equal(int64(1), third.MaintenanceRetries)
 			assert.Empty(lastNotionState(t, st, third.SourceID).Pending)
-			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT body_text FROM message_bodies WHERE message_id = ?`, messageID).Scan(&body))
+			body, err = st.GetMessageBodyText(t.Context(), messageID)
+			require.NoError(err)
 			assert.Contains(body, "Recovered "+section)
 		})
 	}
