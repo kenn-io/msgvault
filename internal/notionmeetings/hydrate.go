@@ -118,7 +118,7 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 	if meetingBlock.Object != "block" || meetingBlock.ID != meeting.ID || meetingBlock.Type != "meeting_notes" {
 		return nil, fmt.Errorf("%w: retrieved meeting-note block has unexpected identity or type", ErrMalformedResponse)
 	}
-	if meeting.Parent.Type != "data_source_id" && strings.TrimSpace(meeting.Parent.PageID) == "" {
+	if strings.TrimSpace(meeting.Parent.PageID) == "" {
 		meeting.Parent = meetingBlock.Parent
 	}
 	result := &HydratedMeeting{Discovery: meeting, MeetingBlock: meetingBlock}
@@ -174,7 +174,7 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 
 func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeeting) error {
 	pageID := strings.TrimSpace(result.Discovery.Parent.PageID)
-	if result.Discovery.Parent.Type == "data_source_id" || pageID == "" {
+	if pageID == "" {
 		return nil
 	}
 	if err := h.reserveRequest(); err != nil {

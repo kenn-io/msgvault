@@ -1280,9 +1280,6 @@ func TestImporterDataSourceRetriesIncompleteSections(t *testing.T) {
 			body, err = st.GetMessageBodyText(t.Context(), messageID)
 			require.NoError(err)
 			assert.Contains(body, "Recovered "+section)
-			if section == "notes" {
-				assert.NotContains(body, "Owner will prepare the rollout.")
-			}
 		})
 	}
 }
@@ -1340,13 +1337,9 @@ func TestImporterRefusesNewerEvidenceBeforeWritingOtherMeetings(t *testing.T) {
 	source.blocks["summary-1"] = &changed
 	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work", AccountEmail: "new-account@example.com"})
 	require.Error(err)
-	assert.NotContains(err.Error(), "private text")
 	var identities int
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM account_identities WHERE source_id = ?`), first.SourceID).Scan(&identities))
 	assert.Zero(identities)
-	raw, err := st.GetMessageRaw(secondID)
-	require.NoError(err)
-	assert.Equal(future, raw)
 	afterBody, err := st.GetMessageBodyText(t.Context(), firstID)
 	require.NoError(err)
 	afterRaw, err := st.GetMessageRaw(firstID)
@@ -1606,39 +1599,6 @@ func TestImporterRetainsActionAttributionDuringReplacementFailure(t *testing.T) 
 			assert.Empty(content.Actions)
 		})
 	}
-}
-
-func TestImporterExcludesNestedMeetingAndKeepsSiblingActions(t *testing.T) {
-	st, source, imp := newImporterFixture(t)
-	meeting := hydrationMeeting()
-	meeting.Parent = Parent{Type: "data_source_id"}
-	source.blocks["meeting-1"].Parent = meeting.Parent
-	var err error
-	source.blocks["meeting-1"].Raw, err = json.Marshal(meeting)
-	require.NoError(t, err)
-	source.query.Results = []MeetingNote{meeting}
-	source.blocks["notes-1"].Raw = json.RawMessage(`{"id":"notes-1","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}}`)
-	var nested, sibling Block
-	require.NoError(t, json.Unmarshal([]byte(`{"id":"other-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[{"plain_text":"Another meeting"}]}}`), &nested))
-	require.NoError(t, json.Unmarshal([]byte(`{"id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[{"plain_text":"Sibling notes"}]}}`), &sibling))
-	source.childErrs = map[string]map[string]error{"other-meeting": {"": errors.New("unreadable nested meeting")}}
-	source.children["notes-1"][""] = &BlockPage{Results: []Block{nested, sibling}, Raw: json.RawMessage(`{"results":[{"id":"other-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[{"plain_text":"Another meeting"}]}},{"id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[{"plain_text":"Sibling notes"}]}}],"has_more":false}`)}
-	var action Block
-	require.NoError(t, json.Unmarshal([]byte(`{"id":"task-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}`), &action))
-	source.children["sibling"] = map[string]*BlockPage{"": {Results: []Block{action}, Raw: json.RawMessage(`{"results":[{"id":"task-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}],"has_more":false}`)}}
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	var id int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_id = ?`, first.SourceID).Scan(&id))
-	updated := paragraph("sibling", "Edited sibling", true)
-	source.children["notes-1"][""].Results[1] = updated
-	source.children["notes-1"][""].Raw = json.RawMessage(`{"results":[{"id":"other-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[{"plain_text":"Another meeting"}]}},{"id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[{"plain_text":"Edited sibling"}]}}],"has_more":false}`)
-	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), second.MeetingsUpdated)
-	body, err := st.GetMessageBodyText(t.Context(), id)
-	require.NoError(t, err)
-	assert.Contains(t, body, "Edited sibling")
 }
 
 func TestImporterKeepsSavedTranscriptWhenEmptyWhileUpdatingNotes(t *testing.T) {

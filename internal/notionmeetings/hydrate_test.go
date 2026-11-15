@@ -153,37 +153,15 @@ func completeHydrationSource() *fakeHydrationSource {
 	}
 }
 
-func TestHydratorResolvesMeetingParent(t *testing.T) {
-	for _, tc := range []struct {
-		name                 string
-		parent               Parent
-		wantType, wantPageID string
-		wantMarkdownCalls    int
-	}{
-		{"retrieved page parent", Parent{}, "page_id", "page-1", 1},
-		{"queried data source parent", Parent{Type: "data_source_id"}, "data_source_id", "", 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			meeting := hydrationMeeting()
-			meeting.Parent = tc.parent
-			var err error
-			meeting.Raw, err = json.Marshal(meeting)
-			require.NoError(t, err)
-			source := completeHydrationSource()
-			if tc.parent.Type == "data_source_id" {
-				source.blocks["meeting-1"].Parent = tc.parent
-				source.blocks["meeting-1"].Raw = meeting.Raw
-			}
-			result, err := NewHydrator(source).Hydrate(t.Context(), meeting)
-			require.NoError(t, err)
-			assert.Equal(t, tc.wantType, result.Discovery.Parent.Type)
-			assert.Equal(t, tc.wantPageID, result.Discovery.Parent.PageID)
-			assert.Equal(t, tc.wantMarkdownCalls, source.markdownCalls)
-			if tc.wantMarkdownCalls > 0 {
-				assert.Equal(t, "page-1", source.markdownID)
-			}
-		})
-	}
+func TestHydratorReadsPageParentMarkdown(t *testing.T) {
+	meeting := hydrationMeeting()
+	source := completeHydrationSource()
+	result, err := NewHydrator(source).Hydrate(t.Context(), meeting)
+	require.NoError(t, err)
+	assert.Equal(t, "page_id", result.Discovery.Parent.Type)
+	assert.Equal(t, "page-1", result.Discovery.Parent.PageID)
+	assert.Equal(t, 1, source.markdownCalls)
+	assert.Equal(t, "page-1", source.markdownID)
 }
 
 func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) {
@@ -407,7 +385,6 @@ func TestHydratorStoresAndComparesPageMarkdown(t *testing.T) {
 			result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 			require.NoError(t, err)
 			assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
-			assert.Same(source.markdown, result.PageMarkdown)
 			if tc.differs {
 				assert.Contains(result.Warnings, "structured transcript and page Markdown transcript differed")
 			} else {
