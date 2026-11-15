@@ -84,6 +84,40 @@ func TestEmailPushBindingValidation(t *testing.T) {
 	}
 }
 
+// Lookup failures keep the Store's useful context without repeating it.
+func TestEmailPushBindingCurrentLookupErrors(t *testing.T) {
+	st, _, src := emailPushFixture(t)
+	binding := emailPushBinding{sourceID: src.ID, sourceType: src.SourceType, identifier: src.Identifier, token: "synthetic-token"}
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	deadline, cancelDeadline := context.WithDeadline(t.Context(), time.Unix(0, 0))
+	defer cancelDeadline()
+	for _, tc := range []struct {
+		name  string
+		ctx   context.Context
+		cause error
+	}{
+		{"canceled", canceled, context.Canceled},
+		{"deadline", deadline, context.DeadlineExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := binding.current(tc.ctx, st)
+			require.ErrorIs(t, err, tc.cause)
+			assert.Nil(t, got)
+			assert.EqualError(t, err, "read email push source binding: "+tc.cause.Error())
+			assert.NotErrorIs(t, err, errEmailPushBinding)
+		})
+	}
+	t.Run("missing-token", func(t *testing.T) {
+		missing := binding
+		missing.token = ""
+		got, err := missing.current(t.Context(), st)
+		assert.Nil(t, got)
+		assert.EqualError(t, err, "email push source binding is missing")
+		assert.NotErrorIs(t, err, errEmailPushBinding)
+	})
+}
+
 func TestEmailPushSourceGuardRejectsRetirementAndReplacement(t *testing.T) {
 	for _, change := range []string{"merged", "identifier", "replacement", "alias-collision", "same-id-replacement"} {
 		t.Run(change, func(t *testing.T) {

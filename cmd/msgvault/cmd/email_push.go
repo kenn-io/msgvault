@@ -98,7 +98,7 @@ func (b emailPushBinding) current(ctx context.Context, st *store.Store) (*store.
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, store.ErrSourceNotFound) || errors.Is(err, store.ErrSourceRetired) {
 			return nil, errEmailPushBinding
 		}
-		return nil, fmt.Errorf("read email push source: %w", err)
+		return nil, err
 	}
 	if src.SourceType != b.sourceType || src.Identifier != b.identifier || src.HistoryOnly || src.MergedIntoSourceID != 0 {
 		return nil, errEmailPushBinding
