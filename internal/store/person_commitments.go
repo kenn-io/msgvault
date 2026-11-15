@@ -354,36 +354,56 @@ func (s *Store) PersonCommitmentDiscoveryContext(ctx context.Context, personID i
 	return since, complete && since != nil, rows.Err()
 }
 
-func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now time.Time, interval, window time.Duration, scopeFingerprint string) (bool, error) {
-	var processed requiredTimestamp
-	var through, backfill int64
-	var scope string
-	var observed sql.NullInt64
+type commitmentDueState struct {
+	processed         requiredTimestamp
+	through, backfill int64
+	observed          sql.NullInt64
+	scope             string
+}
+
+func (s *Store) commitmentDueState(ctx context.Context, personID int64) (commitmentDueState, error) {
+	var st commitmentDueState
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT processed_at, through_sequence, observed_sequence, backfill_message_id,
 		scope_fingerprint
-		FROM person_commitment_frontiers WHERE person_id = ?`), personID).Scan(&processed, &through, &observed, &backfill, &scope)
+		FROM person_commitment_frontiers WHERE person_id = ?`), personID).Scan(&st.processed, &st.through, &st.observed, &st.backfill, &st.scope)
+	return st, err
+}
+
+// commitmentOversizedRetryDue reports whether a message was skipped under a
+// byte limit below maxBytes in this scope, which the retry path will offer again.
+func (s *Store) commitmentOversizedRetryDue(ctx context.Context, personID int64, scopeFingerprint string, maxBytes int) (bool, error) {
+	var due bool
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM person_commitment_oversized WHERE person_id = ? AND scope_fingerprint = ? AND max_bytes < ?)`), personID, scopeFingerprint, maxBytes).Scan(&due)
+	return due, err
+}
+
+func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now time.Time, interval, window time.Duration, scopeFingerprint string, maxBytes int) (bool, error) {
+	st, err := s.commitmentDueState(ctx, personID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return true, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	if scopeFingerprint != "" && scope != scopeFingerprint {
+	if scopeFingerprint != "" && st.scope != scopeFingerprint {
 		return true, nil
 	}
-	if now.Before(processed.Time.Add(interval)) {
+	if retry, err := s.commitmentOversizedRetryDue(ctx, personID, scopeFingerprint, maxBytes); retry || err != nil {
+		return retry, err
+	}
+	if now.Before(st.processed.Time.Add(interval)) {
 		return false, nil
 	}
-	if backfill >= 0 {
+	if st.backfill >= 0 {
 		return true, nil
 	}
-	if observed.Valid {
-		if !now.Before(processed.Time.Add(window)) {
+	if st.observed.Valid {
+		if !now.Before(st.processed.Time.Add(window)) {
 			return true, nil
 		}
-		through = max(through, observed.Int64)
+		st.through = max(st.through, st.observed.Int64)
 	}
-	return s.HasPersonSweepChangesAfter(ctx, personID, through)
+	return s.HasPersonSweepChangesAfter(ctx, personID, st.through)
 }
 
 // commitmentMessage admits both sides only when participant identities prove a
@@ -525,7 +545,7 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 	}
 	if scope != window.ScopeFingerprint {
 		previous, window.BackfillMessageID = 0, 0
-		if _, err := s.db.ExecContext(ctx, s.Rebind(`DELETE FROM person_commitment_oversized WHERE person_id = ? AND scope_fingerprint != ?`), personID, commitmentBaseScope(profile, cfg)); err != nil {
+		if _, err := s.db.ExecContext(ctx, s.Rebind(`DELETE FROM person_commitment_oversized WHERE person_id = ? AND scope_fingerprint != ?`), personID, window.ScopeFingerprint); err != nil {
 			return window, err
 		}
 	}
@@ -534,7 +554,7 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 		day := at.UTC().Format(time.DateOnly)
 		return day >= profile.SourceSince && (profile.SourceUntil == "" || day <= profile.SourceUntil)
 	}
-	err = s.loadCommitmentSources(ctx, &window, cfg, previous, commitmentBaseScope(profile, cfg), inProfile)
+	err = s.loadCommitmentSources(ctx, &window, cfg, previous, window.ScopeFingerprint, inProfile)
 	return window, err
 }
 
@@ -713,13 +733,6 @@ func (s *Store) commitmentBackfillMessages(ctx context.Context, personID, after 
 	}
 	defer func() { _ = rows.Close() }()
 	return scanInt64Rows(rows)
-}
-
-// commitmentBaseScope is the scope without the batch limits, so raising a limit
-// keeps the oversized messages it may now admit.
-func commitmentBaseScope(profile peoplesweep.ProviderProfile, cfg peoplesweep.CommitmentConfig) string {
-	cfg.MaxBytes, cfg.MaxItems = 0, 0
-	return peoplesweep.CommitmentScopeFingerprint(profile, cfg)
 }
 
 func (s *Store) recordOversizedCommitment(ctx context.Context, personID, messageID int64, baseScope string, maxBytes int) error {

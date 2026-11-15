@@ -176,7 +176,7 @@
             {#each group.items as promise (promise.id)}
               <li class="promise">
                 <a href={`/messages/${promise.promise.message_id}`} title={promise.promise.text}>{promise.promise.text}</a>
-                <span class="muted">{ageLabel(promise.promised_at)}</span>
+                <span class="muted">{promise.due_on ? `due ${promise.due_on} · ` : ''}{ageLabel(promise.promised_at)}</span>
               </li>
             {/each}
           </ul>

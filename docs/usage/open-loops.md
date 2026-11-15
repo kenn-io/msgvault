@@ -161,10 +161,11 @@ Use `msgvault person provider consent --commitments` to see the provider,
 source dates, and what the request discloses. Repeat with `--yes` to consent
 to sending conversation text from both sides of verified direct chats and
 email. The request includes the full eligible message text within the configured byte limit, after leading quoted history and whitespace are removed and embedded quoted history is masked. Messages that exceed the byte limit are skipped until they fit within the configured limit. Each cited quote is limited to 2,000 runes.
-Changing provider source dates, the commitment window, or message and byte limits restarts recent discovery while keeping saved decisions.
+Changing provider source dates or the commitment window restarts recent discovery while keeping saved decisions. Raising the byte limit retries skipped messages without rechecking messages already processed.
 The profile must allow sensitive `conversation_text` sources. Check the grant
 with `msgvault person provider status`. Use `msgvault person provider revoke`
 to revoke both the ordinary inference and commitment grants for the profile.
+Revoking commitment consent stops future extraction; saved promises remain available to the owner.
 
 Cited promises appear under **Promises you made** and **Promises to you**.
 Each row links to the quoted message. The JSON response also gives the

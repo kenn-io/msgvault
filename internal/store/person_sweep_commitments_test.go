@@ -120,7 +120,7 @@ func TestCommitmentDecisionSurvivesShiftedQuote(t *testing.T) {
 				body += " " + quote
 			}
 			if tc.sameVersion {
-				cfg.Commitments.MaxBytes++
+				cfg.Commitments.Window += time.Second
 			} else {
 				_, err = f.store.db.ExecContext(ctx, f.store.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), body, id)
 				r.NoError(err)
@@ -372,6 +372,45 @@ func commitmentApplyRequest(t *testing.T, f personSweepApplyFixture, window peop
 	return request
 }
 
+func TestCommitmentByteLimitRaiseRetriesOnlySkippedMessages(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "retry-only-oversized", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	large := persist("large", strings.Repeat("x", 1000), -time.Hour)
+	first := persist("first", "I will call.", -time.Hour)
+	second := persist("second", "I will write.", -time.Hour)
+	cfg, profile := commitmentTestConfig()
+	cfg.Commitments.MaxBytes, cfg.Commitments.MaxItems = 100, 10
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Len(window.Sources, 2)
+	r.ElementsMatch([]int64{first, second}, []int64{window.Sources[0].MessageID, window.Sources[1].MessageID})
+	r.Equal(int64(-1), window.BackfillMessageID)
+	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
+	_, err = f.store.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	later := request.CompletedAt.Add(cfg.Commitments.MinInterval)
+	due, err := f.store.PersonCommitmentsDue(ctx, f.personID, later, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments), cfg.Commitments.MaxBytes)
+	r.NoError(err)
+	r.False(due, "an unchanged byte limit should not retry the oversized message")
+	cfg.Commitments.MaxBytes = 2000
+	due, err = f.store.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments), cfg.Commitments.MaxBytes)
+	r.NoError(err)
+	r.True(due, "a newly eligible oversized message should schedule discovery")
+	window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, request.CompletedAt, "UTC")
+	r.NoError(err)
+	r.Equal(1, len(window.Sources))
+	r.Equal(large, window.Sources[0].MessageID)
+	f = nextCommitmentTestAttempt(t, f, "-retry")
+	request = commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
+	request.Generation.ResolvedAt = window.Now
+	_, err = f.store.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	due, err = f.store.PersonCommitmentsDue(ctx, f.personID, later, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments), cfg.Commitments.MaxBytes)
+	r.NoError(err)
+	r.False(due, "a successful retry should clear the scheduling trigger")
+}
+
 func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T) {
 	for _, tc := range []struct {
 		name, mode string
@@ -486,8 +525,12 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 			cfg.Commitments.MaxItems = 10
 			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, laterNow, "UTC")
 			r.NoError(err)
-			r.Len(window.Sources, 4)
-			a.Equal(laterNow, window.SelectionAt)
+			if !tc.journal {
+				r.Equal(1, len(window.Sources), "raising batch limits should retry only the oversized message")
+				a.Equal(laterNow, window.SelectionAt)
+			} else {
+				a.Equal(personFactLedgerNow, window.SelectionAt)
+			}
 			var largeSource string
 			for _, source := range window.Sources {
 				if source.MessageID == large {

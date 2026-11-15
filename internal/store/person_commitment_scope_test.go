@@ -97,11 +97,11 @@ func TestCommitmentScopeExpansionRevisitsJournaledHistory(t *testing.T) {
 			a.Zero(through)
 			a.Equal(window.ThroughSequence, observed)
 			if expanded == "dates" {
-				due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window, "")
+				due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window, "", cfg.Commitments.MaxBytes)
 				r.NoError(err)
 				a.False(due)
 			}
-			due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.Window), cfg.Commitments.MinInterval, cfg.Commitments.Window, "")
+			due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.Window), cfg.Commitments.MinInterval, cfg.Commitments.Window, "", cfg.Commitments.MaxBytes)
 			r.NoError(err)
 			a.True(due)
 			switch expanded {
@@ -114,12 +114,16 @@ func TestCommitmentScopeExpansionRevisitsJournaledHistory(t *testing.T) {
 			default:
 				cfg.Commitments.MaxItems++
 			}
-			due, err = st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
+			due, err = st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments), cfg.Commitments.MaxBytes)
 			r.NoError(err)
-			a.True(due, "scope changes do not wait out the old minimum interval")
+			if expanded == "batch" {
+				a.False(due, "batch sizing does not invalidate discovery progress")
+			} else {
+				a.True(due, "scope changes do not wait out the old minimum interval")
+			}
 			_, complete, err = st.PersonCommitmentDiscoveryContext(ctx, f.personID, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
 			r.NoError(err)
-			a.False(complete)
+			a.Equal(expanded == "batch", complete)
 			window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 			r.NoError(err)
 			if expanded == "batch" {

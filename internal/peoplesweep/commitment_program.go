@@ -61,11 +61,11 @@ func CommitmentSourceBytes(text string) (int, error) {
 	return len(encoded) - 2, nil
 }
 
-// CommitmentScopeFingerprint binds frontier progress to source eligibility and
-// batch sizing. Changing these inputs restarts bounded discovery and paging.
+// CommitmentScopeFingerprint binds frontier progress to source eligibility.
+// Batch limits are excluded so raising one keeps discovery progress.
 func CommitmentScopeFingerprint(profile ProviderProfile, cfg CommitmentConfig) string {
-	encoded := fmt.Sprintf("%s|%s|%t|%t|%d|%d|%d", profile.SourceSince, profile.SourceUntil,
-		profile.AllowSensitive, slices.Contains(profile.AllowedSources, SourceConversationText), cfg.Window, cfg.MaxItems, cfg.MaxBytes)
+	encoded := fmt.Sprintf("%s|%s|%t|%t|%d", profile.SourceSince, profile.SourceUntil,
+		profile.AllowSensitive, slices.Contains(profile.AllowedSources, SourceConversationText), cfg.Window)
 	digest := sha256.Sum256([]byte(encoded))
 	return hex.EncodeToString(digest[:])
 }

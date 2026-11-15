@@ -90,6 +90,17 @@ describe("PersonOpenLoops", () => {
     expect(url.searchParams.has("include_closed")).toBe(false);
   });
 
+  it("shows the due date only on dated promises", async () => {
+    const promise = (id: number, dueOn?: string) => ({ id: `c${id}`, person_id: 7, summary: "", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: id, start: 0, end: 10, text: `Promise ${id}` }, promised_at: "2026-10-12T12:00:00Z", due_on: dueOn });
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ items: [], truncated: false, commitments: [promise(1, "2026-11-20"), promise(2)] }));
+    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
+    const dated = (await screen.findByRole("link", { name: "Promise 1" })).closest("li");
+    const undated = screen.getByRole("link", { name: "Promise 2" }).closest("li");
+    expect(dated?.textContent).toContain("due 2026-11-20");
+    expect(undated?.textContent).not.toContain("due");
+    expect(screen.queryByRole("button", { name: /done|snooze|dismiss/i })).toBeNull();
+  });
+
   it("says how many messages could not be read, with or without loops", async () => {
     const populated = clientFor([loop(1)], false, 2);
     const view = render(PersonOpenLoops, { client: populated.client, personID: 7 });
