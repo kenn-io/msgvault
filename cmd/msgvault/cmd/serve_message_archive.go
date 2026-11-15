@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"slices"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -17,8 +18,18 @@ func (a *storeAPIAdapter) ArchiveMessage(ctx context.Context, id int64, change e
 	if change.Archived == nil {
 		return nil, emailtags.Failure("invalid_request", "archived must be true or false", nil, nil)
 	}
-	target, _ := a.store.EmailTagTargetContext(ctx, id, "")
-	if target.Provider == "beeper" {
+	target, err := a.store.EmailTagTargetContext(ctx, id, "")
+	if err != nil {
+		failure, ok := errors.AsType[*emailtags.MessageTagError](err)
+		if grant != nil && ok && failure.Code == "message_not_found" {
+			return nil, emailtags.Failure("message_not_found", "Message not found", nil, nil)
+		}
+		// A stale IMAP membership still identifies a source for authorization.
+		if !ok || (failure.Code != "unsupported_provider" && !(failure.Code == "stale_identity" && target.SourceID != 0)) {
+			return nil, err
+		}
+	}
+	if target.Provider == sourceTypeBeeper {
 		return a.archiveBeeperChat(ctx, id, change, grant, acquireWrite)
 	}
 	authorize := func(ctx context.Context, target store.EmailTagTarget) error {
