@@ -568,12 +568,19 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 				}
 				cfg.Commitments.MaxBytes = 100 << 10
 				cfg.Commitments.MaxItems = 1
+				if tc.aged {
+					window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, now, "UTC")
+					r.NoError(err)
+					r.Empty(window.Sources, "expired messages must not be sent to the provider")
+					return
+				}
 				for i, want := range []int64{first, second} {
 					window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, now, "UTC")
 					r.NoError(err)
 					r.Len(window.Sources, 1)
 					r.Equal(want, window.Sources[0].MessageID)
-					if i == 0 && tc.aged {
+					if i == 0 && tc.journal {
+						// A provider failure leaves the retry available without an apply.
 						retry, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, now, "UTC")
 						r.NoError(err)
 						r.Len(retry.Sources, 1)

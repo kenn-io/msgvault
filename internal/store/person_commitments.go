@@ -619,8 +619,7 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 		if err != nil {
 			return err
 		}
-		if !ok || !inProfile(source.EventTime) ||
-			(source.EventTime.Before(cutoff) && source.RecordedTime.Before(cutoff) && change.RecordedAt.Before(cutoff)) {
+		if !ok || !inProfile(source.EventTime) || !commitmentInWindow(source, !change.RecordedAt.Before(cutoff), cutoff) {
 			continue
 		}
 		added, err := add(source)
@@ -739,28 +738,58 @@ func (s *Store) recordOversizedCommitment(ctx context.Context, personID, message
 	return err
 }
 
+// commitmentInWindow reports whether a source is inside the discovery window:
+// its event or archive time, or a journal entry, is no older than cutoff.
+func commitmentInWindow(source peoplesweep.CommitmentSource, journalRecent bool, cutoff time.Time) bool {
+	return journalRecent || !source.EventTime.Before(cutoff) || !source.RecordedTime.Before(cutoff)
+}
+
+// oversizedRetryEligible reports whether an oversized message is still in the
+// profile and the discovery window, as the journal would admit it.
+func (s *Store) oversizedRetryEligible(ctx context.Context, personID int64, source peoplesweep.CommitmentSource, cutoff time.Time, inProfile func(time.Time) bool) (bool, error) {
+	if !inProfile(source.EventTime) {
+		return false, nil
+	}
+	var recent bool
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM person_sweep_changes WHERE person_id = ? AND message_id = ? AND source_lane = 'conversation_text' AND `+s.loopTimeKey("recorded_at")+` >= `+s.loopTimeKey("?")+`)`), personID, source.MessageID, s.dialect.TimestampParam(cutoff)).Scan(&recent)
+	return commitmentInWindow(source, recent, cutoff), err
+}
+
+const oversizedRetryPage = 256
+
+func (s *Store) oversizedRetryIDs(ctx context.Context, personID int64, baseScope string, maxBytes int) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT message_id FROM person_commitment_oversized WHERE person_id = ? AND scope_fingerprint = ? AND max_bytes < ? ORDER BY message_id LIMIT ?`), personID, baseScope, maxBytes, oversizedRetryPage)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanInt64Rows(rows)
+}
+
+func (s *Store) forgetOversizedCommitment(ctx context.Context, personID, messageID int64) error {
+	_, err := s.db.ExecContext(ctx, s.Rebind(`DELETE FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`), personID, messageID)
+	return err
+}
+
 // retryOversizedCommitments offers the messages skipped under a smaller
 // max_bytes before any new journal or backfill work. It reports whether the
 // window is full, in which case discovery resumes from the previous frontier.
 func (s *Store) retryOversizedCommitments(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, baseScope string, inProfile func(time.Time) bool, add func(peoplesweep.CommitmentSource) (bool, error)) (bool, error) {
 	personID := window.PersonID
-	const retryPage = 256
-	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT message_id FROM person_commitment_oversized WHERE person_id = ? AND scope_fingerprint = ? AND max_bytes < ? ORDER BY message_id LIMIT ?`), personID, baseScope, cfg.MaxBytes, retryPage)
-	if err != nil {
-		return false, err
-	}
-	ids, err := scanInt64Rows(rows)
-	_ = rows.Close()
+	ids, err := s.oversizedRetryIDs(ctx, personID, baseScope, cfg.MaxBytes)
 	if err != nil {
 		return false, err
 	}
 	for _, id := range ids {
 		source, ok, err := s.currentCommitmentSource(ctx, personID, id)
+		if ok && err == nil {
+			ok, err = s.oversizedRetryEligible(ctx, personID, source, window.SelectionAt.Add(-cfg.Window), inProfile)
+		}
 		if err != nil {
 			return false, err
 		}
-		if !ok || !inProfile(source.EventTime) {
-			if _, err := s.db.ExecContext(ctx, s.Rebind(`DELETE FROM person_commitment_oversized WHERE person_id = ? AND message_id = ?`), personID, id); err != nil {
+		if !ok {
+			if err := s.forgetOversizedCommitment(ctx, personID, id); err != nil {
 				return false, err
 			}
 			continue
@@ -774,7 +803,7 @@ func (s *Store) retryOversizedCommitments(ctx context.Context, window *peopleswe
 			return true, nil
 		}
 	}
-	if len(ids) == retryPage {
+	if len(ids) == oversizedRetryPage {
 		window.ThroughSequence = previous
 		return true, nil
 	}

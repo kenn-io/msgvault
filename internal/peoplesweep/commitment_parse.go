@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -118,32 +119,72 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 	return parsed, nil
 }
 
+var (
+	commitmentDateLayouts     = []string{time.DateOnly, "January 2, 2006", "Jan 2, 2006", "2 January 2006", "2 Jan 2006"}
+	commitmentYearlessLayouts = []string{"January 2", "Jan 2", "2 January", "2 Jan"}
+	commitmentYearFollows     = regexp.MustCompile(`^[,\s]*\d{4}\b`)
+)
+
+// commitmentQuoteHasDate reports whether the quote itself states due, either
+// literally or relative to the source event day in the configured timezone.
 func commitmentQuoteHasDate(quote string, due, event time.Time, location *time.Location) bool {
 	quote = strings.ToLower(quote)
-	for _, layout := range []string{time.DateOnly, "January 2, 2006", "Jan 2, 2006", "2 January 2006", "2 Jan 2006"} {
-		date := strings.ToLower(due.Format(layout))
-		for remaining := quote; ; {
-			i := strings.Index(remaining, date)
-			if i < 0 {
-				break
-			}
-			before, _ := utf8.DecodeLastRuneInString(remaining[:i])
-			after, _ := utf8.DecodeRuneInString(remaining[i+len(date):])
-			if !unicode.IsLetter(before) && !unicode.IsDigit(before) && !unicode.IsLetter(after) && !unicode.IsDigit(after) {
-				return true
-			}
-			remaining = remaining[i+len(date):]
+	for _, layout := range commitmentDateLayouts {
+		if quoteHasPhrase(quote, strings.ToLower(due.Format(layout)), nil) {
+			return true
 		}
 	}
-	if !event.IsZero() {
-		day := event.In(location)
-		days := (int(due.Weekday()) - int(day.Weekday()) + 7) % 7
-		phrase := "by " + strings.ToLower(due.Weekday().String())
-		end := strings.TrimRightFunc(quote, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsPunct(r) })
-		if day.AddDate(0, 0, days).Format(time.DateOnly) == due.Format(time.DateOnly) && strings.HasSuffix(end, phrase) {
-			before, _ := utf8.DecodeLastRuneInString(end[:len(end)-len(phrase)])
-			return !unicode.IsLetter(before) && !unicode.IsDigit(before)
+	if event.IsZero() {
+		return false
+	}
+	day := event.In(location)
+	return quoteHasTomorrow(quote, due, day) || quoteHasYearlessDate(quote, due, day) || quoteHasByWeekday(quote, due, day)
+}
+
+// quoteHasPhrase finds phrase as a whole token; allow, when set, vets the text after each match.
+func quoteHasPhrase(quote, phrase string, allow func(rest string) bool) bool {
+	isWord := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+	for from := 0; ; {
+		i := strings.Index(quote[from:], phrase)
+		if i < 0 {
+			return false
 		}
+		start, end := from+i, from+i+len(phrase)
+		before, _ := utf8.DecodeLastRuneInString(quote[:start])
+		after, _ := utf8.DecodeRuneInString(quote[end:])
+		if !isWord(before) && !isWord(after) && (allow == nil || allow(quote[end:])) {
+			return true
+		}
+		from = end
+	}
+}
+
+func quoteHasTomorrow(quote string, due, day time.Time) bool {
+	return day.AddDate(0, 0, 1).Format(time.DateOnly) == due.Format(time.DateOnly) && quoteHasPhrase(quote, "tomorrow", nil)
+}
+
+// quoteHasYearlessDate accepts a month and day only for its next occurrence
+// within a year of the event day, and never when the quote names a year.
+func quoteHasYearlessDate(quote string, due, day time.Time) bool {
+	start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, due.Location())
+	if due.Before(start) || !due.Before(start.AddDate(1, 0, 0)) {
+		return false
+	}
+	for _, layout := range commitmentYearlessLayouts {
+		if quoteHasPhrase(quote, strings.ToLower(due.Format(layout)), func(rest string) bool { return !commitmentYearFollows.MatchString(rest) }) {
+			return true
+		}
+	}
+	return false
+}
+
+func quoteHasByWeekday(quote string, due, day time.Time) bool {
+	days := (int(due.Weekday()) - int(day.Weekday()) + 7) % 7
+	phrase := "by " + strings.ToLower(due.Weekday().String())
+	end := strings.TrimRightFunc(quote, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsPunct(r) })
+	if day.AddDate(0, 0, days).Format(time.DateOnly) == due.Format(time.DateOnly) && strings.HasSuffix(end, phrase) {
+		before, _ := utf8.DecodeLastRuneInString(end[:len(end)-len(phrase)])
+		return !unicode.IsLetter(before) && !unicode.IsDigit(before)
 	}
 	return false
 }

@@ -27,6 +27,7 @@
   let loadingPromises = $state(false);
   let morePromisesFailed = $state(false);
   let morePromises = $state<() => void>(() => {});
+  let pagedPromises = false;
 
   $effect(() => {
     const selectedID = personID;
@@ -51,7 +52,7 @@
         unreadable = 0;
         failed = false;
         promiseStatus = '';
-        nextOffset = undefined;
+        [nextOffset, pagedPromises] = [undefined, false];
       }
       try {
         const result = await listLoops(
@@ -61,10 +62,8 @@
         if (controller.signal.aborted) return;
         if (!result.data) throw new Error('Open loops are unavailable.');
         items = result.data.items ?? [];
-        if (!more) {
-          commitments = result.data.commitments ?? [];
-          nextOffset = result.data.commitments_next_offset;
-        }
+        commitments = mergeCommitments(more ? commitments : [], result.data.commitments);
+        if (!pagedPromises) nextOffset = result.data.commitments_next_offset;
         truncated = Boolean(result.data.truncated);
         coverageIncomplete = Boolean(result.data.coverage_incomplete);
         unreadable = result.data.skipped_unparseable ?? 0;
@@ -84,6 +83,13 @@
     void load();
     return () => controller.abort();
   });
+
+  // Refresh loaded promises in place by ID and append the ones not already shown.
+  function mergeCommitments(current: LoopCommitment[], incoming: LoopCommitment[] = []): LoopCommitment[] {
+    const fresh = new Map(incoming.map((item) => [item.id, item]));
+    const known = new Set(current.map((item) => item.id));
+    return [...current.map((item) => fresh.get(item.id) ?? item), ...incoming.filter((item) => !known.has(item.id))];
+  }
 
   // Show the discovery window with the loop results.
   function discoveryStatus(data: LoopListResponse): string {
@@ -105,7 +111,8 @@
       );
       if (signal.aborted) return;
       if (!result.data) throw new Error('Promises are unavailable.');
-      commitments = [...commitments, ...(result.data.commitments ?? [])];
+      commitments = mergeCommitments(commitments, result.data.commitments);
+      pagedPromises = true;
       truncated = Boolean(result.data.truncated);
       nextOffset = result.data.commitments_next_offset;
     } catch {

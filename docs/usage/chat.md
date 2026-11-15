@@ -938,10 +938,13 @@ appears only when the daemon offers its route.
 
 | Tool | Effect | Parameters |
 |---|---|---|
-| `list_open_loops` | List loops waiting on the owner (`reply_owed`) and on the other person (`awaiting_reply`). | Optional `person_id`; `limit` from 1 to 200, default 50 |
+| `list_open_loops` | List reply loops and cited open promises. | Optional `person_id` and `commitment_offset`; `limit` from 1 to 200, default 50 |
 | `close_open_loop` | Mark the listed questions done. | `message_id` and `question_message_ids` |
 | `snooze_open_loop` | Hide the listed questions until a deadline. | `message_id`, `question_message_ids`, and `until` |
 | `reopen_open_loop` | Clear the decision on one question. | `message_id` |
+
+For more promises, pass `commitments_next_offset` from the response as
+`commitment_offset` with the same filters. Use the CLI to decide a promise.
 
 To act on a loop:
 
