@@ -53,7 +53,7 @@ func (s *Store) ReconcileCardDAVParticipantBindingsContext(ctx context.Context, 
 				return err
 			}
 		}
-		plan, err := s.planCardDAVParticipantBindingsTx(ctx, tx, options.Undo, false)
+		plan, err := s.planCardDAVParticipantBindingsTx(ctx, tx, options.Undo)
 		if err != nil {
 			return err
 		}
@@ -69,8 +69,8 @@ func (s *Store) ReconcileCardDAVParticipantBindingsContext(ctx context.Context, 
 }
 
 // Callers hold the identity mutation lock, before any person/resource locks.
-func (s *Store) reconcileCardDAVParticipantBindingsTx(ctx context.Context, tx *loggedTx, cleanupOnly bool) error {
-	plan, err := s.planCardDAVParticipantBindingsTx(ctx, tx, false, cleanupOnly)
+func (s *Store) reconcileCardDAVParticipantBindingsTx(ctx context.Context, tx *loggedTx) error {
+	plan, err := s.planCardDAVParticipantBindingsTx(ctx, tx, false)
 	if err != nil {
 		return err
 	}
@@ -80,18 +80,7 @@ func (s *Store) reconcileCardDAVParticipantBindingsTx(ctx context.Context, tx *l
 	return nil
 }
 
-func (s *Store) cleanupCardDAVParticipantBindingsTx(ctx context.Context, tx *loggedTx) error {
-	var owned bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM person_participants WHERE carddav_owned = TRUE)`).Scan(&owned); err != nil {
-		return err
-	}
-	if !owned {
-		return nil
-	}
-	return s.reconcileCardDAVParticipantBindingsTx(ctx, tx, true)
-}
-
-func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *loggedTx, undo, cleanupOnly bool) (*cardDAVParticipantBindingPlan, error) {
+func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *loggedTx, undo bool) (*cardDAVParticipantBindingPlan, error) {
 	plan := &cardDAVParticipantBindingPlan{result: CardDAVParticipantBindingResult{ConflictDetails: []CardDAVParticipantBindingConflict{}}}
 	bindings := map[int64]cardDAVParticipantBinding{}
 	rows, err := tx.QueryContext(ctx, `SELECT person_id, participant_id, carddav_owned FROM person_participants ORDER BY participant_id`)
@@ -188,10 +177,10 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 		}
 		for _, id := range members {
 			binding, exists := bindings[id]
-			if exists && binding.owned && (personID == 0 || binding.personID != personID) {
+			if _, manuallyOwned := owners[binding.personID]; exists && binding.owned && !manuallyOwned && (personID == 0 || binding.personID != personID) {
 				plan.remove = append(plan.remove, binding)
 			}
-			if (!exists || binding.owned && binding.personID != personID) && personID != 0 && reason == "" && !cleanupOnly {
+			if (!exists || binding.owned && binding.personID != personID) && personID != 0 && reason == "" {
 				plan.add = append(plan.add, cardDAVParticipantBinding{personID: personID, participantID: id, owned: true})
 			}
 		}

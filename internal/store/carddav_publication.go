@@ -167,10 +167,6 @@ func (s *Store) prepareCardDAVPublicationTx(ctx context.Context, tx *loggedTx, p
 			}
 			return fmt.Errorf("lock CardDAV publication book: %w", err)
 		}
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
-			return err
-		}
-
 		if s.cardDAVReviewPersonLockHook != nil {
 			s.cardDAVReviewPersonLockHook()
 		}
@@ -666,13 +662,7 @@ func (s *Store) CommitCardDAVPublicationContext(
 			if _, err = tx.ExecContext(ctx, `DELETE FROM carddav_publications WHERE person_id = ?`, current.PersonID); err != nil {
 				return err
 			}
-			if err := s.resolvePublicationConflictAuditTx(ctx, tx, pending); err != nil {
-				return err
-			}
-			if pending.ResolutionConflictID == 0 {
-				return s.cleanupCardDAVParticipantBindingsTx(ctx, tx)
-			}
-			return nil
+			return s.resolvePublicationConflictAuditTx(ctx, tx, pending)
 		}
 		if input.Tombstone || input.Remote.Href != current.Href || input.Remote.SemanticHash != current.OutgoingSemanticHash ||
 			len(input.Remote.RemoteBody) == 0 || input.Remote.RemoteETag == "" {
@@ -772,13 +762,7 @@ func (s *Store) CommitCardDAVPublicationContext(
 		if affected, _ := result.RowsAffected(); affected != 1 {
 			return ErrCardDAVStalePlan
 		}
-		if err := s.resolvePublicationConflictAuditTx(ctx, tx, pending); err != nil {
-			return err
-		}
-		if pending.ResolutionConflictID == 0 {
-			return s.cleanupCardDAVParticipantBindingsTx(ctx, tx)
-		}
-		return nil
+		return s.resolvePublicationConflictAuditTx(ctx, tx, pending)
 	})
 }
 
@@ -800,7 +784,7 @@ func (s *Store) resolvePublicationConflictAuditTx(
 			return err
 		}
 	}
-	_, err := s.resolveCardDAVConflictAuditTx(ctx, tx, s.dialect,
+	_, err := resolveCardDAVConflictAuditTx(ctx, tx, s.dialect,
 		pending.ResolutionConflictID, CardDAVResolutionKeepLocal)
 	return err
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"strconv"
 	"testing"
-	"time"
 
 	Assert "github.com/stretchr/testify/assert"   //nolint:importas // Keep constructors available in nested assertion scopes.
 	Require "github.com/stretchr/testify/require" //nolint:importas // Keep constructors available in nested assertion scopes.
@@ -374,6 +373,13 @@ func TestCardDAVParticipantBindingCandidateOwnership(t *testing.T) {
 				assert.False(bindingOwned(t, st, a))
 				assert.Equal(actor == "system", bindingOwned(t, st, b))
 				if actor == "system" {
+					card.Emails = nil
+					card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + person.VCardUID + "\r\nFN:Alex Example\r\nEND:VCARD\r\n")
+					card.RemoteETag, card.SemanticHash = "two", "no-claims"
+					applyParticipantBindingCards(t, st, account, book, card)
+					current, err := st.GetPersonContext(t.Context(), person.ID)
+					require.NoError(err)
+					assert.ElementsMatch([]int64{a, b}, current.ParticipantIDs)
 					_, err = st.DecideIdentityMatchCandidateContext(t.Context(), candidate.ID, store.IdentityMatchStateRejected, "user", nil)
 					require.NoError(err)
 				}
@@ -540,7 +546,7 @@ func TestCardDAVParticipantBindingLifecycleCleanup(t *testing.T) {
 	for _, test := range []struct {
 		action  string
 		tracked bool
-	}{{"delete", false}, {"demote", false}, {"discovery", false}, {"demote", true}, {"discovery", true}, {"conflict-edit", true}, {"conflict-tombstone", true}} {
+	}{{"delete", false}, {"demote", false}, {"discovery", false}} {
 		t.Run(test.action+"/tracked="+strconv.FormatBool(test.tracked), func(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)
@@ -567,15 +573,6 @@ func TestCardDAVParticipantBindingLifecycleCleanup(t *testing.T) {
 			case "discovery":
 				allowed := true
 				_, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{BaseURL: "https://contacts.example/dav", Username: "alice", PrincipalURL: "https://contacts.example/principal/alice/", HomeURL: "https://contacts.example/books/alice/", Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://contacts.example/books/alice/replacement/", DisplayName: "Replacement", CanCreate: &allowed}}})
-			default:
-				resource, readErr := st.GetCardDAVResourceContext(t.Context(), book.ID, card.Href)
-				require.NoError(readErr)
-				capture := store.CardDAVConflictCapture{AddressBookID: book.ID, Href: card.Href, ExpectedPersonID: *resource.PersonID, ExpectedMappingRevision: resource.MappingRevision, BaseLocalHash: resource.LocalHash, LocalHash: resource.LocalHash, BaseRemoteHash: resource.RemoteSemanticHash, BaseRemoteETag: resource.RemoteETag, RemoteETag: "two", LocalBody: card.RemoteBody, RemoteBody: []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Changed Example\r\nEND:VCARD\r\n")}
-				if test.action == "conflict-tombstone" {
-					capture.RemoteTombstone = true
-					capture.RemoteBody = nil
-				}
-				_, err = st.RecordCardDAVConflictContext(t.Context(), capture)
 			}
 			require.NoError(err)
 			bound, err := st.PersonForParticipantsContext(t.Context(), []int64{id})
@@ -766,128 +763,6 @@ func TestCardDAVParticipantBindingProvisionalCreateCollisionIsNotEvidence(t *tes
 	require.NoError(err)
 	assert.Equal(store.CardDAVMappingUnbound, mapping.MappingStatus)
 	assert.Nil(mapping.PersonID)
-}
-
-func TestCardDAVParticipantBindingPublicationConflictLockOrder(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-	st, account, book := newCardDAVResourceStore(t)
-	if !st.IsPostgreSQL() {
-		t.Skip("PostgreSQL row-lock scheduling")
-	}
-	_, err := st.EnsureParticipant("alex@example.test", "Alex Example", "example.test")
-	require.NoError(err)
-	card := remoteResource(book.CanonicalURL+"lock-order.vcf", "lock-order-card", "Alex Example", "alex@example.test", "one")
-	applyParticipantBindingCards(t, st, account, book, card)
-	person := bindingCardPerson(t, st, book, card.Href)
-	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), person.ID)
-	require.NoError(err)
-	pending, err := st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{PersonID: person.ID, Desired: true, AddressBookID: book.ID, Href: card.Href, OutgoingBody: card.RemoteBody, OutgoingSemanticHash: "local-update", LocalHash: snapshot.Fingerprint})
-	require.NoError(err)
-	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, card.Href)
-	require.NoError(err)
-	capture := store.CardDAVConflictCapture{AddressBookID: book.ID, Href: card.Href, ExpectedPersonID: person.ID, ExpectedMappingRevision: mapping.MappingRevision, BaseLocalHash: mapping.LocalHash, LocalHash: snapshot.Fingerprint, BaseRemoteHash: mapping.RemoteSemanticHash, BaseRemoteETag: mapping.RemoteETag, RemoteETag: "two", LocalBody: card.RemoteBody, RemoteBody: []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Changed Example\r\nEND:VCARD\r\n")}
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancel()
-	blocker, err := st.DB().BeginTx(ctx, nil)
-	require.NoError(err)
-	defer func() { _ = blocker.Rollback() }()
-	var blockerPID int
-	require.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
-	_, err = blocker.ExecContext(ctx, `UPDATE archive_metadata SET value=value WHERE key='identity_revision'`)
-	require.NoError(err)
-	done := make(chan error, 1)
-	go func() { _, err := st.RecordCardDAVPublicationConflictContext(ctx, *pending, capture); done <- err }()
-	waitForPostgreSQLBlockedPID(ctx, t, st, blockerPID, "archive_metadata", "publication conflict must reach the identity lock")
-	// While capture waits for identity serialization, another writer must still
-	// be able to lock the resource. The reverse order deadlocks reconciliation.
-	var resourceID int64
-	probeErr := st.DB().QueryRowContext(ctx, st.Rebind(`SELECT id FROM carddav_resources WHERE id=? FOR UPDATE NOWAIT`), mapping.ID).Scan(&resourceID)
-	assert.NoError(probeErr, "capture must not own the resource before identity")
-	require.NoError(blocker.Rollback())
-	require.NoError(<-done)
-}
-
-func TestCardDAVParticipantBindingSyncPreflightTakesIdentityLockFirst(t *testing.T) {
-	require := Require.New(t)
-	st, account, book := newCardDAVResourceStore(t)
-	if !st.IsPostgreSQL() {
-		t.Skip("PostgreSQL row-lock scheduling")
-	}
-	_, err := st.EnsureParticipant("alex@example.test", "Alex Example", "example.test")
-	require.NoError(err)
-	card := remoteResource(
-		book.CanonicalURL+"preflight-lock-order.vcf", "preflight-lock-order-card",
-		"Alex Example", "alex@example.test", "one",
-	)
-	applyParticipantBindingCards(t, st, account, book, card)
-	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, card.Href)
-	require.NoError(err)
-	require.NotNil(mapping.PersonID)
-
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-	defer cancel()
-	blocker, err := st.DB().BeginTx(ctx, nil)
-	require.NoError(err)
-	defer func() { _ = blocker.Rollback() }()
-	var blockerPID int
-	require.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
-	_, err = blocker.ExecContext(ctx, `UPDATE archive_metadata SET value=value WHERE key='identity_revision'`)
-	require.NoError(err)
-	var personID int64
-	require.NoError(blocker.QueryRowContext(ctx,
-		`SELECT id FROM persons WHERE id=$1 FOR UPDATE`, *mapping.PersonID).Scan(&personID))
-
-	input := card
-	input.SemanticHash = "remote-two"
-	preflightDone := make(chan error, 1)
-	go func() {
-		_, err := st.CardDAVRemoteUpdateNeedsConflictContext(ctx, book.ID, card.Href, input)
-		preflightDone <- err
-	}()
-	waitForPostgreSQLBlockedPID(ctx, t, st, blockerPID, "archive_metadata",
-		"sync preflight must wait for identity serialization before taking CardDAV row locks")
-	var resourceID int64
-	require.NoError(blocker.QueryRowContext(ctx,
-		`SELECT id FROM carddav_resources WHERE id=$1 FOR UPDATE`, mapping.ID).Scan(&resourceID))
-	require.NoError(blocker.Commit())
-	require.NoError(<-preflightDone)
-}
-
-func TestCardDAVParticipantBindingPublicationPreparationLockOrder(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-	st, _, book := newCardDAVResourceStore(t)
-	if !st.IsPostgreSQL() {
-		t.Skip("PostgreSQL row-lock scheduling")
-	}
-	var personID int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid,display_name) VALUES ('prepare-lock-person','Prepare Example') RETURNING id`).Scan(&personID))
-	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
-	require.NoError(err)
-	body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:prepare-lock-person\r\nFN:Prepare Example\r\nEND:VCARD\r\n")
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancel()
-	require.
-		// Seed the same serialization row used by reconciliation, then hold it.
-		NoError(st.DB().QueryRowContext(ctx, st.Rebind(`INSERT INTO archive_metadata(key,value) VALUES ('identity_revision','0') ON CONFLICT(key) DO UPDATE SET value=archive_metadata.value RETURNING value`)).Scan(new(string)))
-	blocker, err := st.DB().BeginTx(ctx, nil)
-	require.NoError(err)
-	defer func() { _ = blocker.Rollback() }()
-	var blockerPID int
-	require.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
-	_, err = blocker.ExecContext(ctx, `UPDATE archive_metadata SET value=value WHERE key='identity_revision'`)
-	require.NoError(err)
-	done := make(chan error, 1)
-	go func() {
-		_, err := st.PrepareCardDAVPublicationContext(ctx, store.CardDAVPublicationPlan{PersonID: personID, Desired: true, AddressBookID: book.ID, Href: book.CanonicalURL + "prepare-lock.vcf", OutgoingBody: body, OutgoingSemanticHash: "prepare-lock", LocalHash: snapshot.Fingerprint})
-		done <- err
-	}()
-	waitForPostgreSQLBlockedPID(ctx, t, st, blockerPID, "archive_metadata", "publication preparation must wait for identity serialization")
-	var id int64
-	assert.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT id FROM persons WHERE id=? FOR UPDATE NOWAIT`), personID).Scan(&id), "preparation cannot own the person before identity")
-	require.NoError(blocker.Rollback())
-	require.NoError(<-done)
 }
 
 func TestCardDAVParticipantBindingIncludesConfirmedAccountIdentities(t *testing.T) {

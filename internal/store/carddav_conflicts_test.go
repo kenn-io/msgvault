@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
@@ -739,68 +738,6 @@ func TestCardDAVKeepRemoteAndPullUseCanonicalPostgresLockOrder(t *testing.T) {
 	afterMapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, mapping.Href)
 	require.NoError(err)
 	assert.Equal(after.MappingRevision, afterMapping.MappingRevision)
-}
-
-func TestCardDAVRediscoveryAndKeepRemoteUseCanonicalPostgresLockOrder(t *testing.T) {
-	require := require.New(t)
-	st, account, book, mapping := seededCardDAVConflictMapping(t)
-	if !st.IsPostgreSQL() {
-		t.Skip("PostgreSQL row locks are required for the CardDAV discovery/resolution deadlock regression")
-	}
-	capture := conflictCapture(mapping)
-	conflict, err := st.RecordCardDAVConflictContext(t.Context(), capture)
-	require.NoError(err)
-	retained := parseCardDAVRemoteForStoreTest(mapping.Href, capture.RemoteETag, capture.RemoteBody)
-
-	bookLocked := make(chan struct{})
-	resumeResolution := make(chan struct{})
-	var resumeOnce sync.Once
-	resume := func() { resumeOnce.Do(func() { close(resumeResolution) }) }
-	st.SetCardDAVConflictResolutionBookLockHookForTest(func() {
-		close(bookLocked)
-		<-resumeResolution
-	})
-	t.Cleanup(func() { st.SetCardDAVConflictResolutionBookLockHookForTest(nil) })
-	t.Cleanup(resume)
-
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	t.Cleanup(cancel)
-	waitingBefore := postgreSQLWaitingLockCount(t, st)
-	resolveDone := make(chan error, 1)
-	go func() {
-		_, resolveErr := st.ResolveCardDAVConflictRemoteContext(ctx, store.CardDAVConflictRemoteResolution{
-			ConflictID: conflict.ID, ExpectedMappingRevision: conflict.MappingRevision, Remote: retained,
-		})
-		resolveDone <- resolveErr
-	}()
-	select {
-	case <-bookLocked:
-	case <-ctx.Done():
-		require.FailNow("keep-remote did not reach the address-book lock")
-	}
-
-	discoveryDone := make(chan error, 1)
-	go func() {
-		_, _, discoveryErr := st.ReplaceCardDAVDiscoveryContext(ctx, cardDAVRediscoveryForBook(account, book))
-		discoveryDone <- discoveryErr
-	}()
-	require.Eventually(func() bool {
-		return postgreSQLWaitingLockCount(t, st) >= waitingBefore+1
-	}, 5*time.Second, 10*time.Millisecond, "rediscovery did not wait for keep-remote's book lock")
-	resume()
-
-	select {
-	case resolveErr := <-resolveDone:
-		require.NoError(resolveErr, "keep-remote must finish before rediscovery acquires identity state")
-	case <-ctx.Done():
-		require.FailNow("keep-remote did not finish after rediscovery queued on the book lock")
-	}
-	select {
-	case discoveryErr := <-discoveryDone:
-		require.NoError(discoveryErr, "rediscovery must proceed after keep-remote releases the book lock")
-	case <-ctx.Done():
-		require.FailNow("rediscovery did not finish after keep-remote")
-	}
 }
 
 func TestCardDAVKeepRemoteReconcilesUnboundMappingByBookRole(t *testing.T) {

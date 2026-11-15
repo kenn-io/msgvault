@@ -109,7 +109,6 @@ type Store struct {
 	accountAttributionAfterReadHook       func(messageID int64)
 	chatMembersAfterClaimHook             func()
 	cardDAVConflictResolveSnapshotHook    func()
-	cardDAVConflictResolveBookLockHook    func()
 	cardDAVTombstonePrepareSnapshotHook   func()
 	cardDAVReviewPersonLockHook           func()
 	cardDAVCollisionIdentityLockHook      func()

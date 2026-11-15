@@ -713,7 +713,7 @@ func (s *Store) completeCardDAVConflictLocalTombstoneTx(
 			return nil, ErrCardDAVConflictStale
 		}
 	}
-	return s.resolveCardDAVConflictAuditTx(ctx, tx, s.dialect,
+	return resolveCardDAVConflictAuditTx(ctx, tx, s.dialect,
 		conflict.ID, CardDAVResolutionKeepLocal)
 }
 
@@ -789,7 +789,7 @@ func (s *Store) recordCardDAVPublicationConflictContext(
 	}
 	var conflict *CardDAVConflict
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		current, err := s.lockCardDAVPublicationOperationTx(ctx, tx, pending.PersonID, pending.AddressBookID)
+		current, err := getCardDAVPublicationFrom(ctx, tx, pending.PersonID, s.dialect.SelectForUpdate())
 		if err != nil {
 			return err
 		}
@@ -830,7 +830,7 @@ func (s *Store) rollbackOversizedCardDAVPublicationConflictContext(
 	ctx context.Context, pending CardDAVPublication, retainIntent bool,
 ) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		current, err := s.lockCardDAVPublicationOperationTx(ctx, tx, pending.PersonID, pending.AddressBookID)
+		current, err := getCardDAVPublicationFrom(ctx, tx, pending.PersonID, s.dialect.SelectForUpdate())
 		if err != nil {
 			return err
 		}
@@ -940,13 +940,6 @@ func (s *Store) RecordCardDAVConflictContext(
 	}
 	var conflict *CardDAVConflict
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.lockCardDAVPublicationTargetTx(ctx, tx, capture.AddressBookID); err != nil {
-			return err
-		}
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
-			return err
-		}
-
 		var err error
 		conflict, err = s.recordCardDAVConflictTx(ctx, tx, capture, cardDAVConflictRecordOptions{})
 		return err
@@ -955,7 +948,6 @@ func (s *Store) RecordCardDAVConflictContext(
 }
 
 type cardDAVConflictRecordOptions struct {
-	deferParticipantCleanup        bool
 	allowIntentTombstone           bool
 	supersedePendingIntent         bool
 	preserveExistingLocalTombstone bool
@@ -1095,12 +1087,6 @@ func (s *Store) recordCardDAVConflictTx(
 			return nil, fmt.Errorf("supersede refreshed CardDAV conflict intent: %w", err)
 		}
 	}
-	if !options.deferParticipantCleanup {
-		if err := s.cleanupCardDAVParticipantBindingsTx(ctx, tx); err != nil {
-			return nil, err
-		}
-	}
-
 	return conflict, nil
 }
 
@@ -1304,9 +1290,6 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 		if err != nil {
 			return err
 		}
-		if s.cardDAVConflictResolveBookLockHook != nil {
-			s.cardDAVConflictResolveBookLockHook()
-		}
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
@@ -1414,7 +1397,7 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 				}
 			}
 		}
-		resolved, err = s.resolveCardDAVConflictAuditTx(ctx, tx, s.dialect, conflict.ID,
+		resolved, err = resolveCardDAVConflictAuditTx(ctx, tx, s.dialect, conflict.ID,
 			CardDAVResolutionKeepRemote)
 		return err
 	})
@@ -1465,7 +1448,7 @@ func (s *Store) ResolveCardDAVConflictLocalTombstoneContext(
 	return resolved, err
 }
 
-func (s *Store) resolveCardDAVConflictAuditTx(
+func resolveCardDAVConflictAuditTx(
 	ctx context.Context, tx *loggedTx, dialect Dialect, id int64,
 	resolution CardDAVConflictResolution,
 ) (*CardDAVConflict, error) {
@@ -1487,10 +1470,6 @@ func (s *Store) resolveCardDAVConflictAuditTx(
 	if err != nil {
 		return nil, fmt.Errorf("resolve CardDAV conflict audit: %w", err)
 	}
-	if err := s.cleanupCardDAVParticipantBindingsTx(ctx, tx); err != nil {
-		return nil, err
-	}
-
 	return conflict, nil
 }
 
@@ -1581,8 +1560,7 @@ func scanCardDAVConflict(row scanner) (*CardDAVConflict, error) {
 }
 
 // demoteCardDAVCreateCollisionTx retires unaccepted collision evidence before
-// a rejected or oversized create intent is cleared. Callers hold account/book,
-// identity and person locks in that order.
+// a rejected or oversized create intent is cleared.
 func (s *Store) demoteCardDAVCreateCollisionTx(ctx context.Context, tx *loggedTx, current *CardDAVPublication, resource *CardDAVResource) error {
 	if current.MappingRevision <= 0 || current.PreviousMappingRevision != current.MappingRevision ||
 		resource.RemoteSemanticHash == current.OutgoingSemanticHash {
@@ -1612,7 +1590,7 @@ func (s *Store) demoteCardDAVCreateCollisionTx(ctx context.Context, tx *loggedTx
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return ErrCardDAVConflictStale
 	}
-	return s.cleanupCardDAVParticipantBindingsTx(ctx, tx)
+	return nil
 }
 
 // rollbackCardDAVCreateFenceTx distinguishes a fenced conditional-create

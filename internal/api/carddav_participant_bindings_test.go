@@ -51,6 +51,9 @@ func TestCardDAVParticipantBindingHTTPPreviewApplyUndo(t *testing.T) {
 	undone := call(`{"undo":true}`)
 	assert.Equal(1, undone.ParticipantsUnbound)
 	assert.Equal(2, st.refreshCalls)
+	st.refreshErr = nil
+	call(`{"undo":true}`)
+	assert.Equal(3, st.refreshCalls)
 	malformed := personRequest(t, srv, http.MethodPost, "/api/v1/carddav/participant-bindings", []byte(`{"dry_run":"yes"}`), "")
 	assert.Equal(http.StatusBadRequest, malformed.Code)
 }
@@ -106,4 +109,27 @@ func TestCardDAVSyncRefreshesIdentityCacheAfterPartialCommit(t *testing.T) {
 			assert.NotNil(person)
 		})
 	}
+}
+
+type cardDAVRoleMutationFixture struct {
+	cardDAVListFixture
+
+	store       *store.Store
+	participant int64
+}
+
+func (f *cardDAVRoleMutationFixture) SetBookRoles(ctx context.Context, _ int64, _ carddav.BookRoles) error {
+	_, _, err := f.store.CreatePersonFromParticipantContext(ctx, f.participant)
+	return err
+}
+
+func TestCardDAVBookRolesRefreshesIdentityCache(t *testing.T) {
+	st := &stubIdentityCacheStore{Store: testutil.NewTestStore(t)}
+	id, err := st.EnsureParticipant("role@example.test", "Role", "example.test")
+	require.NoError(t, err)
+	service := &cardDAVRoleMutationFixture{store: st.Store, participant: id}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger(), CardDAV: &CardDAVController{service: service}})
+	response := personRequest(t, srv, http.MethodPatch, "/api/v1/carddav/books/7", []byte(`{"write_target":false,"subscribed":false,"lookup_source":false}`), "")
+	assert.Equal(t, http.StatusNotFound, response.Code)
+	assert.Equal(t, 1, st.refreshCalls)
 }

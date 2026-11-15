@@ -258,7 +258,6 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 				}
 			}
 			if _, err := s.recordCardDAVConflictTx(ctx, tx, capture, cardDAVConflictRecordOptions{
-				deferParticipantCleanup:        true,
 				supersedePendingIntent:         !capture.RemoteTombstone,
 				preserveExistingLocalTombstone: !capture.RemoteTombstone,
 			}); err != nil {
@@ -331,7 +330,7 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 			}
 		}
 
-		if err := s.reconcileCardDAVParticipantBindingsTx(ctx, tx, false); err != nil {
+		if err := s.reconcileCardDAVParticipantBindingsTx(ctx, tx); err != nil {
 			return err
 		}
 
@@ -588,11 +587,6 @@ func (s *Store) cardDAVResourceNeedsConflictTx(
 func (s *Store) CardDAVRemoteUpdateNeedsConflictContext(ctx context.Context, bookID int64, href string, input CardDAVRemoteResource) (bool, error) {
 	var needed bool
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		// Match participant reconciliation's identity-first order before this
-		// preflight locks a CardDAV resource or its person.
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
-			return err
-		}
 		var err error
 		needed, _, err = s.cardDAVResourceNeedsConflictTx(ctx, tx, bookID, href, input.SemanticHash, input.EquivalentLocalHash, input.RemoteBody)
 		return err
@@ -1067,9 +1061,6 @@ func (s *Store) acceptCardDAVIdentityMatchCandidateReviewedContext(
 				ctx, tx, candidate.ID, IdentityMatchStateAccepted, *reviewToken); err != nil {
 				return err
 			}
-		}
-		if err := s.cleanupCardDAVParticipantBindingsTx(ctx, tx); err != nil {
-			return err
 		}
 		accepted, err = getIdentityMatchCandidateTx(ctx, tx, candidate.ID)
 		return err
@@ -1858,7 +1849,6 @@ func (s *Store) removeCardDAVResourceWithModeTx(
 	}
 	cleanupImportedPerson := false
 	personHasUserOwnedState := false
-	retireImportedProjection := false
 	if !retainPerson && resource.PersonID != nil && resource.PersonRevisionAtBind != nil {
 		cleanupImportedPerson, err = s.personHasCardDAVImportedProjectionTx(
 			ctx, tx, *resource.PersonID,
@@ -1874,18 +1864,6 @@ func (s *Store) removeCardDAVResourceWithModeTx(
 		if err != nil {
 			return false, err
 		}
-		retireImportedProjection = mode == cardDAVRemovalRetireProjection && personHasUserOwnedState
-		if mode == cardDAVRemovalRetireProjection && !retireImportedProjection {
-			// A person with remaining links may be retained, so retire the old projection.
-			var retained bool
-			if err := tx.QueryRowContext(ctx, `SELECT
-				EXISTS (SELECT 1 FROM person_participants WHERE person_id = ?)
-				OR EXISTS (SELECT 1 FROM carddav_resources WHERE person_id = ? AND id <> ?)`,
-				*resource.PersonID, *resource.PersonID, resource.ID).Scan(&retained); err != nil {
-				return false, fmt.Errorf("check retained CardDAV imported person links: %w", err)
-			}
-			retireImportedProjection = retained
-		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM identity_match_candidates
 		WHERE left_kind = ? AND left_id = ?`, IdentityMatchCardDAVResource, resource.ID); err != nil {
@@ -1898,27 +1876,17 @@ func (s *Store) removeCardDAVResourceWithModeTx(
 	if _, err := tx.ExecContext(ctx, `DELETE FROM carddav_resources WHERE id = ?`, resource.ID); err != nil {
 		return false, fmt.Errorf("delete CardDAV resource ledger row: %w", err)
 	}
-	if retireImportedProjection {
+	if err := s.transferCardDAVImportedPersonCleanupBaselineTx(
+		ctx, tx, resource, personHasUserOwnedState,
+	); err != nil {
+		return false, err
+	}
+	if mode == cardDAVRemovalRetireProjection && personHasUserOwnedState {
 		if err := s.retireCardDAVImportedProjectionTx(
 			ctx, tx, resource,
 		); err != nil {
 			return false, err
 		}
-		if !personHasUserOwnedState {
-			var revision int64
-			if err := tx.QueryRowContext(ctx, `SELECT revision FROM persons WHERE id = ?`,
-				*resource.PersonID).Scan(&revision); err != nil {
-				return false, fmt.Errorf("read CardDAV imported person revision after retirement: %w", err)
-			}
-			resource.PersonRevisionAtBind = &revision
-		}
-	}
-	// Carry retirement's revision forward so duplicate mappings do not mistake
-	// our own imported-field cleanup for user-owned edits.
-	if err := s.transferCardDAVImportedPersonCleanupBaselineTx(
-		ctx, tx, resource, personHasUserOwnedState,
-	); err != nil {
-		return false, err
 	}
 	if !retainPerson {
 		if err := s.deleteUntouchedCardDAVImportedPersonTx(
