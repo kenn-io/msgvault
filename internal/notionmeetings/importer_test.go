@@ -1690,9 +1690,13 @@ func TestImporterExcludesNestedMeetingAndKeepsSiblingActions(t *testing.T) {
 	source.query.Results = []MeetingNote{meeting}
 	source.blocks["notes-1"].Raw = json.RawMessage(`{"id":"notes-1","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}}`)
 	var nested, sibling Block
-	require.NoError(t, json.Unmarshal([]byte(`{"id":"other-meeting","type":"meeting_notes","has_children":true}`), &nested))
-	require.NoError(t, json.Unmarshal([]byte(`{"id":"task-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}`), &sibling))
-	source.children["notes-1"][""] = &BlockPage{Results: []Block{nested, sibling}, Raw: json.RawMessage(`{"results":[{"id":"other-meeting","type":"meeting_notes","has_children":true},{"id":"task-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}],"has_more":false}`)}
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"other-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[{"plain_text":"Another meeting"}]}}`), &nested))
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[{"plain_text":"Sibling notes"}]}}`), &sibling))
+	source.childErrs = map[string]map[string]error{"other-meeting": {"": errors.New("unreadable nested meeting")}}
+	source.children["notes-1"][""] = &BlockPage{Results: []Block{nested, sibling}, Raw: json.RawMessage(`{"results":[{"id":"other-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[{"plain_text":"Another meeting"}]}},{"id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[{"plain_text":"Sibling notes"}]}}],"has_more":false}`)}
+	var action Block
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"task-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}`), &action))
+	source.children["sibling"] = map[string]*BlockPage{"": {Results: []Block{action}, Raw: json.RawMessage(`{"results":[{"id":"task-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}],"has_more":false}`)}}
 	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(t, err)
 	var id int64
@@ -1703,13 +1707,16 @@ func TestImporterExcludesNestedMeetingAndKeepsSiblingActions(t *testing.T) {
 	assert.Equal(t, meetingcontent.CoverageAvailable, content.ActionCoverage)
 	require.Len(t, content.Actions, 1)
 	assert.Equal(t, "Sibling action", content.Actions[0].Title)
-	updated := paragraph("task-1", "Edited sibling", false)
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.NotContains(t, body, "Another meeting")
+	updated := paragraph("sibling", "Edited sibling", true)
 	source.children["notes-1"][""].Results[1] = updated
-	source.children["notes-1"][""].Raw = json.RawMessage(`{"results":[{"id":"other-meeting","type":"meeting_notes","has_children":true},{"id":"task-1","type":"paragraph","has_children":false,"paragraph":{"rich_text":[{"plain_text":"Edited sibling"}]}}],"has_more":false}`)
+	source.children["notes-1"][""].Raw = json.RawMessage(`{"results":[{"id":"other-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[{"plain_text":"Another meeting"}]}},{"id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[{"plain_text":"Edited sibling"}]}}],"has_more":false}`)
 	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), second.MeetingsUpdated)
-	body, err := st.GetMessageBodyText(t.Context(), id)
+	body, err = st.GetMessageBodyText(t.Context(), id)
 	require.NoError(t, err)
 	assert.Contains(t, body, "Edited sibling")
 }
