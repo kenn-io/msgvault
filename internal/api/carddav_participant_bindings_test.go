@@ -66,6 +66,7 @@ func TestCardDAVParticipantBindingHTTPRequiresOwner(t *testing.T) {
 
 type partialCardDAVSyncFixture struct {
 	cardDAVListFixture
+
 	store       *store.Store
 	participant int64
 	syncErr     error

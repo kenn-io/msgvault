@@ -404,6 +404,6 @@ func LastSuccessfulSyncQueryForTest(filterByType bool) string {
 
 // ApplyAcceptedIdentityMatchSnapshotForTest applies a previously read candidate.
 func (s *Store) ApplyAcceptedIdentityMatchSnapshotForTest(ctx context.Context, candidate *IdentityMatchCandidate, actor string) error {
-	_, _, _, err := s.applyAcceptedIdentityMatchCandidateContext(ctx, candidate, actor)
+	_, _, _, err := s.applyAcceptedIdentityMatchCandidateContext(ctx, candidate, actor) //nolint:dogsled // This helper exposes only the error.
 	return err
 }

@@ -22,6 +22,7 @@ import (
 
 type committingCardDAVService struct {
 	scheduledCardDAVFixture
+
 	store       *store.Store
 	participant int64
 }
@@ -80,7 +81,7 @@ func TestCardDAVIdentityRefreshUpdatesCache(t *testing.T) {
 	call := func(body string) {
 		t.Helper()
 		w := httptest.NewRecorder()
-		request := httptest.NewRequest(http.MethodPost, "/api/v1/carddav/participant-bindings", strings.NewReader(body))
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/carddav/participant-bindings", strings.NewReader(body))
 		request.Header.Set("Content-Type", "application/json")
 		srv.Router().ServeHTTP(w, request)
 		req.Equal(http.StatusOK, w.Code, w.Body.String())

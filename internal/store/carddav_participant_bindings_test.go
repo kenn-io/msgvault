@@ -161,7 +161,6 @@ func TestCardDAVParticipantBindingCardEditsRebaseAndRelease(t *testing.T) {
 	assert.Equal([]int64{newID}, person.ParticipantIDs)
 	require.NotNil(person.DisplayName)
 	assert.Equal("Alex Updated", *person.DisplayName)
-
 }
 
 func TestCardDAVParticipantBindingConflictsNeverSteal(t *testing.T) {
@@ -308,17 +307,18 @@ func TestCardDAVParticipantBindingEmailIdentifiersAndEncoding(t *testing.T) {
 			st, account, book := newCardDAVResourceStore(t)
 			var id int64
 			var err error
-			if tc.kind == "email" {
+			switch tc.kind {
+			case "email":
 				id, err = st.EnsureParticipant(tc.value, "Alex", "example.test")
-			} else if tc.kind == "email_alias" {
+			case "email_alias":
 				id, err = st.EnsureParticipant("primary@example.test", "Alex", "example.test")
 				require.NoError(err)
 				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'email', ?)`), id, tc.value)
-			} else if tc.kind == "imessage" {
+			case "imessage":
 				id, err = st.EnsureParticipantByPhone(t.Context(), "+12025550100", "Alex", "imessage")
 				require.NoError(err)
 				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'imessage', ?)`), id, tc.value)
-			} else {
+			default:
 				id, err = st.EnsureParticipantByIdentifier(tc.kind, tc.value, "Alex")
 			}
 			require.NoError(err)
@@ -412,7 +412,6 @@ func TestCardDAVParticipantBindingCandidateOwnership(t *testing.T) {
 			require.NoError(err)
 			assert.ElementsMatch([]int64{a, b}, person.ParticipantIDs)
 		})
-
 	})
 	t.Run("automatic membership", func(t *testing.T) {
 		for _, mode := range []string{"system", "user", "stale-system", "null-actor"} {
@@ -450,7 +449,8 @@ func TestCardDAVParticipantBindingCandidateOwnership(t *testing.T) {
 				automatic := mode == "system" || mode == "null-actor"
 				assert.Equal(automatic, bindingOwned(t, st, a))
 				assert.Equal(automatic, bindingOwned(t, st, b))
-				if mode == "system" {
+				switch mode {
+				case "system":
 					card = remoteResource(card.Href, card.RemoteUID, "Remote Updated", "alex@example.test", "two")
 					card.SemanticHash = "updated-baseline"
 					applyParticipantBindingCards(t, st, account, book, card)
@@ -464,7 +464,7 @@ func TestCardDAVParticipantBindingCandidateOwnership(t *testing.T) {
 					conflict, err := st.CardDAVRemoteUpdateNeedsConflictContext(t.Context(), book.ID, card.Href, card)
 					require.NoError(err)
 					assert.True(conflict)
-				} else if mode == "stale-system" || mode == "null-actor" {
+				case "stale-system", "null-actor":
 					_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{Undo: true})
 					require.NoError(err)
 					if automatic {
@@ -475,7 +475,6 @@ func TestCardDAVParticipantBindingCandidateOwnership(t *testing.T) {
 				}
 			})
 		}
-
 	})
 }
 
@@ -506,7 +505,6 @@ func TestCardDAVParticipantBindingMergedAliasRemainsClaimed(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(1, undo.ParticipantsUnbound)
 		assert.Empty(bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
-
 	})
 	t.Run("phone", func(t *testing.T) {
 		for _, identifierType := range []string{"imessage", "google_voice"} {
@@ -535,7 +533,6 @@ func TestCardDAVParticipantBindingMergedAliasRemainsClaimed(t *testing.T) {
 				assert.True(bindingOwned(t, st, survivor))
 			})
 		}
-
 	})
 }
 

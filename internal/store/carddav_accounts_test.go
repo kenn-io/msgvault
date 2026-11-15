@@ -1831,7 +1831,7 @@ func TestCardDAVConnectionIdentityChangeDeletesAutomaticallyBoundPerson(t *testi
 	assert.NotEqual(book.ID, books[0].ID)
 
 	_, err = st.GetPersonContext(t.Context(), oldPersonID)
-	assert.ErrorIs(err, store.ErrPersonNotFound)
+	require.ErrorIs(err, store.ErrPersonNotFound)
 
 	rematch := remoteResource(books[0].CanonicalURL+"rematch.vcf", "replacement-card", "Replacement Example", "retired@example.test", `"two"`)
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
