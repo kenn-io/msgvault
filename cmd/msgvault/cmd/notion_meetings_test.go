@@ -300,5 +300,5 @@ func TestScheduledNotionSyncUsesUsersToken(t *testing.T) {
 func TestNotionSyncSummaryReportsPartialCoverage(t *testing.T) {
 	var out bytes.Buffer
 	writeNotionMeetingsSummary(&out, &notionmeetings.ImportSummary{PartialCoverage: true})
-	assert.Contains(t, out.String(), "Coverage: partial")
+	assert.Contains(t, out.String(), "  Coverage: partial\n")
 }

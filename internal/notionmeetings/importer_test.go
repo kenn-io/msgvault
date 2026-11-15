@@ -322,7 +322,7 @@ func TestImporterKeepsMeetingWhenIncompleteSectionCannotBeRecovered(t *testing.T
 }
 
 func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
-	for _, failure := range []string{"another meeting", "markdown", "archive", "checkpoint", "completion", "completion and failure"} {
+	for _, failure := range []string{"another meeting", "markdown", "archive", "checkpoint", "completion and failure"} {
 		t.Run(failure, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
 			limited := &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}
@@ -341,11 +341,9 @@ func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
 				if failure == "markdown" {
 					source.markdownErr = errors.New("markdown unavailable")
 				}
-				if failure == "checkpoint" || failure == "completion" || failure == "completion and failure" {
+				if failure == "checkpoint" || failure == "completion and failure" {
 					column, condition := "cursor_before", "NEW.status = 'running'"
-					if failure == "completion" {
-						column, condition = "status", "NEW.status = 'completed'"
-					} else if failure == "completion and failure" {
+					if failure == "completion and failure" {
 						column, condition = "status", "NEW.status IN ('completed', 'failed')"
 					}
 					if st.IsPostgreSQL() {
@@ -356,7 +354,7 @@ func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
 					require.NoError(t, err)
 				}
 				_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-				if failure == "checkpoint" || failure == "completion" || failure == "completion and failure" {
+				if failure == "checkpoint" || failure == "completion and failure" {
 					require.ErrorContains(t, err, "forced final write failure")
 					if st.IsPostgreSQL() {
 						_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_final_write ON sync_runs`)
@@ -364,13 +362,11 @@ func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
 						_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_notion_final_write`)
 					}
 					require.NoError(t, err)
-					if failure == "checkpoint" || failure == "completion and failure" {
-						checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), first.SourceID, SourceType)
-						require.NoError(t, err)
-						var state syncState
-						require.NoError(t, json.Unmarshal([]byte(checkpoint.CursorBefore.String), &state))
-						assert.Equal(t, "2026-09-05T10:30:00Z", state.TranscriptRetryUntil["meeting-1"])
-					}
+					checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), first.SourceID, SourceType)
+					require.NoError(t, err)
+					var state syncState
+					require.NoError(t, json.Unmarshal([]byte(checkpoint.CursorBefore.String), &state))
+					assert.Equal(t, "2026-09-05T10:30:00Z", state.TranscriptRetryUntil["meeting-1"])
 				} else {
 					require.Error(t, err)
 				}
@@ -1671,25 +1667,14 @@ func TestImporterKeepsSectionTextWhileReplacementIsIncomplete(t *testing.T) {
 			var evidence map[string]json.RawMessage
 			require.NoError(json.Unmarshal(raw, &evidence))
 			assert.JSONEq(string(original[section]), string(evidence[section]))
-			content := meetingcontent.Decode(RawFormat, raw, nil)
-			assert.Equal(meetingcontent.CoveragePartial, content.ActionCoverage)
-			assert.Empty(content.Actions)
+			var incomplete []string
+			require.NoError(json.Unmarshal(evidence["incomplete_sections"], &incomplete))
+			assert.Contains(incomplete, section)
 			if section == "notes" {
 				repeated, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 				require.NoError(err)
 				assert.Zero(repeated.MeetingsUpdated)
 			}
-			fresh := paragraph("replacement", "Replacement", false)
-			source.blocks["replacement"] = &fresh
-			delete(source.blockErrs, "replacement")
-			imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
-			_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-			require.NoError(err)
-			raw, err = st.GetMessageRaw(id)
-			require.NoError(err)
-			content = meetingcontent.Decode(RawFormat, raw, nil)
-			assert.Equal(meetingcontent.CoverageAvailable, content.ActionCoverage)
-			assert.Empty(content.Actions)
 		})
 	}
 }

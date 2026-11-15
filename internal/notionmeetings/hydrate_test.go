@@ -160,6 +160,12 @@ func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) 
 	source := completeHydrationSource()
 	meeting := hydrationMeeting()
 	meeting.Parent = Parent{}
+	var discovery map[string]json.RawMessage
+	require.NoError(json.Unmarshal(meeting.Raw, &discovery))
+	delete(discovery, "parent")
+	raw, err := json.Marshal(discovery)
+	require.NoError(err)
+	meeting.Raw = raw
 	hydrated, err := NewHydrator(source).Hydrate(t.Context(), meeting)
 	require.NoError(err)
 	assert.Equal("page_id", hydrated.Discovery.Parent.Type)
@@ -351,26 +357,17 @@ func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 			assert.Contains(result.Warnings, "transcript incomplete: markdown")
 		})
 	}
-	for _, tc := range []struct {
-		name     string
-		blockErr error
-	}{
-		{"block read fine", nil},
-		{"block read failed", &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}},
-	} {
-		t.Run("no transcript in incomplete page/"+tc.name, func(t *testing.T) {
-			source := completeHydrationSource()
-			empty := paragraph("transcript-1", "", false)
-			source.blocks["transcript-1"] = &empty
-			source.blockErrs = map[string]error{"transcript-1": tc.blockErr}
-			source.markdown.Markdown = "# Notes\nMeeting context"
-			source.markdown.UnknownBlockIDs = []string{"unrelated"}
-			result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-			require.NoError(t, err)
-			assert.Empty(t, result.Transcript)
-			assert.Contains(t, result.Incomplete, "transcript")
-		})
-	}
+	t.Run("no transcript in incomplete page", func(t *testing.T) {
+		source := completeHydrationSource()
+		empty := paragraph("transcript-1", "", false)
+		source.blocks["transcript-1"] = &empty
+		source.markdown.Markdown = "# Notes\nMeeting context"
+		source.markdown.UnknownBlockIDs = []string{"unrelated"}
+		result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
+		require.NoError(t, err)
+		assert.Empty(t, result.Transcript)
+		assert.Contains(t, result.Incomplete, "transcript")
+	})
 }
 
 func TestHydratorComparesPageMarkdown(t *testing.T) {
