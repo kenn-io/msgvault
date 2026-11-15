@@ -1222,8 +1222,8 @@ See the [Pocket workflow](usage/meetings.md#pocket) for setup and limitations.
 
 Validate a configured read-only Notion integration and register its meeting
 source without printing meeting content.
-The probe checks parent-page Markdown for page meetings and a section block for
-data-source meetings. It reports when no content is available to check.
+The probe checks a referenced section block. It reports when no section blocks
+are available to check.
 
 ```bash
 msgvault add-notion-meetings [identifier]
