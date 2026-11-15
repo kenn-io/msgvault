@@ -278,7 +278,10 @@ func TestMCPMeetingRecordDelegated(t *testing.T) {
 				content, ok := result.StructuredContent.(map[string]any)
 				require.True(ok)
 				assert.Contains(content["message_ids"], float64(id))
-
+				missing, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_meeting_record", Arguments: map[string]any{"ref": fmt.Sprintf("msg:%d", id+1)}})
+				require.NoError(err)
+				require.True(missing.IsError, "%v", missing.Content)
+				assert.Contains(mcpDraftResultText(t, missing), "meeting_not_found")
 			}
 		})
 	}
