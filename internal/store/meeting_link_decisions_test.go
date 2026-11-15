@@ -1590,6 +1590,29 @@ func TestMeetingDecisionSuccessiveMergePriority(t *testing.T) {
 	assert.NotContains(t, record.MessageIDs, ids[4])
 }
 
+func TestMeetingDecisionCopiedPriorityAcrossSuccessiveDedups(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	var ids []int64
+	for _, name := range []string{"priority-hidden", "priority-survivor", "priority-link", "priority-split", "priority-destination"} {
+		_, id := projectionFixture(t, st, name, "meeting_json", `{}`)
+		ids = append(ids, id)
+	}
+	hidden, survivor, linked, split, destination := ids[0], ids[1], ids[2], ids[3], ids[4]
+	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+	_, err := st.DecideMeetingLinkContext(t.Context(), ref(hidden), ref(linked), "link")
+	r.NoError(err)
+	_, err = st.DecideMeetingLinkContext(t.Context(), ref(hidden), ref(split), "unlink")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), survivor, []int64{hidden}, "priority-carry")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), destination, []int64{linked, split}, "priority-collapse")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), ref(survivor))
+	r.NoError(err)
+	r.Equal([]int64{survivor}, record.MessageIDs)
+}
+
 func TestParseMeetingLinkRef(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
