@@ -420,7 +420,6 @@ func TestMeetingRecordMovedOccurrenceCollidesWithNextWeek(t *testing.T) {
 			assert.Equal([]int64{orphanNote}, record.MessageIDs)
 		}
 	})
-
 }
 
 func TestMeetingRecordAllDayOccurrence(t *testing.T) {
