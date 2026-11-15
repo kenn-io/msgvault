@@ -157,7 +157,6 @@ func TestMeetingRecordStandaloneCancellationPartialBounds(t *testing.T) {
 					assert.Contains(record.Unexpandable, warning)
 				}
 			}
-
 		})
 	}
 }
