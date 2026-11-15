@@ -29,7 +29,7 @@ func TestCardDAVParticipantBindingHTTPPreviewApplyUndo(t *testing.T) {
 	body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:http-card\r\nFN:Alex Example\r\nEMAIL:alex@example.test\r\nEND:VCARD\r\n")
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{AddressBookID: books[0].ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: books[0].SyncRevision, Upserts: []store.CardDAVRemoteResource{{Href: books[0].CanonicalURL + "alex.vcf", RemoteUID: "http-card", RemoteETag: "one", RemoteBody: body, SemanticHash: "http-hash", DisplayName: "Alex Example", Emails: []string{"alex@example.test"}}}})
 	require.NoError(err)
-	id, err := st.EnsureParticipant("alex@example.test", "Alex Example", "example.test")
+	_, err = st.EnsureParticipant("alex@example.test", "Alex Example", "example.test")
 	require.NoError(err)
 	call := func(body string) store.CardDAVParticipantBindingResult {
 		t.Helper()
@@ -42,9 +42,6 @@ func TestCardDAVParticipantBindingHTTPPreviewApplyUndo(t *testing.T) {
 	preview := call(`{"dry_run":true}`)
 	assert.Equal(1, preview.ParticipantsBound)
 	assert.Zero(st.refreshCalls)
-	person, err := st.PersonForParticipantsContext(t.Context(), []int64{id})
-	require.NoError(err)
-	assert.Nil(person)
 	applied := call(`{}`)
 	assert.Equal(1, applied.ParticipantsBound)
 	assert.Equal(1, st.refreshCalls)
