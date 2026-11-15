@@ -93,7 +93,7 @@ func newTikTokCommentsAction(operation string) *cobra.Command {
 	if operation == "sync" {
 		command.Short = "Archive video captions, comments and replies"
 		command.Flags().IntVar(&options.MaxRequests, "max-requests", tiktok.DefaultMaxRequests, "maximum API reads per account, including identity checks")
-		command.Flags().BoolVar(&options.Full, "full", false, "restart traversal with fresh cursors; preserve archived rows")
+		command.Flags().BoolVar(&options.Full, "full", false, "restart sync; keep archived messages")
 		addManualSyncCacheFlags(command)
 	}
 	command.Flags().BoolVar(&asJSON, "json", false, "print JSON results; errors use JSON on stderr")
