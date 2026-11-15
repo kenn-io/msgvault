@@ -3,13 +3,16 @@ package store_test
 import (
 	"crypto/sha256"
 	"database/sql"
+	"net"
 	"sort"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/emailtags"
+	imapclient "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -331,6 +334,46 @@ func TestApplyIMAPMailboxDeltas_TrashPreservesDeletion(t *testing.T) {
 			assert.Equal(t, tc.want, messageTombstoned(t, f.store, id))
 		})
 	}
+}
+
+func TestReviewIMAPFallbackTrash(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newIMAPMembershipFixture(t)
+	messageID := f.createMessage(t, "fallback-trash", "<fallback-trash@example.com>")
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{
+		"INBOX": 0, "Deleted Items": 1,
+	})
+	host, portString, err := net.SplitHostPort(addr)
+	require.NoError(err)
+	port, err := strconv.Atoi(portString)
+	require.NoError(err)
+	client := imapclient.NewClient(&imapclient.Config{
+		Host: host, Port: port, Username: testutil.IMAPTestUsername,
+	}, testutil.IMAPTestPassword)
+	t.Cleanup(func() { _ = client.Close() })
+
+	labels, err := client.ListLabels(t.Context())
+	require.NoError(err)
+	labelInfo := make(map[string]store.LabelInfo, len(labels))
+	for _, label := range labels {
+		labelInfo[label.ID] = store.LabelInfo{
+			Name: label.Name, Type: label.Type, SystemRole: label.SystemRole,
+		}
+	}
+	require.Equal(store.LabelSystemRoleTrash, labelInfo["Deleted Items"].SystemRole)
+	_, err = f.store.EnsureLabelsBatch(t.Context(), f.source.ID, labelInfo)
+	require.NoError(err)
+	require.NoError(f.store.MarkMessageDeleted(f.source.ID, "fallback-trash"))
+
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "Deleted Items",
+		State:   store.IMAPFolderState{Mailbox: "Deleted Items", UIDValidity: 1, UIDNext: 2},
+		Memberships: []store.IMAPMembershipObservation{{
+			UID: 1, SourceMessageID: "fallback-trash",
+		}},
+	}}))
+	assert.True(messageTombstoned(t, f.store, messageID))
 }
 
 func TestApplyIMAPMailboxDeltas_UIDValidityResetDeletesOldEpoch(t *testing.T) {

@@ -2596,11 +2596,64 @@ func TestIncrementalSyncRemovedLabelPreservesOrClearsDeletion(t *testing.T) {
 			source, err := env.Store.GetOrCreateSource("gmail", testEmail)
 			require.NoError(t, err)
 			require.NoError(t, env.Store.MarkMessageDeleted(source.ID, "msg1"))
+			api := &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true}
+			env.Syncer = New(api, env.Store, nil)
+			if tc.label == "TRASH" {
+				env.Mock.Messages["msg1"].LabelIDs = []string{"INBOX"}
+			}
 			env.SetHistory(12350, historyLabelRemoved("msg1", tc.label))
 			runIncrementalSync(t, env)
 			assertDeletedFromSource(t, env.Store, "msg1", tc.deleted)
 		})
 	}
+}
+
+func TestReviewRestoreThenTrashBeforeSync(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12340
+	env.Mock.AddMessage("msg1", testMIME(), []string{"INBOX", "TRASH"})
+	runFullSync(t, env)
+	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
+	require.NoError(t, err)
+	require.NoError(t, env.Store.MarkMessageDeleted(source.ID, "msg1"))
+
+	api := &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true}
+	env.Syncer = New(api, env.Store, nil)
+	env.Mock.Messages["msg1"].LabelIDs = []string{"INBOX", "TRASH"}
+	env.SetHistory(12350,
+		historyLabelRemoved("msg1", "TRASH"),
+		historyLabelAdded("msg1", "TRASH"),
+	)
+
+	runIncrementalSync(t, env)
+	assertDeletedFromSource(t, env.Store, "msg1", true)
+	assertMessageHasLabel(t, env.Store, "msg1", "TRASH")
+	assert.Equal(t, [][]string{{"msg1"}}, api.labelCalls)
+}
+
+func TestIncrementalSyncTrashRemovalWithMessageDeletedRetainsMark(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 12340
+	env.Mock.AddMessage("msg1", testMIME(), []string{"INBOX", "TRASH"})
+	runFullSync(t, env)
+	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
+	require.NoError(t, err)
+	require.NoError(t, env.Store.MarkMessageDeleted(source.ID, "msg1"))
+
+	api := &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true}
+	env.Syncer = New(api, env.Store, nil)
+	env.Mock.Messages["msg1"].LabelIDs = []string{}
+	env.SetHistory(12350,
+		historyLabelRemoved("msg1", "TRASH"),
+		historyDeleted("msg1"),
+	)
+
+	runIncrementalSync(t, env)
+	assertDeletedFromSource(t, env.Store, "msg1", true)
 }
 
 func TestIncrementalSyncLabelAddedToNewMessage(t *testing.T) {

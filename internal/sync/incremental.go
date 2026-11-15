@@ -197,6 +197,8 @@ func (s *Syncer) incrementalWithRecovery(
 	}
 
 	if startHistoryID < profile.HistoryID {
+		trashRemovalIDs := make(map[string]struct{})
+		historyDeletedIDs := make(map[string]struct{})
 		// Process history
 		pageToken := ""
 
@@ -253,6 +255,14 @@ func (s *Syncer) incrementalWithRecovery(
 				}
 				for _, msg := range record.MessagesDeleted {
 					deletedSet[msg.Message.ID] = true
+					historyDeletedIDs[msg.Message.ID] = struct{}{}
+				}
+				for _, item := range record.LabelsRemoved {
+					if slices.Contains(item.LabelIDs, "TRASH") {
+						if _, exists := existingMap[item.Message.ID]; exists {
+							trashRemovalIDs[item.Message.ID] = struct{}{}
+						}
+					}
 				}
 			}
 			for _, record := range historyResp.History {
@@ -374,6 +384,19 @@ func (s *Syncer) incrementalWithRecovery(
 			// No more pages
 			if pageToken == "" {
 				break
+			}
+		}
+		if len(trashRemovalIDs) > 0 {
+			messageIDs := make([]string, 0, len(trashRemovalIDs))
+			for messageID := range trashRemovalIDs {
+				if _, deleted := historyDeletedIDs[messageID]; !deleted {
+					messageIDs = append(messageIDs, messageID)
+				}
+			}
+			sort.Strings(messageIDs)
+			if err := s.reconcileGmailTrashRemovals(ctx, source.ID, messageIDs); err != nil {
+				s.failStoppedSync(syncID, err)
+				return nil, fmt.Errorf("reconcile Gmail Trash removals: %w", err)
 			}
 		}
 	}
@@ -647,12 +670,53 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 	if err := s.store.RemoveMessageLabels(ctx, internalID, labelIDs); err != nil {
 		return false, false, err
 	}
-	if slices.Contains(gmailLabelIDs, "TRASH") {
-		if err := s.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, messageID); err != nil {
-			return false, false, err
+	return true, true, nil
+}
+
+// reconcileGmailTrashRemovals waits until History is consumed before checking
+// current labels, so an older removal cannot clear a mark on a re-trashed message.
+func (s *Syncer) reconcileGmailTrashRemovals(
+	ctx context.Context,
+	sourceID int64,
+	messageIDs []string,
+) error {
+	reader, ok := s.client.(messageLabelBatchReader)
+	if !ok {
+		return errors.New("Gmail label reader unavailable after Trash removal")
+	}
+	batchSize := s.opts.BatchSize
+	if batchSize <= 0 {
+		batchSize = 10
+	}
+	for start := 0; start < len(messageIDs); start += batchSize {
+		batch := messageIDs[start:min(start+batchSize, len(messageIDs))]
+		results, err := reader.GetMessageLabelsBatch(ctx, batch)
+		if err != nil {
+			return fmt.Errorf("fetch final Gmail labels: %w", err)
+		}
+		if len(results) != len(batch) {
+			return fmt.Errorf("Gmail returned %d label results for %d messages", len(results), len(batch))
+		}
+		for i, result := range results {
+			messageID := batch[i]
+			if result.ID != messageID {
+				return fmt.Errorf("Gmail returned labels for %q while reading %q", result.ID, messageID)
+			}
+			if result.Err != nil {
+				if _, gone := messageGoneKind(result.Err); gone {
+					continue
+				}
+				return fmt.Errorf("fetch final Gmail labels for %s: %w", messageID, result.Err)
+			}
+			if slices.Contains(result.LabelIDs, "TRASH") {
+				continue
+			}
+			if err := s.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, messageID); err != nil {
+				return fmt.Errorf("clear deletion mark for restored message %s: %w", messageID, err)
+			}
 		}
 	}
-	return true, true, nil
+	return nil
 }
 
 // logLabelChangeError logs label change errors, downgrading "not found"
