@@ -17,7 +17,7 @@ export type ListLoopsParams = {
    */
   include_closed?: boolean;
   /**
-   * Maximum loops to return
+   * Maximum loops and commitments to return per collection
    * @minimum 1
    * @maximum 200
    */
