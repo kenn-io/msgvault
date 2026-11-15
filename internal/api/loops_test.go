@@ -102,7 +102,7 @@ func (l *loopFixture) list(t *testing.T, query string) LoopListResponse {
 	return out
 }
 
-func TestCommitmentDecisionMapsMalformedAndUnknownIDs(t *testing.T) {
+func TestCommitmentDecisionMapsInvalidUnknownAndChangedIDs(t *testing.T) {
 	a := assert.New(t)
 	fixture := newLoopFixture(t)
 	fixture.router = NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: &conflictingCommitmentStore{fixture.f.Store}, Scheduler: newMockScheduler(), Logger: testLogger()}).Router()
@@ -617,6 +617,9 @@ func TestListLoopsPagesCommitments(t *testing.T) {
 	assert.True(st.includeClosed)
 	var response LoopListResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	require.NotNil(response.CommitmentsNextOffset)
+	assert.Equal(201, *response.CommitmentsNextOffset)
+	assert.True(response.Truncated)
 	require.NotEmpty(response.Commitments)
 	assert.Equal(LoopCommitment{ID: "c201", PersonID: 1, Direction: "owed_to", Summary: "Call", Promise: CommitmentQuote{MessageID: 1, Text: "I will call.", Start: 0, End: 12}, PromisedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Freshness: "fresh", State: "open"}, response.Commitments[0])
 }

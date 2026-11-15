@@ -186,6 +186,8 @@ func TestLoopsDaemonVersions(t *testing.T) {
 				var result map[string]any
 				require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
 				assert.Contains(t, stderr.String(), "does not report promises; upgrade and restart it")
+			} else {
+				assert.Empty(t, stderr.String())
 			}
 		})
 	}

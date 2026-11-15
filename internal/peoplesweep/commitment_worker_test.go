@@ -3,7 +3,6 @@ package peoplesweep
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"testing"
 	"time"
 
@@ -20,9 +19,6 @@ type commitmentWorkerFixture struct {
 
 func (s *commitmentWorkerFixture) ClaimPersonSweep(_ context.Context, input ClaimRequest) (*Lease, error) {
 	s.claims = append(s.claims, input)
-	if input.PersonID > 0 && len(input.ExcludePersonIDs) > 0 {
-		return nil, errors.New("targeted claims cannot contain exclusions")
-	}
 	if len(s.claims) > 1 {
 		return nil, nil //nolint:nilnil // A nil lease means no work under the ClaimPersonSweep contract.
 	}

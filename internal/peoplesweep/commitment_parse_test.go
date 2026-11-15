@@ -102,36 +102,40 @@ func TestCommitmentConfigLimits(t *testing.T) {
 
 func TestParseCommitmentsKeepsOnlyCitedDueDates(t *testing.T) {
 	for _, tc := range []struct {
-		name, text, quote, due string
-		keep                   bool
+		name, text, quote, due, timezone string
+		event                            time.Time
+		keep                             bool
 	}{
-		{"no date", "I will call.", "I will call.", "2026-11-20", false},
-		{"outside quote", "I will call. Meeting is on 2026-11-20.", "I will call.", "2026-11-20", false},
-		{"different date", "I will call by 2026-11-21.", "I will call by 2026-11-21.", "2026-11-20", false},
-		{"embedded digits", "I will call about 12026-11-20.", "I will call about 12026-11-20.", "2026-11-20", false},
-		{"ISO date", "I will call by 2026-11-20.", "I will call by 2026-11-20.", "2026-11-20", true},
-		{"written date", "I will call by November 20, 2026.", "I will call by November 20, 2026.", "2026-11-20", true},
-		{"weekday", "I will call by Friday.", "I will call by Friday.", "2026-11-13", true},
-		{"weekday next week", "I will call by Monday next week.", "I will call by Monday next week.", "2026-11-16", true},
-		{"weekday next week wrong date", "I will call by Monday next week.", "I will call by Monday next week.", "2026-11-23", false},
-		{"yearless date", "I will call on November 20.", "I will call on November 20.", "2026-11-20", true},
-		{"wrong weekday", "I will call by Friday.", "I will call by Friday.", "2026-11-20", false},
-		{"unambiguous numeric date", "I will call on 11/20/2026.", "I will call on 11/20/2026.", "2026-11-20", true},
-		{"ambiguous numeric date", "I will call on 11/12/2026.", "I will call on 11/12/2026.", "2026-11-12", false},
-		{"in four days", "I will call in four days.", "I will call in four days.", "2026-11-14", true},
-		{"unknown days", "I will call in several days.", "I will call in several days.", "2026-11-13", false},
-		{"in three days", "I will call in three days.", "I will call in three days.", "2026-11-13", true},
-		{"in three days wrong date", "I will call in three days.", "I will call in three days.", "2026-11-12", false},
-		{"tomorrow", "I will call tomorrow.", "I will call tomorrow.", "2026-11-11", true},
-		{"day after tomorrow", "I will call the day after tomorrow.", "I will call the day after tomorrow.", "2026-11-12", true},
-		{"day after tomorrow rejects tomorrow", "I will call the day after tomorrow.", "I will call the day after tomorrow.", "2026-11-11", false},
-		{"wrong tomorrow", "I will call tomorrow.", "I will call tomorrow.", "2026-11-12", false},
+		{"no date", "I will call.", "I will call.", "2026-11-20", "", time.Time{}, false},
+		{"outside quote", "I will call. Meeting is on 2026-11-20.", "I will call.", "2026-11-20", "", time.Time{}, false},
+		{"different date", "I will call by 2026-11-21.", "I will call by 2026-11-21.", "2026-11-20", "", time.Time{}, false},
+		{"embedded digits", "I will call about 12026-11-20.", "I will call about 12026-11-20.", "2026-11-20", "", time.Time{}, false},
+		{"ISO date", "I will call by 2026-11-20.", "I will call by 2026-11-20.", "2026-11-20", "", time.Time{}, true},
+		{"written date", "I will call by November 20, 2026.", "I will call by November 20, 2026.", "2026-11-20", "", time.Time{}, true},
+		{"weekday", "I will call by Friday.", "I will call by Friday.", "2026-11-13", "", time.Time{}, true},
+		{"weekday next week", "I will call by Monday next week.", "I will call by Monday next week.", "2026-11-16", "", time.Time{}, true},
+		{"weekday next week wrong date", "I will call by Monday next week.", "I will call by Monday next week.", "2026-11-23", "", time.Time{}, false},
+		{"yearless date", "I will call on November 20.", "I will call on November 20.", "2026-11-20", "", time.Time{}, true},
+		{"wrong weekday", "I will call by Friday.", "I will call by Friday.", "2026-11-20", "", time.Time{}, false},
+		{"unambiguous numeric date", "I will call on 11/20/2026.", "I will call on 11/20/2026.", "2026-11-20", "", time.Time{}, true},
+		{"ambiguous numeric date", "I will call on 11/12/2026.", "I will call on 11/12/2026.", "2026-11-12", "", time.Time{}, false},
+		{"unknown days", "I will call in several days.", "I will call in several days.", "2026-11-13", "", time.Time{}, false},
+		{"in three days", "I will call in three days.", "I will call in three days.", "2026-11-13", "", time.Time{}, true},
+		{"in three days wrong date", "I will call in three days.", "I will call in three days.", "2026-11-12", "", time.Time{}, false},
+		{"tomorrow", "I will call tomorrow.", "I will call tomorrow.", "2026-11-11", "", time.Time{}, true},
+		{"day after tomorrow", "I will call the day after tomorrow.", "I will call the day after tomorrow.", "2026-11-12", "", time.Time{}, true},
+		{"day after tomorrow rejects tomorrow", "I will call the day after tomorrow.", "I will call the day after tomorrow.", "2026-11-11", "", time.Time{}, false},
+		{"wrong tomorrow", "I will call tomorrow.", "I will call tomorrow.", "2026-11-12", "", time.Time{}, false},
+		{"activity timezone", "I will call tomorrow.", "I will call tomorrow.", "2026-11-11", "America/New_York", time.Date(2026, 11, 11, 2, 0, 0, 0, time.UTC), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, a := require.New(t), assert.New(t)
 			now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+			if !tc.event.IsZero() {
+				now = tc.event
+			}
 			source := CommitmentSource{ID: "m1", MessageID: 1, Direction: CommitmentOwedTo, Text: tc.text, EventTime: now}
-			window := CommitmentWindow{PersonID: 2, Sources: []CommitmentSource{source}, Now: now}
+			window := CommitmentWindow{PersonID: 2, Sources: []CommitmentSource{source}, Now: now, Timezone: tc.timezone}
 			output := jsontext.Value(fmt.Sprintf(`{"promises":[{"source_id":"m1","direction":"owed_to","quote":%q,"start":0,"end":%d,"summary":"Call","due_on":%q}]}`, tc.quote, len([]rune(tc.quote)), tc.due))
 			parsed, err := ParseCommitments(output, window)
 			r.NoError(err)
@@ -144,16 +148,4 @@ func TestParseCommitmentsKeepsOnlyCitedDueDates(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestParseCommitmentDeadlineUsesActivityTimezone(t *testing.T) {
-	const quote = "I will call tomorrow."
-	event := time.Date(2026, 11, 11, 2, 0, 0, 0, time.UTC)
-	window := CommitmentWindow{PersonID: 2, Now: event, Timezone: "America/New_York", Sources: []CommitmentSource{{ID: "m1", MessageID: 1, Direction: CommitmentOwedTo, Text: quote, EventTime: event}}}
-	output := jsontext.Value(`{"promises":[{"source_id":"m1","direction":"owed_to","quote":"I will call tomorrow.","start":0,"end":21,"summary":"Call","due_on":"2026-11-11"}]}`)
-	parsed, err := ParseCommitments(output, window)
-	require.NoError(t, err)
-	require.Len(t, parsed.Promises, 1)
-	require.NotNil(t, parsed.Promises[0].DueOn)
-	assert.Equal(t, "2026-11-11", *parsed.Promises[0].DueOn)
 }

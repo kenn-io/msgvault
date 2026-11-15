@@ -375,11 +375,11 @@ func TestMCPLoopListExposesIncompleteCoverage(t *testing.T) {
 
 type pagedMCPLoopStore struct {
 	*storeAPIAdapter
-	limit, offset int
+	offset int
 }
 
-func (s *pagedMCPLoopStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, limit, offset int, _ bool) ([]store.PersonCommitment, error) {
-	s.limit, s.offset = limit, offset
+func (s *pagedMCPLoopStore) ListPersonCommitmentsContext(_ context.Context, _ int64, _ time.Time, _, offset int, _ bool) ([]store.PersonCommitment, error) {
+	s.offset = offset
 	return nil, nil
 }
 
