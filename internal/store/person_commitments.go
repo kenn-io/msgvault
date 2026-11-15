@@ -16,7 +16,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"go.kenn.io/msgvault/internal/jsonexact"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/vector/preprocess"
@@ -187,9 +186,6 @@ func (s *Store) loadCommitmentCandidateEvidenceTx(ctx context.Context, tx *logge
 		return err
 	}
 	var value personfacts.CommitmentValue
-	if err := jsonexact.Validate([]byte(valueJSON), value); err != nil {
-		return fmt.Errorf("decode commitment claim: %w", err)
-	}
 	if err := json.Unmarshal([]byte(valueJSON), &value); err != nil {
 		return fmt.Errorf("decode commitment claim: %w", err)
 	}
@@ -213,12 +209,16 @@ func (s *Store) loadCommitmentCandidateEvidenceTx(ctx context.Context, tx *logge
 }
 
 func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commitmentCandidate, now time.Time) (PersonCommitment, bool, error) {
-	c := candidate.commitment
+	c, input := candidate.commitment, candidate.promise.Input
 	if candidate.promise.ID == 0 {
 		return c, false, nil
 	}
-	live, err := s.currentCommitmentCitation(ctx, c.PersonID, c.Direction, candidate.promise.Input)
-	if err != nil || !live {
+	source, live, err := s.currentCommitmentSource(ctx, c.PersonID, c.AnchorMessageID)
+	if err != nil || !live || source.Direction != c.Direction || source.SourceVersion != input.SourceVersion ||
+		source.ContentSHA256 != input.ContentSHA256 ||
+		!personFactPortableTime(source.EventTime).Equal(input.EventTime) ||
+		!personFactPortableTime(source.RecordedTime).Equal(input.RecordedTime) ||
+		!source.MatchesQuote(c.Quote, c.Start, c.End) {
 		return c, false, err
 	}
 	c.Freshness = describePersonFactFreshness(personfacts.TargetRef{Kind: personfacts.TargetCommitment}, nil, &c.PromisedAt, now).Status
@@ -226,28 +226,6 @@ func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commit
 		c.State, c.SnoozedUntil = LoopStateOpen, nil
 	}
 	return c, true, nil
-}
-
-func (s *Store) currentCommitmentCitation(ctx context.Context, personID int64, direction string, input personfacts.EvidenceInput) (bool, error) {
-	message, found := strings.CutPrefix(input.SourceRef, personfacts.CommitmentMessageRefPrefix)
-	if !found {
-		return false, nil
-	}
-	id, err := strconv.ParseInt(message, 10, 64)
-	if err != nil {
-		return false, fmt.Errorf("parse commitment citation message: %w", err)
-	}
-	if id <= 0 || input.SpanStart == nil || input.SpanEnd == nil {
-		return false, nil
-	}
-	source, live, err := s.currentCommitmentSource(ctx, personID, id)
-	if err != nil || !live || source.Direction != direction || source.SourceVersion != input.SourceVersion ||
-		source.ContentSHA256 != input.ContentSHA256 ||
-		!personFactPortableTime(source.EventTime).Equal(input.EventTime) ||
-		!personFactPortableTime(source.RecordedTime).Equal(input.RecordedTime) {
-		return false, err
-	}
-	return source.MatchesQuote(input.Excerpt, *input.SpanStart, *input.SpanEnd), nil
 }
 
 func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, state string, until *time.Time, now time.Time) (PersonCommitment, error) {
