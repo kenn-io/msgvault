@@ -66,6 +66,10 @@ func TestEmailPushBindingValidation(t *testing.T) {
 				assertions.Equal(src.ID, bindings[src.Identifier].sourceID)
 			} else {
 				requirements.Error(err)
+				if kind == "alias-key" || kind == "duplicate-key" {
+					requirements.ErrorIs(err, errEmailPushBinding)
+					assertions.Equal("Source "+strconv.FormatInt(src.ID, 10)+" needs exactly one enabled schedule using its account identifier", err.Error())
+				}
 			}
 			<-s.Stop().Done()
 		})
@@ -147,8 +151,8 @@ func TestEmailPushStrictSummaryOutcome(t *testing.T) {
 		reason  string
 	}{
 		{"complete", &gmail.SyncSummary{}, nil, true, ""},
-		{"partial with nil error", &gmail.SyncSummary{Errors: 1}, nil, false, "acquisition errors"},
-		{"missing summary", nil, nil, false, "completion summary"},
+		{"partial with nil error", &gmail.SyncSummary{Errors: 1}, nil, false, "Some mail could not be archived"},
+		{"missing summary", nil, nil, false, "Sync completion unknown"},
 		{"failed", nil, errors.New("synthetic provider error"), false, "provider synchronization failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

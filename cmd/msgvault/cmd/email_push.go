@@ -24,12 +24,20 @@ import (
 
 var (
 	errEmailPushBinding    = errors.New("email push requires an active exact source and enabled canonical account schedule")
-	errEmailPushIncomplete = errors.New("email push reconciliation did not complete")
+	errEmailPushIncomplete = errors.New("email push sync incomplete")
 	// Preserve network classification without retaining provider text or addresses.
 	errEmailPushTransient = &net.OpError{Op: "email push reconciliation", Err: errEmailPushIncomplete}
 )
 
 const emailPushProviderSyncFailed = "provider synchronization failed"
+
+type emailPushScheduleError struct{ sourceID int64 }
+
+func (e emailPushScheduleError) Error() string {
+	return fmt.Sprintf("Source %d needs exactly one enabled schedule using its account identifier", e.sourceID)
+}
+
+func (e emailPushScheduleError) Unwrap() error { return errEmailPushBinding }
 
 // Retain only fixed stage labels and allowlisted remediation. A provider cause
 // may contain credential or URL data and must not enter receipts or status.
@@ -121,7 +129,7 @@ func emailPushBindings(ctx context.Context, cfg *config.Config, st *store.Store,
 			}
 		}
 		if matching != 1 || !sched.IsScheduled(src.Identifier) {
-			return nil, fmt.Errorf("email push source %d needs exactly one registered canonical account schedule: %w", id, errEmailPushBinding)
+			return nil, emailPushScheduleError{sourceID: id}
 		}
 		if _, duplicate := bindings[src.Identifier]; duplicate {
 			return nil, fmt.Errorf("email push source %d shares a canonical account key: %w", id, errEmailPushBinding)
@@ -153,10 +161,10 @@ func emailPushWakeSync(bindings map[string]emailPushBinding, st *store.Store, ru
 			return emailPushFailure(binding.sourceID, "provider synchronization stopped", nil)
 		}
 		if summary == nil {
-			return emailPushFailure(binding.sourceID, "provider returned no completion summary", nil)
+			return emailPushFailure(binding.sourceID, "Sync completion unknown", nil)
 		}
 		if summary.Errors != 0 {
-			return emailPushFailure(binding.sourceID, "provider reported acquisition errors", nil)
+			return emailPushFailure(binding.sourceID, "Some mail could not be archived", nil)
 		}
 		if _, err := binding.current(ctx, st); err != nil {
 			return err
@@ -165,17 +173,17 @@ func emailPushWakeSync(bindings map[string]emailPushBinding, st *store.Store, ru
 		// work completed. Preserve debt and cursors, but fail the receipt.
 		items, err := st.ListUnresolvedSyncItemErrors(ctx, binding.sourceID)
 		if err != nil {
-			return emailPushFailure(binding.sourceID, "reading acquisition debt failed", err)
+			return emailPushFailure(binding.sourceID, "Could not check pending mail", err)
 		}
 		if len(items) != 0 {
-			return emailPushFailure(binding.sourceID, "unresolved acquisition errors remain", nil)
+			return emailPushFailure(binding.sourceID, "Earlier mail errors remain", nil)
 		}
 		checkpoint, err := st.GetLatestCheckpointedSyncContext(ctx, binding.sourceID)
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
-			return emailPushFailure(binding.sourceID, "reading recovery checkpoint failed", err)
+			return emailPushFailure(binding.sourceID, "Could not check sync recovery", err)
 		}
 		if checkpoint != nil {
-			return emailPushFailure(binding.sourceID, "recovery checkpoint remains", nil)
+			return emailPushFailure(binding.sourceID, "Sync recovery incomplete", nil)
 		}
 		return nil
 	}
