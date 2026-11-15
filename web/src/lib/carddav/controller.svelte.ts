@@ -1,4 +1,3 @@
-import { cardDAVBindingConflictMessage } from './sync-message';
 import {
   getCardDAVStatus as generatedGetCardDAVStatus,
   listCardDAVBooks as generatedListCardDAVBooks,
@@ -49,6 +48,7 @@ export class CardDAVController {
   runsPageError = $state<string | null>(null);
   syncError = $state<string | null>(null);
   syncStatus = $state<string | null>(null);
+  syncBindingConflicts = $state(0);
   syncUnknown = $state(false);
   bookError = $state<string | null>(null);
   bookStatus = $state<string | null>(null);
@@ -249,6 +249,7 @@ export class CardDAVController {
     this.syncPending = true;
     this.syncError = null;
     this.syncStatus = null;
+    this.syncBindingConflicts = 0;
     this.pollDelay = MIN_POLL_MS;
     this.schedulePoll(MIN_POLL_MS);
     let succeeded = false;
@@ -267,15 +268,15 @@ export class CardDAVController {
         succeeded = data.status === undefined || data.status === 'succeeded';
         refreshBooks = succeeded || data.status === 'partial';
         reconcile = true;
-        const conflicts = cardDAVBindingConflictMessage(data.binding_conflicts);
+        this.syncBindingConflicts = data.binding_conflicts ?? 0;
         if (!succeeded) {
           const names = (data.connections ?? [])
             .filter((outcome) => outcome.status !== 'succeeded')
             .map((outcome) => outcome.connection);
-          this.syncError = [`CardDAV sync ${data.status}. Connections needing attention: ${names.join(', ')}.`, conflicts].filter(Boolean).join(' ');
+          this.syncError = `CardDAV sync ${data.status}. Connections needing attention: ${names.join(', ')}.`;
         }
         if (succeeded) {
-          this.syncStatus = ['CardDAV sync completed.', conflicts].filter(Boolean).join(' ');
+          this.syncStatus = 'CardDAV sync completed.';
         }
       } else if (response.status === 409 || response.status >= 500) {
         reconcile = true;

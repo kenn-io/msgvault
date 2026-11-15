@@ -867,7 +867,8 @@ it('scopes selected status, books, history and sync requests to their connection
       .filter((r) => r.method === 'GET')
       .every((r) => new URL(r.url).searchParams.get('connection') === 'work')
   ).toBe(true);
-  expect(controller.syncStatus).toContain('2 CardDAV binding conflicts. Run msgvault carddav bind-participants --dry-run for details.');
+  expect(controller.syncStatus).toBe('CardDAV sync completed.');
+  expect(controller.syncBindingConflicts).toBe(2);
   controller.destroy();
 });
 
@@ -905,9 +906,8 @@ it.each(['partial', 'failed'] as const)('names a connection whose sync is %s', a
   const controller = new CardDAVController(client);
   await controller.load();
   await controller.sync();
-  const message = '2 CardDAV binding conflicts. Run msgvault carddav bind-participants --dry-run for details.';
   expect(controller.syncError).toContain('work');
-  if (status === 'partial') expect(controller.syncError).toContain(message);
+  expect(controller.syncBindingConflicts).toBe(2);
   expect(controller.syncError).not.toContain('private upstream');
   expect(controller.syncStatus).toBeNull();
   expect(bookReads).toBe(status === 'failed' ? 1 : 2);
