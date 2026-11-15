@@ -96,7 +96,7 @@ func (s endAfterFirstConversation) LoopConversationsContext(ctx context.Context,
 	}
 }
 
-func TestListHandlesInterruptedDiscovery(t *testing.T) {
+func TestListReturnsCheckedConversationsWhenDiscoveryIsInterrupted(t *testing.T) {
 	f := storetest.New(t)
 	waiting := f.PersistEmail(storetest.EmailSpec{Thread: "waiting", From: me, To: []string{"sam@example.test"}, Subject: "Lunch Friday?", Body: "Are you free?", SentAt: ago(5 * day)})
 	f.PersistEmail(storetest.EmailSpec{Thread: "owed", From: alex, To: []string{me}, Subject: "Contract draft", Body: "Can you send the contract?", SentAt: ago(3 * day)})

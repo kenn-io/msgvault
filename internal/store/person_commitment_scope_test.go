@@ -9,8 +9,8 @@ import (
 	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
-func TestCommitmentScopeChangesRevisitJournaledHistory(t *testing.T) {
-	for _, expanded := range []string{"dates", "window", "batch", "backfill window"} {
+func TestCommitmentScopeAndUnfinishedBackfillWindow(t *testing.T) {
+	for _, expanded := range []string{"dates", "window", "batch", "unfinished backfill keeps selection time"} {
 		t.Run(expanded, func(t *testing.T) {
 			r, a, ctx := require.New(t), assert.New(t), t.Context()
 			f := newPersonSweepApplyFixture(t, "scope-"+expanded, false)
@@ -23,7 +23,7 @@ func TestCommitmentScopeChangesRevisitJournaledHistory(t *testing.T) {
 			_, err = st.db.ExecContext(ctx, st.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), st.dialect.TimestampParam(old), id)
 			r.NoError(err)
 			cfg, profile := commitmentTestConfig()
-			if expanded == "backfill window" {
+			if expanded == "unfinished backfill keeps selection time" {
 				cfg.Commitments.Window = 30 * 24 * time.Hour
 				scope := peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments)
 				_, err = st.db.ExecContext(ctx, st.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, 0, ?, ?)`), f.personID, st.dialect.TimestampParam(personFactLedgerNow), scope, st.dialect.TimestampParam(personFactLedgerNow.Add(-30*24*time.Hour)))
