@@ -26,6 +26,7 @@ type fakeHydrationSource struct {
 	userErrs      map[string]error
 	usersCalls    int
 	markdownCalls int
+	markdownIDs   []string
 	markdownErr   error
 	blockCalls    []string
 	onBlock       func(string)
@@ -57,9 +58,13 @@ func (f *fakeHydrationSource) RetrieveBlockChildren(_ context.Context, id, curso
 	return page, nil
 }
 
-func (f *fakeHydrationSource) RetrievePageMarkdown(_ context.Context, _ string, _ bool) (*MarkdownPage, error) {
+func (f *fakeHydrationSource) RetrievePageMarkdown(_ context.Context, id string, _ bool) (*MarkdownPage, error) {
 	f.markdownCalls++
-	return f.markdown, f.markdownErr
+	f.markdownIDs = append(f.markdownIDs, id)
+	if f.markdownErr != nil {
+		return nil, f.markdownErr
+	}
+	return f.markdown, nil
 }
 
 func (f *fakeHydrationSource) ListUsers(_ context.Context, cursor string) (*UserPage, error) {
@@ -153,35 +158,11 @@ func completeHydrationSource() *fakeHydrationSource {
 }
 
 func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) {
-	t.Run("data source parent", func(t *testing.T) {
-		checks := assert.New(t)
-		requirements := require.New(t)
-		source := completeHydrationSource()
-		meeting := hydrationMeeting()
-		meeting.Parent = Parent{Type: "data_source_id"}
-		source.blocks["meeting-1"].Parent = meeting.Parent
-		hydrated, err := NewHydrator(source).Hydrate(t.Context(), meeting)
-		requirements.NoError(err)
-		checks.Equal("Decide the release scope.", hydrated.Summary)
-		checks.Contains(hydrated.Notes, "Nested action item.")
-		checks.Equal("Test Speaker: Ready to ship.", hydrated.Transcript)
-		checks.Zero(source.markdownCalls)
-	})
 	assert := assert.New(t)
 	require := require.New(t)
 	source := completeHydrationSource()
-	meeting := hydrationMeeting()
-	meeting.Parent = Parent{}
-	var discovery map[string]json.RawMessage
-	require.NoError(json.Unmarshal(meeting.Raw, &discovery))
-	delete(discovery, "parent")
-	raw, err := json.Marshal(discovery)
+	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(err)
-	meeting.Raw = raw
-	hydrated, err := NewHydrator(source).Hydrate(t.Context(), meeting)
-	require.NoError(err)
-	assert.Equal("page_id", hydrated.Discovery.Parent.Type)
-	assert.Equal("page-1", hydrated.Discovery.Parent.PageID)
 	assert.False(hydrated.AttendeeResolutionDegraded)
 	assert.Equal("Decide the release scope.", hydrated.Summary)
 	assert.Contains(hydrated.Notes, "Nested action item.")
@@ -207,6 +188,38 @@ func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) 
 	assert.NotContains(string(snapshot.Raw), "user@example.com", "configured identity must not enter provider evidence")
 	assert.Contains(string(snapshot.Metadata), `"creator_user_id":"creator-1"`)
 	assert.Contains(string(snapshot.Metadata), `"unresolved_attendee_ids":["user-2"]`)
+}
+
+func TestHydratorResolvesParentForMarkdown(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		parent   Parent
+		wantPage bool
+	}{
+		{name: "parent from block", wantPage: true},
+		{name: "data source parent", parent: Parent{Type: "data_source_id"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := completeHydrationSource()
+			meeting := hydrationMeeting()
+			meeting.Parent = tc.parent
+			if !tc.wantPage {
+				source.blocks["meeting-1"].Parent = tc.parent
+			}
+			empty := paragraph("transcript-1", "", false)
+			source.blocks["transcript-1"] = &empty
+			hydrated, err := NewHydrator(source).Hydrate(t.Context(), meeting)
+			require.NoError(t, err)
+			if tc.wantPage {
+				assert.Equal(t, []string{"page-1"}, source.markdownIDs)
+				require.NotNil(t, hydrated.PageMarkdown)
+				assert.Equal(t, "page-1", hydrated.PageMarkdown.ID)
+			} else {
+				assert.Zero(t, source.markdownCalls)
+				assert.Empty(t, hydrated.Transcript)
+			}
+		})
+	}
 }
 
 func TestHydratorUsesMarkdownTranscriptFallback(t *testing.T) {

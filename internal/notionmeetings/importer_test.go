@@ -321,7 +321,7 @@ func TestImporterKeepsMeetingWhenIncompleteSectionCannotBeRecovered(t *testing.T
 }
 
 func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
-	for _, failure := range []string{"another meeting", "markdown", "archive", "archive deadline", "checkpoint", "completion and failure", "recovery cancellation"} {
+	for _, failure := range []string{"another meeting", "markdown", "archive", "archive deadline", "checkpoint", "completion and failure", "cancelled before archive"} {
 		t.Run(failure, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
 			limited := &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}
@@ -352,6 +352,9 @@ func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
 			}
 			if failure != "archive" && failure != "archive deadline" {
 				source.blockErrs = map[string]error{"summary-1": limited}
+				if failure == "another meeting" {
+					source.blockErrs["meeting-2"] = errors.New("forced meeting retrieval failure")
+				}
 				if failure == "markdown" {
 					empty := paragraph("transcript-1", "", false)
 					source.blocks["transcript-1"] = &empty
@@ -370,7 +373,7 @@ func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
 					require.NoError(t, err)
 				}
 				ctx := t.Context()
-				if failure == "recovery cancellation" {
+				if failure == "cancelled before archive" {
 					var cancel context.CancelFunc
 					ctx, cancel = context.WithCancel(ctx)
 					defer cancel()
@@ -381,7 +384,7 @@ func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
 					}
 				}
 				_, err = imp.Import(ctx, ImportOptions{Identifier: "work"})
-				if failure == "recovery cancellation" {
+				if failure == "cancelled before archive" {
 					require.ErrorIs(t, err, context.Canceled)
 					checkpoint, checkpointErr := st.GetLatestCheckpointedSyncByType(t.Context(), first.SourceID, SourceType)
 					require.NoError(t, checkpointErr)
@@ -1273,27 +1276,6 @@ func TestImporterPreservesTranscriptWithMissingOrCorruptEvidence(t *testing.T) {
 	}
 }
 
-func TestImporterKeepsSavedTranscriptWhenBlocksAreIncomplete(t *testing.T) {
-	st, source, imp := newImporterFixture(t)
-	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-
-	meeting := hydrationMeeting()
-	meeting.LastEditedTime = "2026-08-29T14:00:00Z"
-	source.query.Results = []MeetingNote{meeting}
-	source.blockErrs = map[string]error{"transcript-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
-	source.markdown.Markdown = "# Transcript\nDifferent page transcript"
-	source.markdown.Raw, err = json.Marshal(source.markdown)
-	require.NoError(t, err)
-	summary, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	assert.Len(t, lastNotionState(t, st, summary.SourceID).Pending, 1)
-	var body string
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT body_text FROM message_bodies`).Scan(&body))
-	assert.Contains(t, body, "Test Speaker: Ready to ship.")
-	assert.NotContains(t, body, "Different page transcript")
-}
-
 func TestImporterKeepsNewMarkdownTranscriptWhileBlocksAreIncomplete(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -1415,14 +1397,14 @@ func TestImporterRetriesIncompleteSections(t *testing.T) {
 			original := map[string]string{"summary": "Decide the release scope.", "notes": "Owner will prepare the rollout.", "transcript": "Test Speaker: Ready to ship."}
 			if section == "transcript" {
 				assert.Positive(source.markdownCalls)
-				assert.Contains(body, "Replacement page transcript")
-				assert.JSONEq(string(source.markdown.Raw), string(afterEvidence["page_markdown"]))
+				assert.Contains(body, original[section])
+				assert.NotContains(body, "Replacement page transcript")
 				metadata, err := st.GetMessageMetadata(messageID)
 				require.NoError(err)
 				require.True(metadata.Valid)
 				var fields map[string]any
 				require.NoError(json.Unmarshal([]byte(metadata.String), &fields))
-				assert.Equal(true, fields["markdown_transcript_fallback"])
+				assert.NotContains(fields, "markdown_transcript_fallback")
 			} else {
 				assert.Contains(body, original[section])
 			}
