@@ -114,7 +114,7 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 	if meetingBlock.Object != "block" || meetingBlock.ID != meeting.ID || meetingBlock.Type != "meeting_notes" {
 		return nil, fmt.Errorf("%w: retrieved meeting-note block has unexpected identity or type", ErrMalformedResponse)
 	}
-	if strings.TrimSpace(meeting.Parent.PageID) == "" {
+	if meeting.Parent.Type != "data_source_id" && strings.TrimSpace(meeting.Parent.PageID) == "" {
 		meeting.Parent = meetingBlock.Parent
 	}
 	result := &HydratedMeeting{Discovery: meeting, MeetingBlock: meetingBlock}
@@ -160,7 +160,7 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 
 func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeeting) error {
 	pageID := strings.TrimSpace(result.Discovery.Parent.PageID)
-	if pageID == "" {
+	if result.Discovery.Parent.Type == "data_source_id" || pageID == "" {
 		return nil
 	}
 	if err := h.reserveRequest(); err != nil {
@@ -182,14 +182,12 @@ func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeet
 	result.PageMarkdown = page
 	markdown := extractMarkdownTranscript(page.Markdown)
 	complete := !page.Truncated && len(page.UnknownBlockIDs) == 0
-	if result.Transcript == "" && markdown != "" && !complete {
-		result.Warnings = append(result.Warnings, "page Markdown transcript was incomplete; transcript remains pending")
-	} else if result.Transcript == "" && markdown != "" {
+	if result.Transcript == "" && !complete {
+		result.markIncomplete("transcript", "markdown")
+	} else if result.Transcript == "" && markdown != "" && !slices.Contains(result.Incomplete, "transcript") {
 		result.Transcript = markdown
 		result.MarkdownTranscriptFallback = true
-		if !slices.Contains(result.Incomplete, "transcript") {
-			result.Warnings = append(result.Warnings, "structured transcript was empty; used page Markdown transcript")
-		}
+		result.Warnings = append(result.Warnings, "structured transcript was empty; used page Markdown transcript")
 	} else if result.Transcript != "" && markdown != "" && complete && normalizedContent(result.Transcript) != normalizedContent(markdown) {
 		result.Warnings = append(result.Warnings, "structured transcript and page Markdown transcript differed")
 	}
@@ -282,6 +280,9 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 		seen := map[string]struct{}{}
 		for {
 			if err := h.reserveRequest(); err != nil {
+				if len(result.Incomplete) == 0 {
+					return err
+				}
 				result.AttendeeResolutionDegraded = true
 				result.Warnings = append(result.Warnings, "Notion User Information lookup deferred: hydration limit reached")
 				break

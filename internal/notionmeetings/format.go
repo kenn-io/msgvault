@@ -90,7 +90,6 @@ func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEma
 	if err != nil {
 		return meetingarchive.Snapshot{}, fmt.Errorf("marshal Notion raw evidence: %w", err)
 	}
-
 	return meetingarchive.Snapshot{
 		SourceID: sourceID, AccountEmail: accountEmail,
 		SourceMessageID: h.Discovery.ID, SourceConversationID: h.Discovery.ID,

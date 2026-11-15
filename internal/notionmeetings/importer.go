@@ -298,9 +298,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		if due[id] {
 			continue
 		}
-		if pending, ok := pendingByID[id]; ok && pending.Incomplete && !opts.Full {
-			continue
-		}
 		if !opts.CreatedAfter.IsZero() && candidateTime(meeting).Before(opts.CreatedAfter) {
 			continue
 		}
@@ -357,6 +354,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		for _, section := range sections {
 			incomplete := slices.Contains(hydrated.Incomplete, section.name)
+			if section.name == "transcript" && hydrated.TranscriptTree.Root != nil && !archived.MarkdownFallback {
+				incomplete = false
+			}
 			omittedTranscript := section.name == "transcript" && meeting.MeetingNotes.Children.TranscriptBlockID == "" && strings.TrimSpace(hydrated.Transcript) == ""
 			if !incomplete && !omittedTranscript {
 				continue
@@ -625,7 +625,6 @@ func decodeArchivedEvidence(raw []byte, expectedID string) (rawEvidence, map[str
 	if version > notionSnapshotVersion {
 		return rawEvidence{}, nil, false, &NewerEvidenceError{MeetingID: expectedID, Found: version, Supported: notionSnapshotVersion}
 	}
-
 	var evidence rawEvidence
 	if json.Unmarshal(raw, &evidence) != nil {
 		return rawEvidence{}, nil, false, nil
@@ -950,7 +949,6 @@ func schedulePending(meeting *HydratedMeeting, now time.Time, previous pendingTr
 	if !retryUntil.After(now) {
 		return pendingTranscript{}, false
 	}
-
 	next := now.Add(transcriptRetryCadence)
 	if next.After(retryUntil) {
 		next = retryUntil

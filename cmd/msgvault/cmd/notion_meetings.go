@@ -124,7 +124,6 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 	if err := probeNotionReadContent(ctx, out, client, result.Results); err != nil {
 		return err
 	}
-
 	if users == nil {
 		if _, err := client.ListUsers(ctx, ""); errors.Is(err, notionmeetings.ErrUserInformation) {
 			_, _ = fmt.Fprintln(out, "  User Information: unavailable (attendees remain display-only unless a users token is configured)")

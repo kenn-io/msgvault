@@ -166,6 +166,23 @@ func TestHydratorResolvesParentPageFromRetrievedMeetingBlock(t *testing.T) {
 	assert.Equal(t, "page-1", source.markdownID)
 }
 
+func TestHydratorDataSourceIgnoresRetrievedPageParent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	meeting := hydrationMeeting()
+	meeting.Parent = Parent{Type: "data_source_id"}
+	var err error
+	meeting.Raw, err = json.Marshal(meeting)
+	require.NoError(err)
+	source := completeHydrationSource()
+	source.markdown.Markdown = "# Transcript\nAnother meeting"
+	result, err := NewHydrator(source).Hydrate(t.Context(), meeting)
+	require.NoError(err)
+	assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
+	assert.Zero(source.markdownCalls)
+	assert.Equal("data_source_id", result.Discovery.Parent.Type)
+}
+
 func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -240,8 +257,8 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal("Decide the release scope.", hydrated.Summary)
 			assert.Contains(hydrated.Notes, "Nested action item.")
-			assert.Equal("Test Speaker: Published in Markdown.", hydrated.Transcript)
-			assert.True(hydrated.MarkdownTranscriptFallback)
+			assert.Empty(hydrated.Transcript)
+			assert.False(hydrated.MarkdownTranscriptFallback)
 			assert.Contains(hydrated.Incomplete, "transcript")
 			assert.NotContains(hydrated.Warnings, "structured transcript was empty; used page Markdown transcript")
 			assert.Len(hydrated.AttendeeLabels, 2)
@@ -331,8 +348,8 @@ func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 			result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 			require.NoError(t, err)
 			assert.Empty(result.Transcript)
-			assert.NotContains(result.Incomplete, "transcript")
-			assert.Contains(result.Warnings, "page Markdown transcript was incomplete; transcript remains pending")
+			assert.Contains(result.Incomplete, "transcript")
+			assert.Contains(result.Warnings, "transcript incomplete: markdown")
 		})
 	}
 	t.Run("no transcript in incomplete page", func(t *testing.T) {
@@ -346,7 +363,7 @@ func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 		result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 		require.NoError(err)
 		assert.Empty(result.Transcript)
-		assert.NotContains(result.Warnings, "page Markdown transcript was incomplete; transcript remains pending")
+		assert.Contains(result.Incomplete, "transcript")
 	})
 }
 
@@ -561,6 +578,36 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 				assert.Contains(result.Incomplete, "transcript")
 				assert.NotContains(source.blockCalls, "notes-1")
 				assert.NotContains(source.blockCalls, "transcript-1")
+			}
+		})
+	}
+}
+
+func TestHydratorAttendeeLimitRequiresIncompleteSection(t *testing.T) {
+	for _, incomplete := range []bool{false, true} {
+		t.Run(fmt.Sprintf("incomplete=%t", incomplete), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			source := completeHydrationSource()
+			if incomplete {
+				source.blockErrs = map[string]error{"summary-1": ErrRateLimited}
+			}
+			source.users = map[string]*UserPage{}
+			for i := range maxHydrationRequests {
+				cursor := ""
+				if i > 0 {
+					cursor = strconv.Itoa(i)
+				}
+				source.users[cursor] = &UserPage{HasMore: true, NextCursor: strconv.Itoa(i + 1)}
+			}
+			result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
+			if incomplete {
+				require.NoError(err)
+				assert.Contains(result.Incomplete, "summary")
+				assert.True(result.AttendeeResolutionDegraded)
+			} else {
+				require.Error(err)
+				assert.Nil(result)
 			}
 		})
 	}
