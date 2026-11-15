@@ -46,12 +46,6 @@ func (s *retryCommitmentSink) ApplyPersonSweep(_ context.Context, request ApplyR
 	return ApplyResult{}, nil
 }
 
-type retryCommitmentRunner struct{ *Runner }
-
-func (retryCommitmentRunner) OrdinaryInferenceAllowed(context.Context) (bool, error) {
-	return false, nil
-}
-
 func TestPersonSweepWorkerDefersCommitmentPrepareFailureForTheRestOfRun(t *testing.T) {
 	worker, fixture, _ := newConsentOnlyCommitmentWorker(t)
 	st := &retryCommitmentStore{commitmentWorkerFixture: fixture}
@@ -59,7 +53,11 @@ func TestPersonSweepWorkerDefersCommitmentPrepareFailureForTheRestOfRun(t *testi
 	response := briefDriverResponse(json.RawMessage(`{"promises":[]}`), "request")
 	driver := &workerRepairDriver{responses: []DriverResponse{response, response}}
 	runner := newWorkerRepairRunnerWithDependencies(t, worker.Config, driver, &commitmentCallAuthority{}, NewCredentialResolver(nil, func(string) (string, bool) { return "test-key", true }))
-	worker.Store, worker.Sink, worker.Runner = st, sink, retryCommitmentRunner{runner}
+	source := &workerProductionSource{windows: map[GenerationCursorMode]PersonWindow{
+		GenerationCursorOptimistic: {Changes: []ArchiveChange{{Sequence: 1, PersonID: 7, SourceLane: SourceConversationText}}, NextSequence: 1},
+	}}
+	worker.Store, worker.Sink, worker.Runner = st, sink, runner
+	worker.Source, worker.Context = source, NewContextRetriever(source)
 	result, err := worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental, Brief: BriefModeSkip})
 	require.NoError(t, err)
 	assert.Equal(t, 2, driver.calls)
@@ -68,4 +66,5 @@ func TestPersonSweepWorkerDefersCommitmentPrepareFailureForTheRestOfRun(t *testi
 	assert.Equal(t, []int64{8}, st.completed)
 	require.Len(t, result.People, 2)
 	assert.Equal(t, FailureInternal, result.People[0].CommitmentFailureClass)
+	assert.False(t, sink.requests[0].CommitmentOnly)
 }
