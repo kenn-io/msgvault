@@ -41,8 +41,35 @@ func TestCommitmentScopeChangesRevisitJournaledHistory(t *testing.T) {
 				profile.SourceSince = "2026-01-01"
 				cfg.Commitments.Window = 24 * time.Hour
 			}
-			_, err = st.db.ExecContext(ctx, st.Rebind(`UPDATE person_inference_profiles SET source_since = ? WHERE fingerprint = ?`), profile.SourceSince, f.request.Generation.Policy.ProviderPolicyFingerprint)
-			r.NoError(err)
+			if expanded == "dates" {
+				policy := peoplesweep.Config{
+					Enabled:  true,
+					Provider: peoplesweep.ProviderSelection{Name: "default"},
+					Providers: map[string]peoplesweep.ProviderConfig{"default": {
+						Protocol: peoplesweep.ProtocolOpenAIChat, Endpoint: "https://api.example.test/v1", Model: "gpt-test",
+						Auth: peoplesweep.AuthBearer, Credential: peoplesweep.CredentialEnv, CredentialEnv: "TEST_KEY",
+						OutputMode: peoplesweep.OutputModeNativeJSONSchema, TokenLimitParameter: "max_completion_tokens",
+						RetentionPosture: "zero_retention", TrainingPosture: "no_training",
+						AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+						SourceSince:    profile.SourceSince, AllowSensitive: true, RequestTimeout: time.Minute,
+					}},
+				}
+				policy.ApplyDefaults()
+				profile, err = policy.Profile()
+				r.NoError(err)
+				_, err = st.EnsurePersonInferenceProfile(ctx, profile)
+				r.NoError(err)
+				_, _, err = st.GrantPersonCommitmentConsent(ctx, profile.Fingerprint, "test")
+				r.NoError(err)
+				for _, table := range []struct{ name, id string }{{"person_sweep_runs", f.runID}, {"person_sweep_attempts", f.attemptID}} {
+					_, err = st.db.ExecContext(ctx, st.Rebind(`UPDATE `+table.name+` SET provider_fingerprint = ? WHERE id = ?`), profile.Fingerprint, table.id)
+					r.NoError(err)
+				}
+				f.request.Generation.Policy.ProviderPolicyFingerprint = profile.Fingerprint
+			} else {
+				_, err = st.db.ExecContext(ctx, st.Rebind(`UPDATE person_inference_profiles SET source_since = ? WHERE fingerprint = ?`), profile.SourceSince, f.request.Generation.Policy.ProviderPolicyFingerprint)
+				r.NoError(err)
+			}
 			window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 			r.NoError(err)
 			r.Empty(window.Sources)
@@ -71,13 +98,13 @@ func TestCommitmentScopeChangesRevisitJournaledHistory(t *testing.T) {
 			a.True(due)
 			switch expanded {
 			case "dates":
+				previousFingerprint := profile.Fingerprint
 				profile.SourceSince = "2026-01-01"
-				_, err = st.db.ExecContext(ctx, st.Rebind(`INSERT INTO person_inference_profiles
-					(fingerprint, provider_kind, endpoint, model, api_key_env, allow_anonymous, retention_posture, training_posture, allowed_sources, source_since, allow_sensitive, policy_json)
-					SELECT ?, provider_kind, endpoint, model, api_key_env, allow_anonymous, retention_posture, training_posture, allowed_sources, ?, allow_sensitive, policy_json
-					FROM person_inference_profiles WHERE fingerprint = ?`), "expanded-profile", profile.SourceSince, f.request.Generation.Policy.ProviderPolicyFingerprint)
+				profile, err = peoplesweep.CanonicalProviderProfile(profile)
 				r.NoError(err)
-				profile.Fingerprint = "expanded-profile"
+				a.NotEqual(previousFingerprint, profile.Fingerprint)
+				_, err = st.EnsurePersonInferenceProfile(ctx, profile)
+				r.NoError(err)
 			case "window":
 				cfg.Commitments.Window = 30 * 24 * time.Hour
 			default:
