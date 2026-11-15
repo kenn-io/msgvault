@@ -208,7 +208,6 @@ describe("PersonOpenLoops", () => {
   });
 
   it("keeps loaded promises when checking more reply history", async () => {
-    const promise = (id: number) => ({ id: `c${id}`, person_id: 7, summary: "", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: id, start: 0, end: 10, text: `Promise ${id}` }, promised_at: "2026-10-12T12:00:00Z" });
     const first = { items: [], commitments: [promise(1)], commitments_next_offset: 1, truncated: true, coverage_incomplete: true };
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json(first))
