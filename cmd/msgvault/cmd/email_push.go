@@ -23,7 +23,7 @@ import (
 )
 
 var (
-	errEmailPushBinding    = errors.New("email push requires an active exact source and enabled canonical account schedule")
+	errEmailPushBinding    = errors.New("enable a schedule using the active source's exact account identifier")
 	errEmailPushIncomplete = errors.New("email push sync incomplete")
 	// Preserve network classification without retaining provider text or addresses.
 	errEmailPushTransient = &net.OpError{Op: "email push reconciliation", Err: errEmailPushIncomplete}
@@ -31,10 +31,13 @@ var (
 
 const emailPushProviderSyncFailed = "provider synchronization failed"
 
-type emailPushScheduleError struct{ sourceID int64 }
+type emailPushScheduleError struct {
+	sourceID    int64
+	requirement string
+}
 
 func (e emailPushScheduleError) Error() string {
-	return fmt.Sprintf("Source %d needs exactly one enabled schedule using its account identifier", e.sourceID)
+	return fmt.Sprintf("Source %d needs %s", e.sourceID, e.requirement)
 }
 
 func (e emailPushScheduleError) Unwrap() error { return errEmailPushBinding }
@@ -123,13 +126,13 @@ func emailPushBindings(ctx context.Context, cfg *config.Config, st *store.Store,
 		for _, account := range cfg.Accounts {
 			if account.Email == src.Identifier {
 				if !account.Enabled || account.Schedule == "" {
-					return nil, fmt.Errorf("email push source %d needs an enabled account schedule: %w", id, errEmailPushBinding)
+					return nil, emailPushScheduleError{sourceID: id, requirement: "an enabled account schedule"}
 				}
 				matching++
 			}
 		}
 		if matching != 1 || !sched.IsScheduled(src.Identifier) {
-			return nil, emailPushScheduleError{sourceID: id}
+			return nil, emailPushScheduleError{sourceID: id, requirement: "exactly one enabled schedule using its account identifier"}
 		}
 		if _, duplicate := bindings[src.Identifier]; duplicate {
 			return nil, fmt.Errorf("email push source %d shares a canonical account key: %w", id, errEmailPushBinding)

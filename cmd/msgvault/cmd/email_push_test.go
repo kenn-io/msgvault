@@ -38,7 +38,7 @@ func emailPushFixture(t *testing.T) (*store.Store, *config.Config, *store.Source
 }
 
 func TestEmailPushBindingValidation(t *testing.T) {
-	for _, kind := range []string{"valid", "wrong-type", "missing", "disabled", "alias-key", "duplicate-key"} {
+	for _, kind := range []string{"valid", "wrong-type", "missing", "disabled", "empty-schedule", "alias-key", "duplicate-key"} {
 		t.Run(kind, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -49,10 +49,13 @@ func TestEmailPushBindingValidation(t *testing.T) {
 				other, err := st.GetOrCreateSource(sourceTypeGmail, "other@example.test")
 				requirements.NoError(err)
 				cfg.EmailPush.IMAPSourceIDs = []int64{other.ID}
+				cfg.Accounts[0].Email = other.Identifier
 			case "missing":
 				cfg.EmailPush.IMAPSourceIDs = []int64{src.ID + 999}
 			case "disabled":
 				cfg.Accounts[0].Enabled = false
+			case "empty-schedule":
+				cfg.Accounts[0].Schedule = ""
 			case "alias-key":
 				cfg.Accounts[0].Email = "friendly"
 			case "duplicate-key":
@@ -65,9 +68,14 @@ func TestEmailPushBindingValidation(t *testing.T) {
 				requirements.NoError(err)
 				assertions.Equal(src.ID, bindings[src.Identifier].sourceID)
 			} else {
-				requirements.Error(err)
+				requirements.ErrorIs(err, errEmailPushBinding)
+				assertions.Equal("enable a schedule using the active source's exact account identifier", errEmailPushBinding.Error())
+				if kind == "disabled" || kind == "empty-schedule" {
+					assertions.Equal("Source "+strconv.FormatInt(src.ID, 10)+" needs an enabled account schedule", err.Error())
+					assertions.Same(errEmailPushBinding, errors.Unwrap(err))
+				}
 				if kind == "alias-key" || kind == "duplicate-key" {
-					requirements.ErrorIs(err, errEmailPushBinding)
+					assertions.Same(errEmailPushBinding, errors.Unwrap(err))
 					assertions.Equal("Source "+strconv.FormatInt(src.ID, 10)+" needs exactly one enabled schedule using its account identifier", err.Error())
 				}
 			}
