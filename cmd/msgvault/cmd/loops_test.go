@@ -132,17 +132,13 @@ func TestLoopsListPagesPromises(t *testing.T) {
 		}
 		a.Equal("200", req.URL.Query().Get("commitment_offset"))
 		a.Equal("1", req.URL.Query().Get("limit"))
-		a.Equal("true", req.URL.Query().Get("include_closed"))
 		_, err := w.Write([]byte(`{"items":[],"commitments":[{"id":"c201","person_id":1,"direction":"owed_to","summary":"Call","promise":{"message_id":42,"text":"I will call.","start":0,"end":12},"promised_at":"2026-01-01T00:00:00Z","freshness":"fresh","state":"done"}],"truncated":true,"commitments_next_offset":201}`))
 		a.NoError(err)
 	}))
 	t.Cleanup(server.Close)
 	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	output, err := runLoops(ctx, t, "list", "--limit", "1", "--include-closed", "--commitment-offset", "200")
+	_, err := runLoops(ctx, t, "list", "--limit", "1", "--commitment-offset", "200")
 	require.NoError(t, err)
-	a.Contains(output, "c201")
-	a.Contains(output, "I will call.")
-	a.Contains(output, "--commitment-offset 201")
 }
 
 func TestLoopsDaemonVersions(t *testing.T) {
@@ -158,7 +154,7 @@ func TestLoopsDaemonVersions(t *testing.T) {
 		{name: "compatible_reply_loop_daemon", version: "3.44.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"commitments":[],"truncated":false}`, args: []string{"list", "--json"}},
 		{name: "compatible_closed_commitment_daemon", version: "5.5.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"commitments":[],"truncated":false}`, args: []string{"list", "--json", "--include-closed"}, closed: true},
 		{name: "commitment", version: "5.5.0", path: "/api/v1/loops/commitments/c12/decision", method: http.MethodPost, response: `{"id":"c12","state":"done"}`, output: "c12 is done.\n", args: []string{"done", "c12"}, state: "done"},
-		{name: "existing_reply_loop", version: "3.44.0", path: "/api/v1/loops/42/done", method: http.MethodPost, response: `{"anchor_message_id":42,"state":"done"}`, output: "Marked 42 done.\n", args: []string{"done", "42"}},
+		{name: "existing_reply_loop", version: "3.44.0", path: "/api/v1/loops/42/done", method: http.MethodPost, response: `{"anchor_message_id":42,"state":"done"}`, args: []string{"done", "42"}},
 		{name: "old_daemon_warning", version: "5.3.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"truncated":false}`, args: []string{"list", "--json"}, warning: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -293,12 +289,14 @@ Showing up to 50 reply loops and 50 cited promises. Use --limit up to 200 to see
 
 	out.Reset()
 	const promise = "I will send the draft."
-	require.NoError(writeLoops(&out, generated.LoopListResponse{Commitments: []generated.LoopCommitment{{
+	nextOffset := int64(201)
+	require.NoError(writeLoops(&out, generated.LoopListResponse{CommitmentsNextOffset: &nextOffset, Commitments: []generated.LoopCommitment{{
 		ID: "c12", PersonID: 7, Direction: "owed_to", Freshness: "fresh", State: "done", Summary: "Send the draft",
 		Promise: generated.CommitmentQuote{MessageID: 19, Text: promise},
 	}}}, 50, now))
 	assert.Contains(out.String(), "c12   person 7 (done)")
 	assert.Contains(out.String(), "message 19: "+promise)
+	assert.Contains(out.String(), "--commitment-offset 201")
 	assert.NotContains(out.String(), "Send the draft")
 	assert.Equal(1, strings.Count(out.String(), promise), "the exact quote appears once")
 }

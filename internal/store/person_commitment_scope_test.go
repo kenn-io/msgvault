@@ -97,11 +97,11 @@ func TestCommitmentScopeExpansionRevisitsJournaledHistory(t *testing.T) {
 			a.Zero(through)
 			a.Equal(window.ThroughSequence, observed)
 			if expanded == "dates" {
-				due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window, "", cfg.Commitments.MaxBytes)
+				due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments), cfg.Commitments.MaxBytes)
 				r.NoError(err)
 				a.False(due)
 			}
-			due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.Window), cfg.Commitments.MinInterval, cfg.Commitments.Window, "", cfg.Commitments.MaxBytes)
+			due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.Window), cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments), cfg.Commitments.MaxBytes)
 			r.NoError(err)
 			a.True(due)
 			switch expanded {
@@ -127,7 +127,7 @@ func TestCommitmentScopeExpansionRevisitsJournaledHistory(t *testing.T) {
 			window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 			r.NoError(err)
 			if expanded == "batch" {
-				a.Empty(window.Sources, "batch sizing resets progress without widening eligibility")
+				a.Empty(window.Sources, "batch sizing preserves progress without widening eligibility")
 			} else {
 				r.Len(window.Sources, 1)
 				a.Equal(id, window.Sources[0].MessageID)

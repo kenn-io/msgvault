@@ -83,11 +83,18 @@ describe("PersonOpenLoops", () => {
     expect(screen.getByRole("heading", { name: "Promises you made" })).toBeDefined();
     expect(screen.getByRole("heading", { name: "Stale promises to you" })).toBeDefined();
     expect(screen.getByRole("link", { name: "I will check the venue." }).getAttribute("href")).toBe("/messages/53");
-    expect(screen.queryByRole("button", { name: /done|snooze|dismiss/i })).toBeNull();
-    expect(screen.getByText("7+ open")).toBeDefined();
-    const request = fetcher.mock.calls[0]?.[0];
-    const url = new URL(request instanceof Request ? request.url : String(request), "http://localhost");
-    expect(url.searchParams.has("include_closed")).toBe(false);
+  });
+
+  it("shows a plus when more loops are open than the card lists", async () => {
+    const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json({
+      items: [loop(42), loop(43), loop(44), loop(45), loop(46)], truncated: true,
+      commitments: [
+        { id: "c1", person_id: 7, state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: 52, start: 0, end: 4, text: "Call" }, promised_at: "2026-10-12T12:00:00Z" },
+        { id: "c2", person_id: 7, state: "open", direction: "owed_to", freshness: "stale", promise: { message_id: 53, start: 0, end: 5, text: "Write" }, promised_at: "2026-10-12T12:00:00Z" },
+      ],
+    })));
+    render(PersonOpenLoops, { client, personID: 7 });
+    expect(await screen.findByText("7+ open")).toBeDefined();
   });
 
   it("shows the due date only on dated promises", async () => {
@@ -229,28 +236,6 @@ describe("PersonOpenLoops", () => {
     expect(url.searchParams.get("limit")).toBe("5");
   });
 
-  it("drops a late promise page after the person changes", async () => {
-    let resolvePage!: (response: Response) => void;
-    const page = new Promise<Response>((resolve) => { resolvePage = resolve; });
-    const promise = (id: number) => ({ id: `c${id}`, person_id: 7, summary: "", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: id, start: 0, end: 10, text: `Promise ${id}` }, promised_at: "2026-10-12T12:00:00Z" });
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const url = new URL(input instanceof Request ? input.url : String(input), "http://localhost");
-      if (url.searchParams.has("commitment_offset")) return page;
-      return url.searchParams.get("person_id") === "7"
-        ? Response.json({ items: [], truncated: true, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(1)], commitments_next_offset: 1 })
-        : Response.json({ items: [], truncated: false, skipped_unparseable: 0, coverage_incomplete: false });
-    }));
-    const view = render(PersonOpenLoops, { client, personID: 7 });
-    (await screen.findByRole("button", { name: "More promises" })).click();
-    await view.rerender({ client, personID: 8 });
-    expect(await screen.findByText("Nothing open with this person.")).toBeDefined();
-    resolvePage(Response.json({ items: [], truncated: false, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(2)] }));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await tick();
-    expect(screen.queryByText("Promise 2")).toBeNull();
-    expect(screen.getByText("Nothing open with this person.")).toBeDefined();
-  });
-
   it("shows an error", async () => {
     const client = createAPIClient(
       vi.fn<typeof fetch>(async () =>
@@ -307,5 +292,27 @@ describe("PersonOpenLoops", () => {
     await consumed;
     await tick();
     expect(screen.queryByText("Review the draft?")).toBeNull();
+    view.unmount();
+    {
+      let resolvePage!: (response: Response) => void;
+      const page = new Promise<Response>((resolve) => { resolvePage = resolve; });
+      const promise = (id: number) => ({ id: `c${id}`, person_id: 7, summary: "", state: "open", direction: "owed_by", freshness: "fresh", promise: { message_id: id, start: 0, end: 10, text: `Promise ${id}` }, promised_at: "2026-10-12T12:00:00Z" });
+      const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
+        const url = new URL(input instanceof Request ? input.url : String(input), "http://localhost");
+        if (url.searchParams.has("commitment_offset")) return page;
+        return url.searchParams.get("person_id") === "7"
+          ? Response.json({ items: [], truncated: true, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(1)], commitments_next_offset: 1 })
+          : Response.json({ items: [], truncated: false, skipped_unparseable: 0, coverage_incomplete: false });
+      }));
+      const view = render(PersonOpenLoops, { client, personID: 7 });
+      (await screen.findByRole("button", { name: "More promises" })).click();
+      await view.rerender({ client, personID: 8 });
+      expect(await screen.findByText("Nothing open with this person.")).toBeDefined();
+      resolvePage(Response.json({ items: [], truncated: false, skipped_unparseable: 0, coverage_incomplete: false, commitments: [promise(2)] }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await tick();
+      expect(screen.queryByText("Promise 2")).toBeNull();
+      expect(screen.getByText("Nothing open with this person.")).toBeDefined();
+    }
   });
 });

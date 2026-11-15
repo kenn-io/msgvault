@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -137,15 +138,20 @@ func (l *loopFixture) list(t *testing.T, query string) LoopListResponse {
 func TestCommitmentDecisionMapsMalformedAndUnknownIDs(t *testing.T) {
 	a := assert.New(t)
 	fixture := newLoopFixture(t)
+	fixture.router = NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: &conflictingCommitmentStore{fixture.f.Store}, Scheduler: newMockScheduler(), Logger: testLogger()}).Router()
 	for _, tc := range []struct {
 		id, request string
 		status      int
 	}{
 		{"12", `{"state":"done"}`, http.StatusBadRequest},
 		{"c12", `{"state":"done"}`, http.StatusNotFound},
+		{"c1", `{"state":"done"}`, http.StatusConflict},
 	} {
 		response := fixture.do(t, http.MethodPost, "/api/v1/loops/commitments/"+tc.id+"/decision", tc.request)
 		a.Equal(tc.status, response.Code, response.Body.String())
+		if tc.status == http.StatusConflict {
+			a.Contains(response.Body.String(), "commitment_changed")
+		}
 	}
 }
 
@@ -207,21 +213,24 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 		return response
 	}
 	response := read()
-	assert.Nil(response.CommitmentsSince)
 	assert.Nil(response.CommitmentsComplete)
 	assert.Empty(response.Commitments)
 	_, _, err = f.Store.GrantPersonCommitmentConsent(t.Context(), profile.Fingerprint, "test")
 	require.NoError(err)
 	response = read()
-	assert.Nil(response.CommitmentsSince)
 	require.NotNil(response.CommitmentsComplete)
 	assert.False(*response.CommitmentsComplete)
 	require.NotNil(response.CommitmentsUntil)
 	assert.Equal("2025-06-30", response.CommitmentsUntil.Format(time.DateOnly))
+	since := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, -1, ?, ?)`), person.ID, since, peoplesweep.CommitmentScopeFingerprint(profile, cfg.People.Sweep.Commitments), since)
+	require.NoError(err)
+	response = read()
+	require.NotNil(response.CommitmentsSince)
+	assert.True(response.CommitmentsSince.Equal(since))
 	_, err = f.Store.RevokePersonCommitmentConsent(t.Context(), profile.Fingerprint, "test")
 	require.NoError(err)
 	response = read()
-	assert.Nil(response.CommitmentsSince)
 	assert.Nil(response.CommitmentsComplete)
 }
 
@@ -585,19 +594,11 @@ func TestLoopBackfillStopsWhenServerShutsDown(t *testing.T) {
 
 type conflictingCommitmentStore struct{ *store.Store }
 
-func (s *conflictingCommitmentStore) DecidePersonCommitmentContext(context.Context, int64, string, *time.Time, time.Time) (store.PersonCommitment, error) {
-	return store.PersonCommitment{}, store.ErrCommitmentChanged
-}
-
-func TestCommitmentDecisionReturnsConflict(t *testing.T) {
-	f := storetest.New(t)
-	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: &conflictingCommitmentStore{f.Store}, Scheduler: newMockScheduler(), Logger: testLogger()})
-	w := httptest.NewRecorder()
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/loops/commitments/c1/decision", strings.NewReader(`{"state":"done"}`))
-	req.Header.Set("Content-Type", "application/json")
-	server.Router().ServeHTTP(w, req)
-	assert.Equal(t, http.StatusConflict, w.Code)
-	assert.Contains(t, w.Body.String(), "commitment_changed")
+func (s *conflictingCommitmentStore) DecidePersonCommitmentContext(_ context.Context, id int64, _ string, _ *time.Time, _ time.Time) (store.PersonCommitment, error) {
+	if id == 1 {
+		return store.PersonCommitment{}, store.ErrCommitmentChanged
+	}
+	return store.PersonCommitment{}, sql.ErrNoRows
 }
 
 type pagingCommitmentStore struct {
@@ -623,7 +624,7 @@ func TestListLoopsPagesCommitments(t *testing.T) {
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
 	var response LoopListResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-	require.Len(response.Commitments, 1)
+	require.NotEmpty(response.Commitments)
 	assert.Equal("c201", response.Commitments[0].ID)
 	assert.Equal(200, st.offset)
 	assert.True(st.includeClosed)

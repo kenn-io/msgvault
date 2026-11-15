@@ -100,11 +100,15 @@ func TestCommitmentRequestSendsPromptFieldsAndFullSourceText(t *testing.T) {
 	a.Contains(request.InputText, strings.Repeat("x", 2001)+"PRIVATE TAIL")
 }
 
-func TestCommitmentSourceBytesAndConfigLimits(t *testing.T) {
+func TestCommitmentSourceBytes(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	size, err := CommitmentSourceBytes("a\x00\n\"")
 	r.NoError(err)
 	a.Equal(11, size)
+}
+
+func TestCommitmentConfigLimits(t *testing.T) {
+	r := require.New(t)
 	cfg := Config{}
 	cfg.ApplyDefaults()
 	cfg.Commitments.Enabled = true
