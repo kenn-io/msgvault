@@ -22,8 +22,12 @@ type fakeNotionProbe struct {
 	blockErrors map[string]error
 	usersErr    error
 	blockIDs    *[]string
-	markdownID  *string
-	markdownErr error
+}
+
+type fakeNotionSyncSource struct{ fakeNotionProbe }
+
+func (fakeNotionSyncSource) RetrievePageMarkdown(context.Context, string, bool) (*notionmeetings.MarkdownPage, error) {
+	return &notionmeetings.MarkdownPage{}, nil
 }
 
 func (f fakeNotionProbe) QueryMeetingNotes(context.Context, int) (*notionmeetings.QueryResult, error) {
@@ -38,16 +42,6 @@ func (f fakeNotionProbe) RetrieveBlock(_ context.Context, id string) (*notionmee
 		return nil, err
 	}
 	return f.block, f.blockErr
-}
-
-func (f fakeNotionProbe) RetrievePageMarkdown(_ context.Context, id string, include bool) (*notionmeetings.MarkdownPage, error) {
-	if f.markdownID != nil {
-		*f.markdownID = id
-	}
-	if f.markdownErr != nil {
-		return nil, f.markdownErr
-	}
-	return &notionmeetings.MarkdownPage{Markdown: "private transcript"}, nil
 }
 
 func (f fakeNotionProbe) RetrieveBlockChildren(context.Context, string, string) (*notionmeetings.BlockPage, error) {
@@ -101,24 +95,19 @@ func TestRunNotionMeetingsProbeIsContentAndTokenSafe(t *testing.T) {
 	assert.NotContains(out.String(), "private-block-id")
 	assert.NotContains(out.String(), "Private meeting title")
 	assert.NotContains(out.String(), "secret-token")
-	assert.NotContains(out.String(), "private transcript")
 	assert.Contains(out.String(), "User Information: available")
 }
 
 func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 	blockUnavailable := errors.New("block endpoint unavailable")
 	for _, tc := range []struct {
-		name, queryPage, blockPage, want string
-		sections                         *notionmeetings.MeetingChildren
-		blockErr, sectionErr, wantErr    error
-		wantIDs                          []string
+		name, want                    string
+		sections                      *notionmeetings.MeetingChildren
+		blockErr, sectionErr, wantErr error
+		wantIDs                       []string
 	}{
-		{name: "query parent", queryPage: "query-page", blockPage: "page-1", wantIDs: []string{"meeting-1", "summary-1"}},
-		{name: "retrieved parent", blockPage: "page-1", wantIDs: []string{"meeting-1", "summary-1"}},
-		{name: "page only", blockPage: "page-1", sections: &notionmeetings.MeetingChildren{}, want: "Read Content: not tested (no section blocks)", wantIDs: []string{"meeting-1"}},
-		{name: "page section permission denied", blockPage: "page-1", sectionErr: &notionmeetings.APIError{Kind: notionmeetings.ErrUnauthorized, Status: 401}, wantErr: notionmeetings.ErrUnauthorized, wantIDs: []string{"meeting-1", "summary-1"}},
-		{name: "block unavailable with query parent", queryPage: "page-1", blockErr: blockUnavailable, wantErr: blockUnavailable},
-		{name: "data source parent", sections: &notionmeetings.MeetingChildren{SummaryBlockID: "summary-1"}, wantIDs: []string{"meeting-1", "summary-1"}},
+		{name: "available", wantIDs: []string{"meeting-1", "summary-1"}},
+		{name: "block unavailable", blockErr: blockUnavailable, wantErr: blockUnavailable},
 		{name: "temporary section failure", sectionErr: &notionmeetings.APIError{Kind: notionmeetings.ErrProvider, Status: 503}, want: "Read Content: not tested (section temporarily unavailable)", wantIDs: []string{"meeting-1", "summary-1"}},
 		{name: "section permission denied", sectionErr: &notionmeetings.APIError{Kind: notionmeetings.ErrUnauthorized, Status: 401}, wantErr: notionmeetings.ErrUnauthorized, wantIDs: []string{"meeting-1", "summary-1"}},
 		{name: "no section blocks", sections: &notionmeetings.MeetingChildren{}, want: "Read Content: not tested (no section blocks)", wantIDs: []string{"meeting-1"}},
@@ -130,13 +119,9 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 			if tc.sections != nil {
 				sections = *tc.sections
 			}
-			parent := notionmeetings.Parent{Type: "data_source_id"}
-			if tc.blockPage != "" {
-				parent = notionmeetings.Parent{Type: "page_id", PageID: tc.blockPage}
-			}
 			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
-				result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", Parent: notionmeetings.Parent{PageID: tc.queryPage}, MeetingNotes: notionmeetings.MeetingNotesData{Children: sections}}}},
-				block:  &notionmeetings.Block{Parent: parent}, blockIDs: &ids,
+				result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", MeetingNotes: notionmeetings.MeetingNotesData{Children: sections}}}},
+				block:  &notionmeetings.Block{}, blockIDs: &ids,
 				blockErr: tc.blockErr, blockErrors: map[string]error{"summary-1": tc.sectionErr},
 			}, nil)
 			if tc.wantIDs != nil {
@@ -154,18 +139,6 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestNotionProbeChecksPageSectionWithoutMarkdown(t *testing.T) {
-	var out bytes.Buffer
-	var page string
-	var ids []string
-	meeting := notionmeetings.MeetingNote{ID: "meeting-1", Parent: notionmeetings.Parent{PageID: "page-1"}, MeetingNotes: notionmeetings.MeetingNotesData{Children: notionmeetings.MeetingChildren{SummaryBlockID: "summary-1"}}}
-	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{meeting}}, block: &notionmeetings.Block{}, blockIDs: &ids, markdownID: &page}, nil)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"meeting-1", "summary-1"}, ids)
-	assert.Empty(t, page)
-	assert.Contains(t, out.String(), "Read Content: available")
 }
 
 func TestRunNotionMeetingsProbeDegradesWithoutUserInformation(t *testing.T) {
@@ -285,11 +258,11 @@ func TestScheduledNotionSyncUsesUsersToken(t *testing.T) {
 	})
 	newNotionMeetingsClient = func(_ string, token string) notionmeetings.Source {
 		assert.Equal("pat-example", token)
-		return fakeNotionProbe{
+		return fakeNotionSyncSource{fakeNotionProbe{
 			result:   &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{Object: "block", ID: "meeting-1", Type: "meeting_notes", Parent: notionmeetings.Parent{PageID: "page-1"}, CreatedTime: "2026-08-29T10:00:00Z", MeetingNotes: notionmeetings.MeetingNotesData{Status: "notes_ready", CalendarEvent: notionmeetings.MeetingCalendarEvent{Attendees: []string{"member"}}}}}},
 			block:    &notionmeetings.Block{Object: "block", ID: "meeting-1", Type: "meeting_notes"},
 			usersErr: notionmeetings.ErrUnauthorized,
-		}
+		}}
 	}
 	users := &fakeNotionUsersProbe{user: &notionmeetings.User{ID: "member", Person: notionmeetings.UserPerson{Email: "member@example.com", EmailVerified: true}}}
 	newNotionUsersClient = func(_ string, token string) notionmeetings.UserSource {

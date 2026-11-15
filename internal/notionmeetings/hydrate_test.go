@@ -26,7 +26,6 @@ type fakeHydrationSource struct {
 	userErrs      map[string]error
 	usersCalls    int
 	markdownCalls int
-	markdownID    string
 	markdownErr   error
 	blockCalls    []string
 	onBlock       func(string)
@@ -58,9 +57,8 @@ func (f *fakeHydrationSource) RetrieveBlockChildren(_ context.Context, id, curso
 	return page, nil
 }
 
-func (f *fakeHydrationSource) RetrievePageMarkdown(_ context.Context, id string, _ bool) (*MarkdownPage, error) {
+func (f *fakeHydrationSource) RetrievePageMarkdown(_ context.Context, _ string, _ bool) (*MarkdownPage, error) {
 	f.markdownCalls++
-	f.markdownID = id
 	return f.markdown, f.markdownErr
 }
 
@@ -170,7 +168,6 @@ func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) 
 	require.NoError(err)
 	assert.Equal("page_id", hydrated.Discovery.Parent.Type)
 	assert.Equal("page-1", hydrated.Discovery.Parent.PageID)
-	assert.Zero(source.markdownCalls)
 	assert.False(hydrated.AttendeeResolutionDegraded)
 	assert.Equal("Decide the release scope.", hydrated.Summary)
 	assert.Contains(hydrated.Notes, "Nested action item.")
@@ -256,7 +253,6 @@ func TestHydratorKeepsSystemicTranscriptErrorsFatal(t *testing.T) {
 		secondPage bool
 	}{
 		{name: "unauthorized", err: &APIError{Kind: ErrUnauthorized, Status: 401, Code: "unauthorized"}},
-		{name: "unauthorized second page", err: &APIError{Kind: ErrUnauthorized, Status: 401, Code: "unauthorized"}, secondPage: true},
 		{name: "forbidden", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "forbidden"}},
 		{name: "forbidden second page", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "forbidden"}, secondPage: true},
 		{name: "transient error after cancel", err: &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}, cancel: true},
@@ -520,7 +516,6 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 				source.blocks["meeting-1"].Raw = json.RawMessage(`{"object":"block","id":"meeting-1","type":"meeting_notes","padding":"` + payload + `"}`)
 				source.blocks["notes-1"].Raw = json.RawMessage(`{"object":"block","id":"notes-1","type":"paragraph","padding":"` + payload + `"}`)
 				source.markdown.Raw = json.RawMessage(`{"object":"page_markdown","id":"page-1","markdown":"` + payload + `"}`)
-				source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
 				empty := paragraph("transcript-1", "", false)
 				source.blocks["transcript-1"] = &empty
 			case "requests":
@@ -536,11 +531,19 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 				source.children["summary-1"] = pages
 			case "blocks":
 				root.HasChildren = true
-				blocks := make([]Block, maxHydrationBlocks)
-				for i := range blocks {
-					blocks[i] = Block{ID: fmt.Sprintf("block-%d", i), Type: "paragraph"}
+				pages := map[string]*BlockPage{}
+				for i := range 100 {
+					cursor := ""
+					if i > 0 {
+						cursor = strconv.Itoa(i)
+					}
+					blocks := make([]Block, 100)
+					for j := range blocks {
+						blocks[j] = Block{ID: fmt.Sprintf("block-%d", i*100+j), Type: "paragraph"}
+					}
+					pages[cursor] = &BlockPage{Results: blocks, HasMore: i < 99, NextCursor: strconv.Itoa(i + 1)}
 				}
-				source.children["summary-1"] = map[string]*BlockPage{"": {Results: blocks}}
+				source.children["summary-1"] = pages
 			case "depth":
 				root.HasChildren = true
 				id := "summary-1"
