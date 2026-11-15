@@ -124,11 +124,7 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 		return nil, err
 	}
 	plan.result.CardsScanned = scanned
-	matched, shadowed, participantKinds, err := cardDAVParticipantMatchesTx(ctx, tx, claims)
-	if err != nil {
-		return nil, err
-	}
-	disputed, _, _, err := cardDAVParticipantMatchesTx(ctx, tx, conflicted)
+	matched, disputed, shadowed, participantKinds, err := cardDAVParticipantMatchesTx(ctx, tx, claims, conflicted)
 	if err != nil {
 		return nil, err
 	}

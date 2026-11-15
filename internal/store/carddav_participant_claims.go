@@ -160,23 +160,23 @@ func cardDAVParticipantAddresses(body []byte) (map[cardDAVParticipantAddress]str
 	return addresses, true, incomplete
 }
 
-func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims map[cardDAVParticipantAddress]cardDAVPersonSet) (map[int64]cardDAVPersonSet, map[int64][]int64, map[int64]cardDAVUncertainKinds, error) {
+func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims, conflicted map[cardDAVParticipantAddress]cardDAVPersonSet) (map[int64]cardDAVPersonSet, map[int64]cardDAVPersonSet, map[int64][]int64, map[int64]cardDAVUncertainKinds, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id, 'email', email_address FROM participants WHERE email_address IS NOT NULL
  UNION ALL SELECT id, 'phone', phone_number FROM participants WHERE phone_number IS NOT NULL
  UNION ALL SELECT participant_id, identifier_type, identifier_value FROM participant_identifiers
  WHERE scope_kind IS NULL AND scope_value IS NULL
  AND identifier_type IN ('email','phone','apple_id','whatsapp','imessage','synctech_sms','google_voice','imazing_csv')`)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("read participant addresses for CardDAV binding: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("read participant addresses for CardDAV binding: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var candidates []cardDAVAddressMatch
+	var candidates, disputedCandidates []cardDAVAddressMatch
 	participantKinds := map[int64]cardDAVUncertainKinds{}
 	for rows.Next() {
 		var id int64
 		var kind, value string
 		if err := rows.Scan(&id, &kind, &value); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		addressKind := ContactAddressPhone
 		if kind == "email" || (kind == "apple_id" || kind == "imessage" || kind == "synctech_sms") && strings.Contains(value, "@") {
@@ -190,16 +190,19 @@ func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims map[c
 			participantKinds[id] = cardDAVUncertainKinds{}
 		}
 		participantKinds[id][addressKind] = true
-		if len(claims[key]) == 0 {
-			continue
+		if len(claims[key]) > 0 {
+			candidates = append(candidates, cardDAVAddressMatch{id, key})
 		}
-		candidates = append(candidates, cardDAVAddressMatch{id, key})
+		if len(conflicted[key]) > 0 {
+			disputedCandidates = append(disputedCandidates, cardDAVAddressMatch{id, key})
+		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	matched, shadowed := cardDAVMatchCandidates(claims, candidates)
-	return matched, shadowed, participantKinds, nil
+	disputed, _ := cardDAVMatchCandidates(conflicted, disputedCandidates)
+	return matched, disputed, shadowed, participantKinds, nil
 }
 
 type cardDAVAddressMatch struct {
