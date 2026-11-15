@@ -9,6 +9,7 @@ import (
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -133,4 +134,50 @@ func TestBuildCache_IncludesMeetingTranscripts(t *testing.T) {
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE message_id = ?`,
 		filepath.Join(analyticsDir, "attachments", "*.parquet"), meetingID).Scan(&meetingAttachmentRows))
 	assert.Equal(1, meetingAttachmentRows, "meeting attachment junction should be exported")
+}
+
+func TestBuildCacheMeetingCountsFollowSavedChoices(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "archive.db")
+	analytics := filepath.Join(dir, "analytics")
+	st := testutil.NewSQLiteTestStoreAt(t, path)
+	source, err := st.GetOrCreateSource("meeting_import", "owner@example.test")
+	require.NoError(t, err)
+	alice, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
+	require.NoError(t, err)
+	bob, err := st.EnsureParticipant("bob@example.test", "Bob", "example.test")
+	require.NoError(t, err)
+	var refs []store.MeetingLinkRef
+	for _, key := range []string{"first", "second"} {
+		id, err := st.PersistMessage(&store.MessagePersistData{
+			Message:      &store.Message{SourceID: source.ID, SourceMessageID: key, MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC), Valid: true}},
+			Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"},
+			RawMIME:      []byte(`{}`), RawFormat: "meeting_json",
+		})
+		require.NoError(t, err)
+		require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{alice, bob}, []string{"", ""}))
+		refs = append(refs, store.MeetingLinkRef{Kind: "msg", MessageID: id})
+	}
+	check := func(want int64) {
+		t.Helper()
+		_, err := buildCache(t.Context(), path, analytics, true)
+		require.NoError(t, err)
+		engine, err := query.NewArchiveDuckDBEngine(t.Context(), analytics)
+		require.NoError(t, err)
+		defer func() { _ = engine.Close() }()
+		for _, name := range []string{"Alice", "Bob"} {
+			people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Query: name})
+			require.NoError(t, err)
+			require.Len(t, people.Rows, 1)
+			assert.Equal(t, want, people.Rows[0].MeetingCount)
+			assert.Equal(t, int64(2), people.Rows[0].ActivityCount)
+		}
+	}
+	check(2)
+	_, err = st.DecideMeetingLinkContext(t.Context(), refs[0], refs[1], "link")
+	require.NoError(t, err)
+	check(1)
+	_, err = st.DecideMeetingLinkContext(t.Context(), refs[0], refs[1], "unlink")
+	require.NoError(t, err)
+	check(2)
 }
