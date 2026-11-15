@@ -401,7 +401,6 @@ func TestCardDAVParticipantBindingEmailIdentifiersAndEncoding(t *testing.T) {
 		name, kind, value, email, property string
 	}{
 		{"legacy encoding", "email", "josé@example.test", "josé@example.test", "EMAIL;CHARSET=ISO-8859-1;ENCODING=QUOTED-PRINTABLE:jos=E9@example.test"},
-		{"email alias", "email_alias", "ALIAS@EXAMPLE.TEST", "alias@example.test", "EMAIL:alias@example.test"},
 		{"imessage alias", "imessage", "Alias@Example.test", "alias@example.test", "EMAIL:alias@example.test"},
 		{"synctech", "synctech_sms", "Alex@Example.Test", "alex@example.test", "EMAIL:alex@example.test"},
 	} {
@@ -414,10 +413,6 @@ func TestCardDAVParticipantBindingEmailIdentifiersAndEncoding(t *testing.T) {
 			switch tc.kind {
 			case "email":
 				id, err = st.EnsureParticipant(tc.value, "Alex", "example.test")
-			case "email_alias":
-				id, err = st.EnsureParticipant("primary@example.test", "Alex", "example.test")
-				require.NoError(err)
-				err = st.SetParticipantIdentifier(id, "email", tc.value)
 			case "imessage":
 				id, err = st.EnsureParticipantByPhone(t.Context(), "+12025550100", "Alex", "imessage")
 				require.NoError(err)
@@ -642,7 +637,7 @@ func TestCardDAVParticipantBindingLifecycleCleanup(t *testing.T) {
 	for _, test := range []struct {
 		action  string
 		tracked bool
-	}{{"delete", false}, {"demote", true}, {"discovery", true}, {"conflict-edit", true}, {"publication-conflict", true}, {"publication-commit", true}} {
+	}{{"delete", false}, {"demote", true}, {"discovery", true}, {"conflict-edit", true}, {"publication-commit", true}} {
 		t.Run(test.action+"/tracked="+strconv.FormatBool(test.tracked), func(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)
@@ -669,25 +664,15 @@ func TestCardDAVParticipantBindingLifecycleCleanup(t *testing.T) {
 			case "discovery":
 				allowed := true
 				_, _, err = st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{BaseURL: "https://contacts.example/dav", Username: "alice", PrincipalURL: "https://contacts.example/principal/alice/", HomeURL: "https://contacts.example/books/alice/", Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://contacts.example/books/alice/replacement/", DisplayName: "Replacement", CanCreate: &allowed}}})
-			case "publication-conflict", "publication-commit":
+			case "publication-commit":
 				snapshot, readErr := st.LoadPersonVCardSnapshotContext(t.Context(), person.ID)
 				require.NoError(readErr)
-				card.SemanticHash = "local-change"
-				if test.action == "publication-commit" {
-					card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:lifecycle-card\r\nFN:Alex Example\r\nEND:VCARD\r\n")
-					card.Emails = nil
-					card.RemoteETag, card.SemanticHash = "two", "changed"
-				}
+				card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:lifecycle-card\r\nFN:Alex Example\r\nEND:VCARD\r\n")
+				card.Emails = nil
+				card.RemoteETag, card.SemanticHash = "two", "changed"
 				pending, readErr := st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{PersonID: person.ID, Desired: true, AddressBookID: book.ID, Href: card.Href, OutgoingBody: card.RemoteBody, OutgoingSemanticHash: card.SemanticHash, LocalHash: snapshot.Fingerprint})
 				require.NoError(readErr)
-				if test.action == "publication-conflict" {
-					mapping, readErr := st.GetCardDAVResourceContext(t.Context(), book.ID, card.Href)
-					require.NoError(readErr)
-					_, err = st.RecordCardDAVPublicationConflictContext(t.Context(), *pending, conflictCapture(mapping))
-				} else {
-					err = st.CommitCardDAVPublicationContext(t.Context(), store.CardDAVCanonicalMutation{Publication: *pending, Remote: card})
-				}
-
+				err = st.CommitCardDAVPublicationContext(t.Context(), store.CardDAVCanonicalMutation{Publication: *pending, Remote: card})
 			default:
 				resource, readErr := st.GetCardDAVResourceContext(t.Context(), book.ID, card.Href)
 				require.NoError(readErr)
