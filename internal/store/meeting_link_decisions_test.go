@@ -1750,3 +1750,173 @@ func TestMeetingDecisionSourceRemovalPreservesMergedNote(t *testing.T) {
 	r.NoError(err)
 	assert.Equal(t, []int64{kept, note}, record.MessageIDs)
 }
+
+func TestMeetingDecisionSurvivesRemovalOfVisibleCopy(t *testing.T) {
+	for _, operation := range []string{"source", "gc"} {
+		t.Run(operation, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			if operation == "gc" && st.IsPostgreSQL() {
+				t.Skip("GC is SQLite-only")
+			}
+			source, err := st.GetOrCreateSource("meeting_import", "visible@example.com")
+			r.NoError(err)
+			data := &MessagePersistData{Message: &Message{SourceID: source.ID, SourceMessageID: "visible", MessageType: "meeting_transcript"}, Conversation: &ConversationPersistData{SourceConversationID: "visible", ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"}
+			visible, err := st.PersistMessage(data)
+			r.NoError(err)
+			_, hidden := projectionFixture(t, st, "remaining-hidden", "meeting_json", `{}`)
+			_, note := projectionFixture(t, st, "remaining-note", "meeting_json", `{}`)
+			ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+			_, err = st.DecideMeetingLinkContext(t.Context(), ref(hidden), ref(note), "link")
+			r.NoError(err)
+			_, err = st.MergeDuplicates(t.Context(), visible, []int64{hidden}, "visible-removal")
+			r.NoError(err)
+			if operation == "gc" {
+				r.NoError(st.MarkMessageDeleted(source.ID, "visible"))
+				plan, err := st.PlanGCContext(t.Context())
+				r.NoError(err)
+				_, err = st.ExecuteGCContext(t.Context(), plan)
+				r.NoError(err)
+			} else {
+				r.NoError(st.RemoveSource(source.ID))
+			}
+			_, err = st.UndoDedup(t.Context(), "visible-removal")
+			r.NoError(err)
+			record, err := st.MeetingRecordContext(t.Context(), ref(note))
+			r.NoError(err)
+			r.Equal([]int64{hidden, note}, record.MessageIDs)
+		})
+	}
+}
+
+func TestMeetingDecisionEmailRemovalAvoidsCopyQueries(t *testing.T) {
+	for _, unrelated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unrelated_choice_%t", unrelated), func(t *testing.T) {
+			r := require.New(t)
+			base := newRFC822IDBackfillBackendStore(t)
+			if unrelated {
+				_, first := projectionFixture(t, base, "email-unrelated-first", "meeting_json", `{}`)
+				_, second := projectionFixture(t, base, "email-unrelated-second", "meeting_json", `{}`)
+				_, err := base.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: first}, MeetingLinkRef{Kind: "msg", MessageID: second}, "link")
+				r.NoError(err)
+			}
+			source, err := base.GetOrCreateSource("gmail", "email@example.com")
+			r.NoError(err)
+			for i := range 5 {
+				key := fmt.Sprintf("email-%d", i)
+				_, err := base.PersistMessage(&MessagePersistData{Message: &Message{SourceID: source.ID, SourceMessageID: key, MessageType: "email"}, Conversation: &ConversationPersistData{SourceConversationID: key, ConversationType: "email"}})
+				r.NoError(err)
+			}
+			var copyQueries int
+			gate := &meetingProjectionGate{before: func(_ context.Context, query string, _ []driver.NamedValue) error {
+				if strings.Contains(query, "meeting_copy_survivors") {
+					copyQueries++
+				}
+				return nil
+			}}
+			st := gatedMeetingProjectionStore(t, base, gate)
+			r.NoError(st.RemoveSource(source.ID))
+			r.Zero(copyQueries)
+		})
+	}
+}
+
+func TestMeetingDecisionGCAfterSourceMerge(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	if st.IsPostgreSQL() {
+		t.Skip("GC is SQLite-only")
+	}
+	raw := `{"id":"shared","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+	from, hidden := calendarFixture(t, st, "gc-merge-hidden", raw, "hidden@example.com")
+	into, _ := calendarFixture(t, st, "gc-merge-visible", raw, "visible@example.com")
+	_, note := projectionFixture(t, st, "gc-merge-note", "meeting_json", `{}`)
+	_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: hidden}, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+	r.NoError(err)
+	_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: from.Message.SourceID, IntoSourceID: into.Message.SourceID})
+	r.NoError(err)
+	r.NoError(st.MarkMessageDeleted(into.Message.SourceID, into.Message.SourceMessageID))
+	plan, err := st.PlanGCContext(t.Context())
+	r.NoError(err)
+	_, err = st.ExecuteGCContext(t.Context(), plan)
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+	r.NoError(err)
+	r.Len(record.Links, 1)
+	r.Equal(fmt.Sprintf("evt:%d", hidden), record.Links[0].Ref)
+}
+
+func TestMeetingDecisionRemovalKeepsNewestChoiceOnRestoredCopy(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource("meeting_import", "removed-visible@example.com")
+	r.NoError(err)
+	visible, err := st.PersistMessage(&MessagePersistData{Message: &Message{SourceID: source.ID, SourceMessageID: "visible-priority", MessageType: "meeting_transcript"}, Conversation: &ConversationPersistData{SourceConversationID: "visible-priority", ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"})
+	r.NoError(err)
+	_, hidden := projectionFixture(t, st, "hidden-priority", "meeting_json", `{}`)
+	_, note := projectionFixture(t, st, "other-priority", "meeting_json", `{}`)
+	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+	_, err = st.DecideMeetingLinkContext(t.Context(), ref(hidden), ref(note), "link")
+	r.NoError(err)
+	_, err = st.DecideMeetingLinkContext(t.Context(), ref(visible), ref(note), "unlink")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), visible, []int64{hidden}, "priority-visible")
+	r.NoError(err)
+	r.NoError(st.RemoveSource(source.ID))
+	_, err = st.UndoDedup(t.Context(), "priority-visible")
+	r.NoError(err)
+	var decision string
+	r.NoError(st.db.QueryRowContext(t.Context(), `SELECT decision FROM meeting_link_decisions WHERE left_message_id=? AND right_message_id=?`, hidden, note).Scan(&decision))
+	r.Equal("split", decision)
+}
+
+func TestMeetingDecisionRemovalRestoresChosenCopyAmongDuplicates(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource("meeting_import", "removed-many@example.com")
+	r.NoError(err)
+	visible, err := st.PersistMessage(&MessagePersistData{Message: &Message{SourceID: source.ID, SourceMessageID: "visible-many", MessageType: "meeting_transcript"}, Conversation: &ConversationPersistData{SourceConversationID: "visible-many", ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"})
+	r.NoError(err)
+	_, otherCopy := projectionFixture(t, st, "other-copy", "meeting_json", `{}`)
+	_, chosen := projectionFixture(t, st, "chosen-copy", "meeting_json", `{}`)
+	_, note := projectionFixture(t, st, "chosen-note", "meeting_json", `{}`)
+	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+	_, err = st.DecideMeetingLinkContext(t.Context(), ref(chosen), ref(note), "link")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), visible, []int64{otherCopy, chosen}, "many-copies")
+	r.NoError(err)
+	r.NoError(st.RemoveSource(source.ID))
+	_, err = st.UndoDedup(t.Context(), "many-copies")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), ref(note))
+	r.NoError(err)
+	r.Equal([]int64{chosen, note}, record.MessageIDs)
+}
+
+func TestMeetingDecisionGCAfterMultipleSourceMerges(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	if st.IsPostgreSQL() {
+		t.Skip("GC is SQLite-only")
+	}
+	raw := `{"id":"shared-many","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+	first, firstID := calendarFixture(t, st, "merge-many-first", raw, "first@example.com")
+	second, secondID := calendarFixture(t, st, "merge-many-second", raw, "second@example.com")
+	into, _ := calendarFixture(t, st, "merge-many-visible", raw, "visible@example.com")
+	_, note := projectionFixture(t, st, "merge-many-note", "meeting_json", `{}`)
+	_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: secondID}, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+	r.NoError(err)
+	for _, source := range []int64{first.Message.SourceID, second.Message.SourceID} {
+		_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: source, IntoSourceID: into.Message.SourceID})
+		r.NoError(err)
+	}
+	r.NoError(st.MarkMessageDeleted(into.Message.SourceID, into.Message.SourceMessageID))
+	plan, err := st.PlanGCContext(t.Context())
+	r.NoError(err)
+	_, err = st.ExecuteGCContext(t.Context(), plan)
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+	r.NoError(err)
+	r.Len(record.Links, 1)
+	r.Equal(fmt.Sprintf("evt:%d", firstID), record.Links[0].Ref)
+}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -507,51 +508,150 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }, predicate string, args ...any) error {
 	reader := s.meetingSQLReader(ctx)
-	rows, err := reader.QueryContext(ctx, `SELECT id FROM messages WHERE `+predicate, args...)
-	if err != nil {
+	var hasChoices bool
+	if err := reader.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meeting_link_decisions)`).Scan(&hasChoices); err != nil {
 		return err
 	}
-	purged := map[int64]bool{}
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return errors.Join(err, rows.Close()) //nolint:sqlclosecheck // Close before returning the scan error.
-		}
-		purged[id] = true
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return err
-	}
-	if len(purged) == 0 {
+	if !hasChoices {
 		return nil
 	}
-	var deletedIDs []int64
-	for id := range purged {
-		deletedIDs = append(deletedIDs, id)
+	var hasMeetings bool
+	if err := reader.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM messages WHERE (`+predicate+`) AND message_type IN ('calendar_event', 'meeting_transcript'))`, args...).Scan(&hasMeetings); err != nil {
+		return err
 	}
-	for _, id := range deletedIDs {
-		copies, err := s.meetingCopies(ctx, id)
-		if err != nil {
-			return err
-		}
-		for _, copyID := range copies {
-			purged[copyID] = true
-		}
+	if !hasMeetings {
+		return nil
 	}
-	rows, err = reader.QueryContext(ctx, `SELECT id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision FROM meeting_link_decisions ORDER BY id DESC`)
+	// Traverse the copy graph once for all rows being deleted. UNION also
+	// prevents a damaged cycle from making cleanup loop forever.
+	visibilityAfterPurge := calendarEventVisibilityExcluding("e", "m", " AND om.id NOT IN (SELECT id FROM targets)")
+	rows, err := reader.QueryContext(ctx, `WITH RECURSIVE
+ targets(id) AS (SELECT id FROM messages WHERE (`+predicate+`) AND message_type IN ('calendar_event', 'meeting_transcript')),
+ links(id, parent) AS (
+ SELECT m.id, COALESCE((SELECT survivor_message_id FROM meeting_copy_survivors WHERE message_id=m.id AND m.delete_batch_id IS NOT NULL), (SELECT survivor_message_id FROM source_merge_messages WHERE message_id=m.id))
+ FROM messages m WHERE m.deleted_at IS NOT NULL OR EXISTS (SELECT 1 FROM calendar_events e WHERE e.message_id=m.id AND NOT `+calendarEventVisibility("e", "m")+`)
+ ),
+ copies(id) AS (
+ SELECT id FROM targets UNION
+ SELECT CASE WHEN l.id=c.id THEN l.parent ELSE l.id END FROM copies c JOIN links l ON (l.id=c.id OR l.parent=c.id) WHERE l.parent IS NOT NULL
+ )
+ SELECT c.id, l.parent, EXISTS(SELECT 1 FROM targets t WHERE t.id=c.id),
+ EXISTS(SELECT 1 FROM calendar_events e JOIN messages m ON m.id=e.message_id WHERE e.message_id=c.id AND m.deleted_at IS NULL AND m.id NOT IN (SELECT id FROM targets) AND `+visibilityAfterPurge+`)
+ FROM copies c LEFT JOIN links l ON l.id=c.id`, args...)
 	if err != nil {
 		return err
 	}
-	var edges []meetingDecisionEdge
+	defer func() { _ = rows.Close() }()
+	purged := map[int64]bool{}
+	children := map[int64][]int64{}
+	parents := map[int64]int64{}
+	var ids []int64
+	var visibleAfter []int64
 	for rows.Next() {
-		var edge meetingDecisionEdge
-		if err := rows.Scan(&edge.id, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.decision); err != nil {
+		var id int64
+		var parent sql.NullInt64
+		var deleted, visible bool
+		if err := rows.Scan(&id, &parent, &deleted, &visible); err != nil {
 			return errors.Join(err, rows.Close()) //nolint:sqlclosecheck // Close before returning the scan error.
 		}
-		edges = append(edges, edge)
+		ids = append(ids, id)
+		purged[id] = deleted
+		if visible {
+			visibleAfter = append(visibleAfter, id)
+		}
+		if parent.Valid {
+			children[parent.Int64] = append(children[parent.Int64], id)
+			parents[id] = parent.Int64
+		}
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	for id := range children {
+		slices.Sort(children[id])
+	}
+	preferred := map[int64]int64{}
+	root := func(id int64) int64 {
+		seen := map[int64]bool{}
+		for parents[id] != 0 && !seen[id] {
+			seen[id] = true
+			id = parents[id]
+		}
+		return id
+	}
+	for _, id := range visibleAfter {
+		if parent := root(id); purged[parent] {
+			preferred[parent] = id
+		}
+	}
+	replacement := func(id int64) (int64, bool) {
+		if copyID, ok := preferred[id]; ok {
+			return copyID, true
+		}
+		queue := []int64{id}
+		seen := map[int64]bool{}
+		for len(queue) > 0 {
+			current := queue[0]
+			queue = queue[1:]
+			if seen[current] {
+				continue
+			}
+			seen[current] = true
+			if !purged[current] {
+				return current, true
+			}
+			queue = append(queue, children[current]...)
+		}
+		return 0, false
+	}
+	var edges []meetingDecisionEdge
+	seenEdges := map[int64]bool{}
+	for batch := range slices.Chunk(ids, 200) {
+		params := make([]any, 0, len(batch)*2)
+		for range 2 {
+			for _, id := range batch {
+				params = append(params, id)
+			}
+		}
+		marks := placeholders(len(batch))
+		if err := func() error {
+			rows, err := reader.QueryContext(ctx, `SELECT id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision FROM meeting_link_decisions WHERE left_message_id IN (`+marks+`) OR right_message_id IN (`+marks+`)`, params...)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rows.Close() }()
+			for rows.Next() {
+				var edge meetingDecisionEdge
+				if err := rows.Scan(&edge.id, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.decision); err != nil {
+					return err
+				}
+				if !seenEdges[edge.id] {
+					seenEdges[edge.id] = true
+					edges = append(edges, edge)
+				}
+			}
+			return errors.Join(rows.Err(), rows.Close())
+		}(); err != nil {
+			return err
+		}
+	}
+	slices.SortFunc(edges, func(a, b meetingDecisionEdge) int { return cmp.Compare(b.id, a.id) })
+	// Keep a choice on a surviving copy when possible. All choices resolving
+	// to the same deleted visible copy use the same replacement for priority.
+	for _, edge := range edges {
+		for _, endpoint := range []meetingDecisionEndpoint{edge.a, edge.b} {
+			deleted, affected := purged[endpoint.ID]
+			if !affected || deleted {
+				continue
+			}
+			id := root(endpoint.ID)
+			if purged[id] && preferred[id] == 0 {
+				preferred[id] = endpoint.ID
+			}
+		}
 	}
 	type pair struct{ a, b meetingDecisionEndpoint }
 	type resolved struct {
@@ -567,10 +667,22 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 		if err != nil {
 			return err
 		}
+		if purged[a.ID] {
+			var found bool
+			a.ID, found = replacement(a.ID)
+			ok = ok && found
+		}
+		if purged[b.ID] {
+			var found bool
+			b.ID, found = replacement(b.ID)
+			ok = ok && found
+		}
 		if compareMeetingEndpoints(a, b) > 0 {
 			a, b = b, a
 		}
-		moving := purged[edge.a.ID] || purged[edge.b.ID]
+		_, leftAffected := purged[edge.a.ID]
+		_, rightAffected := purged[edge.b.ID]
+		moving := leftAffected || rightAffected
 		p := pair{a, b}
 		valid := ok && a != b
 		resolvedEdges = append(resolvedEdges, resolved{edge, p, moving, valid})
