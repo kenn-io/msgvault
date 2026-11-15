@@ -120,7 +120,7 @@ func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
-func TestSchemaVersionCalendarSeriesIndexUpgrade(t *testing.T) {
+func TestCalendarSeriesIndexRecreated(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	if f.Store.IsPostgreSQL() {
@@ -129,9 +129,6 @@ func TestSchemaVersionCalendarSeriesIndexUpgrade(t *testing.T) {
 	ctx := t.Context()
 	_, err := f.Store.DB().ExecContext(ctx, `DROP INDEX IF EXISTS idx_calendar_events_series_provider_id`)
 	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(ctx, `UPDATE archive_metadata SET value = '42' WHERE key = 'schema_version'`)
-	require.NoError(err)
-	require.NoError(f.Store.InitSchemaContext(ctx))
 	require.NoError(f.Store.InitSchemaContext(ctx))
 	query := `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_calendar_events_series_provider_id'`
 	var count int

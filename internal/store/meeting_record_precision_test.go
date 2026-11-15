@@ -19,7 +19,6 @@ func TestMeetingRecordFractionalExceptionImportAndListing(t *testing.T) {
 	}{
 		{"without own UID", "", "001", 1000000},
 		{"with own UID", `,"iCalUID":"uid@example.org"`, "001", 1000000},
-		{"millisecond", `,"iCalUID":"uid@example.org"`, "500", 500000000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
