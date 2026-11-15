@@ -218,7 +218,8 @@ describe("PersonOpenLoops", () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(first));
     if (paged) fetcher.mockResolvedValueOnce(Response.json({ ...first, commitments: [promise(6)], commitments_next_offset: undefined }));
     fetcher.mockResolvedValueOnce(Response.json({ ...first, commitments: [1, 2, 3, 4, 7].map((id) => promise(id)), commitments_next_offset: 5, coverage_incomplete: false }));
-    fetcher.mockResolvedValueOnce(Response.json({ commitments: [promise(6), promise(8)] }));
+    fetcher.mockResolvedValueOnce(Response.json({ commitments: [6, 8, 9, 10, 11].map((id) => promise(id)), commitments_next_offset: 10 }));
+    fetcher.mockResolvedValueOnce(Response.json({ commitments: [promise(12)] }));
     render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
     if (paged) {
       (await screen.findByRole("button", { name: "More promises" })).click();
@@ -232,7 +233,12 @@ describe("PersonOpenLoops", () => {
     if (!paged) (await screen.findByRole("button", { name: "More promises" })).click();
     expect(await screen.findByRole("link", { name: "Promise 8" })).toBeDefined();
     expect(screen.getAllByRole("link", { name: "Promise 6" })).toHaveLength(1);
-    expect(screen.getByText("7 open")).toBeDefined();
+    (await screen.findByRole("button", { name: "More promises" })).click();
+    expect(await screen.findByRole("link", { name: "Promise 12" })).toBeDefined();
+    const request = fetcher.mock.calls.at(-1)?.[0];
+    const url = new URL(request instanceof Request ? request.url : String(request), "http://localhost");
+    expect(url.searchParams.get("commitment_offset")).toBe("10");
+    expect(screen.getByText("11 open")).toBeDefined();
   });
 
   it("appends the next promise page", async () => {
