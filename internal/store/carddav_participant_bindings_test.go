@@ -512,6 +512,9 @@ func TestCardDAVParticipantBindingCandidateOwnership(t *testing.T) {
 				if actor == "system" {
 					assert.Equal(1, result.ParticipantsUnbound)
 					assert.Equal([]int64{a}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
+					_, err = st.LinkParticipants(a, b)
+					require.NoError(err)
+					assert.ElementsMatch([]int64{a, b}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
 					c, err := st.EnsureParticipant("linked@example.test", "Linked", "example.test")
 					require.NoError(err)
 					manualCandidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{LeftKind: store.IdentityMatchParticipant, LeftID: a, RightKind: store.IdentityMatchParticipant, RightID: c, Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("another-provider-id"), State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation})
