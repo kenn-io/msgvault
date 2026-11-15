@@ -644,7 +644,7 @@ func (c *Client) selectMailbox(ctx context.Context, mailbox string) error {
 // server advertises support. Sending extended LIST options to legacy servers
 // can make otherwise valid mailbox enumeration fail.
 func (c *Client) listOptionsLocked() *imap.ListOptions {
-	if !c.conn.Caps().Has(imap.CapSpecialUse) {
+	if !c.connCaps().Has(imap.CapSpecialUse) {
 		return nil
 	}
 	return &imap.ListOptions{ReturnSpecialUse: true}
