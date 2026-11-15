@@ -877,20 +877,18 @@ their referenced section blocks. For meetings under pages, msgvault also reads
 the parent page's Markdown. When the structured transcript is empty or its
 section can't be read, msgvault uses a complete Markdown transcript section.
 
-Temporary provider or network errors, incomplete pagination, and the existing
-request, response-size, block-count, and nesting limits can leave a section
-incomplete. msgvault keeps its archived text and evidence and retries incomplete
-section blocks every six hours until they can be read, including after the meeting
-leaves the visible query window. The initial retry deadline is seven days after
-the meeting ended, or 48 hours after the first retry when the end time is unknown.
-Incomplete section blocks start another 48-hour window after the deadline expires.
+Provider or network errors, incomplete pagination, and request, response-size,
+block-count, and nesting limits can leave sections incomplete. msgvault keeps
+their archived text and evidence and retries section blocks every six hours,
+even after a meeting leaves the query window. The first retry window ends seven
+days after the meeting ended, or 48 hours after the first retry if the end time
+is unknown. Incomplete section blocks start another 48-hour window at expiry.
 
-If incomplete page Markdown has no transcript marker, msgvault keeps saved page
-transcript text. When that is the only incomplete content, background retries stop
-at the deadline without starting another window. Visible meetings still refresh on
-later syncs. A missing transcript without an incomplete section also stops
-background retries at its deadline. The sync summary reports partial coverage when
-a section is incomplete or the Notion query reports more meetings.
+If incomplete page Markdown has no transcript marker, msgvault keeps the saved
+page transcript. When that is the only incomplete content, or a transcript is
+missing without an incomplete section, background retries stop at the deadline.
+Later syncs still refresh visible meetings. The sync summary reports partial
+coverage when a section is incomplete or the Notion query reports more meetings.
 
 When a transcript read is incomplete and no complete page transcript is available,
 sync retains the saved transcript and reports that it did so. An omitted transcript

@@ -479,7 +479,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		finishPending := func() {
 			if clearPending {
 				delete(pendingByID, id)
-				delete(next.TranscriptRetryUntil, id)
+				if !providerTranscriptMissing || terminal {
+					delete(next.TranscriptRetryUntil, id)
+				}
 			}
 		}
 
@@ -770,17 +772,17 @@ func retainDiscoverySectionIDs(raw jsontext.Value, ids map[string]string) (jsont
 			children[key] = value
 		}
 	}
-	value, err := json.Marshal(children)
+	value, err := json.Marshal(children, json.Deterministic(true))
 	if err != nil {
 		return nil, err
 	}
 	meeting["children"] = value
-	value, err = json.Marshal(meeting)
+	value, err = json.Marshal(meeting, json.Deterministic(true))
 	if err != nil {
 		return nil, err
 	}
 	discovery["meeting_notes"] = value
-	return json.Marshal(discovery)
+	return json.Marshal(discovery, json.Deterministic(true))
 }
 
 func transcriptFromArchivedBody(body string) string {

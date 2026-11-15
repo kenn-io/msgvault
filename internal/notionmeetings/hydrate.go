@@ -200,10 +200,10 @@ func (h *Hydrator) hydratePageMarkdown(ctx context.Context, result *HydratedMeet
 		return err
 	}
 	result.PageMarkdown = page
-	markdown := extractMarkdownTranscript(page.Markdown)
+	markdown, hasMarker := extractMarkdownTranscript(page.Markdown)
 	complete := !page.Truncated && len(page.UnknownBlockIDs) == 0
 	if result.Transcript == "" && !complete {
-		result.markdownOnlyIncomplete = !slices.Contains(result.Incomplete, sectionTranscript) && !hasTranscriptMarker(page.Markdown)
+		result.markdownOnlyIncomplete = !slices.Contains(result.Incomplete, sectionTranscript) && !hasMarker
 		result.markIncomplete(sectionTranscript, "markdown")
 	} else if result.Transcript == "" && markdown != "" && complete {
 		result.Transcript = markdown
@@ -274,7 +274,7 @@ func (h *Hydrator) readChildren(ctx context.Context, blockID string, depth int, 
 				return hydrationLimit("block")
 			}
 			tree.Blocks = append(tree.Blocks, child)
-			if child.HasChildren {
+			if child.HasChildren && child.Type != "meeting_notes" {
 				if err := h.readChildren(ctx, child.ID, depth+1, tree); err != nil {
 					return err
 				}
@@ -515,7 +515,7 @@ func transcriptTemporarilyUnavailable(err error) bool {
 	return errors.As(err, &network) || errors.Is(err, io.EOF)
 }
 
-func extractMarkdownTranscript(markdown string) string {
+func extractMarkdownTranscript(markdown string) (string, bool) {
 	lines := strings.Split(strings.ReplaceAll(markdown, "\r\n", "\n"), "\n")
 	for index, line := range lines {
 		headingLevel, heading, isHeading := markdownHeading(line)
@@ -527,7 +527,7 @@ func extractMarkdownTranscript(markdown string) string {
 			continue
 		}
 		if inline != "" {
-			return inline
+			return inline, true
 		}
 		end := len(lines)
 		if !isHeading {
@@ -540,22 +540,9 @@ func extractMarkdownTranscript(markdown string) string {
 				break
 			}
 		}
-		return strings.TrimSpace(strings.Join(lines[index+1:end], "\n"))
+		return strings.TrimSpace(strings.Join(lines[index+1:end], "\n")), true
 	}
-	return ""
-}
-
-func hasTranscriptMarker(markdown string) bool {
-	for line := range strings.SplitSeq(strings.ReplaceAll(markdown, "\r\n", "\n"), "\n") {
-		_, heading, isHeading := markdownHeading(line)
-		if !isHeading {
-			heading = strings.TrimSpace(line)
-		}
-		if _, found := transcriptMarker(heading); found {
-			return true
-		}
-	}
-	return false
+	return "", false
 }
 
 func markdownHeading(line string) (int, string, bool) {

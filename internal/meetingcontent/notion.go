@@ -290,7 +290,7 @@ func notionBlockTraversalHeader(raw jsontext.Value) (string, bool, bool) {
 	}
 	id = strings.TrimSpace(id)
 	hasChildrenRaw, exists := fields["has_children"]
-	if !exists {
+	if !exists || string(fields["type"]) == `"meeting_notes"` {
 		return id, false, true
 	}
 	var hasChildren bool

@@ -1682,3 +1682,51 @@ func TestImporterRetainsActionAttributionDuringReplacementFailure(t *testing.T) 
 		})
 	}
 }
+
+func TestImporterExcludesNestedMeetingAndKeepsSiblingActions(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	meeting := hydrationMeeting()
+	meeting.Parent = Parent{Type: "data_source_id"}
+	source.query.Results = []MeetingNote{meeting}
+	source.blocks["notes-1"].Raw = json.RawMessage(`{"id":"notes-1","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}}`)
+	var nested, sibling Block
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"other-meeting","type":"meeting_notes","has_children":true}`), &nested))
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"task-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}`), &sibling))
+	source.children["notes-1"][""] = &BlockPage{Results: []Block{nested, sibling}, Raw: json.RawMessage(`{"results":[{"id":"other-meeting","type":"meeting_notes","has_children":true},{"id":"task-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Sibling action"}],"checked":false}}],"has_more":false}`)}
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_id = ?`, first.SourceID).Scan(&id))
+	raw, err := st.GetMessageRaw(id)
+	require.NoError(t, err)
+	content := meetingcontent.Decode(RawFormat, raw, nil)
+	assert.Equal(t, meetingcontent.CoverageAvailable, content.ActionCoverage)
+	require.Len(t, content.Actions, 1)
+	assert.Equal(t, "Sibling action", content.Actions[0].Title)
+	updated := paragraph("task-1", "Edited sibling", false)
+	source.children["notes-1"][""].Results[1] = updated
+	source.children["notes-1"][""].Raw = json.RawMessage(`{"results":[{"id":"other-meeting","type":"meeting_notes","has_children":true},{"id":"task-1","type":"paragraph","has_children":false,"paragraph":{"rich_text":[{"plain_text":"Edited sibling"}]}}],"has_more":false}`)
+	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), second.MeetingsUpdated)
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Edited sibling")
+}
+
+func TestImporterUnchangedUnavailableReplacementDoesNotUpdate(t *testing.T) {
+	_, source, imp := newImporterFixture(t)
+	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	meeting := source.query.Results[0]
+	meeting.MeetingNotes.Children.NotesBlockID = "replacement"
+	source.query.Results = []MeetingNote{meeting}
+	source.blockErrs = map[string]error{"replacement": ErrRateLimited}
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	for range 20 {
+		result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+		require.NoError(t, err)
+		assert.Zero(t, result.MeetingsUpdated)
+	}
+}

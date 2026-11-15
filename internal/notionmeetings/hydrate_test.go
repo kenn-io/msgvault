@@ -343,7 +343,11 @@ func TestExtractMarkdownTranscript(t *testing.T) {
 		{"absent", "# Notes\nSome notes", ""},
 		{"empty", "# Transcript\n", ""},
 	} {
-		t.Run(tc.name, func(t *testing.T) { assert.Equal(t, tc.want, extractMarkdownTranscript(tc.markdown)) })
+		t.Run(tc.name, func(t *testing.T) {
+			got, found := extractMarkdownTranscript(tc.markdown)
+			assert.Equal(t, tc.want, got)
+			assert.Equal(t, tc.name != "absent", found)
+		})
 	}
 }
 
