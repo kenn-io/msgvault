@@ -252,6 +252,8 @@ func TestHydratorKeepsSystemicTranscriptErrorsFatal(t *testing.T) {
 	}{
 		{name: "unauthorized", err: &APIError{Kind: ErrUnauthorized, Status: 401, Code: "unauthorized"}},
 		{name: "unauthorized second page", err: &APIError{Kind: ErrUnauthorized, Status: 401, Code: "unauthorized"}, secondPage: true},
+		{name: "forbidden", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "forbidden"}},
+		{name: "forbidden second page", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "forbidden"}, secondPage: true},
 		{name: "malformed response", err: fmt.Errorf("%w: invalid block", ErrMalformedResponse)},
 		{name: "transient error after cancel", err: &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}, cancel: true},
 	}
