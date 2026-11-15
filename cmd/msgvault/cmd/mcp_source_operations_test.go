@@ -65,15 +65,9 @@ func operationMCPSession(t *testing.T, backend *daemonMCPOperations, families []
 	return session
 }
 
-func sourceOperationFixture(t *testing.T, fixture *api.Server, observers ...func(*http.Request)) *daemonMCPOperations {
+func sourceOperationFixture(t *testing.T, fixture *api.Server) *daemonMCPOperations {
 	t.Helper()
-	router := fixture.Router()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		for _, observe := range observers {
-			observe(r)
-		}
-		router.ServeHTTP(w, r)
-	}))
+	server := httptest.NewServer(fixture.Router())
 	t.Cleanup(server.Close)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)

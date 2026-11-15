@@ -63,14 +63,14 @@ func loopOperationMCPSession(t *testing.T, backend *daemonMCPOperations, familie
 	return session
 }
 
-func loopOperationFixture(t *testing.T, observers ...func(*http.Request)) (*storetest.Fixture, *daemonMCPOperations, int64) {
+func loopOperationFixture(t *testing.T) (*storetest.Fixture, *daemonMCPOperations, int64) {
 	t.Helper()
 	f := storetest.New(t)
 	now := time.Now().UTC()
 	f.PersistEmail(storetest.EmailSpec{Thread: "owed", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: "Hello", SentAt: now.Add(-10 * 24 * time.Hour)})
 	anchor := f.PersistEmail(storetest.EmailSpec{Thread: "owed", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send the contract?", SentAt: now.Add(-5 * 24 * time.Hour)})
 	f.PersistEmail(storetest.EmailSpec{Thread: "asked", From: storetest.OwnerAddress, To: []string{"sam@example.test"}, Body: "Are you free?", SentAt: now.Add(-20 * 24 * time.Hour)})
-	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: config.NewDefaultConfig(), Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler)}), observers...)
+	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: config.NewDefaultConfig(), Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler)}))
 	return f, backend, anchor
 }
 
@@ -106,12 +106,7 @@ func assertLoopRefusal(t *testing.T, result *mcpserver.OperationResult, code str
 func TestMCPLoopsSDKDecisionsAndList(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	var offset atomic.Value
-	f, backend, anchor := loopOperationFixture(t, func(r *http.Request) {
-		if r.URL.Path == "/api/v1/loops" {
-			offset.Store(r.URL.Query().Get("commitment_offset"))
-		}
-	})
+	f, backend, anchor := loopOperationFixture(t)
 	approved := true
 	var disclosures []string
 	session := loopOperationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyLoops}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
@@ -131,8 +126,6 @@ func TestMCPLoopsSDKDecisionsAndList(t *testing.T) {
 		requirements.NoError(err)
 		return result
 	}
-	loopToolOutput[generated.LoopListResponse](t, call("list_open_loops", map[string]any{"commitment_offset": 5}))
-	assertions.Equal("5", offset.Load())
 	list := loopToolOutput[generated.LoopListResponse](t, call("list_open_loops", nil))
 	requirements.Len(list.Items, 2)
 	kinds := []string{}
@@ -196,7 +189,7 @@ func TestMCPLoopArgumentValidationAndDateResolution(t *testing.T) {
 		name string
 		args map[string]any
 	}{
-		{"list_open_loops", map[string]any{"commitment_offset": -1}}, {"list_open_loops", map[string]any{"limit": 0}}, {"list_open_loops", map[string]any{"limit": 201}}, {"list_open_loops", map[string]any{"limit": 1.5}},
+		{"list_open_loops", map[string]any{"limit": 0}}, {"list_open_loops", map[string]any{"limit": 201}}, {"list_open_loops", map[string]any{"limit": 1.5}},
 		{"list_open_loops", map[string]any{"person_id": 0}}, {"list_open_loops", map[string]any{"person_id": int64(1 << 53)}}, {"list_open_loops", map[string]any{"kind": "reply_owed"}},
 		{"close_open_loop", map[string]any{"message_id": 0, "question_message_ids": []int64{anchor}}}, {"close_open_loop", map[string]any{"message_id": int64(1 << 53), "question_message_ids": []int64{anchor}}}, {"close_open_loop", map[string]any{"message_id": anchor, "question_message_ids": []int64{anchor}, "note": "x"}},
 		{"close_open_loop", map[string]any{"message_id": anchor}}, {"close_open_loop", map[string]any{"message_id": anchor, "question_message_ids": []int64{}}}, {"close_open_loop", map[string]any{"message_id": anchor, "question_message_ids": []int64{0}}},
