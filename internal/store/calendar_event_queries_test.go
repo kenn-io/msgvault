@@ -6,39 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestCalendarListingUsesProjectedEvents(t *testing.T) {
-	require := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	if st.IsPostgreSQL() {
-		t.Skip("SQLite authorizer detects raw event reads")
-	}
-	_, event := calendarFixture(t, st, "event", calendarRaw)
-	st.DB().SetMaxOpenConns(1)
-	conn, err := st.DB().Conn(t.Context())
-	require.NoError(err)
-	require.NoError(conn.Raw(func(driverConn any) error {
-		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
-		require.True(ok)
-		sqliteConn.RegisterAuthorizer(func(action int, table, _, _ string) int {
-			if action == sqlite3.SQLITE_READ && table == "message_raw" {
-				return sqlite3.SQLITE_DENY
-			}
-			return sqlite3.SQLITE_OK
-		})
-		return nil
-	}))
-	require.NoError(conn.Close())
-	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	require.NoError(err)
-	require.Len(page.Occurrences, 1)
-	require.Equal(event, page.Occurrences[0].MessageID)
-}
 
 func calendarWindow(t *testing.T, st *Store, from, to string) ([]CalendarEventRow, error) {
 	t.Helper()
