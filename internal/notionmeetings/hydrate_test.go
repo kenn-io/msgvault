@@ -266,13 +266,14 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 
 func TestHydratorKeepsSystemicTranscriptErrorsFatal(t *testing.T) {
 	tests := []struct {
-		name string
-		err  error
+		name   string
+		err    error
+		cancel bool
 	}{
 		{name: "unauthorized", err: &APIError{Kind: ErrUnauthorized, Status: 401, Code: "unauthorized"}},
 		{name: "read content forbidden", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "restricted_resource"}},
 		{name: "malformed response", err: fmt.Errorf("%w: invalid block", ErrMalformedResponse)},
-		{name: "context canceled", err: ErrRateLimited},
+		{name: "transient error after cancel", err: ErrRateLimited, cancel: true},
 	}
 
 	for _, tt := range tests {
@@ -281,7 +282,7 @@ func TestHydratorKeepsSystemicTranscriptErrorsFatal(t *testing.T) {
 			source.blockErrs = map[string]error{"transcript-1": tt.err}
 
 			ctx := t.Context()
-			if tt.name == "context canceled" {
+			if tt.cancel {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithCancel(ctx)
 				defer cancel()
@@ -553,7 +554,11 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 				source.children["summary-1"] = pages
 			case "blocks":
 				root.HasChildren = true
-				source.children["summary-1"] = map[string]*BlockPage{"": {Results: make([]Block, maxHydrationBlocks)}}
+				blocks := make([]Block, maxHydrationBlocks)
+				for i := range blocks {
+					blocks[i] = Block{ID: fmt.Sprintf("block-%d", i), Type: "paragraph"}
+				}
+				source.children["summary-1"] = map[string]*BlockPage{"": {Results: blocks}}
 			case "depth":
 				root.HasChildren = true
 				id := "summary-1"

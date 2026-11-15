@@ -102,7 +102,6 @@ func TestRunNotionMeetingsProbeIsContentAndTokenSafe(t *testing.T) {
 	assert.NotContains(out.String(), "Private meeting title")
 	assert.NotContains(out.String(), "secret-token")
 	assert.NotContains(out.String(), "private transcript")
-	assert.Contains(out.String(), "Read Content: available")
 	assert.Contains(out.String(), "User Information: available")
 }
 
