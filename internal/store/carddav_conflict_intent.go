@@ -234,7 +234,7 @@ func (s *Store) CommitCardDAVConflictLocalIntentContext(ctx context.Context, inp
 		if _, err = tx.ExecContext(ctx, `UPDATE carddav_conflicts SET local_mutation_intent=NULL WHERE id=?`, source.Conflict.ID); err != nil {
 			return err
 		}
-		_, err = resolveCardDAVConflictAuditTx(ctx, tx, s.dialect, source.Conflict.ID, CardDAVResolutionKeepLocal)
+		_, err = s.resolveCardDAVConflictAuditTx(ctx, tx, s.dialect, source.Conflict.ID, CardDAVResolutionKeepLocal)
 		return err
 	})
 }

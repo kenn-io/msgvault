@@ -133,3 +133,40 @@ func TestCardDAVBookRolesRefreshesIdentityCache(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, response.Code)
 	assert.Equal(t, 1, st.refreshCalls)
 }
+
+type cardDAVPublicationMutationFixture struct {
+	cardDAVListFixture
+
+	store       *store.Store
+	participant int64
+}
+
+func (f *cardDAVPublicationMutationFixture) PublishPerson(ctx context.Context, _ int64) error {
+	_, _, err := f.store.CreatePersonFromParticipantContext(ctx, f.participant)
+	if err != nil {
+		return err
+	}
+	return errors.New("publication conflict")
+}
+
+func (f *cardDAVPublicationMutationFixture) ResolveConflict(ctx context.Context, _ int64, _ carddav.ResolutionChoice) error {
+	return f.PublishPerson(ctx, 0)
+}
+
+func TestCardDAVPublicationRefreshesIdentityCacheAfterConflict(t *testing.T) {
+	for _, test := range []struct{ path, body string }{
+		{"/api/v1/carddav/publications/7", `{}`},
+		{"/api/v1/carddav/conflicts/7/resolve", `{"choice":"keep_local"}`},
+	} {
+		t.Run(test.path, func(t *testing.T) {
+			st := &stubIdentityCacheStore{Store: testutil.NewTestStore(t)}
+			id, err := st.EnsureParticipant("publish@example.test", "Publish", "example.test")
+			require.NoError(t, err)
+			service := &cardDAVPublicationMutationFixture{store: st.Store, participant: id}
+			srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger(), CardDAV: &CardDAVController{service: service}})
+			response := personRequest(t, srv, http.MethodPost, test.path, []byte(test.body), "")
+			assert.Equal(t, http.StatusInternalServerError, response.Code)
+			assert.Equal(t, 1, st.refreshCalls)
+		})
+	}
+}

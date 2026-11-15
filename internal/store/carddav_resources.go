@@ -258,6 +258,7 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 				}
 			}
 			if _, err := s.recordCardDAVConflictTx(ctx, tx, capture, cardDAVConflictRecordOptions{
+				deferParticipantCleanup:        true,
 				supersedePendingIntent:         !capture.RemoteTombstone,
 				preserveExistingLocalTombstone: !capture.RemoteTombstone,
 			}); err != nil {
@@ -330,7 +331,7 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 			}
 		}
 
-		if err := s.reconcileCardDAVParticipantBindingsTx(ctx, tx); err != nil {
+		if err := s.reconcileCardDAVParticipantBindingsTx(ctx, tx, false); err != nil {
 			return err
 		}
 
@@ -587,6 +588,11 @@ func (s *Store) cardDAVResourceNeedsConflictTx(
 func (s *Store) CardDAVRemoteUpdateNeedsConflictContext(ctx context.Context, bookID int64, href string, input CardDAVRemoteResource) (bool, error) {
 	var needed bool
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		// Match participant reconciliation's identity-first order before this
+		// preflight locks a CardDAV resource or its person.
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		var err error
 		needed, _, err = s.cardDAVResourceNeedsConflictTx(ctx, tx, bookID, href, input.SemanticHash, input.EquivalentLocalHash, input.RemoteBody)
 		return err
@@ -1061,6 +1067,9 @@ func (s *Store) acceptCardDAVIdentityMatchCandidateReviewedContext(
 				ctx, tx, candidate.ID, IdentityMatchStateAccepted, *reviewToken); err != nil {
 				return err
 			}
+		}
+		if err := s.cleanupCardDAVParticipantBindingsTx(ctx, tx); err != nil {
+			return err
 		}
 		accepted, err = getIdentityMatchCandidateTx(ctx, tx, candidate.ID)
 		return err

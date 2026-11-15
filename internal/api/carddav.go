@@ -1578,6 +1578,7 @@ func (s *Server) mutatePublication(w http.ResponseWriter, r *http.Request, mutat
 		writeError(w, 400, "bad_request", err.Error())
 		return
 	}
+	defer s.refreshCardDAVIdentityChanges(r.Context())()
 	if err = mutate(svc, id); err != nil {
 		s.writeCardDAVOperationError(w, err, "CardDAV publication failed")
 		return
@@ -1698,6 +1699,7 @@ func (s *Server) handleCardDAVResolve(w http.ResponseWriter, r *http.Request) {
 	if !decodeCardDAV(w, r, &req) {
 		return
 	}
+	defer s.refreshCardDAVIdentityChanges(r.Context())()
 	if err = svc.ResolveConflict(r.Context(), id, req.Choice); err != nil {
 		s.writeCardDAVOperationError(w, err, "CardDAV conflict resolution failed")
 		return

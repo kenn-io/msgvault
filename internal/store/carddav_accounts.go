@@ -356,6 +356,9 @@ func (s *Store) ReplaceCardDAVDiscoveryContext(
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := s.cleanupCardDAVParticipantBindingsTx(ctx, logged); err != nil {
+		return nil, nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, nil, fmt.Errorf("commit CardDAV discovery replacement: %w", err)
 	}
@@ -667,7 +670,7 @@ func (s *Store) SetCardDAVBookRolesContext(
 		} else if affected != 1 {
 			return ErrCardDAVAddressBookNotFound
 		}
-		return nil
+		return s.cleanupCardDAVParticipantBindingsTx(ctx, tx)
 	})
 }
 
