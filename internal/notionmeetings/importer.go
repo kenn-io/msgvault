@@ -371,9 +371,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			{sectionTranscript, &hydrated.Transcript, archived.Evidence.Canonical.Transcript},
 		}
 		leaveUnchanged := false
-		var retainedIDs = map[string]string{}
-		var previousDiscovery MeetingNote
-		_ = json.Unmarshal(archived.Evidence.Discovery, &previousDiscovery) // zero without usable evidence
 		for _, section := range sections {
 			incomplete := slices.Contains(hydrated.Incomplete, section.name)
 			if section.name == sectionTranscript && hydrated.MarkdownTranscriptFallback {
@@ -406,16 +403,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			if archived.HasEvidence {
 				if rawTree := archived.RawTrees[section.name]; len(rawTree) > 0 {
 					hydrated.keptRawTrees[section.name] = append(jsontext.Value(nil), rawTree...)
-					switch section.name {
-					case "summary":
-						if previousDiscovery.MeetingNotes.Children.SummaryBlockID != "" && previousDiscovery.MeetingNotes.Children.SummaryBlockID != meeting.MeetingNotes.Children.SummaryBlockID {
-							retainedIDs["summary_block_id"] = previousDiscovery.MeetingNotes.Children.SummaryBlockID
-						}
-					case "notes":
-						if previousDiscovery.MeetingNotes.Children.NotesBlockID != "" && previousDiscovery.MeetingNotes.Children.NotesBlockID != meeting.MeetingNotes.Children.NotesBlockID {
-							retainedIDs["notes_block_id"] = previousDiscovery.MeetingNotes.Children.NotesBlockID
-						}
-					}
 				}
 				markdownPresent := len(archived.Evidence.PageMarkdown) > 0 && string(archived.Evidence.PageMarkdown) != "null"
 				if section.name == sectionTranscript && markdownPresent {
@@ -427,15 +414,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				}
 			}
 			hydrated.Warnings = append(hydrated.Warnings, "provider temporarily omitted the "+section.name+"; preserved the archived "+section.name)
-		}
-		if len(retainedIDs) > 0 {
-			var discoveryErr error
-			hydrated.Discovery.Raw, discoveryErr = retainDiscoverySectionIDs(hydrated.Discovery.Raw, retainedIDs)
-			if discoveryErr != nil {
-				sum.Errors++
-				hardErrors = append(hardErrors, fmt.Errorf("meeting %s: retain section IDs: %w", id, discoveryErr))
-				continue
-			}
 		}
 		if hydrated.AttendeeResolutionDegraded {
 			preserveArchivedAttendees(hydrated, archived.ResolvedUsers)
@@ -726,39 +704,6 @@ func decodeArchivedEvidence(raw []byte, expectedID string) (rawEvidence, map[str
 		return rawEvidence{}, nil, false, nil
 	}
 	return evidence, fields, true, nil
-}
-
-func retainDiscoverySectionIDs(raw jsontext.Value, ids map[string]string) (jsontext.Value, error) {
-	var discovery, meeting, children map[string]jsontext.Value
-	if err := json.Unmarshal(raw, &discovery); err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(discovery["meeting_notes"], &meeting); err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(meeting["children"], &children); err != nil {
-		return nil, err
-	}
-	for key, id := range ids {
-		if id != "" {
-			value, err := json.Marshal(id)
-			if err != nil {
-				return nil, err
-			}
-			children[key] = value
-		}
-	}
-	value, err := json.Marshal(children, json.Deterministic(true))
-	if err != nil {
-		return nil, err
-	}
-	meeting["children"] = value
-	value, err = json.Marshal(meeting, json.Deterministic(true))
-	if err != nil {
-		return nil, err
-	}
-	discovery["meeting_notes"] = value
-	return json.Marshal(discovery, json.Deterministic(true))
 }
 
 func transcriptFromArchivedBody(body string) string {

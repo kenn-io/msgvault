@@ -1537,7 +1537,7 @@ func TestImporterHandlesOmittedSections(t *testing.T) {
 	}
 }
 
-func TestImporterRetainsActionAttributionDuringReplacementFailure(t *testing.T) {
+func TestImporterKeepsSectionTextWhileReplacementIsIncomplete(t *testing.T) {
 	for _, section := range []string{"summary", "notes"} {
 		t.Run(section, func(t *testing.T) {
 			assert := assert.New(t)
@@ -1562,6 +1562,10 @@ func TestImporterRetainsActionAttributionDuringReplacementFailure(t *testing.T) 
 			require.NoError(err)
 			var id int64
 			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+			originalRaw, err := st.GetMessageRaw(id)
+			require.NoError(err)
+			var original map[string]json.RawMessage
+			require.NoError(json.Unmarshal(originalRaw, &original))
 			if section == "summary" {
 				meeting.MeetingNotes.Children.SummaryBlockID = "replacement"
 			} else {
@@ -1581,12 +1585,15 @@ func TestImporterRetainsActionAttributionDuringReplacementFailure(t *testing.T) 
 			body, err := st.GetMessageBodyText(t.Context(), id)
 			require.NoError(err)
 			assert.Contains(body, "Updated "+other)
+			assert.Contains(body, "Saved task")
 			raw, err := st.GetMessageRaw(id)
 			require.NoError(err)
+			var evidence map[string]json.RawMessage
+			require.NoError(json.Unmarshal(raw, &evidence))
+			assert.JSONEq(string(original[section]), string(evidence[section]))
 			content := meetingcontent.Decode(RawFormat, raw, nil)
-			assert.Equal(meetingcontent.CoverageAvailable, content.ActionCoverage)
-			require.Len(content.Actions, 1)
-			assert.Equal("Saved task", content.Actions[0].Title)
+			assert.Equal(meetingcontent.CoveragePartial, content.ActionCoverage)
+			assert.Empty(content.Actions)
 			if section == "notes" {
 				repeated, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 				require.NoError(err)
