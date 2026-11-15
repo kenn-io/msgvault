@@ -19,6 +19,7 @@ type fakeNotionProbe struct {
 	block       *notionmeetings.Block
 	err         error
 	blockErr    error
+	blockErrors map[string]error
 	usersErr    error
 	blockIDs    *[]string
 	markdownID  *string
@@ -32,6 +33,9 @@ func (f fakeNotionProbe) QueryMeetingNotes(context.Context, int) (*notionmeeting
 func (f fakeNotionProbe) RetrieveBlock(_ context.Context, id string) (*notionmeetings.Block, error) {
 	if f.blockIDs != nil {
 		*f.blockIDs = append(*f.blockIDs, id)
+	}
+	if err := f.blockErrors[id]; err != nil {
+		return nil, err
 	}
 	return f.block, f.blockErr
 }
@@ -156,6 +160,40 @@ func TestRunNotionMeetingsProbeDataSource(t *testing.T) {
 			require.NoError(t, err)
 			assert.Contains(t, out.String(), tc.want)
 			assert.Equal(t, tc.ids, ids)
+		})
+	}
+}
+
+func TestRunNotionMeetingsProbeTriesLaterSection(t *testing.T) {
+	missing := &notionmeetings.APIError{Kind: notionmeetings.ErrProvider, Status: 404, Code: "object_not_found"}
+	for _, tc := range []struct {
+		name      string
+		firstErr  error
+		secondErr error
+		wantErr   error
+		wantIDs   []string
+	}{
+		{name: "missing then available", firstErr: missing, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
+		{name: "all missing", firstErr: missing, secondErr: missing, wantErr: missing, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
+		{name: "forbidden", firstErr: notionmeetings.ErrReadContent, wantErr: notionmeetings.ErrReadContent, wantIDs: []string{"meeting-1", "summary-1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			var out bytes.Buffer
+			var ids []string
+			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
+				result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", MeetingNotes: notionmeetings.MeetingNotesData{Children: notionmeetings.MeetingChildren{SummaryBlockID: "summary-1", NotesBlockID: "notes-1"}}}}},
+				block:  &notionmeetings.Block{Parent: notionmeetings.Parent{Type: "data_source_id"}}, blockIDs: &ids,
+				blockErrors: map[string]error{"summary-1": tc.firstErr, "notes-1": tc.secondErr},
+			}, nil)
+			assert.Equal(tc.wantIDs, ids)
+			if tc.wantErr != nil {
+				require.ErrorIs(err, tc.wantErr)
+			} else {
+				require.NoError(err)
+				assert.Contains(out.String(), "Read Content: available")
+			}
 		})
 	}
 }
