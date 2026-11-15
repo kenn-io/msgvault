@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -388,8 +387,12 @@ func TestAddCardDAVMicrosoftFlagsAreCheckedBeforeSignIn(t *testing.T) {
 }
 
 func TestCardDAVParticipantBindingCLIUsesDaemonAndPrintsCounts(t *testing.T) {
-	for _, undo := range []bool{false, true} {
-		t.Run(strconv.FormatBool(undo), func(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		undo bool
+	}{{"bind", false}, {"undo", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			undo := tc.undo
 			assert := assert.New(t)
 			require := require.New(t)
 			var seen bool
@@ -399,7 +402,7 @@ func TestCardDAVParticipantBindingCLIUsesDaemonAndPrintsCounts(t *testing.T) {
 				assert.Equal("/api/v1/carddav/participant-bindings", r.URL.Path)
 				var body map[string]bool
 				assert.NoError(json.NewDecoder(r.Body).Decode(&body))
-				assert.True(body["dry_run"])
+				assert.Equal(!undo, body["dry_run"])
 				assert.Equal(undo, body["undo"])
 				w.Header().Set("Content-Type", "application/json")
 				if undo {
@@ -415,18 +418,20 @@ func TestCardDAVParticipantBindingCLIUsesDaemonAndPrintsCounts(t *testing.T) {
 			command := newCardDAVCmd()
 			command.SetContext(testCtx)
 			command.SetOut(&out)
-			args := []string{"bind-participants", "--dry-run"}
+			args := []string{"bind-participants"}
 			if undo {
 				args = append(args, "--undo")
+			} else {
+				args = append(args, "--dry-run")
 			}
 			command.SetArgs(args)
 			require.NoError(command.Execute())
 			assert.True(seen)
 			if undo {
-				assert.Contains(out.String(), "0 cards scanned, 0 participants bound, 3 participants unbound, 0 conflicts")
+				assert.Contains(out.String(), "CardDAV bindings: 0 cards scanned, 0 participants bound, 3 participants unbound, 0 conflicts")
 				return
 			}
-			assert.Contains(out.String(), "2 cards scanned, 0 participants bound, 0 participants unbound, 2 conflicts")
+			assert.Contains(out.String(), "CardDAV bindings (dry run): 2 cards scanned, 0 participants bound, 0 participants unbound, 2 conflicts")
 			assert.Contains(out.String(), "participant 7, people [1 2]: address shared by multiple people")
 			assert.Contains(out.String(), "participant 8, people [2 3]: participant already belongs to another person")
 		})

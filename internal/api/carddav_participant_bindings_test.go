@@ -88,32 +88,27 @@ func (f *cardDAVMutationFixture) ResolveConflict(ctx context.Context, _ int64, _
 func TestCardDAVMutationRefreshesIdentityCache(t *testing.T) {
 	for _, tc := range []struct {
 		name, method, path, body string
-		fail                     bool
+		wantStatus               int
+		refreshErr               error
 	}{
-		{"sync", http.MethodPost, "/api/v1/carddav/sync", `{}`, false},
-		{"sync failure", http.MethodPost, "/api/v1/carddav/sync", `{}`, true},
-		{"roles", http.MethodPatch, "/api/v1/carddav/books/7", `{"write_target":false,"subscribed":false,"lookup_source":false}`, false},
-		{"publish", http.MethodPost, "/api/v1/carddav/publications/7", `{}`, true},
-		{"resolve", http.MethodPost, "/api/v1/carddav/conflicts/7/resolve", `{"choice":"keep_local"}`, true},
+		{"sync", http.MethodPost, "/api/v1/carddav/sync", `{}`, http.StatusOK, nil},
+		{"sync failure", http.MethodPost, "/api/v1/carddav/sync", `{}`, http.StatusInternalServerError, errors.New("cache unavailable")},
+		{"roles", http.MethodPatch, "/api/v1/carddav/books/7", `{"write_target":false,"subscribed":false,"lookup_source":false}`, http.StatusNotFound, nil},
+		{"publish", http.MethodPost, "/api/v1/carddav/publications/7", `{}`, http.StatusInternalServerError, nil},
+		{"resolve", http.MethodPost, "/api/v1/carddav/conflicts/7/resolve", `{"choice":"keep_local"}`, http.StatusInternalServerError, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := &stubIdentityCacheStore{Store: testutil.NewTestStore(t)}
 			id, err := st.EnsureParticipant("mutation@example.test", "Mutation", "example.test")
 			require.NoError(t, err)
 			service := &cardDAVMutationFixture{store: st.Store, participant: id}
-			if tc.name == "sync failure" {
+			if tc.refreshErr != nil {
 				service.syncErr = errors.New("later book failed")
-				st.refreshErr = errors.New("cache unavailable")
+				st.refreshErr = tc.refreshErr
 			}
 			srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger(), CardDAV: &CardDAVController{service: service}})
 			response := personRequest(t, srv, tc.method, tc.path, []byte(tc.body), "")
-			if tc.name == "publish" || tc.name == "resolve" {
-				assert.Equal(t, http.StatusInternalServerError, response.Code)
-			} else if tc.fail {
-				assert.NotEqual(t, http.StatusOK, response.Code)
-			} else if tc.name != "roles" {
-				assert.Equal(t, http.StatusOK, response.Code)
-			}
+			assert.Equal(t, tc.wantStatus, response.Code)
 			assert.Equal(t, 1, st.refreshCalls)
 		})
 	}

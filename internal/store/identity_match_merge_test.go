@@ -763,6 +763,9 @@ func TestMergeParticipantsPreservesAbsorbedEmail(t *testing.T) {
 				assert.Equal(1, count)
 			} else {
 				assert.Zero(count)
+				var email string
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT email_address FROM participants WHERE id = ?`), survivor).Scan(&email))
+				assert.Equal("absorbed@example.test", email)
 			}
 		})
 	}

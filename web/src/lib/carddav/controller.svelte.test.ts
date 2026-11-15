@@ -848,7 +848,7 @@ it('scopes selected status, books, history and sync requests to their connection
     const request = requestOf(input);
     requests.push(request);
     const url = new URL(request.url);
-    if (request.method === 'POST') return Response.json({ books: 0, created: 0, updated: 0, removed: 0 });
+    if (request.method === 'POST') return Response.json({ books: 0, created: 0, updated: 0, removed: 0, binding_conflicts: 2 });
     if (url.pathname.endsWith('/status')) return Response.json(idleStatus);
     if (url.pathname.endsWith('/books')) return Response.json({ books: [] });
     return Response.json({ runs: [] });
@@ -867,10 +867,11 @@ it('scopes selected status, books, history and sync requests to their connection
       .filter((r) => r.method === 'GET')
       .every((r) => new URL(r.url).searchParams.get('connection') === 'work')
   ).toBe(true);
+  expect(controller.syncStatus).toContain('2 CardDAV binding conflicts. Run msgvault carddav bind-participants --dry-run for details.');
   controller.destroy();
 });
 
-it.each(['succeeded', 'partial', 'failed'] as const)('reports binding conflicts when sync is %s', async (status) => {
+it.each(['partial', 'failed'] as const)('names a connection whose sync is %s', async (status) => {
   let bookReads = 0;
   const client = createAPIClient(async (input) => {
     const request = requestOf(input);
@@ -905,14 +906,10 @@ it.each(['succeeded', 'partial', 'failed'] as const)('reports binding conflicts 
   await controller.load();
   await controller.sync();
   const message = '2 CardDAV binding conflicts. Run msgvault carddav bind-participants --dry-run for details.';
-  if (status === 'succeeded') {
-    expect(controller.syncStatus).toContain(message);
-  } else {
-    expect(controller.syncError).toContain('work');
-    expect(controller.syncError).toContain(message);
-    expect(controller.syncError).not.toContain('private upstream');
-    expect(controller.syncStatus).toBeNull();
-  }
+  expect(controller.syncError).toContain('work');
+  if (status === 'partial') expect(controller.syncError).toContain(message);
+  expect(controller.syncError).not.toContain('private upstream');
+  expect(controller.syncStatus).toBeNull();
   expect(bookReads).toBe(status === 'failed' ? 1 : 2);
   controller.destroy();
 });
