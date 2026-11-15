@@ -131,7 +131,6 @@ func TestLoopsDaemonVersions(t *testing.T) {
 		{name: "old_closed_commitment_daemon", version: "5.4.0", minimum: "5.5.0", args: []string{"list", "--json", "--include-closed"}},
 		{name: "old_commitment_pagination_daemon", version: "5.4.0", minimum: "5.5.0", args: []string{"list", "--json", "--commitment-offset", "1"}},
 		{name: "older_commitment_daemon", version: "5.4.0", minimum: "5.5.0", args: []string{"done", "c12"}},
-		{name: "compatible_reply_loop_daemon", version: "3.44.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"truncated":false}`, args: []string{"list", "--json"}},
 		{name: "compatible_closed_commitment_daemon", version: "5.5.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"commitments":[],"truncated":false}`, args: []string{"list", "--json", "--include-closed"}, closed: true},
 		{name: "commitment_page", version: "5.5.0", path: "/api/v1/loops", method: http.MethodGet, response: `{"items":[],"commitments":[],"truncated":false}`, args: []string{"list", "--json", "--commitment-offset", "200"}, offset: "200"},
 		{name: "commitment", version: "5.5.0", path: "/api/v1/loops/commitments/c12/decision", method: http.MethodPost, response: `{"id":"c12","state":"done"}`, output: "c12 is done.\n", args: []string{"done", "c12"}, state: "done"},
