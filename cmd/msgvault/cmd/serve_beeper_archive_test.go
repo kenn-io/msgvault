@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -29,6 +30,7 @@ func TestBeeperArchive(t *testing.T) {
 		{name: "archive", desired: true, whole: true, writes: 1},
 		{name: "unarchive", before: true, whole: true, writes: 1},
 		{name: "already archived", before: true, desired: true, whole: true},
+		{name: "already archived during sync", before: true, desired: true, whole: true, syncActive: true},
 		{name: "already inbox", whole: true},
 		{name: "preview", desired: true, dry: true, whole: true},
 		{name: "explicit scope required", desired: true, wantCode: "invalid_request"},
@@ -106,12 +108,11 @@ func TestBeeperArchive(t *testing.T) {
 			}
 			grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionMessageArchive}, Sources: []agentgrant.SourceRef{ref}}
 			gates := 0
-			result, err := adapter.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &tc.desired, DryRun: tc.dry, WholeChat: tc.whole}, grant, func(context.Context) (func(), error) { gates++; return func() {}, nil })
-			wantGates := 0
-			if !tc.dry && tc.whole && !tc.restricted && !tc.wrongSource && !tc.mergedSource {
-				wantGates = 1
-			}
-			assertions.Equal(wantGates, gates)
+			result, err := adapter.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &tc.desired, DryRun: tc.dry, WholeChat: tc.whole}, grant, func(context.Context) (func(), error) {
+				gates++
+				return nil, errors.New("write gate is busy")
+			})
+			assertions.Zero(gates)
 			if tc.wantCode != "" {
 				var failure *emailtags.MessageTagError
 				requirements.ErrorAs(err, &failure)

@@ -2,15 +2,14 @@ package cmd
 
 import (
 	"context"
-	"errors"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/emailtags"
-	"go.kenn.io/msgvault/internal/store"
 )
 
-func (a *storeAPIAdapter) archiveBeeperChat(ctx context.Context, id int64, change emailtags.ArchiveChange, grant *agentgrant.Grant, acquire func(context.Context) (func(), error)) (*emailtags.ArchiveResult, error) {
+func (a *storeAPIAdapter) archiveBeeperChat(ctx context.Context, id int64, change emailtags.ArchiveChange, grant *agentgrant.Grant, _ func(context.Context) (func(), error)) (*emailtags.ArchiveResult, error) {
 	sourceID, chatID, err := a.store.MessageArchiveChatContext(ctx, id)
 	if err != nil {
 		return nil, err
@@ -26,36 +25,11 @@ func (a *storeAPIAdapter) archiveBeeperChat(ctx context.Context, id int64, chang
 			return nil, emailtags.Failure("message_not_found", "Message not found", nil, nil)
 		}
 	}
-	if source.SourceType != "beeper" {
-		return nil, emailtags.Failure("stale_identity", "Message source changed; retry", nil, nil)
+	if strings.HasPrefix(chatID, "msgvault-archive:") {
+		return nil, emailtags.Failure("stale_identity", "Chat was archived by a source merge", nil, nil)
 	}
 	if !change.WholeChat {
 		return nil, emailtags.Failure("invalid_request", "Beeper archives entire chats; set whole_chat=true", nil, nil)
-	}
-	if !change.DryRun {
-		if acquire != nil {
-			release, err := acquire(ctx)
-			if err != nil {
-				return nil, err
-			}
-			defer release()
-		}
-		execution, err := a.store.AcquireSyncExecutionContext(ctx, sourceID)
-		if err != nil {
-			code := "local_failed"
-			if errors.Is(err, store.ErrSyncAlreadyActive) {
-				code = "sync_active"
-			}
-			return nil, emailtags.Failure(code, "Cannot acquire Beeper source ownership", nil, err)
-		}
-		defer func() { _ = execution.Release() }()
-		lockedSource, lockedChat, err := a.store.MessageArchiveChatContext(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		if lockedSource != sourceID || lockedChat != chatID {
-			return nil, emailtags.Failure("stale_identity", "Message identity changed; retry", nil, nil)
-		}
 	}
 	token, err := beeper.LoadToken(a.config.TokensDir())
 	if err != nil {
