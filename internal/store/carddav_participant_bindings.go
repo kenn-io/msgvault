@@ -123,7 +123,7 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 		return nil, err
 	}
 	plan.result.CardsScanned = scanned
-	matched, err := cardDAVParticipantMatchesTx(ctx, tx, claims)
+	matched, shadowed, err := cardDAVParticipantMatchesTx(ctx, tx, claims)
 	if err != nil {
 		return nil, err
 	}
@@ -149,16 +149,14 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 			return nil, err
 		}
 		members := sortedComponentMembers(seed, edges)
-		wanted, owners := cardDAVPersonSet{}, cardDAVPersonSet{}
+		wanted := cardDAVPersonSet{}
 		for _, id := range members {
 			visited[id] = struct{}{}
 			for personID := range matched[id] {
 				wanted[personID] = struct{}{}
 			}
-			if binding, ok := bindings[id]; ok && !binding.owned {
-				owners[binding.personID] = struct{}{}
-			}
 		}
+		owners := cardDAVManualOwners(bindings, members, shadowed)
 		var personID int64
 		if len(wanted) == 1 {
 			for id := range wanted {
@@ -199,6 +197,20 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 	plan.result.ParticipantsBound, plan.result.ParticipantsUnbound = len(plan.add), len(plan.remove)
 	plan.result.Conflicts = len(plan.result.ConflictDetails)
 	return plan, nil
+}
+
+// cardDAVManualOwners collects the people manually holding any member or any
+// participant whose claim on a member's address yields to it.
+func cardDAVManualOwners(bindings map[int64]cardDAVParticipantBinding, members []int64, shadowed map[int64][]int64) cardDAVPersonSet {
+	owners := cardDAVPersonSet{}
+	for _, id := range members {
+		for _, holder := range append([]int64{id}, shadowed[id]...) {
+			if binding, ok := bindings[holder]; ok && !binding.owned {
+				owners[binding.personID] = struct{}{}
+			}
+		}
+	}
+	return owners
 }
 
 func (s *Store) applyCardDAVParticipantBindingsTx(ctx context.Context, tx *loggedTx, plan *cardDAVParticipantBindingPlan) error {

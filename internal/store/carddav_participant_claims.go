@@ -102,10 +102,9 @@ func (s *Store) cardDAVParticipantClaimsTx(ctx context.Context, tx *loggedTx) (m
 	return claims, scanned, rows.Err()
 }
 
-func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims map[cardDAVParticipantAddress]cardDAVPersonSet) (map[int64]cardDAVPersonSet, error) {
-	matched := map[int64]cardDAVPersonSet{}
+func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims map[cardDAVParticipantAddress]cardDAVPersonSet) (map[int64]cardDAVPersonSet, map[int64][]int64, error) {
 	if len(claims) == 0 {
-		return matched, nil
+		return map[int64]cardDAVPersonSet{}, nil, nil
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT id, 'email', email_address, TRUE FROM participants WHERE email_address IS NOT NULL
  UNION ALL SELECT id, 'phone', phone_number, FALSE FROM participants WHERE phone_number IS NOT NULL
@@ -113,22 +112,17 @@ func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims map[c
  WHERE scope_kind IS NULL AND scope_value IS NULL
  AND identifier_type IN ('email','phone','apple_id','whatsapp','imessage','synctech_sms','google_voice')`)
 	if err != nil {
-		return nil, fmt.Errorf("read participant addresses for CardDAV binding: %w", err)
+		return nil, nil, fmt.Errorf("read participant addresses for CardDAV binding: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	type addressMatch struct {
-		id      int64
-		key     cardDAVParticipantAddress
-		primary bool
-	}
-	var candidates []addressMatch
+	var candidates []cardDAVAddressMatch
 	primaryOwners := map[cardDAVParticipantAddress]cardDAVPersonSet{}
 	for rows.Next() {
 		var id int64
 		var kind, value string
 		var primary bool
 		if err := rows.Scan(&id, &kind, &value, &primary); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		addressKind := ContactAddressPhone
 		if kind == "email" || (kind == "apple_id" || kind == "imessage" || kind == "synctech_sms") && strings.Contains(value, "@") {
@@ -144,16 +138,33 @@ func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims map[c
 			}
 			primaryOwners[key][id] = struct{}{}
 		}
-		candidates = append(candidates, addressMatch{id, key, primary})
+		candidates = append(candidates, cardDAVAddressMatch{id, key, primary})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	matched, shadowed := cardDAVMatchCandidates(claims, candidates, primaryOwners)
+	return matched, shadowed, nil
+}
+
+type cardDAVAddressMatch struct {
+	id      int64
+	key     cardDAVParticipantAddress
+	primary bool
+}
+
+// A primary email outranks another participant's alias for the same address:
+// the alias holder is not matched, but is returned in shadowed under each
+// primary owner so its manual person binding still counts as a competing owner.
+func cardDAVMatchCandidates(claims map[cardDAVParticipantAddress]cardDAVPersonSet, candidates []cardDAVAddressMatch, primaryOwners map[cardDAVParticipantAddress]cardDAVPersonSet) (map[int64]cardDAVPersonSet, map[int64][]int64) {
+	matched, shadowed := map[int64]cardDAVPersonSet{}, map[int64][]int64{}
 	for _, candidate := range candidates {
 		if !candidate.primary && candidate.key.kind == ContactAddressEmail {
 			owners := primaryOwners[candidate.key]
-			_, ownsPrimary := owners[candidate.id]
-			if len(owners) > 0 && !ownsPrimary {
+			if _, ownsPrimary := owners[candidate.id]; len(owners) > 0 && !ownsPrimary {
+				for owner := range owners {
+					shadowed[owner] = append(shadowed[owner], candidate.id)
+				}
 				continue
 			}
 		}
@@ -164,5 +175,5 @@ func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims map[c
 			matched[candidate.id][personID] = struct{}{}
 		}
 	}
-	return matched, nil
+	return matched, shadowed
 }
