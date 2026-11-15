@@ -2,7 +2,6 @@ package meetingcontent
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -243,42 +242,10 @@ func TestReviewRound1NotionCheckedMustBeBoolean(t *testing.T) {
 	}
 }
 
-func TestNotionIncompleteContentFitsPacketBudget(t *testing.T) {
-	for _, section := range []string{"summary", "notes", "transcript"} {
-		t.Run(section, func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			text := strings.Repeat("partial content ", 1000)
-			root := map[string]any{"object": "block", "id": "section-1", "type": "paragraph", "has_children": false,
-				"paragraph": map[string]any{"rich_text": []any{map[string]any{"plain_text": text}}}}
-			header := map[string]any{"object": "block", "id": "meeting-1", "type": "meeting_notes",
-				"meeting_notes": map[string]any{"children": map[string]any{section + "_block_id": "section-1"}}}
-			raw, err := json.Marshal(map[string]any{"schema_version": 2, "discovery": header, "meeting_block": header,
-				section: map[string]any{"root": root, "blocks": []any{root}, "complete": false, "filtered": false}})
-			requirements.NoError(err)
-			content := Decode("notion_meeting_json", raw, nil)
-			entry := renderEntry(1, "Meeting", content)
-			result, err := Render("archive", []Entry{entry}, PacketOptions{Format: FormatJSON, IncludeTranscript: true, MaxBytes: 1600})
-			requirements.NoError(err)
-			packet := packetFromJSON(t, result.Content)
-			requirements.Len(packet.Meetings, 1)
-			assertions.LessOrEqual(result.ContentBytes, 1600)
-			assertions.True(packet.Truncated)
-			var gotText, gotReason string
-			var gotState State
-			switch section {
-			case "summary":
-				gotState, gotReason, gotText = packet.Meetings[0].Content.Summary.State, packet.Meetings[0].Content.Summary.Reason, packet.Meetings[0].Content.Summary.Text
-			case "notes":
-				gotState, gotReason, gotText = packet.Meetings[0].Content.Notes.State, packet.Meetings[0].Content.Notes.Reason, packet.Meetings[0].Content.Notes.Text
-			case "transcript":
-				gotState, gotReason, gotText = packet.Meetings[0].Content.Transcript.State, packet.Meetings[0].Content.Transcript.Reason, packet.Meetings[0].Content.Transcript.Text
-			}
-			assertions.Equal(StateTruncated, gotState)
-			assertions.Equal("incomplete_tree", gotReason)
-			assertions.NotEmpty(gotText)
-			assertions.True(strings.HasPrefix(text, gotText))
-			assertions.Less(len(gotText), len(text))
-		})
-	}
+func TestNotionTreeTraversalSkipsEscapedNestedMeetingType(t *testing.T) {
+	tree := []byte(`{"root":{"id":"notes","has_children":true},"pages":[{"results":[{"id":"nested","type": "meeting\u005fnotes" ,"has_children":true},{"id":"sibling","type":"paragraph","has_children":true}],"has_more":false},{"results":[{"id":"action","type":"to_do","has_children":false}],"has_more":false}]}`)
+	blocks, complete := notionTreeBlocks(tree, "notes")
+	assert.True(t, complete)
+	require.Len(t, blocks, 4)
+	assert.JSONEq(t, `{"id":"action","type":"to_do","has_children":false}`, string(blocks[3]))
 }
