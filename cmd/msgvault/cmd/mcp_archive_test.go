@@ -23,7 +23,6 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/query/querytest"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -241,12 +240,6 @@ func TestMCPMeetingRecordDelegated(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("granola", "notes@example.test")
 	requirements.NoError(err)
-	id, err := st.PersistMessage(&store.MessagePersistData{
-		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "note", MessageType: "meeting_transcript"},
-		Conversation: &store.ConversationPersistData{SourceConversationID: "note", ConversationType: "meeting"},
-		RawMIME:      []byte(`{"summary_text":"Meeting"}`), RawFormat: "granola_json",
-	})
-	requirements.NoError(err)
 	for _, tc := range []struct {
 		name, version string
 		permissions   []string
@@ -257,7 +250,7 @@ func TestMCPMeetingRecordDelegated(t *testing.T) {
 		{"without message access", api.APISchemaVersion, []string{"search.read"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require, assert := require.New(t), assert.New(t)
+			assert := assert.New(t)
 			server := mcpDraftTestDaemon(t, &storeAPIAdapter{store: st}, func(next http.Handler) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.URL.Path == "/api/v1/health" {
@@ -271,18 +264,6 @@ func TestMCPMeetingRecordDelegated(t *testing.T) {
 			session := mcpDraftTestSession(mcpDraftAgentContext(t, server, source.ID, tc.permissions), t)
 			names := mcpDraftToolNames(t, session)
 			assert.Equal(tc.available, slices.Contains(names, "get_meeting_record"))
-			if tc.available && slices.Contains(names, "get_meeting_record") {
-				result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_meeting_record", Arguments: map[string]any{"ref": fmt.Sprintf("msg:%d", id)}})
-				require.NoError(err)
-				require.False(result.IsError, "%v", result.Content)
-				content, ok := result.StructuredContent.(map[string]any)
-				require.True(ok)
-				assert.Contains(content["message_ids"], float64(id))
-				missing, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_meeting_record", Arguments: map[string]any{"ref": fmt.Sprintf("msg:%d", id+1)}})
-				require.NoError(err)
-				require.True(missing.IsError, "%v", missing.Content)
-				assert.Contains(mcpDraftResultText(t, missing), "meeting_not_found")
-			}
 		})
 	}
 }

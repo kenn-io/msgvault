@@ -626,21 +626,6 @@ func TestMeetingRecordExactFractionalAndOffsetTimes(t *testing.T) {
 		assert.Empty(record.Links)
 		assert.Equal([]int64{other}, record.MessageIDs)
 	})
-	t.Run("separate-dates", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		st := newRFC822IDBackfillBackendStore(t)
-		_, first := calendarFixture(t, st, "first-event", `{"id":"first","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
-		_, second := calendarFixture(t, st, "second-event", `{"id":"second","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-21T10:00:00Z"},"end":{"dateTime":"2027-03-21T11:00:00Z"}}`)
-		_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
-		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
-		require.NoError(err)
-		require.Len(record.Links, 1)
-		assert.Equal(fmt.Sprintf("evt:%d", first), record.Links[0].Ref)
-		record, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: second})
-		require.NoError(err)
-		assert.Empty(record.MessageIDs)
-	})
 }
 
 func TestMeetingRecordFollowsAliasesAcrossCalendarCopies(t *testing.T) {

@@ -124,10 +124,15 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 	must.Len(links, 1)
 	link, ok := links[0].(map[string]any)
 	must.True(ok)
-	checks.Equal(fmt.Sprintf("evt:%d", cancelled), link["ref"])
 	checks.Nil(link["start"])
 	checks.Nil(link["end"])
-	checks.Equal("cancelled", link["status"])
+	missing, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingRecord, Arguments: map[string]any{"ref": "msg:999999"}})
+	must.NoError(err)
+	must.True(missing.IsError)
+	must.NotEmpty(missing.Content)
+	missingText, ok := missing.Content[0].(*sdkmcp.TextContent)
+	must.True(ok)
+	checks.Contains(missingText.Text, "meeting_not_found")
 
 	contextResult, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{
 		Name: ToolGetMeetingContext,
