@@ -45,7 +45,7 @@ func occurrenceKeys(o CalendarOccurrence) []meetingLinkKey {
 	var keys []meetingLinkKey
 	owner := strings.TrimSpace(row.CalendarID)
 	if owner != "" && row.Event.ProviderEventID != "" {
-		if row.Event.Kind != "series" {
+		if row.Event.Kind != calendarSeriesKind {
 			keys = append(keys, canonicalMeetingKey("google_event_id", owner, row.Event.ProviderEventID, nil))
 		}
 		if o.SeriesMessageID != 0 && o.original != (calrecur.Identity{}) && (o.original.AllDay || o.original.Instant.Nanosecond() == 0) {
@@ -94,7 +94,7 @@ func meetingBound(at time.Time) *time.Time {
 
 func untimedMeetingCopy(row CalendarEventRow) (CalendarOccurrence, CalendarUnexpandable) {
 	reason := calendarMissingBoundsReason(row.Event)
-	if row.Event.Kind == "exception" {
+	if row.Event.Kind == calendarExceptionKind {
 		reason = "exception has no original start"
 	}
 	return CalendarOccurrence{row: row, Ref: formatMeetingOccurrence(OccurrenceRef{MessageID: row.MessageID}), MessageID: row.MessageID, SourceID: row.SourceID, Subject: row.Subject, Status: row.Event.Status, DeletedFromSource: row.DeletedFromSource}, CalendarUnexpandable{MessageID: row.MessageID, Reason: reason}
@@ -132,7 +132,7 @@ func (s *Store) meetingRelatedRows(ctx context.Context, seeds []CalendarEventRow
 	}
 	for _, row := range seeds {
 		id := row.Event.ProviderEventID
-		if row.Event.Kind == "exception" {
+		if row.Event.Kind == calendarExceptionKind {
 			id = row.Event.SeriesProviderID
 		}
 		if id == "" {
@@ -177,13 +177,13 @@ func (s *Store) meetingOccurrencesForKeys(ctx context.Context, keys []meetingLin
 		}
 		_, _, instance := calrecur.ParseInstanceID(key[2])
 		if key[0] == "google_event_id" && !instance && slices.ContainsFunc(rows, func(row CalendarEventRow) bool {
-			return row.Event.Kind == "series" && canonicalMeetingKey("google_event_id", row.CalendarID, row.Event.ProviderEventID, nil) == key
+			return row.Event.Kind == calendarSeriesKind && canonicalMeetingKey("google_event_id", row.CalendarID, row.Event.ProviderEventID, nil) == key
 		}) {
 			continue
 		}
 		wanted[key] = true
 		for _, row := range rows {
-			if row.Event.Kind != "series" && row.Event.Start == nil && row.Event.End == nil && row.Event.Original == nil {
+			if row.Event.Kind != calendarSeriesKind && row.Event.Start == nil && row.Event.End == nil && row.Event.Original == nil {
 				occurrence, diagnostic := untimedMeetingCopy(row)
 				if key[0] == "google_event_id" && slices.Contains(occurrenceKeys(occurrence), key) {
 					matches[key] = append(matches[key], occurrence)
@@ -353,7 +353,7 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			return record, sql.ErrNoRows
 		}
 		row := rows[0]
-		if row.Event.Kind == "series" && ref.Identity == (calrecur.Identity{}) {
+		if row.Event.Kind == calendarSeriesKind && ref.Identity == (calrecur.Identity{}) {
 			return record, ErrMeetingOccurrenceRequired
 		}
 		var at time.Time
@@ -369,7 +369,7 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 		if err != nil {
 			return record, fmt.Errorf("parse meeting occurrence reference: %w", err)
 		}
-		if at.IsZero() && row.Event.Kind != "series" {
+		if at.IsZero() && row.Event.Kind != calendarSeriesKind {
 			var diagnostic CalendarUnexpandable
 			seed, diagnostic = untimedMeetingCopy(row)
 			record.Unexpandable = append(record.Unexpandable, diagnostic)
@@ -390,7 +390,7 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			}
 		}
 		if seed.Ref == "" {
-			if row.Event.Kind != "series" || !slices.ContainsFunc(record.Unexpandable, func(item CalendarUnexpandable) bool { return item.MessageID == ref.MessageID }) {
+			if row.Event.Kind != calendarSeriesKind || !slices.ContainsFunc(record.Unexpandable, func(item CalendarUnexpandable) bool { return item.MessageID == ref.MessageID }) {
 				return record, sql.ErrNoRows
 			}
 		} else {

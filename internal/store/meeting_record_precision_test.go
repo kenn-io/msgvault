@@ -71,7 +71,7 @@ func TestMeetingRecordFractionalExceptionImportAndListing(t *testing.T) {
 					id, key, hasKey := strings.Cut(strings.TrimPrefix(listed.Ref, "evt:"), "@")
 					messageID, err := strconv.ParseInt(id, 10, 64)
 					require.NoError(err)
-					ref := MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: messageID}}
+					ref := MeetingLinkRef{Kind: "evt", MessageID: messageID}
 					if hasKey {
 						_, ref.Identity, hasKey = calrecur.ParseInstanceID("event_" + key)
 						require.True(hasKey)

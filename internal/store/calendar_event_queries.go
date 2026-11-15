@@ -234,7 +234,7 @@ func calendarEventRowsInWindow(ctx context.Context, r *loggedDB, dialect Dialect
 		for _, row := range parents {
 			if _, exists := byID[row.MessageID]; !exists {
 				byID[row.MessageID] = row
-				if row.Event.Kind == "series" {
+				if row.Event.Kind == calendarSeriesKind {
 					seriesCount++
 				}
 				if seriesCount > maxCalendarSeries {
@@ -375,7 +375,7 @@ func (s *Store) restoreCalendarEvidence(ctx context.Context, rows []CalendarEven
 	}
 	var candidates []int
 	for i, row := range rows {
-		if row.Event.ICalUID != "" || row.Event.Kind == "exception" {
+		if row.Event.ICalUID != "" || row.Event.Kind == calendarExceptionKind {
 			candidates = append(candidates, i)
 		}
 	}

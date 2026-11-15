@@ -399,6 +399,37 @@ func TestMeetingRecordOccurrenceResolution(t *testing.T) {
 	}
 }
 
+func TestMeetingRecordMovedOccurrenceCollidesWithNextWeek(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master-review", `{"id":"review-series","iCalUID":"review@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+	_, moved := calendarFixture(t, st, "moved-review", `{"id":"review-moved","recurringEventId":"review-series","iCalUID":"review@example.org","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-21T10:00:00Z"},"end":{"dateTime":"2027-03-21T11:00:00Z"}}`)
+	_, first := projectionFixture(t, st, "first-review", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"review@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	_, second := projectionFixture(t, st, "second-review", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"review@example.org","startsAt":"2027-03-21T10:00:00Z"}}`)
+	for _, tc := range []struct {
+		name  string
+		ref   MeetingLinkRef
+		want  []int64
+		links int
+		link  int64
+	}{
+		{"moved", MeetingLinkRef{Kind: "evt", MessageID: moved}, []int64{first}, 1, moved},
+		{"original note", MeetingLinkRef{Kind: "msg", MessageID: first}, []int64{first}, 1, moved},
+		{"next week", MeetingLinkRef{Kind: "evt", MessageID: master, Identity: occurrenceIdentity(t, "20270321T100000Z")}, []int64{}, 1, master},
+		{"ambiguous note", MeetingLinkRef{Kind: "msg", MessageID: second}, []int64{second}, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			record, err := st.MeetingRecordContext(t.Context(), tc.ref)
+			require.NoError(err)
+			require.Equal(tc.want, record.MessageIDs)
+			require.Len(record.Links, tc.links)
+			if tc.links > 0 {
+				require.Equal(tc.link, record.Links[0].MessageID)
+			}
+		})
+	}
+}
+
 func TestMeetingRecordAllDayOccurrence(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
