@@ -554,7 +554,7 @@ func TestCommitmentRetryBatchKeepsDiscoveryProgress(t *testing.T) {
 			}
 			window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 			r.NoError(err)
-			r.Len(window.Sources, 0, "completed history must not be sent again")
+			r.Empty(window.Sources, "completed history must not be sent again")
 		})
 	}
 }
