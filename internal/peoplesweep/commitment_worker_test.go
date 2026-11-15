@@ -98,7 +98,7 @@ func TestCommitmentOptionalCallRepairAndBudget(t *testing.T) {
 			profile, err := cfg.Profile()
 			r.NoError(err)
 			lease := Lease{PersonID: 7, WorkerID: "worker-fixture", Fence: 1, ExpiresAt: now.Add(time.Hour)}
-			worker := Worker{Config: cfg, Store: st, Runner: runner, Clock: func() time.Time { return now }}
+			worker := Worker{Config: cfg, Timezone: "America/New_York", Store: st, Runner: runner, Clock: func() time.Time { return now }}
 			accounting := &sweepCallAccounting{budget: cfg.Budgets}
 			var reservations []BudgetReservation
 			result, class, _, err := worker.runCommitmentCall(t.Context(), briefCall{runID: "run", attemptID: "attempt", lease: lease, catalog: catalog, profile: profile, resolvedAt: now}, accounting, &reservations)
@@ -117,6 +117,7 @@ func TestCommitmentOptionalCallRepairAndBudget(t *testing.T) {
 			}
 			if mode == "repair" {
 				r.NotNil(result)
+				a.Equal("America/New_York", result.Window.Timezone)
 				a.Empty(class)
 			} else {
 				a.Nil(result)

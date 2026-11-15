@@ -49,6 +49,10 @@ func (w *Worker) runCommitmentCall(
 	if err != nil {
 		return nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
 	}
+	window.Timezone = w.Timezone
+	if window.Timezone == "" {
+		window.Timezone = "UTC"
+	}
 	if len(window.Sources) == 0 {
 		return &CommitmentResult{Window: window, Config: w.Config.Commitments}, "", lease, nil
 	}

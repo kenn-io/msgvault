@@ -58,7 +58,7 @@ func TestCommitmentRequestSendsPromptFieldsAndFullSourceText(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
 	window := CommitmentWindow{
-		PersonID: 2, Now: now, ThroughSequence: 9,
+		PersonID: 2, Now: now, Timezone: "UTC", ThroughSequence: 9,
 		Sources: []CommitmentSource{{
 			ID: "m3", MessageID: 3, SourceID: 4, RecordedTime: now,
 			Direction: CommitmentOwedTo, Text: "I sent it.", Start: 5, EventTime: now,
@@ -71,7 +71,8 @@ func TestCommitmentRequestSendsPromptFieldsAndFullSourceText(t *testing.T) {
 	r.True(found)
 	a.JSONEq(`{
 		"sources": [{"id":"m3","direction":"owed_to","text":"I sent it.","start":5,"event_time":"2026-10-19T12:00:00Z"}],
-		"now": "2026-10-19T12:00:00Z"
+		"now": "2026-10-19T12:00:00Z",
+		"timezone": "UTC"
 	}`, packet)
 }
 
@@ -110,6 +111,15 @@ func TestParseCommitmentsKeepsOnlyCitedDueDates(t *testing.T) {
 		{"embedded digits", "I will call about 12026-11-20.", "I will call about 12026-11-20.", "2026-11-20", false},
 		{"ISO date", "I will call by 2026-11-20.", "I will call by 2026-11-20.", "2026-11-20", true},
 		{"written date", "I will call by November 20, 2026.", "I will call by November 20, 2026.", "2026-11-20", true},
+		{"weekday", "I will call by Friday.", "I will call by Friday.", "2026-11-13", true},
+		{"weekday next week", "I will call by Monday next week.", "I will call by Monday next week.", "2026-11-16", true},
+		{"weekday next week wrong date", "I will call by Monday next week.", "I will call by Monday next week.", "2026-11-23", false},
+		{"yearless date", "I will call on November 20.", "I will call on November 20.", "2026-11-20", true},
+		{"wrong weekday", "I will call by Friday.", "I will call by Friday.", "2026-11-20", false},
+		{"unambiguous numeric date", "I will call on 11/20/2026.", "I will call on 11/20/2026.", "2026-11-20", true},
+		{"ambiguous numeric date", "I will call on 11/12/2026.", "I will call on 11/12/2026.", "2026-11-12", false},
+		{"in four days", "I will call in four days.", "I will call in four days.", "2026-11-14", true},
+		{"unknown days", "I will call in several days.", "I will call in several days.", "2026-11-13", false},
 		{"in three days", "I will call in three days.", "I will call in three days.", "2026-11-13", true},
 		{"in three days wrong date", "I will call in three days.", "I will call in three days.", "2026-11-12", false},
 		{"tomorrow", "I will call tomorrow.", "I will call tomorrow.", "2026-11-11", true},
@@ -134,4 +144,16 @@ func TestParseCommitmentsKeepsOnlyCitedDueDates(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseCommitmentDeadlineUsesActivityTimezone(t *testing.T) {
+	const quote = "I will call tomorrow."
+	event := time.Date(2026, 11, 11, 2, 0, 0, 0, time.UTC)
+	window := CommitmentWindow{PersonID: 2, Now: event, Timezone: "America/New_York", Sources: []CommitmentSource{{ID: "m1", MessageID: 1, Direction: CommitmentOwedTo, Text: quote, EventTime: event}}}
+	output := jsontext.Value(`{"promises":[{"source_id":"m1","direction":"owed_to","quote":"I will call tomorrow.","start":0,"end":21,"summary":"Call","due_on":"2026-11-11"}]}`)
+	parsed, err := ParseCommitments(output, window)
+	require.NoError(t, err)
+	require.Len(t, parsed.Promises, 1)
+	require.NotNil(t, parsed.Promises[0].DueOn)
+	assert.Equal(t, "2026-11-11", *parsed.Promises[0].DueOn)
 }

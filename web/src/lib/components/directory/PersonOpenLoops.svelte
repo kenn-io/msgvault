@@ -24,6 +24,7 @@
   let checkMore = $state<() => void>(() => {});
   let promiseStatus = $state('');
   let nextOffset = $state<number | undefined>();
+  let loadedPages = 1;
   let loadingPromises = $state(false);
   let morePromisesFailed = $state(false);
   let morePromises = $state<() => void>(() => {});
@@ -52,6 +53,7 @@
         failed = false;
         promiseStatus = '';
         nextOffset = undefined;
+        loadedPages = 1;
       }
       try {
         const result = await listLoops(
@@ -60,12 +62,25 @@
         );
         if (controller.signal.aborted) return;
         if (!result.data) throw new Error('Open loops are unavailable.');
-        items = result.data.items ?? [];
-        if (!more) {
-          commitments = result.data.commitments ?? [];
-          nextOffset = result.data.commitments_next_offset;
-          promiseStatus = discoveryStatus(result.data);
+        let refreshed = result.data.commitments ?? [];
+        let offset = result.data.commitments_next_offset;
+        let pages = 1;
+        while (more && pages < loadedPages && offset !== undefined) {
+          const page = await listLoops(
+            { person_id: selectedID, limit, commitment_offset: offset },
+            { ...selectedClient, signal: controller.signal },
+          );
+          if (controller.signal.aborted) return;
+          if (!page.data) throw new Error('Promises are unavailable.');
+          refreshed = mergeCommitments(refreshed, page.data.commitments);
+          offset = page.data.commitments_next_offset;
+          pages++;
         }
+        items = result.data.items ?? [];
+        commitments = refreshed;
+        nextOffset = offset;
+        loadedPages = pages;
+        promiseStatus = discoveryStatus(result.data);
         truncated = Boolean(result.data.truncated);
         coverageIncomplete = Boolean(result.data.coverage_incomplete);
         unreadable = result.data.skipped_unparseable ?? 0;
@@ -113,6 +128,7 @@
       if (signal.aborted) return;
       if (!result.data) throw new Error('Promises are unavailable.');
       commitments = mergeCommitments(commitments, result.data.commitments);
+      loadedPages++;
       truncated = Boolean(result.data.truncated);
       nextOffset = result.data.commitments_next_offset;
     } catch {

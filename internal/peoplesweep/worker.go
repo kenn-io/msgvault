@@ -403,6 +403,8 @@ type PersonRunResult struct {
 }
 
 type Worker struct {
+	Timezone string
+
 	Config  Config
 	Store   WorkStore
 	Source  AssemblySource
