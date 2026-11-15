@@ -994,12 +994,18 @@ func TestCardDAVParticipantBindingPendingNameConflictBlocksSharedAddress(t *test
 		}
 		_, err = st.RecordCardDAVConflictContext(t.Context(), capture)
 		require.NoError(err)
+		alias, err := st.EnsureParticipant("alias@example.test", "Alias", "example.test")
+		require.NoError(err)
+		owner, _, err := st.CreatePersonFromParticipant(alias)
+		require.NoError(err)
+		require.NoError(st.SetParticipantIdentifier(alias, "email", "private@example.test"))
 		result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
 		require.NoError(err)
 		assert.ElementsMatch([]store.CardDAVParticipantBindingConflict{
 			{ParticipantID: id, PersonIDs: []int64{firstPerson.ID, secondPerson.ID}, Reason: "shared_address"},
 			{ParticipantID: localOnly, PersonIDs: []int64{firstPerson.ID, secondPerson.ID}, Reason: "shared_address"},
 			{ParticipantID: remoteOnly, PersonIDs: []int64{firstPerson.ID, secondPerson.ID}, Reason: "shared_address"},
+			{ParticipantID: private, PersonIDs: []int64{firstPerson.ID, owner.ID}, Reason: "existing_person"},
 		}, result.ConflictDetails)
 		bound, err = st.PersonForParticipantsContext(t.Context(), []int64{id})
 		require.NoError(err)
@@ -1009,9 +1015,10 @@ func TestCardDAVParticipantBindingPendingNameConflictBlocksSharedAddress(t *test
 		assert.Nil(bound)
 		bound, err = st.PersonForParticipantsContext(t.Context(), []int64{private})
 		require.NoError(err)
-		if assert.NotNil(bound) {
-			assert.Equal(firstPerson.ID, bound.ID)
-		}
+		assert.Nil(bound)
+		owner, err = st.GetPersonContext(t.Context(), owner.ID)
+		require.NoError(err)
+		assert.Equal([]int64{alias}, owner.ParticipantIDs)
 		for _, participant := range []int64{localOnly, remoteOnly} {
 			bound, err = st.PersonForParticipantsContext(t.Context(), []int64{participant})
 			require.NoError(err)

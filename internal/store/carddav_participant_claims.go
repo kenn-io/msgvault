@@ -215,7 +215,10 @@ func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims, conf
 	}
 	matched, shadowed := cardDAVMatchCandidates(claims, candidates)
 	disputed, _ := cardDAVMatchCandidates(conflicted, disputedCandidates)
-	retained, _ := cardDAVMatchCandidates(common, commonCandidates)
+	retained, commonShadowed := cardDAVMatchCandidates(common, commonCandidates)
+	for id, holders := range commonShadowed {
+		shadowed[id] = append(shadowed[id], holders...)
+	}
 	return matched, disputed, retained, shadowed, participantKinds, nil
 }
 
