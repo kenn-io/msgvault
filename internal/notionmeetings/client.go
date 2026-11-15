@@ -95,7 +95,7 @@ func (c *Client) QueryMeetingNotes(ctx context.Context, limit int) (*QueryResult
 		return nil, err
 	}
 	for index := range result.Results {
-		if err := validateBlockResponse(result.Results[index].Raw, "", "meeting_notes"); err != nil {
+		if err := validateBlockResponse(result.Results[index].Raw, "", meetingNotesType); err != nil {
 			return nil, fmt.Errorf("validate meeting-note query result %d: %w", index, err)
 		}
 	}

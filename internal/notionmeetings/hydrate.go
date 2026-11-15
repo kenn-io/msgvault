@@ -123,18 +123,18 @@ func (h *Hydrator) hydrateBlock(ctx context.Context, meetingBlock *Block) (*Hydr
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if meetingBlock == nil || meetingBlock.Object != "block" || meetingBlock.Type != "meeting_notes" || strings.TrimSpace(meetingBlock.ID) == "" {
+	if meetingBlock == nil || meetingBlock.Object != "block" || meetingBlock.Type != meetingNotesType || strings.TrimSpace(meetingBlock.ID) == "" {
 		return nil, fmt.Errorf("%w: invalid meeting-note block", ErrMalformedResponse)
 	}
-	if err := validateBlockResponse(meetingBlock.Raw, meetingBlock.ID, "meeting_notes"); err != nil {
+	if err := validateBlockResponse(meetingBlock.Raw, meetingBlock.ID, meetingNotesType); err != nil {
 		return nil, hydrationFailure("validate meeting header", err)
 	}
 	var meeting MeetingNote
-	if err := json.Unmarshal(meetingBlock.Raw, &meeting); err != nil || meeting.Object != "block" || meeting.ID != meetingBlock.ID || meeting.Type != "meeting_notes" {
+	if err := json.Unmarshal(meetingBlock.Raw, &meeting); err != nil || meeting.Object != "block" || meeting.ID != meetingBlock.ID || meeting.Type != meetingNotesType {
 		return nil, fmt.Errorf("%w: invalid authoritative meeting header", ErrMalformedResponse)
 	}
 	var fields map[string]jsontext.Value
-	if err := json.Unmarshal(meetingBlock.Raw, &fields); err != nil || len(fields["meeting_notes"]) == 0 || string(fields["meeting_notes"]) == "null" {
+	if err := json.Unmarshal(meetingBlock.Raw, &fields); err != nil || len(fields[meetingNotesType]) == 0 || string(fields[meetingNotesType]) == "null" {
 		return nil, fmt.Errorf("%w: missing meeting-note data", ErrMalformedResponse)
 	}
 	h.visited = map[string]bool{meeting.ID: true}
@@ -236,7 +236,7 @@ func (h *Hydrator) pageHasOnlyMeeting(ctx context.Context, pageID, meetingID str
 				if h.blocks > maxHydrationBlocks {
 					return false, errHydrationLimit
 				}
-				if child.Type == "meeting_notes" {
+				if child.Type == meetingNotesType {
 					if child.ID != meetingID {
 						return false, nil
 					}
@@ -292,7 +292,7 @@ func (h *Hydrator) readTree(ctx context.Context, id string) (blockTree, error) {
 	if root.ID != id || root.Object != "block" || root.Type == "" {
 		return blockTree{}, fmt.Errorf("%w: invalid section root", ErrMalformedResponse)
 	}
-	if root.Type == "meeting_notes" {
+	if root.Type == meetingNotesType {
 		return blockTree{Filtered: true}, nil
 	}
 	h.visited[id] = true
@@ -337,7 +337,7 @@ func (h *Hydrator) readChildren(ctx context.Context, blockID string, depth int, 
 			if child.ID == "" || child.Object != "block" || child.Type == "" {
 				return fmt.Errorf("%w: invalid section child", ErrMalformedResponse)
 			}
-			if child.Type == "meeting_notes" {
+			if child.Type == meetingNotesType {
 				tree.Filtered = true
 				continue
 			}

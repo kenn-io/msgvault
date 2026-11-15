@@ -61,6 +61,8 @@ type MeetingNotesData struct {
 	Recording     MeetingRecording     `json:"recording"`
 }
 
+const meetingNotesType = "meeting_notes"
+
 type MeetingNote struct {
 	URL            string                    `json:"url,omitempty"`
 	Object         string                    `json:"object"`
@@ -90,7 +92,7 @@ func (m *MeetingNote) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	for _, key := range []string{
-		"object", "id", "type", "meeting_notes", "created_time",
+		"object", "id", "type", meetingNotesType, "created_time",
 		"last_edited_time", "created_by", "last_edited_by", "parent",
 		"has_children", "in_trash", "archived", "url",
 	} {
@@ -170,14 +172,6 @@ func (b *Block) UnmarshalJSON(data []byte) error {
 
 func (b Block) PlainText() string {
 	return meetingcontent.NotionBlockPlainText(b.Raw)
-}
-
-func richTextPlainText(parts []RichText) string {
-	var text strings.Builder
-	for _, part := range parts {
-		text.WriteString(part.PlainText)
-	}
-	return text.String()
 }
 
 type BlockPage struct {
