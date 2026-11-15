@@ -5851,3 +5851,80 @@ func TestCopySubsetMeetingDecisionOnDeduplicatedCopy(t *testing.T) {
 	r.NoError(err)
 	assert.Equal(t, []int64{other}, record.MessageIDs)
 }
+
+func TestCopySubsetMeetingDecisionAcrossOccurrenceRepresentations(t *testing.T) {
+	for _, keep := range []string{"exception", "series"} {
+		t.Run(keep, func(t *testing.T) {
+			r := require.New(t)
+			sourcePath := filepath.Join(t.TempDir(), "source.db")
+			source, err := Open(sourcePath)
+			r.NoError(err)
+			r.NoError(source.InitSchemaContext(t.Context()))
+			seriesRaw := `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`
+			editRaw := `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`
+			var series, edit int64
+			if keep == "exception" {
+				_, series = calendarFixture(t, source, "subset-series", seriesRaw)
+			}
+			_, edit = calendarFixture(t, source, "subset-edit", editRaw)
+			_, note := projectionFixture(t, source, "subset-note", "meeting_json", `{}`)
+			_, err = source.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: edit}, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
+			r.NoError(err)
+			if keep == "series" {
+				_, series = calendarFixture(t, source, "subset-series", seriesRaw)
+			}
+			selected, excluded := edit, series
+			if keep == "series" {
+				selected, excluded = series, edit
+			}
+			_, err = source.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at = CASE WHEN id = ? THEN '2020-01-01T00:00:00Z' ELSE '2029-01-01T00:00:00Z' END WHERE id IN (?, ?, ?)`, excluded, series, edit, note)
+			r.NoError(err)
+			r.NoError(source.Close())
+			dir := filepath.Join(t.TempDir(), "subset")
+			_, err = CopySubset(t.Context(), sourcePath, dir, 2, false)
+			r.NoError(err)
+			destination, err := Open(filepath.Join(dir, "msgvault.db"))
+			r.NoError(err)
+			t.Cleanup(func() { r.NoError(destination.Close()) })
+			record, err := destination.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+			r.NoError(err)
+			r.Len(record.Links, 1)
+			assert.Equal(t, selected, record.Links[0].MessageID)
+		})
+	}
+}
+
+func TestCopySubsetMeetingDecisionKeepsNewestOccurrenceChoice(t *testing.T) {
+	r := require.New(t)
+	sourcePath := filepath.Join(t.TempDir(), "source.db")
+	source, err := Open(sourcePath)
+	r.NoError(err)
+	r.NoError(source.InitSchemaContext(t.Context()))
+	seriesRaw := `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`
+	editRaw := `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`
+	_, oldSeries := calendarFixture(t, source, "priority-old", seriesRaw, "old@example.com")
+	_, note := projectionFixture(t, source, "priority-note", "meeting_json", `{}`)
+	occurrence := MeetingLinkRef{Kind: "evt", MessageID: oldSeries, Identity: occurrenceIdentity(t, "20270314T100000Z")}
+	noteRef := MeetingLinkRef{Kind: "msg", MessageID: note}
+	_, err = source.DecideMeetingLinkContext(t.Context(), occurrence, noteRef, "unlink")
+	r.NoError(err)
+	_, edit := calendarFixture(t, source, "priority-edit", editRaw)
+	_, err = source.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: edit}, noteRef, "link")
+	r.NoError(err)
+	_, series := calendarFixture(t, source, "priority-series", seriesRaw)
+	_, err = source.MergeDuplicates(t.Context(), series, []int64{oldSeries}, "priority-subset")
+	r.NoError(err)
+	_, err = source.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at=CASE WHEN id IN (?, ?) THEN '2029-01-01T00:00:00Z' ELSE '2020-01-01T00:00:00Z' END`, edit, note)
+	r.NoError(err)
+	r.NoError(source.Close())
+	dir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(t.Context(), sourcePath, dir, 2, false)
+	r.NoError(err)
+	destination, err := Open(filepath.Join(dir, "msgvault.db"))
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(destination.Close()) })
+	record, err := destination.MeetingRecordContext(t.Context(), noteRef)
+	r.NoError(err)
+	r.Len(record.Links, 1)
+	assert.Equal(t, edit, record.Links[0].MessageID)
+}

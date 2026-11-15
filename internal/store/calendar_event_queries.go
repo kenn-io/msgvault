@@ -158,7 +158,7 @@ func loadCalendarAttendees(ctx context.Context, r SQLReader, events []CalendarEv
 			var id int64
 			var attendee calevent.Attendee
 			if err := rows.Scan(&id, &attendee.Email, &attendee.DisplayName, &attendee.Role, &attendee.RSVP, &attendee.IsCopySelf); err != nil {
-				_ = rows.Close()
+				_ = rows.Close() //nolint:sqlclosecheck // Close this batch before returning.
 				return fmt.Errorf("scan calendar attendee: %w", err)
 			}
 			i := byID[id]

@@ -18,6 +18,7 @@ type SQLReader interface {
 
 type reboundSQLReader struct {
 	SQLReader
+
 	rebind func(string) string
 }
 
@@ -38,6 +39,7 @@ type readSnapshotKey struct{}
 type readSnapshot struct {
 	db       *sql.DB
 	tx       *loggedTx
+	reader   SQLReader
 	writable bool
 }
 
@@ -100,6 +102,9 @@ func WithoutReadSnapshotContext(ctx context.Context) context.Context {
 // ReadDBContext selects the snapshot only for its owning database.
 func ReadDBContext(ctx context.Context, db *sql.DB) SQLReader {
 	if snapshot, ok := ctx.Value(readSnapshotKey{}).(*readSnapshot); ok && snapshot.db == db {
+		if snapshot.reader != nil {
+			return snapshot.reader
+		}
 		return snapshot.tx.Tx
 	}
 	return db

@@ -417,12 +417,20 @@ func (s *Store) meetingAutomaticRecord(ctx context.Context, ref MeetingLinkRef, 
 		}
 	}
 	if notesOnly {
-		if len(keys) > 0 && (keys[0][0] != "google_event_id" || isMeetingInstanceKey(keys[0])) {
-			notes, err := s.meetingNoteKeys(ctx, []string{keys[0].text()}, budget)
+		var texts []string
+		for _, key := range keys {
+			if key[0] != "google_event_id" || isMeetingInstanceKey(key) {
+				texts = append(texts, key.text())
+			}
+		}
+		if len(texts) > 0 {
+			notes, err := s.meetingNoteKeys(ctx, texts, budget)
 			if err != nil {
 				return record, err
 			}
-			record.MessageIDs = append(record.MessageIDs, notes[keys[0].text()]...)
+			for _, key := range texts {
+				record.MessageIDs = append(record.MessageIDs, notes[key]...)
+			}
 			slices.Sort(record.MessageIDs)
 			record.MessageIDs = slices.Compact(record.MessageIDs)
 		}

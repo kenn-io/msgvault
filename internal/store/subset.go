@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
@@ -215,7 +216,7 @@ func CopySubsetWithOptions(
 		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
 
-	result, err := copyData(ctx, tx, rowCount, options)
+	result, err := copyData(ctx, db, tx, rowCount, options)
 	if err != nil {
 		_ = tx.Rollback()
 		_, _ = db.ExecContext(ctx, "DETACH DATABASE src")
@@ -365,7 +366,7 @@ func verifyForeignKeys(ctx context.Context, db *sql.DB) error {
 }
 
 // copyData executes INSERT INTO ... SELECT in dependency order.
-func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult, error) {
+func copyData(ctx context.Context, db *sql.DB, tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult, error) {
 	result := &CopyResult{}
 
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
@@ -1032,7 +1033,7 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 	if present, err := sourceTableExists(ctx, tx, "meeting_link_decisions"); err != nil {
 		return nil, err
 	} else if present {
-		if err := copySubsetMeetingDecisions(ctx, tx); err != nil {
+		if err := copySubsetMeetingDecisions(ctx, db, tx); err != nil {
 			return nil, fmt.Errorf("copy meeting decisions: %w", err)
 		}
 	}
@@ -3154,33 +3155,111 @@ func preserveSubsetDraftEvidence(ctx context.Context, tx *sql.Tx) (int64, error)
 	return int64(len(sourceIDs)), nil
 }
 
-func copySubsetMeetingDecisions(ctx context.Context, tx *sql.Tx) error {
-	visibility := calendarEventVisibility("e", "m")
-	visibility = strings.NewReplacer("FROM source_merge_", "FROM src.source_merge_", "FROM calendar_events", "FROM src.calendar_events", "JOIN messages", "JOIN src.messages").Replace(visibility)
-	_, err := tx.ExecContext(ctx, `WITH RECURSIVE copies(original, id, depth) AS (
- SELECT left_message_id, left_message_id, 0 FROM src.meeting_link_decisions
- UNION SELECT right_message_id, right_message_id, 0 FROM src.meeting_link_decisions
- UNION ALL
- SELECT c.original, COALESCE((SELECT survivor_message_id FROM src.meeting_copy_survivors WHERE message_id=m.id AND m.delete_batch_id IS NOT NULL), (SELECT survivor_message_id FROM src.source_merge_messages WHERE message_id=m.id)), c.depth+1
- FROM copies c JOIN src.messages m ON m.id=c.id
- WHERE c.depth<100 AND (m.deleted_at IS NOT NULL OR EXISTS (SELECT 1 FROM src.calendar_events e WHERE e.message_id=m.id AND NOT `+visibility+`))
- AND COALESCE((SELECT survivor_message_id FROM src.meeting_copy_survivors WHERE message_id=m.id AND m.delete_batch_id IS NOT NULL), (SELECT survivor_message_id FROM src.source_merge_messages WHERE message_id=m.id)) IS NOT NULL
- ), visible AS (
- SELECT c.original,c.id FROM copies c JOIN src.messages m ON m.id=c.id
- WHERE m.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM src.calendar_events e WHERE e.message_id=m.id AND NOT `+visibility+`)
- AND c.id IN (SELECT id FROM selected_messages)
- ), choices AS (
- SELECT d.id,l.id AS a,d.left_kind AS ak,d.left_key AS av,r.id AS b,d.right_kind AS bk,d.right_key AS bv,d.decision
- FROM src.meeting_link_decisions d JOIN visible l ON l.original=d.left_message_id JOIN visible r ON r.original=d.right_message_id
- WHERE l.id<>r.id OR d.left_kind<>d.right_kind OR d.left_key<>d.right_key
- )
- INSERT OR IGNORE INTO meeting_link_decisions(id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision)
- SELECT id, CASE WHEN a<b OR (a=b AND (ak<bk OR (ak=bk AND av<bv))) THEN a ELSE b END,
- CASE WHEN a<b OR (a=b AND (ak<bk OR (ak=bk AND av<bv))) THEN ak ELSE bk END,
- CASE WHEN a<b OR (a=b AND (ak<bk OR (ak=bk AND av<bv))) THEN av ELSE bv END,
- CASE WHEN a<b OR (a=b AND (ak<bk OR (ak=bk AND av<bv))) THEN b ELSE a END,
- CASE WHEN a<b OR (a=b AND (ak<bk OR (ak=bk AND av<bv))) THEN bk ELSE ak END,
- CASE WHEN a<b OR (a=b AND (ak<bk OR (ak=bk AND av<bv))) THEN bv ELSE av END, decision
- FROM choices ORDER BY id DESC`)
-	return err
+func copySubsetMeetingDecisions(ctx context.Context, db *sql.DB, tx *sql.Tx) error {
+	// The attached source and selected destination share this transaction's snapshot.
+	rewrite := strings.NewReplacer(
+		"FROM messages", "FROM src.messages", "JOIN messages", "JOIN src.messages",
+		"FROM calendar_events", "FROM src.calendar_events", "JOIN calendar_events", "JOIN src.calendar_events",
+		"FROM meeting_copy_survivors", "FROM src.meeting_copy_survivors",
+		"FROM source_merge_messages", "FROM src.source_merge_messages",
+		"FROM source_merge_archive_only_messages", "FROM src.source_merge_archive_only_messages",
+	)
+	s := &Store{db: newLoggedDB(db, nil), dialect: &SQLiteDialect{}}
+	reader := reboundSQLReader{SQLReader: tx, rebind: rewrite.Replace}
+	ctx = context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: db, reader: reader})
+	rows, err := tx.QueryContext(ctx, `SELECT id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision FROM src.meeting_link_decisions ORDER BY id DESC`)
+	if err != nil {
+		return err
+	}
+	var edges []meetingDecisionEdge
+	for rows.Next() {
+		var edge meetingDecisionEdge
+		if err := rows.Scan(&edge.id, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.decision); err != nil {
+			return errors.Join(err, rows.Close()) //nolint:sqlclosecheck // Close before returning the scan error.
+		}
+		edges = append(edges, edge)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	resolve := func(endpoint meetingDecisionEndpoint) (meetingDecisionEndpoint, bool, error) {
+		budget := calrecur.RequestReadBudget
+		key, err := s.meetingOccurrenceKey(ctx, endpoint, &budget)
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrMeetingOccurrenceRequired) {
+			return endpoint, false, nil
+		}
+		if err != nil {
+			return endpoint, false, err
+		}
+		var selected bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM selected_messages WHERE id=?)`, key.ID).Scan(&selected); err != nil {
+			return endpoint, false, err
+		}
+		if selected {
+			return key, true, nil
+		}
+		if key.Kind != meetingRefEvent {
+			return endpoint, false, nil
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT e.message_id FROM src.calendar_events e JOIN src.messages m ON m.id=e.message_id JOIN src.calendar_events series ON series.message_id=? JOIN src.messages sm ON sm.id=series.message_id WHERE e.kind='exception' AND e.series_provider_id=series.provider_event_id AND m.source_id=sm.source_id AND e.message_id IN (SELECT id FROM selected_messages) ORDER BY e.message_id`, key.ID)
+		if err != nil {
+			return endpoint, false, err
+		}
+		var candidates []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return endpoint, false, errors.Join(err, rows.Close()) //nolint:sqlclosecheck // Close before returning the scan error.
+			}
+			candidates = append(candidates, id)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return endpoint, false, err
+		}
+		for _, id := range candidates {
+			candidate, err := s.meetingOccurrenceKey(ctx, meetingDecisionEndpoint{ID: id, Kind: meetingRefEvent}, &budget)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return endpoint, false, err
+			}
+			if candidate == key {
+				candidate.ID = id
+				return candidate, true, nil
+			}
+		}
+		return endpoint, false, nil
+	}
+	for _, edge := range edges {
+		budget := calrecur.RequestReadBudget
+		left, right, valid, err := s.meetingPairKeys(ctx, edge.a, edge.b, &budget)
+		if err != nil {
+			return err
+		}
+		if !valid {
+			continue
+		}
+		a, ok, err := resolve(left)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		b, ok, err := resolve(right)
+		if err != nil {
+			return err
+		}
+		if !ok || a == b {
+			continue
+		}
+		if compareMeetingEndpoints(a, b) > 0 {
+			a, b = b, a
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO meeting_link_decisions(id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES(?,?,?,?,?,?,?,?)`, edge.id, a.ID, a.Kind, a.Key, b.ID, b.Kind, b.Key, edge.decision); err != nil {
+			return err
+		}
+	}
+	return nil
 }

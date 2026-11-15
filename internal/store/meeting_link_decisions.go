@@ -170,10 +170,11 @@ func (s *Store) meetingOccurrenceKey(ctx context.Context, endpoint meetingDecisi
 		endpoint.Key = ""
 		return endpoint, nil
 	}
-	rows, err := s.meetingEventRows(ctx, `e.message_id = ?`, []any{id}, budget)
+	rows, err := queryCalendarEventRowsWithinBudget(ctx, s.meetingSQLReader(ctx), `e.message_id = ?`, []any{id}, *budget)
 	if err != nil {
 		return endpoint, err
 	}
+	*budget -= len(rows)
 	if len(rows) == 0 {
 		return endpoint, sql.ErrNoRows
 	}
@@ -189,10 +190,11 @@ func (s *Store) meetingOccurrenceKey(ctx context.Context, endpoint meetingDecisi
 			endpoint.Key = row.Event.Original.Key()
 		}
 		if row.Event.Original != nil && row.Event.SeriesProviderID != "" {
-			series, err := s.meetingEventRows(ctx, `m.source_id = ? AND e.provider_event_id = ? AND e.kind = 'series'`, []any{row.SourceID, row.Event.SeriesProviderID}, budget)
+			series, err := queryCalendarEventRowsWithinBudget(ctx, s.meetingSQLReader(ctx), `m.source_id = ? AND e.provider_event_id = ? AND e.kind = 'series'`, []any{row.SourceID, row.Event.SeriesProviderID}, *budget)
 			if err != nil {
 				return endpoint, err
 			}
+			*budget -= len(series)
 			if len(series) > 0 {
 				endpoint.ID = series[0].MessageID
 				endpoint.Key = row.Event.Original.Key()
@@ -498,7 +500,14 @@ func deleteMeetingDecisionPair(ctx context.Context, tx *loggedTx, a, b meetingDe
 // preservePurgedMeetingDecisions moves choices off rows that are about to disappear.
 func (s *Store) preservePurgedMeetingDecisions(ctx context.Context, tx *loggedTx, predicate string, args ...any) error {
 	ctx = withWritableSnapshot(ctx, s.db.DB, tx)
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM messages WHERE `+predicate, args...)
+	return s.preservePurgedMeetingDecisionsWith(ctx, tx, predicate, args...)
+}
+
+func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}, predicate string, args ...any) error {
+	reader := s.meetingSQLReader(ctx)
+	rows, err := reader.QueryContext(ctx, `SELECT id FROM messages WHERE `+predicate, args...)
 	if err != nil {
 		return err
 	}
@@ -506,7 +515,7 @@ func (s *Store) preservePurgedMeetingDecisions(ctx context.Context, tx *loggedTx
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			return errors.Join(err, rows.Close())
+			return errors.Join(err, rows.Close()) //nolint:sqlclosecheck // Close before returning the scan error.
 		}
 		purged[id] = true
 	}
@@ -529,7 +538,7 @@ func (s *Store) preservePurgedMeetingDecisions(ctx context.Context, tx *loggedTx
 			purged[copyID] = true
 		}
 	}
-	rows, err = tx.QueryContext(ctx, `SELECT id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision FROM meeting_link_decisions ORDER BY id DESC`)
+	rows, err = reader.QueryContext(ctx, `SELECT id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision FROM meeting_link_decisions ORDER BY id DESC`)
 	if err != nil {
 		return err
 	}
@@ -537,7 +546,7 @@ func (s *Store) preservePurgedMeetingDecisions(ctx context.Context, tx *loggedTx
 	for rows.Next() {
 		var edge meetingDecisionEdge
 		if err := rows.Scan(&edge.id, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.decision); err != nil {
-			return errors.Join(err, rows.Close())
+			return errors.Join(err, rows.Close()) //nolint:sqlclosecheck // Close before returning the scan error.
 		}
 		edges = append(edges, edge)
 	}
@@ -576,7 +585,7 @@ func (s *Store) preservePurgedMeetingDecisions(ctx context.Context, tx *loggedTx
 			continue
 		}
 		if !item.valid || seen[item.pair] {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id=?`, item.edge.id); err != nil {
+			if _, err := tx.ExecContext(ctx, s.dialect.Rebind(`DELETE FROM meeting_link_decisions WHERE id=?`), item.edge.id); err != nil {
 				return err
 			}
 			continue
@@ -588,7 +597,7 @@ func (s *Store) preservePurgedMeetingDecisions(ctx context.Context, tx *loggedTx
 	}
 	for _, item := range updates {
 		p := item.pair
-		if _, err := tx.ExecContext(ctx, `UPDATE meeting_link_decisions SET left_message_id=?,left_kind=?,left_key=?,right_message_id=?,right_kind=?,right_key=? WHERE id=?`, p.a.ID, p.a.Kind, p.a.Key, p.b.ID, p.b.Kind, p.b.Key, item.edge.id); err != nil {
+		if _, err := tx.ExecContext(ctx, s.dialect.Rebind(`UPDATE meeting_link_decisions SET left_message_id=?,left_kind=?,left_key=?,right_message_id=?,right_kind=?,right_key=? WHERE id=?`), p.a.ID, p.a.Kind, p.a.Key, p.b.ID, p.b.Kind, p.b.Key, item.edge.id); err != nil {
 			return err
 		}
 	}
