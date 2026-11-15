@@ -1,9 +1,11 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -11,6 +13,23 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/calrecur"
 )
+
+func TestMeetingRecordDoesNotReadArchiveVersion(t *testing.T) {
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "event", calendarRaw)
+	ConfigureSQLLogging(SQLLogOptions{FullTrace: true, MaxStmtChars: 10000})
+	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event})
+	require.NoError(err)
+	require.Len(record.Links, 1)
+	require.Contains(logs.String(), "calendar_events")
+	require.NotContains(logs.String(), "SELECT value FROM archive_metadata WHERE key = 'schema_version'")
+}
 
 func TestMeetingRecordRejectsFutureProjection(t *testing.T) {
 	for _, tc := range []struct{ name, source string }{
