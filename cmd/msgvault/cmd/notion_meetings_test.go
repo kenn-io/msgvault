@@ -26,7 +26,7 @@ type fakeNotionProbe struct {
 type fakeNotionSyncSource struct{ fakeNotionProbe }
 
 func (fakeNotionSyncSource) RetrievePageMarkdown(context.Context, string, bool) (*notionmeetings.MarkdownPage, error) {
-	return &notionmeetings.MarkdownPage{}, nil
+	return &notionmeetings.MarkdownPage{Object: "page_markdown", ID: "page-1", Raw: []byte(`{"object":"page_markdown","id":"page-1","markdown":""}`)}, nil
 }
 
 func (f fakeNotionProbe) QueryMeetingNotes(context.Context, int) (*notionmeetings.QueryResult, error) {
@@ -79,20 +79,24 @@ func TestRunNotionMeetingsProbeIsContentAndTokenSafe(t *testing.T) {
 	assert := assert.New(t)
 	meeting := notionmeetings.MeetingNote{
 		ID: "private-block-id", MeetingNotes: notionmeetings.MeetingNotesData{
-			Title: []notionmeetings.RichText{{PlainText: "Private meeting title"}},
+			Title: []notionmeetings.RichText{{PlainText: "Private meeting title"}}, Children: notionmeetings.MeetingChildren{TranscriptBlockID: "transcript-1"},
 		},
 	}
 	var out bytes.Buffer
+	var blockIDs []string
 	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
-		result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{meeting}, HasMore: true},
-		block:  &notionmeetings.Block{},
+		result:   &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{meeting}, HasMore: true},
+		block:    &notionmeetings.Block{Type: "paragraph", Paragraph: notionmeetings.RichTextBlock{RichText: []notionmeetings.RichText{{PlainText: "private transcript"}}}},
+		blockIDs: &blockIDs,
 	}, nil)
 	require.NoError(t, err)
 	assert.Contains(out.String(), "Returned meetings: 1")
 	assert.Contains(out.String(), "Partial coverage: true")
 	assert.NotContains(out.String(), "private-block-id")
 	assert.NotContains(out.String(), "Private meeting title")
+	assert.NotContains(out.String(), "private transcript")
 	assert.NotContains(out.String(), "secret-token")
+	assert.Equal([]string{"private-block-id", "transcript-1"}, blockIDs)
 	assert.Contains(out.String(), "User Information: available")
 }
 

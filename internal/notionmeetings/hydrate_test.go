@@ -153,6 +153,20 @@ func completeHydrationSource() *fakeHydrationSource {
 }
 
 func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) {
+	t.Run("data source parent", func(t *testing.T) {
+		checks := assert.New(t)
+		requirements := require.New(t)
+		source := completeHydrationSource()
+		meeting := hydrationMeeting()
+		meeting.Parent = Parent{Type: "data_source_id"}
+		source.blocks["meeting-1"].Parent = meeting.Parent
+		hydrated, err := NewHydrator(source).Hydrate(t.Context(), meeting)
+		requirements.NoError(err)
+		checks.Equal("Decide the release scope.", hydrated.Summary)
+		checks.Contains(hydrated.Notes, "Nested action item.")
+		checks.Equal("Test Speaker: Ready to ship.", hydrated.Transcript)
+		checks.Zero(source.markdownCalls)
+	})
 	assert := assert.New(t)
 	require := require.New(t)
 	source := completeHydrationSource()
@@ -193,6 +207,7 @@ func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) 
 	assert.NotContains(string(snapshot.Raw), "user@example.com", "configured identity must not enter provider evidence")
 	assert.Contains(string(snapshot.Metadata), `"creator_user_id":"creator-1"`)
 	assert.Contains(string(snapshot.Metadata), `"unresolved_attendee_ids":["user-2"]`)
+
 }
 
 func TestHydratorUsesMarkdownTranscriptFallback(t *testing.T) {
@@ -207,18 +222,6 @@ func TestHydratorUsesMarkdownTranscriptFallback(t *testing.T) {
 	checks.Equal("Test Speaker: Late transcript.", hydrated.Transcript)
 	checks.True(hydrated.MarkdownTranscriptFallback)
 	checks.Contains(hydrated.Warnings, "used page Markdown transcript")
-	t.Run("data source has no page", func(t *testing.T) {
-		assert := assert.New(t)
-		source := completeHydrationSource()
-		meeting := hydrationMeeting()
-		meeting.Parent = Parent{Type: "data_source_id"}
-		meeting.MeetingNotes.Children.TranscriptBlockID = ""
-		source.blocks["meeting-1"].Parent = meeting.Parent
-		hydrated, err := NewHydrator(source).Hydrate(t.Context(), meeting)
-		require.NoError(t, err)
-		assert.Empty(hydrated.Transcript)
-		assert.Zero(source.markdownCalls)
-	})
 }
 
 func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {

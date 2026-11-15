@@ -429,7 +429,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			if oldText == "" && len(archived.RawTrees[section.name]) == 0 {
 				continue
 			}
-			keepCurrentTranscript := section.name == sectionTranscript && strings.TrimSpace(oldText) == "" && hydrated.MarkdownTranscriptFallback
+			keepCurrentTranscript := section.name == sectionTranscript && hydrated.MarkdownTranscriptFallback
 			if !keepCurrentTranscript {
 				*section.text = oldText
 			}
