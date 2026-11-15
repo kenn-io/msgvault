@@ -75,11 +75,7 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 	if window.PersonID <= 0 || window.Now.IsZero() {
 		return invalid()
 	}
-	zone := window.Timezone
-	if zone == "" {
-		zone = "UTC"
-	}
-	location, err := time.LoadLocation(zone)
+	location, err := time.LoadLocation(window.Timezone)
 	if err != nil || validateProgramOutput(output, commitmentSchema, "commitment") != nil {
 		return invalid()
 	}
