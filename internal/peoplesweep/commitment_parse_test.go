@@ -120,6 +120,8 @@ func TestParseCommitmentsKeepsOnlyCitedDueDates(t *testing.T) {
 		{"yearless date", "I will call on November 20.", "I will call on November 20.", "2026-11-20", true},
 		{"tomorrow", "I will call tomorrow.", "I will call tomorrow.", "2026-11-11", true},
 		{"day after tomorrow", "I will call the day after tomorrow.", "I will call the day after tomorrow.", "2026-11-12", true},
+		{"in two days", "I will call in two days.", "I will call in two days.", "2026-11-12", true},
+		{"in two days wrong date", "I will call in two days.", "I will call in two days.", "2026-11-11", false},
 		{"day after tomorrow rejects tomorrow", "I will call the day after tomorrow.", "I will call the day after tomorrow.", "2026-11-11", false},
 		{"wrong tomorrow", "I will call tomorrow.", "I will call tomorrow.", "2026-11-12", false},
 		{"weekday", "I will call by Friday.", "I will call by Friday.", "2026-11-13", true},

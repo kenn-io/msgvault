@@ -382,7 +382,7 @@ func writeCommitmentWindow(sb *strings.Builder, result generated.LoopListRespons
 		window = "from " + result.CommitmentsSince.Format(time.DateOnly) + " through " + result.CommitmentsUntil.Format(time.DateOnly)
 	}
 	if result.CommitmentsComplete != nil && !*result.CommitmentsComplete {
-		fmt.Fprintf(sb, "Promise discovery %s is incomplete. Some messages may be too large to check.\n", window)
+		fmt.Fprintf(sb, "Promise discovery %s is incomplete.\n", window)
 	} else {
 		fmt.Fprintf(sb, "Promises checked %s.\n", window)
 	}

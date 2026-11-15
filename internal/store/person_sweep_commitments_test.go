@@ -69,9 +69,7 @@ func TestApplyCommitmentOnlySweepWritesClaims(t *testing.T) {
 	_, err = st.db.ExecContext(ctx, st.Rebind(`UPDATE person_fact_claims SET normalized_value_json = ? WHERE id = ?`), `{"version":2,"summary":{"text":"Future"}}`, claims[0].ID)
 	r.NoError(err)
 	items, err = st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 5, 0, false)
-	r.NoError(err)
-	r.Len(items, 1)
-	a.NotEqual("Future", items[0].Summary)
+	r.ErrorContains(err, "unsupported commitment claim version 2")
 }
 
 func TestCommitmentDecisionSurvivesShiftedQuote(t *testing.T) {
@@ -533,6 +531,9 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 			request := commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
 			_, err = f.store.ApplyPersonSweep(ctx, request)
 			r.NoError(err)
+			due, err := f.store.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments), cfg.Commitments.MaxBytes)
+			r.NoError(err)
+			a.True(due, "an incomplete batch resumes before the minimum interval")
 			items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 5, 0, false)
 			r.NoError(err)
 			r.Len(items, 1)
@@ -566,7 +567,7 @@ func TestCommitmentDiscoverySkipsOversizeAndRetriesWithLargerLimit(t *testing.T)
 				a.False(due, "unchanged limits leave an oversized message pending")
 			}
 			cfg.Commitments.MaxBytes = 100 << 10
-			due, err := f.store.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments), cfg.Commitments.MaxBytes)
+			due, err = f.store.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments), cfg.Commitments.MaxBytes)
 			r.NoError(err)
 			a.True(due, "a raised byte limit schedules a retry immediately")
 			laterNow := personFactLedgerNow.Add(24 * time.Hour)

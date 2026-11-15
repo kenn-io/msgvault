@@ -191,11 +191,12 @@ func (s *Store) loadCommitmentCandidateEvidenceTx(ctx context.Context, tx *logge
 	if err := json.Unmarshal([]byte(valueJSON), &header); err != nil {
 		return fmt.Errorf("decode commitment claim: %w", err)
 	}
+	if header.Version != personfacts.CommitmentValueVersion {
+		return fmt.Errorf("unsupported commitment claim version %d", header.Version)
+	}
 	var value personfacts.CommitmentValue
-	if header.Version == personfacts.CommitmentValueVersion {
-		if err := json.Unmarshal([]byte(valueJSON), &value); err != nil {
-			return fmt.Errorf("decode commitment claim: %w", err)
-		}
+	if err := json.Unmarshal([]byte(valueJSON), &value); err != nil {
+		return fmt.Errorf("decode commitment claim: %w", err)
 	}
 	promise, err := scanPersonFactEvidence(tx.QueryRowContext(ctx, `SELECT `+personFactEvidenceColumns+`
 		FROM person_fact_evidence e WHERE EXISTS (
@@ -213,9 +214,7 @@ func (s *Store) loadCommitmentCandidateEvidenceTx(ctx context.Context, tx *logge
 	c.Start, c.End = *promise.Input.SpanStart, *promise.Input.SpanEnd
 	c.Summary, c.DueOn, c.PromisedAt = value.Summary, value.DueOn, promise.Input.EventTime
 	candidate.commitment = c
-	if header.Version == personfacts.CommitmentValueVersion {
-		candidate.promise = promise
-	}
+	candidate.promise = promise
 	return nil
 }
 
@@ -383,9 +382,6 @@ func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now ti
 	if retry, err := s.commitmentOversizedRetryDue(ctx, personID, scopeFingerprint, maxBytes); retry || err != nil {
 		return retry, err
 	}
-	if now.Before(st.processed.Time.Add(interval)) {
-		return false, nil
-	}
 	if st.backfill >= 0 {
 		return true, nil
 	}
@@ -394,6 +390,11 @@ func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now ti
 			return true, nil
 		}
 		st.through = max(st.through, st.observed.Int64)
+	}
+	if now.Before(st.processed.Time.Add(interval)) {
+		var pending bool
+		err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM person_sweep_changes WHERE person_id = ? AND sequence > ? AND `+s.loopTimeKey("recorded_at")+` <= `+s.loopTimeKey("?")+`)`), personID, st.through, s.dialect.TimestampParam(st.processed.Time)).Scan(&pending)
+		return pending, err
 	}
 	return s.HasPersonSweepChangesAfter(ctx, personID, st.through)
 }

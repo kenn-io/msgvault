@@ -2048,6 +2048,14 @@ conversation first and return `anchor_message_id`, `state` (`done` or
 `POST /api/v1/loops/{message_id}/reopen` clears the decision on that one
 question and returns `state: "open"`.
 
+`POST /api/v1/loops/commitments/{commitment_id}/decision` sets a cited
+promise's state. Use its `c<ID>` and send `{"state":"done"}`,
+`{"state":"open"}`, or `{"state":"snoozed","until":"<future RFC3339 time>"}`.
+The response contains `id`, `state`, and, for a snoozed promise,
+`snoozed_until`. An invalid request returns 400, an unknown promise returns
+404, and changed evidence returns 409 with `commitment_changed`; refresh the
+list before retrying.
+
 | Status | Error | When |
 |---|---|---|
 | 400 | `invalid_request` | A bad ID or parameter, a snooze time in the past, or `question_message_ids` that leaves out `message_id`. |

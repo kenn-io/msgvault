@@ -248,7 +248,7 @@ Showing up to 50 reply loops and 50 cited promises. Use --limit up to 200 to see
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{CommitmentsSince: &now, CommitmentsComplete: &incomplete}, 50, now))
-	assert.Contains(out.String(), "Some messages may be too large to check.")
+	assert.Contains(out.String(), "Promise discovery since 2026-10-19 is incomplete.")
 
 	out.Reset()
 	until := now.AddDate(0, 0, -1)

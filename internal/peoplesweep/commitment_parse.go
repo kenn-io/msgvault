@@ -128,6 +128,7 @@ var (
 	commitmentYearFollows     = regexp.MustCompile(`^[,\s]*\d{4}\b`)
 	commitmentNumericDate     = regexp.MustCompile(`\b\d{1,2}/\d{1,2}/\d{4}\b`)
 	commitmentTomorrow        = regexp.MustCompile(`\b(day after )?tomorrow\b`)
+	commitmentTwoDays         = regexp.MustCompile(`\bin two days\b`)
 	commitmentWeekdayDeadline = regexp.MustCompile(`\b(?:by|on)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:(?:of\s+)?(this|next)\s+week|in\s+([a-z0-9]+)\s+weeks?))?\b`)
 	commitmentInTail          = regexp.MustCompile(`^\s+in\b`)
 )
@@ -157,7 +158,7 @@ func commitmentQuoteHasDate(quote string, due, event time.Time, location *time.L
 		return false
 	}
 	day := event.In(location)
-	return quoteHasTomorrow(quote, due, day) || quoteHasYearlessDate(quote, due, day) || quoteHasByWeekday(quote, due, day)
+	return quoteHasTomorrow(quote, due, day) || (commitmentTwoDays.MatchString(quote) && day.AddDate(0, 0, 2).Format(time.DateOnly) == due.Format(time.DateOnly)) || quoteHasYearlessDate(quote, due, day) || quoteHasByWeekday(quote, due, day)
 }
 
 // quoteHasPhrase finds phrase as a whole token; allow, when set, vets the text after each match.
