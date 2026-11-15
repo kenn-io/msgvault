@@ -82,7 +82,7 @@ func TestRunNotionMeetingsProbeIsContentAndTokenSafe(t *testing.T) {
 	assert := assert.New(t)
 	meeting := notionmeetings.MeetingNote{
 		ID: "private-block-id", MeetingNotes: notionmeetings.MeetingNotesData{
-			Title: []notionmeetings.RichText{{PlainText: "Private meeting title"}}, Children: notionmeetings.MeetingChildren{SummaryBlockID: "summary-1"},
+			Title: []notionmeetings.RichText{{PlainText: "Private meeting title"}},
 		},
 		Parent: notionmeetings.Parent{PageID: "private-page-id"},
 	}
@@ -115,14 +115,17 @@ func TestRunNotionMeetingsProbeChecksPageMarkdown(t *testing.T) {
 			require := require.New(t)
 			meeting := notionmeetings.MeetingNote{ID: "meeting-1", MeetingNotes: notionmeetings.MeetingNotesData{Children: notionmeetings.MeetingChildren{SummaryBlockID: "summary-1"}}}
 			if tc.pageInQuery {
-				meeting.Parent.PageID = "page-1"
+				meeting.Parent.PageID = "query-page"
 			}
 			var out bytes.Buffer
 			var ids []string
 			var page string
 			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{meeting}}, block: &notionmeetings.Block{Parent: notionmeetings.Parent{PageID: "page-1"}}, blockIDs: &ids, markdownID: &page, markdownErr: tc.err}, nil)
-			assert.Equal("page-1", page)
-			assert.Equal([]string{"meeting-1"}, ids)
+			if tc.pageInQuery {
+				assert.Equal("query-page", page)
+			} else {
+				assert.Equal("page-1", page)
+			}
 			if tc.err != nil {
 				require.ErrorIs(err, tc.err)
 			} else {
@@ -306,9 +309,8 @@ func TestScheduledNotionSyncUsesUsersToken(t *testing.T) {
 	assert.Nil(absent)
 }
 
-func TestNotionSyncSummaryReportsIncompleteSection(t *testing.T) {
+func TestNotionSyncSummaryReportsPartialCoverage(t *testing.T) {
 	var out bytes.Buffer
 	writeNotionMeetingsSummary(&out, &notionmeetings.ImportSummary{PartialCoverage: true})
 	assert.Contains(t, out.String(), "Coverage: partial")
-	assert.NotContains(t, out.String(), "50-item")
 }

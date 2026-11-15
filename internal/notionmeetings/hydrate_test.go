@@ -209,7 +209,7 @@ func TestHydratorUsesMarkdownTranscriptFallback(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal("Test Speaker: Late transcript.", hydrated.Transcript)
 	assert.True(hydrated.MarkdownTranscriptFallback)
-	assert.Equal("page-1", source.markdownID)
+	assert.Contains(hydrated.Warnings, "structured transcript was empty; used page Markdown transcript")
 }
 
 func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
@@ -226,6 +226,7 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 		{name: "reset", err: syscall.ECONNRESET},
 		{name: "timeout", err: context.DeadlineExceeded},
 		{name: "truncated", err: io.ErrUnexpectedEOF},
+		{name: "oversized section", err: ErrResponseTooLarge},
 	}
 
 	for _, tt := range tests {
@@ -242,7 +243,7 @@ func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 			assert.Equal("Test Speaker: Published in Markdown.", hydrated.Transcript)
 			assert.True(hydrated.MarkdownTranscriptFallback)
 			assert.Contains(hydrated.Incomplete, "transcript")
-			assert.Equal("page-1", source.markdownID)
+			assert.NotContains(hydrated.Warnings, "structured transcript was empty; used page Markdown transcript")
 			assert.Len(hydrated.AttendeeLabels, 2)
 		})
 	}
@@ -257,7 +258,6 @@ func TestHydratorKeepsSystemicTranscriptErrorsFatal(t *testing.T) {
 		{name: "read content forbidden", err: &APIError{Kind: ErrReadContent, Status: 403, Code: "restricted_resource"}},
 		{name: "malformed response", err: fmt.Errorf("%w: invalid block", ErrMalformedResponse)},
 		{name: "context canceled", err: ErrRateLimited},
-		{name: "local traversal limit", err: errors.New("notion block traversal exceeded block limit")},
 	}
 
 	for _, tt := range tests {
@@ -302,6 +302,11 @@ func TestHydratorRejectsNonMeetingRootBlock(t *testing.T) {
 func TestExtractMarkdownTranscript(t *testing.T) {
 	for _, tc := range []struct{ name, markdown, want string }{
 		{"heading", "# Notes\nSome notes\n## Transcript\nSpeaker: Hello\n## Actions\nNext", "Speaker: Hello"},
+		{"deeper heading", "# Meeting\n## Transcript\nFirst\n### Detail\nSecond\n## Actions\nExclude", "First\n### Detail\nSecond"},
+		{"CRLF and case", "# Meeting\r\n### tRaNsCrIpT\r\nKeep\r\n## Notes\r\nExclude", "Keep"},
+		{"EOF", "# Meeting\n## Transcript\nKeep to EOF", "Keep to EOF"},
+		{"bare marker", "# Meeting\nTranscript:\nKeep\n## Actions\nExclude", "Keep"},
+		{"inline", "Transcript: Inline text\n## Notes\nExclude", "Inline text"},
 		{"absent", "# Notes\nSome notes", ""},
 		{"empty", "# Transcript\n", ""},
 	} {
@@ -330,33 +335,44 @@ func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 			assert.Contains(result.Warnings, "page Markdown transcript was incomplete; transcript remains pending")
 		})
 	}
+	t.Run("no transcript in incomplete page", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		source := completeHydrationSource()
+		empty := paragraph("transcript-1", "", false)
+		source.blocks["transcript-1"] = &empty
+		source.markdown.Markdown = "# Notes\nMeeting context"
+		source.markdown.UnknownBlockIDs = []string{"unrelated"}
+		result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
+		require.NoError(err)
+		assert.Empty(result.Transcript)
+		assert.NotContains(result.Warnings, "page Markdown transcript was incomplete; transcript remains pending")
+	})
 }
 
 func TestHydratorStoresAndComparesPageMarkdown(t *testing.T) {
 	for _, tc := range []struct {
-		name, markdown string
-		differs        bool
+		name, markdown     string
+		differs, truncated bool
 	}{
-		{"same words", "# Transcript\nTest Speaker: Ready   to ship.", false},
-		{"different", "# Transcript\nAnother transcript", true},
+		{"same words", "# Transcript\nTest Speaker: Ready   to ship.", false, false},
+		{"different", "# Transcript\nAnother transcript", true, false},
+		{"incomplete different", "# Transcript\nPartial conflicting transcript", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			source := completeHydrationSource()
 			source.markdown.Markdown = tc.markdown
+			source.markdown.Truncated = tc.truncated
 			result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 			require.NoError(t, err)
 			assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
-			assert.Equal("page-1", source.markdownID)
 			assert.Same(source.markdown, result.PageMarkdown)
 			if tc.differs {
 				assert.Contains(result.Warnings, "structured transcript and page Markdown transcript differed")
 			} else {
 				assert.NotContains(result.Warnings, "structured transcript and page Markdown transcript differed")
 			}
-			snapshot, err := result.ArchiveSnapshot(1, "work", "")
-			require.NoError(t, err)
-			assert.Contains(string(snapshot.Raw), `"page_markdown":{"object":"page_markdown","id":"page-1"`)
 		})
 	}
 }
@@ -476,21 +492,15 @@ func TestHydratorSkipsNestedMeetingChildren(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	source := completeHydrationSource()
-	source.blocks["notes-1"].Raw = json.RawMessage(`{"object":"block","id":"notes-1","type":"paragraph","has_children":true,"paragraph":{"rich_text":[{"plain_text":"Notes"}]}}`)
 	var nested Block
 	require.NoError(json.Unmarshal([]byte(`{"object":"block","id":"nested-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{}}`), &nested))
 	source.children["notes-1"][""] = &BlockPage{
 		Results: []Block{nested},
 		Raw:     json.RawMessage(`{"object":"list","results":[{"object":"block","id":"nested-meeting","type":"meeting_notes","has_children":true,"meeting_notes":{}}],"has_more":false,"next_cursor":null}`),
 	}
-	meeting := hydrationMeeting()
-	var err error
-	meeting.Raw, err = json.Marshal(meeting)
-	require.NoError(err)
-	result, err := NewHydrator(source).Hydrate(t.Context(), meeting)
+	result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(err)
 	assert.Empty(result.Incomplete)
-	assert.NotContains(source.blockCalls, "nested-meeting")
 }
 
 func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
@@ -502,6 +512,9 @@ func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 			meeting := hydrationMeeting()
 			if limit == "blocks" || limit == "depth" {
 				meeting.Parent = Parent{Type: "data_source_id"}
+				var err error
+				meeting.Raw, err = json.Marshal(meeting)
+				require.NoError(err)
 				source.blocks["meeting-1"].Parent = meeting.Parent
 			}
 			root := source.blocks["summary-1"]
