@@ -81,6 +81,7 @@ func TestClientReadEndpointsPreserveRawResponses(t *testing.T) {
 			_, _ = io.WriteString(w, `{"object":"list","results":[{"object":"block","id":"child-1","type":"paragraph","has_children":false,"paragraph":{}}],"next_cursor":"cursor-2","has_more":true}`)
 		case "/v1/pages/page-1/markdown":
 			assert.Equal("true", r.URL.Query().Get("include_transcript"))
+			assert.Empty(r.URL.Query().Get("markdown_version"))
 			_, _ = io.WriteString(w, `{"object":"page_markdown","id":"page-1","markdown":"# Weekly planning\nTranscript: Ready","truncated":false,"unknown_block_ids":[]}`)
 		case "/v1/users/guest":
 			_, _ = io.WriteString(w, `{"object":"user","id":"guest","type":"person","person":{"email":"guest@example.com","email_verified":true}}`)

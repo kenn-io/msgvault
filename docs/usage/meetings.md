@@ -872,10 +872,27 @@ It still cannot discover history beyond the visible window.
 - `--limit` caps the visible meetings fetched and checked.
 - Due transcript retries run in addition to that limit.
 
-Notion may publish notes before a transcript. Missing transcripts retry every
-six hours until seven days after the best known meeting end, or for 48 hours
-from discovery when timing is unknown. A temporary omission never erases a
-transcript already archived. Hard per-meeting failures retain the previous
+Meetings under pages and data sources import their summary, notes, and transcript
+from the meeting's section blocks. When a page meeting has no structured
+transcript, msgvault requests Markdown for its parent page and reads its
+transcript section. A structured transcript takes precedence.
+
+Temporary provider or network errors, incomplete pagination, and the existing
+request, response-size, block-count, and nesting limits can leave a section
+incomplete. msgvault keeps its archived text and evidence and retries every six
+hours, including after the meeting leaves the visible query window. The deadline
+is the later of seven days after the meeting ended and 48 hours after the retry
+starts. An active deadline isn't extended; an incomplete meeting starts a new
+window after expiry, including when it is outside the visible query.
+The sync summary reports partial coverage when a section is incomplete or the
+Notion query reports more meetings.
+
+When a transcript read is incomplete, sync retains the saved transcript and
+reports that it did so. A complete empty transcript clears saved transcript text.
+An archive with a newer
+evidence version is refused before that meeting is updated, even if its other
+fields have changed shape. Existing `[[notion_meetings]]` settings need no
+changes. Hard per-meeting failures retain the previous
 successful state; meetings written earlier in that failed run remain safe and
 idempotent.
 
