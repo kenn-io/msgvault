@@ -133,7 +133,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	SELECT le.anchor_message_id AS entry_num, mp.canonical_id,
 	       mp.is_author, mp.is_owner,
 	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
-	       le.attachment_count, le.source_type
+	       le.attachment_count, le.source_type, le.source_id
 	FROM logical_entries le
 	JOIN message_person mp ON mp.message_id = le.anchor_message_id
 	WHERE le.entry_kind <> 'conversation'
@@ -141,7 +141,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	SELECT -le.conversation_id AS entry_num, cp.canonical_id,
 	       cp.is_author, cp.is_owner,
 	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
-	       le.attachment_count, le.source_type
+	       le.attachment_count, le.source_type, le.source_id
 	FROM logical_entries le
 	JOIN chat_person cp ON cp.conversation_id = le.conversation_id
 	WHERE le.entry_kind = 'conversation'
@@ -462,10 +462,8 @@ func (e *DuckDBEngine) searchPeople(
 	} else if identityRequestIsSourceOnly(request.Explore) && !e.sourceRollupFastPathDisabled {
 		queryText = e.sourceFilteredPeopleSQL(candidates, order, len(request.Explore.Context.SourceIDs))
 		args = append(args, candidateArgs...)
-		for range 2 {
-			for _, sourceID := range request.Explore.Context.SourceIDs {
-				args = append(args, sourceID)
-			}
+		for _, sourceID := range request.Explore.Context.SourceIDs {
+			args = append(args, sourceID)
 		}
 	} else {
 		logicalSQL, logicalArgs, logicalErr := e.buildIdentityLogicalSQL(
@@ -476,7 +474,7 @@ func (e *DuckDBEngine) searchPeople(
 		if logicalErr != nil {
 			return nil, logicalErr
 		}
-		queryText = e.filteredPeopleSQL(logicalSQL, order)
+		queryText = e.filteredPeopleSQL(logicalSQL, order, len(request.Explore.Context.SourceIDs) > 0)
 		args = append(args, logicalArgs...)
 		args = append(args, candidateArgs...)
 	}
@@ -579,8 +577,22 @@ func (e *DuckDBEngine) unfilteredPeopleSQL(
 }
 
 func (e *DuckDBEngine) filteredPeopleSQL(
-	logicalSQL, order string,
+	logicalSQL, order string, filterSource bool,
 ) string {
+	meetingOwner := ""
+	ownerCondition := ""
+	if filterSource {
+		meetingOwner = `, meeting_owners AS (
+	SELECT l.canonical_id, coalesce(g.group_id, l.anchor_message_id) AS group_id,
+	       arg_min(l.source_id, struct_pack(at := l.occurred_at, id := l.anchor_message_id)) AS source_id
+	FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetLogicalContributions)) + `') l
+	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') g ON g.message_id = l.anchor_message_id
+	WHERE l.relation_kind = 1 AND l.message_type = 'meeting_transcript'
+	GROUP BY l.canonical_id, coalesce(g.group_id, l.anchor_message_id)
+)`
+		ownerCondition = ` AND EXISTS (SELECT 1 FROM meeting_owners o
+	        WHERE o.canonical_id = p.canonical_id AND o.group_id = coalesce(g.group_id, p.entry_num) AND o.source_id = p.source_id)`
+	}
 	// person_stats is the ONLY reference to the per-(entry, person) rows,
 	// and it reads person_flags rather than logical_people: a second
 	// reference would make DuckDB materialize the full row set — hundreds
@@ -591,7 +603,7 @@ func (e *DuckDBEngine) filteredPeopleSQL(
 	// the compact (person, source_type) stats, and the candidate
 	// restriction happens in the population join below rather than inside
 	// the aggregate.
-	return logicalSQL + `,
+	return logicalSQL + meetingOwner + `,
 person_stats AS (
 	SELECT p.canonical_id, p.source_type,
 	       count(*)::BIGINT AS source_count,
@@ -605,7 +617,7 @@ person_stats AS (
 	       sum(source_count)::BIGINT AS activity_count,
 	       (SELECT count(DISTINCT coalesce(g.group_id, p.entry_num))::BIGINT
 	        FROM person_flags p LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') g ON g.message_id = p.entry_num
-	        WHERE p.canonical_id = person_stats.canonical_id AND p.message_type = 'meeting_transcript') AS meeting_count,
+	        WHERE p.canonical_id = person_stats.canonical_id AND p.message_type = 'meeting_transcript'` + ownerCondition + `) AS meeting_count,
 	       sum(file_count)::BIGINT AS file_count,
 	       min(first_at)::TIMESTAMP AS first_at,
 	       max(last_at)::TIMESTAMP AS last_at
@@ -657,11 +669,7 @@ func (e *DuckDBEngine) sourceFilteredPeopleSQL(
 ), person_totals AS (
 	SELECT canonical_id,
 	       sum(activity_count)::BIGINT AS activity_count,
-	       coalesce((SELECT count(DISTINCT coalesce(g.group_id, l.anchor_message_id))::BIGINT
-	         FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetLogicalContributions)) + `') l
-	         LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups)) + `') g ON g.message_id = l.anchor_message_id
-	         WHERE l.relation_kind = 1 AND l.message_type = 'meeting_transcript'
-	           AND l.canonical_id = selected_source_rollups.canonical_id AND l.source_id IN (` + placeholders + `)), 0)::BIGINT AS meeting_count,
+	       sum(meeting_count)::BIGINT AS meeting_count,
 	       sum(file_count)::BIGINT AS file_count,
 	       min(first_at)::TIMESTAMP AS first_at,
 	       max(last_at)::TIMESTAMP AS last_at

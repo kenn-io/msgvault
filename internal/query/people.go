@@ -468,6 +468,25 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	}
 	args = append(args, limit, request.Page.Offset)
 	peopleRollup := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))
+	meetingSourceCondition := ""
+	if len(request.Explore.Context.SourceIDs) > 0 {
+		groups := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingGroups))
+		if exactID != nil {
+			meetingSourceCondition = ` AND pe.source_id = (SELECT m.source_id FROM messages m
+				LEFT JOIN read_parquet('` + groups + `') g ON g.message_id = m.id
+				WHERE m.id IN (SELECT message_id FROM person_message_ids) AND m.message_type = 'meeting_transcript'
+				  AND m.sent_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM relationship_unsent_messages u WHERE u.message_id = m.id)
+				  AND coalesce(g.group_id, m.id) = coalesce(mg.group_id, pe.anchor_message_id)
+				ORDER BY m.sent_at, m.id LIMIT 1)`
+		} else {
+			meetingSourceCondition = ` AND pe.source_id = (SELECT l.source_id
+				FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetLogicalContributions)) + `') l
+				LEFT JOIN read_parquet('` + groups + `') g ON g.message_id = l.anchor_message_id
+				WHERE l.relation_kind = 1 AND l.message_type = 'meeting_transcript' AND l.canonical_id = pe.person_id
+				  AND coalesce(g.group_id, l.anchor_message_id) = coalesce(mg.group_id, pe.anchor_message_id)
+				ORDER BY l.occurred_at, l.anchor_message_id LIMIT 1)`
+		}
+	}
 	queryText := buildExploreLogicalSQLNoLists(conditions) + entriesCTE + `
 ), person_population AS (
 	SELECT p.id AS person_id, COALESCE(p.display_name, '') AS display_name,
@@ -476,7 +495,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		` + overrideExpr + ` AS person_display_name,
 		` + sqlPersonIdentifierFallbackExpr("p") + ` AS fallback_label,
 		COUNT(pe.person_id)::BIGINT AS activity_count,
-		COUNT(DISTINCT coalesce(mg.group_id, pe.anchor_message_id)) FILTER (WHERE pe.message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+		COUNT(DISTINCT coalesce(mg.group_id, pe.anchor_message_id)) FILTER (WHERE pe.message_type = 'meeting_transcript'` + meetingSourceCondition + `)::BIGINT AS meeting_count,
 		COALESCE(SUM(pe.attachment_count), 0)::BIGINT AS file_count,
 		MIN(pe.occurred_at) AS first_at, MAX(pe.occurred_at) AS last_at
 	` + populationFrom + `
@@ -567,7 +586,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (s
 	FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
 ), person_entries AS (`, quoteIdentitySQLPath(clustersGlob)) +
 			sqlActivityEntryEdges(
-				"a.canonical_id AS person_id, le.anchor_message_id, le.occurred_at, le.message_type, le.attachment_count, le.source_type",
+				"a.canonical_id AS person_id, le.anchor_message_id, le.occurred_at, le.message_type, le.attachment_count, le.source_type, le.source_id",
 				"a.is_direct", "(a.is_direct OR a.is_conversation_member)"), nil
 	}
 	memberList := "(" + strings.TrimSuffix(strings.Repeat("?,", len(memberIDs)), ",") + ")"
@@ -589,7 +608,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (s
 	SELECT f.conversation_id FROM classified f
 	WHERE f.is_chat AND f.message_id IN (SELECT message_id FROM person_message_ids)
 ), person_entries AS (
-	SELECT ?::BIGINT AS person_id, anchor_message_id, occurred_at, message_type, attachment_count, source_type
+	SELECT ?::BIGINT AS person_id, anchor_message_id, occurred_at, message_type, attachment_count, source_type, source_id
 	FROM logical_entries le
 	WHERE (le.entry_kind <> 'conversation'
 	       AND le.anchor_message_id IN (SELECT message_id FROM person_message_ids))
