@@ -113,31 +113,33 @@ func TestMeetingLinkDecisionGroupsLinkAndSplit(t *testing.T) {
 }
 
 func TestMeetingTranscriptGroupsFollowChoices(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	raw := `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"group_20270314T100000Z"}}`
 	_, first := projectionFixture(t, st, "group-first", "granola_json", raw)
 	_, copyID := projectionFixture(t, st, "group-copy", "granola_json", raw)
 	_, other := projectionFixture(t, st, "group-other", "meeting_json", `{}`)
 	_, err := st.db.ExecContext(t.Context(), `UPDATE messages SET sent_at = ? WHERE id IN (?, ?, ?)`, time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), first, copyID, other)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
 	check := func(want map[int64]int64) {
 		t.Helper()
 		groups, fallback, err := st.MeetingTranscriptGroupsContext(t.Context(), other)
-		require.NoError(t, err)
-		assert.False(t, fallback)
-		assert.Equal(t, want, groups)
+		requirements.NoError(err)
+		assertions.False(fallback)
+		assertions.Equal(want, groups)
 	}
 	check(map[int64]int64{first: first, copyID: first, other: other})
 	groups, fallback, err := st.meetingTranscriptGroupsContext(t.Context(), other, 0)
-	require.NoError(t, err)
-	assert.True(t, fallback)
-	assert.Equal(t, map[int64]int64{first: first, copyID: copyID, other: other}, groups)
+	requirements.NoError(err)
+	assertions.True(fallback)
+	assertions.Equal(map[int64]int64{first: first, copyID: copyID, other: other}, groups)
 	_, err = st.DecideMeetingLinkContext(t.Context(), ref(first), ref(other), "link")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	check(map[int64]int64{first: first, copyID: first, other: first})
 	_, err = st.DecideMeetingLinkContext(t.Context(), ref(first), ref(copyID), "unlink")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	check(map[int64]int64{first: first, copyID: copyID, other: first})
 }
 

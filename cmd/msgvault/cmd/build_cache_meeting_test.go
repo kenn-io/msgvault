@@ -137,16 +137,18 @@ func TestBuildCache_IncludesMeetingTranscripts(t *testing.T) {
 }
 
 func TestBuildCacheMeetingCountsFollowSavedChoices(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "archive.db")
 	analytics := filepath.Join(dir, "analytics")
 	st := testutil.NewSQLiteTestStoreAt(t, path)
 	source, err := st.GetOrCreateSource("meeting_import", "owner@example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	alice, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	bob, err := st.EnsureParticipant("bob@example.test", "Bob", "example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	var refs []store.MeetingLinkRef
 	for _, key := range []string{"first", "second"} {
 		id, err := st.PersistMessage(&store.MessagePersistData{
@@ -154,61 +156,63 @@ func TestBuildCacheMeetingCountsFollowSavedChoices(t *testing.T) {
 			Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"},
 			RawMIME:      []byte(`{}`), RawFormat: "meeting_json",
 		})
-		require.NoError(t, err)
-		require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{alice, bob}, []string{"", ""}))
+		requirements.NoError(err)
+		requirements.NoError(st.ReplaceMessageRecipients(id, "to", []int64{alice, bob}, []string{"", ""}))
 		refs = append(refs, store.MeetingLinkRef{Kind: "msg", MessageID: id})
 	}
 	check := func(want, activity int64) {
 		t.Helper()
 		_, err := buildCache(t.Context(), path, analytics, false)
-		require.NoError(t, err)
+		requirements.NoError(err)
 		engine, err := query.NewDuckDBEngine(t.Context(), analytics, path, st.DB())
-		require.NoError(t, err)
+		requirements.NoError(err)
 		defer func() { _ = engine.Close() }()
 		for _, name := range []string{"Alice", "Bob"} {
 			after := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 			for _, filter := range []query.Context{{}, {SourceIDs: []int64{source.ID}}, {After: &after}} {
 				people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Query: name, Explore: query.ExploreRequest{Context: filter}})
-				require.NoError(t, err)
-				require.Len(t, people.Rows, 1)
-				assert.Equal(t, want, people.Rows[0].MeetingCount)
-				assert.Equal(t, activity, people.Rows[0].ActivityCount)
+				requirements.NoError(err)
+				requirements.Len(people.Rows, 1)
+				assertions.Equal(want, people.Rows[0].MeetingCount)
+				assertions.Equal(activity, people.Rows[0].ActivityCount)
 			}
 		}
 		selection, err := engine.ResolveExploreMeetings(t.Context(), query.ExploreSelectionRequest{}, 10)
-		require.NoError(t, err)
-		assert.Equal(t, want, selection.MeetingCount)
-		assert.Len(t, selection.MessageIDs, int(activity))
+		requirements.NoError(err)
+		assertions.Equal(want, selection.MeetingCount)
+		assertions.Len(selection.MessageIDs, int(activity))
 	}
 	check(2, 2)
 	_, err = st.DecideMeetingLinkContext(t.Context(), refs[0], refs[1], "link")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	check(1, 2)
 	_, err = st.DecideMeetingLinkContext(t.Context(), refs[0], refs[1], "unlink")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	check(2, 2)
 	third, err := st.PersistMessage(&store.MessagePersistData{
 		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "third", MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC), Valid: true}},
 		Conversation: &store.ConversationPersistData{SourceConversationID: "third", ConversationType: "meeting"},
 		RawMIME:      []byte(`{}`), RawFormat: "meeting_json",
 	})
-	require.NoError(t, err)
-	require.NoError(t, st.ReplaceMessageRecipients(third, "to", []int64{alice, bob}, []string{"", ""}))
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageRecipients(third, "to", []int64{alice, bob}, []string{"", ""}))
 	_, err = st.DecideMeetingLinkContext(t.Context(), refs[0], store.MeetingLinkRef{Kind: "msg", MessageID: third}, "link")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	check(2, 3)
 }
 
 func TestBuildCacheMeetingCountsAcrossWeeklyOccurrences(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "archive.db")
 	analytics := filepath.Join(dir, "analytics")
 	st := testutil.NewSQLiteTestStoreAt(t, path)
 	calendar, err := st.GetOrCreateSource("gcal", "owner@example.test")
-	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), calendar.ID, `{"calendar_id":"owner@example.test","time_zone":"UTC"}`))
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), calendar.ID, `{"calendar_id":"owner@example.test","time_zone":"UTC"}`))
 	participant, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	start := time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)
 	event, err := st.PersistMessage(&store.MessagePersistData{
 		Message:      &store.Message{SourceID: calendar.ID, SourceMessageID: "series", MessageType: "calendar_event", SentAt: sql.NullTime{Time: start, Valid: true}},
@@ -216,10 +220,10 @@ func TestBuildCacheMeetingCountsAcrossWeeklyOccurrences(t *testing.T) {
 		RawMIME:      []byte(`{"id":"series","iCalUID":"weekly@example.test","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`), RawFormat: "gcal_json",
 		Metadata: &sql.NullString{String: `{"calendar_id":"owner@example.test"}`, Valid: true},
 	})
-	require.NoError(t, err)
-	require.NoError(t, st.ReplaceMessageRecipients(event, "to", []int64{participant}, []string{""}))
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageRecipients(event, "to", []int64{participant}, []string{""}))
 	notes, err := st.GetOrCreateSource("meeting_import", "owner@example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	for _, entry := range []struct{ key, format, raw string }{
 		{"first", "granola_json", `{"owner":{"email":"owner@example.test"},"calendar_event":{"calendar_event_id":"series_20270314T100000Z"}}`},
 		{"copy", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.test","startsAt":"2027-03-14T10:00:00Z"}}`},
@@ -230,39 +234,39 @@ func TestBuildCacheMeetingCountsAcrossWeeklyOccurrences(t *testing.T) {
 			Conversation: &store.ConversationPersistData{SourceConversationID: entry.key, ConversationType: "meeting"},
 			RawMIME:      []byte(entry.raw), RawFormat: entry.format,
 		})
-		require.NoError(t, err)
-		require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{participant}, []string{""}))
+		requirements.NoError(err)
+		requirements.NoError(st.ReplaceMessageRecipients(id, "to", []int64{participant}, []string{""}))
 	}
 	_, err = buildCache(t.Context(), path, analytics, true)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	engine, err := query.NewDuckDBEngine(t.Context(), analytics, path, st.DB())
-	require.NoError(t, err)
+	requirements.NoError(err)
 	t.Cleanup(func() { _ = engine.Close() })
 	people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Query: "Alice"})
-	require.NoError(t, err)
-	require.Len(t, people.Rows, 1)
-	assert.Equal(t, int64(2), people.Rows[0].MeetingCount)
-	assert.Equal(t, int64(4), people.Rows[0].ActivityCount)
+	requirements.NoError(err)
+	requirements.Len(people.Rows, 1)
+	assertions.Equal(int64(2), people.Rows[0].MeetingCount)
+	assertions.Equal(int64(4), people.Rows[0].ActivityCount)
 	calendarOnly, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Query: "Alice", Explore: query.ExploreRequest{Context: query.Context{SourceIDs: []int64{calendar.ID}}}})
-	require.NoError(t, err)
-	require.Len(t, calendarOnly.Rows, 1)
-	assert.Zero(t, calendarOnly.Rows[0].MeetingCount)
-	require.NoError(t, engine.Close())
+	requirements.NoError(err)
+	requirements.Len(calendarOnly.Rows, 1)
+	assertions.Zero(calendarOnly.Rows[0].MeetingCount)
+	requirements.NoError(engine.Close())
 	copyID, err := st.PersistMessage(&store.MessagePersistData{
 		Message:      &store.Message{SourceID: notes.ID, SourceMessageID: "later-copy", MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: start, Valid: true}},
 		Conversation: &store.ConversationPersistData{SourceConversationID: "later-copy", ConversationType: "meeting"},
 		RawMIME:      []byte(`{"owner":{"email":"owner@example.test"},"calendar_event":{"calendar_event_id":"series_20270314T100000Z"}}`), RawFormat: "granola_json",
 	})
-	require.NoError(t, err)
-	require.NoError(t, st.ReplaceMessageRecipients(copyID, "to", []int64{participant}, []string{""}))
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageRecipients(copyID, "to", []int64{participant}, []string{""}))
 	_, err = buildCache(t.Context(), path, analytics, false)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	updated, err := query.NewDuckDBEngine(t.Context(), analytics, path, st.DB())
-	require.NoError(t, err)
+	requirements.NoError(err)
 	t.Cleanup(func() { _ = updated.Close() })
 	people, err = updated.SearchPeople(t.Context(), query.PersonSearchRequest{Query: "Alice"})
-	require.NoError(t, err)
-	require.Len(t, people.Rows, 1)
-	assert.Equal(t, int64(2), people.Rows[0].MeetingCount)
-	assert.Equal(t, int64(5), people.Rows[0].ActivityCount)
+	requirements.NoError(err)
+	requirements.Len(people.Rows, 1)
+	assertions.Equal(int64(2), people.Rows[0].MeetingCount)
+	assertions.Equal(int64(5), people.Rows[0].ActivityCount)
 }

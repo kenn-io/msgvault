@@ -263,6 +263,8 @@ func TestSearchPeopleAggregatesLinkedIdentitiesAsOneCanonicalRow(t *testing.T) {
 }
 
 func TestPeopleMeetingGroupsAcrossSources(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
 	firstSource := b.AddSourceWithType("first@example.test", "granola")
 	secondSource := b.AddSourceWithType("second@example.test", "zoom")
@@ -277,14 +279,14 @@ func TestPeopleMeetingGroupsAcrossSources(t *testing.T) {
 	engine := b.BuildEngine()
 	for _, filter := range []Context{{}, {SourceIDs: []int64{firstSource}}, {SourceIDs: []int64{secondSource}}, {SourceIDs: []int64{firstSource, secondSource}}} {
 		result, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Query: "Alice", Explore: ExploreRequest{Context: filter}})
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-		assert.Equal(t, int64(1), result.Rows[0].MeetingCount)
+		requirements.NoError(err)
+		requirements.Len(result.Rows, 1)
+		assertions.Equal(int64(1), result.Rows[0].MeetingCount)
 	}
 	detail, err := engine.GetPerson(t.Context(), alice, Context{}, nil)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), detail.MeetingCount)
-	assert.Equal(t, int64(3), detail.ActivityCount)
+	requirements.NoError(err)
+	assertions.Equal(int64(1), detail.MeetingCount)
+	assertions.Equal(int64(3), detail.ActivityCount)
 }
 
 func TestPeopleAndDomainsExcludeUnsentActivity(t *testing.T) {
