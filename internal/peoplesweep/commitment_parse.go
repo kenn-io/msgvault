@@ -47,6 +47,7 @@ type CommitmentWindow struct {
 	BackfillMessageID int64              `json:"-"`
 	SnapshotSequence  int64              `json:"-"`
 	ThroughSequence   int64              `json:"-"`
+	Changes           []ArchiveChange    `json:"-"`
 }
 
 type CommitmentPromise struct {
@@ -193,7 +194,7 @@ func quoteHasByWeekday(quote string, due, day time.Time) bool {
 		case "this":
 			days = int(weekday) - int(day.Weekday())
 		case "next":
-			days += 7
+			days = 7 - (int(day.Weekday())+6)%7 + (int(weekday)+6)%7
 		}
 		if day.AddDate(0, 0, days).Format(time.DateOnly) == due.Format(time.DateOnly) {
 			return true

@@ -536,6 +536,12 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 		return day >= profile.SourceSince && (profile.SourceUntil == "" || day <= profile.SourceUntil)
 	}
 	err = s.loadCommitmentSources(ctx, &window, cfg, previous, window.ScopeFingerprint, inProfile)
+	if err == nil && window.ThroughSequence > previous {
+		window.Changes, err = s.ScanPersonSweepChanges(ctx, personID, previous, maxPersonSweepChangeScan)
+		window.Changes = slices.DeleteFunc(window.Changes, func(change peoplesweep.ArchiveChange) bool {
+			return change.Sequence > window.ThroughSequence
+		})
+	}
 	return window, err
 }
 
@@ -650,7 +656,7 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			return nil
 		}
 	}
-	if window.BackfillMessageID < 0 {
+	if window.ThroughSequence < through || window.BackfillMessageID < 0 {
 		return nil
 	}
 	const backfillPage = 256

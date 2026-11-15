@@ -89,6 +89,12 @@ type capturingSweepCall struct {
 
 type emptyFreshnessContext struct{}
 
+type commitmentOnlyFreshnessRunner struct{ *capturingSweepRunner }
+
+func (commitmentOnlyFreshnessRunner) OrdinaryInferenceAllowed(context.Context) (bool, error) {
+	return false, nil
+}
+
 func (emptyFreshnessContext) RetrievePersonSweepContext(
 	context.Context, peoplesweep.ContextRequest,
 ) ([]peoplesweep.EvidenceItem, error) {
@@ -217,6 +223,31 @@ func runFreshnessSweep(t *testing.T, worker peoplesweep.Worker, personID int64) 
 	require.NoError(t, err)
 	require.Equal(t, 1, result.PeopleSucceeded, "%+v", result)
 	return result
+}
+
+func TestCommitmentOnlySweepRetractsEvidenceBehindPendingProfileWork(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f, worker, catalog := newProjectionFreshnessSweep(t)
+	worker.Config.Commitments.Enabled = true
+	worker.Config.ChangeBatchSize = 1
+	profile, err := worker.Config.Profile()
+	r.NoError(err)
+	_, err = f.store.RevokePersonInferenceConsent(ctx, profile.Fingerprint, "test")
+	r.NoError(err)
+	_, _, err = f.store.GrantPersonCommitmentConsent(ctx, profile.Fingerprint, "test")
+	r.NoError(err)
+	worker.Runner = commitmentOnlyFreshnessRunner{emptyFreshnessRunner()}
+	id := f.insertMessage(t, "pending", "chat", f.aliceID, worker.Clock().Add(-time.Minute))
+	addSweepBody(t, f, id, "A pending profile update")
+	r.NoError(f.store.MarkMessageDeletedBySourceMessageID(ctx, f.sourceID, false, "M1"))
+	var before, after int64
+	r.NoError(f.store.DB().QueryRowContext(ctx, f.store.Rebind(`SELECT optimistic_sequence FROM person_sweep_cursors WHERE person_id = ? AND source_lane = ?`), f.alicePersonID, peoplesweep.SourceConversationText).Scan(&before))
+	runFreshnessSweep(t, worker, f.alicePersonID)
+	r.NoError(f.store.DB().QueryRowContext(ctx, f.store.Rebind(`SELECT optimistic_sequence FROM person_sweep_cursors WHERE person_id = ? AND source_lane = ?`), f.alicePersonID, peoplesweep.SourceConversationText).Scan(&after))
+	assert.Equal(t, before, after)
+	state, err := f.store.LoadPersonFactState(ctx, f.alicePersonID, catalog)
+	r.NoError(err)
+	assert.NotContains(t, projectedValues(t, state.Current), "Lisbon")
 }
 
 func TestPersonSweepEvidenceAlignmentAcceptsPortableTimestampPrecision(t *testing.T) {

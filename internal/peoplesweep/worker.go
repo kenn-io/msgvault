@@ -1126,6 +1126,17 @@ func (w *Worker) runPerson(
 		if fatal != nil {
 			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations, accounting.completedUsage, fatal, resolvedAt)
 		}
+		if commitmentOnly && commitment != nil {
+			changes := append([]ArchiveChange(nil), commitment.Window.Changes...)
+			for _, window := range progress.Windows {
+				changes = append(changes, window.Changes...)
+			}
+			assembly.EvidenceStatusChanges, err = w.Source.BuildPersonSweepEvidenceStatusChanges(ctx, lease.PersonID, canonicalArchiveChanges(changes))
+			if err != nil {
+				return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations, accounting.completedUsage, err, resolvedAt)
+			}
+			assembly.EvidenceStatusChanges = canonicalStatusChanges(assembly.EvidenceStatusChanges)
+		}
 	}
 
 	provider, model := string(profile.Protocol), profile.Model

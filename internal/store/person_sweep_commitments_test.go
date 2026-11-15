@@ -792,3 +792,42 @@ func TestCommitmentDiscoveryCoalescesChangesAcrossPages(t *testing.T) {
 	r.NoError(err)
 	r.Empty(window.Sources)
 }
+
+func TestCommitmentDiscoveryCoalescesBackfillAndJournal(t *testing.T) {
+	r, ctx := require.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "journal-many", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	id := persist("repeated", "I will call.", -time.Hour)
+	for range 1001 {
+		_, err := f.store.db.ExecContext(ctx, f.store.Rebind(`INSERT INTO person_sweep_changes
+			(sequence, person_id, source_lane, change_kind, message_id, recorded_at)
+			SELECT COALESCE(MAX(sequence), 0) + 1, ?, 'conversation_text', 'upsert', ?, ? FROM person_sweep_changes`),
+			f.personID, id, f.store.dialect.TimestampParam(personFactLedgerNow))
+		r.NoError(err)
+	}
+	_, err := f.store.db.ExecContext(ctx, `UPDATE person_sweep_change_clock SET sequence = (SELECT MAX(sequence) FROM person_sweep_changes) WHERE singleton = TRUE`)
+	r.NoError(err)
+	cfg, profile := commitmentTestConfig()
+	var ids []int64
+	for i := range 2 {
+		if i > 0 {
+			f = nextCommitmentTestAttempt(t, f, "-next")
+		}
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+		r.NoError(err)
+		for _, source := range window.Sources {
+			ids = append(ids, source.MessageID)
+		}
+		request := f.request
+		request.CommitmentOnly = true
+		request.Generation.Policy.AllowSensitive = true
+		request.Budget = personSweepApplyBudget()
+		request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
+		if len(window.Sources) > 0 {
+			request = commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
+		}
+		_, err = f.store.ApplyPersonSweep(ctx, request)
+		r.NoError(err)
+	}
+	r.Equal([]int64{id}, ids)
+}
