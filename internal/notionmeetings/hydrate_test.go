@@ -207,6 +207,15 @@ func TestHydratorUsesMarkdownTranscriptFallback(t *testing.T) {
 	assert.Equal("Test Speaker: Late transcript.", hydrated.Transcript)
 	assert.True(hydrated.MarkdownTranscriptFallback)
 	assert.Contains(hydrated.Warnings, "structured transcript was empty; used page Markdown transcript")
+	source = completeHydrationSource()
+	meeting := hydrationMeeting()
+	meeting.Parent = Parent{Type: "data_source_id"}
+	meeting.MeetingNotes.Children.TranscriptBlockID = ""
+	source.blocks["meeting-1"].Parent = meeting.Parent
+	hydrated, err = NewHydrator(source).Hydrate(t.Context(), meeting)
+	require.NoError(t, err)
+	assert.Empty(hydrated.Transcript)
+	assert.Zero(source.markdownCalls)
 }
 
 func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
@@ -364,7 +373,6 @@ func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 
 func TestHydratorSkipsMarkdownForStructuredTranscript(t *testing.T) {
 	source := completeHydrationSource()
-	source.markdownErr = &APIError{Kind: ErrProvider, Status: 503}
 	result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(t, err)
 	assert.Equal(t, "Test Speaker: Ready to ship.", result.Transcript)
@@ -485,30 +493,21 @@ func TestHydratorDegradesAndCachesTransientUserListingFailure(t *testing.T) {
 func TestHydratorLimitsKeepSectionsIncomplete(t *testing.T) {
 	for _, tc := range []struct {
 		limit                      string
-		dataSource                 bool
 		markdownCalls              int
 		incomplete                 []string
 		skipped                    []string
 		checkSummary, notesPresent bool
 	}{
-		{"requests", false, 0, []string{"summary", "notes", "transcript"}, []string{"notes-1", "transcript-1"}, true, false},
-		{"bytes", false, 1, []string{"transcript"}, nil, false, false},
-		{"blocks", true, 0, []string{"summary", "notes", "transcript"}, []string{"notes-1", "transcript-1"}, true, false},
-		{"depth", true, 0, []string{"summary"}, nil, true, true},
+		{"requests", 0, []string{"summary", "notes", "transcript"}, []string{"notes-1", "transcript-1"}, true, false},
+		{"bytes", 1, []string{"transcript"}, nil, false, false},
+		{"blocks", 0, []string{"summary", "notes", "transcript"}, []string{"notes-1", "transcript-1"}, true, false},
+		{"depth", 0, []string{"summary"}, nil, true, true},
 	} {
 		t.Run(tc.limit, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			source := completeHydrationSource()
 			meeting := hydrationMeeting()
-			if tc.dataSource {
-				meeting.Parent = Parent{Type: "data_source_id"}
-				var err error
-				meeting.Raw, err = json.Marshal(meeting)
-				require.NoError(err)
-				source.blocks["meeting-1"].Parent = meeting.Parent
-				source.blocks["meeting-1"].Raw = meeting.Raw
-			}
 			root := source.blocks["summary-1"]
 			switch tc.limit {
 			case "bytes":
@@ -631,7 +630,7 @@ func TestHydratorPaginationFailureDiscardsPartialSection(t *testing.T) {
 	}
 }
 
-func TestHydratorRetriesTemporaryMarkdownFailures(t *testing.T) {
+func TestHydratorMarksTemporaryMarkdownFailureIncomplete(t *testing.T) {
 	source := completeHydrationSource()
 	empty := paragraph("transcript-1", "", false)
 	source.blocks["transcript-1"] = &empty
