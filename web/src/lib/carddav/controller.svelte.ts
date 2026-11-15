@@ -1,3 +1,4 @@
+import { readCardDAVBindingConflicts } from './sync-message';
 import {
   getCardDAVStatus as generatedGetCardDAVStatus,
   listCardDAVBooks as generatedListCardDAVBooks,
@@ -255,6 +256,7 @@ export class CardDAVController {
     let succeeded = false;
     let refreshBooks = false;
     let reconcile = false;
+    let previewConflicts = false;
     try {
       const { data, response } = await generatedSyncCardDAV(
         { full: false, connection },
@@ -280,13 +282,16 @@ export class CardDAVController {
         }
       } else if (response.status === 409 || response.status >= 500) {
         reconcile = true;
+        previewConflicts = response.status !== 409;
         this.syncError = 'Unable to complete CardDAV sync. Current state was refreshed.';
       } else {
+        previewConflicts = response.status !== 400;
         this.syncError = 'Unable to start CardDAV sync.';
       }
     } catch {
       if (!this.current(context, requestController.signal)) return;
       reconcile = true;
+      previewConflicts = true;
       this.syncError = 'Unable to complete CardDAV sync. Current state was refreshed.';
     } finally {
       if (this.current(context)) {
@@ -302,6 +307,11 @@ export class CardDAVController {
         ...(refreshBooks ? [this.loadBooks(true)] : []),
       ]);
       this.syncUnknown = !statusLoaded || !runsLoaded;
+    }
+    if (previewConflicts) {
+      const conflicts = await readCardDAVBindingConflicts(this.client);
+      if (!this.current(context)) return;
+      this.syncBindingConflicts = conflicts;
     }
     this.syncPending = false;
     if (this.shouldPoll()) this.schedulePoll(MIN_POLL_MS);

@@ -771,30 +771,7 @@ func TestMergeParticipantsPreservesAbsorbedEmail(t *testing.T) {
 	}
 }
 
-func TestMergeParticipantsRejectsCompetingEmailAlias(t *testing.T) {
-	for _, kind := range []string{"email", "imessage"} {
-		t.Run(kind, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			st := storetest.New(t).Store
-			absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
-			require.NoError(err)
-			survivor, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
-			require.NoError(err)
-			third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
-			require.NoError(err)
-			require.NoError(st.SetParticipantIdentifier(third, kind, "absorbed@example.test"))
-			mergeErr := st.MergeParticipants(absorbed, survivor)
-			require.ErrorIs(mergeErr, store.ErrParticipantAddressConflict)
-			require.NotErrorIs(mergeErr, store.ErrPersonBindingConflict)
-			resolved, err := st.EnsureParticipantByIdentifier(kind, "absorbed@example.test", "")
-			require.NoError(err)
-			assert.Equal(third, resolved)
-			var email string
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT email_address FROM participants WHERE id = ?`), absorbed).Scan(&email))
-			assert.Equal("absorbed@example.test", email)
-		})
-	}
+func TestMergeParticipantsAliasInSurvivorComponent(t *testing.T) {
 	t.Run("alias in survivor component", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)

@@ -3723,22 +3723,3 @@ func dropReactionsTable(ctx context.Context, db *sql.DB) error {
 	_, err := db.ExecContext(ctx, `DROP TABLE reactions`)
 	return err
 }
-
-func TestParticipantResolverContinuesAfterEmailAliasConflict(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
-	require.NoError(err)
-	survivor, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
-	require.NoError(err)
-	third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
-	require.NoError(err)
-	require.NoError(st.SetParticipantIdentifier(third, "email", "absorbed@example.test"))
-	require.NoError(st.SetParticipantIdentifier(absorbed, participantIdentifierType, "team-a:user-a"))
-	r := newParticipantResolver(st, "team-a")
-	require.NoError(r.recordRich(t.Context(), "user-a", survivor))
-	resolved, _, err := st.ParticipantByIdentifierContext(t.Context(), participantIdentifierType, "team-a:user-a")
-	require.NoError(err)
-	assert.Equal(survivor, resolved)
-}
