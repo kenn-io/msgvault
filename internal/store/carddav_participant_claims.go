@@ -27,7 +27,7 @@ func cardDAVParticipantAddressValue(kind ContactAddressKind, raw string) (cardDA
 			raw = vcard.TelephoneNumber(raw)
 		}
 		for i, r := range raw {
-			if r >= '0' && r <= '9' || unicode.IsSpace(r) || strings.ContainsRune("()-.", r) || r == '+' && i == 0 {
+			if r >= '0' && r <= '9' || unicode.IsSpace(r) || strings.ContainsRune("()-./", r) || r == '+' && i == 0 {
 				continue
 			}
 			return cardDAVParticipantAddress{}, false
@@ -107,19 +107,27 @@ func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims map[c
 	if len(claims) == 0 {
 		return matched, nil
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id, 'email', email_address FROM participants WHERE email_address IS NOT NULL
- UNION ALL SELECT id, 'phone', phone_number FROM participants WHERE phone_number IS NOT NULL
- UNION ALL SELECT participant_id, identifier_type, identifier_value FROM participant_identifiers
+	rows, err := tx.QueryContext(ctx, `SELECT id, 'email', email_address, TRUE FROM participants WHERE email_address IS NOT NULL
+ UNION ALL SELECT id, 'phone', phone_number, FALSE FROM participants WHERE phone_number IS NOT NULL
+ UNION ALL SELECT participant_id, identifier_type, identifier_value, FALSE FROM participant_identifiers
  WHERE scope_kind IS NULL AND scope_value IS NULL
  AND identifier_type IN ('email','phone','apple_id','whatsapp','imessage','synctech_sms','google_voice')`)
 	if err != nil {
 		return nil, fmt.Errorf("read participant addresses for CardDAV binding: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	type addressMatch struct {
+		id      int64
+		key     cardDAVParticipantAddress
+		primary bool
+	}
+	var candidates []addressMatch
+	primaryOwners := map[cardDAVParticipantAddress]cardDAVPersonSet{}
 	for rows.Next() {
 		var id int64
 		var kind, value string
-		if err := rows.Scan(&id, &kind, &value); err != nil {
+		var primary bool
+		if err := rows.Scan(&id, &kind, &value, &primary); err != nil {
 			return nil, err
 		}
 		addressKind := ContactAddressPhone
@@ -130,12 +138,31 @@ func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims map[c
 		if !ok || len(claims[key]) == 0 {
 			continue
 		}
-		if matched[id] == nil {
-			matched[id] = cardDAVPersonSet{}
+		if primary {
+			if primaryOwners[key] == nil {
+				primaryOwners[key] = cardDAVPersonSet{}
+			}
+			primaryOwners[key][id] = struct{}{}
 		}
-		for personID := range claims[key] {
-			matched[id][personID] = struct{}{}
+		candidates = append(candidates, addressMatch{id, key, primary})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, candidate := range candidates {
+		if !candidate.primary && candidate.key.kind == ContactAddressEmail {
+			owners := primaryOwners[candidate.key]
+			_, ownsPrimary := owners[candidate.id]
+			if len(owners) > 0 && !ownsPrimary {
+				continue
+			}
+		}
+		if matched[candidate.id] == nil {
+			matched[candidate.id] = cardDAVPersonSet{}
+		}
+		for personID := range claims[candidate.key] {
+			matched[candidate.id][personID] = struct{}{}
 		}
 	}
-	return matched, rows.Err()
+	return matched, nil
 }

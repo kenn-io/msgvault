@@ -5014,6 +5014,19 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 			return err
 		}
 		if oldEmail.Valid {
+			var conflict bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+				SELECT 1 FROM participant_identifiers
+				WHERE identifier_type IN ('email', 'apple_id', 'imessage', 'synctech_sms')
+				AND LOWER(identifier_value) = LOWER(TRIM(?)) AND participant_id <> ?
+			) AND NOT EXISTS (
+				SELECT 1 FROM participants WHERE id = ? AND LOWER(email_address) = LOWER(?)
+			)`, oldEmail.String, newID, newID, oldEmail.String).Scan(&conflict); err != nil {
+				return fmt.Errorf("check absorbed participant email: %w", err)
+			}
+			if conflict {
+				return errors.New("preserve absorbed participant email: identifier belongs to another participant")
+			}
 			// Preserve the absorbed primary email as an unscoped identifier. A
 			// survivor with its own primary address cannot store this value in
 			// email_address, and CardDAV reconciliation needs the alias to support
