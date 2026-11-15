@@ -264,7 +264,7 @@ func OrganizationComponents(name, department string) []string {
 	return components
 }
 
-// PropertyValue decodes TEXT escapes while retaining URI values.
+// PropertyValue decodes text values and retains URI values.
 func PropertyValue(version Version, property Property) (string, error) {
 	valueType := ""
 	for _, parameter := range property.ParametersNamed("VALUE") {
