@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	syncStateVersion           = 2
+	syncStateVersion           = 1
 	notionSnapshotVersion      = 1
 	transcriptRetryCadence     = 6 * time.Hour
 	transcriptRetryWindow      = 7 * 24 * time.Hour
@@ -112,7 +112,7 @@ func (s syncState) marshal() (string, error) {
 }
 
 func (s syncState) validate() error {
-	if s.Version != 1 && s.Version != syncStateVersion {
+	if s.Version != syncStateVersion {
 		return fmt.Errorf("unsupported Notion sync cursor version %d", s.Version)
 	}
 	seen := make(map[string]struct{}, len(s.Pending))
@@ -157,6 +157,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		return nil, err
 	}
 	sum = &ImportSummary{SourceID: source.ID}
+	if strings.TrimSpace(opts.AccountEmail) != "" {
+		if err := imp.store.AddAccountIdentityContext(ctx, source.ID, opts.AccountEmail, "account-email"); err != nil {
+			return sum, fmt.Errorf("confirm Notion account identity: %w", err)
+		}
+	}
+
 	state := syncState{Version: syncStateVersion, Known: map[string]knownMeeting{}}
 	previous, err := imp.store.GetLastSuccessfulSyncContext(ctx, source.ID)
 	if err == nil && previous.CursorAfter.Valid && previous.CursorAfter.String != "" {
@@ -166,7 +172,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		if err := state.validate(); err != nil {
 			return sum, fmt.Errorf("validate previous Notion sync cursor: %w", err)
 		}
-		state.Version = syncStateVersion
 	} else if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return sum, fmt.Errorf("load previous Notion sync cursor: %w", err)
 	}
@@ -322,16 +327,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		workOrder = append(workOrder, id)
 	}
 
-	archivedStates, err := imp.preflightArchivedStates(ctx, source.ID, workOrder)
-	if err != nil {
-		sum.Errors++
-		return sum, err
-	}
-	if strings.TrimSpace(opts.AccountEmail) != "" {
-		if err := imp.store.AddAccountIdentityContext(ctx, source.ID, opts.AccountEmail, "account-email"); err != nil {
-			return sum, fmt.Errorf("confirm Notion account identity: %w", err)
-		}
-	}
 	hydrator := NewHydrator(imp.client).WithUserSource(imp.users)
 	archiver := meetingarchive.New(scopedStore)
 	var hardErrors []error
@@ -359,7 +354,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 
 		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""
-		archived, recoverErr := archivedStates[id].state, archivedStates[id].err
+		archived, recoverErr := imp.archivedState(ctx, source.ID, id)
 		if recoverErr != nil {
 			sum.Errors++
 			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: recover archived evidence: %w", id, recoverErr))
@@ -625,26 +620,6 @@ type archivedMeetingState struct {
 	ResolvedUsers    []resolvedUser
 	MarkdownFallback bool
 	RawTrees         map[string]jsontext.Value
-}
-
-type archivedLookup struct {
-	state archivedMeetingState
-	err   error
-}
-
-// preflightArchivedStates reads each meeting's stored evidence once, before the
-// first archive write, so newer evidence stops the import with nothing written.
-// Other read errors are kept for the per-meeting handling in Import.
-func (imp *Importer) preflightArchivedStates(ctx context.Context, sourceID int64, ids []string) (map[string]archivedLookup, error) {
-	lookups := make(map[string]archivedLookup, len(ids))
-	for _, id := range ids {
-		state, err := imp.archivedState(ctx, sourceID, id)
-		if _, newer := errors.AsType[*NewerEvidenceError](err); newer {
-			return nil, fmt.Errorf("meeting %s: recover archived evidence: %w", id, err)
-		}
-		lookups[id] = archivedLookup{state: state, err: err}
-	}
-	return lookups, nil
 }
 
 func (imp *Importer) archivedState(ctx context.Context, sourceID int64, id string) (archivedMeetingState, error) {

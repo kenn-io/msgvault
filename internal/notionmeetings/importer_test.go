@@ -710,7 +710,7 @@ func TestImporterMigratesPendingRetryDeadlineFromVersionOneCursor(t *testing.T) 
 	summary, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(err)
 	state := lastNotionState(t, st, summary.SourceID)
-	assert.Equal(2, state.Version)
+	assert.Equal(1, state.Version)
 	assert.Empty(state.Pending)
 	assert.Equal("2026-08-31T12:00:00Z", lastTranscriptRetryUntil(t, st, summary.SourceID)["meeting-1"])
 }
@@ -1301,7 +1301,7 @@ func TestImporterClearsCompleteEmptyNotes(t *testing.T) {
 	assert.NotContains(body, "Owner will prepare the rollout")
 }
 
-func TestImporterRefusesNewerEvidenceBeforeWritingOtherMeetings(t *testing.T) {
+func TestImporterRefusesToOverwriteNewerEvidence(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st, source, imp := newImporterFixture(t)
@@ -1322,30 +1322,26 @@ func TestImporterRefusesNewerEvidenceBeforeWritingOtherMeetings(t *testing.T) {
 		source.blocks[id] = &section
 	}
 	source.query.Results = append(source.query.Results, second)
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(err)
 	var firstID, secondID int64
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&firstID))
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-2'`).Scan(&secondID))
-	beforeBody, err := st.GetMessageBodyText(t.Context(), firstID)
-	require.NoError(err)
-	beforeRaw, err := st.GetMessageRaw(firstID)
-	require.NoError(err)
 	future := []byte(`{"schema_version":2,"summary":[],"page_markdown":"private text","transcript":42}`)
 	require.NoError(st.UpsertMessageRawWithFormat(secondID, future, RawFormat))
-	changed := paragraph("summary-1", "Changed first meeting", false)
-	source.blocks["summary-1"] = &changed
-	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work", AccountEmail: "new-account@example.com"})
-	require.Error(err)
-	var identities int
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM account_identities WHERE source_id = ?`), first.SourceID).Scan(&identities))
-	assert.Zero(identities)
-	afterBody, err := st.GetMessageBodyText(t.Context(), firstID)
+	changed := paragraph("summary-2", "Changed second meeting", false)
+	source.blocks["summary-2"] = &changed
+	changedFirst := paragraph("summary-1", "Changed first meeting", false)
+	source.blocks["summary-1"] = &changedFirst
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	var newer *NewerEvidenceError
+	require.ErrorAs(err, &newer)
+	body, err := st.GetMessageBodyText(t.Context(), firstID)
 	require.NoError(err)
-	afterRaw, err := st.GetMessageRaw(firstID)
+	assert.Contains(body, "Changed first meeting")
+	afterRaw, err := st.GetMessageRaw(secondID)
 	require.NoError(err)
-	assert.Equal(beforeBody, afterBody)
-	assert.Equal(string(beforeRaw), string(afterRaw))
+	assert.Equal(string(future), string(afterRaw))
 }
 
 func TestDecodeArchivedEvidenceVersionProbe(t *testing.T) {
@@ -1573,8 +1569,18 @@ func TestImporterRetainsActionAttributionDuringReplacementFailure(t *testing.T) 
 			}
 			source.query.Results = []MeetingNote{meeting}
 			source.blockErrs = map[string]error{"replacement": ErrRateLimited}
-			_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			other := "summary"
+			if section == "summary" {
+				other = "notes"
+			}
+			updated := paragraph(other+"-1", "Updated "+other, false)
+			source.blocks[other+"-1"] = &updated
+			result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 			require.NoError(err)
+			assert.Equal(int64(1), result.MeetingsUpdated)
+			body, err := st.GetMessageBodyText(t.Context(), id)
+			require.NoError(err)
+			assert.Contains(body, "Updated "+other)
 			raw, err := st.GetMessageRaw(id)
 			require.NoError(err)
 			content := meetingcontent.Decode(RawFormat, raw, nil)

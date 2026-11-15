@@ -893,9 +893,9 @@ coverage when a section is incomplete or the Notion query reports more meetings.
 When a transcript read is incomplete and no complete page transcript is available,
 sync retains the saved transcript and reports that it did so. An empty or omitted
 transcript also keeps saved text when no page transcript is available. Omitted
-summary and notes blocks clear their sections. If a meeting selected for import
-has a newer evidence version, the import stops before writing any meetings to
-the archive. Existing `[[notion_meetings]]` settings need no changes. Other hard
+summary and notes blocks clear their sections. A meeting whose saved evidence
+has a newer version keeps that evidence, and the sync reports an error for it.
+Existing `[[notion_meetings]]` settings need no changes. Other hard
 per-meeting failures retain the previous successful state; meetings written
 earlier in that failed run remain safe and idempotent.
 
