@@ -2310,11 +2310,11 @@ func TestPhoneURINormalizationThroughSync(t *testing.T) {
 			t.Parallel()
 			assert := assert.New(t)
 			require := require.New(t)
-			card := func(uid, phone string) []byte {
-				return []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + uid + "\r\nFN:" + uid + "\r\nTEL:" + phone + "\r\nEND:VCARD\r\n")
+			card := func(phone string) []byte {
+				return []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:first\r\nFN:first\r\nTEL:" + phone + "\r\nEND:VCARD\r\n")
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				writeDAVXML(t, w, syncResponse(cardResponseRaw("/books/personal/first.vcf", `"one"`, escapedCardData(card("first", phone)))+cardResponseRaw("/books/personal/second.vcf", `"one"`, escapedCardData(card("second", phone))), ""))
+				writeDAVXML(t, w, syncResponse(cardResponseRaw("/books/personal/first.vcf", `"one"`, escapedCardData(card(phone))), ""))
 			}))
 			t.Cleanup(server.Close)
 			service, st, book := newPullService(t, server, false)

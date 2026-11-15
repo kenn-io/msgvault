@@ -881,7 +881,6 @@ it.each(['partial', 'failed'] as const)('names a connection whose sync is %s', a
         created: 1,
         updated: 0,
         removed: 0,
-        binding_conflicts: 2,
         status,
         connections: [
           {
@@ -904,10 +903,27 @@ it.each(['partial', 'failed'] as const)('names a connection whose sync is %s', a
   const controller = new CardDAVController(client);
   await controller.load();
   await controller.sync();
-  expect(controller.syncBindingConflicts).toBe(2);
   expect(controller.syncError).toContain('work');
   expect(controller.syncError).not.toContain('private upstream');
   expect(controller.syncStatus).toBeNull();
   expect(bookReads).toBe(status === 'partial' ? 2 : 1);
+  controller.destroy();
+});
+
+it.each(['succeeded', 'partial', 'failed'] as const)('retains binding conflicts after a %s sync', async (status) => {
+  const client = createAPIClient(async (input) => {
+    const request = requestOf(input);
+    const path = new URL(request.url).pathname;
+    if (request.method === 'POST') {
+      return Response.json({ books: 1, created: 1, updated: 0, removed: 0, binding_conflicts: 2, status });
+    }
+    return Response.json(
+      path.endsWith('/status') ? idleStatus : path.endsWith('/books') ? { books: [] } : { runs: [] }
+    );
+  });
+  const controller = new CardDAVController(client);
+  await controller.load();
+  await controller.sync();
+  expect(controller.syncBindingConflicts).toBe(2);
   controller.destroy();
 });

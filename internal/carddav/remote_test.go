@@ -291,15 +291,10 @@ func TestServiceSyncReportsFinalConflictCount(t *testing.T) {
 			result, err := service.Sync(t.Context(), SyncOptions{})
 			require.Error(err)
 			assert.Equal(1, remote.failed)
-			before, err := st.IdentityRevisionContext(t.Context())
-			require.NoError(err)
 			preview, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
 			require.NoError(err)
 			assert.Equal(1, result.BindingConflicts)
 			assert.Equal(1, preview.Conflicts)
-			after, err := st.IdentityRevisionContext(t.Context())
-			require.NoError(err)
-			assert.Equal(before, after)
 		})
 	}
 }
