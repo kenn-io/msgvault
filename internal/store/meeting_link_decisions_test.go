@@ -2028,3 +2028,98 @@ func TestMeetingDecisionPurgeKeepsVisibleChoiceOnCollision(t *testing.T) {
 	r.NoError(err)
 	r.Equal([]int64{kept, note}, record.MessageIDs)
 }
+
+func TestMeetingDecisionPurgeOneCopyThenUndoOther(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, kept := projectionFixture(t, st, "linked-kept", "meeting_json", `{}`)
+	_, purged := projectionFixture(t, st, "linked-purged", "meeting_json", `{}`)
+	_, restored := projectionFixture(t, st, "linked-restored", "meeting_json", `{}`)
+	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+	_, err := st.DecideMeetingLinkContext(t.Context(), ref(purged), ref(restored), "link")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), kept, []int64{purged}, "linked-purge")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), kept, []int64{restored}, "linked-undo")
+	r.NoError(err)
+	_, err = st.DeleteDedupedBatchContext(t.Context(), "linked-purge")
+	r.NoError(err)
+	_, err = st.UndoDedup(t.Context(), "linked-undo")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), ref(restored))
+	r.NoError(err)
+	r.Equal([]int64{kept, restored}, record.MessageIDs)
+}
+
+func TestMeetingDecisionPurgeUsesNearestSurvivingCopy(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, kept := projectionFixture(t, st, "ancestor-kept", "meeting_json", `{}`)
+	_, middle := projectionFixture(t, st, "ancestor-middle", "meeting_json", `{}`)
+	_, purged := projectionFixture(t, st, "ancestor-purged", "meeting_json", `{}`)
+	_, restored := projectionFixture(t, st, "ancestor-restored", "meeting_json", `{}`)
+	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+	_, err := st.DecideMeetingLinkContext(t.Context(), ref(purged), ref(restored), "link")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), middle, []int64{purged}, "ancestor-purge")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), kept, []int64{middle}, "ancestor-middle")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), kept, []int64{restored}, "ancestor-restore")
+	r.NoError(err)
+	_, err = st.DeleteDedupedBatchContext(t.Context(), "ancestor-purge")
+	r.NoError(err)
+	_, err = st.UndoDedup(t.Context(), "ancestor-middle")
+	r.NoError(err)
+	_, err = st.UndoDedup(t.Context(), "ancestor-restore")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), ref(restored))
+	r.NoError(err)
+	r.Equal([]int64{middle, restored}, record.MessageIDs)
+}
+
+func TestMeetingRecordWithoutChoicesAvoidsCopyScan(t *testing.T) {
+	r := require.New(t)
+	base := newRFC822IDBackfillBackendStore(t)
+	_, note := projectionFixture(t, base, "no-choice-note", "meeting_json", `{}`)
+	var copyScans int
+	gate := &meetingProjectionGate{before: func(_ context.Context, query string, _ []driver.NamedValue) error {
+		if strings.HasPrefix(query, "WITH RECURSIVE") && strings.Contains(query, "meeting_copy_survivors") {
+			copyScans++
+		}
+		return nil
+	}}
+	st := gatedMeetingProjectionStore(t, base, gate)
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+	r.NoError(err)
+	r.Equal([]int64{note}, record.MessageIDs)
+	r.Zero(copyScans)
+}
+
+func TestMeetingRecordBatchesCopyScans(t *testing.T) {
+	r := require.New(t)
+	base := newRFC822IDBackfillBackendStore(t)
+	raw := `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"batch_20270314T100000Z"}}`
+	var first int64
+	for i := range 5 {
+		_, id := projectionFixture(t, base, fmt.Sprintf("batch-read-%d", i), "granola_json", raw)
+		if i == 0 {
+			first = id
+		}
+	}
+	_, other := projectionFixture(t, base, "batch-read-other", "meeting_json", `{}`)
+	_, err := base.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: first}, MeetingLinkRef{Kind: "msg", MessageID: other}, "link")
+	r.NoError(err)
+	var copyScans int
+	gate := &meetingProjectionGate{before: func(_ context.Context, query string, _ []driver.NamedValue) error {
+		if strings.HasPrefix(query, "WITH RECURSIVE") && strings.Contains(query, "meeting_copy_survivors") {
+			copyScans++
+		}
+		return nil
+	}}
+	st := gatedMeetingProjectionStore(t, base, gate)
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: first})
+	r.NoError(err)
+	r.Contains(record.MessageIDs, other)
+	r.LessOrEqual(copyScans, 2)
+}

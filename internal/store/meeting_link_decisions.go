@@ -387,6 +387,11 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 
 // meetingPairKeys resolves both endpoints; ok is false once either no longer names an occurrence.
 func (s *Store) meetingPairKeys(ctx context.Context, a, b meetingDecisionEndpoint, budget *int) (x, y meetingDecisionEndpoint, ok bool, err error) {
+	x, y, ok, err = s.meetingPairEndpoints(ctx, a, b, budget)
+	return x, y, ok && x != y, err
+}
+
+func (s *Store) meetingPairEndpoints(ctx context.Context, a, b meetingDecisionEndpoint, budget *int) (x, y meetingDecisionEndpoint, ok bool, err error) {
 	for _, endpoint := range []meetingDecisionEndpoint{a, b} {
 		if endpoint.Kind != meetingRefEvent || endpoint.Key != "" {
 			continue
@@ -411,7 +416,7 @@ func (s *Store) meetingPairKeys(ctx context.Context, a, b meetingDecisionEndpoin
 	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrMeetingOccurrenceRequired) {
 		return x, y, false, nil
 	}
-	return x, y, err == nil && x != y, err
+	return x, y, err == nil, err
 }
 
 // equivalentMeetingDecisions finds saved pairs that resolve to the requested pair.
@@ -588,11 +593,18 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 		}
 	}
 	replacement := func(id int64) (int64, bool) {
+		seen := map[int64]bool{id: true}
+		for parent := parents[id]; parent != 0 && !seen[parent]; parent = parents[parent] {
+			if !purged[parent] {
+				return parent, true
+			}
+			seen[parent] = true
+		}
 		if copyID, ok := preferred[id]; ok {
 			return copyID, true
 		}
 		queue := []int64{id}
-		seen := map[int64]bool{}
+		seen = map[int64]bool{}
 		for len(queue) > 0 {
 			current := queue[0]
 			queue = queue[1:]
@@ -668,18 +680,18 @@ func (s *Store) preservePurgedMeetingDecisionsWith(ctx context.Context, tx inter
 			continue
 		}
 		budget := calrecur.RequestReadBudget
-		a, b, ok, err := s.meetingPairKeys(ctx, edge.a, edge.b, &budget)
+		a, b, ok, err := s.meetingPairEndpoints(ctx, edge.a, edge.b, &budget)
 		if err != nil {
 			return err
 		}
-		if purged[a.ID] {
+		if purged[edge.a.ID] {
 			var found bool
-			a.ID, found = replacement(a.ID)
+			a.ID, found = replacement(edge.a.ID)
 			ok = ok && found
 		}
-		if purged[b.ID] {
+		if purged[edge.b.ID] {
 			var found bool
-			b.ID, found = replacement(b.ID)
+			b.ID, found = replacement(edge.b.ID)
 			ok = ok && found
 		}
 		if !purged[edge.a.ID] {
