@@ -84,7 +84,7 @@ func (imp *MessageImporter) run(ctx context.Context, app, account, syncType stri
 	scoped.store = imp.store.ScopedToSync(source.ID, syncID)
 	sum = &ImportSummary{}
 	defer func() {
-		cp := &store.Checkpoint{MessagesProcessed: int64(sum.MessagesProcessed), MessagesAdded: int64(sum.MessagesAdded)}
+		cp := &store.Checkpoint{MessagesProcessed: int64(sum.MessagesProcessed), MessagesAdded: int64(sum.MessagesAdded), MessagesUpdated: int64(sum.MessagesUpdated)}
 		if retErr != nil {
 			retErr = errors.Join(retErr, imp.store.InterruptSyncWithCheckpoint(ctx, syncID, retErr, cp))
 		} else if err := scoped.store.UpdateSyncCheckpointContext(ctx, syncID, cp); err != nil {
@@ -402,6 +402,8 @@ func (r *messageRun) persist(ctx context.Context, m BusinessMessage, event strin
 	r.sum.MessagesProcessed++
 	if !exists {
 		r.sum.MessagesAdded++
+	} else if !unchanged {
+		r.sum.MessagesUpdated++
 	}
 	target, err := r.imp.store.GetMessageRelationTarget(ctx, messageID)
 	if err != nil {

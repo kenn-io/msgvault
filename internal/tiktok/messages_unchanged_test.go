@@ -241,3 +241,83 @@ func TestMessageReplayRollsBackInterruptedReplyReplacement(t *testing.T) {
 		})
 	}
 }
+
+func TestMessageEditsRecordAnalyticsUpdatesWithoutSender(t *testing.T) {
+	for _, mode := range []string{"pull", "webhook"} {
+		t.Run(mode, func(t *testing.T) {
+			st := testutil.NewSQLiteTestStore(t)
+			api := &pendingMediaAPI{}
+			imp := NewMessageImporter(st, api, MessageImportOptions{})
+			source, err := imp.Register(t.Context(), "app-example", "account-example")
+			require.NoError(t, err)
+			message := BusinessMessage{ID: "message-example", ConversationID: "conversation-example", Timestamp: 1700000000001, Type: "text"}
+			var totalUpdates int64
+			for _, step := range []struct {
+				name, body, stored string
+				added, updated     int64
+				fail, partial      bool
+			}{
+				{name: "new", body: "Original", stored: "Original", added: 1},
+				{name: "unchanged", body: "Original", stored: "Original"},
+				{name: "edit", body: "Edited", stored: "Edited", updated: 1},
+				{name: "unchanged edit", body: "Edited", stored: "Edited"},
+				{name: "rolled back edit", body: "Not committed", stored: "Edited", fail: true},
+				{name: "retry", body: "Not committed", stored: "Not committed", updated: 1},
+				{name: "unchanged retry", body: "Not committed", stored: "Not committed"},
+				{name: "partial pull", body: "Committed in partial pull", stored: "Committed in partial pull", updated: 1, partial: true},
+			} {
+				t.Run(step.name, func(t *testing.T) {
+					if step.partial && mode != "pull" {
+						return
+					}
+					var baseline int64
+					require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&baseline))
+					if step.fail {
+						_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER interrupt_message BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT, 'synthetic interrupted message write'); END`)
+						require.NoError(t, err)
+					}
+					message.Text = &MessageText{Body: step.body}
+					if mode == "pull" {
+						api.messages = []BusinessMessage{message}
+						if step.partial {
+							invalid := message
+							invalid.ID, invalid.Timestamp = "invalid-example", 0
+							api.messages = append(api.messages, invalid)
+						}
+						_, err = imp.Import(t.Context(), "app-example", "account-example")
+					} else {
+						_, err = imp.Apply(t.Context(), "app-example", MessageEvent{ClientKey: "app-example", Event: "im_receive_msg", Account: "account-example"}, message)
+					}
+					if step.fail {
+						require.ErrorContains(t, err, "synthetic interrupted message write")
+						_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER interrupt_message`)
+						require.NoError(t, err)
+					} else if step.partial {
+						require.ErrorContains(t, err, "message timestamp is missing")
+					} else {
+						require.NoError(t, err)
+					}
+					run, err := st.GetLatestSync(source.ID)
+					require.NoError(t, err)
+					assert.Equal(t, step.added, run.MessagesAdded)
+					assert.Equal(t, step.updated, run.MessagesUpdated)
+					totalUpdates += step.updated
+					var updates int64
+					// The cache refresh consumes this cumulative committed-run counter.
+					require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(SUM(messages_updated), 0) FROM sync_runs WHERE source_id = ? AND status IN ('completed', 'failed', 'cancelled', 'paused') AND completed_at IS NOT NULL`, source.ID).Scan(&updates))
+					assert.Equal(t, totalUpdates, updates)
+					var snippet string
+					var sender sql.NullInt64
+					require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT snippet, sender_id FROM messages WHERE source_id = ?`, source.ID).Scan(&snippet, &sender))
+					assert.Equal(t, step.stored, snippet)
+					assert.False(t, sender.Valid)
+					var facts int
+					require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cache_related_change_journal WHERE dataset = 'message_facts' AND seq > ?`, baseline).Scan(&facts))
+					if step.added == 0 {
+						assert.Zero(t, facts, "sender-free text edits need the sync update counter, not recipient invalidation")
+					}
+				})
+			}
+		})
+	}
+}
