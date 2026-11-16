@@ -1470,6 +1470,15 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 	allOnly := f.createMessage(t, "all-only", "<all-only@example.com>")
 	ambiguous := f.createMessage(t, "Trash|1", "<shared@example.com>")
 	f.createMessage(t, "Trash|2", "<shared@example.com>")
+	uniqueRaw := f.createMessage(t, "Trash|3", "")
+	ambiguousRaw1 := f.createMessage(t, "Trash|4", "")
+	ambiguousRaw2 := f.createMessage(t, "Trash|5", "")
+	uniqueData := []byte("From: sender@example.test\r\nSubject: unique\r\n\r\nbody\r\n")
+	ambiguousData := []byte("From: sender@example.test\r\nSubject: identical\r\n\r\nbody\r\n")
+	require.NoError(t, f.store.UpsertMessageRaw(uniqueRaw, uniqueData))
+	for _, id := range []int64{ambiguousRaw1, ambiguousRaw2} {
+		require.NoError(t, f.store.UpsertMessageRaw(id, ambiguousData))
+	}
 	_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
 		"Trash":    {Name: "Trash", Type: "system", SystemRole: store.LabelSystemRoleTrash},
 		"All Mail": {Name: "All Mail", Type: "system", SystemRole: store.LabelSystemRoleAll},
@@ -1477,8 +1486,11 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
-		Mailbox: "Trash", State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 3},
-		Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "restored"}, {UID: 2, SourceMessageID: "still-trash"}},
+		Mailbox: "Trash", State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 6},
+		Memberships: []store.IMAPMembershipObservation{
+			{UID: 1, SourceMessageID: "restored"}, {UID: 2, SourceMessageID: "still-trash"},
+			{UID: 3, SourceMessageID: "Trash|3"}, {UID: 4, SourceMessageID: "Trash|4"}, {UID: 5, SourceMessageID: "Trash|5"},
+		},
 	}, {
 		Mailbox: "Projects", State: store.IMAPFolderState{Mailbox: "Projects", UIDValidity: 1, UIDNext: 2},
 		Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "restored"}},
@@ -1487,12 +1499,17 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "still-trash"))
 	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "all-only"))
 	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "Trash|1"))
+	for _, id := range []string{"Trash|3", "Trash|4", "Trash|5"} {
+		require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, id))
+	}
 	syncID, err := f.store.StartSync(f.source.ID, "full")
 	require.NoError(t, err)
 	require.NoError(t, f.store.CompleteSync(syncID, ""))
 	require.NoError(t, f.store.ClearRestoredIMAPDeletionMarksForSyncContext(t.Context(), f.source.ID, syncID, []store.IMAPMembershipObservation{
 		{Mailbox: "INBOX", SourceMessageID: "INBOX|1", RFC822MessageID: "<restored@example.com>"},
 		{Mailbox: "INBOX", UIDValidity: 1, UID: 2, SourceMessageID: "INBOX|2", RFC822MessageID: "<shared@example.com>"},
+		{Mailbox: "INBOX", SourceMessageID: "INBOX|3", RawSHA256: sha256.Sum256(uniqueData)},
+		{Mailbox: "INBOX", SourceMessageID: "INBOX|4", RawSHA256: sha256.Sum256(ambiguousData)},
 		{Mailbox: "Trash", ArchivedMessageID: restored},
 		{Mailbox: "All Mail", ArchivedMessageID: allOnly},
 		{Mailbox: "Trash", ArchivedMessageID: stillTrash},
@@ -1502,35 +1519,12 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 	assert.Equal(t, []string{"Projects", "Trash"}, messageLabels(t, f.store, restored))
 	assert.True(t, messageTombstoned(t, f.store, allOnly))
 	assert.True(t, messageTombstoned(t, f.store, ambiguous))
+	assert.False(t, messageTombstoned(t, f.store, uniqueRaw))
+	assert.True(t, messageTombstoned(t, f.store, ambiguousRaw1))
+	assert.True(t, messageTombstoned(t, f.store, ambiguousRaw2))
 	assert.True(t, messageTombstoned(t, f.store, stillTrash))
 	assert.Equal(t, []string{"Trash"}, messageLabels(t, f.store, stillTrash))
-	assert.Equal(t, 3, membershipCount(t, f.store, f.source.ID))
-}
-
-func TestFilteredIMAPRestoreKeepsAmbiguousRawMatches(t *testing.T) {
-	f := newIMAPMembershipFixture(t)
-	raw := []byte("From: sender@example.test\r\nSubject: identical\r\n\r\nbody\r\n")
-	first := f.createMessage(t, "Trash|1", "")
-	second := f.createMessage(t, "Trash|2", "")
-	for _, id := range []int64{first, second} {
-		require.NoError(t, f.store.UpsertMessageRaw(id, raw))
-	}
-	_, err := f.store.EnsureLabel(t.Context(), f.source.ID, "INBOX", "INBOX", "system")
-	require.NoError(t, err)
-	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
-		Mailbox: "Trash", State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 3},
-		Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "Trash|1"}, {UID: 2, SourceMessageID: "Trash|2"}},
-	}}))
-	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "Trash|1"))
-	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "Trash|2"))
-	syncID, err := f.store.StartSync(f.source.ID, "full")
-	require.NoError(t, err)
-	require.NoError(t, f.store.CompleteSync(syncID, ""))
-	require.NoError(t, f.store.ClearRestoredIMAPDeletionMarksForSyncContext(t.Context(), f.source.ID, syncID, []store.IMAPMembershipObservation{{
-		Mailbox: "INBOX", SourceMessageID: "INBOX|1", RawSHA256: sha256.Sum256(raw),
-	}}))
-	assert.True(t, messageTombstoned(t, f.store, first))
-	assert.True(t, messageTombstoned(t, f.store, second))
+	assert.Equal(t, 6, membershipCount(t, f.store, f.source.ID))
 }
 
 func TestClearMessageDeletedFromSourceCacheSignal(t *testing.T) {

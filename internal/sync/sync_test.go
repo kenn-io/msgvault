@@ -2640,23 +2640,6 @@ func (a *retrashDuringFullAPI) GetMessageLabelsBatch(ctx context.Context, ids []
 	return a.labelMetadataSnapshotAPI.GetMessageLabelsBatch(ctx, ids)
 }
 
-func TestGmailFullSyncUsesCurrentLabelsAfterRetrash(t *testing.T) {
-	env := newTestEnv(t)
-	env.Mock.Profile.HistoryID = 12340
-	env.Mock.AddMessage("msg1", testMIME(), []string{"TRASH"})
-	runFullSync(t, env)
-	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
-	require.NoError(t, err)
-	require.NoError(t, env.Store.MarkMessageDeleted(source.ID, "msg1"))
-	env.Mock.Messages["msg1"].LabelIDs = []string{"INBOX"}
-	env.Syncer = New(&retrashDuringFullAPI{&labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true}}, env.Store, nil)
-	_, err = env.Syncer.Full(t.Context(), testEmail)
-	require.NoError(t, err)
-	env.SetHistory(12350, historyLabelAdded("msg1", "TRASH"))
-	runIncrementalSync(t, env)
-	assertDeletedFromSource(t, env.Store, "msg1", true)
-}
-
 func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
@@ -2664,10 +2647,12 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 		wantMark     bool
 		unchanged    bool
 		labelFailure bool
+		retrash      bool
 	}{
 		{name: "restored", labels: []string{"INBOX"}},
 		{name: "label read failure and retry", labels: []string{"INBOX"}, labelFailure: true},
 		{name: "still in Trash", labels: []string{"INBOX", "TRASH"}, wantMark: true},
+		{name: "returned to Trash during label read", labels: []string{"INBOX"}, retrash: true, wantMark: true},
 		{name: "unchanged labels", labels: []string{"INBOX"}, unchanged: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2694,6 +2679,9 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 				labelErrors: map[string]error{},
 			}
 			env.Syncer = New(api, env.Store, nil)
+			if tc.retrash {
+				env.Syncer = New(&retrashDuringFullAPI{api}, env.Store, nil)
+			}
 			if tc.labelFailure {
 				api.labelErrors["msg1"] = errors.New("label read failed")
 				_, err := env.Syncer.Full(t.Context(), testEmail)
@@ -2708,6 +2696,10 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 				assert.Equal(int64(1), summary.MessagesUpdated)
 			}
 			assertDeletedFromSource(t, env.Store, "msg1", tc.wantMark)
+			if tc.retrash {
+				assert.Equal([][]string{{"msg1"}}, api.labelCalls)
+				assertMessageHasLabel(t, env.Store, "msg1", "TRASH")
+			}
 			if !tc.wantMark {
 				assertMessageHasLabel(t, env.Store, "msg1", "INBOX")
 				assertMessageNotHasLabel(t, env.Store, "msg1", "TRASH")

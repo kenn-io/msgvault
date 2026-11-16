@@ -42,9 +42,9 @@ var systemNames = map[string]bool{
 // labelTypeSystem is the label_type value for standard IMAP folders.
 const labelTypeSystem = "system"
 
-// systemRoleForMailbox maps roles confirmed by RFC 6154 metadata. ListLabels
-// separately marks the mailbox selected by Trash discovery, including its
-// fallback folder.
+// systemRoleForMailbox returns roles only when RFC 6154 special-use metadata
+// confirms them. Mailbox display names are deliberately not classification
+// input because they are localized and user-editable.
 func systemRoleForMailbox(attrs []imap.MailboxAttr) string {
 	switch {
 	case slices.Contains(attrs, imap.MailboxAttrTrash):

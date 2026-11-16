@@ -144,6 +144,26 @@ func TestRawBatchFetchRecordsMembershipBeforeDedup(t *testing.T) {
 	assert.Equal("Archive|1", observed[1].SourceMessageID)
 	assert.Equal(messageID, observed[1].RFC822MessageID)
 	assert.Equal([]string{"\\Flagged"}, observed[1].Flags)
+
+	{
+		addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0, "Trash": 0})
+		raw := []byte("From: sender@example.test\r\nSubject: raw identity\r\n\r\nbody\r\n")
+		testutil.AppendIMAPRawMessage(t, user, "INBOX", raw)
+		client := newTestClient(t, addr, WithFolderFilter(nil, []string{"Trash"}))
+		require.Equal([]string{"INBOX|1"}, listAllMessages(t, client))
+		require.True(client.LabelsSnapshotFiltered())
+		client.mu.Lock()
+		client.observedMemberships = nil
+		client.mu.Unlock()
+		results, err := client.GetMessagesRawBatchWithErrors(t.Context(), []string{"INBOX|1"})
+		require.NoError(err)
+		require.Len(results, 1)
+		require.NoError(results[0].Err)
+		observed := client.ObservedMemberships()
+		require.Len(observed, 1)
+		assert.Empty(observed[0].RFC822MessageID)
+		assert.Equal("4412f9af19e436873cd1cfe72c65d74b83ad16b325b38e9a46dcfda69b85974b", fmt.Sprintf("%x", observed[0].RawSHA256))
+	}
 }
 
 func TestRawBatchFetchDoesNotRequestMalformedEnvelope(t *testing.T) {
