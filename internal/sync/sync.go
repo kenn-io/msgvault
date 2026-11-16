@@ -108,6 +108,7 @@ type Syncer struct {
 
 	// Recovery must refresh existing memberships before advancing its page.
 	requireLabelRefresh bool
+	trashIDs            map[string]struct{}
 }
 
 // SuccessfulSyncHook runs after the durable sync run is marked complete.
@@ -715,14 +716,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			existingMap[sourceMessageID] = canonical
 		}
 	}
-	markedGmailMessageIDs := make(map[string]struct{})
-	if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
-		markedGmailMessageIDs, err = s.store.MarkedSourceMessageIDsBatchContext(
-			ctx, sourceID, messageIDs,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("check marked Gmail messages: %w", err)
-		}
+	markedGmailMessageIDs, err := s.reconcileMarkedGmail(ctx, sourceID, messageIDs, existingMap, labelMap, result)
+	if err != nil {
+		return nil, err
 	}
 
 	// Existing exact IDs only need current label metadata. Clients with a
@@ -788,7 +784,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 		fetchIDs = append(fetchIDs, id)
 	}
 
-	result.skipped = int64(existingCount)
+	result.skipped += int64(existingCount)
 
 	if len(labelRefreshIDs) > 0 {
 		labelResults, err := labelReader.GetMessageLabelsBatch(ctx, labelRefreshIDs)
@@ -1503,7 +1499,7 @@ func (s *Syncer) full(
 	s.logger.Info("syncing account", "email", profile.EmailAddress, "messages", profile.MessagesTotal)
 
 	// Sync labels
-	labelMap, err := s.syncLabels(ctx, source.ID)
+	labelMap, err := s.syncLabelsAndTrash(ctx, source.ID)
 	if err != nil {
 		s.failStoppedSync(state.syncID, err)
 		return nil, fmt.Errorf("sync labels: %w", err)
@@ -1759,6 +1755,61 @@ func (s *Syncer) listCompleteMessageSnapshot(ctx context.Context) (map[string]st
 		}
 		pageToken = next
 	}
+}
+
+func (s *Syncer) syncLabelsAndTrash(ctx context.Context, sourceID int64) (map[string]int64, error) {
+	labels, err := s.syncLabels(ctx, sourceID)
+	if err != nil || s.opts.SourceType == sourceTypeIMAP || s.requireLabelRefresh {
+		return labels, err
+	}
+	s.trashIDs = make(map[string]struct{})
+	for token := ""; ; {
+		page, err := s.client.ListMessages(ctx, "in:trash", token)
+		if err != nil {
+			return nil, fmt.Errorf("list Gmail Trash: %w", err)
+		}
+		for _, message := range page.Messages {
+			s.trashIDs[message.ID] = struct{}{}
+		}
+		if page.NextPageToken == "" {
+			return labels, nil
+		}
+		token = page.NextPageToken
+	}
+}
+
+func (s *Syncer) reconcileMarkedGmail(ctx context.Context, sourceID int64, messageIDs []string, existing map[string]store.MessageWithRawMetadata, labels map[string]int64, result *batchResult) (map[string]struct{}, error) {
+	if s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail {
+		return nil, nil
+	}
+	marked, err := s.store.MarkedSourceMessageIDsBatchContext(ctx, sourceID, messageIDs)
+	if err != nil {
+		return nil, fmt.Errorf("check marked Gmail messages: %w", err)
+	}
+	if s.trashIDs == nil {
+		return marked, nil
+	}
+	for id := range marked {
+		message, hasRaw := existing[id]
+		if !hasRaw {
+			continue
+		}
+		delete(marked, id)
+		if _, inTrash := s.trashIDs[id]; inTrash {
+			continue
+		}
+		if trashID, ok := labels["TRASH"]; ok {
+			if err := s.store.RemoveMessageLabels(ctx, message.ID, []int64{trashID}); err != nil {
+				return nil, fmt.Errorf("remove Gmail Trash label for %s: %w", id, err)
+			}
+		}
+		if err := s.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, id); err != nil {
+			return nil, fmt.Errorf("clear Gmail deletion mark for restored message %s: %w", id, err)
+		}
+		result.updated++
+		result.skipped--
+	}
+	return marked, nil
 }
 
 // syncLabels syncs all labels and returns a map of Gmail label ID to internal ID.

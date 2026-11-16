@@ -695,6 +695,11 @@ the archive. Those have no retry row to fall back on. If msgvault cannot save
 one, the run keeps its place in History so the next run reads the same changes
 again. See [`incremental.go`](https://github.com/kenn-io/msgvault/blob/main/internal/sync/incremental.go).
 
+An ordinary Gmail full sync lists Trash once, across all pages. When the main
+listing also finds a marked message outside that Trash listing, sync clears its
+deletion mark and stored Trash label. A failed Trash listing stops the run so it
+can retry.
+
 History recovery runs after Gmail expires the History cursor. It still
 refreshes a message's labels when that message's file work fails. It also
 checks the request fingerprint saved with its checkpoint. That check keeps it
