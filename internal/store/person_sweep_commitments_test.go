@@ -182,7 +182,6 @@ func TestCommitmentListPages(t *testing.T) {
 			seen[item.ID] = true
 		}
 	})
-
 }
 
 func applyCommitmentTestSources(t *testing.T, f personSweepApplyFixture, cfg peoplesweep.CommitmentConfig) {

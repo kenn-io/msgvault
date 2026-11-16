@@ -110,7 +110,7 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 		// Human-readable wording is deliberately absent from identity.
 		runes, quote := []rune(source.Text), []rune(promise.Quote)
 		occurrence := 0
-		for i := 0; i < int(promise.Start-source.Start); i++ {
+		for i := range int(promise.Start - source.Start) {
 			if i+len(quote) <= len(runes) && string(runes[i:i+len(quote)]) == promise.Quote {
 				occurrence++
 			}
