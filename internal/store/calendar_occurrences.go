@@ -13,10 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
-const (
-	calendarExceptionKind = "exception"
-	calendarSeriesKind    = "series"
-)
+const calendarSeriesKind = "series"
 
 type CalendarOccurrence struct {
 	row               CalendarEventRow
@@ -151,11 +148,11 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 		if e.Kind == calendarExceptionKind && e.Original == nil {
 			report(row.MessageID, "exception has no original start")
 		}
-		if e.Kind == "exception" && calendarRangeException(e) && !masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
+		if e.Kind == calendarExceptionKind && calendarRangeException(e) && !masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
 			report(row.MessageID, "unsupported recurrence: RANGE=THISANDFUTURE")
 			continue
 		}
-		if (e.Kind == "single" || e.Kind == "series") && slices.ContainsFunc(exceptions[seriesKey{row.SourceID, e.ProviderEventID}], func(row CalendarEventRow) bool {
+		if (e.Kind == "single" || e.Kind == calendarSeriesKind) && slices.ContainsFunc(exceptions[seriesKey{row.SourceID, e.ProviderEventID}], func(row CalendarEventRow) bool {
 			return calendarRangeException(row.Event)
 		}) {
 			report(row.MessageID, "unsupported recurrence: RANGE=THISANDFUTURE")

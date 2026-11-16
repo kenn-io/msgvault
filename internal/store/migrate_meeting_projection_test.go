@@ -25,7 +25,7 @@ func TestMeetingLinkProjectionBackfill(t *testing.T) {
 		`ALTER TABLE meeting_details DROP COLUMN link_key`,
 		`UPDATE meeting_details SET projection_version = 1`,
 		`UPDATE applied_migrations SET version = 1 WHERE name = 'meeting_projection_v1'`,
-		`UPDATE archive_metadata SET value = '43' WHERE key = 'schema_version'`,
+		`UPDATE archive_metadata SET value = '44' WHERE key = 'schema_version'`,
 	} {
 		_, err := st.db.Exec(query)
 		require.NoError(err)
