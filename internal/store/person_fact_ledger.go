@@ -610,9 +610,9 @@ func (s *Store) queryPersonFactEvidenceTx(
 	query := `SELECT ` + personFactEvidenceColumns + `
 		FROM person_fact_evidence e WHERE e.person_id = ?`
 	args := []any{personID}
-	if filter.EvidenceID != nil {
+	if filter.EvidenceID != 0 {
 		query += ` AND e.id = ?`
-		args = append(args, *filter.EvidenceID)
+		args = append(args, filter.EvidenceID)
 	}
 	if filter.Target != nil {
 		query += ` AND EXISTS (

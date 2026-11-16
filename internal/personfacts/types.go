@@ -86,7 +86,7 @@ type TargetRef struct {
 
 type EvidenceFilter struct {
 	Target     *TargetRef
-	EvidenceID *int64
+	EvidenceID int64
 	Limit      int
 	Offset     int
 }

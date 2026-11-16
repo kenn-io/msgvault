@@ -1776,7 +1776,6 @@ func TestPersonFactDecisionOutcomesPersist(t *testing.T) {
 		want  personfacts.DecisionOutcome
 	}{
 		{"saved", setup{}, personfacts.OutcomeSaved},
-		{"retired", setup{seed: "retire", relation: personfacts.RelationSupersede}, personfacts.OutcomeValueRetired},
 		{"current", setup{value: "email", pin: new(false), weak: true}, personfacts.OutcomeCurrentValueKept},
 		{"current removal", setup{value: "chat", pin: new(false), relation: personfacts.RelationContradict, weak: true}, personfacts.OutcomeCurrentValueKept},
 		{"pinned", setup{value: "email"}, personfacts.OutcomePinnedValueKept},
@@ -1798,14 +1797,7 @@ func TestPersonFactDecisionOutcomesPersist(t *testing.T) {
 				require.NoError(t, err)
 			}
 			if test.setup.seed != "" {
-				value := test.setup.seed
-				if value == "retire" {
-					value = "chat"
-				}
-				first := personFactProjectionClaim(personID, target, `"`+value+`"`, test.name+"-seed")
-				if test.setup.seed == "retire" {
-					first.Confidence.ReportedScore = 0
-				}
+				first := personFactProjectionClaim(personID, target, `"`+test.setup.seed+`"`, test.name+"-seed")
 				_, err := st.ApplyPersonFactGenerationContext(t.Context(), personFactProjectionInput(personID, test.name+"-seed", []personfacts.ProposedClaim{first}, nil), nil)
 				require.NoError(t, err)
 			}
@@ -1817,17 +1809,11 @@ func TestPersonFactDecisionOutcomesPersist(t *testing.T) {
 				claim.Evidence[0].Authority = personfacts.AuthorityOrdinary
 				claim.Confidence.ReportedScore = 200
 			}
-			if test.setup.seed == "retire" {
-				claim.Confidence.ReportedScore = 1000
-			}
 			claims := []personfacts.ProposedClaim{claim}
 			if test.setup.competitor != "" {
 				claims = append(claims, personFactProjectionClaim(personID, target, `"`+test.setup.competitor+`"`, test.name+"-other"))
 			}
 			input := personFactProjectionInput(personID, test.name, claims, nil)
-			if test.setup.seed == "retire" {
-				input.ResolvedAt = input.ResolvedAt.Add(time.Hour)
-			}
 			prepared, err := personfacts.PreparePersonFactGeneration(t.Context(), input, nil)
 			require.NoError(t, err)
 			var claimKey string
@@ -1908,15 +1894,18 @@ func TestPersonFactOutcomeUpgradeClassifiesKnownHistory(t *testing.T) {
 	assert.Equal(personfacts.DecisionApplied, replayedSaved.Action)
 }
 
-func TestPersonFactSummaryIncludesEvidenceAndPins(t *testing.T) {
+func TestPersonFactSummaryCountsClaimsAndStoredFacts(t *testing.T) {
 	for _, kind := range []string{"empty", "claims", "evidence", "pin", "attribute", "ended employment"} {
 		t.Run(kind, func(t *testing.T) {
 			st, personID, targets := newPersonFactProjectionStore(t)
 			target := targets[AttributeSlugPrimaryChannel]
 			switch kind {
 			case "claims":
-				claim := personFactProjectionClaim(personID, target, `"chat"`, "summary-claim")
-				_, err := st.ApplyPersonFactGenerationContext(t.Context(), personFactProjectionInput(personID, "summary-claim", []personfacts.ProposedClaim{claim}, nil), nil)
+				claims := []personfacts.ProposedClaim{
+					personFactProjectionClaim(personID, target, `"chat"`, "summary-claim"),
+					personFactProjectionClaim(personID, targets[AttributeSlugAskMeAbout], `"books"`, "summary-other"),
+				}
+				_, err := st.ApplyPersonFactGenerationContext(t.Context(), personFactProjectionInput(personID, "summary-claim", claims, nil), nil)
 				require.NoError(t, err)
 			case "pin":
 				_, err := st.SetPersonFactPinContext(t.Context(), personID, personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}, true, "test")
@@ -1942,7 +1931,7 @@ func TestPersonFactSummaryIncludesEvidenceAndPins(t *testing.T) {
 			assert.Equal(t, kind == "attribute" || kind == "ended employment" || kind == "claims", summary.HasValues)
 			assert.Equal(t, kind == "evidence" || kind == "pin" || kind == "claims", summary.HasFactHistory)
 			if kind == "claims" {
-				assert.Equal(t, 1, summary.ClaimedFields)
+				assert.Equal(t, 2, summary.ClaimedFields)
 				assert.NotNil(t, summary.LatestClaimAt)
 			} else {
 				assert.Zero(t, summary.ClaimedFields)

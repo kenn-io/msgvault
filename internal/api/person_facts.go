@@ -289,16 +289,12 @@ func (s *Server) handleListPersonFactEvidence(w http.ResponseWriter, r *http.Req
 		s.rejectBadParam(w, err)
 		return
 	}
-	var id *int64
-	if present {
-		if evidenceID < 1 {
-			writeError(w, http.StatusBadRequest, "invalid_evidence_id", "evidence_id must be a positive integer")
-			return
-		}
-		id = &evidenceID
+	if present && evidenceID < 1 {
+		writeError(w, http.StatusBadRequest, "invalid_evidence_id", "evidence_id must be a positive integer")
+		return
 	}
 	rows, err := facts.ListPersonFactEvidenceContext(r.Context(), personID,
-		personfacts.EvidenceFilter{Target: filter.target, EvidenceID: id, Limit: filter.limit, Offset: filter.offset})
+		personfacts.EvidenceFilter{Target: filter.target, EvidenceID: evidenceID, Limit: filter.limit, Offset: filter.offset})
 	if err != nil {
 		s.writePersonFactError(w, err)
 		return
@@ -657,12 +653,7 @@ func personFactClaimDTO(claim personfacts.Claim) PersonFactClaim {
 func personFactDecisionDTO(decision personfacts.Decision) PersonFactDecision {
 	var maxima *PersonFactScoreBreakdown
 	if decision.ScoreMaxima != nil {
-		maxima = &PersonFactScoreBreakdown{
-			SourceClass: decision.ScoreMaxima.SourceClass, Directness: decision.ScoreMaxima.Directness,
-			Authority: decision.ScoreMaxima.Authority, Confidence: decision.ScoreMaxima.Confidence,
-			Freshness: decision.ScoreMaxima.Freshness, Corroboration: decision.ScoreMaxima.Corroboration,
-			Total: decision.ScoreMaxima.Total,
-		}
+		maxima = new(PersonFactScoreBreakdown(*decision.ScoreMaxima))
 	}
 	return PersonFactDecision{
 		ID: decision.ID, ResolutionID: decision.ResolutionID,

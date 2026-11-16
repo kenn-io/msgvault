@@ -9,6 +9,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -787,35 +789,31 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 		}
 	}
 	pinnedEmployment := remaining
-	if descriptor.Kind == personfacts.TargetEmployment {
-		for _, decision := range resolution.Decisions {
-			if decision.Reason != personfacts.ReasonPinRetained {
-				continue
-			}
-			jobs, loadErr := s.listAllEmploymentsContext(ctx, tx, EmploymentFilter{PersonID: generation.PersonID})
+	if descriptor.Kind == personfacts.TargetEmployment && slices.ContainsFunc(resolution.Decisions, func(decision personfacts.Decision) bool {
+		return decision.Reason == personfacts.ReasonPinRetained
+	}) {
+		jobs, loadErr := s.listAllEmploymentsContext(ctx, tx, EmploymentFilter{PersonID: generation.PersonID})
+		if loadErr != nil {
+			return false, loadErr
+		}
+		pinnedEmployment = make([]personfacts.CurrentProjection, 0, len(jobs))
+		for _, job := range jobs {
+			organization, loadErr := getOrganizationTx(ctx, tx, job.OrganizationID)
 			if loadErr != nil {
 				return false, loadErr
 			}
-			pinnedEmployment = make([]personfacts.CurrentProjection, 0, len(jobs))
-			for _, job := range jobs {
-				organization, loadErr := getOrganizationTx(ctx, tx, job.OrganizationID)
-				if loadErr != nil {
-					return false, loadErr
-				}
-				normalized, normalizeErr := normalizedPersonFactEmploymentValue(descriptor, job, *organization)
-				if normalizeErr != nil {
-					return false, normalizeErr
-				}
-				pinnedEmployment = append(pinnedEmployment, personfacts.CurrentProjection{Normalized: *normalized})
+			normalized, normalizeErr := normalizedPersonFactEmploymentValue(descriptor, job, *organization)
+			if normalizeErr != nil {
+				return false, normalizeErr
 			}
-			break
+			pinnedEmployment = append(pinnedEmployment, personfacts.CurrentProjection{Normalized: *normalized})
 		}
 	}
 	for _, decision := range resolution.Decisions {
 		claim := claimByKey[decision.ClaimKey]
 		hasCurrent, matchesCurrent := false, false
 		values := remaining
-		if descriptor.Kind == personfacts.TargetEmployment && decision.Reason == personfacts.ReasonPinRetained {
+		if decision.Reason == personfacts.ReasonPinRetained {
 			values = pinnedEmployment
 		}
 		for _, value := range values {
@@ -1841,15 +1839,7 @@ func samePinnedEmployment(left, right personfacts.NormalizedValue) (bool, error)
 	if err := json.Unmarshal(right.JSON, &b); err != nil {
 		return false, err
 	}
-	leftStint, err := json.Marshal([]any{a.Title, a.StartDate, a.EndDate}, json.Deterministic(true))
-	if err != nil {
-		return false, err
-	}
-	rightStint, err := json.Marshal([]any{b.Title, b.StartDate, b.EndDate}, json.Deterministic(true))
-	if err != nil {
-		return false, err
-	}
-	return string(leftStint) == string(rightStint), nil
+	return a.Title == b.Title && reflect.DeepEqual(a.StartDate, b.StartDate) && reflect.DeepEqual(a.EndDate, b.EndDate), nil
 }
 
 func personFactEmploymentStableIdentity(
