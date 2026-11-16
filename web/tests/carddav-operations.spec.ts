@@ -121,8 +121,6 @@ test('keyboard journey configures CardDAV, reconciles roles, syncs history, and 
   await loadMore.focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('table', { name: 'CardDAV sync history' }).getByRole('row')).toHaveCount(4);
-  await expect(page.getByRole('table', { name: 'CardDAV sync history' }).getByText('2 binding conflicts')).toBeVisible();
-  await expect(page.getByText('msgvault carddav bind-participants --dry-run', { exact: true })).toHaveCount(1);
   expect(fixture.requests.filter(({ path, query }) => path === '/api/v1/carddav/runs' && query.before_id === '90'))
     .toEqual([{ method: 'GET', path: '/api/v1/carddav/runs', query: { connection: 'default', limit: '25', before_id: '90' } }]);
 

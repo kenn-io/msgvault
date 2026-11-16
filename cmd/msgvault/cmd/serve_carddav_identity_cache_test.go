@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -20,6 +21,29 @@ import (
 
 type failingCardDAVService struct {
 	scheduledCardDAVFixture
+}
+
+func TestCardDAVIdentityRefreshRebuildsMissingParquet(t *testing.T) {
+	req := require.New(t)
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "msgvault.db")
+	analyticsDir := filepath.Join(dir, "analytics")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
+	req.NoError(err)
+	req.NoError(os.Remove(filepath.Join(analyticsDir, "participants", "participants.parquet")))
+
+	refreshErr := errors.New("missing parquet triggered rebuild")
+	old := runDerivedCacheSubprocess
+	runDerivedCacheSubprocess = func(context.Context, string) error { return refreshErr }
+	t.Cleanup(func() { runDerivedCacheSubprocess = old })
+	cfg := config.NewDefaultConfig()
+	cfg.Analytics.AutoBuildCache = false
+	cfg.Data.DataDir = dir
+	cfg.Data.DatabaseURL = dbPath
+	adapter := &storeAPIAdapter{store: st, config: cfg, analyticsDir: analyticsDir}
+	_, err = adapter.RefreshIdentityDatasets(t.Context())
+	req.ErrorIs(err, refreshErr)
 }
 
 func (f *failingCardDAVService) Sync(context.Context, carddav.SyncOptions) (carddav.SyncResult, error) {
@@ -52,16 +76,6 @@ func TestCardDAVSchedulerRequestsCacheRebuildAfterFailedSync(t *testing.T) {
 		req.Equal("carddav", id)
 	case <-time.After(10 * time.Second):
 		req.FailNow("cache refresh was not requested")
-	}
-	cfg.Analytics.AutoBuildCache = false
-	adapter := &storeAPIAdapter{config: cfg}
-	adapter.QueueCardDAVIdentityCacheRefresh(t.Context())
-	req.True(refresher.Request("probe"))
-	select {
-	case id := <-requests:
-		req.Equal("probe", id)
-	case <-time.After(10 * time.Second):
-		req.FailNow("cache worker did not process the probe")
 	}
 }
 

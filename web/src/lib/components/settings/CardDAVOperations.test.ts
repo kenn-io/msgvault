@@ -231,7 +231,7 @@ describe('CardDAVOperations', () => {
         books: 1, created: 0, updated: 1, removed: 0, binding_conflicts: 2
       }, {
         id: 2, account_id: 1, trigger: 'scheduled', full: false, state: 'succeeded',
-        started_at: '2026-08-27T09:00:00Z', books: 1, created: 0, updated: 0, removed: 0, binding_conflicts: 1
+        started_at: '2026-08-27T09:00:00Z', finished_at: '2026-08-27T09:01:00Z', books: 1, created: 0, updated: 0, removed: 0, binding_conflicts: 1
       }] });
       if (path.endsWith('/books')) return Response.json({ books: [] });
       throw new Error(`Unexpected ${request.method} ${path}`);
@@ -242,7 +242,7 @@ describe('CardDAVOperations', () => {
 
     const rows = screen.getAllByRole('row');
     expect(rows[1].textContent).toContain('2 binding conflicts');
-    expect(rows[2].textContent).toContain('1 binding conflicts');
+    expect(rows[2].textContent).toContain('1 binding conflict');
     expect(screen.getAllByText('msgvault carddav bind-participants --dry-run')).toHaveLength(1);
     controller.destroy();
   });

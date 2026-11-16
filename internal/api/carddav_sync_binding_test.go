@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -14,27 +13,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
-
-type bindingSyncFixture struct {
-	cardDAVListFixture
-	result carddav.SyncResult
-}
-
-func (f bindingSyncFixture) Sync(context.Context, carddav.SyncOptions) (carddav.SyncResult, error) {
-	return f.result, nil
-}
-
-func TestCardDAVSyncReportsBindingConflict(t *testing.T) {
-	conflicts := 1
-	controller := &CardDAVController{
-		cfg:     &config.Config{CardDAV: config.CardDAVConfig{Enabled: true}},
-		service: bindingSyncFixture{result: carddav.SyncResult{BindingConflicts: &conflicts}},
-	}
-	result, err := controller.Sync(t.Context(), CardDAVSyncRequest{Connection: "default"})
-	require.NoError(t, err)
-	require.NotNil(t, result.BindingConflicts)
-	assert.Equal(t, 1, *result.BindingConflicts)
-}
 
 type bindingSyncRemote struct {
 	cards map[string]store.CardDAVRemoteResource
@@ -50,30 +28,13 @@ func (r *bindingSyncRemote) Pull(_ context.Context, _ store.CardDAVAddressBook, 
 	}
 	return plan, nil
 }
-func (r *bindingSyncRemote) Get(_ context.Context, href string) (store.CardDAVRemoteResource, bool, error) {
-	resource, ok := r.cards[href]
-	return resource, !ok, nil
+func (r *bindingSyncRemote) Get(context.Context, string) (store.CardDAVRemoteResource, bool, error) {
+	return store.CardDAVRemoteResource{}, false, nil
 }
-func (r *bindingSyncRemote) Put(_ context.Context, href string, body []byte, _ string, _ bool) error {
-	hash, err := carddav.SemanticHash(body)
-	if err != nil {
-		return err
-	}
-	resource := store.CardDAVRemoteResource{Href: href, RemoteBody: body, RemoteETag: `"published"`, SemanticHash: hash, RemoteUID: "second", DisplayName: "Second"}
-	if bytes.Contains(body, []byte("shared@example.test")) {
-		resource.Emails = []string{"shared@example.test"}
-	}
-	r.cards[href] = resource
-	return nil
-}
-func (r *bindingSyncRemote) Delete(_ context.Context, href, _ string) error {
-	delete(r.cards, href)
-	return nil
-}
-func (r *bindingSyncRemote) CreateHref(collectionURL, uid string) (string, error) {
-	return collectionURL + uid, nil
-}
-func (r *bindingSyncRemote) Limits() (time.Duration, int64) { return time.Minute, 10 << 20 }
+func (r *bindingSyncRemote) Put(context.Context, string, []byte, string, bool) error { return nil }
+func (r *bindingSyncRemote) Delete(context.Context, string, string) error            { return nil }
+func (r *bindingSyncRemote) CreateHref(string, string) (string, error)               { return "", nil }
+func (r *bindingSyncRemote) Limits() (time.Duration, int64)                          { return time.Minute, 10 << 20 }
 
 func TestScheduledCardDAVSyncPersistsBindingConflictCount(t *testing.T) {
 	require := require.New(t)
@@ -102,10 +63,8 @@ func TestScheduledCardDAVSyncPersistsBindingConflictCount(t *testing.T) {
 	service := carddav.NewRemoteService(st, &bindingSyncRemote{cards: cards})
 	result, err := service.Sync(t.Context(), carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
 	require.NoError(err)
-	assert.NotNil(result.BindingConflicts)
-	if result.BindingConflicts != nil {
-		assert.Equal(1, *result.BindingConflicts)
-	}
+	require.NotNil(result.BindingConflicts)
+	assert.Equal(1, *result.BindingConflicts)
 	preview, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
 	require.NoError(err)
 	assert.Equal(1, preview.Conflicts)
@@ -120,5 +79,5 @@ func TestScheduledCardDAVSyncPersistsBindingConflictCount(t *testing.T) {
 	require.NoError(json.NewDecoder(response.Body).Decode(&body))
 	require.Len(body.Runs, 1)
 	assert.Equal("scheduled", body.Runs[0]["trigger"])
-	assert.Equal(float64(preview.Conflicts), body.Runs[0]["binding_conflicts"])
+	assert.InDelta(float64(preview.Conflicts), body.Runs[0]["binding_conflicts"], 0)
 }

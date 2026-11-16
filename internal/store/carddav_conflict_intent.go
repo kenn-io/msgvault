@@ -276,7 +276,15 @@ func (s *Store) ResetCardDAVConflictLocalIntentContext(ctx context.Context, pend
 		if _, err = tx.ExecContext(ctx, `UPDATE carddav_resources SET mapping_revision=? WHERE id=?`, next, source.Resource.ID); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE carddav_conflicts SET local_mutation_intent=NULL, mapping_revision=?, local_body=?,local_hash=?,local_inference_revision=?, remote_body=?,remote_etag=NULLIF(?,''),remote_tombstone=?, review_revision=review_revision+1, approved_local_body_sha256=NULL,approved_local_inference_revision=NULL,approved_conflict_revision=NULL,local_envelope_metadata=NULL,updated_at=`+s.dialect.Now()+` WHERE id=?`, next, current.OutgoingBody, current.LocalHash, current.ApprovedInferenceRevision, nullableCardDAVMetadata(remote.RemoteBody), remote.RemoteETag, tombstone, source.Conflict.ID)
-		return err
+		return s.replaceCardDAVConflictSnapshotsTx(ctx, tx, source.Conflict.ID, next, current, remote, tombstone)
 	})
+}
+
+// replaceCardDAVConflictSnapshotsTx swaps in the new local and remote snapshots, then drops automatic
+// memberships that no snapshot or card supports anymore.
+func (s *Store) replaceCardDAVConflictSnapshotsTx(ctx context.Context, tx *loggedTx, conflictID, next int64, current *CardDAVPublication, remote CardDAVRemoteResource, tombstone bool) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE carddav_conflicts SET local_mutation_intent=NULL, mapping_revision=?, local_body=?,local_hash=?,local_inference_revision=?, remote_body=?,remote_etag=NULLIF(?,''),remote_tombstone=?, review_revision=review_revision+1, approved_local_body_sha256=NULL,approved_local_inference_revision=NULL,approved_conflict_revision=NULL,local_envelope_metadata=NULL,updated_at=`+s.dialect.Now()+` WHERE id=?`, next, current.OutgoingBody, current.LocalHash, current.ApprovedInferenceRevision, nullableCardDAVMetadata(remote.RemoteBody), remote.RemoteETag, tombstone, conflictID); err != nil {
+		return err
+	}
+	return s.cleanupCardDAVParticipantBindingsTx(ctx, tx)
 }

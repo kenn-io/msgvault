@@ -3969,7 +3969,7 @@ func (a *storeAPIAdapter) GetParticipantIdentityContext(
 func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
 	ctx = a.invocationContext(ctx)
 	if cfg := a.publishedConfig(ctx); cfg != nil && !store.IsPostgresURL(cfg.DatabaseDSN()) {
-		staleness, inspectErr := cacheNeedsBuildForServing(ctx, cfg.DatabaseDSN(), a.analyticsDir)
+		staleness, inspectErr := inspectCacheForQuery(ctx, cfg.DatabaseDSN(), a.analyticsDir, false, false)
 		if inspectErr == nil && !staleness.NeedsBuild {
 			state, stateErr := query.ReadCacheSyncState(a.analyticsDir)
 			if stateErr == nil {

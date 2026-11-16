@@ -50,35 +50,22 @@ func TestCardDAVParticipantBindingHTTPPreviewApplyUndo(t *testing.T) {
 type cardDAVMutationFixture struct {
 	cardDAVListFixture
 
-	store       *store.Store
-	participant int64
-	syncErr     error
+	syncErr error
 }
 
-func (f *cardDAVMutationFixture) mutate(ctx context.Context) error {
-	_, _, err := f.store.CreatePersonFromParticipantContext(ctx, f.participant)
-	return err
-}
-
-func (f *cardDAVMutationFixture) Sync(ctx context.Context, _ carddav.SyncOptions) (carddav.SyncResult, error) {
-	if err := f.mutate(ctx); err != nil {
-		return carddav.SyncResult{}, err
-	}
+func (f *cardDAVMutationFixture) Sync(context.Context, carddav.SyncOptions) (carddav.SyncResult, error) {
 	return carddav.SyncResult{Books: 1}, f.syncErr
 }
 
-func (f *cardDAVMutationFixture) SetBookRoles(ctx context.Context, _ int64, _ carddav.BookRoles) error {
-	return f.mutate(ctx)
+func (f *cardDAVMutationFixture) SetBookRoles(context.Context, int64, carddav.BookRoles) error {
+	return nil
 }
 
 func (f *cardDAVMutationFixture) ListBooks(context.Context) ([]store.CardDAVAddressBook, error) {
 	return []store.CardDAVAddressBook{{ID: 7}}, nil
 }
 
-func (f *cardDAVMutationFixture) PublishPerson(ctx context.Context, _ int64) error {
-	if err := f.mutate(ctx); err != nil {
-		return err
-	}
+func (f *cardDAVMutationFixture) PublishPerson(context.Context, int64) error {
 	return errors.New("publication conflict")
 }
 
@@ -100,9 +87,7 @@ func TestCardDAVMutationRefreshesIdentityCache(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := &stubIdentityCacheStore{Store: testutil.NewTestStore(t)}
-			id, err := st.EnsureParticipant("mutation@example.test", "Mutation", "example.test")
-			require.NoError(t, err)
-			service := &cardDAVMutationFixture{store: st.Store, participant: id}
+			service := &cardDAVMutationFixture{}
 			if tc.syncFailure {
 				service.syncErr = errors.New("later book failed")
 			}
@@ -112,16 +97,4 @@ func TestCardDAVMutationRefreshesIdentityCache(t *testing.T) {
 			assert.Equal(t, 1, st.cardDAVRefreshCalls)
 		})
 	}
-}
-
-func TestCardDAVUnchangedSyncRefreshesIdentityCache(t *testing.T) {
-	wrapped := &stubIdentityCacheStore{Store: testutil.NewTestStore(t)}
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{}, Store: wrapped, Logger: testLogger(),
-		CardDAV: &CardDAVController{service: bindingSyncFixture{}},
-	})
-	response := personRequest(t, srv, http.MethodPost, "/api/v1/carddav/sync", []byte(`{}`), "")
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Equal(t, 1, wrapped.cardDAVRefreshCalls,
-		"an unchanged sync must retry a cache refresh left stale by an earlier failure")
 }

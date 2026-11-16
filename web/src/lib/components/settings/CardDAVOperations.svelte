@@ -301,7 +301,7 @@
               <td>{historyRun.trigger === 'scheduled' ? 'Scheduled' : 'Manual'}</td>
               <td
                 >{counters(historyRun)}{#if historyRun.binding_conflicts !== undefined && historyRun.binding_conflicts > 0}<span class="conflict-copy"
-                    >{historyRun.binding_conflicts.toLocaleString()} binding conflicts</span
+                    >{historyRun.binding_conflicts.toLocaleString()} binding conflict{historyRun.binding_conflicts === 1 ? '' : 's'}</span
                   >{/if}{#if historyRun.error_message}<span class="error-copy"
                     >{historyRun.error_message}</span
                   >{/if}</td

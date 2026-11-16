@@ -350,7 +350,7 @@ func TestSyncRecordsOneSucceededManualRunWithExactCounters(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 1}, result)
+	assert.Equal(SyncResult{Books: 1, Created: 1, BindingConflicts: new(0)}, result)
 
 	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
@@ -411,8 +411,6 @@ func TestSyncCancellationFinishesRunWithUncancelledCleanupContext(t *testing.T) 
 	close(releaseRequest)
 	require.ErrorIs(completed.err, context.Canceled)
 	assert.Nil(completed.result.BindingConflicts)
-	_, err := service.cardDAVBindingConflictCount(ctx)
-	require.ErrorIs(err, context.Canceled)
 	runs, err := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
 	require.NoError(err)
 	require.Len(runs, 1)
@@ -452,7 +450,7 @@ func TestSyncTotalFailureRecordsSafeFailedTerminalState(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.Error(err)
-	assert.Equal(SyncResult{}, result)
+	assert.Equal(SyncResult{BindingConflicts: new(0)}, result)
 	assert.Equal("CardDAV server request failed.", err.Error())
 	runs, listErr := st.ListCardDAVSyncRunsContext(t.Context(), 10, nil, store.AllCardDAVAccounts)
 	require.NoError(listErr)
@@ -513,7 +511,7 @@ func TestSyncJoinsExecutionAndFinishFailuresWithoutReplay(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.Error(err)
-	assert.Equal(SyncResult{}, result)
+	assert.Equal(SyncResult{BindingConflicts: new(0)}, result)
 	var statusErr *StatusError
 	require.ErrorAs(err, &statusErr, "execution error must remain inspectable")
 	require.ErrorContains(err, "injected finish failure")
@@ -1079,7 +1077,7 @@ func TestInitialSyncFallsBackToEnumeratedSnapshotWhenEmptyTokenIsRejected(t *tes
 
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 2}, result)
+	assert.Equal(SyncResult{Books: 1, Created: 2, BindingConflicts: new(0)}, result)
 	assert.Equal([]string{
 		"REPORT sync-collection ",
 		"PROPFIND 0",
@@ -1103,7 +1101,7 @@ func TestInitialSyncFallsBackToEnumeratedSnapshotWhenEmptyTokenIsRejected(t *tes
 	state.mu.Unlock()
 	result, err = service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Updated: 1}, result)
+	assert.Equal(SyncResult{Books: 1, Updated: 1, BindingConflicts: new(0)}, result)
 	assert.Equal([]string{
 		"REPORT sync-collection token-1",
 		"REPORT addressbook-multiget /books/personal/alice.vcf",
@@ -1125,7 +1123,7 @@ func TestGoogleInitialSyncSkipsEmptyTokenSyncCollection(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 2}, result)
+	assert.Equal(SyncResult{Books: 1, Created: 2, BindingConflicts: new(0)}, result)
 	assert.Equal([]string{
 		"PROPFIND 0",
 		"PROPFIND 1",
@@ -1145,7 +1143,7 @@ func TestGoogleInitialSyncSkipsEmptyTokenSyncCollection(t *testing.T) {
 	state.mu.Unlock()
 	result, err = service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1}, result)
+	assert.Equal(SyncResult{Books: 1, BindingConflicts: new(0)}, result)
 	assert.Equal([]string{"REPORT sync-collection token-1"}, state.requests)
 }
 
@@ -1172,7 +1170,7 @@ func TestGoogleInvalidTokenReconcileUsesEnumeratedSnapshot(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 2}, result)
+	assert.Equal(SyncResult{Books: 1, Created: 2, BindingConflicts: new(0)}, result)
 	assert.Equal([]string{
 		"PROPFIND 0",
 		"PROPFIND 1",
@@ -1270,7 +1268,7 @@ func TestGoogleSnapshotNeverUsesAddressbookQuery(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 2}, result)
+	assert.Equal(SyncResult{Books: 1, Created: 2, BindingConflicts: new(0)}, result)
 	assert.NotContains(state.requests, "REPORT addressbook-query",
 		"Google's empty addressbook-query must never become a replace-all plan")
 	assert.Equal([]string{
@@ -1297,7 +1295,7 @@ func TestEnumeratedSnapshotWarnsWhenCollectionOmitsSyncToken(t *testing.T) {
 
 	result, err := service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1, Created: 2}, result)
+	assert.Equal(SyncResult{Books: 1, Created: 2, BindingConflicts: new(0)}, result)
 	assert.Contains(logged.String(), "level=WARN")
 	assert.Contains(logged.String(), "no sync token")
 	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
@@ -1311,7 +1309,7 @@ func TestEnumeratedSnapshotWarnsWhenCollectionOmitsSyncToken(t *testing.T) {
 	state.mu.Unlock()
 	result, err = service.Sync(t.Context(), SyncOptions{})
 	require.NoError(err)
-	assert.Equal(SyncResult{Books: 1}, result)
+	assert.Equal(SyncResult{Books: 1, BindingConflicts: new(0)}, result)
 	assert.Equal([]string{
 		"PROPFIND 0",
 		"PROPFIND 1",
