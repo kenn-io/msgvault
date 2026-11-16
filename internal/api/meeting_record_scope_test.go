@@ -168,7 +168,7 @@ func TestMeetingRecordMessageReadSourceScope(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(srv.agentGrants.Close)
 	notesScope := agentgrant.SourceRef{ID: notes.ID, Type: notes.SourceType, Identifier: notes.Identifier}
-	_, token, _, err := srv.agentGrants.Issue("event outside scope", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{notesScope}, time.Time{})
+	_, token, _, err := srv.agentGrants.Issue("event outside scope", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionCalendarEventRead}, []agentgrant.SourceRef{notesScope}, time.Time{})
 	requirements.NoError(err)
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/meetings/record?ref=evt:%d", event), nil)
 	req.Header.Set(apiprotocol.AgentTokenHeader, token)
