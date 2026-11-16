@@ -742,69 +742,59 @@ func TestMergeParticipantsRollsBackWhenCandidateRewriteFails(t *testing.T) {
 }
 
 func TestMergeParticipantsPreservesAbsorbedEmail(t *testing.T) {
-	for _, mode := range []string{"empty survivor", "different email"} {
-		t.Run(mode, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+	for _, tc := range []struct {
+		name, survivorEmail   string
+		thirdHolder, conflict bool
+	}{
+		{name: "empty survivor"},
+		{name: "different survivor email", survivorEmail: "survivor@example.test"},
+		{name: "survivor has primary", survivorEmail: "ABSORBED@example.test", thirdHolder: true},
+		{name: "another participant holds identifier", survivorEmail: "survivor@example.test", thirdHolder: true, conflict: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			st := storetest.New(t).Store
 			absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
-			require.NoError(err)
+			require.NoError(t, err)
 			var survivor int64
-			if mode == "empty survivor" {
+			if tc.survivorEmail == "" {
 				survivor, err = st.EnsureParticipantByIdentifier("beeper", "survivor", "Survivor")
 			} else {
-				survivor, err = st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
+				survivor, err = st.EnsureParticipant(tc.survivorEmail, "Survivor", "example.test")
 			}
-			require.NoError(err)
-			require.NoError(st.MergeParticipants(absorbed, survivor))
-			var count int
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id = ? AND identifier_type = 'email' AND identifier_value = ?`), survivor, "absorbed@example.test").Scan(&count))
-			if mode == "different email" {
-				assert.Equal(1, count)
+			require.NoError(t, err)
+			var third int64
+			if tc.thirdHolder {
+				third, err = st.EnsureParticipant("third@example.test", "Third", "example.test")
+				require.NoError(t, err)
+				require.NoError(t, st.SetParticipantIdentifier(third, "email", "absorbed@example.test"))
+			}
+			err = st.MergeParticipants(absorbed, survivor)
+			if tc.conflict {
+				require.ErrorIs(t, err, store.ErrPersonBindingConflict)
+				var count int
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participants WHERE id IN (?, ?)`), absorbed, survivor).Scan(&count))
+				assert.Equal(t, 2, count)
 			} else {
-				assert.Zero(count)
-				var email string
-				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT email_address FROM participants WHERE id = ?`), survivor).Scan(&email))
-				assert.Equal("absorbed@example.test", email)
+				require.NoError(t, err)
+				var primary string
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT email_address FROM participants WHERE id = ?`), survivor).Scan(&primary))
+				if tc.survivorEmail == "" || tc.thirdHolder {
+					expected := tc.survivorEmail
+					if expected == "" {
+						expected = "absorbed@example.test"
+					}
+					assert.Equal(t, expected, primary)
+				} else {
+					var count int
+					require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id = ? AND identifier_type = 'email' AND identifier_value = ?`), survivor, "absorbed@example.test").Scan(&count))
+					assert.Equal(t, 1, count)
+				}
+			}
+			if tc.thirdHolder {
+				owner, _, err := st.ParticipantByIdentifierContext(t.Context(), "email", "absorbed@example.test")
+				require.NoError(t, err)
+				assert.Equal(t, third, owner)
 			}
 		})
 	}
-}
-
-func TestMergeParticipantsAllowsSharedEmail(t *testing.T) {
-	t.Run("survivor has primary", func(t *testing.T) {
-		st := storetest.New(t).Store
-		absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
-		require.NoError(t, err)
-		survivor, err := st.EnsureParticipant("ABSORBED@example.test", "Survivor", "example.test")
-		require.NoError(t, err)
-		third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
-		require.NoError(t, err)
-		require.NoError(t, st.SetParticipantIdentifier(third, "email", "absorbed@example.test"))
-		require.NoError(t, st.MergeParticipants(absorbed, survivor))
-		owner, _, err := st.ParticipantByIdentifierContext(t.Context(), "email", "absorbed@example.test")
-		require.NoError(t, err)
-		assert.Equal(t, third, owner)
-		var primary string
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT email_address FROM participants WHERE id = ?`), survivor).Scan(&primary))
-		assert.Equal(t, "ABSORBED@example.test", primary)
-	})
-}
-
-func TestMergeParticipantsRejectsLostEmail(t *testing.T) {
-	st := storetest.New(t).Store
-	absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
-	require.NoError(t, err)
-	survivor, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
-	require.NoError(t, err)
-	third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
-	require.NoError(t, err)
-	require.NoError(t, st.SetParticipantIdentifier(third, "email", "absorbed@example.test"))
-	require.ErrorIs(t, st.MergeParticipants(absorbed, survivor), store.ErrPersonBindingConflict)
-	owner, _, err := st.ParticipantByIdentifierContext(t.Context(), "email", "absorbed@example.test")
-	require.NoError(t, err)
-	assert.Equal(t, third, owner)
-	var count int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participants WHERE id IN (?, ?)`), absorbed, survivor).Scan(&count))
-	assert.Equal(t, 2, count)
 }

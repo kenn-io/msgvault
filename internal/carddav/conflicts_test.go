@@ -2298,7 +2298,7 @@ func TestPublishedImportRetainsPreferenceHashBaseline(t *testing.T) {
 	assert.Contains(string(fixture.body), "PREF=01")
 }
 
-func TestPhoneURINormalizationThroughSync(t *testing.T) {
+func TestPhoneURIContactPointMatchingThroughSync(t *testing.T) {
 	t.Parallel()
 	for _, phone := range []string{
 		"+12025550102",
