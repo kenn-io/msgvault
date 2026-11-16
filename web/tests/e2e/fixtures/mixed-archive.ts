@@ -718,7 +718,7 @@ export async function installDirectoryReviewArchive(page: Page) {
             ],
           },
         });
-      if (path.endsWith('/fact-summary')) return route.fulfill({ json: { claimed_fields: 1, latest_claim_at: '2026-01-03T12:00:00Z', has_stored_facts: true } });
+      if (path.endsWith('/fact-summary')) return route.fulfill({ json: { claimed_fields: 1, latest_claim_at: '2026-01-03T12:00:00Z', has_values: false, has_fact_history: true } });
       if (path.endsWith('/fact-evidence'))
         return route.fulfill({
           json: {
