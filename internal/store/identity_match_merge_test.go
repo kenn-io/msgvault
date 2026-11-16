@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -772,8 +773,8 @@ func TestMergeParticipantsPreservesAbsorbedEmail(t *testing.T) {
 }
 
 func TestMergeParticipantsRejectsCompetingEmailAlias(t *testing.T) {
-	for _, kind := range []string{"email", "imessage"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, scoped := range []bool{false, true} {
+		t.Run(strconv.FormatBool(scoped), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st := storetest.New(t).Store
@@ -783,11 +784,16 @@ func TestMergeParticipantsRejectsCompetingEmailAlias(t *testing.T) {
 			require.NoError(err)
 			third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
 			require.NoError(err)
-			require.NoError(st.SetParticipantIdentifier(third, kind, "absorbed@example.test"))
+			require.NoError(st.SetParticipantIdentifier(third, "email", "absorbed@example.test"))
+			if scoped {
+				service, err := st.ResolveCommunicationServiceContext(t.Context(), "signal")
+				require.NoError(err)
+				require.NoError(st.ClassifyParticipantIdentifierServiceContext(t.Context(), "email", "absorbed@example.test", &service.ID, new("account"), new("account-a")))
+			}
 			mergeErr := st.MergeParticipants(absorbed, survivor)
 			require.ErrorIs(mergeErr, store.ErrParticipantAddressConflict)
 			require.NotErrorIs(mergeErr, store.ErrPersonBindingConflict)
-			resolved, err := st.EnsureParticipantByIdentifier(kind, "absorbed@example.test", "")
+			resolved, err := st.EnsureParticipantByIdentifier("email", "absorbed@example.test", "")
 			require.NoError(err)
 			assert.Equal(third, resolved)
 			var email string
@@ -808,9 +814,23 @@ func TestMergeParticipantsAllowsSharedEmail(t *testing.T) {
 		require.NoError(t, err)
 		_, err = st.LinkParticipants(survivor, alias)
 		require.NoError(t, err)
-		require.NoError(t, st.SetParticipantIdentifier(alias, "imessage", "absorbed@example.test"))
+		require.NoError(t, st.SetParticipantIdentifier(alias, "email", "absorbed@example.test"))
 		require.NoError(t, st.MergeParticipants(absorbed, survivor))
 		assert.True(t, linkedPair(t, st, survivor, alias))
+	})
+	t.Run("different email key case", func(t *testing.T) {
+		st := storetest.New(t).Store
+		absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
+		require.NoError(t, err)
+		survivor, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
+		require.NoError(t, err)
+		third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
+		require.NoError(t, err)
+		require.NoError(t, st.SetParticipantIdentifier(third, "email", "ABSORBED@example.test"))
+		require.NoError(t, st.MergeParticipants(absorbed, survivor))
+		owner, _, err := st.ParticipantByIdentifierContext(t.Context(), "email", "absorbed@example.test")
+		require.NoError(t, err)
+		assert.Equal(t, survivor, owner)
 	})
 	t.Run("survivor has primary", func(t *testing.T) {
 		st := storetest.New(t).Store
@@ -820,7 +840,7 @@ func TestMergeParticipantsAllowsSharedEmail(t *testing.T) {
 		require.NoError(t, err)
 		third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
 		require.NoError(t, err)
-		require.NoError(t, st.SetParticipantIdentifier(third, "imessage", "absorbed@example.test"))
+		require.NoError(t, st.SetParticipantIdentifier(third, "email", "absorbed@example.test"))
 		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participants SET email_address = ? WHERE id = ?`), "ABSORBED@example.test", survivor)
 		require.NoError(t, err)
 		require.NoError(t, st.MergeParticipants(absorbed, survivor))

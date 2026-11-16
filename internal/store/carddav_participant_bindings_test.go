@@ -584,8 +584,8 @@ func TestCardDAVParticipantBindingMergedAliasRemainsClaimed(t *testing.T) {
 }
 
 func TestCardDAVBindingRejectsMergeWithCompetingAlias(t *testing.T) {
-	for _, kind := range []string{"email", "imessage"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, scoped := range []bool{false, true} {
+		t.Run(strconv.FormatBool(scoped), func(t *testing.T) {
 			st, account, book := newCardDAVResourceStore(t)
 			absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
 			Require.NoError(t, err)
@@ -593,21 +593,30 @@ func TestCardDAVBindingRejectsMergeWithCompetingAlias(t *testing.T) {
 			Require.NoError(t, err)
 			third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
 			Require.NoError(t, err)
-			Require.NoError(t, st.SetParticipantIdentifier(third, kind, "absorbed@example.test"))
+			Require.NoError(t, st.SetParticipantIdentifier(third, "email", "absorbed@example.test"))
+			if scoped {
+				service, err := st.ResolveCommunicationServiceContext(t.Context(), "signal")
+				Require.NoError(t, err)
+				Require.NoError(t, st.ClassifyParticipantIdentifierServiceContext(t.Context(), "email", "absorbed@example.test", &service.ID, new("account"), new("account-a")))
+			}
 			card := remoteResource(book.CanonicalURL+"merge-conflict.vcf", "merge-conflict", "Absorbed", "absorbed@example.test", "one")
 			applyParticipantBindingCards(t, st, account, book, card)
-			Assert.ElementsMatch(t, []int64{absorbed, third}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
+			expected := []int64{absorbed}
+			if !scoped {
+				expected = append(expected, third)
+			}
+			Assert.ElementsMatch(t, expected, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
 			err = st.MergeParticipants(absorbed, survivor)
 			Require.ErrorIs(t, err, store.ErrParticipantAddressConflict)
 			Require.NotErrorIs(t, err, store.ErrPersonBindingConflict)
 			result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
 			Require.NoError(t, err)
 			Assert.Zero(t, result.ParticipantsUnbound)
-			Assert.ElementsMatch(t, []int64{absorbed, third}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
+			Assert.ElementsMatch(t, expected, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
 			var email string
 			Require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT email_address FROM participants WHERE id = ?`), survivor).Scan(&email))
 			Assert.Equal(t, "survivor@example.test", email)
-			resolved, err := st.EnsureParticipantByIdentifier(kind, "absorbed@example.test", "")
+			resolved, err := st.EnsureParticipantByIdentifier("email", "absorbed@example.test", "")
 			Require.NoError(t, err)
 			Assert.Equal(t, third, resolved)
 		})

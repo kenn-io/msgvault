@@ -5112,13 +5112,11 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 	})
 }
 
-// absorbedEmailConflictTx detects an unscoped email identifier owned outside
-// both components, which would otherwise prevent preserving the absorbed email.
+// absorbedEmailConflictTx detects an email key owned outside both components,
+// which would otherwise prevent preserving the absorbed email.
 func (s *Store) absorbedEmailConflictTx(ctx context.Context, tx *loggedTx, email string, oldID, newID int64, edges []linkEdge) (bool, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT participant_id FROM participant_identifiers
-		WHERE identifier_type IN ('email', 'apple_id', 'imessage', 'synctech_sms')
-		AND scope_kind IS NULL AND scope_value IS NULL
-		AND LOWER(identifier_value) = LOWER(TRIM(?)) AND participant_id <> ?
+		WHERE identifier_type = 'email' AND identifier_value = ? AND participant_id <> ?
 		AND NOT EXISTS (
 			SELECT 1 FROM participants WHERE id = ? AND LOWER(email_address) = LOWER(?)
 		)`, email, newID, newID, email)
