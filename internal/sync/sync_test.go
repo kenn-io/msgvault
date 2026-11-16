@@ -811,6 +811,9 @@ type cancelOnSecondListAPI struct {
 }
 
 func (c *cancelOnSecondListAPI) ListMessages(ctx context.Context, query, pageToken string) (*gmail.MessageListResponse, error) {
+	if query == "in:trash" {
+		return c.MockAPI.ListMessages(ctx, query, pageToken)
+	}
 	c.calls++
 	if c.calls == 2 {
 		return nil, fmt.Errorf("list messages: %w", context.Canceled)
@@ -1928,7 +1931,7 @@ func TestFullSyncPagination(t *testing.T) {
 
 	summary := runFullSync(t, env)
 	assertSummary(t, summary, WantSummary{Added: new(int64(6))})
-	assertListMessagesCalls(t, env, 3)
+	assertListMessagesCalls(t, env, 6)
 }
 
 // Tests for incremental sync
@@ -2633,20 +2636,81 @@ func TestIncrementalSyncRemovedLabelPreservesOrClearsDeletion(t *testing.T) {
 	}
 }
 
+type trashQueryAPI struct {
+	*labelMetadataSnapshotAPI
+	trashPages int
+	trashError error
+}
+
+func (a *trashQueryAPI) ListMessages(ctx context.Context, query, pageToken string) (*gmail.MessageListResponse, error) {
+	if query != "in:trash" {
+		return a.MockAPI.ListMessages(ctx, query, pageToken)
+	}
+	a.trashPages++
+	if a.trashError != nil {
+		return nil, a.trashError
+	}
+	if pageToken == "" {
+		return &gmail.MessageListResponse{NextPageToken: "next"}, nil
+	}
+	return &gmail.MessageListResponse{Messages: []gmail.MessageID{{ID: "trashed"}}}, nil
+}
+
+func TestGmailFullSyncUsesPagedTrashQuery(t *testing.T) {
+	env := newTestEnv(t)
+	env.Mock.Profile.HistoryID = 12340
+	for _, id := range []string{"restored", "trashed"} {
+		env.Mock.AddMessage(id, testMIME(), []string{"INBOX", "TRASH"})
+	}
+	runFullSync(t, env)
+	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
+	require.NoError(t, err)
+	for _, id := range []string{"restored", "trashed"} {
+		require.NoError(t, env.Store.MarkMessageDeleted(source.ID, id))
+	}
+	env.Mock.Messages["restored"].LabelIDs = []string{"INBOX"}
+	api := &trashQueryAPI{labelMetadataSnapshotAPI: &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true}}
+	env.Syncer = New(api, env.Store, nil)
+	_, err = env.Syncer.Full(t.Context(), testEmail)
+	require.NoError(t, err)
+	assert.Equal(t, 2, api.trashPages)
+	assert.Empty(t, api.labelCalls)
+	assertDeletedFromSource(t, env.Store, "restored", false)
+	assertDeletedFromSource(t, env.Store, "trashed", true)
+	assertMessageNotHasLabel(t, env.Store, "restored", "TRASH")
+}
+
+func TestGmailFullSyncRetriesTrashQueryFailure(t *testing.T) {
+	env := newTestEnv(t)
+	env.Mock.Profile.HistoryID = 12340
+	env.Mock.AddMessage("msg1", testMIME(), []string{"INBOX", "TRASH"})
+	runFullSync(t, env)
+	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
+	require.NoError(t, err)
+	require.NoError(t, env.Store.MarkMessageDeleted(source.ID, "msg1"))
+	env.Mock.Messages["msg1"].LabelIDs = []string{"INBOX"}
+	api := &trashQueryAPI{labelMetadataSnapshotAPI: &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true}, trashError: errors.New("query failed")}
+	env.Syncer = New(api, env.Store, nil)
+	_, err = env.Syncer.Full(t.Context(), testEmail)
+	require.Error(t, err)
+	assertDeletedFromSource(t, env.Store, "msg1", true)
+	api.trashError = nil
+	_, err = env.Syncer.Full(t.Context(), testEmail)
+	require.NoError(t, err)
+	assertDeletedFromSource(t, env.Store, "msg1", false)
+}
+
 func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		labels    []string
-		labelErr  error
 		wantMark  bool
 		unchanged bool
-		fault     string
+		gone      bool
 	}{
-		{name: "read error", labels: []string{"INBOX"}, fault: "error"},
-		{name: "missing labels", labels: []string{"INBOX"}, fault: "missing"},
 		{name: "restored", labels: []string{"INBOX"}},
 		{name: "still in Trash", labels: []string{"INBOX", "TRASH"}, wantMark: true},
-		{name: "gone", labelErr: &gmail.NotFoundError{Path: "/messages/msg1"}, wantMark: true},
+		{name: "gone", wantMark: true, gone: true},
 		{name: "unchanged labels", labels: []string{"INBOX"}, unchanged: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2666,37 +2730,23 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 			require.NoError(err)
 			require.NoError(env.Store.MarkMessageDeleted(source.ID, "msg1"))
 			env.Mock.Messages["msg1"].LabelIDs = append([]string(nil), tc.labels...)
+			if tc.gone {
+				delete(env.Mock.Messages, "msg1")
+			}
 			env.Mock.Profile.HistoryID = 12341
 			api := &labelMetadataSnapshotAPI{
 				MockAPI:     env.Mock,
 				complete:    true,
 				labelErrors: map[string]error{},
 			}
-			if tc.labelErr != nil {
-				api.labelErrors["msg1"] = tc.labelErr
-			}
-			switch tc.fault {
-			case "error":
-				api.labelErrors["msg1"] = errors.New("temporary label read failure")
-			case "missing":
-				api.omitLabels = true
-			}
 			env.Syncer = New(api, env.Store, nil)
 
 			summary, err := env.Syncer.Full(t.Context(), testEmail)
-			if tc.fault != "" {
-				require.Error(err)
-				assertDeletedFromSource(t, env.Store, "msg1", true)
-				api.labelErrors = nil
-				api.omitLabels = false
-				api.labelCalls = nil
-				summary, err = env.Syncer.Full(t.Context(), testEmail)
-			}
 			require.NoError(err)
 			if tc.unchanged {
 				assert.Equal(int64(1), summary.MessagesUpdated)
 			}
-			assert.Equal([][]string{{"msg1"}}, api.labelCalls)
+			assert.Empty(api.labelCalls)
 			assertDeletedFromSource(t, env.Store, "msg1", tc.wantMark)
 			if !tc.wantMark {
 				assertMessageHasLabel(t, env.Store, "msg1", "INBOX")
@@ -3307,7 +3357,7 @@ func TestFullSyncResumeWithCursor(t *testing.T) {
 	assert.Equal("page_1", summary.ResumedFromToken, "ResumedFromToken")
 	assertSummary(t, summary, WantSummary{Added: new(int64(4))})
 
-	assertListMessagesCalls(t, env, 1)
+	assertListMessagesCalls(t, env, 3)
 	assertMessageCount(t, env.Store, 4)
 }
 
@@ -3340,7 +3390,7 @@ func TestFullSyncRestartsLegacyUnfilteredCheckpoint(t *testing.T) {
 	summary := runFullSync(t, env)
 	checks.False(summary.WasResumed)
 	checks.Empty(summary.ResumedFromToken)
-	checks.Equal(2, env.Mock.ListMessagesCalls)
+	checks.Equal(4, env.Mock.ListMessagesCalls)
 	assertMessageCount(t, env.Store, 4)
 }
 
@@ -3365,7 +3415,7 @@ func TestFullSyncDoesNotResumeIncrementalCheckpoint(t *testing.T) {
 	summary := runFullSync(t, env)
 	checks.False(summary.WasResumed)
 	checks.Empty(summary.ResumedFromToken)
-	checks.Equal(2, env.Mock.ListMessagesCalls)
+	checks.Equal(4, env.Mock.ListMessagesCalls)
 	assertMessageCount(t, env.Store, 4)
 }
 
