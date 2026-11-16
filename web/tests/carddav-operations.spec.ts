@@ -13,40 +13,6 @@ import { installMixedArchive } from './e2e/fixtures/mixed-archive';
 // CardDAV-server or live Go-backend integration. Task 4 generated-client/API
 // tests and the controller request tests own exact wire-contract proof.
 
-test('shows an unavailable conflict count after a successful sync', async ({ page }) => {
-  await page.setViewportSize({ width: 1800, height: 900 });
-  await installCardDAV(page, { configured: true });
-  await page.route('**/api/v1/carddav/sync', route => route.fulfill({ json: {
-    status: 'succeeded', books: 1, created: 1, updated: 0, removed: 0,
-    binding_conflicts: 0, binding_conflicts_unavailable: true
-  } }));
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
-  await page.getByRole('button', { name: 'Contacts', exact: true }).click();
-  await page.getByRole('button', { name: 'Sync now' }).click();
-  const warning = page.getByRole('alert').filter({ hasText: 'CardDAV binding conflict count unavailable.' });
-  await expect(warning).toBeInViewport();
-  const gaps = await warning.locator('code').evaluate(code => {
-    const before = code.previousSibling!;
-    const after = code.nextSibling!;
-    const bounds = (node: Node, start: number, end: number) => {
-      const range = document.createRange();
-      range.setStart(node, start);
-      range.setEnd(node, end);
-      const { x, y, right } = range.getBoundingClientRect();
-      return { x, y, right };
-    };
-    const previous = bounds(before, before.textContent!.trimEnd().length - 1, before.textContent!.trimEnd().length);
-    const first = bounds(code.firstChild!, 0, 1);
-    const last = bounds(code.firstChild!, code.textContent!.length - 1, code.textContent!.length);
-    const nextStart = after.textContent!.search(/\S/);
-    const next = bounds(after, nextStart, nextStart + 1);
-    return { before: first.x - previous.right, after: next.x - last.right, lines: [previous.y, first.y, last.y, next.y] };
-  });
-  expect(Math.max(...gaps.lines) - Math.min(...gaps.lines)).toBeLessThan(3);
-  expect(gaps.before).toBeLessThan(12);
-  expect(gaps.after).toBeLessThan(12);
-});
-
 test('keyboard journey configures CardDAV, reconciles roles, syncs history, and resolves a conflict', async ({ page }) => {
   const fixture = await installCardDAV(page);
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);

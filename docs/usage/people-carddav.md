@@ -296,7 +296,6 @@ addresses. A shared address claimed by different saved people, or a participant
 already bound to another person, is reported without moving it or merging
 profiles. Correct the cards or inspect the people and explicitly merge them
 with [person merge](people.md#merge-duplicate-profiles-and-reverse-a-merge).
-When sync reports binding conflicts, run the dry-run command above for details. A failed sync also reports the current conflict count when available.
 People with active merge history can receive new matching archived identities.
 Those bindings stay with the surviving person after a split.
 

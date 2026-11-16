@@ -1,4 +1,3 @@
-import { readCardDAVBindingConflicts } from './sync-message';
 import {
   getCardDAVStatus as generatedGetCardDAVStatus,
   listCardDAVBooks as generatedListCardDAVBooks,
@@ -49,8 +48,6 @@ export class CardDAVController {
   runsPageError = $state<string | null>(null);
   syncError = $state<string | null>(null);
   syncStatus = $state<string | null>(null);
-  syncBindingConflicts = $state(0);
-  syncBindingConflictsUnavailable = $state(false);
   syncUnknown = $state(false);
   bookError = $state<string | null>(null);
   bookStatus = $state<string | null>(null);
@@ -251,14 +248,11 @@ export class CardDAVController {
     this.syncPending = true;
     this.syncError = null;
     this.syncStatus = null;
-    this.syncBindingConflicts = 0;
-    this.syncBindingConflictsUnavailable = false;
     this.pollDelay = MIN_POLL_MS;
     this.schedulePoll(MIN_POLL_MS);
     let succeeded = false;
     let refreshBooks = false;
     let reconcile = false;
-    let previewConflicts = false;
     try {
       const { data, response } = await generatedSyncCardDAV(
         { full: false, connection },
@@ -272,8 +266,6 @@ export class CardDAVController {
         succeeded = data.status === undefined || data.status === 'succeeded';
         refreshBooks = succeeded || data.status === 'partial';
         reconcile = true;
-        this.syncBindingConflicts = data.binding_conflicts ?? 0;
-        this.syncBindingConflictsUnavailable = data.binding_conflicts_unavailable ?? false;
         if (!succeeded) {
           const names = (data.connections ?? [])
             .filter((outcome) => outcome.status !== 'succeeded')
@@ -285,16 +277,13 @@ export class CardDAVController {
         }
       } else if (response.status === 409 || response.status >= 500) {
         reconcile = true;
-        previewConflicts = true;
         this.syncError = 'Unable to complete CardDAV sync. Current state was refreshed.';
       } else {
-        previewConflicts = response.status !== 400;
         this.syncError = 'Unable to start CardDAV sync.';
       }
     } catch {
       if (!this.current(context, requestController.signal)) return;
       reconcile = true;
-      previewConflicts = true;
       this.syncError = 'Unable to complete CardDAV sync. Current state was refreshed.';
     } finally {
       if (this.current(context)) {
@@ -310,11 +299,6 @@ export class CardDAVController {
         ...(refreshBooks ? [this.loadBooks(true)] : []),
       ]);
       this.syncUnknown = !statusLoaded || !runsLoaded;
-    }
-    if (previewConflicts) {
-      const conflicts = await readCardDAVBindingConflicts(this.client);
-      if (!this.current(context)) return;
-      this.syncBindingConflicts = conflicts;
     }
     this.syncPending = false;
     if (this.shouldPoll()) this.schedulePoll(MIN_POLL_MS);

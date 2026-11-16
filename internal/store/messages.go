@@ -5014,13 +5014,6 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 			return err
 		}
 		if oldEmail.Valid {
-			conflict, err := s.absorbedEmailConflictTx(ctx, tx, oldEmail.String, oldID, newID, edges)
-			if err != nil {
-				return err
-			}
-			if conflict {
-				return fmt.Errorf("preserve absorbed participant email: %w", ErrParticipantAddressConflict)
-			}
 			// Preserve the absorbed primary email as an unscoped identifier. A
 			// survivor with its own primary address cannot store this value in
 			// email_address, and CardDAV reconciliation needs the alias to support
@@ -5110,32 +5103,6 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		}
 		return nil
 	})
-}
-
-// absorbedEmailConflictTx detects an email key owned outside both components,
-// which would otherwise prevent preserving the absorbed email.
-func (s *Store) absorbedEmailConflictTx(ctx context.Context, tx *loggedTx, email string, oldID, newID int64, edges []linkEdge) (bool, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT participant_id FROM participant_identifiers
-		WHERE identifier_type = 'email' AND identifier_value = ? AND participant_id <> ?
-		AND NOT EXISTS (
-			SELECT 1 FROM participants WHERE id = ? AND LOWER(email_address) = LOWER(?)
-		)`, email, newID, newID, email)
-	if err != nil {
-		return false, fmt.Errorf("check absorbed participant email: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	merged, survivor := componentOf(oldID, edges), componentOf(newID, edges)
-	competing := false
-	for rows.Next() {
-		var ownerID int64
-		if err := rows.Scan(&ownerID); err != nil {
-			return false, err
-		}
-		_, inOld := merged[ownerID]
-		_, inNew := survivor[ownerID]
-		competing = competing || !inOld && !inNew
-	}
-	return competing, rows.Err()
 }
 
 // ParticipantByIdentifier returns the participant an identifier points at,

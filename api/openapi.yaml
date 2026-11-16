@@ -16201,11 +16201,6 @@ components:
     SyncResult:
       additionalProperties: true
       properties:
-        binding_conflicts:
-          format: int64
-          type: integer
-        binding_conflicts_unavailable:
-          type: boolean
         books:
           format: int64
           type: integer
@@ -16233,7 +16228,6 @@ components:
         - created
         - updated
         - removed
-        - binding_conflicts
       type: object
     SyncRunItemStatus:
       additionalProperties: true

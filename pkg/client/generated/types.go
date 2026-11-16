@@ -16227,14 +16227,12 @@ func (s Summary) Validate() error {
 }
 
 type SyncResult struct {
-	BindingConflicts            int64                   `json:"binding_conflicts"`
-	BindingConflictsUnavailable *bool                   `json:"binding_conflicts_unavailable,omitempty"`
-	Books                       int64                   `json:"books"`
-	Connections                 []ConnectionSyncOutcome `json:"connections,omitempty"`
-	Created                     int64                   `json:"created"`
-	Removed                     int64                   `json:"removed"`
-	Status                      *SyncResultStatus       `json:"status,omitempty"`
-	Updated                     int64                   `json:"updated"`
+	Books       int64                   `json:"books"`
+	Connections []ConnectionSyncOutcome `json:"connections,omitempty"`
+	Created     int64                   `json:"created"`
+	Removed     int64                   `json:"removed"`
+	Status      *SyncResultStatus       `json:"status,omitempty"`
+	Updated     int64                   `json:"updated"`
 }
 
 func (s SyncResult) Validate() error {

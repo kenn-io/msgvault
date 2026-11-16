@@ -417,35 +417,8 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 				return err
 			}
 		}
-		restoreMembership := func(priorEdges []linkEdge) (bool, error) {
-			if !confirmMembership || personID == 0 {
-				return false, nil
-			}
-			if err := extendActivePersonMergeLineageTx(ctx, tx, personID, lo, hi, priorEdges, false); err != nil {
-				return false, err
-			}
-			changed, err := s.bindPersonParticipantsTx(ctx, tx, personID, unionMembers)
-			if err != nil || !changed {
-				return changed, err
-			}
-			if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
-				return false, err
-			}
-			if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(ctx, tx, personID); err != nil {
-				return false, err
-			}
-			return true, s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID}, peoplesweep.EvidenceEffectIdentityReassigned)
-		}
 		for _, e := range edges {
 			if e.a == lo && e.b == hi {
-				priorEdges := slices.DeleteFunc(slices.Clone(edges), func(edge linkEdge) bool {
-					return edge.a == lo && edge.b == hi
-				})
-				membershipChanged, err := restoreMembership(priorEdges)
-				if err != nil {
-					return err
-				}
-				var edgeChanged int64
 				if ownerCandidateID == 0 {
 					result, updateErr := tx.ExecContext(ctx, `UPDATE participant_links
 						SET identity_match_candidate_id = NULL
@@ -454,16 +427,22 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 					if updateErr != nil {
 						return fmt.Errorf("confirm participant link: %w", updateErr)
 					}
-					edgeChanged, updateErr = result.RowsAffected()
+					changed, updateErr := result.RowsAffected()
 					if updateErr != nil {
 						return fmt.Errorf("count confirmed participant link: %w", updateErr)
 					}
+					if changed > 0 {
+						revision, updateErr = s.bumpIdentityRevisionContext(ctx, tx)
+						if updateErr != nil {
+							return updateErr
+						}
+						if afterLink != nil {
+							return afterLink(ctx, tx)
+						}
+						return nil
+					}
 				}
-				if membershipChanged || edgeChanged > 0 {
-					revision, err = s.bumpIdentityRevisionContext(ctx, tx)
-				} else {
-					revision, err = s.currentIdentityRevisionTxContext(ctx, tx)
-				}
+				revision, err = s.currentIdentityRevisionTxContext(ctx, tx)
 				if err != nil {
 					return err
 				}
@@ -479,15 +458,7 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 			// have cleared durable recovery state, so commit that update while
 			// preserving ErrAlreadyLinked for ordinary manual link callers.
 			if ownerCandidateID > 0 {
-				membershipChanged, err := restoreMembership(edges)
-				if err != nil {
-					return err
-				}
-				if membershipChanged {
-					revision, err = s.bumpIdentityRevisionContext(ctx, tx)
-				} else {
-					revision, err = s.currentIdentityRevisionTxContext(ctx, tx)
-				}
+				revision, err = s.currentIdentityRevisionTxContext(ctx, tx)
 				if err != nil {
 					return err
 				}

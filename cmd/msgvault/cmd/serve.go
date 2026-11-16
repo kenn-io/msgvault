@@ -1314,10 +1314,7 @@ func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig conf
 	if err := sched.AddJob(scheduler.Job{
 		Name: jobName, Schedule: cardDAVConfig.Schedule,
 		Run: invocationBoundJobRun(state, func(ctx context.Context) error {
-			result, err := service.Sync(ctx, carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
-			if result.BindingConflicts > 0 {
-				logger.Warn("CardDAV binding conflicts", "connection", name, "count", result.BindingConflicts)
-			}
+			_, err := service.Sync(ctx, carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
 			// Completed books remain committed after cancellation.
 			if refreshErr := rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), jobName); refreshErr != nil {
 				logger.Error("identity cache refresh failed", "error", refreshErr)

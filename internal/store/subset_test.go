@@ -5815,37 +5815,3 @@ func TestSubsetKeepsMergedMatrixRoomsOutOfSync(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(pending, "the merged room's placeholder is not retried")
 }
-
-func TestCopySubsetKeepsCardDAVMembershipAfterReconcile(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
-	source, err := Open(sourcePath)
-	require.NoError(err)
-	allowed := true
-	account, books, err := source.ReplaceCardDAVDiscoveryContext(t.Context(), CardDAVDiscoveryInput{BaseURL: "https://contacts.example.test/dav", Username: "synthetic", PrincipalURL: "https://contacts.example.test/principal/", HomeURL: "https://contacts.example.test/books/", Books: []CardDAVDiscoveredBook{{CanonicalURL: "https://contacts.example.test/books/personal/", DisplayName: "Personal", CanCreate: &allowed}}})
-	require.NoError(err)
-	card := CardDAVRemoteResource{Href: books[0].CanonicalURL + "alice.vcf", RemoteUID: "card", RemoteETag: "one", RemoteBody: []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:card\r\nFN:Alice\r\nEMAIL:alice@example.com\r\nEND:VCARD\r\n"), SemanticHash: "hash", DisplayName: "Alice", Emails: []string{"alice@example.com"}}
-	_, err = source.ApplyCardDAVSyncPlanContext(t.Context(), CardDAVSyncPlan{AddressBookID: books[0].ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: books[0].SyncRevision, Upserts: []CardDAVRemoteResource{card}})
-	require.NoError(err)
-	bound, err := source.PersonForParticipantsContext(t.Context(), []int64{1})
-	require.NoError(err)
-	require.NotNil(bound)
-	personID := bound.ID
-	var owned bool
-	require.NoError(source.DB().QueryRowContext(t.Context(), `SELECT carddav_owned FROM person_participants WHERE participant_id = 1`).Scan(&owned))
-	assert.True(owned)
-	require.NoError(source.Close())
-	destinationDir := filepath.Join(t.TempDir(), "subset")
-	_, err = CopySubsetWithOptions(t.Context(), sourcePath, destinationDir, 4, CopySubsetOptions{IncludeIdentity: true, IncludeProfiles: true, IncludeVCardResources: true})
-	require.NoError(err)
-	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
-	require.NoError(err)
-	t.Cleanup(func() { _ = destination.Close() })
-	_, err = destination.ReconcileCardDAVParticipantBindingsContext(t.Context(), CardDAVParticipantBindingOptions{})
-	require.NoError(err)
-	bound, err = destination.PersonForParticipantsContext(t.Context(), []int64{1})
-	require.NoError(err)
-	require.NotNil(bound)
-	assert.Equal(personID, bound.ID)
-}

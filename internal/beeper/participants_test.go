@@ -2,7 +2,6 @@ package beeper
 
 import (
 	"database/sql"
-	"fmt"
 	"testing"
 	"time"
 
@@ -526,46 +525,4 @@ func TestRichUpgradeDoesNotAbsorbContactOwner(t *testing.T) {
 	again, err := r.resolveID(t.Context(), "@lea:beeper.local", "Lea")
 	require.NoError(err)
 	assert.Equal(pid, again, "the identifier now points at the new resolution")
-}
-
-func TestResolveUserContinuesAfterEmailAliasConflict(t *testing.T) {
-	for _, fresh := range []bool{false, true} {
-		t.Run(fmt.Sprintf("fresh=%t", fresh), func(t *testing.T) {
-			st := testutil.NewTestStore(t)
-			r := newParticipantResolver(st, "account-a")
-			user := &User{ID: "synthetic-user", Email: "absorbed@example.test", FullName: "Absorbed"}
-			old, err := r.resolveUser(t.Context(), user)
-			require.NoError(t, err)
-			src, err := st.GetOrCreateSource("beeper", "history")
-			require.NoError(t, err)
-			conv, err := st.EnsureConversationWithType(src.ID, "history", "direct_chat", "History")
-			require.NoError(t, err)
-			before, err := st.UpsertMessage(&store.Message{ConversationID: conv, SourceID: src.ID, SourceMessageID: "before", MessageType: "beeper", SenderID: sql.NullInt64{Int64: old, Valid: true}})
-			require.NoError(t, err)
-			third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
-			require.NoError(t, err)
-			require.NoError(t, st.SetParticipantIdentifier(third, "email", user.Email))
-			phone, err := st.EnsureParticipantByPhone(t.Context(), "+12025550100", "Phone", "imessage")
-			require.NoError(t, err)
-			phoneEmail, err := st.EnsureParticipant("phone@example.test", "Phone", "example.test")
-			require.NoError(t, err)
-			err = st.MergeParticipants(phoneEmail, phone)
-			require.NoError(t, err)
-			if fresh {
-				r = newParticipantResolver(st, "account-a")
-			}
-			pid, err := r.resolveUser(t.Context(), &User{ID: user.ID, PhoneNumber: "+12025550100", FullName: "Absorbed"})
-			require.NoError(t, err)
-			assert.Equal(t, old, pid)
-			_, err = st.UpsertMessage(&store.Message{ConversationID: conv, SourceID: src.ID, SourceMessageID: "after", MessageType: "beeper", SenderID: sql.NullInt64{Int64: pid, Valid: true}})
-			require.NoError(t, err)
-			var sender int64
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), before).Scan(&sender))
-			assert.Equal(t, old, sender)
-			next := newParticipantResolver(st, "account-a")
-			resolved, err := next.resolveID(t.Context(), user.ID, "")
-			require.NoError(t, err)
-			assert.Equal(t, old, resolved)
-		})
-	}
 }

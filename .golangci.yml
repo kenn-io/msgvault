@@ -256,11 +256,6 @@ linters:
 
   exclusions:
     rules:
-      # Preserve the existing effect argument for identity scope changes.
-      - linters: [unparam]
-        path: ^internal/store/person_sweep_changes\.go$
-        text: 'publishPersonIdentityScopeChangesTx - effect always receives peoplesweep\.EvidenceEffectIdentityReassigned'
-
       # Workspace varies in Linux enrollment tests excluded from Windows builds.
       - linters: [unparam]
         path: internal/peoplesweep/codex_app_server_test\.go

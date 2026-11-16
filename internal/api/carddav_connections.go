@@ -330,10 +330,6 @@ func (c *CardDAVController) Sync(ctx context.Context, req CardDAVSyncRequest) (c
 		total.Created += result.Created
 		total.Updated += result.Updated
 		total.Removed += result.Removed
-		if outcome.RunID != nil {
-			total.BindingConflicts = result.BindingConflicts
-			total.BindingConflictsUnavailable = result.BindingConflictsUnavailable
-		}
 		if err == nil {
 			outcome.Status = "succeeded"
 			succeeded = true

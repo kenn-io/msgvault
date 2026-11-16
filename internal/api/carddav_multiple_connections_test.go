@@ -192,35 +192,6 @@ func TestCardDAVMultipleConnectionsAggregateSyncReportsActiveAndUnavailable(t *t
 	assertions.Equal(beforeRuns, afterRuns, "no-enabled sync never creates a run")
 }
 
-func TestCardDAVMultipleConnectionsAdoptStartedRunConflictSnapshot(t *testing.T) {
-	assertions := assert.New(t)
-	require := require.New(t)
-	controller, baseURL := multipleCardDAVController(t)
-	for _, name := range []string{"default", "work"} {
-		_, err := controller.Save(t.Context(), CardDAVAccountRequest{Connection: name, BaseURL: baseURL, Username: name, Password: name + "-synthetic-secret", Enabled: new(true)})
-		require.NoError(err)
-	}
-	// A started zero-book run carries the latest global snapshot.
-	defaultConnection, err := controller.Select("default", false)
-	require.NoError(err)
-	workConnection, err := controller.Select("work", false)
-	require.NoError(err)
-	defaultService, workService := defaultConnection.service, workConnection.service
-	defaultConnection.service = &snapshotCardDAVService{CardDAVOperations: defaultService, conflicts: 3, started: true}
-	workConnection.service = &snapshotCardDAVService{CardDAVOperations: workService, conflicts: 7, started: true}
-	snapshot, err := controller.Sync(t.Context(), CardDAVSyncRequest{})
-	require.NoError(err)
-	assertions.Equal(7, snapshot.BindingConflicts)
-	workConnection.service = &snapshotCardDAVService{CardDAVOperations: workConnection.service, conflicts: 0, started: false}
-	snapshot, err = controller.Sync(t.Context(), CardDAVSyncRequest{})
-	require.NoError(err)
-	assertions.Equal(3, snapshot.BindingConflicts)
-	workConnection.service = &snapshotCardDAVService{CardDAVOperations: workService, unavailable: true, started: true}
-	snapshot, err = controller.Sync(t.Context(), CardDAVSyncRequest{})
-	require.NoError(err)
-	assertions.True(snapshot.BindingConflictsUnavailable)
-}
-
 func TestCardDAVMultipleConnectionsReadSelectorsAndNamedOnlyStatus(t *testing.T) {
 	assertions := assert.New(t)
 	require := require.New(t)
@@ -602,20 +573,4 @@ func TestCardDAVMultipleConnectionsTransactionalRetryHeader(t *testing.T) {
 	require.NoError(parseErr)
 	assertions.GreaterOrEqual(seconds, int64(1))
 	assertions.LessOrEqual(seconds, int64(90), "the transaction's owning connection must supply the retry delay")
-}
-
-type snapshotCardDAVService struct {
-	CardDAVOperations
-
-	conflicts   int
-	unavailable bool
-	started     bool
-}
-
-func (s *snapshotCardDAVService) Sync(_ context.Context, options carddav.SyncOptions) (carddav.SyncResult, error) {
-	if !s.started {
-		return carddav.SyncResult{}, store.ErrCardDAVSyncActive
-	}
-	options.OnRunStarted(123)
-	return carddav.SyncResult{BindingConflicts: s.conflicts, BindingConflictsUnavailable: s.unavailable}, nil
 }

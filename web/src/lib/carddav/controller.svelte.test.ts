@@ -56,28 +56,6 @@ afterEach(() => {
 });
 
 describe('CardDAVController', () => {
-  it.each([409, 502])('keeps the sync error and reports preview conflicts after %i', async (status) => {
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      const path = new URL(request.url).pathname;
-      if (path.endsWith('/status')) return Response.json(idleStatus);
-      if (path.endsWith('/runs')) return Response.json({ runs: [] });
-      if (path.endsWith('/books')) return Response.json({ books: [] });
-      if (path.endsWith('/sync')) return Response.json({ error: 'failed' }, { status });
-      if (path.endsWith('/participant-bindings')) {
-        expect(await request.json()).toEqual({ dry_run: true, undo: false });
-        return Response.json({ conflicts: 2 });
-      }
-      throw new Error(`Unexpected ${path}`);
-    });
-    const controller = new CardDAVController(createAPIClient(fetchFn));
-    await controller.load();
-    await controller.sync();
-    expect(controller.syncError).toBe('Unable to complete CardDAV sync. Current state was refreshed.');
-    expect(controller.syncBindingConflicts).toBe(2);
-    controller.destroy();
-  });
-
   it('keeps history available when status fails without requesting runtime books', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -592,7 +570,7 @@ describe('CardDAVController', () => {
     expect(controller.status?.active?.id).toBe(9);
   });
 
-  it('sends the manual sync body, suppresses duplicates, and refreshes state after ambiguous results', async () => {
+  it('sends the manual sync body, suppresses duplicates, and reconciles ambiguous results with GET only', async () => {
     const sync = deferredResponse();
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>((input) => {
@@ -603,22 +581,21 @@ describe('CardDAVController', () => {
       if (path === '/api/v1/carddav/books') return Promise.resolve(Response.json({ books: [] }));
       if (path === '/api/v1/carddav/runs') return Promise.resolve(Response.json({ runs: [] }));
       if (path === '/api/v1/carddav/sync') return sync.promise;
-      if (path === '/api/v1/carddav/participant-bindings') return Promise.resolve(Response.json({ conflicts: 0 }));
       throw new Error(`Unexpected ${request.method} ${path}`);
     });
     const controller = new CardDAVController(createAPIClient(fetchFn));
     await controller.load();
 
     const first = controller.sync();
-    await vi.waitFor(() => expect(requests.filter((request) => request.method === 'POST' && new URL(request.url).pathname === '/api/v1/carddav/sync')).toHaveLength(1));
+    await vi.waitFor(() => expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1));
     await controller.sync();
-    expect(requests.filter((request) => request.method === 'POST' && new URL(request.url).pathname === '/api/v1/carddav/sync')).toHaveLength(1);
+    expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
     const request = requests.find((candidate) => candidate.method === 'POST')!;
     await expect(request.clone().json()).resolves.toEqual({ full: false });
     sync.resolve(Response.json({ error: 'sync_failed', message: 'unsafe detail' }, { status: 503 }));
     await first;
 
-    expect(requests.filter((candidate) => candidate.method === 'POST' && new URL(candidate.url).pathname === '/api/v1/carddav/sync')).toHaveLength(1);
+    expect(requests.filter((candidate) => candidate.method === 'POST')).toHaveLength(1);
     expect(requests.filter((candidate) => candidate.method === 'GET' && new URL(candidate.url).pathname.endsWith('/status'))).toHaveLength(2);
     expect(requests.filter((candidate) => candidate.method === 'GET' && new URL(candidate.url).pathname.endsWith('/runs'))).toHaveLength(2);
     expect(controller.syncError).toBe('Unable to complete CardDAV sync. Current state was refreshed.');
@@ -646,7 +623,6 @@ describe('CardDAVController', () => {
         if (runsReads === 1 || runsReads === 3) return Response.json({ runs: [] });
         return runsReconcile.promise;
       }
-      if (path.endsWith('/participant-bindings')) return Response.json({ conflicts: 0 });
       posts += 1;
       return Response.json({ error: 'sync_failed', message: 'uncertain' }, { status: posts === 1 ? 503 : 400 });
     });
@@ -905,7 +881,6 @@ it.each(['partial', 'failed'] as const)('names a connection whose sync is %s', a
         created: 1,
         updated: 0,
         removed: 0,
-        binding_conflicts: 2,
         status,
         connections: [
           {
@@ -928,7 +903,6 @@ it.each(['partial', 'failed'] as const)('names a connection whose sync is %s', a
   const controller = new CardDAVController(client);
   await controller.load();
   await controller.sync();
-  expect(controller.syncBindingConflicts).toBe(2);
   expect(controller.syncError).toContain('work');
   expect(controller.syncError).not.toContain('private upstream');
   expect(controller.syncStatus).toBeNull();

@@ -5,8 +5,6 @@ import type { ConnectionSyncOutcome } from "./connectionSyncOutcome";
 import type { SyncResultStatus } from "./syncResultStatus";
 
 export interface SyncResult {
-  binding_conflicts: number;
-  binding_conflicts_unavailable?: boolean;
   books: number;
   connections?: ConnectionSyncOutcome[];
   created: number;

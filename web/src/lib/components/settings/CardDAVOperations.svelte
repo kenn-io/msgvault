@@ -156,13 +156,6 @@
     {/if}
     {#if controller.syncError}<p class="notice notice--error" role="alert">{controller.syncError}</p>{/if}
     {#if controller.syncStatus}<p class="notice notice--success" role="status">{controller.syncStatus}</p>{/if}
-    {#if controller.syncBindingConflictsUnavailable}
-      <p class="notice notice--warning" role="alert"><span>CardDAV binding conflict count unavailable. Run <code>msgvault carddav bind-participants --dry-run</code> for details.</span></p>
-    {:else if controller.syncBindingConflicts > 0}
-      <p class="notice notice--warning" role="alert">
-        <span>{controller.syncBindingConflicts} CardDAV binding conflicts. Run <code>msgvault carddav bind-participants --dry-run</code> for details.</span>
-      </p>
-    {/if}
     {#if controller.syncUnknown}
       <div class="notice notice--error" role="alert">
         <span>Current CardDAV sync state is unknown. Refresh state before starting another sync.</span>
@@ -377,12 +370,6 @@
     border-color: var(--status-success-ink);
     background: var(--status-success-bg);
     color: var(--status-success-ink);
-  }
-  .notice--warning {
-    border-color: var(--status-warning-ink);
-    background: var(--status-warning-bg);
-    color: var(--status-warning-ink);
-    overflow-wrap: anywhere;
   }
   .error-copy {
     display: block;

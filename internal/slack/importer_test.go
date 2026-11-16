@@ -3723,32 +3723,3 @@ func dropReactionsTable(ctx context.Context, db *sql.DB) error {
 	_, err := db.ExecContext(ctx, `DROP TABLE reactions`)
 	return err
 }
-
-func TestParticipantResolverContinuesAfterEmailAliasConflict(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	old, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
-	require.NoError(t, err)
-	third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
-	require.NoError(t, err)
-	require.NoError(t, st.SetParticipantIdentifier(third, "email", "absorbed@example.test"))
-	require.NoError(t, st.SetParticipantIdentifier(old, participantIdentifierType, "team-a:user-a"))
-	src, err := st.GetOrCreateSource("slack", "history")
-	require.NoError(t, err)
-	conv, err := st.EnsureConversationWithType(src.ID, "history", "channel", "History")
-	require.NoError(t, err)
-	before, err := st.UpsertMessage(&store.Message{ConversationID: conv, SourceID: src.ID, SourceMessageID: "before", MessageType: "slack", SenderID: sql.NullInt64{Int64: old, Valid: true}})
-	require.NoError(t, err)
-	r := newParticipantResolver(st, "team-a")
-	r.loadUserSnapshot([]User{{ID: "user-a", Profile: UserProfile{Email: "survivor@example.test"}}})
-	pid, err := r.resolveID(t.Context(), "user-a")
-	require.NoError(t, err)
-	assert.Equal(t, old, pid)
-	_, err = st.UpsertMessage(&store.Message{ConversationID: conv, SourceID: src.ID, SourceMessageID: "after", MessageType: "slack", SenderID: sql.NullInt64{Int64: pid, Valid: true}})
-	require.NoError(t, err)
-	var sender int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), before).Scan(&sender))
-	assert.Equal(t, old, sender)
-	resolved, _, err := st.ParticipantByIdentifierContext(t.Context(), participantIdentifierType, "team-a:user-a")
-	require.NoError(t, err)
-	assert.Equal(t, old, resolved)
-}

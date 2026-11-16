@@ -2,8 +2,6 @@ package slack
 
 import (
 	"context"
-	"errors"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -113,7 +111,10 @@ func (r *participantResolver) resolveID(ctx context.Context, userID string) (int
 		if err != nil {
 			return 0, err
 		}
-		return r.recordRich(ctx, userID, pid)
+		if err := r.recordRich(ctx, userID, pid); err != nil {
+			return 0, err
+		}
+		return pid, nil
 	}
 	name := ""
 	if known {
@@ -131,29 +132,23 @@ func (r *participantResolver) resolveID(ctx context.Context, userID string) (int
 // participant, so later runs resolve bare sightings to the same person. A
 // prior weak (bare-ID) owner is the same Slack user seen with less metadata:
 // its history is merged into the rich participant rather than left split.
-func (r *participantResolver) recordRich(ctx context.Context, userID string, pid int64) (int64, error) {
+func (r *participantResolver) recordRich(ctx context.Context, userID string, pid int64) error {
 	value := r.identifierValue(userID)
 	prev, _, err := r.store.ParticipantByIdentifierContext(ctx, participantIdentifierType, value)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	if prev != 0 && prev != pid {
 		if err := r.store.MergeParticipantsContext(ctx, prev, pid); err != nil {
-			if !errors.Is(err, store.ErrParticipantAddressConflict) {
-				return 0, err
-			}
-			slog.Warn("skipping Slack participant merge due to address conflict", "loser_participant_id", prev, "winner_participant_id", pid)
-			r.rich[userID] = prev
-			delete(r.fallback, userID)
-			return prev, nil
+			return err
 		}
 	}
 	if err := r.store.SetParticipantIdentifierContext(ctx, pid, participantIdentifierType, value); err != nil {
-		return 0, err
+		return err
 	}
 	r.rich[userID] = pid
 	delete(r.fallback, userID)
-	return pid, nil
+	return nil
 }
 
 // resolveBot resolves a bot sender (bot_id + optional username). Bots never

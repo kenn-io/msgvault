@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -252,7 +251,7 @@ func TestSyncCardDAVUsesTheDaemonServiceRoute(t *testing.T) {
 		assertions.NoError(json.NewDecoder(r.Body).Decode(&body))
 		full = body.Full
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"books":1,"created":2,"updated":3,"removed":4,"binding_conflicts":2}`))
+		_, _ = w.Write([]byte(`{"books":1,"created":2,"updated":3,"removed":4}`))
 	}))
 	t.Cleanup(server.Close)
 
@@ -269,23 +268,7 @@ func TestSyncCardDAVUsesTheDaemonServiceRoute(t *testing.T) {
 	cmd.SetArgs([]string{"--full"})
 	require.NoError(t, cmd.Execute())
 	assertions.True(full)
-	assertions.Equal("CardDAV sync: 1 books, 2 created, 3 updated, 4 removed\n2 CardDAV binding conflicts. Run msgvault carddav bind-participants --dry-run for details.\n", stdout.String())
-}
-
-func TestSyncCardDAVReportsUnavailableBindingConflicts(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"books":1,"created":1,"updated":0,"removed":0,"binding_conflicts":0,"binding_conflicts_unavailable":true}`))
-	}))
-	t.Cleanup(server.Close)
-	home := t.TempDir()
-	ctx := withStoreResolverConfig(t, &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	var stdout bytes.Buffer
-	cmd := newSyncCardDAVCmd()
-	cmd.SetContext(ctx)
-	cmd.SetOut(&stdout)
-	require.NoError(t, cmd.Execute())
-	assert.Contains(t, stdout.String(), "CardDAV binding conflict count unavailable. Run msgvault carddav bind-participants --dry-run for details.")
+	assertions.Equal("CardDAV sync: 1 books, 2 created, 3 updated, 4 removed\n", stdout.String())
 }
 
 func TestCardDAVCLISelectsConnectionsAndReportsAggregateFailures(t *testing.T) {
@@ -451,46 +434,6 @@ func TestCardDAVParticipantBindingCLIUsesDaemonAndPrintsCounts(t *testing.T) {
 			assert.Contains(out.String(), "CardDAV bindings (dry run): 2 cards scanned, 0 participants bound, 0 participants unbound, 2 conflicts")
 			assert.Contains(out.String(), "participant 7, people [1 2]: address shared by multiple people")
 			assert.Contains(out.String(), "participant 8, people [2 3]: participant already belongs to another person")
-		})
-	}
-}
-
-func TestSyncCardDAVFailureReportsBindingConflicts(t *testing.T) {
-	for _, previewStatus := range []int{http.StatusOK, http.StatusInternalServerError} {
-		t.Run(strconv.Itoa(previewStatus), func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				switch r.URL.Path {
-				case "/api/v1/carddav/sync":
-					w.WriteHeader(http.StatusConflict)
-					_, _ = w.Write([]byte(`{"error":"sync_failed","message":"sync failed"}`))
-				case "/api/v1/carddav/participant-bindings":
-					var body map[string]bool
-					assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-					assert.Equal(t, map[string]bool{"dry_run": true, "undo": false}, body)
-					w.WriteHeader(previewStatus)
-					_, _ = w.Write([]byte(`{"conflicts":2}`))
-				default:
-					assert.Fail(t, "unexpected path", r.URL.Path)
-				}
-			}))
-			t.Cleanup(server.Close)
-			home := t.TempDir()
-			ctx := withStoreResolverConfig(t, &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-			var stdout bytes.Buffer
-			cmd := newSyncCardDAVCmd()
-			cmd.SilenceUsage = true
-			cmd.SetContext(ctx)
-			cmd.SetOut(&stdout)
-			cmd.SetArgs([]string{"--connection", "work"})
-			err := cmd.Execute()
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), "sync failed")
-			if previewStatus == http.StatusOK {
-				assert.Contains(t, stdout.String(), "2 CardDAV binding conflicts.")
-			} else {
-				assert.Empty(t, stdout.String())
-			}
 		})
 	}
 }
