@@ -298,7 +298,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 		if err != nil {
 			return err
 		}
-		resolver := imapMembershipResolver{ctx: ctx, tx: tx, sourceID: sourceID, sqlite: !s.IsPostgreSQL()}
+		resolver := imapMembershipResolver{ctx: ctx, tx: tx, sourceID: sourceID, sqlite: !s.IsPostgreSQL(), includeMarked: true}
 		if err := resolver.primeIdentities(ctx, normalizedDeltas); err != nil {
 			return err
 		}
@@ -386,6 +386,9 @@ func (s *Store) applyIMAPMailboxDeltas(
 				if err != nil {
 					return err
 				}
+				if err := s.hideRestoredIMAPCopy(ctx, tx, &resolver, observation, messageID); err != nil {
+					return err
+				}
 				flags := observation.Flags
 				if flags == nil {
 					flags = []string{}
@@ -469,7 +472,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 			if len(mailboxes) == 0 {
 				if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 					UPDATE messages SET deleted_from_source_at = %s
-					WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NULL
+					WHERE id = ? AND source_id = ? AND deleted_at IS NULL AND deleted_from_source_at IS NULL
 				`, s.dialect.Now()), messageID, sourceID); err != nil {
 					return fmt.Errorf("tombstone IMAP message %d: %w", messageID, err)
 				}
@@ -567,16 +570,8 @@ func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 			if err != nil {
 				return err
 			}
-			if observation.RFC822MessageID == "" && observation.RawSHA256 != ([32]byte{}) {
-				rawID, unique, err := resolver.resolveRawSHA256(ctx, observation.RawSHA256, observation.RawSize)
-				if err != nil {
-					return err
-				}
-				if unique && rawID == messageID {
-					if err := s.hideFilteredIMAPCopy(ctx, tx, sourceID, messageID, observation.SourceMessageID); err != nil {
-						return err
-					}
-				}
+			if err := s.hideRestoredIMAPCopy(ctx, tx, &resolver, observation, messageID); err != nil {
+				return err
 			}
 			if err := s.clearMessageDeletedFromSourceTx(ctx, tx, `id = ? AND source_id = ?`, messageID, sourceID); err != nil {
 				return fmt.Errorf("message %d: %w", messageID, err)
@@ -586,19 +581,27 @@ func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 	})
 }
 
-func (s *Store) hideFilteredIMAPCopy(ctx context.Context, tx *loggedTx, sourceID, originalID int64, sourceMessageID string) error {
+func (s *Store) hideRestoredIMAPCopy(ctx context.Context, tx *loggedTx, resolver *imapMembershipResolver, observation IMAPMembershipObservation, originalID int64) error {
+	if observation.RFC822MessageID != "" || observation.RawSHA256 == ([32]byte{}) ||
+		resolver.archivedMessages[observation.ArchivedMessageID] || resolver.canonicalMessages[observation.CanonicalSourceMessageID] != 0 {
+		return nil
+	}
+	rawID, unique, err := resolver.resolveRawSHA256(ctx, observation.RawSHA256, observation.RawSize)
+	if err != nil || !unique || rawID != originalID {
+		return err
+	}
 	var copyID int64
-	err := tx.QueryRowContext(ctx, fmt.Sprintf(`UPDATE messages SET deleted_at = %s, delete_batch_id = ?
+	err = tx.QueryRowContext(ctx, fmt.Sprintf(`UPDATE messages SET deleted_at = %s, delete_batch_id = ?
 		WHERE source_id = ? AND source_message_id = ? AND id <> ?
 		  AND deleted_at IS NULL AND deleted_from_source_at IS NULL
 		  AND EXISTS (SELECT 1 FROM messages original WHERE original.id = ? AND original.deleted_from_source_at IS NOT NULL)
 		  AND NOT EXISTS (SELECT 1 FROM imap_message_memberships membership WHERE membership.message_id = messages.id)
-		RETURNING id`, s.dialect.Now()), uuid.NewString(), sourceID, sourceMessageID, originalID, originalID).Scan(&copyID)
+		RETURNING id`, s.dialect.Now()), uuid.NewString(), resolver.sourceID, observation.SourceMessageID, originalID, originalID).Scan(&copyID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("hide filtered IMAP copy: %w", err)
+		return fmt.Errorf("hide restored IMAP copy: %w", err)
 	}
 	if !s.IsPostgreSQL() {
 		_, err = tx.ExecContext(ctx, `INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('message_facts', ?)`, copyID)

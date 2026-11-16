@@ -1539,6 +1539,38 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 	assert.Equal(t, 6, membershipCount(t, f.store, f.source.ID))
 }
 
+func TestCompleteIMAPRestoreWithAmbiguousRawIdentity(t *testing.T) {
+	f := newIMAPIdentityFixture(t)
+	data := []byte("From: sender@example.test\r\nSubject: identical\r\n\r\nbody\r\n")
+	first := f.createMessage(t, "Trash|1", "")
+	second := f.createMessage(t, "Trash|2", "")
+	for _, id := range []int64{first, second} {
+		require.NoError(t, f.store.UpsertMessageRaw(id, data))
+	}
+	_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
+		"Trash": {Name: "Trash", Type: "system", SystemRole: store.LabelSystemRoleTrash},
+		"INBOX": {Name: "INBOX", Type: "system"},
+	})
+	require.NoError(t, err)
+	trash := store.IMAPMailboxDelta{Mailbox: "Trash", State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 3}, Memberships: []store.IMAPMembershipObservation{
+		{UID: 1, SourceMessageID: "Trash|1"}, {UID: 2, SourceMessageID: "Trash|2"},
+	}}
+	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{trash}))
+	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "Trash|1"))
+	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "Trash|2"))
+	copyID := f.createMessage(t, "INBOX|1", "")
+	require.NoError(t, f.store.UpsertMessageRaw(copyID, data))
+	inbox := store.IMAPMailboxDelta{Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{
+		{UID: 1, SourceMessageID: "INBOX|1", RawSHA256: sha256.Sum256(data)},
+	}}
+	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{trash, inbox}))
+	assert.True(t, messageTombstoned(t, f.store, first))
+	assert.True(t, messageTombstoned(t, f.store, second))
+	id, _ := membershipMessageAndFlags(t, f.store, f.source.ID, 1, 1)
+	assert.Equal(t, copyID, id)
+	assert.False(t, messageTombstoned(t, f.store, copyID))
+}
+
 func TestClearMessageDeletedFromSourceCacheSignal(t *testing.T) {
 	for _, tc := range []struct {
 		name string
