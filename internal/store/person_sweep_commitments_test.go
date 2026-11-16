@@ -442,6 +442,91 @@ func TestCommitmentDiscoveryOversizedMessages(t *testing.T) {
 		r.NoError(err)
 		r.False(complete)
 	})
+
+	t.Run("edited skipped message becomes eligible", func(t *testing.T) {
+		r, ctx := require.New(t), t.Context()
+		f := newPersonSweepApplyFixture(t, "edited-skipped", false)
+		_, persist := newCommitmentTestConversation(t, f)
+		id := persist("large", strings.Repeat("x", 200), -time.Hour)
+		cfg, profile := commitmentTestConfig()
+		cfg.Commitments.MaxBytes = 30
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+		r.NoError(err)
+		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "I will call.", id)
+		r.NoError(err)
+		f = nextCommitmentTestAttempt(t, f, "-edited")
+		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		r.Len(window.Sources, 1)
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+		r.NoError(err)
+		_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+		r.NoError(err)
+		r.True(complete)
+		cfg.Commitments.MaxBytes++
+		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		r.Empty(window.Sources)
+	})
+
+	t.Run("retry preserves cutoff for pending changes", func(t *testing.T) {
+		r, ctx := require.New(t), t.Context()
+		f := newPersonSweepApplyFixture(t, "retry-cutoff", false)
+		_, persist := newCommitmentTestConversation(t, f)
+		large := persist("large", strings.Repeat("x", 200), -time.Hour)
+		cfg, profile := commitmentTestConfig()
+		cfg.Commitments.MaxBytes, cfg.Commitments.MaxItems = 30, 1
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+		r.NoError(err)
+		waiting := persist("waiting", "I will call.", -time.Hour)
+		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET archived_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-time.Hour)), waiting)
+		r.NoError(err)
+		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE person_sweep_changes SET recorded_at = ? WHERE message_id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow.Add(-time.Hour)), waiting)
+		r.NoError(err)
+		cfg.Commitments.MaxBytes = 1000
+		later := personFactLedgerNow.Add(31 * 24 * time.Hour)
+		f = nextCommitmentTestAttempt(t, f, "-retry")
+		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, later)
+		r.NoError(err)
+		r.Len(window.Sources, 1)
+		r.Equal(large, window.Sources[0].MessageID)
+		request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{})
+		request.Generation.ResolvedAt = later
+		_, err = f.store.ApplyPersonSweep(ctx, request)
+		r.NoError(err)
+		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, later)
+		r.NoError(err)
+		r.Len(window.Sources, 1)
+		r.Equal(waiting, window.Sources[0].MessageID)
+	})
+
+	t.Run("deleted skipped message clears gap", func(t *testing.T) {
+		r, ctx := require.New(t), t.Context()
+		f := newPersonSweepApplyFixture(t, "deleted-skipped", false)
+		_, persist := newCommitmentTestConversation(t, f)
+		id := persist("large", strings.Repeat("x", 200), -time.Hour)
+		cfg, profile := commitmentTestConfig()
+		cfg.Commitments.MaxBytes = 30
+		window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+		r.NoError(err)
+		_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), f.store.dialect.TimestampParam(personFactLedgerNow), id)
+		r.NoError(err)
+		f = nextCommitmentTestAttempt(t, f, "-deleted")
+		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow)
+		r.NoError(err)
+		r.Empty(window.Sources)
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{}))
+		r.NoError(err)
+		_, complete, err := f.store.PersonCommitmentDiscoveryContext(ctx, f.personID, window.ScopeFingerprint)
+		r.NoError(err)
+		r.True(complete)
+	})
 }
 
 // A paid optional result is discarded after revocation without losing its accounting.
@@ -601,11 +686,28 @@ func TestEditedCommitmentDecision(t *testing.T) {
 			rescans:         []rescanSpec{{text: quote, want: []expectedPromise{{quote, LoopStateOpen}}, includeClosed: true, promises: []promiseSpec{{quote: quote, summary: "Send"}}}},
 		},
 		{
+			name: "originally separate identical quotes keep decisions", initialText: quote + " " + quote,
+			initialStates:   []string{LoopStateDone, LoopStateDone},
+			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}, {quote: quote, summary: "Send", start: int64(len(quote) + 1)}},
+			rescans: []rescanSpec{{text: quote + " " + quote, includeClosed: true,
+				promises: []promiseSpec{{quote: quote, summary: "Send"}, {quote: quote, summary: "Send", start: int64(len(quote) + 1)}},
+				want:     []expectedPromise{{quote, LoopStateDone}, {quote, LoopStateDone}}}},
+		},
+		{
 			name: "unique, duplicated, then unique again clears decision", initialText: quote,
 			initialPromises: []promiseSpec{{quote: quote, summary: "Send"}},
 			rescans: []rescanSpec{
 				{text: quote + " " + quote},
 				{text: quote, want: []expectedPromise{{quote, LoopStateOpen}}, includeClosed: true, promises: []promiseSpec{{quote: quote, summary: "Send"}}},
+			},
+		},
+		{
+			name: "shortened citation duplicated then unique clears decision", initialText: longer,
+			initialPromises: []promiseSpec{{quote: longer, summary: "Send"}},
+			rescans: []rescanSpec{
+				{text: longer, promises: []promiseSpec{{quote: quote, summary: "Send"}}, want: []expectedPromise{{quote, LoopStateDone}}, includeClosed: true},
+				{text: quote + " " + quote},
+				{text: quote, promises: []promiseSpec{{quote: quote, summary: "Send"}}, want: []expectedPromise{{quote, LoopStateOpen}}, includeClosed: true},
 			},
 		},
 		{

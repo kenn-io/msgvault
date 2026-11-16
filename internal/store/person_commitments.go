@@ -499,7 +499,7 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 		return window, err
 	}
 	sameEligibility := len(scope) == 64 && scope[:56] == window.ScopeFingerprint[:56]
-	if sameEligibility && window.BackfillMessageID != -1 && since.Valid && since.Time.Before(now.Add(-cfg.Window)) {
+	if sameEligibility && (window.BackfillMessageID != -1 || previous < through) && since.Valid && since.Time.Before(now.Add(-cfg.Window)) {
 		window.SelectionAt = since.Time.Add(cfg.Window)
 	}
 	if !sameEligibility {
@@ -550,14 +550,14 @@ func (s *Store) scanCommitmentChanges(ctx context.Context, personID, previous, t
 func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, inProfile func(time.Time) bool) error {
 	personID, through := window.PersonID, window.ThroughSequence
 	// Negative values below -1 carry a pending gap and the backfill cursor.
-	gap := false
+	pending := map[int64]bool{}
 	if window.BackfillMessageID < -2 {
 		window.BackfillMessageID = -(window.BackfillMessageID + 3)
 	} else if window.BackfillMessageID == -2 {
 		window.BackfillMessageID = -1
 	}
 	defer func() {
-		if gap {
+		if len(pending) > 0 {
 			if window.BackfillMessageID < 0 {
 				window.BackfillMessageID = -2
 			} else {
@@ -572,7 +572,7 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			return false, err
 		}
 		if sourceBytes > cfg.MaxBytes {
-			gap = true
+			pending[source.MessageID] = true
 			seen[source.MessageID] = true
 			window.SkippedMessageIDs = append(window.SkippedMessageIDs, source.MessageID)
 			return true, nil
@@ -599,7 +599,7 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			single.Sources = []peoplesweep.CommitmentSource{source}
 			fitsAlone, err := peoplesweep.CommitmentInputFits(single)
 			if !fitsAlone && err == nil {
-				gap = true
+				pending[source.MessageID] = true
 				seen[source.MessageID] = true
 				window.SkippedMessageIDs = append(window.SkippedMessageIDs, source.MessageID)
 			}
@@ -633,8 +633,10 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			return err
 		}
 		for _, item := range skipped {
+			pending[item.id] = true
+		}
+		for _, item := range skipped {
 			if item.maxBytes >= cfg.MaxBytes {
-				gap = true
 				continue
 			}
 			source, ok, err := s.currentCommitmentSource(ctx, personID, item.id)
@@ -642,12 +644,16 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 				return err
 			}
 			if ok && inProfile(source.EventTime) {
+				delete(pending, item.id)
 				added, err := add(source)
 				if err != nil || !added {
-					gap = true
+					pending[item.id] = true
 					window.ThroughSequence = previous
 					return err
 				}
+			}
+			if !ok || !inProfile(source.EventTime) {
+				delete(pending, item.id)
 			}
 			window.RetriedMessageIDs = append(window.RetriedMessageIDs, item.id)
 		}
@@ -672,15 +678,27 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			return err
 		}
 		if !ok || !inProfile(source.EventTime) || !commitmentInWindow(source, !change.RecordedAt.Before(cutoff), cutoff) {
+			if pending[change.MessageID] {
+				delete(pending, change.MessageID)
+				window.RetriedMessageIDs = append(window.RetriedMessageIDs, change.MessageID)
+			}
 			continue
 		}
+		wasSkipped := pending[source.MessageID]
+		delete(pending, source.MessageID)
 		added, err := add(source)
 		if err != nil {
 			return err
 		}
 		if !added {
+			if wasSkipped {
+				pending[source.MessageID] = true
+			}
 			window.ThroughSequence = change.Sequence - 1
 			return nil
+		}
+		if wasSkipped {
+			window.RetriedMessageIDs = append(window.RetriedMessageIDs, source.MessageID)
 		}
 	}
 	if window.ThroughSequence < through || window.BackfillMessageID < 0 {

@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,7 +89,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 	generation := request.Generation
 	generation.ProgramID, generation.ProgramVersion = peoplesweep.CommitmentProgramID, peoplesweep.CommitmentProgramVersion
 	generation.ProgramFingerprint = peoplesweep.CommitmentProgramFingerprint()
-	generation.SourceCursors = []personfacts.SourceCursor{{Lane: "commitments", Start: fmt.Sprint(window.BackfillMessageID), End: fmt.Sprintf("%d:%d", window.ThroughSequence, window.SnapshotSequence)}}
+	generation.SourceCursors = []personfacts.SourceCursor{{Lane: "commitments", Start: strconv.FormatInt(window.BackfillMessageID, 10), End: fmt.Sprintf("%d:%d", window.ThroughSequence, window.SnapshotSequence)}}
 	generation.Claims, generation.EvidenceStatusChanges = nil, nil
 	promises, err := s.matchCommitmentCitations(ctx, personID, sources, result.Output.Promises)
 	if err != nil {
@@ -246,7 +247,12 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 			args = append(args, source.SourceRef)
 		}
 		// A formerly unique citation cannot retain its decision after it repeats.
-		rows, err := tx.QueryContext(ctx, `SELECT d.id, d.target_key, e.source_ref, e.excerpt
+		rows, err := tx.QueryContext(ctx, `SELECT d.id, d.target_key, e.source_ref, e.excerpt,
+			(SELECT e0.excerpt FROM person_fact_claims c0
+			 JOIN person_fact_claim_evidence ce0 ON ce0.claim_id = c0.id
+			 JOIN person_fact_evidence e0 ON e0.id = ce0.evidence_id
+			 WHERE c0.person_id = d.person_id AND c0.target_kind = 'commitment' AND c0.target_key = d.target_key
+			 AND c0.origin = 'commitment' AND e0.source_ref = e.source_ref ORDER BY c0.id, e0.id LIMIT 1)
 			FROM person_commitments d
 			JOIN person_fact_claims c ON c.person_id = d.person_id AND c.target_kind = 'commitment' AND c.target_key = d.target_key AND c.origin = 'commitment'
 			JOIN person_fact_claim_evidence ce ON ce.claim_id = c.id
@@ -258,13 +264,13 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 		ids := make(map[int64]bool)
 		for rows.Next() {
 			var id int64
-			var key, ref, quote string
-			if err := rows.Scan(&id, &key, &ref, &quote); err != nil {
+			var key, ref, quote, originalQuote string
+			if err := rows.Scan(&id, &key, &ref, &quote, &originalQuote); err != nil {
 				_ = rows.Close()
 				return err
 			}
 			source := byRef[ref]
-			if peoplesweep.CommitmentQuoteRepeated(source.Text, quote) && key == peoplesweep.UniqueCommitmentTargetKey(request.Lease.PersonID, source, quote) {
+			if peoplesweep.CommitmentQuoteRepeated(source.Text, quote) && key == peoplesweep.UniqueCommitmentTargetKey(request.Lease.PersonID, source, originalQuote) {
 				ids[id] = true
 			}
 		}
@@ -316,7 +322,7 @@ func (s *Store) saveCommitmentFrontierTx(ctx context.Context, tx *loggedTx, requ
 		}
 	}
 	since := prepared.selectionAt.Add(-request.Commitment.Config.Window)
-	if backfill == -1 {
+	if backfill == -1 && prepared.through >= prepared.snapshot {
 		since = request.Commitment.Window.Now.Add(-request.Commitment.Config.Window)
 	}
 	var profileSince string
