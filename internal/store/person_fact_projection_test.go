@@ -1770,6 +1770,7 @@ func TestPersonFactDecisionOutcomesPersist(t *testing.T) {
 		weak       bool
 		retire     bool
 		competitor string
+		close      bool
 	}
 	for _, test := range []struct {
 		name  string
@@ -1784,6 +1785,7 @@ func TestPersonFactDecisionOutcomesPersist(t *testing.T) {
 		{"pinned empty", setup{pin: new(true)}, personfacts.OutcomeNotUsed},
 		{"fact current", setup{seed: "email", weak: true}, personfacts.OutcomeNotUsed},
 		{"tie", setup{competitor: "phone"}, personfacts.OutcomeTooCloseToChoose},
+		{"close competition", setup{competitor: "phone", close: true}, personfacts.OutcomeTooCloseToChoose},
 		{"superseded", setup{competitor: "email", weak: true}, personfacts.OutcomeNotUsed},
 		{"tie with saved value", setup{seed: "chat", relation: personfacts.RelationContradict}, personfacts.OutcomeTooCloseToChoose},
 	} {
@@ -1817,6 +1819,9 @@ func TestPersonFactDecisionOutcomesPersist(t *testing.T) {
 			if test.setup.retire {
 				claim.Confidence.ReportedScore = 1000
 			}
+			if test.setup.close {
+				claim.Confidence.ReportedScore = 800
+			}
 			claims := []personfacts.ProposedClaim{claim}
 			if test.setup.competitor != "" {
 				claims = append(claims, personFactProjectionClaim(personID, target, `"`+test.setup.competitor+`"`, test.name+"-other"))
@@ -1842,6 +1847,9 @@ func TestPersonFactDecisionOutcomesPersist(t *testing.T) {
 			require.Len(t, rows, 1)
 			require.NotNil(t, rows[0].Outcome)
 			assert.Equal(t, test.want, *rows[0].Outcome)
+			if test.setup.close {
+				assert.Equal(t, personfacts.ReasonInsufficientMargin, rows[0].Reason)
+			}
 			if test.name == "saved" {
 				assert.Equal(t, personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}, rows[0].Target)
 				assert.Equal(t, personfacts.ResolverVersionV1, rows[0].ResolverVersion)
