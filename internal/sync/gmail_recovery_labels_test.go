@@ -158,6 +158,56 @@ func assertRecoveryLabels(t *testing.T, e *TestEnv, ids map[string]int64, labels
 	}
 }
 
+func TestGmailArchivedLabelDriftNeedsCompleteRefresh(t *testing.T) {
+	// Serial: the production Gmail client uses the fixture HTTP transport.
+	e, f, ids := recoveryLabelsEnv(t)
+	f.expire = false
+	api := e.Syncer.client
+	oldLabels := map[string][]string{
+		"normal1": {"INBOX"}, "normal2": {"INBOX", "Label_old"}, "spam": {"SPAM"}, "trash": {"TRASH"},
+	}
+
+	// The archived-RAW shortcut still skips membership reads. Reconstruct
+	// the pre-#2236 completion step using its production Store operation:
+	// publish the profile cursor without having consumed the label changes.
+	historicalCursor := fmt.Sprint(f.history)
+	_, err := e.Syncer.Full(t.Context(), testEmail)
+	require.NoError(t, err)
+	assertRecoveryLabels(t, e, ids, oldLabels)
+	source := gmailCoverageSource(t.Context(), t, e)
+	execution, err := e.Store.AcquireSyncExecutionContext(t.Context(), source.ID)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, execution.Release()) })
+	runID, err := execution.StartSyncWithRequestContext(t.Context(), "full", "", e.Syncer.fullSyncRequestFingerprint())
+	require.NoError(t, err)
+	require.NoError(t, e.Store.ScopedToSync(source.ID, runID).CompleteSyncAndUpdateSourceCursorContext(t.Context(), runID, source.ID, historicalCursor))
+	require.NoError(t, execution.Release())
+
+	// Neither current History nor a fresh ordinary full repairs changes
+	// older than the cursor already published by that historical backfill.
+	for _, noResume := range []bool{false, true} {
+		reopenAcquisitionStore(t, e)
+		opts := DefaultOptions()
+		opts.NoResume = noResume
+		e.Syncer = New(api, e.Store, opts)
+		_, err = e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t.Context(), t, e), nil)
+		require.NoError(t, err)
+		_, err = e.Syncer.Full(t.Context(), testEmail)
+		require.NoError(t, err)
+		assertRecoveryLabels(t, e, ids, oldLabels)
+		assert.Equal(t, fmt.Sprint(f.history), gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
+	}
+	assert.Equal(t, []string{historicalCursor}, f.historyStarts, "History after the jumped cursor does not contain the missed label changes")
+	assert.Equal(t, 4, f.rawGets)
+
+	// The existing library recovery is the positive control: it can repair
+	// these memberships without downloading the archived originals again.
+	_, err = e.Syncer.RecoverExpiredHistory(t.Context(), gmailCoverageSource(t.Context(), t, e))
+	require.NoError(t, err)
+	assertRecoveryLabels(t, e, ids, f.labels)
+	assert.Equal(t, 4, f.rawGets)
+}
+
 func TestGmailRecoveryReplacesArchivedLabels(t *testing.T) {
 	for _, fault := range []string{"", "unknown"} {
 		t.Run(fault, func(t *testing.T) {
