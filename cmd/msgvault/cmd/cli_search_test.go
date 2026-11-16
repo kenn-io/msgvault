@@ -49,7 +49,7 @@ var cliSearchExcluded = []string{
 
 func executeCLIDiscovery(tb interface {
 	Helper()
-	Errorf(string, ...any)
+	Errorf(format string, args ...any)
 	FailNow()
 	Context() context.Context
 }, args ...string) (string, string, error) {
