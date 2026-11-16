@@ -15,6 +15,9 @@ All notable changes to msgvault, grouped by release.
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
+- Posts and comments by others that mention a Facebook Page are archived in
+  its comment source when the [Meta webhook receiver](usage/meta-webhooks.md)
+  gets the Page `mention` field.
 - Instagram captions and comments that @-mention a linked account are archived
   into its [mentions source](usage/instagram-comments.md#archive-media-that-tags-the-account)
   when the Meta webhook receiver gets the `mentions` field.

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -50,7 +51,8 @@ func startMetaWebhooks(ctx context.Context, cfg *config.Config, st *store.Store,
 	}
 	pending := filepath.Join(cfg.Data.DataDir, "meta-webhooks", "pending")
 	worker := metawebhook.NewWorker(pending, map[metawebhook.Field]metawebhook.FieldHandler{
-		{Object: "page", Name: "feed"}:               metaFeedHandler(cfg, st, work),
+		{Object: "page", Name: "feed"}:               pageCommentsHandler(cfg, st, work, meta.ApplyFeed),
+		{Object: "page", Name: "mention"}:            pageCommentsHandler(cfg, st, work, meta.ApplyPageMentions),
 		{Object: "instagram", Name: "comments"}:      instagramCommentsHandler(cfg, st, work),
 		{Object: "instagram", Name: "live_comments"}: instagramCommentsHandler(cfg, st, work),
 		{Object: "instagram", Name: "mentions"}:      instagramMentionsHandler(cfg, st, work),
@@ -127,9 +129,11 @@ func (r *metaWebhookRuntime) Shutdown(ctx context.Context) error {
 	}
 }
 
-// metaFeedHandler applies Page feed changes to the comment source of the
-// enabled [[facebook_comments]] profile for the app and Page.
-func metaFeedHandler(cfg *config.Config, st *store.Store, work scheduler.WorkTracker) metawebhook.FieldHandler {
+// pageCommentsHandler applies Page changes with apply to the comment source
+// of the enabled [[facebook_comments]] profile for the app and Page.
+func pageCommentsHandler(cfg *config.Config, st *store.Store, work scheduler.WorkTracker,
+	apply func(context.Context, *store.Store, meta.ObjectReader, string, string, []jsontext.Value) error,
+) metawebhook.FieldHandler {
 	return func(ctx context.Context, change metawebhook.Change) error {
 		i := slices.IndexFunc(cfg.FacebookComments, func(p config.FacebookCommentsSource) bool {
 			return p.Enabled && p.AppID == change.App && p.PageID == change.EntryID
@@ -142,7 +146,7 @@ func metaFeedHandler(cfg *config.Config, st *store.Store, work scheduler.WorkTra
 			return err
 		}
 		return applyMetaWebhook(ctx, work, func() error {
-			return meta.ApplyFeed(ctx, st, client, change.App, change.EntryID, change.Values)
+			return apply(ctx, st, client, change.App, change.EntryID, change.Values)
 		})
 	}
 }

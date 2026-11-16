@@ -41,13 +41,14 @@ report changes after you subscribe.
    the receiver is listening. Nothing starts it again after a reboot or
    `msgvault daemon stop`, and the receiver is down until a daemon runs.
 5. In your Meta app's Webhooks settings, subscribe the Page object to the
-   `feed` field. Use `https://<your-host>/meta/webhook/<app_id>` as the callback
+   `feed` field, and to `mention` to archive posts and comments by others
+   that mention the Page. Use `https://<your-host>/meta/webhook/<app_id>` as the callback
    URL and the same verify token.
 6. Subscribe the Page to the app with its Page token, once per Page:
 
    ```bash
    curl -X POST -H "Authorization: Bearer $EXAMPLE_FACEBOOK_PAGE_TOKEN" \
-     "https://graph.facebook.com/v26.0/<page_id>/subscribed_apps?subscribed_fields=feed"
+     "https://graph.facebook.com/v26.0/<page_id>/subscribed_apps?subscribed_fields=feed,mention"
    ```
 
 Each Page must have an enabled [`[[facebook_comments]]` profile](../configuration.md#facebook-comments)
@@ -79,7 +80,9 @@ rather than taken from the delivery, so a late or repeated delivery cannot
 bring back an older state. A removed comment is marked deleted together with
 its archived replies. A removed post is marked deleted; its comments stay
 archived. An Instagram comment is read from Meta too, and media that is not
-archived yet must be owned by the configured account.
+archived yet must be owned by the configured account. A post or comment that
+mentions the Page is read from Meta and archived in the Page's comment source
+as its own conversation, with the post it belongs to.
 
 ### When a change fails
 
@@ -95,16 +98,17 @@ archived yet must be owned by the configured account.
 
 Polling does not recover a skipped hide, unhide or removal. A later sync
 archives a skipped new or edited comment when it reads that comment. No sync
-can find caption or comment mentions, so a skipped mention is lost.
+can find Instagram caption or comment mentions or posts by others that mention
+a Page, so a skipped mention is lost.
 
 ## Limits
 
 - msgvault applies comment changes and post removals from the Page `feed`
-  field, new comments from the Instagram `comments` and `live_comments`
-  fields, and caption and comment mentions from the Instagram `mentions`
-  field. A change for a field msgvault does not handle is logged and
-  dropped. Other changes inside a handled field, such as reactions, are
-  dropped without a log line.
+  field, new mentions from the Page `mention` field, new comments from the
+  Instagram `comments` and `live_comments` fields, and caption and comment
+  mentions from the Instagram `mentions` field. A change for a field
+  msgvault does not handle is logged and dropped. Other changes inside a
+  handled field, such as reactions, are dropped without a log line.
 - Instagram does not send edits, hides or removals of comments.
 - A hide or unhide for a comment that is not archived yet is ignored. Polling
   sync does not read hidden state, so that comment is not marked hidden.
