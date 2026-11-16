@@ -80,10 +80,11 @@ func (s *Store) meetingDecisionEdgesBatch(ctx context.Context, endpoints []meeti
 				args = append(args, i, endpoint.ID)
 			}
 			args = append(args, copyArgs...)
-			args = append(args, parentArgs...)
 			args = append(args, originalDate, originalTime)
 			args = append(args, editArgs...)
 			args = append(args, seriesArgs...)
+			// The series CTE precedes relations in meetingCopyGraphSQL.
+			args = append(args, parentArgs...)
 			args = append(args, k.kind, k.occurrence, k.kind, k.occurrence)
 			args = append(args, leftArgs...)
 			args = append(args, rightArgs...)
