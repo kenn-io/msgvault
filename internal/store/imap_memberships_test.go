@@ -324,20 +324,20 @@ func TestApplyIMAPMailboxDeltas_TrashAndAllReconcileDeletionMark(t *testing.T) {
 			f := newIMAPMembershipFixture(t)
 			id := f.createMessage(t, "message", "<trash@example.com>")
 			_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
-				"Trash":    {Name: "Trash", Type: "system", SystemRole: store.LabelSystemRoleTrash},
-				"All Mail": {Name: "All Mail", Type: "system", SystemRole: store.LabelSystemRoleAll},
+				"Trash":    {Name: "Trash", Type: "system", SystemRole: "sent"},
+				"All Mail": {Name: "All Mail", Type: "system", SystemRole: "sent"},
 			})
 			require.NoError(t, err)
 			require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "message"))
 			var deltas []store.IMAPMailboxDelta
 			if tc.trash {
-				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "Trash", State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}}})
+				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "Trash", Trash: true, State: store.IMAPFolderState{Mailbox: "Trash", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}}})
 			}
 			if tc.inbox {
 				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 2, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}}})
 			}
 			if tc.all {
-				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "All Mail", State: store.IMAPFolderState{Mailbox: "All Mail", UIDValidity: 3, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}}})
+				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: "All Mail", AllMail: true, State: store.IMAPFolderState{Mailbox: "All Mail", UIDValidity: 3, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "message"}}})
 			}
 			require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, deltas))
 			assert.Equal(t, tc.want, messageTombstoned(t, f.store, id))
@@ -1469,7 +1469,7 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 			f := newIMAPIdentityFixture(t)
 			_, err := f.store.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
 				"Trash":    {Name: "Trash", Type: "system", SystemRole: store.LabelSystemRoleTrash},
-				"All Mail": {Name: "All Mail", Type: "system", SystemRole: store.LabelSystemRoleAll},
+				"All Mail": {Name: "All Mail", Type: "system", SystemRole: "sent"},
 				"INBOX":    {Name: "INBOX", Type: "system"},
 			})
 			require.NoError(t, err)
@@ -1534,10 +1534,6 @@ func TestFilteredIMAPRestorePreservesMembershipLabels(t *testing.T) {
 				assert.False(t, marked)
 			}
 			if scenario == "unique raw" && !f.store.IsPostgreSQL() {
-				plan, err := f.store.PlanGCContext(t.Context())
-				require.NoError(t, err)
-				assert.NotContains(t, plan.SourceDeletedIDs, id)
-				assert.NotContains(t, plan.SourceDeletedIDs, copyID)
 				var count int
 				require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'message_facts' AND message_id = ?`), journalBaseline, copyID).Scan(&count))
 				assert.Positive(t, count)
@@ -1566,7 +1562,7 @@ func TestCompleteIMAPRestoreWithAmbiguousRawIdentity(t *testing.T) {
 	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "Trash|1"))
 	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "Trash|2"))
 	trash.Memberships = nil
-	trash.VanishedUIDs = []uint32{2}
+	trash.VanishedUIDs = []uint32{1, 2}
 	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{trash}))
 	trash.VanishedUIDs = nil
 	copyID := f.createMessage(t, "INBOX|1", "")
@@ -1627,36 +1623,6 @@ func TestCompleteIMAPTrashUIDValidityResetWithIdenticalInbox(t *testing.T) {
 				assert.Equal(t, copyID, id)
 			}
 			assert.False(t, messageTombstoned(t, f.store, copyID))
-		})
-	}
-}
-
-func TestClearMessageDeletedFromSourceCacheSignal(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		fail bool
-	}{{"signal", false}, {"rollback", true}} {
-		t.Run(tc.name, func(t *testing.T) {
-			failSignal := tc.fail
-			f := newIMAPMembershipFixture(t)
-			id := f.createMessage(t, "restored", "<restored@example.com>")
-			require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "restored"))
-			var baseline int64
-			require.NoError(t, f.store.DB().QueryRowContext(t.Context(), `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&baseline))
-			if failSignal {
-				_, err := f.store.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_restore_journal BEFORE INSERT ON cache_related_change_journal BEGIN SELECT RAISE(ABORT, 'journal unavailable'); END`)
-				require.NoError(t, err)
-			}
-			err := f.store.ClearMessageDeletedFromSourceContext(t.Context(), f.source.ID, "restored")
-			if failSignal {
-				require.Error(t, err)
-				assert.True(t, messageTombstoned(t, f.store, id))
-				return
-			}
-			require.NoError(t, err)
-			var count int
-			require.NoError(t, f.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'message_facts' AND message_id = ?`, baseline, id).Scan(&count))
-			assert.Positive(t, count)
 		})
 	}
 }

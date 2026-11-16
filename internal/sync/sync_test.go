@@ -2635,16 +2635,23 @@ func TestIncrementalSyncRemovedLabelPreservesOrClearsDeletion(t *testing.T) {
 
 func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		labels       []string
-		wantMark     bool
-		unchanged    bool
-		labelFailure bool
+		name              string
+		labels            []string
+		wantMark          bool
+		unchanged         bool
+		labelFailure      bool
+		rawMissing        bool
+		attachmentFailure bool
+		rawFailure        bool
 	}{
 		{name: "restored", labels: []string{"INBOX"}},
 		{name: "label read failure and retry", labels: []string{"INBOX"}, labelFailure: true},
 		{name: "still in Trash", labels: []string{"INBOX", "TRASH"}, wantMark: true},
 		{name: "unchanged labels", labels: []string{"INBOX"}, unchanged: true},
+		{name: "raw missing restored", labels: []string{"INBOX"}, rawMissing: true},
+		{name: "raw missing still in Trash", labels: []string{"INBOX", "TRASH"}, wantMark: true, rawMissing: true},
+		{name: "attachment failure", labels: []string{"INBOX"}, rawMissing: true, attachmentFailure: true},
+		{name: "raw insert failure", labels: []string{"INBOX"}, wantMark: true, rawMissing: true, rawFailure: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -2656,20 +2663,41 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 			if tc.unchanged {
 				initial = []string{"INBOX"}
 			}
-			env.Mock.AddMessage("msg1", testMIME(), initial)
+			raw := testMIME()
+			if tc.attachmentFailure {
+				raw = testMIMEWithAttachment()
+			}
+			env.Mock.AddMessage("msg1", raw, initial)
 			runFullSync(t, env)
 
 			source, err := env.Store.GetOrCreateSource("gmail", testEmail)
 			require.NoError(err)
 			require.NoError(env.Store.MarkMessageDeleted(source.ID, "msg1"))
+			var messageID int64
+			if tc.rawMissing {
+				ids, err := env.Store.MessageExistsBatch(source.ID, []string{"msg1"})
+				require.NoError(err)
+				messageID = ids["msg1"]
+				_, err = env.Store.DB().ExecContext(t.Context(), env.Store.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), messageID)
+				require.NoError(err)
+			}
 			env.Mock.Messages["msg1"].LabelIDs = append([]string(nil), tc.labels...)
 			env.Mock.Profile.HistoryID = 12341
-			api := &labelMetadataSnapshotAPI{
-				MockAPI:     env.Mock,
-				complete:    true,
-				labelErrors: map[string]error{},
+			api := &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true, labelErrors: map[string]error{}}
+			var opts *Options
+			if tc.attachmentFailure {
+				blocked := filepath.Join(t.TempDir(), "blocked")
+				require.NoError(os.WriteFile(blocked, []byte("not a directory"), 0600))
+				opts = &Options{AttachmentsDir: blocked}
 			}
-			env.Syncer = New(api, env.Store, nil)
+			env.Syncer = New(api, env.Store, opts)
+			if tc.rawMissing {
+				env.Mock.GetMessageCalls = nil
+			}
+			if tc.rawFailure {
+				allow := acquisitionWriteFault(t, env, "message_raw", "INSERT", "1 = 1")
+				defer allow()
+			}
 			if tc.labelFailure {
 				api.labelErrors["msg1"] = errors.New("label read failed")
 				_, err := env.Syncer.Full(t.Context(), testEmail)
@@ -2683,75 +2711,15 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 			if tc.unchanged {
 				assert.Equal(int64(1), summary.MessagesUpdated)
 			}
-			assertDeletedFromSource(t, env.Store, "msg1", tc.wantMark)
-			if tc.wantMark {
-				assert.Equal([][]string{{"msg1"}}, api.labelCalls)
-				assertMessageHasLabel(t, env.Store, "msg1", "TRASH")
-			}
-			if !tc.wantMark {
-				assertMessageHasLabel(t, env.Store, "msg1", "INBOX")
-				assertMessageNotHasLabel(t, env.Store, "msg1", "TRASH")
-			}
-		})
-	}
-}
-
-func TestGmailFullSyncReacquiresRawForMarkedMessageAndReconcilesLabels(t *testing.T) {
-	for _, tc := range []struct {
-		name              string
-		labels            []string
-		wantMark          bool
-		attachmentFailure bool
-		rawFailure        bool
-	}{
-		{name: "restored", labels: []string{"INBOX"}},
-		{name: "still in Trash", labels: []string{"INBOX", "TRASH"}, wantMark: true},
-		{name: "attachment failure", labels: []string{"INBOX"}, attachmentFailure: true},
-		{name: "raw insert failure", labels: []string{"INBOX"}, wantMark: true, rawFailure: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			env := newTestEnv(t)
-			env.Mock.Profile.MessagesTotal = 1
-			env.Mock.Profile.HistoryID = 12340
-			raw := testMIME()
-			if tc.attachmentFailure {
-				raw = testMIMEWithAttachment()
-			}
-			env.Mock.AddMessage("msg1", raw, []string{"INBOX", "TRASH"})
-			runFullSync(t, env)
-
-			source, err := env.Store.GetOrCreateSource("gmail", testEmail)
-			require.NoError(err)
-			require.NoError(env.Store.MarkMessageDeleted(source.ID, "msg1"))
-			ids, err := env.Store.MessageExistsBatch(source.ID, []string{"msg1"})
-			require.NoError(err)
-			_, err = env.Store.DB().ExecContext(t.Context(), env.Store.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), ids["msg1"])
-			require.NoError(err)
-			env.Mock.Messages["msg1"].LabelIDs = append([]string(nil), tc.labels...)
-			env.Mock.Profile.HistoryID = 12341
-			api := &labelMetadataSnapshotAPI{MockAPI: env.Mock, complete: true}
-			var opts *Options
-			if tc.attachmentFailure {
-				blocked := filepath.Join(t.TempDir(), "blocked")
-				require.NoError(os.WriteFile(blocked, []byte("not a directory"), 0600))
-				opts = &Options{AttachmentsDir: blocked}
-			}
-			env.Syncer = New(api, env.Store, opts)
-			env.Mock.GetMessageCalls = nil
-			if tc.rawFailure {
-				allow := acquisitionWriteFault(t, env, "message_raw", "INSERT", "1 = 1")
-				defer allow()
-			}
-
-			summary, err := env.Syncer.Full(t.Context(), testEmail)
-			require.NoError(err)
 			if tc.attachmentFailure || tc.rawFailure {
 				assert.Equal(int64(1), summary.Errors)
 			}
-			assert.Empty(api.labelCalls, "a row without raw MIME follows normal raw acquisition")
-			assert.Equal([]string{"msg1"}, env.Mock.GetMessageCalls, "full sync must reacquire missing raw MIME")
+			if tc.rawMissing {
+				assert.Empty(api.labelCalls, "a row without raw MIME follows normal raw acquisition")
+				assert.Equal([]string{"msg1"}, env.Mock.GetMessageCalls, "full sync must reacquire missing raw MIME")
+			} else if tc.wantMark {
+				assert.Equal([][]string{{"msg1"}}, api.labelCalls)
+			}
 			assertDeletedFromSource(t, env.Store, "msg1", tc.wantMark)
 			if tc.rawFailure {
 				return
@@ -2762,9 +2730,11 @@ func TestGmailFullSyncReacquiresRawForMarkedMessageAndReconcilesLabels(t *testin
 			} else {
 				assertMessageNotHasLabel(t, env.Store, "msg1", "TRASH")
 			}
-			var rawCount int
-			require.NoError(env.Store.DB().QueryRowContext(t.Context(), env.Store.Rebind(`SELECT count(*) FROM message_raw WHERE message_id = ?`), ids["msg1"]).Scan(&rawCount))
-			assert.Equal(1, rawCount, "full sync must restore the missing raw payload")
+			if tc.rawMissing {
+				var rawCount int
+				require.NoError(env.Store.DB().QueryRowContext(t.Context(), env.Store.Rebind(`SELECT count(*) FROM message_raw WHERE message_id = ?`), messageID).Scan(&rawCount))
+				assert.Equal(1, rawCount, "full sync must restore the missing raw payload")
+			}
 		})
 	}
 }
