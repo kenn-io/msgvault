@@ -138,7 +138,7 @@ func (r *participantResolver) recordRich(ctx context.Context, userID string, pid
 	}
 	if prev != 0 && prev != pid {
 		if err := r.store.MergeParticipantsContext(ctx, prev, pid); err != nil {
-			if !mergeRefused(err) {
+			if !errors.Is(err, store.ErrPersonBindingConflict) {
 				return 0, err
 			}
 			pid = prev
@@ -150,13 +150,6 @@ func (r *participantResolver) recordRich(ctx context.Context, userID string, pid
 	r.rich[userID] = pid
 	delete(r.fallback, userID)
 	return pid, nil
-}
-
-// mergeRefused reports a merge the store blocked to protect durable people or
-// an address another participant holds. The Slack ID stays with its owner.
-func mergeRefused(err error) bool {
-	return errors.Is(err, store.ErrPersonBindingConflict) ||
-		errors.Is(err, store.ErrIdentifierAddressConflict)
 }
 
 // resolveBot resolves a bot sender (bot_id + optional username). Bots never
