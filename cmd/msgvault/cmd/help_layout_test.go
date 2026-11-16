@@ -196,10 +196,10 @@ func TestRootHelpGolden(t *testing.T) {
 	actual := strings.ReplaceAll(output.String(), "\r\n", "\n")
 	assertions.Equal(expected, actual)
 	_, startHere, found := strings.Cut(actual, "Start here:\n")
-	require.True(t, found, "root help must contain the Start here section")
+	requirements.True(found, "root help must contain the Start here section")
 	startHere, _, found = strings.Cut(startHere, "\nOutput:\n")
-	require.True(t, found, "root help must contain the Output section after Start here")
-	assert.LessOrEqual(t, len(startHere), 350, "shorten Start here examples if they exceed the help budget")
+	requirements.True(found, "root help must contain the Output section after Start here")
+	assertions.LessOrEqual(len(startHere), 350, "shorten Start here examples if they exceed the help budget")
 	assertions.NotContains(output.String(), "/home/")
 	assertions.NotContains(output.String(), "/Users/")
 }
