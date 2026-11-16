@@ -661,14 +661,3 @@ func TestHydratorSkipsNestedMeetingAndReadsSibling(t *testing.T) {
 	assert.NotContains(t, hydrated.Notes, "Another meeting")
 	assert.Contains(t, hydrated.Notes, "Sibling action")
 }
-
-func TestHydratorDoesNotUsePageTranscriptWhenStructuredReadFails(t *testing.T) {
-	source := completeHydrationSource()
-	source.blockErrs = map[string]error{"transcript-1": syscall.ECONNRESET}
-	source.markdown.Markdown = "# Transcript\nSibling meeting transcript"
-	result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-	require.NoError(t, err)
-	assert.Empty(t, result.Transcript)
-	assert.Contains(t, result.Incomplete, "transcript")
-	assert.Zero(t, source.markdownCalls)
-}

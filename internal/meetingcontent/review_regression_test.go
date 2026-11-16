@@ -271,3 +271,17 @@ func TestNotionIncompleteSectionKeepsSavedActions(t *testing.T) {
 	require.Len(t, content.Actions, 1)
 	assert.Equal(t, "Saved task", content.Actions[0].Title)
 }
+
+func TestNotionIncompleteSectionsRetainTextAndReportTruncation(t *testing.T) {
+	for _, name := range []string{"summary", "notes", "transcript"} {
+		t.Run(name, func(t *testing.T) {
+			raw := []byte(`{"schema_version":2,"canonical":{"summary":"Saved summary","notes":"Saved notes","transcript":"Saved transcript"},"incomplete_sections":["` + name + `"]}`)
+			content := Decode("notion_meeting_json", raw, nil)
+			want := map[string]State{"summary": StateAvailable, "notes": StateAvailable, "transcript": StateAvailable}
+			want[name] = StateTruncated
+			assert.Equal(t, Section{State: want["summary"], Text: "Saved summary"}, content.Summary)
+			assert.Equal(t, Section{State: want["notes"], Text: "Saved notes"}, content.Notes)
+			assert.Equal(t, Transcript{State: want["transcript"], Text: "Saved transcript"}, content.Transcript)
+		})
+	}
+}

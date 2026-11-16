@@ -104,11 +104,16 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 			_, _ = fmt.Fprintln(out, "  Read Content: available")
 		} else {
 			tested := false
+			var missingErr error
 			for _, id := range []string{meeting.MeetingNotes.Children.SummaryBlockID, meeting.MeetingNotes.Children.NotesBlockID, meeting.MeetingNotes.Children.TranscriptBlockID} {
 				if strings.TrimSpace(id) == "" {
 					continue
 				}
 				if _, err := client.RetrieveBlock(ctx, id); err != nil {
+					if api, ok := errors.AsType[*notionmeetings.APIError](err); ok && api.Status == 404 && api.Code == "object_not_found" {
+						missingErr = err
+						continue
+					}
 					return fmt.Errorf("probe Notion Read Content access: %w", err)
 				}
 				tested = true
@@ -116,6 +121,8 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 			}
 			if tested {
 				_, _ = fmt.Fprintln(out, "  Read Content: available")
+			} else if missingErr != nil {
+				return fmt.Errorf("probe Notion Read Content access: %w", missingErr)
 			} else {
 				_, _ = fmt.Fprintln(out, "  Read Content: not tested (no section blocks)")
 			}

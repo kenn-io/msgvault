@@ -37,7 +37,7 @@ type rawBlockTree struct {
 	Pages []jsontext.Value `json:"pages,omitempty"`
 }
 
-const notionSnapshotVersion = 1
+const notionSnapshotVersion = 2
 
 type rawEvidence struct {
 	SchemaVersion  int               `json:"schema_version"`

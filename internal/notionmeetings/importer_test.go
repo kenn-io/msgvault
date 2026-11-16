@@ -1398,9 +1398,9 @@ func TestDecodeArchivedEvidenceVersionProbe(t *testing.T) {
 		name, input string
 		newer       bool
 	}{
-		{"future incompatible", `{"schema_version":2,"summary":[]}`, true},
+		{"future incompatible", `{"schema_version":3,"summary":[]}`, true},
 		{"missing", `{}`, false}, {"truncated", `{"schema_version":3`, false},
-		{"current version missing discovery", `{"schema_version":1}`, false},
+		{"current version missing discovery", `{"schema_version":2}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, found, err := decodeArchivedEvidence([]byte(tc.input), "meeting-1")
@@ -1636,4 +1636,23 @@ func TestImporterRetriesOmittedTranscriptWithSavedText(t *testing.T) {
 	assert.Contains(t, body, "Recovered transcript")
 	assert.Equal(t, int64(1), third.MaintenanceRetries)
 	assert.Empty(t, lastNotionState(t, st, first.SourceID).Pending)
+}
+
+func TestNotionEvidenceWritesVersionTwoAndReadsVersionOne(t *testing.T) {
+	st, _, imp := newImporterFixture(t)
+	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+	raw, err := st.GetMessageRaw(id)
+	require.NoError(t, err)
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &fields))
+	assert.JSONEq(t, `2`, string(fields["schema_version"]))
+	fields["schema_version"] = json.RawMessage(`1`)
+	old, err := json.Marshal(fields)
+	require.NoError(t, err)
+	_, _, found, err := decodeArchivedEvidence(old, "meeting-1")
+	require.NoError(t, err)
+	assert.True(t, found)
 }

@@ -181,7 +181,7 @@ func TestDecodeNotionEvidence(t *testing.T) {
 	assertions.Equal(CoverageUnavailable, missingTree.ActionCoverage)
 	assertions.Equal("incomplete_tree", missingTree.ActionReason)
 
-	unsupported := Decode("notion_meeting_json", []byte(`{"schema_version":2,"canonical":{"summary":"Ignored"}}`), nil)
+	unsupported := Decode("notion_meeting_json", []byte(`{"schema_version":3,"canonical":{"summary":"Ignored"}}`), nil)
 	assertions.Equal(StateUnavailable, unsupported.Summary.State)
 	assertions.Equal("unsupported_schema", unsupported.Summary.Reason)
 	assertions.Equal(CoverageUnavailable, unsupported.ActionCoverage)

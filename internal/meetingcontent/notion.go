@@ -10,7 +10,7 @@ import (
 
 func decodeNotion(fields map[string]jsontext.Value) Content {
 	version, ok := rawInteger(fields["schema_version"])
-	if !ok || version != 1 {
+	if !ok || version < 1 || version > 2 {
 		return unavailableContent("unsupported_schema")
 	}
 	content := baseRecognizedContent()
@@ -28,6 +28,18 @@ func decodeNotion(fields map[string]jsontext.Value) Content {
 		content.Notes = decodeStringField(canonical, "notes")
 		section := decodeStringField(canonical, "transcript")
 		content.Transcript = Transcript{State: section.State, Reason: section.Reason, Text: section.Text}
+	}
+	var incompleteSections []string
+	if json.Unmarshal(fields["incomplete_sections"], &incompleteSections) == nil {
+		if slices.Contains(incompleteSections, "summary") {
+			content.Summary.State, content.Summary.Reason = StateTruncated, ""
+		}
+		if slices.Contains(incompleteSections, "notes") {
+			content.Notes.State, content.Notes.Reason = StateTruncated, ""
+		}
+		if slices.Contains(incompleteSections, "transcript") {
+			content.Transcript.State, content.Transcript.Reason = StateTruncated, ""
+		}
 	}
 	discovery, discoveryOK := notionDiscovery(fields["discovery"])
 	content.Actions, content.ActionCoverage, content.ActionReason = decodeNotionActions(fields, discovery, discoveryOK)
