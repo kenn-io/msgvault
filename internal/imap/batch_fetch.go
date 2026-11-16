@@ -178,10 +178,7 @@ func (c *Client) applyFetchResults(
 			continue
 		}
 		canonicalSourceMessageID := ""
-		var rawSHA256 [32]byte
-		if rfc822MessageID == "" && (c.preferredRawSourceIDs != nil || c.labelsSnapshotFilteredLocked()) {
-			rawSHA256 = sha256.Sum256(rawMIME)
-		}
+		rawSHA256 := c.membershipRawSHA256Locked(rfc822MessageID, rawMIME)
 		if rfc822MessageID == "" && c.preferredRawSourceIDs != nil {
 			if mailbox == c.allMailFolder {
 				// A canonical-mailbox UID is its own durable identity. Raw
@@ -278,6 +275,16 @@ func (c *Client) applyFetchResults(
 		}
 	}
 	return omitted
+}
+
+// membershipRawSHA256Locked returns the raw-byte digest that identifies a
+// message without a Message-ID: for preferred-source matching, or for a
+// filtered sync to find the archived row of restored mail.
+func (c *Client) membershipRawSHA256Locked(rfc822MessageID string, rawMIME []byte) (digest [32]byte) {
+	if rfc822MessageID == "" && (c.preferredRawSourceIDs != nil || c.labelsSnapshotFilteredLocked()) {
+		digest = sha256.Sum256(rawMIME)
+	}
+	return digest
 }
 
 // batchMailboxOrder returns the mailboxes sorted by name, except that

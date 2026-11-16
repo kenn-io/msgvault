@@ -1252,16 +1252,14 @@ func (r *imapMembershipResolver) resolveRawSHA256(
 			FROM messages
 			JOIN message_raw ON message_raw.message_id = messages.id
 			WHERE messages.source_id = ? AND message_raw.raw_format = 'mime'
+			  AND (? OR messages.deleted_from_source_at IS NULL)
 			  AND EXISTS (
 				SELECT 1 FROM imap_message_memberships membership
 				WHERE membership.source_id = messages.source_id
 				  AND membership.message_id = messages.id
 			  )
 		`
-		args := []any{r.sourceID}
-		if !r.includeMarked {
-			query += ` AND messages.deleted_from_source_at IS NULL`
-		}
+		args := []any{r.sourceID, r.includeMarked}
 		if rawSize > 0 {
 			query += ` AND messages.size_estimate = ?`
 			args = append(args, rawSize)
