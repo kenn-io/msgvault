@@ -114,7 +114,7 @@ func TestMeetingRecordICSProjectionUpgrade(t *testing.T) {
 	require.NoError(t, err)
 	_, err = st.db.ExecContext(t.Context(), `UPDATE applied_migrations SET version = 3 WHERE name = 'calendar_event_projection_v1'`)
 	require.NoError(t, err)
-	_, err = st.db.ExecContext(t.Context(), `UPDATE archive_metadata SET value = '44' WHERE key = 'schema_version'`)
+	_, err = st.db.ExecContext(t.Context(), `UPDATE archive_metadata SET value = '45' WHERE key = 'schema_version'`)
 	require.NoError(t, err)
 	require.NoError(t, st.InitSchemaContext(t.Context()))
 	for _, id := range ids {
