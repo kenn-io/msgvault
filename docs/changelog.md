@@ -18,6 +18,43 @@ All notable changes to msgvault, grouped by release.
 
 - Account matching recovers after identity changes. Explore refreshes pending counts and lets you retry matching for each source.
 
+- New Messenger and Instagram inbox messages, including the ones the Page or
+  account sends, are archived as they arrive when the
+  [Meta webhook receiver](usage/meta-webhooks.md#inbox-messages) gets the
+  `messages` and `message_echoes` fields.
+- [Facebook and Instagram messages](usage/meta-messages.md) archive a Page's
+  Messenger inbox or a linked Instagram account's direct messages as searchable
+  chats. Configure `[[facebook_messages]]` or `[[instagram_messages]]`, then run
+  `msgvault source facebook-messages` or `instagram-messages` `add` and `sync`.
+  Meta returns the 20 most recent messages of each conversation.
+- Posts and comments by others that mention a Facebook Page are archived in
+  its comment source when the [Meta webhook receiver](usage/meta-webhooks.md)
+  gets the Page `mention` field.
+- Instagram captions and comments that @-mention a linked account are archived
+  into its [mentions source](usage/instagram-comments.md#archive-media-that-tags-the-account)
+  when the Meta webhook receiver gets the `mentions` field.
+- [Meta webhooks](usage/meta-webhooks.md) archive new Instagram comments and
+  live comments as they arrive. Subscribe the Instagram object to `comments`
+  and `live_comments`.
+- [Meta webhooks](usage/meta-webhooks.md) archive new, edited, hidden and
+  removed Facebook Page comments as they happen. Configure `[meta_webhooks]`
+  and subscribe the Page to the `feed` field; polling sync stays available for
+  backfill.
+- [Instagram mentions sync](usage/instagram-comments.md#archive-media-that-tags-the-account)
+  archives media in which other accounts tag a linked professional account, in a
+  separate opt-in source. Set `mentions = true` on the profile, then run
+  `msgvault source instagram-mentions add` and `sync`.
+- [Reply publicly](usage/facebook-comments.md#reply-to-comments) to an archived
+  Facebook Page or Instagram comment with `msgvault comment reply`. The reply
+  is archived straight away, and msgvault refuses to send the same text to a
+  comment twice. Each profile opts in with `"reply"` in `actions`.
+- [Hide, unhide, or delete](usage/facebook-comments.md#hide-or-delete-comments)
+  an archived Facebook Page or Instagram comment with `msgvault comment moderate`.
+  Each profile opts in with `actions`, and delete needs `--yes`.
+- Instagram comment sync can also archive comments on the account's ads that
+  its media list leaves out. Set `ad_account_id` and `ad_token_env` on the
+  profile; see [Include ad media](usage/instagram-comments.md#include-ad-media).
+
 - An interrupted `sync-full` prints a command to run again with the same account, filters, configuration, and logging flags. It exits with status 130; on Windows, run the command in PowerShell 7.3 or later.
 
 ## 0.25.0
