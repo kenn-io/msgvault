@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/jsonexact"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -396,7 +399,6 @@ func attributeValidationValue(value any) any {
 	}
 }
 
-
 func mapInternalError(err error) error {
 	if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
 		return &jsonrpc.Error{
@@ -528,7 +530,11 @@ func newMCPServerWithPolicy(
 	}
 
 	for _, definition := range operations {
-		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations, opts.downloads), confirmation))
+		if definition.family == OperationFamilyAttributes {
+			s.AddTool(definition.definition.tool(), exactAttributeToolHandler(definition, opts.Operations, confirmation))
+		} else {
+			sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations, opts.downloads), confirmation))
+		}
 	}
 
 	return s

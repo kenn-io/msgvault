@@ -91,7 +91,7 @@ func (o *attributePatchOptions) GetBody() any { return o.changes }
 
 func attributeRefusal(code string) bool {
 	switch code {
-	case "attribute_uniqueness_unsupported", "attribute_invalid", "attribute_value_invalid", "attribute_definition_not_found", "attribute_value_not_found", "attribute_definition_slug_conflict", "attribute_definition_universal_id_conflict", "attribute_definition_revision_conflict", "attribute_definition_not_deletable", "attribute_definition_has_values", "attribute_definition_not_writable", "attribute_definition_inactive", "attribute_value_conflict", "invalid_attribute_slug", "invalid_expected_value_id", "invalid_ordinal", "invalid_object_type", "invalid_attribute_definition_id", "invalid_if_match", "attributes_unavailable", "server_busy":
+	case "attribute_uniqueness_unsupported", "attribute_invalid", "attribute_value_invalid", "attribute_definition_not_found", "attribute_value_not_found", "attribute_definition_slug_conflict", "attribute_definition_universal_id_conflict", "attribute_definition_revision_conflict", "attribute_definition_not_deletable", "attribute_definition_has_values", "attribute_definition_not_writable", "attribute_definition_inactive", "attribute_value_conflict", "invalid_attribute_slug", "invalid_expected_value_id", "invalid_expected_empty", "invalid_ordinal", "invalid_object_type", "invalid_attribute_definition_id", "invalid_if_match", "attributes_unavailable", "server_busy":
 		return true
 	}
 	return false
@@ -125,13 +125,19 @@ func attributeRequest(name string, args map[string]any) (string, string, runtime
 	case "set_person_attribute":
 		in, err := decodeMCPOperationArguments[attributeSetArgs](args)
 		value, _ := args["value"].(map[string]any)
-		if err != nil || store.ValidateAttributeSlug(in.Slug) != nil || unsafeAttributeJSON(value["json"]) {
+		if err != nil || in.PersonID <= 0 || store.ValidateAttributeSlug(in.Slug) != nil || unsafeAttributeJSON(value["json"]) {
 			return "", "", nil, false
+		}
+		if in.Source == nil || strings.TrimSpace(string(*in.Source)) == "" {
+			in.Source = new(generated.SetPersonAttributeRequestSourceEnrichment)
+		}
+		if in.Actor == nil || strings.TrimSpace(*in.Actor) == "" {
+			in.Actor = new("mcp")
 		}
 		return http.MethodPut, "/api/v1/people/{id}/attributes/{slug}", &generated.SetPersonAttributeRequestOptions{PathParams: &generated.SetPersonAttributePath{ID: in.PersonID, Slug: in.Slug}, Query: &generated.SetPersonAttributeQuery{DryRun: in.DryRun}, Body: &in.SetPersonAttributeBody}, true
 	case "clear_person_attribute":
 		in, err := decodeMCPOperationArguments[attributeClearArgs](args)
-		if err != nil || store.ValidateAttributeSlug(in.Slug) != nil {
+		if err != nil || in.PersonID <= 0 || store.ValidateAttributeSlug(in.Slug) != nil {
 			return "", "", nil, false
 		}
 		return http.MethodDelete, "/api/v1/people/{id}/attributes/{slug}", &generated.ClearPersonAttributeRequestOptions{PathParams: &generated.ClearPersonAttributePath{ID: in.PersonID, Slug: in.Slug}, Query: &generated.ClearPersonAttributeQuery{Ordinal: in.Ordinal, ExpectedValueID: in.ExpectedValueID, DryRun: in.DryRun}}, true
@@ -140,7 +146,7 @@ func attributeRequest(name string, args map[string]any) (string, string, runtime
 		if err != nil {
 			return "", "", nil, false
 		}
-		return http.MethodGet, "/api/v1/attribute-definitions", &generated.ListAttributeDefinitionsRequestOptions{Query: &generated.ListAttributeDefinitionsQuery{ObjectType: in.ObjectType, IncludeHidden: in.IncludeHidden}}, true
+		return http.MethodGet, "/api/v1/attribute-definitions", &generated.ListAttributeDefinitionsRequestOptions{Query: &generated.ListAttributeDefinitionsQuery{ObjectType: new("person"), IncludeHidden: in.IncludeHidden}}, true
 	case "get_attribute_definition", "create_attribute_definition", "patch_attribute_definition", "delete_attribute_definition":
 		in, err := decodeMCPOperationArguments[attributeDefinitionArgs](args)
 		if err != nil {
@@ -148,6 +154,10 @@ func attributeRequest(name string, args map[string]any) (string, string, runtime
 		}
 		switch name {
 		case "create_attribute_definition":
+			if in.Definition == nil {
+				return "", "", nil, false
+			}
+			in.Definition.ObjectType = generated.CreateAttributeDefinitionRequestObjectTypePerson
 			return http.MethodPost, "/api/v1/attribute-definitions", &generated.CreateAttributeDefinitionRequestOptions{Body: in.Definition}, true
 		case "get_attribute_definition":
 			return http.MethodGet, "/api/v1/attribute-definitions/{id}", &generated.GetAttributeDefinitionRequestOptions{PathParams: &generated.GetAttributeDefinitionPath{ID: in.ID}}, true
@@ -264,7 +274,6 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 		}
 		previewArgs := maps.Clone(args)
 		previewArgs["dry_run"] = true
-		delete(previewArgs, "expected_value_id")
 		result, _, err := b.executeRecordAttributeOperation(ctx, name, previewArgs)
 		if err != nil || result == nil || result.IsError {
 			return "", true, attributeContextRefusal(result)

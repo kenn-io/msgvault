@@ -221,7 +221,7 @@ func TestPersonAttributeSupersedeHistoryCASAndDryRun(t *testing.T) {
 	_, err = st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
 		PersonID: person, DefinitionSlug: store.AttributeSlugPrimaryChannel,
 		Value:  store.AttributeValue{Type: store.AttributeValueText, Text: new("email")},
-		Source: store.ProvenanceUser, ExpectedEmpty: true,
+		Source: store.ProvenanceUser, ExpectedValueID: new(int64),
 	})
 	require.ErrorIs(err, store.ErrAttributeValueConflict)
 	require.ErrorAs(err, &conflict)
