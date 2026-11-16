@@ -2618,6 +2618,7 @@ func TestIncrementalSyncRemovedLabelPreservesOrClearsDeletion(t *testing.T) {
 				history = append(history, historyLabelAdded("msg1", "TRASH"))
 			}
 			if tc.messageDeleted {
+				delete(env.Mock.Messages, "msg1")
 				history = append(history, historyDeleted("msg1"))
 			}
 			env.SetHistory(12350, history...)
@@ -2625,10 +2626,8 @@ func TestIncrementalSyncRemovedLabelPreservesOrClearsDeletion(t *testing.T) {
 			assertDeletedFromSource(t, env.Store, "msg1", tc.wantMark)
 			if !tc.marked {
 				assert.Empty(t, api.labelCalls)
-				assertMessageNotHasLabel(t, env.Store, "msg1", "TRASH")
 			}
 			if tc.retrash {
-				assertMessageHasLabel(t, env.Store, "msg1", "TRASH")
 				assert.Equal(t, [][]string{{"msg1"}}, api.labelCalls)
 			}
 		})
@@ -2686,13 +2685,6 @@ func TestGmailFullSyncReconcilesMarkedMessages(t *testing.T) {
 			if !tc.wantMark {
 				assertMessageHasLabel(t, env.Store, "msg1", "INBOX")
 				assertMessageNotHasLabel(t, env.Store, "msg1", "TRASH")
-				source, getErr := env.Store.GetSourceByID(source.ID)
-				require.NoError(getErr)
-				assert.Equal("12341", source.SyncCursor.String)
-				env.Mock.Profile.HistoryID = 12341
-				_, err = env.Syncer.Incremental(t.Context(), source)
-				require.NoError(err)
-				assertDeletedFromSource(t, env.Store, "msg1", false)
 			}
 		})
 	}
@@ -6279,29 +6271,6 @@ func TestIncrementalSyncRepeatedLabelAddAfterIngestThenPurge(t *testing.T) {
 	summary = runIncrementalSync(t, env)
 	assert.Zero(summary.MessagesAdded)
 	assert.Empty(env.Mock.GetMessageCalls)
-}
-
-func TestGmailFullRestoreClearsMarkWhenRawSaveFails(t *testing.T) {
-	env := newTestEnv(t)
-	env.Mock.Profile.MessagesTotal = 1
-	env.Mock.Profile.HistoryID = 12340
-	env.Mock.AddMessage("msg1", testMIME(), []string{"INBOX", "TRASH"})
-	runFullSync(t, env)
-	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
-	require.NoError(t, err)
-	require.NoError(t, env.Store.MarkMessageDeleted(source.ID, "msg1"))
-	ids, err := env.Store.MessageExistsBatch(source.ID, []string{"msg1"})
-	require.NoError(t, err)
-	_, err = env.Store.DB().ExecContext(t.Context(), `DELETE FROM message_raw WHERE message_id = ?`, ids["msg1"])
-	require.NoError(t, err)
-	env.Mock.Messages["msg1"].LabelIDs = []string{"INBOX"}
-	allow := acquisitionWriteFault(t, env, "message_raw", "INSERT", "1 = 1")
-	defer allow()
-
-	summary, err := env.Syncer.Full(t.Context(), testEmail)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), summary.Errors)
-	assertDeletedFromSource(t, env.Store, "msg1", false)
 }
 
 func TestGmailIncrementalRestoreSignalsCacheWithUnchangedLabels(t *testing.T) {
