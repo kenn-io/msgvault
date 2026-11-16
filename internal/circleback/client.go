@@ -38,11 +38,12 @@ type ToolInfo struct {
 // without risking silent data loss.
 var ErrContract = errors.New("circleback MCP contract error")
 
-// errRateLimited marks a provider rate-limit rejection. It is the only
-// tool-result error worth retrying: unlike a contract or missing-result
-// failure it is transient and clears on its own, and without a retry it
-// fails the whole sync run. A first backfill issues one detail call per
-// five meetings, so a large history reliably trips the provider's limit.
+// errRateLimited marks a provider rate-limit rejection, in band or as an
+// HTTP 429. It is the only error worth retrying: unlike a contract or
+// missing-result failure it is transient and clears on its own, and without
+// a retry it fails the whole sync run. A first backfill issues one detail
+// call per five meetings, so a large history reliably trips the provider's
+// limit.
 var errRateLimited = errors.New("circleback rate limited")
 
 const (
@@ -163,6 +164,13 @@ func (s *Session) callToolOnce(ctx context.Context, name string, args map[string
 	}
 	res, err := s.cs.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
 	if err != nil {
+		// An HTTP 429 arrives here as a transport rejection ("rejected by
+		// transport: ... Too Many Requests") instead of a tool result. The
+		// SDK keeps the session open after it, so it backs off and retries
+		// like an in-band rate limit.
+		if isRateLimitMessage(err.Error()) {
+			return nil, fmt.Errorf("circleback tool %s: %w: %w", name, errRateLimited, err)
+		}
 		return nil, fmt.Errorf("circleback tool %s: %w", name, err)
 	}
 	payload, err := toolResultJSON(res)
@@ -174,11 +182,12 @@ func (s *Session) callToolOnce(ctx context.Context, name string, args map[string
 	return payload, nil
 }
 
-// isRateLimitMessage reports whether a tool-result error text is a provider
-// rate-limit rejection. Circleback reports these in band as a plain message
-// ("Rate limit exceeded. Please try again later.") with no status code or
-// machine-readable field, so matching on the text is the only signal
-// available; the extra variants cover equivalent phrasings.
+// isRateLimitMessage reports whether an error text is a provider rate-limit
+// rejection. Circleback reports these in band as a plain message ("Rate limit
+// exceeded. Please try again later.") with no status code or machine-readable
+// field, and the MCP SDK reports an HTTP 429 only as status text, so matching
+// on the text is the only signal available; the extra variants cover
+// equivalent phrasings.
 func isRateLimitMessage(message string) bool {
 	message = strings.ToLower(message)
 	for _, marker := range []string{"rate limit", "rate-limit", "too many requests", "429"} {
