@@ -1772,6 +1772,17 @@ export const getHealth = (
   );
 };
 /**
+ * @summary Refresh identity datasets
+ */
+export const refreshIdentityCache = (
+  options?: SecondParameter<typeof orvalFetch<IdentityLinkResponse>>,
+) => {
+  return orvalFetch<IdentityLinkResponse>(
+    { url: `/api/v1/identity/cache-refresh`, method: "POST" },
+    options,
+  );
+};
+/**
  * @summary Assert two participants are the same person
  */
 export const linkIdentityParticipants = (
