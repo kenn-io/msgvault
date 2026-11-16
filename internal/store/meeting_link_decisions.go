@@ -195,6 +195,7 @@ func (s *Store) meetingAutomaticRecordForEndpoint(ctx context.Context, endpoint 
 	if err != nil {
 		return MeetingRecord{}, err
 	}
+	var series bool
 	if ref.Kind == meetingRefEvent && endpoint.Key != "" {
 		rows, err := s.meetingEventRows(ctx, `e.message_id = ?`, []any{endpoint.ID}, budget)
 		if err != nil {
@@ -202,9 +203,42 @@ func (s *Store) meetingAutomaticRecordForEndpoint(ctx context.Context, endpoint 
 		}
 		if len(rows) > 0 && rows[0].Event.Kind != calendarSeriesKind {
 			ref.Identity = calrecur.Identity{}
+		} else if len(rows) > 0 {
+			series = true
 		}
 	}
-	return s.meetingAutomaticRecord(ctx, ref, budget, notesOnly)
+	record, err := s.meetingAutomaticRecord(ctx, ref, budget, notesOnly)
+	if err != nil || !series || notesOnly || !slices.ContainsFunc(record.Links, func(link MeetingLink) bool { return link.MessageID == endpoint.ID }) {
+		return record, err
+	}
+	var hasChoices bool
+	if err := s.meetingSQLReader(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meeting_link_decisions WHERE (left_kind='evt' AND left_key=?) OR (right_kind='evt' AND right_key=?))`, endpoint.Key, endpoint.Key).Scan(&hasChoices); err != nil || !hasChoices {
+		return record, err
+	}
+	edits, err := s.meetingOccurrenceEdits(ctx, endpoint, budget)
+	if err != nil {
+		return record, err
+	}
+	var replacements []MeetingLink
+	for _, edit := range edits {
+		editRef := MeetingLinkRef{Kind: meetingRefEvent, MessageID: edit.MessageID}
+		copyRecord, err := s.meetingAutomaticRecord(ctx, editRef, budget, false)
+		if err != nil {
+			return record, err
+		}
+		for _, link := range copyRecord.Links {
+			if link.MessageID == edit.MessageID {
+				replacements = append(replacements, link)
+				record.MessageIDs = append(record.MessageIDs, copyRecord.MessageIDs...)
+				record.Unexpandable = append(record.Unexpandable, copyRecord.Unexpandable...)
+			}
+		}
+	}
+	if len(replacements) > 0 {
+		record.Links = slices.DeleteFunc(record.Links, func(link MeetingLink) bool { return link.MessageID == endpoint.ID })
+		record.Links = append(record.Links, replacements...)
+	}
+	return record, nil
 }
 
 // DecideMeetingLinkContext saves or clears a choice between two copies.

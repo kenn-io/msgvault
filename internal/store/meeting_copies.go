@@ -86,6 +86,31 @@ func (s *Store) meetingCopies(ctx context.Context, id int64) ([]int64, error) {
 	return s.meetingCopyLookup(ctx, meetingDecisionEndpoint{ID: id})
 }
 
+// meetingOccurrenceEdits finds the visible edits of one copied occurrence.
+func (s *Store) meetingOccurrenceEdits(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) ([]CalendarEventRow, error) {
+	ids, err := s.meetingCopyLookup(ctx, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	var edits []CalendarEventRow
+	for batch := range slices.Chunk(ids, 100) {
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
+		}
+		rows, err := s.meetingEventRows(ctx, `e.kind='exception' AND e.message_id IN (`+placeholders(len(batch))+`)`, args, budget)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if row.Event.Original != nil && row.Event.Original.Key() == endpoint.Key {
+				edits = append(edits, row)
+			}
+		}
+	}
+	return edits, nil
+}
+
 // meetingOccurrenceSeries finds the visible series directly or through copies.
 func (s *Store) meetingOccurrenceSeries(ctx context.Context, id, sourceID int64, providerID string, original calrecur.Identity, budget *int) (int64, error) {
 	reader := s.meetingSQLReader(ctx)

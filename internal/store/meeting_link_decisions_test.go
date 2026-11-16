@@ -2082,6 +2082,7 @@ func TestMeetingRecordWithoutChoicesAvoidsCopyScan(t *testing.T) {
 	r := require.New(t)
 	base := newRFC822IDBackfillBackendStore(t)
 	_, note := projectionFixture(t, base, "no-choice-note", "meeting_json", `{}`)
+	_, series := calendarFixture(t, base, "no-choice-series", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
 	var copyScans int
 	gate := &meetingProjectionGate{before: func(_ context.Context, query string, _ []driver.NamedValue) error {
 		if strings.HasPrefix(query, "WITH RECURSIVE") && strings.Contains(query, "meeting_copy_survivors") {
@@ -2093,6 +2094,8 @@ func TestMeetingRecordWithoutChoicesAvoidsCopyScan(t *testing.T) {
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
 	r.NoError(err)
 	r.Equal([]int64{note}, record.MessageIDs)
+	_, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: series, Identity: occurrenceIdentity(t, "20270314T100000Z")})
+	r.NoError(err)
 	r.Zero(copyScans)
 }
 
@@ -2271,6 +2274,7 @@ func TestMeetingDecisionRemoveSourceWithKeptAndLinkedCopies(t *testing.T) {
 
 func TestMeetingDecisionDedupEditedOccurrenceWithoutSeries(t *testing.T) {
 	r := require.New(t)
+	a := assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, series := calendarFixture(t, st, "copy-series", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, "original@example.com")
 	raw := `{"id":"edit","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T10:00:00Z"},"end":{"dateTime":"2027-03-15T11:00:00Z"}}`
@@ -2286,10 +2290,29 @@ func TestMeetingDecisionDedupEditedOccurrenceWithoutSeries(t *testing.T) {
 		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: id})
 		r.NoError(err)
 		r.Contains(record.MessageIDs, note)
+		r.Len(record.Links, 1)
+		r.NotNil(record.Links[0].Start)
+		r.NotNil(record.Links[0].End)
+		a.Equal(fmt.Sprintf("evt:%d", kept), record.Links[0].Ref)
+		a.Equal(kept, record.Links[0].MessageID)
+		a.Equal(time.Date(2027, 3, 15, 10, 0, 0, 0, time.UTC), *record.Links[0].Start)
+		a.Equal(time.Date(2027, 3, 15, 11, 0, 0, 0, time.UTC), *record.Links[0].End)
 	}
 	record, err := st.MeetingRecordContext(t.Context(), noteRef)
 	r.NoError(err)
 	r.Len(record.Links, 1)
+	r.NotNil(record.Links[0].Start)
+	r.NotNil(record.Links[0].End)
+	a.Equal(fmt.Sprintf("evt:%d", kept), record.Links[0].Ref)
+	a.Equal(kept, record.Links[0].MessageID)
+	a.Equal(time.Date(2027, 3, 15, 10, 0, 0, 0, time.UTC), *record.Links[0].Start)
+	a.Equal(time.Date(2027, 3, 15, 11, 0, 0, 0, time.UTC), *record.Links[0].End)
+	var savedID int64
+	var savedKey string
+	err = st.db.QueryRowContext(t.Context(), `SELECT left_message_id,left_key FROM meeting_link_decisions WHERE left_kind='evt'`).Scan(&savedID, &savedKey)
+	r.NoError(err)
+	a.Equal(series, savedID)
+	a.Equal("20270314T100000Z", savedKey)
 	second := MeetingLinkRef{Kind: "evt", MessageID: series, Identity: occurrenceIdentity(t, "20270321T100000Z")}
 	record, err = st.MeetingRecordContext(t.Context(), second)
 	r.NoError(err)
