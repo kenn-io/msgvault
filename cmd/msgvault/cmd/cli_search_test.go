@@ -2,12 +2,12 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json/v2"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/clisearch"
-	"hegel.dev/go/hegel"
+	"pgregory.net/rapid"
 )
 
 var cliSearchTasks = []struct {
@@ -47,7 +47,12 @@ var cliSearchExcluded = []string{
 	"msgvault person provider login", "msgvault person provider enroll-codex",
 }
 
-func executeCLIDiscovery(tb testing.TB, args ...string) (string, string, error) {
+func executeCLIDiscovery(tb interface {
+	Helper()
+	Errorf(string, ...any)
+	FailNow()
+	Context() context.Context
+}, args ...string) (string, string, error) {
 	tb.Helper()
 	cli, _, err := rootCmd.Find([]string{"cli"})
 	require.NoError(tb, err)
@@ -63,13 +68,6 @@ func executeCLIDiscovery(tb testing.TB, args ...string) (string, string, error) 
 	rootCmd.SetArgs(args)
 	err = executeRootContext(tb.Context(), rootCmd)
 	return stdout.String(), stderr.String(), err
-}
-
-func skipHegelWithoutEmbeddedRuntime(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS == "darwin" && runtime.GOARCH == "amd64" {
-		t.Skip("Hegel does not bundle libhegel for darwin/amd64")
-	}
 }
 
 // Discovery must not inherit the archive or delegated-client lifecycle.
@@ -281,15 +279,14 @@ func (w *cliSearchFailWriter) Write(p []byte) (int, error) {
 }
 
 func TestCLISearchOutputErrors(t *testing.T) {
-	skipHegelWithoutEmbeddedRuntime(t)
 	if helpTestSubprocess(t) {
 		return
 	}
 	ensureHelpLayout(rootCmd)
-	hegel.Test(t, func(ht *hegel.T) {
-		asJSON := hegel.Draw(ht, hegel.Booleans())
-		query := "zzzxqvzzzxqv " + hegel.Draw(ht, hegel.Text())
-		if hegel.Draw(ht, hegel.Booleans()) {
+	rapid.Check(t, func(ht *rapid.T) {
+		asJSON := rapid.Bool().Draw(ht, "asJSON")
+		query := "zzzxqvzzzxqv " + rapid.String().Draw(ht, "suffix")
+		if rapid.Bool().Draw(ht, "withMessage") {
 			query += " message"
 		}
 		args := []string{"cli", "search"}
@@ -300,7 +297,7 @@ func TestCLISearchOutputErrors(t *testing.T) {
 		complete, diagnostic, err := executeCLIDiscovery(ht, args...)
 		require.NoError(ht, err, "%s", diagnostic)
 		require.NotEmpty(ht, complete)
-		cutoff := hegel.Draw(ht, hegel.Integers(0, len(complete)-1))
+		cutoff := rapid.IntRange(0, len(complete)-1).Draw(ht, "cutoff")
 		rootCmd.SetOut(&cliSearchFailWriter{remaining: cutoff})
 		var stderr bytes.Buffer
 		rootCmd.SetErr(&stderr)
@@ -327,15 +324,14 @@ func TestCLISearchHelpLayoutStable(t *testing.T) {
 }
 
 func TestCLISearchResultEligibility(t *testing.T) {
-	skipHegelWithoutEmbeddedRuntime(t)
 	if helpTestSubprocess(t) {
 		return
 	}
 	ensureHelpLayout(rootCmd)
-	hegel.Test(t, func(ht *hegel.T) {
-		task := cliSearchTasks[hegel.Draw(ht, hegel.Integers(0, len(cliSearchTasks)-1))]
-		query := task.query + " " + hegel.Draw(ht, hegel.Text())
-		limit := hegel.Draw(ht, hegel.Integers(1, 20))
+	rapid.Check(t, func(ht *rapid.T) {
+		task := cliSearchTasks[rapid.IntRange(0, len(cliSearchTasks)-1).Draw(ht, "task")]
+		query := task.query + " " + rapid.String().Draw(ht, "suffix")
+		limit := rapid.IntRange(1, 20).Draw(ht, "limit")
 		results := clisearch.Search(rootCmd, query, limit, cliSearchOptions())
 		require.NotEmpty(ht, results)
 		for _, result := range results {
