@@ -491,7 +491,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: build archive snapshot: %w", id, snapshotErr))
 			continue
 		}
-		if len(snapshot.Raw) > meetingcontent.MaxRawBytes {
+		if len(snapshot.Raw) > meetingcontent.MaxNotionRawBytes {
 			sum.PartialCoverage = true
 			progress("meeting " + id + ": evidence exceeds reader limit; skipped")
 			continue

@@ -638,7 +638,7 @@ func TestImporterUsesPageTranscriptWhenBlockUnavailable(t *testing.T) {
 	assert.Equal(t, "Page transcript", meetingcontent.Decode(RawFormat, raw, nil).Transcript.Text)
 }
 
-func TestImporterKeepsDataSourceSnapshotWhenMergedEvidenceExceedsLimit(t *testing.T) {
+func TestImporterKeepsIncompleteSectionAndSavesLargeEdit(t *testing.T) {
 	st, source, imp := newImporterFixture(t)
 	meeting := hydrationMeeting()
 	meeting.Parent = Parent{Type: "data_source_id"}
@@ -646,42 +646,28 @@ func TestImporterKeepsDataSourceSnapshotWhenMergedEvidenceExceedsLimit(t *testin
 	meeting.MeetingNotes.Children.TranscriptBlockID = ""
 	source.query.Results = []MeetingNote{meeting}
 	source.blocks["meeting-1"].Parent = meeting.Parent
-	summary := paragraph("summary-1", "", true)
-	notes := paragraph("notes-1", "", true)
+	summary := paragraph("summary-1", strings.Repeat("s", 17<<20), false)
 	source.blocks["summary-1"] = &summary
-	source.blocks["notes-1"] = &notes
-	seven := strings.Repeat("s", 7<<20)
-	largeSummary := paragraph("summary-child-1", seven, false)
-	secondSummary := paragraph("summary-child-2", seven, false)
-	source.children["summary-1"] = map[string]*BlockPage{
-		"":     {Results: []Block{largeSummary}, HasMore: true, NextCursor: "next", Raw: json.RawMessage(`{"results":[` + string(largeSummary.Raw) + `],"has_more":true,"next_cursor":"next"}`)},
-		"next": {Results: []Block{secondSummary}, Raw: json.RawMessage(`{"results":[` + string(secondSummary.Raw) + `],"has_more":false}`)},
-	}
 	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(t, err)
 	var id int64
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
-	before, err := st.GetMessageRaw(id)
-	require.NoError(t, err)
-	assert.Equal(t, meetingcontent.StateAvailable, meetingcontent.Decode(RawFormat, before, nil).Summary.State)
-	checksum := checksumBytes(before)
+
 	source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"}}
-	ten := strings.Repeat("n", 10<<20)
-	largeNotes := paragraph("notes-child-1", ten, false)
-	secondNotes := paragraph("notes-child-2", ten, false)
-	thirdNotes := paragraph("notes-child-3", ten, false)
-	source.children["notes-1"] = map[string]*BlockPage{
-		"":     {Results: []Block{largeNotes}, HasMore: true, NextCursor: "next", Raw: json.RawMessage(`{"results":[` + string(largeNotes.Raw) + `],"has_more":true,"next_cursor":"next"}`)},
-		"next": {Results: []Block{secondNotes}, HasMore: true, NextCursor: "last", Raw: json.RawMessage(`{"results":[` + string(secondNotes.Raw) + `],"has_more":true,"next_cursor":"last"}`)},
-		"last": {Results: []Block{thirdNotes}, Raw: json.RawMessage(`{"results":[` + string(thirdNotes.Raw) + `],"has_more":false}`)},
-	}
+	notes := paragraph("notes-1", "Edited notes "+strings.Repeat("n", 17<<20), false)
+	source.blocks["notes-1"] = &notes
 	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(t, err)
 	assert.True(t, result.PartialCoverage)
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Edited notes ")
 	raw, err := st.GetMessageRaw(id)
 	require.NoError(t, err)
-	assert.Equal(t, checksum, checksumBytes(raw))
-	assert.Equal(t, meetingcontent.StateAvailable, meetingcontent.Decode(RawFormat, raw, nil).Summary.State)
+	assert.Greater(t, len(raw), meetingcontent.MaxRawBytes)
+	content := meetingcontent.Decode(RawFormat, raw, nil)
+	assert.Equal(t, meetingcontent.StateAvailable, content.Summary.State)
+	assert.Contains(t, content.Notes.Text, "Edited notes ")
 	assert.Len(t, lastNotionState(t, st, first.SourceID).Pending, 1)
 }
 

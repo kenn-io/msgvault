@@ -205,7 +205,7 @@ func notionTreeBlocks(raw jsontext.Value, expectedRootID string) ([]jsontext.Val
 	if legacyComplete && !complete {
 		return legacy.blocks, true
 	}
-	if complete && !legacyComplete && (!legacy.consumedNested || legacy.parentMismatch) {
+	if complete && !legacyComplete {
 		return traversal.blocks, true
 	}
 	// Both interpretations may assign a page to different blocks. Keep only
@@ -218,15 +218,13 @@ func notionTreeBlocks(raw jsontext.Value, expectedRootID string) ([]jsontext.Val
 }
 
 type notionTreeTraversal struct {
-	pages          []jsontext.Value
-	nextPage       int
-	pageVisits     int
-	blockVisits    int
-	blocks         []jsontext.Value
-	includeNested  bool
-	sawNested      bool
-	consumedNested bool
-	parentMismatch bool
+	pages         []jsontext.Value
+	nextPage      int
+	pageVisits    int
+	blockVisits   int
+	blocks        []jsontext.Value
+	includeNested bool
+	sawNested     bool
 }
 
 func (t *notionTreeTraversal) readChildren(depth int, parentID string) bool {
@@ -264,7 +262,6 @@ func (t *notionTreeTraversal) readChildren(depth int, parentID string) bool {
 			pageParent = block.Parent.BlockID
 		}
 		if parentKnown && pageParent != parentID {
-			t.parentMismatch = true
 			return false
 		}
 
@@ -284,9 +281,6 @@ func (t *notionTreeTraversal) readChildren(depth int, parentID string) bool {
 			if header.Type == "meeting_notes" && header.HasChildren {
 				t.sawNested = true
 				if t.includeNested {
-					if t.nextPage < len(t.pages) {
-						t.consumedNested = true
-					}
 					start := len(t.blocks)
 					if !t.readChildren(depth+1, childID) {
 						childrenComplete = false
