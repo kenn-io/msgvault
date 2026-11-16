@@ -2381,7 +2381,7 @@ func TestPersonFactDecisionOutcomeOpenAPIEnum(t *testing.T) {
 		require.NotNil(schema)
 		outcome := schema.Properties["outcome"]
 		require.NotNil(outcome)
-		assert.ElementsMatch([]any{"saved", "value-retired", "current-value-kept", "pinned-value-kept", "too-close-to-choose", "not-used", nil}, outcome.Enum)
+		assert.ElementsMatch([]any{"saved", "value-retired", "current-value-kept", "pinned-value-kept", "too-close-to-choose", "not-used"}, outcome.Enum)
 		assert.True(outcome.Nullable)
 	}
 }

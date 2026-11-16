@@ -719,7 +719,6 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 	}
 	sortPersonFactProjectionPlans(resolution.Projections)
 	changed := false
-	retiredClaims := make(map[string]bool)
 	plannedCurrent := make(map[personfacts.ProjectionRef]struct{})
 	for _, plan := range resolution.Projections {
 		if plan.CurrentRef != nil {
@@ -741,9 +740,6 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 		if ref != nil {
 			resolution.Decisions[index].Projection = ref
 		}
-		if plan.Operation == personfacts.ProjectionRetire && planChanged {
-			retiredClaims[plan.ClaimKey] = true
-		}
 		// Only a successfully applied, supported system retirement is
 		// deterministic removal. retireUnsupported/retireExpired below
 		// remain attributable to the old inferred contributor.
@@ -761,7 +757,6 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 			return false, retireErr
 		}
 		for _, projection := range retired {
-			retiredClaims[projection.ClaimKey] = true
 			if index, exists := decisionIndex[projection.ClaimKey]; exists && resolution.Decisions[index].Projection == nil {
 				ref := projection.Ref
 				resolution.Decisions[index].Projection = &ref
@@ -777,7 +772,6 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 			return false, retireErr
 		}
 		for _, projection := range retired {
-			retiredClaims[projection.ClaimKey] = true
 			if index, exists := decisionIndex[projection.ClaimKey]; exists && resolution.Decisions[index].Projection == nil {
 				ref := projection.Ref
 				resolution.Decisions[index].Projection = &ref
@@ -823,7 +817,7 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 			closeCompetition = difference > -resolver.Policy.ReplacementMargin && difference < resolver.Policy.ReplacementMargin
 		}
 		blockedRemoval := descriptor.Cardinality == personfacts.CardinalitySingle && matchesCurrent && claim.Claim.Relation != personfacts.RelationSupport && decision.Score.Total >= resolver.Policy.ApplyThreshold
-		outcome, _ := personfacts.DecisionOutcomeFor(personfacts.OutcomeFacts{Decision: decision, Relation: claim.Claim.Relation, HasCurrent: hasCurrent, MatchesCurrent: matchesCurrent, Retired: retiredClaims[decision.ClaimKey], CloseCompetition: closeCompetition, Duplicate: duplicate, BlockedRemoval: blockedRemoval})
+		outcome, _ := personfacts.DecisionOutcomeFor(personfacts.OutcomeFacts{Decision: decision, Relation: claim.Claim.Relation, HasCurrent: hasCurrent, MatchesCurrent: matchesCurrent, CloseCompetition: closeCompetition, Duplicate: duplicate, BlockedRemoval: blockedRemoval})
 		decision.Outcome = &outcome
 		if err := s.insertPersonFactDecisionTx(ctx, tx, generation.PersonID, shell.ID,
 			resolution.InputFingerprint, decision); err != nil {

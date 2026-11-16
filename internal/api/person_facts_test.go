@@ -121,6 +121,39 @@ func TestPersonFactHistoryHTTPIsBoundedNewestFirstNonNullAndNoStore(t *testing.T
 	assertions.Equal(strings.Repeat("a", 64), claimBody.Claims[0]["program_fingerprint"])
 }
 
+func TestPersonFactEvidenceHTTPFiltersIDBeforePagination(t *testing.T) {
+	t.Parallel()
+	srv, st, personID, targets := newPersonFactAPIFixture(t)
+	target := targets[store.AttributeSlugPrimaryChannel]
+	applyPersonFactAPIGeneration(t, st, personID, target, "second", `"phone"`)
+	rows, err := st.ListPersonFactEvidenceContext(t.Context(), personID, personfacts.EvidenceFilter{})
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	base := fmt.Sprintf("/api/v1/people/%d/fact-evidence?evidence_id=%d", personID, rows[1].ID)
+	for _, suffix := range []string{"", "&limit=1", "&target=" + personFactAPITargetQuery(target)} {
+		response := doRequest(t, srv.Router(), http.MethodGet, base+suffix, nil, nil)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var body PersonFactEvidenceResponse
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+		require.Len(t, body.Evidence, 1)
+		assert.Equal(t, rows[1].ID, body.Evidence[0].ID)
+	}
+	for _, path := range []string{base + "&offset=1", fmt.Sprintf("/api/v1/people/%d/fact-evidence?evidence_id=%d", personID, rows[0].ID+100000)} {
+		response := doRequest(t, srv.Router(), http.MethodGet, path, nil, nil)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		assert.JSONEq(t, `{"evidence":[]}`, response.Body.String())
+	}
+	var otherID int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid) VALUES ('other-evidence-person') RETURNING id`).Scan(&otherID))
+	response := doRequest(t, srv.Router(), http.MethodGet, fmt.Sprintf("/api/v1/people/%d/fact-evidence?evidence_id=%d", otherID, rows[1].ID), nil, nil)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.JSONEq(t, `{"evidence":[]}`, response.Body.String())
+	for _, value := range []string{"abc", "0", "-1"} {
+		response := doRequest(t, srv.Router(), http.MethodGet, fmt.Sprintf("/api/v1/people/%d/fact-evidence?evidence_id=%s", personID, value), nil, nil)
+		assert.Equal(t, http.StatusBadRequest, response.Code)
+	}
+}
+
 func TestPersonFactHistoryHTTPFiltersRealEmploymentTargetWithColonKey(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

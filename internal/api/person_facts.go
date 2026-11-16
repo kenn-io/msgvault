@@ -173,6 +173,7 @@ func (s *Server) registerPersonFactRoutes(api huma.API) {
 
 	evidence := personFactHistoryOperation("listPersonFactEvidence", "/people/{id}/fact-evidence",
 		"List immutable person fact evidence")
+	evidence.Parameters = append(evidence.Parameters, queryIntegerParam("evidence_id", "Restrict to one evidence row"))
 	evidence.Responses = jsonResponsesFor[PersonFactEvidenceResponse](api)
 	addErrorResponses(api, evidence.Responses, http.StatusBadRequest, http.StatusNotFound,
 		http.StatusServiceUnavailable)
@@ -283,8 +284,21 @@ func (s *Server) handleListPersonFactEvidence(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	evidenceID, present, err := queryInt64(r, "evidence_id")
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
+	var id *int64
+	if present {
+		if evidenceID < 1 {
+			writeError(w, http.StatusBadRequest, "invalid_evidence_id", "evidence_id must be a positive integer")
+			return
+		}
+		id = &evidenceID
+	}
 	rows, err := facts.ListPersonFactEvidenceContext(r.Context(), personID,
-		personfacts.EvidenceFilter{Target: filter.target, Limit: filter.limit, Offset: filter.offset})
+		personfacts.EvidenceFilter{Target: filter.target, EvidenceID: id, Limit: filter.limit, Offset: filter.offset})
 	if err != nil {
 		s.writePersonFactError(w, err)
 		return

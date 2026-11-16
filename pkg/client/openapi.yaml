@@ -5527,6 +5527,26 @@ components:
         - action
         - reason
       type: object
+    FactSummary:
+      properties:
+        claimed_fields:
+          format: int64
+          type: integer
+        has_stored_facts:
+          description: Whether claims, evidence, pin events, attribute values, or employments are stored
+          type: boolean
+        latest_claim_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+      required:
+        - claimed_fields
+        - latest_claim_at
+        - has_stored_facts
+      type: object
     FieldDescriptor:
       properties:
         cardinality:
@@ -11925,6 +11945,16 @@ components:
         id:
           format: int64
           type: integer
+        outcome:
+          enum:
+            - saved
+            - value-retired
+            - current-value-kept
+            - pinned-value-kept
+            - too-close-to-choose
+            - not-used
+          nullable: true
+          type: string
         projection:
           $ref: "#/components/schemas/ProjectionRef"
         reason:
@@ -11932,13 +11962,22 @@ components:
         resolution_id:
           format: int64
           type: integer
+        resolver_version:
+          type: string
         score:
           $ref: "#/components/schemas/PersonFactScoreBreakdown"
+        score_maxima:
+          $ref: "#/components/schemas/PersonFactScoreBreakdown"
+        target:
+          $ref: "#/components/schemas/TargetRef"
       required:
         - id
         - resolution_id
         - decision_key
         - claim_key
+        - outcome
+        - target
+        - resolver_version
         - action
         - reason
         - score
@@ -29505,6 +29544,11 @@ paths:
           schema:
             format: int64
             type: integer
+        - description: Restrict to one claim key
+          in: query
+          name: claim_key
+          schema:
+            type: string
       responses:
         "200":
           content:
@@ -29566,6 +29610,12 @@ paths:
         - description: Zero-based row offset
           in: query
           name: offset
+          schema:
+            format: int64
+            type: integer
+        - description: Restrict to one evidence row
+          in: query
+          name: evidence_id
           schema:
             format: int64
             type: integer
@@ -29793,6 +29843,53 @@ paths:
       security:
         - apiKey: []
       summary: Replace an effective person fact pin
+      tags:
+        - API
+  /api/v1/people/{id}/fact-summary:
+    get:
+      operationId: getPersonFactSummary
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FactSummary"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get person fact summary
       tags:
         - API
   /api/v1/people/{id}/files/search:

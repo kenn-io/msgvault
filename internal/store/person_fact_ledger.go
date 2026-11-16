@@ -496,7 +496,9 @@ func (s *Store) PersonFactSummaryContext(ctx context.Context, personID int64) (p
 			(SELECT MAX(created_at) FROM person_fact_claims WHERE person_id = ?),
 			(EXISTS(SELECT 1 FROM person_fact_claims WHERE person_id = ?)
 			 OR EXISTS(SELECT 1 FROM person_fact_evidence WHERE person_id = ?)
-			 OR EXISTS(SELECT 1 FROM person_fact_pin_events WHERE person_id = ?))`, personID, personID, personID, personID, personID).Scan(&summary.ClaimedFields, &latest, &summary.HasStoredFacts)
+			 OR EXISTS(SELECT 1 FROM person_fact_pin_events WHERE person_id = ?)
+			 OR EXISTS(SELECT 1 FROM person_attribute_values WHERE person_id = ?)
+			 OR EXISTS(SELECT 1 FROM employments WHERE person_id = ?))`, personID, personID, personID, personID, personID, personID, personID).Scan(&summary.ClaimedFields, &latest, &summary.HasStoredFacts)
 		if err != nil {
 			return fmt.Errorf("load person fact summary: %w", err)
 		}
@@ -523,7 +525,7 @@ func (s *Store) ListPersonFactEvidenceContext(
 	evidence := make([]personfacts.Evidence, 0)
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		evidence, err = s.queryPersonFactEvidenceTx(ctx, tx, personID,
-			personfacts.EvidenceFilter{Target: filter.Target, Limit: limit, Offset: offset})
+			personfacts.EvidenceFilter{Target: filter.Target, EvidenceID: filter.EvidenceID, Limit: limit, Offset: offset})
 		if err != nil {
 			return err
 		}
@@ -608,6 +610,10 @@ func (s *Store) queryPersonFactEvidenceTx(
 	query := `SELECT ` + personFactEvidenceColumns + `
 		FROM person_fact_evidence e WHERE e.person_id = ?`
 	args := []any{personID}
+	if filter.EvidenceID != nil {
+		query += ` AND e.id = ?`
+		args = append(args, *filter.EvidenceID)
+	}
 	if filter.Target != nil {
 		query += ` AND EXISTS (
 			SELECT 1 FROM person_fact_claim_evidence ce

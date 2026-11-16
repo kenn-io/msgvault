@@ -85,9 +85,10 @@ type TargetRef struct {
 }
 
 type EvidenceFilter struct {
-	Target *TargetRef
-	Limit  int
-	Offset int
+	Target     *TargetRef
+	EvidenceID *int64
+	Limit      int
+	Offset     int
 }
 
 type EvidenceStatusFilter struct {
@@ -438,7 +439,7 @@ type ScoreBreakdown struct {
 type FactSummary struct {
 	ClaimedFields  int        `json:"claimed_fields"`
 	LatestClaimAt  *time.Time `json:"latest_claim_at" nullable:"true"`
-	HasStoredFacts bool       `json:"has_stored_facts"`
+	HasStoredFacts bool       `json:"has_stored_facts" doc:"Whether claims, evidence, pin events, attribute values, or employments are stored"`
 }
 
 type ProjectionOperation string
@@ -482,7 +483,6 @@ type OutcomeFacts struct {
 	Historical       bool
 	HasCurrent       bool
 	MatchesCurrent   bool
-	Retired          bool
 	CloseCompetition bool
 	Duplicate        bool
 	BlockedRemoval   bool
@@ -491,17 +491,17 @@ type OutcomeFacts struct {
 // DecisionOutcomeFor returns false when an old row lacks the state needed to classify it.
 func DecisionOutcomeFor(f OutcomeFacts) (DecisionOutcome, bool) {
 	d := f.Decision
-	if f.Retired {
+	if d.Projection != nil && (d.Action != DecisionApplied || f.Relation != RelationSupport) {
 		return OutcomeValueRetired, true
+	}
+	if d.Action == DecisionApplied && f.Relation == RelationSupport {
+		return OutcomeSaved, true
 	}
 	if d.Action == DecisionInvalid || d.Action == DecisionIdentityRejected || d.Action == DecisionPolicyRejected {
 		return OutcomeNotUsed, true
 	}
-	if d.Reason == ReasonOrganizationAmbiguous || d.Reason == ReasonOutsideValidity || d.Reason == ReasonEvidenceUnsupported {
+	if d.Reason == ReasonOrganizationAmbiguous || d.Reason == ReasonOutsideValidity || d.Reason == ReasonEvidenceUnsupported || d.Reason == ReasonBelowThreshold {
 		return OutcomeNotUsed, true
-	}
-	if d.Action == DecisionApplied && f.Relation == RelationSupport {
-		return OutcomeSaved, true
 	}
 	if f.Historical {
 		return "", false

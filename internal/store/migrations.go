@@ -834,7 +834,7 @@ func (s *Store) ForgetMigrationsContext(ctx context.Context, name string) error 
 // backfillPersonFactOutcomes records only outcomes proved by the old ledger.
 func (s *Store) backfillPersonFactOutcomes(ctx context.Context) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT d.id, d.action, d.reason, c.relation, d.competing_claim_id, d.projection_row_id
+		rows, err := tx.QueryContext(ctx, `SELECT d.id, d.action, d.reason, c.relation, d.competing_claim_id, d.projection_kind, d.projection_row_id
 			FROM person_fact_decisions d LEFT JOIN person_fact_claims c ON c.id = d.claim_id WHERE d.outcome IS NULL`)
 		if err != nil {
 			return fmt.Errorf("read old fact decisions: %w", err)
@@ -847,17 +847,19 @@ func (s *Store) backfillPersonFactOutcomes(ctx context.Context) error {
 		for rows.Next() {
 			var id int64
 			var decision personfacts.Decision
-			var relation sql.NullString
+			var relation, projectionKind sql.NullString
 			var competing, projection sql.NullInt64
-			if err := rows.Scan(&id, &decision.Action, &decision.Reason, &relation, &competing, &projection); err != nil {
+			if err := rows.Scan(&id, &decision.Action, &decision.Reason, &relation, &competing, &projectionKind, &projection); err != nil {
 				_ = rows.Close()
 				return err
 			}
 			if competing.Valid {
 				decision.CompetingClaimKey = "present"
 			}
-			retired := projection.Valid && (decision.Action != personfacts.DecisionApplied || personfacts.ClaimRelation(relation.String) != personfacts.RelationSupport)
-			outcome, known := personfacts.DecisionOutcomeFor(personfacts.OutcomeFacts{Decision: decision, Relation: personfacts.ClaimRelation(relation.String), Historical: true, Retired: retired})
+			if projectionKind.Valid && projection.Valid {
+				decision.Projection = &personfacts.ProjectionRef{Kind: projectionKind.String, RowID: projection.Int64}
+			}
+			outcome, known := personfacts.DecisionOutcomeFor(personfacts.OutcomeFacts{Decision: decision, Relation: personfacts.ClaimRelation(relation.String), Historical: true})
 			if known {
 				updates = append(updates, update{id, outcome})
 			}

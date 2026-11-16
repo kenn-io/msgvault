@@ -1834,12 +1834,22 @@ func TestPersonFactDecisionOutcomesPersist(t *testing.T) {
 			if test.name == "retired" {
 				input.ResolvedAt = input.ResolvedAt.Add(time.Hour)
 			}
+			prepared, err := personfacts.PreparePersonFactGeneration(t.Context(), input, nil)
+			require.NoError(err)
+			var claimKey string
+			for _, candidate := range prepared.Claims() {
+				if bytes.Equal(candidate.SubmittedValue, claim.SubmittedValue) {
+					claimKey, err = personfacts.ClaimKey(prepared.GenerationKey(), candidate)
+					require.NoError(err)
+				}
+			}
+			require.NotEmpty(claimKey)
 			result, err := st.ApplyPersonFactGenerationContext(t.Context(), input, nil)
 			require.NoError(err)
 			require.NotEmpty(result.Decisions)
 			var found bool
 			for _, decision := range result.Decisions {
-				if decision.Outcome != nil && *decision.Outcome == test.want {
+				if decision.ClaimKey == claimKey {
 					rows, err := st.ListPersonFactDecisionsContext(t.Context(), personID, personfacts.DecisionFilter{ClaimKey: decision.ClaimKey, Limit: 1})
 					require.NoError(err)
 					require.Len(rows, 1)
@@ -1944,7 +1954,8 @@ func TestPersonFactOutcomeUpgradeClassifiesKnownHistory(t *testing.T) {
 			assert.Nil(decision.Outcome)
 			assert.Equal(personfacts.ReasonInsufficientMargin, decision.Reason)
 		case "legacy-unknown":
-			assert.Nil(decision.Outcome)
+			require.NotNil(decision.Outcome)
+			assert.Equal(personfacts.OutcomeNotUsed, *decision.Outcome)
 			assert.Equal(personfacts.ReasonBelowThreshold, decision.Reason)
 		case "legacy-invalid", "legacy-unsupported":
 			require.NotNil(decision.Outcome)
@@ -1981,6 +1992,28 @@ func TestPersonFactSummaryIncludesEvidenceAndPins(t *testing.T) {
 			assert.True(summary.HasStoredFacts)
 			assert.Zero(summary.ClaimedFields)
 			assert.Nil(summary.LatestClaimAt)
+		})
+	}
+}
+
+func TestPersonFactSummaryIncludesStoredValues(t *testing.T) {
+	for _, kind := range []string{"attribute", "ended employment"} {
+		t.Run(kind, func(t *testing.T) {
+			st, personID, _ := newPersonFactProjectionStore(t)
+			if kind == "attribute" {
+				_, err := st.db.ExecContext(t.Context(), st.Rebind(`INSERT INTO person_attribute_values (person_id, definition_id, value_text, source)
+					SELECT ?, id, 'email', 'user' FROM attribute_definitions WHERE slug = ?`), personID, AttributeSlugPrimaryChannel)
+				require.NoError(t, err)
+			} else {
+				org := createPersonFactOrganization(t, st, "Example Company", "example.org")
+				_, err := st.db.ExecContext(t.Context(), st.Rebind(`INSERT INTO employments (person_id, organization_id, is_current, end_year) VALUES (?, ?, FALSE, 2020)`), personID, org.ID)
+				require.NoError(t, err)
+			}
+			summary, err := st.PersonFactSummaryContext(t.Context(), personID)
+			require.NoError(t, err)
+			assert.True(t, summary.HasStoredFacts)
+			assert.Zero(t, summary.ClaimedFields)
+			assert.Nil(t, summary.LatestClaimAt)
 		})
 	}
 }
