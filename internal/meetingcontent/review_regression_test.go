@@ -247,7 +247,7 @@ func TestNotionNestedMeetingPages(t *testing.T) {
 		name, raw string
 		want      []string
 	}{
-		{name: "TestNotionNestedMeetingDoesNotConsumeSiblingPages", raw: `{
+		{name: "nested meeting does not consume sibling pages", raw: `{
 		"schema_version":1,
 		"discovery":{"meeting_notes":{"children":{"summary_block_id":"root"}}},
 		"canonical":{"summary":"Summary"},
@@ -260,7 +260,7 @@ func TestNotionNestedMeetingPages(t *testing.T) {
 		]}
 	}`, want: []string{"action"}},
 
-		{name: "TestNotionNestedMeetingWithEmptyLastPage", raw: `{
+		{name: "empty last page", raw: `{
 		"schema_version":1,
 		"discovery":{"meeting_notes":{"children":{"summary_block_id":"root"}}},
 		"canonical":{"summary":"Summary"},

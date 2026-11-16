@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"math"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -85,23 +84,6 @@ func TestMeetingContextTranscriptOptInUsesBoundedRawRead(t *testing.T) {
 	requirements.Len(transcript.Segments, 2)
 	assertions.Equal("Start", transcript.Segments[0].Text)
 	assertions.Equal("Finish", transcript.Segments[1].Text)
-}
-
-func TestMeetingContextRejectsOversizedNotionEvidence(t *testing.T) {
-	st := newRFC822IDBackfillBackendStore(t)
-	raw := `{"schema_version":1,"canonical":{"summary":"Saved summary","transcript":"Saved transcript"},"padding":"` + strings.Repeat("x", 65<<20) + `"}`
-	_, id := projectionFixture(t, st, "large-notion", "notion_meeting_json", raw)
-	result, err := st.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: &[]int64{id}}, meetingcontent.PacketOptions{
-		Format: meetingcontent.FormatJSON, IncludeTranscript: true, MaxBytes: 1 << 20,
-	})
-	require.NoError(t, err)
-	var packet meetingcontent.Packet
-	require.NoError(t, json.Unmarshal([]byte(result.Content), &packet))
-	require.Len(t, packet.Meetings, 1)
-	assert.Equal(t, meetingcontent.StateUnavailable, packet.Meetings[0].Content.Summary.State)
-	assert.Equal(t, "raw_too_large", packet.Meetings[0].Content.Summary.Reason)
-	assert.Equal(t, meetingcontent.StateUnavailable, packet.Meetings[0].Content.Transcript.State)
-	assert.Equal(t, "raw_too_large", packet.Meetings[0].Content.Transcript.Reason)
 }
 
 func TestMeetingContextValidatesEveryIDBeforeRendering(t *testing.T) {

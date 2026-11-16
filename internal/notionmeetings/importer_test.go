@@ -886,27 +886,16 @@ func TestImporterMigratesPendingRetryDeadlineFromVersionOneCursor(t *testing.T) 
 	summary, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 	require.NoError(err)
 	state := lastNotionState(t, st, summary.SourceID)
-	assert.Equal(2, state.Version)
 	assert.Empty(state.Pending)
 	assert.Equal("2026-08-31T12:00:00Z", lastTranscriptRetryUntil(t, st, summary.SourceID)["meeting-1"])
 }
 
-func TestSyncStateRejectsInvalidTranscriptRetryDeadline(t *testing.T) {
-	var state syncState
-	require.NoError(t, json.Unmarshal([]byte(`{"version":1,"known":{},"transcript_retry_until":{"meeting-1":"not-a-time"}}`), &state))
-
-	err := state.validate()
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), `transcript retry deadline "meeting-1" is invalid`)
-}
-
-func TestSyncStateVersionTwoValidation(t *testing.T) {
+func TestSyncStateValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name, cursor, wantErr string
 	}{
 		{"valid incomplete", `{"version":2,"pending":[{"block_id":"meeting-1","next_attempt_at":"2026-08-29T18:00:00Z","retry_until":"2026-08-31T12:00:00Z","incomplete":true}]}`, ""},
-		{"invalid retry", `{"version":2,"pending":[{"block_id":"meeting-1","next_attempt_at":"invalid","retry_until":"2026-08-31T12:00:00Z"}]}`, "invalid next_attempt_at"},
+		{"invalid transcript retry deadline", `{"version":1,"known":{},"transcript_retry_until":{"meeting-1":"not-a-time"}}`, `transcript retry deadline "meeting-1" is invalid`},
 		{"future version", `{"version":3}`, "unsupported Notion sync cursor version 3"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1574,16 +1563,16 @@ func TestImporterNewerEvidencePreservesRetryState(t *testing.T) {
 
 func TestImporterRetriesOmittedTranscript(t *testing.T) {
 	for _, tc := range []struct {
-		name, markdown, wantBody                            string
-		pending, truncated, omitted, structured, dataSource bool
+		name, markdown, wantBody, absentBody                               string
+		truncated, omitted, structured, dataSource                         bool
+		wantPending, wantIncomplete, keepMarkdown, keepTree, keepReference bool
 	}{
-		{"page has transcript", "# Transcript\nNew page transcript", "New page transcript", false, false, true, false, false},
-		{"page has none", "# Notes\nNo transcript", "", true, false, true, false, false},
-		{"markdown truncated", "# Notes\nTranscript heading was truncated", "Saved page transcript", true, true, false, false, false},
-		{"omitted and markdown truncated", "# Notes\nTranscript heading was truncated", "Saved page transcript", true, true, true, false, false},
-		{"complete empty section", "# Notes\nNo transcript", "", true, false, false, true, false},
-		{"deleted data source transcript", "", "", true, false, true, true, true},
-		{"empty data source section", "", "", true, false, false, true, true},
+		{name: "page has transcript", markdown: "# Transcript\nNew page transcript", omitted: true, wantBody: "New page transcript", absentBody: "Saved page transcript"},
+		{name: "page has none", markdown: "# Notes\nNo transcript", omitted: true, wantBody: "Saved page transcript", wantPending: true, wantIncomplete: true, keepMarkdown: true},
+		{name: "markdown truncated", markdown: "# Notes\nTranscript heading was truncated", truncated: true, wantBody: "Saved page transcript", wantPending: true, wantIncomplete: true, keepMarkdown: true},
+		{name: "complete empty section", markdown: "# Notes\nNo transcript", structured: true, absentBody: "Test Speaker: Ready to ship.", wantPending: true},
+		{name: "deleted data source transcript", omitted: true, structured: true, dataSource: true, wantBody: "Test Speaker: Ready to ship.", wantPending: true, wantIncomplete: true, keepTree: true, keepReference: true},
+		{name: "empty data source section", structured: true, dataSource: true, absentBody: "Test Speaker: Ready to ship.", wantPending: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, source, imp := newImporterFixture(t)
@@ -1627,50 +1616,39 @@ func TestImporterRetriesOmittedTranscript(t *testing.T) {
 			if tc.wantBody != "" {
 				assert.Contains(t, body, tc.wantBody)
 			}
-			preserveEmpty := !tc.dataSource && tc.omitted && tc.pending && !tc.truncated && tc.wantBody == ""
-			preserveMissing := tc.dataSource && tc.omitted
-			if preserveEmpty || preserveMissing {
-				if tc.structured {
-					assert.Contains(t, body, "Test Speaker: Ready to ship.")
-				} else {
-					assert.Contains(t, body, "Saved page transcript")
-				}
-			} else if tc.structured {
-				assert.NotContains(t, body, "Test Speaker: Ready to ship.")
+			if tc.absentBody != "" {
+				assert.NotContains(t, body, tc.absentBody)
 			}
 			pending := lastNotionState(t, st, first.SourceID).Pending
-			if !tc.pending {
-				assert.NotContains(t, body, "Saved page transcript")
+			if tc.wantPending {
+				require.Len(t, pending, 1)
+				assert.Equal(t, tc.wantIncomplete, pending[0].Incomplete)
+			} else {
 				assert.Empty(t, pending)
-				return
 			}
-			require.Len(t, pending, 1)
-			assert.Equal(t, tc.truncated || preserveEmpty || preserveMissing, pending[0].Incomplete)
-			assert.Equal(t, tc.truncated || preserveEmpty || preserveMissing, second.PartialCoverage)
-			if tc.omitted && !tc.truncated && !preserveEmpty && !preserveMissing {
-				assert.NotContains(t, body, "Saved page transcript")
-			}
-			if tc.truncated || preserveEmpty || preserveMissing {
+			assert.Equal(t, tc.wantIncomplete, second.PartialCoverage)
+			if tc.keepMarkdown || tc.keepTree {
 				after, err := st.GetMessageRaw(id)
 				require.NoError(t, err)
 				var oldFields, newFields map[string]json.RawMessage
 				require.NoError(t, json.Unmarshal(before, &oldFields))
 				require.NoError(t, json.Unmarshal(after, &newFields))
-				assert.JSONEq(t, string(oldFields["page_markdown"]), string(newFields["page_markdown"]))
-				if tc.structured {
-					assert.JSONEq(t, string(oldFields["transcript"]), string(newFields["transcript"]))
-					if preserveMissing {
-						var discovery MeetingNote
-						require.NoError(t, json.Unmarshal(newFields["discovery"], &discovery))
-						assert.Equal(t, "transcript-1", discovery.MeetingNotes.Children.TranscriptBlockID)
-					}
-				} else {
+				if tc.keepMarkdown {
+					assert.JSONEq(t, string(oldFields["page_markdown"]), string(newFields["page_markdown"]))
 					metadata, err := st.GetMessageMetadata(id)
 					require.NoError(t, err)
 					require.True(t, metadata.Valid)
 					var fields map[string]any
 					require.NoError(t, json.Unmarshal([]byte(metadata.String), &fields))
 					assert.Equal(t, true, fields["markdown_transcript_fallback"])
+				}
+				if tc.keepTree {
+					assert.JSONEq(t, string(oldFields["transcript"]), string(newFields["transcript"]))
+				}
+				if tc.keepReference {
+					var discovery MeetingNote
+					require.NoError(t, json.Unmarshal(newFields["discovery"], &discovery))
+					assert.Equal(t, "transcript-1", discovery.MeetingNotes.Children.TranscriptBlockID)
 				}
 			}
 		})

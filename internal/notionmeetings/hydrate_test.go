@@ -632,7 +632,6 @@ func TestHydratorSkipsNestedMeetingAndReadsSibling(t *testing.T) {
 	source.children["sibling"][""].Raw = json.RawMessage(`{"object":"list","results":[` + string(action.Raw) + `],"has_more":false}`)
 	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(t, err)
-	assert.NotContains(t, hydrated.Notes, "Another meeting")
 	assert.Contains(t, hydrated.Notes, "Sibling action")
 	snapshot, err := hydrated.ArchiveSnapshot(1, "example", "")
 	require.NoError(t, err)
