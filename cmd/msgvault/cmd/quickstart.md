@@ -1,5 +1,15 @@
 # msgvault Agent Quickstart
 
+Find the command for a task before reading its flags and examples:
+
+```bash
+msgvault cli search "search extracted document attachments"
+```
+
+This searches command metadata locally without configuration or a daemon.
+Add `--json` for structured results and `--limit N` for 1–20 results (default 5).
+Then run the suggested command with `--help`.
+
 For the MCP guide, run `msgvault quickstart --mcp` or read
 https://msgvault.io/docs/guides/agent-quickstart.md.
 
