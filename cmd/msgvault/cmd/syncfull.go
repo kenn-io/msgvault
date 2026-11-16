@@ -511,18 +511,9 @@ func applyIMAPMailboxDeltas(
 			continue
 		}
 		observationIndexes[key] = len(normalizedObservations)
-		normalizedObservations = append(normalizedObservations, store.IMAPMembershipObservation{
-			Mailbox:                  observation.Mailbox,
-			UIDValidity:              observation.UIDValidity,
-			UID:                      observation.UID,
-			SourceMessageID:          observation.SourceMessageID,
-			CanonicalSourceMessageID: observation.CanonicalSourceMessageID,
-			RFC822MessageID:          observation.RFC822MessageID,
-			RawSHA256:                observation.RawSHA256,
-			RawSize:                  observation.RawSize,
-			Flags:                    append([]string(nil), observation.Flags...),
-			ArchivedMessageID:        observation.ArchivedMessageID,
-		})
+		normalized := imapStoreObservation(observation)
+		normalized.Flags = append([]string(nil), observation.Flags...)
+		normalizedObservations = append(normalizedObservations, normalized)
 	}
 	byMailbox := make(map[string][]store.IMAPMembershipObservation)
 	for _, observation := range normalizedObservations {
@@ -569,19 +560,23 @@ func clearRestoredIMAPDeletionMarks(
 ) error {
 	storeObservations := make([]store.IMAPMembershipObservation, 0, len(observations))
 	for _, observation := range observations {
-		storeObservations = append(storeObservations, store.IMAPMembershipObservation{
-			Mailbox:                  observation.Mailbox,
-			UIDValidity:              observation.UIDValidity,
-			UID:                      observation.UID,
-			SourceMessageID:          observation.SourceMessageID,
-			CanonicalSourceMessageID: observation.CanonicalSourceMessageID,
-			RFC822MessageID:          observation.RFC822MessageID,
-			RawSHA256:                observation.RawSHA256,
-			RawSize:                  observation.RawSize,
-			ArchivedMessageID:        observation.ArchivedMessageID,
-		})
+		storeObservations = append(storeObservations, imapStoreObservation(observation))
 	}
 	return s.ClearRestoredIMAPDeletionMarksForSyncContext(ctx, src.ID, syncRunID, storeObservations)
+}
+
+func imapStoreObservation(observation imaplib.MembershipObservation) store.IMAPMembershipObservation {
+	return store.IMAPMembershipObservation{
+		Mailbox:                  observation.Mailbox,
+		UIDValidity:              observation.UIDValidity,
+		UID:                      observation.UID,
+		SourceMessageID:          observation.SourceMessageID,
+		CanonicalSourceMessageID: observation.CanonicalSourceMessageID,
+		RFC822MessageID:          observation.RFC822MessageID,
+		RawSHA256:                observation.RawSHA256,
+		RawSize:                  observation.RawSize,
+		ArchivedMessageID:        observation.ArchivedMessageID,
+	}
 }
 
 func imapSyncCanCommit(ctx context.Context, summary *gmail.SyncSummary, limit int) bool {
