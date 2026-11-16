@@ -393,7 +393,10 @@ func SetPersonTierRowPage(n int) func() {
 // LastSuccessfulSyncQueryForTest is the newest-completed-run lookup each
 // incremental sync runs.
 func LastSuccessfulSyncQueryForTest(filterByType bool) string {
-	return lastSuccessfulSyncQuery(filterByType)
+	if filterByType {
+		return lastSuccessfulSyncQuery("=")
+	}
+	return lastSuccessfulSyncQuery("")
 }
 
 // ApplyAcceptedIdentityMatchSnapshotForTest applies a previously read candidate.
