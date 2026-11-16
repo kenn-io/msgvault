@@ -243,22 +243,9 @@ func TestReviewRound1NotionCheckedMustBeBoolean(t *testing.T) {
 }
 
 func TestNotionTreeTraversalSkipsNestedMeetingType(t *testing.T) {
-	for _, tc := range []struct {
-		name, root, pages string
-		complete          bool
-	}{
-		{"sibling page", `{"object":"block","id":"notes","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}}`, `[{"results":[{"object":"block","id":"nested","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[]}},{"object":"block","id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}}],"has_more":false},{"results":[{"object":"block","id":"action","type":"to_do","has_children":false,"to_do":{"rich_text":[],"checked":false}}],"has_more":false}]`, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			tree := []byte(`{"root":` + tc.root + `,"pages":` + tc.pages + `}`)
-			blocks, complete := notionTreeBlocks(tree, "notes")
-			assert.Equal(t, tc.complete, complete)
-			if !tc.complete {
-				assert.Nil(t, blocks)
-				return
-			}
-			require.Len(t, blocks, 4)
-			assert.JSONEq(t, `{"object":"block","id":"action","type":"to_do","has_children":false,"to_do":{"rich_text":[],"checked":false}}`, string(blocks[3]))
-		})
-	}
+	tree := []byte(`{"root":{"object":"block","id":"notes","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}},"pages":[{"results":[{"object":"block","id":"nested","type":"meeting_notes","has_children":true,"meeting_notes":{"title":[]}},{"object":"block","id":"sibling","type":"paragraph","has_children":true,"paragraph":{"rich_text":[]}}],"has_more":false},{"results":[{"object":"block","id":"action","type":"to_do","has_children":false,"to_do":{"rich_text":[],"checked":false}}],"has_more":false}]}`)
+	blocks, complete := notionTreeBlocks(tree, "notes")
+	assert.True(t, complete)
+	require.Len(t, blocks, 4)
+	assert.JSONEq(t, `{"object":"block","id":"action","type":"to_do","has_children":false,"to_do":{"rich_text":[],"checked":false}}`, string(blocks[3]))
 }

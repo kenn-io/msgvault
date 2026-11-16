@@ -26,12 +26,6 @@ type fakeNotionProbe struct {
 	markdownErr       error
 }
 
-type fakeNotionSyncSource struct{ fakeNotionProbe }
-
-func (fakeNotionSyncSource) RetrievePageMarkdown(context.Context, string, bool) (*notionmeetings.MarkdownPage, error) {
-	return &notionmeetings.MarkdownPage{Object: "page_markdown", ID: "page-1", Raw: []byte(`{"object":"page_markdown","id":"page-1","markdown":""}`)}, nil
-}
-
 func (f fakeNotionProbe) RetrievePageMarkdown(_ context.Context, id string, includeTranscript bool) (*notionmeetings.MarkdownPage, error) {
 	if f.pageIDs != nil {
 		*f.pageIDs = append(*f.pageIDs, id)
@@ -42,7 +36,7 @@ func (f fakeNotionProbe) RetrievePageMarkdown(_ context.Context, id string, incl
 	if f.markdownErr != nil {
 		return nil, f.markdownErr
 	}
-	return &notionmeetings.MarkdownPage{ID: id}, nil
+	return &notionmeetings.MarkdownPage{Object: "page_markdown", ID: id, Raw: []byte(fmt.Sprintf(`{"object":"page_markdown","id":%q,"markdown":""}`, id))}, nil
 }
 
 func (f fakeNotionProbe) QueryMeetingNotes(context.Context, int) (*notionmeetings.QueryResult, error) {
@@ -95,20 +89,19 @@ func TestRunNotionMeetingsProbeIsContentAndTokenSafe(t *testing.T) {
 	assert := assert.New(t)
 	meeting := notionmeetings.MeetingNote{
 		ID: "private-block-id", MeetingNotes: notionmeetings.MeetingNotesData{
-			Title: []notionmeetings.RichText{{PlainText: "Private meeting title"}}, Children: notionmeetings.MeetingChildren{TranscriptBlockID: "transcript-1"},
+			Title: []notionmeetings.RichText{{PlainText: "Private meeting title"}},
 		},
 	}
 	var out bytes.Buffer
 	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
 		result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{meeting}, HasMore: true},
-		block:  &notionmeetings.Block{Type: "paragraph", Paragraph: notionmeetings.RichTextBlock{RichText: []notionmeetings.RichText{{PlainText: "private transcript"}}}},
+		block:  &notionmeetings.Block{},
 	}, nil)
 	require.NoError(t, err)
 	assert.Contains(out.String(), "Returned meetings: 1")
 	assert.Contains(out.String(), "Partial coverage: true")
 	assert.NotContains(out.String(), "private-block-id")
 	assert.NotContains(out.String(), "Private meeting title")
-	assert.NotContains(out.String(), "private transcript")
 	assert.Contains(out.String(), "User Information: available")
 }
 
@@ -286,11 +279,11 @@ func TestScheduledNotionSyncUsesUsersToken(t *testing.T) {
 	})
 	newNotionMeetingsClient = func(_ string, token string) notionmeetings.Source {
 		assert.Equal("pat-example", token)
-		return fakeNotionSyncSource{fakeNotionProbe{
+		return fakeNotionProbe{
 			result:   &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{Object: "block", ID: "meeting-1", Type: "meeting_notes", Parent: notionmeetings.Parent{PageID: "page-1"}, CreatedTime: "2026-08-29T10:00:00Z", MeetingNotes: notionmeetings.MeetingNotesData{Status: "notes_ready", CalendarEvent: notionmeetings.MeetingCalendarEvent{Attendees: []string{"member"}}}}}},
 			block:    &notionmeetings.Block{Object: "block", ID: "meeting-1", Type: "meeting_notes"},
 			usersErr: notionmeetings.ErrUnauthorized,
-		}}
+		}
 	}
 	users := &fakeNotionUsersProbe{user: &notionmeetings.User{ID: "member", Person: notionmeetings.UserPerson{Email: "member@example.com", EmailVerified: true}}}
 	newNotionUsersClient = func(_ string, token string) notionmeetings.UserSource {

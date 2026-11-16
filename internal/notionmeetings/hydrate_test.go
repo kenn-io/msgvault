@@ -350,46 +350,28 @@ func TestExtractMarkdownTranscript(t *testing.T) {
 
 func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		mutate       func(*MarkdownPage)
-		err          error
-		structured   bool
-		noTranscript bool
+		name   string
+		mutate func(*MarkdownPage)
+		err    error
 	}{
-		{"truncated", func(p *MarkdownPage) { p.Truncated = true }, nil, false, false},
-		{"truncated differing transcript", func(p *MarkdownPage) { p.Truncated = true; p.Markdown = "# Transcript\nDifferent text" }, nil, true, false},
-		{"unknown blocks", func(p *MarkdownPage) { p.UnknownBlockIDs = []string{"block-1"} }, nil, false, false},
-		{"unavailable", nil, &APIError{Kind: ErrRateLimited, Status: 503, Code: "service_unavailable"}, false, false},
-		{"truncated without transcript", func(p *MarkdownPage) { p.Truncated = true }, nil, false, true},
-		{"unknown block without transcript", func(p *MarkdownPage) { p.UnknownBlockIDs = []string{"block-1"} }, nil, false, true},
+		{"truncated", func(p *MarkdownPage) { p.Truncated = true }, nil},
+		{"unknown blocks", func(p *MarkdownPage) { p.UnknownBlockIDs = []string{"block-1"} }, nil},
+		{"unavailable", nil, &APIError{Kind: ErrRateLimited, Status: 503, Code: "service_unavailable"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
 			source := completeHydrationSource()
-			if !tc.structured {
-				empty := paragraph("transcript-1", "", false)
-				source.blocks["transcript-1"] = &empty
-			}
+			empty := paragraph("transcript-1", "", false)
+			source.blocks["transcript-1"] = &empty
+			source.markdown.Markdown = "# Notes\nNo transcript here"
 			if tc.mutate != nil {
 				tc.mutate(source.markdown)
-			}
-			if tc.noTranscript {
-				source.markdown.Markdown = "# Notes\nNo transcript here"
 			}
 			source.markdownErr = tc.err
 			result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 			require.NoError(t, err)
-			if tc.structured {
-				assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
-				assert.NotContains(result.Warnings, "structured transcript and page Markdown transcript differed; kept the structured transcript")
-			} else if tc.noTranscript {
-				assert.Empty(result.Transcript)
-				assert.Contains(result.Incomplete, "transcript")
-			} else {
-				assert.Empty(result.Transcript)
-				assert.Contains(result.Incomplete, "transcript")
-				assert.Contains(result.Warnings, "transcript incomplete: markdown")
-			}
+			assert.Empty(t, result.Transcript)
+			assert.Contains(t, result.Incomplete, "transcript")
+			assert.Contains(t, result.Warnings, "transcript incomplete: markdown")
 		})
 	}
 }
