@@ -764,7 +764,7 @@ func TestMergeParticipantsPreservesAbsorbedEmail(t *testing.T) {
 			}
 			err = st.MergeParticipants(absorbed, survivor)
 			if tc.conflict {
-				require.ErrorIs(t, err, store.ErrPersonBindingConflict)
+				require.ErrorIs(t, err, store.ErrIdentifierAddressConflict)
 				var count int
 				require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participants WHERE id IN (?, ?)`), absorbed, survivor).Scan(&count))
 				assert.Equal(t, 2, count)

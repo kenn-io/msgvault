@@ -17,6 +17,7 @@ var (
 	ErrPersonNotFound                     = errors.New("person not found")
 	ErrPersonRevisionConflict             = errors.New("person revision conflict")
 	ErrPersonBindingConflict              = errors.New("participant clusters belong to different persons")
+	ErrIdentifierAddressConflict          = errors.New("identifier address belongs to another participant")
 	ErrPersonReferenced                   = errors.New("person is referenced by another profile")
 	ErrPersonCardDAVPublished             = errors.New("person has CardDAV publication state")
 	ErrPersonMergeActive                  = errors.New("person has active merge lineage")

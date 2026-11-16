@@ -5031,7 +5031,7 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 				return err
 			}
 			if !retained {
-				return fmt.Errorf("absorbed participant email belongs to another identity: %w", ErrPersonBindingConflict)
+				return fmt.Errorf("absorbed participant email belongs to another identity: %w", ErrIdentifierAddressConflict)
 			}
 		}
 		if err := s.rewriteObservationsForMergeTx(
