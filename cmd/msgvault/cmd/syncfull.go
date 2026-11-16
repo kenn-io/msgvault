@@ -534,6 +534,7 @@ func applyIMAPMailboxDeltas(
 		storeDeltas = append(storeDeltas, store.IMAPMailboxDelta{
 			Mailbox: delta.Mailbox,
 			AllMail: delta.AllMail,
+			Trash:   delta.Trash,
 			State: store.IMAPFolderState{
 				Mailbox:       delta.Mailbox,
 				UIDValidity:   delta.State.UIDValidity,
@@ -556,6 +557,7 @@ func imapStoreObservation(observation imaplib.MembershipObservation) store.IMAPM
 	return store.IMAPMembershipObservation{
 		Mailbox:                  observation.Mailbox,
 		AllMail:                  observation.AllMail,
+		Trash:                    observation.Trash,
 		UIDValidity:              observation.UIDValidity,
 		UID:                      observation.UID,
 		SourceMessageID:          observation.SourceMessageID,

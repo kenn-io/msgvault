@@ -1558,6 +1558,10 @@ func TestCompleteIMAPRestoreWithAmbiguousRawIdentity(t *testing.T) {
 	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{trash}))
 	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "Trash|1"))
 	require.NoError(t, f.store.MarkMessageDeleted(f.source.ID, "Trash|2"))
+	trash.Memberships = nil
+	trash.VanishedUIDs = []uint32{2}
+	require.NoError(t, f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{trash}))
+	trash.VanishedUIDs = nil
 	copyID := f.createMessage(t, "INBOX|1", "")
 	require.NoError(t, f.store.UpsertMessageRaw(copyID, data))
 	inbox := store.IMAPMailboxDelta{Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 1, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{

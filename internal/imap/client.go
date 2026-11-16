@@ -1823,7 +1823,7 @@ func (c *Client) ListLabels(ctx context.Context) ([]*gmailapi.Label, error) {
 		for _, item := range items {
 			labelType := classifyLabelType(item.Mailbox, item.Attrs)
 			role := systemRoleForMailbox(item.Attrs)
-			if item.Mailbox == trashMailbox {
+			if item.Mailbox == trashMailbox && role != store.LabelSystemRoleSent && role != store.LabelSystemRoleDrafts {
 				role = store.LabelSystemRoleTrash
 			}
 			labels = append(labels, &gmailapi.Label{

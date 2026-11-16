@@ -47,13 +47,13 @@ const labelTypeSystem = "system"
 // input because they are localized and user-editable.
 func systemRoleForMailbox(attrs []imap.MailboxAttr) string {
 	switch {
-	case slices.Contains(attrs, imap.MailboxAttrTrash):
-		return store.LabelSystemRoleTrash
 	// Draft evidence wins conflicting metadata so a draft cannot count as sent.
 	case slices.Contains(attrs, imap.MailboxAttrDrafts):
 		return store.LabelSystemRoleDrafts
 	case slices.Contains(attrs, imap.MailboxAttrSent):
 		return store.LabelSystemRoleSent
+	case slices.Contains(attrs, imap.MailboxAttrTrash):
+		return store.LabelSystemRoleTrash
 	case slices.Contains(attrs, imap.MailboxAttrAll):
 		return store.LabelSystemRoleAll
 	}

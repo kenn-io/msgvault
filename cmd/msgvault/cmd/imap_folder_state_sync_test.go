@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"fmt"
 	"log/slog"
 	"net"
 	"strconv"
@@ -162,13 +161,75 @@ func TestRunScheduledIMAPSync_AllMailCombinedRoles(t *testing.T) {
 	}
 }
 
+func TestRunScheduledIMAPSync_TrashCombinedOutboundRoles(t *testing.T) {
+	for _, role := range []struct {
+		name string
+		attr imapapi.MailboxAttr
+	}{{"sent", imapapi.MailboxAttrSent}, {"drafts", imapapi.MailboxAttrDrafts}} {
+		for _, filtered := range []bool{false, true} {
+			t.Run(role.name+"/filtered="+strconv.FormatBool(filtered), func(t *testing.T) {
+				addr, user := testutil.StartIMAPMemServerWithSpecialUse(t, map[string]int{"INBOX": 0, "Combined": 0, "Archive": 0}, map[string][]imapapi.MailboxAttr{"Combined": {imapapi.MailboxAttrTrash, role.attr}})
+				raw := []byte("Message-ID: <combined-trash@example.test>\r\nFrom: sender@example.test\r\nTo: recipient@example.test\r\nSubject: combined\r\n\r\nbody\r\n")
+				testutil.AppendIMAPRawMessage(t, user, "Combined", raw)
+				host, portText, err := net.SplitHostPort(addr)
+				require.NoError(t, err)
+				port, err := strconv.Atoi(portText)
+				require.NoError(t, err)
+				imapCfg := &imaplib.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}
+				st := testutil.NewTestStore(t)
+				src, err := st.GetOrCreateSource(sourceTypeIMAP, imapCfg.Identifier())
+				require.NoError(t, err)
+				configJSON, err := imapCfg.ToJSON()
+				require.NoError(t, err)
+				require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, configJSON))
+				src, err = st.GetSourceByID(src.ID)
+				require.NoError(t, err)
+				home := t.TempDir()
+				cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
+				require.NoError(t, imaplib.SaveCredentials(cfg.TokensDir(), src.Identifier, testutil.IMAPTestPassword))
+				ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+				invocationFromContext(ctx).logger = testDiscardLogger()
+				syncMailbox := func() {
+					summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+					require.NoError(t, err)
+					require.Zero(t, summary.Errors)
+				}
+				syncMailbox()
+				var savedRole string
+				require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT system_role FROM labels WHERE source_id = ? AND source_label_id = 'Combined'`), src.ID).Scan(&savedRole))
+				assert.Equal(t, role.name, savedRole)
+				var accountPath string
+				require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT account_path FROM messages WHERE source_id = ? AND source_message_id = 'Combined|1'`), src.ID).Scan(&accountPath))
+				assert.Equal(t, "sent", accountPath)
+				require.NoError(t, st.MarkMessageDeleted(src.ID, "Combined|1"))
+				if filtered {
+					cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Archive"}}
+				}
+				testutil.SetIMAPFlags(t, addr, "Combined", 1, imapapi.FlagSeen)
+				syncMailbox()
+				assert.Equal(t, 1, imapTombstonedMessageCount(t, st, src.ID))
+				testutil.ExpungeIMAPMessage(t, addr, "Combined", 1)
+				testutil.AppendIMAPRawMessage(t, user, "INBOX", raw)
+				syncMailbox()
+				assert.Zero(t, imapTombstonedMessageCount(t, st, src.ID))
+			})
+		}
+	}
+}
+
 func TestRunScheduledIMAPSync_CompleteRestoreWithoutMessageID(t *testing.T) {
-	for _, allMail := range []bool{true, false} {
-		t.Run(fmt.Sprintf("all-mail=%t", allMail), func(t *testing.T) {
+	for _, tc := range []struct {
+		name                      string
+		allMail, absent, distinct bool
+	}{
+		{"all-mail", true, false, false}, {"move", false, false, false},
+		{"observed-absence", false, true, false}, {"identical-in-trash", false, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			mailboxes := map[string]int{"INBOX": 0, "Trash": 0}
 			roles := map[string][]imapapi.MailboxAttr{"Trash": {imapapi.MailboxAttrTrash}}
 			originalKey := "Trash|1"
-			if allMail {
+			if tc.allMail {
 				mailboxes["All Mail"] = 0
 				roles["All Mail"] = []imapapi.MailboxAttr{imapapi.MailboxAttrAll}
 				originalKey = "All Mail|1"
@@ -177,7 +238,7 @@ func TestRunScheduledIMAPSync_CompleteRestoreWithoutMessageID(t *testing.T) {
 				mailboxes, roles)
 			raw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Restored\r\n\r\nbody\r\n")
 			testutil.AppendIMAPRawMessage(t, user, "Trash", raw)
-			if allMail {
+			if tc.allMail {
 				testutil.AppendIMAPRawMessage(t, user, "All Mail", raw)
 			}
 			host, portText, err := net.SplitHostPort(addr)
@@ -204,13 +265,27 @@ func TestRunScheduledIMAPSync_CompleteRestoreWithoutMessageID(t *testing.T) {
 			var originalID int64
 			require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), src.ID, originalKey).Scan(&originalID))
 			require.NoError(t, st.MarkMessageDeleted(src.ID, originalKey))
-			testutil.ExpungeIMAPMessage(t, addr, "Trash", imapapi.UID(1))
+			if !tc.distinct {
+				testutil.ExpungeIMAPMessage(t, addr, "Trash", imapapi.UID(1))
+			}
+			if tc.absent {
+				summary, err = runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+				require.NoError(t, err)
+				require.Zero(t, summary.Errors)
+			}
 			testutil.AppendIMAPRawMessage(t, user, "INBOX", raw)
 			summary, err = runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
 			require.NoError(t, err)
 			require.Zero(t, summary.Errors)
 			var marked bool
 			require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE id = ?`), originalID).Scan(&marked))
+			if tc.distinct {
+				assert.True(t, marked)
+				var inboxID int64
+				require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = 'INBOX'`), src.ID).Scan(&inboxID))
+				assert.NotEqual(t, originalID, inboxID)
+				return
+			}
 			assert.False(t, marked, "the original archived message should lose its deletion mark")
 			var inboxMemberships int
 			require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ? AND mailbox = 'INBOX' AND message_id = ?`), src.ID, originalID).Scan(&inboxMemberships))
@@ -218,9 +293,11 @@ func TestRunScheduledIMAPSync_CompleteRestoreWithoutMessageID(t *testing.T) {
 			var live int
 			require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND deleted_at IS NULL AND deleted_from_source_at IS NULL`), src.ID).Scan(&live))
 			assert.Equal(t, 1, live)
-			plan, err := st.PlanGCContext(ctx)
-			require.NoError(t, err)
-			assert.Empty(t, plan.SourceDeletedIDs)
+			if !st.IsPostgreSQL() {
+				plan, err := st.PlanGCContext(ctx)
+				require.NoError(t, err)
+				assert.Empty(t, plan.SourceDeletedIDs)
+			}
 		})
 	}
 }

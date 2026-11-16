@@ -20,6 +20,7 @@ import (
 type IMAPMembershipObservation struct {
 	Mailbox                  string
 	AllMail                  bool
+	Trash                    bool
 	UIDValidity              uint32
 	UID                      uint32
 	SourceMessageID          string
@@ -39,6 +40,7 @@ type IMAPMembershipObservation struct {
 type IMAPMailboxDelta struct {
 	Mailbox      string
 	AllMail      bool
+	Trash        bool
 	State        IMAPFolderState
 	Memberships  []IMAPMembershipObservation
 	VanishedUIDs []uint32
@@ -299,6 +301,10 @@ func (s *Store) applyIMAPMailboxDeltas(
 			return err
 		}
 		resolver := imapMembershipResolver{ctx: ctx, tx: tx, sourceID: sourceID, sqlite: !s.IsPostgreSQL(), includeMarked: true}
+		resolver.markedStillInTrash, err = imapMarkedStillInTrash(ctx, tx, sourceID, normalizedDeltas)
+		if err != nil {
+			return err
+		}
 		if err := resolver.primeIdentities(ctx, normalizedDeltas); err != nil {
 			return err
 		}
@@ -317,14 +323,24 @@ func (s *Store) applyIMAPMailboxDeltas(
 		currentMailboxes := make(map[string]struct{}, len(normalizedDeltas))
 		restoringMailboxRole := imapRestoringMailboxRole
 		var allMailArgs []any
+		var trashArgs []any
 		for _, normalized := range normalizedDeltas {
 			currentMailboxes[normalized.mailbox] = struct{}{}
 			if normalized.delta.AllMail {
 				allMailArgs = append(allMailArgs, normalized.mailbox)
 			}
+			if normalized.delta.Trash {
+				trashArgs = append(trashArgs, normalized.mailbox)
+			}
 		}
 		if len(allMailArgs) > 0 {
 			restoringMailboxRole += ` AND l.source_label_id NOT IN (?` + strings.Repeat(",?", len(allMailArgs)-1) + `)`
+		}
+		trashRole := `l.system_role = 'trash'`
+		if len(trashArgs) > 0 {
+			placeholders := `?` + strings.Repeat(",?", len(trashArgs)-1)
+			trashRole += ` OR l.source_label_id IN (` + placeholders + `)`
+			restoringMailboxRole += ` AND l.source_label_id NOT IN (` + placeholders + `)`
 		}
 		if err := retireAbsentIMAPMailboxes(
 			ctx, tx, sourceID, currentMailboxes, generations, affected,
@@ -480,11 +496,11 @@ func (s *Store) applyIMAPMailboxDeltas(
 				id = ? AND source_id = ?
 				AND (
 					NOT EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
-						WHERE ml.message_id = messages.id AND l.system_role = 'trash')
+						WHERE ml.message_id = messages.id AND (`+trashRole+`))
 					OR EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
 						WHERE ml.message_id = messages.id AND `+restoringMailboxRole+`)
 				)
-			`, append([]any{messageID, sourceID}, allMailArgs...)...); err != nil {
+			`, append(append(append([]any{messageID, sourceID}, trashArgs...), allMailArgs...), trashArgs...)...); err != nil {
 				return fmt.Errorf("clear IMAP tombstone for message %d: %w", messageID, err)
 			}
 		}
@@ -554,7 +570,7 @@ func (s *Store) ClearRestoredIMAPDeletionMarksForSyncContext(
 		}
 		var candidates []IMAPMembershipObservation
 		for _, observation := range observations {
-			if eligible[observation.Mailbox] && !observation.AllMail {
+			if eligible[observation.Mailbox] && !observation.AllMail && !observation.Trash {
 				candidates = append(candidates, observation)
 			}
 		}
@@ -987,15 +1003,68 @@ func captureIMAPMembershipMessageIDs(
 }
 
 type imapMembershipResolver struct {
-	ctx               context.Context
-	tx                *loggedTx
-	sourceID          int64
-	sqlite            bool
-	includeMarked     bool
-	rawMessages       map[int64]map[[32]byte]int64
-	canonicalMessages map[string]int64
-	archivedMessages  map[int64]bool
-	legacyMessages    map[string]int64
+	ctx                context.Context
+	tx                 *loggedTx
+	sourceID           int64
+	sqlite             bool
+	includeMarked      bool
+	markedStillInTrash map[int64]bool
+	rawMessages        map[int64]map[[32]byte]int64
+	canonicalMessages  map[string]int64
+	archivedMessages   map[int64]bool
+	legacyMessages     map[string]int64
+}
+
+func imapMarkedStillInTrash(ctx context.Context, tx *loggedTx, sourceID int64, deltas []normalizedIMAPMailboxDelta) (map[int64]bool, error) {
+	byMailbox := make(map[string]normalizedIMAPMailboxDelta, len(deltas))
+	resetUIDs := make(map[string]map[uint32]bool)
+	vanishedUIDs := make(map[string]map[uint32]bool)
+	for _, delta := range deltas {
+		byMailbox[delta.mailbox] = delta
+		if delta.delta.Reset {
+			uids := make(map[uint32]bool, len(delta.delta.Memberships))
+			for _, observation := range delta.delta.Memberships {
+				uids[observation.UID] = true
+			}
+			resetUIDs[delta.mailbox] = uids
+		}
+		if len(delta.delta.VanishedUIDs) > 0 {
+			uids := make(map[uint32]bool, len(delta.delta.VanishedUIDs))
+			for _, uid := range delta.delta.VanishedUIDs {
+				uids[uid] = true
+			}
+			vanishedUIDs[delta.mailbox] = uids
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT m.id, membership.mailbox, membership.uidvalidity, membership.uid, COALESCE(l.system_role, '')
+		FROM messages m JOIN imap_message_memberships membership ON membership.message_id = m.id AND membership.source_id = m.source_id
+		LEFT JOIN labels l ON l.source_id = m.source_id AND l.source_label_id = membership.mailbox
+		WHERE m.source_id = ? AND m.deleted_from_source_at IS NOT NULL`, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	marked := make(map[int64]bool)
+	for rows.Next() {
+		var id int64
+		var mailbox, role string
+		var validity, uid uint32
+		if err := rows.Scan(&id, &mailbox, &validity, &uid, &role); err != nil {
+			return nil, err
+		}
+		delta, exists := byMailbox[mailbox]
+		if !exists || (!delta.delta.Trash && role != LabelSystemRoleTrash) || delta.uidValidity != validity {
+			continue
+		}
+		present := !delta.delta.Reset && !vanishedUIDs[mailbox][uid]
+		if delta.delta.Reset {
+			present = resetUIDs[mailbox][uid]
+		}
+		if present {
+			marked[id] = true
+		}
+	}
+	return marked, rows.Err()
 }
 
 func (r *imapMembershipResolver) retireObsoleteKeys(ctx context.Context, deltas []normalizedIMAPMailboxDelta, generations []imapMembershipUIDGeneration) error {
@@ -1299,13 +1368,14 @@ func (r *imapMembershipResolver) resolveRawSHA256(
 			JOIN message_raw ON message_raw.message_id = messages.id
 			WHERE messages.source_id = ? AND message_raw.raw_format = 'mime'
 			  AND (? OR messages.deleted_from_source_at IS NULL)
-			  AND EXISTS (
+			  AND messages.deleted_at IS NULL
+			  AND ((? AND messages.deleted_from_source_at IS NOT NULL) OR EXISTS (
 				SELECT 1 FROM imap_message_memberships membership
 				WHERE membership.source_id = messages.source_id
 				  AND membership.message_id = messages.id
-			  )
+			  ))
 		`
-		args := []any{r.sourceID, r.includeMarked}
+		args := []any{r.sourceID, r.includeMarked, r.includeMarked}
 		if rawSize > 0 {
 			query += ` AND messages.size_estimate = ?`
 			args = append(args, rawSize)
@@ -1330,6 +1400,10 @@ func (r *imapMembershipResolver) resolveRawSHA256(
 				return 0, false, fmt.Errorf("decode IMAP raw membership identity: %w", err)
 			}
 			rawDigest := sha256.Sum256(decoded)
+			if r.markedStillInTrash[messageID] {
+				messages[rawDigest] = 0
+				continue
+			}
 			if existingMessageID, exists := messages[rawDigest]; !exists {
 				messages[rawDigest] = messageID
 			} else if existingMessageID != messageID {
