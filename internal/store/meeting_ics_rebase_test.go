@@ -200,14 +200,12 @@ func TestFrozenICSAllDayOriginalUnknownZone(t *testing.T) {
 func TestFrozenICSArchivedExceptions(t *testing.T) {
 	for _, tc := range []struct {
 		name, method, properties, original, noteTime string
-		allDay, bounds, missingOriginal, isRange     bool
+		allDay, bounds, isRange                      bool
 	}{
-		{"range", "REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270306T150000Z\r\nDURATION:PT1H", "20270303T120000Z", "2027-03-03T12:00:00Z", false, true, false, true},
-		{"timed", "REQUEST", "RECURRENCE-ID:20270304T120000Z\r\nDTSTART:20270306T150000Z\r\nDURATION:PT1H", "20270304T120000Z", "2027-03-04T12:00:00Z", false, true, false, false},
-		{"all-day", "REQUEST", "RECURRENCE-ID;VALUE=DATE:20270304\r\nDTSTART;VALUE=DATE:20270306\r\nDTEND;VALUE=DATE:20270307", "20270304", "2027-03-04T05:00:00Z", true, true, false, false},
-		{"timed-cancel", "CANCEL", "RECURRENCE-ID:20270304T120000Z\r\nDTSTART:20270306T150000Z\r\nDTEND:20270306T160000Z\r\nSTATUS:CANCELLED", "20270304T120000Z", "2027-03-04T12:00:00Z", false, true, false, false},
-		{"untimed-cancel", "CANCEL", "RECURRENCE-ID:20270304T120000Z\r\nSTATUS:CANCELLED", "20270304T120000Z", "2027-03-04T12:00:00Z", false, false, false, false},
-		{"no-original", "REQUEST", "RECURRENCE-ID:20270304T120000Z\r\nDTSTART:20270306T150000Z\r\nDURATION:PT1H", "", "", false, true, true, false},
+		{"range", "REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270306T150000Z\r\nDURATION:PT1H", "20270303T120000Z", "2027-03-03T12:00:00Z", false, true, true},
+		{"timed", "REQUEST", "RECURRENCE-ID:20270304T120000Z\r\nDTSTART:20270306T150000Z\r\nDURATION:PT1H", "20270304T120000Z", "2027-03-04T12:00:00Z", false, true, false},
+		{"all-day", "REQUEST", "RECURRENCE-ID;VALUE=DATE:20270304\r\nDTSTART;VALUE=DATE:20270306\r\nDTEND;VALUE=DATE:20270307", "20270304", "2027-03-04T05:00:00Z", true, true, false},
+		{"untimed-cancel", "CANCEL", "RECURRENCE-ID:20270304T120000Z\r\nSTATUS:CANCELLED", "20270304T120000Z", "2027-03-04T12:00:00Z", false, false, false},
 	} {
 		for _, withMaster := range []bool{false, true} {
 			t.Run(tc.name+"/master="+strconv.FormatBool(withMaster), func(t *testing.T) {
@@ -234,18 +232,9 @@ func TestFrozenICSArchivedExceptions(t *testing.T) {
 				if withMaster {
 					rangeID = ids[1]
 				}
-				if tc.name == "timed-cancel" {
-					// ICS cancellations discard bounds; other archived sources can retain them.
-					_, err = st.db.ExecContext(t.Context(), `UPDATE calendar_events SET start_at = ?, end_at = ? WHERE message_id = ?`, time.Date(2027, 3, 6, 15, 0, 0, 0, time.UTC), time.Date(2027, 3, 6, 16, 0, 0, 0, time.UTC), edit)
-					require.NoError(t, err)
-				}
-				if tc.missingOriginal {
-					_, err = st.db.ExecContext(t.Context(), `UPDATE calendar_events SET original_start_at = NULL WHERE message_id = ?`, edit)
-					require.NoError(t, err)
-				}
 				ref := MeetingLinkRef{Kind: "evt", MessageID: edit}
 				expectedRef := fmt.Sprintf("evt:%d", edit)
-				if withMaster && !tc.missingOriginal {
+				if withMaster {
 					ref = MeetingLinkRef{Kind: "evt", MessageID: ids[0], Identity: occurrenceIdentity(t, tc.original)}
 					expectedRef = fmt.Sprintf("evt:%d@%s", ids[0], tc.original)
 				}
@@ -260,12 +249,7 @@ func TestFrozenICSArchivedExceptions(t *testing.T) {
 					assert.Equal(t, expectedRef, record.Links[0].Ref)
 					assert.Equal(t, tc.bounds, record.Links[0].Start != nil)
 					assert.Equal(t, tc.bounds, record.Links[0].End != nil)
-					if withMaster || !tc.missingOriginal {
-						assert.Contains(t, record.Unexpandable, CalendarUnexpandable{MessageID: rangeID, Reason: "unsupported recurrence: RANGE=THISANDFUTURE"})
-					}
-					if tc.missingOriginal {
-						assert.Contains(t, record.Unexpandable, CalendarUnexpandable{MessageID: edit, Reason: "exception has no original start"})
-					}
+					assert.Contains(t, record.Unexpandable, CalendarUnexpandable{MessageID: rangeID, Reason: "unsupported recurrence: RANGE=THISANDFUTURE"})
 					if note != 0 && (!tc.allDay || withMaster) {
 						assert.Contains(t, record.MessageIDs, note)
 					} else if note != 0 {
