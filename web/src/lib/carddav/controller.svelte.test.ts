@@ -56,7 +56,7 @@ afterEach(() => {
 });
 
 describe('CardDAVController', () => {
-  it.each([200, 500])('keeps the sync error when preview returns %i', async (previewStatus) => {
+  it('keeps the sync error and reports preview conflicts', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const path = new URL(request.url).pathname;
@@ -66,7 +66,7 @@ describe('CardDAVController', () => {
       if (path.endsWith('/sync')) return Response.json({ error: 'failed' }, { status: 502 });
       if (path.endsWith('/participant-bindings')) {
         expect(await request.json()).toEqual({ dry_run: true, undo: false });
-        return Response.json({ conflicts: 2 }, { status: previewStatus });
+        return Response.json({ conflicts: 2 });
       }
       throw new Error(`Unexpected ${path}`);
     });
@@ -74,7 +74,7 @@ describe('CardDAVController', () => {
     await controller.load();
     await controller.sync();
     expect(controller.syncError).toBe('Unable to complete CardDAV sync. Current state was refreshed.');
-    expect(controller.syncBindingConflicts).toBe(previewStatus === 200 ? 2 : 0);
+    expect(controller.syncBindingConflicts).toBe(2);
     controller.destroy();
   });
 

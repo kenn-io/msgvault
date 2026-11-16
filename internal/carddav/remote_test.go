@@ -24,7 +24,7 @@ type memoryRemote struct {
 	etags   map[string]string
 	version int
 	puts    int
-	// writeErr, when set, fails every write before it is sent.
+	// writeErr fails writes before they are sent, restricted to failHref when set.
 	writeErr error
 	failHref string
 	// failed counts the writes that writeErr failed.
@@ -246,66 +246,57 @@ func TestTokenFailureStopsThePublicationSweep(t *testing.T) {
 	require.Equal(1, remote.failed)
 }
 
-func TestServiceSyncReportsParticipantBindingConflicts(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	allowed := true
-	_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
-		BaseURL: "https://memory.test", Username: "alice", PrincipalURL: "https://memory.test/principal/", HomeURL: "https://memory.test/books/",
-		Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://memory.test/books/personal/", DisplayName: "Personal", CanCreate: &allowed}},
-	})
-	require.NoError(err)
-	_, err = st.EnsureParticipant("shared@example.test", "Shared", "example.test")
-	require.NoError(err)
-	remote := newMemoryRemote()
-	remote.set(books[0].CanonicalURL+"first", []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:first\r\nFN:First\r\nEMAIL:shared@example.test\r\nEND:VCARD\r\n"))
-	remote.set(books[0].CanonicalURL+"second", []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:second\r\nFN:Second\r\nEMAIL:shared@example.test\r\nEND:VCARD\r\n"))
-	result, err := NewRemoteService(st, remote).Sync(t.Context(), SyncOptions{})
-	require.NoError(err)
-	assert.Equal(1, result.BindingConflicts)
-}
-
-func TestServiceSyncReportsConflictsAfterPublicationFailure(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	allowed := true
-	_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
-		BaseURL: "https://memory.test", Username: "alice", PrincipalURL: "https://memory.test/principal/", HomeURL: "https://memory.test/books/",
-		Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://memory.test/books/personal/", DisplayName: "Personal", CanCreate: &allowed}},
-	})
-	require.NoError(err)
-	_, err = st.EnsureParticipant("shared@example.test", "Shared", "example.test")
-	require.NoError(err)
-	remote := newMemoryRemote()
-	remote.set(books[0].CanonicalURL+"first", []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:first\r\nFN:First\r\nEMAIL:shared@example.test\r\nEND:VCARD\r\n"))
-	service := NewRemoteService(st, remote)
-	_, err = service.Sync(t.Context(), SyncOptions{})
-	require.NoError(err)
-	var personID int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?) RETURNING id`), "second", "Second").Scan(&personID))
-	require.NoError(service.PublishPerson(t.Context(), personID))
-	var thirdID int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?) RETURNING id`), "third", "Third").Scan(&thirdID))
-	require.NoError(service.PublishPerson(t.Context(), thirdID))
-	third, err := st.GetPersonContext(t.Context(), thirdID)
-	require.NoError(err)
-	_, err = st.UpdatePersonDisplayNameContext(t.Context(), thirdID, third.Revision, new("Third changed"))
-	require.NoError(err)
-	remote.failHref = books[0].CanonicalURL + "third"
-	remote.writeErr = errors.New("synthetic publication failure")
-	_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
-		AddressKind: store.ContactAddressEmail, OriginalValue: "shared@example.test", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
-	})
-	require.NoError(err)
-	result, err := service.Sync(t.Context(), SyncOptions{})
-	require.Error(err)
-	assert.Equal(1, remote.failed)
-	preview, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
-	require.NoError(err)
-	assert.Equal(1, result.BindingConflicts)
-	assert.Equal(1, preview.Conflicts)
+func TestServiceSyncReportsFinalConflictCount(t *testing.T) {
+	for _, scenario := range []string{"successful sync", "publication failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			allowed := true
+			_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
+				BaseURL: "https://memory.test", Username: "alice", PrincipalURL: "https://memory.test/principal/", HomeURL: "https://memory.test/books/",
+				Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://memory.test/books/personal/", DisplayName: "Personal", CanCreate: &allowed}},
+			})
+			require.NoError(err)
+			_, err = st.EnsureParticipant("shared@example.test", "Shared", "example.test")
+			require.NoError(err)
+			remote := newMemoryRemote()
+			remote.set(books[0].CanonicalURL+"first", []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:first\r\nFN:First\r\nEMAIL:shared@example.test\r\nEND:VCARD\r\n"))
+			if scenario == "successful sync" {
+				remote.set(books[0].CanonicalURL+"second", []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:second\r\nFN:Second\r\nEMAIL:shared@example.test\r\nEND:VCARD\r\n"))
+				result, err := NewRemoteService(st, remote).Sync(t.Context(), SyncOptions{})
+				require.NoError(err)
+				assert.Equal(1, result.BindingConflicts)
+				return
+			}
+			service := NewRemoteService(st, remote)
+			_, err = service.Sync(t.Context(), SyncOptions{})
+			require.NoError(err)
+			var personID int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?) RETURNING id`), "second", "Second").Scan(&personID))
+			require.NoError(service.PublishPerson(t.Context(), personID))
+			var thirdID int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?) RETURNING id`), "third", "Third").Scan(&thirdID))
+			require.NoError(service.PublishPerson(t.Context(), thirdID))
+			third, err := st.GetPersonContext(t.Context(), thirdID)
+			require.NoError(err)
+			_, err = st.UpdatePersonDisplayNameContext(t.Context(), thirdID, third.Revision, new("Third changed"))
+			require.NoError(err)
+			remote.failHref = books[0].CanonicalURL + "third"
+			remote.writeErr = errors.New("synthetic publication failure")
+			_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+				AddressKind: store.ContactAddressEmail, OriginalValue: "shared@example.test", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+			})
+			require.NoError(err)
+			result, err := service.Sync(t.Context(), SyncOptions{})
+			require.Error(err)
+			assert.Equal(1, remote.failed)
+			preview, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
+			require.NoError(err)
+			assert.Equal(1, result.BindingConflicts)
+			assert.Equal(1, preview.Conflicts)
+		})
+	}
 }
 
 func TestServiceSyncFinishesBeforeBlockedPreview(t *testing.T) {
@@ -323,7 +314,12 @@ func TestServiceSyncFinishesBeforeBlockedPreview(t *testing.T) {
 		_, err := service.Sync(ctx, SyncOptions{OnRunStarted: func(int64) { cancel() }})
 		done <- err
 	}()
-	defer func() { close(release); <-done }()
+	defer func() {
+		close(release)
+		err := <-done
+		require.ErrorIs(t, err, context.Canceled)
+		require.NotContains(t, err.Error(), "preview CardDAV participant conflicts")
+	}()
 	select {
 	case <-entered:
 	case <-time.After(10 * time.Second):
