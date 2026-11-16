@@ -439,7 +439,8 @@ type ScoreBreakdown struct {
 type FactSummary struct {
 	ClaimedFields  int        `json:"claimed_fields"`
 	LatestClaimAt  *time.Time `json:"latest_claim_at" nullable:"true"`
-	HasStoredFacts bool       `json:"has_stored_facts" doc:"Whether claims, evidence, pin events, attribute values, or employments are stored"`
+	HasValues      bool       `json:"has_values" doc:"Whether attribute values or employments are stored"`
+	HasFactHistory bool       `json:"has_fact_history" doc:"Whether claims, evidence, or pin events are stored"`
 }
 
 type ProjectionOperation string

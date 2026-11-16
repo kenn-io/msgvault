@@ -5532,8 +5532,11 @@ components:
         claimed_fields:
           format: int64
           type: integer
-        has_stored_facts:
-          description: Whether claims, evidence, pin events, attribute values, or employments are stored
+        has_fact_history:
+          description: Whether claims, evidence, or pin events are stored
+          type: boolean
+        has_values:
+          description: Whether attribute values or employments are stored
           type: boolean
         latest_claim_at:
           format: date-time
@@ -5545,7 +5548,8 @@ components:
       required:
         - claimed_fields
         - latest_claim_at
-        - has_stored_facts
+        - has_values
+        - has_fact_history
       type: object
     FieldDescriptor:
       properties:

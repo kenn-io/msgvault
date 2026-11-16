@@ -4,8 +4,10 @@
 
 export interface FactSummary {
   claimed_fields: number;
-  /** Whether claims, evidence, pin events, attribute values, or employments are stored */
-  has_stored_facts: boolean;
+  /** Whether claims, evidence, or pin events are stored */
+  has_fact_history: boolean;
+  /** Whether attribute values or employments are stored */
+  has_values: boolean;
   /** @nullable */
   latest_claim_at: string | null;
   [key: string]: unknown;

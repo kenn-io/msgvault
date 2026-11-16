@@ -834,6 +834,15 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 				if claimIdentity != currentIdentity {
 					continue
 				}
+				if decision.Reason == personfacts.ReasonPinRetained {
+					match, matchErr := samePinnedEmployment(*claim.Normalized, value.Normalized)
+					if matchErr != nil {
+						return false, matchErr
+					}
+					if !match {
+						continue
+					}
+				}
 			}
 			hasCurrent = true
 			matchesCurrent = matchesCurrent || (claim.Normalized != nil && claim.Normalized.Fingerprint == value.Normalized.Fingerprint)
@@ -1822,6 +1831,25 @@ func loadProjectedPersonFactEmploymentClaimsTx(
 		return nil, fmt.Errorf("iterate projected employment claims: %w", err)
 	}
 	return projected, nil
+}
+
+func samePinnedEmployment(left, right personfacts.NormalizedValue) (bool, error) {
+	var a, b personfacts.EmploymentValue
+	if err := json.Unmarshal(left.JSON, &a); err != nil {
+		return false, err
+	}
+	if err := json.Unmarshal(right.JSON, &b); err != nil {
+		return false, err
+	}
+	leftStint, err := json.Marshal([]any{a.Title, a.StartDate, a.EndDate}, json.Deterministic(true))
+	if err != nil {
+		return false, err
+	}
+	rightStint, err := json.Marshal([]any{b.Title, b.StartDate, b.EndDate}, json.Deterministic(true))
+	if err != nil {
+		return false, err
+	}
+	return string(leftStint) == string(rightStint), nil
 }
 
 func personFactEmploymentStableIdentity(

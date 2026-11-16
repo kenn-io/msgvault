@@ -1989,7 +1989,8 @@ func TestPersonFactSummaryIncludesEvidenceAndPins(t *testing.T) {
 			}
 			summary, err := st.PersonFactSummaryContext(t.Context(), personID)
 			require.NoError(err)
-			assert.True(summary.HasStoredFacts)
+			assert.True(summary.HasFactHistory)
+			assert.False(summary.HasValues)
 			assert.Zero(summary.ClaimedFields)
 			assert.Nil(summary.LatestClaimAt)
 		})
@@ -2011,7 +2012,8 @@ func TestPersonFactSummaryIncludesStoredValues(t *testing.T) {
 			}
 			summary, err := st.PersonFactSummaryContext(t.Context(), personID)
 			require.NoError(t, err)
-			assert.True(t, summary.HasStoredFacts)
+			assert.True(t, summary.HasValues)
+			assert.False(t, summary.HasFactHistory)
 			assert.Zero(t, summary.ClaimedFields)
 			assert.Nil(t, summary.LatestClaimAt)
 		})

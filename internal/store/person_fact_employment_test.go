@@ -1605,6 +1605,7 @@ func TestPersonFactEmploymentPinnedOutcomeMatchesIdentity(t *testing.T) {
 		{"matching", `{"organization":{"name":"Example Company"},"title":"Engineer"}`, `{"organization":{"name":"Example Company"},"title":"Engineer"}`, personfacts.OutcomePinnedValueKept},
 		{"different employer", `{"organization":{"name":"Example Company"},"title":"Engineer"}`, `{"organization":{"name":"Other Company"},"title":"Engineer"}`, personfacts.OutcomeNotUsed},
 		{"different title", `{"organization":{"name":"Example Company"},"title":"Engineer"}`, `{"organization":{"name":"Example Company"},"title":"Manager"}`, personfacts.OutcomeNotUsed},
+		{"separate stints", `{"organization":{"name":"Example Company"},"title":"Engineer","start_date":{"year":2018},"end_date":{"year":2020}}`, `{"organization":{"name":"Example Company"},"title":"Engineer","start_date":{"year":2023},"end_date":{"year":2025}}`, personfacts.OutcomeNotUsed},
 		{"historical", `{"organization":{"name":"Example Company"},"title":"Engineer","end_date":{"year":2020}}`, `{"organization":{"name":"Example Company"},"title":"Engineer","role":"Developer","end_date":{"year":2020}}`, personfacts.OutcomePinnedValueKept},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -5329,9 +5329,12 @@ func (e ExploreUnavailableAction) Validate() error {
 type FactSummary struct {
 	ClaimedFields int64 `json:"claimed_fields"`
 
-	// HasStoredFacts Whether claims, evidence, pin events, attribute values, or employments are stored
-	HasStoredFacts bool       `json:"has_stored_facts"`
-	LatestClaimAt  *time.Time `json:"latest_claim_at" validate:"omitempty"`
+	// HasFactHistory Whether claims, evidence, or pin events are stored
+	HasFactHistory bool `json:"has_fact_history"`
+
+	// HasValues Whether attribute values or employments are stored
+	HasValues     bool       `json:"has_values"`
+	LatestClaimAt *time.Time `json:"latest_claim_at" validate:"omitempty"`
 }
 
 func (f FactSummary) Validate() error {

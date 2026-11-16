@@ -138,7 +138,7 @@ func TestPersonFactEvidenceHTTPFiltersIDBeforePagination(t *testing.T) {
 		require.Len(t, body.Evidence, 1)
 		assert.Equal(t, rows[1].ID, body.Evidence[0].ID)
 	}
-	for _, path := range []string{base + "&offset=1", fmt.Sprintf("/api/v1/people/%d/fact-evidence?evidence_id=%d", personID, rows[0].ID+100000)} {
+	for _, path := range []string{base + "&offset=1", base + "&target=" + personFactAPITargetQuery(targets[store.AttributeSlugAskMeAbout]), fmt.Sprintf("/api/v1/people/%d/fact-evidence?evidence_id=%d", personID, rows[0].ID+100000)} {
 		response := doRequest(t, srv.Router(), http.MethodGet, path, nil, nil)
 		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 		assert.JSONEq(t, `{"evidence":[]}`, response.Body.String())
@@ -494,7 +494,7 @@ func TestPersonFactSummaryAndFilteredDecisionsHTTP(t *testing.T) {
 	path := fmt.Sprintf("/api/v1/people/%d", personID)
 	response := doRequest(t, srv.Router(), http.MethodGet, path+"/fact-summary", nil, nil)
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
-	assert.JSONEq(`{"claimed_fields":0,"latest_claim_at":null,"has_stored_facts":false}`, response.Body.String())
+	assert.JSONEq(`{"claimed_fields":0,"latest_claim_at":null,"has_values":false,"has_fact_history":false}`, response.Body.String())
 	var emptySummary generated.FactSummary
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &emptySummary))
 	require.NoError(emptySummary.Validate())
@@ -513,7 +513,7 @@ func TestPersonFactSummaryAndFilteredDecisionsHTTP(t *testing.T) {
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &summary))
 	assert.Equal(2, summary.ClaimedFields)
 	assert.NotNil(summary.LatestClaimAt)
-	assert.True(summary.HasStoredFacts)
+	assert.True(summary.HasFactHistory)
 
 	response = doRequest(t, srv.Router(), http.MethodGet, path+"/fact-decisions?limit=1&claim_key="+url.QueryEscape(claimKey), nil, nil)
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
