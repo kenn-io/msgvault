@@ -28,8 +28,8 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-// ErrHistoryExpired indicates that the Gmail history ID is too old and a full sync is required.
-var ErrHistoryExpired = errors.New("history expired - run full sync")
+// ErrHistoryExpired indicates that the Gmail history ID is too old and requires History recovery.
+var ErrHistoryExpired = errors.New("history expired - history recovery required")
 
 const (
 	labelTypeSystem               = "system"

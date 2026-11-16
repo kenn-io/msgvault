@@ -88,7 +88,8 @@ faster than a full sync. Requires a prior full sync.
 msgvault sync user@gmail.com
 ```
 
-If Gmail's history has expired (~7 days), it will suggest running a full sync.
+If Gmail's history has expired, sync automatically reconciles the complete
+mailbox and catches up on changes made during recovery.
 
 ### Build the analytics cache
 

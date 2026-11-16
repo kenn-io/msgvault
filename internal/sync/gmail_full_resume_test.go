@@ -181,6 +181,8 @@ func TestGmailFullResumeHistoryExpiration(t *testing.T) {
 	assert.False(summary.WasResumed)
 	require.NotEmpty(f.listTokens)
 	assert.Empty(f.listTokens[0], "History recovery cannot reuse an ordinary full checkpoint")
+	assert.Equal(f.history, summary.FinalHistoryID)
+	assert.Equal(strconv.FormatUint(f.history, 10), gmailCoverageSource(t.Context(), t, e).SyncCursor.String, "recovery publishes after catch-up")
 }
 
 type backfillHistoryTransport struct {
@@ -257,4 +259,20 @@ func TestGmailFullBackfillPreservesPendingHistory(t *testing.T) {
 		gmailCoverageRaw(t, e, id)
 	}
 	assert.Equal(t, "2000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
+}
+
+func TestGmailFullBackfillWithoutValidCursor(t *testing.T) {
+	// Serial: gmailTransportClient replaces http.DefaultClient.
+	for _, cursor := range []string{"", "0", "invalid"} {
+		t.Run(cursor, func(t *testing.T) {
+			e := acquisitionDurabilityEnv(t)
+			e.CreateSourceWithHistory(t, cursor)
+			f := &gmailCoverageTransport{history: 1000}
+			e.Syncer = New(gmailTransportClient(t, f), e.Store, nil)
+			summary, err := e.Syncer.Full(t.Context(), testEmail)
+			require.NoError(t, err)
+			assert.Equal(t, uint64(1000), summary.FinalHistoryID)
+			assert.Equal(t, "1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
+		})
+	}
 }

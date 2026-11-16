@@ -877,7 +877,8 @@ reports a new history event for them. The full listing resumes from its saved
 checkpoint when the request scope matches. A full sync without filters or a
 limit preserves an existing History cursor, including when resumed. The next
 incremental sync can then read pending label changes and deletions as well as
-new arrivals. A first full sync seeds the History point recorded at its start.
+new arrivals. If that cursor has expired, the next incremental sync runs History
+recovery. A first full sync seeds the History point recorded at its start.
 Filtered or limited full syncs leave the source cursor
 unchanged. A full sync interrupted under an earlier release starts
 from the first page once. Previously archived messages aren't downloaded again

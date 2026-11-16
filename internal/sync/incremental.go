@@ -204,9 +204,9 @@ func (s *Syncer) incrementalWithRecovery(
 			if err != nil {
 				// Check for 404 - history too old
 				if _, ok := errors.AsType[*gmail.NotFoundError](err); ok {
-					s.logger.Info("gmail history expired; full sync required")
+					s.logger.Info("gmail history expired; history recovery required")
 					_ = s.store.FailSync(syncID, "history too old")
-					// Callers fall back to a full sync on ErrHistoryExpired.
+					// Callers start History recovery on ErrHistoryExpired.
 					return nil, ErrHistoryExpired
 				}
 				_ = s.store.FailSync(syncID, err.Error())
