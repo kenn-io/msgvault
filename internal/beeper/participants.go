@@ -99,10 +99,10 @@ func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, 
 		// phone one (which dedupes with SMS/WhatsApp archives).
 		if e, ok := r.rich[identifier]; ok && e.pid != pid {
 			if err := r.store.MergeParticipantsContext(ctx, e.pid, pid); err != nil {
-				if !errors.Is(err, store.ErrPersonBindingConflict) {
+				if !errors.Is(err, store.ErrPersonBindingConflict) && !errors.Is(err, store.ErrParticipantAddressConflict) {
 					return 0, err
 				}
-				slog.Warn("skipping Beeper participant merge across durable persons",
+				slog.Warn("skipping Beeper participant merge due to identity conflict",
 					"loser_participant_id", e.pid, "winner_participant_id", pid, "error", err)
 			}
 		}
@@ -146,10 +146,10 @@ func (r *participantResolver) recordRich(ctx context.Context, userID string, pid
 	// differs is left un-merged (conservative: numbers can be recycled).
 	if prev != 0 && prev != pid && !hasPhone {
 		if err := r.store.MergeParticipantsContext(ctx, prev, pid); err != nil {
-			if !errors.Is(err, store.ErrPersonBindingConflict) {
+			if !errors.Is(err, store.ErrPersonBindingConflict) && !errors.Is(err, store.ErrParticipantAddressConflict) {
 				return err
 			}
-			slog.Warn("skipping Beeper participant merge across durable persons",
+			slog.Warn("skipping Beeper participant merge due to identity conflict",
 				"loser_participant_id", prev, "winner_participant_id", pid, "error", err)
 		}
 	}

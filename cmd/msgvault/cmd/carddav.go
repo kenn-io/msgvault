@@ -204,14 +204,12 @@ func newSyncCardDAVCmd() *cobra.Command {
 			return api.SyncCardDAVWithResponse(cmd.Context(), &generated.SyncCardDAVRequestOptions{Body: &body})
 		})
 		if err != nil {
-			if resp == nil || resp.HTTPResponse == nil || resp.HTTPResponse.StatusCode != http.StatusConflict {
-				options := generated.ReconcileCardDAVParticipantBindingsBody{DryRun: true}
-				preview, previewErr := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.ReconcileCardDAVParticipantBindingsResp, error) {
-					return api.ReconcileCardDAVParticipantBindingsWithResponse(cmd.Context(), &generated.ReconcileCardDAVParticipantBindingsRequestOptions{Body: &options})
-				})
-				if previewErr == nil && preview.JSON200 != nil && preview.JSON200.Conflicts > 0 {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d CardDAV binding conflicts. Run msgvault carddav bind-participants --dry-run for details.\n", preview.JSON200.Conflicts)
-				}
+			options := generated.ReconcileCardDAVParticipantBindingsBody{DryRun: true}
+			preview, previewErr := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.ReconcileCardDAVParticipantBindingsResp, error) {
+				return api.ReconcileCardDAVParticipantBindingsWithResponse(cmd.Context(), &generated.ReconcileCardDAVParticipantBindingsRequestOptions{Body: &options})
+			})
+			if previewErr == nil && preview.JSON200 != nil && preview.JSON200.Conflicts > 0 {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d CardDAV binding conflicts. Run msgvault carddav bind-participants --dry-run for details.\n", preview.JSON200.Conflicts)
 			}
 			return err
 		}

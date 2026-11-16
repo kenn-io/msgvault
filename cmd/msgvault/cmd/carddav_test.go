@@ -446,7 +446,7 @@ func TestSyncCardDAVFailureReportsBindingConflicts(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
 				case "/api/v1/carddav/sync":
-					w.WriteHeader(http.StatusBadGateway)
+					w.WriteHeader(http.StatusConflict)
 					_, _ = w.Write([]byte(`{"error":"sync_failed","message":"sync failed"}`))
 				case "/api/v1/carddav/participant-bindings":
 					var body map[string]bool

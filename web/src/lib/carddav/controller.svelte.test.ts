@@ -56,14 +56,14 @@ afterEach(() => {
 });
 
 describe('CardDAVController', () => {
-  it('keeps the sync error and reports preview conflicts', async () => {
+  it.each([409, 502])('keeps the sync error and reports preview conflicts after %i', async (status) => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const path = new URL(request.url).pathname;
       if (path.endsWith('/status')) return Response.json(idleStatus);
       if (path.endsWith('/runs')) return Response.json({ runs: [] });
       if (path.endsWith('/books')) return Response.json({ books: [] });
-      if (path.endsWith('/sync')) return Response.json({ error: 'failed' }, { status: 502 });
+      if (path.endsWith('/sync')) return Response.json({ error: 'failed' }, { status });
       if (path.endsWith('/participant-bindings')) {
         expect(await request.json()).toEqual({ dry_run: true, undo: false });
         return Response.json({ conflicts: 2 });

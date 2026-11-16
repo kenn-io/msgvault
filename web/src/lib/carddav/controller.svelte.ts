@@ -282,7 +282,7 @@ export class CardDAVController {
         }
       } else if (response.status === 409 || response.status >= 500) {
         reconcile = true;
-        previewConflicts = response.status !== 409;
+        previewConflicts = true;
         this.syncError = 'Unable to complete CardDAV sync. Current state was refreshed.';
       } else {
         previewConflicts = response.status !== 400;

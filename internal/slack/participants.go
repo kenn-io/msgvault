@@ -2,6 +2,8 @@ package slack
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -140,7 +142,10 @@ func (r *participantResolver) recordRich(ctx context.Context, userID string, pid
 	}
 	if prev != 0 && prev != pid {
 		if err := r.store.MergeParticipantsContext(ctx, prev, pid); err != nil {
-			return err
+			if !errors.Is(err, store.ErrParticipantAddressConflict) {
+				return err
+			}
+			slog.Warn("skipping Slack participant merge due to address conflict", "loser_participant_id", prev, "winner_participant_id", pid)
 		}
 	}
 	if err := r.store.SetParticipantIdentifierContext(ctx, pid, participantIdentifierType, value); err != nil {

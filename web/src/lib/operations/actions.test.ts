@@ -3,6 +3,14 @@ import { createAPIClient } from '../api/client';
 import { runOperationAction } from './actions';
 
 describe('runOperationAction', () => {
+  it('reports conflicts after a 409 sync failure', async () => {
+    const client = createAPIClient(async (input) => {
+      const path = new URL(new Request(input).url).pathname;
+      return path.endsWith('/sync') ? Response.json({}, { status: 409 }) : Response.json({ conflicts: 2 });
+    });
+    expect(await runOperationAction('carddav_sync', client)).toEqual({ outcome: 'conflict', message: 'The operation could not start because current server state changed. 2 CardDAV binding conflicts. Check CardDAV settings for the review command.' });
+  });
+
   it.each([200, 500])('reports available conflicts after a sync failure with preview %i', async (status) => {
     const client = createAPIClient(async (input) => {
       const request = new Request(input);

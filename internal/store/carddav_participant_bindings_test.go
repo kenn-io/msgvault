@@ -583,6 +583,37 @@ func TestCardDAVParticipantBindingMergedAliasRemainsClaimed(t *testing.T) {
 	})
 }
 
+func TestCardDAVBindingRejectsMergeWithCompetingAlias(t *testing.T) {
+	for _, kind := range []string{"email", "imessage"} {
+		t.Run(kind, func(t *testing.T) {
+			st, account, book := newCardDAVResourceStore(t)
+			absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
+			Require.NoError(t, err)
+			survivor, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
+			Require.NoError(t, err)
+			third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
+			Require.NoError(t, err)
+			Require.NoError(t, st.SetParticipantIdentifier(third, kind, "absorbed@example.test"))
+			card := remoteResource(book.CanonicalURL+"merge-conflict.vcf", "merge-conflict", "Absorbed", "absorbed@example.test", "one")
+			applyParticipantBindingCards(t, st, account, book, card)
+			Assert.ElementsMatch(t, []int64{absorbed, third}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
+			err = st.MergeParticipants(absorbed, survivor)
+			Require.ErrorIs(t, err, store.ErrParticipantAddressConflict)
+			Require.NotErrorIs(t, err, store.ErrPersonBindingConflict)
+			result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
+			Require.NoError(t, err)
+			Assert.Zero(t, result.ParticipantsUnbound)
+			Assert.ElementsMatch(t, []int64{absorbed, third}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
+			var email string
+			Require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT email_address FROM participants WHERE id = ?`), survivor).Scan(&email))
+			Assert.Equal(t, "survivor@example.test", email)
+			resolved, err := st.EnsureParticipantByIdentifier(kind, "absorbed@example.test", "")
+			Require.NoError(t, err)
+			Assert.Equal(t, third, resolved)
+		})
+	}
+}
+
 func TestCardDAVParticipantBindingLifecycleCleanup(t *testing.T) {
 	for _, test := range []struct {
 		action  string

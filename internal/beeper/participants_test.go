@@ -526,3 +526,21 @@ func TestRichUpgradeDoesNotAbsorbContactOwner(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(pid, again, "the identifier now points at the new resolution")
 }
+
+func TestResolveUserContinuesAfterEmailAliasConflict(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	r := newParticipantResolver(st, "account-a")
+	emailUser := &User{ID: "synthetic-user", Email: "absorbed@example.test", FullName: "Absorbed"}
+	_, err := r.resolveUser(t.Context(), emailUser)
+	require.NoError(err)
+	third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
+	require.NoError(err)
+	require.NoError(st.SetParticipantIdentifier(third, "email", "absorbed@example.test"))
+	phone, err := st.EnsureParticipantByPhone(t.Context(), "+12025550100", "Phone", "imessage")
+	require.NoError(err)
+	pid, err := r.resolveUser(t.Context(), &User{ID: emailUser.ID, PhoneNumber: "+12025550100", FullName: "Absorbed"})
+	require.NoError(err)
+	assert.Equal(phone, pid)
+}

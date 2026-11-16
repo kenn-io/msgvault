@@ -19,7 +19,8 @@ export async function runOperationAction(action: OperationAction, client: Genera
       ? await startVisualAttachmentBuild({ consent: true }, client)
       : await resumeVisualAttachmentBuild(client);
   if (result.response.status === 409) {
-    return { outcome: 'conflict', message: 'The operation could not start because current server state changed.' };
+    const conflicts = action === 'carddav_sync' ? cardDAVBindingConflictMessage(await readCardDAVBindingConflicts(client)) : '';
+    return { outcome: 'conflict', message: ['The operation could not start because current server state changed.', conflicts].filter(Boolean).join(' ') };
   }
   if (!result.response.ok) {
     const conflicts = action === 'carddav_sync' ? cardDAVBindingConflictMessage(await readCardDAVBindingConflicts(client)) : '';
