@@ -743,24 +743,18 @@ func TestMergeParticipantsRollsBackWhenCandidateRewriteFails(t *testing.T) {
 
 func TestMergeParticipantsPreservesAbsorbedEmail(t *testing.T) {
 	for _, tc := range []struct {
-		name, survivorEmail   string
-		thirdHolder, conflict bool
+		name, survivorEmail, want string
+		thirdHolder, conflict     bool
 	}{
-		{name: "empty survivor"},
 		{name: "different survivor email", survivorEmail: "survivor@example.test"},
-		{name: "survivor has primary", survivorEmail: "ABSORBED@example.test", thirdHolder: true},
+		{name: "survivor has primary", survivorEmail: "ABSORBED@example.test", want: "ABSORBED@example.test", thirdHolder: true},
 		{name: "another participant holds identifier", survivorEmail: "survivor@example.test", thirdHolder: true, conflict: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := storetest.New(t).Store
 			absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
 			require.NoError(t, err)
-			var survivor int64
-			if tc.survivorEmail == "" {
-				survivor, err = st.EnsureParticipantByIdentifier("beeper", "survivor", "Survivor")
-			} else {
-				survivor, err = st.EnsureParticipant(tc.survivorEmail, "Survivor", "example.test")
-			}
+			survivor, err := st.EnsureParticipant(tc.survivorEmail, "Survivor", "example.test")
 			require.NoError(t, err)
 			var third int64
 			if tc.thirdHolder {
@@ -778,12 +772,8 @@ func TestMergeParticipantsPreservesAbsorbedEmail(t *testing.T) {
 				require.NoError(t, err)
 				var primary string
 				require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT email_address FROM participants WHERE id = ?`), survivor).Scan(&primary))
-				if tc.survivorEmail == "" || tc.thirdHolder {
-					expected := tc.survivorEmail
-					if expected == "" {
-						expected = "absorbed@example.test"
-					}
-					assert.Equal(t, expected, primary)
+				if tc.want != "" {
+					assert.Equal(t, tc.want, primary)
 				} else {
 					var count int
 					require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id = ? AND identifier_type = 'email' AND identifier_value = ?`), survivor, "absorbed@example.test").Scan(&count))

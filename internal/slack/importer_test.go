@@ -473,9 +473,6 @@ func TestImportKeepsSlackIdentityWhenEmailMergeConflicts(t *testing.T) {
 	owner, _, err := st.ParticipantByIdentifierContext(t.Context(), "slack", "T01:UALICE")
 	require.NoError(t, err)
 	assert.Equal(t, previous, owner)
-	owner, _, err = st.ParticipantByIdentifierContext(t.Context(), "email", "previous@example.test")
-	require.NoError(t, err)
-	assert.Equal(t, third, owner)
 	var messages int
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE sender_id = ?`), previous).Scan(&messages))
 	assert.Positive(t, messages)

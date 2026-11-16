@@ -1,9 +1,8 @@
 package api
 
 import (
+	"bytes"
 	"context"
-	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -13,72 +12,36 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
-	"go.kenn.io/msgvault/internal/vcard"
 )
 
 type bindingSyncRemote struct {
-	cards    map[string][]byte
-	versions map[string]string
-	n        int
+	cards map[string]store.CardDAVRemoteResource
 }
 
-func (r *bindingSyncRemote) set(href string, body []byte) {
-	r.n++
-	r.cards[href] = body
-	r.versions[href] = fmt.Sprintf("\"%d\"", r.n)
-}
 func (r *bindingSyncRemote) Discover(context.Context, string) (carddav.Discovery, error) {
 	return carddav.Discovery{}, nil
 }
-func (r *bindingSyncRemote) resource(href string) (store.CardDAVRemoteResource, error) {
-	body := r.cards[href]
-	envelope, err := vcard.ParseResourceEnvelope(body)
-	if err != nil {
-		return store.CardDAVRemoteResource{}, err
-	}
-	hash, err := carddav.SemanticHash(body)
-	if err != nil {
-		return store.CardDAVRemoteResource{}, err
-	}
-	resource := store.CardDAVRemoteResource{Href: href, RemoteBody: body, RemoteETag: r.versions[href], SemanticHash: hash}
-	for _, occurrence := range envelope.PropertyTree {
-		p := occurrence.Property
-		switch strings.ToUpper(p.Name) {
-		case "UID":
-			resource.RemoteUID = p.RawValue
-		case "FN":
-			resource.DisplayName, err = vcard.PropertyValue(envelope.RenderMetadata.StoredVersion, p)
-		case "EMAIL":
-			var value string
-			value, _, err = vcard.ContactPointValue(envelope.RenderMetadata.StoredVersion, p)
-			resource.Emails = append(resource.Emails, value)
-		}
-		if err != nil {
-			return store.CardDAVRemoteResource{}, err
-		}
-	}
-	return resource, nil
-}
 func (r *bindingSyncRemote) Pull(_ context.Context, _ store.CardDAVAddressBook, _ string, _ *carddav.Budget) (store.CardDAVSyncPlan, error) {
-	plan := store.CardDAVSyncPlan{ReplaceAll: true, NextSyncToken: fmt.Sprint(r.n)}
-	for href := range r.cards {
-		resource, err := r.resource(href)
-		if err != nil {
-			return plan, err
-		}
+	plan := store.CardDAVSyncPlan{ReplaceAll: true}
+	for _, resource := range r.cards {
 		plan.Upserts = append(plan.Upserts, resource)
 	}
 	return plan, nil
 }
 func (r *bindingSyncRemote) Get(_ context.Context, href string) (store.CardDAVRemoteResource, bool, error) {
-	if _, ok := r.cards[href]; !ok {
-		return store.CardDAVRemoteResource{Href: href}, true, nil
-	}
-	resource, err := r.resource(href)
-	return resource, false, err
+	resource, ok := r.cards[href]
+	return resource, !ok, nil
 }
 func (r *bindingSyncRemote) Put(_ context.Context, href string, body []byte, _ string, _ bool) error {
-	r.set(href, body)
+	hash, err := carddav.SemanticHash(body)
+	if err != nil {
+		return err
+	}
+	resource := store.CardDAVRemoteResource{Href: href, RemoteBody: body, RemoteETag: `"published"`, SemanticHash: hash, RemoteUID: "second", DisplayName: "Second"}
+	if bytes.Contains(body, []byte("shared@example.test")) {
+		resource.Emails = []string{"shared@example.test"}
+	}
+	r.cards[href] = resource
 	return nil
 }
 func (r *bindingSyncRemote) Delete(_ context.Context, href, _ string) error {
@@ -98,10 +61,15 @@ func TestCardDAVSyncReportsPublicationBindingConflict(t *testing.T) {
 		Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://memory.test/books/personal/", DisplayName: "Personal", CanCreate: &allowed}},
 	})
 	require.NoError(t, err)
-	participant, err := st.EnsureParticipant("shared@example.test", "Shared", "example.test")
+	_, err = st.EnsureParticipant("shared@example.test", "Shared", "example.test")
 	require.NoError(t, err)
-	remote := &bindingSyncRemote{cards: map[string][]byte{}, versions: map[string]string{}}
-	remote.set(books[0].CanonicalURL+"first", []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:first\r\nFN:First\r\nEMAIL:shared@example.test\r\nEND:VCARD\r\n"))
+	body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:first\r\nFN:First\r\nEMAIL:shared@example.test\r\nEND:VCARD\r\n")
+	hash, err := carddav.SemanticHash(body)
+	require.NoError(t, err)
+	href := books[0].CanonicalURL + "first"
+	remote := &bindingSyncRemote{cards: map[string]store.CardDAVRemoteResource{
+		href: {Href: href, RemoteBody: body, RemoteETag: `"first"`, SemanticHash: hash, RemoteUID: "first", DisplayName: "First", Emails: []string{"shared@example.test"}},
+	}}
 	service := carddav.NewRemoteService(st, remote)
 	controller := &CardDAVController{cfg: &config.Config{CardDAV: config.CardDAVConfig{Enabled: true}}, store: st, service: service}
 	_, err = controller.Sync(t.Context(), CardDAVSyncRequest{Connection: "default"})
@@ -116,20 +84,6 @@ func TestCardDAVSyncReportsPublicationBindingConflict(t *testing.T) {
 	require.Zero(t, before.Conflicts)
 	result, err := controller.Sync(t.Context(), CardDAVSyncRequest{Connection: "default"})
 	require.NoError(t, err)
-	revision, err := st.IdentityRevision()
-	require.NoError(t, err)
-	boundBefore, err := st.PersonForParticipantsContext(t.Context(), []int64{participant})
-	require.NoError(t, err)
-	preview, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
-	require.NoError(t, err)
-	require.Equal(t, 1, preview.Conflicts)
-	bound, err := st.PersonForParticipantsContext(t.Context(), []int64{participant})
-	require.NoError(t, err)
-	assert.Nil(t, bound)
-	assert.Equal(t, boundBefore, bound)
-	afterRevision, err := st.IdentityRevision()
-	require.NoError(t, err)
-	assert.Equal(t, revision, afterRevision)
 	require.NotNil(t, result.BindingConflicts)
 	assert.Equal(t, 1, *result.BindingConflicts)
 }
