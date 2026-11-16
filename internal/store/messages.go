@@ -5009,6 +5009,9 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		if _, err := tx.ExecContext(ctx, `UPDATE participant_identifiers SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE source_import_items SET name = ? WHERE provider LIKE 'beeper-roster:%' AND name = ?`, strconv.FormatInt(newID, 10), strconv.FormatInt(oldID, 10)); err != nil {
+			return err
+		}
 		if err := s.rewriteObservationsForMergeTx(
 			ctx, tx, oldID, newID,
 		); err != nil {
@@ -6000,6 +6003,109 @@ func mergeConversationParticipantsWith(
 	return nil
 }
 
+// ConversationParticipantsContext lists the archived membership for a conversation.
+func (s *Store) ConversationParticipantsContext(ctx context.Context, conversationID int64) ([]ConversationParticipantRef, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT participant_id, COALESCE(role, '') FROM conversation_participants WHERE conversation_id = ? ORDER BY participant_id`, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	var members []ConversationParticipantRef
+	for rows.Next() {
+		var member ConversationParticipantRef
+		if err := rows.Scan(&member.ParticipantID, &member.Role); err != nil {
+			return nil, errors.Join(err, rows.Close())
+		}
+		members = append(members, member)
+	}
+	return members, errors.Join(rows.Err(), rows.Close())
+}
+
+// ApplyBeeperRosterMemberContext commits current ownership and its receipt together.
+func (s *Store) ApplyBeeperRosterMemberContext(ctx context.Context, sourceID, conversationID int64, identifier, role, provider, checksum string) (int64, error) {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return 0, err
+	}
+	var participantID int64
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		before, err := beginConversationParticipantJournal(q, s.dialect)
+		if err != nil {
+			return err
+		}
+		if err := s.requireSyncConversationSourceTx(q, conversationID); err != nil {
+			return err
+		}
+		query := `SELECT participant_id FROM participant_identifiers WHERE identifier_type = 'beeper' AND identifier_value = ?`
+		if s.dialect.DriverName() == postgresDriverName {
+			query += ` FOR SHARE`
+		}
+		if err := q.QueryRow(query, identifier).Scan(&participantID); err != nil {
+			return err
+		}
+		if err := mergeConversationParticipantsWith(q, s.dialect, conversationID, []ConversationParticipantRef{{ParticipantID: participantID, Role: role}}); err != nil {
+			return err
+		}
+		if err := consolidateConversationParticipantJournal(q, s.dialect, conversationID, before); err != nil {
+			return err
+		}
+		return s.writeBeeperRosterReceipt(q, sourceID, provider, identifier, checksum, participantID)
+	})
+	return participantID, err
+}
+
+func (s *Store) writeBeeperRosterReceipt(q querier, sourceID int64, provider, identifier, checksum string, owner int64) error {
+	if checksum == "" {
+		return nil
+	}
+	_, err := q.Exec(fmt.Sprintf(`INSERT INTO source_import_items (source_id, provider, provider_id, name, checksum, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', %s, %s) ON CONFLICT(source_id, provider, provider_id) DO UPDATE SET name = excluded.name, checksum = excluded.checksum, status = excluded.status, updated_at = %s`, s.dialect.Now(), s.dialect.Now(), s.dialect.Now()), sourceID, provider, identifier, strconv.FormatInt(owner, 10), BeeperRosterReceiptChecksum(checksum, owner))
+	return err
+}
+
+// BeeperRosterRichPrefix marks receipts based on a phone number or email.
+const BeeperRosterRichPrefix = "rich:"
+
+// BeeperRosterReceiptChecksum binds the consumed inputs to their current owner.
+func BeeperRosterReceiptChecksum(inputs string, owner int64) string {
+	prefix := ""
+	if strings.HasPrefix(inputs, BeeperRosterRichPrefix) {
+		prefix = BeeperRosterRichPrefix
+	}
+	return prefix + fmt.Sprintf("%x", sha256.Sum256([]byte(inputs+":"+strconv.FormatInt(owner, 10))))
+}
+
+// BeeperRosterOwnersContext reads current identifier owners in bounded queries.
+func (s *Store) BeeperRosterOwnersContext(ctx context.Context, identifiers []string) (map[string]int64, error) {
+	owners := make(map[string]int64, len(identifiers))
+	err := queryInChunksContext(ctx, s.db, identifiers, nil, `SELECT identifier_value, participant_id FROM participant_identifiers WHERE identifier_type = 'beeper' AND identifier_value IN (%s)`, func(rows *loggedRows) error {
+		var key string
+		var id int64
+		if err := rows.Scan(&key, &id); err != nil {
+			return err
+		}
+		owners[key] = id
+		return nil
+	})
+	return owners, err
+}
+
+// RemoveBeeperRosterMemberContext removes one stale member from a scoped room.
+func (s *Store) RemoveBeeperRosterMemberContext(ctx context.Context, conversationID, participantID int64) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		before, err := beginConversationParticipantJournal(q, s.dialect)
+		if err != nil {
+			return err
+		}
+		if err := s.requireSyncConversationSourceTx(q, conversationID); err != nil {
+			return err
+		}
+		if _, err := q.Exec(`DELETE FROM conversation_participants WHERE conversation_id = ? AND participant_id = ?`, conversationID, participantID); err != nil {
+			return err
+		}
+		return consolidateConversationParticipantJournal(q, s.dialect, conversationID, before)
+	})
+}
+
 // ReplaceConversationParticipants atomically replaces a conversation's
 // membership with a complete source snapshot.
 func (s *Store) ReplaceConversationParticipants(conversationID int64, participants []ConversationParticipantRef) error {
@@ -6026,17 +6132,9 @@ func replaceConversationParticipantsTx(
 	participants []ConversationParticipantRef,
 ) error {
 	q := boundQuerier{ctx: ctx, q: tx}
-	if dialect.DriverName() != postgresDriverName {
-		// Acquire SQLite's writer slot before taking the journal snapshot. A
-		// deferred transaction that reads first cannot upgrade its stale WAL
-		// snapshot if another writer commits before the membership DELETE.
-		if _, err := q.Exec(`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
-			return fmt.Errorf("lock conversation membership journal: %w", err)
-		}
-	}
-	var journalBefore int64
-	if err := q.QueryRow(`SELECT sequence FROM embedding_change_clock WHERE singleton = 1`).Scan(&journalBefore); err != nil {
-		return fmt.Errorf("read embedding change clock before membership snapshot: %w", err)
+	journalBefore, err := beginConversationParticipantJournal(q, dialect)
+	if err != nil {
+		return err
 	}
 	desired := make(map[int64]string, len(participants))
 	for _, participant := range participants {
@@ -6089,6 +6187,20 @@ func replaceConversationParticipantsTx(
 		}
 	}
 	return consolidateConversationParticipantJournal(q, dialect, conversationID, journalBefore)
+}
+
+func beginConversationParticipantJournal(q querier, dialect Dialect) (int64, error) {
+	// Acquire SQLite's writer slot before reading the journal snapshot.
+	if dialect.DriverName() != postgresDriverName {
+		if _, err := q.Exec(`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
+			return 0, fmt.Errorf("lock conversation membership journal: %w", err)
+		}
+	}
+	var before int64
+	if err := q.QueryRow(`SELECT sequence FROM embedding_change_clock WHERE singleton = 1`).Scan(&before); err != nil {
+		return 0, fmt.Errorf("read embedding change clock before membership snapshot: %w", err)
+	}
+	return before, nil
 }
 
 func consolidateConversationParticipantJournal(tx querier, dialect Dialect, conversationID, after int64) error {
