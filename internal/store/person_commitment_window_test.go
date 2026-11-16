@@ -160,5 +160,4 @@ func TestCommitmentWindowBoundsEscapedEmailInput(t *testing.T) {
 			}
 		})
 	}
-
 }
