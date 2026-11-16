@@ -23,8 +23,8 @@ var skillsInstallCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Install msgvault agent skills",
 	Long: `Install msgvault agent skills into detected agent skill
-directories (~/.claude/skills and ~/.codex/skills), or into an
-explicit directory with --dir.
+directories (~/.claude/skills and ~/.codex/skills). CLAUDE_CONFIG_DIR
+and CODEX_HOME override those agent directories. Use --dir for an explicit directory.
 
 Previously installed skills are updated in place. Files without the
 msgvault generation marker (e.g. hand-edited copies) are skipped

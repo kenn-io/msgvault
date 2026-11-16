@@ -1,11 +1,12 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-14"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
 
-Find a command by task below, or use `msgvault COMMAND --help` for the flags
-in your installed binary. This reference follows current `main`; see
+Find a command with `msgvault cli search "<what you want to do>"`, then use
+`msgvault COMMAND --help` for its flags and examples. This reference follows
+current `main`; see
 [the latest release notes](https://github.com/kenn-io/msgvault/releases/latest) for features and upgrade notes.
 
 `msgvault --help` groups commands by task and lists start-here commands for
@@ -16,7 +17,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full), [source feeds add](#source-feeds-add) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-discord-package](#import-discord-package), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-ics](#import-ics), [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-discord-package](#import-discord-package), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -60,6 +61,37 @@ when more history remains. Run it again to continue; JSON sets
 `coverage_incomplete`. With nothing open, it prints `No open loops.` Acting on
 a message that doesn't start an open loop, such as one you already answered,
 fails with `<id> isn't an open loop.`
+
+## cli search
+
+Describe a task to find relevant commands. Quoting the task is optional.
+
+```bash
+msgvault cli search "search extracted document attachments"
+msgvault cli search read a conversation thread --limit 3 --json
+```
+
+Discovery uses the installed command tree locally. It needs no configuration,
+archive, daemon, credentials, or network, including with delegated connection
+flags. It prints command paths and summaries, followed by a help hint. It
+does not run any suggested command.
+
+| Flag | Contract |
+|---|---|
+| `--limit` | Maximum results, default 5; range 1–20 |
+| `--json` | An object with `query` and `results`; each result has `command`, `summary`, and `usage` |
+
+Hidden, deprecated, help-only, interactive setup, and browser/device login
+commands are excluded. Noninteractive children of excluded groups remain
+searchable. Exclusion is based on required interaction, not whether a default
+path can prompt: commands with supported credential files or piped input remain
+searchable. `add-matrix` stays eligible because its login secret can come from
+`--password-file`, `--login-token-file`, or stdin. A recovery secret can come
+from `--recovery-file` or stdin; `--skip-key-backup` skips key backup. A
+recommendation may need a running daemon or configured source.
+No matches succeeds with an empty `results` array in JSON or a root-help hint
+in text. A blank task or invalid limit is a usage error (exit 1).
+`msgvault cli` alone prints group help.
 
 ## meetings
 
@@ -323,6 +355,12 @@ msgvault message-tags 42 --add Label_123 --remove Label_456 --dry-run --json
 msgvault message-tags 42 --add Next --remove Old --mailbox INBOX
 msgvault message-tags 73 --add Next --remove Old --json
 ```
+
+A plain read can inspect a message marked deleted from its source, including
+one still in Trash, with daemon API schema 5.4.0 or newer. It leaves the
+archive unchanged; edits and edit previews still reject source-deleted
+messages. The provider must resolve the recorded message identity. See the
+[native tag API](api-server.md#native-email-tags) for the read contract.
 
 The same command selects the backend from the archived message's account:
 
@@ -742,10 +780,12 @@ msgvault add-o365 <email>
 
 The command opens your browser for Microsoft OAuth consent, then configures IMAP with XOAUTH2 automatically. The correct IMAP host is auto-detected: `outlook.office.com` for personal accounts (hotmail.com, outlook.com, live.com, msn.com) and `outlook.office365.com` for organizational accounts.
 
-Requires a `[microsoft]` section with `client_id` in `config.toml`. See the [OAuth Setup guide](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for Azure AD app registration.
+Requires a `client_id` in either `[microsoft]` or the selected `[microsoft.apps.<name>]` section of `config.toml`. See the [OAuth Setup guide](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail) for Azure AD app registration.
 
 | Flag | Default | Description |
 |---|---|---|
+| `--oauth-app` | | Named `[microsoft.apps.<name>]` app. Omit to retain the source binding; pass an empty value to use `[microsoft]` |
+| `--source-id` | | Reauthorize an existing source by ID when multiple sources match the mailbox; find IDs with `list-accounts --json` |
 | `--tenant` | `common` | Azure AD tenant ID (restricts which accounts can authorize) |
 | `--headless` | `false` | Sign in with a device code instead of a local browser |
 | `--no-default-identity` | `false` | Do not auto-confirm the email address as this account's "me" identity. Saved across syncs and re-authorization; only explicit `--no-default-identity=false` clears the choice. See [saved identity choice](#saved-default-identity-choice) |
@@ -2195,6 +2235,55 @@ receipts. Reconcile the reported event; do not repeat a completed mutation.
 
 ---
 
+## import-ics
+
+On unreleased `main`, import a local iCalendar file as separate calendar event
+messages:
+
+```bash
+msgvault import-ics calendar.ics --identifier personal-calendar
+```
+
+Choose a stable `--identifier` for each calendar. Each VEVENT becomes its own
+event, identified by UID and original recurrence identity, and keeps its own
+VEVENT with the time zone definitions it uses. A single-VEVENT file stays
+byte-identical. Events omitted from a later file remain archived with their previous status. Re-importing updates events: higher SEQUENCE wins, equal
+sequences use DTSTAMP, and a cancellation wins an exact tie. msgvault converts text in another charset to
+UTF-8, as it does for email. A series with unsupported recurrence stays archived and is reported as unexpandable by `calendar events`. For an unsupported range edit, results may include earlier occurrences while omitting later ones; an edit that cannot be placed may omit the series. The import command
+reports how many events were updated and how many were not. Floating times use the calendar's `X-WR-TIMEZONE` when declared, or UTC otherwise. The daemon
+reads the file locally; importing files through a remote daemon is unavailable.
+
+A file with `METHOD:ADD` is rejected as unsupported.
+
+A cancellation keeps the event's last accepted title, times, participants, and
+raw iCalendar data, and only marks it cancelled.
+
+### Invitations in email
+
+On unreleased `main`, archiving email extracts decoded `text/calendar` and `application/ics` MIME
+parts into event messages in the same source. Attached forwarded emails and iTIP messages with the
+REPLY, REFRESH, COUNTER, or DECLINECOUNTER method are ignored. ADD is unsupported; the email is kept and a warning is logged.
+Attendee RSVPs come from the invitation snapshot; Google Calendar sync supplies provider-reported RSVPs.
+
+An invitation, its updates, and its cancellation share one event. Every
+contributing email keeps its full MIME and attachments, and the event survives
+deletion of any of them.
+Invalid calendar parts leave the email intact and log a warning with its message ID.
+If event extraction fails after the email is archived, run `repair-derived` to retry it.
+
+An email and its event count as two archive records in account listings and
+statistics. Provider verification counts the email once. Hiding the
+email keeps the event; removing its account removes both.
+
+The next email re-derivation extracts invites from archived MIME automatically
+after a sync or import. To run it on demand, use
+[`repair-derived`](#repair-derived). It works from stored MIME without a provider
+connection:
+
+```bash
+msgvault repair-derived --source-type mbox
+```
+
 ## import-eml
 
 Import RFC 5322 `.eml` files inside MailMate-style `.mailbox` directories.
@@ -2697,6 +2786,7 @@ msgvault backup restore [snapshot] --target <dir> [flags]
 | `--repo <dir>` | Backup repository directory |
 | `--target <dir>` | Directory to restore into (required) |
 | `--overwrite` | Allow restoring into a non-empty target directory |
+| `--permissions-only` | Retry token permissions for an explicit snapshot (Windows only); cannot be combined with `--overwrite`, `--jobs`, `--integrity-check`, or `--loose-attachments` |
 | `--integrity-check` | Run SQLite's full integrity check after restoring (slow for large databases) |
 | `--loose-attachments` | Restore attachments as individual loose files instead of installing compatible packs |
 | `--force-unlock` | Break a stale exclusive repository lock before restoring |
@@ -3206,11 +3296,34 @@ msgvault export-token <email> [flags]
 
 ---
 
+## diagnose-acquisition
+
+List Gmail message download, processing, and file-saving failures for a source:
+
+```bash
+msgvault diagnose-acquisition --source-id 1
+msgvault diagnose-acquisition --source-id 1 --all
+```
+
+The command reads the local database without starting the daemon or contacting Gmail. Use `--local` when a remote URL is configured. After a source is merged, use `--all` with the original source ID to inspect its history; unconfirmed work is unknown because sync no longer retries that source. By default it lists failures that sync still retries, based on saved sync records. `--all` adds failures in the other states:
+
+| Text | JSON `state` | Meaning |
+|---|---|---|
+| `still failing` | `active` | Sync retries the failure. |
+| `fixed` | `resolved` | A later sync recorded confirmation that the work succeeded. |
+| `retired` | `historical` | Cleanup retired the failure for a message deleted from Gmail. |
+| `unknown` | `indeterminate` | No retry or confirmation is recorded, sync skipped a later download, or msgvault does not recognize the failure. |
+
+Each row shows the message ID, state, and a description of the failure; JSON also includes the saved phase and error-kind codes. A message can appear once per state, such as an older fixed failure and a newer one still failing. The command does not check saved files, and an empty list does not prove the archive is complete.
+
+---
+
 ## verify
 
 Verify archive integrity against Gmail through the configured remote server or
-local daemon. The command streams the daemon's stdout/stderr back to the
-terminal.
+local daemon. The provider-message counts used by `verify` exclude calendar
+events extracted from invitations. The command streams the daemon's
+stdout/stderr back to the terminal.
 
 ```bash
 msgvault verify <email> [flags]
@@ -3670,6 +3783,11 @@ msgvault person attributes list <person-id> [--slug <slug>] [--history] [--json]
 msgvault person attributes set <person-id> <slug> (--value <scalar> | --value-json <json|@path|->) [flags]
 msgvault person attributes clear <person-id> <slug> [flags]
 ```
+
+`person get --json` includes first archived appearance and the first direct contact
+with daemon API schema 5.7.0 or newer. JSON includes the appearance reference, `email_intro` or `observed` kind, and introducer when known. See
+[first archived appearance](usage/people.md#see-a-persons-first-archived-appearance)
+for evidence rules and limitations.
 
 `promote` seeds a new profile with the first nonblank observed name in its
 linked cluster, ordered by participant ID. It leaves the name empty when no
@@ -4693,6 +4811,12 @@ canonical UID as the scalar `msgvault.person` metadata value and
 
 ---
 
+## agent setup
+
+Run `msgvault agent setup` to install skills and connect the MCP server for Claude Code and Codex. Use `--agent claude,codex` to select agents, `--check` to inspect readiness, `--json` for structured output, or `--print` for manual MCP commands.
+
+Setup registers `msgvault mcp`; the agent starts it with its own environment.
+
 ## skills
 
 Install or remove the bundled msgvault agent skills:
@@ -4702,11 +4826,12 @@ msgvault skills install
 msgvault skills uninstall
 ```
 
-Install detects Claude Code and Codex from `~/.claude` and `~/.codex`, then
+Install detects Claude Code and Codex by their agent directories, then
 writes the `msgvault-search`, `msgvault-attachments`, and
 `msgvault-analytics` skills to their user-level skill directories. Existing
 generated copies are updated in place; files without msgvault's generation
-marker are preserved unless `--force` is supplied.
+marker are preserved unless `--force` is supplied. `CLAUDE_CONFIG_DIR`
+and `CODEX_HOME` override the default agent directories.
 
 | Install flag | Description |
 |---|---|
@@ -4884,6 +5009,8 @@ The command edits the config file on this machine and refuses to run against a
 configured remote daemon; run it on the daemon host or pass `--local`.
 
 ### setup status
+
+Status also asks Claude Code and Codex about msgvault. Codex may start `msgvault mcp` and the daemon, which can create files under the msgvault home.
 
 Report the setup state of each feature (text search, semantic people search,
 visual attachments, people sweep, activity
@@ -5372,6 +5499,7 @@ repair's error output for diagnosis.
 Recompute derived text and metadata from retained provider payloads without
 contacting the provider. The command writes immediately and refreshes analytics;
 it leaves raw payloads, downloaded media, and sync cursors in place.
+It also extracts calendar invites from archived email MIME.
 
 ```bash
 msgvault repair-derived
@@ -5532,6 +5660,11 @@ msgvault update [flags]
 ```
 
 Update restarts only a daemon msgvault started in the background. A daemon run as `msgvault serve` is left to its supervisor or the person who started it. Use `--no-restart` to leave even a background daemon stopped.
+
+Before replacing the installed binary, update runs the new one with
+`msgvault version`. If that run fails, takes longer than a minute, or is
+canceled, the update stops, keeps the installed binary, and shows the new
+binary's output, such as a missing glibc version.
 
 A Homebrew install reports whether a newer release exists but does not replace
 itself. Run `brew upgrade msgvault` instead.

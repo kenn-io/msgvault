@@ -299,3 +299,52 @@ func TestBuildUnsentTailKeepsSentAnchor(t *testing.T) {
 		})
 	}
 }
+
+func TestSparseNormalizedActivityRetainsEmailInviteEdges(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	root, db := writeRelationshipBaseFixture(t, true)
+	writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
+		firstMessageID: 1, messageCount: 4, memberCount: 2, conversationCount: 4,
+		startDate: "2026-01-01", messageType: "calendar_event", conversationType: "calendar",
+	})
+	replaceRelationshipParquet(t, db, root, "sources", `SELECT i::BIGINT AS id, 'owner@example.test' AS account_email,
+  CASE i WHEN 1 THEN 'gmail' WHEN 2 THEN 'gcal' WHEN 3 THEN 'ics' ELSE 'message_import' END AS source_type FROM range(1, 5) t(i)`)
+	path := func(dataset string) string { return parquetDatasetGlob(root, dataset) }
+	messages := "(SELECT * REPLACE (id::BIGINT AS source_id, id <= 3 AS archive_only) FROM " + readParquetRelation([]string{path("messages")}, true) + ")"
+	sql := buildSparseRelationshipActivitySQL(path, messages, readParquetRelation([]string{path("message_recipients")}, false), 2026, "")
+	rows, err := db.QueryContext(t.Context(), "SELECT DISTINCT message_id, email_invite FROM ("+sql+") ORDER BY message_id")
+	requirements.NoError(err)
+	defer func() { requirements.NoError(rows.Close()) }()
+	var got []int64
+	var invitations []int64
+	for rows.Next() {
+		var id int64
+		var invite bool
+		requirements.NoError(rows.Scan(&id, &invite))
+		got = append(got, id)
+		if invite {
+			invitations = append(invitations, id)
+		}
+	}
+	requirements.NoError(rows.Err())
+	requirements.NoError(rows.Close())
+	assertions.Equal([]int64{1, 2, 3, 4}, got)
+	assertions.Equal([]int64{1}, invitations)
+	expanded := ExpandedActivityRelation("("+sql+")", readParquetRelation([]string{path("conversation_participants")}, false), readParquetRelation([]string{path("participants")}, false), readParquetRelation([]string{path("participant_clusters")}, false), readParquetRelation([]string{path("owner_participants")}, false))
+	roster, err := db.QueryContext(t.Context(), "SELECT message_id, email_invite FROM "+expanded+" WHERE canonical_id=2 AND is_conversation_member ORDER BY message_id")
+	requirements.NoError(err)
+	defer func() { requirements.NoError(roster.Close()) }()
+	var rosterIDs, rosterInvites []int64
+	for roster.Next() {
+		var id int64
+		var invite bool
+		requirements.NoError(roster.Scan(&id, &invite))
+		rosterIDs = append(rosterIDs, id)
+		if invite {
+			rosterInvites = append(rosterInvites, id)
+		}
+	}
+	requirements.NoError(roster.Err())
+	assertions.Equal([]int64{1, 2, 3, 4}, rosterIDs)
+	assertions.Equal([]int64{1}, rosterInvites)
+}

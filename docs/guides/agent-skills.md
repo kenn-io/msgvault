@@ -29,7 +29,8 @@ direction before archive mutations such as sync, import, dedup or deletion.
 msgvault skills install
 ```
 
-This detects installed agents by directory (`~/.claude`, `~/.codex`)
+This detects installed agents by directory (`~/.claude`, `~/.codex`, or the
+directories set by `CLAUDE_CONFIG_DIR` and `CODEX_HOME`)
 and writes the skills to each agent's user-level skills directory
 (`~/.claude/skills/`, `~/.codex/skills/`). Options:
 

@@ -30,21 +30,23 @@ func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   daemonService,
 		Short: "Offline email, chat, and meeting archive tool",
-		Long: `Archive email, chats, and meetings offline.
+		Long: `Agents: find the right command with: msgvault cli search "<what you want to do>"
+
+Archive email, chats, and meetings offline.
 
 Start here:
   msgvault list-accounts --json
-  msgvault search 'from:alice@example.com newer_than:30d' --json
+  msgvault search 'from:alice@example.com' --json
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
+  msgvault export-messages --help
   msgvault person --help
   msgvault daemon status
   msgvault setup status --json
 
 Output:
-  --json writes JSON to stdout (JSONL for export-messages).
-  Logs and progress go to stderr. Exit: 0 OK, 1 error, 130 interrupted.
+  --json: stdout (JSONL for export-messages).
+  Logs, progress: stderr. Exit: 0 OK, 1 error, 130 interrupted.
   See msgvault quickstart.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			inv := prepareInvocation(cmd)
@@ -70,9 +72,9 @@ Output:
 			// invocation-contract violations.
 			cmd.SilenceUsage = true
 
-			// A help-only group prints help and reads nothing, so it needs
-			// neither config nor the agent-delegated capability gate.
-			if isHelpOnlyGroup(cmd) {
+			// Help-only groups and command discovery read no runtime state,
+			// so they need neither config nor the delegated capability gate.
+			if isHelpOnlyGroup(cmd) || isCLIDiscoveryCommand(cmd) {
 				cmd.SilenceUsage = false
 				return nil
 			}
@@ -305,7 +307,7 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 		return true
 	}
 	for c := cmd; c != nil; c = c.Parent() {
-		if c == skillsCmd {
+		if c == skillsCmd || c == agentCmd {
 			return true
 		}
 	}

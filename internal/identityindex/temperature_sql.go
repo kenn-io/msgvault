@@ -41,6 +41,7 @@ WITH message_owner AS (
 	WHERE f.canonical_id IS NOT NULL
 	  AND NOT f.is_owner
 	  AND NOT f.unsent
+	  AND NOT f.email_invite
 	  AND f.occurred_at <= TIMESTAMP '%[2]s'
 	  AND (
 	      (f.entry_kind IN ('event', 'meeting'))

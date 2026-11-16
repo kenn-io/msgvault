@@ -58,7 +58,7 @@ func TestMCPCapabilitiesRequiresOwner(t *testing.T) {
 	assertions.NotContains(delegated.Body.String(), agentTokenTestAPIKey)
 }
 
-func TestMCPCapabilitiesDescribeRealRoutes(t *testing.T) {
+func TestMCPCapabilitiesDescribeRealOperationRoutes(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Logger: testLogger()})
@@ -76,6 +76,7 @@ func TestMCPCapabilitiesDescribeRealRoutes(t *testing.T) {
 		{"patchPersonStructuredProfile", http.MethodPatch, "/api/v1/people/{id}/profile"},
 		{"getPersonProfileHistory", http.MethodGet, "/api/v1/people/{id}/profile/history"},
 		{"getPersonProfileMediaContent", http.MethodGet, "/api/v1/people/{id}/profile/media/{media_id}/content"},
+		{"runCLI", http.MethodPost, "/api/v1/cli/run"},
 		{"listLoops", http.MethodGet, "/api/v1/loops"},
 		{"listDeletions", http.MethodGet, "/api/v1/deletions"},
 		{"getDeletion", http.MethodGet, "/api/v1/deletions/{id}"},
@@ -89,6 +90,7 @@ func TestMCPCapabilitiesDescribeRealRoutes(t *testing.T) {
 	}
 	assertions.ElementsMatch([]string{"names", "contact_points", "addresses", "dates", "categories", "media"}, routes["patchPersonStructuredProfile"].RequestProperties)
 	assertions.Contains(routes["listDeletions"].QueryParameters, "status")
+	assertions.Contains(routes["runCLI"].RequestProperties, "args")
 	assertions.ElementsMatch([]string{"limit", "person_id"}, routes["listLoops"].QueryParameters)
 	assertions.Contains(routes["snoozeLoop"].RequestProperties, "until")
 	assertions.Contains(routes["markLoopDone"].QueryParameters, "question_message_ids")

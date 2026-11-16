@@ -421,7 +421,7 @@ func (b builder) relationshipEffectiveAt(ctx context.Context, activity string) (
 	}
 	var newest sql.NullTime
 	if err := b.db.QueryRowContext(ctx,
-		"SELECT max(occurred_at) FROM "+activity,
+		"SELECT max(occurred_at) FROM "+activity+" WHERE NOT email_invite",
 	).Scan(&newest); err != nil {
 		return time.Time{}, fmt.Errorf("read relationship score effective time: %w", err)
 	}
