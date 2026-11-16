@@ -385,6 +385,7 @@ func TestImporterRetriesIncompleteAfterAnotherMeetingFails(t *testing.T) {
 	}{{"meeting failure", false}, {"failed status write", true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			testImporterIncompleteRetry(t, func(t *testing.T, st *store.Store, source *fakeImportSource, imp *Importer, sourceID int64) {
+				t.Helper()
 				second := hydrationMeeting()
 				second.ID = "meeting-2"
 				source.query.Results = append(source.query.Results, second)
@@ -407,6 +408,7 @@ func TestImporterRetriesIncompleteAfterAnotherMeetingFails(t *testing.T) {
 
 func TestImporterRetriesIncompleteAfterMarkdownFailure(t *testing.T) {
 	testImporterIncompleteRetry(t, func(t *testing.T, _ *store.Store, source *fakeImportSource, imp *Importer, _ int64) {
+		t.Helper()
 		empty := paragraph("transcript-1", "", false)
 		source.blocks["transcript-1"] = &empty
 		source.markdownErr = &APIError{Kind: ErrUnauthorized, Status: 401, Code: "unauthorized"}
@@ -422,6 +424,7 @@ func TestImporterRetriesIncompleteAfterSyncWriteFailure(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			testImporterIncompleteRetry(t, func(t *testing.T, st *store.Store, _ *fakeImportSource, imp *Importer, sourceID int64) {
+				t.Helper()
 				remove := failNotionSyncWrite(t, st, tc.column, tc.condition)
 				_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 				require.ErrorContains(t, err, "forced final write failure")
@@ -434,6 +437,7 @@ func TestImporterRetriesIncompleteAfterSyncWriteFailure(t *testing.T) {
 
 func TestImporterRetriesIncompleteAfterCancellation(t *testing.T) {
 	testImporterIncompleteRetry(t, func(t *testing.T, st *store.Store, source *fakeImportSource, imp *Importer, sourceID int64) {
+		t.Helper()
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		source.onBlock = func(id string) {
