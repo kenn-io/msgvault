@@ -38,14 +38,8 @@ func (f *committingCardDAVService) Sync(ctx context.Context, _ carddav.SyncOptio
 	return carddav.SyncResult{Books: 1}, errors.New("later book failed")
 }
 
-func TestCardDAVSchedulerRequestsIdentityRefresh(t *testing.T) {
-	req := require.New(t)
-	cfg := config.NewDefaultConfig()
-	cfg.Data.DataDir = t.TempDir()
-	cfg.Analytics.AutoBuildCache = true
-	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(cfg.Data.DataDir, "msgvault.db"))
-	id, err := st.EnsureParticipant("other@example.test", "Other", "example.test")
-	req.NoError(err)
+func captureDaemonCacheRefreshes(t *testing.T) <-chan string {
+	t.Helper()
 	requests := make(chan string, 2)
 	refresher := newBackgroundCacheRefresher(t.Context(), func(_ context.Context, id string) error {
 		requests <- id
@@ -55,8 +49,20 @@ func TestCardDAVSchedulerRequestsIdentityRefresh(t *testing.T) {
 	daemonCacheRefresher = refresher
 	t.Cleanup(func() {
 		daemonCacheRefresher = old
-		req.NoError(refresher.Shutdown(context.WithoutCancel(t.Context())))
+		require.NoError(t, refresher.Shutdown(context.WithoutCancel(t.Context())))
 	})
+	return requests
+}
+
+func TestCardDAVSchedulerRequestsIdentityRefresh(t *testing.T) {
+	req := require.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Analytics.AutoBuildCache = true
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(cfg.Data.DataDir, "msgvault.db"))
+	id, err := st.EnsureParticipant("other@example.test", "Other", "example.test")
+	req.NoError(err)
+	requests := captureDaemonCacheRefreshes(t)
 	sched := scheduler.New(nil)
 	t.Cleanup(func() { sched.Stop() })
 	service := &committingCardDAVService{store: st, participant: id}
@@ -77,17 +83,7 @@ func TestCardDAVIdentityRefreshFailureRequestsRecovery(t *testing.T) {
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Analytics.AutoBuildCache = true
-	requests := make(chan string, 2)
-	refresher := newBackgroundCacheRefresher(t.Context(), func(_ context.Context, id string) error {
-		requests <- id
-		return nil
-	}, nil)
-	oldRefresher := daemonCacheRefresher
-	daemonCacheRefresher = refresher
-	t.Cleanup(func() {
-		daemonCacheRefresher = oldRefresher
-		req.NoError(refresher.Shutdown(context.WithoutCancel(t.Context())))
-	})
+	requests := captureDaemonCacheRefreshes(t)
 	oldBuild := runDerivedCacheSubprocess
 	t.Cleanup(func() { runDerivedCacheSubprocess = oldBuild })
 	adapter := &storeAPIAdapter{config: cfg, analyticsDir: cfg.AnalyticsDir()}

@@ -905,8 +905,8 @@ it.each(['partial', 'failed'] as const)('names a connection whose sync is %s', a
         created: 1,
         updated: 0,
         removed: 0,
-        status,
         binding_conflicts: 2,
+        status,
         connections: [
           {
             connection: 'work',
@@ -928,10 +928,10 @@ it.each(['partial', 'failed'] as const)('names a connection whose sync is %s', a
   const controller = new CardDAVController(client);
   await controller.load();
   await controller.sync();
+  expect(controller.syncBindingConflicts).toBe(2);
   expect(controller.syncError).toContain('work');
   expect(controller.syncError).not.toContain('private upstream');
   expect(controller.syncStatus).toBeNull();
-  expect(controller.syncBindingConflicts).toBe(2);
   expect(bookReads).toBe(status === 'partial' ? 2 : 1);
   controller.destroy();
 });

@@ -701,7 +701,7 @@ it('keeps binding conflicts visible after a successful sync action', async () =>
   const controller = new OperationsController(client);
   await controller.applyURLState(operationState());
   expect(await controller.runAction('carddav_sync')).toBe('succeeded');
-  expect(controller.snapshot.actionStatus).toContain('2 CardDAV binding conflicts');
+  expect(controller.snapshot.actionStatus).toContain('2 CardDAV binding conflicts.');
   expect(controller.snapshot.actionError).toBeNull();
   controller.destroy();
 });

@@ -360,9 +360,6 @@ func TestCardDAVParticipantBindingManualPromotionAndLinkConfirmOwnership(t *test
 			card := remoteResource(book.CanonicalURL+"manual.vcf", "manual-card", "Alex Example", "alex@example.test", "one")
 			applyParticipantBindingCards(t, st, account, book, card)
 			require.True(bindingOwned(t, st, a))
-			before := bindingCardPerson(t, st, book, card.Href)
-			identityBefore, err := st.IdentityRevision()
-			require.NoError(err)
 			if action == "promote" {
 				_, _, err = st.CreatePersonFromParticipant(a)
 			} else {
@@ -370,19 +367,6 @@ func TestCardDAVParticipantBindingManualPromotionAndLinkConfirmOwnership(t *test
 			}
 			require.NoError(err)
 			assert.False(bindingOwned(t, st, a))
-			if action == "link" {
-				after := bindingCardPerson(t, st, book, card.Href)
-				assert.Greater(after.Revision, before.Revision)
-				identityAfter, err := st.IdentityRevision()
-				require.NoError(err)
-				assert.Greater(identityAfter, identityBefore)
-				_, err = st.LinkParticipants(a, b)
-				require.NoError(err)
-				assert.Equal(after.Revision, bindingCardPerson(t, st, book, card.Href).Revision)
-				identityAgain, err := st.IdentityRevision()
-				require.NoError(err)
-				assert.Equal(identityAfter, identityAgain)
-			}
 			_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{Undo: true})
 			require.NoError(err)
 			person := bindingCardPerson(t, st, book, card.Href)
@@ -512,9 +496,24 @@ func TestCardDAVParticipantBindingCandidateOwnership(t *testing.T) {
 				if actor == "system" {
 					assert.Equal(1, result.ParticipantsUnbound)
 					assert.Equal([]int64{a}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
+					before := bindingCardPerson(t, st, book, card.Href)
+					identityBefore, err := st.IdentityRevision()
+					require.NoError(err)
 					_, err = st.LinkParticipants(a, b)
 					require.NoError(err)
-					assert.ElementsMatch([]int64{a, b}, bindingCardPerson(t, st, book, card.Href).ParticipantIDs)
+					after := bindingCardPerson(t, st, book, card.Href)
+					assert.ElementsMatch([]int64{a, b}, after.ParticipantIDs)
+					assert.False(bindingOwned(t, st, b))
+					assert.Greater(after.Revision, before.Revision)
+					identityAfter, err := st.IdentityRevision()
+					require.NoError(err)
+					assert.Greater(identityAfter, identityBefore)
+					_, err = st.LinkParticipants(a, b)
+					require.NoError(err)
+					assert.Equal(after.Revision, bindingCardPerson(t, st, book, card.Href).Revision)
+					identityAgain, err := st.IdentityRevision()
+					require.NoError(err)
+					assert.Equal(identityAfter, identityAgain)
 					c, err := st.EnsureParticipant("linked@example.test", "Linked", "example.test")
 					require.NoError(err)
 					manualCandidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{LeftKind: store.IdentityMatchParticipant, LeftID: a, RightKind: store.IdentityMatchParticipant, RightID: c, Basis: store.IdentityMatchStableProviderID, NormalizedValue: new("another-provider-id"), State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation})
@@ -842,6 +841,40 @@ func TestCardDAVParticipantBindingApplyRollsBackResourceAndMembership(t *testing
 	}
 }
 
+func TestCardDAVParticipantBindingProvisionalCreateCollisionIsNotEvidence(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	st, _, book := newCardDAVResourceStore(t)
+	id, err := st.EnsureParticipant("collision@example.test", "Collision Example", "example.test")
+	require.NoError(err)
+	var personID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid,display_name) VALUES ('collision-local','Local Example') RETURNING id`).Scan(&personID))
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
+	require.NoError(err)
+	local := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:collision-local\r\nFN:Local Example\r\nEND:VCARD\r\n")
+	pending, err := st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{PersonID: personID, Desired: true, AddressBookID: book.ID, Href: book.CanonicalURL + "collision.vcf", OutgoingBody: local, OutgoingSemanticHash: "local", LocalHash: snapshot.Fingerprint})
+	require.NoError(err)
+	remote := remoteResource(pending.Href, "collision-remote", "Remote Example", "collision@example.test", "remote")
+	fenced, err := st.FenceCardDAVCreateCollisionContext(t.Context(), *pending, remote)
+	require.NoError(err)
+	// No conflict has been recorded yet: a stopped recovery must not turn the
+	// provisional remote card into accepted evidence on the next reconciliation.
+	result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
+	require.NoError(err)
+	assert.Zero(result.ParticipantsBound)
+	person, err := st.PersonForParticipantsContext(t.Context(), []int64{id})
+	require.NoError(err)
+	assert.Nil(person)
+	require.NoError(st.RollbackCardDAVPublicationContext(t.Context(), fenced))
+	result, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
+	require.NoError(err)
+	assert.Zero(result.ParticipantsBound)
+	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, remote.Href)
+	require.NoError(err)
+	assert.Equal(store.CardDAVMappingUnbound, mapping.MappingStatus)
+	assert.Nil(mapping.PersonID)
+}
+
 func TestCardDAVParticipantBindingMovedAddressRebinds(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
@@ -1048,40 +1081,6 @@ func TestCardDAVParticipantBindingDisputedLinkedAddresses(t *testing.T) {
 		require.NoError(err)
 		assert.Nil(bound)
 	}
-}
-
-func TestCardDAVParticipantBindingProvisionalCreateCollisionIsNotEvidence(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-	st, _, book := newCardDAVResourceStore(t)
-	id, err := st.EnsureParticipant("collision@example.test", "Collision Example", "example.test")
-	require.NoError(err)
-	var personID int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid,display_name) VALUES ('collision-local','Local Example') RETURNING id`).Scan(&personID))
-	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
-	require.NoError(err)
-	local := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:collision-local\r\nFN:Local Example\r\nEND:VCARD\r\n")
-	pending, err := st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{PersonID: personID, Desired: true, AddressBookID: book.ID, Href: book.CanonicalURL + "collision.vcf", OutgoingBody: local, OutgoingSemanticHash: "local", LocalHash: snapshot.Fingerprint})
-	require.NoError(err)
-	remote := remoteResource(pending.Href, "collision-remote", "Remote Example", "collision@example.test", "remote")
-	fenced, err := st.FenceCardDAVCreateCollisionContext(t.Context(), *pending, remote)
-	require.NoError(err)
-	// No conflict has been recorded yet: a stopped recovery must not turn the
-	// provisional remote card into accepted evidence on the next reconciliation.
-	result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
-	require.NoError(err)
-	assert.Zero(result.ParticipantsBound)
-	person, err := st.PersonForParticipantsContext(t.Context(), []int64{id})
-	require.NoError(err)
-	assert.Nil(person)
-	require.NoError(st.RollbackCardDAVPublicationContext(t.Context(), fenced))
-	result, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
-	require.NoError(err)
-	assert.Zero(result.ParticipantsBound)
-	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, remote.Href)
-	require.NoError(err)
-	assert.Equal(store.CardDAVMappingUnbound, mapping.MappingStatus)
-	assert.Nil(mapping.PersonID)
 }
 
 func TestCardDAVParticipantBindingRecordedCreateConflict(t *testing.T) {
