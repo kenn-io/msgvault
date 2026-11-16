@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Circleback syncs wait and retry when Circleback answers `429 Too Many Requests`, instead of failing every remaining meeting in the run.
+
 - Archive [Bland calls](usage/meetings.md#bland) as meetings with their summaries, retained transcripts and recordings saved locally, up to 1 GiB each by default (`max_media_mb`).
 
 - Start bounded Gmail or IMAP historical imports through MCP with `--allow-import-writes`, and follow their durable job status.
