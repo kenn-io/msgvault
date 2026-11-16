@@ -55,7 +55,7 @@ func (commitmentOnlyRunner) OrdinaryInferenceAllowed(context.Context) (bool, err
 	return false, nil
 }
 
-func TestTargetedCommitmentOnlyRunSkipsOrdinaryWork(t *testing.T) {
+func TestTargetedCommitmentOnlyRunSkipsOrdinaryWorkAndPassesTimezone(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	worker, st, sink := newConsentOnlyCommitmentWorker(t)
 	worker.Timezone = "America/New_York"

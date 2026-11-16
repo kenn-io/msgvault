@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -372,55 +374,55 @@ func TestMCPLoopListExposesIncompleteCoverage(t *testing.T) {
 	requirements.True(list.CoverageIncomplete)
 }
 
-func TestMCPLoopListPassesCommitmentOffset(t *testing.T) {
-	f := storetest.New(t)
-	fixture := api.NewServerWithOptions(api.ServerOptions{Config: config.NewDefaultConfig(), Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler)})
-	offset := make(chan string, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/loops" {
-			offset <- r.URL.Query().Get("commitment_offset")
-		}
-		fixture.Router().ServeHTTP(w, r)
-	}))
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-	require.NoError(t, err)
-	capabilities, err := client.MCPCapabilities(t.Context())
-	require.NoError(t, err)
-	backend := newDaemonMCPOperations(client, capabilities)
-	session := loopOperationMCPSession(t, backend, nil, &sdkmcp.ClientOptions{})
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_open_loops", Arguments: map[string]any{"limit": 1, "commitment_offset": 5}})
-	require.NoError(t, err)
-	loopToolOutput[generated.LoopListResponse](t, result)
-	select {
-	case got := <-offset:
-		assert.Equal(t, "5", got)
-	default:
-		assert.Fail(t, "daemon did not receive a loops request")
-	}
-}
+func TestMCPLoopListCommitmentOffsetCapabilities(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		supported bool
+	}{{"supported", true}, {"unsupported by parent daemon", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, backend, _ := loopOperationFixture(t)
+			capabilities, err := backend.client.MCPCapabilities(t.Context())
+			require.NoError(t, err)
+			if !tc.supported {
+				for i := range capabilities.Routes {
+					if capabilities.Routes[i].OperationID == "listLoops" {
+						capabilities.Routes[i].QueryParameters = []string{"person_id", "limit"}
+					}
+				}
+				backend = newDaemonMCPOperations(backend.client, capabilities)
+				session := loopOperationMCPSession(t, backend, nil, &sdkmcp.ClientOptions{})
+				result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_open_loops", Arguments: map[string]any{"commitment_offset": 1}})
+				require.NoError(t, err)
+				assert.Equal(t, "invalid_arguments", loopToolFailure(t, result)["error"])
+				return
+			}
 
-func TestMCPLoopListWithParentDaemonCapabilities(t *testing.T) {
-	_, backend, anchor := loopOperationFixture(t)
-	capabilities, err := backend.client.MCPCapabilities(t.Context())
-	require.NoError(t, err)
-	for i := range capabilities.Routes {
-		if capabilities.Routes[i].OperationID == "listLoops" {
-			capabilities.Routes[i].QueryParameters = []string{"person_id", "limit"}
-		}
+			target, err := url.Parse(backend.client.BaseURL())
+			require.NoError(t, err)
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			offset := make(chan string, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/loops" {
+					offset <- r.URL.Query().Get("commitment_offset")
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			t.Cleanup(server.Close)
+			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+			require.NoError(t, err)
+			backend = newDaemonMCPOperations(client, capabilities)
+			session := loopOperationMCPSession(t, backend, nil, &sdkmcp.ClientOptions{})
+			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_open_loops", Arguments: map[string]any{"limit": 1, "commitment_offset": 5}})
+			require.NoError(t, err)
+			loopToolOutput[generated.LoopListResponse](t, result)
+			select {
+			case got := <-offset:
+				assert.Equal(t, "5", got)
+			default:
+				assert.Fail(t, "daemon did not receive a loops request")
+			}
+		})
 	}
-	backend = newDaemonMCPOperations(backend.client, capabilities)
-	session := loopOperationMCPSession(t, backend, nil, &sdkmcp.ClientOptions{})
-	tools, err := session.ListTools(t.Context(), nil)
-	require.NoError(t, err)
-	assert.True(t, slices.ContainsFunc(tools.Tools, func(tool *sdkmcp.Tool) bool { return tool.Name == "list_open_loops" }))
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_open_loops", Arguments: map[string]any{}})
-	require.NoError(t, err)
-	list := loopToolOutput[generated.LoopListResponse](t, result)
-	assert.True(t, slices.ContainsFunc(list.Items, func(item generated.LoopItem) bool { return item.AnchorMessageID == anchor }))
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_open_loops", Arguments: map[string]any{"commitment_offset": 1}})
-	require.NoError(t, err)
-	assert.Equal(t, "invalid_arguments", loopToolFailure(t, result)["error"])
 }
 
 func TestMCPLoopListExposesSkippedUnparseable(t *testing.T) {

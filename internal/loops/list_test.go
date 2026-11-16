@@ -827,10 +827,6 @@ func (s *pagingCommitmentStore) ListPersonCommitmentsContext(_ context.Context, 
 }
 
 func TestListPagesCommitments(t *testing.T) {
-	for _, id := range []string{"12", "c012"} {
-		_, err := loops.ParseCommitmentID(id)
-		assert.ErrorIs(t, err, loops.ErrInvalidCommitmentID)
-	}
 	f := storetest.New(t)
 	st := &pagingCommitmentStore{Store: f.Store}
 	result, err := loops.List(t.Context(), st, loops.Options{Limit: 1, CommitmentOffset: 200}, now)
@@ -841,4 +837,13 @@ func TestListPagesCommitments(t *testing.T) {
 	require.NotNil(t, result.CommitmentsNextOffset)
 	assert.Equal(t, 201, *result.CommitmentsNextOffset)
 	assert.True(t, result.Truncated)
+}
+
+func TestParseCommitmentID(t *testing.T) {
+	for _, value := range []string{"12", "c012"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := loops.ParseCommitmentID(value)
+			assert.ErrorIs(t, err, loops.ErrInvalidCommitmentID)
+		})
+	}
 }

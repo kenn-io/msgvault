@@ -33,21 +33,19 @@ type loopFixture struct {
 type deadlineLoopStore struct {
 	*store.Store
 
-	stage string
+	active       bool
+	since        *time.Time
+	complete     bool
+	consentErr   error
+	discoveryErr error
 }
 
 func (s *deadlineLoopStore) HasActivePersonCommitmentConsent(context.Context, string) (bool, error) {
-	if s.stage == "error" {
-		return false, errors.New("consent read failed")
-	}
-	if s.stage == "consent" {
-		return false, context.DeadlineExceeded
-	}
-	return true, nil
+	return s.active, s.consentErr
 }
 
 func (s *deadlineLoopStore) PersonCommitmentDiscoveryContext(context.Context, int64, string) (*time.Time, bool, error) {
-	return nil, false, context.DeadlineExceeded
+	return s.since, s.complete, s.discoveryErr
 }
 
 func newLoopFixture(t *testing.T) *loopFixture {
@@ -127,10 +125,8 @@ func TestListLoopsFilters(t *testing.T) {
 	assert.True(truncated.Truncated)
 }
 
-func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := storetest.New(t)
+func commitmentDiscoveryAPIConfig(t *testing.T) *config.Config {
+	t.Helper()
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
 	cfg.People.Sweep.Enabled = true
@@ -141,71 +137,96 @@ func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
 	provider.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceConversationText}
 	configureAPIProvider(cfg, provider)
 	cfg.People.Sweep.ApplyDefaults()
-	for _, stage := range []string{"consent", "discovery", "error"} {
-		t.Run(stage, func(t *testing.T) {
-			a, r := assert.New(t), require.New(t)
-			fixture := newLoopFixture(t)
-			st := &deadlineLoopStore{Store: fixture.f.Store, stage: stage}
-			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
-			w := httptest.NewRecorder()
-			server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
-			if stage == "error" {
-				a.Equal(http.StatusInternalServerError, w.Code)
-				return
-			}
-			r.Equal(http.StatusOK, w.Code, w.Body.String())
-			var response LoopListResponse
-			r.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-			a.True(response.CoverageIncomplete)
-			a.Len(response.Items, 2)
-			if stage == "discovery" {
-				r.NotNil(response.CommitmentsComplete)
-				a.False(*response.CommitmentsComplete)
-			} else {
-				a.Nil(response.CommitmentsComplete)
-			}
-		})
-	}
-	profile, err := cfg.People.Sweep.Profile()
-	requirements.NoError(err)
-	_, err = f.Store.EnsurePersonInferenceProfile(t.Context(), profile)
-	requirements.NoError(err)
-	requirements.NoError(f.Store.RecordPersonInferenceCheck(t.Context(), store.PersonInferenceCheck{ProfileFingerprint: profile.Fingerprint, CheckedAt: time.Now(), DriverVersion: profile.DriverVersion, OutputMode: profile.OutputMode, ModelVersion: profile.Model}))
-	participant := f.EnsureParticipant("alex@example.test", "Alex", "example.test")
-	person, _, err := f.Store.CreatePersonFromParticipant(participant)
-	requirements.NoError(err)
-	_, err = f.Store.SetPersonTrackingContext(t.Context(), person.ID, true)
-	requirements.NoError(err)
-	server := NewServerWithOptions(ServerOptions{Config: cfg, Store: f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
+	return cfg
+}
+
+func TestListLoopsReportsCommitmentDiscoveryWhenEnabled(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	fixture := newLoopFixture(t)
+	cfg := commitmentDiscoveryAPIConfig(t)
+	since := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	st := &deadlineLoopStore{Store: fixture.f.Store, active: true, since: &since, complete: true}
+	server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
 	read := func() LoopListResponse {
 		w := httptest.NewRecorder()
-		server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/loops?person_id=%d", person.ID), nil))
+		server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
 		requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 		var response LoopListResponse
 		requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 		return response
 	}
-	_, _, err = f.Store.GrantPersonCommitmentConsent(t.Context(), profile.Fingerprint, "test")
-	requirements.NoError(err)
+
 	response := read()
+	assertions.False(response.CoverageIncomplete)
+	assertions.Len(response.Items, 2)
 	requirements.NotNil(response.CommitmentsUntil)
 	assertions.Equal("2025-06-30", response.CommitmentsUntil.Format(time.DateOnly))
-	since := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint, discovery_since) VALUES (?, 0, ?, -1, ?, ?)`), person.ID, since, peoplesweep.CommitmentScopeFingerprint(profile, cfg.People.Sweep.Commitments), since)
-	requirements.NoError(err)
-	response = read()
+	requirements.NotNil(response.CommitmentsSince)
+	assertions.True(response.CommitmentsSince.Equal(since))
 	requirements.NotNil(response.CommitmentsComplete)
 	assertions.True(*response.CommitmentsComplete)
-	requirements.NotNil(response.CommitmentsSince)
-	assertions.True(response.CommitmentsSince.Equal(since))
-	_, err = f.Store.RevokePersonCommitmentConsent(t.Context(), profile.Fingerprint, "test")
-	requirements.NoError(err)
+
+	st.active = false
 	response = read()
+	assertions.False(response.CoverageIncomplete)
+	requirements.NotNil(response.CommitmentsUntil)
+	assertions.Equal("2025-06-30", response.CommitmentsUntil.Format(time.DateOnly))
 	requirements.NotNil(response.CommitmentsSince)
 	assertions.True(response.CommitmentsSince.Equal(since))
-	requirements.NotNil(response.CommitmentsUntil)
 	requirements.NotNil(response.CommitmentsComplete)
 	assertions.False(*response.CommitmentsComplete)
+}
+
+func TestListLoopsReportsCommitmentDiscoveryDeadlines(t *testing.T) {
+	since := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name         string
+		consentErr   error
+		discoveryErr error
+		wantSince    bool
+		wantComplete bool
+	}{
+		{name: "consent read", consentErr: context.DeadlineExceeded},
+		{name: "discovery read", discoveryErr: context.DeadlineExceeded, wantSince: true, wantComplete: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			fixture := newLoopFixture(t)
+			st := &deadlineLoopStore{Store: fixture.f.Store, active: true, since: &since, complete: true,
+				consentErr: tc.consentErr, discoveryErr: tc.discoveryErr}
+			server := NewServerWithOptions(ServerOptions{Config: commitmentDiscoveryAPIConfig(t), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+			w := httptest.NewRecorder()
+			server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
+			requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+			var response LoopListResponse
+			requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+			assertions.True(response.CoverageIncomplete)
+			assertions.Len(response.Items, 2)
+			if tc.wantSince {
+				requirements.NotNil(response.CommitmentsSince)
+				assertions.True(response.CommitmentsSince.Equal(since))
+			} else {
+				assertions.Nil(response.CommitmentsSince)
+			}
+			if tc.wantComplete {
+				requirements.NotNil(response.CommitmentsComplete)
+				assertions.False(*response.CommitmentsComplete)
+			} else {
+				assertions.Nil(response.CommitmentsComplete)
+			}
+		})
+	}
+}
+
+func TestListLoopsFailsWhenCommitmentConsentReadFails(t *testing.T) {
+	fixture := newLoopFixture(t)
+	st := &deadlineLoopStore{Store: fixture.f.Store, consentErr: errors.New("consent read failed")}
+	server := NewServerWithOptions(ServerOptions{Config: commitmentDiscoveryAPIConfig(t), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+	w := httptest.NewRecorder()
+	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestListLoopsReportsIncompleteCoverage(t *testing.T) {
