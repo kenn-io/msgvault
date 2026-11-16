@@ -329,6 +329,7 @@ export * from "./filters";
 export * from "./findContactCandidatesParams";
 export * from "./findKataIssuesParams";
 export * from "./findSimilarMessagesParams";
+export * from "./firstContactIntroducer";
 export * from "./formatCoverage";
 export * from "./gCalAttendee";
 export * from "./gCalBusyPeriod";
