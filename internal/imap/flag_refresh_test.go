@@ -109,6 +109,32 @@ func TestListMessages_RefreshesFlagChangeWithoutModSeq(t *testing.T) {
 	assert.True(second.LabelsSnapshotComplete())
 }
 
+func TestListMessages_RefreshesFlagsWithFilteredDeletionReconciliation(t *testing.T) {
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1})
+	testutil.SetIMAPFlags(t, addr, "INBOX", 1, imapv2.FlagDraft)
+	opts := []Option{WithFolderFilter(nil, []string{"Trash"}), WithFilteredDeletionReconciliation(true)}
+	first := newTestClient(t, addr, opts...)
+	listAllMessages(t, first)
+	require.True(t, first.ReconcilesFilteredDeletions())
+	saved := first.ObservedFolderStates()
+	archive := archiveObservations(first.ObservedMemberships())
+	require.Equal(t, []string{`\Draft`}, archive.rows["INBOX"][1].Flags)
+	require.NoError(t, first.Close())
+
+	testutil.SetIMAPFlags(t, addr, "INBOX", 1)
+	second := newTestClient(t, addr, append(opts, WithFolderStates(saved), WithStoredMembershipLoader(archive.load))...)
+	assert.Empty(t, listAllMessages(t, second))
+	observations := second.ObservedMemberships()
+	require.Len(t, observations, 1)
+	assert.Equal(t, "INBOX", observations[0].Mailbox)
+	assert.Equal(t, uint32(1), observations[0].UID)
+	assert.Empty(t, observations[0].Flags)
+	deltas := second.ObservedMailboxDeltas()
+	require.Len(t, deltas, 1)
+	assert.Equal(t, "INBOX", deltas[0].Mailbox)
+	assert.True(t, deltas[0].Incremental)
+}
+
 func TestListMessages_UnchangedFlagsRecordNoMemberships(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -112,7 +112,7 @@ func flagRefreshCandidates(known []uint32, listed []imap.UID) []uint32 {
 func (c *Client) refreshKnownFlagsLocked(
 	ctx context.Context, mailbox string, status FolderState, scan mailboxScan,
 ) {
-	if c.storedMembershipLoader == nil || c.labelsSnapshotFilteredLocked() ||
+	if c.storedMembershipLoader == nil || (c.labelsSnapshotFilteredLocked() && !c.scannedMailboxSnapshotLocked()) ||
 		scan.err != nil || scan.reset {
 		return
 	}
