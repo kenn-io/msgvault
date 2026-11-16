@@ -3,23 +3,12 @@ import { createAPIClient } from '../api/client';
 import { runOperationAction } from './actions';
 
 describe('runOperationAction', () => {
-  it.each([
-    {
-      result: { status: 'partial', connections: [
-        { connection: 'work', status: 'partial', error_message: 'private arbitrary upstream detail' },
-        { connection: 'personal', status: 'succeeded' }
-      ] },
-      message: 'CardDAV sync partial. Connections needing attention: work.'
-    },
-    {
-      result: { status: 'failed', connections: [
-        { connection: 'work', status: 'failed', error_message: 'private arbitrary upstream detail' }
-      ] },
-      message: 'CardDAV sync failed. Connections needing attention: work.'
-    }
-  ])('reports contacts sync $result.status', async ({ result, message }) => {
-    const client = createAPIClient(async () => Response.json(result));
+  it.each(['partial', 'failed'])('reports contacts sync %s', async result => {
+    const client = createAPIClient(async () => Response.json({ status: result, connections: [
+      { connection: 'work', status: result, error_message: 'private arbitrary upstream detail' },
+      ...(result === 'partial' ? [{ connection: 'personal', status: 'succeeded' }] : [])
+    ] }));
     const action = await runOperationAction('carddav_sync', client);
-    expect(action).toEqual({ outcome: 'failed', message });
+    expect(action).toEqual({ outcome: 'failed', message: `CardDAV sync ${result}. Connections needing attention: work.` });
   });
 });

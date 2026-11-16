@@ -17,10 +17,10 @@ export async function runOperationAction(action: OperationAction, client: Genera
     : action === 'visual_build'
       ? await startVisualAttachmentBuild({ consent: true }, client)
       : await resumeVisualAttachmentBuild(client);
-  if (!result.response.ok) {
-    const conflict = result.response.status === 409;
-    return { outcome: conflict ? 'conflict' : 'failed', message: conflict ? 'The operation could not start because current server state changed.' : 'Unable to start the operation.' };
+  if (result.response.status === 409) {
+    return { outcome: 'conflict', message: 'The operation could not start because current server state changed.' };
   }
+  if (!result.response.ok) return { outcome: 'failed', message: 'Unable to start the operation.' };
   if (action === 'carddav_sync' && result.data && 'status' in result.data &&
     (result.data.status === 'partial' || result.data.status === 'failed')) {
     const names = ((result.data as SyncResult).connections ?? [])

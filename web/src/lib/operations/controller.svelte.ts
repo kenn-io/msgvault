@@ -249,7 +249,7 @@ export class OperationsController {
       reconcile = true;
       outcome = result.outcome;
       if (outcome === 'conflict') this.actionConflict = result.message ?? null;
-      else if (outcome !== 'succeeded') this.actionError = result.message ?? null;
+      else this.actionError = result.message ?? null;
     } catch {
       if (this.ownsAction(request, generation, context)) {
         reconcile = true;
