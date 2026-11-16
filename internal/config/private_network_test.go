@@ -9,32 +9,32 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"hegel.dev/go/hegel"
+	"pgregory.net/rapid"
 )
 
 func TestKataPrivateNetworkConfigProperty(t *testing.T) {
 	t.Setenv("MSGVAULT_HOME", t.TempDir())
 	path := filepath.Join(t.TempDir(), "config.toml")
-	hegel.Test(t, func(ht *hegel.T) {
-		n := hegel.Draw(ht, hegel.Integers(uint64(0), ^uint64(0)))
+	rapid.Check(t, func(rt *rapid.T) {
+		n := rapid.Uint64().Draw(rt, "n")
 		endpoint := fmt.Sprintf("http://service-%d.example.test:7777/api", n)
-		mode := hegel.Draw(ht, hegel.Integers(0, 2))
-		docbankTrust := hegel.Draw(ht, hegel.Booleans())
+		mode := rapid.IntRange(0, 2).Draw(rt, "mode")
+		docbankTrust := rapid.Bool().Draw(rt, "docbankTrust")
 		trust := ""
 		if mode != 0 {
 			trust = fmt.Sprintf("trust_private_network = %t\n", mode == 2)
 		}
 		content := fmt.Sprintf("[integrations.kata]\nenabled = true\nendpoint = %q\n%s[integrations.docbank]\ntrust_private_network = %t\n", endpoint, trust, docbankTrust)
-		require.NoError(ht, os.WriteFile(path, []byte(content), 0o600))
+		require.NoError(rt, os.WriteFile(path, []byte(content), 0o600))
 		cfg, err := Load(path, "")
 		if mode != 2 {
-			require.Error(ht, err)
+			require.Error(rt, err)
 			return
 		}
-		require.NoError(ht, err)
-		assert.True(ht, cfg.Integrations.Kata.TrustPrivateNetwork)
-		assert.Equal(ht, docbankTrust, cfg.Integrations.Docbank.TrustPrivateNetwork)
-	}, hegel.WithTestCases(32), hegel.WithDatabase(""))
+		require.NoError(rt, err)
+		assert.True(rt, cfg.Integrations.Kata.TrustPrivateNetwork)
+		assert.Equal(rt, docbankTrust, cfg.Integrations.Docbank.TrustPrivateNetwork)
+	})
 }
 
 func TestPrivateNetworkConfigStrictness(t *testing.T) {

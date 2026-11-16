@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/taskclient"
-	"hegel.dev/go/hegel"
+	"pgregory.net/rapid"
 )
 
 func checkPrivateNetworkEndpoint(t require.TestingT, endpoint string, trust, allowed bool) (*Client, *taskclient.Client) {
@@ -38,10 +38,10 @@ func checkPrivateNetworkEndpoint(t require.TestingT, endpoint string, trust, all
 }
 
 func TestPrivateNetworkMappedIPv4RepresentationProperty(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		n := hegel.Draw(ht, hegel.Integers(uint32(0), ^uint32(0)))
+	rapid.Check(t, func(rt *rapid.T) {
+		n := rapid.Uint32().Draw(rt, "n")
 		ip := net.IPv4(byte(n>>24), byte(n>>16), byte(n>>8), byte(n)).String()
-		trust := hegel.Draw(ht, hegel.Booleans())
+		trust := rapid.Bool().Draw(rt, "trust")
 		endpoints := []string{
 			"http://" + ip,
 			"http://[::ffff:" + ip + "]",
@@ -53,24 +53,24 @@ func TestPrivateNetworkMappedIPv4RepresentationProperty(t *testing.T) {
 			client, clientErr := NewClient(endpoint, nil, WithTrustPrivateNetwork(trust))
 			tasks, taskErr := taskclient.New(taskclient.ClientOptions{Endpoint: endpoint, APIKey: "synthetic-key", TrustPrivateNetwork: trust})
 			docbankAllowed, taskAllowed := clientErr == nil, taskErr == nil
-			assert.Equal(ht, docbankAllowed, taskAllowed, endpoint)
+			assert.Equal(rt, docbankAllowed, taskAllowed, endpoint)
 			if i == 0 {
 				wantDocbankAllowed, wantTaskAllowed = docbankAllowed, taskAllowed
 				if tasks != nil {
 					wantTaskKind = tasks.EndpointKind()
 				}
 			} else {
-				assert.Equal(ht, wantDocbankAllowed, docbankAllowed, endpoint)
-				assert.Equal(ht, wantTaskAllowed, taskAllowed, endpoint)
+				assert.Equal(rt, wantDocbankAllowed, docbankAllowed, endpoint)
+				assert.Equal(rt, wantTaskAllowed, taskAllowed, endpoint)
 			}
 			if client != nil {
-				assert.Equal(ht, endpoint, client.baseURL)
+				assert.Equal(rt, endpoint, client.baseURL)
 			}
 			if tasks != nil && wantTaskAllowed {
-				assert.Equal(ht, wantTaskKind, tasks.EndpointKind(), endpoint)
+				assert.Equal(rt, wantTaskKind, tasks.EndpointKind(), endpoint)
 			}
 		}
-	}, hegel.WithDatabase(""))
+	})
 }
 
 func TestPrivateNetworkMappedIPv4EndpointKinds(t *testing.T) {
@@ -91,17 +91,17 @@ func TestPrivateNetworkMappedIPv4EndpointKinds(t *testing.T) {
 }
 
 func TestPrivateNetworkZonedLinkLocalProperty(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		n := hegel.Draw(ht, hegel.Integers(uint64(0), ^uint64(0)))
-		trust := hegel.Draw(ht, hegel.Booleans())
+	rapid.Check(t, func(rt *rapid.T) {
+		n := rapid.Uint64().Draw(rt, "n")
+		trust := rapid.Bool().Draw(rt, "trust")
 		endpoint := fmt.Sprintf("http://[fe80::%x:%x:%x:%x%%25Net%d]:8485/base", uint16(n>>48), uint16(n>>32), uint16(n>>16), uint16(n), n)
-		checkPrivateNetworkEndpoint(ht, endpoint, trust, trust)
+		checkPrivateNetworkEndpoint(rt, endpoint, trust, trust)
 		if trust {
 			client, err := NewClient(endpoint, nil, WithTrustPrivateNetwork(true))
-			require.NoError(ht, err)
-			assert.Equal(ht, endpoint, client.baseURL)
+			require.NoError(rt, err)
+			assert.Equal(rt, endpoint, client.baseURL)
 		}
-	}, hegel.WithDatabase(""))
+	})
 }
 
 func TestPrivateNetworkStrictZonedLoopbackRegression(t *testing.T) {

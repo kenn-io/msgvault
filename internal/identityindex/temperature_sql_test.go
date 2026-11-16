@@ -1,12 +1,16 @@
 package identityindex
 
 import (
+	"encoding/json"
+	"fmt"
 	"math"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"pgregory.net/rapid"
 )
 
 func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *testing.T) {
@@ -200,4 +204,127 @@ func TestRelationshipTemperatureAnnualRollupsStartAtFirstYear(t *testing.T) {
 		assert.False(rows.Next())
 		require.NoError(rows.Err())
 	}()
+}
+
+func TestPropertyAnnualTemperatureRollups(t *testing.T) {
+	_, db := writeRelationshipBaseFixture(t, true)
+	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE `+temperatureBuildRelation+` (
+		canonical_id BIGINT, event_date DATE, sent_count BIGINT, received_count BIGINT,
+		meeting_count BIGINT, email_count BIGINT, chat_count BIGINT, total_count BIGINT,
+		modality_mask UTINYINT, last_at TIMESTAMP)`)
+	require.NoError(t, err)
+	effective := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	query := `WITH anchor AS (SELECT 1)` + relationshipTemperatureCTEs(effective)
+	rapid.Check(t, func(rt *rapid.T) {
+		require := require.New(rt)
+		assert := assert.New(rt)
+		_, err := db.ExecContext(t.Context(), `DELETE FROM `+temperatureBuildRelation)
+		require.NoError(err)
+		// One contact has equal temperatures in two years to exercise peak tie-breaking.
+		dates := []time.Time{
+			time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2000, 2, 29, 0, 0, 0, 0, time.UTC),
+		}
+		ids := []int64{4, 4}
+		for n := rapid.IntRange(1, 6).Draw(rt, "contacts"); n > 0; n-- {
+			var date time.Time
+			if rapid.Bool().Draw(rt, "pre1970") {
+				date = drawDate(rt, time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(1969, 12, 31, 0, 0, 0, 0, time.UTC))
+			} else {
+				date = drawDate(rt, time.Date(1971, 1, 1, 0, 0, 0, 0, time.UTC), effective)
+				// Keep the tie fixture alone in both of its years.
+				if date.Year() == 2000 {
+					date = time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
+				}
+			}
+			dates = append(dates, date)
+			ids = append(ids, rapid.Int64Range(5, 7).Draw(rt, "id"))
+		}
+		rt.Logf("ids=%v dates=%v", ids, dates)
+		expected := map[int64]map[int]bool{}
+		seen := map[string]bool{}
+		for i, date := range dates {
+			id := ids[i]
+			key := fmt.Sprintf("%d/%s", id, date.Format("2006-01-02"))
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			if date.Year() >= 1970 {
+				if expected[id] == nil {
+					expected[id] = map[int]bool{}
+				}
+				expected[id][date.Year()] = true
+			}
+			_, err := db.ExecContext(t.Context(), `INSERT INTO `+temperatureBuildRelation+` VALUES (?, ?, 1, 0, 0, 1, 0, 1, 1, ?)`, id, date.Format("2006-01-02"), date.Format("2006-01-02"))
+			require.NoError(err)
+		}
+		actual := map[int64][]int{}
+		func() {
+			rows, err := db.QueryContext(t.Context(), query+` SELECT canonical_id, CAST(to_json(list_transform(annual_temperatures, lambda x: x.year)) AS VARCHAR) FROM annual_rollups`)
+			require.NoError(err)
+			defer func() { require.NoError(rows.Close()) }()
+			for rows.Next() {
+				var id int64
+				var raw string
+				require.NoError(rows.Scan(&id, &raw))
+				var years []int
+				require.NoError(json.Unmarshal([]byte(raw), &years))
+				actual[id] = years
+			}
+			require.NoError(rows.Err())
+		}()
+		want := map[int64][]int{}
+		for id, years := range expected {
+			for year := range years {
+				want[id] = append(want[id], year)
+			}
+			sort.Ints(want[id])
+		}
+		assert.Equal(want, actual)
+		current := map[int64]bool{}
+		func() {
+			rows, err := db.QueryContext(t.Context(), query+` SELECT canonical_id FROM current_ranked`)
+			require.NoError(err)
+			defer func() { require.NoError(rows.Close()) }()
+			for rows.Next() {
+				var id int64
+				require.NoError(rows.Scan(&id))
+				assert.False(current[id])
+				current[id] = true
+			}
+			require.NoError(rows.Err())
+		}()
+		wantCurrent := map[int64]bool{}
+		for _, id := range ids {
+			wantCurrent[id] = true
+		}
+		assert.Equal(wantCurrent, current)
+		peaks := map[int64]int{}
+		func() {
+			rows, err := db.QueryContext(t.Context(), query+` SELECT canonical_id, peak_year FROM peaks`)
+			require.NoError(err)
+			defer func() { require.NoError(rows.Close()) }()
+			for rows.Next() {
+				var id int64
+				var year int
+				require.NoError(rows.Scan(&id, &year))
+				peaks[id] = year
+			}
+			require.NoError(rows.Err())
+		}()
+		assert.Len(peaks, len(expected))
+		for id := range expected {
+			assert.Contains(peaks, id)
+		}
+		assert.Equal(2000, peaks[4])
+	})
+}
+
+// drawDate draws a UTC calendar date in [lo, hi] by day number, which avoids
+// time.Duration overflow across the full range of years.
+func drawDate(rt *rapid.T, lo, hi time.Time) time.Time {
+	const day = 24 * 60 * 60
+	n := rapid.Int64Range(lo.Unix()/day, hi.Unix()/day).Draw(rt, "day")
+	return time.Unix(n*day, 0).UTC()
 }
