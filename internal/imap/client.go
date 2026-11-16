@@ -19,7 +19,6 @@ import (
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 	gmailapi "go.kenn.io/msgvault/internal/gmail"
-	"go.kenn.io/msgvault/internal/store"
 	"golang.org/x/time/rate"
 )
 
@@ -651,31 +650,6 @@ func (c *Client) listOptionsLocked() *imap.ListOptions {
 	return &imap.ListOptions{ReturnSpecialUse: true}
 }
 
-func discoverTrashMailbox(items []*imap.ListData) string {
-	eligible := func(item *imap.ListData) bool {
-		for _, attr := range item.Attrs {
-			if attr == imap.MailboxAttrNoSelect || (systemAttrs[attr] && attr != imap.MailboxAttrTrash) {
-				return false
-			}
-		}
-		return true
-	}
-	for _, item := range items {
-		if !hasAttr(item.Attrs, imap.MailboxAttrNoSelect) && hasAttr(item.Attrs, imap.MailboxAttrTrash) {
-			return item.Mailbox
-		}
-	}
-	for _, candidate := range []string{Trash, "[Gmail]/Trash", "Deleted Items", "Deleted Messages"} {
-		for _, item := range items {
-			if eligible(item) &&
-				strings.EqualFold(item.Mailbox, candidate) {
-				return item.Mailbox
-			}
-		}
-	}
-	return ""
-}
-
 // listMailboxesLocked returns all selectable mailboxes, caching the result.
 // Also detects special-use attributes (\Trash, \All) for later use.
 // Caller must hold mu.
@@ -739,6 +713,9 @@ func (c *Client) listMailboxesLocked(ctx context.Context) ([]string, error) {
 				}
 			}
 		}
+		if c.trashMailbox == "" && hasAttr(item.Attrs, imap.MailboxAttrTrash) {
+			c.trashMailbox = item.Mailbox
+		}
 		if c.allMailFolder == "" && hasAttr(item.Attrs, imap.MailboxAttrAll) {
 			c.allMailFolder = item.Mailbox
 		}
@@ -746,7 +723,6 @@ func (c *Client) listMailboxesLocked(ctx context.Context) ([]string, error) {
 			c.junkMailbox = item.Mailbox
 		}
 	}
-	c.trashMailbox = discoverTrashMailbox(items)
 
 	// Fallback: look for common junk/spam folder names
 	if c.junkMailbox == "" {
@@ -761,6 +737,21 @@ func (c *Client) listMailboxesLocked(ctx context.Context) ([]string, error) {
 				}
 			}
 			if c.junkMailbox != "" {
+				break
+			}
+		}
+	}
+
+	// Fallback: look for common trash folder names
+	if c.trashMailbox == "" {
+		for _, candidate := range []string{Trash, "[Gmail]/Trash", "Deleted Items", "Deleted Messages"} {
+			for _, mb := range names {
+				if strings.EqualFold(mb, candidate) {
+					c.trashMailbox = mb
+					break
+				}
+			}
+			if c.trashMailbox != "" {
 				break
 			}
 		}
@@ -1814,18 +1805,13 @@ func (c *Client) ListLabels(ctx context.Context) ([]*gmailapi.Label, error) {
 		if err != nil {
 			return fmt.Errorf("LIST: %w", err)
 		}
-		c.trashMailbox = discoverTrashMailbox(items)
 		for _, item := range items {
 			labelType := classifyLabelType(item.Mailbox, item.Attrs)
-			role := systemRoleForMailbox(item.Attrs)
-			if item.Mailbox == c.trashMailbox {
-				role = store.LabelSystemRoleTrash
-			}
 			labels = append(labels, &gmailapi.Label{
 				ID:         item.Mailbox,
 				Name:       item.Mailbox,
 				Type:       labelType,
-				SystemRole: role,
+				SystemRole: systemRoleForMailbox(item.Attrs),
 			})
 		}
 		return nil
@@ -1963,12 +1949,12 @@ func (c *Client) TrashMessage(ctx context.Context, messageID string) error {
 		// Populate trashMailbox via LIST if not yet discovered.
 		if c.trashMailbox == "" {
 			if _, err := c.listMailboxesLocked(ctx); err != nil {
-				return fmt.Errorf("discover trash mailbox: %w", err)
+				c.logger.Warn("failed to discover trash mailbox, will use default", "error", err)
 			}
 		}
 		trashMailbox := c.trashMailbox
 		if trashMailbox == "" {
-			return errors.New("no selectable trash mailbox found")
+			trashMailbox = Trash
 		}
 		var uidSet imap.UIDSet
 		uidSet.AddNum(uid)

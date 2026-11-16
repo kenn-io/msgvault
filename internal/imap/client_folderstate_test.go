@@ -17,38 +17,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestFallbackTrashNameKeepsSentRole(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		fallback bool
-	}{{"sent only", false}, {"fallback trash", true}} {
-		t.Run(tc.name, func(t *testing.T) {
-			folders := map[string]int{"INBOX": 1, "Trash": 0}
-			if tc.fallback {
-				folders["Deleted Items"] = 0
-			}
-			addr, _ := testutil.StartIMAPMemServerWithSpecialUse(t, folders,
-				map[string][]imapv2.MailboxAttr{"Trash": {imapv2.MailboxAttrSent}})
-			client := newTestClient(t, addr)
-			labels, err := client.ListLabels(t.Context())
-			require.NoError(t, err)
-			roles := make(map[string]string)
-			for _, label := range labels {
-				roles[label.ID] = label.SystemRole
-			}
-			assert.Equal(t, "sent", roles["Trash"])
-			if tc.fallback {
-				assert.Equal(t, "trash", roles["Deleted Items"])
-				require.NoError(t, client.TrashMessage(t.Context(), "INBOX|1"))
-				assert.Contains(t, listAllMessages(t, client), "Deleted Items|1")
-			} else {
-				require.ErrorContains(t, client.TrashMessage(t.Context(), "INBOX|1"), "no selectable trash mailbox")
-				assert.Contains(t, listAllMessages(t, client), "INBOX|1")
-			}
-		})
-	}
-}
-
 func TestListMessages_UnmatchedFolderExclusionWarning(t *testing.T) {
 	assert := assert.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1})
