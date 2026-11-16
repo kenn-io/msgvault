@@ -45,7 +45,7 @@ func manualSyncCLICommand(args []string) bool {
 			return false
 		}
 		switch args[1] {
-		case "facebook-comments", "instagram-comments", "instagram-mentions":
+		case "facebook-comments", "instagram-comments", "instagram-mentions", "facebook-messages", "instagram-messages":
 			return args[2] == "sync"
 		case "feeds":
 			// add archives the items a new feed lists now.
