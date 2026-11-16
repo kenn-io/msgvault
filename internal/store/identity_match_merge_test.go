@@ -853,13 +853,17 @@ func TestMergeParticipantsAllowsSharedEmail(t *testing.T) {
 		st := storetest.New(t).Store
 		absorbed, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
 		require.NoError(t, err)
-		survivor, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
+		survivor, err := st.EnsureParticipant("ABSORBED@example.test", "Survivor", "example.test")
 		require.NoError(t, err)
 		third, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
 		require.NoError(t, err)
 		require.NoError(t, st.SetParticipantIdentifier(third, "email", "absorbed@example.test"))
-		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participants SET email_address = ? WHERE id = ?`), "ABSORBED@example.test", survivor)
-		require.NoError(t, err)
 		require.NoError(t, st.MergeParticipants(absorbed, survivor))
+		owner, _, err := st.ParticipantByIdentifierContext(t.Context(), "email", "absorbed@example.test")
+		require.NoError(t, err)
+		assert.Equal(t, third, owner)
+		var primary string
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT email_address FROM participants WHERE id = ?`, survivor).Scan(&primary))
+		assert.Equal(t, "ABSORBED@example.test", primary)
 	})
 }

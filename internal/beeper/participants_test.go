@@ -547,7 +547,9 @@ func TestResolveUserContinuesAfterEmailAliasConflict(t *testing.T) {
 			require.NoError(t, st.SetParticipantIdentifier(third, "email", user.Email))
 			phone, err := st.EnsureParticipantByPhone(t.Context(), "+12025550100", "Phone", "imessage")
 			require.NoError(t, err)
-			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participants SET email_address = ? WHERE id = ?`), "phone@example.test", phone)
+			phoneEmail, err := st.EnsureParticipant("phone@example.test", "Phone", "example.test")
+			require.NoError(t, err)
+			err = st.MergeParticipants(phoneEmail, phone)
 			require.NoError(t, err)
 			if fresh {
 				r = newParticipantResolver(st, "account-a")
@@ -564,9 +566,6 @@ func TestResolveUserContinuesAfterEmailAliasConflict(t *testing.T) {
 			resolved, err := next.resolveID(t.Context(), user.ID, "")
 			require.NoError(t, err)
 			assert.Equal(t, old, resolved)
-			alias, _, err := st.ParticipantByIdentifierContext(t.Context(), "email", user.Email)
-			require.NoError(t, err)
-			assert.Equal(t, third, alias)
 		})
 	}
 }

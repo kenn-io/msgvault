@@ -6,11 +6,14 @@ import { CardDAVController } from '../../carddav/controller.svelte';
 import CardDAVOperations from './CardDAVOperations.svelte';
 
 describe('CardDAVOperations', () => {
-  it('reports when a successful sync cannot count binding conflicts', async () => {
+  it.each([
+    { name: 'unavailable', result: { binding_conflicts: 0, binding_conflicts_unavailable: true }, warning: 'CardDAV binding conflict count unavailable.' },
+    { name: '2 conflicts', result: { binding_conflicts: 2 }, warning: '2 CardDAV binding conflicts.' }
+  ])('shows sync completion and $name', async ({ result, warning }) => {
     const controller = new CardDAVController(createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-      if (request.method === 'POST') return Response.json({ status: 'succeeded', binding_conflicts: 0, binding_conflicts_unavailable: true });
+      if (request.method === 'POST') return Response.json({ status: 'succeeded', ...result });
       if (path.endsWith('/status')) return Response.json({ configured: true, available: true, credential_configured: true, enabled: true, scheduled: false, schedule: '' });
       if (path.endsWith('/books')) return Response.json({ books: [] });
       return Response.json({ runs: [] });
@@ -18,30 +21,11 @@ describe('CardDAVOperations', () => {
     await controller.load();
     render(CardDAVOperations, { controller });
     await fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('CardDAV binding conflict count unavailable.');
-    expect(screen.getByText('CardDAV sync completed.')).toBeDefined();
-    controller.destroy();
-  });
-
-  it('shows sync completion separately from binding conflicts and formats the command', async () => {
-    const controller = new CardDAVController(createAPIClient(async input => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = new URL(request.url).pathname;
-      if (request.method === 'POST') return Response.json({ status: 'succeeded', binding_conflicts: 2 });
-      if (path.endsWith('/status')) return Response.json({ configured: true, available: true, credential_configured: true, enabled: true, scheduled: false, schedule: '' });
-      if (path.endsWith('/books')) return Response.json({ books: [] });
-      return Response.json({ runs: [] });
-    }));
-    await controller.load();
-    render(CardDAVOperations, { controller });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
-
     const success = await screen.findByText('CardDAV sync completed.');
-    const warning = screen.getByRole('alert');
+    const alert = screen.getByRole('alert');
     expect(success.getAttribute('role')).toBe('status');
-    expect(warning.textContent).toContain('2 CardDAV binding conflicts.');
-    expect(warning.querySelector('code')?.textContent).toBe('msgvault carddav bind-participants --dry-run');
+    expect(alert.textContent).toContain(warning);
+    expect(alert.querySelector('code')?.textContent).toBe('msgvault carddav bind-participants --dry-run');
     controller.destroy();
   });
 

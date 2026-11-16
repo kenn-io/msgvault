@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -19,7 +20,7 @@ type failingCardDAVService struct {
 }
 
 func (f *failingCardDAVService) Sync(context.Context, carddav.SyncOptions) (carddav.SyncResult, error) {
-	return carddav.SyncResult{Books: 1}, errors.New("later book failed")
+	return f.result, errors.New("later book failed")
 }
 
 func captureDaemonCacheRefreshes(t *testing.T) <-chan string {
@@ -46,9 +47,12 @@ func TestCardDAVSchedulerRequestsIdentityRefresh(t *testing.T) {
 	requests := captureDaemonCacheRefreshes(t)
 	sched := scheduler.New(nil)
 	t.Cleanup(func() { sched.Stop() })
-	service := &failingCardDAVService{}
-	req.NoError(reconcileCardDAVSchedulerJob(sched, config.CardDAVConfig{Enabled: true, Schedule: "0 */6 * * *"}, service, slog.New(slog.DiscardHandler), config.DefaultCardDAVConnection, testInvocationWithConfig(cfg)))
+	service := &failingCardDAVService{scheduledCardDAVFixture{result: carddav.SyncResult{Books: 1, BindingConflicts: 2}}}
+	var logs bytes.Buffer
+	req.NoError(reconcileCardDAVSchedulerJob(sched, config.CardDAVConfig{Enabled: true, Schedule: "0 */6 * * *"}, service, slog.New(slog.NewTextHandler(&logs, nil)), config.DefaultCardDAVConnection, testInvocationWithConfig(cfg)))
 	req.ErrorContains(sched.TriggerJob(api.CardDAVJobName), "later book failed")
+	req.Contains(logs.String(), "binding conflicts")
+	req.Contains(logs.String(), "count=2")
 	select {
 	case id := <-requests:
 		req.Equal("carddav", id)

@@ -45,7 +45,6 @@ test('shows an unavailable conflict count after a successful sync', async ({ pag
   expect(Math.max(...gaps.lines) - Math.min(...gaps.lines)).toBeLessThan(3);
   expect(gaps.before).toBeLessThan(12);
   expect(gaps.after).toBeLessThan(12);
-  await expect(page.getByText('CardDAV sync completed.')).toBeVisible();
 });
 
 test('keyboard journey configures CardDAV, reconciles roles, syncs history, and resolves a conflict', async ({ page }) => {

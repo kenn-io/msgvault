@@ -3751,7 +3751,4 @@ func TestParticipantResolverContinuesAfterEmailAliasConflict(t *testing.T) {
 	resolved, _, err := st.ParticipantByIdentifierContext(t.Context(), participantIdentifierType, "team-a:user-a")
 	require.NoError(t, err)
 	assert.Equal(t, old, resolved)
-	alias, _, err := st.ParticipantByIdentifierContext(t.Context(), "email", "absorbed@example.test")
-	require.NoError(t, err)
-	assert.Equal(t, third, alias)
 }

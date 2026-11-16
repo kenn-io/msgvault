@@ -193,18 +193,6 @@ func TestGoogleCardDAVSchedulerWaitsForAuthorization(t *testing.T) {
 	assertions.False(sched.IsJobScheduled(api.CardDAVJobName), "saving after credentials are removed must unschedule the account")
 }
 
-func TestScheduledCardDAVSyncReportsBindingConflicts(t *testing.T) {
-	sched := scheduler.New(nil)
-	t.Cleanup(func() { sched.Stop() })
-	service := &scheduledCardDAVFixture{result: carddav.SyncResult{BindingConflicts: 2}}
-	var logs bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logs, nil))
-	require.NoError(t, reconcileCardDAVSchedulerJob(sched, config.CardDAVConfig{Enabled: true, Schedule: "0 1 * * *"}, service, logger, config.DefaultCardDAVConnection, nil))
-	require.NoError(t, sched.TriggerJob(api.CardDAVJobName))
-	assert.Contains(t, logs.String(), "binding conflicts")
-	assert.Contains(t, logs.String(), "count=2")
-}
-
 func TestReconcileCardDAVSchedulerJobUpdatesRunsAndRemovesStableJob(t *testing.T) {
 	assertions := assert.New(t)
 	require := require.New(t)
