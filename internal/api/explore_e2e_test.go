@@ -49,6 +49,7 @@ func TestPeopleHTTPCountsMeetingGroups(t *testing.T) {
 	requirements.False(fallback)
 	requirements.Equal(map[int64]int64{ids[0]: ids[0], ids[1]: ids[0], ids[2]: ids[2]}, groups)
 	messages := strings.ReplaceAll(exploreFixtureDefaultMessages, "'email', NULL::VARCHAR", "'meeting_transcript', NULL::VARCHAR")
+	messages = strings.Replace(messages, "(2::BIGINT, 1::BIGINT, 'm2'", "(2::BIGINT, 2::BIGINT, 'm2'", 1)
 	engine, _ := newExploreDuckDBFixtureWithClusters(t, messages, exploreFixtureDefaultRecipients, "", 3, identityCacheFixtureOptions{
 		meetingGroups: fmt.Sprintf("(SELECT 1::BIGINT AS message_id, %d::BIGINT AS group_id UNION ALL SELECT 2, %d UNION ALL SELECT 3, %d)", groups[ids[0]], groups[ids[1]], groups[ids[2]]),
 	})
@@ -62,6 +63,12 @@ func TestPeopleHTTPCountsMeetingGroups(t *testing.T) {
 	requirements.Len(body.Rows, 1)
 	assertions.Equal(int64(2), body.Rows[0].MeetingCount)
 	assertions.Equal(int64(3), body.Rows[0].ActivityCount)
+
+	response = postExploreJSON(t, srv, "/api/v1/participants/search", `{"identity_query":"Alice","limit":25,"predicate":{"filters":[{"dimension":"source","values":["1","2"]},{"dimension":"after","values":["2026-07-18T10:30:00Z"]}]}}`)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	requirements.Len(body.Rows, 1)
+	assertions.Equal(int64(1), body.Rows[0].MeetingCount)
 }
 
 func TestExploreHTTPUsesCommittedDuckDBReadModel(t *testing.T) {
