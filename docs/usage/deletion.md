@@ -93,7 +93,7 @@ For finer control, drill into any group and use `Space` to select individual row
 
 You can also stage deletions through the [MCP server](/docs/usage/chat/) by asking an AI assistant like Claude to find and stage messages for you. For example:
 
-- *"Stage all messages from noreply@example.com for deletion"*
+- *"Stage all messages from noreply@linkedin.com for deletion"*
 - *"Stage all promotional emails older than 2024-01-01"*
 
 Owner MCP sessions can also list batches and read lifecycle receipts without enabling writes. The MCP `stage_deletion` tool creates a manifest through the selected daemon, the same format as TUI-staged deletions. Nothing is deleted until you run `msgvault delete-staged` from the CLI. See [staged deletion via MCP](chat.md#staged-deletion-via-mcp) for details.
@@ -141,16 +141,16 @@ Staged deletions create manifests that record exactly which messages will be aff
 msgvault delete-staged --list
 
 # Execute deletion for a Gmail account (moves to trash by default)
-msgvault delete-staged --account you@example.com
+msgvault delete-staged --account you@gmail.com
 
 # Move staged IMAP messages to the server's Trash folder
-msgvault delete-staged --account you@example.com
+msgvault delete-staged --account you@fastmail.com
 
 # Move staged Microsoft Graph mail messages to Deleted Items
-msgvault delete-staged --account you@example.com
+msgvault delete-staged --account you@company.com
 
 # Permanently delete Gmail messages instead of moving them to trash
-msgvault delete-staged --account you@example.com --permanent
+msgvault delete-staged --account you@gmail.com --permanent
 ```
 
 Gmail and IMAP both default to moving messages to Trash. Gmail retains trash
@@ -186,7 +186,7 @@ remote_enabled = true
 As a one-command alternative:
 
 ```bash
-MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --account you@example.com
+MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged --account you@gmail.com
 ```
 
 When remote mode is configured, the invoking CLI forwards its effective

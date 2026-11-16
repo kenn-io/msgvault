@@ -834,3 +834,75 @@ func TestSaveIMAPFolderStates_RepublishGoneUIDRecoversByMessageCount(t *testing.
 	assert.Zero(imapTombstonedMessageCount(t, st, src.ID),
 		"a message that regains a mailbox must lose its tombstone")
 }
+
+func TestScheduledIMAPTrashRestoreWithFolderExclusion(t *testing.T) {
+	for _, tc := range []struct {
+		name, destination, skip string
+		removeTrash, wantMarked bool
+	}{
+		{"restored to inbox", "INBOX", "Archive", true, false},
+		{"trash excluded and unseen", "", "Trash", false, true},
+		{"seen only in trash and all", "All Mail", "Archive", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			addr, user := testutil.StartIMAPMemServerWithSpecialUse(t,
+				map[string]int{"INBOX": 0, "Trash": 0, "Archive": 0, "All Mail": 0},
+				map[string][]imapapi.MailboxAttr{"Trash": {imapapi.MailboxAttrTrash}, "All Mail": {imapapi.MailboxAttrAll}},
+			)
+			raw := []byte("Message-ID: <restore@example.com>\r\nFrom: alice@example.com\r\nTo: bob@example.com\r\nSubject: restore evidence\r\n\r\nbody\r\n")
+			testutil.AppendIMAPRawMessage(t, user, "Trash", raw)
+			host, portText, err := net.SplitHostPort(addr)
+			require.NoError(t, err)
+			port, err := strconv.Atoi(portText)
+			require.NoError(t, err)
+			imapCfg := &imaplib.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}
+			st := testutil.NewTestStore(t)
+			src, err := st.GetOrCreateSource(sourceTypeIMAP, imapCfg.Identifier())
+			require.NoError(t, err)
+			configJSON, err := imapCfg.ToJSON()
+			require.NoError(t, err)
+			require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), src.ID, configJSON))
+			src, err = st.GetSourceByID(src.ID)
+			require.NoError(t, err)
+			home := t.TempDir()
+			cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
+			require.NoError(t, imaplib.SaveCredentials(cfg.TokensDir(), src.Identifier, testutil.IMAPTestPassword))
+			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+			summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+			require.NoError(t, err)
+			require.Zero(t, summary.Errors)
+			var id int64
+			require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
+			_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), id)
+			require.NoError(t, err)
+			if tc.removeTrash {
+				testutil.ExpungeIMAPMessage(t, addr, "Trash", imapapi.UID(1))
+			}
+			if tc.destination != "" {
+				testutil.AppendIMAPRawMessage(t, user, tc.destination, raw)
+			}
+			cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {tc.skip}}
+			summary, err = runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+			require.NoError(t, err)
+			require.Zero(t, summary.Errors)
+			var marked bool
+			require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE id = ?`), id).Scan(&marked))
+			assert.Equal(t, tc.wantMarked, marked)
+			matches, _, err := st.SearchMessages("restore evidence", 0, 10)
+			require.NoError(t, err)
+			if tc.wantMarked {
+				assert.Empty(t, matches)
+			} else {
+				require.Len(t, matches, 1)
+				assert.Equal(t, id, matches[0].ID)
+			}
+			plan, err := st.PlanGCContext(ctx)
+			require.NoError(t, err)
+			if tc.wantMarked {
+				assert.Contains(t, plan.SourceDeletedIDs, id)
+			} else {
+				assert.NotContains(t, plan.SourceDeletedIDs, id)
+			}
+		})
+	}
+}

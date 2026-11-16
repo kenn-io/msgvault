@@ -560,6 +560,30 @@ func applyIMAPMailboxDeltas(
 	return s.ApplyIMAPMailboxDeltasForSyncContext(ctx, src.ID, syncRunID, storeDeltas)
 }
 
+func clearRestoredIMAPDeletionMarks(
+	ctx context.Context,
+	s *store.Store,
+	src *store.Source,
+	syncRunID int64,
+	observations []imaplib.MembershipObservation,
+) error {
+	storeObservations := make([]store.IMAPMembershipObservation, 0, len(observations))
+	for _, observation := range observations {
+		storeObservations = append(storeObservations, store.IMAPMembershipObservation{
+			Mailbox:                  observation.Mailbox,
+			UIDValidity:              observation.UIDValidity,
+			UID:                      observation.UID,
+			SourceMessageID:          observation.SourceMessageID,
+			CanonicalSourceMessageID: observation.CanonicalSourceMessageID,
+			RFC822MessageID:          observation.RFC822MessageID,
+			RawSHA256:                observation.RawSHA256,
+			RawSize:                  observation.RawSize,
+			ArchivedMessageID:        observation.ArchivedMessageID,
+		})
+	}
+	return s.ClearRestoredIMAPDeletionMarksForSyncContext(ctx, src.ID, syncRunID, storeObservations)
+}
+
 func imapSyncCanCommit(ctx context.Context, summary *gmail.SyncSummary, limit int) bool {
 	return summary != nil &&
 		ctx.Err() == nil &&
@@ -569,7 +593,9 @@ func imapSyncCanCommit(ctx context.Context, summary *gmail.SyncSummary, limit in
 }
 
 // saveIMAPFolderStates atomically persists mailbox membership and cursor
-// observations only after a clean, unlimited, unfiltered sync.
+// observations only after a clean, unlimited, unfiltered sync. A clean,
+// unlimited filtered sync persists none of them; it only clears deletion marks
+// its observations prove restored.
 func saveIMAPFolderStates(
 	ctx context.Context,
 	s *store.Store,
@@ -582,7 +608,15 @@ func saveIMAPFolderStates(
 	if !ok || !imapSyncCanCommit(ctx, summary, limit) {
 		return nil
 	}
-	if imapClient.LabelsSnapshotFiltered() || !imapClient.LabelsSnapshotComplete() {
+	if imapClient.LabelsSnapshotFiltered() {
+		if err := clearRestoredIMAPDeletionMarks(
+			ctx, s, src, summary.SyncRunID, imapClient.ObservedMemberships(),
+		); err != nil {
+			return fmt.Errorf("clear restored IMAP deletion marks: %w", err)
+		}
+		return nil
+	}
+	if !imapClient.LabelsSnapshotComplete() {
 		return nil
 	}
 	deltas := imapClient.ObservedMailboxDeltas()
