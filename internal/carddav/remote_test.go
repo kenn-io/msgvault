@@ -298,3 +298,28 @@ func TestServiceSyncReportsFinalConflictCount(t *testing.T) {
 		})
 	}
 }
+
+func TestServiceSyncFinishesBeforeBlockedPreview(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	service := NewRemoteService(st, newMemoryRemote())
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	service.bindingPreviewHook = func() {
+		close(entered)
+		<-release
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.Sync(ctx, SyncOptions{OnRunStarted: func(int64) { cancel() }})
+		done <- err
+	}()
+	defer func() { close(release); <-done }()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "preview did not start")
+	}
+	_, err := NewRemoteService(st, newMemoryRemote()).Sync(t.Context(), SyncOptions{})
+	require.NoError(t, err)
+}

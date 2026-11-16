@@ -22,15 +22,17 @@ var (
 )
 
 const (
-	maxSyncPages   = 100
-	multigetBatch  = 100
-	maxSyncMembers = 50_000
+	maxSyncPages                 = 100
+	multigetBatch                = 100
+	maxSyncMembers               = 50_000
+	cardDAVBindingPreviewTimeout = 30 * time.Second
 )
 
 type Service struct {
 	connectionName                   string
 	connectionGeneration             int64
 	conflictOperationMappingReadHook func()
+	bindingPreviewHook               func()
 	store                            *store.Store
 	remote                           Remote
 }
@@ -112,7 +114,19 @@ func (s *Service) Sync(ctx context.Context, options SyncOptions) (result SyncRes
 		if recovered != nil {
 			panic(recovered)
 		}
-		err = errors.Join(publicCardDAVSyncError(syncErr), finishErr)
+		if s.bindingPreviewHook != nil {
+			s.bindingPreviewHook()
+		}
+		// The snapshot must survive cancellation after committed sync work.
+		snapshotCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cardDAVBindingPreviewTimeout)
+		defer cancel()
+		preview, snapshotErr := s.store.ReconcileCardDAVParticipantBindingsContext(snapshotCtx, store.CardDAVParticipantBindingOptions{DryRun: true})
+		if snapshotErr != nil {
+			snapshotErr = fmt.Errorf("preview CardDAV participant conflicts: %w", snapshotErr)
+		} else {
+			result.BindingConflicts = preview.Conflicts
+		}
+		err = errors.Join(publicCardDAVSyncError(syncErr), finishErr, snapshotErr)
 	}()
 	if options.OnRunStarted != nil {
 		options.OnRunStarted(run.ID)
@@ -123,17 +137,6 @@ func (s *Service) Sync(ctx context.Context, options SyncOptions) (result SyncRes
 func (s *Service) sync(ctx context.Context, options SyncOptions) (total SyncResult, err error) {
 	operationCtx, cancel := context.WithTimeout(ctx, s.operationTimeout())
 	defer cancel()
-	// Publications may commit before an operation fails or is cancelled.
-	defer func() {
-		snapshotCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.operationTimeout())
-		defer cancel()
-		preview, snapshotErr := s.store.ReconcileCardDAVParticipantBindingsContext(snapshotCtx, store.CardDAVParticipantBindingOptions{DryRun: true})
-		if snapshotErr != nil {
-			err = errors.Join(err, fmt.Errorf("preview CardDAV participant conflicts: %w", snapshotErr))
-			return
-		}
-		total.BindingConflicts = preview.Conflicts
-	}()
 	if err := s.checkRetry(operationCtx); err != nil {
 		return SyncResult{}, err
 	}

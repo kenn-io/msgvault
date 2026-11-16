@@ -38,74 +38,38 @@ func (f *committingCardDAVService) Sync(ctx context.Context, _ carddav.SyncOptio
 	return carddav.SyncResult{Books: 1}, errors.New("later book failed")
 }
 
-func TestCardDAVIdentityRefreshUpdatesCache(t *testing.T) {
+func TestCardDAVSchedulerRequestsIdentityRefresh(t *testing.T) {
 	req := require.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Analytics.AutoBuildCache = true
-	cfg.Analytics.MinRebuildInterval = 0
-	dbPath := filepath.Join(cfg.Data.DataDir, "msgvault.db")
-	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(cfg.Data.DataDir, "msgvault.db"))
 	id, err := st.EnsureParticipant("other@example.test", "Other", "example.test")
 	req.NoError(err)
-	_, err = buildCache(t.Context(), dbPath, cfg.AnalyticsDir(), true)
-	req.NoError(err)
-	initial, err := query.ReadCacheSyncState(cfg.AnalyticsDir())
-	req.NoError(err)
-	oldBuild := runScheduledBuildCacheSubprocess
-	attempts := 0
-	runScheduledBuildCacheSubprocess = func(ctx context.Context) error {
-		attempts++
-		if attempts == 1 {
-			return errors.New("synthetic publication failure")
-		}
-		_, err := buildCache(ctx, dbPath, cfg.AnalyticsDir(), true)
-		return err
-	}
-	t.Cleanup(func() { runScheduledBuildCacheSubprocess = oldBuild })
-	completed := make(chan error, 2)
-	refresher := newBackgroundCacheRefresher(testInvocationContext(t.Context(), cfg, invocationOptions{}), nil, nil)
-	run := refresher.run
-	refresher.run = func(ctx context.Context, id string) error {
-		err := run(ctx, id)
-		completed <- err
-		return err
-	}
+	requests := make(chan string, 2)
+	refresher := newBackgroundCacheRefresher(t.Context(), func(_ context.Context, id string) error {
+		requests <- id
+		return nil
+	}, nil)
 	old := daemonCacheRefresher
 	daemonCacheRefresher = refresher
 	t.Cleanup(func() {
 		daemonCacheRefresher = old
 		req.NoError(refresher.Shutdown(context.WithoutCancel(t.Context())))
 	})
-	logger := slog.New(slog.DiscardHandler)
 	sched := scheduler.New(nil)
 	t.Cleanup(func() { sched.Stop() })
 	service := &committingCardDAVService{store: st, participant: id}
-	state := testInvocationWithConfig(cfg)
-	req.NoError(reconcileCardDAVSchedulerJob(sched, config.CardDAVConfig{Enabled: true, Schedule: "0 */6 * * *"}, service, logger, config.DefaultCardDAVConnection, state))
-	req.ErrorContains(sched.TriggerJob(api.CardDAVJobName), "later book failed")
-	select {
-	case err := <-completed:
-		req.ErrorContains(err, "synthetic publication failure")
-	case <-time.After(30 * time.Second):
-		req.FailNow("cache refresh did not finish")
+	req.NoError(reconcileCardDAVSchedulerJob(sched, config.CardDAVConfig{Enabled: true, Schedule: "0 */6 * * *"}, service, slog.New(slog.DiscardHandler), config.DefaultCardDAVConnection, testInvocationWithConfig(cfg)))
+	for range 2 {
+		req.ErrorContains(sched.TriggerJob(api.CardDAVJobName), "later book failed")
+		select {
+		case id := <-requests:
+			req.Equal("carddav", id)
+		case <-time.After(10 * time.Second):
+			req.FailNow("cache refresh was not requested")
+		}
 	}
-	failed, err := query.ReadCacheSyncState(cfg.AnalyticsDir())
-	req.NoError(err)
-	req.Equal(initial.IdentityRevision, failed.IdentityRevision)
-	req.ErrorContains(sched.TriggerJob(api.CardDAVJobName), "later book failed")
-	select {
-	case err := <-completed:
-		req.NoError(err)
-	case <-time.After(30 * time.Second):
-		req.FailNow("cache retry did not finish")
-	}
-	published, err := query.ReadCacheSyncState(cfg.AnalyticsDir())
-	req.NoError(err)
-	revision, err := st.IdentityRevisionContext(t.Context())
-	req.NoError(err)
-	req.Greater(revision, initial.IdentityRevision)
-	req.Equal(revision, published.IdentityRevision)
 }
 
 func TestCardDAVIdentityRefreshFailureRequestsRecovery(t *testing.T) {

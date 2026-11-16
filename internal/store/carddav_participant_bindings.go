@@ -190,7 +190,20 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 				}
 			}
 		}
-		personID, reason := cardDAVBindingTarget(wanted, owners)
+		var personID int64
+		var reason string
+		if len(wanted) > 1 {
+			reason = "shared_address"
+		} else {
+			for id := range wanted {
+				personID = id
+				for owner := range owners {
+					if owner != personID {
+						reason = "existing_person"
+					}
+				}
+			}
+		}
 		if reason != "" {
 			people := cardDAVPersonSet{}
 			for id := range wanted {
@@ -215,22 +228,6 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 	plan.result.ParticipantsBound, plan.result.ParticipantsUnbound = len(plan.add), len(plan.remove)
 	plan.result.Conflicts = len(plan.result.ConflictDetails)
 	return plan, nil
-}
-
-// cardDAVBindingTarget names the one person a component may bind to, or why it may not.
-func cardDAVBindingTarget(wanted, owners cardDAVPersonSet) (int64, string) {
-	if len(wanted) > 1 {
-		return 0, "shared_address"
-	}
-	for personID := range wanted {
-		for owner := range owners {
-			if owner != personID {
-				return personID, "existing_person"
-			}
-		}
-		return personID, ""
-	}
-	return 0, ""
 }
 
 // cardDAVManualOwners collects the people manually holding component members.
