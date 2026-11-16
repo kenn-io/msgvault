@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -205,6 +206,85 @@ func TestGmailArchivedLabelDriftNeedsCompleteRefresh(t *testing.T) {
 	_, err = e.Syncer.RecoverExpiredHistory(t.Context(), gmailCoverageSource(t.Context(), t, e))
 	require.NoError(t, err)
 	assertRecoveryLabels(t, e, ids, f.labels)
+	assert.Equal(t, 4, f.rawGets)
+}
+
+type replayedLabelHistoryTransport struct {
+	*recoveryLabelsTransport
+}
+
+func (f *replayedLabelHistoryTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if !strings.HasSuffix(r.URL.Path, "/history") {
+		return f.recoveryLabelsTransport.RoundTrip(r)
+	}
+	start, err := strconv.ParseUint(r.URL.Query().Get("startHistoryId"), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parse label replay cursor: %w", err)
+	}
+	f.historyStarts = append(f.historyStarts, fmt.Sprint(start))
+	events := []any{}
+	for _, event := range []struct {
+		id     uint64
+		add    []string
+		remove []string
+	}{
+		{id: 1200, add: []string{"Label_new"}},
+		{id: 1300, remove: []string{"Label_new"}},
+		{id: 2100, add: []string{"INBOX"}, remove: []string{"TRASH"}},
+	} {
+		if event.id <= start {
+			continue
+		}
+		record := map[string]any{"id": fmt.Sprint(event.id)}
+		for field, labels := range map[string][]string{"labelsAdded": event.add, "labelsRemoved": event.remove} {
+			if len(labels) > 0 {
+				record[field] = []any{map[string]any{"message": map[string]string{"id": "normal1"}, "labelIds": labels}}
+			}
+		}
+		events = append(events, record)
+	}
+	return gmailJSONResponse(r, http.StatusOK, map[string]any{"historyId": fmt.Sprint(f.history), "history": events})
+}
+
+func TestGmailLabelSnapshotConvergesAfterOlderHistoryReplay(t *testing.T) {
+	// Serial: provider snapshots and replay use the production HTTP client.
+	e, f, ids := recoveryLabelsEnv(t)
+	f.expire = false
+	api := e.Syncer.client
+	_, err := e.Syncer.RecoverExpiredHistory(t.Context(), gmailCoverageSource(t.Context(), t, e))
+	require.NoError(t, err)
+	assertRecoveryLabels(t, e, ids, f.labels)
+
+	// Model the proposed sweep's cursor contract: complete memberships have
+	// been observed, but incremental still starts at the prior consumed C.
+	source := gmailCoverageSource(t.Context(), t, e)
+	execution, err := e.Store.AcquireSyncExecutionContext(t.Context(), source.ID)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, execution.Release()) })
+	runID, err := execution.StartSyncWithRequestContext(t.Context(), "full", "", e.Syncer.fullSyncRequestFingerprint())
+	require.NoError(t, err)
+	require.NoError(t, e.Store.ScopedToSync(source.ID, runID).CompleteSyncAndUpdateSourceCursorContext(t.Context(), runID, source.ID, "1000"))
+	require.NoError(t, execution.Release())
+	f.history, f.historyStarts = 2200, nil
+	f.labels["normal1"] = []string{"INBOX"} // Provider change after the snapshot.
+	http.DefaultClient.Transport = &replayedLabelHistoryTransport{f}
+
+	label, err := e.Store.LabelIDContext(t.Context(), source.ID, "Label_new")
+	require.NoError(t, err)
+	removeFault := acquisitionWriteFault(t, e, "message_labels", "DELETE", fmt.Sprintf("OLD.message_id = %d AND OLD.label_id = %d", ids["normal1"], label))
+	_, err = e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t.Context(), t, e), nil)
+	require.ErrorContains(t, err, "synthetic acquisition write failure")
+	assert.Equal(t, "1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
+	assertMessageHasLabel(t, e.Store, "normal1", "Label_new")
+	removeFault()
+
+	reopenAcquisitionStore(t, e)
+	e.Syncer = New(api, e.Store, nil)
+	_, err = e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t.Context(), t, e), nil)
+	require.NoError(t, err)
+	assertRecoveryLabels(t, e, ids, f.labels)
+	assert.Equal(t, []string{"1000", "1000"}, f.historyStarts)
+	assert.Equal(t, "2200", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 	assert.Equal(t, 4, f.rawGets)
 }
 
