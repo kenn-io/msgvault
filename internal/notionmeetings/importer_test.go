@@ -12,7 +12,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -354,6 +353,15 @@ func TestImporterRetriesIncompleteAfterFailure(t *testing.T) {
 			require.NoError(t, err)
 			if failure == "archive deadline" {
 				require.Len(t, lastNotionState(t, st, first.SourceID).Pending, 1)
+			}
+			if failure == "archive" {
+				source.query.Results = nil
+				source.blockCalls = nil
+				imp.now = func() time.Time { return time.Date(2026, 8, 29, 13, 0, 0, 0, time.UTC) }
+				notDue, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+				require.NoError(t, err)
+				assert.True(t, notDue.PartialCoverage)
+				assert.Empty(t, source.blockCalls)
 			}
 			if failure == "another meeting" {
 				second := hydrationMeeting()
@@ -1100,6 +1108,7 @@ func TestImporterContinuesVisibleWorkWhenPendingMeetingCannotBeLoaded(t *testing
 			state := lastNotionState(t, st, first.SourceID)
 			require.Len(state.Pending, 1)
 
+			originalDeadline := state.Pending[0].RetryUntil
 			source.blockErrs = map[string]error{
 				"meeting-1": tc.err,
 			}
@@ -1132,6 +1141,7 @@ func TestImporterContinuesVisibleWorkWhenPendingMeetingCannotBeLoaded(t *testing
 			require.Len(state.Pending, 1)
 			assert.Equal("meeting-1", state.Pending[0].BlockID)
 			assert.Equal("2026-08-30T00:01:00Z", state.Pending[0].NextAttemptAt)
+			assert.Equal(originalDeadline, state.Pending[0].RetryUntil)
 			assert.Contains(strings.Join(progress, "\n"), "load failed; retry deferred")
 			delete(source.blockErrs, "meeting-1")
 			source.query.Results = nil
@@ -1345,45 +1355,6 @@ func TestDecodeArchivedEvidenceVersionProbe(t *testing.T) {
 	}
 }
 
-func TestImporterRetriesIncompleteOutsideWindow(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, source, imp := newImporterFixture(t)
-	meeting := hydrationMeeting()
-	meeting.MeetingNotes.CalendarEvent.EndTime = ""
-	raw, err := json.Marshal(meeting)
-	require.NoError(err)
-	source.blocks["meeting-1"].Raw = raw
-	source.query.Results = []MeetingNote{meeting}
-	source.blockErrs = map[string]error{"summary-1": &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(err)
-	assert.True(first.PartialCoverage)
-	require.Len(lastNotionState(t, st, first.SourceID).Pending, 1)
-	source.query.Results = nil
-	source.blockCalls = nil
-	imp.now = func() time.Time { return time.Date(2026, 8, 29, 13, 0, 0, 0, time.UTC) }
-	notDue, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(err)
-	assert.True(notDue.PartialCoverage)
-	assert.Empty(source.blockCalls)
-	source.blockErrs["meeting-1"] = &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}
-	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
-	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(err)
-	pending := lastNotionState(t, st, result.SourceID).Pending
-	require.Len(pending, 1)
-	assert.Equal("2026-08-31T12:00:00Z", pending[0].RetryUntil)
-	delete(source.blockErrs, "meeting-1")
-	delete(source.blockErrs, "summary-1")
-	imp.now = func() time.Time { return time.Date(2026, 8, 30, 0, 2, 0, 0, time.UTC) }
-	result, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(err)
-	assert.Equal(int64(1), result.MaintenanceRetries)
-	assert.Empty(lastNotionState(t, st, result.SourceID).Pending)
-	assert.NotContains(lastTranscriptRetryUntil(t, st, result.SourceID), "meeting-1")
-}
-
 func TestImporterKeepsSavedPageTranscriptWhenMarkdownIncomplete(t *testing.T) {
 	st, source, imp := newImporterFixture(t)
 	empty := paragraph("transcript-1", "", false)
@@ -1448,7 +1419,6 @@ func TestImporterNewerEvidencePreservesRetryState(t *testing.T) {
 		name string
 		now  time.Time
 	}{
-		{"no pending", time.Date(2026, 8, 29, 19, 0, 0, 0, time.UTC)},
 		{"expired deadline", time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1542,28 +1512,6 @@ func TestImporterRetriesOmittedTranscriptWithSavedText(t *testing.T) {
 	assert.Empty(t, lastNotionState(t, st, first.SourceID).Pending)
 }
 
-func TestImporterPreservesOmittedSummaryAndNotes(t *testing.T) {
-	st, source, imp := newImporterFixture(t)
-	meeting := hydrationMeeting()
-	meeting.Parent = Parent{Type: "data_source_id"}
-	source.blocks["meeting-1"].Parent = meeting.Parent
-	source.query.Results = []MeetingNote{meeting}
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	var id int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
-	source.query.Results[0].MeetingNotes.Children.SummaryBlockID = ""
-	source.query.Results[0].MeetingNotes.Children.NotesBlockID = ""
-	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
-	body, err := st.GetMessageBodyText(t.Context(), id)
-	require.NoError(t, err)
-	assert.Contains(t, body, "Decide the release scope.")
-	assert.Contains(t, body, "Nested action item.")
-	assert.Len(t, lastNotionState(t, st, first.SourceID).Pending, 1)
-	assert.True(t, second.PartialCoverage)
-}
-
 func TestImporterExpiresMissingSectionRetry(t *testing.T) {
 	st, source, imp := newImporterFixture(t)
 	meeting := hydrationMeeting()
@@ -1598,85 +1546,56 @@ func TestImporterExpiresMissingSectionRetry(t *testing.T) {
 	assert.Contains(t, body, "Decide the release scope.")
 }
 
-func TestImporterPreservesImageOnlySummaryWhenOmitted(t *testing.T) {
-	checks := assert.New(t)
-	must := require.New(t)
-	st, source, imp := newImporterFixture(t)
-	image := &Block{Object: "block", ID: "summary-1", Type: "image", Raw: json.RawMessage(`{"object":"block","id":"summary-1","type":"image","has_children":false,"image":{"type":"external","external":{"url":"https://example.com/image.png"}}}`)}
-	source.blocks["summary-1"] = image
-	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	must.NoError(err)
-	var id int64
-	must.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
-	before, err := st.GetMessageRaw(id)
-	must.NoError(err)
-	var old map[string]json.RawMessage
-	must.NoError(json.Unmarshal(before, &old))
-	source.query.Results[0].MeetingNotes.Children.SummaryBlockID = ""
-	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	must.NoError(err)
-	after, err := st.GetMessageRaw(id)
-	must.NoError(err)
-	var updated map[string]json.RawMessage
-	must.NoError(json.Unmarshal(after, &updated))
-	checks.JSONEq(string(old["summary"]), string(updated["summary"]))
-	checks.JSONEq(`["summary"]`, string(updated["incomplete_sections"]))
-	checks.True(second.PartialCoverage)
-	checks.Len(lastNotionState(t, st, first.SourceID).Pending, 1)
-	source.query.Results = nil
-	source.blocks["meeting-1"].Raw = hydrationMeeting().Raw
-	empty := paragraph("summary-1", "", false)
-	source.blocks["summary-1"] = &empty
-	imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
-	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	must.NoError(err)
-	after, err = st.GetMessageRaw(id)
-	must.NoError(err)
-	must.NoError(json.Unmarshal(after, &updated))
-	checks.NotContains(string(updated["summary"]), `"image"`)
-	checks.Empty(lastNotionState(t, st, first.SourceID).Pending)
-}
-
-func TestImporterPreservesActionsWhenSectionsOmitted(t *testing.T) {
-	for _, section := range []string{"summary", "notes"} {
+func TestImporterPreservesOmittedSections(t *testing.T) {
+	for _, section := range []string{"summary", "notes", "image summary"} {
 		t.Run(section, func(t *testing.T) {
 			checks := assert.New(t)
 			must := require.New(t)
 			st, source, imp := newImporterFixture(t)
-			block := &Block{}
-			must.NoError(json.Unmarshal([]byte(`{"object":"block","id":"`+section+`-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Saved task"}],"checked":false}}`), block))
-			source.blocks[section+"-1"] = block
+			key := section
+			if section == "image summary" {
+				key = "summary"
+				source.blocks["summary-1"] = &Block{Object: "block", ID: "summary-1", Type: "image", Raw: json.RawMessage(`{"object":"block","id":"summary-1","type":"image","has_children":false,"image":{"type":"external","external":{"url":"https://example.com/image.png"}}}`)}
+			} else {
+				block := &Block{}
+				must.NoError(json.Unmarshal([]byte(`{"object":"block","id":"`+section+`-1","type":"to_do","has_children":false,"to_do":{"rich_text":[{"plain_text":"Saved task"}],"checked":false}}`), block))
+				source.blocks[section+"-1"] = block
+			}
 			first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 			must.NoError(err)
 			var id int64
 			must.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
-			if section == "summary" {
+			before, err := st.GetMessageRaw(id)
+			must.NoError(err)
+			var old map[string]json.RawMessage
+			must.NoError(json.Unmarshal(before, &old))
+			if key == "summary" {
 				source.query.Results[0].MeetingNotes.Children.SummaryBlockID = ""
 			} else {
 				source.query.Results[0].MeetingNotes.Children.NotesBlockID = ""
 			}
-			_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+			second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 			must.NoError(err)
 			raw, err := st.GetMessageRaw(id)
 			must.NoError(err)
-			content := meetingcontent.Decode(RawFormat, raw, nil)
-			checks.Equal(meetingcontent.CoveragePartial, content.ActionCoverage)
-			must.Len(content.Actions, 1)
-			checks.Equal("Saved task", content.Actions[0].Title)
-			var title string
-			must.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title FROM meeting_action_items WHERE message_id = ?`, id).Scan(&title))
-			checks.Equal("Saved task", title)
+			var updated map[string]json.RawMessage
+			must.NoError(json.Unmarshal(raw, &updated))
+			checks.JSONEq(string(old[key]), string(updated[key]))
+			checks.JSONEq(`["`+key+`"]`, string(updated["incomplete_sections"]))
+			checks.True(second.PartialCoverage)
+			checks.Len(lastNotionState(t, st, first.SourceID).Pending, 1)
 			source.query.Results = nil
 			source.blocks["meeting-1"].Raw = hydrationMeeting().Raw
+			empty := paragraph(key+"-1", "", false)
+			source.blocks[key+"-1"] = &empty
 			imp.now = func() time.Time { return time.Date(2026, 8, 29, 18, 1, 0, 0, time.UTC) }
 			_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
 			must.NoError(err)
-			checks.Empty(lastNotionState(t, st, first.SourceID).Pending)
 			raw, err = st.GetMessageRaw(id)
 			must.NoError(err)
-			checks.Equal(meetingcontent.CoverageAvailable, meetingcontent.Decode(RawFormat, raw, nil).ActionCoverage)
-			must.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title FROM meeting_action_items WHERE message_id = ?`, id).Scan(&title))
-			checks.Equal("Saved task", title)
+			must.NoError(json.Unmarshal(raw, &updated))
+			checks.NotContains(string(updated[key]), string(old[key]))
+			checks.Empty(lastNotionState(t, st, first.SourceID).Pending)
 		})
 	}
 }

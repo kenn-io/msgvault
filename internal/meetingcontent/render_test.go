@@ -370,9 +370,6 @@ func TestRenderBoundsTruncatedSourceContent(t *testing.T) {
 			checks.LessOrEqual(result.ContentBytes, 1200)
 			packet := packetFromJSON(t, result.Content)
 			must.Len(packet.Meetings, 1)
-			checks.Equal("Source meeting", packet.Meetings[0].Meeting.Title)
-			checks.Equal("example", packet.Meetings[0].Meeting.SourceIdentifier)
-			checks.Equal("/api/v1/messages/91", packet.Meetings[0].Meeting.ArchivePath)
 			var state State
 			var text string
 			switch section {

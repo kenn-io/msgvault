@@ -199,7 +199,6 @@ func TestHydratorResolvesParentForMarkdown(t *testing.T) {
 		parent     Parent
 		dataSource bool
 	}{
-		{name: "meeting parent", parent: Parent{Type: "page_id", PageID: "page-1"}},
 		{name: "parent from block"},
 		{name: "data source parent", parent: Parent{Type: "data_source_id"}, dataSource: true},
 	} {

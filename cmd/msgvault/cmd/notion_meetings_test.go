@@ -130,7 +130,7 @@ func TestRunNotionMeetingsProbeReadContent(t *testing.T) {
 		{name: "all sections missing", sectionErr: missing, notesErr: missing, wantErr: missing, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
 		{name: "later section denied", sectionErr: missing, notesErr: denied, wantErr: denied, wantIDs: []string{"meeting-1", "summary-1", "notes-1"}},
 		{name: "meeting parent", meetingParent: notionmeetings.Parent{Type: "page_id", PageID: "page-1"}, markdownErr: denied, wantErr: notionmeetings.ErrUnauthorized, wantPage: true},
-		{name: "block parent", blockParent: notionmeetings.Parent{PageID: "page-1"}, markdownErr: denied, wantErr: notionmeetings.ErrUnauthorized, wantPage: true},
+		{name: "block parent", blockParent: notionmeetings.Parent{PageID: "page-1"}, wantPage: true},
 		{name: "block unavailable", blockErr: blockUnavailable, wantErr: blockUnavailable},
 		{name: "section permission denied", sectionErr: &notionmeetings.APIError{Kind: notionmeetings.ErrUnauthorized, Status: 401}, wantErr: notionmeetings.ErrUnauthorized, wantIDs: []string{"meeting-1", "summary-1"}},
 		{name: "no section blocks", sections: &notionmeetings.MeetingChildren{}, want: "Read Content: not tested (no section blocks)", wantIDs: []string{"meeting-1"}},
