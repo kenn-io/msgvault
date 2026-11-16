@@ -7797,6 +7797,12 @@ type ListSourceStatusResp struct {
 	JSONDefault  *ListSourceStatusErrorResponse
 }
 
+type RepairAccountAttributionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+}
+
 type ListSourceIdentitiesResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
