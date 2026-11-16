@@ -678,6 +678,32 @@ func TestImporterReportsWriteCommittedBeforeConversationStatsFailure(t *testing.
 	assert.Equal(1, messages)
 }
 
+func TestImporterUsesPageTranscriptWhenBlockUnavailable(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	source.blockErrs = map[string]error{"transcript-1": &APIError{Kind: ErrProvider, Status: 404, Code: "object_not_found"}}
+	source.markdown.Markdown = "# Transcript\nPage transcript"
+	var err error
+	source.markdown.Raw, err = json.Marshal(source.markdown)
+	require.NoError(t, err)
+
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	assert.True(t, first.PartialCoverage)
+	pending := lastNotionState(t, st, first.SourceID).Pending
+	require.Len(t, pending, 1)
+	assert.True(t, pending[0].Incomplete)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&id))
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Page transcript")
+	raw, err := st.GetMessageRaw(id)
+	require.NoError(t, err)
+	var evidence map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &evidence))
+	assert.JSONEq(t, `["transcript"]`, string(evidence["incomplete_sections"]))
+}
+
 func TestImporterRetriesPendingTranscriptOutsideVisibleLimit(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -1274,6 +1300,11 @@ func TestImporterRetriesIncompleteSections(t *testing.T) {
 			require.NoError(json.Unmarshal(before, &beforeEvidence))
 			id := section + "-1"
 			source.blockErrs = map[string]error{id: &APIError{Kind: ErrRateLimited, Status: 429, Code: "rate_limited"}}
+			if section == "transcript" {
+				source.markdown.Markdown = "# Transcript\nDifferent page transcript"
+				source.markdown.Raw, err = json.Marshal(source.markdown)
+				require.NoError(err)
+			}
 
 			for _, other := range []string{"summary", "notes", "transcript"} {
 				if other != section {
@@ -1301,6 +1332,8 @@ func TestImporterRetriesIncompleteSections(t *testing.T) {
 			original := map[string]string{"summary": "Decide the release scope.", "notes": "Owner will prepare the rollout.", "transcript": "Test Speaker: Ready to ship."}
 			if section == "transcript" {
 				assert.Contains(body, original[section])
+				assert.NotContains(body, "Different page transcript")
+				assert.JSONEq(string(beforeEvidence["page_markdown"]), string(afterEvidence["page_markdown"]))
 				metadata, err := st.GetMessageMetadata(messageID)
 				require.NoError(err)
 				require.True(metadata.Valid)
